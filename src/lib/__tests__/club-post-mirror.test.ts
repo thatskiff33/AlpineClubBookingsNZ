@@ -1,4 +1,7 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { stripComments } from "./support/strip-comments";
 
 /**
  * Mirroring shared posts from the central server (epic #2992).
@@ -30,9 +33,16 @@ const mocks = vi.hoisted(() => ({
   postUpdate: vi.fn(),
   postDelete: vi.fn(),
   imageDeleteMany: vi.fn(),
+  // The post's row lock, taken inside the fence before the re-read (#4586).
+  executeRaw: vi.fn(),
+  // A hide of an admin-removed mirror scrubs its reports (#4588 review).
+  reportDeleteMany: vi.fn(),
   settingsUpsert: vi.fn(),
   settingsUpdateMany: vi.fn(),
   settingsFindUnique: vi.fn(),
+  // The settings row as the doubles hold it: the fenced cursor write re-reads
+  // it (#4470), so reads see what earlier writes stored.
+  row: {} as Record<string, unknown>,
   settingsUpdate: vi.fn(),
   transaction: vi.fn(),
   pullSharedPostSync: vi.fn(),
@@ -41,9 +51,19 @@ const mocks = vi.hoisted(() => ({
   getServerNzSetupState: vi.fn(),
   getIntegrationCredentialValue: vi.fn(),
   setIntegrationCredential: vi.fn(),
+  invalidateProviderCredentialCache: vi.fn(),
+  answerWriter: vi.fn(),
+  answerTx: {} as Record<string, unknown>,
+  FakeConnectionChangedError: class FakeConnectionChangedError extends Error {
+    constructor() {
+      super("connection changed");
+      this.name = "ServerNzConnectionChangedError";
+    }
+  },
   writePostImage: vi.fn(),
   deletePostImage: vi.fn(),
   loggerWarn: vi.fn(),
+  loggerError: vi.fn(),
   checkServerVersion: vi.fn(),
 }));
 
@@ -56,14 +76,14 @@ vi.mock("@/lib/servernz-version-check", () => ({
 vi.mock("@/lib/logger", () => ({
   default: {
     warn: mocks.loggerWarn,
-    error: vi.fn(),
+    error: mocks.loggerError,
     info: vi.fn(),
     debug: vi.fn(),
   },
 }));
 
 vi.mock("@/lib/prisma", () => ({
-  prisma: {
+  prisma: Object.assign(mocks.answerTx, {
     clubPost: {
       findUnique: mocks.postFindUnique,
       create: mocks.postCreate,
@@ -71,6 +91,8 @@ vi.mock("@/lib/prisma", () => ({
       delete: mocks.postDelete,
     },
     clubPostImage: { deleteMany: mocks.imageDeleteMany },
+    clubPostReport: { deleteMany: mocks.reportDeleteMany },
+    $executeRaw: mocks.executeRaw,
     serverNzSettings: {
       upsert: mocks.settingsUpsert,
       updateMany: mocks.settingsUpdateMany,
@@ -78,7 +100,7 @@ vi.mock("@/lib/prisma", () => ({
       update: mocks.settingsUpdate,
     },
     $transaction: mocks.transaction,
-  },
+  }),
 }));
 
 vi.mock("@/lib/servernz-api", () => ({
@@ -90,11 +112,23 @@ vi.mock("@/lib/servernz-api", () => ({
 
 vi.mock("@/lib/servernz-config", () => ({
   getServerNzSetupState: mocks.getServerNzSetupState,
+  SERVERNZ_PROVIDER: "servernz",
+  SERVERNZ_CREDENTIAL_KEYS: { apiKey: "api_key", pushSecret: "push_secret" },
 }));
 
 vi.mock("@/lib/integration-credentials", () => ({
   getIntegrationCredentialValue: mocks.getIntegrationCredentialValue,
-  setIntegrationCredential: mocks.setIntegrationCredential,
+  invalidateProviderCredentialCache: mocks.invalidateProviderCredentialCache,
+  setIntegrationCredentialInTransaction: mocks.setIntegrationCredential,
+}));
+
+// #4470: the push secret is stored through the answer fence for the identity
+// the registration was sent on. The double records that identity and runs the
+// write on a stand-in fenced client; a refusal is staged per test.
+vi.mock("@/lib/servernz-version-record", () => ({
+  ServerNzConnectionChangedError: mocks.FakeConnectionChangedError,
+  serverNzAnswerWriter: (identity: unknown) => async (work: (tx: unknown) => Promise<unknown>) =>
+    mocks.answerWriter(identity, work),
 }));
 
 vi.mock("@/lib/post-image-storage", () => ({
@@ -102,7 +136,8 @@ vi.mock("@/lib/post-image-storage", () => ({
   deletePostImage: mocks.deletePostImage,
 }));
 
-import { runMirrorSync } from "@/lib/club-post-mirror";
+import { STALE_SYNC_CLAIM_MS, runMirrorSync } from "@/lib/club-post-mirror";
+import { ensurePushRegistration } from "@/lib/servernz-push-registration";
 
 const NOW = new Date("2026-07-01T00:00:00.000Z");
 const SERVER_IMAGE = "c".repeat(32);
@@ -140,15 +175,29 @@ beforeEach(() => {
   });
   mocks.getIntegrationCredentialValue.mockResolvedValue("stored-secret");
   mocks.settingsUpsert.mockResolvedValue({});
-  mocks.settingsUpdateMany.mockResolvedValue({ count: 1 });
-  mocks.settingsFindUnique.mockResolvedValue({
-    commsCursorSince: null,
-    commsCursorSinceId: null,
+  mocks.row = { commsCursorSince: null, commsCursorSinceId: null };
+  // The claim (an OR on the stamp, matched here) and its release (#4586: only
+  // while the row holds the stamp this pass wrote) on the same row double.
+  mocks.settingsUpdateMany.mockImplementation(async ({ where, data }: { where: Record<string, unknown>; data: Record<string, unknown> }) => {
+    if ("commsSyncStartedAt" in where && String(where.commsSyncStartedAt) !== String(mocks.row.commsSyncStartedAt)) return { count: 0 };
+    Object.assign(mocks.row, data);
+    return { count: 1 };
   });
-  mocks.settingsUpdate.mockResolvedValue({});
+  mocks.executeRaw.mockResolvedValue(1);
+  mocks.settingsFindUnique.mockImplementation(async () => ({ ...mocks.row }));
+  mocks.settingsUpdate.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => {
+    Object.assign(mocks.row, data);
+    return {};
+  });
   mocks.postFindUnique.mockResolvedValue(null);
   mocks.postCreate.mockResolvedValue({});
   mocks.transaction.mockResolvedValue([]);
+  mocks.imageDeleteMany.mockResolvedValue({ count: 0 });
+  mocks.postUpdate.mockResolvedValue({});
+  // The fenced writes run on the mocked client's own delegates, so every
+  // row assertion below reads the same doubles whichever client wrote.
+  mocks.answerWriter.mockImplementation(async (_identity: unknown, work: (tx: unknown) => Promise<unknown>) =>
+    work(mocks.answerTx));
 });
 
 describe("runMirrorSync", () => {
@@ -197,10 +246,11 @@ describe("runMirrorSync", () => {
 
     expect(result.skipped).toBe("server-version-mismatch");
     // Released: the next matching pass must not find the claim held.
-    expect(mocks.settingsUpdate).toHaveBeenCalledWith({
-      where: { id: "default" },
+    expect(mocks.settingsUpdateMany).toHaveBeenLastCalledWith({
+      where: { id: "default", commsSyncStartedAt: NOW },
       data: { commsSyncStartedAt: null },
     });
+    expect(mocks.row.commsSyncStartedAt).toBeNull();
   });
 
   it("pauses on a version refusal from an image fetch without counting the change as poison", async () => {
@@ -239,13 +289,13 @@ describe("runMirrorSync", () => {
       order.push("version");
       return { status: "match", serverVersion: "2.0", expected: "2.0", checkedAt: null, couldNotCheck: false };
     });
-    mocks.settingsUpdateMany.mockImplementation(async () => {
-      order.push("claim");
+    mocks.settingsUpdateMany.mockImplementation(async ({ data }: { data: { commsSyncStartedAt: Date | null } }) => {
+      order.push(data.commsSyncStartedAt ? "claim" : "release");
       return { count: 1 };
     });
     mocks.pullSharedPostSync.mockResolvedValue(envelope([]));
     await runMirrorSync(NOW);
-    expect(order).toEqual(["version", "claim"]);
+    expect(order).toEqual(["version", "claim", "release"]);
   });
 
   it("creates a mirror row for another club's post", async () => {
@@ -275,7 +325,8 @@ describe("runMirrorSync", () => {
 
     expect(mocks.postCreate).not.toHaveBeenCalled();
     expect(mocks.postUpdate).not.toHaveBeenCalled();
-    expect(mocks.transaction).not.toHaveBeenCalled();
+    // The update path's image replacement is its fenced write (#4470).
+    expect(mocks.imageDeleteMany).not.toHaveBeenCalled();
   });
 
   it("deletes a mirror outright on a tombstone, files included", async () => {
@@ -422,10 +473,11 @@ describe("runMirrorSync", () => {
 
     await expect(runMirrorSync(NOW)).rejects.toThrow("server down");
 
-    const release = mocks.settingsUpdate.mock.calls.find(
+    const release = mocks.settingsUpdateMany.mock.calls.find(
       ([args]) => args.data.commsSyncStartedAt === null,
     );
     expect(release).toBeDefined();
+    expect(mocks.row.commsSyncStartedAt).toBeNull();
   });
 
   // #3091 review 2: one bad change must not wedge the mirror permanently.
@@ -447,7 +499,7 @@ describe("runMirrorSync", () => {
   });
 
   it("steps OVER a change that has failed three consecutive passes, and the feed continues", async () => {
-    mocks.settingsFindUnique.mockResolvedValue({
+    Object.assign(mocks.row, {
       commsCursorSince: null,
       commsCursorSinceId: null,
       commsPoisonChangeId: "srv-1",
@@ -476,7 +528,7 @@ describe("runMirrorSync", () => {
   });
 
   it("forgets recorded poison when the change applies cleanly on retry", async () => {
-    mocks.settingsFindUnique.mockResolvedValue({
+    Object.assign(mocks.row, {
       commsCursorSince: null,
       commsCursorSinceId: null,
       commsPoisonChangeId: "srv-1",
@@ -539,7 +591,7 @@ describe("runMirrorSync cursor overlap", () => {
   const ONE_MINUTE_EARLIER = "2026-06-30T00:59:00.000Z";
 
   function storedPosition(position = STORED) {
-    mocks.settingsFindUnique.mockResolvedValue({
+    Object.assign(mocks.row, {
       commsCursorSince: position.since,
       commsCursorSinceId: position.sinceId,
       commsPoisonChangeId: null,
@@ -606,7 +658,8 @@ describe("runMirrorSync cursor overlap", () => {
     expect(result.upserted).toBe(0);
     expect(mocks.postCreate).not.toHaveBeenCalled();
     expect(mocks.postUpdate).not.toHaveBeenCalled();
-    expect(mocks.transaction).not.toHaveBeenCalled();
+    // The update path's image replacement is its fenced write (#4470).
+    expect(mocks.imageDeleteMany).not.toHaveBeenCalled();
     expect(mocks.deletePostImage).not.toHaveBeenCalled();
     // The durable position still moves to the server's answer.
     expect(cursorWrites()).toEqual([
@@ -660,7 +713,8 @@ describe("runMirrorSync cursor overlap", () => {
 
     expect(second.unchanged).toBe(1);
     expect(second.upserted).toBe(0);
-    expect(mocks.transaction).not.toHaveBeenCalled();
+    // The update path's image replacement is its fenced write (#4470).
+    expect(mocks.imageDeleteMany).not.toHaveBeenCalled();
     expect(mocks.postCreate).toHaveBeenCalledTimes(1);
     expect(mocks.deletePostImage).toHaveBeenCalledTimes(1);
     expect(mocks.deletePostImage).toHaveBeenCalledWith("posts/2026/07/duplicate.webp");
@@ -723,7 +777,8 @@ describe("runMirrorSync cursor overlap", () => {
 
     expect(again.unchanged).toBe(1);
     expect(again.upserted).toBe(0);
-    expect(mocks.transaction).not.toHaveBeenCalled();
+    // The update path's image replacement is its fenced write (#4470).
+    expect(mocks.imageDeleteMany).not.toHaveBeenCalled();
     expect(mocks.deletePostImage.mock.calls.map(([key]) => key)).toEqual([
       "posts/2026/07/one-again.webp",
       "posts/2026/07/two-again.webp",
@@ -757,7 +812,10 @@ describe("runMirrorSync cursor overlap", () => {
 
     expect(result.upserted).toBe(1);
     expect(result.unchanged).toBe(0);
-    expect(mocks.transaction).toHaveBeenCalledTimes(1);
+    // One fenced write replaced the images and the post together (#4470).
+    expect(mocks.answerWriter).toHaveBeenCalled();
+    expect(mocks.imageDeleteMany).toHaveBeenCalledTimes(1);
+    expect(mocks.postUpdate).toHaveBeenCalledTimes(1);
   });
 
   it("leaves an initial sync with no stored position unchanged", async () => {
@@ -940,3 +998,497 @@ describe("runMirrorSync cursor overlap", () => {
   });
 });
 
+
+describe("ensurePushRegistration stores the secret only for the connection it registered on (#4470)", () => {
+  const SENT_ON = { baseUrl: "https://central.test", credentialVersion: "v-1" };
+
+  beforeEach(() => {
+    mocks.getIntegrationCredentialValue.mockResolvedValue(null);
+    process.env.NEXTAUTH_URL = "https://club.example.nz";
+    mocks.registerPushTarget.mockResolvedValue({ secret: "issued-secret", secretVersion: 3, sentOn: SENT_ON });
+  });
+  afterEach(() => {
+    delete process.env.NEXTAUTH_URL;
+  });
+
+  it("writes through the answer fence for the registration's identity, then drops the cached copy", async () => {
+    await ensurePushRegistration();
+    expect(mocks.answerWriter).toHaveBeenCalledWith(SENT_ON, expect.any(Function));
+    expect(mocks.setIntegrationCredential).toHaveBeenCalledWith({
+      tx: mocks.answerTx,
+      provider: "servernz",
+      key: "push_secret",
+      value: "issued-secret",
+      actor: { kind: "system", actor: "servernz-push-registration" },
+      expect: { expect: "any" },
+    });
+    expect(mocks.invalidateProviderCredentialCache).toHaveBeenCalledWith("servernz");
+    expect(mocks.answerWriter.mock.invocationCallOrder[0])
+      .toBeLessThan(mocks.invalidateProviderCredentialCache.mock.invocationCallOrder[0]);
+  });
+
+  it("stores nothing, says why, and lets the pass go on when the connection changed in flight", async () => {
+    mocks.answerWriter.mockRejectedValue(new mocks.FakeConnectionChangedError());
+    await expect(ensurePushRegistration()).resolves.toBeUndefined();
+    expect(mocks.setIntegrationCredential).not.toHaveBeenCalled();
+    expect(mocks.invalidateProviderCredentialCache).toHaveBeenCalledWith("servernz");
+    expect(mocks.loggerWarn).toHaveBeenCalledWith(expect.stringMatching(/connection changed while this install registered/));
+  });
+
+  it("registers nothing while a secret is stored", async () => {
+    mocks.getIntegrationCredentialValue.mockResolvedValue("stored-secret");
+    await ensurePushRegistration();
+    expect(mocks.registerPushTarget).not.toHaveBeenCalled();
+    expect(mocks.answerWriter).not.toHaveBeenCalled();
+  });
+});
+
+describe("runMirrorSync writes each page only for the connection it came from (#4470)", () => {
+  const OLD = { baseUrl: "https://old.central.test", credentialVersion: "v-old" };
+  const NEW = { baseUrl: "https://old.central.test", credentialVersion: "v-new" };
+
+  function page(changes: unknown[], sentOn: unknown, cursor = { since: "2026-06-30T01:00:00.000Z", sinceId: "srv-1" }, hasMore = false) {
+    return { changes, cursor, hasMore, sentOn };
+  }
+
+  function refuseFor(identity: unknown) {
+    mocks.answerWriter.mockImplementation(async (sentOn: unknown, work: (tx: unknown) => Promise<unknown>) => {
+      if (sentOn === identity) throw new mocks.FakeConnectionChangedError();
+      return work(mocks.answerTx);
+    });
+  }
+
+  it("writes the post, the cursor and the last-sync time through the page's own fence", async () => {
+    mocks.pullSharedPostSync.mockResolvedValue(page([visiblePost()], OLD));
+    const result = await runMirrorSync(NOW);
+    expect(result).toMatchObject({ upserted: 1, pages: 1 });
+    expect(result.stopped).toBeUndefined();
+    // Post, cursor, last-sync: three fenced writes, all for OLD.
+    expect(mocks.answerWriter.mock.calls.map(([identity]) => identity)).toEqual([OLD, OLD, OLD]);
+    expect(mocks.row).toMatchObject({ commsCursorSince: "2026-06-30T01:00:00.000Z", commsLastSyncAt: NOW });
+  });
+
+  it("stops at a replaced connection's first write: no post, cursor, failure count or last-sync, its pictures removed", async () => {
+    mocks.pullSharedPostSync.mockResolvedValue(page(
+      [visiblePost({ images: [{ url: `https://central.test/api/images/posts/${SERVER_IMAGE}`, width: 1, height: 1 }] })],
+      OLD,
+    ));
+    mocks.fetchSharedPostImage.mockResolvedValue(new Uint8Array([1]));
+    mocks.writePostImage.mockResolvedValue({
+      publicId: "local-img", storageKey: "k/local-img", mimeType: "image/webp", sha256: "a", width: 1, height: 1, bytes: 1,
+    });
+    refuseFor(OLD);
+
+    const result = await runMirrorSync(NOW);
+
+    expect(result.stopped).toBe("connection-changed");
+    expect(result.upserted).toBe(0);
+    expect(mocks.postCreate).not.toHaveBeenCalled();
+    expect(mocks.row).toEqual({ commsCursorSince: null, commsCursorSinceId: null, commsSyncStartedAt: null });
+    expect(mocks.deletePostImage).toHaveBeenCalledWith("k/local-img");
+    expect(mocks.loggerWarn).toHaveBeenCalledWith(expect.anything(), expect.stringMatching(/connection changed while the shared-post mirror ran/));
+  });
+
+  it("does not count a replaced connection as a poison change", async () => {
+    mocks.pullSharedPostSync.mockResolvedValue(page([{ state: "removed", id: "srv-gone" }], OLD));
+    mocks.postFindUnique.mockResolvedValue({ id: "local-gone", originClubCode: "RUAPEHU", hiddenAt: null, images: [] });
+    refuseFor(OLD);
+    const result = await runMirrorSync(NOW);
+    expect(result).toMatchObject({ stopped: "connection-changed", removed: 0 });
+    expect(mocks.postDelete).not.toHaveBeenCalled();
+    expect(mocks.row).not.toHaveProperty("commsPoisonChangeId");
+    // Not even attempted: the refused removal is the pass's one fenced write.
+    expect(mocks.answerWriter).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the pages applied before the change and writes nothing from the page after it", async () => {
+    const first = { since: "2026-06-30T01:30:00.000Z", sinceId: "srv-5" };
+    mocks.pullSharedPostSync
+      .mockResolvedValueOnce(page([visiblePost()], NEW, first, true))
+      .mockResolvedValueOnce(page([visiblePost({ id: "srv-6" })], OLD, { since: "2026-06-30T02:00:00.000Z", sinceId: "srv-6" }));
+    refuseFor(OLD);
+    const result = await runMirrorSync(NOW);
+    expect(result).toMatchObject({ stopped: "connection-changed", upserted: 1, pages: 2 });
+    expect(mocks.postCreate).toHaveBeenCalledTimes(1);
+    expect(mocks.row).toMatchObject({ commsCursorSince: first.since, commsCursorSinceId: first.sinceId });
+    expect(mocks.row).not.toHaveProperty("commsLastSyncAt");
+  });
+
+  it("writes no position over one that moved since the pass read it (a key replaced before the first pull)", async () => {
+    mocks.row = { commsCursorSince: "2026-06-30T00:00:00.000Z", commsCursorSinceId: "srv-old" };
+    mocks.pullSharedPostSync.mockImplementation(async () => {
+      // The replacement's reset commits after the pass read the position, and
+      // the page is sent on the NEW key, so the fence itself passes.
+      mocks.row.commsCursorSince = null;
+      mocks.row.commsCursorSinceId = null;
+      return page([], NEW, { since: "2026-06-29T00:00:00.000Z", sinceId: "srv-new" });
+    });
+    const result = await runMirrorSync(NOW);
+    expect(result.stopped).toBe("connection-changed");
+    expect(mocks.row).toMatchObject({ commsCursorSince: null, commsCursorSinceId: null });
+    expect(mocks.row).not.toHaveProperty("commsLastSyncAt");
+  });
+});
+
+/**
+ * A light census (#4470), the download's own (`servernz-version-record.test.ts`):
+ * the mirror reaches the global client only to READ and for its single-flight
+ * claim. Every write it makes from a server answer (posts, removals, failure
+ * count, cursor, last-sync time) goes through the page's fenced writer, so a
+ * future unfenced write on `prisma.` fails here.
+ */
+describe("the mirror writes answers only through the fence (#4470)", () => {
+  it("keeps the database out of the pictures-and-body module split from it (#4588)", () => {
+    const source = stripComments(readFileSync(path.join(process.cwd(), "src/lib/club-post-mirror-images.ts"), "utf8"));
+    expect(source).not.toMatch(/\bprisma\b|\$transaction|@\/lib\/prisma/);
+  });
+
+  it("calls the global client for reads and the claim alone", () => {
+    const source = stripComments(readFileSync(path.join(process.cwd(), "src/lib/club-post-mirror.ts"), "utf8"));
+    const calls = [...source.matchAll(/\bprisma\.(\$?\w+)(?:\s*\.(\w+))?/g)].map(([, model, method]) => `${model}.${method}`);
+    const READS = new Set(["findUnique", "findMany", "findFirst", "count"]);
+    expect(calls.length).toBeGreaterThan(0);
+    expect(calls.filter((call) => !READS.has(call.split(".")[1] ?? "")).sort()).toEqual([
+      // The claim's materialise, take and release: no server answer in them.
+      "serverNzSettings.updateMany",
+      "serverNzSettings.updateMany",
+      "serverNzSettings.upsert",
+    ]);
+    // ...and the second updateMany is the release, of this pass's stamp only
+    // (#4586).
+    expect(source).toMatch(/prisma\.serverNzSettings\s*\.updateMany\(\{ where: \{ id: "default", commsSyncStartedAt: claimedAt \}, data: \{ commsSyncStartedAt: null \} \}\)/);
+  });
+});
+
+describe("runMirrorSync's failure count belongs to the position it read (#4470 delta review)", () => {
+  const NEW = { baseUrl: "https://central.test", credentialVersion: "v-new" };
+
+  it("does not step over a post on a count a key replacement reset while the pass ran", async () => {
+    // Two failures recorded on the OLD key, and no cursor yet either side.
+    Object.assign(mocks.row, { commsPoisonChangeId: "srv-1", commsPoisonCount: 2 });
+    mocks.pullSharedPostSync.mockImplementation(async () => {
+      // The replacement's reset commits after the pass read the row; the page
+      // is sent on the NEW key, so the connection fence itself passes.
+      Object.assign(mocks.row, { commsPoisonChangeId: null, commsPoisonCount: 0 });
+      return { changes: [visiblePost()], cursor: { since: "2026-06-30T01:00:00.000Z", sinceId: "srv-1" }, hasMore: false, sentOn: NEW };
+    });
+    mocks.postCreate.mockRejectedValueOnce(new Error("value too long"));
+
+    const result = await runMirrorSync(NOW);
+
+    expect(result.stopped).toBe("connection-changed");
+    // Not stepped over: the reset count stands, and no cursor moved past it.
+    expect(mocks.row).toMatchObject({ commsPoisonChangeId: null, commsPoisonCount: 0, commsCursorSince: null });
+    expect(mocks.loggerError).not.toHaveBeenCalledWith(expect.anything(), expect.stringMatching(/Skipping a poison/));
+  });
+
+  it("does not count a first failure on the new key onto the old key's count", async () => {
+    Object.assign(mocks.row, { commsPoisonChangeId: "srv-1", commsPoisonCount: 1 });
+    mocks.pullSharedPostSync.mockImplementation(async () => {
+      Object.assign(mocks.row, { commsPoisonChangeId: null, commsPoisonCount: 0 });
+      return { changes: [visiblePost()], cursor: null, hasMore: false, sentOn: NEW };
+    });
+    mocks.postCreate.mockRejectedValueOnce(new Error("value too long"));
+
+    const result = await runMirrorSync(NOW);
+
+    expect(result.stopped).toBe("connection-changed");
+    expect(mocks.row).toMatchObject({ commsPoisonChangeId: null, commsPoisonCount: 0 });
+  });
+
+  it("removes a post's freshly stored pictures when its write fails for any reason, not only a refusal", async () => {
+    mocks.pullSharedPostSync.mockResolvedValue(envelope([
+      visiblePost({ images: [{ url: `https://central.test/api/images/posts/${SERVER_IMAGE}`, width: 1, height: 1 }] }),
+    ]));
+    mocks.fetchSharedPostImage.mockResolvedValue(new Uint8Array([1]));
+    mocks.writePostImage.mockResolvedValue({
+      publicId: "local-img", storageKey: "k/failed-write", mimeType: "image/webp", sha256: "a", width: 1, height: 1, bytes: 1,
+    });
+    mocks.postCreate.mockRejectedValueOnce(new Error("database unavailable"));
+
+    await expect(runMirrorSync(NOW)).rejects.toThrow("database unavailable");
+    expect(mocks.deletePostImage).toHaveBeenCalledWith("k/failed-write");
+  });
+});
+
+/**
+ * #4586: three concurrency gaps in the mirror. The release clears only the
+ * claim this pass wrote; the create-or-update decision, and a tombstone's, is
+ * re-read inside the fence under the post's row lock; and that lock is taken
+ * before any image row, the order every message-board writer follows.
+ */
+describe("the mirror's release clears only this pass's own claim (#4586)", () => {
+  it("leaves a claim that a second pass took over while this one ran", async () => {
+    const takenOverAt = new Date(NOW.getTime() + STALE_SYNC_CLAIM_MS + 1);
+    mocks.pullSharedPostSync.mockImplementation(async () => {
+      // This pass's claim went stale mid-pass and a second pass took it.
+      mocks.row.commsSyncStartedAt = takenOverAt;
+      return envelope([]);
+    });
+
+    await runMirrorSync(NOW);
+
+    expect(mocks.row.commsSyncStartedAt).toBe(takenOverAt);
+  });
+
+  it("releases with the exact stamp its claim wrote", async () => {
+    mocks.pullSharedPostSync.mockResolvedValue(envelope([]));
+
+    await runMirrorSync(NOW);
+
+    const [claim, release] = mocks.settingsUpdateMany.mock.calls.map(([args]) => args);
+    expect(claim.data.commsSyncStartedAt).toEqual(NOW);
+    expect(release).toEqual({ where: { id: "default", commsSyncStartedAt: claim.data.commsSyncStartedAt }, data: { commsSyncStartedAt: null } });
+    expect(mocks.row.commsSyncStartedAt).toBeNull();
+  });
+});
+
+describe("the mirror decides under the post's row lock, post before images (#4586)", () => {
+  const MIRRORED = {
+    id: "local-2", originClubCode: "RUAPEHU", originClubName: "Ruapehu Alpine Club",
+    content: "An older version of the words.", bodyHtml: null,
+    images: [{ storageKey: "posts/2026/06/old.webp", sha256: "0".repeat(64) }],
+  };
+
+  function recordOrder() {
+    const order: string[] = [];
+    mocks.answerWriter.mockImplementation(async (_identity: unknown, work: (tx: unknown) => Promise<unknown>) => {
+      order.push("fence");
+      return work(mocks.answerTx);
+    });
+    mocks.executeRaw.mockImplementation(async (strings: TemplateStringsArray, ...values: unknown[]) => {
+      order.push(`lock ${strings.join("?")} [${values.join(",")}]`);
+      return 1;
+    });
+    mocks.postFindUnique.mockImplementation(async () => {
+      order.push("read");
+      return MIRRORED;
+    });
+    mocks.imageDeleteMany.mockImplementation(async () => {
+      order.push("images");
+      return { count: 1 };
+    });
+    mocks.postUpdate.mockImplementation(async () => {
+      order.push("post");
+      return {};
+    });
+    mocks.postDelete.mockImplementation(async () => {
+      order.push("delete");
+      return {};
+    });
+    return order;
+  }
+
+  const LOCK = 'lock SELECT 1 FROM "ClubPost" WHERE "serverPostId" = ? FOR UPDATE [srv-1]';
+
+  it("locks the post inside the fence, then re-reads it, before any image row", async () => {
+    const order = recordOrder();
+    mocks.pullSharedPostSync.mockResolvedValue(envelope([visiblePost()]));
+
+    const result = await runMirrorSync(NOW);
+
+    expect(result.upserted).toBe(1);
+    // The first read only skips our own posts' downloads; the decision is
+    // the second, under the lock.
+    expect(order.slice(0, 6)).toEqual(["read", "fence", LOCK, "read", "images", "post"]);
+    expect(mocks.deletePostImage).toHaveBeenCalledWith("posts/2026/06/old.webp");
+  });
+
+  it("updates, not creates, a row mirrored between the first read and the fence", async () => {
+    mocks.pullSharedPostSync.mockResolvedValue(envelope([visiblePost()]));
+    mocks.postFindUnique.mockResolvedValueOnce(null).mockResolvedValue(MIRRORED);
+
+    const result = await runMirrorSync(NOW);
+
+    expect(result.upserted).toBe(1);
+    expect(mocks.postCreate).not.toHaveBeenCalled();
+    expect(mocks.postUpdate).toHaveBeenCalledWith(expect.objectContaining({ where: { id: "local-2" } }));
+  });
+
+  it("writes nothing, and drops its fresh pictures, when the row became this club's own post under the lock", async () => {
+    mocks.pullSharedPostSync.mockResolvedValue(envelope([
+      visiblePost({ images: [{ url: `https://central.test/api/images/posts/${SERVER_IMAGE}`, width: 1, height: 1 }] }),
+    ]));
+    mocks.fetchSharedPostImage.mockResolvedValue(new Uint8Array([1]));
+    mocks.writePostImage.mockResolvedValue({
+      publicId: "local-img", storageKey: "k/fresh", mimeType: "image/webp", sha256: "a", width: 1, height: 1, bytes: 1,
+    });
+    // Our share was stamped with this server id after the first read.
+    mocks.postFindUnique.mockResolvedValueOnce(null).mockResolvedValue({ ...MIRRORED, originClubCode: null });
+
+    const result = await runMirrorSync(NOW);
+
+    expect(result.upserted).toBe(0);
+    expect(mocks.postCreate).not.toHaveBeenCalled();
+    expect(mocks.postUpdate).not.toHaveBeenCalled();
+    expect(mocks.imageDeleteMany).not.toHaveBeenCalled();
+    expect(mocks.deletePostImage).toHaveBeenCalledWith("k/fresh");
+  });
+
+  it("applies a tombstone from a read under the lock, deleting the post with its images by cascade", async () => {
+    const order = recordOrder();
+    mocks.pullSharedPostSync.mockResolvedValue(envelope([{ state: "removed", id: "srv-1", reason: "removed" }]));
+
+    const result = await runMirrorSync(NOW);
+
+    expect(result.removed).toBe(1);
+    expect(order.slice(0, 4)).toEqual(["fence", LOCK, "read", "delete"]);
+    expect(mocks.imageDeleteMany).not.toHaveBeenCalled();
+    expect(mocks.deletePostImage).toHaveBeenCalledWith("posts/2026/06/old.webp");
+  });
+
+  it("reads a lock that matched nothing as not found, never as a row read unlocked", async () => {
+    // A share stamping this id on our own post after the lock ran: the read
+    // would see that row with no lock held on it.
+    mocks.pullSharedPostSync.mockResolvedValue(envelope([visiblePost()]));
+    mocks.postFindUnique.mockResolvedValueOnce(null).mockResolvedValue(MIRRORED);
+    mocks.executeRaw.mockResolvedValue(0);
+
+    const result = await runMirrorSync(NOW);
+
+    expect(result.upserted).toBe(1);
+    expect(mocks.postFindUnique).toHaveBeenCalledTimes(1);
+    expect(mocks.postUpdate).not.toHaveBeenCalled();
+    // Created: the unique serverPostId refuses it if a row took the id meanwhile.
+    expect(mocks.postCreate).toHaveBeenCalledTimes(1);
+  });
+
+  it("counts no removal, and deletes no file, when the locked read finds no row", async () => {
+    mocks.pullSharedPostSync.mockResolvedValue(envelope([{ state: "removed", id: "srv-1", reason: "removed" }]));
+
+    const result = await runMirrorSync(NOW);
+
+    expect(result.removed).toBe(0);
+    expect(mocks.executeRaw).toHaveBeenCalledTimes(1);
+    expect(mocks.postDelete).not.toHaveBeenCalled();
+    expect(mocks.deletePostImage).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * #4588: a mirror this club's admin removed never gets its words back, and a
+ * pass whose claim was taken over writes nothing after the takeover.
+ */
+describe("a removed mirror stays removed (#4588)", () => {
+  const REMOVED = {
+    id: "local-3", originClubCode: "RUAPEHU", originClubName: "Ruapehu Alpine Club",
+    content: "", bodyHtml: null, removedAt: new Date("2026-06-30T12:00:00.000Z"), hiddenAt: null, images: [],
+  };
+  const WITH_PICTURE = () => visiblePost({
+    content: "Edited at the origin club.",
+    images: [{ url: `https://central.test/api/images/posts/${SERVER_IMAGE}`, width: 1, height: 1 }],
+  });
+
+  beforeEach(() => {
+    mocks.fetchSharedPostImage.mockResolvedValue(new Uint8Array([1]));
+    mocks.writePostImage.mockResolvedValue({
+      publicId: "local-img", storageKey: "k/fresh", mimeType: "image/webp", sha256: "a", width: 1, height: 1, bytes: 1,
+    });
+  });
+
+  it("downloads nothing and writes nothing for a re-delivery the first read sees removed", async () => {
+    mocks.pullSharedPostSync.mockResolvedValue(envelope([WITH_PICTURE()]));
+    mocks.postFindUnique.mockResolvedValue(REMOVED);
+
+    const result = await runMirrorSync(NOW);
+
+    expect(result).toMatchObject({ upserted: 0, unchanged: 0 });
+    expect(mocks.fetchSharedPostImage).not.toHaveBeenCalled();
+    expect(mocks.postUpdate).not.toHaveBeenCalled();
+    expect(mocks.imageDeleteMany).not.toHaveBeenCalled();
+  });
+
+  it("writes no words or pictures back, and drops its fresh files, when the post was removed before the lock", async () => {
+    mocks.pullSharedPostSync.mockResolvedValue(envelope([WITH_PICTURE()]));
+    // Not yet removed when first read; removed by the time the lock is held.
+    mocks.postFindUnique.mockResolvedValueOnce({ ...REMOVED, removedAt: null }).mockResolvedValue(REMOVED);
+
+    const result = await runMirrorSync(NOW);
+
+    expect(result).toMatchObject({ upserted: 0, unchanged: 0 });
+    expect(mocks.postUpdate).not.toHaveBeenCalled();
+    expect(mocks.postCreate).not.toHaveBeenCalled();
+    expect(mocks.imageDeleteMany).not.toHaveBeenCalled();
+    expect(mocks.deletePostImage).toHaveBeenCalledWith("k/fresh");
+  });
+
+  it("leaves only a scrubbed marker on a HIDE, so a later restore cannot bring it back (#4588 review)", async () => {
+    mocks.pullSharedPostSync.mockResolvedValue(envelope([{ state: "removed", id: "srv-1", reason: "hidden" }]));
+    mocks.postFindUnique.mockResolvedValue({ ...REMOVED, images: [{ storageKey: "k/left-over" }] });
+
+    const result = await runMirrorSync(NOW);
+
+    expect(result.removed).toBe(0);
+    expect(mocks.postDelete).not.toHaveBeenCalled();
+    // Nothing but what recognises the id survives: no author, origin name,
+    // words, body, reports or pictures.
+    expect(mocks.reportDeleteMany).toHaveBeenCalledWith({ where: { postId: "local-3" } });
+    expect(mocks.imageDeleteMany).toHaveBeenCalledWith({ where: { postId: "local-3" } });
+    expect(mocks.postUpdate).toHaveBeenCalledWith({
+      where: { id: "local-3" },
+      data: { authorName: "", originClubName: null, content: "", bodyHtml: null, reportCount: 0 },
+    });
+    expect(mocks.deletePostImage).toHaveBeenCalledWith("k/left-over");
+  });
+
+  it("deletes a removed mirror outright on a final REMOVAL, reports and all (#4588 review)", async () => {
+    mocks.pullSharedPostSync.mockResolvedValue(envelope([{ state: "removed", id: "srv-1", reason: "removed" }]));
+    mocks.postFindUnique.mockResolvedValue(REMOVED);
+
+    const result = await runMirrorSync(NOW);
+
+    expect(result.removed).toBe(1);
+    expect(mocks.postDelete).toHaveBeenCalledWith({ where: { id: "local-3" } });
+    expect(mocks.postUpdate).not.toHaveBeenCalled();
+  });
+
+  it("still deletes a mirror nobody removed here on a hide", async () => {
+    mocks.pullSharedPostSync.mockResolvedValue(envelope([{ state: "removed", id: "srv-1", reason: "hidden" }]));
+    mocks.postFindUnique.mockResolvedValue({ ...REMOVED, removedAt: null });
+
+    const result = await runMirrorSync(NOW);
+
+    expect(result.removed).toBe(1);
+    expect(mocks.postDelete).toHaveBeenCalledWith({ where: { id: "local-3" } });
+    expect(mocks.reportDeleteMany).not.toHaveBeenCalled();
+  });
+});
+
+describe("a pass whose claim was taken over writes nothing after the takeover (#4588)", () => {
+  const TAKEN_OVER_AT = new Date(NOW.getTime() + STALE_SYNC_CLAIM_MS + 1);
+
+  it("stops at its first write, with its own label, and leaves the new holder's claim", async () => {
+    mocks.pullSharedPostSync.mockImplementation(async () => {
+      mocks.row.commsSyncStartedAt = TAKEN_OVER_AT;
+      return envelope([visiblePost()]);
+    });
+
+    const result = await runMirrorSync(NOW);
+
+    expect(result).toMatchObject({ stopped: "claim-taken-over", upserted: 0 });
+    expect(mocks.postCreate).not.toHaveBeenCalled();
+    expect(mocks.row).toMatchObject({ commsCursorSince: null, commsSyncStartedAt: TAKEN_OVER_AT });
+    expect(mocks.row.commsLastSyncAt).toBeUndefined();
+    // Not counted against the change as a failure.
+    expect(mocks.row.commsPoisonChangeId).toBeUndefined();
+  });
+
+  it("refuses a tombstone and a position write too, keeping the pages applied before the takeover", async () => {
+    mocks.pullSharedPostSync
+      .mockResolvedValueOnce({ ...envelope([visiblePost()]), hasMore: true })
+      .mockImplementationOnce(async () => {
+        mocks.row.commsSyncStartedAt = TAKEN_OVER_AT;
+        return envelope([{ state: "removed", id: "srv-1", reason: "removed" }], { since: "2026-06-30T02:00:00.000Z", sinceId: "srv-2" });
+      });
+    mocks.postFindUnique.mockResolvedValueOnce(null).mockResolvedValueOnce(null).mockResolvedValue({
+      id: "local-9", originClubCode: "RUAPEHU", hiddenAt: null, removedAt: null, images: [],
+    });
+
+    const result = await runMirrorSync(NOW);
+
+    expect(result).toMatchObject({ stopped: "claim-taken-over", upserted: 1, removed: 0, pages: 2 });
+    expect(mocks.postCreate).toHaveBeenCalledTimes(1);
+    expect(mocks.postDelete).not.toHaveBeenCalled();
+    expect(mocks.row).toMatchObject({ commsCursorSince: "2026-06-30T01:00:00.000Z", commsSyncStartedAt: TAKEN_OVER_AT });
+  });
+});

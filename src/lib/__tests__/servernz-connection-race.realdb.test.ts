@@ -9,6 +9,14 @@
  * two cases replace the key while the pull is in flight and prove that its
  * deletions and renames change nothing; the control proves the same answer
  * applies when the connection stands. They own `race-4262-` rows.
+ *
+ * #4470: the three leftovers of an address move. A key save that names the
+ * address its page showed, racing a move in both orders; a download whose
+ * ADDRESS moves while its pull is out; and the old server's push secret, both
+ * removed by the move and refused when a registration in flight across the
+ * move comes back. They own `race-4470-` values. The fix round adds a
+ * message-board mirror page in flight across a move, and a key replacement at
+ * the same address rotating the push secret.
  */
 import type { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -31,6 +39,9 @@ let api: typeof import("@/lib/servernz-api");
 let lodgeSync: typeof import("@/lib/servernz-other-lodges-sync");
 let observer: PrismaClient;
 const savedAuthSecret = process.env.AUTH_SECRET;
+// #4470: the mirror cases load `club-post-mirror`, whose image
+// storage loads `sharp`, and loading it sets `VIPSHOME` (#4107 env guard).
+const savedVipsHome = process.env.VIPSHOME;
 const fetchMock = vi.fn();
 
 function latch() {
@@ -44,8 +55,9 @@ function latch() {
     await prisma.auditLog.deleteMany({ where: { memberId: ACTOR_ID } });
     await prisma.auditLog.deleteMany({ where: { action: "alpine_server.other_lodges.hidden", details: { contains: "race-4262" } } });
     await prisma.lodge.deleteMany({ where: { id: { startsWith: "race-4262-" } } });
+    await prisma.clubPost.deleteMany({ where: { serverPostId: { startsWith: "race-4470-" } } });
     await prisma.otherLodge.deleteMany({ where: { id: { startsWith: "race-4262-" } } });
-    await prisma.integrationCredential.deleteMany({ where: { provider: "servernz", key: "api_key" } });
+    await prisma.integrationCredential.deleteMany({ where: { provider: "servernz", key: { in: ["api_key", "push_secret"] } } });
     await prisma.serverNzSettings.deleteMany({ where: { id: "default" } });
   }
 
@@ -135,6 +147,8 @@ function latch() {
     } finally {
       if (savedAuthSecret === undefined) delete process.env.AUTH_SECRET;
       else process.env.AUTH_SECRET = savedAuthSecret;
+      if (savedVipsHome === undefined) delete process.env.VIPSHOME;
+      else process.env.VIPSHOME = savedVipsHome;
       vi.unstubAllGlobals();
     }
   });
@@ -193,7 +207,8 @@ function latch() {
     let replace: Promise<unknown> | undefined;
     try {
       await Promise.race([readAddress.promise, sync.then(() => { throw new Error("Sync escaped the read barrier."); })]);
-      replace = moveAddress().then(() => config.setServerNzApiKey(NEW_KEY, { kind: "admin", memberId: ACTOR_ID }));
+      // The admin's page now shows the new address, so its key save names it.
+      replace = moveAddress().then(() => config.setServerNzApiKey(NEW_KEY, NEW_URL, { kind: "admin", memberId: ACTOR_ID }));
       await waitForBlockedConnection(replace);
       resumeReader.release();
       await sync;
@@ -270,7 +285,7 @@ function latch() {
       await seedRegistry();
       fetchMock.mockImplementation(async () => {
         // The administrator's key replacement commits while the request is out.
-        await config.setServerNzApiKey("race-4262-new-key", { kind: "admin", memberId: ACTOR_ID });
+        await config.setServerNzApiKey("race-4262-new-key", OLD_URL, { kind: "admin", memberId: ACTOR_ID });
         return new Response(JSON.stringify(PULL));
       });
 
@@ -283,6 +298,28 @@ function latch() {
       expect(result).toMatchObject({ hiddenLodges: [], updated: 0, renamed: 0 });
     });
 
+    it("records NOTHING over the reset when the ADDRESS moves while the pull is in flight (#4470)", async () => {
+      await seedRegistry();
+      fetchMock.mockImplementation(async (url: string | URL) => {
+        expect(String(url).startsWith(`${OLD_URL}/`)).toBe(true);
+        // The administrator's address move commits while the request is out.
+        await moveAddress();
+        return new Response(JSON.stringify(PULL));
+      });
+
+      const result = await lodgeSync.downloadOtherClubsFromServer();
+
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(await state()).toEqual({
+        goneHidden: false, twoName: "race-4262 Old", link: "race-4262-c-gone", cursor: null, audits: 0,
+      });
+      // The move's reset stands: no old owned list, keyed marker or download time.
+      expect(await prisma.serverNzSettings.findUnique({ where: { id: "default" } })).toMatchObject({
+        baseUrl: NEW_URL, otherLodgesOwnedLodges: null, otherLodgesKeyedAt: null, otherLodgesLastDownloadAt: null,
+      });
+      expect(result).toMatchObject({ stopped: "connection-changed", hiddenLodges: [], updated: 0, renamed: 0 });
+    });
+
     it("applies the same answer when the connection stands (the control)", async () => {
       await seedRegistry();
       fetchMock.mockImplementation(async () => new Response(JSON.stringify(PULL)));
@@ -293,6 +330,214 @@ function latch() {
         goneHidden: true, twoName: "race-4262 Renamed", link: null, cursor: "race-4262-cursor", audits: 1,
       });
       expect(result).toMatchObject({ hiddenLodges: ["race-4262 Gone"], renamed: 1 });
+    });
+  });
+
+  describe("a key save names the address its page showed (#4470)", () => {
+    const PAGE_KEY = "race-4470-key-from-old-server";
+
+    async function storedKey() {
+      const { readIntegrationCredentialRow } = await import("@/lib/integration-credentials");
+      const row = await readIntegrationCredentialRow(prisma, "servernz", "api_key");
+      return row.status === "configured" ? row.value : null;
+    }
+
+    it("refuses a key for the old address when the move commits first, and stores nothing", async () => {
+      const changedAddress = latch();
+      const resumeMove = latch();
+      const move = moveAddress(resumeMove, changedAddress);
+      let save: Promise<unknown> | undefined;
+      try {
+        await Promise.race([changedAddress.promise, move.then(() => { throw new Error("Move escaped the write barrier."); })]);
+        // The page loaded before the move and still shows the old address.
+        save = config.setServerNzApiKey(PAGE_KEY, OLD_URL, { kind: "admin", memberId: ACTOR_ID });
+        const outcome = save.then(() => ({ error: null }), (error: unknown) => ({ error }));
+        await waitForBlockedConnection(save);
+        resumeMove.release();
+        await move;
+        expect((await outcome).error).toBeInstanceOf(config.ServerNzAddressChangedError);
+        expect(await storedKey()).toBeNull();
+        expect(await prisma.serverNzSettings.findUnique({ where: { id: "default" } })).toMatchObject({ baseUrl: NEW_URL });
+        // The refused save wrote no credential audit row either.
+        const { CREDENTIAL_AUDIT_ACTIONS } = await import("@/lib/integration-credential-actor");
+        const setRows = () => prisma.auditLog.count({ where: { memberId: ACTOR_ID, action: CREDENTIAL_AUDIT_ACTIONS.set } });
+        expect(await setRows()).toBe(0);
+        // A page reloaded on the new address saves its key (and its audit row).
+        await config.setServerNzApiKey("race-4470-new-server-key", NEW_URL, { kind: "admin", memberId: ACTOR_ID });
+        expect(await storedKey()).toBe("race-4470-new-server-key");
+        expect(await setRows()).toBe(1);
+      } finally {
+        resumeMove.release();
+        await Promise.allSettled([move, save]);
+      }
+    });
+
+    it("lets a key saved first for the old address be removed by the move queued behind it", async () => {
+      const saving = latch();
+      const resumeSave = latch();
+      const originalForget = settings.forgetServerConnectionAnswers;
+      const forget = vi.spyOn(settings, "forgetServerConnectionAnswers").mockImplementationOnce(async (db) => {
+        await originalForget(db);
+        saving.release();
+        await resumeSave.promise;
+      });
+      const save = config.setServerNzApiKey(PAGE_KEY, OLD_URL, { kind: "admin", memberId: ACTOR_ID });
+      let move: Promise<unknown> | undefined;
+      try {
+        await Promise.race([saving.promise, save.then(() => { throw new Error("Save escaped the write barrier."); })]);
+        move = moveAddress();
+        await waitForBlockedConnection(move);
+        resumeSave.release();
+        await save;
+        await move;
+        // The key went with the address it was saved for.
+        expect(await storedKey()).toBeNull();
+        expect(await prisma.serverNzSettings.findUnique({ where: { id: "default" } })).toMatchObject({ baseUrl: NEW_URL });
+      } finally {
+        resumeSave.release();
+        forget.mockRestore();
+        await Promise.allSettled([save, move]);
+      }
+    });
+  });
+
+  describe("the old server's push secret (#4470)", () => {
+    const savedNextAuthUrl = process.env.NEXTAUTH_URL;
+
+    // Push secrets the doubled server issues, built at runtime so the tree
+    // carries no key-shaped literal (#4470; `.gitleaks.toml` forgives the one
+    // an earlier commit wrote). The schema wants at least 32 characters.
+    const OLD_SERVER_SECRET = "o".repeat(40);
+    const STANDING_SECRET = "s".repeat(40);
+
+    async function storedPushSecret() {
+      const { readIntegrationCredentialRow } = await import("@/lib/integration-credentials");
+      const row = await readIntegrationCredentialRow(prisma, "servernz", "push_secret");
+      return row.status === "configured" ? row.value : null;
+    }
+
+    async function seedPushSecret(value: string) {
+      const { encryptCredential, INTEGRATION_CREDENTIAL_LABEL } = await import("@/lib/integration-crypto");
+      await prisma.integrationCredential.create({ data: {
+        provider: "servernz", key: "push_secret",
+        ...encryptCredential({ provider: "servernz", key: "push_secret", plaintext: value, label: INTEGRATION_CREDENTIAL_LABEL }),
+      } });
+    }
+
+    afterAll(() => {
+      if (savedNextAuthUrl === undefined) delete process.env.NEXTAUTH_URL;
+      else process.env.NEXTAUTH_URL = savedNextAuthUrl;
+    });
+
+    it("is removed with the address and key, and every sync position with them", async () => {
+      await seedPushSecret("race-4470-old-push-secret");
+      await prisma.serverNzSettings.update({ where: { id: "default" }, data: {
+        otherLodgesCursor: "race-4470-cursor", commsCursorSince: "2026-06-30T00:00:00.000Z", commsCursorSinceId: "race-4470-post",
+      } });
+      await moveAddress();
+      expect(await storedPushSecret()).toBeNull();
+      expect(await prisma.serverNzSettings.findUnique({ where: { id: "default" } })).toMatchObject({
+        baseUrl: NEW_URL, otherLodgesCursor: null, commsCursorSince: null, commsCursorSinceId: null,
+      });
+    });
+
+    it("is not stored from a registration whose address moved while it was out", async () => {
+      process.env.NEXTAUTH_URL = "https://club.race-4470.example.invalid";
+      const { ensurePushRegistration } = await import("@/lib/servernz-push-registration");
+      fetchMock.mockImplementation(async (url: string | URL) => {
+        expect(String(url)).toBe(`${OLD_URL}/api/v1/push-target`);
+        // The administrator moves the address while the PUT is out.
+        await moveAddress();
+        return new Response(JSON.stringify({ url: "https://club.race-4470.example.invalid/api/webhooks/servernz-posts", secretVersion: 1, secret: OLD_SERVER_SECRET }));
+      });
+      await ensurePushRegistration();
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(await storedPushSecret()).toBeNull();
+    });
+
+    it("is removed by a key replacement at the same address too (#4470 review)", async () => {
+      await seedPushSecret("race-4470-old-key-push-secret");
+      await config.setServerNzApiKey("race-4470-rotated-key", OLD_URL, { kind: "admin", memberId: ACTOR_ID });
+      expect(await storedPushSecret()).toBeNull();
+      expect(await prisma.serverNzSettings.findUnique({ where: { id: "default" } })).toMatchObject({ baseUrl: OLD_URL });
+    });
+
+    it("is stored when the connection stands (the control)", async () => {
+      process.env.NEXTAUTH_URL = "https://club.race-4470.example.invalid";
+      const { ensurePushRegistration } = await import("@/lib/servernz-push-registration");
+      fetchMock.mockImplementation(async () => new Response(JSON.stringify({
+        url: "https://club.race-4470.example.invalid/api/webhooks/servernz-posts", secretVersion: 1, secret: STANDING_SECRET,
+      })));
+      await ensurePushRegistration();
+      expect(await storedPushSecret()).toBe(STANDING_SECRET);
+    });
+  });
+
+  describe("a message-board mirror page in flight across an address move (#4470 review)", () => {
+    const savedNextAuthUrl = process.env.NEXTAUTH_URL;
+    const PAGE = {
+      changes: [{ state: "visible", post: {
+        id: "race-4470-post", club: { id: "race-4470-club", name: "Race Club", code: "RACE4470" },
+        authorName: "Race Author", content: "From the old server.", bodyHtml: null, images: [],
+        createdAt: "2026-06-30T00:00:00.000Z", updatedAt: "2026-06-30T00:00:00.000Z",
+      } }],
+      cursor: { since: "2026-06-30T00:00:00.000Z", sinceId: "race-4470-post" },
+      hasMore: false,
+    };
+
+    beforeEach(() => {
+      // Poll-only: no push registration call in these passes.
+      delete process.env.NEXTAUTH_URL;
+    });
+    afterAll(() => {
+      if (savedNextAuthUrl === undefined) delete process.env.NEXTAUTH_URL;
+      else process.env.NEXTAUTH_URL = savedNextAuthUrl;
+    });
+
+    async function mirrorState() {
+      const [row, posts] = await Promise.all([
+        prisma.serverNzSettings.findUnique({ where: { id: "default" }, select: { commsCursorSince: true, commsCursorSinceId: true, commsLastSyncAt: true, commsSyncStartedAt: true } }),
+        prisma.clubPost.count({ where: { serverPostId: { startsWith: "race-4470-" } } }),
+      ]);
+      return { ...row, posts };
+    }
+
+    it("writes no post, cursor or last-sync time once the address moves while the page is out", async () => {
+      const { runMirrorSync } = await import("@/lib/club-post-mirror");
+      fetchMock.mockImplementation(async (url: string | URL) => {
+        // The pass's own version check first, then the page.
+        if (String(url).endsWith("/api/v1/version")) {
+          return new Response(JSON.stringify({ version: SERVERNZ_EXPECTED_SERVER_VERSION, match: true }));
+        }
+        // The administrator's address move commits while the page is out.
+        await moveAddress();
+        return new Response(JSON.stringify(PAGE));
+      });
+
+      const result = await runMirrorSync(new Date());
+
+      expect(fetchMock.mock.calls.map(([url]) => String(url))).toEqual([
+        `${OLD_URL}/api/v1/version`, `${OLD_URL}/api/v1/feed/sync`,
+      ]);
+      expect(result).toMatchObject({ stopped: "connection-changed", upserted: 0, pages: 1 });
+      expect(await mirrorState()).toEqual({
+        commsCursorSince: null, commsCursorSinceId: null, commsLastSyncAt: null, commsSyncStartedAt: null, posts: 0,
+      });
+    });
+
+    it("applies the same page when the connection stands (the control)", async () => {
+      const { runMirrorSync } = await import("@/lib/club-post-mirror");
+      fetchMock.mockImplementation(async (url: string | URL) => new Response(JSON.stringify(
+        String(url).endsWith("/api/v1/version") ? { version: SERVERNZ_EXPECTED_SERVER_VERSION, match: true } : PAGE,
+      )));
+
+      const result = await runMirrorSync(new Date());
+
+      expect(result).toMatchObject({ upserted: 1, pages: 1 });
+      expect(result.stopped).toBeUndefined();
+      expect(await mirrorState()).toMatchObject({
+        commsCursorSince: PAGE.cursor.since, commsCursorSinceId: PAGE.cursor.sinceId, commsSyncStartedAt: null, posts: 1,
+      });
     });
   });
 

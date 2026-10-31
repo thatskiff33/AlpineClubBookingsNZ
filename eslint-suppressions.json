@@ -62,9 +62,6 @@
     }
   },
   "src/app/(admin)/admin/book/page.tsx": {
-    "design-system/no-raw-button": {
-      "count": 2
-    },
     "design-system/no-raw-input": {
       "count": 2
     },
@@ -566,9 +563,6 @@
     }
   },
   "src/app/(authenticated)/book/_components/review-step.tsx": {
-    "design-system/no-raw-button": {
-      "count": 2
-    },
     "design-system/no-raw-input": {
       "count": 3
     },
@@ -652,11 +646,6 @@
   "src/app/(website-dynamic)/join/[code]/group-join-page-client.tsx": {
     "design-system/no-raw-select": {
       "count": 1
-    }
-  },
-  "src/app/(website-dynamic)/join/[code]/member-group-join-panel.tsx": {
-    "design-system/no-raw-button": {
-      "count": 2
     }
   },
   "src/app/(website-dynamic)/school-bookings/school-booking-form.tsx": {
@@ -1319,9 +1308,6 @@
     }
   },
   "src/components/group-booking/organiser-group-booking-card.tsx": {
-    "design-system/no-raw-button": {
-      "count": 2
-    },
     "design-system/no-raw-select": {
       "count": 1
     }

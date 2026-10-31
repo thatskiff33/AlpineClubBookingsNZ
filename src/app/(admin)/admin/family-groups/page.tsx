@@ -798,7 +798,7 @@ export default function FamilyGroupsPage() {
                               <Badge
                                 key={m.id}
                                 variant="secondary"
-                                className={`text-xs flex items-center gap-1 ${!m.active ? "opacity-50" : ""}`}
+                                className={`text-xs flex items-center gap-1 ${!m.active ? "border-dashed border-border" : ""}`}
                               >
                                 {m.firstName} {m.lastName}
                                 {/* P3.2: Age tier badge */}

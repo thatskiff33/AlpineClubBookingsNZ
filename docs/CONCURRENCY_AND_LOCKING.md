@@ -1700,7 +1700,8 @@ only where the lock key can change under you. Booking creation used to lock on
 the code to its immutable id first and refuses a row whose code changed in
 between, so every site below keys on an immutable cuid (or materialises its
 singleton before locking) and cannot see a row appear between the two
-statements.
+statements, except the message-board mirror's post lock (#4586), which keys on
+the mutable `ClubPost.serverPostId` and reads a zero count as not found.
 
 The reason is not tidiness. `$queryRaw<SomeRow[]>` is an **unchecked cast**: raw
 SQL returns the *physical* column names and the generic declares whatever the
@@ -2165,6 +2166,44 @@ mispricing a booking.
   money clusters. The #4436 race suite forces a sync and address move in both
   orders, including a warmed old-key cache, and a sync holding the old address
   while the move and a new key's save queue behind it.
+  Since #4470 four more writers join, with no new lock. Key replacement
+  carries the address its setup page showed and, after the settings lock,
+  re-reads the stored address. It refuses with `ServerNzAddressChangedError`
+  (the credentials route's 409), having written nothing, when another save
+  moved it, so a key issued by the old server never lands beside the new
+  address. A key saved first is removed by the move queued behind it.
+  Address replacement also deletes the old server's `push_secret` in its
+  transaction, after the API key (settings row, `api_key` row,
+  `push_secret` row, audit); key replacement deletes it after the new key
+  (settings row, `api_key` row, `push_secret` row, answer reset, audit). `ensurePushRegistration` stores a newly issued
+  secret through `serverNzAnswerWriter` for the identity its registration
+  was sent on (settings row, credential read, `push_secret` write, audit),
+  so a registration in flight across a move stores nothing and the next pass
+  registers with the new server. The message-board mirror (`runMirrorSync`)
+  writes each page through `serverNzAnswerWriter(page.sentOn)`: post
+  create/update/removal, failure count, cursor and last-sync time, each one
+  short transaction (settings row, credential read, then the `ClubPost` row
+  lock and re-read before any `ClubPostImage` row, or the settings write; see
+  "Message-board posts and their images" below). Every cursor and
+  failure-count write also re-reads the stored cursor pair and failure count
+  under the lock and refuses if any moved since the pass read or last wrote
+  them (`writePosition`). A refusal stops the pass; its single-flight claim
+  (`commsSyncStartedAt`) stays on the global client. Since #4586 the release
+  is an `updateMany` matching the exact stamp the claim wrote, so a pass whose
+  claim went stale and was taken over clears nothing, and the second pass's
+  claim stands until it ends. Since #4588 every page write also re-reads that
+  stamp under the settings-row lock and refuses once another pass holds the
+  claim, so a taken-over pass writes nothing more and stops as
+  `claim-taken-over`. The three recorders in
+  `servernz-settings.ts` (download, upload watermark, version) require a
+  branded `ServerNzAnswerTx`, which only `withCurrentServerNzConnection`
+  mints after its identity check, so calling them outside the fence does not
+  compile. The download's and the mirror's other writes are held to the fence
+  by source censuses (`servernz-version-record.test.ts`,
+  `club-post-mirror.test.ts`), not by type. The race suite forces a key save
+  against a move in both orders, an address move under an in-flight download
+  and under an in-flight mirror page, a push registration across a move, and
+  a key replacement removing the push secret.
 - **Owned-lodge list writer, and every Other lodges download write** —
   `src/lib/servernz-settings.ts` (`lockServerNzSettings`, #64), through the
   connection fence above (#4262 review): `downloadOtherClubsFromServer` builds
@@ -2216,6 +2255,42 @@ mispricing a booking.
   The transaction uses the settings fence's bounded wait
   (`SERVERNZ_TRANSACTION_OPTIONS`). No advisory lock; disjoint from the
   booking/capacity/credit and money clusters.
+- **Message-board posts and their images** (#4586, #4588): every writer that changes
+  both a `ClubPost` row and its `ClubPostImage` rows takes the **post row
+  first**. `ClubPostImage.postId` cascades on delete, so a post delete reaches
+  the image rows after the post. Taking the images first deadlocked an admin
+  removal against a mirror tombstone or retention on the same post.
+
+  | Writer | Order |
+  | --- | --- |
+  | Mirror upsert and tombstone (`club-post-mirror.ts`) | Settings row (the page's fence, which since #4588 also refuses unless `commsSyncStartedAt` is still this pass's claim stamp), then `$executeRaw`SELECT 1 FROM "ClubPost" WHERE "serverPostId" = $1 FOR UPDATE`` (`lockMirroredPost`) and a re-read under it; create or update, or delete, then image rows. A zero count is not found. A row this club removed is never rewritten; a "hidden" tombstone scrubs it to a marker (author and origin name blanked, its reports and image rows deleted under the post lock), and a "removed" one deletes it (#4588). |
+  | Admin removal (`removeClubPost`, `club-posts-admin.ts`) | Status-guarded `updateMany` (`removedAt: null`) takes the post row; images and share state re-read under it, then the image rows deleted. A lost claim is a no-op, or not found when the row is gone. Files deleted after commit. |
+  | Retention (`runClubPostCleanup`, #4588) | Batches of 200: `$executeRaw`SELECT 1 FROM "ClubPost" WHERE "id" IN (…) ORDER BY "id" FOR UPDATE``, the images re-read under those locks, the posts deleted (image rows by cascade); the files after commit. Its single-flight claim (`cleanupStartedAt`) is released, since #4590, only while it still holds the stamp this pass wrote. |
+  | Share send and stamp (`shareOnePost`, `stampShare`, `club-post-sharing.ts`, #4588, #4590) | Before the send, the CLAIM (#4590 review, #4592): `clubPost.updateMany` taking `shareRequestedAt` off our post, guarded on the value read and on no `sharedAt`/`serverPostId`; a count of 0 sends nothing. So the remote send is at most once: a second caller, a failed stamp, a database outage or a process killed mid-send leaves no request to re-send. Only a share the server did NOT take puts the request back (a retryable failure, or a version pause); if that write fails the share is lost, never duplicated. After acceptance, the stamp: settings row (`lockServerNzSettings`), then, only when the mirror already copied our own post under the server's id, our post and that copy (`SELECT 1 … WHERE "id" IN (…, …) ORDER BY "id" FOR UPDATE`), the copy deleted (image rows by cascade, files after commit) and our post stamped while it holds no id or this one. Retried with the id already returned: the locked stamp, then `clubPost.updateMany` of our post alone while its `serverPostId` is null (no settings lock; the unique `serverPostId` refuses it while a mirror copy holds the id), then the locked stamp again. Every exit names the server id: a copy that is not ours, or a different id already held (never overwritten), is a final failure whose `shareError` names it; all three attempts failing records it in `shareError`; a post deleted meanwhile, or that last write failing, leaves it in the error log only. No screen shows `shareError` yet (docs/guides/message-board.md, Troubleshooting). |
+  | Member post create (`createClubPost`) | One transaction since #4590: inserts the new post, then claims the member's unclaimed images (`updateMany`, `postId: null`), and rolls back, refusing the post, when fewer are claimed than the body names (an upload the orphan sweep deleted first). Nothing else can hold the new post. |
+
+  Retention and the share stamp take two or more posts in id order. Two other
+  writers update many posts in scan order, not id order, and take no image
+  row: member merge, which moves `ClubPost.authorMemberId` from the loser to
+  the master in one `updateMany` (`member-merge-relations.ts`,
+  `member-merge.ts`), and member deletion, whose `onDelete: SetNull` clears
+  the same column. Either can meet a retention batch in the opposite order on
+  two posts; PostgreSQL detects that deadlock and aborts one transaction, a
+  risk the single `deleteMany` retention used before #4588 carried too.
+  Making those writers id-ordered is not done here. Post-only writers (hide, edit, the
+  share's failure record, the withdrawal stamp, the mirror's own-post takedown)
+  take no image row. The image-only writers touch no post row: upload, and the
+  orphan sweep, which since #4588 deletes one row at a time and only while
+  `postId` is still null, deleting a file only for a row it deleted, so a
+  claim committing first keeps its image and a single-row delete cannot
+  deadlock against the claim's multi-row update. No advisory key; disjoint
+  from the booking/capacity/credit and money clusters.
+  `club-post-mirror-concurrency.realdb.test.ts` holds a tombstone and an admin
+  removal of one post after their first lock in both orders (neither
+  deadlocks; the images-first order deadlocks in both), and since #4588 a
+  pass taken over mid-pass, a claim queued ahead of the orphan sweep on one
+  upload, and a mirror update adding a picture to a post retention is
+  expiring.
 
 - **Deletion-request approval release** — `src/lib/deletion-request-decision.ts`
   (`releaseDeletionRequestApprovalClaim`, #2627): takes

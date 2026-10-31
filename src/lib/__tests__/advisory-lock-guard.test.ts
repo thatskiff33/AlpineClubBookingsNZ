@@ -1505,7 +1505,43 @@ const ROW_LOCK_SITE_INVENTORY: Record<string, number> = {
   // Amenity/Lodge rows -> audit. No advisory key; disjoint from booking/money
   // writers. See docs/CONCURRENCY_AND_LOCKING.md -> "Owned-lodge list writer,
   // and every Other lodges download write".
+  // #4470, two more participants of the same one statement, no new lock: the
+  // key save compares the address its page showed under the connection fence
+  // (settings -> credential -> audit, as before), and a push registration
+  // stores its secret through the answer fence (settings -> credential read ->
+  // push-secret write -> audit). The address move removes that secret in its
+  // own fenced transaction. The answer recorders take a `ServerNzAnswerTx`
+  // that only the answer fence mints.
   "src/lib/servernz-settings.ts": 1,
+  // Message-board mirror (#4586): inside the page's answer fence (settings row
+  // first, counted under servernz-settings.ts), `lockMirroredPost` locks the
+  // `ClubPost` row a server post id names (`SELECT 1 … FOR UPDATE`, the one
+  // statement counted here) and re-reads it, so create-or-update and a
+  // tombstone are decided under the lock. Order: settings -> ClubPost ->
+  // ClubPostImage, the post-before-images order the admin removal (its
+  // status-guarded claim) and retention (its cascade) also follow. No advisory
+  // key; disjoint from booking/money writers. See
+  // docs/CONCURRENCY_AND_LOCKING.md -> "Message-board posts and their images".
+  "src/lib/club-post-mirror.ts": 1,
+  // Message-board retention (#4588): each batch of expired posts is locked
+  // (`SELECT 1 … WHERE "id" IN (…) ORDER BY "id" FOR UPDATE`, the one statement
+  // counted here) before their images are read and the posts deleted, so no
+  // writer adds an image row the batch did not list. Order: ClubPost rows (id
+  // order) -> ClubPostImage rows by cascade. The share stamp below also takes
+  // its two posts in id order. Member merge (an `updateMany` of
+  // `authorMemberId`) and member deletion (`SetNull`) update many posts in
+  // scan order; a deadlock with a batch is detected and one side aborted, as
+  // with the single `deleteMany` before #4588. No advisory key. See
+  // docs/CONCURRENCY_AND_LOCKING.md -> "Message-board posts and their images".
+  "src/lib/club-post-retention.ts": 1,
+  // Message-board share stamp (#4588): under the settings row
+  // (`lockServerNzSettings`, counted under servernz-settings.ts), when the
+  // mirror already copied our own post back, it locks our post and that copy
+  // (`SELECT 1 … WHERE "id" IN (…, …) ORDER BY "id" FOR UPDATE`, the one
+  // statement counted here), deletes the copy and stamps our post. Order:
+  // settings -> ClubPost rows (id order) -> ClubPostImage by cascade, the
+  // mirror's and retention's order. No advisory key.
+  "src/lib/club-post-sharing.ts": 1,
   // Adult-member-hosting queue participants (#2597): the shared helper mints
   // one reviewed `FOR UPDATE` protocol for member merge over master, loser and
   // every planned ancillary owner, plus the shared standing-subject barrier

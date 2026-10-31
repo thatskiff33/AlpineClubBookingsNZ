@@ -1,5 +1,4 @@
 import "server-only";
-import type { Prisma } from "@prisma/client";
 import type { CredentialVersion } from "@/lib/integration-credential-actor";
 import { invalidateProviderCredentialCache } from "@/lib/integration-credentials";
 import { prisma } from "@/lib/prisma";
@@ -12,6 +11,7 @@ import {
   SERVERNZ_TRANSACTION_OPTIONS,
   lockServerNzSettings,
   recordServerVersionCheck,
+  type ServerNzAnswerTx,
 } from "@/lib/servernz-settings";
 
 /**
@@ -30,7 +30,8 @@ export interface ServerNzConnectionIdentity {
 
 /**
  * THE CONNECTION FENCE for writing a central-server ANSWER (#4366, #4436;
- * the Other lodges download since the #4262 review): run `work` in one short
+ * the Other lodges download since the #4262 review; the push secret a
+ * registration stores since #4470): run `work` in one short
  * transaction that first takes the settings row lock (`lockServerNzSettings`)
  * and re-reads the stored address and API-key credential version under it,
  * and runs `work` only while both are still the ones `identity` captured
@@ -55,7 +56,7 @@ export interface ServerNzConnectionIdentity {
  */
 async function withCurrentServerNzConnection<T>(
   identity: ServerNzConnectionIdentity,
-  work: (tx: Prisma.TransactionClient) => Promise<T>,
+  work: (tx: ServerNzAnswerTx) => Promise<T>,
 ): Promise<{ current: true; value: T } | { current: false }> {
   const outcome = await prisma.$transaction(
     async (tx): Promise<{ current: true; value: T } | { current: false }> => {
@@ -71,7 +72,10 @@ async function withCurrentServerNzConnection<T>(
       ) {
         return { current: false };
       }
-      return { current: true, value: await work(tx) };
+      // THE ONE place a `ServerNzAnswerTx` is minted (#4470): the cast follows
+      // the lock and the identity check, so the answer recorders that require
+      // the type run only for a connection that is still the stored one.
+      return { current: true, value: await work(tx as ServerNzAnswerTx) };
     },
     // Allow a bounded wait behind another fenced write holding the settings row.
     SERVERNZ_TRANSACTION_OPTIONS,
@@ -95,7 +99,7 @@ export class ServerNzConnectionChangedError extends Error {
  * the caller stops at its first stale write.
  */
 export type ServerNzAnswerWrite = <T>(
-  work: (tx: Prisma.TransactionClient) => Promise<T>,
+  work: (tx: ServerNzAnswerTx) => Promise<T>,
 ) => Promise<T>;
 
 export function serverNzAnswerWriter(identity: ServerNzConnectionIdentity): ServerNzAnswerWrite {

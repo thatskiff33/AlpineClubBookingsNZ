@@ -2,6 +2,7 @@ import "server-only";
 import { Prisma } from "@prisma/client";
 import { ownedCentralLodgesSchema, type OwnedCentralLodge } from "@/lib/other-lodges";
 import { prisma } from "@/lib/prisma";
+import { normalizeBaseUrl } from "@/lib/servernz-base-url";
 import { isBlockedDestinationHost } from "@/lib/private-destination-hosts";
 
 /**
@@ -27,6 +28,22 @@ declare const SERVERNZ_CONNECTION_FENCE: unique symbol;
  */
 export type ServerNzConnectionTx = Prisma.TransactionClient & {
   readonly [SERVERNZ_CONNECTION_FENCE]: true;
+};
+
+declare const SERVERNZ_ANSWER_FENCE: unique symbol;
+
+/**
+ * A transaction client that holds the ANSWER fence (#4366, #4470): the settings
+ * row is locked and the stored address and API-key version were re-read under
+ * it and found to be the ones a request was sent on. Only
+ * `withCurrentServerNzConnection` (`servernz-version-record.ts`) mints one,
+ * after that check. The writers that record a central-server answer require
+ * it, so an answer recorded on the global client, or on a transaction that
+ * never compared the connection, does not compile, and one from a connection
+ * replaced in flight is dropped by the fence before it can run.
+ */
+export type ServerNzAnswerTx = Prisma.TransactionClient & {
+  readonly [SERVERNZ_ANSWER_FENCE]: true;
 };
 
 export interface ServerNzSettingsValues {
@@ -129,8 +146,9 @@ export async function loadOwnedOtherLodges(
  * the recorder can safely decline an answer when the row is absent.
  * Every answer writer goes through the one fence built on it,
  * `withCurrentServerNzConnection` / `serverNzAnswerWriter`
- * (`servernz-version-record.ts`): the version recorder and every write of the
- * Other lodges download and upload watermark (#4485). The Central lodge link
+ * (`servernz-version-record.ts`): the version recorder, every write of the
+ * Other lodges download and upload watermark (#4485), and the push secret a
+ * registration stores (#4470). The Central lodge link
  * writer takes it before its `Lodge` row to re-check the owned list.
  */
 export async function lockServerNzSettings(
@@ -170,13 +188,6 @@ export async function loadServerNzSettings(
     if (db !== prisma) throw error;
     return { ...DEFAULTS };
   }
-}
-
-/** Normalise a base URL: trim, drop a trailing slash, or null when blank. */
-export function normalizeBaseUrl(value: string | null | undefined): string | null {
-  const trimmed = value?.trim();
-  if (!trimmed) return null;
-  return trimmed.replace(/\/+$/, "");
 }
 
 export interface BaseUrlValidation {
@@ -259,12 +270,12 @@ export async function updateServerNzSettings(input: {
  * `otherLodgesLastUploadAt` doubles as the incremental-upload watermark: the
  * next upload only sends local rows whose `updatedAt` is newer than this. Pass
  * the newest `updatedAt` among the rows just uploaded so the watermark advances
- * on the same clock as the rows themselves (both DB-generated). `db` must be
- * the upload response's fenced transaction (`serverNzAnswerWriter`).
+ * on the same clock as the rows themselves (both DB-generated). `db` is the
+ * upload response's fenced transaction (`serverNzAnswerWriter`), by type.
  */
 export async function recordOtherLodgesUpload(
   at: Date,
-  db: Pick<Prisma.TransactionClient, "serverNzSettings">,
+  db: ServerNzAnswerTx,
 ): Promise<void> {
   await db.serverNzSettings.upsert({
     where: { id: SERVERNZ_SETTINGS_ID },
@@ -306,11 +317,15 @@ export async function recordOtherLodgesDownload(
     /** This download asked for the whole registry and merged all of it (#64). */
     keyed?: boolean;
     /**
-     * REQUIRED (#4262 review): the download's fenced transaction client
-     * (`serverNzAnswerWriter`). There is no default client, so an unfenced
-     * record does not compile.
+     * REQUIRED (#4262 review; by type since #4470): the download's fenced
+     * transaction client (`serverNzAnswerWriter` for the identity its pull was
+     * sent on). There is no default, and the global client or any other
+     * transaction is not a `ServerNzAnswerTx`, so a record outside the
+     * settings-row fence does not compile. The fence drops the record when the
+     * connection the pull captured is no longer the stored one: an address
+     * move or key change while the download ran leaves the reset standing.
      */
-    db: Pick<Prisma.TransactionClient, "serverNzSettings">;
+    db: ServerNzAnswerTx;
   },
 ): Promise<void> {
   const { db } = options;
@@ -381,7 +396,7 @@ export async function clearOtherLodgesOwnedNames(): Promise<void> {
 export async function recordServerVersionCheck(
   version: string,
   at: Date,
-  db: Pick<Prisma.TransactionClient, "serverNzSettings">,
+  db: ServerNzAnswerTx,
 ): Promise<void> {
   await db.serverNzSettings.upsert({
     where: { id: SERVERNZ_SETTINGS_ID },

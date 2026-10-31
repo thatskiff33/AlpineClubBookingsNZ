@@ -19,6 +19,9 @@ const mocks = vi.hoisted(() => ({
   ),
   memberFindUnique: vi.fn(),
   clubPostCreate: vi.fn(),
+  // The image claim, inside the post's transaction (#4590).
+  imageUpdateMany: vi.fn(),
+  transaction: vi.fn(),
   clubPostFindMany: vi.fn(async () => []),
   logAudit: vi.fn(),
 }));
@@ -37,13 +40,23 @@ vi.mock("@/lib/rate-limit", () => ({
 }));
 
 vi.mock("@/lib/prisma", () => ({
-  prisma: {
-    member: { findUnique: mocks.memberFindUnique },
-    clubPost: {
-      create: mocks.clubPostCreate,
-      findMany: mocks.clubPostFindMany,
-    },
-  },
+  // The post's create and its image claim share one transaction (#4590); the
+  // double runs it on itself.
+  prisma: (() => {
+    const client: Record<string, unknown> = {
+      member: { findUnique: mocks.memberFindUnique },
+      clubPost: {
+        create: mocks.clubPostCreate,
+        findMany: mocks.clubPostFindMany,
+      },
+      clubPostImage: { updateMany: mocks.imageUpdateMany },
+    };
+    client.$transaction = async (work: (tx: unknown) => Promise<unknown>, options?: unknown) => {
+      mocks.transaction(options);
+      return work(client);
+    };
+    return client;
+  })(),
 }));
 
 vi.mock("@/lib/audit", () => ({ logAudit: mocks.logAudit }));
@@ -217,6 +230,56 @@ describe("content rules at the door", () => {
   it("stores markup as typed rather than stripping it", async () => {
     await POST(post({ content: "<b>bold</b>" }));
     expect(mocks.clubPostCreate.mock.calls[0][0].data.content).toBe("<b>bold</b>");
+  });
+});
+
+describe("the pictures a post names are all claimed, or the post is refused (#4590)", () => {
+  const ids = ["a", "b"].map((c) => c.repeat(32));
+  const body = `<p>two pictures</p>${ids.map((id) => `<img src="/api/club-posts/images/${id}" alt="" />`).join("")}`;
+
+  it("claims the member's own unattached uploads in the same transaction as the post", async () => {
+    mocks.imageUpdateMany.mockResolvedValue({ count: 2 });
+
+    const res = await POST(post({ content: "two pictures", bodyHtml: body }));
+
+    expect(res.status).toBe(201);
+    expect(mocks.transaction).toHaveBeenCalledTimes(1);
+    // Bounded like the other short row-lock writers, not Prisma's 2 s / 5 s.
+    expect(mocks.transaction).toHaveBeenCalledWith({ maxWait: 10_000, timeout: 30_000 });
+    expect(mocks.imageUpdateMany).toHaveBeenCalledWith({
+      where: { publicId: { in: ids }, postId: null, uploadedByMemberId: MEMBER_ID },
+      data: { postId: "post-1" },
+    });
+    // Post first, then its pictures.
+    expect(mocks.clubPostCreate.mock.invocationCallOrder[0]).toBeLessThan(mocks.imageUpdateMany.mock.invocationCallOrder[0]);
+  });
+
+  it("refuses with 400 and a re-upload instruction when a picture could not be claimed, writing no audit row", async () => {
+    // One upload was swept (or is not this member's) before the claim.
+    mocks.imageUpdateMany.mockResolvedValue({ count: 1 });
+
+    const res = await POST(post({ content: "two pictures", bodyHtml: body }));
+
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toMatch(/no longer available to attach.*add it again/);
+    expect(mocks.logAudit).not.toHaveBeenCalled();
+  });
+
+  it("claims nothing for a pasted link to a picture, and posts it (#4590 review)", async () => {
+    const res = await POST(post({
+      content: "a link",
+      bodyHtml: `<p>See <a href="/api/club-posts/images/${ids[0]}">this picture</a></p>`,
+    }));
+
+    expect(res.status).toBe(201);
+    expect(mocks.imageUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("claims nothing for a post with no pictures", async () => {
+    const res = await POST(post({ content: "words only" }));
+
+    expect(res.status).toBe(201);
+    expect(mocks.imageUpdateMany).not.toHaveBeenCalled();
   });
 });
 

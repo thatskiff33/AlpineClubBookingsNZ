@@ -137,11 +137,8 @@ describe("committee role form on the shared form layer (#4467)", () => {
     respond(() => json({ role: treasurer }));
     render(<CommitteePage />);
     await screen.findByText("Treasurer");
-    // The row's pencil is the only enabled ghost button in the roles table.
-    const pencil = screen
-      .getAllByRole("button")
-      .find((button) => button.querySelector("svg.lucide-pencil"));
-    fireEvent.click(pencil!);
+    // The row's pencil is named after its role (#4563).
+    fireEvent.click(screen.getByRole("button", { name: "Edit Treasurer" }));
 
     expect(await screen.findByLabelText(/Role Name/i)).toHaveValue("Treasurer");
     expect(screen.getByRole("checkbox", { name: "Active" })).toBeChecked();

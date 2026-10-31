@@ -6,6 +6,8 @@ import { ArrowUpToLine, ArrowDownToLine, ExternalLink } from "lucide-react";
 import {
   NO_KEY_SERVER_VERSION,
   OTHER_LODGES_SYNC_RUNNING_CODE,
+  SERVERNZ_ADDRESS_CHANGED_CODE,
+  SERVERNZ_ADDRESS_CHANGED_MESSAGE,
   SERVERNZ_EXPECTED_SERVER_VERSION,
   SERVER_VERSION_MISMATCH_CODE,
   computeServerVersionStatus,
@@ -13,7 +15,9 @@ import {
   type DownloadStopReason,
   type ServerVersionCheck,
 } from "@/lib/servernz-api-version";
+import { normalizeBaseUrl } from "@/lib/servernz-base-url";
 import { Input } from "@/components/ui/input";
+import { FieldHint, useFieldHint } from "@/components/ui/field-hint";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -158,6 +162,15 @@ export function AlpineServerSetup({ initialState }: { initialState: InitialState
   );
 
   const connectionReady = apiKeySet && savedBaseUrl.length > 0;
+  // A key belongs to the server that issued it (#4470). While the address
+  // field holds something other than the saved address, Save key is off: the
+  // key would be stored against the saved address and, on the version check
+  // that follows, sent there. Save the address first.
+  const addressUnsaved = normalizeBaseUrl(baseUrl) !== normalizeBaseUrl(savedBaseUrl);
+  // The "save the address first" hint describes the key field and its button,
+  // and only while it is shown (an id that names nothing describes nothing).
+  const addressUnsavedHint = useFieldHint();
+  const describedByUnsaved = addressUnsaved ? addressUnsavedHint.fieldProps : {};
 
   // The version check (#49): ONE call per page entry, from a mount effect,
   // and again only after a key or address is saved - never on re-render and
@@ -238,9 +251,18 @@ export function AlpineServerSetup({ initialState }: { initialState: InitialState
           provider: "servernz",
           key: "api_key",
           value: apiKey.trim(),
+          // The address this page shows as saved (#4470): the key is stored
+          // only while it is still the stored one, so a key issued by the old
+          // server is never saved against an address another Save moved to.
+          expectedBaseUrl: savedBaseUrl || null,
         }),
       });
       const data = await res.json().catch(() => null);
+      if (res.status === 409 && data?.code === SERVERNZ_ADDRESS_CHANGED_CODE) {
+        // Nothing was saved. The address shown here is out of date, so the
+        // page cannot offer a retry that means anything: reload, then decide.
+        throw new Error(SERVERNZ_ADDRESS_CHANGED_MESSAGE);
+      }
       if (!res.ok) throw new Error(data?.error ?? "Failed to save API key");
       setApiKeySet(true);
       setApiKey("");
@@ -427,16 +449,24 @@ export function AlpineServerSetup({ initialState }: { initialState: InitialState
                 placeholder={apiKeySet ? "•••••••• (enter a new key to replace)" : "acs_…"}
                 value={apiKey}
                 onChange={(e) => setApiKey(e.target.value)}
+                {...describedByUnsaved}
               />
               <ViewOnlyActionButton
                 canEdit={canWriteConnection}
                 readOnlyReason={ADMIN_FULL_ADMIN_ONLY_ACTION_REASON}
                 onClick={saveApiKey}
-                disabled={busy !== null || !apiKey.trim()}
+                disabled={busy !== null || !apiKey.trim() || addressUnsaved}
+                {...describedByUnsaved}
               >
                 {busy === "apiKey" ? "Saving…" : "Save key"}
               </ViewOnlyActionButton>
             </div>
+            {addressUnsaved ? (
+              <FieldHint {...addressUnsavedHint.hintProps} data-testid="api-key-address-unsaved">
+                Save the address first: a key is issued by one server, and the
+                address above is not the saved one.
+              </FieldHint>
+            ) : null}
             {apiKeySet ? (
               <p className="text-xs text-muted-foreground">
                 Last updated {fmt(clubTime, initialState.apiKeyUpdatedAt)}. The key is stored

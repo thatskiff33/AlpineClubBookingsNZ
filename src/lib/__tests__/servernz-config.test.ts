@@ -13,7 +13,7 @@ const mocks = vi.hoisted(() => ({
   readIntegrationCredentialRow: vi.fn(),
   setIntegrationCredential: vi.fn(),
   deleteIntegrationCredential: vi.fn(),
-  tx: { serverNzSettings: { createMany: vi.fn() } },
+  tx: { serverNzSettings: { createMany: vi.fn(), findUnique: vi.fn() } },
   lockServerNzSettings: vi.fn(),
   forgetServerConnectionAnswers: vi.fn(),
 }));
@@ -46,13 +46,18 @@ import {
   readServerNzCredentialVersion,
   setServerNzApiKey,
   clearServerNzApiKey,
+  clearServerNzPushSecret,
+  ServerNzAddressChangedError,
   withServerNzConnectionTransaction,
   getServerNzSetupState,
   isServerNzConfigured,
 } from "@/lib/servernz-config";
 
+const STORED_URL = "https://central.example.invalid";
+
 beforeEach(() => {
   vi.clearAllMocks();
+  mocks.tx.serverNzSettings.findUnique.mockResolvedValue({ baseUrl: STORED_URL });
 });
 
 describe("ServerNZ credential wiring", () => {
@@ -123,7 +128,7 @@ describe("ServerNZ credential wiring", () => {
     const saved = { provider: "servernz", key: "api_key", updatedAt: new Date() };
     mocks.setIntegrationCredential.mockResolvedValueOnce(saved);
     // The credentials route's result is the store's own (#4436).
-    await expect(setServerNzApiKey("acs_new", actor, request)).resolves.toBe(saved);
+    await expect(setServerNzApiKey("acs_new", STORED_URL, actor, request)).resolves.toBe(saved);
     expect(mocks.setIntegrationCredential).toHaveBeenCalledWith({
       tx: mocks.tx,
       provider: "servernz",
@@ -152,7 +157,7 @@ describe("ServerNZ credential wiring", () => {
     // different lodges. (The settings route's address move removes the key
     // through `clearServerNzApiKey`, so it is covered too.)
     const actor = { kind: "admin", memberId: "member-1" } as const;
-    await setServerNzApiKey("acs_new", actor);
+    await setServerNzApiKey("acs_new", STORED_URL, actor);
     expect(mocks.forgetServerConnectionAnswers).toHaveBeenCalledWith(mocks.tx);
     expect(mocks.setIntegrationCredential.mock.invocationCallOrder[0])
       .toBeLessThan(mocks.forgetServerConnectionAnswers.mock.invocationCallOrder[0]);
@@ -161,6 +166,94 @@ describe("ServerNZ credential wiring", () => {
     // too, and both are forgotten in the one write.
     expect(mocks.forgetServerConnectionAnswers).toHaveBeenCalledTimes(2);
     expect(mocks.forgetServerConnectionAnswers).toHaveBeenLastCalledWith(mocks.tx);
+  });
+});
+
+describe("a key is saved only for the address the setup page showed (#4470)", () => {
+  const actor = { kind: "admin", memberId: "member-1" } as const;
+
+  it.each([
+    ["the stored address exactly", STORED_URL],
+    ["the same address with a trailing slash", `${STORED_URL}/`],
+  ])("saves when the page showed %s", async (_label, shown) => {
+    await setServerNzApiKey("acs_new", shown, actor);
+    expect(mocks.setIntegrationCredential).toHaveBeenCalledTimes(1);
+  });
+
+  it("compares the stored address only after taking the settings-row lock", async () => {
+    await setServerNzApiKey("acs_new", STORED_URL, actor);
+    expect(mocks.tx.serverNzSettings.findUnique).toHaveBeenCalledWith({
+      where: { id: "default" },
+      select: { baseUrl: true },
+    });
+    expect(mocks.lockServerNzSettings.mock.invocationCallOrder[0])
+      .toBeLessThan(mocks.tx.serverNzSettings.findUnique.mock.invocationCallOrder[0]);
+  });
+
+  it.each([
+    ["another address", "https://old.example.invalid"],
+    ["no address", null],
+    ["a blank address", ""],
+  ])("refuses, writing nothing, when the page showed %s", async (_label, shown) => {
+    await expect(setServerNzApiKey("acs_old_server", shown, actor))
+      .rejects.toBeInstanceOf(ServerNzAddressChangedError);
+    expect(mocks.setIntegrationCredential).not.toHaveBeenCalled();
+    expect(mocks.forgetServerConnectionAnswers).not.toHaveBeenCalled();
+  });
+
+  it("refuses a page that showed an address once the stored one is removed", async () => {
+    mocks.tx.serverNzSettings.findUnique.mockResolvedValue({ baseUrl: null });
+    await expect(setServerNzApiKey("acs_old_server", STORED_URL, actor))
+      .rejects.toBeInstanceOf(ServerNzAddressChangedError);
+    expect(mocks.setIntegrationCredential).not.toHaveBeenCalled();
+  });
+
+  it("saves a first key on a page that showed no address while none is stored", async () => {
+    mocks.tx.serverNzSettings.findUnique.mockResolvedValue({ baseUrl: null });
+    await setServerNzApiKey("acs_first", null, actor);
+    expect(mocks.setIntegrationCredential).toHaveBeenCalledTimes(1);
+  });
+
+  it("says what happened and what to do, without the key", () => {
+    const message = new ServerNzAddressChangedError().message;
+    expect(message).toMatch(/address was changed/);
+    expect(message).toMatch(/Reload the page/);
+  });
+});
+
+describe("the old server's push secret (#4470)", () => {
+  it("goes with a key replacement, after the key and before the answer reset, in the same fence", async () => {
+    const actor = { kind: "admin", memberId: "member-1" } as const;
+    const request = { id: "req-1", ipAddress: "1.2.3.4", userAgent: "test" };
+    await setServerNzApiKey("acs_rotated", STORED_URL, actor, request);
+    expect(mocks.deleteIntegrationCredential).toHaveBeenCalledWith({
+      tx: mocks.tx, provider: "servernz", key: "push_secret", actor, expect: { expect: "any" }, request,
+    });
+    const removed = mocks.deleteIntegrationCredential.mock.invocationCallOrder[0];
+    expect(mocks.setIntegrationCredential.mock.invocationCallOrder[0]).toBeLessThan(removed);
+    expect(removed).toBeLessThan(mocks.forgetServerConnectionAnswers.mock.invocationCallOrder[0]);
+  });
+
+  it("stays when a key save is refused for a moved address", async () => {
+    await expect(setServerNzApiKey("acs_old", "https://old.example.invalid", { kind: "admin", memberId: "m" }))
+      .rejects.toBeInstanceOf(ServerNzAddressChangedError);
+    expect(mocks.deleteIntegrationCredential).not.toHaveBeenCalled();
+  });
+
+  it("is removed under the provider namespace, by the forwarded admin actor", async () => {
+    const actor = { kind: "admin", memberId: "member-1" } as const;
+    await withServerNzConnectionTransaction((tx) => clearServerNzPushSecret(actor, tx));
+    expect(mocks.deleteIntegrationCredential).toHaveBeenCalledWith({
+      tx: mocks.tx,
+      provider: "servernz",
+      key: "push_secret",
+      actor,
+      expect: { expect: "any" },
+      request: undefined,
+    });
+    expect(SERVERNZ_CREDENTIAL_KEYS.pushSecret).toBe("push_secret");
+    // Never admin-writable: the server issues it.
+    expect(SERVERNZ_WRITABLE_CREDENTIAL_KEYS).not.toContain("push_secret");
   });
 });
 
