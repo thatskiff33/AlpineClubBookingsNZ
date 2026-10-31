@@ -1161,7 +1161,9 @@ describe("concurrency race DB safety guard (#1881)", () => {
       await prisma.$executeRawUnsafe(
         `CREATE TABLE IF NOT EXISTS "${PROBE_TABLE}" (id text PRIMARY KEY, status text NOT NULL)`
       );
-      // Idempotent recovery from an interrupted earlier opt-in run.
+      // Idempotent recovery from an interrupted earlier opt-in run. #4514: a
+      // group's settlement no longer goes with it (INV-MONEY-043).
+      await releaseBookingFinancialHistoryForTeardown(prisma, [APP_BOOKING_ID, MOVE_BOOKING_ID, MOVE_BLOCKER_BOOKING_ID]);
       await prisma.groupBooking.deleteMany({ where: { id: APP_GROUP_ID } });
       await prisma.booking.deleteMany({
         where: { id: { in: [MOVE_BOOKING_ID, MOVE_BLOCKER_BOOKING_ID] } },
