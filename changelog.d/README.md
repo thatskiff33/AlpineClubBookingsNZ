@@ -62,6 +62,22 @@ routing row are for.
 3. Commit it with the rest of the pull request. The `verify` job checks that a
    code-bearing pull request carries one.
 
+## Patch or minor: the `.feature.md` suffix
+
+The fragment's filename is the only type it carries, and it decides the next
+version number (#4465). Name the fragment `<pr-number>-<short-slug>.feature.md`
+when the change gives clubs something new — a capability, a setting, a screen —
+or changes behaviour an operator has to learn or act on. Every other fragment
+keeps the plain `.md` name and counts as a fix.
+
+`pnpm run release:cut prepare` makes the release **minor** (`0.13.2` →
+`0.14.0`) when any fragment in it ends in `.feature.md`, and a **patch**
+(`0.13.2` → `0.13.3`) otherwise. It prints that suggestion with the fragments
+that caused it, and `--bump patch|minor|major` overrides it — the maintainer's
+call for a release whose fragments predate the suffix, and the only way to a
+major release. The suffix changes nothing else: the compiler releases a
+`.feature.md` fragment exactly like any other.
+
 ## The house entry style
 
 An entry is written for a club administrator reading a release note, not for a
@@ -130,8 +146,9 @@ the one outcome that switches the gate off in practice.
 
 ## Compiling a release
 
-From the release-prep branch (see `docs/MAINTENANCE.md`, "Public Reference
-Release Checklist"):
+`pnpm run release:cut prepare --execute` runs the compiler for you on a new
+release-prep branch, with the version it worked out (see `docs/MAINTENANCE.md`,
+"Public Reference Release Checklist"). To run the compiler on its own:
 
 ```bash
 node scripts/release/compile-changelog.mjs 0.14.0 --dry-run   # show the plan
@@ -153,6 +170,14 @@ sections are never rewritten. A failed removal restores the original changelog
 and fragments for a safe retry; if restoration itself fails, stop and inspect
 the files named by the error. The compiler cannot prove an unfetched remote
 update does not exist, so refresh `origin/main` before running it.
+
+A version that already has a section is refused — except with `--append`,
+which adds the fragments (and any direct `## Unreleased` entries) to the end of
+that existing section and keeps its heading and date. It refuses any section
+but the newest, so it cannot rewrite a released version's notes. That is only for a
+release prepared but not yet tagged, when fragments merged while its
+release-prep pull request was open; `pnpm run release:cut prepare --amend` runs
+it on a `release/v<version>-late` branch.
 
 Two things under `## Unreleased` are **not** entries, and the compiler tells
 them apart by marker rather than by position:

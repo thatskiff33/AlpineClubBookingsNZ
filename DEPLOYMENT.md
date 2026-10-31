@@ -894,6 +894,32 @@ from, because a default that silently points at the upstream registry is how
 a fork's deploy fails at step 9 with "not found". Note that `sudo` strips the
 shell environment; the `.env` route survives it.
 
+### Cut the release first (#4465)
+
+Every production deploy runs a tagged release, so adopting clubs and forks can
+tell which `main` commit is a known-good release, and a rollback has a version
+to name. Before the deploy, cut the release with `pnpm run release:cut`
+([`scripts/release/cut-release.mjs`](scripts/release/cut-release.mjs)) — the
+full order, its refusals and its recovery messages are in
+[`docs/MAINTENANCE.md`](docs/MAINTENANCE.md#public-reference-release-checklist),
+"Public Reference Release Checklist":
+
+1. `pnpm run release:cut prepare --execute` on a clean checkout of
+   `origin/main` builds the `release/v<version>` commit; push it and merge it
+   as the release-prep pull request.
+2. `pnpm run release:cut publish --execute` tags the merged commit, pushes the
+   tag and publishes the GitHub release.
+3. Deploy that tag from the host's source checkout:
+
+   ```bash
+   git fetch origin tag v0.14.0
+   DEPLOY_REF=v0.14.0 ./scripts/run-production-blue-green-deploy.sh
+   ```
+
+   `DEPLOY_REF` pins the deploy to the tagged commit even if `main` has moved
+   since; while nothing has merged after the release, `origin/main` is that
+   commit and the plain command deploys the same thing.
+
 ### The deploy refuses a commit that exists on no remote (#3539)
 
 Before it builds the workspace, the wrapper asks git whether the commit it

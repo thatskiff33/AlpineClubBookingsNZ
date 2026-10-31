@@ -2799,11 +2799,37 @@ A failing drill is a **backup-pipeline incident**, not a routine test flake:
 
 ## Public Reference Release Checklist
 
-Before cutting a public reference release:
+Every production deploy ships a tagged release (#4465), cut with
+[`scripts/release/cut-release.mjs`](../scripts/release/cut-release.mjs). `main`
+only moves through pull requests, so the release is cut in two phases with the
+release-prep pull request between them — the order v0.13.2 was cut in. Both
+phases print their whole plan and change nothing without `--execute`.
 
-1. Create a release-prep branch from fresh `origin/main`.
-2. Update the version in `package.json` (`pnpm-lock.yaml` does not record it), then
-   compile the changelog:
+1. From a clean checkout of `origin/main`, prepare the release-prep commit:
+
+   ```bash
+   git switch --detach origin/main
+   pnpm run release:cut prepare             # dry run: version, fragments, steps
+   pnpm run release:cut prepare --execute   # make the local commit
+   ```
+
+   It fetches `origin/main`, refuses a dirty tree (an untracked `changelog.d/`
+   draft would be released), a checkout that is not exactly `origin/main`, a
+   `release/v<version>` branch that already exists here or on `origin`, a
+   local tag for the version that `origin` does not have, and a release that
+   is prepared but not yet tagged (`package.json` ahead of `origin`'s latest
+   tag, with that version's section in `CHANGELOG.md`) — publish that one, or
+   fold late fragments into it, rather than planning a lower version. The version is the
+   latest `vX.Y.Z` tag **on `origin`** (never this clone's tags) plus a minor
+   bump when any fragment
+   is named `*.feature.md`, or a patch bump otherwise
+   (`changelog.d/README.md`, "Patch or minor"); `--bump patch|minor|major`
+   overrides it and `--date YYYY-MM-DD` overrides the release date. With
+   `--execute` it creates `release/v<version>`, sets `package.json`'s
+   `"version"` (`pnpm-lock.yaml` does not record it), compiles the changelog
+   (step 2) and commits. It never pushes. If it stops part way it prints how to
+   inspect the branch or abandon it.
+2. The compile step runs `scripts/release/compile-changelog.mjs` — on its own:
 
    ```bash
    node scripts/release/compile-changelog.mjs 0.14.0 --dry-run   # show the plan
@@ -2815,9 +2841,10 @@ Before cutting a public reference release:
    `## Unreleased`), deletes the fragments it consumed and the committed,
    clean `size-allowances.d/*.md` fragments made inert by their merge to main,
    and leaves the `## Unreleased` heading and its sentinel-marked pointer note
-   in place. Commit the compiled `CHANGELOG.md` and both sets of fragment
-   deletions together, then read the new section end to end and edit it for
-   order and duplication before pushing —
+   in place. The compiled `CHANGELOG.md` and both sets of fragment deletions
+   are committed together (`release:cut` does it; by hand, do the same), then
+   read the new section end to end and edit it for order and duplication
+   before pushing —
    `changelog.d/README.md` documents the convention. If the run prints
    `WARNING: unrecognised content left under "## Unreleased"`, resolve that
    first: the text it echoes was neither released nor deleted. A release-prep
@@ -2839,9 +2866,61 @@ Before cutting a public reference release:
 5. Run local release validation without live provider credentials, then rely on
    GitHub Actions for Docker image build, static analysis, secret scanning,
    dependency review, and GHCR publication.
-6. After merge, create the annotated release tag on the merged commit and
-   publish the GitHub release with validation evidence, migration notes, image
-   names, commit SHA, and non-blocking maintainability follow-ups.
+6. Push `release/v<version>` and open the release-prep pull request from the
+   template (`pnpm run pr:check <body-file>` first). It merges like any other.
+7. After it merges, tag the merged commit and publish the GitHub release:
+
+   ```bash
+   git fetch origin main
+   pnpm run release:cut publish             # dry run: commit, body, steps
+   pnpm run release:cut publish --execute
+   ```
+
+   It reads the version from `package.json` on the merged commit (default
+   `origin/main`; `--commit <sha>` names another) and publishes to the
+   repository `origin`'s push URL names (its URL when no push URL is set),
+   passing it to every `gh` call; push and fetch URLs that name different
+   repositories are refused. It refuses when:
+
+   - the commit is not on `origin/main`'s **first-parent** chain — only a
+     commit CI pushed to `main` has GHCR images, so only its tag can be
+     deployed (a release-prep branch commit inside a merge never was);
+   - `origin` already has the version's tag on another commit, or the version
+     is not newer than `origin`'s latest tag — nothing new was prepared;
+   - `CHANGELOG.md` has no section for the version, or still has entries
+     written directly under `## Unreleased`;
+   - the commit still holds `changelog.d/` fragments. Required checks are not
+     strict, so a pull request can merge while the release-prep one is open
+     and leave its fragment in the merge commit. Two supported ways out:
+     **fold** them — from a fresh `origin/main`,
+     `pnpm run release:cut prepare --amend --execute` appends them to the
+     untagged `## <version>` section on `release/v<version>-late`; merge that
+     pull request and publish its merge commit. A late `*.feature.md` cannot
+     be folded into a patch release: carry it, or revert the release-prep
+     merge and prepare again as minor. Or **carry** them:
+     `pnpm run release:cut publish --carry-late-fragments --execute` publishes
+     anyway and lists them as carried into the next release.
+
+   The dry run also checks `gh auth status` and that `gh` can reach the
+   repository, and says which release body it will use: the section itself,
+   or — over 120,000 characters, below GitHub's 125,000 limit — a short body
+   with the entry count and a link to the section in `CHANGELOG.md` at the
+   tag. With `--execute` it writes the body to a file, creates the annotated
+   `v<version>` tag, and only then pushes the tag and runs
+   `gh release create`. A failure prints the re-run, always with
+   `--commit <sha>` of the commit being tagged, and the re-run resumes: a
+   local (annotated) tag on the commit resumes at the push, still re-running
+   the content checks; a pushed tag resumes at `gh release create`; an
+   existing release is reported as done. Once `main` has moved on, a pushed
+   tag whose release is missing is resumed on its own commit even without
+   `--commit`, and a local-only tag on another commit is named with the
+   `--commit` that resumes it. A failed push keeps the local tag; a failed
+   publish never deletes the pushed tag. `compile-changelog.mjs --append`
+   only adds to the newest section, so a fold can never rewrite a released
+   version's notes.
+   Add validation evidence, migration notes, image names and non-blocking
+   maintainability follow-ups to the published release by hand.
+8. Deploy the tag (`DEPLOYMENT.md`, "Cut the release first").
 
 ## GitHub Actions Availability
 
