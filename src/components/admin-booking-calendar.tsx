@@ -675,7 +675,7 @@ export function AdminBookingCalendar() {
       <div className="flex flex-wrap gap-4 px-3 py-2.5 border-t text-xs">
         {Object.entries(STATUS_COLORS).map(([status, color]) => (
           // A hidden status dims its SWATCH and strikes its label through. The
-          // whole item used to be `opacity-30`, which took the label to 1.53:1
+          // whole item used to be at 30% opacity, which took the label to 1.53:1
           // (#4466); the label stays at full muted ink so it can still be read.
           <div key={status} className="flex items-center gap-1.5">
             <div aria-hidden className={`w-3.5 h-2.5 rounded-sm ${color} ${enabledStatuses.has(status) ? "" : "opacity-30"}`} />

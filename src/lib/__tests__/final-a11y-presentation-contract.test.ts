@@ -153,7 +153,20 @@ describe("#1819 final accessibility presentation contract", () => {
     // hut-leader candidate used to fade the whole row. The row now says
     // "Inactive" (or "Archived") in its status badge, and a card adds a dashed
     // border; the text keeps its full-strength pair.
+    //
+    // #4594 adds the rest that review found: a past day's bed count and "+N
+    // more" on the admin calendar, a departed kiosk guest, a removed guest on
+    // the edit-booking card, a locked alert, an already-added member-guest
+    // option and the page editor's read-only inputs. Each says its state in
+    // words instead. Not here: `login-holder-section.tsx`, whose faded rows are
+    // labels of a genuinely `disabled` radio, which axe exempts.
     const files = [
+      "src/components/admin-booking-calendar.tsx",
+      "src/app/(lodge)/lodge/kiosk/page.tsx",
+      "src/components/edit-booking/existing-guest-row.tsx",
+      "src/app/(admin)/admin/notifications/notifications-settings.tsx",
+      "src/components/book/member-guest-find-panel.tsx",
+      "src/components/admin/page-content-panel.tsx",
       "src/components/group-booking/organiser-group-booking-card.tsx",
       "src/app/(website-dynamic)/join/[code]/member-group-join-panel.tsx",
       "src/app/(admin)/admin/book/page.tsx",
