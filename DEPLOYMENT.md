@@ -803,6 +803,9 @@ updates for review. The pnpm minimum release age matches the npm Dependabot
 cooldown: seven days (`10080` minutes).
 The already-locked `nodemailer@10.2.1` has an exact-version exception so frozen
 installs work during rollout; remove it after the next Nodemailer update.
+`follow-redirects@1.16.2` has one too: it is the fix for a high advisory, and
+it was still inside the cooldown when the advisory blocked the required audit
+(#4565). Remove it once that version is seven days old.
 
 Both published images include a BuildKit SBOM and maximum build provenance,
 plus a GitHub build provenance attestation tied to the pushed image digest.
