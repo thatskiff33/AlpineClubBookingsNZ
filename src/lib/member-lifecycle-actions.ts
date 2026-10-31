@@ -538,7 +538,7 @@ const MEMBER_DELETE_BLOCKER_SPECS: readonly BlockerSpec[] = [
   {
     // #4514 (D1 on #4482): a journal debtor is a retained identity string, not a
     // key; a member whose balance the journal moves is archived instead.
-    code: "member_money_history",
+    code: "journal_debtor",
     label: "Member money journal rows name this member as debtor.",
     query: (db, memberId) => journalRowsNamingDebtor(db, memberId),
   },

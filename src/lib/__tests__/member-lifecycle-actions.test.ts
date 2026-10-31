@@ -630,7 +630,7 @@ describe("member delete lifecycle actions", () => {
     expect(eligibility.blockers).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          code: "member_money_history",
+          code: "journal_debtor",
           label: "Member money journal rows name this member as debtor.",
           count: 3,
         }),
