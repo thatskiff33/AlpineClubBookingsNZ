@@ -115,9 +115,7 @@ export function classifyXeroInvoiceCashEvidence(
     return amountPaidCents > 0 ? "cash" : "none";
   }
   if (Array.isArray(invoice.payments)) {
-    const cashPayments = invoice.payments.filter(
-      (payment) => !isDeletedXeroPaymentStatus(payment.status)
-    );
+    const cashPayments = invoice.payments.filter((payment) => !isDeletedXeroPaymentStatus(payment.status));
     return cashPayments.length > 0 ? "cash" : "none";
   }
   return "indeterminate";
