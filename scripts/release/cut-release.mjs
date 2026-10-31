@@ -359,6 +359,13 @@ export function publishRelease({
   const version = String(pkg.version ?? "");
   const tag = `v${version}`;
   if (!parseReleaseTag(tag)) throw new ReleaseCutError(`package.json at ${target.slice(0, 12)} has no X.Y.Z version: ${version}`);
+  const previous = latestReleaseTag(releaseTags(cmd));
+  if (previous && compareParts(parseReleaseTag(tag), previous.parts) <= 0) {
+    throw new ReleaseCutError(
+      `${tag} is not newer than the latest release tag ${previous.tag}: there is no prepared release to publish.`,
+      "Run pnpm run release:cut prepare and merge its pull request first.",
+    );
+  }
   const notes = releaseSection(cmd.git(["show", `${target}:CHANGELOG.md`]), version);
   if (notes === null || notes.trim() === "") {
     throw new ReleaseCutError(
@@ -376,10 +383,6 @@ export function publishRelease({
         `something merged after the release-prep commit, so ${tag} would ship changes its notes leave out.`,
       `Tag the release-prep merge commit instead: pnpm run release:cut publish --commit <merge-sha>`,
     );
-  }
-  const previous = latestReleaseTag(releaseTags(cmd));
-  if (previous && compareParts(parseReleaseTag(tag), previous.parts) <= 0) {
-    throw new ReleaseCutError(`${tag} is not newer than the latest release tag ${previous.tag}.`);
   }
   refuseExisting(cmd, { tag });
 
