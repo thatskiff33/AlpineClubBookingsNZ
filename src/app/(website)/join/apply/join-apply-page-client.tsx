@@ -20,6 +20,7 @@ import {
   type MemberAddressValues,
 } from "@/lib/member-address";
 import type { ClubIdentity } from "@/config/club-identity-types";
+import { readValidationDetails } from "@/lib/format-validation-errors";
 
 /*
   #2264 — the phone row is three boxes sharing ONE example. Greyed "64", "27"
@@ -273,11 +274,14 @@ export function JoinApplyPageClient({
       const data = await response.json();
 
       if (!response.ok) {
-        if (data.details) {
+        // The route's validation details are read through the one shared reader
+        // (#4580); anything else falls back to the route's own sentence.
+        const details = readValidationDetails(data);
+        if (details && details.fieldErrors.length > 0) {
           const nextErrors: FieldErrors = {};
-          Object.entries(data.details).forEach(([field, messages]) => {
-            nextErrors[field as keyof FieldErrors] = (messages as string[])[0];
-          });
+          for (const [field, messages] of details.fieldErrors) {
+            nextErrors[field as keyof FieldErrors] = messages[0];
+          }
           setFieldErrors(nextErrors);
         } else {
           setError(

@@ -1,0 +1,1 @@
+- **The membership application form shows the route's own message when a refusal isn't about one field (#4580).** It now reads the route's field errors through the same shared reader as every other form (#4579), so field errors still appear on their field, and any other refusal shows the route's own sentence instead of nothing.
