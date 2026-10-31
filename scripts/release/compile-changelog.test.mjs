@@ -4,12 +4,14 @@ import path from "node:path";
 import { execFileSync } from "node:child_process";
 
 import {
+  classifyUnreleased,
   compareFragmentNames,
   compileChangelog,
   parseArgs,
   POINTER_NOTE_END,
   POINTER_NOTE_START,
   readFragments,
+  releaseSection,
   retiredAllowancePaths,
   todayInNewZealand,
 } from "./compile-changelog.mjs";
@@ -754,6 +756,69 @@ describe("compile-changelog", () => {
     ).toThrow(/already has a "## 0.13.2" section/);
   });
 
+  it("appends late fragments to an existing, untagged section only when asked (#4465)", () => {
+    const prepared = [
+      "# Changelog",
+      "",
+      "## Unreleased",
+      "",
+      NOTE,
+      "",
+      "## 0.13.3 - 2026-10-31",
+      "",
+      "- **Prepared entry (#4400).**",
+      "  Continued.",
+      "",
+      HISTORY,
+    ].join("\n");
+    const root = makeRepo({ changelog: prepared, fragments: { "4500-late.md": "- **Late entry (#4500).**\n" } });
+
+    // The default still refuses an existing section.
+    expect(() => compileChangelog({ repoRoot: root, version: "0.13.3", date: "2026-11-02", log: silentLog() })).toThrow(
+      /already has a "## 0.13.3" section/,
+    );
+
+    const dryLog = silentLog();
+    compileChangelog({ repoRoot: root, version: "0.13.3", date: "2026-11-02", append: true, dryRun: true, log: dryLog });
+    expect(dryLog.text()).toContain('Would append to "## 0.13.3 - 2026-10-31" in CHANGELOG.md');
+    expect(read(root)).toBe(prepared);
+
+    const log = silentLog();
+    const result = compileChangelog({ repoRoot: root, version: "0.13.3", date: "2026-11-02", append: true, log });
+    expect(result.written).toBe(true);
+    const compiled = read(root);
+    expect(releaseSection(compiled, "0.13.3")).toEqual({
+      heading: "## 0.13.3 - 2026-10-31",
+      body: "- **Prepared entry (#4400).**\n  Continued.\n- **Late entry (#4500).**",
+    });
+    expect(compiled).not.toContain("2026-11-02");
+    expect(compiled.match(/^## 0\.13\.3 /gm)).toHaveLength(1);
+    expect(compiled).toContain(`## Unreleased\n\n${NOTE}\n\n## 0.13.3 - 2026-10-31`);
+    expect(compiled.slice(compiled.indexOf("## 0.13.2"))).toBe(`${HISTORY.trimEnd()}\n`);
+    expect(fragmentFiles(root)).toEqual([]);
+    expect(log.text()).toContain('Appended to "## 0.13.3 - 2026-10-31" in CHANGELOG.md.');
+  });
+
+  it("refuses to append when the section does not exist", () => {
+    const root = makeRepo({ fragments: { "4500-late.md": "- **Late (#4500).**\n" } });
+    expect(() =>
+      compileChangelog({ repoRoot: root, version: "0.14.0", date: "2026-11-02", append: true, log: silentLog() }),
+    ).toThrow(/has no "## 0.14.0" section to append to/);
+    expect(fragmentFiles(root)).toEqual(["4500-late.md"]);
+  });
+
+  it("reads a section's heading and body, and classifies Unreleased, from text", () => {
+    const text = changelogWith("- **Direct entry (#1).**");
+    expect(releaseSection(text, "0.13.2")).toEqual({
+      heading: "## 0.13.2 - 2026-07-23",
+      body: HISTORY.split("\n").slice(2).join("\n").trim(),
+    });
+    expect(releaseSection(text, "0.13")).toBeNull();
+    expect(classifyUnreleased(text).legacy).toEqual(["- **Direct entry (#1).**"]);
+    expect(classifyUnreleased(changelogWith("")).legacy).toEqual([]);
+    expect(classifyUnreleased("# Changelog\n\n## 0.1.0 - 2026-01-01\n")).toBeNull();
+  });
+
   it("rejects a malformed version or date", () => {
     const root = makeRepo();
     expect(() => compileChangelog({ repoRoot: root, version: "v0.14", log: silentLog() })).toThrow(
@@ -809,11 +874,13 @@ describe("compile-changelog", () => {
       version: "0.14.0",
       date: "2026-08-04",
       dryRun: false,
+      append: false,
     });
-    expect(parseArgs(["--dry-run", "0.14.0"])).toEqual({
+    expect(parseArgs(["--dry-run", "0.14.0", "--append"])).toEqual({
       version: "0.14.0",
       date: undefined,
       dryRun: true,
+      append: true,
     });
   });
 
