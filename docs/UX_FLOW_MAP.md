@@ -1828,9 +1828,11 @@ establishes:
   green/yellow Tailwind classes so badges/chips adapt to dark mode. The trio is
   completed by `--info` (calm blue) and `--danger` (dark-adaptable red), the
   pair for solid destructive buttons and badges. The `text-destructive` error
-  ink is red-700 in light mode (#4466) and the dark `--danger` tone in dark
-  mode (#4553); `destructive-contrast-contract.test.ts` pins both, per theme
-  scope, from the values in `globals.css`.
+  ink is red-800, the light `--danger` value, in light mode (#4563; red-700
+  read 4.49:1 in an error box on a grey panel) and the dark `--danger` tone in
+  dark mode (#4553); `destructive-contrast-contract.test.ts` pins both, per
+  theme scope, from the values in `globals.css`, for text and for a
+  `bg-destructive/<n>` box on every surface, grey and danger-tinted included.
 - **Status + occupancy primitives (#1804):** render any domain status with
   `StatusChip` (`src/components/ui/status-chip.tsx`; `kind` =
   booking|payment|subscription|lifecycle|financeAccess) — it resolves each state
@@ -1863,7 +1865,21 @@ establishes:
   surfaces still hand-roll their attention that way — the module names them.
 - **Final sweep (#1819):** colour-coded calendar seasons, payment choices, and
   focused bed-allocation cards/cells pair their colour with visible text/icons
-  or a distinct border style. The shared error `Alert` uses the AA `--danger`
+  or a distinct border style.
+- **Choice cards (#4563):** a set of mutually exclusive options drawn as cards,
+  such as Card or Internet Banking, uses `OptionCard` inside `OptionCardGroup`
+  (`src/components/ui/option-card.tsx`). Each card is a native button with
+  `aria-pressed`, the chosen one shows a check icon and the word "Selected",
+  and the group is named by its visible heading. All four payment pickers
+  (booking review, admin Book, the organiser's group settlement, the group
+  join panel) use it; never draw a card whose only cue is its tint.
+- **Inactive rows (#4563):** an archived or inactive row (a chore, committee
+  role or assignment, booking policy or period, family member, a fully covered
+  hut-leader candidate) keeps its text at full strength and says so in words,
+  in its status badge or label; a card may add `border-dashed` as a second,
+  non-text cue. Never fade a row with `opacity-*`: it drops the text under
+  4.5:1, and axe exempts only disabled controls, not text.
+  `final-a11y-presentation-contract.test.ts` fails a faded row in those files. The shared error `Alert` uses the AA `--danger`
   pair rather than `--destructive`. The bookings table keeps a horizontally
   scrollable minimum width, while booking review, family-group, and member
   detail controls stack at phone width. The eight #1809 admin-list surfaces now
