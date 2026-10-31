@@ -2815,8 +2815,11 @@ phases print their whole plan and change nothing without `--execute`.
 
    It fetches `origin/main`, refuses a dirty tree (an untracked `changelog.d/`
    draft would be released), a checkout that is not exactly `origin/main`, a
-   `release/v<version>` branch that already exists here or on `origin`, and a
-   local tag for the version that `origin` does not have. The version is the
+   `release/v<version>` branch that already exists here or on `origin`, a
+   local tag for the version that `origin` does not have, and a release that
+   is prepared but not yet tagged (`package.json` ahead of `origin`'s latest
+   tag, with that version's section in `CHANGELOG.md`) — publish that one, or
+   fold late fragments into it, rather than planning a lower version. The version is the
    latest `vX.Y.Z` tag **on `origin`** (never this clone's tags) plus a minor
    bump when any fragment
    is named `*.feature.md`, or a patch bump otherwise
@@ -2875,8 +2878,9 @@ phases print their whole plan and change nothing without `--execute`.
 
    It reads the version from `package.json` on the merged commit (default
    `origin/main`; `--commit <sha>` names another) and publishes to the
-   repository `origin`'s URL names, passing it to every `gh` call. It refuses
-   when:
+   repository `origin`'s push URL names (its URL when no push URL is set),
+   passing it to every `gh` call; push and fetch URLs that name different
+   repositories are refused. It refuses when:
 
    - the commit is not on `origin/main`'s **first-parent** chain — only a
      commit CI pushed to `main` has GHCR images, so only its tag can be
@@ -2891,7 +2895,9 @@ phases print their whole plan and change nothing without `--execute`.
      **fold** them — from a fresh `origin/main`,
      `pnpm run release:cut prepare --amend --execute` appends them to the
      untagged `## <version>` section on `release/v<version>-late`; merge that
-     pull request and publish its merge commit — or **carry** them:
+     pull request and publish its merge commit. A late `*.feature.md` cannot
+     be folded into a patch release: carry it, or revert the release-prep
+     merge and prepare again as minor. Or **carry** them:
      `pnpm run release:cut publish --carry-late-fragments --execute` publishes
      anyway and lists them as carried into the next release.
 
@@ -2901,10 +2907,17 @@ phases print their whole plan and change nothing without `--execute`.
    with the entry count and a link to the section in `CHANGELOG.md` at the
    tag. With `--execute` it writes the body to a file, creates the annotated
    `v<version>` tag, and only then pushes the tag and runs
-   `gh release create`. A re-run after a failure resumes: a local tag on the
-   commit resumes at the push, a pushed tag at `gh release create`, and an
-   existing release is reported as done. A failed push keeps the local tag; a
-   failed publish never deletes the pushed tag.
+   `gh release create`. A failure prints the re-run, always with
+   `--commit <sha>` of the commit being tagged, and the re-run resumes: a
+   local (annotated) tag on the commit resumes at the push, still re-running
+   the content checks; a pushed tag resumes at `gh release create`; an
+   existing release is reported as done. Once `main` has moved on, a pushed
+   tag whose release is missing is resumed on its own commit even without
+   `--commit`, and a local-only tag on another commit is named with the
+   `--commit` that resumes it. A failed push keeps the local tag; a failed
+   publish never deletes the pushed tag. `compile-changelog.mjs --append`
+   only adds to the newest section, so a fold can never rewrite a released
+   version's notes.
    Add validation evidence, migration notes, image names and non-blocking
    maintainability follow-ups to the published release by hand.
 8. Deploy the tag (`DEPLOYMENT.md`, "Cut the release first").
