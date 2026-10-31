@@ -119,9 +119,29 @@ function post(overrides: Record<string, unknown> = {}) {
   };
 }
 
+/**
+ * Which guarded write an `updateMany` is (#4590 review): the claim before the
+ * send, the request put back, the locked stamp (our post holding no id or this
+ * one), or the stamp without the lock (our post holding no id).
+ */
+type GuardedWrite = { where: Record<string, unknown>; data: Record<string, unknown> };
+function writeKind({ where }: GuardedWrite): "claim" | "restore" | "stamp" | "unlocked-stamp" {
+  if ("OR" in where) return "stamp";
+  if (where.shareRequestedAt === null) return "restore";
+  if ("shareRequestedAt" in where) return "claim";
+  return "unlocked-stamp";
+}
+function writes(kind: ReturnType<typeof writeKind>): GuardedWrite[] {
+  return mocks.updateMany.mock.calls.map(([args]) => args as GuardedWrite).filter((args) => writeKind(args) === kind);
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.update.mockResolvedValue({});
+  mocks.updateMany.mockImplementation(async (args: GuardedWrite) => {
+    mocks.order.push(writeKind(args));
+    return { count: 1 };
+  });
   mocks.readPostImage.mockResolvedValue(Buffer.from([1, 2, 3]));
   mocks.isServerSyncPaused.mockResolvedValue(false);
   mocks.order.length = 0;
@@ -132,13 +152,78 @@ beforeEach(() => {
   mocks.deletePostImage.mockImplementation(async () => { mocks.order.push("file"); });
 });
 
-describe("a share the server accepted is never sent again (#4590)", () => {
+describe("the request is claimed before the send, so a share goes out at most once (#4590 review, #4592)", () => {
+  beforeEach(() => {
+    mocks.findUnique.mockImplementation(async ({ where }: { where: { id?: string } }) => (where.id ? post() : null));
+    mocks.shareClubPost.mockResolvedValue({ id: "server-9" });
+  });
+
+  it("takes the request off the row, guarded on the value it read, before anything is sent", async () => {
+    mocks.shareClubPost.mockImplementation(async () => {
+      mocks.order.push("send");
+      return { id: "server-9" };
+    });
+
+    await shareOnePost("post-1");
+
+    expect(writes("claim")).toEqual([{
+      where: { id: "post-1", sharedAt: null, serverPostId: null, removedAt: null, shareRequestedAt: REQUESTED },
+      data: { shareRequestedAt: null },
+    }]);
+    expect(mocks.order.indexOf("claim")).toBeLessThan(mocks.order.indexOf("send"));
+  });
+
+  it("sends nothing when another caller already claimed it", async () => {
+    mocks.updateMany.mockResolvedValueOnce({ count: 0 });
+
+    expect(await shareOnePost("post-1")).toEqual({ status: "skipped", reason: "claimed" });
+    expect(mocks.shareClubPost).not.toHaveBeenCalled();
+  });
+
+  it("puts the request back only for a share the server did not take", async () => {
+    mocks.shareClubPost.mockRejectedValue(new FakeApiError(503, "unavailable"));
+
+    expect(await shareOnePost("post-1")).toMatchObject({ status: "failed", retryable: true });
+    expect(mocks.update.mock.calls.at(-1)?.[0].data).toMatchObject({ shareRequestedAt: REQUESTED, shareAttempts: 1 });
+  });
+
+  it("puts the request back after a version pause, counting nothing", async () => {
+    mocks.shareClubPost.mockRejectedValue(new FakeVersionError());
+
+    expect(await shareOnePost("post-1")).toEqual({ status: "paused" });
+    expect(writes("restore")).toEqual([{
+      where: { id: "post-1", shareRequestedAt: null, sharedAt: null, serverPostId: null },
+      data: { shareRequestedAt: REQUESTED },
+    }]);
+    expect(mocks.update).not.toHaveBeenCalled();
+  });
+
+  it("never puts the request back after the server accepted the share, even when nothing can be recorded", async () => {
+    mocks.lockServerNzSettings.mockRejectedValue(new Error("database unavailable"));
+    mocks.updateMany.mockImplementation(async (args: GuardedWrite) => {
+      if (writeKind(args) === "claim") return { count: 1 };
+      throw new Error("database unavailable");
+    });
+    mocks.update.mockRejectedValue(new Error("database unavailable"));
+
+    expect(await shareOnePost("post-1")).toMatchObject({ status: "failed", retryable: false });
+
+    expect(mocks.shareClubPost).toHaveBeenCalledTimes(1);
+    expect(writes("restore")).toEqual([]);
+    expect(mocks.update.mock.calls.some(([args]) => args.data.shareRequestedAt)).toBe(false);
+    // The log names the copy on the server.
+    expect(mocks.logger.error).toHaveBeenCalledWith(
+      expect.objectContaining({ serverPostId: "server-9" }), expect.stringMatching(/Could not record a share/),
+    );
+  });
+});
+
+describe("a share the server accepted is recorded with the id it returned (#4590)", () => {
   const lockFails = () => mocks.lockServerNzSettings.mockRejectedValueOnce(new Error("lock wait timeout"));
 
   beforeEach(() => {
     mocks.findUnique.mockImplementation(async ({ where }: { where: { id?: string } }) => (where.id ? post() : null));
     mocks.shareClubPost.mockResolvedValue({ id: "server-9" });
-    mocks.updateMany.mockResolvedValue({ count: 1 });
   });
 
   it("records the returned id without the lock when the locked stamp fails, and reports it shared", async () => {
@@ -147,28 +232,31 @@ describe("a share the server accepted is never sent again (#4590)", () => {
     expect(await shareOnePost("post-1")).toEqual({ status: "shared", serverPostId: "server-9" });
 
     expect(mocks.shareClubPost).toHaveBeenCalledTimes(1);
-    expect(mocks.updateMany).toHaveBeenCalledWith({
+    expect(writes("unlocked-stamp")).toEqual([{
       where: { id: "post-1", serverPostId: null },
       data: { serverPostId: "server-9", sharedAt: expect.any(Date), shareError: null },
-    });
+    }]);
     // No attempt is counted against a share that succeeded.
     expect(mocks.update.mock.calls.some(([args]) => "shareAttempts" in args.data)).toBe(false);
   });
 
   it("takes the locked stamp again when the mirror's copy refuses the unlocked write", async () => {
     lockFails();
-    mocks.updateMany.mockRejectedValueOnce(new Error("Unique constraint failed on serverPostId"));
+    mocks.updateMany.mockImplementation(async (args: GuardedWrite) => {
+      if (writeKind(args) === "unlocked-stamp") throw new Error("Unique constraint failed on serverPostId");
+      return { count: 1 };
+    });
 
     expect(await shareOnePost("post-1")).toEqual({ status: "shared", serverPostId: "server-9" });
 
     expect(mocks.lockServerNzSettings).toHaveBeenCalledTimes(2);
-    expect(mocks.update).toHaveBeenLastCalledWith(expect.objectContaining({ data: expect.objectContaining({ serverPostId: "server-9" }) }));
+    expect(writes("stamp")).toHaveLength(1);
     expect(mocks.shareClubPost).toHaveBeenCalledTimes(1);
   });
 
   it("counts a write that matched nothing as recorded when our post already holds the id", async () => {
     lockFails();
-    mocks.updateMany.mockResolvedValue({ count: 0 });
+    mocks.updateMany.mockImplementation(async (args: GuardedWrite) => ({ count: writeKind(args) === "claim" ? 1 : 0 }));
     // Read unshared before the send; holding the id by the time it is re-read.
     let reads = 0;
     mocks.findUnique.mockImplementation(async ({ where }: { where: { id?: string } }) => {
@@ -180,9 +268,12 @@ describe("a share the server accepted is never sent again (#4590)", () => {
     expect(await shareOnePost("post-1")).toEqual({ status: "shared", serverPostId: "server-9" });
   });
 
-  it("clears the request, names the server id, and never shares again when every recording fails", async () => {
+  it("names the server id in shareError when every recording fails", async () => {
     mocks.lockServerNzSettings.mockRejectedValue(new Error("database unavailable"));
-    mocks.updateMany.mockRejectedValue(new Error("database unavailable"));
+    mocks.updateMany.mockImplementation(async (args: GuardedWrite) => {
+      if (writeKind(args) === "claim") return { count: 1 };
+      throw new Error("database unavailable");
+    });
 
     const outcome = await shareOnePost("post-1");
 
@@ -190,20 +281,47 @@ describe("a share the server accepted is never sent again (#4590)", () => {
     expect(mocks.shareClubPost).toHaveBeenCalledTimes(1);
     expect(mocks.update).toHaveBeenLastCalledWith({
       where: { id: "post-1" },
-      data: { shareRequestedAt: null, shareAttempts: 1, shareError: expect.stringContaining("server-9") },
+      data: { shareAttempts: 1, shareError: expect.stringContaining("server-9") },
     });
     expect(mocks.logger.error).toHaveBeenCalledWith(
       expect.objectContaining({ serverPostId: "server-9" }), expect.stringMatching(/will not be sent again/),
     );
   });
 
-  it("still keeps the request for a share that never reached the server", async () => {
-    mocks.shareClubPost.mockRejectedValue(new FakeApiError(503, "unavailable"));
+  it("never writes over a DIFFERENT id our post already holds, and names the abandoned one (#4590 review)", async () => {
+    mocks.updateMany.mockImplementation(async (args: GuardedWrite) => ({ count: writeKind(args) === "claim" ? 1 : 0 }));
+    let reads = 0;
+    mocks.findUnique.mockImplementation(async ({ where }: { where: { id?: string } }) => {
+      if (!where.id) return null;
+      reads += 1;
+      return reads === 1 ? post() : post({ serverPostId: "server-1" });
+    });
 
-    expect(await shareOnePost("post-1")).toMatchObject({ status: "failed", retryable: true });
+    const outcome = await shareOnePost("post-1");
 
-    expect(mocks.update.mock.calls.at(-1)?.[0].data).not.toHaveProperty("shareRequestedAt");
-    expect(mocks.updateMany).not.toHaveBeenCalled();
+    expect(outcome).toMatchObject({ status: "failed", retryable: false });
+    expect(writes("stamp")[0]?.where).toEqual({ id: "post-1", OR: [{ serverPostId: null }, { serverPostId: "server-9" }] });
+    // One attempt only: a mismatch is final.
+    expect(mocks.lockServerNzSettings).toHaveBeenCalledTimes(1);
+    expect(mocks.update.mock.calls.at(-1)?.[0].data).toMatchObject({
+      shareRequestedAt: null, shareError: expect.stringMatching(/already recorded as server-1.*\(server-9\) was not recorded/),
+    });
+  });
+
+  it("logs the id, and writes nothing, when our post was deleted before it could be recorded (#4590 review)", async () => {
+    mocks.updateMany.mockImplementation(async (args: GuardedWrite) => ({ count: writeKind(args) === "claim" ? 1 : 0 }));
+    let reads = 0;
+    mocks.findUnique.mockImplementation(async ({ where }: { where: { id?: string } }) => {
+      if (!where.id) return null;
+      reads += 1;
+      return reads === 1 ? post() : null;
+    });
+
+    expect(await shareOnePost("post-1")).toMatchObject({ status: "failed", retryable: false });
+    expect(mocks.update).not.toHaveBeenCalled();
+    expect(mocks.logger.error).toHaveBeenCalledWith(
+      expect.objectContaining({ serverPostId: "server-9" }), expect.stringMatching(/deleted before its share was recorded/),
+    );
   });
 });
 
@@ -216,7 +334,6 @@ describe("the share's stamp and the mirror's copy of our own post (#4588)", () =
       return copy;
     });
     mocks.shareClubPost.mockResolvedValue({ id: "server-9" });
-    mocks.update.mockImplementation(async () => { mocks.order.push("stamp"); return {}; });
   }
 
   it("stamps under the settings-row lock, the lock every mirror write holds", async () => {
@@ -224,7 +341,7 @@ describe("the share's stamp and the mirror's copy of our own post (#4588)", () =
 
     expect(await shareOnePost("post-1")).toEqual({ status: "shared", serverPostId: "server-9" });
 
-    expect(mocks.order).toEqual(["settings", "find-copy", "stamp"]);
+    expect(mocks.order).toEqual(["claim", "settings", "find-copy", "stamp"]);
     expect(mocks.findUnique).toHaveBeenLastCalledWith(expect.objectContaining({ where: { serverPostId: "server-9" } }));
     expect(mocks.deleteMany).not.toHaveBeenCalled();
   });
@@ -236,13 +353,13 @@ describe("the share's stamp and the mirror's copy of our own post (#4588)", () =
 
     expect(await shareOnePost("post-1")).toEqual({ status: "shared", serverPostId: "server-9" });
 
-    expect(mocks.order).toEqual(["settings", "find-copy", "posts", "delete-copy", "stamp", "file"]);
+    expect(mocks.order).toEqual(["claim", "settings", "find-copy", "posts", "delete-copy", "stamp", "file"]);
     const [strings, ...values] = mocks.executeRaw.mock.calls[0] as [TemplateStringsArray, ...unknown[]];
     expect(strings.join("?")).toBe('SELECT 1 FROM "ClubPost" WHERE "id" IN (?, ?) ORDER BY "id" FOR UPDATE');
     expect(values).toEqual(["post-1", "copy-1"]);
     expect(mocks.imageFindMany).toHaveBeenCalledWith({ where: { postId: "copy-1" }, select: { storageKey: true } });
     expect(mocks.deleteMany).toHaveBeenCalledWith({ where: { id: "copy-1" } });
-    expect(mocks.update).toHaveBeenCalledWith(expect.objectContaining({ where: { id: "post-1" } }));
+    expect(writes("stamp")[0]?.where).toMatchObject({ id: "post-1" });
     expect(mocks.deletePostImage).toHaveBeenCalledWith("posts/2026/07/copy.webp");
   });
 
@@ -257,11 +374,11 @@ describe("the share's stamp and the mirror's copy of our own post (#4588)", () =
     expect(outcome).toMatchObject({ status: "failed", retryable: false });
     expect(mocks.deleteMany).not.toHaveBeenCalled();
     // Our post was never stamped with the id.
-    expect(mocks.update.mock.calls.some(([args]) => args.data.serverPostId !== undefined)).toBe(false);
-    // The failure is recorded on our post, and the request cleared, because
-    // a retry would put a second copy on the server.
+    expect(writes("stamp")).toEqual([]);
+    // The failure is recorded on our post, naming the id, and the request
+    // stays off it, because a retry would put a second copy on the server.
     const recorded = mocks.update.mock.calls.at(-1)?.[0];
-    expect(recorded.data).toMatchObject({ shareRequestedAt: null, shareError: expect.stringMatching(/already held here by another club's post/) });
+    expect(recorded.data).toMatchObject({ shareRequestedAt: null, shareError: expect.stringMatching(/\(server-9\) is already held here by another club's post/) });
     expect(mocks.logger.error).toHaveBeenCalledWith(
       expect.objectContaining({ mirrorPostId: "copy-1" }), expect.stringMatching(/not our copy/),
     );
@@ -269,7 +386,10 @@ describe("the share's stamp and the mirror's copy of our own post (#4588)", () =
 
   it("never deletes another of this club's own posts that holds the id", async () => {
     sharedBack({ id: "post-0", originClubCode: null });
-    mocks.update.mockRejectedValueOnce(new Error("Unique constraint failed on serverPostId"));
+    mocks.updateMany.mockImplementation(async (args: GuardedWrite) => {
+      if (writeKind(args) === "stamp") throw new Error("Unique constraint failed on serverPostId");
+      return { count: 1 };
+    });
 
     await shareOnePost("post-1");
 
@@ -286,7 +406,7 @@ describe("shareOnePost", () => {
     const outcome = await shareOnePost("post-1");
 
     expect(outcome).toEqual({ status: "shared", serverPostId: "server-9" });
-    const data = mocks.update.mock.calls[0][0].data;
+    const data = writes("stamp")[0]!.data;
     expect(data.serverPostId).toBe("server-9");
     expect(data.sharedAt).toBeInstanceOf(Date);
     expect(data.shareError).toBeNull();
@@ -325,10 +445,8 @@ describe("shareOnePost", () => {
     const outcome = await shareOnePost("post-1");
 
     expect(outcome).toMatchObject({ status: "failed", retryable: true });
-    // shareRequestedAt is NOT cleared, so the sweep carries it.
-    expect(mocks.update.mock.calls[0][0].data).not.toHaveProperty(
-      "shareRequestedAt",
-    );
+    // The request the claim took goes back, so the sweep carries it.
+    expect(mocks.update.mock.calls[0][0].data.shareRequestedAt).toEqual(REQUESTED);
   });
 
   it("stops retrying a refusal that will never change", async () => {

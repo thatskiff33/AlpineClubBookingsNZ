@@ -42,7 +42,8 @@ export const SHARE_SWEEP_PAGE_SIZE = 8;
 export type ShareOutcome =
   | { status: "shared"; serverPostId: string }
   | { status: "failed"; error: string; retryable: boolean }
-  | { status: "skipped"; reason: "already-shared" | "not-requested" | "gone" }
+  /** `claimed` (#4590 review): another caller holds this share; nothing was sent. */
+  | { status: "skipped"; reason: "already-shared" | "not-requested" | "gone" | "claimed" }
   /**
    * The central server is on a different API version (#49): nothing was sent,
    * the request stays pending and NO attempt is counted, so a pause that lasts
@@ -62,7 +63,7 @@ export type ShareOutcome =
  */
 function isRetryable(error: unknown): boolean {
   // Sending again would only put a second copy on the server (#4588 review).
-  if (error instanceof ShareStampConflictError) return false;
+  if (error instanceof ShareStampConflictError || error instanceof ShareStampMismatchError) return false;
   if (error instanceof ServerNzApiError) {
     if (error.status === 429) return true;
     return error.status < 400 || error.status >= 500;
@@ -72,10 +73,40 @@ function isRetryable(error: unknown): boolean {
 
 /** The server's id for a share is held by a mirrored post that is not our copy (#4588 review). */
 class ShareStampConflictError extends Error {
-  constructor() {
-    super("The central server's id for this post is already held here by another club's post, so the share was not recorded.");
+  constructor(serverPostId: string) {
+    super(`The central server's id for this post (${serverPostId}) is already held here by another club's post, so the share was not recorded.`);
     this.name = "ShareStampConflictError";
   }
+}
+
+/** Our post already holds a DIFFERENT server id; the new one is never written over it (#4590 review). */
+class ShareStampMismatchError extends Error {
+  constructor(held: string, abandoned: string) {
+    super(`This post is already recorded as ${held} on the central server; its newer copy there (${abandoned}) was not recorded.`);
+    this.name = "ShareStampMismatchError";
+  }
+}
+
+/** Our post was deleted while its stamp was retried: there is no row to record the id on (#4590 review). */
+class ShareStampPostGoneError extends Error {
+  constructor() {
+    super("The post was deleted before its share could be recorded");
+    this.name = "ShareStampPostGoneError";
+  }
+}
+
+/**
+ * Why a stamp matched no row: our post is gone, or holds another id (never
+ * overwritten). Read on the same client as the write that matched nothing.
+ */
+async function stampMissed(
+  db: Pick<typeof prisma, "clubPost">,
+  postId: string,
+  serverPostId: string,
+): Promise<void> {
+  const row = await db.clubPost.findUnique({ where: { id: postId }, select: { serverPostId: true } });
+  if (!row) throw new ShareStampPostGoneError();
+  if (row.serverPostId !== serverPostId) throw new ShareStampMismatchError(row.serverPostId ?? "unknown", serverPostId);
 }
 
 /**
@@ -113,17 +144,20 @@ async function stampShare(postId: string, serverPostId: string): Promise<void> {
       const mirrored = await tx.clubPost.findUnique({ where: { id: copy.id }, select: { content: true, authorName: true } });
       if (!ours || !mirrored || mirrored.content !== ours.content.slice(0, 4000) || mirrored.authorName !== ours.authorName) {
         logger.error({ postId, serverPostId, mirrorPostId: copy.id }, "A shared post's server id is held by a mirrored post that is not our copy; neither was changed");
-        throw new ShareStampConflictError();
+        throw new ShareStampConflictError(serverPostId);
       }
       const images = await tx.clubPostImage.findMany({ where: { postId: copy.id }, select: { storageKey: true } });
       await tx.clubPost.deleteMany({ where: { id: copy.id } });
       files = images.map((image) => image.storageKey);
       logger.warn({ postId, serverPostId }, "The mirror copied our own post back before its share was recorded; the copy was removed");
     }
-    await tx.clubPost.update({
-      where: { id: postId },
+    // Only while our post holds no id, or this very one (#4590 review): a
+    // different id already recorded is never written over.
+    const stamped = await tx.clubPost.updateMany({
+      where: { id: postId, OR: [{ serverPostId: null }, { serverPostId }] },
       data: { serverPostId, sharedAt: new Date(), shareError: null },
     });
+    if (stamped.count === 0) await stampMissed(tx, postId, serverPostId);
     return files;
   }, SERVERNZ_TRANSACTION_OPTIONS);
   // Rows first, files second. After the commit, so a file that cannot be
@@ -149,17 +183,16 @@ async function stampShareUnlocked(postId: string, serverPostId: string): Promise
     data: { serverPostId, sharedAt: new Date(), shareError: null },
   });
   if (count === 1) return;
-  const row = await prisma.clubPost.findUnique({ where: { id: postId }, select: { serverPostId: true } });
-  if (row?.serverPostId !== serverPostId) throw new Error("The post could not take the central server's id");
+  await stampMissed(prisma, postId, serverPostId);
 }
 
 /**
  * Try to share one post.
  *
  * Idempotent on `serverPostId`: a post that already carries one is not sent
- * again, so a retry that crashed after the remote accepted it but before the
- * local row was updated cannot produce a duplicate on every other club's
- * board.
+ * again. And AT MOST ONCE (#4590 review): the request is claimed off the row
+ * before the send, so a retry after a crash, a failed stamp or a second caller
+ * cannot produce a duplicate on every other club's board.
  */
 export async function shareOnePost(postId: string): Promise<ShareOutcome> {
   const post = await prisma.clubPost.findUnique({
@@ -222,6 +255,23 @@ export async function shareOnePost(postId: string): Promise<ShareOutcome> {
     });
   }
 
+  // THE CLAIM, BEFORE THE SEND (#4590 review, #4592). Taking the request off
+  // the row first makes the remote send at most once: a second caller (the
+  // post route's inline share racing the cron sweep) matches nothing and sends
+  // nothing, and a stamp that fails after the server accepted the share, the
+  // database being down, or the process being killed mid-send leave no
+  // request for a later sweep to send again. The request goes back only when
+  // the server did NOT take the share and the failure is worth retrying
+  // (`recordShareFailure`); if even that write fails, the share is lost, never
+  // duplicated. The trade-off is deliberate: a lost share can be posted again,
+  // a duplicate on every club's board cannot be withdrawn from here.
+  const requestedAt = post.shareRequestedAt;
+  const claimed = await prisma.clubPost.updateMany({
+    where: { id: post.id, sharedAt: null, serverPostId: null, removedAt: null, shareRequestedAt: requestedAt },
+    data: { shareRequestedAt: null },
+  });
+  if (claimed.count === 0) return { status: "skipped", reason: "claimed" };
+
   let serverPostId: string;
   try {
     const result = await shareClubPost({
@@ -236,7 +286,8 @@ export async function shareOnePost(postId: string): Promise<ShareOutcome> {
     });
     serverPostId = result.id;
   } catch (error) {
-    return recordShareFailure(post, error);
+    // Not accepted: the request may go back on the row.
+    return recordShareFailure(post, error, requestedAt);
   }
   return recordAcceptedShare(post, serverPostId);
 }
@@ -245,6 +296,12 @@ export async function shareOnePost(postId: string): Promise<ShareOutcome> {
 async function recordShareFailure(
   post: { id: string; shareAttempts: number },
   error: unknown,
+  /**
+   * The request the claim took, passed ONLY when the server did not accept
+   * the share: a retryable failure or a pause puts it back. Never passed
+   * after acceptance, so an accepted share is never requested again.
+   */
+  requestedAt?: Date,
 ): Promise<ShareOutcome> {
   // The gate can still refuse between the pre-check and the send (a version
   // recorded by another container, or the inline self-heal on a never-asked
@@ -255,6 +312,12 @@ async function recordShareFailure(
       { postId: post.id, expected: error.expected, serverVersion: error.serverVersion },
       "Sharing a club post is paused: the central server API version differs",
     );
+    if (requestedAt) {
+      await prisma.clubPost.updateMany({
+        where: { id: post.id, shareRequestedAt: null, sharedAt: null, serverPostId: null },
+        data: { shareRequestedAt: requestedAt },
+      });
+    }
     return { status: "paused" };
   }
   const attempts = post.shareAttempts + 1;
@@ -277,7 +340,8 @@ async function recordShareFailure(
     data: {
       shareError: recorded,
       shareAttempts: attempts,
-      ...(retryable ? {} : { shareRequestedAt: null }),
+      // Back on the row only for a share the server did not take (#4590 review).
+      ...(retryable && requestedAt ? { shareRequestedAt: requestedAt } : { shareRequestedAt: null }),
     },
   });
 
@@ -290,19 +354,20 @@ async function recordShareFailure(
 
 /**
  * Record a share the central server ACCEPTED (#4590). The post is on the
- * server under `serverPostId` from here, so nothing below sends it again: a
- * stamp that failed used to fall into the attempt-failure path, keep the
- * request, and the next sweep shared the post a second time, leaving the
- * first copy with no id here to withdraw it by.
+ * server under `serverPostId` from here, and its request was taken off the
+ * row by the claim before the send, so nothing sends it again.
  *
- * The id already returned is retried instead, in three steps: the locked stamp
+ * The id already returned is retried, in three steps: the locked stamp
  * ({@link stampShare}); then a guarded write of the id alone, without the
  * settings lock (enough when that lock was the trouble, and refused by the
  * unique `serverPostId` if the mirror already copied the post back); then the
- * locked stamp once more, which removes such a copy. If all three fail, the
- * request is cleared, so it is never sent again, and the failure names the
- * server id for an officer. Needs no new column: the id is recorded where it
- * always lives, or named in `shareError`.
+ * locked stamp once more, which removes such a copy. EVERY EXIT NAMES THE
+ * SERVER ID (#4590 review): a conflict or a different id already held is a
+ * final failure whose `shareError` names it; all three failing records it in
+ * `shareError`; a post deleted meanwhile, or a recording write that fails
+ * too, leaves the id in the error log only. Nothing on screen shows
+ * `shareError` yet; docs/guides/message-board.md says where to find the id
+ * and how to have that copy taken down.
  */
 async function recordAcceptedShare(
   post: { id: string; shareAttempts: number },
@@ -314,8 +379,17 @@ async function recordAcceptedShare(
       await stamp(post.id, serverPostId);
       return { status: "shared", serverPostId };
     } catch (error) {
-      // Not ours to delete: the same final refusal as before (#4588 review).
-      if (error instanceof ShareStampConflictError) return recordShareFailure(post, error);
+      // Final, and never sent again: not our copy to delete (#4588 review), or
+      // our post already holds another id (#4590 review). The request is not
+      // passed, so it stays off the row.
+      if (error instanceof ShareStampConflictError || error instanceof ShareStampMismatchError) {
+        logger.error({ postId: post.id, serverPostId, err: error }, "A share the central server accepted was not recorded here");
+        return recordShareFailure(post, error);
+      }
+      if (error instanceof ShareStampPostGoneError) {
+        logger.error({ postId: post.id, serverPostId }, "A shared post was deleted before its share was recorded; its copy on the central server has no local record");
+        return { status: "failed", error: error.message, retryable: false };
+      }
       lastError = error;
     }
   }
@@ -323,11 +397,12 @@ async function recordAcceptedShare(
   try {
     await prisma.clubPost.update({
       where: { id: post.id },
-      data: { shareRequestedAt: null, shareAttempts: post.shareAttempts + 1, shareError: message },
+      data: { shareAttempts: post.shareAttempts + 1, shareError: message },
     });
   } catch (error) {
-    // Nothing more can be recorded; the log is the record.
-    logger.error({ postId: post.id, serverPostId, err: error }, "Could not record a share the central server accepted, nor clear its request");
+    // Nothing more can be recorded; the log is the record. The request was
+    // already taken off the row by the claim, so it is still never re-sent.
+    logger.error({ postId: post.id, serverPostId, err: error }, "Could not record a share the central server accepted");
   }
   logger.error({ postId: post.id, serverPostId, err: lastError }, "A share the central server accepted could not be recorded here; it will not be sent again");
   return { status: "failed", error: message, retryable: false };
