@@ -6071,6 +6071,43 @@ enqueue joins its caller's transaction. An inbound void racing a create's
 record on one payment can take the same two rows in the opposite order; that
 predates #4161 and is not changed here.
 
+## Retiring a deleted Xero payment's link (#4531)
+
+The inbound invoice and credit-note reconcile retires a `PAYMENT` link once Xero
+confirms its payment DELETED (`retireDeletedXeroPaymentLink`,
+`xero-inbound/deleted-payment-links.ts`, `INV-INT-031`); the operator backfill
+`applyDeletedPaymentLinkBackfill` uses the same write. It writes only
+`XeroObjectLink.active` and that link's `metadata.status`: no money column, no
+booking status, no pointer. Under `INV-LOCK-001` it joins no advisory cohort and
+takes no advisory key (`INV-LOCK-002`, `INV-LOCK-003` unchanged), and it takes
+no explicit row lock.
+
+- **Provider call outside any transaction.** The reconcile is not wrapped in a
+  transaction (its callers: the stored-event worker under the event's
+  status claim, the incremental cursor, "Sync now", the bank-refund void
+  answer). The confirming `GET /Payments/{id}` runs between its short link
+  writes, never inside one (`INV-INT-003`).
+- **The claim.** One statement per link:
+  `updateMany where { id, xeroObjectType: "PAYMENT", active: true, metadata = <as read> }`.
+  A concurrent writer that changed the metadata, or retired it first, makes
+  the count 0. The retire then re-reads and tries once more over the fresh
+  metadata, or stops if the link is already inactive. It never overwrites a
+  field it did not read. DELETED is terminal in Xero, so retiring over a
+  newer reading is always right.
+- **No counterpart deadlock.** It holds one row lock for one statement and
+  waits on nothing else. The link funnel's canonical rules
+  (`deactivateOtherCanonicalLinksWithClient`, the `REFUND_PAYMENT`
+  single-active rule) run only for a write that leaves its link active, so the
+  retire never retires a sibling.
+- **Stated limit.** A reconcile holding a payload read before the deletion can
+  upsert the link live after the retire, because the funnel takes no row lock
+  first. The link is then a candidate again on the next read of the document,
+  and the backfill finds it.
+
+Reconciled against the last ten merges touching `src/lib/xero-inbound`
+(#4543, #4555, #4539, #4437, #4443, #4339, #4341, #4228, #4289, #4231). None
+writes a `PAYMENT` link's `active` flag or reads one this retire changes.
+
 ## Voided bank-transfer refund note follow-up (#4162)
 
 `followUpVoidedBankRefundNote` (`src/lib/bank-refund-void-follow-up.ts`, owner
