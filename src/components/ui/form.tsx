@@ -365,9 +365,12 @@ function FormErrorSummary({
     >
       <XCircle aria-hidden className="mt-0.5 size-4 shrink-0" />
       <div className="min-w-0 flex-1 space-y-1">
-        <h2 id={titleId} className="font-medium">
+        {/* A paragraph, not a heading: the summary sits inside forms at
+            every heading depth, and names the alert through
+            `aria-labelledby` either way. */}
+        <p id={titleId} className="font-medium">
           {title}
-        </h2>
+        </p>
         <ul className="list-disc space-y-1 pl-5">
           {shown.map((entry, index) => (
             <li key={`${entry.name ?? "form"}-${index}`}>
