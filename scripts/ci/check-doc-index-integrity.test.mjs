@@ -15,6 +15,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   AGENT_DOC_BUDGET_SLACK,
   BYTE_ORDER_MARK,
+  agentDocBudgetDrift,
   auditAgentDocWordBudgets,
   auditControlCharacters,
   auditDefinitionHeadingShapes,
@@ -3906,12 +3907,42 @@ describe("agent-doc word ceilings (#4462)", () => {
     expect(problems[0]).toContain("docs/agents/A.md is 101 words; its ceiling is 100");
   });
 
-  it("fails a ceiling that has drifted more than the slack above its page", () => {
-    const problems = auditAgentDocWordBudgets(
-      files({ "docs/agents/A.md": prose(100) }, [`| \`docs/agents/A.md\` | ${101 + AGENT_DOC_BUDGET_SLACK} |`]),
-    );
-    expect(problems).toHaveLength(1);
-    expect(problems[0]).toContain("Lower the ceiling");
+  it("fails a ceiling this change sets more than the slack above its page", () => {
+    const loose = `| \`docs/agents/A.md\` | ${101 + AGENT_DOC_BUDGET_SLACK} |`;
+    const head = files({ "docs/agents/A.md": prose(100) }, [loose]);
+    // Added against a base that had no row, or raised against one that had a tighter one.
+    for (const base of [files({}, []), files({}, ["| `docs/agents/A.md` | 100 |"])]) {
+      const problems = auditAgentDocWordBudgets(head, base);
+      expect(problems).toHaveLength(1);
+      expect(problems[0]).toContain(`sets the ceiling for docs/agents/A.md to ${101 + AGENT_DOC_BUDGET_SLACK}`);
+    }
+    // A row the change leaves alone only reports drift, as information.
+    expect(auditAgentDocWordBudgets(head, files({}, [loose]))).toEqual([]);
+    expect(auditAgentDocWordBudgets(head)).toEqual([]);
+    expect(agentDocBudgetDrift(head)).toEqual([
+      expect.objectContaining({ rel: "docs/agents/A.md", words: 100, ceiling: 101 + AGENT_DOC_BUDGET_SLACK }),
+    ]);
+  });
+
+  it("keeps main green when two lanes each shrink one page without touching its row", () => {
+    // main: A at 300 words, ceiling 300. Lane 1 cuts 30 words, lane 2 cuts a
+    // different 30; each is green alone (within the slack). Merged, A is 240
+    // and the untouched row is 60 above it, which a floor on every row would
+    // fail on main with neither lane at fault.
+    const row = ["| `docs/agents/A.md` | 300 |"];
+    const base = files({ "docs/agents/A.md": prose(300) }, row);
+    expect(auditAgentDocWordBudgets(files({ "docs/agents/A.md": prose(270) }, row), base)).toEqual([]);
+    const merged = files({ "docs/agents/A.md": prose(240) }, row);
+    expect(auditAgentDocWordBudgets(merged, base)).toEqual([]);
+    // Through auditDocs too, which hands the audit its baseline. (Reachability
+    // is another audit, and this fixture has no hub linking the page.)
+    const budgetFindings = (map) =>
+      auditDocs(map, { baselineFiles: base }).filter((p) => p.includes("docs/agents/A.md") && !p.includes("not reachable"));
+    expect(budgetFindings(merged)).toEqual([]);
+    expect(budgetFindings(files({ "docs/agents/A.md": prose(240) }, ["| `docs/agents/A.md` | 299 |"]))).toHaveLength(1);
+    expect(agentDocBudgetDrift(merged)).toHaveLength(1);
+    // Growth past an unchanged ceiling still fails.
+    expect(auditAgentDocWordBudgets(files({ "docs/agents/A.md": prose(301) }, row), base)).toHaveLength(1);
   });
 
   it("fails an unregistered page, including when the register is missing", () => {
@@ -3951,6 +3982,6 @@ describe("agent-doc word ceilings (#4462)", () => {
 
   it("states the enforced slack in the register, so the doc and the gate agree", () => {
     const text = readFileSync(path.join(REPO_ROOT, WORD_BUDGET_REGISTER), "utf8").replace(/\s+/g, " ");
-    expect(text).toContain(`more than ${AGENT_DOC_BUDGET_SLACK} words under its ceiling`);
+    expect(text).toContain(`at most ${AGENT_DOC_BUDGET_SLACK} words above its page`);
   });
 });

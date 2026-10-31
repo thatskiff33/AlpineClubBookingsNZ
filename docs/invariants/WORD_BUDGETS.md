@@ -1,20 +1,22 @@
-# Word-budget register: approved exceptions and migration ratchet
+# Word-budget register: invariant exceptions, migration ratchet, agent-doc ceilings
 
 Audience: Developer, Agent.
 
 Index: [`docs/DOMAIN_INVARIANTS.md`](../DOMAIN_INVARIANTS.md) · the rule this
-register serves: [`SCHEME.md`](SCHEME.md) §8.1 · deciding issue: #2789.
+register serves: [`SCHEME.md`](SCHEME.md) §8.1 · deciding issues: #2789 (the
+invariant tables), #4462 (the agent-doc table).
 
 Every invariant entry is at most **300 words** and every index-row description
 at most **12 words** (`SCHEME.md` §8.1). This file is the only place an entry
 may be allowed more, and `pnpm run docs:indexcheck` reads it: an id listed here
 is held to the limit on its row, an id not listed here is held to 300, and the
-index cap has no register at all. **Nothing in this file is a rule and nothing
-here has an id**; it is an inventory the gate enforces exactly, so a row that is
-stale, duplicated, malformed or for an id nothing defines fails the check.
+index cap has no register at all. **Nothing in the two invariant tables is a
+rule and nothing there has an id**; they are an inventory the gate enforces
+exactly, so a row that is stale, duplicated, malformed or for an id nothing
+defines fails the check.
 
 The last table, [Agent docs](#agent-docs), holds the ceilings for the agent
-guides under `docs/agents/`.
+guides under `docs/agents/`, under the looser rules stated there.
 
 To read a figure the way the gate does, run
 `node scripts/ci/check-doc-index-integrity.mjs --words`. Do not measure with a
@@ -170,18 +172,21 @@ stays for the agent-doc ceilings below.
 
 Every top-level `docs/agents/*.md` page has a word ceiling here (#4462), measured
 over the whole file the same way. Agent guidance is read under context
-pressure, so it may not grow by default: a page over its ceiling fails, a page
-with no row fails, and a page more than 50 words under its ceiling fails until
-the row is lowered, so the ceiling follows the page down. Raising one is a
-deliberate edit a reviewer sees; the cheaper fix is usually to compact, to move
-detail to the doc that owns it, or to turn a mechanical rule into a hook
-(`scripts/agent-hooks/rules.mjs`). Exact form, one row per page:
+pressure, so it may not grow by default: a page over its ceiling fails, and a
+page with no row fails. A ceiling a change adds or alters must sit at most 50
+words above its page; a row the change leaves alone is never failed for sitting
+further above a page that shrank (two lanes shrinking one page would otherwise
+redden `main` between them), and the check prints a note suggesting it be
+lowered. Raising one is a deliberate edit a reviewer sees; the cheaper fix is
+usually to compact, to move detail to the doc that owns it, or to turn a
+mechanical rule into a hook (`scripts/agent-hooks/rules.mjs`). Exact form, one
+row per page:
 
 | File | Ceiling |
 | --- | ---: |
 | `docs/agents/CODEX_PROMPTS.md` | 1050 |
 | `docs/agents/CODEX_WORKFLOW.md` | 2450 |
-| `docs/agents/COORDINATION.md` | 2300 |
+| `docs/agents/COORDINATION.md` | 2350 |
 | `docs/agents/DATASET_RESET_INVENTORY.md` | 750 |
 | `docs/agents/EPIC_PLAYBOOK.md` | 4450 |
 | `docs/agents/ISSUE_WORKFLOW.md` | 3400 |

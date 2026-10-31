@@ -1942,9 +1942,12 @@ export const AGENT_DOC_PATTERN = /^docs\/agents\/[^/]+\.md$/;
 export const AGENT_DOC_BUDGET_HEADING = "Agent docs";
 
 /**
- * How far a ceiling may sit above its page. A page that shrinks by more than
- * this must have its row lowered, so the ceiling follows it down and cannot
- * become room to grow back into.
+ * How far a ceiling may sit above its page when a change SETS it: a row this
+ * change adds or alters against the base must be at or within this many words
+ * above its page, so a ceiling is never written as room to grow into. A row
+ * the change leaves alone fails only when its page goes over it. A floor on
+ * unchanged rows would let two green pull requests that each shrink one page
+ * redden `main` between them, so drift there is reported, not failed.
  */
 export const AGENT_DOC_BUDGET_SLACK = 50;
 
@@ -1988,13 +1991,37 @@ export function parseAgentDocBudgets(files) {
   return { ceilings, problems };
 }
 
-/** Every agent guide within its ceiling, every ceiling close to its page. */
-export function auditAgentDocWordBudgets(files) {
+/**
+ * The agent guides whose ceiling sits more than {@link AGENT_DOC_BUDGET_SLACK}
+ * words above their page: `[{ rel, words, ceiling, at }]`, for the information
+ * lines the CLI prints and the `--words` inventory.
+ */
+export function agentDocBudgetDrift(files) {
+  const { ceilings } = parseAgentDocBudgets(files);
+  const drift = [];
+  for (const [rel, { at, ceiling }] of ceilings) {
+    const text = files.get(rel);
+    if (text === undefined) continue;
+    const words = countWords(text);
+    if (ceiling - words > AGENT_DOC_BUDGET_SLACK) drift.push({ rel, words, ceiling, at });
+  }
+  return drift;
+}
+
+/**
+ * Every agent guide within its ceiling, every row well formed and live, and
+ * every ceiling this change sets close to its page. `baselineFiles` is the
+ * base the checker already resolves for invariant ids; without one, no row
+ * counts as set by this change.
+ */
+export function auditAgentDocWordBudgets(files, baselineFiles = null) {
   const { ceilings, problems } = parseAgentDocBudgets(files);
+  const baseCeilings = baselineFiles ? parseAgentDocBudgets(baselineFiles).ceilings : null;
   const pages = [...files.keys()].filter((rel) => AGENT_DOC_PATTERN.test(rel)).sort();
   for (const rel of pages) {
     const words = countWords(files.get(rel));
     const record = ceilings.get(rel);
+    const setHere = baseCeilings !== null && baseCeilings.get(rel)?.ceiling !== record?.ceiling;
     if (!record) {
       problems.push(
         `${rel} is ${words} words and has no row in the "${AGENT_DOC_BUDGET_HEADING}" table of ` +
@@ -2007,11 +2034,11 @@ export function auditAgentDocWordBudgets(files) {
           "to the doc that owns it, or turn a mechanical rule into a hook (#4462). Raising the " +
           "ceiling is a deliberate change a reviewer sees.",
       );
-    } else if (record.ceiling - words > AGENT_DOC_BUDGET_SLACK) {
+    } else if (setHere && record.ceiling - words > AGENT_DOC_BUDGET_SLACK) {
       problems.push(
-        `${rel} is ${words} words, more than ${AGENT_DOC_BUDGET_SLACK} under its ceiling of ` +
-          `${record.ceiling} (${record.at}). Good — it shrank. Lower the ceiling to at or just ` +
-          `above ${words} so it cannot grow back.`,
+        `${record.at} sets the ceiling for ${rel} to ${record.ceiling}, more than ` +
+          `${AGENT_DOC_BUDGET_SLACK} words above its ${words} words. A ceiling this change writes ` +
+          `goes at or just above the page, so it is not room to grow into.`,
       );
     }
   }
@@ -2885,7 +2912,7 @@ export function auditDocs(
     ...auditIndexRows(files),
     ...auditIndexCatalogueRows(files),
     ...auditWordBudgets(files),
-    ...auditAgentDocWordBudgets(files),
+    ...auditAgentDocWordBudgets(files, baselineFiles),
     ...auditRoutingTable(files),
     ...auditLineNumberCitations(files),
     ...auditDocReachability(files),
@@ -3359,7 +3386,12 @@ export function formatWordInventory(files) {
   lines.push("", `agent docs (words / ceiling): ${agentDocs.length}`);
   for (const rel of agentDocs) {
     const ceiling = ceilings.get(rel)?.ceiling ?? "none";
-    lines.push(`${String(countWords(files.get(rel))).padStart(5)} / ${String(ceiling).padStart(5)}  ${rel}`);
+    const words = countWords(files.get(rel));
+    const drifted = typeof ceiling === "number" && ceiling - words > AGENT_DOC_BUDGET_SLACK;
+    lines.push(
+      `${String(words).padStart(5)} / ${String(ceiling).padStart(5)}  ${rel}` +
+        (drifted ? "  (shrank; the ceiling can be lowered)" : ""),
+    );
   }
   return lines.join("\n");
 }
@@ -3413,6 +3445,12 @@ if (invokedPath === import.meta.url) {
           `Scanned ${files.size} of ${trackedCount} tracked file(s) — the gap is Git's ` +
           "binary classification, and the clause above is what accounts for it.",
       );
+      for (const { rel, words, ceiling, at } of agentDocBudgetDrift(files)) {
+        console.log(
+          `Note: ${rel} is ${words} words, more than ${AGENT_DOC_BUDGET_SLACK} under its ceiling of ` +
+            `${ceiling} (${at}). Lowering the ceiling is welcome but not required.`,
+        );
+      }
     }
   } catch (error) {
     console.error(`Documentation index integrity check failed: ${error.message}`);
