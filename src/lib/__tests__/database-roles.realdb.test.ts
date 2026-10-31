@@ -54,6 +54,7 @@ const RACE_DB_URL = process.env.CONCURRENCY_RACE_DATABASE_URL ?? "";
 const REPO_ROOT = process.cwd();
 const INSUFFICIENT_PRIVILEGE = "42501";
 const RESTRICT_VIOLATION = "23001";
+const FOREIGN_KEY_VIOLATION = "23503";
 const CHECK_VIOLATION = "23514";
 
 const PREFIX = `tac_test_4453_${randomBytes(3).toString("hex")}`;
@@ -565,11 +566,19 @@ async function privilegeSnapshot(database: string, { includeDatabaseAcl = true }
         expect(lines).toEqual([{ bookingId, lodgeId }]);
       });
 
-      it("still deletes a booking's ledger lines with the booking: the documented ON DELETE CASCADE", async () => {
-        const doomed = "tac4453-deleted-booking";
+      // #4514 (Ledger M2), the #4482 acceptance criterion: an application-role
+      // booking delete cannot remove ledger lines. D1 (owner, 28 Oct 2026) made
+      // every financial key RESTRICT; a referential action runs with the table
+      // owner's rights, so before it the cascade was a route around the grant.
+      it("cannot remove a booking's ledger lines, or blank a credit row's booking link, by deleting the booking (#4482, D1)", async () => {
+        const kept = "tac4514-booking-with-history";
+        const memberId = "tac4514-member";
+        await appPrisma.member.create({
+          data: { id: memberId, email: `${memberId}@example.invalid`, passwordHash: "not-a-real-password", firstName: "Ledger", lastName: "Keeper" },
+        });
         await appPrisma.booking.create({
           data: {
-            id: doomed,
+            id: kept,
             lodgeId,
             organisationId: "tac4453-organisation",
             checkIn: new Date("2026-09-01T00:00:00.000Z"),
@@ -578,15 +587,87 @@ async function privilegeSnapshot(database: string, { includeDatabaseAcl = true }
             finalPriceCents: 100,
           },
         });
-        await appPrisma.bookingLedgerLine.create({
+        const line = await appPrisma.bookingLedgerLine.create({
           data: {
-            bookingId: doomed, lodgeId, side: "ADJUSTMENT", kind: "AGREED_ADJUSTMENT", sign: 1, quantity: 1,
-            unitCents: 100, amountCents: 100, guestNames: [], anchorKind: "REVIEW_TASK", anchorId: "tac4453-delete",
-            narration: "Adjustment agreed with member: deleted with its booking",
+            bookingId: kept, lodgeId, side: "ADJUSTMENT", kind: "AGREED_ADJUSTMENT", sign: 1, quantity: 1,
+            unitCents: 100, amountCents: 100, guestNames: [], anchorKind: "REVIEW_TASK", anchorId: "tac4514-delete",
+            narration: "Adjustment agreed with member: outlives its booking",
           },
         });
-        await appPrisma.booking.delete({ where: { id: doomed } });
-        expect(await appPrisma.bookingLedgerLine.count({ where: { bookingId: doomed } })).toBe(0);
+        const credit = await appPrisma.memberCredit.create({
+          data: { memberId, amountCents: -100, type: "BOOKING_APPLIED", description: "tac4514 applied", appliedToBookingId: kept },
+        });
+
+        // Every route the application role has to the booking row.
+        await expect(appPrisma.booking.delete({ where: { id: kept } })).rejects.toMatchObject({ code: "P2003" });
+        await expect(appPrisma.booking.deleteMany({ where: { id: kept } })).rejects.toMatchObject({ code: "P2003" });
+        await withClient(urlFor(DATABASES.upgrade, "app"), async (client) => {
+          await client.query("BEGIN");
+          expect(await sqlstate(client, `DELETE FROM "Booking" WHERE "id" = $1`, [kept])).toBe(FOREIGN_KEY_VIOLATION);
+          expect(await sqlstate(client, `DELETE FROM "Lodge" WHERE "id" = $1`, [lodgeId])).toBe(FOREIGN_KEY_VIOLATION);
+          expect(await sqlstate(client, `TRUNCATE "Booking" CASCADE`)).toBe(INSUFFICIENT_PRIVILEGE);
+          // The parent-key routes: a line's own key is not the application's to
+          // change, and the parents' keys stay refused (S-F1).
+          expect(await sqlstate(client, `UPDATE "BookingLedgerLine" SET "id" = 'tac4514-renamed' WHERE "id" = $1`, [line.id])).toBe(INSUFFICIENT_PRIVILEGE);
+          expect(await sqlstate(client, `UPDATE "Booking" SET "id" = 'tac4514-renamed' WHERE "id" = $1`, [kept])).toBe(RESTRICT_VIOLATION);
+          await client.query("ROLLBACK");
+        });
+        // The owner is refused too: RESTRICT binds whoever deletes. With the line
+        // gone (only the owner can), the credit row alone still refuses it.
+        await withClient(urlFor(DATABASES.upgrade), async (client) => {
+          await client.query("BEGIN");
+          expect(await sqlstate(client, `DELETE FROM "Booking" WHERE "id" = $1`, [kept])).toBe(FOREIGN_KEY_VIOLATION);
+          expect(await sqlstate(client, `DELETE FROM "BookingLedgerLine" WHERE "id" = $1`, [line.id])).toBe("ok");
+          expect(await sqlstate(client, `DELETE FROM "Booking" WHERE "id" = $1`, [kept])).toBe(FOREIGN_KEY_VIOLATION);
+          await client.query("ROLLBACK");
+        });
+
+        expect(await appPrisma.bookingLedgerLine.findMany({ where: { bookingId: kept }, select: { id: true } })).toEqual([{ id: line.id }]);
+        expect(await appPrisma.memberCredit.findUniqueOrThrow({ where: { id: credit.id }, select: { appliedToBookingId: true } }))
+          .toEqual({ appliedToBookingId: kept });
+        expect(await appPrisma.booking.count({ where: { id: kept } })).toBe(1);
+      });
+
+      it("still hard-deletes a draft that carries no money, as the previous release's draft paths do", async () => {
+        const draft = "tac4514-money-free-draft";
+        await appPrisma.booking.create({
+          data: {
+            id: draft,
+            lodgeId,
+            organisationId: "tac4453-organisation",
+            status: "DRAFT",
+            checkIn: new Date("2026-09-03T00:00:00.000Z"),
+            checkOut: new Date("2026-09-04T00:00:00.000Z"),
+            totalPriceCents: 100,
+            finalPriceCents: 100,
+            guests: { create: [{ firstName: "Draft", lastName: "Guest", ageTier: "ADULT", priceCents: 100, stayStart: new Date("2026-09-03T00:00:00.000Z"), stayEnd: new Date("2026-09-04T00:00:00.000Z") }] },
+          },
+        });
+        await appPrisma.booking.delete({ where: { id: draft } });
+        expect(await appPrisma.booking.count({ where: { id: draft } })).toBe(0);
+        expect(await appPrisma.bookingGuest.count({ where: { bookingId: draft } })).toBe(0);
+      });
+
+      it("holds every key a money line or a credit row's booking link has as RESTRICT both ways, so no referential action can reach one", async () => {
+        const { rows } = await withClient(urlFor(DATABASES.upgrade), (client) => client.query(
+          `SELECT c.conrelid::regclass::text AS relation, a.attname AS "column", c.confdeltype AS "onDelete",
+                  c.confupdtype AS "onUpdate", c.convalidated AS validated
+             FROM pg_constraint c
+             JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = c.conkey[1]
+            WHERE c.contype = 'f' AND c.connamespace = 'public'::regnamespace
+              AND (c.conrelid::regclass::text = ANY($1::text[])
+                OR (c.conrelid = '"MemberCredit"'::regclass
+                  AND a.attname IN ('sourceBookingId', 'appliedToBookingId', 'sourceBookingModificationId')))
+            ORDER BY 1, 2`,
+          [["\"BookingLedgerLine\"", ...MEMBER_MONEY_RELATIONS.map((name) => `"${name}"`)]],
+        ));
+        // Not vacuous: the legacy ledger's three keys, the credit links and the journal's keys are all here.
+        expect(rows.filter((row) => row.relation === '"BookingLedgerLine"').map((row) => row.column).sort())
+          .toEqual(["bookingId", "lodgeId", "reversesLineId"]);
+        expect(rows.filter((row) => row.relation === '"MemberCredit"')).toHaveLength(3);
+        expect(rows.filter((row) => row.relation === '"MemberMoneyLine"').map((row) => row.column))
+          .toEqual(expect.arrayContaining(["bookingId", "lodgeId", "journalId"]));
+        expect(rows.filter((row) => row.onDelete !== "r" || row.onUpdate !== "r" || !row.validated)).toEqual([]);
       });
 
       it("may create a temporary table, which nothing else grants it once AI Diagnostics revoked PUBLIC's", async () => {
