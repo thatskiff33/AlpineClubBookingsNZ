@@ -75,9 +75,10 @@ function shortCluster(word, letter) {
 }
 
 /**
- * The commands a launcher would run on the command's behalf: `pnpm exec x`,
- * `pnpm x` (pnpm runs an installed binary by name) and `npm run` are not
- * expanded beyond that, because a script name says nothing about its body.
+ * The command pnpm runs on this command's behalf: `pnpm exec x`, or `pnpm x`,
+ * since pnpm runs an installed binary by name. `pnpm run <script>` yields
+ * `run <script>`, which no rule matches: a script name says nothing about its
+ * body.
  */
 function launched(words) {
   if (words[0] !== "pnpm") return [];

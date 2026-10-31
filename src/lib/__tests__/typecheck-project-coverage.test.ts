@@ -56,6 +56,11 @@ const JAVASCRIPT_VITEST_TESTS = [
   "scripts/eslint/accessibility.test.mjs",
   "scripts/eslint/fixture-import.test.mjs",
   "scripts/eslint/ratchet.test.mjs",
+  // #4462: the frozen-clock lint rule, a bare-Node .mjs rule like the above.
+  "scripts/eslint/test-clock.test.mjs",
+  // #4462: the agent-rule hook dispatcher runs under bare `node` before every
+  // Bash call an agent makes, so it and its suite stay JavaScript.
+  "scripts/agent-hooks/agent-hooks.test.mjs",
   // #3254 split the dependency audit out of `verify` into its own job and its
   // own `.mjs` tool. Its suite tests that tool, so it stays JavaScript for the
   // same reason every other entry here does. It arrived on `main`, whose copy of
