@@ -404,6 +404,12 @@ function latch() {
   describe("the old server's push secret (#4470)", () => {
     const savedNextAuthUrl = process.env.NEXTAUTH_URL;
 
+    // Push secrets the doubled server issues, built at runtime so the tree
+    // carries no key-shaped literal (#4470; `.gitleaks.toml` forgives the one
+    // an earlier commit wrote). The schema wants at least 32 characters.
+    const OLD_SERVER_SECRET = "o".repeat(40);
+    const STANDING_SECRET = "s".repeat(40);
+
     async function storedPushSecret() {
       const { readIntegrationCredentialRow } = await import("@/lib/integration-credentials");
       const row = await readIntegrationCredentialRow(prisma, "servernz", "push_secret");
@@ -442,7 +448,7 @@ function latch() {
         expect(String(url)).toBe(`${OLD_URL}/api/v1/push-target`);
         // The administrator moves the address while the PUT is out.
         await moveAddress();
-        return new Response(JSON.stringify({ url: "https://club.race-4470.example.invalid/api/webhooks/servernz-posts", secretVersion: 1, secret: "race-4470-old-server-secret-padded-to-32-chars" }));
+        return new Response(JSON.stringify({ url: "https://club.race-4470.example.invalid/api/webhooks/servernz-posts", secretVersion: 1, secret: OLD_SERVER_SECRET }));
       });
       await ensurePushRegistration();
       expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -460,10 +466,10 @@ function latch() {
       process.env.NEXTAUTH_URL = "https://club.race-4470.example.invalid";
       const { ensurePushRegistration } = await import("@/lib/club-post-mirror");
       fetchMock.mockImplementation(async () => new Response(JSON.stringify({
-        url: "https://club.race-4470.example.invalid/api/webhooks/servernz-posts", secretVersion: 1, secret: "race-4470-standing-secret-padded-to-32-chars",
+        url: "https://club.race-4470.example.invalid/api/webhooks/servernz-posts", secretVersion: 1, secret: STANDING_SECRET,
       })));
       await ensurePushRegistration();
-      expect(await storedPushSecret()).toBe("race-4470-standing-secret-padded-to-32-chars");
+      expect(await storedPushSecret()).toBe(STANDING_SECRET);
     });
   });
 
