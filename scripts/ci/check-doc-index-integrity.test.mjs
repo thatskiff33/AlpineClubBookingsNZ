@@ -13,7 +13,9 @@ import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
+  AGENT_DOC_BUDGET_SLACK,
   BYTE_ORDER_MARK,
+  auditAgentDocWordBudgets,
   auditControlCharacters,
   auditDefinitionHeadingShapes,
   auditDocReachability,
@@ -3877,5 +3879,78 @@ describe("the checker's own source", () => {
         new Map([["scripts/ci/check-doc-index-integrity.mjs", checkerSource]]),
       ),
     ).toEqual([]);
+  });
+});
+
+describe("agent-doc word ceilings (#4462)", () => {
+  const prose = (n) => Array.from({ length: n }, (_, i) => `w${i + 1}`).join(" ");
+  const register = (rows) =>
+    ["# Word budgets", "", "## Agent docs", "", "| File | Ceiling |", "| --- | ---: |", ...rows, ""].join("\n");
+  const files = (pages, rows) =>
+    new Map([
+      ...Object.entries(pages),
+      ...(rows === undefined ? [] : [[WORD_BUDGET_REGISTER, register(rows)]]),
+    ]);
+
+  it("passes a page at or under its ceiling and within the slack", () => {
+    const pages = { "docs/agents/A.md": prose(100) };
+    expect(auditAgentDocWordBudgets(files(pages, ["| `docs/agents/A.md` | 100 |"]))).toEqual([]);
+    expect(
+      auditAgentDocWordBudgets(files(pages, [`| \`docs/agents/A.md\` | ${100 + AGENT_DOC_BUDGET_SLACK} |`])),
+    ).toEqual([]);
+  });
+
+  it("fails a page over its ceiling", () => {
+    const problems = auditAgentDocWordBudgets(files({ "docs/agents/A.md": prose(101) }, ["| `docs/agents/A.md` | 100 |"]));
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain("docs/agents/A.md is 101 words; its ceiling is 100");
+  });
+
+  it("fails a ceiling that has drifted more than the slack above its page", () => {
+    const problems = auditAgentDocWordBudgets(
+      files({ "docs/agents/A.md": prose(100) }, [`| \`docs/agents/A.md\` | ${101 + AGENT_DOC_BUDGET_SLACK} |`]),
+    );
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain("Lower the ceiling");
+  });
+
+  it("fails an unregistered page, including when the register is missing", () => {
+    for (const rows of [[], undefined]) {
+      const problems = auditAgentDocWordBudgets(files({ "docs/agents/NEW.md": prose(3) }, rows));
+      expect(problems).toHaveLength(1);
+      expect(problems[0]).toContain("docs/agents/NEW.md is 3 words and has no row");
+    }
+  });
+
+  it("fails stale, duplicate and malformed rows, and ignores nested pages and other docs", () => {
+    const problems = auditAgentDocWordBudgets(
+      files(
+        { "docs/agents/A.md": prose(10), "docs/agents/codex/skills/X.md": prose(9999), "docs/OTHER.md": prose(9999) },
+        [
+          "| `docs/agents/A.md` | 10 |",
+          "| `docs/agents/A.md` | 10 |",
+          "| `docs/agents/GONE.md` | 10 |",
+          "| docs/agents/A.md | 10 |",
+          "| `docs/agents/A.md` | 010 |",
+        ],
+      ),
+    );
+    expect(problems).toHaveLength(4);
+    expect(problems.filter((problem) => problem.includes("a second time"))).toHaveLength(1);
+    expect(problems.filter((problem) => problem.includes("not a well-formed row"))).toHaveLength(2);
+    expect(problems.filter((problem) => problem.includes("docs/agents/GONE.md, which is not a tracked file"))).toHaveLength(1);
+  });
+
+  it("holds the real repository, and runs inside auditDocs", () => {
+    const tracked = loadTrackedFiles(REPO_ROOT);
+    expect(auditAgentDocWordBudgets(tracked)).toEqual([]);
+    const grown = new Map(tracked);
+    grown.set("docs/agents/MODELS.md", `${tracked.get("docs/agents/MODELS.md")}\n${prose(200)}\n`);
+    expect(auditDocs(grown).some((problem) => problem.startsWith("docs/agents/MODELS.md is "))).toBe(true);
+  });
+
+  it("states the enforced slack in the register, so the doc and the gate agree", () => {
+    const text = readFileSync(path.join(REPO_ROOT, WORD_BUDGET_REGISTER), "utf8").replace(/\s+/g, " ");
+    expect(text).toContain(`more than ${AGENT_DOC_BUDGET_SLACK} words under its ceiling`);
   });
 });

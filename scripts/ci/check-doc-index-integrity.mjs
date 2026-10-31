@@ -1934,6 +1934,96 @@ export function auditWordBudgets(files) {
 }
 
 /**
+ * The agent guides, each held to a word ceiling in {@link WORD_BUDGET_REGISTER}
+ * (#4462). Every top-level `docs/agents/*.md` page is read, so a new guide has
+ * to be given a row before it can merge.
+ */
+export const AGENT_DOC_PATTERN = /^docs\/agents\/[^/]+\.md$/;
+export const AGENT_DOC_BUDGET_HEADING = "Agent docs";
+
+/**
+ * How far a ceiling may sit above its page. A page that shrinks by more than
+ * this must have its row lowered, so the ceiling follows it down and cannot
+ * become room to grow back into.
+ */
+export const AGENT_DOC_BUDGET_SLACK = 50;
+
+const AGENT_DOC_CELL_PATTERN = /^`(docs\/agents\/[^/`]+\.md)`$/;
+
+/**
+ * Parse the {@link AGENT_DOC_BUDGET_HEADING} table:
+ * `{ ceilings: Map<path, { at, ceiling }>, problems }`.
+ */
+export function parseAgentDocBudgets(files) {
+  const ceilings = new Map();
+  const problems = [];
+  const text = files.get(WORD_BUDGET_REGISTER);
+  if (text === undefined) return { ceilings, problems };
+  let section = null;
+  for (const { number, text: line } of scannableLines(text)) {
+    const heading = line.match(INDEX_SECTION_HEADING_PATTERN);
+    if (heading) {
+      section = heading[1];
+      continue;
+    }
+    if (section !== AGENT_DOC_BUDGET_HEADING) continue;
+    const cells = splitTableCells(line);
+    if (!cells || cells[0] === "File" || /^:?-+:?$/.test(cells[0])) continue;
+    const at = `${WORD_BUDGET_REGISTER}:${number}`;
+    const file = cells[0].match(AGENT_DOC_CELL_PATTERN)?.[1];
+    if (!file || cells.length !== 2 || !WHOLE_NUMBER_PATTERN.test(cells[1])) {
+      problems.push(
+        `${at} is in the "${AGENT_DOC_BUDGET_HEADING}" table but is not a well-formed row. ` +
+          "The exact form is | `docs/agents/<Name>.md` | <ceiling> |, with a whole-number " +
+          "ceiling. A row that parses as nothing is a limit that is silently not enforced.",
+      );
+      continue;
+    }
+    if (ceilings.has(file)) {
+      problems.push(`${at} records ${file} a second time. One page has one ceiling.`);
+      continue;
+    }
+    ceilings.set(file, { at, ceiling: Number(cells[1]) });
+  }
+  return { ceilings, problems };
+}
+
+/** Every agent guide within its ceiling, every ceiling close to its page. */
+export function auditAgentDocWordBudgets(files) {
+  const { ceilings, problems } = parseAgentDocBudgets(files);
+  const pages = [...files.keys()].filter((rel) => AGENT_DOC_PATTERN.test(rel)).sort();
+  for (const rel of pages) {
+    const words = countWords(files.get(rel));
+    const record = ceilings.get(rel);
+    if (!record) {
+      problems.push(
+        `${rel} is ${words} words and has no row in the "${AGENT_DOC_BUDGET_HEADING}" table of ` +
+          `${WORD_BUDGET_REGISTER}. Add one with a ceiling at or just above ${words}.`,
+      );
+    } else if (words > record.ceiling) {
+      problems.push(
+        `${rel} is ${words} words; its ceiling is ${record.ceiling} (${record.at}). Agent guidance ` +
+          "is read under context pressure, so it may not grow by default: compact it, move detail " +
+          "to the doc that owns it, or turn a mechanical rule into a hook (#4462). Raising the " +
+          "ceiling is a deliberate change a reviewer sees.",
+      );
+    } else if (record.ceiling - words > AGENT_DOC_BUDGET_SLACK) {
+      problems.push(
+        `${rel} is ${words} words, more than ${AGENT_DOC_BUDGET_SLACK} under its ceiling of ` +
+          `${record.ceiling} (${record.at}). Good — it shrank. Lower the ceiling to at or just ` +
+          `above ${words} so it cannot grow back.`,
+      );
+    }
+  }
+  for (const [rel, { at }] of ceilings) {
+    if (!files.has(rel)) {
+      problems.push(`${at} records ${rel}, which is not a tracked file. Delete the row.`);
+    }
+  }
+  return problems;
+}
+
+/**
  * Inside a catalogue table of the index — a table whose header's first cell is
  * `ID` — every body row's first cell is a backticked id. A row with an empty
  * first cell renders as a continuation of the description above it and is
@@ -2795,6 +2885,7 @@ export function auditDocs(
     ...auditIndexRows(files),
     ...auditIndexCatalogueRows(files),
     ...auditWordBudgets(files),
+    ...auditAgentDocWordBudgets(files),
     ...auditRoutingTable(files),
     ...auditLineNumberCitations(files),
     ...auditDocReachability(files),
@@ -3263,6 +3354,13 @@ export function formatWordInventory(files) {
     }
   }
   lines.push("", `index rows over the ${INDEX_ROW_WORD_CAP}-word cap: ${overCap.length}`, ...overCap);
+  const { ceilings } = parseAgentDocBudgets(files);
+  const agentDocs = [...files.keys()].filter((rel) => AGENT_DOC_PATTERN.test(rel)).sort();
+  lines.push("", `agent docs (words / ceiling): ${agentDocs.length}`);
+  for (const rel of agentDocs) {
+    const ceiling = ceilings.get(rel)?.ceiling ?? "none";
+    lines.push(`${String(countWords(files.get(rel))).padStart(5)} / ${String(ceiling).padStart(5)}  ${rel}`);
+  }
   return lines.join("\n");
 }
 
@@ -3305,7 +3403,8 @@ if (invokedPath === import.meta.url) {
           `every index row is within ${INDEX_ROW_WORD_CAP} words and every entry within its ` +
           `word budget (${INVARIANT_ENTRY_WORD_BUDGET} by default, ${wordRegister.exceptions.size} approved ` +
           `exception(s), ${wordRegister.ratchet.size} ratchet record(s)), ` +
-          `every docs/ page is reachable, ${routedRows} routing row(s) resolve, all ` +
+          `every docs/agents page within its word ceiling (${parseAgentDocBudgets(files).ceilings.size} ` +
+          `ceiling(s)), every docs/ page is reachable, ${routedRows} routing row(s) resolve, all ` +
           `${STABLE_INDEX_HEADINGS.length} pre-split index headings are intact, no line ` +
           "number is cited into the invariants, no file is BOM'd or double-encoded, no " +
           "file carries a raw control character or an invisible format character, every " +

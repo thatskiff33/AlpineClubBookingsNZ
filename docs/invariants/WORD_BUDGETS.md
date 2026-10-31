@@ -13,6 +13,9 @@ index cap has no register at all. **Nothing in this file is a rule and nothing
 here has an id**; it is an inventory the gate enforces exactly, so a row that is
 stale, duplicated, malformed or for an id nothing defines fails the check.
 
+The last table, [Agent docs](#agent-docs), holds the ceilings for the agent
+guides under `docs/agents/`.
+
 To read a figure the way the gate does, run
 `node scripts/ci/check-doc-index-integrity.mjs --words`. Do not measure with a
 script of your own: two instruments that measure differently agree where both
@@ -69,9 +72,8 @@ exception: `INV-MONEY-029` went 655 to 808 on #4317, because the owner amended
 the rule itself (24 Oct 2026, on #4302: a capped carried promotion's night rows
 are scaled, the one rule-derived amount it allows, with every case that writes
 none listed), and an amendment the owner decides is new rule text, not drift to
-be compacted. When the last row goes,
-delete this section — and when the exceptions table is also empty, delete this
-file; the checker treats an absent register as "no exceptions, no debt".
+be compacted. When the last row goes, delete this section's table; the file
+stays for the agent-doc ceilings below.
 
 | ID | Words |
 | --- | ---: |
@@ -163,3 +165,30 @@ file; the checker treats an absent register as "no exceptions, no debt".
 | `INV-PAY-046` | 308 |
 | `INV-CAP-027` | 303 |
 | `INV-CAP-036` | 303 |
+
+## Agent docs
+
+Every top-level `docs/agents/*.md` page has a word ceiling here (#4462), measured
+over the whole file the same way. Agent guidance is read under context
+pressure, so it may not grow by default: a page over its ceiling fails, a page
+with no row fails, and a page more than 50 words under its ceiling fails until
+the row is lowered, so the ceiling follows the page down. Raising one is a
+deliberate edit a reviewer sees; the cheaper fix is usually to compact, to move
+detail to the doc that owns it, or to turn a mechanical rule into a hook
+(`scripts/agent-hooks/rules.mjs`). Exact form, one row per page:
+
+| File | Ceiling |
+| --- | ---: |
+| `docs/agents/CODEX_PROMPTS.md` | 1050 |
+| `docs/agents/CODEX_WORKFLOW.md` | 2450 |
+| `docs/agents/COORDINATION.md` | 2300 |
+| `docs/agents/DATASET_RESET_INVENTORY.md` | 750 |
+| `docs/agents/EPIC_PLAYBOOK.md` | 4450 |
+| `docs/agents/ISSUE_WORKFLOW.md` | 3400 |
+| `docs/agents/MODELS.md` | 850 |
+| `docs/agents/PROFILE_GUIDE.md` | 200 |
+| `docs/agents/PROMPT_INJECTION_GUIDE.md` | 300 |
+| `docs/agents/REVIEW_SEVERITY.md` | 400 |
+| `docs/agents/SCOPED_CONTEXT.md` | 850 |
+| `docs/agents/SEKRETON_ORCHESTRATOR.md` | 1800 |
+| `docs/agents/SUBAGENT_GUIDE.md` | 1100 |
