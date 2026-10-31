@@ -23,6 +23,7 @@
 
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import { SERVERNZ_ADDRESS_CHANGED_CODE } from "@/lib/servernz-api-version";
 import {
   readIntegrationCredentialRow,
   setIntegrationCredentialInTransaction,
@@ -118,6 +119,8 @@ export async function readServerNzCredentialVersion(
  * was written. The message is safe to show an administrator.
  */
 export class ServerNzAddressChangedError extends Error {
+  /** The machine code the credentials route's 409 carries for the setup page. */
+  readonly code = SERVERNZ_ADDRESS_CHANGED_CODE;
   constructor() {
     super(
       "The central server address was changed after this page was loaded, so the API key was not saved: it may have been issued for the old address. Reload the page, check the address, and enter the key again.",

@@ -17,7 +17,6 @@ import type {
   CredentialRequestContext,
 } from "@/lib/integration-credential-actor";
 import { WeakAuthSecretError } from "@/lib/integration-crypto";
-import { SERVERNZ_ADDRESS_CHANGED_CODE } from "@/lib/servernz-api-version";
 import {
   credentialWriteResetsXeroTokens,
   withXeroVerifyReset,
@@ -152,10 +151,7 @@ const bodySchema = z.object({
   // A credential value; capped by the store's own bound. Never logged, never
   // returned.
   value: z.string().min(1).max(INTEGRATION_CREDENTIAL_VALUE_MAX_LENGTH),
-  // The Alpine Central Server address the setup form showed beside its key
-  // field (#4470), `null` when it showed none. Required for that key and
-  // refused for every other: the key is saved only while this is still the
-  // stored address. Bounded like the stored column.
+  // The ServerNZ key's page-shown server address (#4470), bounded like its column.
   expectedBaseUrl: z.string().max(500).nullable().optional(),
 });
 
@@ -236,20 +232,13 @@ export async function POST(request: Request) {
     );
   }
 
-  // A ServerNZ key is issued by one server, so the Save names the address the
-  // page showed (#4470); a body without it (a page from before this check) is
-  // refused rather than saved against whatever address is stored now.
-  const isServerNzApiKey =
-    provider === SERVERNZ_PROVIDER && key === SERVERNZ_CREDENTIAL_KEYS.apiKey;
+  // Required for the ServerNZ key (one server issued it) and no other (#4470).
+  const isServerNzApiKey = provider === SERVERNZ_PROVIDER && key === SERVERNZ_CREDENTIAL_KEYS.apiKey;
   if (isServerNzApiKey !== (expectedBaseUrl !== undefined)) {
-    return NextResponse.json(
-      {
-        error: isServerNzApiKey
-          ? "Reload the page and enter the key again: the save did not say which central server address it was for."
-          : "expectedBaseUrl applies only to the Alpine Central Server API key.",
-      },
-      { status: 400 },
-    );
+    const error = isServerNzApiKey
+      ? "Reload the page and enter the key again: the save did not say which central server address it was for."
+      : "expectedBaseUrl applies only to the Alpine Central Server API key.";
+    return NextResponse.json({ error }, { status: 400 });
   }
 
   // Capture-time gate for the restore-validation DSN (#2095 MAJOR-2): it carries
@@ -289,12 +278,7 @@ export async function POST(request: Request) {
     // ServerNZ's API key (its one writable key) is saved under the connection
     // fence, and only while the address the page showed is still the stored one.
     result = isServerNzApiKey
-      ? await setServerNzApiKey(
-          value,
-          expectedBaseUrl ?? null,
-          { kind: "admin", memberId: guard.memberId },
-          requestContext,
-        )
+      ? await setServerNzApiKey(value, expectedBaseUrl ?? null, { kind: "admin", memberId: guard.memberId }, requestContext)
       : credentialWriteResetsXeroTokens(provider, key)
       ? await withXeroVerifyReset(
           {
@@ -323,13 +307,9 @@ export async function POST(request: Request) {
           request: requestContext,
         });
   } catch (error) {
+    // Another Save moved the address (#4470): nothing written; no secret in it.
     if (error instanceof ServerNzAddressChangedError) {
-      // Another Save moved the address after this page loaded (#4470): nothing
-      // was written. Plain English, no secret; the page says to reload.
-      return NextResponse.json(
-        { error: error.message, code: SERVERNZ_ADDRESS_CHANGED_CODE },
-        { status: 409 },
-      );
+      return NextResponse.json({ error: error.message, code: error.code }, { status: 409 });
     }
     if (error instanceof WeakAuthSecretError) {
       // Plain-English capture-time gate message; safe to surface (no secret).
