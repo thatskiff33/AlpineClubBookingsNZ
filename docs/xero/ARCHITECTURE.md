@@ -1607,6 +1607,23 @@ payment-link writes, it retires those links
   caught exactly that overwrite. Each retired link gets an audit row (source
   `xero-inbound-deleted-payment-retired`) whose summary says it was retired. A
   replay finds no candidate.
+- **Not while an operation on the link's record may still run.** Two writers
+  skip re-sending a payment while an active link records it: the booking
+  change's card receipt and the primary invoice's PARTIAL payment repair. Their
+  payment is made by a separate operation that writes the link before the
+  parent completes, so a parent whose completion failed retries with the link
+  in place. Retiring the link then would let that retry pay again. So no link
+  is retired while its own record (`localModel`/`localId`) has an operation in
+  `XERO_RERUNNABLE_OPERATION_STATUSES` (live, FAILED or PARTIAL) that no
+  officer resolved in Xero (`findRerunnableOperation`). It is asked immediately
+  before each guarded write rather than in one transaction with it, because no
+  writer can make the answer wrong in between. An operation leaves the set by
+  finishing, which only holds back more than needed. It never re-enters the set
+  (a recorded outcome is final, `INV-INT-029`, and a retry claim moves FAILED or
+  PARTIAL to RUNNING, inside it), and a new operation never holds this
+  payment's link. A held link stays active, is marked with the operation that
+  held it, and is retired by the scheduled re-check once that operation is
+  done. A payment whose every link is held is not asked about.
 - **A candidate Xero could not judge is re-checked.** A deferred candidate, or
   one whose answer failed, is marked in its own metadata
   (`deletionCheckPending`, when it was first marked, and how many answers
@@ -1616,7 +1633,8 @@ payment-link writes, it retires those links
   `DELETED_PAYMENT_RECHECK` sync cursor). It reads only marked links, least
   recently written first, under the same cap and budget gate. It retires a
   confirmed one, clears the marker from a live one, and counts another failed
-  answer, which moves that link to the back of the queue. It never fails the
+  answer, which moves that link to the back of the queue, as does a check that
+  is held back again. It never fails the
   cycle. A paid invoice is rarely read again, so without this a deferral would
   have lasted until someone ran the backfill.
 - **Never re-adopted.** A retired payment is absent from every later payload,

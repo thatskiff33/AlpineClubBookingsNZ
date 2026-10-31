@@ -6183,15 +6183,22 @@ no explicit row lock.
   upsert the link live after the retire, because the funnel takes no row lock
   first. The link is then a candidate again on the next read of the document,
   and the backfill finds it.
-- **Counterpart readers.** Two writers skip re-sending a payment when an active
-  link records it: the booking change's card receipt
-  (`recordAdditionalCaptureReceipt`) and the primary invoice's PARTIAL payment
-  repair (`recordedRepairPayment`, which already ignored a link recorded
-  DELETED). Their parent operation can be retried after its payment succeeded
-  if that operation's own completion failed. A retire in that window lets the
-  retry send the payment again. The inbound reconcile never nominates the
-  first (its link is on a `PaymentTransaction`); only the backfill can retire
-  it.
+- **Counterpart readers, and the hold-back that protects them.** Two writers
+  skip re-sending a payment when an active link records it: the booking
+  change's card receipt (`recordAdditionalCaptureReceipt`) and the primary
+  invoice's PARTIAL payment repair (`recordedRepairPayment`). Their payment is
+  made by a separate operation that writes the link before the parent
+  completes, so a parent whose completion failed retries with the link in
+  place. The retire therefore never runs while the link's own record has an
+  operation in `XERO_RERUNNABLE_OPERATION_STATUSES` with `manuallyResolvedAt:
+  null` (`findRerunnableOperation`). It is asked immediately before each guarded
+  `updateMany`, not under a lock or in one transaction with it, and no writer
+  can invalidate the answer in between. An operation leaves the set only by
+  finishing, which merely holds back more than needed. It never re-enters (a
+  recorded outcome is final, `INV-INT-029`; a retry claim moves FAILED or
+  PARTIAL to RUNNING, inside the set), and a new operation never holds this
+  payment's link. A held link stays active and marked, and the scheduled
+  re-check retires it once the operation is done. The readers are unchanged.
 
 Reconciled against the last ten merges touching `src/lib/xero-inbound`
 (#4543, #4555, #4539, #4437, #4443, #4339, #4341, #4228, #4289, #4231). None
