@@ -28,6 +28,7 @@ vi.mock("@/lib/xero-api-client", async (importOriginal) => {
   return { ...actual, callXeroApi: (fn: () => Promise<unknown>) => fn() };
 });
 
+import { Prisma } from "@prisma/client";
 import { XeroDailyLimitError } from "@/lib/xero-api-client";
 import {
   confirmXeroPaymentDeleted,
@@ -41,7 +42,6 @@ import {
 const INVOICE = "inv-4531";
 const NOTE = "cn-4531";
 const SCOPE = [{ localModel: "Payment", localId: "pay-local-1" }];
-const UPDATED = new Date("2026-06-30T10:00:00.000Z");
 const session = { tenantId: "tenant-test", xero: { accountingApi: { getPayment: h.getPayment } } } as never;
 
 function invoice(overrides: Partial<Invoice> = {}): Invoice {
@@ -65,7 +65,6 @@ function linkRow(xeroObjectId: string, overrides: Record<string, unknown> = {}) 
     xeroObjectId,
     xeroObjectNumber: null,
     metadata: { invoiceId: INVOICE, amount: 120, status: null },
-    updatedAt: UPDATED,
     ...overrides,
   };
 }
@@ -78,7 +77,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   h.budgetAllows.mockResolvedValue(true);
   h.linkUpdateMany.mockResolvedValue({ count: 1 });
-  h.linkFindUnique.mockResolvedValue({ active: false, metadata: {}, updatedAt: UPDATED });
+  h.linkFindUnique.mockResolvedValue({ active: false, metadata: {} });
 });
 
 describe("which payloads may nominate a candidate (#4531)", () => {
@@ -166,7 +165,12 @@ describe("retiring the links of payments Xero deleted (#4531)", () => {
     expect(h.getPayment).toHaveBeenCalledWith("tenant-test", "deleted");
     expect(h.linkUpdateMany).toHaveBeenCalledTimes(1);
     expect(h.linkUpdateMany).toHaveBeenCalledWith({
-      where: { id: "link-deleted-pay-local-1", xeroObjectType: "PAYMENT", active: true, updatedAt: UPDATED },
+      where: {
+        id: "link-deleted-pay-local-1",
+        xeroObjectType: "PAYMENT",
+        active: true,
+        metadata: { equals: { invoiceId: INVOICE, amount: 120, status: null } },
+      },
       data: { active: false, metadata: { invoiceId: INVOICE, amount: 120, status: "DELETED" } },
     });
     expect(outcome).toMatchObject({ candidatePayments: 1, xeroCalls: 1, confirmedDeleted: ["deleted"], retiredLinks: 1 });
@@ -243,7 +247,7 @@ describe("retiring the links of payments Xero deleted (#4531)", () => {
     h.linkFindMany.mockResolvedValue([linkRow("deleted")]);
     h.getPayment.mockResolvedValue(xeroPayment("deleted", "DELETED"));
     h.linkUpdateMany.mockResolvedValue({ count: 0 });
-    h.linkFindUnique.mockResolvedValue({ active: false, metadata: { status: "DELETED" }, updatedAt: UPDATED });
+    h.linkFindUnique.mockResolvedValue({ active: false, metadata: { status: "DELETED" } });
     const outcome = await retire();
     expect(outcome).toMatchObject({ confirmedDeleted: ["deleted"], retiredLinks: 0 });
     expect(h.writeAudit).toHaveBeenCalledWith(expect.objectContaining({ links: [] }));
@@ -267,19 +271,29 @@ describe("retiring the links of payments Xero deleted (#4531)", () => {
 
 describe("the guarded retire write (#4531)", () => {
   it("re-reads after a concurrent write and retires over its metadata", async () => {
-    const later = new Date("2026-06-30T11:00:00.000Z");
     h.linkUpdateMany.mockResolvedValueOnce({ count: 0 }).mockResolvedValueOnce({ count: 1 });
-    h.linkFindUnique.mockResolvedValue({ active: true, metadata: { invoiceId: INVOICE, amount: 125 }, updatedAt: later });
+    h.linkFindUnique.mockResolvedValue({ active: true, metadata: { invoiceId: INVOICE, amount: 125 } });
     expect(await retireDeletedXeroPaymentLink(linkRow("deleted"))).toBe(true);
     expect(h.linkUpdateMany.mock.calls[1][0]).toEqual({
-      where: { id: "link-deleted-pay-local-1", xeroObjectType: "PAYMENT", active: true, updatedAt: later },
+      where: {
+        id: "link-deleted-pay-local-1",
+        xeroObjectType: "PAYMENT",
+        active: true,
+        metadata: { equals: { invoiceId: INVOICE, amount: 125 } },
+      },
       data: { active: false, metadata: { invoiceId: INVOICE, amount: 125, status: "DELETED" } },
     });
   });
 
+  it("guards a link stored without metadata on its being null", async () => {
+    await retireDeletedXeroPaymentLink(linkRow("deleted", { metadata: null }));
+    expect(h.linkUpdateMany.mock.calls[0][0].where.metadata).toEqual({ equals: Prisma.AnyNull });
+    expect(h.linkUpdateMany.mock.calls[0][0].data.metadata).toEqual({ status: "DELETED" });
+  });
+
   it("gives up after two lost guards rather than overwrite blindly", async () => {
     h.linkUpdateMany.mockResolvedValue({ count: 0 });
-    h.linkFindUnique.mockResolvedValue({ active: true, metadata: {}, updatedAt: UPDATED });
+    h.linkFindUnique.mockResolvedValue({ active: true, metadata: {} });
     expect(await retireDeletedXeroPaymentLink(linkRow("deleted"))).toBe(false);
     expect(h.linkUpdateMany).toHaveBeenCalledTimes(2);
   });

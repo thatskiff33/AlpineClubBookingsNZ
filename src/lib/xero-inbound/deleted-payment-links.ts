@@ -16,6 +16,7 @@
  * transaction; the retire is one guarded statement per link.
  */
 import type { CreditNote, Invoice } from "xero-node";
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import logger from "@/lib/logger";
 import { providerAmountToCents } from "@/lib/money-provider-amount";
@@ -171,7 +172,6 @@ export type DeletedPaymentLinkRow = {
   xeroObjectId: string;
   xeroObjectNumber: string | null;
   metadata: unknown;
-  updatedAt: Date;
 };
 
 export const DELETED_PAYMENT_LINK_SELECT = {
@@ -182,7 +182,6 @@ export const DELETED_PAYMENT_LINK_SELECT = {
   xeroObjectId: true,
   xeroObjectNumber: true,
   metadata: true,
-  updatedAt: true,
 } as const;
 
 function asMetadataRecord(metadata: unknown): Record<string, unknown> {
@@ -192,29 +191,40 @@ function asMetadataRecord(metadata: unknown): Record<string, unknown> {
 }
 
 /**
+ * The guard that the stored metadata is still exactly what was read. Compared
+ * as a value, not by `updatedAt`: two writes in one millisecond share a
+ * timestamp, and the real-database proof caught exactly that overwrite.
+ */
+function sameMetadata(metadata: unknown): Prisma.JsonNullableFilter<"XeroObjectLink"> {
+  return metadata === null || metadata === undefined
+    ? { equals: Prisma.AnyNull }
+    : { equals: metadata as Prisma.InputJsonValue };
+}
+
+/**
  * Retire one link of a payment Xero confirmed DELETED: inactive, its recorded
  * status DELETED, every other metadata field kept. The write is guarded on the
- * row being still active and unchanged since it was read (`updatedAt`), so a
- * concurrent writer's metadata is never overwritten; a lost guard re-reads and
- * tries once more. Replays write nothing. Returns whether this call retired it.
+ * row being still active with the metadata it was read with, so a concurrent
+ * writer's metadata is never overwritten; a lost guard re-reads and tries once
+ * more. Replays write nothing. Returns whether this call retired it.
  */
 export async function retireDeletedXeroPaymentLink(link: DeletedPaymentLinkRow): Promise<boolean> {
-  let current: Pick<DeletedPaymentLinkRow, "metadata" | "updatedAt"> = link;
+  let metadata: unknown = link.metadata;
   for (let attempt = 0; attempt < 2; attempt += 1) {
     const { count } = await prisma.xeroObjectLink.updateMany({
-      where: { id: link.id, xeroObjectType: "PAYMENT", active: true, updatedAt: current.updatedAt },
+      where: { id: link.id, xeroObjectType: "PAYMENT", active: true, metadata: sameMetadata(metadata) },
       data: {
         active: false,
-        metadata: { ...asMetadataRecord(current.metadata), status: DELETED_XERO_PAYMENT_STATUS },
+        metadata: { ...asMetadataRecord(metadata), status: DELETED_XERO_PAYMENT_STATUS },
       },
     });
     if (count === 1) return true;
     const reread = await prisma.xeroObjectLink.findUnique({
       where: { id: link.id },
-      select: { active: true, metadata: true, updatedAt: true },
+      select: { active: true, metadata: true },
     });
     if (!reread?.active) return false;
-    current = reread;
+    metadata = reread.metadata;
   }
   return false;
 }

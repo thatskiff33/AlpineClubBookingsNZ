@@ -1001,7 +1001,6 @@ describe("processStoredXeroInboundEvents", () => {
       },
     ]);
     mocks.processedCreate.mockResolvedValue({ id: "processed_4531_inv" });
-    const updatedAt = new Date("2026-06-30T10:00:00.000Z");
     mocks.linkFindMany
       .mockResolvedValueOnce([
         { localModel: "Payment", localId: "pay_1", xeroObjectType: "INVOICE", role: "PRIMARY_INVOICE" },
@@ -1017,7 +1016,6 @@ describe("processStoredXeroInboundEvents", () => {
           xeroObjectId: "xpay_deleted",
           xeroObjectNumber: null,
           metadata: { invoiceId: "inv_1", amount: 120 },
-          updatedAt,
         },
       ]);
     mocks.linkUpdateMany.mockResolvedValue({ count: 1 });
@@ -1047,7 +1045,12 @@ describe("processStoredXeroInboundEvents", () => {
     expect(accountingApi.getPayment).toHaveBeenCalledTimes(1);
     expect(accountingApi.getPayment).toHaveBeenCalledWith("tenant_1", "xpay_deleted");
     expect(mocks.linkUpdateMany).toHaveBeenCalledWith({
-      where: { id: "link_deleted", xeroObjectType: "PAYMENT", active: true, updatedAt },
+      where: {
+        id: "link_deleted",
+        xeroObjectType: "PAYMENT",
+        active: true,
+        metadata: { equals: { invoiceId: "inv_1", amount: 120 } },
+      },
       data: { active: false, metadata: { invoiceId: "inv_1", amount: 120, status: "DELETED" } },
     });
     expect(mocks.upsertXeroObjectLink).toHaveBeenCalledWith(

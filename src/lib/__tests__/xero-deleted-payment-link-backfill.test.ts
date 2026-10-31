@@ -36,7 +36,6 @@ import {
   formatDeletedPaymentLinkBackfillReport,
 } from "@/lib/xero-deleted-payment-link-backfill";
 
-const UPDATED = new Date("2026-06-30T10:00:00.000Z");
 const session = { tenantId: "tenant-test", xero: { accountingApi: { getPayments: h.getPayments, getPayment: h.getPayment } } } as never;
 
 function link(xeroObjectId: string) {
@@ -48,7 +47,6 @@ function link(xeroObjectId: string) {
     xeroObjectId,
     xeroObjectNumber: null,
     metadata: { invoiceId: "inv-4531", amount: 120, status: null },
-    updatedAt: UPDATED,
   };
 }
 
@@ -56,7 +54,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   h.budgetAllows.mockResolvedValue(true);
   h.linkUpdateMany.mockResolvedValue({ count: 1 });
-  h.linkFindUnique.mockResolvedValue({ active: false, metadata: {}, updatedAt: UPDATED });
+  h.linkFindUnique.mockResolvedValue({ active: false, metadata: {} });
 });
 
 describe("the deleted-payment link backfill (#4531)", () => {
@@ -112,7 +110,12 @@ describe("the deleted-payment link backfill (#4531)", () => {
     expect(result).toMatchObject({ confirmedDeleted: ["deleted-1"], confirmedLive: ["deleted-2"], retiredLinks: 1, xeroCalls: 3 });
     expect(h.linkUpdateMany).toHaveBeenCalledTimes(1);
     expect(h.linkUpdateMany).toHaveBeenCalledWith({
-      where: { id: "link-deleted-1", xeroObjectType: "PAYMENT", active: true, updatedAt: UPDATED },
+      where: {
+        id: "link-deleted-1",
+        xeroObjectType: "PAYMENT",
+        active: true,
+        metadata: { equals: { invoiceId: "inv-4531", amount: 120, status: null } },
+      },
       data: { active: false, metadata: { invoiceId: "inv-4531", amount: 120, status: "DELETED" } },
     });
     expect(h.writeAudit).toHaveBeenCalledWith(
