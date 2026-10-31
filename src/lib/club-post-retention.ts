@@ -205,7 +205,10 @@ export async function runClubPostCleanup(
     });
 
     // Strictly older than the cutoff. A post exactly ON the boundary is KEPT:
-    // where the rule could be read two ways, this deletes less.
+    // where the rule could be read two ways, this deletes less. The post rows
+    // go first and their image rows by cascade: the post-before-images order
+    // every message-board writer takes (#4586, docs/CONCURRENCY_AND_LOCKING.md
+    // -> "Message-board posts and their images").
     const { count } = await prisma.clubPost.deleteMany({
       where: { postedAt: { lt: cutoff } },
     });

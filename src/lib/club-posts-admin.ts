@@ -219,34 +219,22 @@ export async function editClubPostContent(
  * answerable for.
  */
 export async function removeClubPost(postId: string): Promise<void> {
-  const post = await prisma.clubPost.findUnique({
-    where: { id: postId },
-    select: {
-      id: true,
-      removedAt: true,
-      serverPostId: true,
-      originClubCode: true,
-    },
-  });
-  if (!post) throw new ClubPostNotFoundError();
-  // Idempotent: removing an already-removed post is a no-op rather than an
-  // error, so a double-click or a retry does not report a failure.
-  if (post.removedAt) return;
-
+  // THE POST ROW FIRST, then its images (#4586), the order every message-board
+  // writer takes them in (docs/CONCURRENCY_AND_LOCKING.md -> "Message-board
+  // posts and their images"): taking the images first deadlocked against a
+  // mirror tombstone or the retention sweep deleting the same post. The
+  // status-guarded claim below takes the post's row lock; the images, and the
+  // share state the withdrawal needs, are read under it.
+  //
   // The IMAGES go with the words. The serving route already refuses images on
   // a removed post, but refusing to serve a file is not the same as the file
   // being gone -- a removal that left the photographs on the mount until
   // retention happened to sweep the row would keep exactly the content the
   // admin asked to be rid of. Rows first, files second: the crash order that
   // leaves invisible orphans for the sweep, never broken references.
-  const images = await prisma.clubPostImage.findMany({
-    where: { postId },
-    select: { storageKey: true },
-  });
-  await prisma.$transaction([
-    prisma.clubPostImage.deleteMany({ where: { postId } }),
-    prisma.clubPost.update({
-      where: { id: postId },
+  const post = await prisma.$transaction(async (tx) => {
+    const claim = await tx.clubPost.updateMany({
+      where: { id: postId, removedAt: null },
       data: {
         content: "",
         bodyHtml: null,
@@ -256,9 +244,29 @@ export async function removeClubPost(postId: string): Promise<void> {
         // succeeded would publish it minutes later.
         shareRequestedAt: null,
       },
-    }),
-  ]);
-  for (const image of images) {
+    });
+    if (claim.count === 0) return null;
+    const removed = await tx.clubPost.findUniqueOrThrow({
+      where: { id: postId },
+      select: { serverPostId: true, originClubCode: true, images: { select: { storageKey: true } } },
+    });
+    await tx.clubPostImage.deleteMany({ where: { postId } });
+    return removed;
+    // Bounded like the repository's other short row-lock writers (#4586
+    // review): the post-row claim can queue behind a retention batch holding
+    // the same row, and Prisma's 5 s default would refuse a removal that only
+    // had to wait.
+  }, { maxWait: 10_000, timeout: 30_000 });
+  if (!post) {
+    // The claim matched nothing. Idempotent: removing an already-removed post
+    // is a no-op rather than an error, so a double-click or a retry does not
+    // report a failure; a post that is gone (a mirror tombstone or retention
+    // deleted it) is not found.
+    const exists = await prisma.clubPost.findUnique({ where: { id: postId }, select: { id: true } });
+    if (!exists) throw new ClubPostNotFoundError();
+    return;
+  }
+  for (const image of post.images) {
     await deletePostImage(image.storageKey);
   }
 

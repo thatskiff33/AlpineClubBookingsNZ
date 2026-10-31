@@ -30,6 +30,12 @@ const mocks = vi.hoisted(() => {
     imageFindMany: vi.fn(),
     imageDeleteMany: vi.fn(),
     transaction: vi.fn(),
+    // The removal's interactive transaction (#4586): the post's guarded claim,
+    // the re-read under its lock, then the image rows.
+    txUpdateMany: vi.fn(),
+    txFindUniqueOrThrow: vi.fn(),
+    txImageDeleteMany: vi.fn(),
+    order: [] as string[],
     deletePostImage: vi.fn(),
     logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
   };
@@ -82,7 +88,24 @@ beforeEach(() => {
   mocks.findMany.mockResolvedValue([]);
   mocks.imageFindMany.mockResolvedValue([]);
   mocks.imageDeleteMany.mockResolvedValue({ count: 0 });
-  mocks.transaction.mockResolvedValue([]);
+  mocks.order.length = 0;
+  mocks.txUpdateMany.mockImplementation(async () => {
+    mocks.order.push("post");
+    return { count: 1 };
+  });
+  mocks.txFindUniqueOrThrow.mockImplementation(async () => {
+    mocks.order.push("read");
+    return { serverPostId: null, originClubCode: null, images: [] };
+  });
+  mocks.txImageDeleteMany.mockImplementation(async () => {
+    mocks.order.push("images");
+    return { count: 0 };
+  });
+  mocks.transaction.mockImplementation(async (work: (tx: unknown) => Promise<unknown>) =>
+    work({
+      clubPost: { updateMany: mocks.txUpdateMany, findUniqueOrThrow: mocks.txFindUniqueOrThrow },
+      clubPostImage: { deleteMany: mocks.txImageDeleteMany },
+    }));
   mocks.deletePostImage.mockResolvedValue(undefined);
   mocks.update.mockResolvedValue({});
   mocks.findUnique.mockResolvedValue({
@@ -120,47 +143,67 @@ describe("moderation reaches members", () => {
 });
 
 describe("removal", () => {
+  function shared(originClubCode: string | null) {
+    mocks.txFindUniqueOrThrow.mockResolvedValue({ serverPostId: "server-9", originClubCode, images: [] });
+  }
+
   it("blanks the content rather than only flagging the row", async () => {
     // Behind-a-filter is not gone. A future query that forgets the filter would
     // otherwise resurface words somebody asked to have removed.
     await removeClubPost("post-1");
-    const data = mocks.update.mock.calls[0][0].data;
+    const { where, data } = mocks.txUpdateMany.mock.calls[0][0];
+    // A status-guarded claim: only a post not yet removed is removed.
+    expect(where).toEqual({ id: "post-1", removedAt: null });
     expect(data.content).toBe("");
     expect(data.removedAt).toBeInstanceOf(Date);
   });
 
   it("keeps the author on the row, so a removal stays answerable for", async () => {
     await removeClubPost("post-1");
-    const data = mocks.update.mock.calls[0][0].data;
+    const data = mocks.txUpdateMany.mock.calls[0][0].data;
     expect(data).not.toHaveProperty("authorMemberId");
     expect(data).not.toHaveProperty("authorName");
   });
 
-  it("is idempotent — removing twice is not an error", async () => {
-    mocks.findUnique.mockResolvedValue({
-      id: "post-1",
-      removedAt: new Date("2026-06-01T00:00:00.000Z"),
+  it("takes the post row before its images, and reads the images under that lock (#4586)", async () => {
+    // The order every message-board writer follows. Images first deadlocked
+    // against a mirror tombstone or retention deleting the same post.
+    mocks.txFindUniqueOrThrow.mockImplementation(async () => {
+      mocks.order.push("read");
+      return { serverPostId: null, originClubCode: null, images: [{ storageKey: "posts/2026/06/a.webp" }] };
     });
-    await expect(removeClubPost("post-1")).resolves.toBeUndefined();
-    expect(mocks.update).not.toHaveBeenCalled();
+
+    await removeClubPost("post-1");
+
+    expect(mocks.order).toEqual(["post", "read", "images"]);
+    expect(mocks.txImageDeleteMany).toHaveBeenCalledWith({ where: { postId: "post-1" } });
+    // Rows first, files after the commit.
+    expect(mocks.deletePostImage).toHaveBeenCalledWith("posts/2026/06/a.webp");
+    expect(mocks.imageFindMany).not.toHaveBeenCalled();
   });
 
-  it("404s an unknown post", async () => {
+  it("is idempotent — removing twice is not an error", async () => {
+    mocks.txUpdateMany.mockResolvedValue({ count: 0 });
+    mocks.findUnique.mockResolvedValue({ id: "post-1" });
+    await expect(removeClubPost("post-1")).resolves.toBeUndefined();
+    expect(mocks.txImageDeleteMany).not.toHaveBeenCalled();
+    expect(mocks.deletePostImage).not.toHaveBeenCalled();
+    expect(mocks.withdrawClubPost).not.toHaveBeenCalled();
+  });
+
+  it("404s an unknown post, or one a mirror tombstone or retention deleted first", async () => {
+    mocks.txUpdateMany.mockResolvedValue({ count: 0 });
     mocks.findUnique.mockResolvedValue(null);
     await expect(removeClubPost("nope")).rejects.toBeInstanceOf(
       ClubPostNotFoundError,
     );
+    expect(mocks.txImageDeleteMany).not.toHaveBeenCalled();
   });
 
   // #3091 review 1: a takedown of a SHARED post must be confirmed, retried,
   // and visible while outstanding — not fire-and-forget.
   it("stamps withdrawnAt when the central server confirms the takedown", async () => {
-    mocks.findUnique.mockResolvedValue({
-      id: "post-1",
-      removedAt: null,
-      serverPostId: "server-9",
-      originClubCode: null,
-    });
+    shared(null);
     mocks.withdrawClubPost.mockResolvedValue(undefined);
 
     await removeClubPost("post-1");
@@ -175,12 +218,7 @@ describe("removal", () => {
   });
 
   it("leaves the removal standing and withdrawnAt unset when the withdrawal fails", async () => {
-    mocks.findUnique.mockResolvedValue({
-      id: "post-1",
-      removedAt: null,
-      serverPostId: "server-9",
-      originClubCode: null,
-    });
+    shared(null);
     mocks.withdrawClubPost.mockRejectedValue(new Error("server down"));
 
     // NOT fatal: the local removal is what the admin asked for.
@@ -192,13 +230,14 @@ describe("removal", () => {
     expect(stamped).toBeUndefined();
   });
 
+  it("bounds the removal's transaction like the other short row-lock writers (#4586 review)", async () => {
+    shared(null);
+    await removeClubPost("post-1");
+    expect(mocks.transaction).toHaveBeenCalledWith(expect.any(Function), { maxWait: 10_000, timeout: 30_000 });
+  });
+
   it("stands the removal, leaves the withdrawal pending and logs at info while the server version differs (#49)", async () => {
-    mocks.findUnique.mockResolvedValue({
-      id: "post-1",
-      removedAt: null,
-      serverPostId: "server-9",
-      originClubCode: null,
-    });
+    shared(null);
     mocks.withdrawClubPost.mockRejectedValue(new mocks.FakeVersionError());
 
     await expect(removeClubPost("post-1")).resolves.toBeUndefined();
@@ -216,12 +255,7 @@ describe("removal", () => {
   });
 
   it("never withdraws a MIRROR — the network copy belongs to its origin club", async () => {
-    mocks.findUnique.mockResolvedValue({
-      id: "post-1",
-      removedAt: null,
-      serverPostId: "server-9",
-      originClubCode: "RUAPEHU",
-    });
+    shared("RUAPEHU");
 
     await removeClubPost("post-1");
 
