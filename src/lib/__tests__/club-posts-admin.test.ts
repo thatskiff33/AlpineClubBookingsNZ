@@ -230,6 +230,12 @@ describe("removal", () => {
     expect(stamped).toBeUndefined();
   });
 
+  it("bounds the removal's transaction like the other short row-lock writers (#4586 review)", async () => {
+    shared(null);
+    await removeClubPost("post-1");
+    expect(mocks.transaction).toHaveBeenCalledWith(expect.any(Function), { maxWait: 10_000, timeout: 30_000 });
+  });
+
   it("stands the removal, leaves the withdrawal pending and logs at info while the server version differs (#49)", async () => {
     shared(null);
     mocks.withdrawClubPost.mockRejectedValue(new mocks.FakeVersionError());

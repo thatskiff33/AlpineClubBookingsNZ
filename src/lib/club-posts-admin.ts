@@ -252,7 +252,11 @@ export async function removeClubPost(postId: string): Promise<void> {
     });
     await tx.clubPostImage.deleteMany({ where: { postId } });
     return removed;
-  });
+    // Bounded like the repository's other short row-lock writers (#4586
+    // review): the post-row claim can queue behind a retention batch holding
+    // the same row, and Prisma's 5 s default would refuse a removal that only
+    // had to wait.
+  }, { maxWait: 10_000, timeout: 30_000 });
   if (!post) {
     // The claim matched nothing. Idempotent: removing an already-removed post
     // is a no-op rather than an error, so a double-click or a retry does not
