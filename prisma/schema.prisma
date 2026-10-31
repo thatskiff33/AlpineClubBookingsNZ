@@ -2422,7 +2422,10 @@ model GroupBookingSettlement {
   createdAt             DateTime      @default(now())
   updatedAt             DateTime      @updatedAt
 
-  groupBooking GroupBooking @relation(fields: [groupBookingId], references: [id], onDelete: Cascade)
+  /// D1 (#4482, M2 #4514): an organiser's settlement is financial history. Its
+  /// group cascades with the organiser's booking; the settlement refuses, so a
+  /// settled group stops that delete (`INV-MONEY-043`).
+  groupBooking GroupBooking @relation(fields: [groupBookingId], references: [id], onDelete: Restrict, onUpdate: Restrict)
 
   @@index([status, createdAt])
 }
@@ -9025,6 +9028,8 @@ model MemberMoneyObligation {
   lines MemberMoneyLine[]
   applications MemberMoneyApplication[]
   @@index([journalId])
+  /// Member hard delete counts the obligations naming a debtor (#4514).
+  @@index([memberId])
 }
 
 model MemberMoneyApplication {

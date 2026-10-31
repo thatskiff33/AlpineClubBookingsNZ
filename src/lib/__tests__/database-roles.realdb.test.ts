@@ -655,7 +655,7 @@ async function privilegeSnapshot(database: string, { includeDatabaseAcl = true }
         expect(await appPrisma.bookingGuest.count({ where: { bookingId: draft } })).toBe(0);
       });
 
-      it("holds every key a money line or a credit row's booking link has as RESTRICT both ways, so no referential action can reach one", async () => {
+      it("holds every key a money line, a credit row's booking link or a group settlement has as RESTRICT both ways, so no referential action can reach one", async () => {
         const { rows } = await withClient(urlFor(DATABASES.upgrade), (client) => client.query(
           `SELECT c.conrelid::regclass::text AS relation, a.attname AS "column", c.confdeltype AS "onDelete",
                   c.confupdtype AS "onUpdate", c.convalidated AS validated
@@ -664,7 +664,8 @@ async function privilegeSnapshot(database: string, { includeDatabaseAcl = true }
             WHERE c.contype = 'f' AND c.connamespace = 'public'::regnamespace
               AND (c.conrelid::regclass::text = ANY($1::text[])
                 OR (c.conrelid = '"MemberCredit"'::regclass
-                  AND a.attname IN ('sourceBookingId', 'appliedToBookingId', 'sourceBookingModificationId')))
+                  AND a.attname IN ('sourceBookingId', 'appliedToBookingId', 'sourceBookingModificationId'))
+                OR (c.conrelid = '"GroupBookingSettlement"'::regclass AND a.attname = 'groupBookingId'))
             ORDER BY 1, 2`,
           [["\"BookingLedgerLine\"", ...MEMBER_MONEY_RELATIONS.map((name) => `"${name}"`)]],
         ));
@@ -672,6 +673,7 @@ async function privilegeSnapshot(database: string, { includeDatabaseAcl = true }
         expect(rows.filter((row) => row.relation === '"BookingLedgerLine"').map((row) => row.column).sort())
           .toEqual(["bookingId", "lodgeId", "reversesLineId"]);
         expect(rows.filter((row) => row.relation === '"MemberCredit"')).toHaveLength(3);
+        expect(rows.filter((row) => row.relation === '"GroupBookingSettlement"').map((row) => row.column)).toEqual(["groupBookingId"]);
         expect(rows.filter((row) => row.relation === '"MemberMoneyLine"').map((row) => row.column))
           .toEqual(expect.arrayContaining(["bookingId", "lodgeId", "journalId"]));
         expect(rows.filter((row) => row.onDelete !== "r" || row.onUpdate !== "r" || !row.validated)).toEqual([]);

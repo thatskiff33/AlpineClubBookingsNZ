@@ -5,6 +5,7 @@ vi.mock("@/lib/prisma", () => ({ prisma: {} }));
 import type { Prisma } from "@prisma/client";
 
 import {
+  APPEND_ONLY_FINANCIAL_HISTORY_RELATIONS,
   BOOKING_FINANCIAL_HISTORY_RELATIONS,
   bookingsWithFinancialHistory,
 } from "@/lib/booking-financial-history";
@@ -17,22 +18,34 @@ import { deleteDraftBookingDependents } from "@/lib/draft-booking-cleanup";
  * anomalous draft from aborting the whole nightly batch.
  */
 
-/** A store whose financial delegates name exactly `named`, per delegate. */
+/** The ids a reader's `where` asks about: its single `{ in: [...] }` list, wherever it nests. */
+function askedIds(where: unknown): string[] {
+  if (!where || typeof where !== "object") return [];
+  if (Array.isArray((where as { in?: unknown }).in)) return (where as { in: string[] }).in;
+  return Object.values(where).flatMap(askedIds);
+}
+
+/**
+ * A store whose financial delegates name exactly `named`, per relation, and only
+ * among the bookings each query asks about, so a reader that asked the wrong
+ * delegate or the wrong ids finds nothing.
+ */
 function storeNaming(named: Partial<Record<string, string[]>> = {}) {
+  const hits = (key: string, where: unknown) => (named[key] ?? []).filter((id) => askedIds(where).includes(id));
   const rows = (key: string, field: string) =>
-    vi.fn(async () => (named[key] ?? []).map((bookingId) => ({ [field]: bookingId })));
+    vi.fn(async ({ where }: { where: unknown }) => hits(key, where).map((bookingId) => ({ [field]: bookingId })));
   return {
     bookingLedgerLine: { findMany: rows("BookingLedgerLine.bookingId", "bookingId") },
     memberMoneyLine: { findMany: rows("MemberMoneyLine.bookingId", "bookingId") },
     memberCredit: {
       findMany: vi.fn(async ({ where }: { where: Record<string, unknown> }) => {
         if ("sourceBookingId" in where) {
-          return (named["MemberCredit.sourceBookingId"] ?? []).map((id) => ({ sourceBookingId: id }));
+          return hits("MemberCredit.sourceBookingId", where).map((id) => ({ sourceBookingId: id }));
         }
         if ("appliedToBookingId" in where) {
-          return (named["MemberCredit.appliedToBookingId"] ?? []).map((id) => ({ appliedToBookingId: id }));
+          return hits("MemberCredit.appliedToBookingId", where).map((id) => ({ appliedToBookingId: id }));
         }
-        return (named["MemberCredit.sourceBookingModificationId"] ?? []).map((id) => ({
+        return hits("MemberCredit.sourceBookingModificationId", where).map((id) => ({
           sourceBookingModification: { bookingId: id },
         }));
       }),
@@ -41,6 +54,10 @@ function storeNaming(named: Partial<Record<string, string[]>> = {}) {
     refundRequest: { findMany: rows("RefundRequest.bookingId", "bookingId") },
     manualRefundTask: { findMany: rows("ManualRefundTask.bookingId", "bookingId") },
     paymentRecoveryOperation: { findMany: rows("PaymentRecoveryOperation.bookingId", "bookingId") },
+    groupBookingSettlement: {
+      findMany: vi.fn(async ({ where }: { where: unknown }) =>
+        hits("GroupBookingSettlement.groupBookingId", where).map((id) => ({ groupBooking: { organiserBookingId: id } }))),
+    },
   };
 }
 
@@ -60,6 +77,36 @@ describe("bookingsWithFinancialHistory (#4514)", () => {
       );
     },
   );
+
+  it("asks each relation for exactly the given bookings, by the key that names them", async () => {
+    const store = storeNaming();
+    await bookingsWithFinancialHistory(store as never, ["a", "b", "a"]);
+    const ids = { in: ["a", "b"] };
+    const distinctBooking = { select: { bookingId: true }, distinct: ["bookingId"] };
+    expect(store.bookingLedgerLine.findMany).toHaveBeenCalledWith({ where: { bookingId: ids }, ...distinctBooking });
+    expect(store.memberMoneyLine.findMany).toHaveBeenCalledWith({ where: { bookingId: ids }, ...distinctBooking });
+    expect(store.refundRequest.findMany).toHaveBeenCalledWith({ where: { bookingId: ids }, ...distinctBooking });
+    expect(store.manualRefundTask.findMany).toHaveBeenCalledWith({ where: { bookingId: ids }, ...distinctBooking });
+    expect(store.paymentRecoveryOperation.findMany).toHaveBeenCalledWith({ where: { bookingId: ids }, ...distinctBooking });
+    expect(store.payment.findMany).toHaveBeenCalledWith({ where: { bookingId: ids }, select: { bookingId: true } });
+    expect(store.memberCredit.findMany.mock.calls.map(([args]) => args)).toEqual([
+      { where: { sourceBookingId: ids }, select: { sourceBookingId: true }, distinct: ["sourceBookingId"] },
+      { where: { appliedToBookingId: ids }, select: { appliedToBookingId: true }, distinct: ["appliedToBookingId"] },
+      { where: { sourceBookingModification: { bookingId: ids } }, select: { sourceBookingModification: { select: { bookingId: true } } } },
+    ]);
+    expect(store.groupBookingSettlement.findMany).toHaveBeenCalledWith({
+      where: { groupBooking: { organiserBookingId: ids } },
+      select: { groupBooking: { select: { organiserBookingId: true } } },
+    });
+  });
+
+  it("can be limited to the append-only money lines, asking nothing else", async () => {
+    const store = storeNaming({ "BookingLedgerLine.bookingId": ["a"], "Payment.bookingId": ["b"] });
+    expect(APPEND_ONLY_FINANCIAL_HISTORY_RELATIONS).toEqual(["BookingLedgerLine.bookingId", "MemberMoneyLine.bookingId"]);
+    expect(await bookingsWithFinancialHistory(store as never, ["a", "b"], APPEND_ONLY_FINANCIAL_HISTORY_RELATIONS))
+      .toEqual(new Set(["a"]));
+    expect(store.payment.findMany).not.toHaveBeenCalled();
+  });
 
   it("drops a credit row whose modification has no booking id", async () => {
     const store = storeNaming();

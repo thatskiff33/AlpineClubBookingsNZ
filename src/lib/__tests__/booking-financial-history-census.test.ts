@@ -17,8 +17,8 @@ import { MEMBER_MONEY_RELATIONS } from "@/lib/member-money-tables";
  *     on update. A cascade deletes a line, and a SET NULL or an update cascade
  *     rewrites one, with the table owner's rights, past the application role's
  *     INSERT/SELECT grant (#4453).
- *  2. Is every relation into `Booking` (and `BookingModification`, which a
- *     draft's cleanup deletes) classified? It is financial history, named in
+ *  2. Is every relation into `Booking` (and `BookingModification` and
+ *     `GroupBooking`, which go with it) classified? It is financial history, named in
  *     `BOOKING_FINANCIAL_HISTORY_RELATIONS` and RESTRICT, or it is operational,
  *     listed below with its action and the reason. A new booking child fails
  *     here until somebody decides which it is.
@@ -50,7 +50,8 @@ const OPERATIONAL_BOOKING_RELATIONS: Readonly<Record<string, { onDelete: string;
   "PromoRedemption.bookingId": { onDelete: "Cascade", reason: "promotion build-up, released with a draft" },
   "PromoRedemptionAllocation.bookingId": { onDelete: "Cascade", reason: "promotion build-up, released with a draft" },
   "PromoRedemptionGuestTarget.bookingId": { onDelete: "Cascade", reason: "promotion build-up, released with a draft" },
-  "GroupBooking.organiserBookingId": { onDelete: "Cascade", reason: "group container; an organiser is never a draft" },
+  "GroupBooking.organiserBookingId": { onDelete: "Cascade", reason: "group container; its settlement is RESTRICT, so a settled group stops the delete" },
+  "GroupBookingJoin.groupBookingId": { onDelete: "Cascade", reason: "join records of the group" },
   "GroupBookingJoin.bookingId": { onDelete: "SetNull", reason: "join record pointer to the child booking" },
   "BookingRequest.convertedBookingId": { onDelete: "SetNull", reason: "enquiry pointer; the enquiry outlives a draft" },
   "BookingRequest.heldBookingId": { onDelete: "SetNull", reason: "enquiry pointer; the enquiry outlives a draft" },
@@ -64,8 +65,12 @@ const OPERATIONAL_BOOKING_RELATIONS: Readonly<Record<string, { onDelete: string;
   "BookingChangeRequest.linkedModificationId": { onDelete: "SetNull", reason: "request pointer to the change it made" },
 };
 
-/** Booking and the booking child a draft's cleanup deletes outright. */
-const BOOKING_PARENTS = new Set(["Booking", "BookingModification"]);
+/**
+ * Booking, and the booking children that go when it does: a modification (a
+ * draft's cleanup deletes it outright) and a group (it cascades with its
+ * organiser's booking). A financial row keyed to either is booking history.
+ */
+const BOOKING_PARENTS = new Set(["Booking", "BookingModification", "GroupBooking"]);
 
 const RELATION_LINE = /^\s*(\w+)\s+(\w+)(\?|\[\])?\s+@relation\((.*)\)\s*$/;
 
@@ -129,7 +134,7 @@ describe("financial history outlives its booking: the schema (#4514, D1)", () =>
     }
   });
 
-  it("classifies every relation into Booking or BookingModification as financial history or operational", () => {
+  it("classifies every relation into a booking, its modifications or its group as financial history or operational", () => {
     const financial = new Set<string>(BOOKING_FINANCIAL_HISTORY_RELATIONS);
     const intoBooking = relations.filter((relation) => BOOKING_PARENTS.has(relation.target));
     const unclassified = intoBooking.map(key).filter((name) => !financial.has(name) && !(name in OPERATIONAL_BOOKING_RELATIONS));
