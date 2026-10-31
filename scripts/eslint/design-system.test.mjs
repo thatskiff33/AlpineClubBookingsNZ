@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 
 import { ESLint, RuleTester } from "eslint";
@@ -33,6 +34,14 @@ tester.run("no-raw-input", rule("no-raw-input"), {
     '<input type="file" className="peer sr-only" tabIndex={-1} />',
     '<input type="file" hidden />',
     '<input type="file" hidden={true} />',
+    // Classes that hide it further, or only style it, do not undo the exemption.
+    '<input type="file" className="hidden md:hidden w-full" />',
+    '<input type="file" className="sr-only peer" hidden />',
+    // A spread BEFORE the attributes it relies on cannot override them.
+    '<input {...rest} type="hidden" name="tab" />',
+    '<input {...rest} type="file" className="hidden" />',
+    // JSX applies the last of a repeated attribute.
+    '<input type="text" type="hidden" />',
   ],
   invalid: [
     { code: '<input type="text" value={v} />', errors: [{ messageId: "raw" }] },
@@ -49,6 +58,22 @@ tester.run("no-raw-input", rule("no-raw-input"), {
     { code: '<input type="file" hidden={collapsed} />', errors: [{ messageId: "raw" }] },
     // Hidden by class but not a file picker: still a control.
     { code: '<input type="text" className="hidden" />', errors: [{ messageId: "raw" }] },
+    // A class token that can show the input again ends the exemption, with any variant prefix.
+    ...[
+      "hidden block", "hidden md:block", "sr-only focus:not-sr-only", "sr-only not-sr-only", "hidden lg:flex",
+      "hidden sm:inline-block", "hidden !grid", "hidden hover:inline", "hidden [display:block]", "sr-only md:focus:table-cell",
+    ].map((className) => ({ code: `<input type="file" className="${className}" />`, errors: [{ messageId: "raw" }] })),
+    { code: '<input type="file" hidden className="block" />', errors: [{ messageId: "raw" }] },
+    { code: '<input type="file" hidden className={cls} />', errors: [{ messageId: "raw" }] },
+    // Only a prefixed hide: visible below that breakpoint.
+    { code: '<input type="file" className="md:hidden" />', errors: [{ messageId: "raw" }] },
+    // A spread AFTER an attribute the exemption relies on may replace it at runtime.
+    { code: '<input type="hidden" {...rest} />', errors: [{ messageId: "raw" }] },
+    { code: '<input type="file" className="hidden" {...rest} />', errors: [{ messageId: "raw" }] },
+    { code: '<input type="file" hidden {...rest} />', errors: [{ messageId: "raw" }] },
+    { code: '<input className="hidden" type="file" {...rest} />', errors: [{ messageId: "raw" }] },
+    { code: '<input type="checkbox" {...rest} />', errors: [{ messageId: "raw" }] },
+    { code: '<input type="hidden" type="text" />', errors: [{ messageId: "raw" }] },
   ],
 });
 
@@ -74,6 +99,11 @@ tester.run("no-native-confirm", rule("no-native-confirm"), {
     "dialog.confirm();",
     "window.confirmation();",
     "const ask = confirmed();",
+    "const { prompt } = window;",
+    "const { confirm } = dialogs;",
+    "const { confirm } = useConfirm();",
+    "let confirm; ({ confirm } = useConfirm());",
+    "frame.confirm();",
   ],
   invalid: [
     { code: 'if (!window.confirm("Delete?")) stop();', errors: [{ messageId: "native" }] },
@@ -84,6 +114,17 @@ tester.run("no-native-confirm", rule("no-native-confirm"), {
     { code: 'if (!confirm("Delete this period?")) stop();', errors: [{ messageId: "native" }] },
     // A `confirm` declared in another function does not cover this one.
     { code: 'function a() { const confirm = 1; }\nfunction b() { return confirm("x"); }', errors: [{ messageId: "native" }] },
+    { code: 'top.confirm("Delete?");', errors: [{ messageId: "native" }] },
+    { code: 'parent.confirm("Delete?");', errors: [{ messageId: "native" }] },
+    { code: 'window[`confirm`]("Delete?");', errors: [{ messageId: "native" }] },
+    { code: '(0, window.confirm)("Delete?");', errors: [{ messageId: "native" }] },
+    { code: 'window.confirm.call(window, "Delete?");', errors: [{ messageId: "native" }] },
+    { code: 'globalThis.confirm.apply(null, ["Delete?"]);', errors: [{ messageId: "native" }] },
+    // Destructured from the global: the destructure is reported, the later call is local.
+    { code: 'const { confirm } = window;\nconfirm("Delete?");', errors: [{ messageId: "native" }] },
+    { code: 'const { confirm: ask, alert } = globalThis;', errors: [{ messageId: "native" }] },
+    { code: 'const { ["confirm"]: ask } = self;', errors: [{ messageId: "native" }] },
+    { code: 'let confirm; ({ confirm } = window);', errors: [{ messageId: "native" }] },
   ],
 });
 
@@ -114,15 +155,15 @@ async function designSystemRules(filePath, code = RAW) {
     .sort();
 }
 
-const ALL = [
-  "design-system/no-native-confirm",
-  "design-system/no-raw-button",
-  "design-system/no-raw-input",
-  "design-system/no-raw-select",
-  "design-system/no-raw-table",
-];
+// Every rule the plugin has: RAW must trip each one, so a new rule fails here until it does.
+const ALL = Object.keys(designSystem.rules).map((name) => `design-system/${name}`).sort();
 
 describe("design-system rules through the repository config", () => {
+  it("switches on every rule the plugin has, as an error", async () => {
+    const config = await new ESLint().calculateConfigForFile("src/app/(admin)/admin/probe/page.tsx");
+    for (const ruleId of ALL) expect([config.rules[ruleId]].flat()[0], ruleId).toBe(2);
+  }, 20_000);
+
   it("reports every raw control in app code, and the browser confirm in a .ts hook", async () => {
     expect(await designSystemRules("src/app/(admin)/admin/probe/page.tsx")).toEqual(ALL);
     expect(await designSystemRules("src/components/probe-panel.tsx")).toEqual(ALL);
@@ -151,4 +192,105 @@ describe("design-system rules through the repository config", () => {
       expect(await designSystemRules(file)).toEqual(ALL.filter((ruleId) => ruleId !== `design-system/${lifted}`));
     }
   }, 20_000);
+});
+
+// The rules carry no inline escape. Each one names a primitive that is
+// available everywhere, so a disable comment only signs a raw control off as
+// migrated, and the ratchet exists to make that count fall honestly. This is
+// the money and cents guards' "never a disable comment" census, but the
+// comments are found by ESLint's own directive parser rather than by grep, so
+// a block directive naming the rule on its second line, a JSX `{/* … */}`
+// directive and an inline rule-config comment are all seen, and prose that
+// merely mentions a directive is not.
+const directiveProbe = {
+  rules: {
+    directives: {
+      meta: { schema: [] },
+      create(context) {
+        return {
+          "Program:exit"() {
+            const { sourceCode } = context;
+            for (const directive of sourceCode.getDisableDirectives().directives) {
+              if (directive.type === "enable") continue;
+              context.report({ loc: directive.node.loc, message: JSON.stringify({ kind: directive.type, rules: directive.value.trim() }) });
+            }
+            for (const comment of sourceCode.getInlineConfigNodes()) {
+              if (/^\s*eslint\s/.test(comment.value)) {
+                context.report({ loc: comment.loc, message: JSON.stringify({ kind: "config", rules: comment.value.trim() }) });
+              }
+            }
+          },
+        };
+      },
+    },
+  },
+};
+
+// Directives are read, not applied: an applied one could hide the probe itself.
+const directiveReader = () => new ESLint({
+  allowInlineConfig: false,
+  overrideConfig: { plugins: { "directive-probe": directiveProbe }, rules: { "directive-probe/directives": "error" } },
+});
+
+/** Each directive that silences a design-system rule, as `file:line kind rules`. */
+async function escapesIn(results) {
+  const repoConfig = new ESLint();
+  const escapes = [];
+  for (const result of results) {
+    const file = result.filePath.slice(process.cwd().length + 1);
+    for (const message of result.messages) {
+      if (message.ruleId !== "directive-probe/directives") continue;
+      const { kind, rules } = JSON.parse(message.message);
+      const names = rules.includes("design-system/");
+      // A disable naming no rule silences every rule, these included, wherever they apply.
+      const bare = kind !== "config" && rules === "";
+      if (!names && !(bare && await appliesTo(repoConfig, file))) continue;
+      escapes.push(`${file}:${message.line} ${kind} ${rules || "(every rule)"}`);
+    }
+  }
+  return escapes;
+}
+
+async function appliesTo(eslint, file) {
+  const config = await eslint.calculateConfigForFile(file);
+  return Object.keys(designSystem.rules).some((name) => [config?.rules?.[`design-system/${name}`]].flat()[0] === 2);
+}
+
+describe("design-system rules have no inline escape", () => {
+  const DIRECTIVE_FIXTURES = [
+    ["a next-line disable naming a rule", 'const a = 1;\n// eslint-disable-next-line design-system/no-raw-button\nconst b = <button />;\n', 1],
+    ["a same-line disable", 'const b = <button />; // eslint-disable-line design-system/no-raw-button -- legacy\n', 1],
+    ["a file-wide block disable naming it on its second line", '/* eslint-disable\n   design-system/no-native-confirm */\nwindow.confirm("x");\n', 1],
+    ["a JSX comment directive", 'const a = <div>\n  {/* eslint-disable-next-line design-system/no-raw-select */}\n  <select />\n</div>;\n', 1],
+    ["an inline rule-config comment", '/* eslint design-system/no-raw-table: "off" */\nconst t = <table />;\n', 1],
+    ["a bare disable in app code", '// eslint-disable-next-line\nconst b = <button />;\n', 1],
+    ["a disable naming another rule", '// eslint-disable-next-line no-console\nconsole.log(1);\n', 0],
+    ["prose about a directive", '// An eslint-disable naming design-system/no-raw-button is banned.\nconst a = 1;\n', 0],
+    ["a string holding a directive", 'const a = "// eslint-disable-next-line design-system/no-raw-button";\n', 0],
+  ];
+
+  it.each(DIRECTIVE_FIXTURES)("counts %s", async (_label, code, expected) => {
+    const results = await directiveReader().lintText(code, { filePath: "src/app/(admin)/admin/probe/page.tsx" });
+    expect(await escapesIn(results)).toHaveLength(expected);
+  }, 20_000);
+
+  it("allows a bare disable where the rules do not apply", async () => {
+    const results = await directiveReader().lintText('// eslint-disable-next-line\nconst b = <button />;\n', { filePath: "src/components/ui/probe.tsx" });
+    expect(await escapesIn(results)).toEqual([]);
+  }, 20_000);
+
+  it("has none anywhere in the tree", async () => {
+    // Only files that could hold one are parsed: a disable or a rule name.
+    const candidates = execFileSync(
+      "git",
+      ["grep", "-l", "-e", "eslint-disable", "-e", "design-system/", "--", "*.ts", "*.tsx", "*.mts", "*.cts", "*.js", "*.jsx", "*.mjs", "*.cjs"],
+      { encoding: "utf8" },
+    ).split("\n").filter(Boolean);
+    expect(candidates.length, "the search found nothing, so it proves nothing").toBeGreaterThan(10);
+    const results = await directiveReader().lintFiles(candidates);
+    expect(
+      await escapesIn(results),
+      "Never an eslint-disable comment for a design-system rule: migrate to the primitive, or for a shared primitive outside src/components/ui/, add it to PRIMITIVE_IMPLEMENTATIONS with its reason.",
+    ).toEqual([]);
+  }, 60_000);
 });

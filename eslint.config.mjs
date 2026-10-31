@@ -3224,13 +3224,8 @@ const eslintConfig = defineConfig([
     files: ["src/**/*.{js,jsx,ts,tsx}"],
     ignores: ["src/components/ui/**", "src/**/__tests__/**", "src/**/*.test.{js,jsx,ts,tsx}", "src/test/**"],
     plugins: { "design-system": designSystem },
-    rules: {
-      "design-system/no-raw-button": "error",
-      "design-system/no-raw-input": "error",
-      "design-system/no-raw-select": "error",
-      "design-system/no-raw-table": "error",
-      "design-system/no-native-confirm": "error",
-    },
+    // Every rule the plugin has, so a new one cannot ship switched off.
+    rules: Object.fromEntries(Object.keys(designSystem.rules).map((rule) => [`design-system/${rule}`, "error"])),
   },
   // A shared primitive built outside src/components/ui/ may use the one element
   // it is built on; each entry carries its reason in PRIMITIVE_IMPLEMENTATIONS.

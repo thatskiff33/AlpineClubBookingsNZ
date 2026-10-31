@@ -90,3 +90,15 @@ it("holds each raw-control count per file and rule, and asks for a prune when on
     rmSync(dir, { recursive: true, force: true });
   }
 }, 30_000);
+
+// A suppression is keyed by path. If its file is deleted, a NEW file created at
+// that path would inherit the old file's allowance without anyone deciding so.
+// A deleted file's entries go in the same change; a moved file's entry moves
+// with it, at the same count (docs/TESTING.md -> "Design-system control ratchet").
+it("records suppressions only for files that exist", async () => {
+  const { existsSync, readFileSync } = await import("node:fs");
+  const suppressions = JSON.parse(readFileSync(path.join(process.cwd(), "eslint-suppressions.json"), "utf8"));
+  const files = Object.keys(suppressions);
+  expect(files.length).toBeGreaterThan(0);
+  expect(files.filter((file) => !existsSync(path.join(process.cwd(), file)))).toEqual([]);
+});
