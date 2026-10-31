@@ -33,6 +33,7 @@ const mocks = vi.hoisted(() => ({
   memberCreditNoteAllocationFindMany: vi.fn(),
   linkFindMany: vi.fn(),
   linkFindFirst: vi.fn(),
+  linkUpdateMany: vi.fn(),
   auditLogCreate: vi.fn(),
   bookingFindMany: vi.fn(),
   bookingUpdate: vi.fn(),
@@ -160,6 +161,8 @@ vi.mock("@/lib/prisma", () => ({
       findMany: mocks.linkFindMany,
       // #3642: the group-settlement arm looks up an abandoned invoice's link.
       findFirst: mocks.linkFindFirst,
+      // #4531: the retire of a payment link Xero confirmed deleted.
+      updateMany: mocks.linkUpdateMany,
     },
     auditLog: {
       create: mocks.auditLogCreate,
@@ -983,6 +986,74 @@ describe("processStoredXeroInboundEvents", () => {
         }),
       }),
     });
+  });
+
+  it("retires the link of a payment deleted in Xero and keeps the hand-entered replacement active (#4531)", async () => {
+    mocks.inboundFindMany.mockResolvedValue([
+      {
+        id: "evt_4531_inv",
+        source: "webhook",
+        eventCategory: "INVOICE",
+        eventType: "UPDATE",
+        resourceId: "inv_1",
+        correlationKey: "corr_4531_inv",
+        payload: { resourceId: "inv_1" },
+      },
+    ]);
+    mocks.processedCreate.mockResolvedValue({ id: "processed_4531_inv" });
+    const updatedAt = new Date("2026-06-30T10:00:00.000Z");
+    mocks.linkFindMany
+      .mockResolvedValueOnce([
+        { localModel: "Payment", localId: "pay_1", xeroObjectType: "INVOICE", role: "PRIMARY_INVOICE" },
+      ])
+      .mockResolvedValueOnce([
+        {
+          id: "link_deleted",
+          localModel: "Payment",
+          localId: "pay_1",
+          role: "INVOICE_PAYMENT",
+          xeroObjectType: "PAYMENT",
+          active: true,
+          xeroObjectId: "xpay_deleted",
+          xeroObjectNumber: null,
+          metadata: { invoiceId: "inv_1", amount: 120 },
+          updatedAt,
+        },
+      ]);
+    mocks.linkUpdateMany.mockResolvedValue({ count: 1 });
+    const accountingApi = {
+      getInvoice: vi.fn().mockResolvedValue({
+        body: {
+          invoices: [
+            {
+              invoiceID: "inv_1",
+              invoiceNumber: "INV-001",
+              status: "PAID",
+              amountPaid: 120,
+              payments: [{ paymentID: "xpay_replacement", amount: 120, status: "AUTHORISED" }],
+            },
+          ],
+        },
+      }),
+      getPayment: vi.fn().mockResolvedValue({
+        body: { payments: [{ paymentID: "xpay_deleted", status: "DELETED", invoice: { invoiceID: "inv_1" } }] },
+      }),
+    };
+    mocks.getAuthenticatedXeroClient.mockResolvedValue({ xero: { accountingApi }, tenantId: "tenant_1" });
+
+    const result = await processStoredXeroInboundEvents();
+
+    expect(result).toMatchObject({ succeeded: 1, failed: 0 });
+    expect(accountingApi.getPayment).toHaveBeenCalledTimes(1);
+    expect(accountingApi.getPayment).toHaveBeenCalledWith("tenant_1", "xpay_deleted");
+    expect(mocks.linkUpdateMany).toHaveBeenCalledWith({
+      where: { id: "link_deleted", xeroObjectType: "PAYMENT", active: true, updatedAt },
+      data: { active: false, metadata: { invoiceId: "inv_1", amount: 120, status: "DELETED" } },
+    });
+    expect(mocks.upsertXeroObjectLink).toHaveBeenCalledWith(
+      expect.objectContaining({ xeroObjectId: "xpay_replacement", role: "INVOICE_PAYMENT", active: true }),
+    );
+    expect(mocks.upsertXeroObjectLink).not.toHaveBeenCalledWith(expect.objectContaining({ xeroObjectId: "xpay_deleted" }));
   });
 
   // #2109 FIX-3: a member-less invoice matched ONLY via a union-only
@@ -5603,6 +5674,54 @@ describe("processStoredXeroInboundEvents", () => {
         xeroObjectType: "PAYMENT",
         xeroObjectId: "xpay_1",
         role: "INVOICE_PAYMENT",
+      })
+    );
+  });
+
+  it("writes the link of a payment Xero reports DELETED inactive, so it is never re-adopted (#4531)", async () => {
+    mocks.inboundFindMany.mockResolvedValue([
+      {
+        id: "evt_4531",
+        source: "webhook",
+        eventCategory: "PAYMENT",
+        eventType: "UPDATE",
+        resourceId: "xpay_deleted",
+        correlationKey: "corr_4531",
+        payload: { resourceId: "xpay_deleted" },
+      },
+    ]);
+    mocks.processedCreate.mockResolvedValue({ id: "processed_4531" });
+    mocks.linkFindMany
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([
+        { localModel: "Payment", localId: "pay_1", xeroObjectType: "INVOICE", role: "PRIMARY_INVOICE" },
+      ])
+      .mockResolvedValueOnce([]);
+    mocks.paymentFindMany.mockResolvedValue([]);
+    mocks.subscriptionFindMany.mockResolvedValue([]);
+    const accountingApi = {
+      getPayment: vi.fn().mockResolvedValue({
+        body: {
+          payments: [
+            { paymentID: "xpay_deleted", amount: 120, status: "DELETED", invoice: { invoiceID: "inv_1" } },
+          ],
+        },
+      }),
+    };
+    mocks.getAuthenticatedXeroClient.mockResolvedValue({ xero: { accountingApi }, tenantId: "tenant_1" });
+
+    const result = await processStoredXeroInboundEvents();
+
+    expect(result).toMatchObject({ succeeded: 1, failed: 0 });
+    expect(mocks.upsertXeroObjectLink).toHaveBeenCalledWith(
+      expect.objectContaining({
+        localModel: "Payment",
+        localId: "pay_1",
+        xeroObjectType: "PAYMENT",
+        xeroObjectId: "xpay_deleted",
+        role: "INVOICE_PAYMENT",
+        active: false,
+        metadata: expect.objectContaining({ status: "DELETED" }),
       })
     );
   });
