@@ -4,6 +4,7 @@ import type { AgeTier } from "@prisma/client";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { CheckCircle2, CreditCard, Info, Landmark } from "lucide-react";
+import { OptionCard, OptionCardGroup } from "@/components/ui/option-card";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -360,61 +361,40 @@ export function MemberGroupJoinPanel({
               </div>
 
               {showPaymentMethodChoice ? (
-                <div className="space-y-2">
-                  <p className="text-sm font-medium text-muted-foreground">How would you like to pay?</p>
-                  <div className="grid gap-2 sm:grid-cols-2">
-                    <button
-                      type="button"
-                      onClick={() => setPaymentMethod("stripe")}
-                      className={`flex min-h-16 items-start gap-3 rounded-md border p-3 text-left text-sm ${
-                        paymentMethod === "stripe"
-                          ? "border-info-7 bg-info-3 text-info-11"
-                          : "border-border bg-card text-muted-foreground hover:border-border"
-                      }`}
-                    >
-                      <CreditCard className="mt-0.5 h-4 w-4 shrink-0" />
-                      <span>
-                        <span className="block font-medium">Card</span>
-                        <span className="block text-xs">
-                          {/* #2919 review: a template like every other body here
-                              — render it, do not print it. */}
-                          {renderClientBookingMessage({
-                            template:
-                              bookingMessages["booking.payment.card.description"],
-                            fallback: "Pay now and secure the booking immediately.",
-                            clubTokens: messageTokens,
-                            lodgeName: summary.lodgeName,
-                          })}
-                        </span>
-                      </span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setPaymentMethod("internet_banking")}
-                      className={`flex min-h-16 items-start gap-3 rounded-md border p-3 text-left text-sm ${
-                        paymentMethod === "internet_banking"
-                          ? "border-info-7 bg-info-3 text-info-11"
-                          : "border-border bg-card text-muted-foreground hover:border-border"
-                      }`}
-                    >
-                      <Landmark className="mt-0.5 h-4 w-4 shrink-0" />
-                      <span>
-                        <span className="block font-medium">Internet Banking</span>
-                        <span className="block text-xs">
-                          {renderClientBookingMessage({
-                            template:
-                              bookingMessages[
-                                "booking.payment.internetBanking.description"
-                              ],
-                            fallback: "Receive a Xero invoice by email.",
-                            clubTokens: messageTokens,
-                            lodgeName: summary.lodgeName,
-                          })}
-                        </span>
-                      </span>
-                    </button>
-                  </div>
-                </div>
+                <OptionCardGroup label="How would you like to pay?">
+                  <OptionCard
+                    selected={paymentMethod === "stripe"}
+                    onSelect={() => setPaymentMethod("stripe")}
+                    icon={CreditCard}
+                    title="Card"
+                  >
+                    {/* #2919 review: a template like every other body here
+                        — render it, do not print it. */}
+                    {renderClientBookingMessage({
+                      template:
+                        bookingMessages["booking.payment.card.description"],
+                      fallback: "Pay now and secure the booking immediately.",
+                      clubTokens: messageTokens,
+                      lodgeName: summary.lodgeName,
+                    })}
+                  </OptionCard>
+                  <OptionCard
+                    selected={paymentMethod === "internet_banking"}
+                    onSelect={() => setPaymentMethod("internet_banking")}
+                    icon={Landmark}
+                    title="Internet Banking"
+                  >
+                    {renderClientBookingMessage({
+                      template:
+                        bookingMessages[
+                          "booking.payment.internetBanking.description"
+                        ],
+                      fallback: "Receive a Xero invoice by email.",
+                      clubTokens: messageTokens,
+                      lodgeName: summary.lodgeName,
+                    })}
+                  </OptionCard>
+                </OptionCardGroup>
               ) : null}
 
               {error ? (

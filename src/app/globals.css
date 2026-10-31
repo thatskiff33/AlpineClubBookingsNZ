@@ -310,8 +310,15 @@
      page (#f6f8f7), 4.31:1 on a hovered menu item, 3.74:1 inside its own
      `bg-destructive/10` alert box. red-700 clears every one of them (lowest
      4.97:1, on the --accent hover surface) and lifts the solid button's
-     white label from 4.57:1 to 6.15:1. Restated in `.website-theme` below. */
-  --destructive: oklch(0.505 0.213 27.518);
+     white label from 4.57:1 to 6.15:1.
+     #4563 — red-800, the light `--danger` value, not red-700. An error box
+     laid on a grey panel (`bg-destructive/10` inside `bg-muted`, as the
+     booking-request release confirmation is) read 4.49:1 at red-700, and
+     4.40:1 on `--danger-muted`. red-800 clears every surface in every box
+     alpha, and light mode now uses one error red, as dark mode does since
+     #4553. Restated in `.website-theme` below; `destructive-contrast-contract`
+     measures both from this file. */
+  --destructive: var(--danger);
   --destructive-foreground: oklch(0.985 0 0);
   --border: oklch(0.922 0 0);
   --input: oklch(0.922 0 0);
@@ -464,7 +471,7 @@
      overrides these per-club by source order (see `src/lib/theme/app-tokens.ts`,
      `WEBSITE_ROLE_ALIASES`). The BRANDED look is preserved deliberately: a light
      page (neutral-1), a GOLD (accent-9) primary/ring, and a DARK charcoal
-     (neutral-12) nav. `--destructive*` stay fixed oklch (not brand-derived).
+     (neutral-12) nav. `--destructive*` stay fixed, not brand-derived (`--destructive` is `var(--danger)`).
      Pinned against the resolver in `app-theme-layout-contract.test.ts` so the
      CSS literals and the derivation cannot drift. */
   --background: #f6f8f7;
@@ -483,8 +490,8 @@
   --placeholder-foreground: var(--muted-foreground);
   --accent: #e0e3e1;
   --accent-foreground: #1c211d;
-  /* #4466 — the AA error ink; see the `:root` note. */
-  --destructive: oklch(0.505 0.213 27.518);
+  /* #4466, #4563 — the AA error ink; see the `:root` note. */
+  --destructive: var(--danger);
   --destructive-foreground: oklch(0.985 0 0);
   --border: #d0d3d0;
   --input: #c5c8c5;

@@ -544,7 +544,7 @@ export function MemberCommitteeAssignmentsCard({
               <div
                 key={assignment.id}
                 className={`rounded-md border border-border p-4 ${
-                  assignment.isActive ? "" : "opacity-60"
+                  assignment.isActive ? "" : "border-dashed"
                 }`}
               >
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
