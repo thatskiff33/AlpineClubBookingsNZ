@@ -55,6 +55,8 @@ export const INVOICE_PAYMENT_ROLE = "INVOICE_PAYMENT";
  */
 export const PRIMARY_INVOICE_CASH_ALLOCATIONS_KEY = "overpaymentOrPrepaymentAllocations";
 export const SUPPLEMENTARY_INVOICE_PAYMENT_ROLE = "SUPPLEMENTARY_INVOICE_PAYMENT";
+export const SUBSCRIPTION_PAYMENT_ROLE = "SUBSCRIPTION_PAYMENT";
+export const REFUND_PAYMENT_ROLE = "REFUND_PAYMENT";
 
 export function getDerivedInboundPaymentRole(link: Pick<ResolvedXeroObjectLink, "xeroObjectType" | "role">) {
   if (link.xeroObjectType === "PAYMENT") {
@@ -67,9 +69,9 @@ export function getDerivedInboundPaymentRole(link: Pick<ResolvedXeroObjectLink, 
     case "SUPPLEMENTARY_INVOICE":
       return SUPPLEMENTARY_INVOICE_PAYMENT_ROLE;
     case "SUBSCRIPTION_INVOICE":
-      return "SUBSCRIPTION_PAYMENT";
+      return SUBSCRIPTION_PAYMENT_ROLE;
     case "REFUND_CREDIT_NOTE":
-      return "REFUND_PAYMENT";
+      return REFUND_PAYMENT_ROLE;
     default:
       return null;
   }
@@ -84,13 +86,28 @@ export const BOOKING_INVOICE_PAYMENT_ROLES = [
   SUPPLEMENTARY_INVOICE_PAYMENT_ROLE,
 ] as const;
 
+/**
+ * #4531: the roles `getDerivedInboundPaymentRole` gives a payment on an
+ * invoice's own links (primary, supplementary, subscription) - every payment
+ * link the inbound invoice reconcile writes. Only these are a deleted-payment
+ * candidate on an invoice read; a refund payment naming the invoice sits on its
+ * credit note, never in the invoice's `Payments`.
+ */
+export const INVOICE_DERIVED_PAYMENT_ROLES = [
+  INVOICE_PAYMENT_ROLE,
+  SUPPLEMENTARY_INVOICE_PAYMENT_ROLE,
+  SUBSCRIPTION_PAYMENT_ROLE,
+] as const;
+
 /** #4531: the status Xero gives a payment it has deleted (reversed). Terminal: never live again. */
 export const DELETED_XERO_PAYMENT_STATUS = "DELETED";
 
 /**
- * #4531 (`INV-INT-031`): whether a Xero payment status is DELETED, the one
- * spelling of that test. An inbound write of a payment Xero reports deleted
- * lands its link inactive, so a deleted payment is never re-adopted.
+ * #4531 (`INV-INT-031`): whether a Xero payment status is DELETED. The inbound
+ * reconcile, the payment-link readers in this file and the cash quantifier use
+ * it; four older inline copies elsewhere (two of them case-sensitive) are
+ * tracked by #4576. An inbound write of a payment Xero reports deleted lands
+ * its link inactive, so a deleted payment is never re-adopted.
  */
 export function isDeletedXeroPaymentStatus(status: unknown): boolean {
   return String(status ?? "").toUpperCase() === DELETED_XERO_PAYMENT_STATUS;
@@ -117,7 +134,7 @@ export function isRecordedBookingInvoicePayment(link: {
       : null;
   // Xero's payment statuses are AUTHORISED and DELETED; VOIDED is refused too
   // because the #3535 audit always did, and one list now serves both.
-  return !["DELETED", "VOIDED"].includes(String(status ?? "").toUpperCase());
+  return !isDeletedXeroPaymentStatus(status) && String(status ?? "").toUpperCase() !== "VOIDED";
 }
 
 export function getDerivedInboundAllocationRole(creditNoteRole: string) {

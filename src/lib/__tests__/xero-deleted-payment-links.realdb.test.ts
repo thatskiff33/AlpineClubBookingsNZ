@@ -4,7 +4,9 @@
  * recorded status DELETED) and keeps the hand-entered replacement active; a
  * replay writes nothing and asks Xero nothing; a payload without `Payments`
  * retires nothing; the guarded write never overwrites a concurrent writer's
- * metadata; and the backfill's `--apply` retires through the same write.
+ * metadata; a candidate Xero could not answer for is marked and the scheduled
+ * re-check retires it; and the backfill's `--apply` retires through the same
+ * write.
  *
  * Only Xero's client is doubled (synthetic payloads); every link read and
  * write is the real one. Ordinary Vitest runs skip the whole file. It reuses
@@ -34,6 +36,7 @@ let invoicePayload: Record<string, unknown>;
 (RUN ? describe : describe.skip)("a payment deleted in Xero retires its link - real PostgreSQL (#4531)", { timeout: 60_000 }, () => {
   async function clean() {
     await db.xeroObjectLink.deleteMany({ where: { localId: LOCAL_PAYMENT } });
+    await db.xeroSyncCursor.deleteMany({ where: { resourceType: "DELETED_PAYMENT_RECHECK" } });
   }
 
   async function seed() {
@@ -149,6 +152,31 @@ let invoicePayload: Record<string, unknown>;
       metadata: { invoiceId: INVOICE, amount: 125, note: "concurrent", status: "DELETED" },
     });
     expect(await retireDeletedXeroPaymentLink(stale)).toBe(false);
+  });
+
+  it("a candidate Xero could not answer for is marked, and the scheduled re-check retires it", async () => {
+    const { reconcileXeroInvoice } = await import("@/lib/xero-inbound/invoice");
+    const { recheckPendingDeletedPaymentLinks } = await import("@/lib/xero-inbound/deleted-payment-links");
+    const { getAuthenticatedXeroClient } = await import("@/lib/xero-api-client");
+    getPayment.mockRejectedValueOnce(Object.assign(new Error("Xero 503"), { response: { statusCode: 503, headers: {} } }));
+
+    const first = await reconcileXeroInvoice(INVOICE, CLUB_FORMAT_TEST, { skipSubscriptionRefresh: true });
+
+    expect(first.deletedPaymentLinks).toMatchObject({ deferred: [DELETED], retiredLinks: 0 });
+    expect(await paymentLink(DELETED)).toMatchObject({
+      active: true,
+      metadata: { invoiceId: INVOICE, deletionCheckPending: true, deletionCheckAttempts: 0 },
+    });
+
+    const recheck = await recheckPendingDeletedPaymentLinks({ minimumIntervalMs: 0, session: await getAuthenticatedXeroClient() });
+
+    expect(recheck).toMatchObject({ confirmedDeleted: [DELETED], retiredLinks: 1 });
+    const retired = await paymentLink(DELETED);
+    expect(retired).toMatchObject({ active: false, metadata: { invoiceId: INVOICE, amount: 120, status: "DELETED" } });
+    expect(retired.metadata).not.toHaveProperty("deletionCheckPending");
+    expect(await paymentLink(REPLACEMENT)).toMatchObject({ active: true });
+    const again = await recheckPendingDeletedPaymentLinks({ minimumIntervalMs: 0, session: await getAuthenticatedXeroClient() });
+    expect(again).toMatchObject({ candidatePayments: 0, xeroCalls: 0 });
   });
 
   it("the backfill's --apply retires through the same write, once", async () => {

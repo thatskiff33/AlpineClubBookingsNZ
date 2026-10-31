@@ -1,18 +1,46 @@
 /**
  * #4531 (`INV-INT-031`): a payment link is retired only once Xero confirms its
- * payment DELETED; absence from a trusted payload only nominates it. Synthetic
- * fixtures and a doubled Xero client only.
+ * payment DELETED; absence from a trusted payload only nominates it, and only
+ * for a role the document's own reconcile writes. A candidate Xero could not
+ * judge is marked and re-checked by the scheduled run. Synthetic fixtures and a
+ * doubled Xero client only.
+ *
+ * The link table is an in-memory double that HONOURS the query (role, status,
+ * metadata path, id lists, OR, the metadata guard), so a filter missing from a
+ * query fails here rather than hiding behind a double that returns every row
+ * (the role-filter defect #4596's review found did exactly that). One test
+ * bypasses the query on purpose, to prove the in-code re-check on its own.
  */
+import { isDeepStrictEqual } from "node:util";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { CreditNote, Invoice } from "xero-node";
 
+type LinkRow = {
+  id: string;
+  localModel: string;
+  localId: string;
+  role: string;
+  xeroObjectType: string;
+  active: boolean;
+  xeroObjectId: string;
+  xeroObjectNumber: string | null;
+  metadata: unknown;
+  updatedAt: Date;
+};
+
 const h = vi.hoisted(() => ({
+  store: [] as LinkRow[],
+  tick: 0,
   linkFindMany: vi.fn(),
   linkUpdateMany: vi.fn(),
   linkFindUnique: vi.fn(),
   budgetAllows: vi.fn(),
   writeAudit: vi.fn(),
   getPayment: vi.fn(),
+  callOptions: [] as unknown[],
+  getCursor: vi.fn(),
+  upsertCursor: vi.fn(),
+  getClient: vi.fn(),
 }));
 
 vi.mock("@/lib/prisma", () => ({
@@ -22,10 +50,18 @@ vi.mock("@/lib/prisma", () => ({
 }));
 vi.mock("@/lib/xero-api-usage", () => ({ xeroDailyBudgetAllowsDeferrableCall: h.budgetAllows }));
 vi.mock("@/lib/xero-inbound/audit", () => ({ writeXeroInboundAuditLogs: h.writeAudit }));
+vi.mock("@/lib/xero-sync-cursors", () => ({ getXeroSyncCursor: h.getCursor, upsertXeroSyncCursor: h.upsertCursor }));
 vi.mock("@/lib/logger", () => ({ default: { warn: vi.fn(), info: vi.fn(), error: vi.fn(), debug: vi.fn() } }));
 vi.mock("@/lib/xero-api-client", async (importOriginal) => {
   const actual = (await importOriginal()) as typeof import("@/lib/xero-api-client");
-  return { ...actual, callXeroApi: (fn: () => Promise<unknown>) => fn() };
+  return {
+    ...actual,
+    getAuthenticatedXeroClient: h.getClient,
+    callXeroApi: (fn: () => Promise<unknown>, options: unknown) => {
+      h.callOptions.push(options);
+      return fn();
+    },
+  };
 });
 
 import { Prisma } from "@prisma/client";
@@ -33,16 +69,105 @@ import { XeroDailyLimitError } from "@/lib/xero-api-client";
 import {
   confirmXeroPaymentDeleted,
   creditNotePaymentsForAbsence,
+  DELETED_PAYMENT_RECHECK_MIN_INTERVAL_MS,
+  deletedPaymentCandidateRoles,
   invoicePaymentsForAbsence,
   MAX_DELETED_PAYMENT_CONFIRMATIONS_PER_RECONCILE,
+  recheckPendingDeletedPaymentLinks,
   retireDeletedPaymentLinksAbsentFromPayload,
   retireDeletedXeroPaymentLink,
 } from "@/lib/xero-inbound/deleted-payment-links";
+import { getDerivedInboundPaymentRole, INVOICE_DERIVED_PAYMENT_ROLES } from "@/lib/xero-inbound/object-links";
 
 const INVOICE = "inv-4531";
 const NOTE = "cn-4531";
 const SCOPE = [{ localModel: "Payment", localId: "pay-local-1" }];
 const session = { tenantId: "tenant-test", xero: { accountingApi: { getPayment: h.getPayment } } } as never;
+
+// ---- the honouring link-table double -------------------------------------------------
+function readPath(value: unknown, path: string[]): unknown {
+  return path.reduce<unknown>((current, key) => (current && typeof current === "object" ? (current as Record<string, unknown>)[key] : undefined), value);
+}
+
+function matches(row: LinkRow, where: Record<string, unknown>): boolean {
+  for (const [key, condition] of Object.entries(where)) {
+    if (key === "OR") {
+      if (!(condition as Array<Record<string, unknown>>).some((branch) => matches(row, branch))) return false;
+      continue;
+    }
+    const value = (row as Record<string, unknown>)[key];
+    if (key === "metadata") {
+      const filter = condition as { path?: string[]; equals: unknown };
+      if (filter.path) {
+        if (!isDeepStrictEqual(readPath(value, filter.path), filter.equals)) return false;
+      } else if (filter.equals === Prisma.AnyNull) {
+        if (value !== null && value !== undefined) return false;
+      } else if (!isDeepStrictEqual(value, filter.equals)) {
+        return false;
+      }
+      continue;
+    }
+    if (condition instanceof Date) {
+      if (!(value instanceof Date) || value.getTime() !== condition.getTime()) return false;
+      continue;
+    }
+    if (condition && typeof condition === "object") {
+      const operators = condition as { in?: unknown[]; notIn?: unknown[] };
+      const unknownOperator = Object.keys(operators).find((operator) => operator !== "in" && operator !== "notIn");
+      if (unknownOperator) throw new Error(`The link double does not understand ${key}.${unknownOperator}`);
+      if (operators.in && !operators.in.includes(value)) return false;
+      if (operators.notIn && operators.notIn.includes(value)) return false;
+      continue;
+    }
+    if (value !== condition) return false;
+  }
+  return true;
+}
+
+function honourQueries() {
+  h.linkFindMany.mockImplementation(async (args: { where: Record<string, unknown>; orderBy?: unknown; take?: number }) => {
+    let rows = h.store.filter((row) => matches(row, args.where)).map((row) => ({ ...row }));
+    const orders = Array.isArray(args.orderBy) ? args.orderBy : args.orderBy ? [args.orderBy] : [];
+    for (const order of [...orders].reverse()) {
+      const [field] = Object.keys(order as object);
+      rows = [...rows].sort((a, b) => {
+        const left = (a as Record<string, unknown>)[field];
+        const right = (b as Record<string, unknown>)[field];
+        return left instanceof Date && right instanceof Date ? left.getTime() - right.getTime() : String(left).localeCompare(String(right));
+      });
+    }
+    return args.take ? rows.slice(0, args.take) : rows;
+  });
+  h.linkUpdateMany.mockImplementation(async (args: { where: Record<string, unknown>; data: Partial<LinkRow> }) => {
+    const hit = h.store.filter((row) => matches(row, args.where));
+    for (const row of hit) Object.assign(row, args.data, { updatedAt: new Date(Date.UTC(2026, 5, 30, 12, 0, h.tick++)) });
+    return { count: hit.length };
+  });
+  h.linkFindUnique.mockImplementation(async (args: { where: { id: string } }) => {
+    const row = h.store.find((candidate) => candidate.id === args.where.id);
+    return row ? { ...row } : null;
+  });
+}
+
+function seedLink(xeroObjectId: string, overrides: Partial<LinkRow> = {}): LinkRow {
+  const row: LinkRow = {
+    id: `link-${xeroObjectId}-${overrides.localId ?? "pay-local-1"}`,
+    localModel: "Payment",
+    localId: "pay-local-1",
+    role: "INVOICE_PAYMENT",
+    xeroObjectType: "PAYMENT",
+    active: true,
+    xeroObjectId,
+    xeroObjectNumber: null,
+    metadata: { invoiceId: INVOICE, amount: 120, status: null },
+    updatedAt: new Date(Date.UTC(2026, 5, 30, 10, 0, h.tick++)),
+    ...overrides,
+  };
+  h.store.push(row);
+  return row;
+}
+
+const stored = (id: string) => h.store.find((row) => row.id === id)!;
 
 function invoice(overrides: Partial<Invoice> = {}): Invoice {
   return {
@@ -54,36 +179,27 @@ function invoice(overrides: Partial<Invoice> = {}): Invoice {
   } as unknown as Invoice;
 }
 
-function linkRow(xeroObjectId: string, overrides: Record<string, unknown> = {}) {
-  return {
-    id: `link-${xeroObjectId}-${String(overrides.localId ?? "pay-local-1")}`,
-    localModel: "Payment",
-    localId: "pay-local-1",
-    role: "INVOICE_PAYMENT",
-    xeroObjectType: "PAYMENT",
-    active: true,
-    xeroObjectId,
-    xeroObjectNumber: null,
-    metadata: { invoiceId: INVOICE, amount: 120, status: null },
-    ...overrides,
-  };
-}
-
 function xeroPayment(paymentID: string, status: string, invoiceID = INVOICE) {
   return { body: { payments: [{ paymentID, status, invoice: { invoiceID } }] } };
 }
 
+function xeroError(statusCode: number) {
+  return Object.assign(new Error(`Xero ${statusCode}`), { response: { statusCode, headers: {} } });
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
+  h.store.length = 0;
+  h.callOptions.length = 0;
   h.budgetAllows.mockResolvedValue(true);
-  h.linkUpdateMany.mockResolvedValue({ count: 1 });
-  h.linkFindUnique.mockResolvedValue({ active: false, metadata: {} });
+  h.getCursor.mockResolvedValue(null);
+  h.getClient.mockResolvedValue(session);
+  honourQueries();
 });
 
 describe("which payloads may nominate a candidate (#4531)", () => {
   it("trusts an invoice whose listed payments are complete and add up to AmountPaid", () => {
-    const result = invoicePaymentsForAbsence(invoice());
-    expect(result).toEqual({ trusted: true, presentIds: new Set(["replacement"]) });
+    expect(invoicePaymentsForAbsence(invoice())).toEqual({ trusted: true, presentIds: new Set(["replacement"]) });
   });
 
   it("counts a DELETED entry as present but not toward AmountPaid", () => {
@@ -115,9 +231,7 @@ describe("which payloads may nominate a candidate (#4531)", () => {
   });
 
   it("refuses a payload the module's degraded-shape guard finds incomplete", () => {
-    const degraded = invoice({
-      overpayments: [{ overpaymentID: "op-1" }] as never,
-    });
+    const degraded = invoice({ overpayments: [{ overpaymentID: "op-1" }] as never });
     expect(invoicePaymentsForAbsence(degraded)).toEqual({ trusted: false, reason: "The invoice's cash figures are incomplete." });
   });
 
@@ -127,6 +241,17 @@ describe("which payloads may nominate a candidate (#4531)", () => {
       payments: [{ paymentID: "refund-live", amount: 50 }],
     } as unknown as CreditNote);
     expect(result).toEqual({ trusted: true, presentIds: new Set(["refund-live"]) });
+  });
+});
+
+describe("which roles a document nominates (#4531)", () => {
+  it("an invoice nominates exactly the payment roles its own reconcile derives", () => {
+    const derived = ["PRIMARY_INVOICE", "SUPPLEMENTARY_INVOICE", "SUBSCRIPTION_INVOICE"].map((role) =>
+      getDerivedInboundPaymentRole({ xeroObjectType: "INVOICE", role }),
+    );
+    expect([...INVOICE_DERIVED_PAYMENT_ROLES].sort()).toEqual([...derived].sort());
+    expect(deletedPaymentCandidateRoles({ kind: "INVOICE", id: INVOICE })).toEqual(INVOICE_DERIVED_PAYMENT_ROLES);
+    expect(deletedPaymentCandidateRoles({ kind: "CREDIT_NOTE", id: NOTE })).toEqual(["REFUND_PAYMENT"]);
   });
 });
 
@@ -140,16 +265,17 @@ describe("retiring the links of payments Xero deleted (#4531)", () => {
     });
 
   it("retires nothing, and asks nothing, when the payload cannot be trusted", async () => {
+    seedLink("deleted");
     const outcome = await retire(invoicePaymentsForAbsence(invoice({ payments: undefined })));
     expect(outcome).toMatchObject({ skippedReason: "The payload carries no Payments list.", retiredLinks: 0, xeroCalls: 0 });
     expect(h.linkFindMany).not.toHaveBeenCalled();
     expect(h.getPayment).not.toHaveBeenCalled();
-    expect(h.linkUpdateMany).not.toHaveBeenCalled();
+    expect(stored("link-deleted-pay-local-1").active).toBe(true);
   });
 
   it("retires a confirmed DELETED payment and leaves the hand-entered replacement active", async () => {
-    // The double ignores the query's filters, so the replacement comes back too.
-    h.linkFindMany.mockResolvedValue([linkRow("deleted"), linkRow("replacement")]);
+    seedLink("deleted");
+    seedLink("replacement");
     h.getPayment.mockResolvedValue(xeroPayment("deleted", "DELETED"));
 
     const outcome = await retire();
@@ -157,13 +283,13 @@ describe("retiring the links of payments Xero deleted (#4531)", () => {
     expect(h.linkFindMany.mock.calls[0][0].where).toMatchObject({
       xeroObjectType: "PAYMENT",
       active: true,
+      role: { in: [...INVOICE_DERIVED_PAYMENT_ROLES] },
       metadata: { path: ["invoiceId"], equals: INVOICE },
       xeroObjectId: { notIn: ["replacement"] },
       OR: [{ localModel: "Payment", localId: "pay-local-1" }],
     });
     expect(h.getPayment).toHaveBeenCalledTimes(1);
     expect(h.getPayment).toHaveBeenCalledWith("tenant-test", "deleted");
-    expect(h.linkUpdateMany).toHaveBeenCalledTimes(1);
     expect(h.linkUpdateMany).toHaveBeenCalledWith({
       where: {
         id: "link-deleted-pay-local-1",
@@ -173,90 +299,125 @@ describe("retiring the links of payments Xero deleted (#4531)", () => {
       },
       data: { active: false, metadata: { invoiceId: INVOICE, amount: 120, status: "DELETED" } },
     });
+    expect(stored("link-deleted-pay-local-1")).toMatchObject({ active: false, metadata: { status: "DELETED" } });
+    expect(stored("link-replacement-pay-local-1")).toMatchObject({ active: true, metadata: { status: null } });
     expect(outcome).toMatchObject({ candidatePayments: 1, xeroCalls: 1, confirmedDeleted: ["deleted"], retiredLinks: 1 });
     expect(h.writeAudit).toHaveBeenCalledWith(
       expect.objectContaining({
         source: "xero-inbound-deleted-payment-retired",
+        summary: "Xero payment link retired: payment deleted in Xero",
         links: [expect.objectContaining({ xeroObjectId: "deleted", role: "INVOICE_PAYMENT" })],
       }),
     );
   });
 
-  it("asks once per payment and retires every link that names it", async () => {
-    h.linkFindMany.mockResolvedValue([linkRow("deleted"), linkRow("deleted", { localModel: "Booking", localId: "booking-1" })]);
-    h.getPayment.mockResolvedValue(xeroPayment("deleted", "DELETED"));
+  it("never asks Xero about a refund payment that names the invoice it refunds", async () => {
+    seedLink("refund-on-note", { role: "REFUND_PAYMENT", metadata: { invoiceId: INVOICE, creditNoteId: NOTE, amount: 50 } });
     const outcome = await retire();
+    expect(outcome).toMatchObject({ candidatePayments: 0, xeroCalls: 0 });
+    expect(h.getPayment).not.toHaveBeenCalled();
+  });
+
+  it("re-checks role, status, document and absence in code even if the query returned every row", async () => {
+    seedLink("refund-on-note", { role: "REFUND_PAYMENT" });
+    seedLink("replacement");
+    seedLink("already-retired", { active: false });
+    seedLink("other-invoice", { metadata: { invoiceId: "another-invoice", amount: 1 } });
+    h.linkFindMany.mockImplementationOnce(async () => h.store.map((row) => ({ ...row })));
+    const outcome = await retire();
+    expect(outcome.candidatePayments).toBe(0);
+    expect(h.getPayment).not.toHaveBeenCalled();
+  });
+
+  it("asks once per payment and retires every link that names it", async () => {
+    seedLink("deleted");
+    seedLink("deleted", { localModel: "Booking", localId: "booking-1" });
+    h.getPayment.mockResolvedValue(xeroPayment("deleted", "DELETED"));
+    const outcome = await retireDeletedPaymentLinksAbsentFromPayload({
+      session,
+      document: { kind: "INVOICE", id: INVOICE },
+      payments: invoicePaymentsForAbsence(invoice()),
+      localScope: [...SCOPE, { localModel: "Booking", localId: "booking-1" }],
+    });
     expect(h.getPayment).toHaveBeenCalledTimes(1);
-    expect(h.linkUpdateMany).toHaveBeenCalledTimes(2);
     expect(outcome.retiredLinks).toBe(2);
   });
 
-  it("keeps a candidate Xero still reports live", async () => {
-    h.linkFindMany.mockResolvedValue([linkRow("absent-but-live")]);
+  it("keeps a candidate Xero still reports live, and clears a pending marker", async () => {
+    seedLink("absent-but-live", { metadata: { invoiceId: INVOICE, deletionCheckPending: true, deletionCheckPendingSince: "x", deletionCheckAttempts: 2 } });
     h.getPayment.mockResolvedValue(xeroPayment("absent-but-live", "AUTHORISED"));
     const outcome = await retire();
     expect(outcome).toMatchObject({ confirmedLive: ["absent-but-live"], retiredLinks: 0 });
-    expect(h.linkUpdateMany).not.toHaveBeenCalled();
+    expect(stored("link-absent-but-live-pay-local-1")).toMatchObject({ active: true, metadata: { invoiceId: INVOICE } });
+    expect(stored("link-absent-but-live-pay-local-1").metadata).not.toHaveProperty("deletionCheckPending");
   });
 
   it("keeps a deleted payment Xero files under another invoice", async () => {
-    h.linkFindMany.mockResolvedValue([linkRow("deleted")]);
+    seedLink("deleted");
     h.getPayment.mockResolvedValue(xeroPayment("deleted", "DELETED", "another-invoice"));
     const outcome = await retire();
     expect(outcome).toMatchObject({ unconfirmed: ["deleted"], retiredLinks: 0 });
-    expect(h.linkUpdateMany).not.toHaveBeenCalled();
+    expect(stored("link-deleted-pay-local-1").active).toBe(true);
   });
 
-  it("keeps a candidate when Xero's answer fails", async () => {
-    h.linkFindMany.mockResolvedValue([linkRow("deleted")]);
+  it("marks a candidate whose answer failed, counting the attempt", async () => {
+    seedLink("deleted");
     h.getPayment.mockRejectedValue(new Error("404 Not Found"));
     const outcome = await retire();
     expect(outcome).toMatchObject({ unconfirmed: ["deleted"], xeroCalls: 1, retiredLinks: 0 });
-    expect(h.linkUpdateMany).not.toHaveBeenCalled();
+    expect(stored("link-deleted-pay-local-1")).toMatchObject({
+      active: true,
+      metadata: { invoiceId: INVOICE, deletionCheckPending: true, deletionCheckPendingSince: "2026-07-01T00:00:00.000Z", deletionCheckAttempts: 1 },
+    });
   });
 
-  it("defers without calling Xero when the day's budget is spent", async () => {
-    h.linkFindMany.mockResolvedValue([linkRow("deleted")]);
+  it("defers and marks, without calling Xero, when the day's budget is spent", async () => {
+    seedLink("deleted");
     h.budgetAllows.mockResolvedValue(false);
     const outcome = await retire();
     expect(outcome).toMatchObject({ deferred: ["deleted"], xeroCalls: 0, retiredLinks: 0 });
     expect(h.getPayment).not.toHaveBeenCalled();
-    expect(h.linkUpdateMany).not.toHaveBeenCalled();
+    expect(stored("link-deleted-pay-local-1")).toMatchObject({ active: true, metadata: { deletionCheckPending: true, deletionCheckAttempts: 0 } });
   });
 
-  it("stops asking once Xero's daily limit is hit, deferring the rest", async () => {
-    h.linkFindMany.mockResolvedValue([linkRow("first"), linkRow("second")]);
+  it("stops asking once Xero's daily limit is hit, deferring and marking the rest", async () => {
+    seedLink("first");
+    seedLink("second");
     h.getPayment.mockRejectedValue(new XeroDailyLimitError(3600, true));
     const outcome = await retire();
     expect(h.getPayment).toHaveBeenCalledTimes(1);
     expect(outcome).toMatchObject({ deferred: ["first", "second"], xeroCalls: 0, retiredLinks: 0 });
+    expect(stored("link-second-pay-local-1").metadata).toMatchObject({ deletionCheckPending: true });
   });
 
-  it(`asks about at most ${MAX_DELETED_PAYMENT_CONFIRMATIONS_PER_RECONCILE} payments per reconcile`, async () => {
+  it(`asks about at most ${MAX_DELETED_PAYMENT_CONFIRMATIONS_PER_RECONCILE} payments per reconcile and marks the rest`, async () => {
     const ids = Array.from({ length: MAX_DELETED_PAYMENT_CONFIRMATIONS_PER_RECONCILE + 2 }, (_, index) => `p${index}`);
-    h.linkFindMany.mockResolvedValue(ids.map((id) => linkRow(id)));
+    for (const id of ids) seedLink(id);
     h.getPayment.mockImplementation(async (_tenant: string, id: string) => xeroPayment(id, "DELETED"));
     const outcome = await retire();
     expect(h.getPayment).toHaveBeenCalledTimes(MAX_DELETED_PAYMENT_CONFIRMATIONS_PER_RECONCILE);
     expect(outcome.xeroCalls).toBe(MAX_DELETED_PAYMENT_CONFIRMATIONS_PER_RECONCILE);
     expect(outcome.deferred).toEqual(ids.slice(MAX_DELETED_PAYMENT_CONFIRMATIONS_PER_RECONCILE));
     expect(outcome.retiredLinks).toBe(MAX_DELETED_PAYMENT_CONFIRMATIONS_PER_RECONCILE);
+    expect(stored(`link-${ids.at(-1)}-pay-local-1`).metadata).toMatchObject({ deletionCheckPending: true });
   });
 
-  it("a replay finds nothing to retire and writes no audit row", async () => {
-    h.linkFindMany.mockResolvedValue([linkRow("deleted")]);
+  it("a replay finds nothing to retire, asks nothing and writes no audit row", async () => {
+    seedLink("deleted");
     h.getPayment.mockResolvedValue(xeroPayment("deleted", "DELETED"));
-    h.linkUpdateMany.mockResolvedValue({ count: 0 });
-    h.linkFindUnique.mockResolvedValue({ active: false, metadata: { status: "DELETED" } });
-    const outcome = await retire();
-    expect(outcome).toMatchObject({ confirmedDeleted: ["deleted"], retiredLinks: 0 });
+    await retire();
+    vi.clearAllMocks();
+    honourQueries();
+    const replay = await retire();
+    expect(replay).toMatchObject({ candidatePayments: 0, retiredLinks: 0, xeroCalls: 0 });
+    expect(h.getPayment).not.toHaveBeenCalled();
+    expect(h.linkUpdateMany).not.toHaveBeenCalled();
     expect(h.writeAudit).toHaveBeenCalledWith(expect.objectContaining({ links: [] }));
   });
 
-  it("nominates a credit note's refund payments by the note's id", async () => {
-    h.linkFindMany.mockResolvedValue([
-      linkRow("refund-deleted", { role: "REFUND_PAYMENT", metadata: { creditNoteId: NOTE, amount: 50 } }),
-    ]);
+  it("nominates only a credit note's refund payments, by the note's id", async () => {
+    seedLink("refund-deleted", { role: "REFUND_PAYMENT", metadata: { creditNoteId: NOTE, amount: 50 } });
+    seedLink("invoice-payment-naming-note", { role: "INVOICE_PAYMENT", metadata: { creditNoteId: NOTE, amount: 50 } });
     h.getPayment.mockResolvedValue({ body: { payments: [{ paymentID: "refund-deleted", status: "DELETED", creditNote: { creditNoteID: NOTE } }] } });
     const outcome = await retireDeletedPaymentLinksAbsentFromPayload({
       session,
@@ -264,56 +425,129 @@ describe("retiring the links of payments Xero deleted (#4531)", () => {
       payments: creditNotePaymentsForAbsence({ creditNoteID: NOTE, payments: [] } as unknown as CreditNote),
       localScope: SCOPE,
     });
-    expect(h.linkFindMany.mock.calls[0][0].where.metadata).toEqual({ path: ["creditNoteId"], equals: NOTE });
+    expect(h.linkFindMany.mock.calls[0][0].where).toMatchObject({ role: { in: ["REFUND_PAYMENT"] }, metadata: { path: ["creditNoteId"], equals: NOTE } });
+    expect(h.getPayment).toHaveBeenCalledTimes(1);
     expect(outcome.retiredLinks).toBe(1);
   });
 });
 
-describe("the guarded retire write (#4531)", () => {
-  it("re-reads after a concurrent write and retires over its metadata", async () => {
-    h.linkUpdateMany.mockResolvedValueOnce({ count: 0 }).mockResolvedValueOnce({ count: 1 });
-    h.linkFindUnique.mockResolvedValue({ active: true, metadata: { invoiceId: INVOICE, amount: 125 } });
-    expect(await retireDeletedXeroPaymentLink(linkRow("deleted"))).toBe(true);
-    expect(h.linkUpdateMany.mock.calls[1][0]).toEqual({
-      where: {
-        id: "link-deleted-pay-local-1",
-        xeroObjectType: "PAYMENT",
-        active: true,
-        metadata: { equals: { invoiceId: INVOICE, amount: 125 } },
-      },
-      data: { active: false, metadata: { invoiceId: INVOICE, amount: 125, status: "DELETED" } },
-    });
+describe("the guarded write (#4531)", () => {
+  it("re-reads after a concurrent write and retires over its metadata, dropping the pending marker", async () => {
+    const stale = seedLink("deleted", { metadata: { invoiceId: INVOICE, deletionCheckPending: true } });
+    stored(stale.id).metadata = { invoiceId: INVOICE, amount: 125, deletionCheckPending: true };
+    expect(await retireDeletedXeroPaymentLink({ ...stale, metadata: { invoiceId: INVOICE, deletionCheckPending: true } })).toBe(true);
+    expect(h.linkUpdateMany).toHaveBeenCalledTimes(2);
+    expect(stored(stale.id)).toMatchObject({ active: false, metadata: { invoiceId: INVOICE, amount: 125, status: "DELETED" } });
+    expect(stored(stale.id).metadata).not.toHaveProperty("deletionCheckPending");
   });
 
   it("guards a link stored without metadata on its being null", async () => {
-    await retireDeletedXeroPaymentLink(linkRow("deleted", { metadata: null }));
+    const row = seedLink("deleted", { metadata: null });
+    expect(await retireDeletedXeroPaymentLink(row)).toBe(true);
     expect(h.linkUpdateMany.mock.calls[0][0].where.metadata).toEqual({ equals: Prisma.AnyNull });
-    expect(h.linkUpdateMany.mock.calls[0][0].data.metadata).toEqual({ status: "DELETED" });
+    expect(stored(row.id).metadata).toEqual({ status: "DELETED" });
   });
 
   it("gives up after two lost guards rather than overwrite blindly", async () => {
+    const row = seedLink("deleted");
     h.linkUpdateMany.mockResolvedValue({ count: 0 });
-    h.linkFindUnique.mockResolvedValue({ active: true, metadata: {} });
-    expect(await retireDeletedXeroPaymentLink(linkRow("deleted"))).toBe(false);
+    expect(await retireDeletedXeroPaymentLink(row)).toBe(false);
     expect(h.linkUpdateMany).toHaveBeenCalledTimes(2);
+  });
+
+  it("writes nothing to a link already retired", async () => {
+    const row = seedLink("deleted", { active: false });
+    expect(await retireDeletedXeroPaymentLink(row)).toBe(false);
+    expect(stored(row.id).metadata).toEqual({ invoiceId: INVOICE, amount: 120, status: null });
   });
 });
 
 describe("confirming a payment's deletion (#4531)", () => {
+  it("is one attempt that never waits and never arms the outage breaker", async () => {
+    h.getPayment.mockResolvedValue(xeroPayment("deleted", "DELETED"));
+    await confirmXeroPaymentDeleted(session, "deleted", { workflow: "test" });
+    expect(h.callOptions[0]).toMatchObject({ maxRetries: 0, maxTransientRetries: 0, armTransientBreaker: false });
+  });
+
+  it.each([429, 503, 408])("defers on a %s rather than calling it unanswered", async (statusCode) => {
+    h.getPayment.mockRejectedValue(xeroError(statusCode));
+    expect(await confirmXeroPaymentDeleted(session, "deleted", { workflow: "test" })).toEqual({ confirmation: "DEFERRED", called: true });
+  });
+
   it("is DELETED only for the payment asked about", async () => {
     h.getPayment.mockResolvedValue(xeroPayment("someone-else", "DELETED"));
-    expect(await confirmXeroPaymentDeleted(session, "deleted", { workflow: "test" })).toEqual({
-      confirmation: "UNCONFIRMED",
-      called: true,
-    });
+    expect(await confirmXeroPaymentDeleted(session, "deleted", { workflow: "test" })).toEqual({ confirmation: "UNCONFIRMED", called: true });
   });
 
   it("defers when today's usage cannot be read", async () => {
     h.budgetAllows.mockRejectedValue(new Error("db down"));
-    expect(await confirmXeroPaymentDeleted(session, "deleted", { workflow: "test" })).toEqual({
-      confirmation: "DEFERRED",
-      called: false,
-    });
+    expect(await confirmXeroPaymentDeleted(session, "deleted", { workflow: "test" })).toEqual({ confirmation: "DEFERRED", called: false });
     expect(h.getPayment).not.toHaveBeenCalled();
+  });
+});
+
+describe("the scheduled re-check of pending links (#4531)", () => {
+  const pending = (attempts = 0) => ({ deletionCheckPending: true, deletionCheckPendingSince: "2026-06-29T00:00:00.000Z", deletionCheckAttempts: attempts });
+
+  it("waits out its interval without reading a link", async () => {
+    h.getCursor.mockResolvedValue({ lastSuccessfulSyncAt: new Date(Date.now() - DELETED_PAYMENT_RECHECK_MIN_INTERVAL_MS + 60_000) });
+    const outcome = await recheckPendingDeletedPaymentLinks();
+    expect(outcome).toMatchObject({ skipped: true, xeroCalls: 0 });
+    expect(h.linkFindMany).not.toHaveBeenCalled();
+    expect(h.upsertCursor).not.toHaveBeenCalled();
+  });
+
+  it("reads only marked links, and with none asks Xero nothing", async () => {
+    seedLink("unmarked");
+    const outcome = await recheckPendingDeletedPaymentLinks();
+    expect(h.linkFindMany.mock.calls[0][0].where).toEqual({
+      xeroObjectType: "PAYMENT",
+      active: true,
+      metadata: { path: ["deletionCheckPending"], equals: true },
+    });
+    expect(outcome.candidatePayments).toBe(0);
+    expect(h.getClient).not.toHaveBeenCalled();
+    expect(h.upsertCursor).toHaveBeenCalledWith(expect.objectContaining({ resourceType: "DELETED_PAYMENT_RECHECK", lastSuccessfulSyncAt: expect.any(Date) }));
+  });
+
+  it("retires a confirmed one, clears a live one and counts a failed answer", async () => {
+    seedLink("now-deleted", { metadata: { invoiceId: INVOICE, ...pending() } });
+    seedLink("live", { metadata: { invoiceId: INVOICE, ...pending() } });
+    seedLink("silent", { metadata: { creditNoteId: NOTE, ...pending(3) }, role: "REFUND_PAYMENT" });
+    h.getPayment.mockImplementation(async (_tenant: string, id: string) => {
+      if (id === "silent") throw new Error("404 Not Found");
+      return xeroPayment(id, id === "now-deleted" ? "DELETED" : "AUTHORISED");
+    });
+
+    const outcome = await recheckPendingDeletedPaymentLinks();
+
+    expect(outcome).toMatchObject({ confirmedDeleted: ["now-deleted"], confirmedLive: ["live"], unconfirmed: ["silent"], retiredLinks: 1, xeroCalls: 3 });
+    expect(stored("link-now-deleted-pay-local-1")).toMatchObject({ active: false, metadata: { invoiceId: INVOICE, status: "DELETED" } });
+    expect(stored("link-now-deleted-pay-local-1").metadata).not.toHaveProperty("deletionCheckPending");
+    expect(stored("link-live-pay-local-1")).toMatchObject({ active: true, metadata: { invoiceId: INVOICE } });
+    expect(stored("link-live-pay-local-1").metadata).not.toHaveProperty("deletionCheckPending");
+    expect(stored("link-silent-pay-local-1").metadata).toMatchObject({ deletionCheckPending: true, deletionCheckAttempts: 4 });
+    expect(h.writeAudit).toHaveBeenCalledWith(expect.objectContaining({ links: [expect.objectContaining({ xeroObjectId: "now-deleted" })] }));
+  });
+
+  it("asks least recently written first, so a link Xero never answers for rotates to the back", async () => {
+    seedLink("silent", { metadata: { invoiceId: INVOICE, ...pending(1) } });
+    const ids = Array.from({ length: MAX_DELETED_PAYMENT_CONFIRMATIONS_PER_RECONCILE }, (_, index) => `later-${index}`);
+    for (const id of ids) seedLink(id, { metadata: { invoiceId: INVOICE, ...pending() } });
+    h.getPayment.mockRejectedValue(new Error("404 Not Found"));
+
+    await recheckPendingDeletedPaymentLinks({ minimumIntervalMs: 0 });
+    expect(h.getPayment.mock.calls.map((call) => call[1])).toEqual(["silent", ...ids.slice(0, -1)]);
+
+    h.getPayment.mockClear();
+    await recheckPendingDeletedPaymentLinks({ minimumIntervalMs: 0 });
+    expect(h.getPayment.mock.calls[0][1]).toBe(ids.at(-1));
+  });
+
+  it("judges a pending link against the document it names", async () => {
+    seedLink("deleted", { metadata: { invoiceId: INVOICE, ...pending() } });
+    h.getPayment.mockResolvedValue(xeroPayment("deleted", "DELETED", "another-invoice"));
+    const outcome = await recheckPendingDeletedPaymentLinks();
+    expect(outcome).toMatchObject({ unconfirmed: ["deleted"], retiredLinks: 0 });
   });
 });

@@ -4,14 +4,17 @@
  * retire before #4531, because Xero leaves a deleted payment out of its
  * invoice and so it was never seen again.
  *
- * Report-only by default. Provider traffic is READ-ONLY: the dry run pages
+ * Report-only by default: it changes no link (its Xero calls still record usage
+ * rows). Provider traffic is READ-ONLY: the dry run pages
  * `GET /Payments?where=Status=="DELETED"` (100 a page), and `--apply` adds one
- * `GET /Payments/{id}` per payment it retires a link of. It retires only a
- * payment Xero confirms DELETED, writing the link inactive with its recorded
- * status DELETED, and never touches Xero. Runbook: docs/MAINTENANCE.md,
- * "Retire links to payments deleted in Xero (#4531)".
+ * `GET /Payments/{id}` per candidate payment it checks. With `--payment` it
+ * asks Xero about just those ids (one call each) instead of listing, and that
+ * answer is the confirmation. It retires only a payment Xero confirms DELETED,
+ * writing the link inactive with its recorded status DELETED, and never
+ * touches Xero. Runbook: docs/MAINTENANCE.md, "Retire links to payments
+ * deleted in Xero (#4531)".
  *
- *   pnpm run xero:deleted-payment-link-backfill                       # dry run (writes nothing)
+ *   pnpm run xero:deleted-payment-link-backfill                       # dry run (changes no link)
  *   pnpm run xero:deleted-payment-link-backfill --apply               # retire every confirmed one
  *   pnpm run xero:deleted-payment-link-backfill --apply --payment <xero payment id> [--payment <id>...]
  */
@@ -28,15 +31,16 @@ import {
 
 function printUsage() {
   console.log(`Usage:
-  pnpm run xero:deleted-payment-link-backfill                  # dry run (default, writes nothing)
+  pnpm run xero:deleted-payment-link-backfill                  # dry run (default, changes no link)
   pnpm run xero:deleted-payment-link-backfill --apply          # retire links of payments Xero confirms DELETED
   pnpm run xero:deleted-payment-link-backfill --payment <id>   # scope to Xero payment id(s) (repeatable)
 
 Options:
-  --apply          Ask Xero about each listed payment once more and retire the
-                   active links of every one it confirms DELETED. Anything
+  --apply          Retire the active links of every payment Xero confirms
+                   DELETED (a listed one is asked about once more). Anything
                    else is left active and named.
-  --payment <id>   Restrict to one Xero payment id; repeat for several.
+  --payment <id>   Ask Xero about this payment id directly instead of listing;
+                   repeat for several.
   --json           Emit machine-readable JSON after the report.
   --help, -h       Show this help.
 `);

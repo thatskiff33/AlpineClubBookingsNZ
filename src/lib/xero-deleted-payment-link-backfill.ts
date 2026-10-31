@@ -2,27 +2,39 @@
  * #4531 (`INV-INT-031`): the one-off backfill for payment links whose Xero
  * payment was deleted before the inbound reconcile learned to retire them.
  *
- * Report-only by default. It lists the payments Xero itself reports DELETED
- * (`GET /Payments?where=Status=="DELETED"`, a page per 100, the status checked
- * again on every row) and names each ACTIVE local payment link that points at
- * one. `--apply` asks Xero about each such payment once more
- * (`confirmXeroPaymentDeleted`, the inbound reconcile's own check) and retires
- * only a confirmed DELETED one, through the inbound reconcile's own guarded
- * write. Every call spends the daily budget only below the usage panel's
- * "critical" threshold, so a run stopped short says so and can be run again.
+ * Report-only by default: it changes no link (its Xero calls still record usage
+ * rows). It lists the payments Xero itself reports DELETED
+ * (`GET /Payments?where=Status=="DELETED"`, oldest change first, a page per
+ * 100, the status checked again on every row) and names each ACTIVE local
+ * payment link that points at one. With `--payment` it asks Xero about just
+ * those payments (`GET /Payments/{id}`) instead of listing. `--apply` retires
+ * only payments Xero confirms DELETED (`confirmXeroPaymentDeleted`, the inbound
+ * reconcile's own check): each listed candidate is asked about once more, and
+ * a `--payment` id's direct answer is that confirmation. It writes through the
+ * inbound reconcile's own guarded write. Every call is one attempt and spends
+ * the daily budget only below the usage panel's "critical" threshold, so a run
+ * stopped short says so; a re-run lists again from the start.
  * Runbook: docs/MAINTENANCE.md, "Retire links to payments deleted in Xero".
  */
 import { prisma } from "@/lib/prisma";
-import { callXeroApi, XeroDailyLimitError, XeroTransientOutageError, type getAuthenticatedXeroClient } from "@/lib/xero-api-client";
+import {
+  callXeroApi,
+  isRetryableXeroTransientStatus,
+  XeroDailyLimitError,
+  XeroTransientOutageError,
+  type getAuthenticatedXeroClient,
+} from "@/lib/xero-api-client";
+import { getXeroErrorStatusCode } from "@/lib/xero-error-shape";
 import { xeroDailyBudgetAllowsDeferrableCall } from "@/lib/xero-api-usage";
 import {
+  auditRetiredPaymentLinks,
   confirmXeroPaymentDeleted,
+  DEFERRABLE_XERO_READ,
   DELETED_PAYMENT_LINK_SELECT,
   retireDeletedXeroPaymentLink,
   type DeletedPaymentLinkRow,
 } from "@/lib/xero-inbound/deleted-payment-links";
-import { DELETED_XERO_PAYMENT_STATUS, isDeletedXeroPaymentStatus } from "@/lib/xero-inbound/object-links";
-import { writeXeroInboundAuditLogs } from "@/lib/xero-inbound/audit";
+import { isDeletedXeroPaymentStatus } from "@/lib/xero-inbound/object-links";
 
 type XeroClientSession = Awaited<ReturnType<typeof getAuthenticatedXeroClient>>;
 
@@ -37,6 +49,8 @@ export type DeletedPaymentBackfillCandidate = {
 };
 
 export type DeletedPaymentBackfillReport = {
+  /** "list": Xero's DELETED list was paged; "direct": each `--payment` id was asked about. */
+  source: "list" | "direct";
   listedDeletedPayments: number;
   pagesRead: number;
   /** False when the list stopped early: the budget, Xero's daily limit, or the page bound. */
@@ -70,7 +84,8 @@ async function listDeletedXeroPaymentIds(session: XeroClientSession) {
             session.tenantId,
             undefined,
             'Status=="DELETED"',
-            undefined,
+            // Oldest change first, so a payment deleted mid-run lands on a later page.
+            "UpdatedDateUTC ASC",
             page,
             DELETED_PAYMENT_LIST_PAGE_SIZE,
           ),
@@ -79,12 +94,18 @@ async function listDeletedXeroPaymentIds(session: XeroClientSession) {
           resourceType: "PAYMENT",
           workflow: "xeroDeletedPaymentLinkBackfill",
           context: `xeroDeletedPaymentLinkBackfill(page ${page})`,
+          ...DEFERRABLE_XERO_READ,
         },
       );
       payments = response.body.payments ?? [];
     } catch (err) {
       if (err instanceof XeroDailyLimitError || err instanceof XeroTransientOutageError) {
         if (!err.preHttp) calls += 1;
+        break;
+      }
+      const statusCode = getXeroErrorStatusCode(err);
+      if (statusCode === 429 || isRetryableXeroTransientStatus(statusCode)) {
+        calls += 1;
         break;
       }
       throw err;
@@ -104,14 +125,35 @@ async function listDeletedXeroPaymentIds(session: XeroClientSession) {
   return { ids, pagesRead, calls, complete };
 }
 
-/** The dry run: every active payment link whose payment Xero lists as DELETED. */
+/** `--payment`: ask Xero about just these payments, keeping those it confirms DELETED. */
+async function confirmNamedDeletedPayments(session: XeroClientSession, paymentIds: string[]) {
+  const ids = new Set<string>();
+  let calls = 0;
+  let complete = true;
+  for (const paymentId of [...new Set(paymentIds)]) {
+    const { confirmation, called } = await confirmXeroPaymentDeleted(session, paymentId, {
+      workflow: "xeroDeletedPaymentLinkBackfill",
+    });
+    if (called) calls += 1;
+    if (confirmation === "DEFERRED") {
+      complete = false;
+      break;
+    }
+    if (confirmation === "DELETED") ids.add(paymentId);
+  }
+  return { ids, pagesRead: 0, calls, complete };
+}
+
+/** The dry run: every active payment link whose payment Xero reports DELETED. */
 export async function findDeletedPaymentLinkBackfill(
   session: XeroClientSession,
   scope?: { paymentIds?: string[] },
 ): Promise<DeletedPaymentBackfillReport> {
-  const listed = await listDeletedXeroPaymentIds(session);
-  const wanted = scope?.paymentIds?.length ? new Set(scope.paymentIds) : null;
-  const ids = [...listed.ids].filter((id) => !wanted || wanted.has(id));
+  const direct = Boolean(scope?.paymentIds?.length);
+  const listed = direct
+    ? await confirmNamedDeletedPayments(session, scope!.paymentIds!)
+    : await listDeletedXeroPaymentIds(session);
+  const ids = [...listed.ids];
   const rows =
     ids.length === 0
       ? []
@@ -125,6 +167,7 @@ export async function findDeletedPaymentLinkBackfill(
     byPayment.set(row.xeroObjectId, [...(byPayment.get(row.xeroObjectId) ?? []), row]);
   }
   return {
+    source: direct ? "direct" : "list",
     listedDeletedPayments: listed.ids.size,
     pagesRead: listed.pagesRead,
     listComplete: listed.complete,
@@ -133,7 +176,11 @@ export async function findDeletedPaymentLinkBackfill(
   };
 }
 
-/** `--apply`: retire the candidates' links whose payment Xero confirms DELETED once more. */
+/**
+ * `--apply`: retire the candidates' links whose payment Xero confirms DELETED:
+ * a listed candidate is asked about once more; a `--payment` id was already
+ * asked directly, and that answer is its confirmation.
+ */
 export async function applyDeletedPaymentLinkBackfill(
   session: XeroClientSession,
   scope?: { paymentIds?: string[] },
@@ -155,9 +202,10 @@ export async function applyDeletedPaymentLinkBackfill(
       result.deferred.push(candidate.paymentId);
       continue;
     }
-    const { confirmation, called } = await confirmXeroPaymentDeleted(session, candidate.paymentId, {
-      workflow: "xeroDeletedPaymentLinkBackfill",
-    });
+    const { confirmation, called } =
+      report.source === "direct"
+        ? { confirmation: "DELETED" as const, called: false }
+        : await confirmXeroPaymentDeleted(session, candidate.paymentId, { workflow: "xeroDeletedPaymentLinkBackfill" });
     if (called) result.xeroCalls += 1;
     if (confirmation === "DEFERRED") {
       stop = true;
@@ -174,18 +222,7 @@ export async function applyDeletedPaymentLinkBackfill(
     }
   }
   result.retiredLinks = retired.length;
-  await writeXeroInboundAuditLogs({
-    source: DELETED_PAYMENT_BACKFILL_AUDIT_SOURCE,
-    links: retired.map((link) => ({
-      localModel: link.localModel,
-      localId: link.localId,
-      xeroObjectType: "PAYMENT",
-      xeroObjectId: link.xeroObjectId,
-      xeroObjectNumber: link.xeroObjectNumber,
-      role: link.role,
-    })),
-    metadata: { status: DELETED_XERO_PAYMENT_STATUS },
-  });
+  await auditRetiredPaymentLinks(DELETED_PAYMENT_BACKFILL_AUDIT_SOURCE, retired, {});
   return result;
 }
 
@@ -198,10 +235,12 @@ function linkDocument(metadata: unknown): string {
 
 export function formatDeletedPaymentLinkBackfillReport(report: DeletedPaymentBackfillReport): string {
   const lines = [
-    `Xero lists ${report.listedDeletedPayments} deleted payment(s) (${report.pagesRead} page(s), ${report.xeroCalls} call(s)).`,
+    report.source === "direct"
+      ? `Xero confirms ${report.listedDeletedPayments} of the named payment(s) DELETED (${report.xeroCalls} call(s)).`
+      : `Xero lists ${report.listedDeletedPayments} deleted payment(s) (${report.pagesRead} page(s), ${report.xeroCalls} call(s)).`,
     report.listComplete
       ? "The list is complete."
-      : "The list stopped early (daily budget, Xero's daily limit or the page bound): run again later for the rest.",
+      : "The run stopped early (daily budget, a Xero rate limit or outage, or the page bound). Run it again later: it starts again from the beginning.",
     `${report.candidates.length} of them still have an active link here:`,
   ];
   for (const candidate of report.candidates) {

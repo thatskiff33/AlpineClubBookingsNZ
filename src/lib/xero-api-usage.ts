@@ -51,9 +51,12 @@ interface UsageBucket {
  * each other, which is why this only ever showed as an off-by-one LABEL on the
  * admin usage panel rather than as a lost count.
  *
- * Nothing gates on this figure — it is an operator display of Xero API calls
- * against a daily budget — so the change costs at most one day's bucket being
- * split across the deploy, and no migration.
+ * When CT-5 moved it, nothing gated on this figure - it was only an operator
+ * display - so the change cost at most one day's bucket being split across the
+ * deploy, and no migration. Since #4531 one gate does read it: a deferrable
+ * call (`xeroDailyBudgetAllowsDeferrableCall`) stops at the "critical"
+ * threshold of today's bucket. A mis-bucketed day now changes behaviour, though
+ * only by deferring a call that can always wait or by letting one through.
  */
 async function clubUsageDate(at: Date): Promise<Date> {
   const zone = await readClubTimeZoneOutsideRequest();

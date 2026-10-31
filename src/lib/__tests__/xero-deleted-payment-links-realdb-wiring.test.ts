@@ -20,5 +20,7 @@ describe("the deleted-payment link retire's real-database proof stays wired into
     expect(suite).toContain("retires the deleted payment's link, keeps the replacement, and a replay changes nothing");
     expect(suite).toContain("a payload without Payments retires nothing and asks Xero nothing");
     expect(suite).toContain("the guarded write keeps a concurrent writer's metadata");
+    expect(suite).toContain("a candidate Xero could not answer for is marked, and the scheduled re-check retires it");
+    expect(suite).toContain("the backfill's --apply retires through the same write, once");
   });
 });

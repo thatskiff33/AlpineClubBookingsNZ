@@ -4,6 +4,27 @@ import { buildXeroIdempotencyKey } from "@/lib/xero-sync";
 import { isIncludedRefundCreditNoteStatus } from "@/lib/xero-refund-note-status";
 import { providerAmountToCents } from "@/lib/money-provider-amount";
 import { type AccountCreditAllocationTarget, type CreditNoteAmounts } from "./types";
+import { isDeletedXeroPaymentStatus } from "./object-links";
+
+/**
+ * #4531 (`INV-SSOT`): the cash of a document's listed payments in integer
+ * cents, DELETED (reversed) ones skipped; `complete` is false when a counted
+ * payment's amount is unreadable. The one reading of that sum: the invoice cash
+ * quantifier and the deleted-payment trust check both use it.
+ */
+export function sumListedXeroPaymentCents(
+  payments: ReadonlyArray<{ amount?: unknown; status?: unknown }>,
+): { cents: number; complete: boolean } {
+  let cents = 0;
+  let complete = true;
+  for (const payment of payments) {
+    if (isDeletedXeroPaymentStatus(payment.status)) continue;
+    const paymentCents = providerAmountToCents(payment.amount);
+    if (paymentCents === null) complete = false;
+    else cents += paymentCents;
+  }
+  return { cents, complete };
+}
 
 export function buildSyntheticAllocationLinkId(
   creditNoteId: string,

@@ -12,6 +12,7 @@ import {
 } from "@/lib/email";
 import { providerAmountToCents } from "@/lib/money-provider-amount";
 import { isDeletedXeroPaymentStatus } from "@/lib/xero-inbound/object-links";
+import { sumListedXeroPaymentCents } from "@/lib/xero-inbound/amounts";
 import { findSettlingInternetBankingTransactionId, recordSettlingTransaction } from "@/lib/payment-settler";
 import {
   findSecondInstrumentSettlement,
@@ -160,17 +161,9 @@ export function quantifyXeroInvoiceCashCents(
       complete = false;
     }
     if (Array.isArray(invoice.payments)) {
-      for (const payment of invoice.payments) {
-        if (isDeletedXeroPaymentStatus(payment.status)) {
-          continue;
-        }
-        const paymentCents = providerAmountToCents(payment.amount);
-        if (paymentCents !== null) {
-          knownCents += paymentCents;
-        } else {
-          complete = false;
-        }
-      }
+      const listed = sumListedXeroPaymentCents(invoice.payments);
+      knownCents += listed.cents;
+      complete &&= listed.complete;
     }
   }
 

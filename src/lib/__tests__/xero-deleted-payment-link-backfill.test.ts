@@ -72,9 +72,9 @@ describe("the deleted-payment link backfill (#4531)", () => {
 
     const report = await findDeletedPaymentLinkBackfill(session);
 
-    expect(h.getPayments).toHaveBeenCalledWith("tenant-test", undefined, 'Status=="DELETED"', undefined, 1, DELETED_PAYMENT_LIST_PAGE_SIZE);
+    expect(h.getPayments).toHaveBeenCalledWith("tenant-test", undefined, 'Status=="DELETED"', "UpdatedDateUTC ASC", 1, DELETED_PAYMENT_LIST_PAGE_SIZE);
     expect(h.linkFindMany.mock.calls[0][0].where).toEqual({ xeroObjectType: "PAYMENT", active: true, xeroObjectId: { in: ["deleted-1"] } });
-    expect(report).toMatchObject({ listedDeletedPayments: 1, pagesRead: 1, listComplete: true, xeroCalls: 1 });
+    expect(report).toMatchObject({ source: "list", listedDeletedPayments: 1, pagesRead: 1, listComplete: true, xeroCalls: 1 });
     expect(report.candidates).toEqual([{ paymentId: "deleted-1", links: [link("deleted-1")] }]);
     expect(h.getPayment).not.toHaveBeenCalled();
     expect(h.linkUpdateMany).not.toHaveBeenCalled();
@@ -119,20 +119,42 @@ describe("the deleted-payment link backfill (#4531)", () => {
       data: { active: false, metadata: { invoiceId: "inv-4531", amount: 120, status: "DELETED" } },
     });
     expect(h.writeAudit).toHaveBeenCalledWith(
-      expect.objectContaining({ source: "xero-deleted-payment-link-backfill", links: [expect.objectContaining({ xeroObjectId: "deleted-1" })] }),
+      expect.objectContaining({
+        source: "xero-deleted-payment-link-backfill",
+        summary: "Xero payment link retired: payment deleted in Xero",
+        links: [expect.objectContaining({ xeroObjectId: "deleted-1" })],
+      }),
     );
   });
 
-  it("--apply --payment scopes the run to the named payments", async () => {
-    h.getPayments.mockResolvedValue({
-      body: { payments: [{ paymentID: "deleted-1", status: "DELETED" }, { paymentID: "deleted-2", status: "DELETED" }] },
-    });
+  it("--payment asks Xero about the named payments directly, without listing", async () => {
+    h.linkFindMany.mockResolvedValue([link("deleted-2")]);
+    h.getPayment.mockImplementation(async (_tenant: string, id: string) => ({
+      body: { payments: [{ paymentID: id, status: id === "deleted-2" ? "DELETED" : "AUTHORISED" }] },
+    }));
+    const report = await findDeletedPaymentLinkBackfill(session, { paymentIds: ["deleted-2", "live-3", "deleted-2"] });
+    expect(h.getPayments).not.toHaveBeenCalled();
+    expect(h.getPayment.mock.calls.map((call) => call[1])).toEqual(["deleted-2", "live-3"]);
+    expect(h.linkFindMany.mock.calls[0][0].where.xeroObjectId).toEqual({ in: ["deleted-2"] });
+    expect(report).toMatchObject({ source: "direct", listedDeletedPayments: 1, listComplete: true, xeroCalls: 2 });
+    expect(h.linkUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("--apply --payment retires on that direct answer, asking only once", async () => {
     h.linkFindMany.mockResolvedValue([link("deleted-2")]);
     h.getPayment.mockResolvedValue({ body: { payments: [{ paymentID: "deleted-2", status: "DELETED" }] } });
     const result = await applyDeletedPaymentLinkBackfill(session, { paymentIds: ["deleted-2"] });
-    expect(h.linkFindMany.mock.calls[0][0].where.xeroObjectId).toEqual({ in: ["deleted-2"] });
+    expect(h.getPayments).not.toHaveBeenCalled();
     expect(h.getPayment).toHaveBeenCalledTimes(1);
-    expect(result.retiredLinks).toBe(1);
+    expect(result).toMatchObject({ confirmedDeleted: ["deleted-2"], retiredLinks: 1, xeroCalls: 1 });
+  });
+
+  it("stops listing on a Xero rate limit, reporting the list incomplete", async () => {
+    h.getPayments.mockRejectedValue(Object.assign(new Error("Xero 429"), { response: { statusCode: 429, headers: {} } }));
+    h.linkFindMany.mockResolvedValue([]);
+    const report = await findDeletedPaymentLinkBackfill(session);
+    expect(h.getPayments).toHaveBeenCalledTimes(1);
+    expect(report).toMatchObject({ listComplete: false, xeroCalls: 1, candidates: [] });
   });
 
   it("--apply: defers the rest once the budget is spent mid-run", async () => {

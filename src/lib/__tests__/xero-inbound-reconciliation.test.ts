@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   transaction: vi.fn(),
   xeroSyncOperationFindMany: vi.fn(),
   xeroSyncCursorFindUnique: vi.fn(),
+  xeroSyncCursorUpsert: vi.fn(),
   memberFindMany: vi.fn(),
   memberFindUnique: vi.fn(),
   // #2939: `applyInboundMemberContactPatch` now takes the contact-home lock and
@@ -141,6 +142,8 @@ vi.mock("@/lib/prisma", () => ({
     },
     xeroSyncCursor: {
       findUnique: mocks.xeroSyncCursorFindUnique,
+      // #4531: the deleted-payment re-check records when it last ran.
+      upsert: mocks.xeroSyncCursorUpsert,
     },
     member: {
       findMany: mocks.memberFindMany,
@@ -7491,8 +7494,10 @@ describe("runXeroInboundReconciliationCycle", () => {
       runXeroInboundReconciliationCycle({
         batchSize: 1,
         maxBatches: 3,
+        includeDeletedPaymentRecheck: false,
       })
     ).resolves.toEqual({
+      deletedPaymentRecheck: null,
       inbound: {
         batches: 2,
         found: 1,
@@ -7539,6 +7544,33 @@ describe("runXeroInboundReconciliationCycle", () => {
     expect(mocks.refreshAllMembershipStatuses).toHaveBeenCalledWith(2026);
   });
 
+  it("re-checks links pending a deleted-payment check, and a failure never fails the cycle (#4531)", async () => {
+    mocks.inboundFindMany.mockResolvedValue([]);
+    mocks.xeroSyncCursorFindUnique.mockResolvedValue(null);
+    mocks.linkFindMany.mockResolvedValue([]);
+    mocks.xeroSyncCursorUpsert.mockResolvedValue({});
+    const options = {
+      includeContactReconciliation: false,
+      includeMembershipReconciliation: false,
+      includeInvoiceReconciliation: false,
+    };
+
+    const result = await runXeroInboundReconciliationCycle(options);
+
+    expect(result.deletedPaymentRecheck).toMatchObject({ candidatePayments: 0, xeroCalls: 0 });
+    expect(mocks.linkFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ metadata: { path: ["deletionCheckPending"], equals: true } }) }),
+    );
+    expect(mocks.xeroSyncCursorUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { resourceType_scope: { resourceType: "DELETED_PAYMENT_RECHECK", scope: "default" } } }),
+    );
+
+    mocks.linkFindMany.mockRejectedValue(new Error("db hiccup"));
+    await expect(runXeroInboundReconciliationCycle(options)).resolves.toMatchObject({
+      deletedPaymentRecheck: { error: "db hiccup" },
+    });
+  });
+
   it("skips duplicate contact and membership cursor refreshes when the cursors are still fresh", async () => {
     mocks.inboundFindMany.mockResolvedValue([]);
     mocks.xeroSyncCursorFindUnique
@@ -7554,8 +7586,10 @@ describe("runXeroInboundReconciliationCycle", () => {
     await expect(
       runXeroInboundReconciliationCycle({
         seasonYear: 2026,
+        includeDeletedPaymentRecheck: false,
       })
     ).resolves.toEqual({
+      deletedPaymentRecheck: null,
       inbound: {
         batches: 1,
         found: 0,
@@ -7669,8 +7703,10 @@ describe("runXeroInboundReconciliationCycle", () => {
       runXeroInboundReconciliationCycle({
         batchSize: 1,
         maxBatches: 1,
+        includeDeletedPaymentRecheck: false,
       })
     ).resolves.toEqual({
+      deletedPaymentRecheck: null,
       inbound: {
         batches: 1,
         found: 0,
