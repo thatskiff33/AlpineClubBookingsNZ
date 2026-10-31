@@ -108,6 +108,8 @@ describe("the Bash rules, for the main session and orchestrators", () => {
     "gh pr merge 1 --merge -R -s/repo",
     "gh pr merge 1 --merge --match-head-commit -s",
     "gh pr merge 1 --merge --squash=false",
+    "gh pr merge 1 --merge -db -s",
+    "gh api -X PUT repos/o/r/pulls/1/merge -f commit_title='not merge_method=squash' -f merge_method=merge",
     "gh api repos/o/r/issues/1/comments -f body='use merge_method=squash, never squash'",
     "gh api repos/o/r/issues/1/comments -f body=merge_method=squash",
     "gh api repos/o/r/pulls/1 -f merge_method=squash",
