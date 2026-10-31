@@ -13,7 +13,7 @@ import {
   readFragments,
   releaseSection,
   retiredAllowancePaths,
-  todayInNewZealand,
+  releaseDateToday,
 } from "./compile-changelog.mjs";
 
 const NOTE_BODY = "Entries for the next release live in `changelog.d/` — one file per PR.";
@@ -894,9 +894,18 @@ describe("compile-changelog", () => {
     });
   });
 
-  it("formats today's date as an NZ date-only value", () => {
-    expect(todayInNewZealand(new Date("2026-08-03T20:00:00Z"))).toBe("2026-08-04");
-    expect(todayInNewZealand()).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+  it("dates a release in the zone it is given, or the machine's own, never a fixed one (#4571)", () => {
+    const instant = new Date("2026-08-03T20:00:00Z");
+    expect(releaseDateToday(instant, "Pacific/Auckland")).toBe("2026-08-04");
+    expect(releaseDateToday(instant, "America/Denver")).toBe("2026-08-03");
+    expect(releaseDateToday(instant, "UTC")).toBe("2026-08-03");
+    expect(releaseDateToday()).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+  });
+
+  it("names no time zone in the release tooling (#4571, INV-CONFIG-002)", () => {
+    for (const file of ["scripts/release/compile-changelog.mjs", "scripts/release/cut-release.mjs"]) {
+      expect(fs.readFileSync(file, "utf8"), file).not.toMatch(/timeZone:\s*["'][A-Za-z]+\/[A-Za-z_]+["']/);
+    }
   });
 });
 
