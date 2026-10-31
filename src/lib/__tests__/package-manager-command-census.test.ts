@@ -71,6 +71,11 @@ const ALLOWED: Array<{ file: string; line?: RegExp; reason: string }> = [
     reason: "the #3254/#3673 history of the gate, which used to be `npm audit`",
   },
   {
+    file: "scripts/agent-hooks/rules.mjs",
+    line: /^"Bash\(npx \*\)",$|`npm exec` can download and run an unreviewed package/,
+    reason: "the agent-rule hook's list of the download runners it blocks (#4462)",
+  },
+  {
     file: "scripts/audit/audit-writer-census-manifest.ts",
     // Only the measurement notes themselves, which all say what was run to get
     // a figure ("Re-measured with", "Taken from", "MEASURED", "on this tree"…).

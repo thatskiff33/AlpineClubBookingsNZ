@@ -666,6 +666,10 @@ generalised.
    expect(realElapsedMs(before)).toBeLessThan(20);
    ```
 
+   `pnpm run lint` reports a `Date.now()` stopwatch or deadline in a Vitest
+   file (`test-clock/no-date-now-elapsed`, #4462): `Date.now()` measured against
+   an earlier `Date.now()` reading held inline or in a plain variable.
+
    `process.hrtime.bigint()` is monotonic, so neither the freeze nor the canary's
    libfaketime shim touches it. `performance.now()` also stays real, but it is
    only safe when **the code under test does not read it too** — otherwise a
