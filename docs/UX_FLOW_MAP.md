@@ -1584,7 +1584,8 @@ every screen:
   reads the semantic tokens so it adapts to dark mode. Prefer `Alert` over
   hand-rolled coloured banner `<div>`s.
 - **Destructive confirmations** use `useConfirm()` from
-  `src/components/confirm-dialog.tsx`, never `window.confirm`.
+  `src/components/confirm-dialog.tsx`, never `window.confirm`. Lint enforces
+  it (`design-system/no-native-confirm`), with today's calls on a ratchet.
 
 New code follows this rule; existing inline success panels are converted
 opportunistically when a file is already being touched.
@@ -1814,6 +1815,13 @@ establishes:
   modes) — instead of re-implementing the table shell / sort / pagination per
   page. `bookings-pagination.tsx` / `member-pagination.tsx` are thin wrappers
   over the shared `Pagination`.
+- **Design-system controls (#4467):** outside `src/components/ui/`, use
+  `Button`, `Input`, `Checkbox`, `Select` and `Table` (or `AdminDataTable`),
+  never a raw `<button>`, `<input>`, `<select>` or `<table>`, and `useConfirm()`
+  rather than the browser's confirm box. Lint reports each one, naming the
+  primitive to use; the existing usages sit on a count ratchet that only falls.
+  The scope, the named exceptions and how to lower the count are in
+  [`TESTING.md`](TESTING.md#design-system-control-ratchet-4467).
 - **Long-page section nav (#1818):** wrap the long single-column member pages
   (`/profile`, `/bookings/[id]`) with `SectionNav` (`src/components/section-nav.tsx`;
   a sticky desktop anchor rail + a mobile `<details>` disclosure of in-page

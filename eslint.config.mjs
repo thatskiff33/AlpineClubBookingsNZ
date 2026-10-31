@@ -6,6 +6,7 @@ import jsxA11y from "eslint-plugin-jsx-a11y";
 import css from "@eslint/css";
 import accessibility from "./scripts/eslint/accessibility.mjs";
 import testClock from "./scripts/eslint/test-clock.mjs";
+import designSystem, { PRIMITIVE_IMPLEMENTATIONS } from "./scripts/eslint/design-system.mjs";
 
 // #2264 — the three date-rendering restrictions, named so the "Number
 // formatting only" block below can re-state the two date ones while dropping
@@ -3213,6 +3214,25 @@ const eslintConfig = defineConfig([
       "accessibility/no-nested-interactive": "error",
     },
   },
+  {
+    // #4467 item 2: raw <button>, <input>, <select>, <table> and the browser's
+    // confirm box, outside the design-system primitives. Today's usages are
+    // recorded in eslint-suppressions.json and the count only falls
+    // (docs/TESTING.md -> "Design-system control ratchet").
+    // Not app UI, so out of scope: the primitives themselves, and test files,
+    // whose harnesses and module mocks render raw stand-ins for primitives.
+    files: ["src/**/*.{js,jsx,ts,tsx}"],
+    ignores: ["src/components/ui/**", "src/**/__tests__/**", "src/**/*.test.{js,jsx,ts,tsx}", "src/test/**"],
+    plugins: { "design-system": designSystem },
+    // Every rule the plugin has, so a new one cannot ship switched off.
+    rules: Object.fromEntries(Object.keys(designSystem.rules).map((rule) => [`design-system/${rule}`, "error"])),
+  },
+  // A shared primitive built outside src/components/ui/ may use the one element
+  // it is built on; each entry carries its reason in PRIMITIVE_IMPLEMENTATIONS.
+  ...PRIMITIVE_IMPLEMENTATIONS.map(({ file, rule }) => ({
+    files: [file],
+    rules: { [`design-system/${rule}`]: "off" },
+  })),
   {
     // #4462: the frozen test clock's elapsed-time rule, enforced rather than
     // written down (docs/TESTING.md -> "The frozen test clock", rule 5). Vitest

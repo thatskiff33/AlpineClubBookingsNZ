@@ -43,9 +43,49 @@ the baseline to pass lint. After fixing debt, run
 commands do not modify it.
 
 Focused rule and ratchet contracts run with
-`pnpm run test:named scripts/eslint/accessibility.test.mjs scripts/eslint/ratchet.test.mjs scripts/eslint/fixture-import.test.mjs`.
+`pnpm run test:named scripts/eslint/accessibility.test.mjs scripts/eslint/ratchet.test.mjs scripts/eslint/fixture-import.test.mjs scripts/eslint/design-system.test.mjs`.
 The shared axe fixture and mobile project are described in
 [`E2E_PLAYWRIGHT.md`](E2E_PLAYWRIGHT.md#accessibility-and-mobile-checks-4466).
+
+### Design-system control ratchet (#4467)
+
+Five local rules in `scripts/eslint/design-system.mjs` report what bypasses the
+primitives in `src/components/ui/`, each naming the one to use:
+`design-system/no-raw-button`, `no-raw-input`, `no-raw-select` and
+`no-raw-table` for the intrinsic JSX element, and `no-native-confirm` for the
+browser's confirm box: called through `window`, `globalThis`, `self`, `top` or
+`parent`, destructured from one of them, or called bare when the name resolves
+to the global. A `confirm` from `useConfirm()` is the sanctioned one.
+Today's usages are recorded in `eslint-suppressions.json` with the debt above,
+per file and per rule, so swapping a raw `<select>` for a raw `<button>` still
+fails. Migrate, then prune; never add a count.
+
+**Never an eslint-disable comment: migrate to the primitive.**
+`design-system.test.mjs` fails on any disable or rule-config comment naming a
+`design-system/` rule, and on a disable naming no rule where they apply.
+
+A suppression is keyed by path, so `ratchet.test.mjs` fails on an entry whose
+file no longer exists: a new file at that path would inherit the allowance. A
+deleted file's entries go in the same PR. A moved or renamed file's entries
+move to the new path in the same PR, at the same count; the count never rises.
+
+The exceptions are named:
+
+- **By path** (`eslint.config.mjs`): `src/components/ui/` itself; test files
+  (`__tests__/`, `*.test.*`, `src/test/`), which are not app UI and mock
+  primitives with raw stand-ins; and the files in `PRIMITIVE_IMPLEMENTATIONS`,
+  each excused one rule with a written reason: the admin table shell and sort
+  header (#1805).
+- **By element** (the rule): `<input type="hidden">`, and an
+  `<input type="file">` hidden by a literal `hidden` attribute or an
+  unprefixed `hidden` or `sr-only` class, the picker a `Button` opens. Neither
+  holds when a JSX spread comes after an attribute it relies on, or when a
+  class could show the input again (`block`, `md:flex`, `focus:not-sr-only`).
+  A visible file input uses `<Input type="file">`.
+
+Not covered: `React.createElement`, an element named through a variable
+(`const Tag = "button"; <Tag />`), a `confirm` reached through an alias, and
+`<textarea>`.
 
 ## Stateful Xero and Stripe fakes
 
