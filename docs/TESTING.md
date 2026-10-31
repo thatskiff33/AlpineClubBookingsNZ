@@ -24,6 +24,13 @@ in Tailwind classes, inline `fontSize` properties, CSS declarations and CSS
 expressions still need browser/design review. CSS uses the tolerant parser for
 Tailwind syntax; it is not a general CSS validity gate.
 
+The local `accessibility/no-nested-interactive` rule (#4553) rejects a link or
+button inside another one: a `next/link` `Link`, the ui `Button`, `<a>` or
+`<button>` nested in any of them, which axe reports as `nested-interactive`.
+Write `<Button asChild><Link>…</Link></Button>`; an `asChild` Button renders no
+element of its own. Link and Button are matched by import, so a wrapper
+component that renders one is outside the rule.
+
 [`eslint-suppressions.json`](../eslint-suppressions.json) records existing debt
 using ESLint's built-in per-file/per-rule counts. Normal `pnpm run lint` applies
 it automatically: new files and increased counts fail, and unused suppressions
