@@ -9,6 +9,8 @@ import {
   mixSrgb,
 } from "@/lib/club-theme-schema";
 
+import { stripCssComments } from "./support/strip-comments";
+
 // #4553 — `text-destructive` is the app's error ink (inline field errors,
 // `bg-destructive/10` alert boxes, destructive menu items). #4534 measured the
 // light value short of AA and moved it to red-700; dark mode kept a red-900
@@ -17,10 +19,7 @@ import {
 // here: no colour is copied into this file.
 
 // Comments are dropped first: several of them quote selectors and braces.
-const GLOBALS = readFileSync(join(process.cwd(), "src/app/globals.css"), "utf8").replace(
-  /\/\*[\s\S]*?\*\//g,
-  "",
-);
+const GLOBALS = stripCssComments(readFileSync(join(process.cwd(), "src/app/globals.css"), "utf8"));
 
 /** The declarations of the first rule whose selector is exactly `selector`. */
 function block(selector: string): Map<string, string> {
