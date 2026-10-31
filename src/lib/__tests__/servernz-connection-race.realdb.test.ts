@@ -37,6 +37,9 @@ let api: typeof import("@/lib/servernz-api");
 let lodgeSync: typeof import("@/lib/servernz-other-lodges-sync");
 let observer: PrismaClient;
 const savedAuthSecret = process.env.AUTH_SECRET;
+// #4470: the push-registration cases load `club-post-mirror`, whose image
+// storage loads `sharp`, and loading it sets `VIPSHOME` (#4107 env guard).
+const savedVipsHome = process.env.VIPSHOME;
 const fetchMock = vi.fn();
 
 function latch() {
@@ -141,6 +144,8 @@ function latch() {
     } finally {
       if (savedAuthSecret === undefined) delete process.env.AUTH_SECRET;
       else process.env.AUTH_SECRET = savedAuthSecret;
+      if (savedVipsHome === undefined) delete process.env.VIPSHOME;
+      else process.env.VIPSHOME = savedVipsHome;
       vi.unstubAllGlobals();
     }
   });
