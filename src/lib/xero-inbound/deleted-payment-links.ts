@@ -271,11 +271,12 @@ async function writeActivePaymentLink(
 ): Promise<boolean> {
   let metadata: unknown = link.metadata;
   for (let attempt = 0; attempt < 2; attempt += 1) {
-    const data = change(metadata);
-    if (!data) return false;
+    const next = change(metadata);
+    if (!next) return false;
     const { count } = await prisma.xeroObjectLink.updateMany({
       where: { id: link.id, xeroObjectType: "PAYMENT", active: true, metadata: sameMetadata(metadata) },
-      data: data as Prisma.XeroObjectLinkUpdateManyMutationInput,
+      // Built here, so the write guard can see it names no `xeroObjectUrl`.
+      data: { ...(next.active === false ? { active: false } : {}), metadata: next.metadata as Prisma.InputJsonValue },
     });
     if (count === 1) return true;
     const reread = await prisma.xeroObjectLink.findUnique({
