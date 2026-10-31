@@ -1589,6 +1589,48 @@ every screen:
 New code follows this rule; existing inline success panels are converted
 opportunistically when a file is already being touched.
 
+## Error and loading screens per area (#4467)
+
+When a page fails, the person stays in the area they were using. Every route
+group has its own `error.tsx`, rendered **inside** that group's layout, so an
+officer keeps the admin sidebar and a member keeps the member navigation; only
+the failed page is replaced. All of them are the one shared screen,
+`src/components/route-error.tsx`:
+
+- **Something went wrong**, with focus moved to that heading so a keyboard or
+  screen-reader user hears it.
+- **Try again** re-fetches the page from the server and re-renders it (Next's
+  `retry`), so a passing fault recovers without a reload and the URL is kept.
+- A link back to the area's own landing page, not the browser's previous page,
+  which may be the page that failed, another site, or nothing on a kiosk.
+- The error is reported to Sentry with its digest and the area, like the root
+  screen. The message and stack are never shown; a server error shows only
+  **Error ID** (the digest), which matches the server log line.
+
+| Area | Boundary | "Back" goes to | Loading state while a page streams in |
+| --- | --- | --- | --- |
+| Admin (`/admin/*`) | `(admin)/error.tsx` | `/admin` | `(admin)/loading.tsx`; bookings, dashboard and members keep their own skeletons |
+| Member area (dashboard, bookings, profile, …) | `(authenticated)/error.tsx` | `/dashboard` | Per page only: dashboard, bookings, book, booking detail, consent |
+| Finance (`/finance`) | `(finance)/finance/error.tsx` | `/finance` | `(finance)/finance/loading.tsx` |
+| Lodge kiosk (`/lodge/*`) | `(lodge)/error.tsx` | `/lodge/kiosk` | `(lodge)/loading.tsx` (in-app navigation only; the kiosk loads its own data) |
+| Sign-in, recovery and token pages | `(public)/error.tsx` | `/` | None |
+| Public website | `(website)/error.tsx`, `(website-dynamic)/error.tsx` | `/` | None |
+
+Every loading state is the shared `src/components/route-loading.tsx`: a polite
+`status` region with a visually hidden label ("Loading bookings…") and skeleton
+blocks hidden from assistive technology, in the theme's tokens for light and
+dark.
+
+Four route groups have no group-wide loading state, on purpose. A `loading.tsx` starts
+the response before the page has decided anything, so a page's own "not found"
+or redirect would arrive as a 200 instead of a 404 or 307. The public website
+forbids it outright (`scripts/ci/check-website-render-modes.mjs`, #2352 and
+#2434: a missing page would become a stored soft 404); the member area decides
+404s per page (an out-of-audience notice must be a real 404); and the sign-in
+pages redirect from the page. `src/lib/__tests__/route-group-boundaries.test.ts`
+records each reason and fails if a new route group arrives without an error
+screen and a decision on its loading state.
+
 ## Back-link convention (admin drill-down leaves) (#2046)
 
 Admin hubs (`/admin/setup`, `/admin/display`, `/admin/appearance`, …) open a
