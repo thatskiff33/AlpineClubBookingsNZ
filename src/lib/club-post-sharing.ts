@@ -1,7 +1,7 @@
 import "server-only";
 
 import logger from "@/lib/logger";
-import { readPostImage } from "@/lib/post-image-storage";
+import { deletePostImage, readPostImage } from "@/lib/post-image-storage";
 import { prisma } from "@/lib/prisma";
 import {
   ServerNzApiError,
@@ -9,6 +9,7 @@ import {
   shareClubPost,
   withdrawClubPost,
 } from "@/lib/servernz-api";
+import { SERVERNZ_TRANSACTION_OPTIONS, lockServerNzSettings } from "@/lib/servernz-settings";
 import { isServerSyncPaused } from "@/lib/servernz-version-check";
 
 /**
@@ -65,6 +66,45 @@ function isRetryable(error: unknown): boolean {
     return error.status < 400 || error.status >= 500;
   }
   return true;
+}
+
+/**
+ * Record the server's id on our post, under the lock the mirror writes under
+ * (#4588).
+ *
+ * The mirror can pull our post back before this stamp commits: it does not yet
+ * know the id is ours, so it creates a MIRROR row holding it, and the stamp
+ * then failed on the unique `serverPostId`, leaving our post reading as never
+ * shared (and a retry would share it twice). This install cannot recognise its
+ * own club by code: it does not store the code the server knows it by. So the
+ * stamp takes the settings row first, the lock every mirror write holds (its
+ * page fence), which means no mirror create of this id is in flight. If the
+ * mirror got there first, its copy of our own post is deleted, our post and
+ * that copy locked in id order before either changes, and the stamp lands.
+ * From then on the mirror's locked re-read finds our post and skips it. Order:
+ * settings row -> ClubPost rows (id order) -> ClubPostImage by cascade, as in
+ * docs/CONCURRENCY_AND_LOCKING.md -> "Message-board posts and their images".
+ */
+async function stampShare(postId: string, serverPostId: string): Promise<void> {
+  const copyFiles = await prisma.$transaction(async (tx) => {
+    await lockServerNzSettings(tx);
+    const copy = await tx.clubPost.findUnique({ where: { serverPostId }, select: { id: true, originClubCode: true } });
+    let files: string[] = [];
+    if (copy && copy.originClubCode !== null) {
+      await tx.$executeRaw`SELECT 1 FROM "ClubPost" WHERE "id" IN (${postId}, ${copy.id}) ORDER BY "id" FOR UPDATE`;
+      const images = await tx.clubPostImage.findMany({ where: { postId: copy.id }, select: { storageKey: true } });
+      await tx.clubPost.deleteMany({ where: { id: copy.id } });
+      files = images.map((image) => image.storageKey);
+      logger.warn({ postId, serverPostId }, "The mirror copied our own post back before its share was recorded; the copy was removed");
+    }
+    await tx.clubPost.update({
+      where: { id: postId },
+      data: { serverPostId, sharedAt: new Date(), shareError: null },
+    });
+    return files;
+  }, SERVERNZ_TRANSACTION_OPTIONS);
+  // Rows first, files second.
+  for (const key of copyFiles) await deletePostImage(key);
 }
 
 /**
@@ -148,14 +188,7 @@ export async function shareOnePost(postId: string): Promise<ShareOutcome> {
       images,
     });
 
-    await prisma.clubPost.update({
-      where: { id: post.id },
-      data: {
-        serverPostId: result.id,
-        sharedAt: new Date(),
-        shareError: null,
-      },
-    });
+    await stampShare(post.id, result.id);
 
     return { status: "shared", serverPostId: result.id };
   } catch (error) {

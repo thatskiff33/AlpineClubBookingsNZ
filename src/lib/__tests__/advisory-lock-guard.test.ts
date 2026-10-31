@@ -1527,10 +1527,19 @@ const ROW_LOCK_SITE_INVENTORY: Record<string, number> = {
   // (`SELECT 1 … WHERE "id" IN (…) ORDER BY "id" FOR UPDATE`, the one statement
   // counted here) before their images are read and the posts deleted, so no
   // writer adds an image row the batch did not list. Order: ClubPost rows (id
-  // order) -> ClubPostImage rows by cascade; every other post writer holds one
-  // post at a time, so the batch cannot invert them. No advisory key. See
-  // docs/CONCURRENCY_AND_LOCKING.md -> "Message-board posts and their images".
+  // order) -> ClubPostImage rows by cascade. The one other writer holding two
+  // posts (the share stamp below) takes them in id order too, so the batch
+  // cannot invert it. No advisory key. See docs/CONCURRENCY_AND_LOCKING.md ->
+  // "Message-board posts and their images".
   "src/lib/club-post-retention.ts": 1,
+  // Message-board share stamp (#4588): under the settings row
+  // (`lockServerNzSettings`, counted under servernz-settings.ts), when the
+  // mirror already copied our own post back, it locks our post and that copy
+  // (`SELECT 1 … WHERE "id" IN (…, …) ORDER BY "id" FOR UPDATE`, the one
+  // statement counted here), deletes the copy and stamps our post. Order:
+  // settings -> ClubPost rows (id order) -> ClubPostImage by cascade, the
+  // mirror's and retention's order. No advisory key.
+  "src/lib/club-post-sharing.ts": 1,
   // Adult-member-hosting queue participants (#2597): the shared helper mints
   // one reviewed `FOR UPDATE` protocol for member merge over master, loser and
   // every planned ancillary owner, plus the shared standing-subject barrier
