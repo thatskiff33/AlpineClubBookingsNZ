@@ -230,8 +230,8 @@ runs the next epic.
   fork whose workflows predate it, and note why it was only ever second best: a
   probe tests the commit *outside* its stack, so it can pass while the stacked
   integration is broken.
-- **Drift.** Merge `origin/main` into the integration branch regularly, as a
-  merge commit. A branch that only reconciles at the end reconciles
+- **Drift.** Merge `origin/main` into the integration branch regularly — a merge
+  commit, never a force-push. A branch that only reconciles at the end reconciles
   once, badly; this repository has twice shipped a *wrong* value out of a
   hand-resolved long-lived conflict (#2979's ceiling, and the `CHANGELOG.md`
   churn that #2452 ended).
@@ -267,7 +267,8 @@ runs the next epic.
   **A red sync pull request is the branch
   telling you `main` and the epic no longer compose**, so read it rather than
   re-running it. Resolve a conflict by hand on a merge branch, opened as a
-  hand sync (below), never by letting a merge tool pick a side unread.
+  hand sync (below), never by force-pushing a shared branch and never by
+  letting a merge tool pick a side unread.
 
   The description that workflow writes carries a complete
   `## Concurrency And Lock Impact` section, and says in its own words that the

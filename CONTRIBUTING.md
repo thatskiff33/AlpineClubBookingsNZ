@@ -81,9 +81,11 @@ writes a `package-lock.json` or a `node_modules` tree (measured on npm 11.16:
 the backstop behind both). `package-lock.json` is
 git-ignored and CI fails a branch that carries one; `pnpm-lock.yaml` is the only
 lockfile. `npm run` and `npx` may still happen to work, but they are not the
-supported spelling. An agent session in this repository cannot run `npx` or
-`pnpm dlx` at all: the hooks in `.claude/settings.json` and `.codex/hooks.json`
-block them (#4462).
+supported spelling. Agents may not use `npx` or `pnpm dlx`: the agent-rule
+hooks in `.claude/settings.json` and `.codex/hooks.json` block them, and the
+rule binds either way (#4462). The hooks inspect the command line only, so a
+package script that calls `pnpm dlx` itself, such as
+`pnpm run theme:vendor-transpile`, is not inspected.
 
 **Where the settings live.** `pnpm-workspace.yaml` holds all of pnpm's
 settings: `overrides` (the reasons for each are in

@@ -80,8 +80,10 @@ Add a row for a doc an agent must reach; cite ids, never line numbers
   live deployment without a written test window.
 - This repository is public: nothing private goes into an issue, PR, comment,
   commit or fragment ([`ISSUE_WORKFLOW.md`](docs/agents/ISSUE_WORKFLOW.md#writing-in-the-open)).
-- Merge only under "Completion and Merge", with a merge commit.
-- Hooks enforce the mechanical rules in [`rules.mjs`](scripts/agent-hooks/rules.mjs).
+- Merge only under "Completion and Merge". These bind with or without
+  [hooks](scripts/agent-hooks/rules.mjs): merge commits only; never rewrite a
+  pushed branch by any route, force-push included; no `npx`/`pnpm dlx`; never
+  `prisma format` (#1567).
 
 ## Change discipline
 
@@ -101,9 +103,9 @@ Add a row for a doc an agent must reach; cite ids, never line numbers
   settlement stay distinct. Webhooks and cron are idempotent. Provider calls
   stay outside long transactions unless the locking guide documents the
   bounded exception.
-- Hand-edit `prisma/schema.prisma` (#1567).
 - Tests never use the real calendar: today is frozen at
-  `2026-07-01T00:00:00.000Z` ([`TESTING.md`](docs/TESTING.md#the-frozen-test-clock)).
+  `2026-07-01T00:00:00.000Z`; elapsed time uses `realElapsedMs`
+  ([`TESTING.md`](docs/TESTING.md#the-frozen-test-clock)).
 - Lifecycle and feature changes update tests and docs (`README.md`, guides,
   operator notes) in the same PR, per [`STYLE_GUIDE.md`](docs/STYLE_GUIDE.md).
   Every doc is reachable from an index or hub; a new admin route area gets a
