@@ -181,5 +181,9 @@ describe("shared form schemas (#4467)", () => {
         `no "use client" module imports it; importers: ${relative.join(", ") || "none"}`,
       ).toBeGreaterThan(0);
     },
+    // It parses every source file's imports: a whole-tree census, given the
+    // same allowance as the others (#4584; 5.9 s on a CI runner, over the
+    // 5 s default).
+    120_000,
   );
 });
