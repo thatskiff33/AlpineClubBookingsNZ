@@ -1879,12 +1879,20 @@ establishes:
   and the group is named by its visible heading. All four payment pickers
   (booking review, admin Book, the organiser's group settlement, the group
   join panel) use it; never draw a card whose only cue is its tint.
-- **Inactive rows (#4563):** an archived or inactive row (a chore, committee
-  role or assignment, booking policy or period, family member, a fully covered
-  hut-leader candidate) keeps its text at full strength and says so in words,
-  in its status badge or label; a card may add `border-dashed` as a second,
-  non-text cue. Never fade a row with `opacity-*`: it drops the text under
-  4.5:1, and axe exempts only disabled controls, not text.
+- **Inactive, past, departed, removed and locked rows (#4563, #4594):** a row
+  in a lesser state keeps its text at full strength and says the state in
+  words. An archived or inactive row (a chore, committee role or assignment,
+  booking policy or period, family member, a fully covered hut-leader
+  candidate) says so in its status badge or label. A past day on the admin
+  calendar is grey and announces "(past)" to a screen reader; a departed kiosk
+  guest gets a "Departed" chip; a guest removed in an edit keeps its
+  strike-through and gains a "Removed" tag; a locked alert on Notification
+  Recipients says "Locked:" with its reason, which its checkbox also reads out;
+  an already-added member guest says "Already added". A card may add
+  `border-dashed` as a second, non-text cue. Never fade a row with `opacity-*`:
+  it drops the text under 4.5:1, and axe exempts only disabled controls and
+  their labels, not text. A read-only input is not disabled either. The
+  login-holder rows stay faded because their radio really is `disabled`.
   `final-a11y-presentation-contract.test.ts` fails a faded row in those files.
 - **List loading/empty primitives (#1803):** use the shared `Spinner`
   (`src/components/ui/spinner.tsx`; `role="status"` with an sr-only label, and
