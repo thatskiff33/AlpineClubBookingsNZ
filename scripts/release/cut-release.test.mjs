@@ -238,6 +238,9 @@ describe("package.json and section helpers", () => {
   it("refuses a package.json whose first version key is not the top-level one", () => {
     const nested = `{\n  "engines": {\n    "version": "x"\n  },\n  "version": "0.13.2"\n}\n`;
     expect(() => bumpPackageJson(nested, "0.14.0")).toThrow(/Could not rewrite/);
+    // Already at the target, the top-level check alone would pass while the nested key was rewritten.
+    const alreadyBumped = `{\n  "engines": {\n    "version": "x"\n  },\n  "version": "0.14.0"\n}\n`;
+    expect(() => bumpPackageJson(alreadyBumped, "0.14.0")).toThrow(/Could not rewrite/);
   });
 
   it("reads one compiled section without its heading or its neighbours", () => {
