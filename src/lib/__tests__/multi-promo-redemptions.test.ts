@@ -14,6 +14,11 @@
 import { describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/prisma", () => ({ prisma: {} }));
+// No financial history on these drafts; its withholding is covered in
+// draft-booking-cleanup.test.ts (#4514).
+vi.mock("@/lib/booking-financial-history", () => ({
+  bookingsWithFinancialHistory: vi.fn(async () => new Set<string>()),
+}));
 
 import {
   bookingPromoCodeAdjustments,

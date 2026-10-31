@@ -1,6 +1,6 @@
 /**
- * M1 (#4513) ships the member-money journal inert: no production path reads it
- * or posts to it. This census reads every non-test source file under `src/` and
+ * M1 (#4513) ships the member-money journal inert: no production path posts to
+ * it, and only the deletion guards M2 (#4514) names below read it. This census reads every non-test source file under `src/` and
  * `scripts/`, and the seeds and other top-level files in `prisma/`, and fails on
  * a journal reference outside the module boundary and the files that only name,
  * provision or verify it. The migration is SQL, outside the scan. A later child that adds a writer or reader edits this
@@ -21,6 +21,10 @@ const ALLOWED: Record<string, string> = {
   "src/lib/member-merge-snapshot-columns.ts": "member-merge classification strings",
   "src/lib/privacy-retention-classification.ts": "privacy schedule classification strings; no journal access",
   "scripts/verify-member-money-journal.ts": "operator verifier in a READ ONLY transaction",
+  // M2 (#4514, D1 on #4482): read-only, through the boundary's index, so a
+  // deletion path respects what posted rows retain. Neither posts.
+  "src/lib/booking-financial-history.ts": "draft hard delete skips a booking a journal leg names (read-only)",
+  "src/lib/member-lifecycle-actions.ts": "member hard delete refuses a journal debtor (read-only count)",
 };
 const BOUNDARY = "src/lib/member-money/";
 

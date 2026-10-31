@@ -121,6 +121,20 @@ async function hardDeleteDraftBooking(
       return { status: 403, error: "Forbidden" };
     }
 
+    // D1 (#4482, `INV-MONEY-043`): financial history outlives its booking. The
+    // cleanup clears a draft only when nothing financial names it, and writes
+    // nothing for one it withholds, so this refusal leaves the draft as it was.
+    const dependents = await deleteDraftBookingDependents(tx, [booking]);
+    if (dependents.withheldBookingIds.length > 0) {
+      return {
+        status: 409,
+        error: "This draft booking has financial history, so it cannot be deleted",
+        blockers: [
+          { code: "financial_history", label: "Financial history names this booking", count: 1 },
+        ],
+      };
+    }
+
     await createAuditLog(
       {
         action: "booking.delete.draft",
@@ -142,8 +156,6 @@ async function hardDeleteDraftBooking(
       },
       tx
     );
-
-    await deleteDraftBookingDependents(tx, [booking]);
 
     await tx.booking.delete({ where: { id: booking.id } });
 

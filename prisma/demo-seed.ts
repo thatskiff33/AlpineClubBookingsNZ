@@ -138,6 +138,16 @@ async function assertDemoSeedSafety() {
 // Cleanup — delete demo + transactional rows in FK-safe (child→parent) order.
 // ---------------------------------------------------------------------------
 async function cleanup() {
+  // D1 (#4482, #4514): a booking-ledger line outlives its booking. The database
+  // refuses to delete a booking a line names, and no code deletes a line, so a
+  // demo database where a booking was confirmed through the app is reset, not
+  // re-seeded. Refused before anything is deleted, never half-way through.
+  const ledgerLines = await prisma.bookingLedgerLine.count();
+  if (ledgerLines > 0) {
+    throw new Error(
+      `Demo seed refused: ${ledgerLines} booking-ledger line(s) exist, and ledger history is never deleted. Recreate the demo database (for example drop and re-create its schema, then migrate) and run the seed again.`,
+    );
+  }
   console.log("Clearing previous demo / transactional data...");
   await prisma.bedAllocation.deleteMany();
   await prisma.guestChoreToken.deleteMany();
