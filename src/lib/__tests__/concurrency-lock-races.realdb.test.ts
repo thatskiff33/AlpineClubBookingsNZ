@@ -628,6 +628,13 @@ import "./servernz-version-record-race.realdb.test";
 
 // #4436: address/key replacement and request capture share the settings fence.
 import "./servernz-connection-race.realdb.test";
+// #4586 reuses it to prove the message-board mirror's release leaves a claim a
+// second pass took over, and that a mirror tombstone and an admin removal of
+// one post, each held after its first lock, finish without deadlock in both
+// orders (post row before image rows). Skipped unless
+// RUN_CONCURRENCY_RACE_TESTS=1; it owns `race-4586-` posts and the singleton
+// settings row.
+import "./club-post-mirror-concurrency.realdb.test";
 // #4262: the other-lodge name-index pair's windowed declaration measured, not
 // asserted: the previous release's name-keyed upsert refused once it applies,
 // and each reverse script's duplicate-name refusal and order. Skipped unless
