@@ -72,6 +72,9 @@ tester.run("no-raw-input", rule("no-raw-input"), {
     { code: '<input type="file" className="hidden" {...rest} />', errors: [{ messageId: "raw" }] },
     { code: '<input type="file" hidden {...rest} />', errors: [{ messageId: "raw" }] },
     { code: '<input className="hidden" type="file" {...rest} />', errors: [{ messageId: "raw" }] },
+    // The spread follows only the hiding attribute, not the type.
+    { code: '<input className="hidden" {...rest} type="file" />', errors: [{ messageId: "raw" }] },
+    { code: '<input hidden {...rest} type="file" />', errors: [{ messageId: "raw" }] },
     { code: '<input type="checkbox" {...rest} />', errors: [{ messageId: "raw" }] },
     { code: '<input type="hidden" type="text" />', errors: [{ messageId: "raw" }] },
   ],
