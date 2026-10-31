@@ -72,11 +72,12 @@ const DARK_APP = block(".dark .app-theme-scope");
 // muted, secondary and accent surfaces (a hovered destructive menu item sits on
 // `--accent`). `--danger-muted` is added where a scope declares it.
 const SURFACES = ["--background", "--card", "--popover", "--muted", "--secondary", "--accent"];
-// The surfaces an error BOX (`bg-destructive/<n>`) is laid on: a page, card or
-// dialog. Dark mode is held to every surface; light mode is not, because its
-// red-700 (#4534) is 4.49:1 in a /10 box laid on `--muted` and 4.40:1 on
-// `--danger-muted`, so this contract does not claim a light box on those.
-const PAGE_SURFACES = ["--background", "--card", "--popover"];
+// An error BOX (`bg-destructive/<n>`) is held to the same surfaces as its text,
+// grey and danger-tinted ones included, in light mode as in dark. #4563 found
+// one on a grey panel: the booking-request release confirmation sits inside a
+// `bg-muted` box, where the old light red-700 read 4.49:1 in a /10 box (4.40:1
+// on `--danger-muted`). Light mode now uses red-800 and clears them all.
+const BOX_SURFACES = [...SURFACES, "--danger-muted"];
 
 // Each list is the cascade an element in that theme sees, nearest first: a
 // `.dark .app-theme-scope` element matches both app-scope rules (the dark one
@@ -92,11 +93,11 @@ type Theme = {
 };
 
 const THEMES: Theme[] = [
-  { name: "light :root", ink: [ROOT], surfaces: [ROOT], textSurfaces: [...SURFACES, "--danger-muted"], boxSurfaces: PAGE_SURFACES },
-  { name: "light app scope", ink: [APP, ROOT], surfaces: [APP, ROOT], textSurfaces: SURFACES, boxSurfaces: PAGE_SURFACES },
-  { name: "website", ink: [WEBSITE, ROOT], surfaces: [WEBSITE, ROOT], textSurfaces: SURFACES, boxSurfaces: PAGE_SURFACES },
-  { name: "dark .dark", ink: [DARK, ROOT], surfaces: [DARK, ROOT], textSurfaces: [...SURFACES, "--danger-muted"], boxSurfaces: [...SURFACES, "--danger-muted"] },
-  { name: "dark app scope", ink: [DARK_APP, APP, DARK, ROOT], surfaces: [DARK_APP, APP, DARK, ROOT], textSurfaces: SURFACES, boxSurfaces: SURFACES },
+  { name: "light :root", ink: [ROOT], surfaces: [ROOT], textSurfaces: [...SURFACES, "--danger-muted"], boxSurfaces: BOX_SURFACES },
+  { name: "light app scope", ink: [APP, ROOT], surfaces: [APP, ROOT], textSurfaces: SURFACES, boxSurfaces: BOX_SURFACES },
+  { name: "website", ink: [WEBSITE, ROOT], surfaces: [WEBSITE, ROOT], textSurfaces: SURFACES, boxSurfaces: BOX_SURFACES },
+  { name: "dark .dark", ink: [DARK, ROOT], surfaces: [DARK, ROOT], textSurfaces: [...SURFACES, "--danger-muted"], boxSurfaces: BOX_SURFACES },
+  { name: "dark app scope", ink: [DARK_APP, APP, DARK, ROOT], surfaces: [DARK_APP, APP, DARK, ROOT], textSurfaces: SURFACES, boxSurfaces: BOX_SURFACES },
 ];
 
 describe("destructive token contrast (#4553)", () => {
