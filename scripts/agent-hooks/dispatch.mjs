@@ -72,7 +72,7 @@ function alreadyReminded(sessionId, files, stateDir) {
  * both injectable for tests. Returns `{ exitCode, stdout, stderr }`.
  */
 export function runHook(input, options = {}) {
-  const { role = null, listChanges = changedSourceFiles, stateDir = path.join(tmpdir(), "agent-hooks-4462") } = options;
+  const { role = null, listChanges = changedSourceFiles, stateDir = path.join(tmpdir(), "agent-hooks-reminders") } = options;
   const event = input?.hook_event_name;
   if (event === "PreToolUse") {
     const rule = findViolation(input, role);
