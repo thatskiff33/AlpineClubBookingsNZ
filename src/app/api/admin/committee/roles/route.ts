@@ -1,5 +1,4 @@
 import { NextResponse } from "next/server";
-import { z } from "zod";
 import {
   buildStructuredAuditLogCreateArgs,
   getAuditRequestContext,
@@ -12,18 +11,10 @@ import {
   normalizeCommitteeText,
   serializeCommitteeRole,
 } from "@/lib/committee";
+import { committeeRoleCreateSchema } from "@/lib/forms/committee-role-schema";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
 
-const createSchema = z
-  .object({
-    name: z.string().trim().min(1).max(120),
-    description: z.string().trim().max(1000).nullable().optional(),
-    contactEmail: z.string().trim().email().max(320).nullable().optional(),
-    isActive: z.boolean().optional().default(true),
-    sortOrder: z.number().int().min(0).max(100000).optional(),
-  })
-  .strict();
 
 export async function GET() {
   const guard = await requireAdmin({
@@ -55,7 +46,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
 
-  const parsed = createSchema.safeParse(body);
+  const parsed = committeeRoleCreateSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Invalid input", details: parsed.error.flatten() },

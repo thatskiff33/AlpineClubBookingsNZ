@@ -621,6 +621,11 @@ caught by a count contract in `field-hint.test.tsx`: `useFieldHint(`,
 `.fieldProps` and `.hintProps` must occur the same number of times across
 `src/`.
 
+On the shared form layer (#4467) a field's example is `FormDescription`,
+which renders `FieldHint` and wires it the same way: `FormControl` lists the
+field's error first, then any id passed to it, then the hint, and names the
+hint only while it is rendered.
+
 **A person-entered money amount uses `MoneyInput`.**
 `src/components/ui/money-input.tsx` is the controlled text field for dollars
 and cents: it preserves invalid text for the caller's visible validation, refuses
@@ -1179,10 +1184,10 @@ figures rather than trusting a hand count: **104 components render a banner, and
 reason. (Earlier revisions of this page published 76/232/264/211 — those were
 upstream-historical and had drifted; the numbers here are the ones the contract
 test currently pins, which is the only authority.) Those 331 split by WHICH rule
-covers them: **294** pass the literal
-`describeReason={false}` and are covered by a banner in the same file, and **37**
+covers them: **293** pass the literal
+`describeReason={false}` and are covered by a banner in the same file, and **38**
 pass `describeReason={!ancestorRendersViewOnlyBanner}` and are covered by a
-verified vouching parent — 32 by a parent's own JSX render site (#2168), 5 by the
+verified vouching parent — 33 by a parent's own JSX render site (#2168), 5 by the
 guided-setup shell (#2324); see *Vouching for a child's coverage* and *Vouching
 through the wizard shell* below. The
 remaining **55 controls across 30 files deliberately keep the per-button
@@ -1637,6 +1642,7 @@ and the boxes can already be out of date. What keeps stale display from becoming
 a stale WRITE is the changed-fields-only patch above, not the gate. What the
 gate adds is that the dirty comparison is against the card's own snapshot, which
 is what is on screen, so a stale box never arms Save by itself.
+
 The rule binds sections that are NEW or MODIFIED. Known departures that this
 rule does not itself retrofit are the `/admin/modules` grid (deliberate bulk
 toggles), the older staged-but-ungated settings forms, the age-tier and
@@ -1833,6 +1839,23 @@ load compare equal to the scope the section mounts on. The unknown state must
 also be RECOVERABLE without leaving the page: it carries a **Try again** action
 that re-runs the current key's load in place. All three keyed booking-policy
 sections (default cancellation, booking periods, minimum night stay) carry this.
+
+**The shared form layer (#4467) validates fields; it is not an edit model.**
+Its pattern is in [`UX_FLOW_MAP.md`](UX_FLOW_MAP.md#forms-4467): a zod schema
+in `src/lib/forms/` shared with the write route, `useZodForm`, inline errors
+and a `FormErrorSummary` that takes focus. A settings section that adopts it
+keeps every rule above: `useSectionEditState` still owns Edit, Cancel to the
+snapshot and the dirty- and view-gated Save, and the section's permanently
+mounted banner and feedback regions still carry its request-level outcomes.
+The summary is the one region the layer adds, and it follows
+`FocusedActionError` rather than the permanently-mounted rule: a
+`role="alert"` mounted when a submit fails, already filled, and announced by
+taking focus as the submit completes, so it does not depend on a live region
+being registered first. Between submits its text never changes; entries only
+disappear as their fields are fixed, so nothing is announced while the person
+types. The first form on the layer is the committee page's role form, a
+submit-style form rather than a staged section; no staged section uses the
+layer yet.
 
 The `/admin/xero` and `/admin/members` routes are route shells with local
 `_components` and `_hooks` folders; the member `/book` wizard follows the same

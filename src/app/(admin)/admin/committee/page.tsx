@@ -14,12 +14,12 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { FieldHint, useFieldHint } from "@/components/ui/field-hint";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { useActionAttention } from "@/hooks/use-scroll-to-feedback";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
+import { useZodForm } from "@/hooks/use-zod-form";
 import { CommitteePhotoDisplayControl } from "@/components/admin/committee-photo-display-control";
 import {
   ADMIN_FORBIDDEN_SAVE_REASON,
@@ -27,6 +27,13 @@ import {
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
 import { apiErrorMessageFromBody } from "@/lib/api-error-message";
+import {
+  committeeRoleFormSchema,
+  type CommitteeRoleFormValues,
+  type CommitteeRolePayload,
+} from "@/lib/forms/committee-role-schema";
+import { applyServerValidationErrors } from "@/lib/forms/server-validation-errors";
+import { CommitteeRoleForm } from "./_components/committee-role-form";
 
 interface CommitteeRole {
   id: string;
@@ -60,7 +67,7 @@ interface CommitteeAssignment {
   };
 }
 
-const emptyRoleForm = {
+const emptyRoleForm: CommitteeRoleFormValues = {
   name: "",
   description: "",
   contactEmail: "",
@@ -133,13 +140,13 @@ export default function CommitteePage() {
   // Committee roles/assignments resolve to the membership area (their write
   // routes enforce membership:edit), so gate the editors on that area (#1940).
   const canEdit = useAdminAreaEditAccess("membership");
-  // #2264 — the role email example moves out of the placeholder (grey text
-  // inside the box reads as an address already on file) and under the field.
-  const roleEmailHint = useFieldHint();
 
   const [showRoleForm, setShowRoleForm] = useState(false);
   const [editingRoleId, setEditingRoleId] = useState<string | null>(null);
-  const [roleForm, setRoleForm] = useState(emptyRoleForm);
+  // #4467: validated by the schema both role routes parse with.
+  const roleForm = useZodForm(committeeRoleFormSchema, {
+    defaultValues: emptyRoleForm,
+  });
 
   const [editingAssignmentId, setEditingAssignmentId] = useState<string | null>(
     null,
@@ -199,14 +206,14 @@ export default function CommitteePage() {
       (max, role) => Math.max(max, role.sortOrder),
       -1,
     );
-    setRoleForm({ ...emptyRoleForm, sortOrder: maxOrder + 1 });
+    roleForm.reset({ ...emptyRoleForm, sortOrder: maxOrder + 1 });
     setShowRoleForm(true);
     setError("");
   }
 
   function openEditRoleForm(role: CommitteeRole) {
     setEditingRoleId(role.id);
-    setRoleForm({
+    roleForm.reset({
       name: role.name,
       description: role.description ?? "",
       contactEmail: role.contactEmail ?? "",
@@ -220,7 +227,7 @@ export default function CommitteePage() {
   function closeRoleForm() {
     setShowRoleForm(false);
     setEditingRoleId(null);
-    setRoleForm(emptyRoleForm);
+    roleForm.reset(emptyRoleForm);
   }
 
   function openAssignmentForm(assignment: CommitteeAssignment) {
@@ -241,18 +248,9 @@ export default function CommitteePage() {
     setAssignmentForm(emptyAssignmentForm);
   }
 
-  async function handleRoleSubmit(e: React.FormEvent) {
-    e.preventDefault();
+  async function handleRoleSubmit(payload: CommitteeRolePayload) {
     setError("");
     setSaving(true);
-
-    const payload = {
-      name: roleForm.name,
-      description: roleForm.description || null,
-      contactEmail: roleForm.contactEmail || null,
-      sortOrder: roleForm.sortOrder,
-      isActive: roleForm.isActive,
-    };
 
     try {
       const url = editingRoleId
@@ -272,6 +270,9 @@ export default function CommitteePage() {
           setError(ADMIN_FORBIDDEN_SAVE_REASON);
           return;
         }
+        // A field the route refused is marked on that field and listed in
+        // the form's error summary, which takes focus (#4467).
+        if (applyServerValidationErrors(roleForm, response.status, body)) return;
         throw new Error(apiErrorMessageFromBody(body, "Failed to save role"));
       }
       closeRoleForm();
@@ -422,113 +423,15 @@ export default function CommitteePage() {
         </CardHeader>
         <CardContent className="space-y-4">
           {showRoleForm ? (
-            <form
+            <CommitteeRoleForm
+              form={roleForm}
+              editing={editingRoleId !== null}
+              canEdit={canEdit}
+              saving={saving}
               onSubmit={handleRoleSubmit}
-              className="rounded-md border border-border bg-card p-4 text-card-foreground"
-            >
-              <div className="mb-4 flex items-center justify-between">
-                <h2 className="font-medium text-foreground">
-                  {editingRoleId ? "Edit Role" : "Add Role"}
-                </h2>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  onClick={closeRoleForm}
-                >
-                  <X className="h-4 w-4" />
-                </Button>
-              </div>
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                <div>
-                  <Label htmlFor="roleName">Role Name *</Label>
-                  <Input
-                    id="roleName"
-                    value={roleForm.name}
-                    onChange={(event) =>
-                      setRoleForm({ ...roleForm, name: event.target.value })
-                    }
-                    required
-                    disabled={!canEdit}
-                  />
-                </div>
-                <div>
-                  <Label htmlFor="roleSortOrder">Sort Order</Label>
-                  <Input
-                    id="roleSortOrder"
-                    type="number"
-                    min={0}
-                    value={roleForm.sortOrder}
-                    onChange={(event) =>
-                      setRoleForm({
-                        ...roleForm,
-                        sortOrder: parseInt(event.target.value, 10) || 0,
-                      })
-                    }
-                    disabled={!canEdit}
-                  />
-                </div>
-              </div>
-              <div className="mt-4">
-                <Label htmlFor="roleContactEmail">Role Email</Label>
-                <Input
-                  id="roleContactEmail"
-                  type="email"
-                  value={roleForm.contactEmail}
-                  onChange={(event) =>
-                    setRoleForm({
-                      ...roleForm,
-                      contactEmail: event.target.value,
-                    })
-                  }
-                  disabled={!canEdit}
-                  {...roleEmailHint.fieldProps}
-                />
-                <FieldHint {...roleEmailHint.hintProps} className="mt-1">
-                  Example: president@example.org
-                </FieldHint>
-              </div>
-              <div className="mt-4">
-                <Label htmlFor="roleDescription">Description</Label>
-                <Textarea
-                  id="roleDescription"
-                  rows={3}
-                  value={roleForm.description}
-                  onChange={(event) =>
-                    setRoleForm({
-                      ...roleForm,
-                      description: event.target.value,
-                    })
-                  }
-                  maxLength={1000}
-                  disabled={!canEdit}
-                />
-              </div>
-              <label className="mt-4 flex items-center gap-2 text-sm">
-                <input
-                  type="checkbox"
-                  checked={roleForm.isActive}
-                  onChange={(event) =>
-                    setRoleForm({
-                      ...roleForm,
-                      isActive: event.target.checked,
-                    })
-                  }
-                  disabled={!canEdit}
-                  className="h-4 w-4 rounded border-border"
-                />
-                Active
-              </label>
-              <div className="mt-4 flex gap-2">
-                <ViewOnlyActionButton canEdit={canEdit} describeReason={false} type="submit" disabled={saving}>
-                  <Save className="mr-2 h-4 w-4" />
-                  Save Role
-                </ViewOnlyActionButton>
-                <Button type="button" variant="outline" onClick={closeRoleForm}>
-                  Cancel
-                </Button>
-              </div>
-            </form>
+              onClose={closeRoleForm}
+              ancestorRendersViewOnlyBanner
+            />
           ) : null}
 
           <AdminDataTable>
@@ -715,6 +618,7 @@ export default function CommitteePage() {
                   type="button"
                   variant="ghost"
                   size="icon"
+                  aria-label="Close"
                   onClick={closeAssignmentForm}
                 >
                   <X className="h-4 w-4" />

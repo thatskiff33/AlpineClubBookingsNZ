@@ -11,22 +11,13 @@ import {
   normalizeCommitteeText,
   serializeCommitteeRole,
 } from "@/lib/committee";
+import { committeeRolePatchSchema } from "@/lib/forms/committee-role-schema";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
 
 const paramsSchema = z.object({
   id: z.string().min(1),
 });
-
-const patchSchema = z
-  .object({
-    name: z.string().trim().min(1).max(120).optional(),
-    description: z.string().trim().max(1000).nullable().optional(),
-    contactEmail: z.string().trim().email().max(320).nullable().optional(),
-    isActive: z.boolean().optional(),
-    sortOrder: z.number().int().min(0).max(100000).optional(),
-  })
-  .strict();
 
 function changedFields(
   before: Record<string, unknown>,
@@ -82,7 +73,7 @@ export async function PATCH(
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
 
-  const parsed = patchSchema.safeParse(body);
+  const parsed = committeeRolePatchSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Invalid input", details: parsed.error.flatten() },

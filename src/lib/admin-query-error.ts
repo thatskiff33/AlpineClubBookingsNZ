@@ -1,3 +1,5 @@
+import { readValidationDetails } from "@/lib/format-validation-errors";
+
 /**
  * Why an admin list API refused a query, in words an operator can act on.
  *
@@ -27,25 +29,8 @@ export async function readAdminQueryErrorMessage(
     return fallback;
   }
 
-  const details = (
-    payload as {
-      details?: {
-        fieldErrors?: Record<string, unknown>;
-        formErrors?: unknown;
-      };
-    } | null
-  )?.details;
-
-  const candidates = [
-    ...Object.values(details?.fieldErrors ?? {}).flatMap((messages) =>
-      Array.isArray(messages) ? messages : [],
-    ),
-    ...(Array.isArray(details?.formErrors) ? details.formErrors : []),
-  ];
-
-  const message = candidates.find(
-    (entry): entry is string => typeof entry === "string" && entry.trim() !== "",
-  );
-
-  return message ?? fallback;
+  // The one reader of a validation refusal's `details` (#4467): the first
+  // field message, else the first form-level one.
+  const details = readValidationDetails(payload);
+  return details?.fieldErrors[0]?.[1][0] ?? details?.formErrors[0] ?? fallback;
 }

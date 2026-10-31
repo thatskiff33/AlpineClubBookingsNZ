@@ -87,6 +87,32 @@ Not covered: `React.createElement`, an element named through a variable
 (`const Tag = "button"; <Tag />`), a `confirm` reached through an alias, and
 `<textarea>`.
 
+### Testing a form on the shared form layer (#4467)
+
+The pattern is in [`UX_FLOW_MAP.md`](UX_FLOW_MAP.md#forms-4467). A form on it
+is tested in jsdom, like
+`src/app/(admin)/admin/committee/__tests__/committee-role-form.test.tsx`:
+
+- **Assert the wiring by resolving it.** Read the control's
+  `aria-describedby`, look each id up with `document.getElementById`, and
+  check the text and the order: error first, example last. Testing Library's
+  `toHaveAccessibleDescription` does the same in one step where the order does
+  not matter.
+- **Assert the summary holds focus, not that it got it.** Use
+  `expectToHoldFocus` from `src/lib/__tests__/helpers/focus.ts`.
+  react-hook-form's own focus-the-first-error runs again on a timer, so a
+  bare `waitFor` passes even while it steals focus a tick later.
+- **Wrap a submit in `act`.** The submit is asynchronous: the resolver, then
+  the handler, then the state update that raises `submitCount` and moves
+  focus.
+- **Assert the payload and the route, as well as the errors.** A migrated
+  form must send what it sent before.
+
+`src/components/ui/__tests__/form.test.tsx` pins the primitives themselves.
+`src/lib/__tests__/shared-form-schema-census.test.ts` reads source from disk,
+so `test:related` cannot select it; run it with `test:named` when you add or
+move a schema in `src/lib/forms/`, its route or its form.
+
 ## Stateful Xero and Stripe fakes
 
 Tests can keep provider state across a whole money journey instead of returning

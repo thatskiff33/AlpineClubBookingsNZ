@@ -1590,6 +1590,74 @@ every screen:
 New code follows this rule; existing inline success panels are converted
 opportunistically when a file is already being touched.
 
+## Forms (#4467)
+
+A form is built on the shared form layer: shadcn's Form primitives over
+react-hook-form, validated by a zod schema (owner decision, 27 Oct 2026). The
+layer decides three things once, so no form has to:
+
+- **Each field's error is tied to its control.** `aria-invalid` is set while
+  the field fails, and `aria-describedby` names the error first, then any id
+  the caller passes, then the field's example, the order `FieldHint` fixed
+  in #2257.
+- **A failed submit is listed at the top of the form, and the list takes
+  focus.** `FormErrorSummary` is a `role="alert"` that shows each error as a
+  link that moves focus to its field. Focus moves only when a submit
+  completes, never while the person types. Between submits its text never
+  changes: an entry keeps the message it had at the submit and only
+  disappears once its field is fixed. The inline message shows the field's
+  current state.
+- **The browser and the API route check the same rules.** The schema lives in
+  `src/lib/forms/<name>-schema.ts`, imports nothing but `zod`, and is imported
+  by the route and the form. `shared-form-schema-census.test.ts` fails a
+  schema that either side stops using. `src/lib/club-theme-update-schema.ts`
+  shares a schema between a route and a page the same way but predates this
+  convention, so it sits outside `src/lib/forms/` and the census.
+
+The committee page's **Add / Edit Role** form is the worked example: its
+schema module is `src/lib/forms/committee-role-schema.ts`, and its form is
+`src/app/(admin)/admin/committee/_components/committee-role-form.tsx`.
+
+### Building a form
+
+1. **Write the schema** in `src/lib/forms/`. Keep each field's rule as a
+   constant, and build from them the route's wire schema (or one per route:
+   `POST` with its defaults, `PATCH` with every field optional and no
+   defaults) and the form's schema. The form's schema takes what the controls
+   hold and outputs the payload the route accepts; for example, an empty text
+   box becomes `null`. Write each message as the fix ("Enter a role name"),
+   because the summary shows it without the field's label.
+2. **Parse with it in the route**, and answer a refusal the existing way:
+   `{ error: "Invalid input", details: parsed.error.flatten() }` with a 400.
+   New routes use this shape; the member routes' bare `fieldErrors` shape
+   (`details: parsed.error.flatten().fieldErrors`, with a 422) is also read.
+3. **Build the form** with `useZodForm(schema, { defaultValues })` from
+   `src/hooks/use-zod-form.ts`. It also turns off react-hook-form's own
+   focus-the-first-error, which would take focus back from the summary.
+   Render `<Form {...form}>`, then a `<form noValidate>` with
+   `<FormErrorSummary />` before the fields. Each field is a `FormField`
+   whose `render` returns a `FormItem` holding `FormLabel`, `FormControl`
+   around exactly one primitive (`Input`, `Textarea`, `Checkbox`…), then
+   `FormMessage` and, for an example, `FormDescription`. Pass any further
+   description id, such as a view-only reason, as `aria-describedby` on
+   `FormControl`, not on the control: the control's own would replace the
+   error's.
+4. **Map the route's answer back.** In the `handleSubmit` callback, call
+   `applyServerValidationErrors(form, response.status, body)` on a refusal.
+   It acts only on a 400 or 422 whose `details` is zod's `flatten()` shape,
+   read by `readValidationDetails`, the one reader of that shape. Field
+   messages go on their fields; form-level ones, and any for a key the form
+   does not render, show unlinked in the summary. It returns `false` for
+   anything else (a 403, a 500, a 400 with no zod `details`): show the
+   route's `error` as before, through the page's `role="alert"` banner and
+   `useActionAttention`. Call it before the
+   callback returns, because the summary takes focus when the submit
+   completes.
+
+A staged settings section keeps `useSectionEditState` and every rule in
+[`ARCHITECTURE.md`](ARCHITECTURE.md#adminmember-layer) when it adopts the
+layer.
+
 ## Error and loading screens per area (#4467)
 
 When a page fails, the person stays in the area they were using. Every route
@@ -1822,6 +1890,9 @@ establishes:
   primitive to use; the existing usages sit on a count ratchet that only falls.
   The scope, the named exceptions and how to lower the count are in
   [`TESTING.md`](TESTING.md#design-system-control-ratchet-4467).
+- **Forms (#4467):** build a form on the shared form layer
+  (`src/components/ui/form.tsx`), with its zod schema shared with the API
+  route; see [Forms](#forms-4467).
 - **Long-page section nav (#1818):** wrap the long single-column member pages
   (`/profile`, `/bookings/[id]`) with `SectionNav` (`src/components/section-nav.tsx`;
   a sticky desktop anchor rail + a mobile `<details>` disclosure of in-page
