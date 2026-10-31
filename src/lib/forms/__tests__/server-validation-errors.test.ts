@@ -6,8 +6,13 @@ import { applyServerValidationErrors } from "@/lib/forms/server-validation-error
 // reader `formatValidationErrorResponse` uses, so both shapes the routes send
 // reach the form and nothing else does.
 
+type Form = Parameters<typeof applyServerValidationErrors<Record<string, unknown>>>[0];
+
 function fakeForm(values: Record<string, unknown>) {
-  return { setError: vi.fn(), getValues: vi.fn(() => values) };
+  const setError = vi.fn<Form["setError"]>();
+  // `getValues` is overloaded; the helper only ever calls the no-argument form.
+  const getValues = vi.fn(() => values) as unknown as Form["getValues"];
+  return { setError, getValues };
 }
 
 describe("applyServerValidationErrors", () => {
