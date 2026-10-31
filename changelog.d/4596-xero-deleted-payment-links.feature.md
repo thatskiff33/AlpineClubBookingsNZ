@@ -7,10 +7,12 @@
   Now, when the app next reads the invoice or credit note, it asks Xero about
   any payment that has disappeared from it. Only a payment Xero confirms as
   deleted is retired; the hand-entered replacement stays as it is. If Xero
-  cannot be asked (for example, the day's Xero allowance is nearly used up),
-  nothing changes and it tries again on a later read.
+  cannot be asked at that moment (for example, the day's Xero allowance is
+  nearly used up), the app tries again on its own every few hours until Xero
+  answers.
 
-  Payments deleted before this release are not retired by themselves. Run
+  Payments deleted before this release are not retired by themselves, and
+  neither is a booking change's card payment. Run
   `pnpm run xero:deleted-payment-link-backfill` to see them (it changes
   nothing), then run it again with `--apply` to retire the ones Xero confirms
   deleted. `docs/MAINTENANCE.md` has the steps.

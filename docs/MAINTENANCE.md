@@ -2399,38 +2399,50 @@ window rather than raising the bound.
 Before #4531 a payment deleted in Xero kept its link here active, because Xero
 leaves a deleted payment out of its invoice and the inbound sync never saw it
 again. The sync now retires such a link when it next reads the invoice or credit
-note (`INV-INT-031`), but a payment deleted before that, on an invoice nobody
-has touched since, stays active until this backfill retires it.
+note (`INV-INT-031`), and re-checks on a schedule any it could not confirm at
+the time. A payment deleted before that, on an invoice nobody has touched
+since, stays active until this backfill retires it. So does a booking change's
+card payment, whose link the inbound sync never reaches.
 
 ```bash
-pnpm run xero:deleted-payment-link-backfill                   # dry run: lists, changes nothing
+pnpm run xero:deleted-payment-link-backfill                   # dry run: lists, changes no link
 pnpm run xero:deleted-payment-link-backfill --apply           # retire every confirmed one
 pnpm run xero:deleted-payment-link-backfill --apply --payment <xero payment id>
 pnpm run xero:deleted-payment-link-backfill --json            # machine-readable report too
 ```
 
-- **Dry run (the default).** It pages Xero's list of DELETED payments (100 a
-  call, at most 50 calls), checks each row's status itself, and prints every
-  ACTIVE local payment link that points at one: the link, its local record, its
-  role and the invoice or credit note it names. It writes nothing.
-- **`--apply`.** It asks Xero about each listed payment once more
-  (`GET /Payments/{id}`) and retires only the links of a payment Xero confirms
-  DELETED: inactive, with its recorded status `DELETED` and its other fields
-  kept. A payment Xero reports live, or does not answer for, is left active and
-  named. Keep the dry-run output with the change record.
-- **Xero calls.** Every call is read-only and stops once the day's recorded
-  usage reaches 85% of the usage panel's budget, or while Xero's own daily
-  limit is in force. A run cut short says the list stopped early. Run it again
-  later and it carries on from what is still active.
+- **Dry run (the default).** It pages Xero's list of DELETED payments, oldest
+  change first (100 a call, at most 50 calls), checks each row's status itself,
+  and prints every ACTIVE local payment link that points at one: the link, its
+  local record, its role and the invoice or credit note it names. It changes
+  no link; its Xero calls are still recorded on the usage panel, like any
+  other.
+- **`--payment <id>`.** Instead of listing, it asks Xero about each named
+  payment directly (one call each) and keeps only those Xero reports DELETED.
+- **`--apply`.** It retires only the links of a payment Xero confirms DELETED:
+  inactive, with its recorded status `DELETED` and its other fields kept. A
+  listed payment is asked about once more first, so `--apply` costs one extra
+  call per candidate payment it checks, retired or not; a `--payment` id's
+  direct answer is already that confirmation. A payment Xero reports live, or
+  does not answer for, is left active and named. Keep the dry-run output with
+  the change record.
+- **Xero calls.** Every call is read-only and a single attempt. A run stops
+  once the day's recorded usage reaches 85% of the usage panel's budget, on a
+  Xero rate limit or outage, or while Xero's own daily limit is in force, and
+  then says it stopped early. A later run lists again from the beginning,
+  re-spending those list calls; it acts only on links still active. An
+  organisation with more than 5,000 deleted payments is never listed in full:
+  name the payments with `--payment` instead.
 
 It changes nothing in Xero and nothing else locally: no booking, payment or
 ledger row. Readers that judge recorded payments skip a `DELETED` status
 (`isRecordedBookingInvoicePayment`), so they stop counting the retired payment
 as money held. Before, they reached the right answer only because a
 replacement payment usually existed. It also removes the double count from the
-"recorded in Xero" totals.
-Design and call budget: [`xero/ARCHITECTURE.md` -> "A payment deleted in Xero
-(#4531)"](xero/ARCHITECTURE.md#a-payment-deleted-in-xero-4531).
+"recorded in Xero" totals. A booking change's card payment it retires gets no
+audit row (the audit writer resolves no subject for it), so keep this run's
+output. Design and call budget: [`xero/ARCHITECTURE.md` -> "A payment deleted
+in Xero (#4531)"](xero/ARCHITECTURE.md#a-payment-deleted-in-xero-4531).
 
 ### Count voided bank-transfer refund notes before the follow-up writes (#4162)
 

@@ -6150,18 +6150,23 @@ predates #4161 and is not changed here.
 
 The inbound invoice and credit-note reconcile retires a `PAYMENT` link once Xero
 confirms its payment DELETED (`retireDeletedXeroPaymentLink`,
-`xero-inbound/deleted-payment-links.ts`, `INV-INT-031`); the operator backfill
-`applyDeletedPaymentLinkBackfill` uses the same write. It writes only
-`XeroObjectLink.active` and that link's `metadata.status`: no money column, no
-booking status, no pointer. Under `INV-LOCK-001` it joins no advisory cohort and
+`xero-inbound/deleted-payment-links.ts`, `INV-INT-031`). The scheduled re-check
+`recheckPendingDeletedPaymentLinks` (run by the inbound cron cycle) and the
+operator backfill `applyDeletedPaymentLinkBackfill` use the same write. So do
+the marker writes on a candidate Xero could not judge (mark, count a failed
+answer, clear on live). They write only `XeroObjectLink.active` and that link's
+metadata: no money column, no booking status, no pointer. Under `INV-LOCK-001` it joins no advisory cohort and
 takes no advisory key (`INV-LOCK-002`, `INV-LOCK-003` unchanged), and it takes
 no explicit row lock.
 
 - **Provider call outside any transaction.** The reconcile is not wrapped in a
   transaction (its callers: the stored-event worker under the event's
   status claim, the incremental cursor, "Sync now", the bank-refund void
-  answer). The confirming `GET /Payments/{id}` runs between its short link
-  writes, never inside one (`INV-INT-003`).
+  answer, and "Resolve by hand" on a Xero operation, which reconciles the
+  credit note it names). The confirming `GET /Payments/{id}` runs between its
+  short link writes, never inside one (`INV-INT-003`). It is one attempt: it
+  never sleeps on a rate limit and never arms the process-wide outage breaker
+  (`DEFERRABLE_XERO_READ`).
 - **The claim.** One statement per link:
   `updateMany where { id, xeroObjectType: "PAYMENT", active: true, metadata = <as read> }`.
   A concurrent writer that changed the metadata, or retired it first, makes
@@ -6178,6 +6183,15 @@ no explicit row lock.
   upsert the link live after the retire, because the funnel takes no row lock
   first. The link is then a candidate again on the next read of the document,
   and the backfill finds it.
+- **Counterpart readers.** Two writers skip re-sending a payment when an active
+  link records it: the booking change's card receipt
+  (`recordAdditionalCaptureReceipt`) and the primary invoice's PARTIAL payment
+  repair (`recordedRepairPayment`, which already ignored a link recorded
+  DELETED). Their parent operation can be retried after its payment succeeded
+  if that operation's own completion failed. A retire in that window lets the
+  retry send the payment again. The inbound reconcile never nominates the
+  first (its link is on a `PaymentTransaction`); only the backfill can retire
+  it.
 
 Reconciled against the last ten merges touching `src/lib/xero-inbound`
 (#4543, #4555, #4539, #4437, #4443, #4339, #4341, #4228, #4289, #4231). None
