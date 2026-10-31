@@ -18,14 +18,19 @@ const mocks = vi.hoisted(() => ({
   settingsUpdate: vi.fn(),
   settingsUpsert: vi.fn(),
   postDeleteMany: vi.fn(),
+  postFindMany: vi.fn(),
   postCount: vi.fn(),
+  // The expired-post batch's row lock (#4588), and the order things happen in.
+  executeRaw: vi.fn(),
+  order: [] as string[],
   imageFindMany: vi.fn(),
   imageDeleteMany: vi.fn(),
   deletePostImage: vi.fn(),
 }));
 
 vi.mock("@/lib/prisma", () => ({
-  prisma: {
+  // One double serves the global client and the batch's transaction client.
+  prisma: (() => { const client: Record<string, unknown> = {
     clubPostSettings: {
       findUnique: mocks.settingsFindUnique,
       updateMany: mocks.settingsUpdateMany,
@@ -34,13 +39,17 @@ vi.mock("@/lib/prisma", () => ({
     },
     clubPost: {
       deleteMany: mocks.postDeleteMany,
+      findMany: mocks.postFindMany,
       count: mocks.postCount,
     },
     clubPostImage: {
       findMany: mocks.imageFindMany,
       deleteMany: mocks.imageDeleteMany,
     },
-  },
+    $executeRaw: mocks.executeRaw,
+  };
+  client.$transaction = async (work: (tx: unknown) => Promise<unknown>) => work(client);
+  return client; })(),
 }));
 
 // The filesystem side of the pass. Mocked so the tests stay about WHAT is
@@ -61,6 +70,28 @@ import {
 
 const NOW = new Date("2026-07-01T00:00:00.000Z");
 
+/**
+ * Posts past the window: the first batch read returns them, the next none; the
+ * re-read under the lock returns them with their images.
+ */
+function expired(rows: { id: string; images?: { storageKey: string }[] }[]) {
+  let served = false;
+  mocks.postFindMany.mockImplementation(async (args: { take?: number }) => {
+    if (args.take) {
+      mocks.order.push("find-batch");
+      if (served) return [];
+      served = true;
+      return rows.map((row) => ({ id: row.id }));
+    }
+    mocks.order.push("reread-under-lock");
+    return rows.map((row) => ({ id: row.id, images: row.images ?? [] }));
+  });
+  mocks.postDeleteMany.mockImplementation(async () => {
+    mocks.order.push("delete-posts");
+    return { count: rows.length };
+  });
+}
+
 function settings(retentionDays: number) {
   return {
     retentionDays,
@@ -79,7 +110,16 @@ beforeEach(() => {
   mocks.imageDeleteMany.mockResolvedValue({ count: 0 });
   mocks.deletePostImage.mockResolvedValue(undefined);
   mocks.settingsUpdate.mockResolvedValue({});
-  mocks.postDeleteMany.mockResolvedValue({ count: 3 });
+  mocks.order.length = 0;
+  mocks.postFindMany.mockResolvedValue([]);
+  mocks.postDeleteMany.mockResolvedValue({ count: 0 });
+  mocks.executeRaw.mockImplementation(async () => {
+    mocks.order.push("lock-posts");
+    return 1;
+  });
+  mocks.deletePostImage.mockImplementation(async () => {
+    mocks.order.push("delete-file");
+  });
   mocks.postCount.mockResolvedValue(0);
 });
 
@@ -143,12 +183,13 @@ describe("the cleanup pass", () => {
     mocks.imageFindMany.mockResolvedValue([
       { id: "img-9", storageKey: "posts/2025/01/abandoned.webp" },
     ]);
+    mocks.imageDeleteMany.mockResolvedValue({ count: 1 });
 
     const outcome = await runClubPostCleanup(NOW);
 
     expect(outcome.skipped).toBe("disabled");
     expect(mocks.imageDeleteMany).toHaveBeenCalledWith({
-      where: { id: { in: ["img-9"] } },
+      where: { id: "img-9", postId: null },
     });
     expect(mocks.deletePostImage).toHaveBeenCalledWith(
       "posts/2025/01/abandoned.webp",
@@ -158,13 +199,18 @@ describe("the cleanup pass", () => {
   });
 
   it("deletes strictly older than the cutoff, so the boundary is KEPT", async () => {
+    expired([{ id: "p1" }]);
     await runClubPostCleanup(NOW);
 
-    const where = mocks.postDeleteMany.mock.calls[0][0].where;
-    expect(where.postedAt.lt).toEqual(new Date("2025-07-01T00:00:00.000Z"));
-    // `lt`, never `lte`. A post exactly on the boundary survives — where the
-    // rule could be read two ways, this deletes less.
-    expect(where.postedAt.lte).toBeUndefined();
+    // The batch read and the re-read under the lock both hold the line.
+    for (const [args] of mocks.postFindMany.mock.calls) {
+      const where = (args as { where: { postedAt: { lt?: Date; lte?: Date } } }).where;
+      expect(where.postedAt.lt).toEqual(new Date("2025-07-01T00:00:00.000Z"));
+      // `lt`, never `lte`. A post exactly on the boundary survives — where the
+      // rule could be read two ways, this deletes less.
+      expect(where.postedAt.lte).toBeUndefined();
+    }
+    expect(mocks.postDeleteMany).toHaveBeenCalledWith({ where: { id: { in: ["p1"] } } });
   });
 
   it("does nothing when another pass holds the claim", async () => {
@@ -190,6 +236,7 @@ describe("the cleanup pass", () => {
   });
 
   it("releases the claim after a pass that throws", async () => {
+    expired([{ id: "p1" }]);
     mocks.postDeleteMany.mockRejectedValue(new Error("database went away"));
 
     await expect(runClubPostCleanup(NOW)).rejects.toThrow("database went away");
@@ -200,7 +247,7 @@ describe("the cleanup pass", () => {
   });
 
   it("records what it deleted, then releases", async () => {
-    mocks.postDeleteMany.mockResolvedValue({ count: 7 });
+    expired(["1", "2", "3", "4", "5", "6", "7"].map((id) => ({ id })));
 
     const outcome = await runClubPostCleanup(NOW);
 
@@ -231,20 +278,15 @@ describe("the cleanup pass", () => {
   it("reports zero honestly rather than as a skip", async () => {
     // "Ran and deleted nothing" and "did not run" are different answers, and
     // the screen says different things about them.
-    mocks.postDeleteMany.mockResolvedValue({ count: 0 });
     expect(await runClubPostCleanup(NOW)).toEqual({ deleted: 0 });
+    // Nothing past the window: no transaction, no lock.
+    expect(mocks.executeRaw).not.toHaveBeenCalled();
   });
 });
 
 describe("image cleanup", () => {
   it("deletes the FILES of expired posts, not just their rows", async () => {
-    mocks.imageFindMany.mockImplementation(async (args: { where: unknown }) => {
-      // The doomed-images query, not the orphan query.
-      const where = args.where as { postId?: null };
-      if (where.postId === null) return [];
-      return [{ storageKey: "posts/2025/01/a.webp" }];
-    });
-    mocks.postDeleteMany.mockResolvedValue({ count: 1 });
+    expired([{ id: "p1", images: [{ storageKey: "posts/2025/01/a.webp" }] }]);
 
     await runClubPostCleanup(NOW);
 
@@ -253,24 +295,36 @@ describe("image cleanup", () => {
     expect(mocks.deletePostImage).toHaveBeenCalledWith("posts/2025/01/a.webp");
   });
 
-  it("collects the doomed files BEFORE deleting the rows that name them", async () => {
-    const order: string[] = [];
-    mocks.imageFindMany.mockImplementation(async () => {
-      order.push("find-images");
-      return [];
-    });
-    mocks.postDeleteMany.mockImplementation(async () => {
-      order.push("delete-posts");
-      return { count: 0 };
-    });
+  it("locks the doomed posts, reads their images under the locks, deletes, and only then the files (#4588)", async () => {
+    expired([{ id: "p1", images: [{ storageKey: "posts/2025/01/a.webp" }] }, { id: "p2" }]);
 
     await runClubPostCleanup(NOW);
 
-    // The cascade removes the image rows with the posts, so a query made after
-    // the delete returns nothing and every file leaks. Order is the behaviour.
-    expect(order.indexOf("find-images")).toBeLessThan(
-      order.indexOf("delete-posts"),
-    );
+    // The cascade removes the image rows with the posts, so the images are
+    // read before the delete; and under the posts' locks, so no writer can add
+    // an image row the read missed. Files go after the commit.
+    expect(mocks.order).toEqual(["find-batch", "lock-posts", "reread-under-lock", "delete-posts", "delete-file", "find-batch"]);
+    const [strings, ...values] = mocks.executeRaw.mock.calls[0] as [TemplateStringsArray, ...unknown[]];
+    expect(strings.join("?")).toMatch(/SELECT 1 FROM "ClubPost" WHERE "id" IN \(\?\) ORDER BY "id" FOR UPDATE/);
+    expect(values).toHaveLength(1);
+    // The re-read is scoped to the locked ids.
+    expect(mocks.postFindMany.mock.calls[1][0].where.id).toEqual({ in: ["p1", "p2"] });
+  });
+
+  it("deletes in bounded batches until nothing past the window is left", async () => {
+    let call = 0;
+    mocks.postFindMany.mockImplementation(async (args: { take?: number; where: { id?: { in: string[] } } }) => {
+      if (args.take) {
+        expect(args.take).toBe(200);
+        call += 1;
+        return call <= 2 ? [{ id: `batch-${call}` }] : [];
+      }
+      return (args.where.id?.in ?? []).map((id) => ({ id, images: [] }));
+    });
+    mocks.postDeleteMany.mockResolvedValue({ count: 1 });
+
+    expect(await runClubPostCleanup(NOW)).toEqual({ deleted: 2 });
+    expect(mocks.executeRaw).toHaveBeenCalledTimes(2);
   });
 
   it("sweeps uploads that were never attached to a post", async () => {
@@ -281,16 +335,31 @@ describe("image cleanup", () => {
       }
       return [];
     });
-    mocks.postDeleteMany.mockResolvedValue({ count: 0 });
+    mocks.imageDeleteMany.mockResolvedValue({ count: 1 });
 
     await runClubPostCleanup(NOW);
 
     expect(mocks.imageDeleteMany).toHaveBeenCalledWith({
-      where: { id: { in: ["img-1"] } },
+      where: { id: "img-1", postId: null },
     });
     expect(mocks.deletePostImage).toHaveBeenCalledWith(
       "posts/2025/01/orphan.webp",
     );
+  });
+
+  it("keeps the file of an upload a new post claimed after the sweep read it (#4588)", async () => {
+    mocks.imageFindMany.mockResolvedValue([
+      { id: "img-1", storageKey: "posts/2025/01/claimed.webp" },
+      { id: "img-2", storageKey: "posts/2025/01/orphan.webp" },
+    ]);
+    // img-1 was claimed in between: its guarded delete matches nothing.
+    mocks.imageDeleteMany.mockImplementation(async ({ where }: { where: { id: string } }) => ({ count: where.id === "img-1" ? 0 : 1 }));
+
+    await runClubPostCleanup(NOW);
+
+    expect(mocks.imageDeleteMany).toHaveBeenCalledWith({ where: { id: "img-1", postId: null } });
+    expect(mocks.deletePostImage).not.toHaveBeenCalledWith("posts/2025/01/claimed.webp");
+    expect(mocks.deletePostImage).toHaveBeenCalledWith("posts/2025/01/orphan.webp");
   });
 
   it("gives a fresh upload an hour before treating it as abandoned", async () => {

@@ -1523,6 +1523,14 @@ const ROW_LOCK_SITE_INVENTORY: Record<string, number> = {
   // key; disjoint from booking/money writers. See
   // docs/CONCURRENCY_AND_LOCKING.md -> "Message-board posts and their images".
   "src/lib/club-post-mirror.ts": 1,
+  // Message-board retention (#4588): each batch of expired posts is locked
+  // (`SELECT 1 … WHERE "id" IN (…) ORDER BY "id" FOR UPDATE`, the one statement
+  // counted here) before their images are read and the posts deleted, so no
+  // writer adds an image row the batch did not list. Order: ClubPost rows (id
+  // order) -> ClubPostImage rows by cascade; every other post writer holds one
+  // post at a time, so the batch cannot invert them. No advisory key. See
+  // docs/CONCURRENCY_AND_LOCKING.md -> "Message-board posts and their images".
+  "src/lib/club-post-retention.ts": 1,
   // Adult-member-hosting queue participants (#2597): the shared helper mints
   // one reviewed `FOR UPDATE` protocol for member merge over master, loser and
   // every planned ancillary owner, plus the shared standing-subject barrier
