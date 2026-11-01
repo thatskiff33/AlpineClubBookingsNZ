@@ -74,6 +74,10 @@ const { ledger, mocks } = vi.hoisted(() => {
       rows.splice(0, rows.length);
       seq = 0;
     },
+    /** #4646: the booking each payment belongs to (`Payment.bookingId`); `pay_<x>` is `bk_<x>`. */
+    bookingOfPayment(paymentId: string): string {
+      return paymentId.replace(/^pay_/, "bk_");
+    },
     seed(partial: Partial<LedgerRow> & { paymentId: string }): LedgerRow {
       seq += 1;
       // Recent by default (the frozen clock is "now"): a seeded attempt whose
@@ -116,11 +120,13 @@ const { ledger, mocks } = vi.hoisted(() => {
             .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime() || a.insertionSeq - b.insertionSeq)
             .map((r) => ({ ...r }))
       ),
-      // The adoption lookup (`adoptSavedCardChargeAttemptForIntent`).
+      // The adoption lookup (`adoptSavedCardChargeAttemptForIntent`): by the
+      // event's key (`reference`) or, #4646, by the metadata's row id (`id`).
       findFirst: vi.fn(
         async (args: {
           where: {
-            reference: string;
+            reference?: string;
+            id?: string;
             kind: PaymentTransactionKind;
             source: PaymentSource;
             stripePaymentIntentId: null;
@@ -129,13 +135,17 @@ const { ledger, mocks } = vi.hoisted(() => {
         }) => {
           const row = rows.find(
             (r) =>
-              r.reference === args.where.reference &&
+              (args.where.reference === undefined || r.reference === args.where.reference) &&
+              (args.where.id === undefined || r.id === args.where.id) &&
               r.kind === args.where.kind &&
               r.source === args.where.source &&
               r.stripePaymentIntentId === null &&
               statusMatches(r.status, args.where.status)
           );
-          return row ? { id: row.id, paymentId: row.paymentId } : null;
+          if (args.where.reference === undefined && args.where.id === undefined) throw new Error("an unkeyed adoption lookup");
+          return row
+            ? { id: row.id, paymentId: row.paymentId, reference: row.reference, payment: { bookingId: ledger.bookingOfPayment(row.paymentId) } }
+            : null;
         }
       ),
       create: vi.fn(async (args: { data: Omit<Partial<LedgerRow>, "id"> & { paymentId: string } }) => {
@@ -258,13 +268,18 @@ vi.mock("../logger", () => ({
 
 const {
   beginSavedCardChargeAttempt,
-  buildSavedCardChargeMetadata,
-  SAVED_CARD_CHARGE_KEY_PREFIX,
   SAVED_CARD_CHARGE_KEY_RESEND_WINDOW_MS,
   SAVED_CARD_CHARGE_REASON,
-  savedCardChargeIdempotencyKey,
   SavedCardChargeRefusedError,
 } = await import("../saved-card-charge-attempt");
+const {
+  buildSavedCardChargeMetadata,
+  SAVED_CARD_ATTEMPT_ID_METADATA_KEY,
+  SAVED_CARD_CHARGE_KEY_PREFIX,
+  savedCardAttemptIdFromMetadata,
+  savedCardChargeIdempotencyKey,
+  savedCardChargeKeyShape,
+} = await import("../saved-card-charge-key");
 // The contract is one thing in three files, split where the provider call is
 // (the ledger decision under the claim's locks, the Stripe call with no lock
 // held, recording the answer). It is exercised from this one suite because the
@@ -335,15 +350,53 @@ beforeEach(() => {
   mocks.reconcilePaymentAggregates.mockResolvedValue(null);
 });
 
+/** A key minted before #4646, as the old builder spelled it. */
+const preAttemptIdKey = (bookingId: string, rowId: string) => `pending_charge_${bookingId}_${rowId}`;
+
 describe("the key and the metadata (INV-SSOT)", () => {
-  it("builds every key from the one prefix the cron's sweep excludes on, with the row's own id last", () => {
-    expect(savedCardChargeIdempotencyKey("bk", "txn")).toBe(`${SAVED_CARD_CHARGE_KEY_PREFIX}bk_txn`);
+  it("builds every key from the one prefix the cron's sweep excludes on, with the row's own id and the #4646 ending last", () => {
+    expect(savedCardChargeIdempotencyKey("bk", "txn")).toBe(`${SAVED_CARD_CHARGE_KEY_PREFIX}bk_txn_v2`);
     expect(SAVED_CARD_CHARGE_KEY_PREFIX).toBe("pending_charge_");
   });
 
-  it("sends exactly { bookingId, memberId } for every path — no per-path `source`", () => {
-    expect(buildSavedCardChargeMetadata("bk", "mem")).toEqual({ bookingId: "bk", memberId: "mem" });
-    expect(Object.keys(buildSavedCardChargeMetadata("bk", "mem"))).not.toContain("source");
+  it("#4646: reads a key as this row's new key, its pre-#4646 key, or neither", () => {
+    expect(savedCardChargeKeyShape(savedCardChargeIdempotencyKey("bk", "txn"), "bk", "txn")).toBe("names_attempt");
+    expect(savedCardChargeKeyShape(preAttemptIdKey("bk", "txn"), "bk", "txn")).toBe("pre_4646");
+    for (const key of [
+      savedCardChargeIdempotencyKey("bk", "txn_other"),
+      savedCardChargeIdempotencyKey("bk_other", "txn"),
+      preAttemptIdKey("bk_other", "txn"),
+      "pending_charge_bk",
+      null,
+      undefined,
+    ]) {
+      expect(savedCardChargeKeyShape(key, "bk", "txn"), String(key)).toBeNull();
+    }
+  });
+
+  it("sends exactly { bookingId, memberId, savedCardAttemptId } for every path — no per-path `source`", () => {
+    const attempt = { attemptRowId: "txn", idempotencyKey: savedCardChargeIdempotencyKey("bk", "txn") };
+    expect(buildSavedCardChargeMetadata("bk", "mem", attempt)).toEqual({ bookingId: "bk", memberId: "mem", savedCardAttemptId: "txn" });
+    expect(buildSavedCardChargeMetadata("bk", null, attempt)).toEqual({ bookingId: "bk", savedCardAttemptId: "txn" });
+    expect(Object.keys(buildSavedCardChargeMetadata("bk", "mem", attempt))).not.toContain("source");
+    expect(SAVED_CARD_ATTEMPT_ID_METADATA_KEY).toBe("savedCardAttemptId");
+  });
+
+  it("#4646: a key minted before #4646 gets the body its first send had, so Stripe sees no parameter mismatch", () => {
+    const attempt = { attemptRowId: "txn", idempotencyKey: preAttemptIdKey("bk", "txn") };
+    expect(buildSavedCardChargeMetadata("bk", "mem", attempt)).toEqual({ bookingId: "bk", memberId: "mem" });
+    expect(buildSavedCardChargeMetadata("bk", null, attempt)).toEqual({ bookingId: "bk" });
+    // A key that is not this row's names no row either.
+    expect(
+      buildSavedCardChargeMetadata("bk", "mem", { attemptRowId: "txn", idempotencyKey: savedCardChargeIdempotencyKey("bk", "txn_other") }),
+    ).toEqual({ bookingId: "bk", memberId: "mem" });
+  });
+
+  it("#4646: reads the attempt id back only when it is a non-empty string", () => {
+    expect(savedCardAttemptIdFromMetadata({ bookingId: "bk", savedCardAttemptId: "txn" })).toBe("txn");
+    for (const metadata of [null, undefined, {}, { bookingId: "bk" }, { savedCardAttemptId: "" }, { savedCardAttemptId: 7 }]) {
+      expect(savedCardAttemptIdFromMetadata(metadata as never), JSON.stringify(metadata)).toBeNull();
+    }
   });
 
   it("gives each path its own ledger reason, the cron's and charge-saved-method's unchanged from before #3267", () => {
@@ -842,7 +895,7 @@ describe("chargeSavedCardAttempt", () => {
       // from `format` inside stripe.ts, so a caller cannot pass a second answer.
       customerId: "cus_1",
       paymentMethodId: "pm_1",
-      metadata: { bookingId: BOOKING, memberId: MEMBER },
+      metadata: { bookingId: BOOKING, memberId: MEMBER, savedCardAttemptId: attempt.attemptRowId },
       idempotencyKey: attempt.idempotencyKey,
       format: CLUB_FORMAT_TEST,
     });
@@ -870,7 +923,23 @@ describe("chargeSavedCardAttempt", () => {
     await charge(attempt);
 
     expect(mocks.chargePaymentMethod).toHaveBeenCalledWith(
-      expect.objectContaining({ idempotencyKey: earlier.reference })
+      expect.objectContaining({
+        idempotencyKey: earlier.reference,
+        metadata: { bookingId: BOOKING, memberId: MEMBER, savedCardAttemptId: earlier.id },
+      })
+    );
+  });
+
+  it("#4646: a row minted before #4646 is re-sent under its OWN old key with its OLD body, byte for byte — never the attempt id Stripe would refuse as a parameter mismatch", async () => {
+    const earlier = seedAttempt({ id: "txn_pre_4646", reference: preAttemptIdKey(BOOKING, "txn_pre_4646"), status: PaymentStatus.PENDING });
+    const attempt = await begin();
+    expect(attempt).toMatchObject({ kind: "replay", attemptRowId: earlier.id, idempotencyKey: preAttemptIdKey(BOOKING, earlier.id) });
+    mocks.chargePaymentMethod.mockResolvedValue(succeeded);
+
+    await charge(attempt);
+
+    expect(mocks.chargePaymentMethod).toHaveBeenCalledWith(
+      expect.objectContaining({ idempotencyKey: preAttemptIdKey(BOOKING, earlier.id), metadata: { bookingId: BOOKING, memberId: MEMBER } })
     );
   });
 
@@ -1212,7 +1281,7 @@ describe("cross-path scenarios (the property the owner chose)", () => {
     await charge(admin);
 
     expect(mocks.chargePaymentMethod).toHaveBeenLastCalledWith(
-      expect.objectContaining({ idempotencyKey: admin.idempotencyKey, metadata: { bookingId: BOOKING, memberId: MEMBER } })
+      expect.objectContaining({ idempotencyKey: admin.idempotencyKey, metadata: { bookingId: BOOKING, memberId: MEMBER, savedCardAttemptId: admin.attemptRowId } })
     );
     expect(ledger.rows.map((r) => r.status)).toEqual([PaymentStatus.FAILED, PaymentStatus.PENDING]);
   });
@@ -1423,15 +1492,20 @@ describe("settleSavedCardChargeAttempt", () => {
 
 describe("adoptSavedCardChargeAttemptForIntent (a webhook for an intent the ledger does not know — the lost-response recovery)", () => {
   const capture = { id: "pi_lost", status: "succeeded" as const, amount: 10000, payment_method: "pm_1" };
+  /** What the attempt's own POST sent, as Stripe echoes it on the intent. */
+  const sentMetadata = (attemptRowId: string) => ({ bookingId: BOOKING, memberId: MEMBER, savedCardAttemptId: attemptRowId });
+  const adopt = (params: { idempotencyKey?: string | null; metadata?: Record<string, string> | null; paymentIntent?: typeof capture; bookingId?: string }) =>
+    adoptSavedCardChargeAttemptForIntent({
+      paymentIntent: params.paymentIntent ?? capture,
+      bookingId: params.bookingId ?? BOOKING,
+      idempotencyKey: params.idempotencyKey,
+      metadata: params.metadata,
+    });
 
   it("adopts the PENDING no-intent attempt row whose key the event carries: stamps the intent and SUCCEEDED, reconciles, and reports the row", async () => {
     const attempt = await begin();
 
-    const adopted = await adoptSavedCardChargeAttemptForIntent({
-      paymentIntent: capture,
-      bookingId: BOOKING,
-      idempotencyKey: attempt.idempotencyKey,
-    });
+    const adopted = await adopt({ idempotencyKey: attempt.idempotencyKey, metadata: sentMetadata(attempt.attemptRowId) });
 
     expect(adopted).toEqual({ transactionId: attempt.attemptRowId, ledgerStatus: PaymentStatus.SUCCEEDED, keptExistingRow: false, moved: true, newlyCaptured: true });
     expect(row(attempt.attemptRowId)).toMatchObject({ stripePaymentIntentId: "pi_lost", status: PaymentStatus.SUCCEEDED });
@@ -1440,28 +1514,30 @@ describe("adoptSavedCardChargeAttemptForIntent (a webhook for an intent the ledg
     await expect(begin()).rejects.toMatchObject({ why: "captured_primary_exists", paymentIntentId: "pi_lost" });
   });
 
+  it("adopts a row minted before #4646 by its old key too", async () => {
+    const earlier = seedAttempt({ id: "txn_pre_4646", reference: preAttemptIdKey(BOOKING, "txn_pre_4646") });
+
+    expect(await adopt({ idempotencyKey: earlier.reference, metadata: { bookingId: BOOKING, memberId: MEMBER } })).toMatchObject({ transactionId: earlier.id, moved: true, newlyCaptured: true });
+  });
+
   it("adopts a FAILED answer too, so a lost-response decline ends the attempt instead of leaving it to expire", async () => {
     const attempt = await begin();
 
-    const adopted = await adoptSavedCardChargeAttemptForIntent({
-      paymentIntent: { ...capture, status: "requires_payment_method" },
-      bookingId: BOOKING,
-      idempotencyKey: attempt.idempotencyKey,
-    });
+    const adopted = await adopt({ idempotencyKey: attempt.idempotencyKey, paymentIntent: { ...capture, status: "requires_payment_method" as never } });
 
     expect(adopted).toMatchObject({ ledgerStatus: PaymentStatus.FAILED, moved: true });
     expect((await begin()).kind).toBe("fresh");
   });
 
   it.each([
-    ["no key on the event", undefined],
+    ["no key on the event and no attempt id in the metadata", undefined],
     ["a key that is not ours", "late_cancel_refund_bk_1_pi_x"],
     ["a key built from ANOTHER row's id", savedCardChargeIdempotencyKey(BOOKING, "txn_somebody_else")],
     ["a key for another booking", savedCardChargeIdempotencyKey("bk_other", "txn_seeded_1")],
   ])("returns null and touches nothing for %s", async (_label, key) => {
     const attempt = await begin();
 
-    expect(await adoptSavedCardChargeAttemptForIntent({ paymentIntent: capture, bookingId: BOOKING, idempotencyKey: key })).toBeNull();
+    expect(await adopt({ idempotencyKey: key, metadata: { bookingId: BOOKING } })).toBeNull();
     expect(row(attempt.attemptRowId)).toMatchObject({ status: PaymentStatus.PENDING, stripePaymentIntentId: null });
   });
 
@@ -1469,7 +1545,127 @@ describe("adoptSavedCardChargeAttemptForIntent (a webhook for an intent the ledg
     const attempt = await begin();
     await settle(attempt.attemptRowId, capture);
 
-    expect(await adoptSavedCardChargeAttemptForIntent({ paymentIntent: capture, bookingId: BOOKING, idempotencyKey: attempt.idempotencyKey })).toBeNull();
+    expect(await adopt({ idempotencyKey: attempt.idempotencyKey })).toBeNull();
+  });
+
+  describe("#4646: by the attempt id in the metadata, when the event carries no key (an asynchronous capture)", () => {
+    it("adopts the row the metadata names, through the same forward-only settle, and a redelivery adopts nothing more", async () => {
+      const attempt = await begin();
+
+      const adopted = await adopt({ idempotencyKey: null, metadata: sentMetadata(attempt.attemptRowId) });
+
+      expect(adopted).toEqual({ transactionId: attempt.attemptRowId, ledgerStatus: PaymentStatus.SUCCEEDED, keptExistingRow: false, moved: true, newlyCaptured: true });
+      expect(row(attempt.attemptRowId)).toMatchObject({ stripePaymentIntentId: "pi_lost", status: PaymentStatus.SUCCEEDED });
+      expect(await adopt({ idempotencyKey: null, metadata: sentMetadata(attempt.attemptRowId) })).toBeNull();
+    });
+
+    it("uses the metadata when the event names a request whose key is not a saved-card key", async () => {
+      const attempt = await begin();
+
+      expect(await adopt({ idempotencyKey: "some_other_request_key", metadata: sentMetadata(attempt.attemptRowId) })).toMatchObject({ transactionId: attempt.attemptRowId, moved: true });
+    });
+
+    it("never falls back to the metadata when the event carries a saved-card key: the key decides", async () => {
+      const attempt = await begin();
+
+      expect(await adopt({ idempotencyKey: savedCardChargeIdempotencyKey(BOOKING, "txn_somebody_else"), metadata: sentMetadata(attempt.attemptRowId) })).toBeNull();
+      expect(row(attempt.attemptRowId)).toMatchObject({ status: PaymentStatus.PENDING, stripePaymentIntentId: null });
+    });
+
+    it("refuses an id that names ANOTHER row", async () => {
+      const attempt = await begin();
+
+      expect(await adopt({ idempotencyKey: null, metadata: sentMetadata("txn_somebody_else") })).toBeNull();
+      expect(row(attempt.attemptRowId)).toMatchObject({ status: PaymentStatus.PENDING, stripePaymentIntentId: null });
+    });
+
+    it("refuses a row whose payment is another booking's", async () => {
+      const attempt = await begin();
+
+      expect(await adopt({ idempotencyKey: null, bookingId: "bk_other", metadata: { ...sentMetadata(attempt.attemptRowId), bookingId: "bk_other" } })).toBeNull();
+      expect(row(attempt.attemptRowId)).toMatchObject({ status: PaymentStatus.PENDING, stripePaymentIntentId: null });
+    });
+
+    it("refuses a row whose key embeds another booking, though its payment is this one's", async () => {
+      const stray = seedAttempt({ id: "txn_stray", reference: savedCardChargeIdempotencyKey("bk_other", "txn_stray") });
+
+      expect(await adopt({ idempotencyKey: null, metadata: sentMetadata(stray.id) })).toBeNull();
+      expect(row(stray.id)).toMatchObject({ status: PaymentStatus.PENDING, stripePaymentIntentId: null });
+    });
+
+    it("refuses a row that already holds an intent", async () => {
+      const held = seedAttempt({ status: PaymentStatus.PROCESSING, stripePaymentIntentId: "pi_earlier" });
+
+      expect(await adopt({ idempotencyKey: null, metadata: sentMetadata(held.id) })).toBeNull();
+      expect(row(held.id)).toMatchObject({ status: PaymentStatus.PROCESSING, stripePaymentIntentId: "pi_earlier" });
+    });
+
+    it.each([
+      ["a /pay link intent's row (no reference)", { reference: null }],
+      ["an Internet Banking reference", { reference: "IB-123" }],
+      ["a row minted before #4646, which never sent an attempt id", { reference: preAttemptIdKey(BOOKING, "txn_not_attempt") }],
+      ["a row that is not PRIMARY", { kind: PaymentTransactionKind.ADDITIONAL }],
+      ["a row that is not Stripe's", { source: PaymentSource.INTERNET_BANKING }],
+      ["a row already ended", { status: PaymentStatus.FAILED }],
+    ] as const)("refuses %s", async (_label, partial) => {
+      const notAttempt = seedAttempt({ id: "txn_not_attempt", ...partial });
+
+      expect(await adopt({ idempotencyKey: null, metadata: sentMetadata(notAttempt.id) })).toBeNull();
+      expect(row(notAttempt.id).stripePaymentIntentId).toBeNull();
+    });
+
+    it.each([
+      ["no metadata", null],
+      ["metadata naming no attempt", { bookingId: BOOKING }],
+      ["an empty attempt id", { bookingId: BOOKING, savedCardAttemptId: "" }],
+      ["a garbage attempt id", { bookingId: BOOKING, savedCardAttemptId: "'; drop table --" }],
+    ])("returns null and touches nothing for %s", async (_label, metadata) => {
+      const attempt = await begin();
+
+      expect(await adopt({ idempotencyKey: null, metadata })).toBeNull();
+      expect(row(attempt.attemptRowId)).toMatchObject({ status: PaymentStatus.PENDING, stripePaymentIntentId: null });
+    });
+  });
+
+  describe("#4646: an adoption that loses to another writer writes nothing", () => {
+    it("a row the charging code recorded between the lookup and the locked write: no write, no reconcile, moved false", async () => {
+      const attempt = await begin();
+      // The charging code's own settle lands after the adoption's lookup and
+      // before its locked write: it records the intent as still processing.
+      const lookup = ledger.paymentTransaction.findFirst.getMockImplementation()!;
+      ledger.paymentTransaction.findFirst.mockImplementationOnce(async (args) => {
+        const found = await lookup(args);
+        await settle(attempt.attemptRowId, { ...capture, status: "processing" });
+        mocks.reconcilePaymentAggregates.mockClear();
+        return found;
+      });
+
+      const adopted = await adopt({ idempotencyKey: null, metadata: sentMetadata(attempt.attemptRowId) });
+
+      expect(adopted).toEqual({ transactionId: attempt.attemptRowId, ledgerStatus: PaymentStatus.PROCESSING, keptExistingRow: false, moved: false, newlyCaptured: false });
+      // The charging code's answer stands; the webhook's handler records the capture by intent id.
+      expect(row(attempt.attemptRowId)).toMatchObject({ stripePaymentIntentId: "pi_lost", status: PaymentStatus.PROCESSING });
+      expect(mocks.reconcilePaymentAggregates).not.toHaveBeenCalled();
+    });
+
+    it("two adoptions of one row, by key and by metadata: the first writes the capture as new money, the second writes nothing", async () => {
+      const attempt = await begin();
+      const lookup = ledger.paymentTransaction.findFirst.getMockImplementation()!;
+      let byMetadata: Awaited<ReturnType<typeof adopt>> | undefined;
+      ledger.paymentTransaction.findFirst.mockImplementationOnce(async (args) => {
+        const found = await lookup(args);
+        byMetadata = await adopt({ idempotencyKey: null, metadata: sentMetadata(attempt.attemptRowId) });
+        return found;
+      });
+
+      const byKey = await adopt({ idempotencyKey: attempt.idempotencyKey, metadata: sentMetadata(attempt.attemptRowId) });
+
+      expect(byMetadata).toMatchObject({ moved: true, newlyCaptured: true });
+      expect(byKey).toMatchObject({ moved: false, newlyCaptured: false, ledgerStatus: PaymentStatus.SUCCEEDED });
+      expect(ledger.rows).toHaveLength(1);
+      expect(row(attempt.attemptRowId)).toMatchObject({ stripePaymentIntentId: "pi_lost", status: PaymentStatus.SUCCEEDED });
+      expect(mocks.reconcilePaymentAggregates).toHaveBeenCalledTimes(1);
+    });
   });
 });
 

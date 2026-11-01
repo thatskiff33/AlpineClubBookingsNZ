@@ -159,7 +159,7 @@ import {
 const params = Promise.resolve({ id: "b1" });
 /** #3267: the id the attempt row is minted with; the Stripe key is built from it. */
 const ATTEMPT_ROW_ID = "txn_attempt_1";
-const ATTEMPT_KEY = `pending_charge_b1_${ATTEMPT_ROW_ID}`;
+const ATTEMPT_KEY = `pending_charge_b1_${ATTEMPT_ROW_ID}_v2`;
 
 // Transaction client the route receives inside prisma.$transaction. Reuses the
 // same underlying mocks so assertions on booking.updateMany / payment.upsert
@@ -397,7 +397,7 @@ describe("POST /api/admin/bookings/[id]/confirm-pending-guests", () => {
       // from `format` inside stripe.ts, so a caller cannot pass a second answer.
       customerId: "cus_1",
       paymentMethodId: "pm_1",
-      metadata: { bookingId: "b1", memberId: "m1" },
+      metadata: { bookingId: "b1", memberId: "m1", savedCardAttemptId: ATTEMPT_ROW_ID },
       idempotencyKey: ATTEMPT_KEY,
       format: CLUB_FORMAT_TEST,
     });

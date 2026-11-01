@@ -404,18 +404,13 @@ export async function processStripeWebhookEvent(
 /**
  * #3267 (`INV-PAY-055`): an intent the ledger does not know may be a saved-card
  * charge attempt whose POST executed but whose response was lost — the row is
- * PENDING with no intent id, and the only link between it and this event is the
- * idempotency key Stripe stamps on the event (`event.request.idempotency_key`),
- * which the row stores on `reference`. Adopt it, forward only, so the handler
+ * PENDING with no intent id. Two things link it to this event: the idempotency
+ * key Stripe stamps on the event (`event.request.idempotency_key`), which the
+ * row stores on `reference`, and — when `event.request` is null, as on an
+ * asynchronous capture and every redelivery of it — the attempt row id the
+ * intent's metadata carries (#4646). Adopt it, forward only, so the handler
  * that follows finds the row by intent id like any other. The `event` is
- * threaded in for exactly this field; a handler that read only the intent could
- * never make the link.
- *
- * `event.request` is null whenever Stripe did not attribute the state change to
- * an API request — an asynchronous capture, notably — so this recovers a lost
- * response only while the intent's own answer was synchronous. The rest fall
- * through to the 23-hour `attempt_key_expired` refusal rather than to a second
- * charge; see `adoptSavedCardChargeAttemptForIntent`.
+ * threaded in for the key; see `adoptSavedCardChargeAttemptForIntent`.
  */
 async function adoptUnknownIntentsAttemptRow(
   paymentIntent: Stripe.PaymentIntent,
@@ -427,6 +422,7 @@ async function adoptUnknownIntentsAttemptRow(
     paymentIntent,
     bookingId,
     idempotencyKey: event.request?.idempotency_key,
+    metadata: paymentIntent.metadata,
   });
   if (!adopted) return null;
   onAdopted?.(adopted.newlyCaptured);

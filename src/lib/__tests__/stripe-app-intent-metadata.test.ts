@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import type * as StripeModule from "@/lib/stripe";
 import { relativeSource, sourceFiles } from "@/lib/__tests__/support/booking-guest-night-writer-scan";
 import { stripCommentsAndStrings } from "@/lib/__tests__/support/strip-comments";
-import { buildSavedCardChargeMetadata } from "@/lib/saved-card-charge-attempt";
+import { buildSavedCardChargeMetadata, savedCardChargeIdempotencyKey } from "@/lib/saved-card-charge-key";
 import {
   GROUP_SETTLEMENT_INTENT_TYPE,
   appPaymentIntentRoute,
@@ -29,9 +29,11 @@ describe("isAppCreatedPaymentIntent (#4532)", () => {
       { bookingId: "bk_1", type: "additional_modification", reason: "r", reissuedAskKey: "k" },
       // group organiser settlement
       { type: GROUP_SETTLEMENT_INTENT_TYPE, groupBookingId: "g_1", organiserMemberId: "m_1" },
-      // saved-card off-session charges, from the real builder
-      buildSavedCardChargeMetadata("bk_1", "m_1"),
-      buildSavedCardChargeMetadata("bk_1", null),
+      // saved-card off-session charges, from the real builder: a new attempt
+      // names its row (#4646); one minted before #4646 re-sends its old body
+      buildSavedCardChargeMetadata("bk_1", "m_1", { attemptRowId: "txn_1", idempotencyKey: savedCardChargeIdempotencyKey("bk_1", "txn_1") }),
+      buildSavedCardChargeMetadata("bk_1", null, { attemptRowId: "txn_1", idempotencyKey: savedCardChargeIdempotencyKey("bk_1", "txn_1") }),
+      buildSavedCardChargeMetadata("bk_1", "m_1", { attemptRowId: "txn_1", idempotencyKey: "pending_charge_bk_1_txn_1" }),
     ];
     for (const metadata of shapes) expect(isAppCreatedPaymentIntent(metadata), JSON.stringify(metadata)).toBe(true);
   });

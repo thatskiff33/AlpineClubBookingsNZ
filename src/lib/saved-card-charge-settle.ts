@@ -30,11 +30,12 @@ import {
   reconcilePaymentAggregates,
   type PaymentStore,
 } from "./payment-transactions";
+import { UNRESOLVED_ATTEMPT_STATUSES } from "./saved-card-charge-attempt";
 import {
   SAVED_CARD_CHARGE_KEY_PREFIX,
-  savedCardChargeIdempotencyKey,
-  UNRESOLVED_ATTEMPT_STATUSES,
-} from "./saved-card-charge-attempt";
+  savedCardAttemptIdFromMetadata,
+  savedCardChargeKeyShape,
+} from "./saved-card-charge-key";
 
 /**
  * The part of a PaymentIntent the ledger records. Callers that carry an answer
@@ -177,7 +178,7 @@ function forwardOnlyStatusGuard(answer: PaymentStatus) {
  * this call, so the guard admits the answer and the fresh row is removed. And
  * a webhook that wrote the intent's row first — which no handler does today
  * (`handlePaymentIntentSucceeded` and both failure handlers look the intent up
- * and adopt the attempt row by key when nothing is found), so for that history
+ * and adopt the attempt row by key or metadata when nothing is found), so for that history
  * the pre-check and the `P2002` catch are defensive; they exist because the
  * write is on a unique column and the alternative is a thrown constraint error
  * on a path that has just captured money.
@@ -203,12 +204,21 @@ export async function settleSavedCardChargeAttempt(params: {
   paymentId: string;
   paymentIntent: SavedCardChargeAnswer;
   store?: PaymentStore;
+  /**
+   * #4646: the webhook's adoption of a row it found holding no intent. The
+   * row's own write then also requires it STILL to hold none, under the
+   * Payment lock: an adoption that lost to another writer (the charging
+   * code's settle, or a second delivery's adoption) writes nothing, reconciles
+   * nothing and reports `moved: false`, and the handler goes on to read the row
+   * by intent id as for any other delivery.
+   */
+  adopting?: boolean;
 }): Promise<SettledSavedCardChargeAttempt> {
   const { attemptRowId, paymentId, paymentIntent } = params;
   const store = params.store ?? prisma;
   const ledgerStatus = ledgerStatusForPaymentIntent(paymentIntent.status);
   const paymentMethodId = stripeReferenceId(paymentIntent.payment_method);
-  const answer = { ledgerStatus, amountCents: paymentIntent.amount, paymentMethodId };
+  const answer = { ledgerStatus, amountCents: paymentIntent.amount, paymentMethodId, adopting: params.adopting === true };
 
   // #4217 (`INV-LOCK-002`): the Payment row before the attempt's row, inside
   // the caller's locked release transaction (or a short one of its own), the
@@ -243,7 +253,7 @@ async function settleSavedCardChargeAttemptUnderLock(
     attemptRowId: string;
     paymentId: string;
     paymentIntent: SavedCardChargeAnswer;
-    answer: { ledgerStatus: PaymentStatus; amountCents: number; paymentMethodId: string | null };
+    answer: { ledgerStatus: PaymentStatus; amountCents: number; paymentMethodId: string | null; adopting: boolean };
   },
 ): Promise<SettledSavedCardChargeAttempt> {
   const { ledgerStatus, paymentMethodId } = answer;
@@ -257,7 +267,12 @@ async function settleSavedCardChargeAttemptUnderLock(
 
   const before = await store.paymentTransaction.findUnique({ where: { id: attemptRowId }, select: { status: true } });
   const moved = await store.paymentTransaction.updateMany({
-    where: { id: attemptRowId, status: forwardOnlyStatusGuard(ledgerStatus) },
+    where: {
+      id: attemptRowId,
+      status: forwardOnlyStatusGuard(ledgerStatus),
+      // #4646: an adoption claims only a row that still holds no intent.
+      ...(answer.adopting ? { stripePaymentIntentId: null } : {}),
+    },
     data: {
       stripePaymentIntentId: paymentIntent.id,
       status: ledgerStatus,
@@ -277,7 +292,9 @@ async function settleSavedCardChargeAttemptUnderLock(
         answered: ledgerStatus,
         rowStatus: current?.status ?? null,
       },
-      "The attempt row had already moved past Stripe's answer (a webhook won); left it as it is (#3267)"
+      answer.adopting
+        ? "Another writer recorded this attempt row first; the webhook's adoption wrote nothing (#4646)"
+        : "The attempt row had already moved past Stripe's answer (a webhook won); left it as it is (#3267)"
     );
     return {
       transactionId: attemptRowId,
@@ -355,59 +372,73 @@ async function keepExistingRow(
 
 /**
  * A `payment_intent.*` webhook for an intent the ledger does not know: find the
- * attempt row whose POST minted it, by the idempotency key Stripe stamps on the
- * event (`Stripe.Event.request.idempotency_key` — the key the originating
- * request carried), and record the answer on it.
+ * attempt row whose POST minted it and record the answer on it. This is the
+ * recovery for a lost response: a fresh attempt's POST executes, the response
+ * never reaches us (timeout, deploy, crash), and the row sits PENDING with no
+ * intent id. Without it the `succeeded` webhook found no row, the capture was
+ * invisible even to the #1992 duplicate-capture backstop, and after Stripe's
+ * 24-hour key window the next attempt's re-send was a SECOND charge.
  *
- * This is the recovery for a lost response. A fresh attempt's POST executes and
- * captures, the response never reaches us (timeout, deploy, crash), and the row
- * sits PENDING with no intent id. Nothing local can link the capture to the row
- * — except the key, which is the one thing both sides hold: the row stores it
- * on `reference` and Stripe echoes it on every event the request produced.
- * Without this, the `succeeded` webhook found no row, warned, and returned; the
- * capture was invisible even to the #1992 duplicate-capture backstop, and after
- * Stripe's 24-hour key window the next attempt's re-send was a SECOND charge.
+ * Two exact links, never a guess (no booking-and-amount match):
  *
- * Only a PENDING/PROCESSING attempt row with NO intent id is adopted, and only
- * when the key is the one that row's OWN id builds (the same rule
- * `beginSavedCardChargeAttempt` recognises attempt rows by), so a stray key can
- * never claim another row. The write itself is `settleSavedCardChargeAttempt`,
- * forward only, so a race with the charging code's own settle resolves the same
- * way from either side. Returns null when there is nothing to adopt — no key on
- * the event, not our prefix, no such row — and the handler proceeds as before.
+ * - The idempotency key Stripe stamps on the event
+ *   (`Stripe.Event.request.idempotency_key`), which the row stores on
+ *   `reference`. Used whenever the event carries a saved-card key.
+ * - #4646: otherwise the attempt row id in the intent's metadata
+ *   (`savedCardAttemptId`). `Event.request` is null for any state change Stripe
+ *   did not attribute to an API request, so an intent whose lost-response POST
+ *   answered `processing` and captured asynchronously arrives with no key, and
+ *   every redelivery of it carries none either. Before #4646 nothing could link
+ *   it, and the row ended at `attempt_key_expired` with the card charged.
  *
- * NOT a universal recovery, and the limit is Stripe's: `Event.request` is null
- * for any state change Stripe did not attribute to an API request. So an intent
- * whose lost-response POST answered `processing` and captured asynchronously
- * later arrives as a `payment_intent.succeeded` carrying NO idempotency key, and
- * nothing can link it to the row. That row stays PENDING with no intent id and
- * ends at the 23-hour `attempt_key_expired` refusal, which is the fail-safe end
- * of that road — no second charge, and the refusal message tells an operator to
- * look in Stripe and resend the event.
+ * Either way only a PRIMARY Stripe row that is PENDING/PROCESSING and holds NO
+ * intent id is adopted, and only when its `reference` is the key ITS OWN id
+ * builds for this booking (`savedCardChargeKeyShape`, the rule
+ * `beginSavedCardChargeAttempt` recognises attempt rows by). By metadata, the
+ * row's payment must also be this booking's, and its key must be the shape
+ * whose sends carry the id (`names_attempt`): a row minted before #4646 never
+ * sent one, so nothing that names it by metadata came from its own POST. So a
+ * stray key or a forged id can never claim another row. The write itself is
+ * `settleSavedCardChargeAttempt` with `adopting`, forward only and claimed on
+ * "still no intent" under the Payment lock, so a race with the charging code's
+ * own settle, or between two deliveries, resolves with one writer. Returns null
+ * when there is nothing to adopt, and the handler proceeds as before.
+ *
+ * The one case left is Stripe's limit plus the deploy: an attempt minted before
+ * #4646 whose capture was asynchronous carries no key and no id, so it still
+ * ends at `attempt_key_expired`, alerted as unmatched (`INV-INT-033`).
  */
 export async function adoptSavedCardChargeAttemptForIntent(params: {
   paymentIntent: SavedCardChargeAnswer;
   bookingId: string;
   idempotencyKey: string | null | undefined;
+  /** #4646: the intent's metadata, read only when the event carries no saved-card key. */
+  metadata: Readonly<Record<string, string | undefined>> | null | undefined;
   store?: PaymentStore;
 }): Promise<SettledSavedCardChargeAttempt | null> {
   const { paymentIntent, bookingId, idempotencyKey } = params;
   const store = params.store ?? prisma;
-  if (!idempotencyKey?.startsWith(SAVED_CARD_CHARGE_KEY_PREFIX)) return null;
+  const byKey = idempotencyKey?.startsWith(SAVED_CARD_CHARGE_KEY_PREFIX) ? idempotencyKey : null;
+  const attemptRowId = byKey === null ? savedCardAttemptIdFromMetadata(params.metadata) : null;
+  const lookup = byKey !== null ? { reference: byKey } : attemptRowId !== null ? { id: attemptRowId } : null;
+  if (lookup === null) return null;
 
   const row = await store.paymentTransaction.findFirst({
     where: {
-      reference: idempotencyKey,
+      ...lookup,
       kind: PaymentTransactionKind.PRIMARY,
       source: PaymentSource.STRIPE,
       stripePaymentIntentId: null,
       status: { in: [...UNRESOLVED_ATTEMPT_STATUSES] },
     },
-    select: { id: true, paymentId: true },
+    select: { id: true, paymentId: true, reference: true, payment: { select: { bookingId: true } } },
   });
-  if (!row || savedCardChargeIdempotencyKey(bookingId, row.id) !== idempotencyKey) {
-    return null;
-  }
+  if (!row) return null;
+  // The row's key is its own for this booking (`reference` equals the event's
+  // key, by the lookup); by metadata, the shape whose sends carry the id.
+  const shape = savedCardChargeKeyShape(row.reference, bookingId, row.id);
+  const linked = byKey !== null ? shape !== null : shape === "names_attempt";
+  if (!linked || row.payment.bookingId !== bookingId) return null;
 
   logger.warn(
     {
@@ -415,13 +446,15 @@ export async function adoptSavedCardChargeAttemptForIntent(params: {
       attemptRowId: row.id,
       paymentIntentId: paymentIntent.id,
       paymentStatus: paymentIntent.status,
+      adoptedBy: byKey !== null ? "idempotency_key" : "metadata",
     },
-    "Adopted a saved-card charge attempt row for a webhook whose intent the ledger did not know, by the event's idempotency key (#3267)"
+    "Adopted a saved-card charge attempt row for a webhook whose intent the ledger did not know (#3267, #4646)"
   );
   return settleSavedCardChargeAttempt({
     attemptRowId: row.id,
     paymentId: row.paymentId,
     paymentIntent,
     store,
+    adopting: true,
   });
 }

@@ -251,7 +251,7 @@ import { UNSUPPORTED_CHARGE_CURRENCY_ADMIN_MESSAGE } from "@/lib/stripe-charge-c
 
 /** #3267: the id the attempt row is minted with; the Stripe key is built from it. */
 const ATTEMPT_ROW_ID = "txn_attempt_1";
-const ATTEMPT_KEY = `pending_charge_booking-1_${ATTEMPT_ROW_ID}`;
+const ATTEMPT_KEY = `pending_charge_booking-1_${ATTEMPT_ROW_ID}_v2`;
 const HOLD_UNTIL = new Date("2026-07-08T00:00:00.000Z");
 
 function makeRequest(headers: Record<string, string> = {}) {
@@ -567,7 +567,7 @@ describe("POST /api/payments/charge-saved-method", () => {
       );
     });
 
-    it("charges under the attempt row's own key with the shared { bookingId, memberId } metadata, and records the capture on that row before reconciling", async () => {
+    it("charges under the attempt row's own key with the shared { bookingId, memberId, savedCardAttemptId } metadata, and records the capture on that row before reconciling", async () => {
       mockChargePaymentMethod.mockResolvedValue({
         id: "pi_1",
         status: "succeeded",
@@ -583,7 +583,7 @@ describe("POST /api/payments/charge-saved-method", () => {
         // from `format` inside stripe.ts, so a caller cannot pass a second answer.
         customerId: "cus_123",
         paymentMethodId: "pm_123",
-        metadata: { bookingId: "booking-1", memberId: "member-1" },
+        metadata: { bookingId: "booking-1", memberId: "member-1", savedCardAttemptId: ATTEMPT_ROW_ID },
         idempotencyKey: ATTEMPT_KEY,
         format: CLUB_FORMAT_TEST,
       });
