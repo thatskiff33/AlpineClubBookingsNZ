@@ -2867,13 +2867,11 @@ export async function queueApprovedMembershipCancellationXeroOperations(params: 
   const queuedResults: Array<{ queueOperationId: string | null; message: string }> = [];
 
   // Enqueue the credit note BEFORE the contact cleanup. The outbox processes
-  // operations oldest-first (orderBy createdAt asc, id asc), so this ensures
-  // the credit note is pushed to Xero before the contact is archived. Archiving
-  // first would block the credit note, because Xero rejects credit notes raised
-  // against an archived contact. Two rows in one millisecond tie and fall to
-  // `id` (#4663), so the order is a preference, not a guarantee: the contact
-  // operation re-checks this at run time and defers if the credit note has not
-  // settled yet.
+  // operations oldest-first (createdAt, then id: a same-millisecond pair is not
+  // guaranteed in call order, #4663), so this puts the credit note ahead of the
+  // contact archive. Archiving first would block it: Xero rejects credit notes
+  // against an archived contact. The contact operation re-checks this at run
+  // time and defers if the credit note has not settled yet.
   if (subscription) {
     queuedResults.push(
       await enqueueXeroMembershipCancellationCreditNoteOperation(
@@ -2965,11 +2963,8 @@ export async function processQueuedXeroOutboxOperations(options?: {
       // is looked at again only every few minutes, not on every kick.
       AND: [outboxScanLeavesAwaitingOwnNote(new Date()), outboxScanSpacesWaitingReceipts(new Date())],
     },
-    // Oldest first, ties broken by `id` (#4663). `createdAt` is filled from JS
-    // time, so rows queued in one millisecond (every row under the frozen test
-    // clock) tie, and PostgreSQL would return them in arbitrary physical order.
-    // `id` is a cuid: the order is deterministic, NOT insertion order, so nothing
-    // may rely on first-in-first-out within one millisecond.
+    // Ties on `createdAt` (same ms; all rows under the frozen clock) fall to `id`:
+    // deterministic, not insertion order (#4663; STATE_MACHINES.md).
     orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     take: limit,
   });
