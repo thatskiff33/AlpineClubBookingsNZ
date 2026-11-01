@@ -664,6 +664,12 @@ import "./resolve-records-refund-note.realdb.test";
 // the ensure and the lock is re-ensured. Skipped unless
 // RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own `race-4609-` rows.
 import "./login-throttle.realdb.test";
+// #4445 reuses it to prove two writers merging metadata onto one Xero link
+// (an existing row, or a missing one both create) both keep their keys, and
+// that the one-statement merge writes what the old spread wrote. Skipped
+// unless RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own `race-4445-`
+// links.
+import "./xero-object-link-metadata-merge.realdb.test";
 // #2374 (AID-5) deliberately is NOT imported here, unlike the two suites above.
 // `ai-diagnostics-select-only-role.realdb.test.ts` provisions and drops a cluster
 // ROLE and revokes `TEMPORARY ... FROM PUBLIC` on the shared throwaway database
