@@ -1720,11 +1720,11 @@ release).
 - **A change's card capture that nothing else records is recorded against the
   Xero invoice that bills it, by one recorder** (#3953; owner, 21 Oct 2026).
 - **One recorder.** The primary's create stores the captures its cash covers;
-  every other gets an `ADDITIONAL_CAPTURE_RECEIPT` row, at the link save or the
-  late-success release. The gap invoice pays only from unclaimed cash, naming
-  what it took. A receipt stands down where the primary or a paying
-  supplementary invoice (naming it, covering it, or the change's own) records
-  it (`readCaptureRecorder`).
+  every other gets an `ADDITIONAL_CAPTURE_RECEIPT` row, at link save or
+  late-success release. The gap invoice pays only from unclaimed cash, never
+  the sweep's share (`INV-ADDPAY-046`), naming what it took. A receipt stands
+  down where the primary or a paying supplementary invoice (naming it,
+  covering it, or the change's own) records it (`readCaptureRecorder`).
 - **No stamp.** A review charge's change is read from its reason
   (`captureChangeId`). One with neither decides under the booking's key, which
   a paying invoice there naming no capture takes first, and refuses beside one.
@@ -2797,10 +2797,10 @@ _Legacy: settles tasks raised before #4317._
   recoveries closed first, then unpaid rows FAILED and `withdrawnAt` behind an
   unpaid fence; cancellations queued; parked invoices CANCELLED. A capture or
   deadlock in between rolls the edit back (409); a capture after commit is
-  refunded in full. The re-issue's recovery and the billed-offset note are
-  written in it. An orphaned re-issue intent is cancelled at Stripe,
-  best-effort, unless a row or runner owns it; one uncancellable is left and
-  logged.
+  refunded in full. The re-issue's recovery and billed-offset note are
+  written in it. An orphaned intent, the door's or the runner's own (#4631),
+  is cancelled at Stripe, best-effort, unless a row, recovery or live runner
+  claim may own it; one uncancellable is left and logged.
 - **A declined card stays live** (#4052).
 - **Asks awaiting a failed mint's retry** count, sized as the replay would. A
   retry claimed within two minutes refuses the edit; an older claim is closed.
@@ -2809,14 +2809,14 @@ _Legacy: settles tasks raised before #4317._
   (`planReissuedAskMint`).
 - **Only the member's price asks.** An officer's review charge is never set
   against. Nor is a financial review's settled refund share: the officer
-  decided that refund from the booking's evidence, so it is paid as decided,
-  and the ledger census reports the booking if the member pays the ask.
+  decided it, so it is paid as decided, and the ledger census reports the
+  booking if the member pays the ask.
 - **Xero** (`splitUnpaidAskOffsetForXero`). The smaller ask gets its own
   supplementary invoice for what the retired asks' invoices left after the
   offset. The rest of the offset, where evidence shows the primary invoice
   billed it (`unpaidAskBillingEvidence`), takes a scoped invoice-correction
-  note, raised after the edit's own note; where that cannot be established, the
-  repair pass reports it for a person.
+  note, raised after the edit's own note; otherwise the repair pass reports it
+  for a person.
 
 ## INV-PAY-121
 

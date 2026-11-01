@@ -9,7 +9,7 @@ import { XeroAppliedCreditOperationBusyError } from "@/lib/xero-applied-credit-o
 import { buildXeroBookingInvoiceCorrelationKey } from "@/lib/xero-booking-invoice-key";
 import { liveRunningXeroOperationFilter } from "@/lib/xero-stale-operations";
 import { XERO_OUTBOX_ADDITIONAL_CAPTURE_RECEIPT_TYPE } from "@/lib/additional-capture-receipt-payload";
-import { asRecord } from "@/lib/xero-json";
+import { asRecord, responseNamesXeroInvoice } from "@/lib/xero-json";
 import { sanitizeForJson } from "@/lib/xero-sync";
 
 /** The `lastErrorCode` a receipt carries while it waits (busy) and goes back to PENDING. */
@@ -106,15 +106,6 @@ export function outboxScanSpacesWaitingReceipts(now: Date) {
   };
 }
 
-/** Round 9: whether a failed row's own response names an invoice Xero made - then it is not unsent. */
-function responseNamesXeroInvoice(value: unknown, depth = 0): boolean {
-  if (depth > 6 || value === null || typeof value !== "object") return false;
-  if (Array.isArray(value)) return value.some((entry) => responseNamesXeroInvoice(entry, depth + 1));
-  return Object.entries(value as Record<string, unknown>).some(([key, entry]) =>
-    /^(xero)?invoice_?id$/i.test(key) ? typeof entry === "string" && entry.length > 0 : responseNamesXeroInvoice(entry, depth + 1),
-  );
-}
-
 /**
  * #3953 review round 6 (item 2), narrowed in round 9: a receipt whose own
  * payment is in Xero found another supplementary invoice that would record
@@ -182,7 +173,12 @@ export async function switchUnsentRecorderUnpaid(
  * receipt does, the row itself is set unpaid there, guarded on the status read
  * (the switch's write), so the receipt reads it as the invoice it records
  * against rather than a second recorder. A #3980 gap invoice decides its own
- * cash and is left as asked. `raisedUnpaid` says this call turned it unpaid.
+ * cash and is left as asked, save (#4494) where its payment would overlap the
+ * credit-release sweep's share: asked after the lock is released (the check
+ * may alert), and set unpaid, guarded on FAILED or PARTIAL - naming nothing
+ * only where its payment provably never reached Xero, otherwise still naming
+ * its captures so the sweep keeps holding (`unpaidGapPayloadIfOverlapping`).
+ * `raisedUnpaid` says this call turned it unpaid.
  */
 export async function supplementaryReplayMayRecordPayment(input: {
   operationId: string;
@@ -191,7 +187,7 @@ export async function supplementaryReplayMayRecordPayment(input: {
 }): Promise<{ recordPayment: boolean; raisedUnpaid: boolean }> {
   const { lockSupplementaryInvoiceAnchor } = await import("@/lib/xero-operation-outbox");
   const { anchorCaptureHasReceipt } = await import("@/lib/additional-capture-receipt-link");
-  return prisma.$transaction(async (tx) => {
+  const decided = await prisma.$transaction(async (tx) => {
     await lockSupplementaryInvoiceAnchor(tx, input.bookingModificationId);
     const row = await tx.xeroSyncOperation.findUnique({
       where: { id: input.operationId },
@@ -199,7 +195,7 @@ export async function supplementaryReplayMayRecordPayment(input: {
     });
     const payload = asRecord(row?.requestPayload);
     if (!row || payload?.recordPayment === false) return { recordPayment: false, raisedUnpaid: false };
-    if (payload?.primaryInvoiceGap === true) return { recordPayment: true, raisedUnpaid: false };
+    if (payload?.primaryInvoiceGap === true) return { recordPayment: true, raisedUnpaid: false, gapPayload: payload };
     // Round 12: a payment linked or a decision stored - never a bare running
     // receipt, which reads this row again before it decides.
     const recorded = await anchorCaptureHasReceipt(
@@ -220,4 +216,13 @@ export async function supplementaryReplayMayRecordPayment(input: {
     });
     return { recordPayment: false, raisedUnpaid: written.count === 1 };
   });
+  if (!("gapPayload" in decided) || !decided.gapPayload) return decided;
+  const { unpaidGapPayloadIfOverlapping } = await import("@/lib/credit-release-xero-payment");
+  const unpaid = await unpaidGapPayloadIfOverlapping({ operationId: input.operationId, bookingId: input.bookingId, payload: decided.gapPayload });
+  if (!unpaid) return { recordPayment: true, raisedUnpaid: false };
+  const written = await prisma.xeroSyncOperation.updateMany({
+    where: { id: input.operationId, status: { in: ["FAILED", "PARTIAL"] } },
+    data: { requestPayload: sanitizeForJson(unpaid) },
+  });
+  return { recordPayment: false, raisedUnpaid: written.count === 1 };
 }

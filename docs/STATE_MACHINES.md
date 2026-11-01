@@ -801,7 +801,12 @@ reduction edit, under the door's locks
        exact status, attempts and processingStartedAt read; a deadlock -> 409
        claimed under two minutes ago -> 409 "try again in a moment"
        claimed since the read -> 409, the edit rolls back
-       its retry later -> nothing to claim; a stalled runner writes nothing
+       its retry later -> nothing to claim; a stalled runner writes nothing,
+         and the intent it minted, once no row or recovery names it, is
+         cancelled at Stripe (`abandoned`, best-effort, after its claim hold's
+         transaction ended; logged as `reissued-ask.abandoned-intent-cleanup`;
+         #4631); a recovery reset or reclaimed meanwhile, or an intent it
+         adopted by matching (#4036), keeps it
   -> enqueue CANCEL_PAYMENT_INTENT for each retired intent (same transaction)
   -> WAITING_PAYMENT supplementary invoices on it, or on a closed recovery's
        edit -> read for what they bill, then CANCELLED
@@ -837,7 +842,8 @@ after commit, the minter
 later increase while a re-issue still waits -> folds it in: one ask for both,
   the re-issue's recovery closed under the same fence, the fold recorded on the
   increase's history (its replay asks again; the re-issue's invoice waits on
-  the increase's intent once minted)
+  the increase's intent once minted); a stalled runner's unwritten intent is
+  cancelled as a net-off's is (#4631)
 chase -> reads the mirror: a cancelled ask stops, a re-issued one is chased at its new amount
 ```
 
@@ -4129,8 +4135,25 @@ late change capture KEPT on a cancelled, invoiced booking (the #3639 task
     anchor lock: raised unpaid where a capture of it has a receipt linked,
     RUNNING or carrying a stored decision
   gap check: pays the gap invoice only from cash no receipt row claims and no
-    supplementary invoice records, and names the captures it took, with the
-    cents, on its payload (coveredPaymentIntentIds, coveredCaptureCents)
+    supplementary invoice records, never the credit-release sweep's share
+    (#4494), and names the captures it took, with the cents, on its payload
+    (coveredPaymentIntentIds, coveredCaptureCents)
+  gap invoice send (outbox), officer Retry or PARTIAL repair, where what it
+    takes of a capture plus the credit-release sweep's share (the larger of
+    the ledger's and its CREDIT_RELEASE_PAYMENT links') exceeds the gross
+    capture, or the sweep holds a capture it takes from (#4494) -> no
+    payment recorded, an officer alerted; the payload is stored unpaid before
+    any Xero call (the repair: under its claim, then closed with the reason),
+    naming no capture only where its payment provably never reached Xero,
+    else still naming its captures
+  credit-release sweep beside such a gap invoice (#4494): one whose payment
+    may be in Xero (SUCCEEDED, PARTIAL, resolved, a Xero id, response or
+    link, a stale-RUNNING reset, an invoice body its send stored) -> held, an
+    officer alerted; one that cannot have paid yet and can still send (it
+    can run again - PENDING, RUNNING, WAITING_PAYMENT, or FAILED or PARTIAL
+    and replayable, unresolved - queued within 7 days) -> waiting, no alert;
+    otherwise -> held, an officer alerted daily, naming the row: retry it or
+    wait if it can still run, else record the payment by hand
   receipt worker:
     a LIVE invoice create for the booking, or (under the booking's anchor
       lock) a LIVE receipt for it stamped ADDITIONAL_CAPTURE_RECEIPT_PLANNING
