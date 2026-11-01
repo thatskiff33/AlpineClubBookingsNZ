@@ -327,6 +327,8 @@ describe("which roles a document nominates (#4531)", () => {
       expect(INVOICE_DERIVED_PAYMENT_ROLES).toContain(paymentRole);
     }
     expect(INVOICE_DERIVED_PAYMENT_ROLES).toHaveLength(Object.keys(INVOICE_LINK_PAYMENT_ROLES).length);
+    // Today's three, so none can drop out of the map unnoticed.
+    expect([...INVOICE_DERIVED_PAYMENT_ROLES].sort()).toEqual(["INVOICE_PAYMENT", "SUBSCRIPTION_PAYMENT", "SUPPLEMENTARY_INVOICE_PAYMENT"]);
     expect(getDerivedInboundPaymentRole({ xeroObjectType: "INVOICE", role: "GROUP_SETTLEMENT_INVOICE" })).toBeNull();
     expect(getDerivedInboundPaymentRole({ xeroObjectType: "CREDIT_NOTE", role: "REFUND_CREDIT_NOTE" })).toBe("REFUND_PAYMENT");
     expect(deletedPaymentCandidateRoles({ kind: "INVOICE", id: INVOICE })).toEqual(INVOICE_DERIVED_PAYMENT_ROLES);
@@ -643,6 +645,8 @@ describe("an operation that may still run holds the retire back (#4531, PR #4596
 
     expect(await run()).toMatchObject({ blocked: ["supplementary-deleted"], retiredLinks: 0 });
     receipt.status = "SUCCEEDED";
+    // Another kind of operation on the booking's capture reads no supplementary link.
+    seedOperation({ localModel: "PaymentTransaction", localId: "txn-1", status: "FAILED", queueType: "KEPT_LATE_CAPTURE_INVOICE" });
     expect(await run()).toMatchObject({ retiredLinks: 1, blocked: [] });
   });
 
