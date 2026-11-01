@@ -1913,7 +1913,14 @@ repeatable-read snapshot opened `READ ONLY`, so PostgreSQL itself refuses a
 write inside it; it repairs nothing and calls no provider. For every booking it
 checks seven identities — the price, the captured amount, applied credit, the
 refunded total, change fees, the uncollected ask, and a live booking's balance
-owed — against the ledger lines that project them, and prints:
+owed — against the ledger lines that project them. Since Ledger M3b (#4627,
+[`INV-MONEY-044`](invariants/money.md#inv-money-044)) an eighth, `JOURNAL`,
+compares, for each booking whose confirmation is in the member-money journal,
+the total of the journal's live charge components with the ledger lines it links; a booking
+confirmed earlier is not compared (M9 back-posts it). The comparison is of each
+booking's total, not component by component (a give-back may legitimately be
+taken from a change fee), so money posted to the wrong component of the right
+booking is not caught here; the mapping is pinned by its tests. It prints:
 
 - per identity, how many bookings it applies to, agree, disagree, are
   classified, or are a coverage gap;
@@ -1928,8 +1935,14 @@ owed — against the ledger lines that project them, and prints:
 - **integrity**: reversals that name no line or are not its exact opposite, a
   second live line for one guest-night, an unknown posting-key namespace or one
   on an anchor it never posts under, and a live line its source row (or a
-  cancellation's frozen kept figure) no longer bears out. PostgreSQL's update and delete
-  counts for the table are printed as information only;
+  cancellation's frozen kept figure) no longer bears out, and (`UNBRIDGED_CHARGE_LINE`)
+  a charge line on a journal-confirmed booking that no journal batch links,
+  (`CONFIRMED_WITHOUT_R01`) a booking created after the journal's first
+  confirmation and confirmed on the ledger with none, and (`JOURNAL_INACTIVE`,
+  once) a club whose currency no card can be charged in, for which the journal
+  posts nothing.
+  PostgreSQL's update and delete counts for the table are printed as
+  information only;
 - **named classes** — expected differences, each matched to the cent from the
   booking's own rows (in-flight refunds and hand-backs, a review share kept by
   the club, the refunded total's credit and hand-back allocations, and so on).
@@ -2091,8 +2104,9 @@ DATABASE_URL=<...> pnpm run booking-ledger:back-post --json           # the repo
 ```
 
 **Reading the report.** One summary line — bookings, how many it posted (or
-would) and how many lines, how many had nothing to post, how many it cannot
-post — then one line per booking that posts or cannot:
+would) and how many lines, how many were journal only and how many
+member-money journal batches it posted, how many had nothing to post, how many
+it cannot post — then one line per booking that posts or cannot:
 
 - `POSTED` / `WOULD POST <id>  <n> line(s): …` names the steps: the
   confirmation (one line per guest-night, an evenly split strand included), an
@@ -2103,7 +2117,13 @@ post — then one line per booking that posts or cannot:
   `group plan refund (<cents>)`; its kept figure is the organiser cancel's own
   (the share less every refund made or still owed). A plan refund still being
   retried is not posted: the census names it `IN_FLIGHT_REFUND`, and the retry
-  posts it when it goes through.
+  posts it when it goes through. Since #4627 the line also counts the
+  member-money journal batches posted beside the lines (`, <n> journal batch(es)`).
+- `POSTED` / `WOULD POST <id>  journal only, <n> batch(es)` (#4627,
+  `JOURNAL_ONLY`): no legacy line to fill, but the journal had work — a
+  booking created after the journal's first confirmation that is missing its
+  R01, or lines no journal batch had picked up. A dry run reports these exactly
+  as `--apply` commits them.
 - `CANNOT POST <id>  <reason>: …`. `UNPRICED_NIGHT` — a strand has a night with
   no price, which is an open review: close the review, then re-run.
   `CONFIRMATION_DOES_NOT_RECONCILE` — the night rows and promotion do not make

@@ -12,7 +12,10 @@ const mocks = vi.hoisted(() => ({
   openNonCancellationHandBackCents: vi.fn(async () => 0),
   createMany: vi.fn(async ({ data }: { data: unknown[] }) => ({ count: data.length })),
   findFirst: vi.fn(async (): Promise<{ id: string } | null> => ({ id: "share-line" })),
+  postBookingLedgerJournal: vi.fn(async () => null),
 }));
+// #4627: the journal half runs on PostgreSQL (`booking-ledger-journal.realdb.test.ts`), not on these fake stores.
+vi.mock("@/lib/member-money/doors", () => ({ postBookingLedgerJournal: mocks.postBookingLedgerJournal }));
 vi.mock("@/lib/edit-refund-hand-back", () => ({ openNonCancellationHandBackCents: mocks.openNonCancellationHandBackCents }));
 vi.mock("@/lib/booking-ledger-cancellation-sync", () => ({ postCancellationLedgerLines: mocks.postCancellationLedgerLines }));
 vi.mock("@/lib/organiser-child-refund", async (importOriginal) => ({
@@ -23,6 +26,9 @@ const logger = vi.hoisted(() => ({ warn: vi.fn(), error: vi.fn(), info: vi.fn() 
 vi.mock("@/lib/logger", () => ({ default: logger }));
 
 import { postGroupCancelChildLedgerLines, postGroupSettlementLedgerLines } from "@/lib/booking-ledger-group-settlement-sync";
+import { memberMoneyTestContext } from "./support/member-money-fixtures";
+
+const journal = memberMoneyTestContext();
 
 const tx = { bookingLedgerLine: { createMany: mocks.createMany, findFirst: mocks.findFirst } } as never;
 const paidChild = {
@@ -39,7 +45,7 @@ describe("postGroupCancelChildLedgerLines", () => {
   beforeEach(() => vi.clearAllMocks());
 
   it("a mirror plan: posts the refund beside the mirror and keeps the share less it", async () => {
-    await postGroupCancelChildLedgerLines(tx, { child: paidChild, settlement: bank, mirrorPlan: true, refundForChild: 2_250, plannedRefundCents: 2_250 });
+    await postGroupCancelChildLedgerLines(tx, { child: paidChild, settlement: bank, mirrorPlan: true, refundForChild: 2_250, plannedRefundCents: 2_250, journal });
     expect(mocks.createMany).toHaveBeenCalledWith({
       data: [expect.objectContaining({ bookingId: "c1", kind: "BANK_REFUND", amountCents: -2_250, anchorKind: "GROUP_SETTLEMENT", anchorId: "gs2" })],
       skipDuplicates: true,
@@ -49,20 +55,20 @@ describe("postGroupCancelChildLedgerLines", () => {
 
   it("posts no refund for a child whose share this settlement never posted (settled before #3854), as the cancellation posts nothing for it", async () => {
     mocks.findFirst.mockResolvedValueOnce(null);
-    await postGroupCancelChildLedgerLines(tx, { child: paidChild, settlement: bank, mirrorPlan: true, refundForChild: 2_250, plannedRefundCents: 2_250 });
+    await postGroupCancelChildLedgerLines(tx, { child: paidChild, settlement: bank, mirrorPlan: true, refundForChild: 2_250, plannedRefundCents: 2_250, journal });
     expect(mocks.findFirst).toHaveBeenCalledWith({ where: { bookingId: "c1", postingKey: "group-settlement:gs2:child:c1" }, select: { id: true } });
     expect(mocks.createMany).not.toHaveBeenCalled();
   });
 
   it("a card mirror plan whose refund failed: no refund line yet, but the frozen plan already counts as owed", async () => {
-    await postGroupCancelChildLedgerLines(tx, { child: paidChild, settlement: card, mirrorPlan: true, refundForChild: 0, plannedRefundCents: 4_500 });
+    await postGroupCancelChildLedgerLines(tx, { child: paidChild, settlement: card, mirrorPlan: true, refundForChild: 0, plannedRefundCents: 4_500, journal });
     expect(mocks.createMany).not.toHaveBeenCalled();
     expect(kept()).toBe(0);
   });
 
   it("a #3653 per-child plan: posts no refund line (its refund row does) and keeps the share less every refund made or owed", async () => {
     mocks.organiserChildCommittedRefundCents.mockResolvedValueOnce(3_000);
-    await postGroupCancelChildLedgerLines(tx, { child: paidChild, settlement: card, mirrorPlan: false, refundForChild: 1_500, plannedRefundCents: 0 });
+    await postGroupCancelChildLedgerLines(tx, { child: paidChild, settlement: card, mirrorPlan: false, refundForChild: 1_500, plannedRefundCents: 0, journal });
     expect(mocks.createMany).not.toHaveBeenCalled();
     expect(mocks.organiserChildCommittedRefundCents).toHaveBeenCalledWith(tx, paidChild.payment, "pi_1");
     expect(kept()).toBe(1_500);
@@ -71,11 +77,11 @@ describe("postGroupCancelChildLedgerLines", () => {
   it("#3827 (INV-PAY-117): an open edit hand-back the cancel's refund was sized net of is not kept either, under either plan", async () => {
     // $45 paid, a $10 edit refund promised back by hand; the mirror plan refunds 50% of the $35 left.
     mocks.openNonCancellationHandBackCents.mockResolvedValue(1_000);
-    await postGroupCancelChildLedgerLines(tx, { child: paidChild, settlement: bank, mirrorPlan: true, refundForChild: 1_750, plannedRefundCents: 1_750 });
+    await postGroupCancelChildLedgerLines(tx, { child: paidChild, settlement: bank, mirrorPlan: true, refundForChild: 1_750, plannedRefundCents: 1_750, journal });
     expect(mocks.openNonCancellationHandBackCents).toHaveBeenCalledWith(tx, "p1");
     expect(kept()).toBe(1_750);
     mocks.organiserChildCommittedRefundCents.mockResolvedValueOnce(1_750);
-    await postGroupCancelChildLedgerLines(tx, { child: paidChild, settlement: card, mirrorPlan: false, refundForChild: 1_750, plannedRefundCents: 0 });
+    await postGroupCancelChildLedgerLines(tx, { child: paidChild, settlement: card, mirrorPlan: false, refundForChild: 1_750, plannedRefundCents: 0, journal });
     expect(kept()).toBe(1_750);
     mocks.openNonCancellationHandBackCents.mockResolvedValue(0);
   });
@@ -87,9 +93,10 @@ describe("postGroupCancelChildLedgerLines", () => {
       mirrorPlan: false,
       refundForChild: 0,
       plannedRefundCents: 0,
+      journal,
     });
     expect(kept()).toBe(0);
-    await postGroupCancelChildLedgerLines(tx, { child: paidChild, settlement: null, mirrorPlan: false, refundForChild: 0, plannedRefundCents: 0 });
+    await postGroupCancelChildLedgerLines(tx, { child: paidChild, settlement: null, mirrorPlan: false, refundForChild: 0, plannedRefundCents: 0, journal });
     expect(kept()).toBe(0);
     expect(mocks.postCancellationLedgerLines).toHaveBeenLastCalledWith(
       expect.objectContaining({ bookingId: "c1", site: "group-cancel:organiser-settled-child" }),
@@ -123,6 +130,7 @@ describe("postGroupSettlementLedgerLines", () => {
 
     await postGroupSettlementLedgerLines({
       store,
+      journal,
       settlement: { id: "gs1", source: "STRIPE", amountCents: 4_500 },
       children: [
         { id: "good", lodgeId: "l1", finalPriceCents: 4_500, payment: null },
@@ -132,6 +140,15 @@ describe("postGroupSettlementLedgerLines", () => {
 
     const written = (mocks.createMany.mock.calls[0] as unknown as [{ data: Array<{ bookingId: string; kind: string }> }])[0].data;
     expect(written.map((row) => `${row.bookingId}:${row.kind}`)).toEqual(["good:GUEST_NIGHT", "good:CARD_CAPTURE"]);
+    // #4627 (R01): each newly confirmed child posts R01 with its own charge lines; the one whose
+    // lines could not be built still posts it (a ZERO event), so its later money posts.
+    expect(mocks.postBookingLedgerJournal).toHaveBeenCalledTimes(2);
+    expect(mocks.postBookingLedgerJournal).toHaveBeenCalledWith(store, journal, expect.objectContaining({
+      bookingId: "good", event: { kind: "confirmation" }, postingKeys: [expect.stringMatching(/^confirmation:good:night:/)],
+    }));
+    expect(mocks.postBookingLedgerJournal).toHaveBeenCalledWith(store, journal, expect.objectContaining({
+      bookingId: "bad", event: { kind: "confirmation" }, postingKeys: [],
+    }));
     expect(logger.error).toHaveBeenCalledWith(
       { settlementId: "gs1", failedBookingIds: ["bad"] },
       expect.stringContaining("posted no lines for these children"),
@@ -151,6 +168,7 @@ describe("postGroupSettlementLedgerLines", () => {
 
     await postGroupSettlementLedgerLines({
       store,
+      journal,
       settlement: { id: "gs3", source: "STRIPE", amountCents: 5_000 },
       children: [{ id: "fee", lodgeId: "l1", finalPriceCents: 4_500, payment: { changeFeeCents: 500 } }],
     });

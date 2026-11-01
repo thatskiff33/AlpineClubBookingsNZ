@@ -33,8 +33,20 @@ export const memberMoneyEventKeys = {
   /** R04: a booking can be cancelled, restored and cancelled again, so the revision is part of the key. */
   cancellation: (bookingId: string, cancellationRevision: number) =>
     key(`cancellation:${part(bookingId, "booking id")}:${revision(cancellationRevision)}`),
-  /** R21: one per review task close. */
-  reviewClose: (taskId: string) => key(`review-close:${part(taskId, "task id")}`),
+  /**
+   * R21: one per closure of a review task. A task can be reopened and closed
+   * again, so the closure is named by the first legacy line it writes, as the
+   * back-post is: a line is written once, so a retry finds its batch.
+   */
+  reviewClose: (taskId: string, firstLineId: string) =>
+    key(`review-close:${part(taskId, "task id")}:${part(firstLineId, "first legacy line id")}`),
+  /**
+   * R26: the booking-ledger back-post filling lines a door could not post, for a
+   * booking whose R01 is in the journal (#4627). Named by the first legacy line
+   * it posts: a line is written once, so a retry finds its batch, and a run that
+   * writes nothing posts nothing.
+   */
+  backPost: (firstLineId: string) => key(`back-post:${part(firstLineId, "first legacy line id")}`),
   /** D4: one transfer per merge of two members. */
   merge: (fromMemberId: string, toMemberId: string) =>
     key(`merge:${part(fromMemberId, "merged-away member id")}:${part(toMemberId, "surviving member id")}`),

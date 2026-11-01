@@ -49,7 +49,14 @@ export interface MemberMoneySource {
  */
 export type MemberMoneyTaxContext =
   | { status: "known"; treatment: ClubTaxTreatment }
-  | { status: "unavailable"; effectiveFrom: CalendarDate };
+  | { status: "unavailable"; effectiveFrom: CalendarDate }
+  /**
+   * #4627: the setting could not be read before the transaction. Like
+   * "unavailable", only a fresh split refuses it, inside the door's transaction,
+   * so the door's business change rolls back with it; a correction repeats its
+   * posted split and needs no setting at all. Never a guess (D3).
+   */
+  | { status: "unreadable"; reason: string };
 
 declare const postingContextBrand: unique symbol;
 
@@ -437,6 +444,9 @@ export function buildMemberMoneyBatch(context: MemberMoneyPostingContext, plan: 
       else if (leg.frozenTax) split = leg.frozenTax;
       else if (context.tax.status === "unavailable") {
         problems.push(`${label} needs a fresh tax split, but the club's tax setting starts on ${context.tax.effectiveFrom}`);
+        return;
+      } else if (context.tax.status === "unreadable") {
+        problems.push(`${label} needs a fresh tax split, but the club's tax setting could not be read (${context.tax.reason})`);
         return;
       } else split = splitTaxInclusiveGross(leg.grossCents, context.tax.treatment);
       if (split && split.netCents <= 0) {

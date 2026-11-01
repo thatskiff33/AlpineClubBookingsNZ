@@ -39,7 +39,8 @@ interface ComponentState {
   byCode: Map<string | null, Totals>;
 }
 
-const componentKey = (account: string, chargeIdentity: string) => `${account}\u0000${chargeIdentity}`;
+/** A component's map key: one revenue account and one `chargeIdentity`. */
+export const componentKey = (account: string, chargeIdentity: string) => `${account}\u0000${chargeIdentity}`;
 const scopeOf = (leg: { bookingId: string | null; lodgeId: string | null }) => stableStringify([leg.bookingId, leg.lodgeId]);
 
 function componentStates(posted: readonly PostedRevenueLeg[]): Map<string, ComponentState> {
@@ -58,6 +59,19 @@ function componentStates(posted: readonly PostedRevenueLeg[]): Map<string, Compo
     state.byCode.set(leg.taxCode, totals);
   }
   return states;
+}
+
+/**
+ * The gross each component's posted legs still carry, across every tax code,
+ * by `componentKey` (#4627). What a door reads before it plans a correction:
+ * the store re-checks the same figure against the same legs under `lock(1)`.
+ */
+export function liveComponentGross(posted: readonly PostedRevenueLeg[]): Map<string, number> {
+  const gross = new Map<string, number>();
+  for (const [key, state] of componentStates(posted)) {
+    gross.set(key, [...state.byCode.values()].reduce((sum, totals) => sum + totals.gross, 0));
+  }
+  return gross;
 }
 
 /** The tax codes a component still carries money under. A code fully netted to zero no longer counts. */

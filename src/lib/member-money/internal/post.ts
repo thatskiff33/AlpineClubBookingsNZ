@@ -26,7 +26,8 @@ import { readMemberMoneyJournalToReverse, writeMemberMoneyBatch, type MemberMone
  * disagree. A stored currency a card cannot be charged in is refused here, so
  * such a club posts nothing at all, bank and cash events included. The tax
  * treatment is the one in force on that date (D3), or "unavailable" when the
- * setting starts later; only a fresh tax split refuses that.
+ * setting starts later, or "unreadable" when the caller could not read it
+ * (#4627); only a fresh tax split refuses either.
  *
  * `effectiveAt` must be the source fact's own stable instant, never the clock
  * at processing time: the payload hash includes it.
@@ -37,15 +38,20 @@ export function resolveMemberMoneyPostingContext(input: {
   format: ClubFormat;
   policyVersion: string;
   codingVersion: string;
-  taxSettings: ClubTaxSettings;
+  /** The setting as read, or why it could not be read (#4627): only a fresh split then refuses. */
+  taxSettings: ClubTaxSettings | { unreadable: string };
 }): MemberMoneyPostingContext {
   const effectiveDate = clubCalendarDateOf(input.effectiveAt, input.zone);
   let tax: MemberMoneyTaxContext;
-  try {
-    tax = { status: "known", treatment: clubTaxTreatmentOn(input.taxSettings, effectiveDate) };
-  } catch (error) {
-    if (!(error instanceof ClubTaxTreatmentUnavailableError)) throw error;
-    tax = { status: "unavailable", effectiveFrom: error.effectiveFrom };
+  if ("unreadable" in input.taxSettings) {
+    tax = { status: "unreadable", reason: input.taxSettings.unreadable };
+  } else {
+    try {
+      tax = { status: "known", treatment: clubTaxTreatmentOn(input.taxSettings, effectiveDate) };
+    } catch (error) {
+      if (!(error instanceof ClubTaxTreatmentUnavailableError)) throw error;
+      tax = { status: "unavailable", effectiveFrom: error.effectiveFrom };
+    }
   }
   return {
     effectiveAt: input.effectiveAt,

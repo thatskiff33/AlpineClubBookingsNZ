@@ -56,6 +56,7 @@
  */
 import type { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { releaseBookingJournalForTeardown } from "./support/booking-financial-history-teardown";
 
 import { realElapsedMs } from "@/lib/__tests__/helpers/clock";
 import type { CalendarDate } from "@/lib/club-time";
@@ -791,6 +792,8 @@ let observerClient: PrismaClient;
      */
     it("#3947 FORCES the post-commit window shut: share A cannot commit before its invoice is queued, and share B chosen right after joins it", async () => {
       await clearReviewRunState();
+      // #4627: the doors post journal batches bridged to these lines; release them first.
+      await releaseBookingJournalForTeardown(prisma, [BOOKING_ID]);
       await prisma.bookingLedgerLine.deleteMany({ where: { bookingId: BOOKING_ID } });
       await prisma.paymentRecoveryOperation.deleteMany({ where: { bookingId: BOOKING_ID } });
 
@@ -904,6 +907,8 @@ let observerClient: PrismaClient;
           data: { source: "INTERNET_BANKING", status: "PENDING", amountCents: 20000 },
         });
         await clearReviewRunState();
+        // #4627: the doors post journal batches bridged to these lines; release them first.
+        await releaseBookingJournalForTeardown(prisma, [BOOKING_ID]);
         await prisma.bookingLedgerLine.deleteMany({ where: { bookingId: BOOKING_ID } });
         await prisma.paymentRecoveryOperation.deleteMany({ where: { bookingId: BOOKING_ID } });
       }
@@ -1230,6 +1235,8 @@ let observerClient: PrismaClient;
         await prisma.xeroObjectLink.deleteMany({ where: { localModel: "MemberCreditNoteAllocation", localId: { in: slices.map((slice) => slice.id) } } });
         await prisma.memberCreditNoteAllocation.deleteMany({ where: { appliedToBookingId: BOOKING_ID } });
         await prisma.xeroObjectLink.deleteMany({ where: { localModel: "BookingModification", localId: MODIFICATION_ID } });
+        // #4627: the doors post journal batches bridged to these lines; release them first.
+        await releaseBookingJournalForTeardown(prisma, [BOOKING_ID]);
         await prisma.bookingLedgerLine.deleteMany({ where: { bookingId: BOOKING_ID } });
         await prisma.paymentRecoveryOperation.deleteMany({ where: { bookingId: BOOKING_ID } });
         await prisma.memberCredit.deleteMany({ where: { memberId: MEMBER_ID } });

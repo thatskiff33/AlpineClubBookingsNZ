@@ -128,6 +128,7 @@ File: [`invariants/money.md`](invariants/money.md). Prefix `INV-MONEY`.
 | `INV-MONEY-041` | Member journals commit complete balanced batches with exact reversals |
 | `INV-MONEY-042` | Sealed journals reject later legs; accounts and source identities persist |
 | `INV-MONEY-043` | Money lines, credit links and group settlements refuse booking deletion |
+| `INV-MONEY-044` | Booking doors post their legacy charge lines into the journal once |
 
 ## Booking Dates And Capacity
 

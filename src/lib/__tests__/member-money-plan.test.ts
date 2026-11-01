@@ -75,7 +75,7 @@ describe("member-money event keys", () => {
     expect(memberMoneyEventKeys.bookingCharge("b1")).toBe("booking-charge:b1");
     expect(memberMoneyEventKeys.modification("m1")).toBe("modification:m1");
     expect(memberMoneyEventKeys.cancellation("b1", 2)).toBe("cancellation:b1:2");
-    expect(memberMoneyEventKeys.reviewClose("t1")).toBe("review-close:t1");
+    expect(memberMoneyEventKeys.reviewClose("t1", "l1")).toBe("review-close:t1:l1");
     expect(memberMoneyEventKeys.merge("from", "to")).toBe("merge:from:to");
     expect(memberMoneyEventKeys.reversal("j1")).toBe("reversal:j1");
   });
@@ -155,7 +155,7 @@ describe("buildMemberMoneyBatch", () => {
   });
 
   it("builds an explicit ZERO event with no legs", () => {
-    const batch = buildMemberMoneyBatch(context, { kind: "ZERO", eventKey: memberMoneyEventKeys.reviewClose("t1"), origin: "APP",
+    const batch = buildMemberMoneyBatch(context, { kind: "ZERO", eventKey: memberMoneyEventKeys.reviewClose("t1", "l1"), origin: "APP",
       reason: "no invoice", source: { kind: "SUBSCRIPTION", id: "s1", version: "1" } });
     expect(batch.lines).toEqual([]);
     expect(batch.sources).toEqual([{ kind: "SUBSCRIPTION", id: "s1", version: "1", bookingLedgerLineId: null }]);
@@ -173,9 +173,9 @@ describe("buildMemberMoneyBatch", () => {
 
   describe("with no tax treatment for the date (D3)", () => {
     it("still builds every batch that needs no fresh split", () => {
-      expect(buildMemberMoneyBatch(unavailable, { kind: "ZERO", eventKey: memberMoneyEventKeys.reviewClose("t1"), origin: "APP",
+      expect(buildMemberMoneyBatch(unavailable, { kind: "ZERO", eventKey: memberMoneyEventKeys.reviewClose("t1", "l1"), origin: "APP",
         reason: "z", source: { kind: "BOOKING", id: "b", version: "1" } }).lines).toEqual([]);
-      const receipt: MemberMoneyPlan = { kind: "ADJUSTMENT", eventKey: memberMoneyEventKeys.reviewClose("t2"), origin: "OFFICER",
+      const receipt: MemberMoneyPlan = { kind: "ADJUSTMENT", eventKey: memberMoneyEventKeys.reviewClose("t2", "l1"), origin: "OFFICER",
         reason: "receipt", source: { kind: "OFFICER_FACT", id: "r", version: "1" }, legs: [
           { type: "amount", account: "BANK", side: "DEBIT", amountCents: 500, evidence: {} },
           { type: "amount", account: "MEMBER_RECEIVABLE", side: "CREDIT", amountCents: 500, debtor: MEMBER, evidence: {} },
@@ -218,7 +218,7 @@ describe("buildMemberMoneyBatch", () => {
     });
 
     it("an obligation whose refund-payable legs net to its face is accepted", () => {
-      const refund: MemberMoneyPlan = { kind: "ADJUSTMENT", eventKey: memberMoneyEventKeys.reviewClose("t3"), origin: "APP",
+      const refund: MemberMoneyPlan = { kind: "ADJUSTMENT", eventKey: memberMoneyEventKeys.reviewClose("t3", "l1"), origin: "APP",
         reason: "refund owed", source: { kind: "REFUND", id: "rf", version: "1" },
         obligations: [{ key: "refund:rf", kind: "REFUND", debtor: MEMBER, faceCents: 800, evidence: {} }],
         legs: [

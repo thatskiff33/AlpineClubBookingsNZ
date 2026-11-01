@@ -6,6 +6,7 @@ import {
 } from "@prisma/client";
 import { bookingOwner } from "@/lib/booking-owner";
 import { postCancellationLedgerLines } from "@/lib/booking-ledger-cancellation-sync";
+import { resolveBookingMoneyPostingContext, type BookingJournalContext } from "@/lib/member-money/doors";
 import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-coverage-drain";
 import { reconcileHostingReviewForSystemCancellation } from "@/lib/adult-member-hosting-system-cancellation";
 import { reconcileBedAllocationsForBookingWithLodgeLockHeld } from "@/lib/bed-allocation-lifecycle";
@@ -81,6 +82,8 @@ function releaseOneHold(
   linksSince: Date,
   clubTodayDateOnly: Date,
   format: ClubFormat,
+  /** #4627: the journal's posting context, resolved once per run before any transaction. */
+  journal: BookingJournalContext,
 ) {
   return prisma.$transaction(
     async (tx) => {
@@ -208,6 +211,7 @@ function releaseOneHold(
       // ledger — under the lock(1) this release took first.
       await postCancellationLedgerLines({
         store: tx,
+        journal,
         bookingId: fresh.bookingId,
         lodgeId: fresh.booking.lodgeId,
         keptCents: 0,
@@ -408,6 +412,8 @@ export async function releaseExpiredInternetBankingHolds(
   // uses (INV-DATE-019): one read, outside every transaction, for both the
   // unreadable-invoice bound (#3643) and the started-stay check (#3663).
   const clubToday = await clubTodayForStartedStay(now);
+  // #4627: the journal's posting context, likewise one read outside every transaction.
+  const journal = await resolveBookingMoneyPostingContext();
 
   // #3643: only a booking the release could act on is asked about — one no
   // longer CONFIRMED is skipped by the transaction's guard set, and an alert
@@ -463,6 +469,7 @@ export async function releaseExpiredInternetBankingHolds(
         evidence?.readStartedAt ?? now,
         clubToday,
         format,
+        journal,
       );
     } catch (err) {
       // One poisoned candidate must not starve the rest of the queue: its

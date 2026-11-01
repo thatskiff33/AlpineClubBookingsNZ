@@ -4,7 +4,8 @@
  *
  * Until the reads move (#3584), `Booking.finalPriceCents` and the five
  * `Payment` money columns are PROJECTIONS of the booking ledger. This module
- * states the seven identities that say so and judges one booking against them,
+ * states the seven identities that say so and judges one booking against them
+ * (an eighth, `JOURNAL`, is added by `booking-ledger-projection-census-journal.ts`),
  * from a snapshot row it is handed. It reads nothing and writes nothing; the
  * one-snapshot read is `booking-ledger-projection-census-store.ts`, the
  * operator command `scripts/booking-ledger-census.ts`.
@@ -88,6 +89,8 @@ import { reviewAdjustmentEvidence, type ReviewAdjustmentEvidence } from "@/lib/b
  * `owed(b)` against what its columns say is owed (`INV-PAY-047`'s residual plus
  * the ask). Without it a line no column projects — a `CREDIT_ISSUED` or
  * `BANK_REFUND` — could be missing, or wrong, with every column agreeing.
+ * `JOURNAL` (#4627) is judged apart, by `booking-ledger-projection-census-journal.ts`,
+ * which the census store adds to each evaluation.
  */
 export const BOOKING_LEDGER_IDENTITIES = [
   "PRICE",
@@ -97,6 +100,8 @@ export const BOOKING_LEDGER_IDENTITIES = [
   "CHANGE_FEE",
   "ADDITIONAL",
   "OWED",
+  // #4627: the member-money journal's live charge components against the bridged lines.
+  "JOURNAL",
 ] as const;
 export type BookingLedgerIdentity = (typeof BOOKING_LEDGER_IDENTITIES)[number];
 
@@ -121,6 +126,12 @@ export const BOOKING_LEDGER_INTEGRITY_KINDS = [
   "UNKNOWN_KEY_NAMESPACE",
   "KEY_ANCHOR_MISMATCH",
   "SOURCE_DRIFT",
+  // #4627: a charge line on a journal-confirmed booking that no journal batch links.
+  "UNBRIDGED_CHARGE_LINE",
+  // #4627: a booking created after the journal's first R01, confirmed on the ledger, with no R01.
+  "CONFIRMED_WITHOUT_R01",
+  // #4627: the club's currency cannot be charged by card, so the journal posts nothing (one finding).
+  "JOURNAL_INACTIVE",
 ] as const;
 export type BookingLedgerIntegrityKind = (typeof BOOKING_LEDGER_INTEGRITY_KINDS)[number];
 

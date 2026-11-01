@@ -37,6 +37,7 @@
  * fixtures.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { releaseBookingJournalForTeardown } from "./support/booking-financial-history-teardown";
 import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 import { assertSafeRaceDbUrl } from "@/lib/__tests__/support/race-db-url";
 import type { ResolvedBankRefundVoidAnswer } from "@/lib/bank-refund-void-answer";
@@ -79,6 +80,8 @@ function answerRefundsAsStripeWould(params: { paymentIntentId: string; amountCen
       await prisma.xeroObjectLink.deleteMany({ where: { localModel: "BookingModification", localId: { startsWith: P } } });
       await prisma.xeroSyncOperation.deleteMany({ where: { localModel: "BookingModification", localId: { startsWith: P } } });
       await prisma.bookingModification.deleteMany({ where: { bookingId: BOOKING_ID } });
+      // #4627: the doors post journal batches bridged to these lines; release them first.
+      await releaseBookingJournalForTeardown(prisma, [BOOKING_ID]);
       await prisma.bookingLedgerLine.deleteMany({ where: { bookingId: BOOKING_ID } });
       await prisma.bookingEvent.deleteMany({ where: { bookingId: BOOKING_ID } });
       await prisma.manualRefundTask.deleteMany({ where: { bookingId: BOOKING_ID } });
