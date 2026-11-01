@@ -235,9 +235,13 @@ async function ensureAlert(
     throw new UnrecognisedStripePaymentAlertNotSentError(row.stripePaymentIntentId);
   };
 
+  // Not kept with a claim of its own means this send did not go out
+  // (`stampAlertSent` never throws), so give it back before any further read
+  // that could itself fail and leave the claim held.
   const first = await send();
-  if (first.kept || (await alertWasSent(row))) return;
+  if (first.kept) return;
   if (first.claimedAt) await giveBackOwnClaimAndFail(first.claimedAt);
+  if (await alertWasSent(row)) return;
 
   const heldAt = (await readHeldOnceEverAlertTimes([key], new Date())).get(key);
   if (!heldAt) {
@@ -252,10 +256,10 @@ async function ensureAlert(
 
   await releaseAlertCooldown({ key, claimedAt: heldAt });
   const second = await send();
-  if (second.kept || (await alertWasSent(row))) return;
+  if (second.kept) return;
   if (second.claimedAt) await giveBackOwnClaimAndFail(second.claimedAt);
+  if (await alertWasSent(row)) return;
   throw new UnrecognisedStripePaymentAlertNotSentError(row.stripePaymentIntentId);
-
 }
 
 /**
