@@ -28,8 +28,7 @@ import { readCapacityRaceStripeRefundedForTask } from "@/lib/capacity-race-refun
 import { settlementWriteRefusal } from "@/lib/manual-refund-task-settlement-refusal";
 import { prisma } from "@/lib/prisma";
 import { clubToday } from "@/lib/club-time";
-import { resolveBookingMoneyPostingContext } from "@/lib/member-money/doors";
-import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
+import { resolveBookingDoorClock } from "@/lib/member-money/doors";
 // #3195: the $0 refusal is said by the settle SCREEN as well as thrown here, and
 // this module is `server-only` - so the sentence lives in a client-safe home and
 // both read it (`INV-SSOT`).
@@ -147,11 +146,9 @@ export async function resolveManualRefundTask(
   }
 
   // #3219 `INV-LOCK-004`: read outside the transaction; dates the promo window,
-  // and (#3635) the day a kept late capture's Xero receipt is dated.
-  const clubZone = await readClubTimeZoneOutsideRequest();
+  // (#3635) the day a kept late capture's Xero receipt is dated, and (#4627) the journal.
+  const { zone: clubZone, journal } = await resolveBookingDoorClock();
   const todayAtClub = clubToday(clubZone);
-  // #4627: the journal's posting context, likewise read outside the transaction.
-  const journal = await resolveBookingMoneyPostingContext({ zone: clubZone });
   const capacityRaceStripe = resolution === "completed" ? await readCapacityRaceStripeRefundedForTask(taskId) : null; // #4154 review (M1): a provider call, so here, bounded
   const { chargeInvoice, ...result } = await prisma.$transaction(async (tx) => { // #3947: chargeInvoice is internal, never returned
     // #3740 (concurrency F1): only the immutable `kind` is read unlocked. An
@@ -545,8 +542,7 @@ export async function resolveManualRefundTask(
         settlementRoute,
         settlementAmountCents: settledCents,
         settlementDirection: settlement ? settlementDirection : null,
-        store: tx,
-        journal,
+        store: tx, journal,
       });
     }
     const chargeInvoice = settlement ? await queueEditReviewChargeInvoiceInTransaction({ bookingId: task.bookingId, route: settlementRoute, hasIssuedXeroInvoice, createdByMemberId: actingMemberId, store: tx }) : null; // #3947: the invoice route's invoice, queued LAST - its anchor key after every other lock

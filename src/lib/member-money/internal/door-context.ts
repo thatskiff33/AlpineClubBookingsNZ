@@ -53,3 +53,13 @@ export async function resolveBookingMoneyPostingContext(options: {
     taxSettings,
   });
 }
+
+/**
+ * A door's club time in one read (#4627): the club's zone, for its own club-day
+ * decisions, and the journal's posting context on that same zone. Before the
+ * door's transaction, like the resolver above.
+ */
+export async function resolveBookingDoorClock(): Promise<{ zone: ClubTimeZone; journal: MemberMoneyPostingContext }> {
+  const zone = await readClubTimeZoneOutsideRequest();
+  return { zone, journal: await resolveBookingMoneyPostingContext({ zone }) };
+}

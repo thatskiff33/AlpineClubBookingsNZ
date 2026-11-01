@@ -8,7 +8,6 @@ import { getBookingEditPolicy } from "@/lib/booking-edit-policy";
 import { bookingFinalPriceCents } from "@/lib/booking-final-price";
 import { postModificationLedgerLines } from "@/lib/booking-ledger-modification-sync";
 import { postStoredBookingConfirmationLedgerLines } from "@/lib/booking-ledger-confirmation-sync";
-import type { MemberMoneyPostingContext } from "@/lib/member-money/doors";
 import {
   loadModificationLinesAuditFields,
   pricingSideFromStoredGuests,
@@ -192,11 +191,9 @@ export async function repriceBookingAfterGuestAcceptance(
     acceptedGuestId: string;
     /** The member who accepted (the guest, or their delegate) — the history row's actor. */
     actorMemberId: string;
-    /** The club's day, resolved before the transaction opened (`INV-LOCK-004`). */
-    todayAtClub: CalendarDate;
+    /** The club's day and (#4627) the journal's context, resolved before the transaction opened (`INV-LOCK-004`). */
+    todayAtClub: CalendarDate; journal: Parameters<typeof postModificationLedgerLines>[0]["journal"];
     format: ClubFormat;
-    /** #4627: the journal's posting context, resolved before the transaction opened (`INV-LOCK-004`). */
-    journal: MemberMoneyPostingContext;
   },
 ): Promise<GuestAcceptanceReprice> {
   const { bookingId, todayAtClub, format, journal } = params;
@@ -500,8 +497,7 @@ export async function repriceBookingAfterGuestAcceptance(
   });
   await queueOrganiserExtraForChange(tx, booking, bookingModification);
   await postModificationLedgerLines({
-    store: tx,
-    journal,
+    store: tx, journal,
     bookingId,
     lodgeId,
     bookingModification,

@@ -97,8 +97,8 @@ const CONTEXT_RESOLVERS: readonly string[] = [
   "src/lib/stored-night-price-repair-store.ts",
   "src/lib/xero-inbound/invoice-paid-effects.ts",
 ];
-/** Anything a context resolver may say about the journal: the `./doors` entry, the resolver and the context type. */
-const RESOLVER_VOCABULARY = /["']@\/lib\/member-money\/doors["']|\bresolveBookingMoneyPostingContext\b|\bMemberMoneyPostingContext\b/g;
+/** Anything a context resolver may say about the journal: the `./doors` entry, the resolvers and the context type. */
+const RESOLVER_VOCABULARY = /["']@\/lib\/member-money\/doors["']|\bresolveBookingMoneyPostingContext\b|\bresolveBookingDoorClock\b|\bMemberMoneyPostingContext\b/g;
 const BOUNDARY = "src/lib/member-money/";
 /** M3a (#4626): the one file that creates journal rows. */
 const WRITER = "src/lib/member-money/internal/store.ts";

@@ -12,4 +12,4 @@ import "server-only";
 export type { BookingChargeEvent } from "./internal/booking-charges";
 export type { MemberMoneyPostingContext } from "./internal/plan";
 export { postBookingLedgerJournal, postMemberMergeTransfer } from "./internal/booking-posting";
-export { resolveBookingMoneyPostingContext } from "./internal/door-context";
+export { resolveBookingDoorClock, resolveBookingMoneyPostingContext } from "./internal/door-context";

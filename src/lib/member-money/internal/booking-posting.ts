@@ -1,7 +1,5 @@
 import type { Prisma } from "@prisma/client";
-import { z } from "zod";
 import { calendarDateOfDateOnlyInstant } from "../../club-time";
-import { decodeRawRows } from "../../raw-sql-rows";
 import {
   bookingChargeEventIdentity,
   bookingComponentKey,
@@ -42,16 +40,14 @@ import type { MemberMoneyPosting } from "./store";
 
 type Db = Prisma.TransactionClient;
 
-const OWNER_ROW = z.object({ memberId: z.string().nullable(), organisationId: z.string().nullable() });
-
-/** The booking's owner, read under its row lock: the receivable's debtor (`bookingOwner`'s rule: exactly one). */
+/**
+ * The booking's owner, read under its row lock: the receivable's debtor
+ * (`bookingOwner`'s rule: exactly one). Lock raw, read typed (#2289): the lock
+ * selects a constant, the owner comes back through the Prisma model.
+ */
 async function lockedBookingDebtor(tx: Db, bookingId: string): Promise<MemberMoneyDebtor> {
-  const rows = decodeRawRows(
-    await tx.$queryRaw`SELECT "memberId", "organisationId" FROM "Booking" WHERE "id" = ${bookingId} FOR NO KEY UPDATE`,
-    OWNER_ROW,
-    "booking owner",
-  );
-  const owner = rows[0];
+  await tx.$executeRaw`SELECT 1 FROM "Booking" WHERE "id" = ${bookingId} FOR NO KEY UPDATE`;
+  const owner = await tx.booking.findUnique({ where: { id: bookingId }, select: { memberId: true, organisationId: true } });
   if (!owner) throw new MemberMoneyPlanError([`booking ${bookingId} does not exist`]);
   if (owner.organisationId !== null && owner.memberId === null) return { kind: "ORGANISATION", organisationId: owner.organisationId };
   if (owner.memberId !== null && owner.organisationId === null) return { kind: "MEMBER", memberId: owner.memberId };

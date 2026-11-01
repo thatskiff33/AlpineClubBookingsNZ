@@ -13,7 +13,8 @@ vi.mock("server-only", () => ({}));
 const log = vi.hoisted(() => ({ warn: vi.fn(), error: vi.fn(), info: vi.fn() }));
 vi.mock("@/lib/logger", () => ({ default: log }));
 // #4627: the journal half runs on PostgreSQL (`booking-ledger-journal.realdb.test.ts`), not on this fake store.
-vi.mock("@/lib/member-money/doors", () => ({ postBookingLedgerJournal: vi.fn(async () => null) }));
+const journalPost = vi.hoisted(() => vi.fn(async () => null));
+vi.mock("@/lib/member-money/doors", () => ({ postBookingLedgerJournal: journalPost }));
 
 import { bookingLedgerBalance } from "@/lib/booking-ledger-balance";
 import { planCancellationChargeLines } from "@/lib/booking-ledger-cancellation-posting";
@@ -226,7 +227,13 @@ describe("postCancellationLedgerLines: owed(b) is zero once the settlement lines
     book.insert(capture(20_000));
     const { refundAmountCents, keptCents } = paidCancel({ amountCents: 20_000, creditAppliedCents: 0, changeFeeCents: 0, finalPriceCents: 20_000, days: 10, refundMethod: "card" });
     expect([refundAmountCents, keptCents]).toEqual([8_000, 12_000]);
+    journalPost.mockClear();
     await cancel(book, keptCents);
+    // #4627 (R04): the cancellation's lines, by their keys, into the journal in the same transaction.
+    expect(journalPost).toHaveBeenCalledWith(book.store, journal, expect.objectContaining({
+      bookingId: "b1", lodgeId: "l1", event: { kind: "cancellation" },
+      postingKeys: book.rows.filter((row) => row.anchorKind === "CANCELLATION").map((row) => row.postingKey),
+    }));
     book.insert(cardRefund(refundAmountCents));
     expect(bookingLedgerBalance(book.rows)).toEqual({ chargedCents: 12_000, settledCents: 12_000, adjustedCents: 0, owedCents: 0 });
   });

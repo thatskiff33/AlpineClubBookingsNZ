@@ -9,7 +9,8 @@ vi.mock("server-only", () => ({}));
 const log = vi.hoisted(() => ({ warn: vi.fn(), error: vi.fn(), info: vi.fn() }));
 vi.mock("@/lib/logger", () => ({ default: log }));
 // #4627: the journal half runs on PostgreSQL (`booking-ledger-journal.realdb.test.ts`), not on this fake store.
-vi.mock("@/lib/member-money/doors", () => ({ postBookingLedgerJournal: vi.fn(async () => null) }));
+const journalPost = vi.hoisted(() => vi.fn(async () => null));
+vi.mock("@/lib/member-money/doors", () => ({ postBookingLedgerJournal: journalPost }));
 
 import { bookingLedgerBalance } from "@/lib/booking-ledger-balance";
 import { planConfirmationChargeLines } from "@/lib/booking-ledger-confirmation-posting";
@@ -182,10 +183,16 @@ describe("postModificationLedgerLines (#3582)", () => {
   it("posts an edit's reversals on a booking confirmed on the ledger, leaving owed(b) at the refund due", async () => {
     const ledger = confirmedLedger();
     const s = store(ledger);
+    journalPost.mockClear();
     await postModificationLedgerLines({ ...base, store: s.store, sides: SIDES_REMOVE_G2 });
     expect(s.createMany).toHaveBeenCalledTimes(1);
     expect(s.written.every((row) => row.anchorKind === "MODIFICATION" && row.anchorId === "m1")).toBe(true);
     expect(owed([...ledger, ...s.written])).toBe(-10_000);
+    // #4627 (R02/R03): the same lines, by their keys, into the journal in the edit's transaction.
+    expect(journalPost).toHaveBeenCalledWith(s.store, base.journal, {
+      bookingId: "b1", lodgeId: "l1", event: { kind: "modification", modificationId: "m1" },
+      postingKeys: s.written.map((row) => row.postingKey),
+    });
   });
 
   it("posts nothing on a booking not yet confirmed on the ledger — the confirmation will read the booking as it then is", async () => {
@@ -263,6 +270,7 @@ describe("postReviewClosureLedgerLines — one record of the share's money, per 
   it("REFUND, re-priced: the re-price reverses the removed guest and posts NO adjustment; owed(b) settles to zero", async () => {
     const ledger = confirmedLedger();
     const s = store(ledger, [G1_AFTER]);
+    journalPost.mockClear();
     await postReviewClosureLedgerLines({
       ...base,
       store: s.store,
@@ -275,6 +283,11 @@ describe("postReviewClosureLedgerLines — one record of the share's money, per 
       ["GUEST_NIGHT", -5_000, "rb1"],
     ]);
     expect(owed([...ledger, ...s.written, settlementOf("REFUND_TO_MEMBER", 10_000)])).toBe(0);
+    // #4627 (R21): the closure's lines into the journal, as one review-close event naming the officer.
+    expect(journalPost).toHaveBeenCalledWith(s.store, base.journal, {
+      bookingId: "b1", lodgeId: "l1", event: { kind: "review-close", taskId: "t1", officerMemberId: "o1" },
+      postingKeys: s.written.map((row) => row.postingKey),
+    });
   });
 
   it("CHARGE, re-priced: the re-price posts the added nights and NO adjustment; owed(b) settles to zero", async () => {
