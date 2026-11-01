@@ -12,12 +12,14 @@ import { getClubIdentitySync } from "@/lib/club-identity-settings";
 import {
   DataKeyRingError,
   LEGACY_AUTH_SECRET_KEY_ID,
-  codeHashKeys,
-  currentDataKey,
-  dataKeyById,
   deriveDataSubkey,
   legacySecretOf,
   type DataKey,
+} from "@/lib/data-encryption-key-material";
+import {
+  codeHashKeys,
+  currentDataKey,
+  dataKeyById,
 } from "@/lib/data-encryption-keys";
 import { prisma } from "@/lib/prisma";
 import {
@@ -191,9 +193,28 @@ export function hashRecoveryCode(code: string) {
  * retired the moment a ring is set; a ring hash, when its key leaves the ring.
  */
 export function isRetiredRecoveryCodeHash(codeHash: string): boolean {
-  const separator = codeHash.indexOf(":");
-  const id = separator === -1 ? LEGACY_AUTH_SECRET_KEY_ID : codeHash.slice(0, separator);
+  const id = codeHashKeyId(codeHash);
   return !codeHashKeys().some((key) => key.id === id);
+}
+
+/** The key id a stored code hash was made under: its prefix, or legacy if bare. */
+export function codeHashKeyId(codeHash: string): string {
+  const separator = codeHash.indexOf(":");
+  return separator === -1 ? LEGACY_AUTH_SECRET_KEY_ID : codeHash.slice(0, separator);
+}
+
+/**
+ * The key id a stored authenticator secret names — legacy for `v1`, the id for
+ * `v2:<id>:…` — or null for a format no write produces. Counting only; a read
+ * goes through `decryptTwoFactorSecret`, which refuses the same formats.
+ */
+export function twoFactorSecretKeyId(stored: string): string | null {
+  const parts = stored.split(":");
+  if (parts[0] === LEGACY_ENCRYPTION_VERSION && parts.length === 4) return LEGACY_AUTH_SECRET_KEY_ID;
+  if (parts[0] === RING_ENCRYPTION_VERSION && parts.length === 5 && parts[1] && parts[1] !== LEGACY_AUTH_SECRET_KEY_ID) {
+    return parts[1];
+  }
+  return null;
 }
 
 /**
@@ -293,7 +314,7 @@ export async function createTwoFactorEmailCode(memberId: string) {
 
 export async function verifyTwoFactorEmailCode(memberId: string, code: string) {
   const record = await prisma.twoFactorEmailCode.findFirst({
-    where: { codeHash: { in: twoFactorCodeHashCandidates(normalizeOtpCode(code)) } },
+    where: { memberId, codeHash: { in: twoFactorCodeHashCandidates(normalizeOtpCode(code)) } },
   });
 
   if (
@@ -416,7 +437,7 @@ export async function verifyStoredTotpCode(memberId: string, code: string) {
 
 export async function consumeRecoveryCode(memberId: string, code: string) {
   const record = await prisma.twoFactorRecoveryCode.findFirst({
-    where: { codeHash: { in: twoFactorCodeHashCandidates(normalizeRecoveryCode(code)) } },
+    where: { memberId, codeHash: { in: twoFactorCodeHashCandidates(normalizeRecoveryCode(code)) } },
   });
 
   if (!record || record.memberId !== memberId || record.usedAt) {

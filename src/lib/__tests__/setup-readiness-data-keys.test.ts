@@ -13,11 +13,14 @@ function testKey(seed: number, bytes = 32): string {
 const K1 = testKey(1);
 const K2 = testKey(2);
 
-const NOTHING_STORED: DataKeyUsageSnapshot = { credentialRowsByKeyId: {}, legacyTotpSecrets: 0 };
-const LEGACY_STORED: DataKeyUsageSnapshot = {
+function usage(overrides: Partial<DataKeyUsageSnapshot> = {}): DataKeyUsageSnapshot {
+  return { credentialRowsByKeyId: {}, totpRowsByKeyId: {}, recoveryCodesByKeyId: {}, ...overrides };
+}
+const NOTHING_STORED = usage();
+const LEGACY_STORED = usage({
   credentialRowsByKeyId: { "legacy-auth-secret": 3 },
-  legacyTotpSecrets: 2,
-};
+  totpRowsByKeyId: { "legacy-auth-secret": 2 },
+});
 
 describe("setup readiness: the Data Encryption Key step (#4456)", () => {
   it("is amber when no ring is set and nothing is stored yet", () => {
@@ -42,7 +45,7 @@ describe("setup readiness: the Data Encryption Key step (#4456)", () => {
       ]),
     );
     // The rollout caveat: an older release cannot read ring rows.
-    expect(check.details.join(" ")).toMatch(/older release cannot read/);
+    expect(check.details.join(" ")).toMatch(/roll back to an older release/);
   });
 
   it.each([
@@ -59,12 +62,16 @@ describe("setup readiness: the Data Encryption Key step (#4456)", () => {
   });
 
   it("is red when stored credentials name a key the ring no longer holds", () => {
-    const check = buildDataEncryptionKeyCheck(`k2:${K2}`, {
-      credentialRowsByKeyId: { k1: 4, k2: 1 },
-      legacyTotpSecrets: 0,
-    });
+    const check = buildDataEncryptionKeyCheck(
+      `k2:${K2}`,
+      usage({ credentialRowsByKeyId: { k1: 4, k2: 1 }, totpRowsByKeyId: { k0: 2, k2: 5 } }),
+    );
     expect(check.status).toBe("blocked");
-    expect(check.details).toEqual([expect.stringContaining('4 provider credentials under the key "k1"')]);
+    expect(check.details).toEqual([
+      '4 provider credentials under the data key "k1".',
+      '2 authenticator-app secrets under the data key "k0".',
+      expect.stringMatching(/Put that key back in the ring/),
+    ]);
   });
 
   it("is amber while a ring is set but stored data still depends on AUTH_SECRET", () => {
@@ -72,31 +79,70 @@ describe("setup readiness: the Data Encryption Key step (#4456)", () => {
     expect(check.status).toBe("warning");
     expect(check.message).toMatch(/data key "k1"/);
     expect(check.message).toMatch(/rotating it now would make that data unreadable/);
+    // The manual routes, until the re-encrypt command ships (#4456 PR 2).
+    expect(check.details.join(" ")).toMatch(/re-enter each provider credential in Admin → Integrations/);
+    expect(check.details.join(" ")).toMatch(/re-enrol/);
   });
 
   it("is complete when a ring is set and nothing depends on AUTH_SECRET", () => {
-    const check = buildDataEncryptionKeyCheck(`k2:${K2},k1:${K1}`, {
-      credentialRowsByKeyId: { k2: 2, k1: 1 },
-      legacyTotpSecrets: 0,
-    });
+    const check = buildDataEncryptionKeyCheck(
+      `k2:${K2},k1:${K1}`,
+      usage({ credentialRowsByKeyId: { k2: 2, k1: 1 }, totpRowsByKeyId: { k1: 3 }, recoveryCodesByKeyId: { k2: 10 } }),
+    );
     expect(check.status).toBe("complete");
     expect(check.message).toBe('Data is encrypted under the data key "k2".');
   });
 
+  it("is never complete when stored data was not checked, with a ring set (#4456 review)", () => {
+    const check = buildDataEncryptionKeyCheck(`k1:${K1}`, undefined);
+    expect(check.status).toBe("warning");
+    expect(check.message).toMatch(/stored data was not checked/);
+  });
+
+  it("is red when the ring is unset but stored data is under a ring key (#4456 review)", () => {
+    for (const stored of [
+      usage({ credentialRowsByKeyId: { k1: 1, "legacy-auth-secret": 2 } }),
+      usage({ totpRowsByKeyId: { k1: 1 } }),
+    ]) {
+      const check = buildDataEncryptionKeyCheck(undefined, stored);
+      expect(check.status).toBe("blocked");
+      expect(check.message).toMatch(/encrypted under a data-encryption key, but DATA_ENCRYPTION_KEYS is not set/);
+      expect(check.details.join(" ")).toMatch(/never unset it/);
+    }
+  });
+
+  it("reports recovery codes no lookup can match as information, never as red", () => {
+    const check = buildDataEncryptionKeyCheck(
+      `k2:${K2}`,
+      usage({ credentialRowsByKeyId: { k2: 1 }, recoveryCodesByKeyId: { "legacy-auth-secret": 7, k1: 3, k2: 10 } }),
+    );
+    expect(check.status).toBe("complete");
+    expect(check.details).toContain(
+      "10 unused recovery codes no longer work under this key ring; their members are told to generate a new set.",
+    );
+  });
+
+  it("is red for a ring key that is the auth secret, read from the auth secret it is given", () => {
+    expect(buildDataEncryptionKeyCheck(`k1:${K1}`, NOTHING_STORED, K1).status).toBe("blocked");
+    expect(buildDataEncryptionKeyCheck(`k1:${K1}`, NOTHING_STORED, K1).details[0]).toMatch(/is weak: it is the auth secret/);
+  });
+
   it("tallies stored rows per key id, folding both auth-secret spellings into the legacy key", () => {
     expect(
-      tallyDataKeyUsage(
-        [
+      tallyDataKeyUsage({
+        credentialSources: [
           { secretSource: "AUTH_SECRET", count: 2 },
           { secretSource: "NEXTAUTH_SECRET", count: 1 },
           { secretSource: "DATA_ENCRYPTION_KEY:k1", count: 4 },
           { secretSource: "SOMETHING_ELSE", count: 1 },
         ],
-        5,
-      ),
+        totpKeyIds: ["legacy-auth-secret", "k1", "k1", null],
+        recoveryCodeKeyIds: ["legacy-auth-secret", "k2"],
+      }),
     ).toEqual({
       credentialRowsByKeyId: { "legacy-auth-secret": 3, k1: 4, "unrecognised:SOMETHING_ELSE": 1 },
-      legacyTotpSecrets: 5,
+      totpRowsByKeyId: { "legacy-auth-secret": 1, k1: 2, unrecognised: 1 },
+      recoveryCodesByKeyId: { "legacy-auth-secret": 1, k2: 1 },
     });
   });
 

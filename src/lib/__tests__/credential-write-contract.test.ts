@@ -36,6 +36,8 @@ const mocks = vi.hoisted(() => {
     create: vi.fn(),
     updateMany: vi.fn(),
     deleteMany: vi.fn(),
+    // #4456: rows already under a ring key, asked before an AUTH_SECRET write.
+    count: vi.fn(async () => 0),
   });
   const tx = {
     integrationCredential: credentialDelegate(),

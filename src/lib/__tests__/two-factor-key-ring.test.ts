@@ -22,14 +22,14 @@ vi.mock("@/lib/club-identity-settings", () => ({
 type CodeRow = { id: string; memberId: string; codeHash: string; usedAt: Date | null };
 const db = vi.hoisted(() => ({ recovery: [] as CodeRow[], email: [] as Array<{ id: string; memberId: string; codeHash: string; used: boolean; expiresAt: Date }> }));
 
-function matches(hash: string, where: { codeHash?: { in: string[] } }) {
-  return where.codeHash?.in.includes(hash) ?? false;
+function matches(row: { memberId: string; codeHash: string }, where: { memberId?: string; codeHash?: { in: string[] } }) {
+  return (where.memberId === undefined || where.memberId === row.memberId) && (where.codeHash?.in.includes(row.codeHash) ?? false);
 }
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     twoFactorRecoveryCode: {
-      findFirst: vi.fn(async ({ where }) => db.recovery.find((row) => matches(row.codeHash, where)) ?? null),
+      findFirst: vi.fn(async ({ where }) => db.recovery.find((row) => matches(row, where)) ?? null),
       findMany: vi.fn(async ({ where }) =>
         db.recovery.filter((row) => row.memberId === where.memberId && row.usedAt === null),
       ),
@@ -45,7 +45,7 @@ vi.mock("@/lib/prisma", () => ({
         db.email.push({ id: `e${db.email.length}`, used: false, ...data });
         return data;
       }),
-      findFirst: vi.fn(async ({ where }) => db.email.find((row) => matches(row.codeHash, where)) ?? null),
+      findFirst: vi.fn(async ({ where }) => db.email.find((row) => matches(row, where)) ?? null),
       updateMany: vi.fn(async () => ({ count: 1 })),
     },
     twoFactorSessionChallenge: {
@@ -155,6 +155,10 @@ describe("code hashes under the ring (#4456)", () => {
     storeRecoveryCode("member-1", "ABCD-EFGH-IJKL");
     process.env.DATA_ENCRYPTION_KEYS = `k2:${K2},k1:${K1}`;
     process.env.AUTH_SECRET = "rotated-auth-secret-0123456789abcdefghij";
+    await expect(consumeRecoveryCode("member-2", "abcd efgh ijkl")).resolves.toBe(false);
+    expect(vi.mocked(prisma.twoFactorRecoveryCode.findFirst)).toHaveBeenLastCalledWith({
+      where: expect.objectContaining({ memberId: "member-2" }),
+    });
     await expect(consumeRecoveryCode("member-1", "abcd efgh ijkl")).resolves.toBe(true);
     await expect(consumeRecoveryCode("member-1", "ABCD-EFGH-IJKL")).resolves.toBe(false);
   });
@@ -164,6 +168,9 @@ describe("code hashes under the ring (#4456)", () => {
     const { code } = await createTwoFactorEmailCode("member-1");
     expect(db.email[0]?.codeHash).toMatch(/^k1:/);
     await expect(verifyTwoFactorEmailCode("member-1", code)).resolves.toBe(true);
+    expect(vi.mocked(prisma.twoFactorEmailCode.findFirst)).toHaveBeenLastCalledWith({
+      where: expect.objectContaining({ memberId: "member-1" }),
+    });
   });
 
   it("a session challenge is consumed by any ring key's hash", async () => {

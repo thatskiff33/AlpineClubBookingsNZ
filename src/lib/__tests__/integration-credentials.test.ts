@@ -12,6 +12,8 @@ const mocks = vi.hoisted(() => {
     create: vi.fn(),
     updateMany: vi.fn(),
     deleteMany: vi.fn(),
+    // #4456: rows already under a ring key, asked before an AUTH_SECRET write.
+    count: vi.fn(async () => 0),
   });
   const tx = {
     integrationCredential: delegate(),
@@ -30,7 +32,7 @@ const mocks = vi.hoisted(() => {
 
 vi.mock("@/lib/prisma", () => ({ prisma: mocks.prisma }));
 
-import { encryptCredential } from "@/lib/integration-crypto";
+import { WeakAuthSecretError, encryptCredential } from "@/lib/integration-crypto";
 import { credentialVersionOf, type CredentialActor } from "@/lib/integration-credential-actor";
 import {
   CACHE_TTL_MS,
@@ -230,3 +232,39 @@ describe("integration-credentials: uncached row re-read (#4366)", () => {
     ).resolves.toEqual({ status: "not_configured" });
   });
 });
+
+describe("no AUTH_SECRET write while ring-keyed credentials exist (#4456 review)", () => {
+  const RING_KEY = Buffer.from(Array.from({ length: 32 }, (_, index) => (index * 23 + 5) % 256)).toString("base64");
+  const write = () =>
+    setIntegrationCredential({ provider: "xero", key: "client_id", value: "v", actor: ADMIN, expect: { expect: "any" } });
+
+  beforeEach(() => {
+    delete process.env.DATA_ENCRYPTION_KEYS;
+    mocks.tx.integrationCredential.upsert.mockResolvedValue({ provider: "xero", key: "client_id", updatedAt: new Date() });
+  });
+
+  it("refuses, writing and auditing nothing, when the ring is unset but a row is under a ring key", async () => {
+    mocks.tx.integrationCredential.count.mockResolvedValueOnce(2);
+    await expect(write()).rejects.toThrow(WeakAuthSecretError);
+    mocks.tx.integrationCredential.count.mockResolvedValueOnce(2);
+    await expect(write()).rejects.toThrow(/DATA_ENCRYPTION_KEYS is not set/);
+    expect(mocks.tx.integrationCredential.count).toHaveBeenCalledWith({
+      where: { secretSource: { startsWith: "DATA_ENCRYPTION_KEY:" } },
+    });
+    expect(mocks.tx.integrationCredential.upsert).not.toHaveBeenCalled();
+    expect(mocks.tx.auditLog.create).not.toHaveBeenCalled();
+  });
+
+  it("writes under AUTH_SECRET as before when nothing is under a ring key", async () => {
+    await write();
+    expect(mocks.tx.integrationCredential.upsert).toHaveBeenCalledOnce();
+  });
+
+  it("never asks when the write is under the ring", async () => {
+    process.env.DATA_ENCRYPTION_KEYS = `k1:${RING_KEY}`;
+    await write();
+    expect(mocks.tx.integrationCredential.count).not.toHaveBeenCalled();
+    expect(mocks.tx.integrationCredential.upsert).toHaveBeenCalledOnce();
+  });
+});
+

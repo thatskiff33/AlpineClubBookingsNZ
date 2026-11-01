@@ -7,7 +7,9 @@
  * part every caller still relies on.
  */
 
+import { assertLegacyCaptureAllowed } from "@/lib/integration-credentials";
 import { requireCredentialCaptureKey } from "@/lib/integration-crypto";
+import { prisma } from "@/lib/prisma";
 
 /**
  * Thrown when the stored Xero tokens cannot be used: the credential-store copy
@@ -56,7 +58,9 @@ export class XeroTokenSaveUnavailableError extends Error {
  */
 export async function assertXeroTokensCanBeStored(): Promise<void> {
   try {
-    requireCredentialCaptureKey();
+    // The store also refuses the AUTH_SECRET fallback while ring-keyed rows
+    // exist (#4456), so ask that here too, before the token is spent.
+    if (requireCredentialCaptureKey().key.legacy) await assertLegacyCaptureAllowed(prisma);
   } catch {
     throw new XeroTokenSaveUnavailableError();
   }

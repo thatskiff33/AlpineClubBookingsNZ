@@ -2321,9 +2321,15 @@ exposes both and rotating it destroys the stored data.
   be re-keyed. A member holding them is told, on the sign-in challenge and on
   their profile, to generate a new set. Email codes last ten minutes and simply
   expire.
-- **Rollout.** Set it only once every running container is on a release that
-  understands it: an older release cannot read data written under a data key.
-  Steps: [`DEPLOYMENT.md` → Adding a data-encryption key](DEPLOYMENT.md#adding-a-data-encryption-key-4456).
+- **Rollout, and no way back.** Set it only once every running container is on
+  a release that understands it: an older release cannot read data written
+  under a data key. Once rows are written under it, the previous colour of the
+  same release (started without the ring) cannot read them during the redeploy
+  that sets it, and rolling back to an older release, routing traffic back to a
+  ring-less colour or unsetting the variable strands every ring-keyed
+  credential, authenticator secret and recovery code. If that deploy fails,
+  keep the ring set and go forward. Steps and the safe sequence:
+  [`DEPLOYMENT.md` → Adding a data-encryption key](DEPLOYMENT.md#adding-a-data-encryption-key-4456).
 - **Removing a key** strands every row still naming it ("needs re-entry" for a
   credential; an authenticator that no longer verifies; recovery codes that no
   longer match). Keep an old key in the ring until nothing names it.

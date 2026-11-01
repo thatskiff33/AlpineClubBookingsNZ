@@ -48,6 +48,8 @@ import {
 } from "@/lib/integration-credential-actor";
 import {
   CredentialDecryptError,
+  DATA_KEY_SOURCE_PREFIX,
+  WeakAuthSecretError,
   decryptCredential,
   encryptCredential,
   getAuthSecretWithSource,
@@ -366,6 +368,9 @@ export async function setIntegrationCredentialInTransaction(
     key: params.key,
     plaintext: params.value,
   });
+  if (!encrypted.secretSource.startsWith(DATA_KEY_SOURCE_PREFIX)) {
+    await assertLegacyCaptureAllowed(params.tx);
+  }
   const written: CredentialRowWrite = {
     ciphertext: encrypted.ciphertext,
     iv: encrypted.iv,
@@ -408,6 +413,28 @@ export async function setIntegrationCredentialInTransaction(
   };
 }
 
+
+/**
+ * Refuse a write under the AUTH_SECRET fallback while any stored credential is
+ * already under a data-encryption ring key (#4456 review). That state means the
+ * ring was set and has since been unset or lost: its rows cannot be read, and
+ * re-entering them now would quietly put them back under the session secret the
+ * ring exists to keep them away from. Throws `WeakAuthSecretError`, so routes
+ * show the message and nothing is written; the Xero refresh asks first
+ * (`assertXeroTokensCanBeStored`) so it never spends a token it cannot store.
+ */
+export async function assertLegacyCaptureAllowed(
+  db: Pick<Prisma.TransactionClient, "integrationCredential">,
+): Promise<void> {
+  const ringRows = await db.integrationCredential.count({
+    where: { secretSource: { startsWith: DATA_KEY_SOURCE_PREFIX } },
+  });
+  if (ringRows > 0) {
+    throw new WeakAuthSecretError(
+      "Stored credentials are encrypted under a data-encryption key, but DATA_ENCRYPTION_KEYS is not set. Set it back as it was before saving credentials; otherwise this one would be saved under AUTH_SECRET alone.",
+    );
+  }
+}
 
 /**
  * What a delete is claiming, as a VALUE rather than as a convention.

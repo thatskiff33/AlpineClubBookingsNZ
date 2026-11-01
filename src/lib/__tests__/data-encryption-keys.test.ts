@@ -10,12 +10,14 @@ import {
   DATA_KEY_BYTES,
   DataKeyRingError,
   LEGACY_AUTH_SECRET_KEY_ID,
-  codeHashKeys,
-  currentDataKey,
-  dataKeyById,
   deriveDataSubkey,
   legacySecretOf,
   parseDataEncryptionKeys,
+} from "@/lib/data-encryption-key-material";
+import {
+  codeHashKeys,
+  currentDataKey,
+  dataKeyById,
   readDataKeyRing,
 } from "@/lib/data-encryption-keys";
 import { decryptCredential, encryptCredential, WeakAuthSecretError } from "@/lib/integration-crypto";
@@ -67,6 +69,11 @@ describe("parseDataEncryptionKeys (#4456)", () => {
     ["a key repeating one byte", `k1:${Buffer.alloc(32).toString("base64")}`, /repeats one byte/],
     ["the same key under two ids", `k1:${K1},k2:${K1}`, /repeats an earlier entry's key/],
     ["a trailing empty entry", `k1:${K1},`, /entry 2 is not in the form/],
+    [
+      "a key that is printable text",
+      `k1:${Buffer.from("correct-horse-battery-staple-1234", "utf8").subarray(0, 32).toString("base64")}`,
+      /is weak: every byte is printable text/,
+    ],
   ])("refuses %s as a whole ring", (_label, raw, reason) => {
     const state = parseDataEncryptionKeys(raw);
     expect(state.status).toBe("invalid");
@@ -77,6 +84,33 @@ describe("parseDataEncryptionKeys (#4456)", () => {
     expect(state.reason).not.toContain(K1);
     expect(state.reason).not.toContain(K2);
     expect(state.reason).not.toContain("not base64!!");
+  });
+});
+
+describe("a ring key may not be the auth secret (#4456 review)", () => {
+  it.each([
+    ["the same base64 text", K1, K1],
+    ["the bytes a base64 auth secret decodes to", K1.replace(/=+$/, ""), K1],
+    ["the bytes a hex auth secret decodes to", Buffer.from(K1, "base64").toString("hex"), K1],
+    ["the auth secret's own text bytes", "0123456789abcdef0123456789abcdef", Buffer.from("0123456789abcdef0123456789abcdef").toString("base64")],
+  ])("refuses %s, as a weak key", (_label, authSecret, ringKey) => {
+    const state = parseDataEncryptionKeys(`k1:${ringKey}`, authSecret);
+    expect(state.status).toBe("invalid");
+    if (state.status === "invalid") {
+      // Printable text is refused first for the last case; both say "weak".
+      expect(state.reason).toMatch(/the key for "k1" is weak/);
+      expect(state.reason).not.toContain(ringKey);
+    }
+  });
+
+  it("accepts a ring key unrelated to the auth secret", () => {
+    expect(parseDataEncryptionKeys(`k1:${K1}`, AUTH).status).toBe("configured");
+  });
+
+  it("refuses the ring in the environment when its key is the auth secret", () => {
+    process.env.AUTH_SECRET = K1;
+    process.env.DATA_ENCRYPTION_KEYS = `k1:${K1}`;
+    expect(readDataKeyRing().status).toBe("invalid");
   });
 });
 

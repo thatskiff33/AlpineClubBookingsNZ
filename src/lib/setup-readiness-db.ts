@@ -26,6 +26,7 @@ import {
 } from "@/lib/membership-types";
 import { type SetupDatabaseSnapshot } from "@/lib/setup-readiness";
 import { tallyDataKeyUsage, type DataKeyUsageSnapshot } from "@/lib/setup-readiness-data-keys";
+import { codeHashKeyId, twoFactorSecretKeyId } from "@/lib/two-factor";
 import { collapseHutFeeColumns } from "@/lib/public-hut-fee-columns";
 import { getXeroTokenReadability } from "@/lib/xero-token-store";
 import { getStripeSetupState } from "@/lib/stripe-config";
@@ -612,16 +613,19 @@ export async function getSetupDatabaseSnapshot(): Promise<SetupDatabaseSnapshot>
 
 /**
  * Stored data by the key each row names (#4456): credential rows grouped by
- * `secretSource`, and authenticator secrets still in the legacy `v1` format.
- * Counts only; no ciphertext leaves the database.
+ * `secretSource`, and each authenticator secret and unused recovery-code hash
+ * by the key id its format names. Only counts leave this function; the stored
+ * values are read here (as the sign-in path reads them) to see their prefix.
  */
 async function readDataKeyUsage(): Promise<DataKeyUsageSnapshot> {
-  const [bySource, legacyTotpSecrets] = await Promise.all([
+  const [bySource, totpSecrets, recoveryCodes] = await Promise.all([
     prisma.integrationCredential.groupBy({ by: ["secretSource"], _count: { _all: true } }),
-    prisma.member.count({ where: { totpSecret: { startsWith: "v1:" } } }),
+    prisma.member.findMany({ where: { totpSecret: { not: null } }, select: { totpSecret: true } }),
+    prisma.twoFactorRecoveryCode.findMany({ where: { usedAt: null }, select: { codeHash: true } }),
   ]);
-  return tallyDataKeyUsage(
-    bySource.map((row) => ({ secretSource: row.secretSource, count: row._count._all })),
-    legacyTotpSecrets,
-  );
+  return tallyDataKeyUsage({
+    credentialSources: bySource.map((row) => ({ secretSource: row.secretSource, count: row._count._all })),
+    totpKeyIds: totpSecrets.map((row) => (row.totpSecret ? twoFactorSecretKeyId(row.totpSecret) : null)),
+    recoveryCodeKeyIds: recoveryCodes.map((row) => codeHashKeyId(row.codeHash)),
+  });
 }

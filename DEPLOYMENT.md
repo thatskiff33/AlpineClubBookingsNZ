@@ -2047,6 +2047,29 @@ Production operator steps are the owner's.
 6. When the step is **green**, nothing stored depends on `AUTH_SECRET`; rotating
    it now only signs everyone out and invalidates links signed with it.
 
+**Once rows are written under the ring, there is no going back without it.**
+Data written under a data key can only be read by a container that holds that
+key. So:
+
+- during the redeploy that sets the variable, the previous colour (the same
+  release, started without the ring) cannot read rows the new colour or the
+  recreated cron leader has already written — a Xero token refresh, a saved
+  credential, a member enrolling an authenticator or regenerating recovery
+  codes. Set it in a quiet window and expect that colour to show "needs
+  re-entry" or refuse those members' codes until traffic has moved;
+- rolling back to a release older than #4456, routing Caddy back to a colour
+  started without the ring, or unsetting the variable strands every
+  ring-keyed credential, authenticator secret and recovery code (the setup
+  step goes red and says so, and credential capture refuses rather than
+  quietly saving under `AUTH_SECRET`).
+
+**The safe sequence if that deploy fails:** once the engine has recreated the
+cron leader with the ring (it does so before the step-16 warm-up gate), keep
+the ring set and either let the deploy complete or redeploy the same release
+with it; never route traffic back to a colour without it. If you must roll
+back to an older release, restore the ring-less state from the pre-deploy
+backup instead, as an owner-approved data operation.
+
 **Adding a newer key later:** put it **first** (`DATA_ENCRYPTION_KEYS=k2027:<new>,k2026:<old>`),
 redeploy, move the rows still on the old key, and only then remove the old
 entry. Removing a key any earlier strands every row that names it.
@@ -2175,6 +2198,12 @@ before deployment; Admin Modules do not replace that safety check.
 Preferred rollback is to route Caddy back to the previous healthy color while it
 is still running. If schema changes have already applied, rollback must respect
 the migration policy and any compatibility constraints in the migration PR.
+
+**Not once a data-encryption key is in use (#4456).** Rows written under
+`DATA_ENCRYPTION_KEYS` cannot be read by an older release or by a colour started
+without the ring, so routing back to one strands those credentials, two-factor
+secrets and recovery codes. Keep the ring set and go forward; the safe sequence
+is in [Adding a data-encryption key](#adding-a-data-encryption-key-4456).
 
 **The previous release's images are held back from the deploy's own prune
 (#3539).** That rollback needs the previous images on the host, and the deploy

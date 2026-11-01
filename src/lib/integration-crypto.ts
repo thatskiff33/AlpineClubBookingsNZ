@@ -51,11 +51,13 @@ import { createCipheriv, createDecipheriv, hkdfSync, randomBytes } from "crypto"
 import {
   DataKeyRingError,
   LEGACY_AUTH_SECRET_KEY_ID,
-  currentDataKey,
-  dataKeyById,
   deriveDataSubkey,
   legacySecretOf,
   type DataKey,
+} from "@/lib/data-encryption-key-material";
+import {
+  currentDataKey,
+  dataKeyById,
 } from "@/lib/data-encryption-keys";
 
 const ENCRYPTION_ALGORITHM = "aes-256-gcm";

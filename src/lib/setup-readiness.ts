@@ -2163,7 +2163,7 @@ export function buildSetupReadiness(
       buildEnvironmentRoleCheck(input.database, progress),
       buildRuntimeEnvCheck(env, progress),
       buildAuthSecretStrengthCheck(env, progress),
-      applyProgress(buildDataEncryptionKeyCheck(readEnv(env, "DATA_ENCRYPTION_KEYS"), input.database?.dataKeyUsage), progress),
+      applyProgress(buildDataEncryptionKeyCheck(readEnv(env, "DATA_ENCRYPTION_KEYS"), input.database?.dataKeyUsage, readEnv(env, "AUTH_SECRET") ?? readEnv(env, "NEXTAUTH_SECRET")), progress),
       buildSeedAdminCheck(input.database, progress),
       buildFeatureFlagCheck(input.database, progress),
     ],
