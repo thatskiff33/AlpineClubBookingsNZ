@@ -170,6 +170,8 @@ import {
   classifyFinishedStayChangeFeeRule,
   finishedStayNoticeDay,
   finishedStayRemovalFeeCents,
+  finishedStayReductionReturnedInFull,
+  finishedStayRemovalIsCharged,
   FINISHED_STAY_INVOICE_RAISED_MESSAGE,
   recordFinishedStayFeeOwed,
   finishedStayRemovedPortion,
@@ -1527,6 +1529,7 @@ export async function modifyBookingBatch({
               stored: entry.guest,
               proposed: entry,
             })),
+            changesPromoCodes: requestChangesPromoCodes(input),
           })
         : null;
     const moneyTierDay = finishedStayCorrection
@@ -1538,8 +1541,12 @@ export async function modifyBookingBatch({
     // 7 Oct 2026), and whatever reduction then remains comes back in full, so
     // the tier is applied once and never netted against what was added.
     const finishedStayRemovalCharged =
-      Boolean(finishedStayCorrection) &&
-      finishedStayChangeFeeRule !== "ADD_ONLY_NO_FEE";
+      finishedStayChangeFeeRule !== null && finishedStayRemovalIsCharged(finishedStayChangeFeeRule);
+    // #4533: and a correction that applies a promo code returns its reduction
+    // in full too — the same untiered settlement, with no removal fee.
+    const finishedStayReductionInFull =
+      finishedStayChangeFeeRule !== null &&
+      finishedStayReductionReturnedInFull(finishedStayChangeFeeRule, requestChangesPromoCodes(input));
     const removedPortion = finishedStayRemovalCharged
       ? finishedStayRemovedPortion({
           storedGuests: booking.guests,
@@ -1566,7 +1573,7 @@ export async function modifyBookingBatch({
     // stay correction is charged ONLY the same-day retention on what it removes
     // — never the ordinary late-change fee across the whole booking.
     const chargeableChangeFeeCents =
-      finishedStayChangeFeeRule === "ADD_ONLY_NO_FEE"
+      finishedStayChangeFeeRule === "ADD_ONLY_NO_FEE" || finishedStayChangeFeeRule === "PROMO_ONLY_NO_FEE"
       ? 0
       : finishedStayCorrection
         ? removalFeeCents
@@ -1609,7 +1616,7 @@ export async function modifyBookingBatch({
     // #3750: a correction already paid the tier in its fee, so what remains of a
     // reduction comes back in full — the tier applies once, to the removed portion.
     // #3954: what remains once the unpaid ask has taken its share.
-    const settlementOptions = finishedStayRemovalCharged
+    const settlementOptions = finishedStayReductionInFull
         ? calculateFullReductionSettlementOptions({
             booking,
             netChargeCents: reduction.netChargeLeftCents,
@@ -1713,7 +1720,7 @@ export async function modifyBookingBatch({
       format,
       // #3750 (F2): the tier was already applied in the removal fee, so an
       // applied-credit give-back returns the remaining reduction once, untiered.
-      reductionUntiered: finishedStayRemovalCharged,
+      reductionUntiered: finishedStayReductionInFull,
       // #3954 x #3750: recorded once, below, by `recordFinishedStayFeeOwed`.
       changeFeeRecordedByCaller: feeAddedToAmountOwed,
       // #3980: an officer approves a correction again rather than retrying it.

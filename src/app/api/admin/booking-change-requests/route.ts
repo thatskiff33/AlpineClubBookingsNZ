@@ -8,6 +8,7 @@ import { isFinishedStay } from "@/lib/booking-edit-policy";
 import {
   describeRequestedGuestNights,
   storedRequestNamesNoChange,
+  storedRequestPromoFacts,
 } from "@/lib/booking-change-request-stored";
 import { hasAdminAreaAccess } from "@/lib/admin-permissions";
 import { loadMemberGuestFindGate } from "@/lib/member-guest-find-service";
@@ -139,6 +140,9 @@ export async function GET(req: NextRequest) {
       executesOnApproval &&
       request.status === "REQUESTED" &&
       storedRequestNamesNoChange(request.requestedChanges, booking);
+    // #4533: the promo change a request carries, and whether the officer may
+    // enter one on approval — asked through the executor's schema and mapping.
+    const promoFacts = storedRequestPromoFacts(request.requestedChanges, booking);
     return {
       ...request,
       // #4030 review S7: the guests' member ids reach the screen only where
@@ -146,6 +150,8 @@ export async function GET(req: NextRequest) {
       booking: acceptsOfficerGuests ? { ...booking, guests } : booking,
       executesOnApproval,
       acceptsOfficerGuests,
+      acceptsOfficerPromo: executesOnApproval && request.status === "REQUESTED" && promoFacts.takesPromoEntry,
+      promoCorrection: promoFacts.promoCorrection,
       // #4088: each guest's requested nights, as runs, for the card; #4157:
       // a pending request read against the live rows approval reads.
       requestedGuestNights: describeRequestedGuestNights(request.requestedChanges, {

@@ -114,6 +114,9 @@ export interface BookingData {
     // Issue #1668: an admin may override the date-window locks for this booking.
     // Optional so pre-existing fixtures stay valid; the booking page sets it.
     adminOverrideAvailable?: boolean;
+    // #4533: an officer on a FINISHED stay, where Save cannot apply and a promo
+    // code is sent as a correction request instead. Absent for everyone else.
+    finishedStayPromoCorrection?: boolean;
   };
   // #2104: an already-flagged/reviewed booking (requiresAdminReview && a
   // non-null adminReviewStatus) must not re-prompt for a justification — the

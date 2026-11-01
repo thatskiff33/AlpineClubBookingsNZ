@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRef, useState, type ComponentType, type ReactNode } from "react";
 
 import { Button, type ButtonProps } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ADMIN_VIEW_ONLY_ACTION_REASON } from "@/hooks/use-admin-area-edit-access";
 import { calendarDateOfDateOnlyInstant, formatStayDate } from "@/lib/club-time";
@@ -18,6 +19,7 @@ import type {
   ChangeRequestStay,
   OfficerEnteredGuest,
 } from "@/lib/booking-change-request-guests";
+import type { ChangeRequestPromoChange } from "@/lib/booking-change-request-promo";
 import type { ClubFormat } from "@/lib/club-format";
 import type { OverCapacityNight } from "@/lib/over-capacity-confirmation";
 import { formatCents } from "@/lib/utils";
@@ -53,8 +55,8 @@ export type FinishedStayQuoteFigures = {
 export type FinishedStayQuote = {
   figures: FinishedStayQuoteFigures | null;
   forSettlementMethod: FinishedStaySettlementMethod;
-  /** #4030: the officer-entered guests (as sent) the figures were computed for. */
-  forOfficerGuests: string;
+  /** #4030 / #4533: the officer's entry (guests and promo, as sent) the figures were computed for. */
+  forOfficerEntry: string;
   confirmOverCapacity: boolean;
   overCapacityNights: OverCapacityNight[] | null;
   loading: boolean;
@@ -63,19 +65,25 @@ export type FinishedStayQuote = {
 const EMPTY_QUOTE: FinishedStayQuote = {
   figures: null,
   forSettlementMethod: "",
-  forOfficerGuests: "",
+  forOfficerEntry: "",
   confirmOverCapacity: false,
   overCapacityNights: null,
   loading: false,
 };
 
 /**
- * #4030 Part B: the guests an officer has entered on one card, as the approval
- * and its quote send them ("" when none). The same string keys the quote, so
- * figures computed for one list never arm an approval of another.
+ * #4030 Part B: the guests an officer has entered on one card — and, #4533, the
+ * promo code — as the approval and its quote send them ("" when none). The
+ * same string keys the quote, so figures computed for one entry never arm an
+ * approval of another.
  */
-export function officerGuestsKey(guests: readonly OfficerEnteredGuest[] | null): string {
-  return guests && guests.length > 0 ? JSON.stringify(guests) : "";
+export function officerEntryKey(
+  guests: readonly OfficerEnteredGuest[] | null,
+  promo: ChangeRequestPromoChange | null = null,
+): string {
+  const hasGuests = Boolean(guests && guests.length > 0);
+  if (!hasGuests && !promo) return "";
+  return JSON.stringify({ guests: hasGuests ? guests : null, promo });
 }
 
 /**
@@ -105,12 +113,14 @@ export function useFinishedStayQuotes(onError: (message: string) => void) {
       confirmOverCapacity: boolean;
       /** #4030: the officer's entry, when the card takes one. */
       officerGuests?: OfficerEnteredGuest[] | null;
+      /** #4533: the officer's promo code, when the card takes one. */
+      officerPromo?: ChangeRequestPromoChange | null;
     },
   ) {
     const generation = bump(id);
     const stale = () => generations.current[id] !== generation;
     patch(id, { loading: true, figures: null });
-    const forOfficerGuests = officerGuestsKey(answers.officerGuests ?? null);
+    const forOfficerEntry = officerEntryKey(answers.officerGuests ?? null, answers.officerPromo ?? null);
     try {
       const response = await fetch(`/api/admin/booking-change-requests/${id}/quote`, {
         method: "POST",
@@ -118,7 +128,8 @@ export function useFinishedStayQuotes(onError: (message: string) => void) {
         body: JSON.stringify({
           ...(answers.settlementMethod ? { settlementMethod: answers.settlementMethod } : {}),
           ...(answers.confirmOverCapacity ? { confirmOverCapacity: true } : {}),
-          ...(forOfficerGuests ? { officerGuests: answers.officerGuests } : {}),
+          ...(answers.officerGuests?.length ? { officerGuests: answers.officerGuests } : {}),
+          ...(answers.officerPromo ? { officerPromo: answers.officerPromo } : {}),
         }),
       });
       const data = await response.json().catch(() => ({}));
@@ -138,7 +149,7 @@ export function useFinishedStayQuotes(onError: (message: string) => void) {
         loading: false,
         figures: data.quote as FinishedStayQuoteFigures,
         forSettlementMethod: answers.settlementMethod,
-        forOfficerGuests,
+        forOfficerEntry,
         confirmOverCapacity: answers.confirmOverCapacity,
         overCapacityNights: null,
       });
@@ -186,13 +197,13 @@ export function expectedFiguresOf(quote: FinishedStayQuote | undefined) {
 export function quoteIsCurrent(
   quote: FinishedStayQuote | undefined,
   settlementMethod: FinishedStaySettlementMethod,
-  /** #4030: `officerGuestsKey` of the guests on screen. */
-  officerGuests: string,
+  /** #4030 / #4533: `officerEntryKey` of the entry on screen. */
+  officerEntry: string,
 ): quote is FinishedStayQuote & { figures: FinishedStayQuoteFigures } {
   return (
     Boolean(quote?.figures) &&
     quote?.forSettlementMethod === settlementMethod &&
-    quote?.forOfficerGuests === officerGuests
+    quote?.forOfficerEntry === officerEntry
   );
 }
 
@@ -267,6 +278,85 @@ export function officerGuestsPayload(
   stay: ChangeRequestStay,
 ): OfficerEnteredGuest[] | null {
   return guests.length > 0 ? changeRequestGuestsPayload(guests, stay) : null;
+}
+
+/**
+ * #4533: on a finished stay's request that names no promo code, the officer may
+ * enter the one the member should have had — a missed free night, say. The code
+ * is applied exactly as Edit Booking applies it: the same eligibility, the same
+ * caps, the same refusal when it does not apply. The figures check shows the
+ * reduction before approving.
+ */
+export function OfficerPromoEntry({
+  requestId,
+  code,
+  onChange,
+  canEdit,
+}: {
+  requestId: string;
+  code: string;
+  onChange: (code: string) => void;
+  canEdit: boolean;
+}) {
+  return (
+    <div className="space-y-2 rounded-md border border-border p-3 text-sm">
+      <Label htmlFor={`officer-promo-${requestId}`}>Promo code to apply (optional)</Label>
+      <p className="text-xs text-muted-foreground">
+        If the member should have had a promo code on this stay — a free night
+        assigned to them, say — enter it here. Approving records it on the
+        request as entered by you on the member&rsquo;s behalf, applies it
+        exactly as Edit Booking would (who it is assigned to and its limits
+        still apply), counts it as used, and settles the reduction.
+      </p>
+      <Input
+        id={`officer-promo-${requestId}`}
+        value={code}
+        maxLength={50}
+        disabled={!canEdit}
+        title={canEdit === false ? ADMIN_VIEW_ONLY_ACTION_REASON : undefined}
+        onChange={(event) => onChange(event.target.value)}
+        placeholder="Promo code"
+        autoComplete="off"
+      />
+    </div>
+  );
+}
+
+/** #4533: the officer's promo entry as the approval sends it, or null when none. */
+export function officerPromoPayload(code: string): ChangeRequestPromoChange | null {
+  const trimmed = code.trim();
+  return trimmed ? { promoCode: trimmed } : null;
+}
+
+/**
+ * #4533: the officer's notify-or-not choice, offered only on a promo-only
+ * correction — a guest or date change always emails the member (#4030).
+ */
+export function FinishedStayNotifyChoice({
+  requestId,
+  notifyMember,
+  canEdit,
+  onChange,
+}: {
+  requestId: string;
+  notifyMember: boolean;
+  canEdit: boolean;
+  onChange: (notifyMember: boolean) => void;
+}) {
+  return (
+    <label className="flex items-start gap-2 text-sm" htmlFor={`notify-member-${requestId}`}>
+      <input
+        id={`notify-member-${requestId}`}
+        type="checkbox"
+        className="mt-1"
+        checked={notifyMember}
+        disabled={!canEdit}
+        title={canEdit === false ? ADMIN_VIEW_ONLY_ACTION_REASON : undefined}
+        onChange={(event) => onChange(event.target.checked)}
+      />
+      <span>Email the member about this correction</span>
+    </label>
+  );
 }
 
 /** The calendar days a panel row's booking runs over (`yyyy-MM-dd`). */
@@ -384,7 +474,9 @@ export function FinishedStayApprovalNotice() {
       who stays — is charged the cancellation policy&rsquo;s same-day share as a
       change fee, paid or unpaid, and is never netted against guests added in
       its place; the rest comes back in full, the way it was paid unless you
-      choose account credit below. Check the figures before approving. If the booking has changed since the
+      choose account credit below. A promo code applied this way carries no
+      change fee, and its reduction comes back in full as account credit unless
+      you choose a refund. Check the figures before approving. If the booking has changed since the
       request was made, nothing is applied and the request stays pending.
     </p>
   );
@@ -474,12 +566,26 @@ export function FinishedStayUnlinkedNote() {
 export function decisionToastMessage(args: {
   status: "APPROVED" | "REJECTED";
   execution:
-    | { executed?: boolean; followUpFailed?: boolean; officerEnteredGuestCount?: number }
+    | {
+        executed?: boolean;
+        followUpFailed?: boolean;
+        officerEnteredGuestCount?: number;
+        promoCodesApplied?: string[];
+        notifyMember?: boolean;
+      }
     | undefined;
   linkedModificationId: string;
 }): string {
   if (args.status !== "APPROVED") return "Request rejected";
   if (args.execution?.executed) {
+    // #4533: a promo correction says what it applied and whether the member hears.
+    if (args.execution.promoCodesApplied?.length && !args.execution.followUpFailed) {
+      return `Promo code ${args.execution.promoCodesApplied.join(", ")} applied to the booking and the request approved.${
+        args.execution.notifyMember === false
+          ? " The member was not emailed."
+          : " The member is emailed the change."
+      }`;
+    }
     if (args.execution.officerEnteredGuestCount && !args.execution.followUpFailed) {
       return "Guests recorded on the member's behalf, and the request approved and applied to the booking. The member is emailed the change and any amount due.";
     }

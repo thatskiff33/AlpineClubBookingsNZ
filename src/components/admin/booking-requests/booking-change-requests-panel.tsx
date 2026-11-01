@@ -28,12 +28,15 @@ import { useAgeTierOptions } from "@/lib/use-age-tier-options";
 import {
   decisionToastMessage,
   FinishedStayApprovalNotice,
+  FinishedStayNotifyChoice,
   FinishedStaySettlementField,
   FinishedStayQuoteSummary,
   expectedFiguresOf,
   OfficerGuestEntry,
-  officerGuestsKey,
+  officerEntryKey,
   officerGuestsPayload,
+  OfficerPromoEntry,
+  officerPromoPayload,
   OverCapacityConfirmation,
   quoteIsCurrent,
   requestStay,
@@ -179,6 +182,19 @@ export function BookingChangeRequestsPanel({
     request.acceptsOfficerGuests
       ? officerGuestsPayload(decisionDraftFor(request.id).officerGuests, requestStay(request.booking))
       : null;
+  /** This row's officer-entered promo code as sent, or null (#4533). */
+  const officerPromoFor = (request: BookingChangeRequestData) =>
+    request.acceptsOfficerPromo ? officerPromoPayload(decisionDraftFor(request.id).officerPromoCode) : null;
+  /**
+   * #4533: whether approving would be a promo-only correction — the request's
+   * own promo change is its one change, or it names nothing and the officer
+   * entered only a code — the one shape whose email the officer may withhold.
+   * The executor asks the same question under its locks and refuses otherwise.
+   */
+  const promoOnlyCorrection = (request: BookingChangeRequestData) =>
+    request.promoCorrection
+      ? request.promoCorrection.onlyChange
+      : Boolean(request.acceptsOfficerGuests && officerPromoFor(request) && !officerGuestsFor(request));
   const currentPath = buildBookingChangeRequestsPath(
     basePath,
     searchParams.toString(),
@@ -258,6 +274,9 @@ export function BookingChangeRequestsPanel({
                   ? { confirmOverCapacity: true }
                   : {}),
                 ...(officerGuestsFor(request) ? { officerGuests: officerGuestsFor(request) } : {}),
+                ...(officerPromoFor(request) ? { officerPromo: officerPromoFor(request) } : {}),
+                // #4533: the email choice, sent only where it can be honoured.
+                ...(promoOnlyCorrection(request) && !draft.notifyMember ? { notifyMember: false } : {}),
                 // #4030 review C4: the figures this approval was shown.
                 expectedFigures: expectedFiguresOf(quotes.quoteFor(request.id)),
               }
@@ -390,10 +409,11 @@ export function BookingChangeRequestsPanel({
             const quote = quotes.quoteFor(request.id);
             const overCapacityNights = quote?.overCapacityNights ?? null;
             const officerGuests = officerGuestsFor(request);
+            const officerPromo = officerPromoFor(request);
             const quoteCurrent = quoteIsCurrent(
               quote,
               decisionDraftFor(request.id).settlementMethod,
-              officerGuestsKey(officerGuests),
+              officerEntryKey(officerGuests, officerPromo),
             );
 
             return (
@@ -566,6 +586,25 @@ export function BookingChangeRequestsPanel({
                           ActionButton={OfficerEntryButton}
                         />
                       ) : null}
+                      {request.acceptsOfficerPromo ? (
+                        <OfficerPromoEntry
+                          requestId={request.id}
+                          code={decisionDraftFor(request.id).officerPromoCode}
+                          canEdit={canEdit}
+                          onChange={(officerPromoCode) => {
+                            updateDecisionDraft(request.id, { officerPromoCode });
+                            quotes.clear(request.id); // figures belong to their entry
+                          }}
+                        />
+                      ) : null}
+                      {request.executesOnApproval && promoOnlyCorrection(request) ? (
+                        <FinishedStayNotifyChoice
+                          requestId={request.id}
+                          notifyMember={decisionDraftFor(request.id).notifyMember}
+                          canEdit={canEdit}
+                          onChange={(notifyMember) => updateDecisionDraft(request.id, { notifyMember })}
+                        />
+                      ) : null}
                       {request.executesOnApproval ? (
                         <FinishedStaySettlementField
                           requestId={request.id}
@@ -587,6 +626,7 @@ export function BookingChangeRequestsPanel({
                               settlementMethod: decisionDraftFor(request.id).settlementMethod,
                               confirmOverCapacity: quote?.confirmOverCapacity === true, // a list change clears it (M1)
                               officerGuests,
+                              officerPromo,
                             })
                           }
                         />
@@ -623,6 +663,7 @@ export function BookingChangeRequestsPanel({
                                   settlementMethod: decisionDraftFor(request.id).settlementMethod,
                                   confirmOverCapacity: true,
                                   officerGuests,
+                                  officerPromo,
                                 })
                               }
                               disabled={quote?.loading === true}

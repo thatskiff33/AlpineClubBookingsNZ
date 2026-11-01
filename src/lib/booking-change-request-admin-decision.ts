@@ -47,6 +47,11 @@ import {
   officerEnteredGuestsSchema,
   type OfficerEnteredGuest,
 } from "@/lib/booking-change-request-guests";
+import {
+  changeRequestPromoChangeSchema,
+  OFFICER_PROMO_NEEDS_EXECUTION_MESSAGE,
+  type ChangeRequestPromoChange,
+} from "@/lib/booking-change-request-promo";
 
 /**
  * The officer's decision on a LOCKED_PERIOD change request
@@ -129,6 +134,17 @@ export const finishedStayApprovalFields = {
    */
   officerGuests: officerEnteredGuestsSchema.optional(),
   /**
+   * #4533: a promo code the officer entered on the member's behalf, for a
+   * request that names none. Accepted only on an approval that applies the
+   * request; stored on it by the approval's own claim.
+   */
+  officerPromo: changeRequestPromoChangeSchema.optional(),
+  /**
+   * #4533: the officer's notify-or-not choice; absent means notify. `false`
+   * is refused unless the request's one change is a promo code.
+   */
+  notifyMember: z.boolean().optional(),
+  /**
    * #4030 review C4: the money figures the officer's check showed, REQUIRED on
    * an approval that applies the request; the executor refuses one whose own
    * figures differ.
@@ -151,6 +167,8 @@ export const finishedStayQuoteSchema = z.object({
   confirmOverCapacity: z.boolean().optional(),
   settlementMethod: z.enum(["card", "credit"]).optional(),
   officerGuests: officerEnteredGuestsSchema.optional(),
+  /** #4533: the officer's promo entry, priced exactly as approving would. */
+  officerPromo: changeRequestPromoChangeSchema.optional(),
 });
 
 /** #4030: an officer's entry outside an approval that applies the request. */
@@ -202,16 +220,24 @@ export async function finishedStayApprovalResponse(
       expectedVersion?: number;
       execute?: boolean;
       officerGuests?: OfficerEnteredGuest[];
+      officerPromo?: ChangeRequestPromoChange;
+      notifyMember?: boolean;
       expectedFigures?: FinishedStayExpectedFigures;
     };
     actorMemberId: string;
   },
 ): Promise<NextResponse | null> {
   const { request, body } = args;
-  if (body.status !== "APPROVED") {
-    return body.officerGuests
+  // #4030 review C3 / #4533: an entry sent with a decision that applies nothing
+  // is refused, never dropped silently.
+  const entryRefusal = () =>
+    body.officerGuests
       ? NextResponse.json({ error: OFFICER_GUESTS_NEED_EXECUTION_MESSAGE }, { status: 400 })
-      : null;
+      : body.officerPromo
+        ? NextResponse.json({ error: OFFICER_PROMO_NEEDS_EXECUTION_MESSAGE }, { status: 400 })
+        : null;
+  if (body.status !== "APPROVED") {
+    return entryRefusal();
   }
   const today = (await clubTime()).today();
   const finished = isFinishedStay(request.booking, dateOnlyInstantOf(today));
@@ -234,9 +260,7 @@ export async function finishedStayApprovalResponse(
     // Reached by an approval with `execute: false` on a stay still running —
     // an acknowledgement, which applies nothing. An entry sent with one is
     // refused here, never dropped silently (#4030 review C3).
-    return body.officerGuests
-      ? NextResponse.json({ error: OFFICER_GUESTS_NEED_EXECUTION_MESSAGE }, { status: 400 })
-      : null;
+    return entryRefusal();
   }
   if (body.linkedModificationId) {
     return NextResponse.json(
@@ -263,6 +287,8 @@ export async function finishedStayApprovalResponse(
     confirmOverCapacity: body.confirmOverCapacity === true,
     settlementMethod: body.settlementMethod,
     officerGuests: body.officerGuests,
+    officerPromo: body.officerPromo,
+    notifyMember: body.notifyMember,
     todayAtClub: today,
     mode: { expectedFigures: body.expectedFigures },
   });
@@ -317,6 +343,8 @@ export async function finishedStayQuoteResponse(
     confirmOverCapacity: args.body.confirmOverCapacity === true,
     settlementMethod: args.body.settlementMethod,
     officerGuests: args.body.officerGuests,
+    officerPromo: args.body.officerPromo,
+    notifyMember: undefined,
     todayAtClub: today,
     mode: { dryRun: true },
   });
@@ -407,6 +435,18 @@ function finishedStayRefusalResponse(
   return null;
 }
 
+/** The approval's audit summary: what the officer entered, then what was done. */
+function approvalAuditSummary(entry: { officerEnteredGuests: boolean; promoCodes: string[] | null }): string {
+  const entered = [
+    entry.officerEnteredGuests ? "Guests entered by the booking officer on the member's behalf" : null,
+    // #4533: the promo code applied, named on the approval's own row.
+    entry.promoCodes ? `Promo code ${entry.promoCodes.join(", ")} applied on the member's behalf` : null,
+  ].filter((part): part is string => part !== null);
+  return entered.length > 0
+    ? `${entered.join("; ")}; booking change request approved and applied to the finished stay`
+    : "Booking change request approved and applied to the finished stay";
+}
+
 /**
  * #3750: approve-and-execute on a finished stay, or its dry run. Every refusal
  * leaves the request REQUESTED at its old version — the executor's transaction
@@ -424,6 +464,8 @@ async function runFinishedStayApproval(
     confirmOverCapacity: boolean;
     settlementMethod: "card" | "credit" | undefined;
     officerGuests: OfficerEnteredGuest[] | undefined;
+    officerPromo: ChangeRequestPromoChange | undefined;
+    notifyMember: boolean | undefined;
     todayAtClub: CalendarDate;
     /** A dry run, or an approval carrying the figures the officer was shown. */
     mode: FinishedStayApprovalMode;
@@ -450,6 +492,8 @@ async function runFinishedStayApproval(
       confirmOverCapacity: args.confirmOverCapacity,
       settlementMethod: args.settlementMethod,
       ...(args.officerGuests ? { officerEnteredGuests: args.officerGuests } : {}),
+      ...(args.officerPromo ? { officerPromoChange: args.officerPromo } : {}),
+      ...(args.notifyMember === false ? { notifyMember: false } : {}),
       todayAtClub: args.todayAtClub,
       format,
       preTransaction,
@@ -513,6 +557,7 @@ async function runFinishedStayApproval(
   // #4030 Part B: the officer's entry, named on the approval's own row — the
   // officer is the row's actor, and the guests they entered are listed.
   const officerEntered = result.officerEnteredGuests;
+  const promoChange = result.promoChange;
   logAudit({
     action: "booking-change-request.approve",
     memberId: args.actorMemberId,
@@ -522,9 +567,10 @@ async function runFinishedStayApproval(
     entityId: id,
     category: "booking",
     outcome: "success",
-    summary: officerEntered
-      ? "Guests entered by the booking officer on the member's behalf; booking change request approved and applied to the finished stay"
-      : "Booking change request approved and applied to the finished stay",
+    summary: approvalAuditSummary({
+      officerEnteredGuests: Boolean(officerEntered),
+      promoCodes: promoChange?.codes ?? null,
+    }),
     details: args.adminNotes,
     // `INV-PRIV-018`: exactly what the acknowledgement path discloses — the
     // member-facing explanation, which the member reads on their booking page —
@@ -567,6 +613,17 @@ async function runFinishedStayApproval(
             })),
           }
         : null,
+      // #4533: the promo change applied, who entered it and where, and the
+      // officer's email choice — joined to the modification above.
+      promoChange: promoChange
+        ? {
+            codes: promoChange.codes,
+            onMemberBehalf: true,
+            enteredByMemberId: promoChange.enteredBy.officerMemberId,
+            enteredOn: promoChange.enteredBy.enteredOn,
+          }
+        : null,
+      notifyMember: result.notifyMember,
     },
     ipAddress,
   });
@@ -587,6 +644,8 @@ async function runFinishedStayApproval(
       settlementMethod: result.settlementMethod,
       capacityOverridden: result.capacityOverridden,
       officerEnteredGuestCount: officerEntered?.length ?? 0,
+      promoCodesApplied: promoChange?.codes ?? [],
+      notifyMember: result.notifyMember,
       followUpFailed: result.followUpFailed === true,
     },
   });

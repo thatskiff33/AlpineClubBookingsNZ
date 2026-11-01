@@ -60,6 +60,10 @@ import {
 } from "@/lib/booking-dependant-identity-doors";
 import { PriceSummaryCard } from "@/components/edit-booking/price-summary-card";
 import { hasSeveralPromoCodes, PromoCodeCard } from "@/components/edit-booking/promo-code-card";
+import {
+  FinishedStayPromoCorrectionCard,
+  promoActionAsCorrection,
+} from "@/components/edit-booking/finished-stay-promo-correction-card";
 import { ReviewJustificationField } from "@/components/edit-booking/review-justification-field";
 import {
   exceptionProposalSignature,
@@ -623,7 +627,9 @@ export function EditBookingPanel({
       storedElectionCents > 0 ||
       ledgerAppliedCreditCents > 0);
 
-  const hasChanges =
+  // #4533: the changes other than the promo code, which a finished stay's
+  // promo correction request cannot carry.
+  const hasNonPromoChanges =
     checkIn !== booking.checkIn ||
     checkOut !== booking.checkOut ||
     removedGuestIds.size > 0 ||
@@ -631,9 +637,13 @@ export function EditBookingPanel({
     guestRangesChanged ||
     guestNightsChanged ||
     guestNamesChanged ||
-    promoAction.type !== "keep" ||
     otherLodgeRate.changed ||
     creditChanged;
+  const hasChanges = hasNonPromoChanges || promoAction.type !== "keep";
+  // #4533: an officer on a finished stay — Save cannot apply here, so the panel
+  // says so and offers the promo correction request instead.
+  const finishedStayLocked =
+    booking.editPolicy.finishedStayPromoCorrection === true && !overrideEnabled;
 
   // #4202: the officer re-rates, read ONCE for the payload and the promo box.
   const editRerates = useEditRerates({
@@ -1799,6 +1809,15 @@ export function EditBookingPanel({
         />
       )}
 
+      {finishedStayLocked && hasChanges ? (
+        <FinishedStayPromoCorrectionCard
+          bookingId={booking.id}
+          promoChange={promoActionAsCorrection(promoAction, remainingGuests)}
+          otherChanges={hasNonPromoChanges}
+          promoRemoved={promoAction.type === "remove"}
+        />
+      ) : null}
+
       {showChangeRequestPath && (
         <ChangeRequestCard
           reason={requestReason}
@@ -1932,6 +1951,8 @@ export function EditBookingPanel({
               onClick={handleSaveClick}
               disabled={
                 !hasChanges ||
+                // #4533: said by the finished-stay card above, never silent.
+                finishedStayLocked ||
                 saving ||
                 quoteLoading ||
                 !quote ||
