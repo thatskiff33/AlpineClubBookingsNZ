@@ -449,6 +449,9 @@ async function untilSomeoneWaits(): Promise<void> {
   });
 
   it("a journal-era booking confirmed while inactive gets its R01 from the back-post, and the census clears", async () => {
+    // The journal era begins with an R01: post one first, so this test stands alone.
+    await settleHistoryByCard(await newBooking(), PRICE);
+    vi.setSystemTime(new Date(Date.now() + 60_000));
     const id = await newBooking();
     await prisma.clubFormatSettings.create({ data: { id: "default", currencyCode: "JPY", locale: "ja-JP" } });
     try {
