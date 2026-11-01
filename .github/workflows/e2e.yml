@@ -173,7 +173,7 @@ jobs:
       - name: Save the Next.js build cache
         if: steps.scope.outputs.needed != 'false' && github.event_name == 'push'
         continue-on-error: true
-        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .artifacts/next-build-cache
           key: e2e-next-build-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}-${{ github.sha }}
