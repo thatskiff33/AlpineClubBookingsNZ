@@ -230,6 +230,16 @@ renders, plus an operator alert. `PENDING -> PAID` via the public payment link i
 the exception that never needs it: that route refuses a booking carrying an
 election outright rather than charging the pre-credit price.
 
+A bank-transfer booking's charge is in the member-money journal before its
+`PAID` (#4628, `INV-MONEY-045`): the transitions that issue its payable invoice
+(the internet-banking create into `PAYMENT_PENDING` or `CONFIRMED`, the switch
+to internet banking, the school pay-on-account approval) post R01; an edit or
+`CANCELLED` before payment re-states it; and the later `PAID` (the settle, or
+the Internet Banking reconcile's flip, which now writes the confirmation's
+ledger lines as the settle does) links its lines to that charge rather than
+charging again. Every writer that sets `PAID` or `CANCELLED` is classified by
+`booking-sale-status-writer-census.test.ts`.
+
 Waitlist confirmation and expiry serialize on the offered booking's lodge lock.
 Confirmation re-reads `WAITLIST_OFFERED` and the deadline after acquiring the
 lock and uses a status/deadline-guarded claim, so an expiry that wins first
@@ -3914,6 +3924,16 @@ resolves in Xero Operations.
 Refund notes target the invoice that held each paid share and wait for its
 unpaid-balance waiver to finish before payout. The organiser's app
 notice is a separate durable email row, sent by the email retry lifecycle.
+
+The outbox scan (`processQueuedXeroOutboxOperations`) and the retry scan
+(`processQueuedXeroOperationRetries`) read `PENDING` rows oldest first, ordered
+by `createdAt` then `id` (#4663). `createdAt` comes from JS time, so rows queued
+in one millisecond tie (every row under the frozen test clock), and without the
+`id` tiebreak a tie fell to PostgreSQL's physical row order. The `id` is a cuid,
+so a tie breaks deterministically but not in insertion order: nothing may rely
+on first-in-first-out within one millisecond. A test that runs the worker with
+`limit: 1` reads the row the worker holds, or makes its target the only eligible
+row, and never assumes which of two tied rows is first.
 
 ```text
 local business event -> Xero outbox operation queued

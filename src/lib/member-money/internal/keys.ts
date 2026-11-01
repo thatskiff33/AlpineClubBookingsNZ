@@ -47,6 +47,13 @@ export const memberMoneyEventKeys = {
    * writes nothing posts nothing.
    */
   backPost: (firstLineId: string) => key(`back-post:${part(firstLineId, "first legacy line id")}`),
+  /**
+   * #4628 (M3c): the one restatement a bank-transfer booking's legacy
+   * confirmation may need, when the lines it writes add up to other than the
+   * charge its binding R01 and pre-settlement edits left in the journal. A
+   * booking is confirmed on the legacy ledger once (`INV-MONEY-033`), so once.
+   */
+  chargeRestatement: (bookingId: string) => key(`charge-restatement:${part(bookingId, "booking id")}`),
   /** D4: one transfer per merge of two members. */
   merge: (fromMemberId: string, toMemberId: string) =>
     key(`merge:${part(fromMemberId, "merged-away member id")}:${part(toMemberId, "surviving member id")}`),

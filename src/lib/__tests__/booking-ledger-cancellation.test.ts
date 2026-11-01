@@ -14,7 +14,9 @@ const log = vi.hoisted(() => ({ warn: vi.fn(), error: vi.fn(), info: vi.fn() }))
 vi.mock("@/lib/logger", () => ({ default: log }));
 // #4627: the journal half runs on PostgreSQL (`booking-ledger-journal.realdb.test.ts`), not on this fake store.
 const journalPost = vi.hoisted(() => vi.fn(async () => null));
-vi.mock("@/lib/member-money/doors", () => ({ postBookingLedgerJournal: journalPost }));
+// #4628: and a pending bank-transfer charge's re-statement, for a booking not confirmed on the ledger.
+const pendingPost = vi.hoisted(() => vi.fn(async () => null));
+vi.mock("@/lib/member-money/doors", () => ({ postBookingLedgerJournal: journalPost, postPendingBookingJournal: pendingPost }));
 
 import { bookingLedgerBalance } from "@/lib/booking-ledger-balance";
 import { planCancellationChargeLines } from "@/lib/booking-ledger-cancellation-posting";
@@ -451,6 +453,10 @@ describe("postCancellationLedgerLines: what keeps nothing", () => {
     const book = ledger();
     await cancel(book, 5_000);
     expect(book.rows).toEqual([]);
+    // #4628: a pending bank-transfer charge, if the journal holds one, is re-stated instead.
+    expect(pendingPost).toHaveBeenCalledTimes(1);
+    expect(pendingPost.mock.calls[0]).toEqual([expect.anything(), expect.anything(), expect.objectContaining({ event: { kind: "cancellation" } })]);
+    expect(journalPost).not.toHaveBeenCalled();
   });
 
   it("UNPAID but confirmed (a mark-paid since reversed): the stay is reversed, no fee, owed is zero", async () => {

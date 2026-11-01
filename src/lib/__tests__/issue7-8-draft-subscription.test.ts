@@ -69,6 +69,17 @@ const mockTx = {
   },
 };
 
+// #4628: a bank-transfer booking's pending journal charge is proved against PostgreSQL
+// (`booking-ledger-pending-charge.realdb.test.ts`); this fake store does not carry the journal.
+vi.mock("@/lib/booking-ledger-pending-charge", () => ({
+  postBindingCharge: vi.fn(async () => {}),
+  postPendingModificationCharge: vi.fn(async () => {}),
+  postPendingCancellationCharge: vi.fn(async () => {}),
+}));
+vi.mock("@/lib/member-money/doors", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/member-money/doors")),
+  resolveBookingMoneyPostingContext: vi.fn(async () => ({ journal: "context" })),
+}));
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     // #3770 R2: the create route reads the booker's lodge restrictions before

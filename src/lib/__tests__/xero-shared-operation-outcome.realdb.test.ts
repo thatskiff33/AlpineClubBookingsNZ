@@ -569,3 +569,91 @@ let sync: typeof import("@/lib/xero-sync");
     });
   },
 );
+
+/**
+ * #4663: the outbox scan breaks `createdAt` ties by `id`, so its order does not
+ * depend on PostgreSQL's physical row order.
+ *
+ * `createdAt` is filled from JS time, so rows queued in one millisecond tie (all
+ * of them under the frozen test clock). The scan ordered by `createdAt` alone,
+ * and a tie fell to the table's physical order, which earlier suites in this
+ * shared database shape. Here three rows share one `createdAt` and are inserted
+ * in three different orders, none of them id order. The REAL scan
+ * (`processQueuedXeroOutboxOperations`, its claim refused so nothing is
+ * processed) runs against the real table after each, and must return the rows in
+ * id order. Mutation probe: dropping `{ id: "asc" }` from the scan's `orderBy`
+ * leaves the heap's order, which is the insertion order here, and fails this test.
+ *
+ * The shared timestamp is a fixed old date, not the frozen clock's day: it puts
+ * these rows ahead of any other suite's pending row inside the scan's `limit`.
+ */
+(RUN ? describe : describe.skip)(
+  "#4663: the outbox scan breaks createdAt ties by id - real PostgreSQL",
+  { timeout: RACE_TEST_TIMEOUT_MS },
+  () => {
+    const TIED_AT = new Date("2000-01-01T00:00:00.000Z");
+    // Id order is a < b < c.
+    const IDS = ["race-4663-op-a", "race-4663-op-b", "race-4663-op-c"];
+
+    async function clearFixtures() {
+      await prisma.xeroSyncOperation.deleteMany({ where: { id: { in: IDS } } });
+    }
+
+    /** The ids of this test's rows, in the order the real scan returns them. */
+    async function scanOrder(): Promise<string[]> {
+      const scanned: string[] = [];
+      const findMany = prisma.xeroSyncOperation.findMany.bind(prisma.xeroSyncOperation);
+      vi.spyOn(prisma.xeroSyncOperation, "findMany").mockImplementation((async (args: never) => {
+        const found = await findMany(args);
+        scanned.push(...(found as Array<{ id: string }>).map((row) => row.id));
+        return found;
+      }) as never);
+      // Refuse every claim: the scan runs for real, no row is processed.
+      vi.spyOn(prisma.xeroSyncOperation, "updateMany").mockResolvedValue({ count: 0 });
+      try {
+        const { processQueuedXeroOutboxOperations } = await import("@/lib/xero-operation-outbox");
+        await processQueuedXeroOutboxOperations({ limit: 50 });
+      } finally {
+        vi.restoreAllMocks();
+      }
+      return scanned.filter((id) => IDS.includes(id));
+    }
+
+    beforeAll(async () => {
+      assertSafeRaceDbUrl(RACE_DB_URL, "Outbox scan createdAt tiebreak (#4663)");
+      process.env.DATABASE_URL = RACE_DB_URL;
+      ({ prisma } = await import("@/lib/prisma"));
+      await clearFixtures();
+    });
+
+    afterAll(async () => {
+      if (prisma) await clearFixtures();
+    });
+
+    it("three rows with one createdAt come back in id order whatever order they were inserted in", async () => {
+      const { XERO_OUTBOX_QUEUE_TYPES } = await import("@/lib/xero-operation-outbox-payload");
+      const queueType = XERO_OUTBOX_QUEUE_TYPES[0];
+      const seed = async (id: string) =>
+        prisma.xeroSyncOperation.create({
+          data: {
+            id,
+            direction: "OUTBOUND",
+            entityType: "INVOICE",
+            operationType: "CREATE",
+            status: "PENDING",
+            queueType,
+            requestPayload: { queueType },
+            createdAt: TIED_AT,
+          },
+        });
+      const [a, b, c] = IDS as [string, string, string];
+      // None is id order, so a scan that fell to the heap would return one of
+      // these, not [a, b, c]: each insert appends a new tuple after the last.
+      for (const insertOrder of [[c, a, b], [c, b, a], [b, c, a]]) {
+        await clearFixtures();
+        for (const id of insertOrder) await seed(id);
+        expect(await scanOrder(), `inserted ${insertOrder.join(",")}`).toEqual(IDS);
+      }
+    });
+  },
+);
