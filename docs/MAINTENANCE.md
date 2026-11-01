@@ -1920,7 +1920,17 @@ the total of the journal's live charge components with the ledger lines it links
 confirmed earlier is not compared (M9 back-posts it). The comparison is of each
 booking's total, not component by component (a give-back may legitimately be
 taken from a change fee), so money posted to the wrong component of the right
-booking is not caught here; the mapping is pinned by its tests. It prints:
+booking is not caught here; the mapping is pinned by its tests. Since Ledger
+M3c (#4628, [`INV-MONEY-045`](invariants/money.md#inv-money-045)) a
+bank-transfer booking charged at its binding moment and not yet confirmed on
+the ledger is judged by `JOURNAL_PENDING` instead: the journal's live charge
+against the booking's final price plus the change fees recorded on its payment,
+or, once cancelled, the kept figure its CANCELLED snapshot froze (none: zero).
+A disagreement there means a writer moved the price before payment without a
+journal event; the confirmation will re-state it once (logged as "confirmation
+lines differ from the charge posted before settlement"), so acknowledge it to
+the cent or let the booking settle. A charge line on such a booking is
+`UNBRIDGED_CHARGE_LINE`: a confirmation that skipped the bridge. It prints:
 
 - per identity, how many bookings it applies to, agree, disagree, are
   classified, or are a coverage gap;

@@ -5574,6 +5574,39 @@ Reconciled against #4626 (the command and its `lock(1)` assertion), #4564 (M2's
 RESTRICT keys and the journal-aware teardown), #4622, #4629 and #4630, the last
 merges touching these writers.
 
+## The M3c bank-transfer binding doors and the confirmation bridge (#4628)
+
+Ledger M3c adds no advisory key and no new lock site, and changes no door's lock
+order. Its participants:
+
+- **The binding doors** post R01 through `postPendingBookingJournal` after
+  their booking, guest and payment writes, inside the transaction that already
+  holds global `lock(1)` then the lodge key: the internet-banking arm of
+  `createConfirmedBooking` (its own transaction, or the exception approval's),
+  the switch to internet banking (which also holds the owner's credit-ledger
+  key, taken before), and both pay-on-account arms of the school and member
+  request approvals. Each resolves its posting context before the transaction
+  (`INV-LOCK-004`): the bookings route, the group join (an EACH_PAYS_OWN joiner
+  may pay by internet banking) and the switch route read it, the approval reuses
+  the batch executor's, the school approval reads it on its club zone. The
+  create's input type requires the context wherever the method can be internet
+  banking, so a caller cannot omit it and compile.
+- **The pending-charge syncs.** The modification and cancellation posters,
+  reached by every edit and cancel door under its `lock(1)`, re-state a pending
+  charge where the booking is not yet confirmed on the ledger. They read the
+  stored rows the door just wrote; nothing depends on capacity.
+- **The confirmation bridge** runs at the top of `postBookingLedgerJournal`,
+  so every confirmation door (the settle, the Xero receipt, an edit's
+  auto-pay, the group settle, the back-post) links its first legacy lines under
+  the `lock(1)` it already holds. Appending source links to a sealed batch takes
+  no lock on the batch's rows; the unique link key refuses a second link of one
+  line. A restatement, when needed, is a correction, which the engine refuses
+  without `lock(1)`. It takes the booking row lock first, as M3b's adapter does.
+
+Reconciled against #4636 (M3b: the doors, the booking row lock, the inactive
+journal), #4630 (M3a) and #4634 (the finished-stay fee owed, which the planned
+confirmation includes), the last merges touching these writers.
+
 ## A credit note spent outside the app: global, then the member's credit ledger (#4219)
 
 `convergeCreditNoteSpentOutsideApp` releases a booking's applied credit and writes

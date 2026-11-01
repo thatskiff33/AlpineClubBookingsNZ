@@ -328,6 +328,29 @@ a stated limit. Its `JOURNAL` identity compares each booking's total, not
 component by component, because the rebalancing above legitimately moves money
 between a booking's components.
 
+M3c ([#4628](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/4628))
+posts a bank-transfer booking's charge at its binding moment: internet-banking
+create, switch to internet banking, and both school pay-on-account paths, each
+inside its `lock(1)` and lodge-key transaction. No legacy line exists yet, so
+the door's legacy side plans, without writing, the lines its confirmation would
+post (`planConfirmationPostings`, the plan the confirmation itself writes), and
+the journal maps them to components by the one rule; nothing is re-priced. R01
+keeps the confirmation's key and records the source version `binding`. Until
+the legacy confirmation, an edit or a cancellation re-states that pending charge
+from the same planners (the cancellation planner runs over the planned lines),
+so a writer that moved the price without posting is absorbed by the next event,
+never compounded. The booking's first legacy lines, whichever door writes them,
+are linked to the binding R01 by source links appended to its sealed batch,
+with postings naming its receivable leg, as section 3 allows; no second charge
+posts. If they add up to other than the journal carries, one `charge-restatement`
+batch re-states the journal to them first, and the door logs it. The Xero
+"invoice paid" receipt now posts the confirmation's lines too, as the settle
+does. Report v2 (`JOURNAL_PENDING`) compares a pending charge with the booking's
+final price plus its recorded fees, or what a cancellation kept. A census
+classifies every booking write that sets PAID or CANCELLED as posting, not a
+sale, or a legacy confirmation gap (a credit-covered PAID) that the back-post
+fills.
+
 Use the existing lock classification, never a new generic journal advisory key.
 Settlement/lifecycle commands take global `lock(1)` under `INV-LOCK-001`; capacity
 composition adds sorted lodge keys from `acquireLodgeCapacityLock`, then member
@@ -800,8 +823,8 @@ than opening a competing implementation lane.
 
 M3 ships as three PRs (the plan on #4515): M3a, the posting command (#4626,
 delivered); M3b, the confirmed population bridged one-to-one with comparison
-report v1 (#4627, delivered); M3c, bank-transfer charges before settlement
-(#4628). M3 closes when M3c merges.
+report v1 (#4627, delivered); M3c, bank-transfer charges before settlement with
+report v2 (#4628, delivered). M3 closes when M3c merges.
 
 M12 is the existing explicitly multi-PR reader programme; M13 and M15 likewise
 split by complete document/decision cohorts when filed. Each PR must have one
