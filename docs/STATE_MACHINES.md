@@ -2328,9 +2328,12 @@ inbound fence records its conflict the same way, under the
   -> closed, nothing asked    (not a release / ended booking / payment not captured /
                                organiser-settled / invoice paid in Xero / nothing owed /
                                below the card minimum, the last with an officer alert)
-  -> waiting                  (an unpaid edit request is open: back to the longest retry interval,
-                               no attempt spent, never terminal; officers told once, INV-ADDPAY-051)
-  -> ADDITIONAL row PENDING (reason credit_released_outside_app, carries any live ask)
+  -> waiting                  (an unpaid edit request is open whose invoice would not follow a
+                               merge: back to the longest retry interval, no attempt spent, never
+                               terminal; officers told once, INV-ADDPAY-051)
+  -> ADDITIONAL row PENDING (reason credit_released_outside_app, carries any live ask; an unpaid
+                               edit request is MERGED into it, its waiting invoice moved onto it,
+                               cause "mixed", INV-ADDPAY-052)
        -> SUCCEEDED by card  -> payment recorded on the booking's invoice (sweep, XeroObjectLink)
        -> FAILED+withdrawn   when Xero shows the invoice PAID (the request alone, or carrying only
                                earlier released credit): card payment cancelled first,
@@ -2345,7 +2348,7 @@ inbound fence records its conflict the same way, under the
                                or the request cannot be matched to it (none, a 404, no amount due)
 ```
 
-`INV-ADDPAY-045`, `INV-ADDPAY-046`, `INV-ADDPAY-048`, `INV-ADDPAY-050`, `INV-ADDPAY-051`.
+`INV-ADDPAY-045`, `INV-ADDPAY-046`, `INV-ADDPAY-048`, `INV-ADDPAY-050`, `INV-ADDPAY-051`, `INV-ADDPAY-052`.
 
 ### Manual refund task lifecycle (#2262)
 

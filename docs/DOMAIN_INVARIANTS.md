@@ -751,6 +751,7 @@ Prefix `INV-ADDPAY`.
 | `INV-ADDPAY-049` | Released-credit request emails can offer bank transfer payment |
 | `INV-ADDPAY-050` | Earlier credit releases are asked for in audited, switchable batches |
 | `INV-ADDPAY-051` | An unchaseable released-credit request fails closed to the officers |
+| `INV-ADDPAY-052` | A release on an unpaid edit request merges into one request |
 
 ## Analytics And Privacy
 

@@ -35,6 +35,7 @@ import {
 
 import { bookingLedgerResidualCents, outstandingAdditionalAskCents } from "@/lib/additional-payment-ask";
 import { sizeCreditReleaseAsk } from "@/lib/credit-release-ask-size";
+import { CREDIT_RELEASE_MERGE_WAIT_WORDS, readCreditReleaseMergeVerdict } from "@/lib/credit-release-merge";
 import { createAuditLog } from "@/lib/audit";
 import { signalCreditReleaseToOfficers } from "@/lib/release-ask-officer-signal";
 import { bookingOwner } from "@/lib/booking-owner";
@@ -79,9 +80,9 @@ export interface CreditReleaseAskRunnerDeps {
   wait: (operation: PaymentRecoveryOperation, message: string) => Promise<unknown>;
 }
 
-/** What a release waiting behind an unpaid edit request records on its recovery row. */
+/** What a release that cannot merge into an unpaid edit request records on its recovery row (#4491). */
 export const CREDIT_RELEASE_WAITING_ON_EDIT_MESSAGE =
-  "An unpaid edit request is open on this booking; the released-credit request waits until it is paid or withdrawn";
+  "An unpaid edit request is open on this booking and its Xero invoice cannot follow a combined request; the released-credit request waits until it is paid or withdrawn";
 
 /** Why a row was closed without asking for anything: the audit row's wording and its code. */
 type NoAskReason =
@@ -205,26 +206,42 @@ export async function processCreditReleaseAskOperation(
     return;
   }
 
-  // An unpaid EDIT request may have its own supplementary invoice, which a release request
-  // superseding it could not pay (an edit made after the release merges instead, `INV-ADDPAY-048`).
-  // The release waits for it to be paid or withdrawn - for as long as that takes. A throw here used
-  // to spend the row's attempts in about 17 hours and leave it terminal, and the sweep never looks
-  // at a release twice, so the money was never asked for. Now the row is put back at the longest
-  // retry interval with its attempt handed back, and the officers are told once (`INV-ADDPAY-051`).
-  // Asked BEFORE the Xero read below: it needs only the payment and the ledger, and a waiting row
-  // must never take the read's failure path (an unreachable Xero would otherwise spend its attempts
-  // and make it terminal after all), nor read Xero every 12 hours for nothing.
-  if (outstandingAdditionalAskCents(payment) > 0 && payment.additionalPaymentIntentId) {
-    const live = await prisma.paymentTransaction.findUnique({
-      where: { stripePaymentIntentId: payment.additionalPaymentIntentId },
-      select: { reason: true },
-    });
-    if (live?.reason !== CREDIT_RELEASE_ASK_REASON) {
+  // An unpaid EDIT request open on the booking is MERGED into this one (#4491, `INV-ADDPAY-052`):
+  // the mint below carries its balance and supersedes it, and the supersede moves its waiting
+  // supplementary invoice onto this request, so one card payment pays both invoices. Where that
+  // move would not take every edit invoice, the release waits for the edit to be paid or withdrawn
+  // - for as long as that takes. A throw here used to spend the row's attempts in about 17 hours
+  // and leave it terminal, and the sweep never looks at a release twice, so the money was never
+  // asked for. Now the row is put back at the longest retry interval with its attempt handed back,
+  // and the officers are told once (`INV-ADDPAY-051`). Decided BEFORE the Xero read below: it needs
+  // only the database, and a waiting row must never take the read's failure path (an unreachable
+  // Xero would otherwise spend its attempts and make it terminal after all), nor read Xero every
+  // 12 hours for nothing.
+  const liveAsk =
+    outstandingAdditionalAskCents(payment) > 0 && payment.additionalPaymentIntentId
+      ? {
+          id: payment.id,
+          bookingId: operation.bookingId,
+          xeroInvoiceId: payment.xeroInvoiceId,
+          additionalAmountCents: payment.additionalAmountCents,
+          additionalPaymentIntentId: payment.additionalPaymentIntentId,
+        }
+      : null;
+  if (liveAsk) {
+    const merge = await readCreditReleaseMergeVerdict(prisma, liveAsk);
+    if (!merge.merge) {
       await signalCreditReleaseToOfficers({
         bookingId: operation.bookingId,
         reason: "waiting-on-edit-request",
         key: `waiting-on-edit-request:${operation.id}`,
-        metadata: { operationId: operation.id, releasedCents: operation.amountCents, editPaymentIntentId: payment.additionalPaymentIntentId },
+        // Why it could not merge, in the officers' own note (#4491).
+        detail: CREDIT_RELEASE_MERGE_WAIT_WORDS[merge.reason],
+        metadata: {
+          operationId: operation.id,
+          releasedCents: operation.amountCents,
+          editPaymentIntentId: liveAsk.additionalPaymentIntentId,
+          notMergedBecause: merge.reason,
+        },
       });
       logger.info({ operationId: operation.id, bookingId: operation.bookingId }, CREDIT_RELEASE_WAITING_ON_EDIT_MESSAGE);
       await deps.wait(operation, CREDIT_RELEASE_WAITING_ON_EDIT_MESSAGE);
@@ -325,6 +342,11 @@ export async function processCreditReleaseAskOperation(
     const fresh = await store.payment.findUnique({ where: { id: operation.paymentId }, include: { booking: true } });
     if (!fresh?.booking || sizingBasis(fresh) !== sizingBasis(payment)) {
       throw new Error("The booking's payment changed while the released-credit request was being raised; retrying");
+    }
+    // The merge decided again under the lock (#4491): an edit invoice that can no longer follow
+    // this request (sent, retired or resolved since) means the row retries and waits instead.
+    if (liveAsk && !(await readCreditReleaseMergeVerdict(store, liveAsk)).merge) {
+      throw new Error("The unpaid edit request on the booking changed while the released-credit request was being raised; retrying");
     }
     await refuseAdoptedIntentOnLedger(store, { intent, adopted: false });
     await upsertPaymentIntentTransaction({
