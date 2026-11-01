@@ -703,6 +703,7 @@ this (#1208). Shared JSON-guard micro-helpers (`asRecord`/`readString`/
 | `xero-booking-repair` | Booking-vs-Xero audit and self-repair (see Flow 3). CLI entry: `scripts/xero-booking-repair.ts`. Split into cohesive `xero-booking-repair-*` sub-modules (#1208 item 2, entry re-exports the public surface); see refactor item 2 for the module map. |
 | `xero-hardening` | Historical `XeroObjectLink` backfill, stale canonical-link cleanup, the emailed reconciliation report, repeated-failure alerting. Split into cohesive `xero-hardening-*` sub-modules (#1208 item 5, entry re-exports the public surface); see refactor item 5 for the module map. Cleanup and the report's drift classifications are source-aware for Stripe per-delta refund notes (#2901): see "Repairing Stripe refund-note links" under Flow 3. |
 | `xero-refund-note-link-repair` | Dry-run-first operator repair for Stripe per-delta `REFUND_CREDIT_NOTE` links damaged by the pre-#2901 cleanup loop: unconditionally deactivates local mirrors of notes VOIDED/DELETED in Xero, reactivates wrongly deactivated links (recorded-status only, never past the note-eligible cash — `resolveRefundNoteEligibleCash`, #2902/INV-PAY-050 less late captures Xero never received, #3635 — with notes resolved in Xero counted as coverage; landing short is applied honestly and the self-heal reissues the remainder), refuses payments with a still-executable credit-note operation (queued/running/awaiting-payment, failed-but-retryable, or a queued retry of one). No provider calls; `--apply` is bound to reviewed payment ids. CLI entry: `scripts/xero-refund-note-link-repair.ts`. Runbook: "Repairing Stripe refund-note links (#2901)" under Flow 3. |
+| `xero-deleted-payment-link-backfill` | `INV-INT-031`'s one-off backfill. Dry run (the default, changes no link) pages Xero's DELETED payments, or asks about each `--payment` id directly, and lists every active local payment link that points at one; `--apply` confirms each listed candidate again and retires through the inbound reconcile's own guarded write (`xero-inbound/deleted-payment-links.ts`). Read-only at Xero. CLI entry: `scripts/xero-deleted-payment-link-backfill.ts`. See "A payment deleted in Xero (#4531)" under Flow 2. |
 | `xero-refund-note-status-recorder` | Read-only provider GETs that record each linked refund credit note's live Xero status onto ALL of its local links, active or not (`--record-statuses`; run automatically before `--apply`). Exists because inbound reconciliation structurally cannot stamp a status onto an inactive link, and the repair never reactivates an unknown-status note. |
 | `xero-refund-note-status` | The one home for "does this credit-note status still count as refund coverage?" (`VOIDED`/`DELETED` do not) and for reading a link's recorded status — shared by the inbound contribution math, `sumCoveredRefundCreditNoteCents`, cleanup, the drift report and the operator repair so no path can disagree (#2901). Also "does this create row count toward coverage?" (`countsTowardRefundNoteCoverage`, #4265): only its own note, never a refund request's. |
 | `xero-resolve-refund-note` | "Resolve by hand" on a FAILED payment refund-note create that names no note (#4421, `INV-INT-028`): which rows ask for the Xero note's number (`refundNoteResolveShape`, `resolveCreditNotePrompt`), the note's check (reusing `verifyHandMadeRefundNote`), the `lock(1)`-then-Payment-row claim that records it on the row and as the payment's link (`writeHandMadeRefundNoteLink`), refusing a retry that ran or a note any other create row or link records, and the withdrawal that retires both (alerting if it fails). It also carries the resolve route's refund-note half (`resolveRecordingRefundNote`, `withdrawRecordedNoteOrAlert`, `answerExistingResolveMark`), and `xero-operation-resolve-guards.ts` its other pre-mark checks and plain mark writes, so the route stays a thin handler. Its words live in `bank-refund-void-follow-up-copy.ts`; the operator reason bounds in `xero-operation-resolution.ts`. |
@@ -1563,6 +1564,146 @@ Operator replay (`/api/admin/xero/inbound-events/[id]/replay`) deletes the
 dedupe row, resets the event to RECEIVED, and reprocesses it synchronously —
 allowed for FAILED/PROCESSED events and for PROCESSING events older than the
 staleness threshold (dead-worker takeover).
+
+### A payment deleted in Xero (#4531)
+
+Xero leaves a deleted payment out of its invoice's (and credit note's)
+`Payments`, and the inbound reconcile writes payment links only for the
+payments a payload names. So a payment deleted in Xero, typically during bank
+reconciliation when the treasurer deletes the app's payment and enters it again
+by hand, kept its link active for good, and the document read as paid twice.
+Rule: `INV-INT-031`.
+
+When `reconcileXeroInvoice` or `reconcileXeroCreditNote` runs, after its own
+payment-link writes, it retires those links
+(`xero-inbound/deleted-payment-links.ts`):
+
+- **Candidates come from absence, and only from a trusted payload.** A
+  candidate is an ACTIVE `PAYMENT` link of one of the document's related local
+  rows, of a role that document's own reconcile writes, whose
+  `metadata.invoiceId` (or `creditNoteId`) names the document and whose payment
+  the payload does not list. The roles are `INVOICE_DERIVED_PAYMENT_ROLES`
+  (primary, supplementary and subscription payments) for an invoice and
+  `REFUND_PAYMENT` for a credit note: a refund payment's link also names the
+  invoice it refunds, but the payment sits on the credit note, so an invoice
+  read never asks about it. A payload nominates nothing when it has no
+  `Payments` list, when a listed payment lacks an id or a readable amount, or,
+  for an invoice, when the module's own degraded-shape guard finds the cash
+  incomplete (`quantifyXeroInvoiceCashCents`) or a finite `AmountPaid` differs
+  from the listed payments' sum (a truncated list). Both read that sum through
+  one helper, `sumListedXeroPaymentCents`.
+- **Only Xero's word retires.** Each candidate payment is fetched once
+  (`GET /Payments/{id}`, `confirmXeroPaymentDeleted`). Only a payment Xero
+  reports DELETED, filed under this document when Xero names one, is retired.
+  A live payment, a failed or empty answer, or a payment filed elsewhere is
+  left active and logged. The fetch is one attempt: no retry and no backoff
+  sleep inside a reconcile, and it never arms the process-wide outage breaker
+  (`DEFERRABLE_XERO_READ`). A rate limit (429) or a server error defers it.
+- **The retire.** One `updateMany` per link, guarded on the row still being
+  active with the metadata it was read with, writes `active = false` and
+  `metadata.status = "DELETED"`, keeping every other field. A lost guard
+  re-reads and tries once more. It is compared as a value, not by `updatedAt`:
+  two writes in one millisecond share a timestamp, and the real-database proof
+  caught exactly that overwrite. Each retired link gets an audit row (source
+  `xero-inbound-deleted-payment-retired`) whose summary says it was retired. A
+  replay finds no candidate.
+- **Not while an operation that reads the link may still run.** Some writers
+  skip re-sending a payment while an active link records it. Their payment is
+  made by a separate operation that writes the link before the parent
+  completes, so a parent whose completion failed retries with the link in
+  place, and retiring the link then would let that retry pay again. So no link
+  is retired while an operation that may run again holds it
+  (`findRerunnableOperation` in `xero-inbound/deleted-payment-holdback.ts`, over `rerunnableOperationWhere`: live, or FAILED
+  or PARTIAL and still `replayable`, and not resolved by an officer in Xero; a
+  REQUEUE row or one marked non-replayable never runs again and holds nothing).
+  Two places are checked:
+  - **The link's own record** (`localModel`/`localId`): the booking change's
+    card receipt, the primary invoice's PARTIAL payment repair, and the kept
+    late capture's invoice.
+  - **The same booking, across records:** a card receipt (on a
+    `PaymentTransaction`) refuses while a supplementary invoice's payment link
+    (on a `BookingModification`) is active (`bookingHasPaidUnnamedSupplementary`),
+    and a supplementary invoice reads the receipts' links the other way
+    (`anchorCaptureHasReceipt`). So a supplementary payment link waits for the
+    booking's open card receipts, and a receipt's link for the booking's open
+    supplementary invoices.
+
+  It is asked immediately before each guarded write rather than in one
+  transaction with it, because no writer can make the answer wrong in between.
+  An operation leaves the set by finishing, which only holds back more than
+  needed. It never re-enters the set (a recorded outcome is final,
+  `INV-INT-029`, and a retry claim moves FAILED or PARTIAL to RUNNING, inside
+  it), and a new operation never holds this payment's link. A held link stays
+  active, is marked with the operation that held it, and is retired by the
+  scheduled re-check once that operation is done. A payment whose every link is
+  held is not asked about.
+- **A candidate Xero could not judge is re-checked.** A deferred candidate, or
+  one whose answer failed, is marked in its own metadata
+  (`deletionCheckPending`, when it was first marked, and how many answers
+  failed), through the same guarded write. The inbound cron cycle
+  (`runXeroInboundReconciliationCycle`) then runs
+  `recheckPendingDeletedPaymentLinks` at most every six hours. It claims the
+  slot before any call (it creates the `DELETED_PAYMENT_RECHECK` sync cursor
+  once, or moves it forward only if six hours have passed, in one guarded
+  write), so the cron and every webhook's kick cannot each spend the cap. It
+  reads only marked links, least recently written first, under the same cap
+  and budget gate, and judges each against the document its role records it on
+  (`documentNamedByLink`: a refund payment against its credit note). It
+  retires a confirmed one and clears the marker from a live one. It counts
+  another failed answer, which moves that link to the back of the queue, as
+  does a check that is held back again. After `MAX_DELETION_CHECK_ATTEMPTS` (5)
+  failed answers it stops asking on its own: the link stays active, the
+  marker records when it gave up, an error is logged, and only a fresh read of
+  its document or the backfill asks again. It logs what it left active and
+  never fails the cycle. A paid invoice is rarely read again, so without this
+  a deferral would have lasted until someone ran the backfill.
+- **Never re-adopted.** A retired payment is absent from every later payload,
+  so no inbound write touches it again. A payload or payment read that reports
+  a payment DELETED writes its link inactive (`isDeletedXeroPaymentStatus`), on
+  the invoice, payment and credit-note paths alike. A hand-entered replacement
+  is in the payload, so it is never a candidate and stays active.
+
+**Xero call budget.** Per invoice or credit-note reconcile: no extra call when
+every active candidate-role link of the document is in the payload, which is
+the steady state (one indexed query). Otherwise one `GET /Payments/{id}` per
+distinct missing payment, at most `MAX_DELETED_PAYMENT_CONFIRMATIONS_PER_RECONCILE`
+(5); none for a degraded payload. The scheduled re-check spends at most 5 calls
+a run and claims at most one run every six hours, so at most 20 a day, and none
+while no link is marked; a link it never gets an answer for costs at most 5
+calls in all. Every one of these is a deferrable call: it is not made once
+today's recorded usage reaches the usage panel's "critical" threshold (85% of
+its 1,000-call budget, `xeroDailyBudgetAllowsDeferrableCall`), nor while Xero's
+own daily-limit or outage cooldown is in force. A deferred candidate stays
+active, is marked, and is reported in the reconcile's result
+(`deletedPaymentLinks`, kept on the inbound operation's response). The event
+still succeeds, because failing it would retry into the same exhausted budget.
+A deletion therefore costs one call once, plus one per later read or re-check
+while it stays deferred or unanswered.
+
+Nothing here runs in a transaction, and the provider call sits between short
+link writes (`INV-INT-003`). Lock classification: [Retiring a deleted Xero
+payment's link](../CONCURRENCY_AND_LOCKING.md#retiring-a-deleted-xero-payments-link-4531).
+
+Stated limits:
+
+- An invoice whose payload carries no `Payments` list at all (if Xero ever
+  omits it once the only payment is deleted) is never nominated.
+- A reconcile holding a reading taken before the deletion can write the link
+  live again after the retire. The next read nominates it again.
+- A booking change's card payment (`ADDITIONAL_CAPTURE_PAYMENT`) is linked to
+  its `PaymentTransaction`, which is never among an invoice's related local
+  rows, so the inbound reconcile never nominates it. Only the backfill retires
+  one, and its audit row is skipped, because the audit writer resolves no
+  subject for a `PaymentTransaction`.
+
+The report-only backfill covers all three, and every deletion from before
+#4531 (`xero-deleted-payment-link-backfill`, runbook in
+[`MAINTENANCE.md`](../MAINTENANCE.md#retire-links-to-payments-deleted-in-xero-4531)).
+Its dry run changes no link. It pages Xero's DELETED payments oldest change
+first (ceil(N/100) calls, at most 50), or with `--payment` asks about just
+those ids, one call each. `--apply` adds one confirming call per listed
+candidate payment it checks; a `--payment` id's direct answer is already that
+confirmation.
 
 ## Flow 3 — Repair and hardening
 

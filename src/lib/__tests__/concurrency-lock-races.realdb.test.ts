@@ -39,6 +39,8 @@ import "./support/race-harness-outbox-guard";
 // #4432: scheduled/manual inbound exclusion and dead-holder recovery.
 import "./xero-inbound-run-claim.realdb.test";
 import "./xero-sync-now.realdb.test";
+// #4531: a payment deleted in Xero retires its link; the replay and the backfill write nothing more.
+import "./xero-deleted-payment-links.realdb.test";
 import "./minimum-stay-policy-trigger.realdb.test";
 // #2532 reuses the same guarded harness to prove the AI Diagnostics monthly
 // budget (AID-2, #2371) can never be overspent by concurrent reservers. Its

@@ -652,3 +652,16 @@ The central server's public lodge search may ask this site how many beds are fre
 - **Counts only.** The body is the free beds per night and their minimum, for the active lodge an administrator has explicitly linked to its central id (`Lodge.centralLodgeId`), a one-lodge club included: there is no automatic one-lodge fallback (owner decision, 24 Oct 2026, #4262); never a guest, member or booking, and every refusal is one 404.
 
 Pinned by `webhooks/servernz-availability/__tests__/route.test.ts`, `webhooks/servernz-posts/__tests__/route.test.ts`, `central-lodge-link.test.ts`.
+
+## A payment deleted in Xero (#4531)
+
+### INV-INT-031
+A Xero payment link is retired only when Xero says its payment is DELETED, never because a payload left it out.
+
+- **Absence nominates; Xero decides.** The inbound invoice and credit-note reconcile nominate an active `PAYMENT` link, of a role that document's own reconcile writes, whose payment the payload no longer lists. Only a trusted payload nominates: a `Payments` list whose entries all carry an id, every one not already DELETED a readable amount, and, for an invoice, whose cash `quantifyXeroInvoiceCashCents` finds complete and whose `AmountPaid` equals the listed sum. Retirement needs `GET /Payments/{id}` to report DELETED.
+- **Budgeted and deferrable.** One attempt per payment, at most five per run, none past the usage panel's critical threshold or during Xero's daily limit. A deferred or unanswered candidate stays active and marked, and the inbound cron cycle re-checks marked links at most every six hours, five failed answers at most; the event does not fail.
+- **The retire.** `active = false` and `metadata.status = "DELETED"`, other fields kept, in one write guarded on the link still being active with the metadata it was read with. Never while an operation that reads the link may run again (`rerunnableOperationWhere`, on its record or the same booking): its retry would pay again. A replay writes nothing.
+- **Never re-adopted.** Any inbound write of a payment Xero reports DELETED lands its link inactive. A hand-entered replacement is in the payload and stays active.
+- **Backfill.** `scripts/xero-deleted-payment-link-backfill.ts` is report-only by default; `--apply` retires only payments Xero confirms DELETED, through the same write.
+
+Pinned by `xero-deleted-payment-links.test.ts`, `xero-deleted-payment-link-backfill.test.ts`, `xero-inbound-reconciliation.test.ts`, `xero-inbound-audit-summary.test.ts`, `xero-api-usage.test.ts` and, against a real database, `xero-deleted-payment-links.realdb.test.ts`.

@@ -930,6 +930,7 @@ File: [`invariants/integrations.md`](invariants/integrations.md). Prefix
 | `INV-INT-028` | A refund note resolved by hand records its Xero note, once |
 | `INV-INT-029` | Xero outcomes never replace better ones nor land on another claim |
 | `INV-INT-030` | Free-beds answer: module and toggle on, signed first, counts only |
+| `INV-INT-031` | A Xero payment link retires only on confirmed DELETED, never absence |
 
 ## Operations
 
