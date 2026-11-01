@@ -83,7 +83,8 @@ const STATUS_FREE_CONSTANTS: Record<string, object> = {
   RELEASE_WHOLE_LODGE_HOLD_UPDATE,
 };
 
-const unwrap = (node: ts.Expression): ts.Expression => (ts.isParenthesizedExpression(node) || ts.isAsExpression(node) || ts.isSatisfiesExpression(node) ? unwrap(node.expression) : node);
+const unwrap = (node: ts.Expression): ts.Expression =>
+  (ts.isParenthesizedExpression(node) || ts.isAsExpression(node) || ts.isSatisfiesExpression(node) || ts.isNonNullExpression(node) ? unwrap(node.expression) : node);
 
 /** The BookingStatus a literal names (`BookingStatus.PAID`, `"PAID"`), or null for anything computed. */
 function literalStatus(node: ts.Expression): string | null {
@@ -94,166 +95,276 @@ function literalStatus(node: ts.Expression): string | null {
 }
 
 /**
- * WHAT A NON-LITERAL SITE CAN WRITE, BY CONTENT (#4659 review, concurrency-4).
- * A site whose status is computed, or whose payload or spread is a name, is
- * keyed by the name AND the set of status values the census can see it take in
- * the function that writes it: every literal assigned to the name (a
- * declaration, a re-assignment, either arm of a conditional), and, for a
- * payload or spread object, every `status` its object literals or
- * `name.status = …` assignments carry, followed through names to a fixed
- * depth. A value it cannot read is `?`. So a new `PAID` reachable in an existing
- * computed or payload site changes its key and fails the census, while an edit
- * that adds no status value does not. A `?` stays a reviewed unknown.
+ * WHAT A NON-LITERAL SITE CAN WRITE, BY CONTENT, FAILING CLOSED (#4659 review,
+ * concurrency-4 and the delta lens d-1 to d-4). A site whose status is
+ * computed, or whose payload, spread or whole write arguments are a name, is
+ * keyed by the name AND the set of status values it can take: every value
+ * assigned to that one binding (resolved by symbol, so a shadowing or unrelated
+ * declaration of the same name supplies nothing), followed through names to a
+ * fixed depth. Anything the scanner cannot fully read adds `?`, which keeps the
+ * site listed: a binding made by a parameter, a destructuring, an import, a
+ * for-of/for-in variable or a catch clause; a value that is not a literal, a
+ * name or a conditional of those; and, for an object, the name passed to any
+ * call (`Object.assign`, a helper), written through a computed key, or
+ * deleted from. `??` and `||` read both operands; only `&&` may drop its left.
+ * A site proven to reach only other statuses (or none) is not a PAID/CANCELLED
+ * writer and needs no entry; one that can reach a sale status or `?` is listed.
  */
 const MAX_DEPTH = 3;
 
-function enclosingScope(node: ts.Node): ts.Node {
-  let current: ts.Node | undefined = node.parent;
-  while (current && !ts.isFunctionLike(current) && !ts.isSourceFile(current)) current = current.parent;
-  return current ?? node.getSourceFile();
+interface Scanned {
+  source: ts.SourceFile;
+  checker: ts.TypeChecker;
+  /** The booking write being judged: its own use of a name is not a mutation of it. */
+  site?: ts.Node;
 }
 
-const isStatusName = (node: ts.Node) =>
-  (ts.isIdentifier(node) && node.text === "status") || (ts.isStringLiteralLike(node) && node.text === "status");
+/** One file bound on its own (no lib, no imports resolved): enough for local symbols, never for types. */
+function bind(text: string, file: string): { source: ts.SourceFile; checker: ts.TypeChecker } {
+  const options: ts.CompilerOptions = { noLib: true, noResolve: true, types: [], allowJs: false, target: ts.ScriptTarget.Latest, jsx: ts.JsxEmit.Preserve };
+  const name = file.endsWith(".tsx") ? "/scan.tsx" : "/scan.ts";
+  const source = ts.createSourceFile(name, text, ts.ScriptTarget.Latest, true, name.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
+  const host: ts.CompilerHost = {
+    getSourceFile: (fileName) => (fileName === name ? source : undefined),
+    getDefaultLibFileName: () => "/lib.d.ts",
+    writeFile: () => undefined,
+    getCurrentDirectory: () => "/",
+    getCanonicalFileName: (fileName) => fileName,
+    useCaseSensitiveFileNames: () => true,
+    getNewLine: () => "\n",
+    fileExists: (fileName) => fileName === name,
+    readFile: () => undefined,
+  };
+  const program = ts.createProgram([name], options, host);
+  return { source: program.getSourceFile(name)!, checker: program.getTypeChecker() };
+}
 
-/** Each status value an expression can evaluate to, following names assigned in `scope`. */
-function statusValues(node: ts.Expression, scope: ts.Node, depth: number): string[] {
+const UNKNOWN = ["?"];
+
+/** How a binding came to exist: a declaration the scanner can follow, or one whose value it cannot know. */
+function bindingIsOpaque(declaration: ts.Declaration): boolean {
+  if (ts.isParameter(declaration) || ts.isBindingElement(declaration)) return true;
+  if (ts.isImportSpecifier(declaration) || ts.isImportClause(declaration) || ts.isNamespaceImport(declaration) || ts.isImportEqualsDeclaration(declaration)) return true;
+  if (ts.isVariableDeclaration(declaration)) {
+    if (!ts.isIdentifier(declaration.name)) return true;
+    const list = declaration.parent;
+    if (ts.isCatchClause(list)) return true;
+    const statement = list?.parent;
+    if (statement && (ts.isForOfStatement(statement) || ts.isForInStatement(statement))) return true;
+    return false;
+  }
+  // A function, class or enum declaration is no status value either.
+  return true;
+}
+
+/** The binding a name refers to; a shorthand `{ data }` names the variable, not the property. */
+function symbolOf(identifier: ts.Identifier, scanned: Scanned): ts.Symbol | undefined {
+  return ts.isShorthandPropertyAssignment(identifier.parent) && identifier.parent.name === identifier
+    ? scanned.checker.getShorthandAssignmentValueSymbol(identifier.parent)
+    : scanned.checker.getSymbolAtLocation(identifier);
+}
+
+/** Every reference to the symbol in the file, by symbol identity (shorthand uses included). */
+function referencesTo(symbol: ts.Symbol, scanned: Scanned): ts.Identifier[] {
+  const found: ts.Identifier[] = [];
+  const visit = (node: ts.Node): void => {
+    if (ts.isIdentifier(node) && node.text === symbol.name && symbolOf(node, scanned) === symbol) found.push(node);
+    ts.forEachChild(node, visit);
+  };
+  visit(scanned.source);
+  return found;
+}
+
+const within = (node: ts.Node, ancestor: ts.Node | undefined): boolean => {
+  for (let current: ts.Node | undefined = node; current; current = current.parent) if (current === ancestor) return true;
+  return false;
+};
+
+const isAssignmentOperator = (kind: ts.SyntaxKind) =>
+  kind === ts.SyntaxKind.EqualsToken || kind === ts.SyntaxKind.QuestionQuestionEqualsToken || kind === ts.SyntaxKind.BarBarEqualsToken
+  || kind === ts.SyntaxKind.AmpersandAmpersandEqualsToken;
+
+/** The values written to a binding and, for an object, what else touches it. */
+interface BindingUse {
+  assigned: ts.Expression[];
+  statusWrites: ts.Expression[];
+  opaque: boolean;
+  objectOpaque: boolean;
+}
+
+function bindingUse(identifier: ts.Identifier, scanned: Scanned): BindingUse | null {
+  const symbol = symbolOf(identifier, scanned);
+  if (!symbol || !symbol.declarations || symbol.declarations.length === 0) return null;
+  const use: BindingUse = { assigned: [], statusWrites: [], opaque: false, objectOpaque: false };
+  for (const declaration of symbol.declarations) {
+    if (bindingIsOpaque(declaration)) use.opaque = true;
+    else if (ts.isVariableDeclaration(declaration) && declaration.initializer) use.assigned.push(declaration.initializer);
+  }
+  for (const reference of referencesTo(symbol, scanned)) {
+    let node: ts.Node = reference;
+    while (ts.isParenthesizedExpression(node.parent) || ts.isAsExpression(node.parent) || ts.isSatisfiesExpression(node.parent) || ts.isNonNullExpression(node.parent)) node = node.parent;
+    const parent = node.parent;
+    if (ts.isBinaryExpression(parent) && parent.left === node && isAssignmentOperator(parent.operatorToken.kind)) {
+      use.assigned.push(parent.right);
+      continue;
+    }
+    // A member write: `name.status = …`, `name["status"] = …`; any computed key is unknown.
+    if ((ts.isPropertyAccessExpression(parent) || ts.isElementAccessExpression(parent)) && parent.expression === node) {
+      const outer = parent.parent;
+      const written = ts.isBinaryExpression(outer) && outer.left === parent && isAssignmentOperator(outer.operatorToken.kind);
+      const deleted = ts.isDeleteExpression(outer);
+      if (written || deleted) {
+        const key = ts.isPropertyAccessExpression(parent) ? parent.name.text
+          : ts.isStringLiteralLike(parent.argumentExpression) ? parent.argumentExpression.text : null;
+        if (key === null || deleted) use.objectOpaque = true;
+        else if (key === "status") use.statusWrites.push((outer as ts.BinaryExpression).right);
+      }
+      continue;
+    }
+    // The declaration's own name, a spread (which copies, never aliases), and the write being judged, are not escapes.
+    if (ts.isVariableDeclaration(parent) && parent.name === node) continue;
+    if (ts.isSpreadAssignment(parent) || ts.isSpreadElement(parent)) continue;
+    if (within(node, scanned.site)) continue;
+    // Any other use hands the object on: to a call (`Object.assign`, a helper), into
+    // another object or array, to another name. It may come back mutated: unknown.
+    use.objectOpaque = true;
+  }
+  return use;
+}
+
+/** Each status value an expression can evaluate to. */
+function statusValues(node: ts.Expression, scanned: Scanned, depth: number): string[] {
   const value = unwrap(node);
   const literal = literalStatus(value);
   if (literal !== null) return [literal];
-  if (ts.isConditionalExpression(value)) return [...statusValues(value.whenTrue, scope, depth), ...statusValues(value.whenFalse, scope, depth)];
+  if (ts.isConditionalExpression(value)) return [...statusValues(value.whenTrue, scanned, depth), ...statusValues(value.whenFalse, scanned, depth)];
   if (ts.isBinaryExpression(value) && [ts.SyntaxKind.BarBarToken, ts.SyntaxKind.QuestionQuestionToken].includes(value.operatorToken.kind)) {
-    return [...statusValues(value.left, scope, depth), ...statusValues(value.right, scope, depth)];
+    return [...statusValues(value.left, scanned, depth), ...statusValues(value.right, scanned, depth)];
   }
   if (ts.isIdentifier(value) && depth < MAX_DEPTH) {
-    const assigned = assignmentsTo(value.text, scope);
-    return assigned.length === 0 ? ["?"] : assigned.flatMap((expression) => statusValues(expression, scope, depth + 1));
+    const use = bindingUse(value, scanned);
+    if (!use) return UNKNOWN;
+    return [...(use.opaque ? UNKNOWN : []), ...use.assigned.flatMap((expression) => statusValues(expression, scanned, depth + 1))];
   }
-  return ["?"];
+  return UNKNOWN;
 }
 
-/** Every `status` an object expression (or a name for one) can carry, by content. */
-function objectStatusValues(node: ts.Expression, scope: ts.Node, depth: number): string[] {
+/** Every `status` an object expression (or a name for one) can carry. */
+function objectStatusValues(node: ts.Expression, scanned: Scanned, depth: number): string[] {
   const value = unwrap(node);
   if (ts.isObjectLiteralExpression(value)) {
     return value.properties.flatMap((property) => {
-      if (ts.isPropertyAssignment(property) && property.name.getText() === "status") return statusValues(property.initializer, scope, depth);
-      if (ts.isShorthandPropertyAssignment(property) && property.name.text === "status") return statusValues(property.name, scope, depth);
-      if (ts.isSpreadAssignment(property)) return objectStatusValues(property.expression, scope, depth);
+      if (ts.isPropertyAssignment(property)) {
+        if (ts.isComputedPropertyName(property.name)) return UNKNOWN;
+        return property.name.getText(scanned.source).replace(/^["']|["']$/g, "") === "status" ? statusValues(property.initializer, scanned, depth) : [];
+      }
+      if (ts.isShorthandPropertyAssignment(property)) return property.name.text === "status" ? statusValues(property.name, scanned, depth) : [];
+      if (ts.isSpreadAssignment(property)) return objectStatusValues(property.expression, scanned, depth);
       return [];
     });
   }
-  if (ts.isConditionalExpression(value)) return [...objectStatusValues(value.whenTrue, scope, depth), ...objectStatusValues(value.whenFalse, scope, depth)];
-  if (ts.isBinaryExpression(value) && [ts.SyntaxKind.AmpersandAmpersandToken, ts.SyntaxKind.BarBarToken, ts.SyntaxKind.QuestionQuestionToken].includes(value.operatorToken.kind)) {
-    return objectStatusValues(value.right, scope, depth);
+  if (ts.isConditionalExpression(value)) return [...objectStatusValues(value.whenTrue, scanned, depth), ...objectStatusValues(value.whenFalse, scanned, depth)];
+  if (ts.isBinaryExpression(value) && value.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken) return objectStatusValues(value.right, scanned, depth);
+  if (ts.isBinaryExpression(value) && [ts.SyntaxKind.BarBarToken, ts.SyntaxKind.QuestionQuestionToken].includes(value.operatorToken.kind)) {
+    return [...objectStatusValues(value.left, scanned, depth), ...objectStatusValues(value.right, scanned, depth)];
   }
   if (ts.isIdentifier(value) && value.text in STATUS_FREE_CONSTANTS) return [];
   if (ts.isIdentifier(value) && depth < MAX_DEPTH) {
-    const assigned = assignmentsTo(value.text, scope);
-    const members = memberStatusAssignments(value.text, scope);
-    if (assigned.length === 0 && members.length === 0) return ["?"];
-    return [...assigned.flatMap((expression) => objectStatusValues(expression, scope, depth + 1)),
-      ...members.flatMap((expression) => statusValues(expression, scope, depth + 1))];
+    const use = bindingUse(value, scanned);
+    if (!use) return UNKNOWN;
+    return [...(use.opaque || use.objectOpaque ? UNKNOWN : []),
+      ...use.assigned.flatMap((expression) => objectStatusValues(expression, scanned, depth + 1)),
+      ...use.statusWrites.flatMap((expression) => statusValues(expression, scanned, depth + 1))];
   }
-  return ["?"];
-}
-
-/** The scope that declares a name: the nearest enclosing function (or the file) holding its declaration. */
-function declaringScope(name: string, scope: ts.Node): ts.Node {
-  for (let current: ts.Node = scope; ; current = enclosingScope(current)) {
-    let declared = false;
-    const visit = (node: ts.Node): void => {
-      if (declared) return;
-      if ((ts.isVariableDeclaration(node) || ts.isParameter(node) || ts.isBindingElement(node)) && ts.isIdentifier(node.name) && node.name.text === name) declared = true;
-      else ts.forEachChild(node, visit);
-    };
-    visit(current);
-    if (declared || ts.isSourceFile(current)) return current;
-  }
-}
-
-/** The expressions assigned to a name where it is declared: its initializer and every `name = …`. */
-function assignmentsTo(name: string, within: ts.Node): ts.Expression[] {
-  const scope = declaringScope(name, within);
-  const found: ts.Expression[] = [];
-  const visit = (node: ts.Node): void => {
-    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.name.text === name && node.initializer) found.push(node.initializer);
-    if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.EqualsToken && ts.isIdentifier(node.left) && node.left.text === name) found.push(node.right);
-    ts.forEachChild(node, visit);
-  };
-  visit(scope);
-  return found;
-}
-
-/** Every `name.status = …` / `name["status"] = …` where the name is declared. */
-function memberStatusAssignments(name: string, within: ts.Node): ts.Expression[] {
-  const scope = declaringScope(name, within);
-  const found: ts.Expression[] = [];
-  const visit = (node: ts.Node): void => {
-    if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
-      const target = node.left;
-      const onName = (ts.isPropertyAccessExpression(target) || ts.isElementAccessExpression(target)) && ts.isIdentifier(target.expression) && target.expression.text === name;
-      const isStatus = ts.isPropertyAccessExpression(target) ? isStatusName(target.name) : ts.isElementAccessExpression(target) && isStatusName(target.argumentExpression);
-      if (onName && isStatus) found.push(node.right);
-    }
-    ts.forEachChild(node, visit);
-  };
-  visit(scope);
-  return found;
+  return UNKNOWN;
 }
 
 /** `{A,B,?}`: the distinct values, in plain code-unit order. */
 const valueSet = (values: readonly string[]) => `{${[...new Set(values)].sort(compareOrdinal).join(",")}}`;
 
-/**
- * A non-literal site is listed only when its content can reach a sale status or
- * a value the census cannot read; one proven to write only other statuses (or
- * none) is not a PAID/CANCELLED writer and needs no entry.
- */
+/** Listed only when its content can reach a sale status or a value the census cannot read. */
 const siteOf = (label: string, values: readonly string[]): string[] =>
   values.some((value) => value === "?" || SALE_STATUSES.has(value)) ? [`${label}${valueSet(values)}`] : [];
 
-/** The sites one data object yields: its `status`, and those of every object a conditional spread may add. */
-function objectSites(object: ts.ObjectLiteralExpression, source: ts.SourceFile): string[] {
+/** The sites one data object literal yields: its `status`, and those of every object a spread may add. */
+function objectSites(object: ts.ObjectLiteralExpression, scanned: Scanned): string[] {
   const sites: string[] = [];
   for (const property of object.properties) {
-    if (ts.isPropertyAssignment(property) && property.name.getText(source) === "status") {
+    if (ts.isPropertyAssignment(property)) {
+      if (ts.isComputedPropertyName(property.name)) {
+        sites.push(`computed:${property.name.getText(scanned.source)}{?}`);
+        continue;
+      }
+      if (property.name.getText(scanned.source).replace(/^["']|["']$/g, "") !== "status") continue;
       const status = literalStatus(property.initializer);
-      if (status === null) {
-        sites.push(...siteOf(`computed:${property.initializer.getText(source)}`, statusValues(property.initializer, enclosingScope(property), 0)));
-      } else if (SALE_STATUSES.has(status)) sites.push(status);
+      if (status === null) sites.push(...siteOf(`computed:${property.initializer.getText(scanned.source)}`, statusValues(property.initializer, scanned, 0)));
+      else if (SALE_STATUSES.has(status)) sites.push(status);
     } else if (ts.isShorthandPropertyAssignment(property) && property.name.text === "status") {
-      sites.push(...siteOf("computed:status", statusValues(property.name, enclosingScope(property), 0)));
+      sites.push(...siteOf("computed:status", statusValues(property.name, scanned, 0)));
     } else if (ts.isSpreadAssignment(property)) {
-      sites.push(...spreadSites(property.expression, source));
+      sites.push(...spreadSites(property.expression, scanned));
     }
   }
   return sites;
 }
 
-function spreadSites(node: ts.Expression, source: ts.SourceFile): string[] {
+function spreadSites(node: ts.Expression, scanned: Scanned): string[] {
   const value = unwrap(node);
-  if (ts.isObjectLiteralExpression(value)) return objectSites(value, source);
-  if (ts.isConditionalExpression(value)) return [...spreadSites(value.whenTrue, source), ...spreadSites(value.whenFalse, source)];
-  if (ts.isBinaryExpression(value) && (value.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken
-    || value.operatorToken.kind === ts.SyntaxKind.BarBarToken || value.operatorToken.kind === ts.SyntaxKind.QuestionQuestionToken)) {
-    return spreadSites(value.right, source);
-  }
+  if (ts.isObjectLiteralExpression(value)) return objectSites(value, scanned);
+  if (ts.isConditionalExpression(value)) return [...spreadSites(value.whenTrue, scanned), ...spreadSites(value.whenFalse, scanned)];
+  if (ts.isBinaryExpression(value) && value.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken) return spreadSites(value.right, scanned);
   if (ts.isIdentifier(value) && value.text in STATUS_FREE_CONSTANTS) return [];
-  return siteOf(`spread:${value.getText(source)}`, objectStatusValues(value, enclosingScope(value), 0));
+  return siteOf(`spread:${value.getText(scanned.source)}`, objectStatusValues(value, scanned, 0));
 }
 
-/** A write's payload: an object literal, or a conditional choosing between payloads, read through; anything else by content. */
-function payloadSites(node: ts.Expression, source: ts.SourceFile): string[] {
+/** A write's data payload: an object literal, or a conditional choosing between payloads, read through; anything else by content. */
+function payloadSites(node: ts.Expression, scanned: Scanned): string[] {
   const value = unwrap(node);
-  if (ts.isObjectLiteralExpression(value)) return objectSites(value, source);
-  if (ts.isConditionalExpression(value)) return [...payloadSites(value.whenTrue, source), ...payloadSites(value.whenFalse, source)];
-  return siteOf(`payload:${value.getText(source)}`, objectStatusValues(value, enclosingScope(value), 0));
+  if (ts.isObjectLiteralExpression(value)) return objectSites(value, scanned);
+  if (ts.isConditionalExpression(value)) return [...payloadSites(value.whenTrue, scanned), ...payloadSites(value.whenFalse, scanned)];
+  return siteOf(`payload:${value.getText(scanned.source)}`, objectStatusValues(value, scanned, 0));
+}
+
+const PAYLOAD_KEYS = new Set(["data", "create", "update"]);
+
+/** The sites a write's WHOLE arguments yield: its data/create/update payloads; whatever it cannot read is opaque. */
+function argsSites(node: ts.Expression, scanned: Scanned, depth: number): string[] {
+  const value = unwrap(node);
+  const opaque = [`payload:${value.getText(scanned.source)}{?}`];
+  if (ts.isConditionalExpression(value)) return [...argsSites(value.whenTrue, scanned, depth), ...argsSites(value.whenFalse, scanned, depth)];
+  if (ts.isObjectLiteralExpression(value)) {
+    const sites: string[] = [];
+    for (const property of value.properties) {
+      if (ts.isSpreadAssignment(property)) {
+        sites.push(`payload:...${property.expression.getText(scanned.source)}{?}`);
+      } else if (ts.isShorthandPropertyAssignment(property) && PAYLOAD_KEYS.has(property.name.text)) {
+        sites.push(...payloadSites(property.name, scanned));
+      } else if (ts.isPropertyAssignment(property)) {
+        if (ts.isComputedPropertyName(property.name)) {
+          sites.push(`payload:${property.name.getText(scanned.source)}{?}`);
+          continue;
+        }
+        if (!PAYLOAD_KEYS.has(property.name.getText(scanned.source).replace(/^["']|["']$/g, ""))) continue;
+        const initializer = unwrap(property.initializer);
+        const payloads = ts.isArrayLiteralExpression(initializer) ? initializer.elements : [property.initializer];
+        for (const payload of payloads) sites.push(...payloadSites(payload, scanned));
+      }
+    }
+    return sites;
+  }
+  if (ts.isIdentifier(value) && depth < MAX_DEPTH) {
+    const use = bindingUse(value, scanned);
+    if (!use) return opaque;
+    // Its own `data` written through the name (`args.data = …`) is as unreadable as any other member write.
+    const unreadable = use.opaque || use.objectOpaque || use.statusWrites.length > 0 || use.assigned.length === 0;
+    return [...(unreadable ? opaque : []), ...use.assigned.flatMap((expression) => argsSites(expression, scanned, depth + 1))];
+  }
+  return opaque;
 }
 
 /** Every classified site in one file's source, as `value` strings (one per occurrence). */
 function bookingSaleStatusSites(text: string, file: string): string[] {
-  const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, file.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
+  const { source, checker } = bind(text, file);
   const sites: string[] = [];
   const visit = (node: ts.Node): void => {
     if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression) && WRITE_METHODS.has(node.expression.name.text)) {
@@ -262,17 +373,7 @@ function bookingSaleStatusSites(text: string, file: string): string[] {
         || (ts.isElementAccessExpression(delegate) && ts.isStringLiteralLike(delegate.argumentExpression) && delegate.argumentExpression.text === "booking");
       if (isBooking) {
         const [argument] = node.arguments;
-        if (!argument || !ts.isObjectLiteralExpression(unwrap(argument))) {
-          sites.push(...(argument ? payloadSites(argument, source) : ["payload:none{?}"]));
-        } else {
-          for (const property of (unwrap(argument) as ts.ObjectLiteralExpression).properties) {
-            if (!ts.isPropertyAssignment(property) || !["data", "create", "update"].includes(property.name.getText(source))) continue;
-            const payloads = ts.isArrayLiteralExpression(unwrap(property.initializer))
-              ? (unwrap(property.initializer) as ts.ArrayLiteralExpression).elements
-              : [property.initializer];
-            for (const payload of payloads) sites.push(...payloadSites(payload, source));
-          }
-        }
+        sites.push(...(argument ? argsSites(argument, { source, checker, site: node }, 0) : ["payload:none{?}"]));
       }
     }
     ts.forEachChild(node, visit);
@@ -358,10 +459,39 @@ describe("every booking PAID/CANCELLED writer is classified (#4628)", () => {
     expect(sites("function f(x) { let next = BookingStatus.PENDING; if (x) next = BookingStatus.PAID; return tx.booking.update({ where, data: { status: next } }); }"))
       .toEqual(["computed:next{PAID,PENDING}"]);
     expect(sites("function f() { const next = x ? BookingStatus.PENDING : BookingStatus.CONFIRMED; return tx.booking.update({ where, data: { status: next } }); }")).toEqual([]);
+    expect(sites("function f() { const data = { status: BookingStatus.PENDING }; return tx.booking.update({ where, data: data }); }")).toEqual([]);
+    // #4659 delta lens, d-4: shorthand `{ where, data }` is read through, and a top-level spread is opaque.
     expect(sites("function f() { const data = { status: BookingStatus.PENDING }; return tx.booking.update({ where, data }); }")).toEqual([]);
+    expect(sites("function f() { const data = { status: BookingStatus.PAID }; return tx.booking.update({ where, data }); }")).toEqual(["payload:data{PAID}"]);
+    expect(sites("async function f(base) { await tx.booking.update({ ...base }); }")).toEqual(["payload:...base{?}"]);
+    // d-1: whole arguments passed by name are walked for their data, never read as the data.
+    expect(sites("async function f(id) { const args = { where: { id }, data: { status: BookingStatus.PAID } }; await tx.booking.update(args); }")).toEqual(["PAID"]);
+    expect(sites("async function f(id) { const args = { where: { id }, data: { status: BookingStatus.PAID } }; await tx.booking.updateMany(args); }")).toEqual(["PAID"]);
+    expect(sites("async function f(id) { const args = { where: { id }, data: { status: BookingStatus.PAID } } satisfies Prisma.BookingUpdateArgs; await tx.booking.update(args); }")).toEqual(["PAID"]);
+    expect(sites("async function f(args) { await tx.booking.update(args); }")).toEqual(["payload:args{?}"]);
+    // d-2: a payload name the scanner cannot follow fails closed.
+    expect(sites("async function f(cancel) { const data: Prisma.BookingUpdateInput = {}; if (cancel) Object.assign(data, { status: BookingStatus.CANCELLED }); await tx.booking.update({ where, data: data }); }"))
+      .toEqual(["payload:data{?}"]);
+    expect(sites("async function f() { const updateData = { notes: null }; applyCancellation(updateData); await tx.booking.update({ where, data: updateData }); }"))
+      .toEqual(["payload:updateData{?}"]);
+    expect(sites("async function f(k, v) { const updateData = { notes: null }; updateData[k] = v; await tx.booking.update({ where, data: updateData }); }"))
+      .toEqual(["payload:updateData{?}"]);
+    expect(sites("async function f(input) { const data = input.cancelData ?? { notes: null }; await tx.booking.update({ where, data: data }); }"))
+      .toEqual(["payload:data{?}"]);
+    // d-3: a status bound where the scanner cannot see its value, or shadowed elsewhere, stays unknown.
+    expect(sites("async function f(tx, status: BookingStatus) { if (!status) status = BookingStatus.PENDING; await tx.booking.update({ where, data: { status } }); }"))
+      .toEqual(["computed:status{?,PENDING}"]);
+    expect(sites("async function f(input, x) { let { next } = input; if (x) next = BookingStatus.PENDING; await tx.booking.update({ where, data: { status: next } }); }"))
+      .toEqual(["computed:next{?,PENDING}"]);
+    expect(sites("function f(tx, next) { const g = () => { const next = BookingStatus.PENDING; return next; }; g(); return tx.booking.update({ where, data: { status: next } }); }"))
+      .toEqual(["computed:next{?}"]);
+    expect(sites('import { next } from "./x"; function g() { const next = BookingStatus.PENDING; return next; } function f() { return tx.booking.update({ where, data: { status: next } }); }'))
+      .toEqual(["computed:next{?}"]);
+    expect(sites("async function f(rows) { for (const next of rows) await tx.booking.update({ where, data: { status: next } }); }")).toEqual(["computed:next{?}"]);
+    expect(sites("async function f() { try { x(); } catch (next) { await tx.booking.update({ where, data: { status: next } }); } }")).toEqual(["computed:next{?}"]);
     expect(sites("function f() { const data: Record<string, unknown> = { status: BookingStatus.PENDING }; data.status = BookingStatus.PAID; return tx.booking.updateMany({ where, data: data }); }"))
       .toEqual(["payload:data{PAID,PENDING}"]);
-    expect(sites('function f() { const extra = { ["x"]: 1 }; extra["status"] = "CANCELLED"; return tx.booking.update({ where, data: { ...extra } }); }'))
+    expect(sites('function f() { const extra = { x: 1 }; extra["status"] = "CANCELLED"; return tx.booking.update({ where, data: { ...extra } }); }'))
       .toEqual(["spread:extra{CANCELLED}"]);
     expect(sites("await tx.booking.update({ where, data: { ...(legacy ? { status: BookingStatus.CANCELLED } : {}) } });")).toEqual(["CANCELLED"]);
     expect(sites("await tx.booking.update({ where, data: { ...(ok && { status: BookingStatus.PAID }) } });")).toEqual(["PAID"]);
