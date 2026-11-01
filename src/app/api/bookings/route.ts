@@ -1641,7 +1641,7 @@ export async function POST(request: NextRequest) {
 
   // #4628: an internet-banking create posts its charge to the journal; the
   // context is read here, before the create's transaction (`INV-LOCK-004`).
-  const journal = paymentMethod === "internet_banking" ? await resolveBookingMoneyPostingContext() : undefined;
+  const journal = await resolveBookingMoneyPostingContext();
 
   try {
     const outcome = await createConfirmedBooking({

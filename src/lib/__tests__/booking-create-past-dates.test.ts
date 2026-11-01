@@ -274,7 +274,8 @@ function baseInput(
     todayAtClub: FIXTURE_CLUB_DAY,
     format: CLUB_FORMAT_TEST,
     ...overrides,
-  };
+    // #4628: the payment union is checked at real call sites; a test spreads loose overrides.
+  } as Parameters<typeof createConfirmedBooking>[0];
 }
 
 function auditMetadata(action: string): Record<string, unknown> | undefined {

@@ -188,7 +188,22 @@ interface BaseInput {
 
 export type DraftBookingInput = BaseInput;
 
-export interface ConfirmedBookingInput extends BaseInput {
+/**
+ * #4628 (Ledger M3c): how the create is paid, and the journal context that an
+ * internet-banking create needs. Its invoice binds the charge, so the create
+ * posts R01 inside its transaction from a context its caller resolved before
+ * any transaction (`INV-LOCK-004`, as `todayAtClub`). The union makes the
+ * context REQUIRED wherever the method can be internet banking: a caller
+ * passing a `BookingPaymentMethod` it did not narrow must pass one too, so the
+ * compiler names every door that forgot it (a group join did, #4659).
+ */
+export type ConfirmedBookingPaymentInput =
+  | { paymentMethod: "internet_banking"; journal: BookingJournalContext }
+  | { paymentMethod?: Exclude<BookingPaymentMethod, "internet_banking">; journal?: BookingJournalContext };
+
+export type ConfirmedBookingInput = ConfirmedBookingInputFields & ConfirmedBookingPaymentInput;
+
+interface ConfirmedBookingInputFields extends BaseInput {
   /**
    * The CLUB's calendar day (`INV-CONFIG-002`), resolved by the caller before
    * it opened ANY transaction. REQUIRED, with no default.
@@ -211,17 +226,9 @@ export interface ConfirmedBookingInput extends BaseInput {
    * property that used to rest on both sides happening to call the same helper.
    */
   todayAtClub: CalendarDate;
-  /**
-   * #4628 (Ledger M3c): the member-money journal's posting context, resolved
-   * by the caller before any transaction, for the same reason as `todayAtClub`.
-   * Required on an internet-banking create, whose invoice binds the charge
-   * (the create refuses one without it); unread on every other.
-   */
-  journal?: BookingJournalContext;
   status: BookingStatus;
   shouldBePending: boolean;
   holdDays: number;
-  paymentMethod?: BookingPaymentMethod;
   internetBankingSettings?: InternetBankingPaymentSettingsValues;
   // Retroactive booking (#1695). Honoured only for on-behalf creates: the
   // check-in may fall in the past (up to RETROACTIVE_BOOKING_MAX_LOOKBACK_DAYS)
