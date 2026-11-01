@@ -335,7 +335,7 @@ async function expectSettledOnce(paymentIntentId: string, attemptRowId: string):
     it("the stated limit: an attempt minted before #4646 sent no attempt id, so its asynchronous capture is still alerted as unmatched, once", async () => {
       const { sent, attemptRowId } = await chargeWithLostAnswer();
       // As the old code minted it: the key without its #4646 ending, the metadata without the row.
-      const { savedCardAttemptId: _dropped, ...oldMetadata } = sent.metadata;
+      const oldMetadata = Object.fromEntries(Object.entries(sent.metadata).filter(([key]) => key !== "savedCardAttemptId"));
       await prisma.paymentTransaction.update({ where: { id: attemptRowId }, data: { reference: sent.idempotencyKey.replace(/_v2$/, "") } });
       const intent = `${INTENT_PREFIX}pre_4646`;
       const capture = succeededEvent(intent, { ...sent, metadata: oldMetadata });
