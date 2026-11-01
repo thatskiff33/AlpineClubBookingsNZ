@@ -169,6 +169,7 @@ async function cleanup() {
   await prisma.groupBookingSettlement.deleteMany();
   // RESTRICT onto both its booking and its payment (#4583); the seed raises one
   // (the bank-refund void follow-up), so it goes before either parent.
+  await prisma.manualRefundTask.deleteMany();
   await prisma.payment.deleteMany();
   await prisma.paymentLink.deleteMany();
   await prisma.bookingEvent.deleteMany();
