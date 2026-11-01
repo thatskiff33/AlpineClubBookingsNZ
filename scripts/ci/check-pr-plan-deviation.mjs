@@ -31,7 +31,8 @@
  *   - `PLAN_DEVIATION_ENFORCED` below, to `true`;
  *   - the `::warning::` branch of this file's entrypoint and its "warning
  *     during the rollout week" text (the `fail` branch already exists);
- *   - tests: `check-pr-plan-deviation.test.mjs` "is in its warning week" and
+ *   - tests: `check-pr-plan-deviation.test.mjs` "is in its warning week" (it
+ *     fails when the warning sentences below disagree with the constant) and
  *     "prints a ::warning:: annotation…", and `check-pr-body.test.mjs`
  *     "reports a missing plan-deviation section as WARN…";
  *   - the texts that say "warning": the `## Plan Deviation` comment in

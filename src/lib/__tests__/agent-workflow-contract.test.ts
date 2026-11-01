@@ -492,6 +492,16 @@ describe("repository agent workflow contract", () => {
     expect(ci).toContain("node scripts/ci/check-pr-plan-deviation.mjs");
     expect(ci).toContain("Check PR size (soft limit)");
     expect(ci).toContain("node scripts/ci/check-pr-size.mjs");
+    // The size step warns and exits 0 when it cannot measure, so dropping its
+    // diff range or its pull-request guard leaves the suite green while the
+    // check never runs.
+    const sizeStep = ci.slice(
+      ci.indexOf("- name: Check PR size (soft limit)"),
+      ci.indexOf("- name: Refuse an npm lockfile"),
+    );
+    expect(sizeStep).toContain("if: github.event_name == 'pull_request'");
+    expect(sizeStep).toContain("PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}");
+    expect(sizeStep).toContain("PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}");
   });
 
   /*

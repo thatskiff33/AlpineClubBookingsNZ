@@ -175,9 +175,19 @@ describe("validatePlanDeviation", () => {
 
 describe("planDeviationVerdict: the rollout switch", () => {
   it("is in its warning week: the shipped constant is not enforced", () => {
-    // The follow-up PR flips this to `true` and updates this one assertion.
+    // The follow-up sets the constant to `true` and removes the warning-week
+    // sentences. Either change without the other fails here.
     expect(PLAN_DEVIATION_ENFORCED).toBe(false);
     expect(planDeviationVerdict("no section").status).toBe("warn");
+    const warningSentences = [
+      [".github/pull_request_template.md", "`verify` warns on a missing, empty or unlinked section"],
+      [".github/workflows/ci.yml", "WARNING ONLY until `PLAN_DEVIATION_ENFORCED`"],
+      ["CONTRIBUTING.md", "Two PR-body checks warn rather than fail"],
+    ];
+    for (const [path, sentence] of warningSentences) {
+      const text = readFileSync(join(repoRoot, path), "utf8").replace(/\s+/g, " ");
+      expect([path, text.includes(sentence)]).toEqual([path, !PLAN_DEVIATION_ENFORCED]);
+    }
   });
 
   it("warns while not enforced and fails once enforced, on the same body", () => {
