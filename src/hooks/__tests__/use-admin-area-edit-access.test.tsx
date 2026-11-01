@@ -16,6 +16,7 @@ vi.mock("next-auth/react", () => ({
 import {
   useAdminAreaEditAccess,
   useAdminAreaViewAccess,
+  useCanOpenAdminPath,
 } from "../use-admin-area-edit-access";
 
 function matrix(
@@ -101,5 +102,18 @@ describe("useAdminAreaViewAccess tri-state (#2065)", () => {
     setSession("unauthenticated");
     const { result } = renderHook(() => useAdminAreaViewAccess("finance"));
     expect(result.current).toBe(false);
+  });
+});
+
+describe("useCanOpenAdminPath (#4581)", () => {
+  it("is undefined while the session resolves, then follows the route map's area", () => {
+    setSession("loading");
+    expect(renderHook(() => useCanOpenAdminPath("/admin/lockers")).result.current).toBeUndefined();
+
+    setSession("authenticated", matrix({ membership: "none" }));
+    expect(renderHook(() => useCanOpenAdminPath("/admin/lockers")).result.current).toBe(false);
+
+    setSession("authenticated", matrix({ membership: "view", lodge: "none" }));
+    expect(renderHook(() => useCanOpenAdminPath("/admin/lockers")).result.current).toBe(true);
   });
 });

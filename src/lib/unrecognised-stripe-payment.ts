@@ -22,25 +22,43 @@
  *   it and sends. A Checkout read that throws is not stored as "no Checkout":
  *   nothing is inserted, and Stripe redelivers.
  *
+ * #4624 (`INV-INT-033`): the same record, claim and alert hold a succeeded
+ * PaymentIntent the app DID create - it carries the app's `bookingId` - that
+ * no PRIMARY payment transaction names, so no path settles it
+ * (`recordUnmatchedAppStripePayment`). The row's `reason` says which case it
+ * is; an app intent names its booking, skips the Checkout read (the app makes
+ * no Checkout) and raises its own alert, `admin-unmatched-app-stripe-payment`,
+ * under the same once-ever key: one row and one alert per PaymentIntent,
+ * whichever case recorded it first. Nothing about the booking, its payment or
+ * its ledger is written.
+ *
  * No advisory lock: nothing here touches a booking, settlement money, capacity
  * or credit, and the only race — two deliveries of one payment — is decided by
  * the two unique keys. No transaction: the Checkout read is a provider call and
  * runs before any write (`INV-INT-003`). Nothing is posted to Xero.
  */
 import type Stripe from "stripe";
-import type { UnrecognisedStripePayment } from "@prisma/client";
+import {
+  PaymentTransactionKind,
+  UnrecognisedStripePaymentReason,
+  type UnrecognisedStripePayment,
+} from "@prisma/client";
 
 import { readHeldOnceEverAlertTimes, sendAdminAlertOnceEver } from "@/lib/admin-alert-once";
 import { releaseAlertCooldown } from "@/lib/alert-cooldown";
 import { currencyHasTwoDecimalPlaces, canonicalCurrencyCode } from "@/lib/club-currency-minor-unit";
 import type { ClubFormat } from "@/lib/club-format";
-import { sendAdminUnrecognisedStripePaymentAlert } from "@/lib/email";
-import { UNMUTEABLE_ALERT_SENT } from "@/lib/email/admin-alert-send-result";
-import type { UnrecognisedStripePaymentAlertFields } from "@/lib/email-templates/admin-unrecognised-stripe-payment";
+import { sendAdminUnmatchedAppStripePaymentAlert, sendAdminUnrecognisedStripePaymentAlert } from "@/lib/email";
+import { UNMUTEABLE_ALERT_SENT, type AdminAlertSendOutcome } from "@/lib/email/admin-alert-send-result";
+import type {
+  UnmatchedAppStripePaymentAlertFields,
+  UnrecognisedStripePaymentAlertFields,
+} from "@/lib/email-templates/admin-unrecognised-stripe-payment";
 import { emailClubDateTime } from "@/lib/email-templates-club-time";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 import { findCheckoutSessionForPaymentIntent } from "@/lib/stripe";
+import { UNMATCHED_APP_LEDGER_MATCH_LABEL } from "@/lib/unrecognised-stripe-payment-note";
 import { formatCents } from "@/lib/utils";
 
 /** The stored description's cap: line items are short; a typed description is not. */
@@ -64,10 +82,18 @@ export const UNRECOGNISED_ALERT_IN_FLIGHT_MS = 15 * 60 * 1000;
 /** The alert was neither sent nor left claimed, so the webhook must fail and Stripe redeliver. */
 export class UnrecognisedStripePaymentAlertNotSentError extends Error {
   constructor(readonly paymentIntentId: string) {
-    super(`The alert for Stripe payment ${paymentIntentId}, which the app did not create, was not sent; Stripe will redeliver`);
+    super(`The alert for Stripe payment ${paymentIntentId}, which no app path settled, was not sent; Stripe will redeliver`);
     this.name = "UnrecognisedStripePaymentAlertNotSentError";
   }
 }
+
+/** Why this delivery is recording the payment, and for an app intent, its booking. */
+type RecordOrigin =
+  | { reason: typeof UnrecognisedStripePaymentReason.NOT_APP_CREATED; bookingId: null }
+  | { reason: AppIntentReason; bookingId: string };
+
+/** #4624: the reasons an app intent with a booking id is recorded. */
+type AppIntentReason = Exclude<UnrecognisedStripePaymentReason, typeof UnrecognisedStripePaymentReason.NOT_APP_CREATED>;
 
 /**
  * Record a succeeded PaymentIntent the app did not create, and alert about it,
@@ -78,15 +104,62 @@ export async function recordUnrecognisedStripePayment(
   event: Stripe.Event,
   format: ClubFormat,
 ): Promise<void> {
-  const row = await claimRecord(paymentIntent, event);
+  await recordAndAlert(paymentIntent, event, format, {
+    reason: UnrecognisedStripePaymentReason.NOT_APP_CREATED,
+    bookingId: null,
+  });
+}
+
+/**
+ * #4624: which unmatched case an app intent is - no payment transaction names
+ * it (`null`), or one of another kind does. A PRIMARY row is settled by the
+ * webhook and never reaches here; passing one is a caller bug and throws.
+ */
+function unmatchedAppIntentReason(matchedKind: PaymentTransactionKind | null): AppIntentReason {
+  if (matchedKind === null) return UnrecognisedStripePaymentReason.APP_INTENT_NO_TRANSACTION;
+  if (matchedKind === PaymentTransactionKind.PRIMARY) {
+    throw new Error("A PRIMARY payment transaction matches this PaymentIntent; it is settled, not recorded as unmatched");
+  }
+  return UnrecognisedStripePaymentReason.APP_INTENT_NOT_PRIMARY;
+}
+
+/**
+ * #4624 (`INV-INT-033`): record a succeeded PaymentIntent the app created for
+ * `bookingId` that no PRIMARY payment transaction names, and alert about it,
+ * once each. `matchedKind` is the kind of the transaction that does name it,
+ * or null when none does. Settles nothing.
+ */
+export async function recordUnmatchedAppStripePayment(
+  paymentIntent: Stripe.PaymentIntent,
+  event: Stripe.Event,
+  format: ClubFormat,
+  match: { bookingId: string; matchedKind: PaymentTransactionKind | null },
+): Promise<void> {
+  await recordAndAlert(paymentIntent, event, format, {
+    reason: unmatchedAppIntentReason(match.matchedKind),
+    bookingId: match.bookingId,
+  });
+}
+
+async function recordAndAlert(
+  paymentIntent: Stripe.PaymentIntent,
+  event: Stripe.Event,
+  format: ClubFormat,
+  origin: RecordOrigin,
+): Promise<void> {
+  const row = await claimRecord(paymentIntent, event, origin);
   logger.warn(
     {
       paymentIntentId: row.stripePaymentIntentId,
       paymentLinkId: row.stripePaymentLinkId,
       amountCents: row.amountCents,
       currency: row.currency,
+      reason: row.reason,
+      bookingId: row.bookingId,
     },
-    "Stripe payment the app did not create: recorded for the treasurer to code in Xero (#4532)",
+    row.reason === UnrecognisedStripePaymentReason.NOT_APP_CREATED
+      ? "Stripe payment the app did not create: recorded for the treasurer to code in Xero (#4532)"
+      : "App booking payment no payment transaction settles: recorded for the treasurer to match by hand (#4624)",
   );
 
   await ensureAlert(row, event, format);
@@ -99,14 +172,14 @@ async function ensureAlert(
   format: ClubFormat,
 ): Promise<void> {
   const key = unrecognisedStripePaymentAlertKey(row.stripePaymentIntentId);
-  const fields = alertFields(row, event.livemode, format);
+  const mail = alertMail(row, event.livemode, format);
   const send = () =>
     sendAdminAlertOnceEver({
       key,
-      label: "unrecognised Stripe payment alert",
-      context: { paymentIntentId: row.stripePaymentIntentId },
+      label: mail.label,
+      context: { paymentIntentId: row.stripePaymentIntentId, reason: row.reason },
       send: async () => {
-        const outcome = await sendAdminUnrecognisedStripePaymentAlert(fields);
+        const outcome = await mail.send();
         if (outcome !== "sent") {
           throw new UnrecognisedStripePaymentAlertNotSentError(row.stripePaymentIntentId);
         }
@@ -147,14 +220,19 @@ async function alertWasSent(id: string): Promise<boolean> {
 async function claimRecord(
   paymentIntent: Stripe.PaymentIntent,
   event: Stripe.Event,
+  origin: RecordOrigin,
 ): Promise<UnrecognisedStripePayment> {
   const where = { stripePaymentIntentId: paymentIntent.id };
   const existing = await prisma.unrecognisedStripePayment.findUnique({ where });
   if (existing) return existing;
 
-  const session = await readCheckoutSession(paymentIntent.id);
+  // The app makes no Checkout session, so an app intent's is not asked for.
+  const session =
+    origin.reason === UnrecognisedStripePaymentReason.NOT_APP_CREATED
+      ? await readCheckoutSession(paymentIntent.id)
+      : null;
   await prisma.unrecognisedStripePayment.createMany({
-    data: [buildRecord(paymentIntent, event, session)],
+    data: [buildRecord(paymentIntent, event, session, origin)],
     skipDuplicates: true,
   });
   // Ours or a concurrent delivery's: both describe the same payment.
@@ -201,6 +279,7 @@ function buildRecord(
   paymentIntent: Stripe.PaymentIntent,
   event: Stripe.Event,
   session: Stripe.Checkout.Session | null,
+  origin: RecordOrigin,
 ) {
   return {
     stripePaymentIntentId: paymentIntent.id,
@@ -212,6 +291,8 @@ function buildRecord(
     stripeCreatedAt: new Date(event.created * 1000),
     description: describeUnrecognisedPayment(paymentIntent, session),
     stripeEventId: event.id,
+    reason: origin.reason,
+    bookingId: origin.bookingId,
   };
 }
 
@@ -231,6 +312,45 @@ export function unrecognisedPaymentAmountLabel(amountCents: number, currency: st
 /** The Stripe dashboard page of the payment, in the mode the event came from. */
 export function stripeDashboardPaymentUrl(paymentIntentId: string, livemode: boolean): string {
   return `https://dashboard.stripe.com/${livemode ? "" : "test/"}payments/${encodeURIComponent(paymentIntentId)}`;
+}
+
+/**
+ * The one alert the stored row's reason raises: #4532's for a payment the app
+ * did not create, #4624's for the app's own unmatched booking payment. Read off
+ * the STORED row, so a later delivery alerts as the first one recorded.
+ */
+function alertMail(
+  row: UnrecognisedStripePayment,
+  livemode: boolean,
+  format: ClubFormat,
+): { label: string; send: () => Promise<AdminAlertSendOutcome> } {
+  const reason = row.reason;
+  if (reason === UnrecognisedStripePaymentReason.NOT_APP_CREATED) {
+    const fields = alertFields(row, livemode, format);
+    return { label: "unrecognised Stripe payment alert", send: () => sendAdminUnrecognisedStripePaymentAlert(fields) };
+  }
+  const fields = unmatchedAppAlertFields(row, reason, livemode, format);
+  return { label: "unmatched app Stripe payment alert", send: () => sendAdminUnmatchedAppStripePaymentAlert(fields) };
+}
+
+/** #4624: the label map, typed here so a new app-intent reason without a label does not compile. */
+const LEDGER_MATCH_LABEL: Record<AppIntentReason, string> = UNMATCHED_APP_LEDGER_MATCH_LABEL;
+
+function unmatchedAppAlertFields(
+  row: UnrecognisedStripePayment,
+  reason: AppIntentReason,
+  livemode: boolean,
+  format: ClubFormat,
+): UnmatchedAppStripePaymentAlertFields {
+  return {
+    amount: unrecognisedPaymentAmountLabel(row.amountCents, row.currency, format),
+    receivedAt: emailClubDateTime(row.stripeCreatedAt),
+    bookingId: row.bookingId ?? NONE,
+    ledgerMatch: LEDGER_MATCH_LABEL[reason],
+    paymentIntentId: row.stripePaymentIntentId,
+    chargeId: row.stripeChargeId ?? NONE,
+    stripeDashboardUrl: stripeDashboardPaymentUrl(row.stripePaymentIntentId, livemode),
+  };
 }
 
 function alertFields(

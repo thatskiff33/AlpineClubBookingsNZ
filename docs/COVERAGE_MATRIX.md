@@ -125,7 +125,7 @@ a `GAP`, replace it with a relative link to that file (e.g.
 | `site-style` | content | — | [guide](guides/site-style.md) | 4 |
 | `stripe` | finance | [`guides/integrations.md`](guides/integrations.md) (Stripe Setup), [`guides/payments.md`](guides/payments.md) | [guide](guides/integrations.md) (`stripe/setup` wizard) | — (guided setup epic #2078; postdates #2050) |
 | `stuck-states` | support | `ARCHITECTURE.md` (stuck-state dashboard) | [guide](guides/stuck-states.md) | 4 |
-| `subscription-lockout` | support | `ARCHITECTURE.md` (subscription lockout) | [guide](guides/subscription-lockout.md) | 2 |
+| `subscription-lockout` | membership | `ARCHITECTURE.md` (subscription lockout) | [guide](guides/subscription-lockout.md) | 2 |
 | `subscriptions` | finance | `ARCHITECTURE.md` (membership subscription billing) | [guide](guides/subscriptions.md) | 2 |
 | `testing` | overview (allowlisted) | TEST-ONLY: `testing/route-error` is the route-error probe for the #4467 boundary E2E. In a real production runtime it calls `notFound()` before any await and has no loading boundary above it, so the answer is a real 404 status; elsewhere it runs the admin guard itself before reading its cookie (`src/lib/route-error-probe.ts`) | — (not an operator surface) | — |
 | `video-meetings` | finance | [`guides/calendar.md`](guides/calendar.md) ("Video meetings (MiroTalk)"), `SECURITY-ATTACK-SURFACE.md` (MiroTalk meeting tokens) | [guide](guides/calendar.md) | — (MAD #2940, epic #2725; postdates #2050) |
@@ -207,12 +207,14 @@ Members** hub (`/admin/membership-setup`) and their guides open with the hub nav
 path; `lockers` is lodge-scoped (ADR-005), reached from the lodge configuration
 hub's **Lockers** card, and its guide correctly opens route-first (the
 `seasons.md` precedent — there is no clean `Admin → X` path without first
-picking a lodge). Note also that `subscription-lockout`'s page admission is
-gated to the **support** area even though its settings span membership/finance/
-bookings — the guide documents this. `fees` sits under both **bookings** and **finance**: its admission is OR
+picking a lodge; the lodge hub hides that card from an admin without membership
+access, since `/admin/lockers` is a membership page, #4581). Note also that
+`subscription-lockout`'s page admission is the **membership** area, matching its
+API, even though its settings span membership/finance/bookings (#4581) — the
+guide documents this. `fees` sits under both **bookings** and **finance**: its admission is OR
 (bookings *or* finance view), and it self-gates editing per section (hut fees need
 bookings edit; joining/annual/family fees need finance edit). The `subscription-lockout`
-page's own route is **support**, but it embeds membership, finance, and (read-only)
+page's own route is **membership**, but it embeds membership, finance, and (read-only)
 bookings settings — the Batch column tracks the finance grouping used for #2050
 delivery.
 

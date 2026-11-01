@@ -8,7 +8,10 @@
  */
 import { escapeHtml } from "./escape";
 import { alertBox, button, heading, infoTable, layout, paragraph } from "./layout";
-import { UNRECOGNISED_STRIPE_PAYMENT_NOTE } from "@/lib/unrecognised-stripe-payment-note";
+import {
+  UNMATCHED_APP_STRIPE_PAYMENT_NOTE,
+  UNRECOGNISED_STRIPE_PAYMENT_NOTE,
+} from "@/lib/unrecognised-stripe-payment-note";
 
 /** What the alert names, already rendered: the amount in the payment's own currency, the time in the club's. */
 export type UnrecognisedStripePaymentAlertFields = {
@@ -38,6 +41,46 @@ export function adminUnrecognisedStripePaymentTemplate(data: UnrecognisedStripeP
       { label: "Charge", value: escapeHtml(data.chargeId) },
       { label: "Checkout session", value: escapeHtml(data.checkoutSessionId) },
       { label: "Payment Link", value: escapeHtml(data.paymentLinkId) },
+    ])}
+    ${button("Open in Stripe", data.stripeDashboardUrl)}
+  `);
+}
+
+/**
+ * #4624 (`INV-INT-033`): what the alert for an app-started booking payment with
+ * no matching payment record names, already rendered.
+ */
+export type UnmatchedAppStripePaymentAlertFields = {
+  amount: string;
+  receivedAt: string;
+  bookingId: string;
+  /** What the app found for the payment: no record, or a record of another kind. */
+  ledgerMatch: string;
+  paymentIntentId: string;
+  chargeId: string;
+  stripeDashboardUrl: string;
+};
+
+/**
+ * #4624 (`INV-INT-033`): the admin alert for a succeeded card payment the app
+ * started for a booking (its PaymentIntent carries the booking id) that matches
+ * no payment the booking is waiting on, so the booking was not settled.
+ */
+export function adminUnmatchedAppStripePaymentTemplate(data: UnmatchedAppStripePaymentAlertFields): string {
+  return layout(`
+    ${heading("Booking Card Payment the App Could Not Match")}
+    ${alertBox(
+      "A card payment the app started for a booking went through in Stripe, but the app has no matching payment on that booking, so it did not mark the booking paid and has sent nothing to Xero.",
+      "warning",
+    )}
+    ${paragraph(UNMATCHED_APP_STRIPE_PAYMENT_NOTE)}
+    ${infoTable([
+      { label: "Amount", value: escapeHtml(data.amount) },
+      { label: "Received", value: escapeHtml(data.receivedAt) },
+      { label: "Booking", value: escapeHtml(data.bookingId) },
+      { label: "Found in the app", value: escapeHtml(data.ledgerMatch) },
+      { label: "Stripe payment", value: escapeHtml(data.paymentIntentId) },
+      { label: "Charge", value: escapeHtml(data.chargeId) },
     ])}
     ${button("Open in Stripe", data.stripeDashboardUrl)}
   `);
