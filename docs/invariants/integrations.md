@@ -483,7 +483,7 @@ re-run, never offered for retry, never re-minted beside (owner decision,
 - **One predicate.** `isResolvedInXero` (`xero-operation-resolution.ts`); a
   `where` clause spells it on `manuallyResolvedAt`. The mark leaves the row
   `FAILED`/`PARTIAL`, so status alone reads it as live; a late success lands
-  and alerts (`INV-INT-029`).
+  and alerts, except over a recorded refund note (`INV-INT-029`).
 - **Retries refuse it.** `getXeroOperationRetryMeta` refuses first; retry and
   requeue answer 409; the drain closes that queued row `CANCELLED`.
 - **Enqueues and the outbox respect it.** A resolved refund note covers its
@@ -491,12 +491,11 @@ re-run, never offered for retry, never re-minted beside (owner decision,
   (#4250) or a refund request's (#4265); one sum
   (`sumRefundCreditNoteCoverageCents`) caps the enqueue, the send and the gap. No booking invoice is
   queued while the latest create is resolved; only single-booking force-sync
-  overrides, and audits it. The outbox cancels, before any Xero call, a copy
-  queued before a sibling was resolved.
+  overrides it, audited. The outbox cancels, unsent, a copy queued before a
+  sibling was resolved.
 - **Resolve and retry.** The route refuses while the operation is RUNNING, a
   live copy is queued, or a queued retry is RUNNING or started before the mark
-  and completed after it - checked after the mark is written, which is then
-  withdrawn. Gaps: clock skew between instances, and a caller of
+  and completed after it - checked after the mark is written, then withdrawn. Gaps: clock skew between instances, and a caller of
   `retryXeroSyncOperation` that bypasses the drain.
 - **Applied-credit operations are retry-only.** The route refuses them, and a
   pre-release mark on one is void on the retry path.
@@ -540,9 +539,9 @@ officer made, and that note records no other refund: one note, one refund
   failed withdrawal alerts); only that row takes it back. Every refusal is
   audited.
 - **Legacy.** A row resolved before #4421 names no note.
-- **A late create keeps out (#4426).** A stalled create's note lands only on a
-  row not resolved by hand (`recordCreatedRefundNote`); else officers are
-  alerted and it is never linked or settled.
+- **A late create keeps out (#4426).** A stalled create never records its note
+  over this one (`recordCreatedRefundNote`): a different note is audited and
+  alerted, never linked or settled.
 
 Pinned by `xero-resolve-refund-note.test.ts`,
 `resolve-records-refund-note.realdb.test.ts`, `advisory-lock-guard.test.ts`,
@@ -553,9 +552,8 @@ Pinned by `xero-resolve-refund-note.test.ts`,
 ### INV-INT-029
 
 A recorded Xero outcome is never replaced by a worse one, and never lands on
-another attempt's claim. Two callers can hold one row: a start losing the
-one-ACTIVE-row insert race (#1354) takes the winner's row, each recording its
-outcome of the same keyed Xero call there.
+another attempt's claim. Two callers can hold one row (#1354), each recording
+its outcome of the same keyed Xero call there.
 
 - **One guard, in the two writers.** `completeXeroSyncOperation` and
   `failXeroSyncOperation` (`xero-sync.ts`) guard every outcome write with
@@ -570,11 +568,12 @@ outcome of the same keyed Xero call there.
 - **A repair's claim is kept too.** The PARTIAL repair and FAILED
   refund-note repair stamp a marker code on their RUNNING claim; no outcome
   but SUCCEEDED lands there unless written onto that claim (`retryClaim`).
-- **A success lands on any row no claim holds** (Xero's answer to the same
-  keyed call), even one resolved in Xero (#4374). The write leaves the mark;
-  if it recorded a Xero object, after commit it warns and alerts officers
-  once per operation: Xero may hold it twice. Limit: an alert reaching
-  nobody is retried only if another success lands.
+- **A success lands on any row no claim holds,** even one resolved in Xero
+  (#4374). The write leaves the mark; if it recorded a Xero object, after
+  commit it warns and alerts officers once per operation: Xero may hold it
+  twice. Limit: an alert reaching nobody is retried only if another success
+  lands. Except a refund-note create's late note over a note a resolve
+  recorded (#4426): audited and alerted, not recorded.
 - **A refused write changes nothing.** It answers null, writes no link and
   raises no alert. A missing row throws, or is logged for a guarded caller.
   A success refused for a later claim still records its links, warned.

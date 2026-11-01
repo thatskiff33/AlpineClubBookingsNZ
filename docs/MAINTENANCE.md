@@ -2644,13 +2644,23 @@ a duplicate. If that email cannot reach anyone, it is not sent again; the
 operation's succeeded status on the panel is then the only sign.
 
 A payment refund credit note is the exception (#4426): a refund-note job that
-stalled in Xero, was marked failed and was then resolved by hand keeps the
-note you recorded when its own call comes back with a second note. The app
-does not record, link or pay out the late note, and the operation stays as you
-resolved it. The same **Xero Sync Error** email names the late note's number
-and Xero id and the note the operation keeps: check the late note in Xero and
-void it if it duplicates yours. If that email cannot reach anyone, the app's
-log is the only record of the late note.
+stalled in Xero, was marked failed and was then resolved by hand with the
+number of the note you made keeps your note when its own call comes back with
+a second one. The app does not record or link the late note, or record a
+refund payment against it in Xero, and the operation stays as you resolved it.
+The audit log gets one Xero entry naming the late note (its number, Xero id,
+amount and booking), and the same **Xero Sync Error** email names it and the
+note the operation keeps: check the late note in Xero, and that it is not
+recorded on the payment, before voiding it. If the late note is the very note
+you recorded (Xero made it but its answer to the app was lost, and you found
+it), nothing is wrong and nothing is sent; recording its refund payment in
+Xero, if one is due, stays with you, as for any note you resolve by hand. A
+job resolved without a note number (a refund request's note) records the late
+note as before and sends the email above.
+
+Limit: if the app stops between deciding not to record the late note and
+writing its audit entry, the app's log is the only record of it; if the email
+cannot reach anyone, the audit entry and the log remain.
 
 There is no undo on the panel. If you marked one by mistake, fix the Xero side
 by hand, or use **Targeted force sync** for that one booking's invoice: it

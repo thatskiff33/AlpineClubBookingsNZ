@@ -3990,13 +3990,14 @@ FAILED/PARTIAL -> officer marks it resolved in Xero -> done: status unchanged,
   withdrawn mark takes the note and retires the link (audited; a failed
   withdrawal alerts); a PARTIAL row naming no note and an unreadable amount
   are refused (Mark non-replayable)
-  the create's own call, stalled past a Mark failed and a resolve, then
-  answers (#4426): its note is recorded only under a status-guarded claim on
-  "not resolved by hand" -> lost: nothing written (the row keeps the
-  officer's note, no link, no pointer), no settlement, no completion; the
-  officers get one XERO_SUCCESS_AFTER_RESOLUTION alert naming the late note.
-  After a Mark failed with no resolve the late note lands as any success does
-  (FAILED -> SUCCEEDED)
+  the create's own call, stalled past a Mark failed and a resolve recording a
+  note, then answers (#4426): its note is recorded only under a
+  status-guarded claim refusing a row whose resolve recorded a note -> lost:
+  nothing written (the row keeps the officer's note, no link, no pointer), no
+  settlement, no completion; the same note as the officer's -> nothing more;
+  any other -> one `xero` audit row and one XERO_SUCCESS_AFTER_RESOLUTION
+  alert naming it. After a plain resolve (no note recorded) or a Mark failed
+  with no resolve the late note lands as any success does (-> SUCCEEDED)
 credit-note allocation refused by Xero as more than the note has left (#4218)
   -> FAILED with code CREDIT_NOTE_SPENT_OUTSIDE_APP when a read of the note
   afterwards CONFIRMS it was spent outside the app. Xero's refusal is the

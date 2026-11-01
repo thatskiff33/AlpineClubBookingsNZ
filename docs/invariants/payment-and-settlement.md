@@ -3842,6 +3842,8 @@ _Split from `INV-PAY-057` (#3220)._
   payment, its covering link (amount, watermark, capture) and its id on the
   row. A process that dies after that leaves a FAILED row naming its note:
   coverage counts the note, so nothing re-mints it, and the retry finishes it.
+  That record never lands over a note a resolve by hand recorded (#4426,
+  `INV-INT-028`).
 - **One read-back-then-settle** (`finishRefundCreditNoteSettlement`) serves the
   builder's own row, the retry and repair leg, and the repair tool. It reads the
   note back and records what Xero shows (paid, allocated, or part-paid with
