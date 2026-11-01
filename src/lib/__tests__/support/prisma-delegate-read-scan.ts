@@ -7,8 +7,9 @@
  * by brackets (`tx["memberMoneyLine"]`), destructure it (`const { memberMoneyLine } = tx`)
  * or chain it optionally (`tx?.memberMoneyLine?.create`). So the rule is the
  * other way round and syntactic: every mention of a delegate name must be the
- * receiver of a call to a read method, a relation key in a query object that
- * holds no nested write, or a type. Anything else is reported. A name built at
+ * receiver of a call to a read method, a relation key whose value is `true` or
+ * an object made only of literals (no identifier, call, spread or write key),
+ * or a type. Anything else is reported. A name built at
  * runtime from pieces is outside what any static scan can see.
  */
 import { readdirSync } from "node:fs";
@@ -53,16 +54,24 @@ function accessedName(node: ts.Node): string | undefined {
   return undefined;
 }
 
-function holdsNestedWrite(node: ts.Node): boolean {
-  let found = false;
-  const visit = (child: ts.Node) => {
-    if (found) return;
-    if ((ts.isPropertyAssignment(child) || ts.isShorthandPropertyAssignment(child) || ts.isMethodDeclaration(child))
-      && NESTED_WRITE_KEYS.has(nameOf(child.name) ?? "")) found = true;
-    else ts.forEachChild(child, visit);
-  };
-  visit(node);
-  return found;
+/**
+ * A query value made only of literals: `true`, numbers, strings, null, and
+ * object or array literals of the same, with no key that writes. An identifier,
+ * call, spread or template with a substitution could carry a nested write the
+ * scan cannot see, so none is allowed.
+ */
+function isLiteralQuery(node: ts.Expression): boolean {
+  if (node.kind === ts.SyntaxKind.TrueKeyword || node.kind === ts.SyntaxKind.FalseKeyword
+    || node.kind === ts.SyntaxKind.NullKeyword || ts.isNumericLiteral(node) || ts.isStringLiteral(node)
+    || ts.isNoSubstitutionTemplateLiteral(node)) return true;
+  if (ts.isArrayLiteralExpression(node)) return node.elements.every((element) => isLiteralQuery(element));
+  if (ts.isObjectLiteralExpression(node)) {
+    return node.properties.every((property) => ts.isPropertyAssignment(property)
+      && (ts.isIdentifier(property.name) || ts.isStringLiteral(property.name))
+      && !NESTED_WRITE_KEYS.has(property.name.text)
+      && isLiteralQuery(property.initializer));
+  }
+  return false;
 }
 
 /** `access` (a delegate reached by `.name` or `["name"]`) is the receiver of a read call. */
@@ -80,8 +89,11 @@ function isAllowedUse(node: ts.Node): boolean {
   // `x.delegate` or `x["delegate"]`, followed by a read call.
   if (ts.isPropertyAccessExpression(parent) && parent.name === node) return isReadCall(parent);
   if (ts.isElementAccessExpression(parent) && parent.argumentExpression === node) return isReadCall(parent);
-  // A relation key in select/include/where: `{ memberMoneyLines: { some: … } }`, never a nested write.
-  if (ts.isPropertyAssignment(parent) && parent.name === node) return !holdsNestedWrite(parent.initializer);
+  // A relation key in select/include/where: `true`, or an object built only of literals.
+  if (ts.isPropertyAssignment(parent) && parent.name === node) {
+    const value = parent.initializer;
+    return value.kind === ts.SyntaxKind.TrueKeyword || (ts.isObjectLiteralExpression(value) && isLiteralQuery(value));
+  }
   // A type: `Pick<Prisma.TransactionClient, "memberMoneyLine">`.
   if (ts.isLiteralTypeNode(parent)) return true;
   return false;

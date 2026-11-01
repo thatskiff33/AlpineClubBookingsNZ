@@ -10,8 +10,8 @@
  * Migrations (SQL) and tests are outside it. When #4632's surface lands, it
  * retires this census in the same change.
  */
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { readdirSync, readFileSync } from "node:fs";
+import { join, relative, sep } from "node:path";
 import { describe, expect, it } from "vitest";
 import { MODEL_LEVEL_EXCLUSIONS } from "@/lib/config-transfer/singleton-models";
 import { delegateUsesBeyondReads, productionSourceFiles } from "./support/prisma-delegate-read-scan";
@@ -26,6 +26,15 @@ const naming = productionSourceFiles(ROOT)
   .map((file) => ({ file, text: readFileSync(join(ROOT, file), "utf8") }))
   .filter(({ text }) => /clubTaxSettings|ClubTaxSettings/.test(text));
 
+/** Shell and SQL files outside the migrations, where an operator write would live. */
+function shellAndSqlFiles(dir: string): string[] {
+  return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    const path = join(dir, entry.name);
+    if (entry.isDirectory()) return ["node_modules", "migrations", ".next", ".git"].includes(entry.name) ? [] : shellAndSqlFiles(path);
+    return /\.(sql|sh)$/.test(entry.name) ? [relative(ROOT, path).split(sep).join("/")] : [];
+  });
+}
+
 describe("the club tax setting has no writer until Xero reads it (#4632)", () => {
   it("is only ever read through its delegate", () => {
     const offenders = naming.flatMap(({ file, text }) =>
@@ -33,8 +42,13 @@ describe("the club tax setting has no writer until Xero reads it (#4632)", () =>
     expect(offenders, "a production path writes ClubTaxSettings while Xero still hard-codes its tax type").toEqual([]);
   });
 
-  it("is written by no raw SQL", () => {
+  it("is written by no raw SQL, in source or in a shell or SQL file outside the migrations", () => {
     expect(naming.filter(({ text }) => SQL_WRITE.test(stripComments(text))).map(({ file }) => file)).toEqual([]);
+    const scripts = ["scripts", "prisma", "docker"].flatMap((dir) => {
+      try { return shellAndSqlFiles(join(ROOT, dir)); } catch { return []; }
+    });
+    expect(scripts.length, "the shell and SQL scan found nothing to read").toBeGreaterThan(0);
+    expect(scripts.filter((file) => SQL_WRITE.test(readFileSync(join(ROOT, file), "utf8")))).toEqual([]);
   });
 
   it("does not travel by config transfer", () => {

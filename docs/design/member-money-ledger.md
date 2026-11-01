@@ -256,8 +256,17 @@ only the builder splits tax out of them. A debit revenue leg is a correction of
 a posted component, named by `chargeIdentity`. It must take the whole live
 component and repeats the component's posted split. A partial reduction is the
 whole component corrected plus a fresh charge for what remains, so no split is
-ever apportioned. A component posted under two tax treatments cannot be
-corrected this way. The payload hash covers the economics, not the reason or
+ever apportioned. A component is one revenue account and one `chargeIdentity`
+across the whole journal, not per booking, so the identity must name its
+booking (the legacy component keys do). Every leg of a component must name the
+same booking and lodge, and so must its correction. Once a component is fully
+corrected, the remainder charge may reuse its identity, even at a new rate:
+only a tax code that still carries money counts. A component carrying money
+under two codes at once cannot be corrected this way. A correction, and an
+exact reversal of a journal that posted revenue, read live component state and
+then write, so the caller must hold `lock(1)` (`INV-LOCK-001`); the store
+refuses otherwise. A reversal is also refused once a component it would undo
+has changed since. The payload hash covers the economics, not the reason or
 actor. The store, `internal/store.ts`, is the one writer of these tables. It
 looks up a replay first, then completes corrections, then writes in the order
 the foreign keys need. `reverseMemberMoneyJournal` posts the exact whole-batch
@@ -683,8 +692,7 @@ remains with M9. Until the Xero tax-type issue
 Xero's renders read the setting, nothing may write it, because the renderers
 hard-code the inclusive OUTPUT2 code and the two would disagree
 (`club-tax-settings-writer-census.test.ts`, `INV-CONFIG-007`). A club that is not
-GST-registered therefore needs that surface, or a seed, before M3b posts its
-charges.
+GST-registered therefore needs that surface before M3b posts its charges.
 
 ### D4. Member merge: transfer open balances explicitly
 

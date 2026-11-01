@@ -5403,6 +5403,32 @@ DB-enforced NULL-distinct unique column, `openStateKey`, present on both the new
   never awaited inside the request path and its failure is logged, so an alert
   outage cannot fail or roll back a member's request.
 
+## The member-money posting command: the caller's `lock(1)`, asserted, no key of its own (#4626)
+
+`postMemberMoneyEvent` and `reverseMemberMoneyJournal` (`src/lib/member-money`,
+Ledger M3a) take no advisory key and add no lock site. They run inside the
+caller's business transaction and inherit its tiers (`INV-LOCK-001`,
+`INV-LOCK-003`). Two of their checks read and then write, which only the global
+key keeps true until commit:
+
+- a **correction** reads what a revenue component still carries, then posts its
+  exact opposite. Two corrections of one component under different event keys
+  would both pass the read under READ COMMITTED;
+- an **exact reversal** of a journal that posted revenue reads that each
+  component is unchanged since, then copies the journal's legs.
+
+So the store asks `assertGlobalLockHeld` (`src/lib/global-lock-held.ts`, a
+`pg_locks` read for this backend's advisory key `1`) before either, and refuses
+with `GlobalLockNotHeldError` when the caller does not hold `lock(1)`. It is an
+assertion, not an acquisition, so the advisory-lock census has no new site to
+register. Every door that will post a correction (R02-R04, R21) already holds
+the key. A plan with no correction, and a reversal of a journal without revenue
+components, need no key: their event key's unique index makes a duplicate post
+collapse to one, and `ON CONFLICT DO NOTHING` makes a concurrent poster of the
+same key wait and then replay. A refused check looks the key up once more,
+because a same-key poster may have committed in between. Proved against real
+PostgreSQL by `member-money-posting.realdb.test.ts`.
+
 ## A credit note spent outside the app: global, then the member's credit ledger (#4219)
 
 `convergeCreditNoteSpentOutsideApp` releases a booking's applied credit and writes

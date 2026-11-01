@@ -53,10 +53,18 @@ const DELEGATE_WRITE = /\.memberMoney\w*\s*\.\s*(create|update|upsert|delete)/;
  * Every name that reaches a journal row through Prisma: each relation's
  * delegate, and the relation fields other models carry (`Booking.memberMoneyLines`).
  */
+const journalRelations: readonly string[] = MEMBER_MONEY_RELATIONS;
+/** Fields of other models whose TYPE is a journal relation, whatever they are named. */
+function journalRelationFields(schema: string): string[] {
+  return [...schema.matchAll(/^model\s+(\w+)\s*\{([\s\S]*?)^\}/gm)]
+    .filter(([, model]) => !journalRelations.includes(model!))
+    .flatMap(([, , body]) => [...body!.matchAll(/^\s+(\w+)\s+(\w+)(?:\[\]|\?)?(?:\s|$)/gm)]
+      .filter(([, , type]) => journalRelations.includes(type!))
+      .map(([, field]) => field!));
+}
 const JOURNAL_DELEGATES = new Set([
   ...MEMBER_MONEY_RELATIONS.map((relation) => relation[0]!.toLowerCase() + relation.slice(1)),
-  ...[...readFileSync(join(ROOT, "prisma/schema.prisma"), "utf8").matchAll(/^\s+(memberMoney\w+)\s+MemberMoney\w+/gm)]
-    .map((match) => match[1]!),
+  ...journalRelationFields(readFileSync(join(ROOT, "prisma/schema.prisma"), "utf8")),
 ]);
 const isJournalDelegate = (name: string) => JOURNAL_DELEGATES.has(name);
 /** One `import { … } from "@/lib/member-money";` statement, on its own line(s). */
@@ -125,6 +133,8 @@ describe("member money journal stays inert in M1 (#4513)", () => {
 
   it("finds every escape a delegate write could take (fixture proof)", () => {
     expect([...JOURNAL_DELEGATES].sort()).toEqual(expect.arrayContaining(["memberMoneyLine", "memberMoneyLines", "memberMoneySourceLink"]));
+    // By type, not by name: a relation field called anything else is still found.
+    expect(journalRelationFields("model Booking {\n  ledgerRows MemberMoneyLine[]\n  title String\n}\n")).toEqual(["ledgerRows"]);
     const caught = (code: string) => delegateUsesBeyondReads(code, "fixture.ts", isJournalDelegate).length;
     for (const write of [
       "await tx.memberMoneyLine.create({ data });",
@@ -138,6 +148,9 @@ describe("member money journal stays inert in M1 (#4513)", () => {
       'const name = "memberMoneyLine"; await tx[name].create({ data });',
       "await helper(tx.memberMoneyLine);",
       "await tx.booking.update({ where, data: { memberMoneyLines: { create: [] } } });",
+      "await tx.booking.update({ where, data: { memberMoneyLines: nested } });",
+      "await tx.booking.update({ where, data: { memberMoneyLines: buildNestedWrite() } });",
+      "await tx.booking.update({ where, data: { memberMoneyLines: { ...nestedCreate } } });",
     ]) {
       expect(caught(write), write).toBeGreaterThan(0);
     }

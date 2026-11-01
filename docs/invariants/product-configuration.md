@@ -518,7 +518,7 @@ home for that explanation and is not repeated here.
 - **Nothing writes the row yet.** The Xero renderers still hard-code the
   inclusive OUTPUT2 code (#4632), so a second answer must not appear until Xero
   reads this setting. `club-tax-settings-writer-census.test.ts` fails on any
-  writer. A non-registered club needs that surface, or a seed, before the
-  journal posts its charges (M3b).
+  writer. A non-registered club needs that surface before the journal posts
+  its charges (M3b).
 - **It is instance-local:** a legal fact about this club, excluded from config
   transfer.

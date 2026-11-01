@@ -2541,8 +2541,8 @@ applies from. There is no environment variable and, for now, no screen.
 - **Nothing writes it yet,** on purpose. Changing it before Xero reads it would
   give the ledger and the invoices two different answers, so a census fails on
   any code that writes the row. A club that is not GST-registered needs the
-  screen #4632 brings, or a seed, before the ledger starts recording its
-  booking charges (M3b). Until then the ledger posts nothing for any club.
+  screen #4632 brings before the ledger starts recording its booking charges
+  (M3b). Until then the ledger posts nothing for any club.
 
 ## Finance dashboard
 
