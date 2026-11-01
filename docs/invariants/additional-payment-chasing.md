@@ -1775,6 +1775,10 @@ _Legacy: settles tasks raised before #4317._
   closed when Xero shows its invoice paid: the card payment is
   cancelled first (a succeeded or processing one is left), then one transaction
   under the global key fences the row and writes the money as bank cash.
+- **Never the gap invoice's cash** (#4494). The #3980 gap invoice treats the
+  sweep's share as taken, all of a held capture (`readCreditReleaseCaptureShare`).
+  The sweep holds and alerts where a gap invoice already took more than its share
+  leaves; a gap invoice's send, or Retry, paying from that share goes unpaid.
 - **No new advisory key.** Home: `credit-release-xero-payment.ts`,
   `credit-release-ask-close.ts`.
 
