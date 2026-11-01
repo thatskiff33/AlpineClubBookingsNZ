@@ -1086,6 +1086,21 @@ note.
    `XERO_INBOUND_FAILED_RETRY_BACKOFF_MS`; stale PROCESSING rows are
    operator-replayable.
 
+### Stripe payments the app did not create (#4532)
+
+Not every succeeded Stripe payment is the app's. A Payment Link, a Checkout page
+or a dashboard charge on the club's account reaches `payment_intent.succeeded`
+with none of the app's metadata, so `handlePaymentIntentSucceeded`
+(`stripe-webhook-service.ts`) never routes it to a booking and **nothing is
+queued to the outbox**. Since #4532 it is not dropped: the first branch,
+`!isAppCreatedPaymentIntent(metadata)`, hands it to
+`recordUnrecognisedStripePayment` (`unrecognised-stripe-payment.ts`), which
+writes one `UnrecognisedStripePayment` row (unique on the PaymentIntent id) and
+raises one unmuteable `admin-unrecognised-stripe-payment` alert, claimed once
+ever; the event completes. The treasurer codes the money against the Stripe
+clearing account by hand. Posting a mapped Payment Link to Xero automatically is
+#4532's part 2 and is not built. `INV-INT-032`.
+
 ## Flow 2 — Inbound reconciliation (webhooks + incremental cursors)
 
 Xero pushes CONTACT, INVOICE, and CREDITNOTE events (the credit-note
