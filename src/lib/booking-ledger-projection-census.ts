@@ -88,6 +88,8 @@ import { reviewAdjustmentEvidence, type ReviewAdjustmentEvidence } from "@/lib/b
  * `owed(b)` against what its columns say is owed (`INV-PAY-047`'s residual plus
  * the ask). Without it a line no column projects — a `CREDIT_ISSUED` or
  * `BANK_REFUND` — could be missing, or wrong, with every column agreeing.
+ * `JOURNAL` (#4627) is judged apart, by `booking-ledger-projection-census-journal.ts`,
+ * which the census store adds to each evaluation.
  */
 export const BOOKING_LEDGER_IDENTITIES = [
   "PRICE",
@@ -97,6 +99,8 @@ export const BOOKING_LEDGER_IDENTITIES = [
   "CHANGE_FEE",
   "ADDITIONAL",
   "OWED",
+  // #4627: the member-money journal's live charge components against the bridged lines.
+  "JOURNAL",
 ] as const;
 export type BookingLedgerIdentity = (typeof BOOKING_LEDGER_IDENTITIES)[number];
 
@@ -121,6 +125,8 @@ export const BOOKING_LEDGER_INTEGRITY_KINDS = [
   "UNKNOWN_KEY_NAMESPACE",
   "KEY_ANCHOR_MISMATCH",
   "SOURCE_DRIFT",
+  // #4627: a charge line on a journal-confirmed booking that no journal batch links.
+  "UNBRIDGED_CHARGE_LINE",
 ] as const;
 export type BookingLedgerIntegrityKind = (typeof BOOKING_LEDGER_INTEGRITY_KINDS)[number];
 

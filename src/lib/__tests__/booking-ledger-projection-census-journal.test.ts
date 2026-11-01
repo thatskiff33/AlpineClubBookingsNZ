@@ -1,0 +1,93 @@
+/**
+ * Comparison report v1 (#4627): the JOURNAL identity and the
+ * `UNBRIDGED_CHARGE_LINE` finding, judged from a census row. Pure. The same
+ * comparison over real door postings on PostgreSQL is in
+ * `booking-ledger-journal.realdb.test.ts`.
+ */
+import { describe, expect, it } from "vitest";
+import { journalChargeComparison } from "@/lib/booking-ledger-projection-census-journal";
+import type { BookingLedgerCensusRow, CensusLedgerLine } from "@/lib/booking-ledger-projection-census-row";
+import { bookingChargeIdentity, type BookingJournalCharges } from "@/lib/member-money";
+
+const B = "census-4627";
+const CHARGE = bookingChargeIdentity(B);
+const AT = new Date("2026-06-01T00:00:00.000Z");
+
+function line(id: string, overrides: Partial<CensusLedgerLine>): CensusLedgerLine {
+  return {
+    id, side: "CHARGE", kind: "GUEST_NIGHT", sign: 1, quantity: 1, unitCents: 0, amountCents: 0, bookingGuestId: null,
+    nightStart: null, nightEndExclusive: null, anchorKind: "CONFIRMATION", anchorId: B, settlementMethod: null,
+    reversesLineId: null, postingKey: `key-${id}`, postedAt: AT, ...overrides,
+  };
+}
+
+function row(lines: CensusLedgerLine[], journal: BookingJournalCharges | null): BookingLedgerCensusRow {
+  return {
+    booking: { id: B, status: "PAID", deletedAt: null, organiserSettled: false, finalPriceCents: 0 },
+    payment: null, transactions: [], refunds: [], credits: [], tasks: [], modifications: [], recoveryOperations: [],
+    cancellation: null, appeals: [], groupSettlement: null, groupChild: null, lines, journal,
+  };
+}
+
+const nightA = line("n1", { amountCents: 6000, unitCents: 6000 });
+const nightB = line("n2", { amountCents: 6000, unitCents: 6000 });
+const promo = line("p1", { kind: "PROMOTION", sign: -1, unitCents: 1500, amountCents: -1500 });
+const fee = line("f1", { kind: "CHANGE_FEE", amountCents: 2000, unitCents: 2000, anchorKind: "MODIFICATION", postingKey: "modification:m1:change-fee" });
+const capture = line("c1", { side: "SETTLEMENT", kind: "CARD_CAPTURE", sign: -1, amountCents: -12500, settlementMethod: "CARD" });
+const all = (ids: string[]) => new Set(ids);
+
+describe("the JOURNAL comparison (#4627)", () => {
+  it("does not compare a booking whose confirmation is not in the journal: M9 back-posts it", () => {
+    expect(journalChargeComparison(row([nightA], null)).identity.status).toBe("NOT_APPLICABLE");
+    expect(journalChargeComparison(row([nightA], { charged: false, components: [], bridgedLineIds: all([]) })).identity.status).toBe("NOT_APPLICABLE");
+  });
+
+  it("agrees when each live component equals its bridged lines, settlement lines aside", () => {
+    const result = journalChargeComparison(row([nightA, nightB, promo, fee, capture], {
+      charged: true,
+      components: [
+        { account: "BOOKING_REVENUE", chargeIdentity: CHARGE, liveGrossCents: 10500 },
+        { account: "FEE_REVENUE", chargeIdentity: "modification:m1:change-fee", liveGrossCents: 2000 },
+      ],
+      bridgedLineIds: all(["n1", "n2", "p1", "f1"]),
+    }));
+    expect(result.identity).toMatchObject({ identity: "JOURNAL", status: "AGREE", columnCents: 12500, ledgerCents: 12500, deltaCents: 0 });
+    expect(result.integrity).toEqual([]);
+  });
+
+  it("disagrees when a component differs, even if the totals match", () => {
+    const result = journalChargeComparison(row([nightA, fee], {
+      charged: true,
+      components: [
+        { account: "BOOKING_REVENUE", chargeIdentity: CHARGE, liveGrossCents: 8000 },
+        { account: "FEE_REVENUE", chargeIdentity: "modification:m1:change-fee", liveGrossCents: 0 },
+      ],
+      bridgedLineIds: all(["n1", "f1"]),
+    }));
+    expect(result.identity).toMatchObject({ status: "DISAGREE", columnCents: 8000, ledgerCents: 8000, deltaCents: 0 });
+  });
+
+  it("names a fee reversal by the fee it reverses", () => {
+    const back = line("f2", { kind: "CHANGE_FEE", sign: -1, amountCents: -2000, unitCents: 2000, reversesLineId: "f1", postingKey: "reversal:f1" });
+    const result = journalChargeComparison(row([nightA, fee, back], {
+      charged: true,
+      components: [
+        { account: "BOOKING_REVENUE", chargeIdentity: CHARGE, liveGrossCents: 6000 },
+        { account: "FEE_REVENUE", chargeIdentity: "modification:m1:change-fee", liveGrossCents: 0 },
+      ],
+      bridgedLineIds: all(["n1", "f1", "f2"]),
+    }));
+    expect(result.identity.status).toBe("AGREE");
+  });
+
+  it("finds a charge line no batch links, as an integrity finding that holds the gate", () => {
+    const result = journalChargeComparison(row([nightA, nightB, line("z1", { amountCents: 0 })], {
+      charged: true,
+      components: [{ account: "BOOKING_REVENUE", chargeIdentity: CHARGE, liveGrossCents: 6000 }],
+      bridgedLineIds: all(["n1"]),
+    }));
+    expect(result.identity.status).toBe("AGREE");
+    // The zero-cent line carries no money and is never bridged; the unbridged night is the finding.
+    expect(result.integrity).toEqual([expect.objectContaining({ lineId: "n2", kind: "UNBRIDGED_CHARGE_LINE" })]);
+  });
+});

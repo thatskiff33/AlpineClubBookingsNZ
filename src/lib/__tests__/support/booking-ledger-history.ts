@@ -18,6 +18,7 @@ import { expect, vi } from "vitest";
 
 import type { CalendarDate } from "@/lib/club-time";
 import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
+import { releaseBookingJournalForTeardown } from "@/lib/__tests__/support/booking-financial-history-teardown";
 import { memberMoneyTestContext } from "@/lib/__tests__/support/member-money-fixtures";
 
 const D1 = new Date("2027-08-01T00:00:00.000Z");
@@ -108,14 +109,20 @@ async function createBooking(
   });
 }
 
-/** The ledger as it stood before #3580: no lines at all. */
+/** The ledger as it stood before #3580: no lines at all, and (#4627) no journal batch bridging them. */
 export async function stripAllLines(prisma: PrismaClient, bookingId: string): Promise<void> {
+  await releaseBookingJournalForTeardown(prisma, [bookingId]);
   await prisma.bookingLedgerLine.deleteMany({ where: { bookingId, reversesLineId: { not: null } } });
   await prisma.bookingLedgerLine.deleteMany({ where: { bookingId } });
 }
 
-/** An edit made before #3582 posted nothing: its own lines go, reversals first. */
+/**
+ * An edit made before #3582 posted nothing: its own lines go, reversals first.
+ * #4627: the booking's journal batches go too, so the journal never bridges a
+ * history the legacy ledger no longer holds; the booking reads as pre-M3b.
+ */
 async function stripModificationLines(prisma: PrismaClient, bookingId: string, modificationId: string): Promise<void> {
+  await releaseBookingJournalForTeardown(prisma, [bookingId]);
   await prisma.bookingLedgerLine.deleteMany({ where: { bookingId, anchorKind: "MODIFICATION", anchorId: modificationId, reversesLineId: { not: null } } });
   await prisma.bookingLedgerLine.deleteMany({ where: { bookingId, anchorKind: "MODIFICATION", anchorId: modificationId } });
 }
@@ -442,6 +449,7 @@ export async function cleanHistories(prisma: PrismaClient, prefix: string): Prom
   // #3854's group histories (`booking-ledger-group-history.ts`): their settlements and groups.
   const settlements = await prisma.groupBookingSettlement.findMany({ where: { id: { startsWith: prefix } }, select: { id: true } });
   const settlementIds = settlements.map((settlement) => settlement.id);
+  await releaseBookingJournalForTeardown(prisma, ids);
   await prisma.bookingLedgerLine.deleteMany({ where: { ...where, reversesLineId: { not: null } } });
   await prisma.bookingLedgerLine.deleteMany({ where });
   await prisma.xeroSyncOperation.deleteMany({ where: { localId: { in: [...ids, ...paymentIds, ...settlementIds] } } });

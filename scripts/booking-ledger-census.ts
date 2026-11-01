@@ -111,6 +111,9 @@ function summary(report: BookingLedgerCensusReport, format: ClubFormat): string 
       `${identity.padEnd(16)} ${String(tally.applicable).padStart(11)} ${String(tally.agree).padStart(8)} ${String(tally.disagree).padStart(9)} ${String(tally.classified).padStart(11)} ${String(tally.coverage).padStart(9)}`,
     );
   }
+  out.push(
+    "  JOURNAL (#4627): the member-money journal's live charge components against the legacy lines it bridges, for each booking whose confirmation it holds; a booking confirmed before it is back-posted whole by M9 and not compared",
+  );
   const strands = report.info.ibUnallocatedAppliedCredit;
   out.push(
     `  CREDIT_APPLIED, information (#1620): internet-banking applied credit no Xero note allocates — realized ${strands.realized.bookings} (${money(strands.realized.cents)})${examples(strands.realized.items.map((item) => item.bookingId))}, unverified (no current receipt or manual settlement proves the invoice paid; not asserted unpaid, #3632) ${strands.unverified.bookings} (${money(strands.unverified.cents)})${examples(strands.unverified.items.map((item) => item.bookingId))}`,

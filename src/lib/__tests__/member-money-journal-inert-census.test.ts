@@ -45,6 +45,19 @@ const READERS: Record<string, { reason: string; importOnly: boolean }> = {
     reason: "member hard delete refuses a journal debtor (read-only count)",
     importOnly: true,
   },
+  // M3b (#4627): comparison report v1, through `readBookingJournalCharges` in the census snapshot.
+  "src/lib/booking-ledger-projection-census-store.ts": {
+    reason: "the census reads the journal's charges for each page (read-only)",
+    importOnly: false,
+  },
+  "src/lib/booking-ledger-projection-census-row.ts": {
+    reason: "the census row carries the journal's charges (a type import)",
+    importOnly: false,
+  },
+  "src/lib/booking-ledger-projection-census-journal.ts": {
+    reason: "the pure JOURNAL comparison of the journal's charges with the bridged lines",
+    importOnly: false,
+  },
 };
 /**
  * M3b (#4627): THE POSTING CALLERS, exactly. Each posts through

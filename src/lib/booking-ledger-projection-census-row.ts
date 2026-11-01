@@ -23,6 +23,7 @@ import type {
 
 import type { ConfirmationPostingBooking } from "@/lib/booking-ledger-confirmation-posting";
 import type { GroupChildSibling } from "@/lib/booking-ledger-group-child-plan";
+import type { BookingJournalCharges } from "@/lib/member-money";
 
 // ---------------------------------------------------------------------------
 // The snapshot one booking is judged from
@@ -194,4 +195,10 @@ export type BookingLedgerCensusRow = {
     snapshotKept: { keptCents: number; policyKeptCents?: number } | null;
   } | null;
   lines: readonly CensusLedgerLine[];
+  /**
+   * #4627: what the member-money journal holds of this booking's charges
+   * (`readBookingJournalCharges`), for the JOURNAL comparison; absent where the
+   * reader did not ask.
+   */
+  journal?: BookingJournalCharges | null;
 };
