@@ -4101,7 +4101,12 @@ once, by card, and Xero is told about the payment without a second invoice.
   its `CREDIT_RELEASE_PAYMENT` links') exceeds the gross capture, or the sweep holds
   the capture. The sweep holds, with an alert, where an overlapping gap invoice's
   payment may be in Xero (`gapPaymentMayBeInXero`; `readRecordedByPrimaryOrGap`, the
-  reader the receipt uses), and waits, silently, where it cannot have paid yet. The
+  reader the receipt uses, which counts the invoice body a send stores before any
+  Xero call), and waits, silently, for one that cannot have paid yet only while it
+  can still send (`gapRowCanStillSend`: queued, sending or waiting, or FAILED and
+  replayable, within seven days of being queued, `GAP_SEND_WAIT_MS`); past that it
+  holds and alerts daily, naming the row. A PARTIAL repair skips a gap payload
+  already set unpaid without asking again. The
   gap invoice's send, an officer's Retry and the PARTIAL repair record no payment on
   overlap and alert (`unpaidGapPayloadIfOverlapping`, `skipPartialGapRepairPayment`):
   the payload goes unpaid, naming no capture only where its payment provably never

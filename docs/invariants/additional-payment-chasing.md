@@ -1779,8 +1779,9 @@ _Legacy: settles tasks raised before #4317._
   sweep's share as taken, all of a held capture (`readCreditReleaseCaptureShare`).
   Overlap means a gap invoice's cents plus the sweep's share exceed the gross
   capture. The sweep holds and alerts where an overlapping gap may have paid,
-  and waits where it cannot have yet. Its send, Retry or PARTIAL repair records
-  no payment on overlap, still naming its captures unless provably never sent.
+  or cannot send (non-replayable, or queued over seven days); it waits while
+  an unsent one can. Its send, Retry or PARTIAL repair records no payment on
+  overlap, still naming its captures unless provably never sent.
 - **No new advisory key.** Home: `credit-release-xero-payment.ts`,
   `credit-release-ask-close.ts`.
 

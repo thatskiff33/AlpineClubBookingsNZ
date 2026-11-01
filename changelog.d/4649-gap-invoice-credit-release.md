@@ -7,6 +7,7 @@
   and is raised unpaid when nothing else could pay it. An extra invoice queued
   before this release records no payment when it is sent, retried or repaired
   if what it would take, together with the credit-release money, is more than
-  the card took. The sweep waits for such an invoice that has not been sent,
-  and holds, telling an officer, where it may already have recorded part of the
-  card payment. Members see no change.
+  the card took. The sweep waits for such an invoice that has not been sent and
+  still can be, and holds, telling an officer, where it may already have
+  recorded part of the card payment or will not be sent on its own. Members see
+  no change.
