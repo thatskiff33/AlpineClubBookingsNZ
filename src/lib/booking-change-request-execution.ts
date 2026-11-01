@@ -7,7 +7,7 @@ import { acquireLodgeCapacityLock } from "@/lib/capacity";
 import { getDefaultLodgeId } from "@/lib/lodges";
 import { calendarDateOfDateOnlyInstant, type CalendarDate } from "@/lib/club-time";
 import type { ClubFormat } from "@/lib/club-format";
-import { finishedStayCorrectionEligibility } from "@/lib/booking-edit-policy";
+import { finishedStayEligibility } from "@/lib/booking-edit-policy";
 import { ApiError } from "@/lib/api-error";
 import { dateOnlyInstantOf } from "@/lib/club-time";
 import { paidByOrganiser } from "@/lib/group-organiser-paid";
@@ -444,7 +444,7 @@ export async function approveAndExecuteLockedPeriodChangeRequest(params: {
       // finished, and its status is one the correction edits. The service's
       // edit policy asks both again; this copy refuses before the claim, so a
       // cancelled booking's request is not even claimed.
-      const eligibility = finishedStayCorrectionEligibility(booking, dateOnlyInstantOf(params.todayAtClub));
+      const eligibility = finishedStayEligibility(booking, dateOnlyInstantOf(params.todayAtClub));
       if (!eligibility.eligible) {
         return {
           outcome: "keptPending",

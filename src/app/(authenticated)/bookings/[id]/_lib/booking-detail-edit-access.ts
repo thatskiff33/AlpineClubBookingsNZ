@@ -2,7 +2,7 @@ import type { FeatureFlags } from "@/config/schema";
 import type { Instant } from "@/lib/club-time";
 import {
   bookingStayHasStarted,
-  finishedStayCorrectionEligibility,
+  finishedStayEligibility,
   getBookingEditPolicy,
 } from "@/lib/booking-edit-policy";
 import { isBookingFullyPaidForGuestNameEdits } from "@/lib/booking-modify";
@@ -135,7 +135,7 @@ export async function resolveBookingDetailEditAccess({
   // request from Edit Booking — the one eligibility answer the request route and
   // the executor read, so the panel never offers a request they would refuse.
   const canRequestFinishedStayPromoCorrection =
-    canAdminOverride && finishedStayCorrectionEligibility(booking, clubTodayDateOnly).eligible;
+    canAdminOverride && finishedStayEligibility(booking, clubTodayDateOnly).eligible;
   const canEditRequestedRoom = isDeleted
     ? false
     : isAdmin

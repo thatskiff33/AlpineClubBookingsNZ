@@ -3,7 +3,7 @@ import type { Prisma } from "@prisma/client";
 
 import { logAudit } from "@/lib/audit";
 import { bookingOwner } from "@/lib/booking-owner";
-import { finishedStayCorrectionEligibility } from "@/lib/booking-edit-policy";
+import { finishedStayEligibility } from "@/lib/booking-edit-policy";
 import { changeRequestStoredProposal } from "@/lib/booking-change-request-stored";
 import type { ChangeRequestDelta } from "@/lib/booking-change-request-input";
 import {
@@ -109,7 +109,7 @@ export async function finishedStayPromoCorrectionRequestResponse(
     return NextResponse.json({ error: PROMO_CHANGE_ALONE_MESSAGE }, { status: 400 });
   }
   // The one eligibility answer the executor asks again under its locks.
-  const eligibility = finishedStayCorrectionEligibility(booking, args.today);
+  const eligibility = finishedStayEligibility(booking, args.today);
   if (!eligibility.eligible) {
     return NextResponse.json(
       {

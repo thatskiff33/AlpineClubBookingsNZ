@@ -252,15 +252,15 @@ export function isFinishedStay(
  * offer, accept or apply what another refuses. The edit policy's own
  * `finishedStayCorrection` mode asks both questions again under the locks.
  */
-export type FinishedStayCorrectionEligibility =
+export type FinishedStayEligibility =
   | { eligible: true }
   | { eligible: false; reason: "not-finished" }
   | { eligible: false; reason: "status"; message: string };
 
-export function finishedStayCorrectionEligibility(
+export function finishedStayEligibility(
   booking: { checkOut: Date; status: string },
   today: Date,
-): FinishedStayCorrectionEligibility {
+): FinishedStayEligibility {
   if (!isFinishedStay(booking, today)) return { eligible: false, reason: "not-finished" };
   const message = activeLifecycleEditRefusal(booking.status, "ADMIN", { includeFinishedStay: true });
   return message ? { eligible: false, reason: "status", message } : { eligible: true };

@@ -347,7 +347,7 @@ list), entered by an officer on the member's behalf and stored as
 entered, beside `original.promoCodes`, the booking's codes it was entered
 against. It is entered from Edit Booking (`POST
 /api/bookings/[id]/change-requests` with `promoChange`, which refuses a member,
-a stay not eligible (`finishedStayCorrectionEligibility`), any other change and
+a stay not eligible (`finishedStayEligibility`), any other change and
 any pending request on the booking) or on approval of a request naming none,
 written by the approval's guarded claim like `INV-REQ-011`'s guests. No change
 removes a code: `promoChangeRefusal`, read by the route and the executor over
