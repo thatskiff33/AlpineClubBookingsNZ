@@ -47,8 +47,8 @@ lines: 1407
 reason: both consent doors resolve the journal's posting context on the zone they already read and thread it to the removal and reprice they run under lock(1).
 
 file: src/lib/member-merge.ts
-lines: 3134
-reason: D4's transfer must run inside the merge transaction, after the owner move and the Member FOR UPDATE set; moving it to another module would hide that ordering, which is the point.
+lines: 3140
+reason: D4's transfer must run inside the merge transaction, after the owner move and the Member FOR UPDATE set, and the merge must refuse before it while the journal is inactive; moving either to another module would hide that ordering, which is the point.
 
 file: src/lib/payment-reconciliation.ts
 lines: 2839
