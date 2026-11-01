@@ -6,17 +6,19 @@
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+type Txn = { status: string; withdrawnAt: Date | null; reason?: string | null; recoveryOperations?: { id: string }[] };
 const h = vi.hoisted(() => ({
   newData: null as unknown,
   byId: null as null | Record<string, unknown>,
   // Round 7: the minted intent's own row, re-read before anything is queued.
-  txn: { status: "PENDING", withdrawnAt: null } as null | { status: string; withdrawnAt: Date | null },
+  txn: { status: "PENDING", withdrawnAt: null } as null | Txn,
   enqueue: vi.fn(async (...args: unknown[]) => { void args; return { queueOperationId: "op_1", outcome: "covers-total" }; }),
   error: vi.fn(),
 }));
 vi.mock("@/lib/prisma", () => ({
   prisma: {
-    paymentTransaction: { findUnique: vi.fn(async () => h.txn) },
+    // #4052: a row as the liveness re-read selects it - its retirement evidence included.
+    paymentTransaction: { findUnique: vi.fn(async () => (h.txn ? { reason: null, recoveryOperations: [], ...h.txn } : null)) },
     bookingModification: {
       findUnique: vi.fn(async ({ where }: { where: { id: string } }) => ({
         newData: h.byId ? h.byId[where.id] : h.newData,
@@ -80,9 +82,11 @@ describe("queueReissuedAskSupplementaryInvoice", () => {
     expect(h.error).toHaveBeenCalledTimes(1);
   });
 
-  it.each([
+  it.each<[string, Txn]>([
     ["withdrawn by a later reduction", { status: "FAILED", withdrawnAt: new Date("2026-07-01T00:00:00.000Z") }],
-    ["failed", { status: "FAILED", withdrawnAt: null }],
+    // #4052: a supersede or a booking's end fails the row and queues its Stripe cancellation.
+    ["superseded, its cancellation queued", { status: "FAILED", withdrawnAt: null, recoveryOperations: [{ id: "op_cancel" }] }],
+    ["superseded by the cancel processor's older stamp", { status: "FAILED", withdrawnAt: null, reason: "zero_dollar_batch_modification_superseded" }],
   ])("MUTATION (round 7): a minted intent %s queues nothing and offers no secret", async (_label, txn) => {
     h.newData = { reissuedAskInvoiceCents: 3_000 };
     h.txn = txn;
@@ -92,15 +96,31 @@ describe("queueReissuedAskSupplementaryInvoice", () => {
 
   // Round 8 (F4): only a RETIRED row is not live. The recovery path reaches
   // here after the member may already have paid; that invoice is owed.
-  it.each([
+  it.each<[string, Txn | null]>([
     ["already paid", { status: "SUCCEEDED", withdrawnAt: null }],
     ["being paid", { status: "PROCESSING", withdrawnAt: null }],
     ["not found", null],
+    // #4052: a declined card marks the row FAILED and nothing more; the member can pay it with another card.
+    ["declined (FAILED, nothing retired it)", { status: "FAILED", withdrawnAt: null, reason: "guest_removal_price_increase" }],
   ])("MUTATION (round 8): a minted intent %s is live, and its invoice is queued", async (_label, txn) => {
     h.newData = { reissuedAskInvoiceCents: 3_000 };
     h.txn = txn;
     expect(await queueReissuedAskSupplementaryInvoice(CALL)).toBe(true);
     expect(h.enqueue).toHaveBeenCalledTimes(1);
+  });
+
+  it("#4052: the retirement evidence it reads is a queued Stripe cancellation of THAT row, not any recovery", async () => {
+    h.newData = { reissuedAskInvoiceCents: 3_000 };
+    await queueReissuedAskSupplementaryInvoice(CALL);
+    const { prisma } = await import("@/lib/prisma");
+    expect(vi.mocked(prisma.paymentTransaction.findUnique)).toHaveBeenCalledWith({
+      where: { stripePaymentIntentId: "pi_reissued" },
+      select: expect.objectContaining({
+        withdrawnAt: true,
+        reason: true,
+        recoveryOperations: { where: { type: "CANCEL_PAYMENT_INTENT" }, select: { id: true }, take: 1 },
+      }),
+    });
   });
 
   it("round 8: a re-read that fails is read as live, so the invoice is still queued", async () => {

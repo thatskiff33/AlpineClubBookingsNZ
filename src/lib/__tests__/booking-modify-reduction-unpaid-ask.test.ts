@@ -38,6 +38,9 @@ const minterDb = vi.hoisted(() => {
     // Round 7: with the stored customer the door now resolves exactly as the runner does.
     currentPayment: { additionalAmountCents: 0, additionalPaymentStatus: null as string | null, ...PAYMENT_CUSTOMER },
     completeCount: 1,
+    // #4052: a payment row naming the door's intent, and whether a transaction is open.
+    intentRow: null as null | { id: string },
+    inTransaction: false,
     recoveryFindUnique: null as unknown as ReturnType<typeof import("vitest").vi.fn>,
     recoveryUpdateMany: null as unknown as ReturnType<typeof import("vitest").vi.fn>,
     executeRaw: null as unknown as ReturnType<typeof import("vitest").vi.fn>,
@@ -53,14 +56,22 @@ vi.mock("@/lib/prisma", async () => {
     // #4217: the door's write under its recovery locks the Payment row first.
     $executeRaw: (...args: unknown[]) => (minterDb.executeRaw as unknown as (...a: unknown[]) => Promise<number>)(...args),
     payment: { findUnique: async () => minterDb.currentPayment },
-    paymentTransaction: { findMany: async () => [] },
+    paymentTransaction: { findMany: async () => [], findUnique: async () => minterDb.intentRow },
     paymentRecoveryOperation: {
       findUnique: minterDb.recoveryFindUnique,
       updateMany: minterDb.recoveryUpdateMany,
       upsert: async () => ({ id: "op_upserted" }),
     },
   };
-  return { prisma: { ...prisma, $transaction: (fn: (tx: typeof prisma) => unknown) => fn(prisma) } };
+  const $transaction = async (fn: (tx: typeof prisma) => unknown) => {
+    minterDb.inTransaction = true;
+    try {
+      return await fn(prisma);
+    } finally {
+      minterDb.inTransaction = false;
+    }
+  };
+  return { prisma: { ...prisma, $transaction } };
 });
 
 const mocks = vi.hoisted(() => ({
@@ -72,6 +83,7 @@ const mocks = vi.hoisted(() => ({
   createIntent: vi.fn(),
   findMinted: vi.fn(),
   upsert: vi.fn(),
+  cancelIntent: vi.fn(),
 }));
 
 // #3954 decision A: the re-issue's own invoice, queued after its mint
@@ -89,6 +101,7 @@ vi.mock("@/lib/stripe", async (importOriginal) => ({
   createPaymentIntent: mocks.createIntent,
   findRecentPaymentIntentByMetadata: mocks.findMinted,
   findOrCreateCustomer: vi.fn(async () => ({ id: "cus_1" })),
+  cancelPaymentIntentIfCancellableWithResult: mocks.cancelIntent,
 }));
 
 
@@ -661,7 +674,13 @@ describe("#3954: after commit, the minter cancels what the reduction retired, th
     minterDb.reissueRecovery = { ...REISSUE_RECOVERY };
     minterDb.currentPayment = { additionalAmountCents: 0, additionalPaymentStatus: null, ...PAYMENT_CUSTOMER };
     minterDb.completeCount = 1;
+    minterDb.intentRow = null;
     mocks.findMinted.mockReset();
+    mocks.cancelIntent.mockReset();
+    mocks.cancelIntent.mockImplementation(async (id: string) => {
+      expect(minterDb.inTransaction).toBe(false); // #4052: never inside a transaction
+      return { paymentIntent: { id, status: "canceled" }, canceled: true };
+    });
   });
 
   async function mintAfter(result: Awaited<ReturnType<typeof adjust>>) {
@@ -766,6 +785,7 @@ describe("#3954: after commit, the minter cancels what the reduction retired, th
       const { minted } = await mintAfter(result);
 
       expect(mocks.createIntent).not.toHaveBeenCalled();
+      expect(mocks.cancelIntent).not.toHaveBeenCalled(); // #4052: nothing minted, nothing to clean up
       expect(minted).toEqual({ additionalPaymentClientSecret: undefined, additionalPaymentIntentId: undefined, additionalAskRetired: retired });
     },
   );
@@ -802,6 +822,64 @@ describe("#3954: after commit, the minter cancels what the reduction retired, th
       expect(minted).toEqual({ additionalPaymentClientSecret: undefined, additionalPaymentIntentId: undefined, additionalAskRetired: retired });
     },
   );
+
+  // #4052: the intent the door minted while a later edit closed the recovery
+  // without a mint has no owner - cancelled at Stripe, after the lost write's
+  // transaction, as `abandoned`. One a runner claimed or completed is its own.
+  describe("#4052: the door's intent when its recovery moved mid-mint", () => {
+    async function loseFenceTo(moved: Record<string, unknown>) {
+      minterDb.completeCount = 0;
+      const result = await adjust(grownBooking({ creditPaid: true }), -2_000);
+      minterDb.recoveryFindUnique
+        .mockResolvedValueOnce({ ...REISSUE_RECOVERY, lastError: null })
+        .mockResolvedValueOnce({ ...REISSUE_RECOVERY, ...moved });
+      return mintAfter(result);
+    }
+
+    it.each([
+      ["netted off by a later reduction", PENDING_ASK_NETTED_BY_REDUCTION_NOTE],
+      ["folded in by a later increase", WAITING_REISSUE_FOLDED_BY_INCREASE_NOTE],
+    ])("MUTATION: a recovery %s during the mint has the door's unused intent cancelled as abandoned, after the fence", async (_label, note) => {
+      await loseFenceTo({ status: "SUCCEEDED", lastError: note });
+
+      expect(mocks.cancelIntent).toHaveBeenCalledTimes(1);
+      expect(mocks.cancelIntent).toHaveBeenCalledWith("pi_reissued_3000", { cancellationReason: "abandoned" });
+      expect(minterDb.recoveryUpdateMany.mock.invocationCallOrder[0]!).toBeLessThan(mocks.cancelIntent.mock.invocationCallOrder[0]!);
+      expect(mocks.upsert).not.toHaveBeenCalled();
+      expect(queueReissueInvoice).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ["claimed by the runner", { status: "PROCESSING", attempts: 1, lastError: null }],
+      ["completed by the runner with this same intent", { status: "SUCCEEDED", lastError: null, paymentIntentId: "pi_reissued_3000" }],
+      ["failed for good", { status: "FAILED", attempts: 10, lastError: "card currency refused" }],
+      ["still waiting", { status: "PENDING", attempts: 1, lastError: null }],
+    ])("MUTATION: a recovery %s during the mint keeps the intent - never cancelled", async (_label, moved) => {
+      await loseFenceTo(moved);
+      expect(mocks.cancelIntent).not.toHaveBeenCalled();
+    });
+
+    it("a closed recovery whose intent a payment row names is left to that row", async () => {
+      minterDb.intentRow = { id: "txn_owned" };
+      await loseFenceTo({ status: "SUCCEEDED", lastError: PENDING_ASK_NETTED_BY_REDUCTION_NOTE });
+      expect(mocks.cancelIntent).not.toHaveBeenCalled();
+    });
+
+    it("a failed cancel is logged, not thrown: the edit's answer stands, and nothing is written", async () => {
+      mocks.cancelIntent.mockRejectedValueOnce(new Error("Stripe is down"));
+      const { minted } = await loseFenceTo({ status: "SUCCEEDED", lastError: PENDING_ASK_NETTED_BY_REDUCTION_NOTE });
+      expect(minted).toEqual({ additionalPaymentClientSecret: undefined, additionalPaymentIntentId: undefined, additionalAskRetired: true });
+      expect(mocks.upsert).not.toHaveBeenCalled();
+    });
+
+    it("an intent Stripe no longer lets us cancel (captured) is left as it is, never written as failed", async () => {
+      mocks.cancelIntent.mockResolvedValueOnce({ paymentIntent: { id: "pi_reissued_3000", status: "succeeded" }, canceled: false });
+      const { minted } = await loseFenceTo({ status: "SUCCEEDED", lastError: WAITING_REISSUE_FOLDED_BY_INCREASE_NOTE });
+      // A fold still asks for that money, on the increase's own ask.
+      expect(minted).toEqual({ additionalPaymentClientSecret: undefined, additionalPaymentIntentId: undefined, additionalAskRetired: false });
+      expect(mocks.upsert).not.toHaveBeenCalled();
+    });
+  });
 
   it("final review: a re-read that fails after the recovery moved names the re-issue, as before", async () => {
     minterDb.completeCount = 0;

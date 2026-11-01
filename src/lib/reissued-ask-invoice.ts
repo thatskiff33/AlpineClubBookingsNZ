@@ -22,7 +22,8 @@
  * intent it just minted in that time - accounting for this money in its own
  * history, and naming this edit there (round 8). So the intent's row is
  * re-read first (`isMintedAskStillLive`). Round 8: only a row RETIRED since -
- * withdrawn, or FAILED - is not live. A row the member already paid is live
+ * withdrawn, or cancelled as superseded (#4052: not a declined card, which
+ * the member can still pay) - is not live. A row the member already paid is live
  * (its invoice is queued and released as paid), and so is one the re-read
  * could not see, or a re-read that failed: an invoice parked on an intent that
  * did die is retired with it by the stale-wait reaper, while one not queued
@@ -31,9 +32,10 @@
  * edit's Xero leg still needs to park the increase's own invoice rather than
  * raise it unpaid.
  */
-import { PaymentStatus } from "@prisma/client";
+import { PaymentRecoveryOperationType, PaymentStatus } from "@prisma/client";
 
 import logger from "@/lib/logger";
+import { SUPERSEDED_PAYMENT_REFUND_METADATA_REASON } from "@/lib/payment-recovery-keys";
 import { prisma } from "@/lib/prisma";
 import {
   recordedFoldedReissuedAskModificationIds,
@@ -42,15 +44,34 @@ import {
 import { enqueueXeroSupplementaryInvoiceOperation } from "@/lib/xero-operation-outbox";
 
 /**
- * Whether a just-minted ask is still live: not retired since by a reduction
- * (withdrawn) nor failed. Paid counts as live; so does a row not found.
+ * Whether a just-minted ask is still live: not retired since. Paid counts as
+ * live; so does a row not found, and so does a DECLINED card (#4052): a
+ * declined attempt marks the row FAILED and nothing more
+ * (`markPaymentIntentTransactionFailed`), and the member can still pay that
+ * intent with another card. Retired is only what a retiring writer leaves:
+ * `withdrawnAt` (a reduction, an officer's withdrawal, a credit-release close),
+ * or a FAILED row with a queued Stripe cancellation (a supersede, a booking's
+ * end - `enqueuePaymentIntentCancellationRecovery`), or the cancel processor's
+ * older supersede stamp (`SUPERSEDED_PAYMENT_REFUND_METADATA_REASON`).
  */
 export async function isMintedAskStillLive(paymentIntentId: string): Promise<boolean> {
   const row = await prisma.paymentTransaction.findUnique({
     where: { stripePaymentIntentId: paymentIntentId },
-    select: { status: true, withdrawnAt: true },
+    select: {
+      status: true,
+      withdrawnAt: true,
+      reason: true,
+      recoveryOperations: {
+        where: { type: PaymentRecoveryOperationType.CANCEL_PAYMENT_INTENT },
+        select: { id: true },
+        take: 1,
+      },
+    },
   });
-  return !row || (!row.withdrawnAt && row.status !== PaymentStatus.FAILED);
+  if (!row) return true;
+  if (row.withdrawnAt) return false;
+  if (row.status !== PaymentStatus.FAILED) return true;
+  return row.recoveryOperations.length === 0 && row.reason !== SUPERSEDED_PAYMENT_REFUND_METADATA_REASON;
 }
 
 /**

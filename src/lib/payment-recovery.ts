@@ -632,7 +632,7 @@ import {
   cardRefundOperationRefundMetadata,
   buildSupersededPaymentRefundRecoveryIdempotencyKey,
   buildLegacyModificationRefundStripeKeyPrefix,
-  REFUND_REQUEST_REFUND_RECOVERY_PREFIX,
+  REFUND_REQUEST_REFUND_RECOVERY_PREFIX, SUPERSEDED_PAYMENT_REFUND_METADATA_REASON,
   isLateCaptureRefundStripeKeyPrefix,
   bookingModificationIdForAdditionalIntentRecoveryKey,
   bookingModificationRefundReasonForKeyPrefix,
@@ -1759,7 +1759,7 @@ async function markSupersededTransactionFailed(
     },
     data: {
       status: PaymentStatus.FAILED,
-      reason: "zero_dollar_batch_modification_superseded",
+      reason: SUPERSEDED_PAYMENT_REFUND_METADATA_REASON, // #4052: what `isMintedAskStillLive` reads as superseded
     },
   });
 
