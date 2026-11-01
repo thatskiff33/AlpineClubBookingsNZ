@@ -4247,6 +4247,26 @@ invoice to have nothing due; a delayed waiver keeps payout pending. A settled in
 note is settled through the existing refund-note settlement helper. The worker
 re-reads invoice amounts after creating or recovering the waiver note, before
 allocation, to recognise cash that raced the provider call and shrink the note.
+The created note is written on the operation row before any allocation or
+payout (`recordCreatedOrganiserNote`, #4655, `INV-INT-034`). A create can stall
+in Xero past the stale threshold and be reset while its call still waits; the
+organiser adjustment's Retry runs on that same row (handed back to PENDING in
+place), and a run that finds a note there continues from it. So the note lands
+where a success may (`INV-INT-029`) and no other note is recorded: the run's
+own claim; a row a reset left FAILED, which this run then allocates or pays out
+and completes; or a row a Retry queued, where this run stops and the queued run
+finishes from the note, never raising a second. A row resolved by hand, held
+by a retry's claim, recording another note or closed takes nothing: the run
+returns without failing it, and the note is warned, audited once
+(`xero.organiser_adjustment_note.late_note_not_recorded`, `xero`) and sent
+through #4374's **Xero Sync Error** alert once per note
+(`xero-success-after-resolution:<operation id>:<note id>`), by the trace #4426's
+refund note uses (`traceUnrecordedLateNote`). A resolved row is kept out by
+choice: nothing retries it, so landing would only add an allocation or refund
+payment after an officer took the adjustment over. Limits: a retry running when
+the note returns may record that same note through Xero's idempotency key, so
+the alert asks for a comparison before voiding; a process dying before the
+audit row leaves the warning only.
 Inbound extra receipts retain the original paid share and add actual cash once;
 a reversal of cash already partly refunded records nothing and raises one
 non-replayable review row in Xero Operations instead of failing the event. Once

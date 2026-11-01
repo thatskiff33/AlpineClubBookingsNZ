@@ -3904,6 +3904,8 @@ place. Its original combined-invoice share is retained.
 Waivers start `PENDING`; refund notes start `WAITING_PAYMENT` and become
 `PENDING` only when the matching bank-transfer hand-back is `COMPLETED`. The
 worker claims `RUNNING` before provider work and completes under that claim.
+A run that stalls past Reset stale running still records its credit note on a
+FAILED or re-queued row, and is otherwise traced, never lost (#4655, below).
 A full release of an invoice with no payment or credit voids it; any other
 release allocates a credit note. A still-queued extra invoice a release covers
 whole goes from `PENDING`, `WAITING_PAYMENT` or `FAILED` to `SKIPPED` and is
@@ -4017,6 +4019,16 @@ FAILED/PARTIAL -> officer marks it resolved in Xero -> done: status unchanged,
   any other -> one `xero` audit row and one XERO_SUCCESS_AFTER_RESOLUTION
   alert naming it. After a plain resolve (no note recorded) or a Mark failed
   with no resolve the late note lands as any success does (-> SUCCEEDED)
+  an organiser adjustment's create, stalled past Reset stale running, then
+  answers (#4655, `INV-INT-034`): its note is written on the row before any
+  allocation only where no other note is recorded and the row is this run's
+  RUNNING claim, or unresolved FAILED (no officer action: this run allocates
+  or pays it out -> SUCCEEDED) or PENDING (a Retry queued it in place: this run
+  stops; the queued run continues from the note, raising no second one) ->
+  otherwise (resolved by hand, a retry's RUNNING claim, another note recorded,
+  closed): nothing written, the run returns without failing the row; the same
+  note -> nothing more; any other -> one `xero` audit row and one
+  XERO_SUCCESS_AFTER_RESOLUTION alert naming it
 credit-note allocation refused by Xero as more than the note has left (#4218)
   -> FAILED with code CREDIT_NOTE_SPENT_OUTSIDE_APP when a read of the note
   afterwards CONFIRMS it was spent outside the app. Xero's refusal is the
