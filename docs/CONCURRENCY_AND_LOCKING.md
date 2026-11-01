@@ -3513,8 +3513,8 @@ so only the stale reaper and a reclaim move it; its Stripe key is scoped to its
 release and minted only by that recovery's runner, and no refused replay adopts
 its reason (`isIntentForOrdinaryAskPlan`), so once closed nothing records its
 intent and its owner-check gap is empty. Accepted window, a stated limit: a
-recovery still claimed, even by a runner that already wrote another intent, or
-handed back to retry, keeps the stale attempt's intent - a credit-release retry
+recovery still claimed, even by a runner that already wrote another intent,
+handed back to retry, or failed for good, keeps the stale attempt's intent - a credit-release retry
 re-sizes and may mint under the same key, and Stripe answers with that intent.
 It stays open, never offered, logged under the cleanup event. Reads and one
 provider call only, after the hold's transaction: no lock, key, participant or

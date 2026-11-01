@@ -660,6 +660,7 @@ let previousDatabaseUrl: string | undefined;
           vi.setSystemTime(new Date(frozenNow.getTime() + 31 * 60_000));
           const held = await prisma.paymentRecoveryOperation.findUniqueOrThrow({ where: { id: operation.id } });
           // The stale reaper's write (`markPaymentRecoveryOperationFailed`), fenced on the attempt it read.
+          // A copy of its NON-terminal data (that function is private): keep it in step with it.
           const reaped = await prisma.paymentRecoveryOperation.updateMany({
             where: { id: operation.id, status: "PROCESSING", attempts: held.attempts, processingStartedAt: held.processingStartedAt },
             data: { status: "FAILED", lastError: "Payment recovery worker timed out before completion.", processingStartedAt: null, nextRetryAt: new Date() },

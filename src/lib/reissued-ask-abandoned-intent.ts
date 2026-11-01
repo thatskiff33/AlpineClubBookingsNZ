@@ -157,7 +157,7 @@ export async function settleLostRecoveryClaimHold(call: {
   if (closedBy) await cancelAbandonedReissuedAskIntent({ ...intent, closedBy });
 }
 
-type ClosedBy = "netted" | "folded" | "minted-elsewhere";
+type ClosedBy = NonNullable<ReturnType<typeof reissueClosedUnminted>> | "minted-elsewhere";
 
 async function cancelAbandonedReissuedAskIntent(call: {
   bookingId: string;

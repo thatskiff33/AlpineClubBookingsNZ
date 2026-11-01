@@ -2358,8 +2358,9 @@ inbound fence records its conflict the same way, under the
                                (`abandoned`, best-effort, after the hold's transaction; logged
                                as `reissued-ask.abandoned-intent-cleanup`) only once the
                                reclaiming runner closed the row SUCCEEDED without it and no row
-                               or recovery names it; a row still claimable or claimed keeps it,
-                               since its retry mints under the same key (#4652, INV-PAY-120)
+                               or recovery names it; a row still claimable or claimed, or failed
+                               for good, keeps it: a retry may mint under the same key and get
+                               it back, otherwise it stays open, never offered (#4652, INV-PAY-120)
   chase while unpaid (INV-ADDPAY-048): request email now, reminders at 7, 14, 21 and 28
                                days; after the fourth reminder only the officers' queues chase
   reminder withheld for an officer (INV-ADDPAY-051): Xero shows the invoice owing less than the
