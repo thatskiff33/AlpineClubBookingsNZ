@@ -33,8 +33,7 @@ const READER = "src/lib/format-validation-errors.ts";
  * An entry that stops matching fails below, so the list cannot go stale.
  */
 const KNOWN_DEBT: Record<string, string> = {
-  "src/app/(website)/join/apply/join-apply-page-client.tsx":
-    "the public application form maps the applications route's bare fieldErrors itself; to move onto readValidationDetails",
+  // Empty since #4580 moved the public application form onto the shared reader.
 };
 
 function walk(dir: string): string[] {

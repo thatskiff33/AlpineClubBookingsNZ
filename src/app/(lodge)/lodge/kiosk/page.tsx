@@ -1168,14 +1168,11 @@ export default function KioskPage() {
                               <div
                                 key={guest.id}
                                 className={`flex items-center justify-between rounded-lg px-4 py-3 min-h-[56px] ${
-                                  // Faded = "gone". A guest who is checking back
-                                  // in tonight is not gone, even though the
-                                  // stay's single `departedAt` still holds the
-                                  // check-out from their previous segment
-                                  // (#2628) — fading them there would show
-                                  // somebody standing at the desk as departed.
+                                  // Dashed + a "Departed" chip = gone (#4594: never faded). A guest
+                                  // checking back in tonight is not gone, though `departedAt` still
+                                  // holds their previous segment's check-out (#2628).
                                   guest.departedAt && !guest.canMarkArrived
-                                    ? "bg-kiosk-inset opacity-60"
+                                    ? "bg-kiosk-inset border border-dashed border-kiosk-border"
                                     : guest.arrivedAt && !guest.departedAt
                                       ? "bg-kiosk-success-bg border border-kiosk-success-border"
                                       : "bg-kiosk-inset"
@@ -1221,6 +1218,9 @@ export default function KioskPage() {
                                     <span className="bg-kiosk-chip text-kiosk-fg text-sm px-3 py-1 rounded-full">
                                       Non-member
                                     </span>
+                                  )}
+                                  {guest.departedAt && !guest.canMarkArrived && !(canMarkAttendance && guest.canMarkDeparted && !booking.blockedFromCheckin) && (
+                                    <span className="bg-kiosk-chip text-kiosk-fg text-sm px-3 py-1 rounded-full">Departed</span>
                                   )}
                                   {canMarkAttendance && guest.canMarkArrived && !booking.blockedFromCheckin && (
                                     <button

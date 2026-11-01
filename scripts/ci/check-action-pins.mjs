@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 import fs from "node:fs";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
 
 import { parseWorkflowYaml } from "./check-workflow-suite-checkout-depth.mjs";
+import { isMainModule } from "../lib/is-main-module.mjs";
 
 // Source-only so CI can check pins before installing dependencies. Reuse the
 // repository's YAML reader, and reject unsupported job/step shapes fail-closed.
@@ -73,7 +73,7 @@ export function checkActionPins(root) {
   });
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
+if (isMainModule(import.meta.url)) {
   const problems = checkActionPins(process.cwd());
   if (problems.length) {
     console.error(problems.join("\n"));

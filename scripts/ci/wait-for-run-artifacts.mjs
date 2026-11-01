@@ -1,7 +1,7 @@
 import { performance } from "node:perf_hooks";
-import { pathToFileURL } from "node:url";
 
 import { UPSTREAM_JOB_NAME, assertUpstreamSucceeded, getAttemptJobs, getRunApiJson, parseMaxWaitMinutes } from "./require-test-shards.mjs";
+import { isMainModule } from "../lib/is-main-module.mjs";
 
 // #4397: lets a REQUIRED job use another job's output without a `needs:`
 // edge. A required job with `needs:` reports "skipped" when its upstream
@@ -83,7 +83,7 @@ export async function waitForRunArtifacts({
   }
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (isMainModule(import.meta.url)) {
   try {
     const options = parseArtifactWaitArgs(process.argv.slice(2));
     const context = {

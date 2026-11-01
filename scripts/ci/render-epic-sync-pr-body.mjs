@@ -27,9 +27,10 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 
 import { isConcurrencySensitivePath } from "./check-pr-concurrency-declaration.mjs";
+import { isMainModule } from "../lib/is-main-module.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
@@ -207,8 +208,7 @@ export function renderHandSyncPrBody({
   });
 }
 
-const invokedPath = process.argv[1] ? pathToFileURL(process.argv[1]).href : null;
-if (invokedPath === import.meta.url) {
+if (isMainModule(import.meta.url)) {
   try {
     process.stdout.write(
       renderEpicSyncPrBody({ branch: process.env.BRANCH ?? "", runUrl: process.env.RUN_URL ?? "" }),

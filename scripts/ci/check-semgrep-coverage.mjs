@@ -1,5 +1,5 @@
 import fs from "node:fs";
-import { pathToFileURL } from "node:url";
+import { isMainModule } from "../lib/is-main-module.mjs";
 
 /**
  * Fails the build when Semgrep's real coverage shrinks (issue #2842).
@@ -419,8 +419,7 @@ export function checkSemgrepCoverage(reportPath, allowlistPath) {
   return { coverage, allowlisted, minimumScannedFiles, failures };
 }
 
-const invokedPath = process.argv[1] ? pathToFileURL(process.argv[1]).href : null;
-if (invokedPath === import.meta.url) {
+if (isMainModule(import.meta.url)) {
   const [reportPath, allowlistPath = ".semgrep/unparsed-allowlist.json"] =
     process.argv.slice(2);
 

@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
+import { isMainModule } from "../lib/is-main-module.mjs";
 
 /**
  * Fails the build when a PRERENDERED page ships an inline `<script>` with no
@@ -203,8 +203,7 @@ export function checkBuildOutput(distRoot) {
   return { files, offenders, staleAllowances };
 }
 
-const invokedPath = process.argv[1] ? pathToFileURL(process.argv[1]).href : null;
-if (invokedPath === import.meta.url) {
+if (isMainModule(import.meta.url)) {
   try {
     const distRoot = path.resolve(process.cwd(), DIST_DIR);
     const { files, offenders, staleAllowances } = checkBuildOutput(distRoot);

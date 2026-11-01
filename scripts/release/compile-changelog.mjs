@@ -39,9 +39,9 @@
 import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
-import { pathToFileURL } from "node:url";
 import { execFileSync } from "node:child_process";
 import { ALLOWANCE_DIR, isReservedAllowanceName, isSafeAllowanceName } from "../lib/allowance-dir.mjs";
+import { isMainModule } from "../lib/is-main-module.mjs";
 
 const REPO_ROOT = path.resolve(path.join(import.meta.dirname, "..", ".."));
 
@@ -435,10 +435,16 @@ export function composeChangelog({ changelog, version, date, fragments, append =
   };
 }
 
-/** Today's date in the club's timezone, as `YYYY-MM-DD`. */
-export function todayInNewZealand(now = new Date()) {
+/**
+ * Today's date for whoever cuts the release, as `YYYY-MM-DD` (#4571). A release
+ * date is not a club civil date, and the club's zone lives in the database,
+ * which release tooling never reads (`INV-CONFIG-002`), so nothing here names a
+ * zone: `RELEASE_TIME_ZONE` when set, otherwise this machine's own zone.
+ * `--date` / the date argument still sets it outright.
+ */
+export function releaseDateToday(now = new Date(), timeZone = process.env.RELEASE_TIME_ZONE || undefined) {
   return new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Pacific/Auckland",
+    timeZone,
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
@@ -452,7 +458,7 @@ export function todayInNewZealand(now = new Date()) {
 export function compileChangelog({
   repoRoot = REPO_ROOT,
   version,
-  date = todayInNewZealand(),
+  date = releaseDateToday(),
   dryRun = false,
   append = false,
   log = console.log,
@@ -648,11 +654,13 @@ export function parseArgs(argv) {
   return { version, date, dryRun, append };
 }
 
-const invokedPath = process.argv[1] ? pathToFileURL(process.argv[1]).href : null;
-if (invokedPath === import.meta.url) {
+// Run directly only when this file IS the script node was given, compared by
+// real path: unresolved, a run through a symlinked checkout or launcher matched
+// nothing and exited 0 having compiled nothing (#4569, #4598).
+if (isMainModule(import.meta.url)) {
   try {
     const { version, date, dryRun, append } = parseArgs(process.argv.slice(2));
-    compileChangelog({ version, date: date ?? todayInNewZealand(), dryRun, append });
+    compileChangelog({ version, date: date ?? releaseDateToday(), dryRun, append });
   } catch (error) {
     console.error(`compile-changelog failed: ${error.message}`);
     console.error("Usage: node scripts/release/compile-changelog.mjs <version> [YYYY-MM-DD] [--dry-run] [--append]");

@@ -19,7 +19,6 @@
  * Runs before `pnpm install --frozen-lockfile` in the `verify` job, so it uses Node built-ins only.
  */
 import process from "node:process";
-import { pathToFileURL } from "node:url";
 
 import {
   fetchLivePrBody,
@@ -28,6 +27,7 @@ import {
   readEventPrBody,
   selectPrBody,
 } from "./pr-body.mjs";
+import { isMainModule } from "../lib/is-main-module.mjs";
 
 const GATE_LABEL = "PR changelog fragment check";
 
@@ -106,8 +106,7 @@ const OUTCOME_MESSAGES = {
     "prefer a changelog.d fragment).",
 };
 
-const invokedPath = process.argv[1] ? pathToFileURL(process.argv[1]).href : null;
-if (invokedPath === import.meta.url) {
+if (isMainModule(import.meta.url)) {
   try {
     const base = process.env.PR_BASE_SHA;
     const head = process.env.PR_HEAD_SHA;
