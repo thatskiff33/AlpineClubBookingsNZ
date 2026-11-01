@@ -457,7 +457,9 @@ describe("after commit: the card refund, the Xero correction, the email and the 
 // #3954 round 9: the re-issued ask is named as due only while it is live - the
 // same liveness that withholds its client secret.
 describe("the email names a re-issued ask only while it is live", () => {
-  async function emailedAdditional(additionalAskRetired: boolean, minted = true): Promise<{ additionalAmountCents: number; additionalPaymentMethod: unknown }> {
+  // #4052: the email's terms as the shared decision returns them; the minter
+  // is mocked here, so this suite reads only what reaches the email.
+  async function emailedTerms(additionalAskRetired: boolean, minted = true) {
     const reprice = await accept(booking());
     if (!reprice.repriced) throw new Error("expected a re-price");
     h.executeBookingModificationRefund.mockResolvedValue({ stripeRefundId: undefined, refundDestination: "own" });
@@ -473,20 +475,29 @@ describe("the email names a re-issued ask only while it is live", () => {
       reprice: { ...reprice, additionalAsk: reissueUnpaidAdditionalAsk({ askLeftCents: 3000 }) },
       format: CLUB_FORMAT_TEST,
     });
-    const sent = h.sendBookingModifiedEmail.mock.calls.at(-1)?.[0];
-    return { additionalAmountCents: sent.additionalAmountCents, additionalPaymentMethod: sent.additionalPaymentMethod };
+    return h.sendBookingModifiedEmail.mock.calls.at(-1)?.[0];
   }
+  const emailedAdditionalCents = async (retired: boolean): Promise<number> => (await emailedTerms(retired)).additionalAmountCents;
+  const emailedMethod = async (retired: boolean, minted = true): Promise<unknown> => (await emailedTerms(retired, minted)).additionalPaymentMethod;
 
-  it("a live re-issue is named, as a card payment (#4052)", async () => {
-    expect(await emailedAdditional(false)).toEqual({ additionalAmountCents: 3000, additionalPaymentMethod: "STRIPE" });
-  });
-
-  it("MUTATION (#4052): a re-issue whose mint failed, its retry queued, is still named as a card payment", async () => {
-    expect(await emailedAdditional(false, false)).toEqual({ additionalAmountCents: 3000, additionalPaymentMethod: "STRIPE" });
+  it("a live re-issue is named", async () => {
+    expect(await emailedAdditionalCents(false)).toBe(3000);
   });
 
   it("MUTATION (round 9): a re-issue a later reduction retired is not", async () => {
-    expect(await emailedAdditional(true)).toEqual({ additionalAmountCents: 0, additionalPaymentMethod: undefined });
+    expect(await emailedAdditionalCents(true)).toBe(0);
+  });
+
+  it("#4052: a live re-issue is named as a card payment", async () => {
+    expect(await emailedMethod(false)).toBe("STRIPE");
+  });
+
+  it("MUTATION (#4052): a re-issue whose mint failed, its retry queued, is still named as a card payment", async () => {
+    expect(await emailedMethod(false, false)).toBe("STRIPE");
+  });
+
+  it("#4052: a retired re-issue names no method", async () => {
+    expect(await emailedMethod(true)).toBeUndefined();
   });
 });
 
