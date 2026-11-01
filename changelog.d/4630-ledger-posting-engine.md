@@ -14,3 +14,6 @@
 
   Nothing changes for members or officers in this release. No booking, payment
   or screen uses the ledger yet, and there is no screen for the GST setting.
+  Xero invoices do not read the setting yet either, so nothing may change it
+  until they do: a club that is not GST-registered will need that screen
+  before the ledger records its charges.

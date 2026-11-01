@@ -499,3 +499,26 @@ home for that explanation and is not repeated here.
 - Decided on #3563 (programme #3205), which holds the narrative; #3564-#3567
   moved every reader onto it. Operator guide:
   [`club-format.md`](../guides/club-format.md).
+
+## INV-CONFIG-007
+
+- **The club's GST treatment is one setting, with today's treatment as its
+  default.** `ClubTaxSettings` (id `"default"`) records whether the club is
+  GST-registered, the rate in basis points, and the club civil date it applies
+  from (#4626, decision D3 in
+  [`member-money-ledger.md`](../design/member-money-ledger.md#d3-tax-and-recognition-keep-each-charges-actual-treatment)).
+  It is read through `loadClubTaxSettings` in
+  [`club-tax-settings.ts`](../../src/lib/club-tax-settings.ts). An absent row
+  means registered at 1500 basis points from 2010-10-01, which is the
+  GST-inclusive 15% treatment the Xero documents already render. Prices are
+  GST-inclusive, so "inclusive" is the treatment itself, not a setting.
+- **A date before the setting starts has no treatment.** A posting that needs a
+  fresh tax split on such a date is refused, never guessed. Postings that need
+  no split go ahead.
+- **Nothing writes the row yet.** The Xero renderers still hard-code the
+  inclusive OUTPUT2 code (#4632), so a second answer must not appear until Xero
+  reads this setting. `club-tax-settings-writer-census.test.ts` fails on any
+  writer. A non-registered club needs that surface, or a seed, before the
+  journal posts its charges (M3b).
+- **It is instance-local:** a legal fact about this club, excluded from config
+  transfer.
