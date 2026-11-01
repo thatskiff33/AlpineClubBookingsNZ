@@ -824,10 +824,12 @@ after commit, the minter
        invoice, WAITING_PAYMENT on the intent (decision A)
        the recovery ended SUCCEEDED without this intent (a later reduction
          netted it off, an increase folded it in, or the runner wrote another
-         intent under an amount-suffixed key) and no row or recovery names it
+         intent under an amount-suffixed key), or is still PROCESSING but
+         already repointed at another intent, and no row or recovery names it
          -> that intent cancelled at Stripe (`abandoned`, best-effort, after
          commit; logged as `reissued-ask.abandoned-intent-cleanup`; #4052); a
-         runner still claiming it, or that wrote this same intent, keeps it
+         runner claim still naming the key, or one that wrote this same
+         intent, keeps it
   -> the new intent's row re-read before its invoice and secret: retired only
        when withdrawn, or FAILED with a queued Stripe cancellation, the
        supersede stamp, or Stripe reporting the intent cancelled or gone; a

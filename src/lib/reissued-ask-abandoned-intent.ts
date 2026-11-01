@@ -6,8 +6,14 @@
  * unclaimed (`writeReissuedAskUnderRecovery`). When the write loses that fence,
  * whoever moved the recovery owns the ask, and the door's intent is either
  * theirs or nobody's:
- *  - a runner still holding its claim (PROCESSING) may yet write this very
- *    intent - left alone;
+ *  - a runner still holding its claim (PROCESSING) that has not yet written
+ *    an intent (the recovery still names the Stripe key the door read), or
+ *    that wrote this very intent, owns it or may yet - left alone;
+ *  - a runner still holding its claim that already wrote ANOTHER intent: its
+ *    locked write repoints the recovery at that intent, with its row, before
+ *    its Stripe cancels and invoice steps finish, and from then on it uses only
+ *    that one (an amount-suffixed key, `planReissuedAskMint`) - the door's is
+ *    nobody's (#4052 review);
  *  - a recovery that ended SUCCEEDED naming THIS intent: the runner minted
  *    under the same key, Stripe handed it the same intent, and it is the ask -
  *    left alone;
@@ -49,18 +55,26 @@ export const ABANDONED_REISSUE_INTENT_LOG_EVENT = "reissued-ask.abandoned-intent
  * read fails), cancel the door's intent when that proves nobody owns it, and
  * return the re-read for the door's email decision (`reissueNotMinted`).
  */
-export async function settleLostReissuedAskFence(call: {
+export async function settleLostReissuedAskFence({
+  stripeKey,
+  ...call
+}: {
   bookingId: string;
   bookingModificationId: string;
   /** The intent the door minted under the recovery's key. */
   paymentIntentId: string;
+  /** That key, as the door read it on the recovery before minting. */
+  stripeKey: string;
 }): Promise<ReissuedAskRecovery | null> {
   const moved = await readReissuedAskRecovery(call.bookingModificationId).catch((err: unknown) => {
     logger.error({ err, bookingId: call.bookingId }, "Could not re-read a re-issued ask's recovery; the email names it (#3954)");
     return null;
   });
-  if (moved?.status === PaymentRecoveryOperationStatus.SUCCEEDED && moved.paymentIntentId !== call.paymentIntentId) {
+  if (!moved || moved.paymentIntentId === call.paymentIntentId) return moved;
+  if (moved.status === PaymentRecoveryOperationStatus.SUCCEEDED) {
     await cancelAbandonedReissuedAskIntent({ ...call, closedBy: reissueClosedUnminted(moved) ?? "minted-elsewhere" });
+  } else if (moved.status === PaymentRecoveryOperationStatus.PROCESSING && moved.paymentIntentId !== stripeKey) {
+    await cancelAbandonedReissuedAskIntent({ ...call, closedBy: "runner-wrote-another" });
   }
   return moved;
 }
@@ -69,7 +83,7 @@ async function cancelAbandonedReissuedAskIntent(call: {
   bookingId: string;
   bookingModificationId: string;
   paymentIntentId: string;
-  closedBy: "netted" | "folded" | "minted-elsewhere";
+  closedBy: "netted" | "folded" | "minted-elsewhere" | "runner-wrote-another";
 }): Promise<void> {
   const context = { event: ABANDONED_REISSUE_INTENT_LOG_EVENT, ...call };
   try {

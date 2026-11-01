@@ -1399,7 +1399,7 @@ let webhookClient: PrismaClient;
           cancelled.push(id);
           return { paymentIntent: { id, status: "canceled" }, canceled: false };
         }) as never;
-        await settleLostReissuedAskFence({ bookingId: BOOKING_ID, bookingModificationId: result.bookingModificationId!, paymentIntentId: intent!.id });
+        await settleLostReissuedAskFence({ bookingId: BOOKING_ID, bookingModificationId: result.bookingModificationId!, paymentIntentId: intent!.id, stripeKey: recovery.paymentIntentId });
         expect(cancelled.filter((id) => stripe.intents.has(id))).toEqual([intent!.id, intent!.id]);
         expect(await prisma.paymentTransaction.findUnique({ where: { stripePaymentIntentId: intent!.id } })).toBeNull();
       },
@@ -1498,6 +1498,67 @@ let webhookClient: PrismaClient;
       expect(await prisma.paymentTransaction.findUnique({ where: { stripePaymentIntentId: door.id } })).toBeNull();
       expect(cancelled.filter((id) => id === door.id)).toEqual([door.id]);
       expect(cancelled).not.toContain(live[0]!.stripePaymentIntentId);
+    });
+
+    // #4052 delta review: the same race, but the door re-reads the recovery
+    // while the runner, past its locked write (row written, recovery repointed
+    // at its own intent), is still running its Stripe cancels - PROCESSING.
+    it("#4052 delta review: a runner still finishing after writing ANOTHER intent - the door's intent is cancelled while the recovery is PROCESSING", async () => {
+      await grownBooking("card", 1_000);
+      const result = await removeLeavingGuest();
+      const stripe = fakeStripe();
+      const recovery = await reissueRecovery(result.bookingModificationId!);
+      const { REISSUED_ASK_REASON } = await import("@/lib/payment-recovery-keys");
+      const { runPaymentRecoveryOperationNow } = await import("@/lib/payment-recovery");
+      const cancelled: string[] = [];
+      let c: string | undefined;
+      let doorSettled!: () => void;
+      const doorDone = new Promise<void>((resolve) => { doorSettled = resolve; });
+      let statusSeenByDoor: string | undefined;
+      stripeRaceHooks.cancel = (async (id: string) => {
+        // The runner's cancel of C waits until the door has settled its lost fence.
+        if (id === c) {
+          await doorDone;
+        } else if (stripe.intents.has(id)) {
+          statusSeenByDoor = (await prisma.paymentRecoveryOperation.findUniqueOrThrow({ where: { id: recovery.id }, select: { status: true } })).status;
+        }
+        cancelled.push(id);
+        return { paymentIntent: { id, status: "canceled" }, canceled: true };
+      }) as never;
+      let runner: Promise<string> | undefined;
+      let doorFirst = true;
+      stripeRaceHooks.create = (async (args: Parameters<typeof stripe.create>[0]) => {
+        if (doorFirst && args.metadata?.reason === REISSUED_ASK_REASON) {
+          doorFirst = false;
+          c = await askMintedSinceReduction();
+          await prisma.paymentRecoveryOperation.update({ where: { id: recovery.id }, data: { nextRetryAt: new Date("2026-06-30T00:00:00.000Z") } });
+          runner = runPaymentRecoveryOperationNow(recovery.id, CLUB_FORMAT_TEST);
+          // Wait for the runner's locked write to repoint the recovery at its own intent.
+          const startedAt = process.hrtime.bigint();
+          for (;;) {
+            const now = await prisma.paymentRecoveryOperation.findUniqueOrThrow({ where: { id: recovery.id }, select: { paymentIntentId: true } });
+            if (now.paymentIntentId !== recovery.paymentIntentId) break;
+            if (realElapsedMs(startedAt) > 10_000) throw new Error("The runner never wrote its intent");
+            await new Promise((resolve) => setTimeout(resolve, 10));
+          }
+        }
+        return stripe.create(args);
+      }) as never;
+
+      try {
+        expect((await mintAtDoor(result)).additionalPaymentIntentId).toBeUndefined();
+      } finally {
+        doorSettled();
+      }
+      expect(await runner).toBe("succeeded");
+
+      const door = [...stripe.intents.values()].find((intent) => intent.amount === 3_000)!;
+      const live = await liveAsks();
+      expect(live).toEqual([{ stripePaymentIntentId: expect.any(String), amountCents: 5_000, carriedAskCents: 5_000, reason: REISSUED_ASK_REASON }]);
+      expect(statusSeenByDoor).toBe("PROCESSING");
+      expect(cancelled.filter((id) => id === door.id)).toEqual([door.id]);
+      expect(cancelled).not.toContain(live[0]!.stripePaymentIntentId);
+      expect(await prisma.paymentTransaction.findUnique({ where: { stripePaymentIntentId: door.id } })).toBeNull();
     });
 
     // #4052: a declined card fails the row and nothing more; only a retiring

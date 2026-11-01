@@ -3419,9 +3419,10 @@ fenced the same way (`writeReissuedAskUnderRecovery`). An increase folding a
 waiting re-issue in closes it with the same fence. #4052: when the door's write
 loses that fence and the recovery ended SUCCEEDED without the door's intent (a
 net-off, a fold, or the runner writing another intent under an amount-suffixed
-key), and no row or recovery names it, the door cancels that intent at Stripe
-after commit, under no lock; a runner's live claim, or one that wrote the same
-intent, leaves it alone. No lock or key changes. All proven on real Postgres.
+key), or is still PROCESSING but already repointed by the runner's locked write
+at another intent, and no row or recovery names it, the door cancels that
+intent at Stripe after commit, under no lock; a runner claim still naming the
+key, or one that wrote the same intent, leaves it alone. No lock or key changes. All proven on real Postgres.
 Round 6: the retire closes waiting recoveries before it stamps the rows - the
 runner's own order (its claim hold writes the recovery, then its row; since
 #4217 both take the `Payment` row before either) - and a
@@ -3444,8 +3445,11 @@ landing after that read leaves an invoice parked on a cancelled intent, which
 the stale-wait reaper retires). Round 8: only a retired row is "retired"
 there - a paid one, one not found or a failed re-read is live; #4052: retired
 is withdrawn, or FAILED with a queued Stripe cancellation, the supersede stamp,
-or Stripe reporting the intent cancelled or gone, so a declined card is live -
-and
+or Stripe reporting the intent cancelled or gone, so a declined card is live.
+That Stripe read (`readOpenProviderIntent` from `isMintedAskStillLive`) is a
+provider call made only outside any transaction or lock: the door's after its
+commit, the runner's after `holdAdditionalIntentRecoveryClaim`'s transaction
+has ended - and
 the door still returns the intent's id, so the increase's Xero leg parks its
 invoice on it rather than raising it unpaid; the reduction names the
 increase from the edit its mint stamped on the row

@@ -860,7 +860,9 @@ describe("#3954: after commit, the minter cancels what the reduction retired, th
       ["netted off by a later reduction", { lastError: PENDING_ASK_NETTED_BY_REDUCTION_NOTE }],
       ["folded in by a later increase", { lastError: WAITING_REISSUE_FOLDED_BY_INCREASE_NOTE }],
       // Review (F1): the runner minted under an amount-suffixed key and wrote THAT intent.
-      ["completed by the runner with another intent", { lastError: null, paymentIntentId: "pi_runner_suffixed_key" }],
+      ["completed by the runner with another intent", { status: "SUCCEEDED", lastError: null, paymentIntentId: "pi_runner_suffixed_key" }],
+      // Delta review: ...and is still finishing its cancels and invoice steps.
+      ["still held by a runner that already wrote another intent", { status: "PROCESSING", attempts: 1, lastError: null, paymentIntentId: "pi_runner_suffixed_key" }],
     ])("MUTATION: a recovery %s during the mint has the door's unused intent cancelled as abandoned, after the fence", async (_label, moved) => {
       await loseFenceTo({ status: "SUCCEEDED", ...moved });
 

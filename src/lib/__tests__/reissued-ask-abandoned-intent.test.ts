@@ -30,7 +30,7 @@ vi.mock("@/lib/logger", () => ({ default: { info: h.info, warn: h.warn, error: h
 const { ABANDONED_REISSUE_INTENT_LOG_EVENT, settleLostReissuedAskFence } = await import("@/lib/reissued-ask-abandoned-intent");
 const { PENDING_ASK_NETTED_BY_REDUCTION_NOTE } = await import("@/lib/additional-ask-recovery-close");
 
-const CALL = { bookingId: "booking_1", bookingModificationId: "mod_reduction", paymentIntentId: "pi_door" };
+const CALL = { bookingId: "booking_1", bookingModificationId: "mod_reduction", paymentIntentId: "pi_door", stripeKey: "mod_reissued_ask_mod_reduction" };
 const NETTED = {
   id: "op_reissue",
   status: "SUCCEEDED",
@@ -94,8 +94,17 @@ describe("settleLostReissuedAskFence", () => {
     expect(h.cancel).toHaveBeenCalledWith("pi_door", { cancellationReason: "abandoned" });
   });
 
+  // Delta review: the runner's locked write repoints the recovery at the intent
+  // it wrote, then stays PROCESSING through its Stripe cancels and invoice steps.
+  it("MUTATION: a recovery the runner still holds, already repointed at ANOTHER intent, leaves the door's abandoned - cancelled", async () => {
+    h.recovery = { id: "op_reissue", status: "PROCESSING", lastError: null, paymentIntentId: "pi_runner_suffixed_key" };
+    await settleLostReissuedAskFence(CALL);
+    expect(h.cancel).toHaveBeenCalledWith("pi_door", { cancellationReason: "abandoned" });
+  });
+
   it.each([
-    ["claimed by the runner (PROCESSING)", { status: "PROCESSING", lastError: null, paymentIntentId: "mod_reissued_ask_mod_reduction" }],
+    ["claimed by the runner (PROCESSING), still naming the key", { status: "PROCESSING", lastError: null, paymentIntentId: "mod_reissued_ask_mod_reduction" }],
+    ["claimed by the runner (PROCESSING), which wrote the door's own intent", { status: "PROCESSING", lastError: null, paymentIntentId: "pi_door" }],
     ["failed for good", { status: "FAILED", lastError: "out of attempts", paymentIntentId: "mod_reissued_ask_mod_reduction" }],
     ["still waiting", { status: "PENDING", lastError: null, paymentIntentId: "mod_reissued_ask_mod_reduction" }],
   ])("MUTATION: a recovery %s is never a proof - nothing cancelled", async (_label, moved) => {

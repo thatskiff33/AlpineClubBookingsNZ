@@ -534,7 +534,7 @@ export async function createModificationAdditionalPaymentIntent(
         // Final review: whoever moved it decides whether it is still owed. A
         // failed re-read names it, as before. #4052: an intent this mint left
         // with no owner is cancelled at Stripe, outside any transaction.
-        return reissueNotMinted(await settleLostReissuedAskFence({ bookingId, bookingModificationId: result.bookingModificationId, paymentIntentId: pi.id }));
+        return reissueNotMinted(await settleLostReissuedAskFence({ bookingId, bookingModificationId: result.bookingModificationId, paymentIntentId: pi.id, stripeKey: reissueRecovery.paymentIntentId }));
       }
       await cancelSupersededAdditionalIntentsNow({ format, bookingId, paymentId, queued: superseded, newPaymentIntentId: pi.id });
       // #4316: a cancel that committed while this minted could not see it.
