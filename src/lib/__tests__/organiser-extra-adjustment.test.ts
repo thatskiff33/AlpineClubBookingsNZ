@@ -2,11 +2,11 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { Invoice, type CreditNote } from "xero-node";
 import type { Prisma } from "@prisma/client";
 const mocks = vi.hoisted(() => ({
-  operation: { xeroObjectId: null as string | null, correlationKey: "scope" },
+  operation: { xeroObjectId: null as string | null, xeroObjectNumber: null as string | null, correlationKey: "scope" },
   invoice: {} as Invoice,
   note: {} as CreditNote,
   getInvoice: vi.fn(), getCreditNote: vi.fn(), createCreditNotes: vi.fn(), createCreditNoteAllocation: vi.fn(), updateInvoice: vi.fn(),
-  complete: vi.fn(), save: vi.fn(), start: vi.fn(), settle: vi.fn(), record: vi.fn(),
+  complete: vi.fn(), start: vi.fn(), settle: vi.fn(), record: vi.fn(), retake: vi.fn(),
   updateCreditNote: vi.fn(), task: vi.fn(),
   // Every adjustment row of the booking, oldest first: the waivers' own rows and what they reserve.
   plans: [] as { requestPayload: unknown; correlationKey?: string }[],
@@ -27,7 +27,7 @@ const transactionStore = {
   },
 };
 vi.mock("@/lib/prisma", () => ({ prisma: {
-  xeroSyncOperation: { findUniqueOrThrow: vi.fn(async () => mocks.operation), updateMany: mocks.save },
+  xeroSyncOperation: { findUniqueOrThrow: vi.fn(async () => mocks.operation) },
   xeroObjectLink: { findMany: vi.fn(async () => []) },
   payment: { findUniqueOrThrow: vi.fn(async () => ({ id: "child-payment" })) },
   manualRefundTask: { findUniqueOrThrow: mocks.task },
@@ -50,6 +50,9 @@ import { XERO_OUTBOX_ORGANISER_EXTRA_ADJUSTMENT_TYPE, type OrganiserExtraAdjustm
 
 const payload = (overrides: Partial<OrganiserExtraAdjustmentPayload> = {}): OrganiserExtraAdjustmentPayload => ({ queueType: XERO_OUTBOX_ORGANISER_EXTRA_ADJUSTMENT_TYPE, bookingId: "child", scopeId: "cut", modificationId: "increase", invoiceId: "extra", amountCents: 4_000, purpose: "waive", cashAtPlanCents: 2_000, refundPercentage: 50, ...overrides });
 const claim = { id: "operation", startedAt: new Date("2026-07-01T00:00:00.000Z") };
+/** The executor as the outbox runs it, its #4655 re-take hook observed. */
+const execute = (input: OrganiserExtraAdjustmentPayload, operation: { id: string; startedAt: Date | null } = claim) =>
+  executeOrganiserExtraAdjustment(input, operation, { onRetake: mocks.retake });
 
 describe("organiser extra adjustment provider execution", () => {
   // The executor loads the Xero inbound graph on demand. Load it once here, so
@@ -62,7 +65,7 @@ describe("organiser extra adjustment provider execution", () => {
     vi.clearAllMocks();
     // Drop any once-queued answer a failed case left behind, so cases cannot leak into each other.
     for (const fn of Object.values(mocks)) if (vi.isMockFunction(fn)) fn.mockReset();
-    mocks.operation = { xeroObjectId: null, correlationKey: "scope" };
+    mocks.operation = { xeroObjectId: null, xeroObjectNumber: null, correlationKey: "scope" };
     mocks.plans = [];
     mocks.modifications = {};
     mocks.start.mockImplementation(async (input: { requestPayload: unknown }) => { mocks.plans.push(input); return { id: "raced-refund" }; });
@@ -73,14 +76,13 @@ describe("organiser extra adjustment provider execution", () => {
     mocks.getInvoice.mockImplementation(async () => ({ body: { invoices: [mocks.invoice] } }));
     mocks.getCreditNote.mockImplementation(async () => ({ body: { creditNotes: [mocks.note] } }));
     mocks.createCreditNotes.mockImplementation(async () => ({ body: { creditNotes: [mocks.note] } }));
-    mocks.save.mockImplementation(async (input: { data: { xeroObjectId: string } }) => { mocks.operation.xeroObjectId = input.data.xeroObjectId; return { count: 1 }; });
-    mocks.record.mockImplementation(async (input: { creditNoteId: string }) => { mocks.operation.xeroObjectId = input.creditNoteId; return "claimed"; });
+    mocks.record.mockImplementation(async (input: { creditNoteId: string; claim: unknown }) => { mocks.operation.xeroObjectId = input.creditNoteId; return { outcome: "claimed", claim: input.claim }; });
     mocks.createCreditNoteAllocation.mockImplementation(async () => { mocks.note.allocations = [{ invoice: { invoiceID: "extra" }, amount: 40, date: "2026-07-01" }]; return { body: {} }; });
     mocks.updateInvoice.mockResolvedValue({ body: {} });
     mocks.updateCreditNote.mockResolvedValue({ body: {} });
   });
   it("N4 never voids a partly-paid invoice; credits its unpaid remainder against organiser contact", async () => {
-    await executeOrganiserExtraAdjustment(payload(), claim);
+    await execute(payload(), claim);
     expect(mocks.updateInvoice).not.toHaveBeenCalled();
     expect(mocks.createCreditNotes.mock.calls[0]?.[1]).toMatchObject({ creditNotes: [{ contact: { contactID: "organiser" }, lineItems: [{ unitAmount: 40, accountCode: "219" }] }] });
     expect(mocks.createCreditNoteAllocation.mock.calls[0]?.[2]).toEqual({ allocations: [{ invoice: { invoiceID: "extra" }, amount: 40, date: "2026-07-01" }] });
@@ -88,7 +90,7 @@ describe("organiser extra adjustment provider execution", () => {
   it("N2 voids a wholly unpaid extra instead of raising a credit", async () => {
     mocks.invoice.amountPaid = 0;
     mocks.invoice.amountDue = 60;
-    await executeOrganiserExtraAdjustment(payload({ cashAtPlanCents: 0, amountCents: 6_000 }), claim);
+    await execute(payload({ cashAtPlanCents: 0, amountCents: 6_000 }), claim);
     expect(mocks.updateInvoice).toHaveBeenCalledOnce();
     expect(mocks.updateInvoice.mock.calls[0]?.[2]).toMatchObject({ invoices: [{ invoiceID: "extra", status: "VOIDED" }] });
     expect(mocks.createCreditNotes).not.toHaveBeenCalled();
@@ -98,27 +100,27 @@ describe("organiser extra adjustment provider execution", () => {
     mocks.invoice = { ...mocks.invoice, amountPaid: 0, amountCredited: 30, amountDue: 30, total: 60 };
     mocks.note = { creditNoteID: "second-waiver", total: 30, allocations: [] };
     mocks.createCreditNoteAllocation.mockImplementation(async () => ({ body: {} }));
-    await executeOrganiserExtraAdjustment(payload({ scopeId: "second-cut", cashAtPlanCents: 0, amountCents: 3_000 }), claim);
+    await execute(payload({ scopeId: "second-cut", cashAtPlanCents: 0, amountCents: 3_000 }), claim);
     expect(mocks.updateInvoice).not.toHaveBeenCalled();
     expect(mocks.createCreditNotes.mock.calls[0]?.[1]).toMatchObject({ creditNotes: [{ lineItems: [{ unitAmount: 30 }] }] });
     expect(mocks.createCreditNoteAllocation.mock.calls[0]?.[2]).toMatchObject({ allocations: [{ invoice: { invoiceID: "extra" }, amount: 30 }] });
   });
   it("a retry after allocation recovers its recorded note and records no second document or allocation", async () => {
-    await executeOrganiserExtraAdjustment(payload(), claim);
-    await executeOrganiserExtraAdjustment(payload(), claim);
+    await execute(payload(), claim);
+    await execute(payload(), claim);
     expect(mocks.createCreditNotes).toHaveBeenCalledOnce();
     expect(mocks.createCreditNoteAllocation).toHaveBeenCalledOnce();
   });
   it("a provider failure after note creation leaves its identity recorded for retry", async () => {
     mocks.createCreditNoteAllocation.mockRejectedValueOnce(new Error("connection lost"));
-    await expect(executeOrganiserExtraAdjustment(payload(), claim)).rejects.toThrow("connection lost");
+    await expect(execute(payload(), claim)).rejects.toThrow("connection lost");
     expect(mocks.operation.xeroObjectId).toBe("waiver");
-    await executeOrganiserExtraAdjustment(payload(), claim);
+    await execute(payload(), claim);
     expect(mocks.createCreditNotes).toHaveBeenCalledOnce();
   });
   it("refuses to act on an unreadable live cash figure", async () => {
     mocks.invoice.amountPaid = undefined;
-    await expect(executeOrganiserExtraAdjustment(payload(), claim)).rejects.toThrow("unreadable");
+    await expect(execute(payload(), claim)).rejects.toThrow("unreadable");
     expect(mocks.createCreditNotes).not.toHaveBeenCalled();
     expect(mocks.updateInvoice).not.toHaveBeenCalled();
   });
@@ -129,7 +131,7 @@ describe("organiser extra adjustment provider execution", () => {
       return queued.purpose === waiver.purpose && queued.scopeId === waiver.scopeId && queued.modificationId === waiver.modificationId;
     };
     if (!mocks.plans.some(same)) mocks.plans.push({ requestPayload: waiver });
-    await executeOrganiserExtraAdjustment(waiver, operation);
+    await execute(waiver, operation);
   };
   const handBacks = () => mocks.task.mock.calls.map(([input]) => (input as { data: { amountCents: number } }).data.amountCents);
   const racedRows = () => mocks.plans.map((row) => row.requestPayload as OrganiserExtraAdjustmentPayload).filter((row) => row.racedPlanScopeId);
@@ -251,60 +253,97 @@ describe("organiser extra adjustment provider execution", () => {
   });
   it("refuses an unreadable refreshed invoice before allocating a waiver", async () => {
     mocks.getInvoice.mockResolvedValueOnce({ body: { invoices: [mocks.invoice] } }).mockResolvedValueOnce({ body: { invoices: [] } });
-    await expect(executeOrganiserExtraAdjustment(payload(), claim)).rejects.toThrow("unreadable");
+    await expect(execute(payload(), claim)).rejects.toThrow("unreadable");
     expect(mocks.createCreditNoteAllocation).not.toHaveBeenCalled();
     expect(mocks.operation.xeroObjectId).toBe("waiver");
   });
-  it("records the created note with its number and amount under this run's claim before any allocation", async () => {
+  it("records the created note with its number and amount under this run's claim before any allocation, and completes keeping the number (#4672 N2)", async () => {
     mocks.note = { ...mocks.note, creditNoteNumber: "CN-9" };
-    await executeOrganiserExtraAdjustment(payload(), claim);
+    await expect(execute(payload(), claim)).resolves.toBe("completed");
     expect(mocks.record).toHaveBeenCalledWith({ claim, bookingId: "child", purpose: "waive", creditNoteId: "waiver", creditNoteNumber: "CN-9", amountCents: 4_000 });
     expect(mocks.record.mock.invocationCallOrder[0]).toBeLessThan(mocks.createCreditNoteAllocation.mock.invocationCallOrder[0]!);
+    expect(mocks.complete).toHaveBeenCalledWith(claim, expect.objectContaining({ xeroObjectId: "waiver", xeroObjectNumber: "CN-9" }));
+    expect(mocks.retake).not.toHaveBeenCalled();
+  });
+  it("MUTATION (#4672 N2): a run continuing from a recorded note completes with the number the row records when Xero's read gives none", async () => {
+    mocks.operation = { xeroObjectId: "waiver", xeroObjectNumber: "CN-8", correlationKey: "scope" };
+    await execute(payload(), claim);
+    expect(mocks.createCreditNotes).not.toHaveBeenCalled();
+    expect(mocks.complete).toHaveBeenCalledWith(claim, expect.objectContaining({ xeroObjectNumber: "CN-8" }));
+  });
+  it("MUTATION (#4672 N2): a refund note completes with the number its settlement read", async () => {
+    mocks.invoice = { ...mocks.invoice, amountDue: 0, amountCredited: 40 };
+    mocks.settle.mockResolvedValueOnce({ creditNoteNumber: "CN-11", outcome: { refundPaymentErr: null, refundPaymentResponseBody: null, refundPaymentSkipReason: null } });
+    await execute(payload({ purpose: "refund", amountCents: 500, handBackTaskId: "hand-back" }), claim);
+    expect(mocks.complete).toHaveBeenCalledWith(claim, expect.objectContaining({ xeroObjectNumber: "CN-11" }));
   });
   // #4655: a note no row may take is traced by the record; the run stops quietly, so the
   // outbox's catch never fails the row an officer reset, resolved or queued again.
   it("MUTATION: a note not recorded stops before any allocation or payout, and throws nothing into the outbox", async () => {
-    mocks.record.mockResolvedValueOnce("not-recorded");
-    await expect(executeOrganiserExtraAdjustment(payload(), claim)).resolves.toBeUndefined();
+    mocks.record.mockResolvedValueOnce({ outcome: "not-recorded" });
+    await expect(execute(payload(), claim)).resolves.toBe("stood-down");
     expect(mocks.getCreditNote).not.toHaveBeenCalled();
     expect(mocks.createCreditNoteAllocation).not.toHaveBeenCalled();
     expect(mocks.complete).not.toHaveBeenCalled();
   });
   it("a note landed on a row queued again stops: the queued run finishes from it", async () => {
     mocks.invoice = { ...mocks.invoice, amountDue: 0, amountCredited: 40 };
-    mocks.record.mockResolvedValueOnce("queued");
-    await expect(executeOrganiserExtraAdjustment(payload({ purpose: "refund", amountCents: 500, handBackTaskId: "hand-back" }), claim)).resolves.toBeUndefined();
+    mocks.record.mockResolvedValueOnce({ outcome: "queued" });
+    await expect(execute(payload({ purpose: "refund", amountCents: 500, handBackTaskId: "hand-back" }), claim)).resolves.toBe("stood-down");
     expect(mocks.settle).not.toHaveBeenCalled();
     expect(mocks.complete).not.toHaveBeenCalled();
   });
-  it("a note landed on a row a reset left FAILED is finished by this run: allocated and completed onto its claim", async () => {
-    mocks.record.mockImplementationOnce(async (input: { creditNoteId: string }) => { mocks.operation.xeroObjectId = input.creditNoteId; return "landed"; });
-    await executeOrganiserExtraAdjustment(payload(), claim);
+  // #4672 review S1/S2: the late note re-took a row a reset failed, under a fresh claim.
+  const RETAKEN = { id: "operation", startedAt: new Date("2026-07-01T00:20:00.000Z") };
+  const retaken = () => mocks.record.mockImplementationOnce(async (input: { creditNoteId: string }) => {
+    mocks.operation.xeroObjectId = input.creditNoteId;
+    return { outcome: "retaken", claim: RETAKEN };
+  });
+  it("MUTATION: a note that re-took a row a reset failed hands the caller the new claim before allocating, and completes under it, never the stalled claim", async () => {
+    retaken();
+    await expect(execute(payload(), claim)).resolves.toBe("completed");
+    expect(mocks.retake).toHaveBeenCalledExactlyOnceWith(RETAKEN);
+    expect(mocks.retake.mock.invocationCallOrder[0]).toBeLessThan(mocks.getCreditNote.mock.invocationCallOrder[0]!);
     expect(mocks.createCreditNoteAllocation).toHaveBeenCalledOnce();
-    expect(mocks.complete).toHaveBeenCalledWith(claim, expect.objectContaining({ xeroObjectId: "waiver", xeroObjectType: "CREDIT_NOTE" }));
+    expect(mocks.complete).toHaveBeenCalledExactlyOnceWith(RETAKEN, expect.objectContaining({ xeroObjectId: "waiver", xeroObjectType: "CREDIT_NOTE" }));
+  });
+  it("MUTATION: a re-taken refund note pays out and completes under the new claim", async () => {
+    mocks.invoice = { ...mocks.invoice, amountDue: 0, amountCredited: 40 };
+    retaken();
+    await execute(payload({ purpose: "refund", amountCents: 500, handBackTaskId: "hand-back" }), claim);
+    expect(mocks.retake).toHaveBeenCalledExactlyOnceWith(RETAKEN);
+    expect(mocks.settle).toHaveBeenCalledOnce();
+    expect(mocks.complete).toHaveBeenCalledExactlyOnceWith(RETAKEN, expect.anything());
+  });
+  it("a re-taken run that then fails has already handed the caller the new claim, so the outbox fails the row under it", async () => {
+    retaken();
+    mocks.createCreditNoteAllocation.mockRejectedValueOnce(new Error("connection lost"));
+    await expect(execute(payload(), claim)).rejects.toThrow("connection lost");
+    expect(mocks.retake).toHaveBeenCalledExactlyOnceWith(RETAKEN);
+    expect(mocks.complete).not.toHaveBeenCalled();
   });
   it("holds a refund until the organiser's bank-transfer hand-back completes", async () => {
     mocks.invoice = { ...mocks.invoice, amountDue: 0, amountCredited: 40 };
     mocks.task.mockResolvedValue({ status: "PENDING" });
-    await expect(executeOrganiserExtraAdjustment(payload({ purpose: "refund", amountCents: 500, handBackTaskId: "hand-back" }), claim)).rejects.toThrow("awaits its bank-transfer hand-back");
+    await expect(execute(payload({ purpose: "refund", amountCents: 500, handBackTaskId: "hand-back" }), claim)).rejects.toThrow("awaits its bank-transfer hand-back");
     expect(mocks.createCreditNotes).not.toHaveBeenCalled();
     expect(mocks.settle).not.toHaveBeenCalled();
   });
   it("waits for a failed or delayed waiver before paying the refund note", async () => {
     const refund = payload({ purpose: "refund", amountCents: 500, handBackTaskId: "hand-back" });
-    await expect(executeOrganiserExtraAdjustment(refund, claim)).rejects.toThrow("awaits its unpaid-balance waiver");
+    await expect(execute(refund, claim)).rejects.toThrow("awaits its unpaid-balance waiver");
     expect(mocks.createCreditNotes).not.toHaveBeenCalled();
     expect(mocks.settle).not.toHaveBeenCalled();
     expect(mocks.complete).not.toHaveBeenCalled();
 
     mocks.invoice = { ...mocks.invoice, amountDue: 0, amountCredited: 40 };
-    await executeOrganiserExtraAdjustment(refund, claim);
+    await execute(refund, claim);
     expect(mocks.createCreditNotes).toHaveBeenCalledOnce();
     expect(mocks.settle).toHaveBeenCalledOnce();
   });
   it("pays out a settled invoice's refund note using the completed bank-transfer record", async () => {
     mocks.invoice = { ...mocks.invoice, amountPaid: 60, amountDue: 0, status: Invoice.StatusEnum.PAID };
-    await executeOrganiserExtraAdjustment(payload({ purpose: "refund", amountCents: 500, cashAtPlanCents: 6_000, handBackTaskId: "hand-back" }), claim);
+    await execute(payload({ purpose: "refund", amountCents: 500, cashAtPlanCents: 6_000, handBackTaskId: "hand-back" }), claim);
     expect(mocks.createCreditNotes.mock.calls[0]?.[1]).toMatchObject({ creditNotes: [{ reference: expect.stringContaining("EXTRA-1"), lineItems: [{ unitAmount: 5 }] }] });
     expect(mocks.createCreditNoteAllocation).not.toHaveBeenCalled();
     expect(mocks.settle).toHaveBeenCalledWith(expect.objectContaining({ creditNoteId: "waiver", refundMethod: "internet-banking", refundMethodRecorded: true }));
@@ -314,9 +353,9 @@ describe("organiser extra adjustment provider execution", () => {
     mocks.invoice = { ...mocks.invoice, amountDue: 0, amountCredited: 40 };
     mocks.settle.mockResolvedValueOnce({ outcome: { refundPaymentErr: new Error("bank unavailable") } });
     const refund = payload({ purpose: "refund", amountCents: 500, handBackTaskId: "hand-back" });
-    await expect(executeOrganiserExtraAdjustment(refund, claim)).rejects.toThrow("bank unavailable");
+    await expect(execute(refund, claim)).rejects.toThrow("bank unavailable");
     expect(mocks.complete).not.toHaveBeenCalled();
-    await executeOrganiserExtraAdjustment(refund, claim);
+    await execute(refund, claim);
     expect(mocks.createCreditNotes).toHaveBeenCalledOnce();
     expect(mocks.complete).toHaveBeenCalledOnce();
   });

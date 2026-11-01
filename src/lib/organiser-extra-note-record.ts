@@ -12,8 +12,11 @@
  *
  * - **Recorded** where a success may land (`INV-INT-029`) and no other note is
  *   recorded: this run's own RUNNING claim (`claimed`); a row no claim holds
- *   that a reset left FAILED (`landed`: this run carries on, allocates or pays
- *   out the note and completes it); or one an officer queued again, PENDING
+ *   that a reset left FAILED, which the same write takes back RUNNING under a
+ *   fresh claim (`retaken`, #4672 review S1/S2: this run allocates or pays out
+ *   the note and completes or fails the row under that claim, and while it does
+ *   the row is RUNNING, so Resolve and Retry refuse it and Reset stale running
+ *   still covers a process that dies); or one an officer queued again, PENDING
  *   (`queued`: this run stops, and the queued run finishes from the note
  *   instead of raising a second one).
  * - **Not recorded** on a row resolved by hand (nothing retries it, so the
@@ -24,17 +27,20 @@
  *   nothing throws into the outbox's catch, whose failure write would land on
  *   the row an officer reset, resolved or queued again.
  *
- * One status-guarded `updateMany` on the operation row is the whole claim: no
- * advisory lock, the row lock of that statement only. The resets, the
- * requeue, the outbox claim and the resolve mark all write the same row
- * status-guarded, so whichever commits first wins and the other's guard reads
- * the committed row.
+ * Each record is one status-guarded `updateMany` on the operation row: no
+ * advisory lock, the row lock of that statement only. They are tried in turn
+ * (own claim, re-take, queued), each a transition valid whenever it commits,
+ * so a row that moves between two of them is simply met in its new state. The
+ * resets, the requeue, the outbox claim and the resolve mark all write the
+ * same row status-guarded, so whichever commits first wins and the other's
+ * guard reads the committed row.
  */
 import type { Prisma, XeroSyncOperation } from "@prisma/client";
 
 import { createAuditLog } from "@/lib/audit";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
+import { isPrismaUniqueConstraintError } from "@/lib/prisma-errors";
 import { traceUnrecordedLateNote } from "@/lib/xero-late-note-trace";
 import type { XeroOperationClaim } from "@/lib/xero-operation-outcome-guard";
 import { isResolvedInXero, resolutionLabel } from "@/lib/xero-operation-resolution";
@@ -55,38 +61,42 @@ export interface CreatedOrganiserNote {
 }
 
 /**
- * `claimed`: on this run's own claim. `landed`: on a row a reset left FAILED,
- * which this run finishes. `queued`: on a row queued again, which the queued
- * run finishes. `not-recorded`: traced, and this run stops.
+ * `claimed`: on this run's own claim. `retaken`: on a row a reset left FAILED,
+ * now RUNNING under `claim`, which this run finishes and every outcome of it is
+ * written under. `queued`: on a row queued again, which the queued run
+ * finishes. `not-recorded`: traced, and this run stops.
  */
-export type OrganiserNoteRecord = "claimed" | "landed" | "queued" | "not-recorded";
+export type OrganiserNoteRecord =
+  | { outcome: "claimed" | "retaken"; claim: XeroOperationClaim }
+  | { outcome: "queued" | "not-recorded" };
 
 /**
- * The claim and the write as one statement: the row records no other note,
- * and is either this run's RUNNING claim or a row no claim holds and no
- * resolve closed - FAILED after a reset, or PENDING after a retry queued it.
+ * The three guarded records, in the order they are tried. Each takes a row
+ * that records no other note: `own` this run's RUNNING claim; `retake` a row a
+ * reset left FAILED and no resolve closed, taken back RUNNING under a claim
+ * stamped `retakenAt` with the claim's own resets (`claimXeroSyncOperationToRunning`);
+ * `queued` a row a retry queued again, PENDING and unresolved, left PENDING.
  */
-export function createdOrganiserNoteClaim(note: Pick<CreatedOrganiserNote, "claim" | "creditNoteId" | "creditNoteNumber">) {
+export function createdOrganiserNoteWrites(
+  note: Pick<CreatedOrganiserNote, "claim" | "creditNoteId" | "creditNoteNumber">,
+  retakenAt: Date,
+) {
   // An `updateMany` reads an undefined id as no filter at all: never let one through.
   if (!note.claim.id) throw new Error("An organiser adjustment note's record needs its operation's id.");
+  const id = note.claim.id;
+  const noOtherNote = { OR: [{ xeroObjectId: null }, { xeroObjectId: note.creditNoteId }] };
+  const fields = { xeroObjectType: "CREDIT_NOTE", xeroObjectId: note.creditNoteId, xeroObjectNumber: note.creditNoteNumber };
   return {
-    where: {
-      id: note.claim.id,
-      AND: [
-        { OR: [{ xeroObjectId: null }, { xeroObjectId: note.creditNoteId }] },
-        {
-          OR: [
-            { status: "RUNNING", startedAt: note.claim.startedAt },
-            { status: { in: ["FAILED", "PENDING"] }, manuallyResolvedAt: null },
-          ],
-        },
-      ],
+    own: { where: { id, status: "RUNNING", startedAt: note.claim.startedAt, AND: [noOtherNote] }, data: fields },
+    retake: {
+      where: { id, status: "FAILED", manuallyResolvedAt: null, AND: [noOtherNote] },
+      data: { ...fields, status: "RUNNING", startedAt: retakenAt, completedAt: null, lastErrorCode: null, lastErrorMessage: null },
     },
-    data: { xeroObjectType: "CREDIT_NOTE", xeroObjectId: note.creditNoteId, xeroObjectNumber: note.creditNoteNumber },
-  } satisfies Prisma.XeroSyncOperationUpdateManyArgs;
+    queued: { where: { id, status: "PENDING", manuallyResolvedAt: null, AND: [noOtherNote] }, data: fields },
+  } satisfies Record<string, Prisma.XeroSyncOperationUpdateManyArgs>;
 }
 
-/** Record the note Xero returned, or trace it when no row may take it. Throws only when the write itself fails. */
+/** Record the note Xero returned, or trace it when no row may take it. Throws only when a write itself fails. */
 export async function recordCreatedOrganiserNote(note: CreatedOrganiserNote): Promise<OrganiserNoteRecord> {
   const trace = {
     operationId: note.claim.id,
@@ -96,23 +106,30 @@ export async function recordCreatedOrganiserNote(note: CreatedOrganiserNote): Pr
     creditNoteNumber: note.creditNoteNumber,
     amountCents: note.amountCents,
   };
-  let rows: Array<Pick<XeroSyncOperation, "status">>;
-  try {
-    rows = await prisma.xeroSyncOperation.updateManyAndReturn({ ...createdOrganiserNoteClaim(note), select: { status: true } });
-  } catch (error) {
-    // The note exists in Xero: name it before the outbox fails the row on this error.
-    logger.error({ ...trace, err: error }, "Organiser adjustment credit note from Xero could not be recorded on its operation (#4655)");
-    throw error;
+  const retakenAt = new Date();
+  const writes = createdOrganiserNoteWrites(note, retakenAt);
+  const record = async (args: Prisma.XeroSyncOperationUpdateManyArgs, activeKeyTaken: "lost" | "throw") => {
+    try {
+      return (await prisma.xeroSyncOperation.updateManyAndReturn({ ...args, select: { id: true } })).length === 1;
+    } catch (error) {
+      // RUNNING is an active status: a live row already holding this correlation key keeps it, and this re-take loses.
+      if (activeKeyTaken === "lost" && isPrismaUniqueConstraintError(error)) return false;
+      // The note exists in Xero: name it before the outbox fails the row on this error.
+      logger.error({ ...trace, err: error }, "Organiser adjustment credit note from Xero could not be recorded on its operation (#4655)");
+      throw error;
+    }
+  };
+  if (await record(writes.own, "throw")) return { outcome: "claimed", claim: note.claim };
+  if (await record(writes.retake, "lost")) {
+    logger.warn(
+      { ...trace, retakenAt },
+      "Organiser adjustment credit note landed on its operation after a reset; this run took the operation back under a new claim and finishes it (INV-INT-029, #4655)",
+    );
+    return { outcome: "retaken", claim: { id: note.claim.id, startedAt: retakenAt } };
   }
-  const status = rows[0]?.status;
-  if (status === "RUNNING") return "claimed";
-  if (status === "FAILED") {
-    logger.warn(trace, "Organiser adjustment credit note landed on its operation after a reset; this run finishes it (INV-INT-029, #4655)");
-    return "landed";
-  }
-  if (status === "PENDING") {
+  if (await record(writes.queued, "throw")) {
     logger.warn(trace, "Organiser adjustment credit note landed on its operation queued again; the queued run finishes from it (INV-INT-029, #4655)");
-    return "queued";
+    return { outcome: "queued" };
   }
   await traceUnrecordedLateNote(
     { operationId: note.claim.id, bookingId: note.bookingId, creditNoteId: note.creditNoteId, creditNoteNumber: note.creditNoteNumber, amountCents: note.amountCents },
@@ -145,7 +162,7 @@ export async function recordCreatedOrganiserNote(note: CreatedOrganiserNote): Pr
       alertMessage: (row, late) => organiserLateNoteMessage(row, late, note.purpose),
     },
   );
-  return "not-recorded";
+  return { outcome: "not-recorded" };
 }
 
 function adjustmentLabel(purpose: CreatedOrganiserNote["purpose"]): string {

@@ -17,8 +17,14 @@
  *   and the once-ever alert's claim, with only the email send replaced.
  *
  * Proven, each after stall then reset then the late success:
- * - no officer action: the note lands on the FAILED row, and the stalled run
- *   allocates it and completes the row SUCCEEDED - one note, one allocation;
+ * - no officer action: the note lands on the FAILED row, taking it back
+ *   RUNNING under a fresh claim, and the stalled run allocates it and
+ *   completes the row SUCCEEDED - one note, one allocation, its number kept;
+ * - #4672 review S1: Resolve pressed while that run allocates is refused (the
+ *   row is RUNNING), so no allocation follows an officer's takeover;
+ * - #4672 review S2: Retry pressed then is refused too, and when the
+ *   allocation then throws the row ends FAILED under the run's own claim, the
+ *   note kept for the next retry;
  * - Retry queued: the note lands on the queued row and the stalled run stops;
  *   the queued run continues from it - one note in Xero, never a second;
  * - resolve by hand: nothing written, the row stays as the officer left it
@@ -73,6 +79,9 @@ function fakeXero() {
   const notes = new Map<string, FakeNote>();
   const creates: Array<{ answer: (id: string, number: string) => void }> = [];
   const allocations: string[] = [];
+  /** #4672 review S1/S2: a note read the test holds, so an officer can act while the run is past its record. */
+  const reads = { held: null as Promise<void> | null, reached: 0 };
+  let allocationFailure: Error | null = null;
   const accountingApi = {
     getInvoice: async () => ({ body: { invoices: [{ ...invoice }] } }),
     createCreditNotes: (_tenant: string, body: { creditNotes: Array<{ lineItems: Array<{ description: string; unitAmount: number }> }> }) =>
@@ -89,8 +98,17 @@ function fakeXero() {
           },
         });
       }),
-    getCreditNote: async (_tenant: string, id: string) => ({ body: { creditNotes: [structuredClone(notes.get(id))] } }),
+    getCreditNote: async (_tenant: string, id: string) => {
+      reads.reached += 1;
+      await reads.held;
+      return { body: { creditNotes: [structuredClone(notes.get(id))] } };
+    },
     createCreditNoteAllocation: async (_tenant: string, id: string, body: { allocations: Array<{ invoice: { invoiceID: string }; amount: number }> }) => {
+      if (allocationFailure) {
+        const failure = allocationFailure;
+        allocationFailure = null;
+        throw failure;
+      }
       const allocation = body.allocations[0]!;
       notes.get(id)!.allocations.push({ invoice: allocation.invoice, amount: allocation.amount });
       invoice.amountCredited += allocation.amount;
@@ -107,7 +125,22 @@ function fakeXero() {
       await new Promise((resolve) => setTimeout(resolve, 10));
     }
   }
-  return { accountingApi, creates, allocations, notes, reached };
+  /** Holds every note read until the returned release is called. */
+  function holdNoteReads(): () => void {
+    let release!: () => void;
+    reads.held = new Promise((resolve) => { release = resolve; });
+    return release;
+  }
+  /** Waits (real time, bounded) until a note read has reached the fake Xero. */
+  async function readReached(): Promise<void> {
+    const started = process.hrtime.bigint();
+    while (reads.reached < 1) {
+      if (realElapsedMs(started) > 20_000) throw new Error("The note read never reached the fake Xero");
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+  }
+  const failNextAllocation = (error: Error) => { allocationFailure = error; };
+  return { accountingApi, creates, allocations, notes, reached, holdNoteReads, readReached, failNextAllocation };
 }
 
 (RUN ? describe : describe.skip)(
@@ -217,19 +250,36 @@ function fakeXero() {
       await expect(retryXeroSyncOperation(operationId, CLUB_FORMAT_TEST)).resolves.toMatchObject({ message: "Queued organiser invoice adjustment retry." });
     }
 
-    const lateAudits = () => prisma.auditLog.findMany({ where: { action: LATE_ACTION, targetId: BOOKING_ID } });
-    const waiverLinks = () => prisma.xeroObjectLink.findMany({ where: { localModel: "Booking", localId: BOOKING_ID, role: "ORGANISER_EXTRA_WAIVER" } });
+    /** The instant the stalled run's late note lands: past the stale threshold, so its re-taken claim is a later one. */
+    const LANDED_AT = new Date("2026-07-01T00:20:00.000Z");
 
-    it("MUTATION: reset with no resolve, then the late success - the note lands on the FAILED row, and the stalled run allocates it and completes it", async () => {
+    /** Stall, reset, then the late note lands and the stalled run is held at its next Xero read. */
+    async function landedAndHeld() {
       const operationId = await queuedWaiver();
       const run = runOutbox();
       await xero.reached(1);
       await resetStale(operationId);
+      const release = xero.holdNoteReads();
+      vi.setSystemTime(LANDED_AT);
       xero.creates[0]!.answer(NOTE_LATE, "CN-LATE");
+      await xero.readReached();
+      // The note landed and took the row back under the run's fresh claim.
+      expect(await prisma.xeroSyncOperation.findUniqueOrThrow({ where: { id: operationId } })).toMatchObject({
+        status: "RUNNING", startedAt: LANDED_AT, xeroObjectId: NOTE_LATE, xeroObjectNumber: "CN-LATE", manuallyResolvedAt: null,
+      });
+      return { operationId, run, release };
+    }
+
+    const lateAudits = () => prisma.auditLog.findMany({ where: { action: LATE_ACTION, targetId: BOOKING_ID } });
+    const waiverLinks = () => prisma.xeroObjectLink.findMany({ where: { localModel: "Booking", localId: BOOKING_ID, role: "ORGANISER_EXTRA_WAIVER" } });
+
+    it("MUTATION: reset with no resolve, then the late success - the note re-takes the FAILED row, and the stalled run allocates it and completes it under that claim", async () => {
+      const { operationId, run, release } = await landedAndHeld();
+      release();
       await expect(run).resolves.toMatchObject({ succeeded: 1, failed: 0 });
 
       expect(await prisma.xeroSyncOperation.findUniqueOrThrow({ where: { id: operationId } })).toMatchObject({
-        status: "SUCCEEDED", xeroObjectType: "CREDIT_NOTE", xeroObjectId: NOTE_LATE, manuallyResolvedAt: null,
+        status: "SUCCEEDED", startedAt: LANDED_AT, xeroObjectType: "CREDIT_NOTE", xeroObjectId: NOTE_LATE, xeroObjectNumber: "CN-LATE", manuallyResolvedAt: null,
       });
       expect(xero.creates).toHaveLength(1);
       expect(xero.allocations).toEqual([NOTE_LATE]);
@@ -245,7 +295,8 @@ function fakeXero() {
       await resetStale(operationId);
       await retry(operationId);
       xero.creates[0]!.answer(NOTE_LATE, "CN-LATE");
-      await stalled;
+      // #4672 review N4: the stalled run wrote no outcome, so it counts as skipped.
+      await expect(stalled).resolves.toMatchObject({ succeeded: 0, skipped: 1, failed: 0 });
       expect(await prisma.xeroSyncOperation.findUniqueOrThrow({ where: { id: operationId } })).toMatchObject({ status: "PENDING", xeroObjectId: NOTE_LATE });
       expect(xero.allocations).toEqual([]);
 
@@ -269,7 +320,7 @@ function fakeXero() {
 
       xero.creates[0]!.answer(NOTE_LATE, "CN-LATE");
       // The run stops quietly: the outbox writes no failure over the officer's row.
-      await expect(run).resolves.toMatchObject({ succeeded: 1, failed: 0 });
+      await expect(run).resolves.toMatchObject({ succeeded: 0, skipped: 1, failed: 0 });
 
       const row = await prisma.xeroSyncOperation.findUniqueOrThrow({ where: { id: operationId } });
       expect(row).toMatchObject({
@@ -292,7 +343,7 @@ function fakeXero() {
       const { recordCreatedOrganiserNote } = await import("@/lib/organiser-extra-note-record");
       await expect(recordCreatedOrganiserNote({
         claim: { id: operationId, startedAt: row.startedAt }, bookingId: BOOKING_ID, purpose: "waive", creditNoteId: NOTE_LATE, creditNoteNumber: "CN-LATE", amountCents: 4_000,
-      })).resolves.toBe("not-recorded");
+      })).resolves.toEqual({ outcome: "not-recorded" });
       expect(send).toHaveBeenCalledTimes(1);
     });
 
@@ -310,7 +361,7 @@ function fakeXero() {
       expect(held).toMatchObject({ status: "RUNNING", startedAt: new Date("2026-07-01T00:40:00.000Z"), xeroObjectId: null });
 
       xero.creates[0]!.answer(NOTE_LATE, "CN-LATE");
-      await expect(first).resolves.toMatchObject({ succeeded: 1, failed: 0 });
+      await expect(first).resolves.toMatchObject({ succeeded: 0, skipped: 1, failed: 0 });
       expect(await prisma.xeroSyncOperation.findUniqueOrThrow({ where: { id: operationId } })).toMatchObject({
         status: "RUNNING", startedAt: held.startedAt, xeroObjectId: null,
       });
@@ -325,6 +376,46 @@ function fakeXero() {
       expect(await prisma.xeroSyncOperation.findUniqueOrThrow({ where: { id: operationId } })).toMatchObject({ status: "SUCCEEDED", xeroObjectId: NOTE_RETRY });
       expect(xero.allocations).toEqual([NOTE_RETRY]);
       expect(send).toHaveBeenCalledTimes(1);
+    });
+
+    it("MUTATION (#4672 review S1): the note re-took the row, then an officer presses Resolve before the run completes - refused, and the run allocates and completes with no officer mark", async () => {
+      const { operationId, run, release } = await landedAndHeld();
+      const { claimResolvedInXeroMark, resolvePrecheckRefusal } = await import("@/lib/xero-operation-resolve-guards");
+      const held = await prisma.xeroSyncOperation.findUniqueOrThrow({ where: { id: operationId } });
+      await expect(resolvePrecheckRefusal({ ...held, queueType: "ORGANISER_EXTRA_ADJUSTMENT" })).resolves.toContain("is running");
+      expect(await claimResolvedInXeroMark({ id: operationId, resolvedAt: new Date("2026-07-01T00:25:00.000Z"), reason: "Waived by hand in Xero", resolvedById: OFFICER_ID })).toBe(false);
+
+      release();
+      await expect(run).resolves.toMatchObject({ succeeded: 1, failed: 0 });
+      expect(await prisma.xeroSyncOperation.findUniqueOrThrow({ where: { id: operationId } })).toMatchObject({
+        status: "SUCCEEDED", xeroObjectId: NOTE_LATE, manuallyResolvedAt: null, manuallyResolvedById: null,
+      });
+      expect(xero.creates).toHaveLength(1);
+      expect(xero.allocations).toEqual([NOTE_LATE]);
+      expect(send).not.toHaveBeenCalled();
+    });
+
+    it("MUTATION (#4672 review S2): the note re-took the row, then an officer presses Retry, then the allocation throws - Retry refused, and the row ends FAILED under the run's own claim, its note kept for the next retry", async () => {
+      const { operationId, run, release } = await landedAndHeld();
+      const { retryXeroSyncOperation } = await import("@/lib/xero-operation-retry");
+      await expect(retryXeroSyncOperation(operationId, CLUB_FORMAT_TEST)).rejects.toThrow();
+      expect(await prisma.xeroSyncOperation.findUniqueOrThrow({ where: { id: operationId } })).toMatchObject({ status: "RUNNING", startedAt: LANDED_AT });
+
+      xero.failNextAllocation(new Error("Xero allocation refused"));
+      release();
+      await expect(run).resolves.toMatchObject({ succeeded: 0, failed: 1 });
+      const failed = await prisma.xeroSyncOperation.findUniqueOrThrow({ where: { id: operationId } });
+      expect(failed).toMatchObject({ status: "FAILED", startedAt: LANDED_AT, xeroObjectId: NOTE_LATE, manuallyResolvedAt: null });
+      expect(failed.lastErrorMessage).toContain("Xero allocation refused");
+      expect(xero.allocations).toEqual([]);
+
+      // Now the officer's Retry takes: the queued run finishes from the kept note, never raising a second.
+      vi.setSystemTime(new Date("2026-07-01T00:40:00.000Z"));
+      await retry(operationId);
+      await expect(runOutbox()).resolves.toMatchObject({ succeeded: 1, failed: 0 });
+      expect(await prisma.xeroSyncOperation.findUniqueOrThrow({ where: { id: operationId } })).toMatchObject({ status: "SUCCEEDED", xeroObjectId: NOTE_LATE });
+      expect(xero.creates).toHaveLength(1);
+      expect(xero.allocations).toEqual([NOTE_LATE]);
     });
   },
 );

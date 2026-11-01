@@ -18,10 +18,32 @@ import type { OrganiserExtraAdjustmentPayload } from "@/lib/organiser-extra-adju
 const WAIVER_LINE = "Unpaid organiser extra released; no cancellation percentage applies";
 const REFUND_LINE = "Refund paid back to the group organiser by bank transfer";
 
-export async function executeOrganiserExtraAdjustment(payload: OrganiserExtraAdjustmentPayload, claim: XeroOperationClaim): Promise<void> {
+/**
+ * `completed`: the row's outcome was written under the run's claim.
+ * `stood-down`: #4655, the created note was recorded on a row queued again, or
+ * on no row (traced); this run wrote no outcome.
+ */
+export type OrganiserExtraAdjustmentRun = "completed" | "stood-down";
+
+export interface OrganiserExtraAdjustmentHooks {
+  /**
+   * #4655 (#4672 review S1/S2, `INV-INT-029`): the run's late note re-took a
+   * row a reset failed, under a fresh claim. Every outcome of this run from
+   * then on - the outbox's give-backs and failure write included - is written
+   * under that claim, so the caller holds it before anything else can throw.
+   */
+  onRetake: (claim: XeroOperationClaim) => void;
+}
+
+export async function executeOrganiserExtraAdjustment(
+  payload: OrganiserExtraAdjustmentPayload,
+  startedClaim: XeroOperationClaim,
+  hooks: OrganiserExtraAdjustmentHooks,
+): Promise<OrganiserExtraAdjustmentRun> {
+  let claim = startedClaim;
   const operation = await prisma.xeroSyncOperation.findUniqueOrThrow({
     where: { id: claim.id },
-    select: { xeroObjectId: true, correlationKey: true },
+    select: { xeroObjectId: true, xeroObjectNumber: true, correlationKey: true },
   });
   let invoiceId = payload.invoiceId;
   if (!invoiceId && payload.modificationId) {
@@ -65,7 +87,7 @@ export async function executeOrganiserExtraAdjustment(payload: OrganiserExtraAdj
     const state = classifyGroupSettlementInvoiceState(invoice);
     if (state.kind === "void") {
       await completeXeroSyncOperation(claim, { responsePayload: { alreadyVoided: true } });
-      return;
+      return "completed";
     }
     if (state.kind === "open" && dueCents > 0 && payload.amountCents >= dueCents) {
       await callXeroApi(
@@ -73,11 +95,11 @@ export async function executeOrganiserExtraAdjustment(payload: OrganiserExtraAdj
         { operation: "updateInvoice", resourceType: "INVOICE", workflow: "organiserExtraAdjustment", context: `void organiser extra ${extraInvoiceId}` },
       );
       await completeXeroSyncOperation(claim, { responsePayload: { voided: true, invoiceId: extraInvoiceId } });
-      return;
+      return "completed";
     }
     if (dueCents <= 0) {
       await completeXeroSyncOperation(claim, { responsePayload: { nothingDue: true, invoiceId: extraInvoiceId } });
-      return;
+      return "completed";
     }
   }
 
@@ -91,6 +113,8 @@ export async function executeOrganiserExtraAdjustment(payload: OrganiserExtraAdj
   }
   const amountCents = payload.purpose === "waive" ? Math.min(payload.amountCents, dueCents) : payload.amountCents;
   let noteId = operation.xeroObjectId;
+  // #4672 review N2: the completion writes the number too, so carry it rather than blank the recorded one.
+  let noteNumber = operation.xeroObjectNumber;
   if (!noteId) {
     const account = await getResolvedAccountMapping("hutFeeRefunds");
     if (!invoice.contact?.contactID) throw new Error("Organiser invoice has no Xero contact");
@@ -107,15 +131,22 @@ export async function executeOrganiserExtraAdjustment(payload: OrganiserExtraAdj
     const createdNote = created.body.creditNotes?.[0];
     noteId = createdNote?.creditNoteID ?? null;
     if (!noteId) throw new Error("Xero did not create the organiser credit note");
+    noteNumber = createdNote?.creditNoteNumber ?? null;
     // Persist the returned identity BEFORE allocation/payment. A retry never
     // depends solely on the provider's expiring idempotency cache. #4655
     // (`INV-INT-029`): a run that stalled past a reset still records it on a
-    // row no claim holds; one it may not land on is audited and alerted, and
-    // this run stops without failing the row an officer reset, resolved or queued.
+    // row no claim holds - a FAILED one it takes back RUNNING under a fresh
+    // claim, which the rest of this run is written under; one it may not land
+    // on is audited and alerted, and this run stops without failing the row an
+    // officer reset, resolved or queued.
     const record = await recordCreatedOrganiserNote({
-      claim, bookingId: payload.bookingId, purpose: payload.purpose, creditNoteId: noteId, creditNoteNumber: createdNote?.creditNoteNumber ?? null, amountCents,
+      claim, bookingId: payload.bookingId, purpose: payload.purpose, creditNoteId: noteId, creditNoteNumber: noteNumber, amountCents,
     });
-    if (record === "not-recorded" || record === "queued") return;
+    if (record.outcome === "not-recorded" || record.outcome === "queued") return "stood-down";
+    if (record.outcome === "retaken") {
+      claim = record.claim;
+      hooks.onRetake(claim);
+    }
   }
   const creditNoteId = noteId;
   if (payload.purpose === "waive") {
@@ -166,7 +197,7 @@ export async function executeOrganiserExtraAdjustment(payload: OrganiserExtraAdj
       );
     }
     await completeXeroSyncOperation(claim, {
-      xeroObjectId: creditNoteId, xeroObjectType: "CREDIT_NOTE",
+      xeroObjectId: creditNoteId, xeroObjectType: "CREDIT_NOTE", xeroObjectNumber: note.creditNoteNumber ?? noteNumber,
       responsePayload: { invoiceId: extraInvoiceId, amountCents: totalCents, allocated: true },
       extraLinks: [{ localModel: "Booking", localId: payload.bookingId, xeroObjectType: "CREDIT_NOTE", xeroObjectId: creditNoteId, role: "ORGANISER_EXTRA_WAIVER", metadata: { invoiceId: extraInvoiceId, amountCents: totalCents } }],
     });
@@ -176,9 +207,10 @@ export async function executeOrganiserExtraAdjustment(payload: OrganiserExtraAdj
     });
     if (settlement.outcome.refundPaymentErr) throw settlement.outcome.refundPaymentErr;
     await completeXeroSyncOperation(claim, {
-      xeroObjectId: creditNoteId, xeroObjectType: "CREDIT_NOTE",
+      xeroObjectId: creditNoteId, xeroObjectType: "CREDIT_NOTE", xeroObjectNumber: settlement.creditNoteNumber ?? noteNumber,
       responsePayload: { invoiceId: extraInvoiceId, amountCents, refundPayment: settlement.outcome.refundPaymentResponseBody, refundPaymentSkipped: settlement.outcome.refundPaymentSkipReason },
       extraLinks: [{ localModel: "Payment", localId: payment.id, xeroObjectType: "CREDIT_NOTE", xeroObjectId: creditNoteId, role: "ORGANISER_EXTRA_REFUND", metadata: { invoiceId: extraInvoiceId, amountCents, handBackTaskId: payload.handBackTaskId } }],
     });
   }
+  return "completed";
 }
