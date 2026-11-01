@@ -8,6 +8,8 @@
  * OverCapacityConfirmationRequiredError keeps working with `instanceof`.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { postBindingCharge } from "@/lib/booking-ledger-pending-charge";
+import { memberMoneyTestContext } from "./support/member-money-fixtures";
 import { bookingGuestDietarySeeding } from "@/lib/member-dietary-booking-writes";
 import { AgeTier, BookingStatus } from "@prisma/client";
 import {
@@ -37,6 +39,13 @@ const h = vi.hoisted(() => ({
   sendAdminNewBookingAlert: vi.fn(),
 }));
 
+// #4628: a bank-transfer booking's pending journal charge is proved against PostgreSQL
+// (`booking-ledger-pending-charge.realdb.test.ts`); this fake store does not carry the journal.
+vi.mock("@/lib/booking-ledger-pending-charge", () => ({
+  postBindingCharge: vi.fn(async () => {}),
+  postPendingModificationCharge: vi.fn(async () => {}),
+  postPendingCancellationCharge: vi.fn(async () => {}),
+}));
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     $transaction: (fn: (tx: unknown) => Promise<unknown>) => h.transaction(fn),
@@ -662,6 +671,8 @@ describe("createConfirmedBooking carries the on-behalf email choice to its invoi
   ) =>
     baseInput([guest(true, "Alice")], {
       paymentMethod: "internet_banking",
+      // #4628: an internet-banking create carries the journal context its caller resolved.
+      journal: memberMoneyTestContext(),
       ...overrides,
     });
 
@@ -687,6 +698,14 @@ describe("createConfirmedBooking carries the on-behalf email choice to its invoi
     expect(enqueuedInvoiceOptions()).toMatchObject({
       invoiceEmailDelivery: XERO_INVOICE_EMAIL_SEND,
     });
+  });
+
+  it("binds the charge in the journal inside the create, and refuses an internet-banking create without its context (#4628)", async () => {
+    const journal = memberMoneyTestContext();
+    await createConfirmedBooking(internetBanking({ journal }));
+    expect(postBindingCharge).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(postBindingCharge).mock.calls[0]![1]).toBe(journal);
+    await expect(createConfirmedBooking(internetBanking({ journal: undefined }))).rejects.toThrow(/journal context/);
   });
 
   it("records a send when no choice was made at all", async () => {
