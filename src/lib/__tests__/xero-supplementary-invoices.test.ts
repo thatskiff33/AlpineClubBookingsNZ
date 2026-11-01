@@ -30,7 +30,11 @@ const mocks = vi.hoisted(() => ({
   lockAnchor: vi.fn(),
   xeroSyncOperationFindFirst: vi.fn(),
   xeroSyncOperationUpdateMany: vi.fn(),
+  // #4494: the gap invoice's send-time check (resets to undefined: no overlap).
+  gapPaymentOverlapsCreditRelease: vi.fn(),
 }));
+
+vi.mock("@/lib/credit-release-xero-payment", () => ({ gapPaymentOverlapsCreditRelease: mocks.gapPaymentOverlapsCreditRelease }));
 
 vi.mock("@/lib/xero-operation-outbox", () => ({ lockSupplementaryInvoiceAnchor: mocks.lockAnchor }));
 
@@ -866,6 +870,80 @@ describe("a second ask survives a Xero rejection replayably (#3193)", () => {
         localId: "mod_123",
       }),
     ).toEqual({ supported: true, reason: null });
+  });
+
+  describe("#4494: a gap invoice whose payment would take the credit-release sweep's share", () => {
+    const gapPayload = {
+      queueType: "SUPPLEMENTARY_INVOICE",
+      bookingId: "bk1",
+      priceDiffCents: 3000,
+      changeFeeCents: 0,
+      bookingModificationId: "mod_123",
+      recordPayment: true,
+      primaryInvoiceGap: true,
+      coveredPaymentIntentIds: ["pi_release"],
+      coveredCaptureCents: { pi_release: 3000 },
+    };
+    const send = async () => {
+      mocks.xeroSyncOperationFindUnique.mockResolvedValue({ requestPayload: gapPayload });
+      mocks.retryXeroWriteWithContactRepair.mockRejectedValue(new Error("Account code 200 has been archived"));
+      await expect(
+        createXeroSupplementaryInvoice({
+          format: CLUB_FORMAT_TEST,
+          bookingId: "bk1",
+          priceDiffCents: 3000,
+          changeFeeCents: 0,
+          bookingModificationId: "mod_123",
+          recordPayment: true,
+          syncOperation: xeroClaim("op_q"),
+        }),
+      ).rejects.toThrow("Account code 200 has been archived");
+      return mocks.xeroSyncOperationUpdate.mock.calls[0][0].data.requestPayload;
+    };
+
+    it("MUTATION: is raised unpaid, naming nothing, stored before the Xero call so a retry replays it unpaid", async () => {
+      mocks.gapPaymentOverlapsCreditRelease.mockResolvedValue(true);
+      const written = await send();
+      expect(mocks.gapPaymentOverlapsCreditRelease).toHaveBeenCalledWith({ operationId: "op_q", bookingId: "bk1", payload: gapPayload });
+      expect(written).toMatchObject({ recordPayment: false, primaryInvoiceGap: true, coveredPaymentIntentIds: [], coveredCaptureCents: {} });
+      expect(readQueuedOutboxPayload(written)).toMatchObject({ recordPayment: false });
+    });
+
+    it("MUTATION: sends no Xero payment for it on that same attempt", async () => {
+      mocks.gapPaymentOverlapsCreditRelease.mockResolvedValue(true);
+      mocks.xeroSyncOperationFindUnique.mockResolvedValue({ requestPayload: gapPayload });
+      const createPayments = vi.fn().mockResolvedValue({ body: { payments: [{ paymentID: "pay_1" }] } });
+      mocks.getAuthenticatedXeroClient.mockResolvedValue({ xero: { accountingApi: { createPayments } }, tenantId: "tenant_1" });
+      mocks.retryXeroWriteWithContactRepair.mockResolvedValue({ body: { invoices: [{ invoiceID: "inv_gap", invoiceNumber: "INV-0043" }] } });
+      await createXeroSupplementaryInvoice({
+        format: CLUB_FORMAT_TEST,
+        bookingId: "bk1",
+        priceDiffCents: 3000,
+        changeFeeCents: 0,
+        bookingModificationId: "mod_123",
+        recordPayment: true,
+        syncOperation: xeroClaim("op_q"),
+      });
+      expect(createPayments).not.toHaveBeenCalled();
+      // Control: the same send pays where nothing overlaps.
+      mocks.gapPaymentOverlapsCreditRelease.mockResolvedValue(false);
+      await createXeroSupplementaryInvoice({
+        format: CLUB_FORMAT_TEST,
+        bookingId: "bk1",
+        priceDiffCents: 3000,
+        changeFeeCents: 0,
+        bookingModificationId: "mod_123",
+        recordPayment: true,
+        syncOperation: xeroClaim("op_q"),
+      });
+      expect(createPayments).toHaveBeenCalledTimes(1);
+    });
+
+    it("pays as queued where nothing it pays from is the sweep's", async () => {
+      mocks.gapPaymentOverlapsCreditRelease.mockResolvedValue(false);
+      const written = await send();
+      expect(written).toMatchObject({ recordPayment: true, coveredPaymentIntentIds: ["pi_release"], coveredCaptureCents: { pi_release: 3000 } });
+    });
   });
 
   /**

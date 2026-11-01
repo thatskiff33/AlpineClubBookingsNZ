@@ -8,7 +8,10 @@ import { prisma } from "@/lib/prisma";
 import { XeroAppliedCreditOperationBusyError } from "@/lib/xero-applied-credit-operation-serialization";
 import { buildXeroBookingInvoiceCorrelationKey } from "@/lib/xero-booking-invoice-key";
 import { liveRunningXeroOperationFilter } from "@/lib/xero-stale-operations";
-import { XERO_OUTBOX_ADDITIONAL_CAPTURE_RECEIPT_TYPE } from "@/lib/additional-capture-receipt-payload";
+import {
+  unpaidPrimaryInvoiceGapPayload,
+  XERO_OUTBOX_ADDITIONAL_CAPTURE_RECEIPT_TYPE,
+} from "@/lib/additional-capture-receipt-payload";
 import { asRecord } from "@/lib/xero-json";
 import { sanitizeForJson } from "@/lib/xero-sync";
 
@@ -182,7 +185,10 @@ export async function switchUnsentRecorderUnpaid(
  * receipt does, the row itself is set unpaid there, guarded on the status read
  * (the switch's write), so the receipt reads it as the invoice it records
  * against rather than a second recorder. A #3980 gap invoice decides its own
- * cash and is left as asked. `raisedUnpaid` says this call turned it unpaid.
+ * cash and is left as asked, save (#4494) where a capture it pays from is the
+ * credit-release sweep's: asked after the lock is released (the check may
+ * alert), and set unpaid, naming nothing, guarded on an unsent status.
+ * `raisedUnpaid` says this call turned it unpaid.
  */
 export async function supplementaryReplayMayRecordPayment(input: {
   operationId: string;
@@ -191,7 +197,7 @@ export async function supplementaryReplayMayRecordPayment(input: {
 }): Promise<{ recordPayment: boolean; raisedUnpaid: boolean }> {
   const { lockSupplementaryInvoiceAnchor } = await import("@/lib/xero-operation-outbox");
   const { anchorCaptureHasReceipt } = await import("@/lib/additional-capture-receipt-link");
-  return prisma.$transaction(async (tx) => {
+  const decided = await prisma.$transaction(async (tx) => {
     await lockSupplementaryInvoiceAnchor(tx, input.bookingModificationId);
     const row = await tx.xeroSyncOperation.findUnique({
       where: { id: input.operationId },
@@ -199,7 +205,7 @@ export async function supplementaryReplayMayRecordPayment(input: {
     });
     const payload = asRecord(row?.requestPayload);
     if (!row || payload?.recordPayment === false) return { recordPayment: false, raisedUnpaid: false };
-    if (payload?.primaryInvoiceGap === true) return { recordPayment: true, raisedUnpaid: false };
+    if (payload?.primaryInvoiceGap === true) return { recordPayment: true, raisedUnpaid: false, gapPayload: payload };
     // Round 12: a payment linked or a decision stored - never a bare running
     // receipt, which reads this row again before it decides.
     const recorded = await anchorCaptureHasReceipt(
@@ -220,4 +226,13 @@ export async function supplementaryReplayMayRecordPayment(input: {
     });
     return { recordPayment: false, raisedUnpaid: written.count === 1 };
   });
+  if (!("gapPayload" in decided) || !decided.gapPayload) return decided;
+  const { gapPaymentOverlapsCreditRelease } = await import("@/lib/credit-release-xero-payment");
+  const overlaps = await gapPaymentOverlapsCreditRelease({ operationId: input.operationId, bookingId: input.bookingId, payload: decided.gapPayload });
+  if (!overlaps) return { recordPayment: true, raisedUnpaid: false };
+  const written = await prisma.xeroSyncOperation.updateMany({
+    where: { id: input.operationId, status: { in: ["FAILED", "PARTIAL"] } },
+    data: { requestPayload: sanitizeForJson(unpaidPrimaryInvoiceGapPayload(decided.gapPayload)) },
+  });
+  return { recordPayment: false, raisedUnpaid: written.count === 1 };
 }

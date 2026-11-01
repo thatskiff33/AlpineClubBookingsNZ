@@ -2,9 +2,15 @@ import "server-only";
 
 import { PaymentSource, PaymentStatus, PaymentTransactionKind } from "@prisma/client";
 
+import {
+  creditReleaseShareOverlaps,
+  readRecordedByPrimaryOrGap,
+} from "@/lib/additional-capture-recorder";
+import { GAP_COVERED_INTENTS_KEY } from "@/lib/additional-capture-receipt-payload";
 import { claimAlertCooldown } from "@/lib/alert-cooldown";
 import { createAuditLog } from "@/lib/audit";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
+import { readCreditReleaseCaptureShare } from "@/lib/credit-release-capture-share";
 import {
   planCreditReleasePayments,
   type AskLedgerRow,
@@ -19,6 +25,8 @@ import {
 import { prisma } from "@/lib/prisma";
 import { readStripeCaptureDocumentDate } from "@/lib/stripe-capture-date";
 import { createXeroPaymentForInvoice } from "@/lib/xero-invoice-payments";
+import { asRecord } from "@/lib/xero-json";
+import { readPrimaryInvoiceFeeAtLink } from "@/lib/xero-primary-invoice-gap-anchors";
 import {
   openBalanceCents,
   readXeroInvoiceBalance,
@@ -46,6 +54,15 @@ import { buildXeroIdempotencyKey } from "@/lib/xero-sync";
  * same money twice (by bank transfer, or against a credit note) and part of the
  * card payment is a refund the club owes. Nothing is recorded and an officer is
  * told, once a day.
+ *
+ * #4494 (`INV-PAY-139`): ONE RECORDER PER CAPTURE, both orderings. The #3980 gap
+ * invoice never pays itself from this sweep's share (`attributeGapCash`), but a
+ * gap invoice queued before that fix, or by the previous colour during a
+ * cutover, may have. So the sweep holds a payment such a gap invoice already
+ * took part of ({@link recordOne}), and a gap invoice's send raises it unpaid
+ * where a capture it would pay from is this sweep's
+ * ({@link gapPaymentOverlapsCreditRelease}). Both read only, outside any
+ * transaction, and fail closed with an alert.
  */
 export const CREDIT_RELEASE_PAYMENT_ROLE = "CREDIT_RELEASE_PAYMENT";
 export const CREDIT_RELEASE_PAYMENT_LOCAL_MODEL = "PaymentTransaction";
@@ -192,7 +209,16 @@ export async function recordCreditReleasePayments(
     }
     for (const item of plan.items) {
       if (done.has(item.askRowId)) continue;
-      const outcome = await recordOne({ item, payment, deps, now });
+      // #4494 (`INV-SSOT` exception, stated): this capture's whole credit-release
+      // share, summed from THIS run's plan - the same pure function over the same
+      // payment's rows `readCreditReleaseCaptureShare` runs - not a second read per item.
+      const capture = {
+        shareCents: plan.items
+          .filter((other) => other.capturedByIntentId === item.capturedByIntentId)
+          .reduce((sum, other) => sum + other.ownCents, 0),
+        amountCents: payment.transactions.find((row) => row.id === item.capturedByRowId)?.amountCents ?? 0,
+      };
+      const outcome = await recordOne({ item, capture, payment, deps, now });
       result[outcome] += 1;
     }
   }
@@ -201,11 +227,14 @@ export async function recordCreditReleasePayments(
 
 async function recordOne({
   item,
+  capture,
   payment,
   deps,
   now,
 }: {
   item: CreditReleasePaymentItem;
+  /** The capture's whole credit-release share (every item it collected) and its gross amount. */
+  capture: { shareCents: number; amountCents: number };
   payment: { bookingId: string; xeroInvoiceId: string | null };
   deps: CreditReleasePaymentDeps;
   now: Date;
@@ -250,6 +279,21 @@ async function recordOne({
       payment.bookingId,
       "A card payment for credit used in Xero may or may not be recorded",
       "An attempt to record the member's card payment for credit that was used in Xero did not finish, and is too old to retry safely. Please check the booking's invoice in Xero: record the payment by hand if it is missing.",
+    );
+    return "held";
+  }
+
+  // #4494: a gap invoice queued before the fix may already have paid itself from
+  // this capture. What it and the primary recorded, beside the sweep's share, must
+  // fit inside what the card took (the reader the receipt's recorder uses).
+  const figures = await readPrimaryInvoiceFeeAtLink(payment.bookingId, invoiceId);
+  const recorded = await readRecordedByPrimaryOrGap(item.capturedByIntentId, figures?.atLink);
+  if (creditReleaseShareOverlaps(recorded, { ownCents: capture.shareCents, held: false }, capture.amountCents)) {
+    await alertOnce(
+      `credit-release-payment-gap-overlap:${item.askRowId}`,
+      payment.bookingId,
+      "A card payment for credit used in Xero was not recorded",
+      "The member paid by card for credit that was used in Xero, but the booking's extra invoice for its remaining balance already recorded part of the same card payment. Nothing more was recorded in Xero, so the payment is not counted twice. Please check both invoices in Xero and record what is missing by hand.",
     );
     return "held";
   }
@@ -311,4 +355,53 @@ async function recordOne({
     }
     return "failed";
   }
+}
+
+/**
+ * #4494 (`INV-ADDPAY-046`, `INV-PAY-139`): THE GAP INVOICE'S SEND-TIME CHECK.
+ * Asked just before a #3980 gap invoice's Stripe payment is sent - by the
+ * outbox's send and by an officer's Retry - for a payload queued before the fix
+ * or by the previous colour. True where any capture it pays from overlaps this
+ * sweep's share of it: the share the ledger gives
+ * (`readCreditReleaseCaptureShare`), or what the sweep already recorded (its
+ * `CREDIT_RELEASE_PAYMENT` links), whichever is more. The caller then raises the
+ * invoice unpaid; an officer is told once a day. Reads only, no lock.
+ */
+export async function gapPaymentOverlapsCreditRelease(input: {
+  operationId: string;
+  bookingId: string;
+  payload: Record<string, unknown>;
+}): Promise<boolean> {
+  const intents = input.payload[GAP_COVERED_INTENTS_KEY];
+  if (!Array.isArray(intents) || intents.length === 0) return false;
+  const booking = await prisma.payment.findUnique({ where: { bookingId: input.bookingId }, select: { xeroInvoiceId: true } });
+  const figures = booking?.xeroInvoiceId ? await readPrimaryInvoiceFeeAtLink(input.bookingId, booking.xeroInvoiceId) : null;
+  for (const intent of intents) {
+    if (typeof intent !== "string") continue;
+    const [share, links, capture, recorded] = await Promise.all([
+      readCreditReleaseCaptureShare(intent),
+      prisma.xeroObjectLink.findMany({
+        where: { role: CREDIT_RELEASE_PAYMENT_ROLE, active: true, metadata: { path: ["paymentIntentId"], equals: intent } },
+        select: { metadata: true },
+      }),
+      prisma.paymentTransaction.findUnique({ where: { stripePaymentIntentId: intent }, select: { amountCents: true } }),
+      readRecordedByPrimaryOrGap(intent, figures?.atLink),
+    ]);
+    const amountCents = capture?.amountCents ?? 0;
+    // A link with no recorded figure is read as all of the capture: fail closed.
+    const linkedCents = links.reduce((sum, link) => {
+      const cents = asRecord(link.metadata)?.amountCents;
+      return sum + (typeof cents === "number" ? cents : amountCents);
+    }, 0);
+    const swept = { held: share.held, ownCents: Math.max(share.ownCents, linkedCents) };
+    if (!creditReleaseShareOverlaps(recorded, swept, amountCents)) continue;
+    await alertOnce(
+      `credit-release-gap-payment-overlap:${input.operationId}`,
+      input.bookingId,
+      "A booking's extra Xero invoice was raised unpaid",
+      "The booking's extra invoice for its remaining balance would have recorded a card payment the member made for credit used in Xero, which is recorded against the booking's own invoice. It was raised unpaid so the payment is not counted twice. Please check both invoices in Xero.",
+    );
+    return true;
+  }
+  return false;
 }

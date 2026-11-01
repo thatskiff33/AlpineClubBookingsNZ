@@ -36,7 +36,10 @@ const mocks = vi.hoisted(() => ({
   findUniqueTask: vi.fn(),
   creditBackLateCaptureRefunds: vi.fn(),
   queueWaitingPaidAnotherWayNote: vi.fn(),
+  // #4494: whether a gap invoice's payment would take the credit-release sweep's share.
+  gapPaymentOverlapsCreditRelease: vi.fn(),
 }));
+vi.mock("@/lib/credit-release-xero-payment", () => ({ gapPaymentOverlapsCreditRelease: mocks.gapPaymentOverlapsCreditRelease }));
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
@@ -199,6 +202,7 @@ const gapTarget = (status = "SUCCEEDED") => {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mocks.gapPaymentOverlapsCreditRelease.mockResolvedValue(false);
   order = [];
   invoices = { [PRIMARY]: { amountDue: 8000 } };
   rows = { otherReceiptRunning: false, createRunning: false, primaryCreate: { status: "SUCCEEDED", responsePayload: {}, manuallyResolvedAt: null } };
@@ -1093,6 +1097,23 @@ describe("supplementaryReplayMayRecordPayment (rounds 9 and 11)", () => {
     mocks.txFindFirstLink.mockResolvedValue({ id: "receipt_link" });
     await expect(ask()).resolves.toEqual({ recordPayment: true, raisedUnpaid: false });
     expect(writes()).toEqual([]);
+  });
+
+  it("MUTATION #4494: raises a gap invoice unpaid, naming nothing, where a capture it pays from is the credit-release sweep's - asked after the lock", async () => {
+    const gapPayload = { primaryInvoiceGap: true, recordPayment: true, coveredPaymentIntentIds: ["pi_release"], coveredCaptureCents: { pi_release: 3_000 } };
+    mocks.findUniqueOperation.mockResolvedValue({ status: "FAILED", requestPayload: gapPayload });
+    mocks.gapPaymentOverlapsCreditRelease.mockResolvedValue(true);
+    await expect(ask()).resolves.toEqual({ recordPayment: false, raisedUnpaid: true });
+    expect(mocks.gapPaymentOverlapsCreditRelease).toHaveBeenCalledWith({ operationId: "op_change_invoice", bookingId: "booking_1", payload: gapPayload });
+    expect(mocks.transaction.mock.invocationCallOrder[0]).toBeLessThan(mocks.gapPaymentOverlapsCreditRelease.mock.invocationCallOrder[0]!);
+    expect(writes()).toEqual([
+      [
+        {
+          where: { id: "op_change_invoice", status: { in: ["FAILED", "PARTIAL"] } },
+          data: { requestPayload: { ...gapPayload, recordPayment: false, coveredPaymentIntentIds: [], coveredCaptureCents: {} } },
+        },
+      ],
+    ]);
   });
 });
 

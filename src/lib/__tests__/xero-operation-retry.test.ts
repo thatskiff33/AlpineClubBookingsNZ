@@ -1593,7 +1593,7 @@ describe("retryXeroSyncOperation", () => {
 
     // Round 11: the officer is told it was raised unpaid, and why.
     await expect(retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST, { createdByMemberId: "admin_1" })).resolves.toEqual({
-      message: "Retried Xero supplementary invoice creation, raised unpaid: the card payment it would record is recorded by its own receipt.",
+      message: "Retried Xero supplementary invoice creation, raised unpaid: the card payment it would record is recorded by its own receipt or the credit-release sweep.",
     });
 
     expect(mocks.supplementaryReplayMayRecordPayment).toHaveBeenCalledWith({

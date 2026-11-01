@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
     xeroObjectLink: { findMany: vi.fn() },
     payment: { findUnique: vi.fn(), findMany: vi.fn() },
     xeroSyncOperation: { findMany: vi.fn(), findFirst: vi.fn() },
+    paymentTransaction: { findUnique: vi.fn(), findMany: vi.fn() },
   },
   claimAlertCooldown: vi.fn(),
   sendAlert: vi.fn(),
@@ -32,6 +33,7 @@ import {
   CREDIT_RELEASE_PAYMENT_RETRY_AFTER_MS,
   CREDIT_RELEASE_PAYMENT_ROLE,
   creditReleasePaymentIdempotencyKey,
+  gapPaymentOverlapsCreditRelease,
   recordCreditReleasePayments,
 } from "@/lib/credit-release-xero-payment";
 import {
@@ -69,10 +71,43 @@ function deps(over: { due?: number | null; status?: string } = {}) {
   };
 }
 
+type GapRow = { id: string; status: string; requestPayload: Record<string, unknown> };
+/** What the outbox holds: an attempt in doubt, and #3980 gap invoices (#4494). */
+const outbox: { inDoubt: { createdAt: Date } | null; gapRows: GapRow[] } = { inDoubt: null, gapRows: [] };
+const gapRow = (status: string, intent: string, cents?: number): GapRow => ({
+  id: `op-gap-${status}`,
+  status,
+  requestPayload: {
+    primaryInvoiceGap: true,
+    recordPayment: true,
+    coveredPaymentIntentIds: [intent],
+    ...(cents === undefined ? {} : { coveredCaptureCents: { [intent]: cents } }),
+  },
+});
+
 beforeEach(() => {
   vi.clearAllMocks();
+  outbox.inDoubt = null;
+  outbox.gapRows = [];
   mocks.prisma.payment.findMany.mockResolvedValue([{ id: "pay-1", transactions: [{ id: "ask-1" }] }]);
-  mocks.prisma.xeroSyncOperation.findFirst.mockResolvedValue(null);
+  // Each read answered by its shape, as PostgreSQL would: the gap reader's filter is applied, not stubbed.
+  mocks.prisma.xeroSyncOperation.findFirst.mockImplementation(
+    async ({ where }: { where: { status?: { not?: string }; correlationKey?: string; requestPayload?: { path: string[]; array_contains?: string[] } } }) => {
+      if (where.requestPayload?.path[0] === "coveredPaymentIntentIds") {
+        const intent = where.requestPayload.array_contains?.[0];
+        return (
+          outbox.gapRows.find(
+            (row) =>
+              row.status !== where.status?.not && (row.requestPayload.coveredPaymentIntentIds as string[]).includes(intent as string),
+          ) ?? null
+        );
+      }
+      if (where.correlationKey) return null;
+      return outbox.inDoubt;
+    },
+  );
+  mocks.prisma.paymentTransaction.findUnique.mockResolvedValue({ paymentId: "pay-1", amountCents: 4000 });
+  mocks.prisma.paymentTransaction.findMany.mockResolvedValue([releaseRow]);
   mocks.prisma.xeroObjectLink.findMany.mockResolvedValue([]);
   mocks.prisma.payment.findUnique.mockResolvedValue({ bookingId: "bk-12345678", xeroInvoiceId: "inv-1", transactions: [releaseRow] });
   mocks.prisma.xeroSyncOperation.findMany.mockResolvedValue([]);
@@ -174,7 +209,7 @@ describe("recordCreditReleasePayments", () => {
     const startedAgo = (ms: number) => ({ createdAt: new Date(NOW.getTime() - ms) });
 
     it("is replayed under the same key without reading the balance, which may already be net of it", async () => {
-      mocks.prisma.xeroSyncOperation.findFirst.mockResolvedValue(startedAgo(60 * 60 * 1000));
+      outbox.inDoubt = startedAgo(60 * 60 * 1000);
       const d = deps({ due: 0, status: "PAID" });
       expect((await recordCreditReleasePayments({ deps: d, now: NOW })).recorded).toBe(1);
       expect(d.readInvoiceBalance).not.toHaveBeenCalled();
@@ -184,7 +219,7 @@ describe("recordCreditReleasePayments", () => {
     });
 
     it("is held for an officer once too old to trust Xero's replay protection", async () => {
-      mocks.prisma.xeroSyncOperation.findFirst.mockResolvedValue(startedAgo(CREDIT_RELEASE_PAYMENT_IN_DOUBT_MS + 1000));
+      outbox.inDoubt = startedAgo(CREDIT_RELEASE_PAYMENT_IN_DOUBT_MS + 1000);
       const d = deps();
       expect((await recordCreditReleasePayments({ deps: d, now: NOW })).held).toBe(1);
       expect(d.createPayment).not.toHaveBeenCalled();
@@ -225,6 +260,93 @@ describe("recordCreditReleasePayments", () => {
       d.createPayment.mockRejectedValue(new Error("400"));
       expect((await recordCreditReleasePayments({ deps: d, now: NOW })).failed).toBe(1);
       expect(mocks.sendAlert).toHaveBeenCalledTimes(1);
+    });
+  });
+});
+
+describe("#4494: one recorder per capture, beside a #3980 gap invoice", () => {
+  // A release request carried into an edit's request and paid together: 40.00 is the sweep's, 60.00 the edit's.
+  const mixedChain = [
+    { ...releaseRow, id: "ask-1", status: PaymentStatus.PENDING, stripePaymentIntentId: null },
+    { ...releaseRow, id: "edit-1", reason: "edit_price_increase", amountCents: 10000, carriedAskCents: 4000, stripePaymentIntentId: "pi_mix" },
+  ];
+
+  describe("the sweep", () => {
+    it("MUTATION (a): holds, and tells an officer once, where a gap invoice already took part of the capture", async () => {
+      outbox.gapRows = [gapRow("PENDING", "pi_1", 1000)];
+      const d = deps();
+      expect(await recordCreditReleasePayments({ deps: d, now: NOW })).toEqual({ recorded: 0, held: 1, failed: 0, waiting: 0 });
+      expect(d.createPayment).not.toHaveBeenCalled();
+      expect(mocks.sendAlert).toHaveBeenCalledTimes(1);
+      expect(mocks.claimAlertCooldown).toHaveBeenCalledWith(expect.objectContaining({ key: "credit-release-payment-gap-overlap:ask-1" }));
+    });
+
+    it("MUTATION (b): records where the gap invoice took only the edit's own part of the capture", async () => {
+      mocks.prisma.payment.findUnique.mockResolvedValue({ bookingId: "bk-12345678", xeroInvoiceId: "inv-1", transactions: mixedChain });
+      mocks.prisma.paymentTransaction.findUnique.mockResolvedValue({ paymentId: "pay-1", amountCents: 10000 });
+      outbox.gapRows = [gapRow("PENDING", "pi_mix", 6000)];
+      const d = deps();
+      expect((await recordCreditReleasePayments({ deps: d, now: NOW })).recorded).toBe(1);
+      expect(d.createPayment).toHaveBeenCalledWith(expect.objectContaining({ amountCents: 4000, reference: "Stripe pi_mix" }));
+      // One cent more than the edit's part overlaps.
+      outbox.gapRows = [gapRow("PENDING", "pi_mix", 6001)];
+      expect((await recordCreditReleasePayments({ deps: deps(), now: NOW })).held).toBe(1);
+    });
+
+    it("(c): holds beside a legacy gap invoice that names the capture with no cents", async () => {
+      outbox.gapRows = [gapRow("FAILED", "pi_1")];
+      const d = deps();
+      expect((await recordCreditReleasePayments({ deps: d, now: NOW })).held).toBe(1);
+      expect(d.createPayment).not.toHaveBeenCalled();
+    });
+
+    it("MUTATION (d): ignores a CANCELLED gap invoice", async () => {
+      outbox.gapRows = [gapRow("CANCELLED", "pi_1", 4000)];
+      const d = deps();
+      expect((await recordCreditReleasePayments({ deps: d, now: NOW })).recorded).toBe(1);
+    });
+  });
+
+  describe("gapPaymentOverlapsCreditRelease (the gap invoice's send)", () => {
+    const ask = (payload: Record<string, unknown>) => gapPaymentOverlapsCreditRelease({ operationId: "op-gap", bookingId: "bk-12345678", payload });
+    beforeEach(() => {
+      mocks.prisma.xeroObjectLink.findMany.mockResolvedValue([]);
+    });
+
+    it("MUTATION: says so, and tells an officer once, where a capture it pays from is the sweep's", async () => {
+      const row = gapRow("RUNNING", "pi_1", 3000);
+      outbox.gapRows = [row];
+      await expect(ask(row.requestPayload)).resolves.toBe(true);
+      expect(mocks.claimAlertCooldown).toHaveBeenCalledWith(expect.objectContaining({ key: "credit-release-gap-payment-overlap:op-gap" }));
+      expect(mocks.sendAlert).toHaveBeenCalledTimes(1);
+    });
+
+    it("MUTATION: lets it pay from the edit's own part of a capture it shares with the sweep", async () => {
+      mocks.prisma.paymentTransaction.findMany.mockResolvedValue(mixedChain);
+      mocks.prisma.paymentTransaction.findUnique.mockResolvedValue({ paymentId: "pay-1", amountCents: 10000 });
+      const row = gapRow("RUNNING", "pi_mix", 6000);
+      outbox.gapRows = [row];
+      await expect(ask(row.requestPayload)).resolves.toBe(false);
+      expect(mocks.sendAlert).not.toHaveBeenCalled();
+    });
+
+    it("MUTATION: counts what the sweep already recorded (its CREDIT_RELEASE_PAYMENT link) where the ledger no longer gives a share", async () => {
+      mocks.prisma.paymentTransaction.findMany.mockResolvedValue([]);
+      mocks.prisma.paymentTransaction.findUnique.mockResolvedValue({ paymentId: "pay-1", amountCents: 5000 });
+      const row = gapRow("RUNNING", "pi_1", 3000);
+      outbox.gapRows = [row];
+      await expect(ask(row.requestPayload)).resolves.toBe(false);
+      mocks.prisma.xeroObjectLink.findMany.mockResolvedValue([{ metadata: { paymentIntentId: "pi_1", amountCents: 4000 } }]);
+      await expect(ask(row.requestPayload)).resolves.toBe(true);
+      expect(mocks.prisma.xeroObjectLink.findMany).toHaveBeenLastCalledWith({
+        where: { role: CREDIT_RELEASE_PAYMENT_ROLE, active: true, metadata: { path: ["paymentIntentId"], equals: "pi_1" } },
+        select: { metadata: true },
+      });
+    });
+
+    it("reads nothing for a gap invoice that pays from no capture", async () => {
+      await expect(ask({ primaryInvoiceGap: true, coveredPaymentIntentIds: [] })).resolves.toBe(false);
+      expect(mocks.prisma.paymentTransaction.findUnique).not.toHaveBeenCalled();
     });
   });
 });

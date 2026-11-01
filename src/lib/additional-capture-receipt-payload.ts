@@ -113,3 +113,13 @@ export function primaryInvoiceGapPayload(
     [GAP_COVERED_CENTS_KEY]: Object.fromEntries(gap.coveredCaptures.map((capture) => [capture.paymentIntentId, capture.cents])),
   };
 }
+
+/**
+ * #4494 (`INV-ADDPAY-046`): a gap invoice's queued payload turned unpaid at
+ * its send, because a capture it would pay from is the credit-release sweep's.
+ * An unpaid gap invoice names no capture, as the enqueue writes one, so every
+ * reader of its coverage sees the same thing.
+ */
+export function unpaidPrimaryInvoiceGapPayload(payload: Record<string, unknown>): Record<string, unknown> {
+  return { ...payload, recordPayment: false, ...primaryInvoiceGapPayload({ coveredCaptures: [] }) };
+}

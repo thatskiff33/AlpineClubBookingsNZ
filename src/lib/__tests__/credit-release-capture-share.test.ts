@@ -5,7 +5,7 @@ import { CREDIT_RELEASE_ASK_REASON } from "@/lib/credit-release-ask-keys";
 const mocks = vi.hoisted(() => ({ prisma: {} }));
 vi.mock("@/lib/prisma", () => ({ prisma: mocks.prisma }));
 
-import { readCreditReleaseCaptureShare } from "@/lib/credit-release-capture-share";
+import { creditReleaseSweptCents, readCreditReleaseCaptureShare } from "@/lib/credit-release-capture-share";
 
 /*
   #4253 (`INV-ADDPAY-046`): how much of one capture the credit-release sweep records, so the
@@ -66,5 +66,18 @@ describe("readCreditReleaseCaptureShare", () => {
   it("reads the payment's ADDITIONAL rows only", async () => {
     await readCreditReleaseCaptureShare("pi_release", store as never);
     expect(store.paymentTransaction.findMany.mock.calls[0]![0].where).toEqual({ paymentId: "pay-1", kind: "ADDITIONAL" });
+  });
+});
+
+describe("creditReleaseSweptCents (#4494)", () => {
+  it("MUTATION: is all of the net cash for a capture the sweep holds - it has no plan item, so its own share is 0", () => {
+    expect(creditReleaseSweptCents({ ownCents: 0, held: true }, 5_000)).toBe(5_000);
+  });
+
+  it("is the sweep's own share, never more than the capture holds and never negative", () => {
+    expect(creditReleaseSweptCents({ ownCents: 0, held: false }, 5_000)).toBe(0);
+    expect(creditReleaseSweptCents({ ownCents: 4_000, held: false }, 10_000)).toBe(4_000);
+    expect(creditReleaseSweptCents({ ownCents: 6_000, held: false }, 5_000)).toBe(5_000);
+    expect(creditReleaseSweptCents({ ownCents: 4_000, held: false }, -100)).toBe(0);
   });
 });
