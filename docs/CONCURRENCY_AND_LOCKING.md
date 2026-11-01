@@ -6789,6 +6789,18 @@ on an existing row and a missing one. Both keys survive; on the pre-#4445 code
 all four cases lose one. It also compares the statement with the old spread
 across stored and incoming shapes.
 
+#4657: the same merge serves a second writer that is not the funnel. The
+erased-member contact status check (`recordObservation` in
+`xero-erased-member-contact-status-check.ts`) found each retired Member
+`CONTACT` link with `findMany`, read its metadata and wrote back a spread, so a
+concurrent writer's key on that link could be lost. It now selects only the row
+ids and calls `mergeXeroObjectLinkMetadata` with a plan from
+`planXeroObjectLinkMetadataMerge`, with the same top-level meaning. It takes no
+lock and joins no advisory cohort for the same reason: it writes only link
+metadata. `xero-erased-contact-status-metadata.realdb.test.ts` holds the
+observation between its read and its write while another writer merges a key;
+on the old read-then-write code that key is lost.
+
 ## One Xero contact, one local home: the contact-home key (#3367)
 
 **Audience: developer.** The rule this key enforces is `INV-INT-018`
