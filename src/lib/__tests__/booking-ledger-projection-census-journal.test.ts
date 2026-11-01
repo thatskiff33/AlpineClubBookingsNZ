@@ -55,16 +55,30 @@ describe("the JOURNAL comparison (#4627)", () => {
     expect(result.integrity).toEqual([]);
   });
 
-  it("disagrees when a component differs, even if the totals match", () => {
+  it("disagrees when the journal carries a different total from the bridged lines", () => {
     const result = journalChargeComparison(row([nightA, fee], {
       charged: true,
       components: [
-        { account: "BOOKING_REVENUE", chargeIdentity: CHARGE, liveGrossCents: 8000 },
+        { account: "BOOKING_REVENUE", chargeIdentity: CHARGE, liveGrossCents: 6000 },
         { account: "FEE_REVENUE", chargeIdentity: "modification:m1:change-fee", liveGrossCents: 0 },
       ],
       bridgedLineIds: all(["n1", "f1"]),
     }));
-    expect(result.identity).toMatchObject({ status: "DISAGREE", columnCents: 8000, ledgerCents: 8000, deltaCents: 0 });
+    expect(result.identity).toMatchObject({ status: "DISAGREE", columnCents: 6000, ledgerCents: 8000, deltaCents: -2000 });
+  });
+
+  it("agrees when a give-back the charge could not absorb was taken from a change fee: the total is what counts", () => {
+    const kept = line("k1", { kind: "CANCELLATION_FEE", anchorKind: "CANCELLATION", amountCents: 1000, unitCents: 1000 });
+    const giveBack = line("a1", { side: "ADJUSTMENT", kind: "AGREED_ADJUSTMENT", sign: -1, amountCents: -1500, unitCents: 1500, anchorKind: "REVIEW_TASK" });
+    const result = journalChargeComparison(row([kept, fee, giveBack], {
+      charged: true,
+      components: [
+        { account: "BOOKING_REVENUE", chargeIdentity: CHARGE, liveGrossCents: 0 },
+        { account: "FEE_REVENUE", chargeIdentity: "modification:m1:change-fee", liveGrossCents: 1500 },
+      ],
+      bridgedLineIds: all(["k1", "f1", "a1"]),
+    }));
+    expect(result.identity).toMatchObject({ status: "AGREE", columnCents: 1500, ledgerCents: 1500 });
   });
 
   it("names a fee reversal by the fee it reverses", () => {

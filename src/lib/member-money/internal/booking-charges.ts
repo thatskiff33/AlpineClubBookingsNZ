@@ -23,14 +23,21 @@ import {
  *
  * THE GRAIN. A component is one revenue account and one `chargeIdentity`
  * across the journal. A debit revenue leg must correct a WHOLE posted component,
- * so a promotion cannot be a debit of its own. Every night, the promotion and
- * any agreed adjustment therefore fold into ONE booking charge component
- * (`bookingChargeIdentity`), whose gross is what the booking's live charge
- * lines add up to: its final price, as confirmed and as each edit leaves it.
- * An edit that moves it corrects the whole component and charges the
- * remainder. Each change fee and cancellation fee is a component of its own,
- * keyed by its legacy posting key, so a fee's later reversal is one whole
- * correction of it.
+ * so a promotion cannot be a debit of its own. Every night, the promotion, any
+ * agreed adjustment and a cancellation's kept fee therefore fold into ONE
+ * booking charge component (`bookingChargeIdentity`), whose gross is what those
+ * live lines add up to: the final price, as confirmed and as each edit leaves
+ * it, or what the club keeps once it is cancelled. An event that moves it
+ * corrects the whole component and charges the remainder. Each change fee is a
+ * component of its own (R03), keyed by its legacy posting key, so its later
+ * reversal is one whole correction of it.
+ *
+ * A reduction the booking charge cannot absorb (an agreed give-back larger than
+ * what it still carries, say after a cancellation) takes the rest from the
+ * booking's live change-fee components, in key order, each corrected whole and
+ * charged its remainder: the legacy ledger reduces the booking's total, and a
+ * component never goes below zero. A reduction beyond every live component is
+ * refused, never guessed.
  *
  * THE BRIDGE. Every legacy line with money gets one receivable leg sourced to
  * it (Dr for a line that adds to the price, Cr for one that takes away), so each
@@ -67,10 +74,14 @@ export interface BookingChargeComponent {
   chargeIdentity: string;
 }
 
-/** The legacy kinds that fold into the booking's one charge component. */
-const FOLDED_KINDS: readonly LedgerLineKind[] = ["GUEST_NIGHT", "PROMOTION", "GROUP_DISCOUNT", "AGREED_ADJUSTMENT"];
-/** The legacy kinds that are each a fee component of their own. */
-const FEE_KINDS: readonly LedgerLineKind[] = ["CHANGE_FEE", "CANCELLATION_FEE"];
+/**
+ * The legacy kinds that fold into the booking's one charge component: what the
+ * stay costs, how its promotion and agreed adjustments move that, and, once it
+ * is cancelled, what the club keeps of it.
+ */
+const FOLDED_KINDS: readonly LedgerLineKind[] = ["GUEST_NIGHT", "PROMOTION", "GROUP_DISCOUNT", "AGREED_ADJUSTMENT", "CANCELLATION_FEE"];
+/** The legacy kind that is a fee component of its own (R03). */
+const FEE_KINDS: readonly LedgerLineKind[] = ["CHANGE_FEE"];
 
 /** The booking's folded charge component. It names its booking, as every component identity must. */
 export function bookingChargeIdentity(bookingId: string): string {
@@ -171,8 +182,8 @@ export interface BookingChargePlanInput {
   debtor: MemberMoneyDebtor;
   /** This event's stored legacy lines, not yet bridged. Lines of zero cents are left out here. */
   lines: readonly LegacyChargeLine[];
-  /** The live gross each touched component carries now, read under `lock(1)` (absent: none). */
-  liveGrossCents: ReadonlyMap<string, number>;
+  /** Every live charge component the booking's journal carries now, read under `lock(1)`. */
+  liveComponents: ReadonlyArray<BookingChargeComponent & { liveGrossCents: number }>;
 }
 
 /**
@@ -207,7 +218,12 @@ export function planBookingChargeEvent(input: BookingChargePlanInput): MemberMon
     evidence: lineEvidence(line),
   }));
 
-  const byComponent = new Map<string, { component: BookingChargeComponent; lines: LegacyChargeLine[] }>();
+  // Each component's live gross, and where this event's lines leave it.
+  type Moved = { component: BookingChargeComponent; live: number; after: number; lines: LegacyChargeLine[] };
+  const moved = new Map<string, Moved>();
+  for (const component of input.liveComponents) {
+    moved.set(bookingComponentKey(component), { component, live: component.liveGrossCents, after: component.liveGrossCents, lines: [] });
+  }
   for (const line of lines) {
     const component = journalComponentOfLegacyLine(line);
     if (!component) {
@@ -215,19 +231,32 @@ export function planBookingChargeEvent(input: BookingChargePlanInput): MemberMon
       continue;
     }
     const key = bookingComponentKey(component);
-    const entry = byComponent.get(key) ?? { component, lines: [] };
+    const entry = moved.get(key) ?? { component, live: 0, after: 0, lines: [] };
+    entry.after += line.amountCents;
     entry.lines.push(line);
-    byComponent.set(key, entry);
+    moved.set(key, entry);
   }
-  for (const [key, { component, lines: touching }] of byComponent) {
-    const delta = touching.reduce((sum, line) => sum + line.amountCents, 0);
-    if (delta === 0) continue;
-    const live = input.liveGrossCents.get(key) ?? 0;
-    const after = live + delta;
+  const charge = moved.get(bookingComponentKey({ account: "BOOKING_REVENUE", chargeIdentity: bookingChargeIdentity(input.bookingId) }));
+  if (charge && charge.after < 0) {
+    let shortfall = -charge.after;
+    charge.after = 0;
+    const fees = [...moved.values()].filter((entry) => entry.component.account === "FEE_REVENUE")
+      .sort((a, b) => a.component.chargeIdentity.localeCompare(b.component.chargeIdentity));
+    for (const fee of fees) {
+      const take = Math.min(shortfall, Math.max(0, fee.after));
+      fee.after -= take;
+      shortfall -= take;
+    }
+    if (shortfall > 0) {
+      problems.push(`the booking's charges would carry ${formatCentsPlain(-shortfall)}: its legacy lines take away more than they hold`);
+    }
+  }
+  for (const { component, live, after, lines: touching } of moved.values()) {
     if (after < 0) {
       problems.push(`component ${component.chargeIdentity} would carry ${formatCentsPlain(after)}: its legacy lines take away more than it holds`);
       continue;
     }
+    if (after === live) continue;
     const source = touching.length === 1 ? lineSource(touching[0]!) : undefined;
     const shared = { account: component.account, booking, chargeIdentity: component.chargeIdentity,
       ...(source ? { source } : {}) } as const;

@@ -1916,7 +1916,7 @@ refunded total, change fees, the uncollected ask, and a live booking's balance
 owed — against the ledger lines that project them. Since Ledger M3b (#4627,
 [`INV-MONEY-044`](invariants/money.md#inv-money-044)) an eighth, `JOURNAL`,
 compares, for each booking whose confirmation is in the member-money journal,
-the journal's live charge components with the ledger lines it links; a booking
+the total of the journal's live charge components with the ledger lines it links; a booking
 confirmed earlier is not compared (M9 back-posts it). It prints:
 
 - per identity, how many bookings it applies to, agree, disagree, are

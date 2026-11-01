@@ -21,6 +21,38 @@ export interface BookingJournalCharges {
 
 const CHARGE_ACCOUNTS: readonly BookingChargeAccount[] = ["BOOKING_REVENUE", "FEE_REVENUE"];
 
+/** A booking charge component's live gross, as the posted legs leave it. */
+export type LiveChargeComponent = BookingJournalCharges["components"][number];
+
+const LEG_SELECT = {
+  account: true, chargeIdentity: true, side: true, amountCents: true,
+  grossCents: true, netCents: true, taxCents: true, taxCode: true, bookingId: true, lodgeId: true,
+} as const;
+type ChargeLeg = Prisma.MemberMoneyLineGetPayload<{ select: typeof LEG_SELECT }>;
+
+/** Each charge component the legs post, with the gross it still carries: the one rule for the doors and the census. */
+function liveChargeComponents(legs: readonly ChargeLeg[]): LiveChargeComponent[] {
+  const gross = liveComponentGross(legs);
+  return [...new Map(legs.map((leg) => [componentKey(leg.account, leg.chargeIdentity!), leg])).entries()]
+    .map(([key, leg]) => ({
+      account: leg.account as BookingChargeAccount,
+      chargeIdentity: leg.chargeIdentity!,
+      liveGrossCents: gross.get(key) ?? 0,
+    }));
+}
+
+const chargeLegsOf = (bookingIds: readonly string[]) => ({
+  bookingId: { in: [...bookingIds] }, account: { in: [...CHARGE_ACCOUNTS] }, chargeIdentity: { not: null },
+});
+
+/** One booking's live charge components, read inside a door's transaction under `lock(1)`. */
+export async function readBookingLiveComponents(
+  db: Pick<Prisma.TransactionClient, "memberMoneyLine">,
+  bookingId: string,
+): Promise<LiveChargeComponent[]> {
+  return liveChargeComponents(await db.memberMoneyLine.findMany({ where: chargeLegsOf([bookingId]), orderBy: { id: "asc" }, select: LEG_SELECT }));
+}
+
 export async function readBookingJournalCharges(
   db: Pick<Prisma.TransactionClient, "memberMoneyEvent" | "memberMoneyLine" | "memberMoneySourceLink">,
   bookingIds: readonly string[],
@@ -30,12 +62,7 @@ export async function readBookingJournalCharges(
   const keys = new Map<string, string>(bookingIds.map((bookingId) => [memberMoneyEventKeys.bookingCharge(bookingId), bookingId]));
   const charged = await db.memberMoneyEvent.findMany({ where: { eventKey: { in: [...keys.keys()] } }, select: { eventKey: true } });
   const chargedIds = new Set(charged.map((event) => keys.get(event.eventKey)));
-  const legs = await db.memberMoneyLine.findMany({
-    where: { bookingId: { in: [...bookingIds] }, account: { in: [...CHARGE_ACCOUNTS] }, chargeIdentity: { not: null } },
-    orderBy: { id: "asc" },
-    select: { account: true, chargeIdentity: true, side: true, amountCents: true,
-      grossCents: true, netCents: true, taxCents: true, taxCode: true, bookingId: true, lodgeId: true },
-  });
+  const legs = await db.memberMoneyLine.findMany({ where: chargeLegsOf(bookingIds), orderBy: { id: "asc" }, select: LEG_SELECT });
   const links = await db.memberMoneySourceLink.findMany({
     where: { bookingLedgerLine: { bookingId: { in: [...bookingIds] } } },
     orderBy: { id: "asc" },
@@ -47,18 +74,14 @@ export async function readBookingJournalCharges(
     if (!bookingId || !link.bookingLedgerLineId) continue;
     bridged.set(bookingId, (bridged.get(bookingId) ?? new Set<string>()).add(link.bookingLedgerLineId));
   }
-  const byBooking = new Map<string, typeof legs>();
+  const byBooking = new Map<string, ChargeLeg[]>();
   for (const leg of legs) byBooking.set(leg.bookingId!, [...(byBooking.get(leg.bookingId!) ?? []), leg]);
   for (const bookingId of bookingIds) {
-    const bookingLegs = byBooking.get(bookingId) ?? [];
-    const gross = liveComponentGross(bookingLegs);
-    const components = [...new Map(bookingLegs.map((leg) => [componentKey(leg.account, leg.chargeIdentity!), leg])).entries()]
-      .map(([key, leg]) => ({
-        account: leg.account as BookingChargeAccount,
-        chargeIdentity: leg.chargeIdentity!,
-        liveGrossCents: gross.get(key) ?? 0,
-      }));
-    result.set(bookingId, { charged: chargedIds.has(bookingId), components, bridgedLineIds: bridged.get(bookingId) ?? new Set() });
+    result.set(bookingId, {
+      charged: chargedIds.has(bookingId),
+      components: liveChargeComponents(byBooking.get(bookingId) ?? []),
+      bridgedLineIds: bridged.get(bookingId) ?? new Set(),
+    });
   }
   return result;
 }

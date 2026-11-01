@@ -8,5 +8,5 @@
   so no screen, email, invoice or Xero document changes. Bookings confirmed
   before this release are not posted; a later step back-posts their history.
   `pnpm run booking-ledger:census` gains a `JOURNAL` check that the journal's
-  charges equal the booking-ledger lines it links, and lists any charge line
+  charges add up to the booking-ledger lines it links, and lists any charge line
   left unlinked.

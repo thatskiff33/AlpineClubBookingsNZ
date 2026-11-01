@@ -282,10 +282,13 @@ cancellation, R04) calls `postBookingLedgerJournal` after its legacy write, in
 the same transaction, with a context the door resolved before it opened. The
 adapter reads back the lines the door just wrote and maps each to a component by
 `journalComponentOfLegacyLine`, so nothing is re-priced. Every night, the signed
-promotion and any agreed adjustment fold into one booking charge component,
-`booking:<id>:charge`, whose gross is what the booking's live lines add up to;
-each change or cancellation fee is a component of its own, keyed by its legacy
-posting key. A later event corrects a whole component and charges the remainder.
+promotion, any agreed adjustment and a cancellation's kept fee fold into one
+booking charge component, `booking:<id>:charge`, whose gross is what those live
+lines add up to; each change fee is a component of its own (R03), keyed by its
+legacy posting key. A later event corrects a whole component and charges the
+remainder. A reduction the charge cannot absorb, such as a review give-back after
+a cancellation, comes off the live change fees in key order, so no component
+goes below zero; one beyond them all is refused.
 Each line with money is bridged by its own receivable leg; a zero-cent line has
 no leg to carry it and is not linked. The debtor is the booking's owner, member
 or organisation, read after the adapter takes the booking's row lock. R01 opens

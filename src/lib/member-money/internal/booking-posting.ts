@@ -2,15 +2,12 @@ import type { Prisma } from "@prisma/client";
 import { calendarDateOfDateOnlyInstant } from "../../club-time";
 import {
   bookingChargeEventIdentity,
-  bookingComponentKey,
-  journalComponentOfLegacyLine,
   planBookingChargeEvent,
   planMemberMergeTransfer,
-  type BookingChargeComponent,
   type BookingChargeEvent,
   type LegacyChargeLine,
 } from "./booking-charges";
-import { liveComponentGross } from "./components";
+import { readBookingLiveComponents } from "./booking-journal-read";
 import { memberMoneyEventKeys, type MemberMoneyEventKey } from "./keys";
 import { MemberMoneyPlanError, type MemberMoneyDebtor, type MemberMoneyPostingContext } from "./plan";
 import { postMemberMoneyEvent } from "./post";
@@ -77,17 +74,6 @@ async function unbridgedLines(tx: Db, bookingId: string, postingKeys: readonly s
   }));
 }
 
-/** The live gross each component carries, from its posted revenue legs. A read only. */
-async function readLiveGross(tx: Db, components: readonly BookingChargeComponent[]): Promise<Map<string, number>> {
-  if (components.length === 0) return new Map();
-  const posted = await tx.memberMoneyLine.findMany({
-    where: { OR: components.map(({ account, chargeIdentity }) => ({ account, chargeIdentity })) },
-    select: { account: true, chargeIdentity: true, side: true, amountCents: true,
-      grossCents: true, netCents: true, taxCents: true, taxCode: true, bookingId: true, lodgeId: true },
-  });
-  return liveComponentGross(posted);
-}
-
 export interface BookingLedgerJournalInput {
   bookingId: string;
   lodgeId: string;
@@ -110,18 +96,13 @@ export async function postBookingLedgerJournal(
   const lines = (await unbridgedLines(tx, input.bookingId, input.postingKeys)).filter((line) => line.amountCents !== 0);
   if (lines.length === 0) return null;
   const debtor = await lockedBookingDebtor(tx, input.bookingId);
-  const components = new Map<string, BookingChargeComponent>();
-  for (const line of lines) {
-    const component = journalComponentOfLegacyLine(line);
-    if (component) components.set(bookingComponentKey(component), component);
-  }
   const plan = planBookingChargeEvent({
     bookingId: input.bookingId,
     lodgeId: input.lodgeId,
     event: input.event,
     debtor,
     lines,
-    liveGrossCents: await readLiveGross(tx, [...components.values()]),
+    liveComponents: await readBookingLiveComponents(tx, input.bookingId),
   });
   return plan ? postMemberMoneyEvent(tx, context, plan) : null;
 }
