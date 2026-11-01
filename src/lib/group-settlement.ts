@@ -36,6 +36,7 @@ import { bookingOwner } from "@/lib/booking-owner";
 import { prisma } from "@/lib/prisma";
 import { clubToday, dateOnlyInstantOf } from "@/lib/club-time";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
+import { GROUP_SETTLEMENT_INTENT_TYPE } from "@/lib/stripe-app-intent-metadata";
 import {
   cancelPaymentIntentIfCancellable,
   createPaymentIntent,
@@ -404,7 +405,7 @@ export async function createGroupSettlementIntent(
     amountCents,
     customerId: customer.id,
     metadata: {
-      type: "group_settlement",
+      type: GROUP_SETTLEMENT_INTENT_TYPE,
       groupBookingId: group.id,
       organiserMemberId: group.organiserMemberId,
     },

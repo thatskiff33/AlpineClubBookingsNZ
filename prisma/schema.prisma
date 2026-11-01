@@ -4805,7 +4805,10 @@ model ProcessedWebhookEvent {
 // `payment_intent.succeeded` webhook and claimed by the unique intent id, so a
 // redelivery or a concurrent delivery writes nothing more. Nothing reaches
 // Xero from here (part 2 of #4532 would); the treasurer codes it by hand from
-// the admin alert. Insert-only. Club-wide: no booking, so no lodge.
+// the admin alert. The webhook only inserts. The application role can still
+// update or delete the row, so part 2 (#4621) must not treat that as a
+// database guarantee if it records a Xero posting here. Club-wide: no booking,
+// so no lodge.
 model UnrecognisedStripePayment {
   id                      String   @id @default(cuid())
   stripePaymentIntentId   String   @unique
