@@ -116,10 +116,19 @@ export function primaryInvoiceGapPayload(
 
 /**
  * #4494 (`INV-ADDPAY-046`): a gap invoice's queued payload turned unpaid at
- * its send, because a capture it would pay from is the credit-release sweep's.
- * An unpaid gap invoice names no capture, as the enqueue writes one, so every
- * reader of its coverage sees the same thing.
+ * its send, because a capture it would pay from overlaps the credit-release
+ * sweep's share. Where its payment provably never reached Xero it names no
+ * capture, as the enqueue writes an unpaid one. Where an earlier attempt's
+ * payment may be in Xero (`keepCoverage`) it keeps the captures it named, so
+ * the sweep's overlap hold still sees them and never records on top.
  */
-export function unpaidPrimaryInvoiceGapPayload(payload: Record<string, unknown>): Record<string, unknown> {
-  return { ...payload, recordPayment: false, ...primaryInvoiceGapPayload({ coveredCaptures: [] }) };
+export function unpaidPrimaryInvoiceGapPayload(
+  payload: Record<string, unknown>,
+  options: { keepCoverage: boolean },
+): Record<string, unknown> {
+  return {
+    ...payload,
+    recordPayment: false,
+    ...(options.keepCoverage ? {} : primaryInvoiceGapPayload({ coveredCaptures: [] })),
+  };
 }

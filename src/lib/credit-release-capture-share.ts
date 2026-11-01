@@ -3,7 +3,11 @@ import "server-only";
 import type { Prisma } from "@prisma/client";
 import { PaymentTransactionKind } from "@prisma/client";
 
-import { planCreditReleasePayments, type AskLedgerRow } from "@/lib/credit-release-payment-plan";
+import {
+  creditReleaseShareFromPlan,
+  planCreditReleasePayments,
+  type AskLedgerRow,
+} from "@/lib/credit-release-payment-plan";
 import { LEDGER_ROWS_OLDEST_FIRST } from "@/lib/payment-ledger-order";
 import { prisma } from "@/lib/prisma";
 
@@ -46,13 +50,7 @@ export async function readCreditReleaseCaptureShare(
       stripePaymentIntentId: true,
     },
   });
-  const plan = planCreditReleasePayments(rows as AskLedgerRow[]);
-  return {
-    ownCents: plan.items
-      .filter((item) => item.capturedByIntentId === paymentIntentId)
-      .reduce((sum, item) => sum + item.ownCents, 0),
-    held: plan.unexplainedCaptureIntentIds.includes(paymentIntentId),
-  };
+  return creditReleaseShareFromPlan(planCreditReleasePayments(rows as AskLedgerRow[]), paymentIntentId);
 }
 
 /**

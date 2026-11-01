@@ -36,10 +36,10 @@ const mocks = vi.hoisted(() => ({
   findUniqueTask: vi.fn(),
   creditBackLateCaptureRefunds: vi.fn(),
   queueWaitingPaidAnotherWayNote: vi.fn(),
-  // #4494: whether a gap invoice's payment would take the credit-release sweep's share.
-  gapPaymentOverlapsCreditRelease: vi.fn(),
+  // #4494: the unpaid payload a gap invoice's payment overlapping the credit-release sweep's share is sent with.
+  unpaidGapPayloadIfOverlapping: vi.fn(),
 }));
-vi.mock("@/lib/credit-release-xero-payment", () => ({ gapPaymentOverlapsCreditRelease: mocks.gapPaymentOverlapsCreditRelease }));
+vi.mock("@/lib/credit-release-xero-payment", () => ({ unpaidGapPayloadIfOverlapping: mocks.unpaidGapPayloadIfOverlapping }));
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
@@ -202,7 +202,7 @@ const gapTarget = (status = "SUCCEEDED") => {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mocks.gapPaymentOverlapsCreditRelease.mockResolvedValue(false);
+  mocks.unpaidGapPayloadIfOverlapping.mockResolvedValue(null);
   order = [];
   invoices = { [PRIMARY]: { amountDue: 8000 } };
   rows = { otherReceiptRunning: false, createRunning: false, primaryCreate: { status: "SUCCEEDED", responsePayload: {}, manuallyResolvedAt: null } };
@@ -1099,21 +1099,16 @@ describe("supplementaryReplayMayRecordPayment (rounds 9 and 11)", () => {
     expect(writes()).toEqual([]);
   });
 
-  it("MUTATION #4494: raises a gap invoice unpaid, naming nothing, where a capture it pays from is the credit-release sweep's - asked after the lock", async () => {
+  it("MUTATION #4494: raises a gap invoice unpaid where its payment would overlap the credit-release sweep's share - asked after the lock, guarded on an unsent status", async () => {
     const gapPayload = { primaryInvoiceGap: true, recordPayment: true, coveredPaymentIntentIds: ["pi_release"], coveredCaptureCents: { pi_release: 3_000 } };
+    // Here an earlier attempt may have paid, so the answer still names its captures.
+    const unpaid = { ...gapPayload, recordPayment: false };
     mocks.findUniqueOperation.mockResolvedValue({ status: "FAILED", requestPayload: gapPayload });
-    mocks.gapPaymentOverlapsCreditRelease.mockResolvedValue(true);
+    mocks.unpaidGapPayloadIfOverlapping.mockResolvedValue(unpaid);
     await expect(ask()).resolves.toEqual({ recordPayment: false, raisedUnpaid: true });
-    expect(mocks.gapPaymentOverlapsCreditRelease).toHaveBeenCalledWith({ operationId: "op_change_invoice", bookingId: "booking_1", payload: gapPayload });
-    expect(mocks.transaction.mock.invocationCallOrder[0]).toBeLessThan(mocks.gapPaymentOverlapsCreditRelease.mock.invocationCallOrder[0]!);
-    expect(writes()).toEqual([
-      [
-        {
-          where: { id: "op_change_invoice", status: { in: ["FAILED", "PARTIAL"] } },
-          data: { requestPayload: { ...gapPayload, recordPayment: false, coveredPaymentIntentIds: [], coveredCaptureCents: {} } },
-        },
-      ],
-    ]);
+    expect(mocks.unpaidGapPayloadIfOverlapping).toHaveBeenCalledWith({ operationId: "op_change_invoice", bookingId: "booking_1", payload: gapPayload });
+    expect(mocks.transaction.mock.invocationCallOrder[0]).toBeLessThan(mocks.unpaidGapPayloadIfOverlapping.mock.invocationCallOrder[0]!);
+    expect(writes()).toEqual([[{ where: { id: "op_change_invoice", status: { in: ["FAILED", "PARTIAL"] } }, data: { requestPayload: unpaid } }]]);
   });
 });
 

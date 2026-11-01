@@ -81,3 +81,21 @@ describe("creditReleaseSweptCents (#4494)", () => {
     expect(creditReleaseSweptCents({ ownCents: 4_000, held: false }, -100)).toBe(0);
   });
 });
+
+describe("creditReleaseShareFromPlan (#4494 fix round, the one fold)", () => {
+  it("sums every item a capture collected and says whether the sweep holds it - the sweep and the share reader read the same", async () => {
+    const { creditReleaseShareFromPlan } = await import("@/lib/credit-release-payment-plan");
+    const plan = {
+      items: [
+        { askRowId: "a1", ownCents: 1_000, capturedByRowId: "c1", capturedByIntentId: "pi_1" },
+        { askRowId: "a2", ownCents: 2_500, capturedByRowId: "c1", capturedByIntentId: "pi_1" },
+        { askRowId: "a3", ownCents: 9_999, capturedByRowId: "c2", capturedByIntentId: "pi_2" },
+      ],
+      unexplainedRowIds: ["a0"],
+      unexplainedCaptureIntentIds: ["pi_1"],
+    };
+    expect(creditReleaseShareFromPlan(plan, "pi_1")).toEqual({ ownCents: 3_500, held: true });
+    expect(creditReleaseShareFromPlan(plan, "pi_2")).toEqual({ ownCents: 9_999, held: false });
+    expect(creditReleaseShareFromPlan(plan, "pi_none")).toEqual({ ownCents: 0, held: false });
+  });
+});

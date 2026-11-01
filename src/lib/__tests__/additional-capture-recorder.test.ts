@@ -19,6 +19,7 @@ vi.mock("@/lib/xero-primary-invoice-gap-anchors", () => ({
 import {
   attributeGapCash,
   creditReleaseShareOverlaps,
+  gapPaymentMayBeInXero,
   readCapturedStripeCash,
   readCaptureRecorder,
   readRecordedByPrimaryOrGap,
@@ -546,6 +547,17 @@ describe("readRecordedByPrimaryOrGap and creditReleaseShareOverlaps (#4494)", ()
     await expect(readRecordedByPrimaryOrGap("pi_release", null, store as never)).resolves.toEqual({ kind: "gap-invoice", operationId: "op_gap" });
   });
 
+  it("#4494 fix round: says, for the sweep only, whether the gap row's payment can be in Xero yet", async () => {
+    rows = [{ ...gapRow("PENDING", 3_000), xeroObjectId: null, responsePayload: null, lastErrorCode: null, manuallyResolvedAt: null, localModel: null, localId: null } as never];
+    await expect(readRecordedByPrimaryOrGap("pi_release", null, store as never, { withGapSendState: true })).resolves.toEqual({
+      kind: "part",
+      cents: 3_000,
+      gapPaymentMayBeInXero: false,
+    });
+    // The receipt's reading is unchanged: a queued gap's cents count, with no send state.
+    await expect(readRecordedByPrimaryOrGap("pi_release", null, store as never)).resolves.toEqual({ kind: "part", cents: 3_000 });
+  });
+
   it("MUTATION: ignores a CANCELLED gap row", async () => {
     rows = [gapRow("CANCELLED", 3_000)];
     await expect(readRecordedByPrimaryOrGap("pi_release", null, store as never)).resolves.toEqual({ kind: "part", cents: 0 });
@@ -560,5 +572,42 @@ describe("readRecordedByPrimaryOrGap and creditReleaseShareOverlaps (#4494)", ()
     expect(creditReleaseShareOverlaps({ kind: "gap-invoice", operationId: "op_gap" }, share(0), 5_000)).toBe(false);
     expect(creditReleaseShareOverlaps({ kind: "part", cents: 1 }, share(0, true), 5_000)).toBe(true);
     expect(creditReleaseShareOverlaps({ kind: "part", cents: 0 }, share(0, true), 5_000)).toBe(false);
+  });
+});
+
+describe("gapPaymentMayBeInXero (#4494 fix round)", () => {
+  const row = (over: Record<string, unknown>) => ({
+    status: "FAILED",
+    xeroObjectId: null,
+    responsePayload: null,
+    lastErrorCode: null,
+    manuallyResolvedAt: null,
+    localModel: "BookingModification",
+    localId: "mod_gap",
+    ...over,
+  });
+  const store = { xeroObjectLink: { findFirst: vi.fn() } };
+  beforeEach(() => store.xeroObjectLink.findFirst.mockReset().mockResolvedValue(null));
+  const ask = (over: Record<string, unknown>) => gapPaymentMayBeInXero(row(over) as never, store as never);
+
+  it("is yes for a row that sent, went PARTIAL or was resolved by hand", async () => {
+    await expect(ask({ status: "SUCCEEDED" })).resolves.toBe(true);
+    await expect(ask({ status: "PARTIAL" })).resolves.toBe(true);
+    await expect(ask({ manuallyResolvedAt: new Date("2026-06-30T00:00:00.000Z") })).resolves.toBe(true);
+  });
+
+  it("MUTATION: is yes for any evidence an attempt reached Xero", async () => {
+    await expect(ask({ xeroObjectId: "inv_gap" })).resolves.toBe(true);
+    await expect(ask({ responsePayload: { invoice: { invoices: [{ invoiceID: "inv_gap" }] } } })).resolves.toBe(true);
+    await expect(ask({ responsePayload: { payment: { paymentID: "pay_gap" } } })).resolves.toBe(true);
+    await expect(ask({ lastErrorCode: "ORPHANED_STALE_RUNNING" })).resolves.toBe(true);
+    store.xeroObjectLink.findFirst.mockResolvedValueOnce({ id: "link_gap" });
+    await expect(ask({})).resolves.toBe(true);
+  });
+
+  it("is no only for a row that provably never reached Xero", async () => {
+    await expect(ask({ responsePayload: { message: "Account code 200 has been archived" } })).resolves.toBe(false);
+    await expect(ask({ status: "PENDING" })).resolves.toBe(false);
+    await expect(ask({ status: "RUNNING", localModel: null })).resolves.toBe(false);
   });
 });

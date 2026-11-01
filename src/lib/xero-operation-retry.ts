@@ -1483,9 +1483,7 @@ export async function retryXeroSyncOperation(
   const createdByMemberId = options?.createdByMemberId ?? undefined;
 
   if (operation.status === "PARTIAL") {
-    const partialInvoiceRepair = partialInvoiceOperationHasPaymentFault(operation)
-      ? parsePartialInvoiceRepairInput(operation)
-      : null;
+    const partialInvoiceRepair = partialInvoiceOperationHasPaymentFault(operation) ? parsePartialInvoiceRepairInput(operation) : null;
     if (
       operation.entityType === "INVOICE" &&
       operation.operationType === "CREATE" &&
@@ -1545,6 +1543,8 @@ export async function retryXeroSyncOperation(
               "The payment is already recorded in Xero; retry once to close this operation.",
             );
           }
+          const gapSkip = await (await import("@/lib/credit-release-xero-payment")).skipPartialGapRepairPayment(operation, claim);
+          if (gapSkip) return close(gapSkip.paymentOutcome, gapSkip.message); // #4494: overlaps the credit-release sweep's share.
           const paymentId = await xero.createXeroPaymentForInvoice({
             localModel: operation.localModel!,
             localId: operation.localId!,

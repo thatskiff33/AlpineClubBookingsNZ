@@ -3,9 +3,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   prisma: {
-    xeroObjectLink: { findMany: vi.fn() },
+    xeroObjectLink: { findMany: vi.fn(), findFirst: vi.fn() },
     payment: { findUnique: vi.fn(), findMany: vi.fn() },
-    xeroSyncOperation: { findMany: vi.fn(), findFirst: vi.fn() },
+    xeroSyncOperation: { findMany: vi.fn(), findFirst: vi.fn(), findUnique: vi.fn(), updateMany: vi.fn() },
     paymentTransaction: { findUnique: vi.fn(), findMany: vi.fn() },
   },
   claimAlertCooldown: vi.fn(),
@@ -35,6 +35,8 @@ import {
   creditReleasePaymentIdempotencyKey,
   gapPaymentOverlapsCreditRelease,
   recordCreditReleasePayments,
+  skipPartialGapRepairPayment,
+  unpaidGapPayloadIfOverlapping,
 } from "@/lib/credit-release-xero-payment";
 import {
   CREDIT_RELEASE_ASK_REASON,
@@ -71,12 +73,29 @@ function deps(over: { due?: number | null; status?: string } = {}) {
   };
 }
 
-type GapRow = { id: string; status: string; requestPayload: Record<string, unknown> };
+type GapRow = {
+  id: string;
+  status: string;
+  requestPayload: Record<string, unknown>;
+  xeroObjectId: string | null;
+  responsePayload: unknown;
+  lastErrorCode: string | null;
+  manuallyResolvedAt: Date | null;
+  localModel: string;
+  localId: string;
+};
 /** What the outbox holds: an attempt in doubt, and #3980 gap invoices (#4494). */
 const outbox: { inDoubt: { createdAt: Date } | null; gapRows: GapRow[] } = { inDoubt: null, gapRows: [] };
-const gapRow = (status: string, intent: string, cents?: number): GapRow => ({
+const gapRow = (status: string, intent: string, cents?: number, over: Partial<GapRow> = {}): GapRow => ({
   id: `op-gap-${status}`,
   status,
+  xeroObjectId: null,
+  responsePayload: null,
+  lastErrorCode: null,
+  manuallyResolvedAt: null,
+  localModel: "BookingModification",
+  localId: "mod-gap",
+  ...over,
   requestPayload: {
     primaryInvoiceGap: true,
     recordPayment: true,
@@ -107,6 +126,9 @@ beforeEach(() => {
     },
   );
   mocks.prisma.paymentTransaction.findUnique.mockResolvedValue({ paymentId: "pay-1", amountCents: 4000 });
+  // No live link on a gap invoice's change unless a case says so.
+  mocks.prisma.xeroObjectLink.findFirst.mockResolvedValue(null);
+  mocks.prisma.xeroSyncOperation.updateMany.mockResolvedValue({ count: 1 });
   mocks.prisma.paymentTransaction.findMany.mockResolvedValue([releaseRow]);
   mocks.prisma.xeroObjectLink.findMany.mockResolvedValue([]);
   mocks.prisma.payment.findUnique.mockResolvedValue({ bookingId: "bk-12345678", xeroInvoiceId: "inv-1", transactions: [releaseRow] });
@@ -272,8 +294,8 @@ describe("#4494: one recorder per capture, beside a #3980 gap invoice", () => {
   ];
 
   describe("the sweep", () => {
-    it("MUTATION (a): holds, and tells an officer once, where a gap invoice already took part of the capture", async () => {
-      outbox.gapRows = [gapRow("PENDING", "pi_1", 1000)];
+    it("MUTATION (a): holds, and tells an officer once, where a gap invoice that sent already took part of the capture", async () => {
+      outbox.gapRows = [gapRow("SUCCEEDED", "pi_1", 1000)];
       const d = deps();
       expect(await recordCreditReleasePayments({ deps: d, now: NOW })).toEqual({ recorded: 0, held: 1, failed: 0, waiting: 0 });
       expect(d.createPayment).not.toHaveBeenCalled();
@@ -284,17 +306,17 @@ describe("#4494: one recorder per capture, beside a #3980 gap invoice", () => {
     it("MUTATION (b): records where the gap invoice took only the edit's own part of the capture", async () => {
       mocks.prisma.payment.findUnique.mockResolvedValue({ bookingId: "bk-12345678", xeroInvoiceId: "inv-1", transactions: mixedChain });
       mocks.prisma.paymentTransaction.findUnique.mockResolvedValue({ paymentId: "pay-1", amountCents: 10000 });
-      outbox.gapRows = [gapRow("PENDING", "pi_mix", 6000)];
+      outbox.gapRows = [gapRow("SUCCEEDED", "pi_mix", 6000)];
       const d = deps();
       expect((await recordCreditReleasePayments({ deps: d, now: NOW })).recorded).toBe(1);
       expect(d.createPayment).toHaveBeenCalledWith(expect.objectContaining({ amountCents: 4000, reference: "Stripe pi_mix" }));
       // One cent more than the edit's part overlaps.
-      outbox.gapRows = [gapRow("PENDING", "pi_mix", 6001)];
+      outbox.gapRows = [gapRow("SUCCEEDED", "pi_mix", 6001)];
       expect((await recordCreditReleasePayments({ deps: deps(), now: NOW })).held).toBe(1);
     });
 
-    it("(c): holds beside a legacy gap invoice that names the capture with no cents", async () => {
-      outbox.gapRows = [gapRow("FAILED", "pi_1")];
+    it("(c): holds beside a legacy gap invoice that names the capture with no cents, once it may have sent", async () => {
+      outbox.gapRows = [gapRow("FAILED", "pi_1", undefined, { lastErrorCode: "ORPHANED_STALE_RUNNING" })];
       const d = deps();
       expect((await recordCreditReleasePayments({ deps: d, now: NOW })).held).toBe(1);
       expect(d.createPayment).not.toHaveBeenCalled();
@@ -304,6 +326,42 @@ describe("#4494: one recorder per capture, beside a #3980 gap invoice", () => {
       outbox.gapRows = [gapRow("CANCELLED", "pi_1", 4000)];
       const d = deps();
       expect((await recordCreditReleasePayments({ deps: d, now: NOW })).recorded).toBe(1);
+    });
+
+    it.each([
+      ["queued", gapRow("PENDING", "pi_1", 1000)],
+      ["sending", gapRow("RUNNING", "pi_1", 1000)],
+      ["failed before Xero made anything", gapRow("FAILED", "pi_1", 1000, { responsePayload: { message: "Account code 200 has been archived" } })],
+    ])("MUTATION (e): waits, telling nobody, for a gap invoice %s - its send re-checks the overlap", async (_name, row) => {
+      outbox.gapRows = [row];
+      const d = deps();
+      expect(await recordCreditReleasePayments({ deps: d, now: NOW })).toEqual({ recorded: 0, held: 0, failed: 0, waiting: 1 });
+      expect(d.createPayment).not.toHaveBeenCalled();
+      expect(mocks.sendAlert).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ["a Xero invoice on its row", { xeroObjectId: "inv-gap" }],
+      ["a response naming an invoice", { responsePayload: { invoice: { invoices: [{ invoiceID: "inv-gap" }] } } }],
+      ["a stale-RUNNING reset", { lastErrorCode: "ORPHANED_STALE_RUNNING" }],
+    ])("MUTATION (f): holds for a FAILED gap invoice whose payment may be in Xero: %s", async (_name, over) => {
+      outbox.gapRows = [gapRow("FAILED", "pi_1", 1000, over as Partial<GapRow>)];
+      expect((await recordCreditReleasePayments({ deps: deps(), now: NOW })).held).toBe(1);
+    });
+
+    it("MUTATION (f): holds for a FAILED gap invoice with a live invoice or payment link on its change", async () => {
+      outbox.gapRows = [gapRow("FAILED", "pi_1", 1000)];
+      mocks.prisma.xeroObjectLink.findFirst.mockResolvedValue({ id: "link-gap" });
+      expect((await recordCreditReleasePayments({ deps: deps(), now: NOW })).held).toBe(1);
+      expect(mocks.prisma.xeroObjectLink.findFirst).toHaveBeenCalledWith({
+        where: {
+          localModel: "BookingModification",
+          localId: "mod-gap",
+          role: { in: ["SUPPLEMENTARY_INVOICE", "SUPPLEMENTARY_INVOICE_PAYMENT"] },
+          active: true,
+        },
+        select: { id: true },
+      });
     });
   });
 
@@ -347,6 +405,76 @@ describe("#4494: one recorder per capture, beside a #3980 gap invoice", () => {
     it("reads nothing for a gap invoice that pays from no capture", async () => {
       await expect(ask({ primaryInvoiceGap: true, coveredPaymentIntentIds: [] })).resolves.toBe(false);
       expect(mocks.prisma.paymentTransaction.findUnique).not.toHaveBeenCalled();
+    });
+  });
+});
+
+describe("#4494 fix round: the unpaid payload a gap invoice is sent with", () => {
+  const sent = gapRow("RUNNING", "pi_1", 3000);
+  beforeEach(() => {
+    mocks.prisma.xeroObjectLink.findMany.mockResolvedValue([]);
+    outbox.gapRows = [sent];
+  });
+
+  it("MUTATION: names nothing where its payment provably never reached Xero", async () => {
+    mocks.prisma.xeroSyncOperation.findUnique.mockResolvedValue(sent);
+    await expect(unpaidGapPayloadIfOverlapping({ operationId: sent.id, bookingId: "bk-12345678", payload: sent.requestPayload })).resolves.toEqual({
+      ...sent.requestPayload,
+      recordPayment: false,
+      coveredPaymentIntentIds: [],
+      coveredCaptureCents: {},
+    });
+  });
+
+  it("MUTATION: keeps naming its captures where an earlier attempt's payment may be in Xero, so the sweep keeps holding", async () => {
+    mocks.prisma.xeroSyncOperation.findUnique.mockResolvedValue({ ...sent, lastErrorCode: "ORPHANED_STALE_RUNNING" });
+    await expect(unpaidGapPayloadIfOverlapping({ operationId: sent.id, bookingId: "bk-12345678", payload: sent.requestPayload })).resolves.toEqual({
+      ...sent.requestPayload,
+      recordPayment: false,
+    });
+  });
+
+  it("is null where nothing overlaps, or the payload is no paying gap invoice", async () => {
+    mocks.prisma.paymentTransaction.findMany.mockResolvedValue([]);
+    await expect(unpaidGapPayloadIfOverlapping({ operationId: sent.id, bookingId: "bk-12345678", payload: sent.requestPayload })).resolves.toBeNull();
+    await expect(
+      unpaidGapPayloadIfOverlapping({ operationId: sent.id, bookingId: "bk-12345678", payload: { ...sent.requestPayload, recordPayment: false } }),
+    ).resolves.toBeNull();
+    await expect(unpaidGapPayloadIfOverlapping({ operationId: sent.id, bookingId: "bk-12345678", payload: { paymentIntentId: "pi_1" } })).resolves.toBeNull();
+  });
+
+  describe("skipPartialGapRepairPayment (an officer's repair of a PARTIAL gap invoice)", () => {
+    const claim = { id: "op-gap-PARTIAL", startedAt: NOW };
+    const partial = gapRow("PARTIAL", "pi_1", 3000, { xeroObjectId: "inv-gap" });
+    const operation = { id: partial.id, localModel: "BookingModification", requestPayload: { ...partial.requestPayload, bookingId: "bk-12345678" } };
+
+    it("MUTATION: writes the unpaid payload, still naming its captures, under the repair's claim, and closes with the reason", async () => {
+      outbox.gapRows = [{ ...partial, status: "RUNNING" }];
+      mocks.prisma.xeroSyncOperation.findUnique.mockResolvedValue({ ...partial, status: "RUNNING" });
+      const skip = await skipPartialGapRepairPayment(operation, claim);
+      expect(skip).toEqual({
+        paymentOutcome: { payment: null, paymentSkipped: true, paymentSkipReason: expect.stringContaining("credit used in Xero") },
+        message: expect.stringContaining("Closed without recording a payment."),
+      });
+      expect(mocks.prisma.xeroSyncOperation.updateMany).toHaveBeenCalledWith({
+        where: { id: claim.id, status: "RUNNING", startedAt: NOW },
+        // (The fixture's digit-run booking id is masked by the payload writer's redaction; real ids are cuids.)
+        data: {
+          requestPayload: expect.objectContaining({
+            primaryInvoiceGap: true,
+            recordPayment: false,
+            coveredPaymentIntentIds: ["pi_1"],
+            coveredCaptureCents: { pi_1: 3000 },
+          }),
+        },
+      });
+      expect(mocks.sendAlert).toHaveBeenCalledTimes(1);
+    });
+
+    it("is null, writing nothing, for a repair that is not a gap invoice's", async () => {
+      await expect(skipPartialGapRepairPayment({ ...operation, localModel: "Payment" }, claim)).resolves.toBeNull();
+      await expect(skipPartialGapRepairPayment({ ...operation, requestPayload: { recordPayment: true } }, claim)).resolves.toBeNull();
+      expect(mocks.prisma.xeroSyncOperation.updateMany).not.toHaveBeenCalled();
     });
   });
 });

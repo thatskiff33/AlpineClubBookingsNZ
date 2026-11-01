@@ -21,7 +21,6 @@ import { bookingOwner } from "@/lib/booking-owner";
 import logger from "@/lib/logger";
 import { buildXeroInvoiceUrl } from "@/lib/xero-links";
 import { asRecord } from "@/lib/xero-json";
-import { unpaidPrimaryInvoiceGapPayload } from "@/lib/additional-capture-receipt-payload";
 import { buildXeroSupplementaryInvoiceKey } from "@/lib/xero-supplementary-invoice-key";
 import {
   buildXeroIdempotencyKey,
@@ -282,14 +281,12 @@ export async function createXeroSupplementaryInvoice(params: {
     });
   }
   // #4494 (`INV-ADDPAY-046`): a gap invoice queued before the fix, or by the
-  // previous colour, may pay from a capture the credit-release sweep records.
-  // Raised unpaid instead, naming nothing; stored below before the Xero call.
-  if (recordPayment && queuedRequestPayload?.primaryInvoiceGap === true && syncOperation) {
-    const { gapPaymentOverlapsCreditRelease } = await import("@/lib/credit-release-xero-payment");
-    if (await gapPaymentOverlapsCreditRelease({ operationId: syncOperation.id, bookingId, payload: queuedRequestPayload })) {
-      recordPayment = false;
-      queuedRequestPayload = unpaidPrimaryInvoiceGapPayload(queuedRequestPayload);
-    }
+  // previous colour, may pay from cash overlapping the credit-release sweep's
+  // share. Raised unpaid instead; the payload is stored below before the Xero call.
+  if (recordPayment && queuedRequestPayload && syncOperation) {
+    const { unpaidGapPayloadIfOverlapping } = await import("@/lib/credit-release-xero-payment");
+    const unpaid = await unpaidGapPayloadIfOverlapping({ operationId: syncOperation.id, bookingId, payload: queuedRequestPayload });
+    if (unpaid) [recordPayment, queuedRequestPayload] = [false, unpaid];
   }
   // Read the club day ONCE. `buildInvoice` is called for the recorded
   // `requestPayload` and again for each contact-repair attempt, so a per-call
