@@ -10,26 +10,55 @@
  * `## Plan Deviation` section whose answer is `None` or one item per deviation,
  * and each item must link the owner's answer.
  *
- * What counts as that link (`OWNER_ANSWER_LINK`): a GitHub issue, pull request
- * or discussion URL — normally the permalink of the owner's comment — or a
- * `#<number>` reference to the issue whose body records the decision (the
- * "Recording a decision" rule puts the deciding comment's link at the top of
- * that body). Prose such as "the owner agreed in chat" is not a link: a decision
- * nobody can open is one nobody can check.
+ * What counts as that link (`ownerAnswerLink`):
+ *   - a GitHub issue, pull request or discussion URL in THIS repository —
+ *     normally the permalink of the owner's comment. The repository is
+ *     `GITHUB_REPOSITORY` in CI, else the `origin` remote's owner/name; a URL
+ *     into any other repository is not this project's owner answering.
+ *   - a bare `#<number>`, meant as the issue whose body records the decision
+ *     (the "Recording a decision" rule puts the deciding comment's link at the
+ *     top of that body). A bare `#n` is TRUSTED, not resolved: this gate runs
+ *     offline, so "skipped step #2 of the plan" also passes. Reviewers read
+ *     the reference; the gate only proves one was given.
+ * Prose such as "the owner agreed in chat" is not a link: a decision nobody can
+ * open is one nobody can check.
  *
  * ROLLOUT (owner decision, 1 Nov 2026): the section ships as a WARNING for
- * seven days so open PRs can add it; a small follow-up PR then sets
- * `PLAN_DEVIATION_ENFORCED` to `true` and nothing else changes. While it is
- * `false` a missing or unlinked section prints a GitHub Actions `::warning::`
- * annotation and exits 0, and `pnpm run pr:check` reports WARN.
+ * seven days so open PRs can add it; while `PLAN_DEVIATION_ENFORCED` is
+ * `false` a missing, empty or unlinked section prints a GitHub Actions
+ * `::warning::` annotation and exits 0, and `pnpm run pr:check` reports WARN.
+ * The follow-up PR that makes it a failure changes exactly these:
+ *   - `PLAN_DEVIATION_ENFORCED` below, to `true`;
+ *   - the `::warning::` branch of this file's entrypoint and its "warning
+ *     during the rollout week" text (the `fail` branch already exists);
+ *   - tests: `check-pr-plan-deviation.test.mjs` "is in its warning week" and
+ *     "prints a ::warning:: annotation…", and `check-pr-body.test.mjs`
+ *     "reports a missing plan-deviation section as WARN…";
+ *   - the texts that say "warning": the `## Plan Deviation` comment in
+ *     `.github/pull_request_template.md`, the "WARNING ONLY" comment on the
+ *     `Validate PR plan deviation` step in `.github/workflows/ci.yml`, and
+ *     "Two PR-body checks warn rather than fail" in `CONTRIBUTING.md`;
+ *   - the Dependabot exemption (owner decision): a dependency-only DIFF rule,
+ *     the same kind the concurrency gate's #2726 waiver uses — never the
+ *     author. Until then a Dependabot body, which cannot carry the section,
+ *     only warns.
  *
  * Runs before `pnpm install --frozen-lockfile` in the `verify` job, so it uses
  * Node built-ins only.
  */
 import process from "node:process";
 
+import { execFileSync } from "node:child_process";
+
 import { workflowCommand } from "./dependency-mitigation.mjs";
-import { fetchLivePrBody, readEventPrBody, selectPrBody } from "./pr-body.mjs";
+import { escapeRegex } from "./escape-regex.mjs";
+import {
+  fetchLivePrBody,
+  readEventPrBody,
+  sectionAfterHeading,
+  selectPrBody,
+  stripNonAnswerText,
+} from "./pr-body.mjs";
 import { isMainModule } from "../lib/is-main-module.mjs";
 
 /**
@@ -42,48 +71,73 @@ export const PLAN_DEVIATION_HEADING = "## Plan Deviation";
 
 const GATE_LABEL = "PR plan deviation check";
 
-const HEADING_PATTERN = /^[^\S\r\n]*##[^\S\r\n]+Plan Deviation[^\S\r\n]*\r?$/im;
-
 /**
- * A link to the owner's answer: a GitHub issue/PR/discussion URL (a comment
- * permalink is one of these with an `#issuecomment-…` anchor), or a `#<number>`
- * reference that is not part of a longer token such as `&#123;` or `a#1`.
+ * This repository as `owner/name`: `GITHUB_REPOSITORY` when set (always, in
+ * Actions), else parsed from the `origin` remote (a local `pr:check`), else
+ * null — and with null no URL counts, only a `#<number>`.
  */
-export const OWNER_ANSWER_LINK =
-  /https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/(?:issues|pull|discussions)\/\d+|(?<![\w&#/])#\d+\b/;
-
-/** A top-level list item opener: `-`, `*`, `+` or `1.` / `1)`, at most 3 spaces in. */
-const ITEM_START = /^ {0,3}(?:[-*+]|\d+[.)])(?:[^\S\r\n]+|$)/;
-
-/**
- * Text the gate must not read as an answer: HTML comments (the template's own
- * instructions mention `None` and `#<number>`) and fenced code blocks (a body
- * explaining this gate may quote the heading).
- */
-export function stripNonAnswerText(body) {
-  return body.replace(/<!--[\s\S]*?(?:-->|$)/g, "").replace(/^ {0,3}(`{3,}|~{3,})[\s\S]*?^ {0,3}\1[^\S\r\n]*$/gm, "");
+export function thisRepository(env = process.env) {
+  if (env.GITHUB_REPOSITORY) return env.GITHUB_REPOSITORY;
+  try {
+    const url = execFileSync("git", ["remote", "get-url", "origin"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+    return /github\.com[:/]([\w.-]+\/[\w.-]+?)(?:\.git)?\/?$/i.exec(url)?.[1] ?? null;
+  } catch {
+    return null;
+  }
 }
+
+/**
+ * The link rule for one repository (see the header). The `#<number>` form must
+ * not be part of a longer token such as `&#123;`, `a#1` or a URL's `/#1`.
+ */
+export function ownerAnswerLink(repository) {
+  const reference = String.raw`(?<![\w&#/])#\d+\b`;
+  if (!repository) return new RegExp(reference);
+  const url = String.raw`https://github\.com/${escapeRegex(repository)}/(?:issues|pull|discussions)/\d+\b`;
+  return new RegExp(`${url}|${reference}`, "i");
+}
+
+/** A list item opener: its indent, marker (`-`, `*`, `+`, `1.`, `1)`), and following spaces. */
+const ITEM_MARKER = /^([^\S\r\n]*)([-*+]|\d+[.)])([^\S\r\n]+|$)/;
 
 class PlanDeviationError extends Error {}
 
-/** The section's text, or null when the body has no `## Plan Deviation` heading. */
+/** The section's text with comments and fences removed, or null when there is no heading. */
 export function planDeviationSection(body) {
-  const text = stripNonAnswerText(body);
-  const match = HEADING_PATTERN.exec(text);
-  if (!match) return null;
-  const after = text.slice(match.index + match[0].length);
-  const next = after.search(/\r?\n[^\S\r\n]*#{1,2}[^\S\r\n#]/);
-  return next >= 0 ? after.slice(0, next) : after;
+  return sectionAfterHeading(stripNonAnswerText(body), PLAN_DEVIATION_HEADING);
 }
 
-/** The section's items: each top-level list item with its continuation lines. */
+/**
+ * The section's answers.
+ *
+ * With list items: each item with its continuation lines. A marker line starts
+ * a NEW item only when it sits left of the current item's content column (the
+ * column its text starts in), so `  - it is nullable` under `- Added a column`
+ * is part of that item, not an unlinked item of its own. Prose before the first
+ * marker ("One deviation, agreed with the owner:") is an introduction, not an
+ * answer, and is ignored.
+ *
+ * With no list items: the whole of the prose is one answer, which is how a
+ * plain `None` line is read.
+ */
 export function planDeviationItems(section) {
+  const lines = section.split(/\r?\n/);
+  const first = lines.findIndex((line) => ITEM_MARKER.test(line));
+  if (first < 0) {
+    const prose = lines.join("\n").trim();
+    return prose ? [prose] : [];
+  }
   const items = [];
-  for (const line of section.split(/\r?\n/)) {
-    if (ITEM_START.test(line)) {
-      items.push(line.replace(ITEM_START, ""));
+  let contentColumn = -1;
+  for (const line of lines.slice(first)) {
+    const marker = ITEM_MARKER.exec(line);
+    if (marker && (contentColumn < 0 || marker[1].length < contentColumn)) {
+      contentColumn = marker[1].length + marker[2].length + Math.max(1, marker[3].length);
+      items.push(line.slice(marker[0].length));
     } else if (line.trim()) {
-      if (items.length === 0) items.push("");
       items[items.length - 1] += `\n${line}`;
     }
   }
@@ -96,7 +150,7 @@ const isNone = (item) => /^none\b/i.test(item.replace(/[`*_~[\]]/g, "").trim());
  * Decide the section. Returns `{ outcome }` or throws a `PlanDeviationError`
  * with an actionable message.
  */
-export function validatePlanDeviation(body) {
+export function validatePlanDeviation(body, { repository = thisRepository() } = {}) {
   const section = planDeviationSection(body ?? "");
   if (section === null) {
     throw new PlanDeviationError(
@@ -120,13 +174,14 @@ export function validatePlanDeviation(body) {
         "there is no material deviation; otherwise remove it and link each item to the owner's answer.",
     );
   }
-  const unlinked = items.filter((item) => !OWNER_ANSWER_LINK.test(item));
+  const link = ownerAnswerLink(repository);
+  const unlinked = items.filter((item) => !link.test(item));
   if (unlinked.length > 0) {
     const first = unlinked[0].split("\n")[0];
     throw new PlanDeviationError(
       `${unlinked.length} ${PLAN_DEVIATION_HEADING} item(s) do not link the owner's answer ` +
         `(first: "${first.length > 80 ? `${first.slice(0, 77)}...` : first}"). Each item needs ` +
-        "the owner's comment URL (https://github.com/<owner>/<repo>/issues/<n>#issuecomment-<id>) " +
+        `the owner's comment URL (https://github.com/${repository ?? "<owner>/<repo>"}/issues/<n>#issuecomment-<id>) ` +
         "or the `#<number>` of the issue whose body records the decision. A deviation the owner " +
         "has not answered yet goes to the owner before this PR is ready.",
     );
@@ -145,9 +200,9 @@ const OUTCOME_MESSAGES = {
  * `fail` once it is true. `enforced` is a parameter only so tests can drive
  * both states; every caller leaves it to the constant.
  */
-export function planDeviationVerdict(body, { enforced = PLAN_DEVIATION_ENFORCED } = {}) {
+export function planDeviationVerdict(body, { enforced = PLAN_DEVIATION_ENFORCED, repository } = {}) {
   try {
-    const { outcome } = validatePlanDeviation(body);
+    const { outcome } = validatePlanDeviation(body, repository === undefined ? {} : { repository });
     return { status: "pass", outcome, message: OUTCOME_MESSAGES[outcome] };
   } catch (error) {
     if (!(error instanceof PlanDeviationError)) throw error;

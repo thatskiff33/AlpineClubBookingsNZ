@@ -13,14 +13,19 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   PLAN_DEVIATION_ENFORCED,
   PLAN_DEVIATION_HEADING,
+  ownerAnswerLink,
   planDeviationItems,
   planDeviationVerdict,
-  validatePlanDeviation,
+  thisRepository,
+  validatePlanDeviation as validateFor,
 } from "./check-pr-plan-deviation.mjs";
 
 const repoRoot = resolve(import.meta.dirname, "..", "..");
 const gate = join(repoRoot, "scripts", "ci", "check-pr-plan-deviation.mjs");
-const COMMENT_URL = "https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/4463#issuecomment-1234567890";
+const REPO = "example-owner/example-repo";
+const COMMENT_URL = `https://github.com/${REPO}/issues/4463#issuecomment-1234567890`;
+/** Every shape test names its repository, so none depends on this checkout's remote. */
+const validatePlanDeviation = (text) => validateFor(text, { repository: REPO });
 
 const body = (...sectionLines) =>
   ["## Summary", "", "- does a thing", "", PLAN_DEVIATION_HEADING, "", ...sectionLines, "", "## Risk Level", "", "- [x] Low", ""].join("\n");
@@ -78,10 +83,67 @@ describe("validatePlanDeviation", () => {
       "- Column added (see a#12)",
       "- Column added &#123;",
       "- Column added, https://example.com/issues/12",
-      "- Column added, https://github.com/o/r/blob/main/x.md",
+      `- Column added, https://github.com/${REPO}/blob/main/x.md`,
+      // Another repository's issue is not this project's owner answering.
+      "- Column added, https://github.com/prisma/prisma/issues/123",
+      "- Column added, https://github.com/example-owner/example-repo-fork/issues/12",
     ]) {
       expect(() => validatePlanDeviation(body(fake)), fake).toThrow(/do not link/);
     }
+  });
+
+  it("accepts this repository's issue, PR and discussion URLs, and any bare #n", () => {
+    for (const shape of [
+      `- Column: https://github.com/${REPO}/issues/12`,
+      `- Column: https://github.com/${REPO}/pull/12#discussion_r1`,
+      `- Column: https://github.com/${REPO}/discussions/12`,
+      `- Column: https://github.com/${REPO.toUpperCase()}/issues/12`,
+      "- Column: #4470",
+      // A bare #n is TRUSTED, not resolved (documented in the gate's header):
+      // the gate proves a reference was given, a reviewer reads it.
+      "- Skipped step #2 of the plan",
+    ]) {
+      expect(validatePlanDeviation(body(shape)), shape).toEqual({ outcome: "listed", count: 1 });
+    }
+  });
+
+  it("accepts only #n when the repository is unknown", () => {
+    expect(ownerAnswerLink(null).test(COMMENT_URL.replace("#issuecomment-1234567890", ""))).toBe(false);
+    expect(ownerAnswerLink(null).test("see #12")).toBe(true);
+  });
+
+  it("names the repository from GITHUB_REPOSITORY, else the origin remote", () => {
+    expect(thisRepository({ GITHUB_REPOSITORY: "a/b" })).toBe("a/b");
+    expect(thisRepository({})).toMatch(/^[\w.-]+\/[\w.-]+$/);
+  });
+
+  it("keeps a sub-bullet indented under an item as part of that item", () => {
+    expect(
+      validatePlanDeviation(
+        body("- Added a column, owner agreed #4463", "  - it is nullable so old code still reads it"),
+      ),
+    ).toEqual({ outcome: "listed", count: 1 });
+    expect(validatePlanDeviation(body("1. Added a column: #4463", "   - nullable"))).toEqual({
+      outcome: "listed",
+      count: 1,
+    });
+  });
+
+  it("still splits sibling items, and a sibling without a link fails", () => {
+    expect(() => validatePlanDeviation(body("- Added a column: #4463", " - Added a provider call"))).toThrow(
+      /first: "Added a provider call"/,
+    );
+  });
+
+  it("ignores prose before the first item", () => {
+    expect(
+      validatePlanDeviation(body("One deviation, agreed with the owner:", "", `- Added a column (${COMMENT_URL})`)),
+    ).toEqual({ outcome: "listed", count: 1 });
+  });
+
+  it("reads prose as the answer when there is no list", () => {
+    expect(validatePlanDeviation(body("None — built to the plan."))).toEqual({ outcome: "none" });
+    expect(() => validatePlanDeviation(body("Added a column without asking."))).toThrow(/do not link/);
   });
 
   it("fails None alongside listed items", () => {
@@ -107,6 +169,7 @@ describe("validatePlanDeviation", () => {
 
   it("splits items at top-level bullets and numbered items only", () => {
     expect(planDeviationItems("- a\n  more\n1. b\n    - nested\n")).toEqual(["a\n  more", "b\n    - nested"]);
+    expect(planDeviationItems("intro\n- a\n  - child\n- b\n")).toEqual(["a\n  - child", "b"]);
   });
 });
 
@@ -119,9 +182,9 @@ describe("planDeviationVerdict: the rollout switch", () => {
 
   it("warns while not enforced and fails once enforced, on the same body", () => {
     const unlinked = body("- Added a column");
-    expect(planDeviationVerdict(unlinked, { enforced: false })).toMatchObject({ status: "warn" });
-    expect(planDeviationVerdict(unlinked, { enforced: true })).toMatchObject({ status: "fail" });
-    expect(planDeviationVerdict(unlinked, { enforced: true }).message).toMatch(/do not link/);
+    expect(planDeviationVerdict(unlinked, { enforced: false, repository: REPO })).toMatchObject({ status: "warn" });
+    expect(planDeviationVerdict(unlinked, { enforced: true, repository: REPO })).toMatchObject({ status: "fail" });
+    expect(planDeviationVerdict(unlinked, { enforced: true, repository: REPO }).message).toMatch(/do not link/);
   });
 
   it("passes a good body in either state", () => {
