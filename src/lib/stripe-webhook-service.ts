@@ -65,7 +65,7 @@ import {
   markGroupSettlementIntentRefunded,
 } from "@/lib/group-settlement";
 import { adoptSavedCardChargeAttemptForIntent } from "@/lib/saved-card-charge-settle";
-import { GROUP_SETTLEMENT_INTENT_TYPE, isAppCreatedPaymentIntent } from "@/lib/stripe-app-intent-metadata";
+import { GROUP_SETTLEMENT_INTENT_TYPE, appPaymentIntentRoute } from "@/lib/stripe-app-intent-metadata";
 import { recordUnmatchedAppStripePayment, recordUnrecognisedStripePayment } from "@/lib/unrecognised-stripe-payment";
 import { PaymentStatus, PaymentTransactionKind } from "@prisma/client";
 import { isCapturedTransactionStatus, isRefusedRefundStatus } from "@/lib/payment-transaction-status";
@@ -449,7 +449,8 @@ async function handlePaymentIntentSucceeded(
   // Checkout page or a dashboard charge - carries none of the app's metadata, so
   // no path below claims it. It is recorded and alerted once, and the event
   // completes; it never reaches a booking or Xero.
-  if (!isAppCreatedPaymentIntent(paymentIntent.metadata)) {
+  const route = appPaymentIntentRoute(paymentIntent.metadata);
+  if (route === null) {
     await recordUnrecognisedStripePayment(paymentIntent, event, format);
     return;
   }
@@ -457,7 +458,7 @@ async function handlePaymentIntentSucceeded(
   // Group ORGANISER_PAYS settlement: one combined intent settles many child
   // bookings, so it carries groupBookingId (not bookingId) and is reconciled by
   // its own handler before the per-booking path below.
-  if (paymentIntent.metadata?.type === GROUP_SETTLEMENT_INTENT_TYPE) {
+  if (route.kind === "group_settlement") {
     const applied = await applyGroupSettlementSucceeded({
       id: paymentIntent.id,
       amount: paymentIntent.amount,
@@ -472,11 +473,9 @@ async function handlePaymentIntentSucceeded(
     return;
   }
 
-  const bookingId = paymentIntent.metadata?.bookingId;
-  if (!bookingId) {
-    logger.warn({ paymentIntentId: paymentIntent.id }, "PaymentIntent succeeded but no bookingId in metadata");
-    return;
-  }
+  // #4647: the route carries the non-empty booking id, so there is no
+  // "succeeded with no bookingId" case left to handle here.
+  const { bookingId } = route;
 
   if (
     await queueSupersededPaymentIntentRefundRecovery(paymentIntent)
