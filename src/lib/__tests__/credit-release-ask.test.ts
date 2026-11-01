@@ -8,7 +8,6 @@ const mocks = vi.hoisted(() => ({
   prisma: {
     memberCredit: { findUnique: vi.fn() },
     payment: { findUnique: vi.fn() },
-    paymentTransaction: { findUnique: vi.fn() },
   },
   audit: vi.fn(),
   createIntent: vi.fn(),
@@ -20,6 +19,7 @@ const mocks = vi.hoisted(() => ({
   lockPayment: vi.fn(),
   paidCash: vi.fn(),
   retireAfterWrite: vi.fn(),
+  mergeVerdict: vi.fn(),
 }));
 
 vi.mock("@/lib/prisma", () => ({ prisma: mocks.prisma }));
@@ -48,7 +48,13 @@ vi.mock("@/lib/ended-booking-ask-guard", () => ({
 }));
 vi.mock("@/lib/payment-recovery-alert", () => ({ alertPaymentRecoveryOfficers: mocks.alertOfficers }));
 vi.mock("@/lib/release-ask-officer-signal", () => ({ signalCreditReleaseToOfficers: mocks.signalOfficers }));
+// #4491: the merge decision has its own suite (`credit-release-merge`) and a real-PostgreSQL proof.
+vi.mock("@/lib/credit-release-merge", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/credit-release-merge")),
+  readCreditReleaseMergeVerdict: mocks.mergeVerdict,
+}));
 
+import { CREDIT_RELEASE_MERGE_WAIT_WORDS } from "@/lib/credit-release-merge";
 import {
   CREDIT_RELEASE_WAITING_ON_EDIT_MESSAGE,
   processCreditReleaseAskOperation,
@@ -131,12 +137,12 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.prisma.memberCredit.findUnique.mockResolvedValue(release);
   mocks.prisma.payment.findUnique.mockResolvedValue(payment());
-  mocks.prisma.paymentTransaction.findUnique.mockResolvedValue({ reason: CREDIT_RELEASE_ASK_REASON });
   mocks.createIntent.mockResolvedValue({ id: "pi_new" });
   store.paymentTransaction.findMany.mockResolvedValue([]);
   store.paymentRecoveryOperation.upsert.mockImplementation(async ({ create }: { create: { paymentIntentId: string } }) => ({ id: `op-cancel-${create.paymentIntentId}` }));
   mocks.retireAfterWrite.mockResolvedValue(false);
   mocks.paidCash.mockResolvedValue(0);
+  mocks.mergeVerdict.mockResolvedValue({ merge: true });
   // Under the lock the payment is as it was read, unless a test moves it.
   store.payment.findUnique.mockImplementation(async () => mocks.prisma.payment.findUnique.mock.results.at(-1)?.value);
 });
@@ -197,7 +203,7 @@ describe("processCreditReleaseAskOperation", () => {
     mocks.prisma.payment.findUnique.mockResolvedValue(
       payment({ additionalAmountCents: 2500, additionalPaymentStatus: "PENDING", additionalPaymentIntentId: "pi_edit", amountCents: 32_000 }),
     );
-    mocks.prisma.paymentTransaction.findUnique.mockResolvedValue({ reason: "edit_price_increase" });
+    mocks.mergeVerdict.mockResolvedValue({ merge: false, reason: "edit-invoice-not-waiting" });
     const deps = runnerDeps();
     await processCreditReleaseAskOperation(operation, CLUB_FORMAT_TEST, asDeps(deps), vi.fn().mockResolvedValue(open));
     // Never a throw: a throw spends an attempt, and five of them made the release terminal and never asked.
@@ -205,7 +211,14 @@ describe("processCreditReleaseAskOperation", () => {
     expect(deps.complete).not.toHaveBeenCalled();
     expect(mocks.createIntent).not.toHaveBeenCalled();
     expect(mocks.signalOfficers).toHaveBeenCalledWith(
-      expect.objectContaining({ bookingId: "bk-1", reason: "waiting-on-edit-request", key: "waiting-on-edit-request:op-1" }),
+      expect.objectContaining({
+        bookingId: "bk-1",
+        reason: "waiting-on-edit-request",
+        key: "waiting-on-edit-request:op-1",
+        // The officers' note says why it could not merge, in words, not only in its metadata.
+        detail: CREDIT_RELEASE_MERGE_WAIT_WORDS["edit-invoice-not-waiting"],
+        metadata: expect.objectContaining({ notMergedBecause: "edit-invoice-not-waiting" }),
+      }),
     );
   });
 
@@ -213,7 +226,7 @@ describe("processCreditReleaseAskOperation", () => {
     mocks.prisma.payment.findUnique.mockResolvedValue(
       payment({ additionalAmountCents: 2500, additionalPaymentStatus: "PENDING", additionalPaymentIntentId: "pi_edit", amountCents: 32_000 }),
     );
-    mocks.prisma.paymentTransaction.findUnique.mockResolvedValue({ reason: "edit_price_increase" });
+    mocks.mergeVerdict.mockResolvedValue({ merge: false, reason: "edit-invoice-not-waiting" });
     const deps = runnerDeps();
     const read = vi.fn().mockRejectedValue(new Error("Xero unavailable"));
     // Never a throw (which would spend an attempt and, five times over, make the row terminal).
@@ -222,14 +235,63 @@ describe("processCreditReleaseAskOperation", () => {
     expect(deps.wait).toHaveBeenCalledWith(operation, CREDIT_RELEASE_WAITING_ON_EDIT_MESSAGE);
   });
 
-  it("asks once the edit request is paid: the release's own live request is not something to wait for", async () => {
-    mocks.prisma.payment.findUnique.mockResolvedValue(
-      payment({ additionalAmountCents: 2500, additionalPaymentStatus: "PENDING", additionalPaymentIntentId: "pi_rel_old", amountCents: 32_000 }),
-    );
-    mocks.prisma.paymentTransaction.findUnique.mockResolvedValue({ reason: CREDIT_RELEASE_ASK_REASON });
+  it("asks once the edit request is paid or withdrawn: with no live request there is nothing to merge or wait for", async () => {
     const deps = runnerDeps();
     await processCreditReleaseAskOperation(operation, CLUB_FORMAT_TEST, asDeps(deps), vi.fn().mockResolvedValue(open));
+    expect(mocks.mergeVerdict).not.toHaveBeenCalled();
     expect(deps.wait).not.toHaveBeenCalled();
+    expect(mocks.upsert).toHaveBeenCalledWith(expect.objectContaining({ amountCents: 4000, carriedAskCents: 0 }));
+  });
+
+  describe("#4491: merges into an unpaid edit request (INV-ADDPAY-052)", () => {
+    const withEdit = () =>
+      payment({ additionalAmountCents: 2500, additionalPaymentStatus: "PENDING", additionalPaymentIntentId: "pi_edit", amountCents: 32_000 });
+
+    it("raises ONE request for both, carrying the edit, superseding it and naming itself as the carrier its invoice follows", async () => {
+      mocks.prisma.payment.findUnique.mockResolvedValue(withEdit());
+      store.paymentTransaction.findMany.mockResolvedValue([{ id: "ptx-edit", stripePaymentIntentId: "pi_edit", amountCents: 2500 }]);
+      const { deps } = await run();
+      const liveAsk = { id: "pay-1", bookingId: "bk-1", xeroInvoiceId: "inv-1", additionalAmountCents: 2500, additionalPaymentIntentId: "pi_edit" };
+      // Decided before the mint, and again on the claim's store under the Payment row lock.
+      expect(mocks.mergeVerdict.mock.calls).toEqual([[mocks.prisma, liveAsk], [store, liveAsk]]);
+      expect(deps.wait).not.toHaveBeenCalled();
+      expect(mocks.createIntent).toHaveBeenCalledTimes(1);
+      expect(mocks.createIntent).toHaveBeenCalledWith(expect.objectContaining({ amountCents: 6500 }));
+      expect(mocks.upsert).toHaveBeenCalledTimes(1);
+      expect(mocks.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({ amountCents: 6500, carriedAskCents: 2500, reason: CREDIT_RELEASE_ASK_REASON, hadIssuedXeroInvoice: false }),
+      );
+      expect(store.paymentRecoveryOperation.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({ create: expect.objectContaining({ type: "CANCEL_PAYMENT_INTENT", paymentIntentId: "pi_edit" }) }),
+      );
+      expect(mocks.cancelSuperseded).toHaveBeenCalledWith(expect.objectContaining({ newPaymentIntentId: "pi_new" }));
+      expect(deps.complete).toHaveBeenCalledWith("op-1");
+      expect(mocks.signalOfficers).not.toHaveBeenCalled();
+    });
+
+    it("a merge that no longer holds under the lock retries: nothing written, nothing superseded", async () => {
+      mocks.prisma.payment.findUnique.mockResolvedValue(withEdit());
+      mocks.mergeVerdict.mockResolvedValueOnce({ merge: true }).mockResolvedValueOnce({ merge: false, reason: "invoice-cannot-follow" });
+      const deps = runnerDeps();
+      await expect(processCreditReleaseAskOperation(operation, CLUB_FORMAT_TEST, asDeps(deps), vi.fn().mockResolvedValue(open))).rejects.toThrow(
+        /edit request on the booking changed/,
+      );
+      expect(mocks.upsert).not.toHaveBeenCalled();
+      expect(store.paymentRecoveryOperation.upsert).not.toHaveBeenCalled();
+      expect(mocks.cancelSuperseded).not.toHaveBeenCalled();
+      expect(deps.complete).not.toHaveBeenCalled();
+    });
+
+    it("a merge that loses its claim supersedes nothing and moves no invoice", async () => {
+      mocks.prisma.payment.findUnique.mockResolvedValue(withEdit());
+      const deps = runnerDeps();
+      deps.holdClaim.mockResolvedValue(null as never);
+      await run({ deps });
+      expect(mocks.upsert).not.toHaveBeenCalled();
+      expect(mocks.cancelSuperseded).not.toHaveBeenCalled();
+      expect(mocks.retireAfterWrite).not.toHaveBeenCalled();
+      expect(deps.complete).not.toHaveBeenCalled();
+    });
   });
 
   it("asks for the smaller figure when part of the release was paid meanwhile, under a key that names the amount", async () => {

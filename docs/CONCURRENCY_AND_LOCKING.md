@@ -5649,8 +5649,15 @@ the stamp boundary of the existing guarded claim in `cron-additional-payment-rem
 read and the bank-transfer offer that decide whether a released-credit reminder goes
 (`credit-release-reminder-gate.ts`, `INV-ADDPAY-051`) run before that claim and outside any
 transaction, in the cron and in the manual re-send alike; a withheld reminder claims nothing,
-and its one audit note is written outside any lock. A release waiting behind an unpaid edit
-request goes back through the recovery runner's one failure write
+and its one audit note is written outside any lock. A release merging into an unpaid edit
+request (`INV-ADDPAY-052`, #4491) takes nothing new: its merge decision is read before the
+Stripe mint and again inside the claim's existing transaction, after the `Payment` row lock
+and the sizing fence, with a change throwing to retry; the supersede and the invoice move
+then run as for every superseding minter (`INV-PAY-140`). Stated limit, shared with every
+superseding minter: the move passes over the superseded edit ask while its cancel is still in
+flight, so if the immediate cancel fails and the edit's invoice is old enough for the
+waiting-invoice reaper, the reaper can retire it before the cancel lands (#4665). A release that cannot merge, waiting behind an unpaid edit
+request, goes back through the recovery runner's one failure write
 (`markPaymentRecoveryOperationFailed`), fenced on the attempt its worker holds, with that
 attempt handed back; it takes no lock and changes no money.
 
@@ -6788,6 +6795,18 @@ funnel's upsert until both arrive, past the old read and before either write,
 on an existing row and a missing one. Both keys survive; on the pre-#4445 code
 all four cases lose one. It also compares the statement with the old spread
 across stored and incoming shapes.
+
+#4657: the same merge serves a second writer that is not the funnel. The
+erased-member contact status check (`recordObservation` in
+`xero-erased-member-contact-status-check.ts`) found each retired Member
+`CONTACT` link with `findMany`, read its metadata and wrote back a spread, so a
+concurrent writer's key on that link could be lost. It now selects only the row
+ids and calls `mergeXeroObjectLinkMetadata` with a plan from
+`planXeroObjectLinkMetadataMerge`, with the same top-level meaning. It takes no
+lock and joins no advisory cohort for the same reason: it writes only link
+metadata. `xero-erased-contact-status-metadata.realdb.test.ts` holds the
+observation between its read and its write while another writer merges a key;
+on the old read-then-write code that key is lost.
 
 ## One Xero contact, one local home: the contact-home key (#3367)
 

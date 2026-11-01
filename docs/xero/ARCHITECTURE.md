@@ -4140,7 +4140,14 @@ once, by card, and Xero is told about the payment without a second invoice.
   `createXeroPaymentForInvoice` against the booking's invoice, from the Stripe
   account, dated the day Stripe took it. The `XeroObjectLink` (role
   `CREDIT_RELEASE_PAYMENT`) is the done marker. An edit's own money stays on its
-  supplementary invoice, so one card payment is recorded against two invoices.
+  supplementary invoice, so one card payment is recorded against two invoices. That
+  holds in either order: a release on an unpaid edit request merges into one request
+  (#4491, `INV-ADDPAY-052`) only where the edit's waiting invoice can move onto it
+  (`anchorInvoicesMoveRefusal`, the one test the superseded-invoice move itself asks,
+  read through `readAskInvoicesForCarry`), so its capture releases that invoice for the
+  edit's own amount and the sweep records the rest. An edit billed on a #3980 gap
+  invoice anchored on it is not merged: the merged capture's receipt would record it
+  on the booking's invoice.
 - **One writer per capture.** The ordinary additional-capture receipt writer
   (`readCaptureRecorder`) stands down for a capture the sweep owns, and subtracts the
   sweep's share from one it shares with an edit, so the card payment is never recorded

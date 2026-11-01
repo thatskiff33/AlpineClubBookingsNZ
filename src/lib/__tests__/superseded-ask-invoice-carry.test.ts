@@ -103,8 +103,10 @@ import {
   followSupersededAskInvoicesForIntentSafely,
   followSupersededAskInvoicesSafely,
   followSupersededAskInvoicesToCarrier,
+  readAskInvoicesForCarry,
   supersededAskCarriers,
 } from "@/lib/superseded-ask-invoice-carry";
+import { prisma as storeClient } from "@/lib/prisma";
 import { buildEditFinancialReviewChargeReason } from "@/lib/payment-recovery-keys";
 import { supplementaryInvoiceWaitedFirstOn } from "@/lib/supplementary-invoice-parked-from";
 
@@ -604,5 +606,95 @@ describe("the callers' spelling (`followSupersededAskInvoicesSafely`)", () => {
     mocks.lockAnchor.mockRejectedValue(new Error("connection reset"));
     await expect(followSupersededAskInvoicesSafely({ paymentId: "pay_1" })).resolves.toBeNull();
     expect(payloadOf("op_mod_a").paymentIntentId).toBe("pi_a");
+  });
+});
+
+describe("#4491: what the move would take, read before a minter supersedes (`readAskInvoicesForCarry`)", () => {
+  const read = (intents: string[]) => readAskInvoicesForCarry(storeClient as never, intents);
+
+  it("a waiting invoice on a change with nothing else going out is carriable, with where its money was first asked", async () => {
+    store.operations.push(waitingInvoice("mod_e", "pi_e", 3000));
+    expect(await read(["pi_e"])).toEqual([{ anchorId: "mod_e", firstWaitedOn: "pi_e", carriable: true, refusal: null }]);
+  });
+
+  it("nothing is read for no intents, and an invoice naming another request is not returned", async () => {
+    store.operations.push(waitingInvoice("mod_x", "pi_x", 3000));
+    expect(await read([])).toEqual([]);
+    expect(await read(["pi_e"])).toEqual([]);
+  });
+
+  it.each([
+    ["already released to go out", { status: "PENDING" }],
+    ["sent", { status: "SUCCEEDED" }],
+    ["carrying an error code", { lastErrorCode: "SOMETHING" }],
+    ["resolved by hand", { manuallyResolvedAt: new Date("2026-06-30T00:00:00.000Z") }],
+  ])("an invoice naming the request that is %s is not carriable", async (_label, overrides) => {
+    store.operations.push(waitingInvoice("mod_e", "pi_e", 3000, overrides));
+    expect(await read(["pi_e"])).toEqual([{ anchorId: "mod_e", firstWaitedOn: "pi_e", carriable: false, refusal: expect.any(String) }]);
+  });
+
+  it("a cancelled invoice is not returned at all", async () => {
+    store.operations.push(waitingInvoice("mod_e", "pi_e", 3000, { status: "CANCELLED" }));
+    expect(await read(["pi_e"])).toEqual([]);
+  });
+
+  it("a change with an active invoice link, or another invoice going out, is not carriable", async () => {
+    store.operations.push(waitingInvoice("mod_e", "pi_e", 3000));
+    store.links.push({ id: "link_e", xeroObjectId: "inv_xero_e", localModel: "BookingModification", localId: "mod_e", xeroObjectType: "INVOICE", role: "SUPPLEMENTARY_INVOICE", active: true, createdAt: new Date(0) });
+    expect((await read(["pi_e"]))[0]!.carriable).toBe(false);
+    store.links = [];
+    store.operations.push(waitingInvoice("mod_e", "pi_other", 3000, { id: "op_mod_e_repair", status: "PENDING" }));
+    expect((await read(["pi_e"]))[0]!.carriable).toBe(false);
+  });
+
+  it("an invoice whose billed figure cannot be read is not carriable", async () => {
+    store.operations.push(waitingInvoice("mod_e", "pi_e", 3000, { requestPayload: { paymentIntentId: "pi_e" } }));
+    expect((await read(["pi_e"]))[0]!.carriable).toBe(false);
+  });
+
+  /*
+    INV-SSOT: the pre-check and the move ask ONE test (`anchorInvoicesMoveRefusal`), so they cannot
+    disagree. Each fixture runs through both: the minter's read of A's invoice, and the real move
+    of it onto B after B supersedes A.
+  */
+  it.each([
+    ["nothing in the way", () => {}, null],
+    ["an active invoice link on the change", () => {
+      store.links.push({ id: "link_a", xeroObjectId: "inv_xero_a", localModel: "BookingModification", localId: "mod_a", xeroObjectType: "INVOICE", role: "SUPPLEMENTARY_INVOICE", active: true, createdAt: new Date(0) });
+    }, "invoice-already-linked"],
+    ["another invoice of the change going out", () => {
+      store.operations.push(waitingInvoice("mod_a", "pi_other", 5000, { id: "op_mod_a_repair", status: "PENDING" }));
+    }, "another-invoice-queued"],
+    ["an unreadable billed figure", () => {
+      const row = store.operations.find((operation) => operation.id === "op_mod_a")!;
+      row.requestPayload = { paymentIntentId: "pi_a" };
+    }, "unreadable-invoice"],
+    ["not waiting (already released)", () => {
+      store.operations.find((operation) => operation.id === "op_mod_a")!.status = "PENDING";
+    }, "not-waiting"],
+  ] as const)("the pre-check and the move agree: %s", async (_label, arrange, refusal) => {
+    aSupersededByB();
+    arrange();
+    const [readA] = (await read(["pi_a"])).filter((invoice) => invoice.anchorId === "mod_a" && invoice.firstWaitedOn === "pi_a");
+    expect(readA).toMatchObject({ carriable: refusal === null, refusal });
+    const moved = await followSupersededAskInvoicesToCarrier({ paymentId: "pay_1", carrierPaymentIntentId: "pi_b" });
+    const movedA = moved.refusals.find((entry) => entry.anchorId === "mod_a")?.reason ?? null;
+    if (refusal === null) {
+      expect(payloadOf("op_mod_a").paymentIntentId).toBe("pi_b");
+      expect(movedA).toBeNull();
+    } else {
+      expect(payloadOf("op_mod_a").paymentIntentId).toBe("pi_a");
+      // A row that is not waiting is never read by the move, so it refuses nothing by name.
+      expect(movedA).toBe(refusal === "not-waiting" ? null : refusal);
+    }
+  });
+
+  it("a moved invoice reports the request it was first asked on", async () => {
+    store.operations.push(
+      waitingInvoice("mod_e", "pi_r", 3000, {
+        requestPayload: { ...(waitingInvoice("mod_e", "pi_r", 3000).requestPayload as object), parkedFromPaymentIntentId: "pi_e" },
+      }),
+    );
+    expect(await read(["pi_r"])).toEqual([{ anchorId: "mod_e", firstWaitedOn: "pi_e", carriable: true, refusal: null }]);
   });
 });

@@ -607,6 +607,13 @@ import "./ended-booking-ask-mint-race.realdb.test";
 // unless RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own `race-3403-`
 // fixtures.
 import "./superseded-ask-invoice-carry.realdb.test";
+// #4491 (`INV-ADDPAY-052`) reuses it to prove a credit release merges into an
+// unpaid edit request: one request for both, the edit's invoice following it,
+// and the one card payment recorded against both invoices once; the wait where
+// the edit's invoice cannot follow; and the edit paid or withdrawn between the
+// release's read and its claim. Skipped unless RUN_CONCURRENCY_RACE_TESTS=1; it
+// owns and cleans its own `race-4491-` fixtures.
+import "./credit-release-merge-into-edit.realdb.test";
 // #4357 reuses it to prove every saved-card door charges the booking's worth:
 // a change fee the edit lifecycle's writer recorded on an unsettled payment is
 // charged by the charge-saved-method route and the officer's
@@ -677,6 +684,9 @@ import "./login-throttle.realdb.test";
 // unless RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own `race-4445-`
 // links.
 import "./xero-object-link-metadata-merge.realdb.test";
+// #4657 reuses it to prove the erased-member contact status check keeps a
+// concurrent writer's link metadata; it owns and cleans its own `race-4657-` links.
+import "./xero-erased-contact-status-metadata.realdb.test";
 // #2374 (AID-5) deliberately is NOT imported here, unlike the two suites above.
 // `ai-diagnostics-select-only-role.realdb.test.ts` provisions and drops a cluster
 // ROLE and revokes `TEMPORARY ... FROM PUBLIC` on the shared throwaway database

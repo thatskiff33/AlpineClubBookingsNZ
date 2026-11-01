@@ -2328,9 +2328,12 @@ inbound fence records its conflict the same way, under the
   -> closed, nothing asked    (not a release / ended booking / payment not captured /
                                organiser-settled / invoice paid in Xero / nothing owed /
                                below the card minimum, the last with an officer alert)
-  -> waiting                  (an unpaid edit request is open: back to the longest retry interval,
-                               no attempt spent, never terminal; officers told once, INV-ADDPAY-051)
-  -> ADDITIONAL row PENDING (reason credit_released_outside_app, carries any live ask)
+  -> waiting                  (an unpaid edit request is open whose invoice would not follow a
+                               merge: back to the longest retry interval, no attempt spent, never
+                               terminal; officers told once, INV-ADDPAY-051)
+  -> ADDITIONAL row PENDING (reason credit_released_outside_app, carries any live ask; an unpaid
+                               edit request is MERGED into it, its waiting invoice moved onto it,
+                               cause "mixed", INV-ADDPAY-052)
        -> SUCCEEDED by card  -> payment recorded on the booking's invoice (sweep, XeroObjectLink)
        -> FAILED+withdrawn   when Xero shows the invoice PAID (the request alone, or carrying only
                                earlier released credit): card payment cancelled first,
@@ -2345,7 +2348,7 @@ inbound fence records its conflict the same way, under the
                                or the request cannot be matched to it (none, a 404, no amount due)
 ```
 
-`INV-ADDPAY-045`, `INV-ADDPAY-046`, `INV-ADDPAY-048`, `INV-ADDPAY-050`, `INV-ADDPAY-051`.
+`INV-ADDPAY-045`, `INV-ADDPAY-046`, `INV-ADDPAY-048`, `INV-ADDPAY-050`, `INV-ADDPAY-051`, `INV-ADDPAY-052`.
 
 ### Manual refund task lifecycle (#2262)
 
@@ -3919,6 +3922,16 @@ resolves in Xero Operations.
 Refund notes target the invoice that held each paid share and wait for its
 unpaid-balance waiver to finish before payout. The organiser's app
 notice is a separate durable email row, sent by the email retry lifecycle.
+
+The outbox scan (`processQueuedXeroOutboxOperations`) and the retry scan
+(`processQueuedXeroOperationRetries`) read `PENDING` rows oldest first, ordered
+by `createdAt` then `id` (#4663). `createdAt` comes from JS time, so rows queued
+in one millisecond tie (every row under the frozen test clock), and without the
+`id` tiebreak a tie fell to PostgreSQL's physical row order. The `id` is a cuid,
+so a tie breaks deterministically but not in insertion order: nothing may rely
+on first-in-first-out within one millisecond. A test that runs the worker with
+`limit: 1` reads the row the worker holds, or makes its target the only eligible
+row, and never assumes which of two tied rows is first.
 
 ```text
 local business event -> Xero outbox operation queued
