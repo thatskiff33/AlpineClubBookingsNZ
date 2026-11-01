@@ -35,6 +35,21 @@
  * left as it is, never reported as cancelled. A second run finds it cancelled
  * and does nothing. The debt, any replacement ask and the late-capture refund
  * path are untouched.
+ *
+ * #4631: THE RUNNER'S SIDE, for any additional ask's recovery - an ordinary
+ * ask's as well as a re-issue's. The recovery runner mints before it writes, and
+ * writes only while it still holds its claim (`holdAdditionalIntentRecoveryClaim`).
+ * When that hold loses, its intent is in the door's position: once the recovery
+ * is closed terminally by a net-off or a fold (`reissueClosedUnminted`), nobody
+ * writes under it again - the hold, the door's write and a stale runner's are
+ * all fenced on a claimable recovery - so the same proof, re-read after the
+ * hold's transaction has ended, and the same cancel apply
+ * (`settleLostRecoveryClaimHold`). Anything else - a recovery reset or
+ * reclaimed by another runner, still PROCESSING, PENDING or FAILED - may yet
+ * record it, and is left. So is an intent the runner ADOPTED by matching
+ * (#4036) rather than minted under its own key: it is not the runner's own,
+ * and another edit's stalled door or recovery may still record it under that
+ * edit's key, which the owner check cannot see.
  */
 import { PaymentRecoveryOperationStatus } from "@prisma/client";
 
@@ -79,9 +94,48 @@ export async function settleLostReissuedAskFence({
   return moved;
 }
 
+/**
+ * #4631: after the runner's claim hold lost (its transaction ended, nothing
+ * written): re-read the recovery, and cancel the intent the runner minted when
+ * a net-off or a fold closed it and no row or recovery names that intent.
+ * Never throws: an unread or unproven recovery cancels nothing, and the run
+ * ends as before.
+ */
+export async function settleLostRecoveryClaimHold(call: {
+  operationId: string;
+  bookingId: string;
+  /** The intent the runner minted and could not write. */
+  paymentIntentId: string;
+  /** Found by matching (`mintOrdinaryAskIntent`, #4036), not minted under this recovery's key: never cancelled. */
+  adopted: boolean;
+}): Promise<void> {
+  const moved = await prisma.paymentRecoveryOperation
+    .findUnique({ where: { id: call.operationId }, select: { status: true, lastError: true } })
+    .catch((err: unknown) => {
+      logger.error({ err, ...call, event: ABANDONED_REISSUE_INTENT_LOG_EVENT, outcome: "unread" }, "Could not re-read a recovery whose claim was lost; its minted intent is not cancelled (#4631)");
+      return null;
+    });
+  const { adopted, ...intent } = call;
+  const closedBy = reissueClosedUnminted(moved);
+  if (closedBy && adopted) {
+    logger.warn(
+      { ...intent, event: ABANDONED_REISSUE_INTENT_LOG_EVENT, closedBy, outcome: "adopted" },
+      "Additional intent recovery lost its claim on an intent it adopted by matching (#4036); not its own, so it is left in Stripe (#4631)",
+    );
+    return;
+  }
+  logger.warn(
+    { ...call, status: moved?.status, closedBy },
+    "Additional intent recovery lost its claim before writing its row; nothing written - the minted intent was never offered to anyone, and is cancelled at Stripe only when a net-off or fold closed the recovery (#3954, #4631)",
+  );
+  if (closedBy) await cancelAbandonedReissuedAskIntent({ ...intent, closedBy });
+}
+
 async function cancelAbandonedReissuedAskIntent(call: {
   bookingId: string;
-  bookingModificationId: string;
+  /** Who minted it: the door names its edit, the runner its recovery (#4631). */
+  bookingModificationId?: string;
+  operationId?: string;
   paymentIntentId: string;
   closedBy: "netted" | "folded" | "minted-elsewhere" | "runner-wrote-another";
 }): Promise<void> {
@@ -93,13 +147,13 @@ async function cancelAbandonedReissuedAskIntent(call: {
     ]);
     if (row || recovery) {
       logger.warn(
-        { ...context, outcome: "owned", paymentTransactionId: row?.id, operationId: recovery?.id },
-        "A re-issued ask's intent is named by a payment row or recovery although its own recovery ended without it; left to that owner (#4052)",
+        { ...context, outcome: "owned", paymentTransactionId: row?.id, ownerOperationId: recovery?.id },
+        "An ask's minted intent is named by a payment row or recovery although its own recovery ended without it; left to that owner (#4052)",
       );
       return;
     }
   } catch (err) {
-    logger.error({ err, ...context, outcome: "unread" }, "Could not check an abandoned re-issued ask's intent for an owner; it is not cancelled (#4052)");
+    logger.error({ err, ...context, outcome: "unread" }, "Could not check an abandoned ask's intent for an owner; it is not cancelled (#4052)");
     return;
   }
 
@@ -110,14 +164,14 @@ async function cancelAbandonedReissuedAskIntent(call: {
     });
     const outcome = { ...context, outcome: result.canceled ? "cancelled" : "uncancellable", canceled: result.canceled, intentStatus: result.paymentIntent.status };
     if (result.canceled) {
-      logger.info(outcome, "Cancelled the unused intent a door minted for a re-issued ask whose recovery moved mid-mint (#4052)");
+      logger.info(outcome, "Cancelled the unused intent minted for an ask whose recovery moved mid-mint (#4052)");
     } else {
-      logger.warn(outcome, "Left an abandoned re-issued ask's intent alone: Stripe no longer lets it be cancelled (#4052)");
+      logger.warn(outcome, "Left an abandoned ask's intent alone: Stripe no longer lets it be cancelled (#4052)");
     }
   } catch (err) {
     logger.error(
       { err, ...context, outcome: "cancel-failed" },
-      "Could not cancel the unused intent a door minted for a re-issued ask whose recovery moved mid-mint; it was never offered, so it cannot be paid, and stays in Stripe (#4052)",
+      "Could not cancel the unused intent minted for an ask whose recovery moved mid-mint; it was never offered, so it cannot be paid, and stays in Stripe (#4052)",
     );
   }
 }

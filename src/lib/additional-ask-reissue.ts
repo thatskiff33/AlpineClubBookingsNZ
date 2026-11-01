@@ -408,7 +408,7 @@ export async function readReissuedAskRecovery(
 }
 
 /**
- * #4052: whether a re-issue's recovery was closed without its mint, and by
+ * #4052: whether an additional ask's recovery was closed without its mint, and by
  * whom: a later reduction that netted it off, or a later increase that folded
  * it into its own ask (`closeWaitingAskRecoveries`, each with its note). Either
  * way nobody mints under its Stripe key again. Null for anything else - still
