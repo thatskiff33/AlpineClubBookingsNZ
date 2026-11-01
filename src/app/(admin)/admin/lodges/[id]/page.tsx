@@ -93,6 +93,9 @@ export default function LodgeConfigurationHubPage() {
   // membership area, not lodge (#4581): a lodge-only admin must not be offered a
   // link the layout would refuse, nor a summary fetch the API would 403.
   const canOpenLockers = useCanOpenAdminPath("/admin/lockers") === true;
+  // #4643: the card follows the fee console (bookings OR finance); its count, the seasons API (bookings).
+  const canOpenFees = useCanOpenAdminPath("/admin/fees") === true;
+  const canReadSeasons = useCanOpenAdminPath("/admin/seasons") === true;
   const [lodge, setLodge] = useState<LodgeRecord | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -217,20 +220,22 @@ export default function LodgeConfigurationHubPage() {
         .catch(() => {});
     }
 
-    fetch(`/api/admin/seasons?${query}`)
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data) => {
-        if (cancelled || !Array.isArray(data)) return;
-        const active = data.filter(
-          (season: { active: boolean }) => season.active,
-        ).length;
-        setSeasons({
-          loaded: true,
-          count: data.length,
-          detail: `${active} active`,
-        });
-      })
-      .catch(() => {});
+    if (canReadSeasons) {
+      fetch(`/api/admin/seasons?${query}`)
+        .then((res) => (res.ok ? res.json() : null))
+        .then((data) => {
+          if (cancelled || !Array.isArray(data)) return;
+          const active = data.filter(
+            (season: { active: boolean }) => season.active,
+          ).length;
+          setSeasons({
+            loaded: true,
+            count: data.length,
+            detail: `${active} active`,
+          });
+        })
+        .catch(() => {});
+    }
 
     fetch(`/api/admin/chores?${query}`)
       .then((res) => (res.ok ? res.json() : null))
@@ -255,7 +260,7 @@ export default function LodgeConfigurationHubPage() {
     return () => {
       cancelled = true;
     };
-  }, [lodgeId, canOpenLockers]);
+  }, [lodgeId, canOpenLockers, canReadSeasons]);
 
   async function saveCapacityOverride() {
     setSavingCapacity(true);
@@ -342,7 +347,7 @@ export default function LodgeConfigurationHubPage() {
     },
     {
       key: "seasons",
-      enabled: true,
+      enabled: canOpenFees,
       title: "Seasons & Rates",
       icon: CalendarRange,
       // Consolidated fee console (#1933, E7): hut nightly rates now live in
@@ -643,7 +648,7 @@ export default function LodgeConfigurationHubPage() {
                 <p className="text-sm text-muted-foreground">
                   {configured
                     ? area.summary.detail ?? "Configured."
-                    : area.emptyHint}
+                    : area.summary.loaded ? area.emptyHint : null /* #4643: an unread count claims nothing */}
                 </p>
                 <Button asChild variant="outline" size="sm">
                   <Link href={area.href}>Configure</Link>

@@ -103,3 +103,44 @@ describe("lodge hub Lockers card (#4581)", () => {
     expect(fetchedUrls.some((u) => u.startsWith("/api/admin/lockers"))).toBe(true);
   });
 });
+
+/**
+ * #4643 — the Seasons & Rates card links to the fee console (`/admin/fees`,
+ * bookings OR finance); its season count comes from `/api/admin/seasons`
+ * (bookings). The card follows the console, the count follows the API.
+ */
+describe("lodge hub Seasons & Rates card (#4643)", () => {
+  it("hides the card and skips the seasons fetch for a lodge-only admin", async () => {
+    permissionMatrix = { ...emptyAdminPermissionMatrix(), lodge: "edit" };
+    render(<LodgeConfigurationHubPage />);
+    await screen.findByText("Chores");
+    expect(screen.queryByText("Seasons & Rates")).not.toBeInTheDocument();
+    expect(fetchedUrls.some((u) => u.startsWith("/api/admin/seasons"))).toBe(false);
+  });
+
+  it("shows the card without a count, and claims nothing, for a finance admin without bookings", async () => {
+    permissionMatrix = {
+      ...emptyAdminPermissionMatrix(),
+      lodge: "edit",
+      finance: "view",
+    };
+    render(<LodgeConfigurationHubPage />);
+    await waitFor(() => expect(screen.getByText("Seasons & Rates")).toBeInTheDocument());
+    await screen.findByText("Chores");
+    expect(fetchedUrls.some((u) => u.startsWith("/api/admin/seasons"))).toBe(false);
+    expect(screen.queryByText(/No seasons yet/)).not.toBeInTheDocument();
+  });
+
+  it("shows the card and its count for a bookings admin", async () => {
+    permissionMatrix = {
+      ...emptyAdminPermissionMatrix(),
+      lodge: "edit",
+      bookings: "view",
+    };
+    render(<LodgeConfigurationHubPage />);
+    await waitFor(() => expect(screen.getByText("Seasons & Rates")).toBeInTheDocument());
+    expect(fetchedUrls.some((u) => u.startsWith("/api/admin/seasons"))).toBe(true);
+    // The stub returns no seasons, so once read the card says so.
+    await waitFor(() => expect(screen.getByText(/No seasons yet/)).toBeInTheDocument());
+  });
+});
