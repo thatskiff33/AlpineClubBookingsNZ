@@ -19,6 +19,12 @@
  * those files in the PR diff view and keeps them out of this count; add a
  * generated file there, never to a list in this script.
  *
+ * The attributes are read from the PR's BASE (`git check-attr --source`, git
+ * 2.40+), never from its own tree: otherwise a PR could mark its own files
+ * generated in `.gitattributes` and shrink its own count. The cost is that a
+ * PR adding a generated file AND its `.gitattributes` line is counted in full
+ * once; every later PR sees the line.
+ *
  * Runs before `pnpm install --frozen-lockfile` in the `verify` job, so it uses
  * Node built-ins only.
  */
@@ -26,7 +32,7 @@ import { execFileSync } from "node:child_process";
 import process from "node:process";
 
 import { workflowCommand } from "./dependency-mitigation.mjs";
-import { fetchLivePrBody, readEventPrBody, selectPrBody } from "./pr-body.mjs";
+import { fetchLivePrBody, readEventPrBody, selectPrBody, stripNonAnswerText } from "./pr-body.mjs";
 import { isMainModule } from "../lib/is-main-module.mjs";
 
 export const LARGE_PR_LINE_THRESHOLD = 800;
@@ -66,10 +72,14 @@ export function parseNumstat(stdout) {
   return records;
 }
 
-/** Which of `paths` `.gitattributes` marks generated, read with `git check-attr`. */
-export function generatedPaths(paths, { cwd } = {}) {
+/**
+ * Which of `paths` `.gitattributes` marks generated, as of the commit `source`
+ * (the PR's base; see the header), read with `git check-attr --source`.
+ */
+export function generatedPaths(paths, { cwd, source }) {
+  if (!source) throw new Error("generatedPaths needs the commit to read .gitattributes from (source).");
   if (paths.length === 0) return new Set();
-  const stdout = execFileSync("git", ["check-attr", "-z", GENERATED_ATTRIBUTE, "--stdin"], {
+  const stdout = execFileSync("git", ["check-attr", "-z", `--source=${source}`, GENERATED_ATTRIBUTE, "--stdin"], {
     encoding: "utf8",
     input: `${paths.join("\0")}\0`,
     ...(cwd ? { cwd } : {}),
@@ -112,17 +122,18 @@ export function measurePrSize(base, head, { cwd } = {}) {
   );
   const records = parseNumstat(stdout);
   const paths = [...new Set(records.flatMap((r) => (r.oldPath ? [r.path, r.oldPath] : [r.path])))];
-  return countReviewableLines(records, generatedPaths(paths, { cwd }));
+  return countReviewableLines(records, generatedPaths(paths, { cwd, source: base }));
 }
 
 /**
  * The body's `large-pr:` reason, or null. It must start its own line
  * (optionally as a list item or in bold/code markers) and carry a non-empty
- * reason on that line. HTML comments are ignored, so the template's own
- * instruction cannot satisfy it.
+ * reason on that line. HTML comments and code fences are ignored
+ * (`stripNonAnswerText`), so neither the template's own instruction nor a
+ * quoted example can satisfy it.
  */
 export function largePrReason(body) {
-  const text = (body ?? "").replace(/<!--[\s\S]*?(?:-->|$)/g, "");
+  const text = stripNonAnswerText(body);
   const match = /^[^\S\r\n]*(?:[-*+>][^\S\r\n]*)*[`*_]*large-pr:[`*_]*[^\S\r\n]*(\S[^\r\n]*?)[^\S\r\n]*\r?$/im.exec(
     text,
   );

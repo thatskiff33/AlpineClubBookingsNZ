@@ -68,7 +68,7 @@ describe("the repository's own generated list", () => {
         "prisma/migrations/20260101000000_x/migration.sql",
         "package.json",
       ],
-      { cwd: repoRoot },
+      { cwd: repoRoot, source: "HEAD" },
     );
     expect([...generated].sort()).toEqual([
       "pnpm-lock.yaml",
@@ -115,6 +115,18 @@ describe("measurePrSize against a real repository", () => {
       excludedLines: 5900,
       excluded: ["gen/out.json", "pnpm-lock.yaml"],
     });
+  });
+
+  it("reads .gitattributes from the base, so a PR cannot mark its own files generated", () => {
+    makeRepo({
+      "src/a.ts": lines(300),
+      ".gitattributes": "pnpm-lock.yaml linguist-generated\ngen/** linguist-generated=true\nsrc/** linguist-generated\n",
+    });
+    // src/** is generated only in the PR's own tree; the base says otherwise.
+    expect(measurePrSize("base", "work", { cwd: root }).lines).toBe(301);
+    expect(generatedPaths(["src/a.ts"], { cwd: root, source: "work" }).has("src/a.ts")).toBe(true);
+    expect(generatedPaths(["src/a.ts"], { cwd: root, source: "base" }).has("src/a.ts")).toBe(false);
+    expect(() => generatedPaths(["src/a.ts"], { cwd: root })).toThrow(/source/);
   });
 
   it("counts a pure rename as nothing and its edits as lines", () => {
@@ -167,6 +179,8 @@ describe("largePrReason", () => {
     expect(largePrReason("large-pr:\n- next bullet\n")).toBeNull();
     expect(largePrReason("Add a large-pr: line if needed")).toBeNull();
     expect(largePrReason("<!-- \nlarge-pr: <reason>\n -->")).toBeNull();
+    expect(largePrReason("Write it like this:\n\n```text\nlarge-pr: generated seed data\n```\n")).toBeNull();
+    expect(largePrReason("~~~\nlarge-pr: unclosed fence example\n")).toBeNull();
     const template = readFileSync(join(repoRoot, ".github", "pull_request_template.md"), "utf8");
     expect(template).toContain("large-pr:");
     expect(largePrReason(template)).toBeNull();
