@@ -385,7 +385,7 @@ export function buildMemberMoneyBatch(context: MemberMoneyPostingContext, plan: 
 
     if (lines.length < 2) problems.push(`a ${plan.kind} batch needs at least two legs`);
     const net = lines.reduce((sum, line) => sum + (line.side === "DEBIT" ? line.amountCents : -line.amountCents), 0);
-    if (net !== 0) problems.push(`debits and credits differ by ${net} cents`);
+    if (net !== 0) problems.push(`debits minus credits is ${net} cents, not 0`);
     sources.forEach((source, index) => {
       if (source.kind === "BOOKING_LEDGER" && lines.length > 0 && !lines.some((line) => line.source === index)) {
         problems.push(`legacy line ${source.id} is linked but no leg posts it`);
