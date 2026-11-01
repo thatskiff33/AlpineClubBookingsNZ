@@ -185,11 +185,6 @@ export function readDataKeyRing(): DataKeyRingState {
   return memo.state;
 }
 
-/** Is a usable ring set? */
-export function isDataKeyRingConfigured(): boolean {
-  return readDataKeyRing().status === "configured";
-}
-
 function configuredRing(): Extract<DataKeyRingState, { status: "configured" }> | null {
   const state = readDataKeyRing();
   if (state.status === "invalid") throw new DataKeyRingError(state.reason);
