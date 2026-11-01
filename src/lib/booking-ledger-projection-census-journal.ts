@@ -1,11 +1,14 @@
 /**
- * COMPARISON REPORT V1: THE JOURNAL AGAINST THE LEGACY LEDGER (#4627, Ledger
- * M3b; the M3 plan on #4515). Pure: the census row in, one identity and its
- * integrity findings out, added to the booking's evaluation.
+ * COMPARISON REPORTS V1 AND V2: THE JOURNAL AGAINST THE LEGACY LEDGER (#4627,
+ * Ledger M3b; #4628, M3c; the M3 plan on #4515). Pure: the census row in, ONE
+ * journal identity and its integrity findings out, added to the booking's
+ * evaluation: `JOURNAL_PENDING` (v2, `pendingChargeComparison` below) for a
+ * bank-transfer booking whose binding R01 is in the journal and none of whose
+ * legacy lines is linked yet, `JOURNAL` (v1) for every other booking.
  *
- * For every booking whose confirmation (R01) is in the member-money journal,
- * the journal's live charge components must add up to the legacy charge lines
- * bridged to it. Each line counts only through the one rule that maps a legacy
+ * V1: for every booking whose confirmation (R01) is in the member-money journal
+ * and linked, the journal's live charge components must add up to the legacy
+ * charge lines bridged to it. Each line counts only through the one rule that maps a legacy
  * line to a component (`journalComponentOfLegacyLine`, `INV-SSOT`), so a
  * settlement line never does. The comparison is of the booking's total, not
  * component by component: a give-back the booking charge cannot absorb is taken
@@ -15,8 +18,9 @@
  * the bridged lines add up to, so an acknowledgement uses the census's own
  * format, with identity `JOURNAL`.
  *
- * Every charge line with money on such a booking must be bridged: one that is
- * not is an `UNBRIDGED_CHARGE_LINE` integrity finding (a door that wrote the
+ * Every charge line with money on such a booking must be bridged (and on a
+ * pending one, none may exist: see v2): one that is not is an
+ * `UNBRIDGED_CHARGE_LINE` integrity finding (a door that wrote the
  * legacy line and skipped the journal), which holds the gate. A booking
  * confirmed before M3b is NOT_APPLICABLE: M9 back-posts its whole history.
  */

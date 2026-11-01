@@ -5579,9 +5579,11 @@ order. Its participants:
   the switch to internet banking (which also holds the owner's credit-ledger
   key, taken before), and both pay-on-account arms of the school and member
   request approvals. Each resolves its posting context before the transaction
-  (`INV-LOCK-004`): the bookings route and the switch route read it, the
-  approval reuses the batch executor's, the school approval reads it on its
-  club zone.
+  (`INV-LOCK-004`): the bookings route, the group join (an EACH_PAYS_OWN joiner
+  may pay by internet banking) and the switch route read it, the approval reuses
+  the batch executor's, the school approval reads it on its club zone. The
+  create's input type requires the context wherever the method can be internet
+  banking, so a caller cannot omit it and compile.
 - **The pending-charge syncs.** The modification and cancellation posters,
   reached by every edit and cancel door under its `lock(1)`, re-state a pending
   charge where the booking is not yet confirmed on the ledger. They read the

@@ -5,7 +5,9 @@
  * Until the reads move (#3584), `Booking.finalPriceCents` and the five
  * `Payment` money columns are PROJECTIONS of the booking ledger. This module
  * states the seven identities that say so and judges one booking against them
- * (an eighth, `JOURNAL`, is added by `booking-ledger-projection-census-journal.ts`),
+ * (one journal identity is added by `booking-ledger-projection-census-journal.ts`:
+ * `JOURNAL` (#4627), or `JOURNAL_PENDING` (#4628) for a bank-transfer charge
+ * still pending, never both),
  * from a snapshot row it is handed. It reads nothing and writes nothing; the
  * one-snapshot read is `booking-ledger-projection-census-store.ts`, the
  * operator command `scripts/booking-ledger-census.ts`.
@@ -89,8 +91,9 @@ import { reviewAdjustmentEvidence, type ReviewAdjustmentEvidence } from "@/lib/b
  * `owed(b)` against what its columns say is owed (`INV-PAY-047`'s residual plus
  * the ask). Without it a line no column projects — a `CREDIT_ISSUED` or
  * `BANK_REFUND` — could be missing, or wrong, with every column agreeing.
- * `JOURNAL` (#4627) is judged apart, by `booking-ledger-projection-census-journal.ts`,
- * which the census store adds to each evaluation.
+ * `JOURNAL` (#4627) and `JOURNAL_PENDING` (#4628) are judged apart, by
+ * `booking-ledger-projection-census-journal.ts`, which the census store adds to
+ * each evaluation: exactly one of them per booking.
  */
 export const BOOKING_LEDGER_IDENTITIES = [
   "PRICE",

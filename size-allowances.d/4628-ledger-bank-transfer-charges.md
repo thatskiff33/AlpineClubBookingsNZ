@@ -38,3 +38,9 @@ lines: 2085
 reason: the Xero receipt's PAID claim is a confirmation, so the confirmation's
   lines post right after it, inside the same lock(1) and lodge-key transaction,
   as the settle's do.
+
+file: src/lib/group-booking.ts
+lines: 1966
+reason: an EACH_PAYS_OWN joiner paying by internet banking binds its charge in
+  the create, so the join reads the journal context before the create's
+  transaction, on the club zone it already reads, and passes it in.
