@@ -4083,10 +4083,18 @@ late change capture KEPT on a cancelled, invoiced booking (the #3639 task
     supplementary invoice records, never the credit-release sweep's share
     (#4494), and names the captures it took, with the cents, on its payload
     (coveredPaymentIntentIds, coveredCaptureCents)
-  gap invoice send (outbox) or officer Retry, paying from a capture the
-    credit-release sweep has a share of or a CREDIT_RELEASE_PAYMENT link on
-    (#4494) -> raised unpaid, naming nothing, stored before the Xero call;
-    an officer alerted
+  gap invoice send (outbox), officer Retry or PARTIAL repair, where what it
+    takes of a capture plus the credit-release sweep's share (the larger of
+    the ledger's and its CREDIT_RELEASE_PAYMENT links') exceeds the gross
+    capture, or the sweep holds a capture it takes from (#4494) -> no
+    payment recorded, an officer alerted; the payload is stored unpaid before
+    any Xero call (the repair: under its claim, then closed with the reason),
+    naming no capture only where its payment provably never reached Xero,
+    else still naming its captures
+  credit-release sweep beside such a gap invoice (#4494): one whose payment
+    may be in Xero (SUCCEEDED, PARTIAL, resolved, a Xero id, response or
+    link, a stale-RUNNING reset) -> held, an officer alerted; one that cannot
+    have paid yet -> waiting, no alert
   receipt worker:
     a LIVE invoice create for the booking, or (under the booking's anchor
       lock) a LIVE receipt for it stamped ADDITIONAL_CAPTURE_RECEIPT_PLANNING

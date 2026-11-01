@@ -4096,12 +4096,17 @@ once, by card, and Xero is told about the payment without a second invoice.
   sweep's share either (#4494): `readCapturedStripeCash` names each capture's
   `sweptCents` (all of a held one), and `attributeGapCash` takes them out first, so
   the gap is raised unpaid where only that money could pay it. A gap invoice queued
-  before that fix, or by the previous colour, is caught both ways: the sweep holds,
-  with an alert, where a gap invoice already took more of the capture than its share
-  leaves (`readRecordedByPrimaryOrGap`, the reader the receipt uses); and the gap
-  invoice's send, and an officer's Retry, raise it unpaid, naming nothing, where a
-  capture it pays from has a sweep share or a `CREDIT_RELEASE_PAYMENT` link
-  (`gapPaymentOverlapsCreditRelease`), and alert.
+  before that fix, or by the previous colour, is caught both ways, on OVERLAP: what
+  the gap takes of a capture plus the sweep's share (the larger of the ledger's and
+  its `CREDIT_RELEASE_PAYMENT` links') exceeds the gross capture, or the sweep holds
+  the capture. The sweep holds, with an alert, where an overlapping gap invoice's
+  payment may be in Xero (`gapPaymentMayBeInXero`; `readRecordedByPrimaryOrGap`, the
+  reader the receipt uses), and waits, silently, where it cannot have paid yet. The
+  gap invoice's send, an officer's Retry and the PARTIAL repair record no payment on
+  overlap and alert (`unpaidGapPayloadIfOverlapping`, `skipPartialGapRepairPayment`):
+  the payload goes unpaid, naming no capture only where its payment provably never
+  reached Xero, else still naming them so the sweep keeps holding. A gap invoice
+  that takes only an edit's own part of a shared capture still pays.
 - **It fails closed.** An invoice no longer open, owing less than the card took, a
   partly refunded capture, or a chain that cannot be traced records nothing and alerts
   the officers once a day; failed attempts are an hour apart and capped at five. A

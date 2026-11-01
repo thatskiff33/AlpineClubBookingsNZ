@@ -1791,7 +1791,7 @@ export async function retryXeroSyncOperation(
         repairExistingLink: true,
         format,
       });
-      if (replay?.raisedUnpaid) return { message: "Retried Xero supplementary invoice creation, raised unpaid: the card payment it would record is recorded by its own receipt or the credit-release sweep." };
+      if (replay?.raisedUnpaid) return { message: "Retried Xero supplementary invoice creation, raised unpaid: the card payment it would record is recorded by its own receipt, or overlaps a credit-release payment." };
       return { message: "Retried Xero supplementary invoice creation." };
     }
 
