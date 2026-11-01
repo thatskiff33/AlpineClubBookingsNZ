@@ -159,13 +159,19 @@ claim token. Invoice reads, voids, credit creation, allocation and refund-note
 settlement run outside database transactions. Refund notes wait for the
 matching bank-transfer hand-back's completion; a lost outbox claim cannot save
 its outcome. #4655: the created note's record (`recordCreatedOrganiserNote`) is
-one status-guarded `updateMany` on the operation row and takes no advisory
-key. It lands on this run's claim, or on a row no claim holds and no resolve
-closed (FAILED after a reset, PENDING after a retry), and never on another
-claim's RUNNING row or over another note; the reset, requeue, outbox claim and
-resolve mark write that row status-guarded too, so whichever commits first
-wins. A lost record runs no allocation or payout and writes no failure; its
-audit row and alert run after, outside any transaction. This composes with the existing cancel/capture/refund cohort and
+status-guarded `updateMany`s on the operation row, tried in turn, and takes no
+advisory key. It lands on this run's claim, or on a row no claim holds and no
+resolve closed - FAILED after a reset, taken back RUNNING under a fresh
+`startedAt` in the same write (#4672), or PENDING after a retry - and never on
+another claim's RUNNING row or over another note. The executor hands the fresh
+claim to the outbox (`onRetake`), whose completion, busy and cooldown
+give-backs and failure write are all guarded on it; Resolve
+(`claimResolvedInXeroMark`) and Retry (`requeueOutboxRowForRetry`) take only
+FAILED or PARTIAL, so they lose to the RUNNING row, and the stale reset still
+fails it if the process dies. The reset, requeue, outbox claim and resolve
+mark write that row status-guarded too, so whichever commits first wins. A
+lost record runs no allocation or payout and writes no failure; its audit row
+and alert run after, outside any transaction. This composes with the existing cancel/capture/refund cohort and
 with the supplementary-anchor protocol rather than holding a lock across Xero.
 
 ### One refund credit note in flight per payment, by claim order (#3880)

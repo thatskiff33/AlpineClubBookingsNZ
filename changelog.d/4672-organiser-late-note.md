@@ -7,8 +7,9 @@
   same adjustment.
 
   The app now records the late note on the job whenever it can: after a reset
-  alone it finishes the job with that note, and after a **Retry** the retry
-  finishes from it instead of raising another. If the job was resolved by
+  alone it takes the job back as running and finishes it with that note
+  (while it runs, **Resolve** and **Retry** wait for it), and after a
+  **Retry** the retry finishes from it instead of raising another. If the job was resolved by
   hand, a retry was already running, or the job finished with a different
   note, the app leaves the job as it is; the audit log gets one Xero entry
   naming the late note, and the finance contacts get one **Xero Sync Error**

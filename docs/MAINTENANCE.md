@@ -2679,9 +2679,12 @@ extra, or an organiser's bank-transfer refund note) has its own rule (#4655).
 If its job stalls in Xero and you press **Reset stale running**, the stalled
 call may still come back with a note:
 
-- If you did nothing else, the app records the note on the job and finishes it
-  (allocates the waiver, or records the refund payment), and the job shows as
-  succeeded. One note, nothing to do.
+- If you did nothing else, the app records the note on the job, takes the job
+  back as running, and finishes it (allocates the waiver, or records the
+  refund payment); the job shows as succeeded. One note, nothing to do. While
+  it shows as running, **Resolve** and **Retry** are refused: wait for it to
+  finish or fail. If it fails, it fails with the note kept, and **Retry**
+  finishes from that note.
 - If you pressed **Retry** after the reset, the app records the note on the
   queued job, and the retry finishes from it instead of raising a second note.
 - If you resolved the job by hand, or a retry was already running its own

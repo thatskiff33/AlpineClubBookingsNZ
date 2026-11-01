@@ -590,23 +590,24 @@ An organiser adjustment's credit note that Xero creates after its stalled job
 was reset is recorded on the job or surfaced once, never silently lost (#4655).
 
 - **It lands where a success may.** `recordCreatedOrganiserNote`
-  (`organiser-extra-note-record.ts`) writes the note on its row in one
-  status-guarded `updateMany`, before any allocation or payout, only where the
-  row records no other note and is this run's RUNNING claim, or is unresolved
-  and FAILED (a reset: this run finishes it) or PENDING (a Retry queued it in
-  place: this run stops and the queued run continues from the note). A retry
-  therefore never raises a second note.
+  (`organiser-extra-note-record.ts`) writes it on its row, before any
+  allocation or payout, in status-guarded `updateMany`s, only where the row
+  records no other note: this run's RUNNING claim; an unresolved FAILED row (a
+  reset), taken back RUNNING under a fresh claim in the same write; or an
+  unresolved PENDING row (a Retry queued it in place: this run stops and the
+  queued run continues). A retry never raises a second note.
+- **A re-taken row is this run's (#4672).** The outbox completes, gives back
+  and fails it under the fresh claim; Resolve and Retry refuse it while
+  RUNNING, and Reset stale running still covers a dead process.
 - **Anywhere else it is kept out.** A row resolved by hand, held by another
-  claim, recording a different note or closed takes nothing, and the run
-  returns without failing it. `traceUnrecordedLateNote` (shared with #4426)
-  warns, writes one `xero` audit row
+  claim, recording a different note or closed takes nothing; the run returns
+  without failing it. `traceUnrecordedLateNote` (shared with #4426) warns,
+  writes one `xero` audit row
   (`xero.organiser_adjustment_note.late_note_not_recorded`) and sends #4374's
-  alert once per note, each step caught. A row already recording this note
-  logs at info only.
+  alert once per note, each step caught.
 - **A resolved row is a stated choice.** Unlike a plain-resolved refund-note
-  row (#4426), it never takes a late note: nothing retries it, so landing
-  would only add an allocation or refund payment after an officer took the
-  adjustment over.
+  row (#4426), it never takes a late note: landing would only add an
+  allocation or payout after an officer took the adjustment over.
 - **Limits.** A retry running when the note returns may record the same note
   through Xero's idempotency key; the alert says to compare before voiding. A
   process dying before the audit row leaves the warning only; an alert

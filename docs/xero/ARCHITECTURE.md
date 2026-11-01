@@ -4253,9 +4253,12 @@ in Xero past the stale threshold and be reset while its call still waits; the
 organiser adjustment's Retry runs on that same row (handed back to PENDING in
 place), and a run that finds a note there continues from it. So the note lands
 where a success may (`INV-INT-029`) and no other note is recorded: the run's
-own claim; a row a reset left FAILED, which this run then allocates or pays out
-and completes; or a row a Retry queued, where this run stops and the queued run
-finishes from the note, never raising a second. A row resolved by hand, held
+own claim; a row a reset left FAILED, which the same write takes back RUNNING
+under a fresh claim (#4672) that this run then allocates or pays out and
+completes or fails under, the outbox following that claim, while Resolve and
+Retry refuse the RUNNING row; or a row a Retry queued, where this run stops
+(counted skipped) and the queued run finishes from the note, never raising a
+second. A row resolved by hand, held
 by a retry's claim, recording another note or closed takes nothing: the run
 returns without failing it, and the note is warned, audited once
 (`xero.organiser_adjustment_note.late_note_not_recorded`, `xero`) and sent
