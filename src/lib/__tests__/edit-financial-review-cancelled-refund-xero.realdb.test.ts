@@ -278,7 +278,7 @@ let outbox: typeof import("@/lib/xero-operation-outbox");
       await cancelAt(rule);
       // What the paid cancellation's card refund raises: a refund note on the payment.
       expect(await refundNotes()).toEqual([
-        { on: "Payment:CREDIT_NOTE:CREATE", queueType: "REFUND_CREDIT_NOTE", cents: cancelBackCents, refundMethod: undefined, key: `payment:${PAYMENT_ID}:refund-credit-note:${cancelBackCents}:v2` },
+        { on: "Payment:CREDIT_NOTE:CREATE", queueType: "REFUND_CREDIT_NOTE", cents: cancelBackCents, refundMethod: "card", key: `payment:${PAYMENT_ID}:refund-credit-note:${cancelBackCents}:v2` },
       ]);
 
       await completeShare(raised.taskId);
