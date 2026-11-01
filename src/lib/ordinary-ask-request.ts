@@ -44,6 +44,7 @@ import {
   isCreditReleaseAskRecoveryKey,
 } from "@/lib/credit-release-ask-keys";
 import { staleIntentAction } from "@/lib/stale-intent-action";
+import type { AppPaymentIntentMetadata } from "@/lib/stripe-app-intent-metadata";
 
 /** The Stripe metadata `type` every additional ask's intent carries. */
 export const ADDITIONAL_ASK_INTENT_TYPE = "modification_additional";
@@ -126,7 +127,7 @@ export type OrdinaryAskMintPlan = {
   readonly bookingId: string;
   readonly amountCents: number;
   readonly idempotencyKey: string;
-  readonly metadata: Readonly<Record<string, string>>;
+  readonly metadata: AppPaymentIntentMetadata;
 };
 
 /** The one request both minters of an ordinary edit's price ask send. */

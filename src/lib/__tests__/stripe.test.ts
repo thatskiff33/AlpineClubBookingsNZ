@@ -23,6 +23,8 @@ const mockPaymentMethodsDetach = vi.fn();
 const mockCustomersCreate = vi.fn();
 const mockCustomersList = vi.fn();
 const mockWebhooksConstructEvent = vi.fn();
+// #4532: the Checkout Session a payment the app did not create went through.
+const mockCheckoutSessionsList = vi.fn();
 
 vi.mock("stripe", () => {
   const MockStripe = function () {
@@ -52,6 +54,9 @@ vi.mock("stripe", () => {
       webhooks: {
         constructEvent: mockWebhooksConstructEvent,
       },
+      checkout: {
+        sessions: { list: mockCheckoutSessionsList },
+      },
     };
   };
   return { default: MockStripe };
@@ -75,6 +80,7 @@ const {
   UnsupportedChargeCurrencyError,
   findRecentPaymentIntentByMetadata,
   listRecentPaymentIntentsMatching,
+  findCheckoutSessionForPaymentIntent,
 } = await import("../stripe");
 
 describe("Stripe library", () => {
@@ -124,7 +130,7 @@ describe("Stripe library", () => {
     it("charges a club on the NZ default in nzd", async () => {
       mockPaymentIntentsCreate.mockResolvedValue({ id: "pi_test" });
 
-      await createPaymentIntent({ format: CLUB_FORMAT_TEST, amountCents: 1000 });
+      await createPaymentIntent({ format: CLUB_FORMAT_TEST, amountCents: 1000, metadata: { bookingId: "booking_1" } });
 
       expect(mockPaymentIntentsCreate).toHaveBeenCalledWith(
         expect.objectContaining({ currency: "nzd" }),
@@ -138,6 +144,7 @@ describe("Stripe library", () => {
       await createPaymentIntent({
         format: { currencyCode: "AUD", locale: "en-AU" },
         amountCents: 1000,
+        metadata: { bookingId: "booking_1" },
       });
 
       expect(mockPaymentIntentsCreate).toHaveBeenCalledWith(
@@ -152,7 +159,7 @@ describe("Stripe library", () => {
       try {
         mockPaymentIntentsCreate.mockResolvedValue({ id: "pi_test" });
 
-        await createPaymentIntent({ format: CLUB_FORMAT_TEST, amountCents: 1000 });
+        await createPaymentIntent({ format: CLUB_FORMAT_TEST, amountCents: 1000, metadata: { bookingId: "booking_1" } });
 
         expect(mockPaymentIntentsCreate).toHaveBeenCalledWith(
           expect.objectContaining({ currency: "nzd" }),
@@ -170,6 +177,7 @@ describe("Stripe library", () => {
           createPaymentIntent({
             format: { currencyCode, locale: "en-NZ" },
             amountCents: 845000,
+            metadata: { bookingId: "booking_1" },
           }),
         ).rejects.toBeInstanceOf(UnsupportedChargeCurrencyError);
         await expect(
@@ -178,6 +186,7 @@ describe("Stripe library", () => {
             amountCents: 845000,
             customerId: "cus_test",
             paymentMethodId: "pm_test",
+            metadata: { bookingId: "booking_1" },
           }),
         ).rejects.toThrow(/does not count in hundredths/);
         expect(mockPaymentIntentsCreate).not.toHaveBeenCalled();
@@ -186,7 +195,7 @@ describe("Stripe library", () => {
 
     it("refuses to charge for a club whose STORED currency is JPY, though it displays NZD (#3567 re-review)", async () => {
       const stored = { currencyCode: "NZD", locale: "en-NZ", unusableStoredCurrency: "JPY" };
-      await expect(createPaymentIntent({ format: stored, amountCents: 500000 })).rejects.toBeInstanceOf(
+      await expect(createPaymentIntent({ format: stored, amountCents: 500000, metadata: { bookingId: "booking_1" } })).rejects.toBeInstanceOf(
         UnsupportedChargeCurrencyError,
       );
       expect(mockPaymentIntentsCreate).not.toHaveBeenCalled();
@@ -220,6 +229,24 @@ describe("Stripe library", () => {
         undefined,
       );
       expect(result.id).toBe("seti_test_123");
+    });
+  });
+
+  describe("findCheckoutSessionForPaymentIntent (#4532)", () => {
+    it("asks for the intent's session with its line items, bounded, and returns it", async () => {
+      mockCheckoutSessionsList.mockResolvedValue({ data: [{ id: "cs_1", payment_link: "plink_1" }] });
+
+      await expect(findCheckoutSessionForPaymentIntent("pi_1")).resolves.toEqual({ id: "cs_1", payment_link: "plink_1" });
+      expect(mockCheckoutSessionsList).toHaveBeenCalledWith(
+        { payment_intent: "pi_1", limit: 1, expand: ["data.line_items"] },
+        { timeout: 10_000, maxNetworkRetries: 0 },
+      );
+    });
+
+    it("returns null for an intent taken outside Checkout (a dashboard charge)", async () => {
+      mockCheckoutSessionsList.mockResolvedValue({ data: [] });
+
+      await expect(findCheckoutSessionForPaymentIntent("pi_2")).resolves.toBeNull();
     });
   });
 

@@ -65,6 +65,8 @@ import {
   markGroupSettlementIntentRefunded,
 } from "@/lib/group-settlement";
 import { adoptSavedCardChargeAttemptForIntent } from "@/lib/saved-card-charge-settle";
+import { GROUP_SETTLEMENT_INTENT_TYPE, isAppCreatedPaymentIntent } from "@/lib/stripe-app-intent-metadata";
+import { recordUnrecognisedStripePayment } from "@/lib/unrecognised-stripe-payment";
 import { PaymentStatus, PaymentTransactionKind } from "@prisma/client";
 import { isCapturedTransactionStatus, isRefusedRefundStatus } from "@/lib/payment-transaction-status";
 import { keyAfterStripeRefusals, refusedRefundMessage } from "@/lib/refused-card-refund-retry";
@@ -443,10 +445,19 @@ async function handlePaymentIntentSucceeded(
   event: Stripe.Event,
   format: ClubFormat,
 ) {
+  // #4532 (`INV-INT-032`): a payment the app did not create - a Payment Link, a
+  // Checkout page or a dashboard charge - carries none of the app's metadata, so
+  // no path below claims it. It is recorded and alerted once, and the event
+  // completes; it never reaches a booking or Xero.
+  if (!isAppCreatedPaymentIntent(paymentIntent.metadata)) {
+    await recordUnrecognisedStripePayment(paymentIntent, event, format);
+    return;
+  }
+
   // Group ORGANISER_PAYS settlement: one combined intent settles many child
   // bookings, so it carries groupBookingId (not bookingId) and is reconciled by
   // its own handler before the per-booking path below.
-  if (paymentIntent.metadata?.type === "group_settlement") {
+  if (paymentIntent.metadata?.type === GROUP_SETTLEMENT_INTENT_TYPE) {
     const applied = await applyGroupSettlementSucceeded({
       id: paymentIntent.id,
       amount: paymentIntent.amount,
@@ -463,6 +474,8 @@ async function handlePaymentIntentSucceeded(
 
   const bookingId = paymentIntent.metadata?.bookingId;
   if (!bookingId) {
+    // Unreachable: `isAppCreatedPaymentIntent` let through only a bookingId or
+    // the group type, which returned above. Kept as the type's narrowing.
     logger.warn({ paymentIntentId: paymentIntent.id }, "PaymentIntent succeeded but no bookingId in metadata");
     return;
   }
@@ -693,7 +706,7 @@ async function handlePaymentIntentFailed(
 ) {
   // Group settlement intents have no per-booking payment transaction; the
   // children stay CONFIRMED (beds held) so the organiser can retry.
-  if (paymentIntent.metadata?.type === "group_settlement") {
+  if (paymentIntent.metadata?.type === GROUP_SETTLEMENT_INTENT_TYPE) {
     await markGroupSettlementIntentFailed(paymentIntent.id, PaymentStatus.FAILED);
     logger.info(
       { paymentIntentId: paymentIntent.id, groupBookingId: paymentIntent.metadata?.groupBookingId },
@@ -775,7 +788,7 @@ async function handlePaymentIntentCanceled(
 ) {
   // Group settlement intents have no per-booking payment transaction; record the
   // canceled state and leave the children CONFIRMED for a fresh settlement.
-  if (paymentIntent.metadata?.type === "group_settlement") {
+  if (paymentIntent.metadata?.type === GROUP_SETTLEMENT_INTENT_TYPE) {
     await markGroupSettlementIntentFailed(paymentIntent.id, PaymentStatus.FAILED);
     return;
   }

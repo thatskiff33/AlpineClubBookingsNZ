@@ -140,6 +140,7 @@ import {
 } from "@prisma/client";
 
 import logger from "@/lib/logger";
+import type { AppPaymentIntentMetadata } from "@/lib/stripe-app-intent-metadata";
 import { LEDGER_ROWS_OLDEST_FIRST } from "@/lib/payment-ledger-order";
 import { readSupersededOwnership } from "@/lib/superseded-capture-ownership";
 import { isCapturedTransactionStatus } from "./payment-transactions";
@@ -221,7 +222,7 @@ export function buildSavedCardChargeMetadata(
    * organisation id under a name that says member.
    */
   memberId: string | null
-): Record<string, string> {
+): AppPaymentIntentMetadata {
   return memberId ? { bookingId, memberId } : { bookingId };
 }
 

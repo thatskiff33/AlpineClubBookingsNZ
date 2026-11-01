@@ -16,6 +16,7 @@ import {
   stripeChargeCurrency,
 } from "@/lib/stripe-charge-currency";
 import { refundRequestStripeMetadata } from "@/lib/refund-slice-evidence";
+import type { AppPaymentIntentMetadata } from "@/lib/stripe-app-intent-metadata";
 
 // DB-only credential resolution (#2082): the secret key lives in the encrypted
 // IntegrationCredential store, so client construction is now ASYNC. We memoize
@@ -68,7 +69,8 @@ export async function createPaymentIntent({
   /** The club's format: the charge currency and the below-minimum refusal. */
   format: ClubFormat;
   customerId?: string;
-  metadata?: Record<string, string>;
+  /** #4532: required, so every app intent is one the webhook recognises (`isAppCreatedPaymentIntent`). */
+  metadata: AppPaymentIntentMetadata;
   idempotencyKey?: string;
 }): Promise<Stripe.PaymentIntent> {
   const currency = stripeChargeCurrency(format);
@@ -79,7 +81,7 @@ export async function createPaymentIntent({
       amount: amountCents,
       currency,
       customer: customerId,
-      metadata: metadata ?? {},
+      metadata: { ...metadata },
       automatic_payment_methods: { enabled: true },
     },
     idempotencyKey ? { idempotencyKey } : undefined,
@@ -126,7 +128,8 @@ export async function chargePaymentMethod({
   format: ClubFormat;
   customerId: string;
   paymentMethodId: string;
-  metadata?: Record<string, string>;
+  /** #4532: required, as for {@link createPaymentIntent}. */
+  metadata: AppPaymentIntentMetadata;
   idempotencyKey?: string;
 }): Promise<Stripe.PaymentIntent> {
   const currency = stripeChargeCurrency(format);
@@ -140,7 +143,7 @@ export async function chargePaymentMethod({
       payment_method: paymentMethodId,
       off_session: true,
       confirm: true,
-      metadata: metadata ?? {},
+      metadata: { ...metadata },
     },
     idempotencyKey ? { idempotencyKey } : undefined,
   );
@@ -303,6 +306,24 @@ export async function retrieveRefund(
 /**
  * Retrieve a PaymentIntent by ID.
  */
+/**
+ * #4532 (`INV-INT-032`): the Checkout Session that took a PaymentIntent, if
+ * any — a Stripe Payment Link pays through one — with its line items, or
+ * `null` when the intent was not taken through Checkout (a dashboard charge).
+ * Read for a payment the app did not create, to name what was bought. Bounded
+ * like a background read: a webhook must not wait on stripe-node's ~80s default.
+ */
+export async function findCheckoutSessionForPaymentIntent(
+  paymentIntentId: string,
+): Promise<Stripe.Checkout.Session | null> {
+  const stripe = await getStripe();
+  const sessions = await stripe.checkout.sessions.list(
+    { payment_intent: paymentIntentId, limit: 1, expand: ["data.line_items"] },
+    { timeout: 10_000, maxNetworkRetries: 0 },
+  );
+  return sessions.data[0] ?? null;
+}
+
 export async function getPaymentIntent(
   paymentIntentId: string,
   /**
