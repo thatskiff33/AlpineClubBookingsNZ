@@ -3892,6 +3892,10 @@ their once-ever claim back when nobody received them and fail the webhook, so
 Stripe's redelivery sends them again; a cron replay as well would send them
 twice.
 
+Stated limit, shared with the settlement-figure alert: these alerts count as
+sent once any recipient receives them, so a copy one recipient lost while
+another got it is neither retried nor queued for review (#4669).
+
 To verify: retry backoff, suppression handling, durable recipient identity,
 direct/inherited mailbox drift, revoked-authority fail-closed behavior,
 page-fragment/bearer preservation, rollback isolation, which business-critical

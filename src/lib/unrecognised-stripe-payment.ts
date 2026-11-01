@@ -19,8 +19,9 @@
  *   webhook answers 500 so Stripe redelivers. A claim still held with no
  *   `alertedAt` is a delivery that died: younger than the webhook lease less
  *   a margin it belongs to a sibling still sending; older, this delivery
- *   releases it and sends (`UNRECOGNISED_ALERT_IN_FLIGHT_MS`). A Checkout read that throws is not stored as "no Checkout":
- *   nothing is inserted, and Stripe redelivers.
+ *   releases it and sends (`UNRECOGNISED_ALERT_IN_FLIGHT_MS`). A Checkout
+ *   read that throws is not stored as "no Checkout": nothing is inserted, and
+ *   Stripe redelivers.
  *
  * #4624 (`INV-INT-033`): the same record, claim and alert hold a succeeded
  * PaymentIntent the app DID create - it carries the app's `bookingId` - that
