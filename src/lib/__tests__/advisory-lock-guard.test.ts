@@ -1450,6 +1450,15 @@ const ROW_LOCK_SITE_INVENTORY: Record<string, number> = {
   // Singleton-keyed; no advisory lock; disjoint from booking/money writers. See
   // docs/CONCURRENCY_AND_LOCKING.md -> "Club-theme logo writer".
   "src/lib/club-theme.ts": 1,
+  // Per-account password throttle (#4609, INV-AUTH): `claimPasswordAttempt`
+  // ensures the account's `LoginThrottle` row, then locks it
+  // (`SELECT 1 … FOR UPDATE`) before the read-decide-count, so parallel guesses
+  // queue and a burst at the end of a wait admits one. Keyed on an immutable
+  // HMAC id; no advisory key, never composed with another lock, no provider
+  // call, and the password compare runs after commit. A row lost between the
+  // ensure and the lock (a clear or the idle sweep) is ensured and locked once
+  // more. See docs/CONCURRENCY_AND_LOCKING.md -> "Login throttle claim".
+  "src/lib/login-throttle.ts": 1,
   // #3029 C3: the held-party dietary rebuild locks the booking's guest rows
   // (`SELECT 1 … FOR UPDATE`, id order) before reading the values it carries,
   // so a concurrent single-row admin edit is read or refused, never lost.

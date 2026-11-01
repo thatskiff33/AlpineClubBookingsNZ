@@ -22,10 +22,11 @@
  * transaction id, i.e. blocked BEFORE writing anything. Only then is the holder
  * released. No `setTimeout` stands in for the interleaving.
  *
- * Probed before commit: deleting the lock statement from `lockAccountRow`
- * leaves the claims unblocked, so the barrier times out naming the lock (or,
- * if they block later on the update, names the write-before-lock order), and
- * case 2 admits two.
+ * Probed against committed state: with the lock statement deleted from
+ * `lockAccountRow` the claims block only at their update, already holding a
+ * transaction id, so every forced case fails on the barrier's
+ * write-before-lock diagnostic; with the re-ensure loop cut to one pass, case
+ * 4 finds no row in the store.
  *
  * OFF by default, like every `*.realdb.test.ts`: it runs only with
  * `RUN_CONCURRENCY_RACE_TESTS=1` against `CONCURRENCY_RACE_DATABASE_URL`

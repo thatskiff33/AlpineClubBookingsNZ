@@ -95,6 +95,7 @@ see [backups](guides/backups.md), the
 | `PaymentRefund` | Payment, refund, recovery and officer decision evidence | Kept with booking / financial records for reconciliation and evidence; no new automatic deletion | Keep |
 | `UnrecognisedStripePayment` | Stripe payments taken outside the app: provider references, amount and the description the payer saw or typed | Kept with booking / financial records for reconciliation and evidence; no new automatic deletion | Keep |
 | `RateLimitCounter` | Pseudonymous requester keys for abuse prevention | Until counter reset / existing rate-limit cleanup | Delete through existing cleanup |
+| `LoginThrottle` | Pseudonymous per-account keys (an HMAC of the sign-in email, never the address) and a count of recent password attempts, for abuse prevention (#4609) | Until a valid password or a completed password reset, or an hour after the last counted attempt | Delete on that sign-in or reset, and through the best-effort idle sweep |
 | `AlertCooldown` | Alert deduplication keys that may reference an entity | Kept for the operational purpose while needed; no new automatic deletion | Keep |
 | `PaymentRecoveryOperation` | Payment, refund, recovery and officer decision evidence | Kept with booking / financial records for reconciliation and evidence; no new automatic deletion | Keep |
 | `PromoRedemption` | Member promotion entitlement, guest targets and applied discounts | Kept with booking / financial records for reconciliation and evidence; no new automatic deletion | Keep |
