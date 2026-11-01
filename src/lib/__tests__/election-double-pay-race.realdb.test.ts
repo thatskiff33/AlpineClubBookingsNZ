@@ -20,6 +20,7 @@
 import { Role, type PrismaClient } from "@prisma/client";
 import type Stripe from "stripe";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { releaseBookingJournalForTeardown } from "./support/booking-financial-history-teardown";
 
 import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 import { registerRaceStripeKeyOverride } from "@/lib/__tests__/support/race-stripe-key-override";
@@ -202,6 +203,8 @@ async function clean(): Promise<void> {
   await prisma.processedWebhookEvent.deleteMany({ where: { eventId: { startsWith: "evt_race_3864_" } } });
   await prisma.webhookLog.deleteMany({ where: { eventId: { startsWith: "evt_race_3864_" } } });
   await prisma.paymentRecoveryOperation.deleteMany({ where: { bookingId: BOOKING_ID } });
+  // #4627: the doors post journal batches bridged to these lines; release them first.
+  await releaseBookingJournalForTeardown(prisma, [BOOKING_ID]);
   await prisma.bookingLedgerLine.deleteMany({ where: { bookingId: BOOKING_ID } });
   await prisma.bookingEvent.deleteMany({ where: { bookingId: BOOKING_ID } });
   await prisma.bookingModification.deleteMany({ where: { bookingId: BOOKING_ID } });

@@ -34,6 +34,7 @@
  * fixtures.
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { releaseBookingJournalForTeardown } from "./support/booking-financial-history-teardown";
 import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 import { assertSafeRaceDbUrl } from "@/lib/__tests__/support/race-db-url";
 
@@ -62,6 +63,8 @@ let prisma: (typeof import("@/lib/prisma"))["prisma"];
   { timeout: 60_000 },
   () => {
     async function clearRun() {
+      // #4627: the doors post journal batches bridged to these lines; release them first.
+      await releaseBookingJournalForTeardown(prisma, BOOKING_IDS);
       await prisma.bookingLedgerLine.deleteMany({ where: { bookingId: { in: BOOKING_IDS } } });
       await prisma.bookingEvent.deleteMany({ where: { bookingId: { in: BOOKING_IDS } } });
       await prisma.manualRefundTask.deleteMany({ where: { bookingId: { in: BOOKING_IDS } } });

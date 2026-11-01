@@ -23,6 +23,7 @@
  */
 import type { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { releaseBookingJournalForTeardown } from "./support/booking-financial-history-teardown";
 
 import type { BookingLedgerCensusReport } from "@/lib/booking-ledger-projection-census-report";
 import type { CalendarDate } from "@/lib/club-time";
@@ -65,6 +66,8 @@ async function clean(): Promise<void> {
   await prisma.xeroObjectLink.deleteMany({ where: { localId: { in: [...slices.map((slice) => slice.id), ...ids.map(modificationOf)] } } });
   await prisma.memberCreditNoteAllocation.deleteMany({ where: { appliedToBookingId: { in: ids } } });
   await prisma.xeroSyncOperation.deleteMany({ where: { localId: { in: [...ids, ...paymentIds, ...ids.map(modificationOf)] } } });
+  // #4627: the doors post journal batches bridged to these lines; release them first.
+  await releaseBookingJournalForTeardown(prisma, ids);
   await prisma.bookingLedgerLine.deleteMany({ where });
   await prisma.memberCredit.deleteMany({ where: { memberId: { in: memberIds } } });
   await prisma.manualRefundTask.deleteMany({ where });

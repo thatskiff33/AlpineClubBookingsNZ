@@ -1936,11 +1936,17 @@ group settlement's group key do too (`INV-MONEY-043`): a booking with money is n
 Database CHECKs, deferred triggers and INSERT/SELECT-only application grants
 carry `INV-MONEY-041`, `INV-MONEY-042` and `INV-OPS-016`. No legacy source is made
 mandatory yet. `src/lib/member-money/index.ts` exposes the account registry, the
-operator verifier and, since M2 (#4514), two read-only references the deletion
-guards consult (`INV-MONEY-043`); implementation lives in `internal/`. No posting
-API is enabled. Later writer commands must implement the
-existing advisory tiers (`INV-LOCK-001`–`003`); M1 adds no advisory key, lifecycle
-participant, outbox or provider call. The verifier reads a repeatable-read,
+operator verifier, since M2 (#4514) two read-only references the deletion guards
+consult (`INV-MONEY-043`), since M3a (#4626) the posting command
+`postMemberMoneyEvent` with its context, keys and tax split, and since M3b
+(#4627) `journalComponentOfLegacyLine`, `bookingChargeIdentity`,
+`readBookingJournalCharges` and `bookingJournalInactiveReason`; implementation
+lives in `internal/`. The booking-ledger chokepoints (confirmation, modification
+and review close, cancellation, the group settle and the back-post) and member
+merge post only through the server-only `src/lib/member-money/doors.ts`
+(`INV-MONEY-044`); `member-money-journal-inert-census.test.ts` admits exactly
+those callers. Writers implement the existing advisory tiers
+(`INV-LOCK-001`–`003`); the journal adds no advisory key, outbox or provider call. The verifier reads a repeatable-read,
 read-only snapshot. See [deployment grants](../DEPLOYMENT.md#member-money-journal-grants-m1)
 and [lodge scoping](multi-lodge/lodge-scoping-contract.md#member-money-journal-4513).
 

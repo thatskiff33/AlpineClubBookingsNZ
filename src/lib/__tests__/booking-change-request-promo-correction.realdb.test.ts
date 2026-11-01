@@ -30,6 +30,8 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vites
 
 import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 import { realElapsedMs } from "@/lib/__tests__/helpers/clock";
+import { memberMoneyTestContext } from "./support/member-money-fixtures";
+import { releaseBookingJournalForTeardown } from "./support/booking-financial-history-teardown";
 
 const RUN = process.env.RUN_CONCURRENCY_RACE_TESTS === "1";
 const RACE_DB_URL = process.env.CONCURRENCY_RACE_DATABASE_URL ?? "";
@@ -134,6 +136,8 @@ async function clean(): Promise<void> {
   });
   await prisma.bookingChangeRequest.deleteMany({ where: { bookingId: { in: EVERY_BOOKING } } });
   await prisma.paymentRecoveryOperation.deleteMany({ where: { bookingId: { in: EVERY_BOOKING } } });
+  // M3b: the journal's batches name these bookings' ledger lines (RESTRICT), so release them first.
+  await releaseBookingJournalForTeardown(prisma, EVERY_BOOKING);
   await prisma.bookingLedgerLine.deleteMany({ where: { bookingId: { in: EVERY_BOOKING } } });
   await prisma.bookingEvent.deleteMany({ where: { bookingId: { in: EVERY_BOOKING } } });
   await prisma.manualRefundTask.deleteMany({ where: { paymentId: PAYMENT_ID } });
@@ -276,7 +280,7 @@ async function seed(options: { priorFreeNightsUsed?: number; organiserPaid?: boo
   // The stay's confirmation lines, as its settle posted them: an edit posts
   // its own ledger lines only onto a booking the ledger already holds.
   const ledger = await import("@/lib/booking-ledger-confirmation-sync");
-  await prisma.$transaction((tx) => ledger.postStoredBookingConfirmationLedgerLines(tx, BOOKING_ID));
+  await prisma.$transaction((tx) => ledger.postStoredBookingConfirmationLedgerLines(tx, BOOKING_ID, memberMoneyTestContext()));
   await freeTextRequest(REQUEST_ID);
   if (options.priorFreeNightsUsed) {
     await ownerStay(PRIOR_BOOKING_ID, "race-4533-prior-guest", {

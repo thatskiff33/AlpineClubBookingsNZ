@@ -1,4 +1,5 @@
 import { postStoredBookingConfirmationLedgerLines } from "@/lib/booking-ledger-confirmation-sync";
+import { resolveBookingMoneyPostingContext } from "@/lib/member-money/doors";
 /**
  * School group booking request variant (issue #709).
  *
@@ -2504,12 +2505,13 @@ export async function approveMemberWholeLodgeRequest(input: {
   // `booking-request.ts`: `src/instrumentation.node.ts` reaches this family
   // through the booking-request cron chain, and `server-only` is a bare throw
   // at import outside the `react-server` condition.
-  const clubTodayDateOnly = dateOnlyInstantOf(
-    clubToday(await readClubTimeZoneOutsideRequest()),
-  );
+  const clubZone = await readClubTimeZoneOutsideRequest();
+  const clubTodayDateOnly = dateOnlyInstantOf(clubToday(clubZone));
   // #3029 (`INV-MOD-059`): the dietary seeding toggle, read before the same
   // transaction for the same reason (`INV-LOCK-004`).
   const guestDietarySeeding = await resolveBookingGuestDietarySeeding();
+  // #4627: the journal's posting context, likewise read before the transaction, on the same zone.
+  const journal = await resolveBookingMoneyPostingContext({ zone: clubZone });
 
   try {
     conversion = await prisma.$transaction(async (tx) => {
@@ -2839,7 +2841,7 @@ export async function approveMemberWholeLodgeRequest(input: {
             where: { id: booking.id },
             data: { status: BookingStatus.PAID },
           });
-          await postStoredBookingConfirmationLedgerLines(tx, booking.id);
+          await postStoredBookingConfirmationLedgerLines(tx, booking.id, journal);
           settledByCredit = true;
         }
       } else {

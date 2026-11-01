@@ -191,12 +191,12 @@ export async function repriceBookingAfterGuestAcceptance(
     acceptedGuestId: string;
     /** The member who accepted (the guest, or their delegate) — the history row's actor. */
     actorMemberId: string;
-    /** The club's day, resolved before the transaction opened (`INV-LOCK-004`). */
-    todayAtClub: CalendarDate;
+    /** The club's day and (#4627) the journal's context, resolved before the transaction opened (`INV-LOCK-004`). */
+    todayAtClub: CalendarDate; journal: Parameters<typeof postModificationLedgerLines>[0]["journal"];
     format: ClubFormat;
   },
 ): Promise<GuestAcceptanceReprice> {
-  const { bookingId, todayAtClub, format } = params;
+  const { bookingId, todayAtClub, format, journal } = params;
   const booking = await tx.booking.findUnique({
     where: { id: bookingId },
     include: {
@@ -497,7 +497,7 @@ export async function repriceBookingAfterGuestAcceptance(
   });
   await queueOrganiserExtraForChange(tx, booking, bookingModification);
   await postModificationLedgerLines({
-    store: tx,
+    store: tx, journal,
     bookingId,
     lodgeId,
     bookingModification,
@@ -506,7 +506,7 @@ export async function repriceBookingAfterGuestAcceptance(
   });
   // #4019: a whole-lodge PAID at $0 bypasses the settle; post as the other edit doors do.
   if (lifecycle.zeroDollarAutoPaid && isUnpaidConfirmedWholeLodge(booking)) {
-    await postStoredBookingConfirmationLedgerLines(tx, bookingId);
+    await postStoredBookingConfirmationLedgerLines(tx, bookingId, journal);
   }
   // D-3813-6 (`INV-PAY-117`): the cash share of a reduction on a booking paid
   // by internet banking or by hand is the treasurer's to send back.
