@@ -107,6 +107,16 @@ with new floating-point arithmetic. Preserve current inclusive tax treatment
 and subscription component rounding. Section 10 asks how the journal's tax and
 recognition settings should cover clubs with different accounting policies.
 
+M3a ([#4626](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/4626))
+delivered D3's setting and split. `ClubTaxSettings` records GST registration,
+the rate in basis points and the date it applies from. With no row, the club
+is registered at 1500 basis points from 1 October 2010, which is the
+GST-inclusive 15% treatment the Xero documents already render.
+`splitTaxInclusiveGross` derives tax = round-half-up(gross × rate ÷ (10000 +
+rate)) and net = gross − tax, in integer arithmetic only. An unregistered club
+posts revenue with no tax fields and no GST leg. A date before the setting
+starts has no treatment, and the posting refuses it rather than guess.
+
 ## 3. Journal model and enforcement
 
 A posted event is an indivisible, balanced batch. The following are proposed
@@ -227,6 +237,20 @@ itself a capability boundary: restricted delegates/typed participants keep money
 tables out of caller clients, and an AST census covers delegate and SQL writes.
 Tests exercise the real import rule with prohibited examples and mutation probes;
 the database balance/refusal tests cover what lint cannot prove (`INV-SSOT-004`).
+
+M3a ([#4626](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/4626))
+delivered the posting command. `postMemberMoneyEvent(tx, context, plan)` takes
+a context resolved before the transaction: the club date from the club-time
+kernel, the currency, the policy and coding versions and the tax treatment.
+Its plan is CHARGE, ADJUSTMENT or ZERO. The builder refuses an unbalanced or
+ill-shaped plan before any write. Revenue legs give their gross cents, and only
+the builder splits tax out of them. The store, `internal/store.ts`, is the one
+writer of these tables, and writes in the order the foreign keys need.
+`reverseMemberMoneyJournal` posts the exact whole-batch reversal. A partial
+correction is an ADJUSTMENT naming each component by `chargeIdentity`. Event
+keys are built only in `internal/keys.ts`. No door calls the command until M3b,
+and `member-money-journal-inert-census.test.ts` holds that. Applications are
+not yet in the plan: M4 adds them with receipts.
 
 Use the existing lock classification, never a new generic journal advisory key.
 Settlement/lifecycle commands take global `lock(1)` under `INV-LOCK-001`; capacity
@@ -638,6 +662,9 @@ a defect to fix before that cohort activates, never a guess and never a
 permanent block. Receipts and refunds post their full known gross cents. The
 scope still excludes GST returns and does not assume every adopting club is
 GST-registered. Not taken: a new universal tax or recognition basis.
+Delivered for future charges by M3a (#4626): section 2 describes the setting
+and the split. Back-posting history by the rate in force on each charge date
+remains with M9.
 
 ### D4. Member merge: transfer open balances explicitly
 
