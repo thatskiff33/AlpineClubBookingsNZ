@@ -1968,3 +1968,15 @@ States. Its hours setting defaults to 24 and follows read-only → Edit →
 Save/Cancel, with Save disabled until the valid value changes. The health read
 and settings write use `/api/admin/xero/webhook-health`. See the
 [operator steps](guides/xero.md#pick-up-a-change-made-in-xero-now).
+
+### Xero Operations Failed view (#4220)
+
+Choosing **Failed** under **Status** in **Admin → Finance → Xero → Operations**
+also selects **Active only** under **Failure**, written to the URL as
+`opFailureState=ACTIVE`. A status line, announced to screen readers, says how
+many repaired or resolved failures are hidden; its **Show them** button (or
+**All failures** in the selector) sets Failure to All. A link with only
+`opStatus=FAILED` still lists every failed row. An Active failure whose error
+is a credit note used in Xero outside the app carries a **Credit used outside
+the app** chip: the app could not close it itself, and any amount still owed is
+chased from Xero.
