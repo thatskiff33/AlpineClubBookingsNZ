@@ -22,8 +22,8 @@
  * intent it just minted in that time - accounting for this money in its own
  * history, and naming this edit there (round 8). So the intent's row is
  * re-read first (`isMintedAskStillLive`). Round 8: only a row RETIRED since -
- * withdrawn, or cancelled as superseded (#4052: not a declined card, which
- * the member can still pay) - is not live. A row the member already paid is live
+ * withdrawn, or cancelled (superseded, or at Stripe; #4052: not a declined
+ * card, which the member can still pay) - is not live. A row the member already paid is live
  * (its invoice is queued and released as paid), and so is one the re-read
  * could not see, or a re-read that failed: an invoice parked on an intent that
  * did die is retired with it by the stale-wait reaper, while one not queued
@@ -32,11 +32,14 @@
  * edit's Xero leg still needs to park the increase's own invoice rather than
  * raise it unpaid.
  */
-import { PaymentRecoveryOperationType, PaymentStatus } from "@prisma/client";
+import { PaymentStatus } from "@prisma/client";
 
+import { readOpenProviderIntent } from "@/lib/additional-payment-chase";
 import logger from "@/lib/logger";
-import { SUPERSEDED_PAYMENT_REFUND_METADATA_REASON } from "@/lib/payment-recovery-keys";
+import { SUPERSEDED_ASK_TRANSACTION_REASON } from "@/lib/payment-transaction-status";
 import { prisma } from "@/lib/prisma";
+import { intentCancellationQueuedWhere } from "@/lib/queued-intent-cancellation";
+import { getPaymentIntent } from "@/lib/stripe";
 import {
   recordedFoldedReissuedAskModificationIds,
   recordedReissuedAskInvoiceCents,
@@ -48,31 +51,40 @@ import { enqueueXeroSupplementaryInvoiceOperation } from "@/lib/xero-operation-o
  * live; so does a row not found, and so does a DECLINED card (#4052): a
  * declined attempt marks the row FAILED and nothing more
  * (`markPaymentIntentTransactionFailed`), and the member can still pay that
- * intent with another card. Retired is only what a retiring writer leaves:
- * `withdrawnAt` (a reduction, an officer's withdrawal, a credit-release close),
- * or a FAILED row with a queued Stripe cancellation (a supersede, a booking's
- * end - `enqueuePaymentIntentCancellationRecovery`), or the cancel processor's
- * older supersede stamp (`SUPERSEDED_PAYMENT_REFUND_METADATA_REASON`).
+ * intent with another card. Retired is only:
+ *  - `withdrawnAt` (a reduction, an officer's withdrawal, a credit-release close);
+ *  - FAILED with a queued Stripe cancellation (a supersede, a booking's end -
+ *    `intentCancellationQueuedWhere`);
+ *  - FAILED with the cancel processor's supersede stamp
+ *    (`SUPERSEDED_ASK_TRANSACTION_REASON`);
+ *  - FAILED with none of those, and Stripe reports the intent cancelled or gone
+ *    (`readOpenProviderIntent`, the pay door's own read): a cancel made at
+ *    Stripe itself, which `handlePaymentIntentCanceled` records as FAILED
+ *    alone, exactly as a decline. That writer leaves no mark of its own on
+ *    purpose: the row's `reason` names the ask, and the billing evidence, the
+ *    reminder cadence and the review-charge reads key on it.
+ * A Stripe read that fails throws; the caller reads that as live.
  */
 export async function isMintedAskStillLive(paymentIntentId: string): Promise<boolean> {
   const row = await prisma.paymentTransaction.findUnique({
     where: { stripePaymentIntentId: paymentIntentId },
-    select: {
-      status: true,
-      withdrawnAt: true,
-      reason: true,
-      recoveryOperations: {
-        where: { type: PaymentRecoveryOperationType.CANCEL_PAYMENT_INTENT },
-        select: { id: true },
-        take: 1,
-      },
-    },
+    select: { status: true, withdrawnAt: true, reason: true },
   });
   if (!row) return true;
   if (row.withdrawnAt) return false;
   if (row.status !== PaymentStatus.FAILED) return true;
-  return row.recoveryOperations.length === 0 && row.reason !== SUPERSEDED_PAYMENT_REFUND_METADATA_REASON;
+  if (row.reason === SUPERSEDED_ASK_TRANSACTION_REASON) return false;
+  const queuedCancel = await prisma.paymentRecoveryOperation.findFirst({
+    where: intentCancellationQueuedWhere([paymentIntentId]),
+    select: { id: true },
+  });
+  if (queuedCancel) return false;
+  const open = await readOpenProviderIntent(paymentIntentId, (id) => getPaymentIntent(id, { timeoutMs: STRIPE_READ_TIMEOUT_MS }));
+  return open !== null;
 }
+
+/** The liveness re-read's Stripe read gives up quickly; a failed read is read as live. */
+const STRIPE_READ_TIMEOUT_MS = 10_000;
 
 /**
  * Queue the reduction's re-issue invoice on its minted intent. Returns whether

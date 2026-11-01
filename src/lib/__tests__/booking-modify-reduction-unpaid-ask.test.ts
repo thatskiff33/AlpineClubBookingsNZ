@@ -59,6 +59,8 @@ vi.mock("@/lib/prisma", async () => {
     paymentTransaction: { findMany: async () => [], findUnique: async () => minterDb.intentRow },
     paymentRecoveryOperation: {
       findUnique: minterDb.recoveryFindUnique,
+      // #4052: no other recovery names the door's intent.
+      findFirst: async () => null,
       updateMany: minterDb.recoveryUpdateMany,
       upsert: async () => ({ id: "op_upserted" }),
     },
@@ -491,6 +493,24 @@ describe("#3954: a card-paid booking's reduction is set against its unpaid ask f
   });
 });
 
+// #4052 review: a credit-paid ($0) booking's INCREASE is asked by card only
+// through `zeroDollarCardIncrease` (#3502) - nothing was captured - and the
+// email names it so, through the real settlement's answer.
+describe("#4052: the email names a credit-paid booking's card-eligible increase as a card payment", () => {
+  it("MUTATION: hasSucceededPayment holds only through the zero-dollar card path, and the terms name the card", async () => {
+    const booking = grownBooking({ creditPaid: true });
+    expect(booking.payment!.amountCents).toBe(0);
+    const result = await adjust(booking, 2_000);
+    expect(result.hasSucceededPayment).toBe(true);
+    expect(result.additionalAsk.reissuesUnpaidAsk).toBe(false);
+    const { additionalAskEmailTerms } = await import("@/lib/additional-ask-email-terms");
+    const terms = additionalAskEmailTerms({ ...result, paymentSource: booking.payment!.source }, { additionalAskRetired: false });
+    expect(terms.additionalPaymentMethod).toBe("STRIPE");
+    expect(terms.additionalAmountCents).toBe(result.additionalAmountCents);
+    expect(terms.additionalAmountCents).toBeGreaterThan(0);
+  });
+});
+
 describe("#3954: a credit-paid ($0) booking's reduction is set against its unpaid ask first", () => {
   it("MUTATION: cancels the ask and gives back only the rest of the reduction as credit", async () => {
     const booking = grownBooking({ creditPaid: true });
@@ -837,10 +857,12 @@ describe("#3954: after commit, the minter cancels what the reduction retired, th
     }
 
     it.each([
-      ["netted off by a later reduction", PENDING_ASK_NETTED_BY_REDUCTION_NOTE],
-      ["folded in by a later increase", WAITING_REISSUE_FOLDED_BY_INCREASE_NOTE],
-    ])("MUTATION: a recovery %s during the mint has the door's unused intent cancelled as abandoned, after the fence", async (_label, note) => {
-      await loseFenceTo({ status: "SUCCEEDED", lastError: note });
+      ["netted off by a later reduction", { lastError: PENDING_ASK_NETTED_BY_REDUCTION_NOTE }],
+      ["folded in by a later increase", { lastError: WAITING_REISSUE_FOLDED_BY_INCREASE_NOTE }],
+      // Review (F1): the runner minted under an amount-suffixed key and wrote THAT intent.
+      ["completed by the runner with another intent", { lastError: null, paymentIntentId: "pi_runner_suffixed_key" }],
+    ])("MUTATION: a recovery %s during the mint has the door's unused intent cancelled as abandoned, after the fence", async (_label, moved) => {
+      await loseFenceTo({ status: "SUCCEEDED", ...moved });
 
       expect(mocks.cancelIntent).toHaveBeenCalledTimes(1);
       expect(mocks.cancelIntent).toHaveBeenCalledWith("pi_reissued_3000", { cancellationReason: "abandoned" });

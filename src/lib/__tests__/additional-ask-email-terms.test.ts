@@ -18,8 +18,8 @@ describe("additionalAskEmailTerms", () => {
   it.each([
     // A card-settled booking's ask - minted, or waiting on its failed mint's retry: the email cannot tell, and must not.
     ["a card-paid booking's ask", { additionalAsk: CARD_ASK, hasSucceededPayment: true, paymentSource: PaymentSource.STRIPE }],
-    // #3502: a credit-paid ($0) booking's increase is asked by card.
-    ["a credit-paid booking's card ask", { additionalAsk: CARD_ASK, hasSucceededPayment: true, paymentSource: PaymentSource.STRIPE }],
+    // #3502: a credit-paid ($0) booking's card-eligible increase arrives here exactly so;
+    // the real settlement's answer for one is pinned in `booking-modify-reduction-unpaid-ask.test.ts`.
     // #3954: a re-issue was asked of the card already, captured or not.
     ["a re-issued ask on a booking that captured nothing", { additionalAsk: { amountCents: 2_000, reissuesUnpaidAsk: true }, hasSucceededPayment: false, paymentSource: PaymentSource.STRIPE }],
   ])("MUTATION: names %s as a card payment, at its figure", (_label, edit) => {

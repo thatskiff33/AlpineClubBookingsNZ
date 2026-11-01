@@ -141,6 +141,9 @@ let webhookClient: PrismaClient;
       await prisma.bookingEvent.deleteMany({ where: { bookingId: BOOKING_ID } });
       await prisma.auditLog.deleteMany({ where: { OR: [{ memberId: MEMBER_ID }, { actorMemberId: MEMBER_ID }, { targetId: BOOKING_ID }] } });
       await prisma.paymentRecoveryOperation.deleteMany({ where: { bookingId: BOOKING_ID } });
+      // #4052: the Stripe webhook deliveries a case sends through the real processor.
+      await prisma.processedWebhookEvent.deleteMany({ where: { eventId: { startsWith: "evt_race_4052_" } } });
+      await prisma.webhookLog.deleteMany({ where: { eventId: { startsWith: "evt_race_4052_" } } });
       await prisma.manualRefundTask.deleteMany({ where: { bookingId: BOOKING_ID } });
       await prisma.bookingModification.deleteMany({ where: { bookingId: BOOKING_ID } });
       await prisma.paymentRefund.deleteMany({ where: { paymentId: PAYMENT_ID } });
@@ -1416,6 +1419,85 @@ let webhookClient: PrismaClient;
       expect(await mintAtDoor(result)).toEqual({ additionalPaymentClientSecret: undefined, additionalPaymentIntentId: undefined, additionalAskRetired: true });
       expect(stripe.intents.size).toBe(0);
       expect(cancelled.filter((id) => stripe.intents.has(id))).toEqual([]); // the retired ask's own cancel is not this one
+    });
+
+    // #4052 review (F2): Stripe's own `payment_intent.canceled` (a dashboard
+    // cancel) and `payment_intent.payment_failed` (a decline), through the real
+    // webhook processor. Both leave the row FAILED alone; Stripe tells them apart.
+    let webhookSequence = 0;
+    async function deliverIntentWebhook(type: "payment_intent.canceled" | "payment_intent.payment_failed") {
+      webhookSequence += 1;
+      const { processStripeWebhookEvent } = await import("@/lib/stripe-webhook-service");
+      const status = type === "payment_intent.canceled" ? "canceled" : "requires_payment_method";
+      const delivered = await processStripeWebhookEvent({
+        id: `evt_race_4052_${webhookSequence}`,
+        object: "event",
+        type,
+        request: null,
+        data: {
+          object: {
+            id: ASK_INTENT, object: "payment_intent", amount: 5_000, currency: "nzd", status, payment_method: null,
+            metadata: { bookingId: BOOKING_ID, type: "modification_additional" }, latest_charge: null,
+            cancellation_reason: type === "payment_intent.canceled" ? "requested_by_customer" : null,
+            last_payment_error: type === "payment_intent.payment_failed" ? { message: "Your card was declined." } : null,
+          },
+        },
+      } as unknown as import("stripe").Stripe.Event);
+      expect(delivered.init?.status ?? 200, JSON.stringify(delivered.body)).toBe(200);
+      stripeRaceHooks.get = (async (id: string) => ({ id, status })) as never;
+    }
+
+    it.each([
+      ["cancelled in the Stripe dashboard", "payment_intent.canceled", false],
+      ["declined", "payment_intent.payment_failed", true],
+    ] as const)("#4052 review (F2): an ask %s reads FAILED alone; liveness asks Stripe, and reads it %s", async (_label, type, live) => {
+      await grownBooking("card", 1_000);
+      await deliverIntentWebhook(type);
+      expect(await askAfter()).toEqual({ status: "FAILED", withdrawnAt: null });
+      expect(await cancellations()).toEqual([]);
+      const { isMintedAskStillLive } = await import("@/lib/reissued-ask-invoice");
+      expect(await isMintedAskStillLive(ASK_INTENT)).toBe(live);
+    });
+
+    // #4052 review (F1): an ask minted since the reduction (C) makes the runner
+    // size the re-issue larger and mint under an amount-suffixed key
+    // (`planReissuedAskMint`); it writes THAT intent, so the door's own request -
+    // sized before C, under the plain key - is nobody's.
+    it("#4052 review (F1): the runner writes the re-issue under an amount-suffixed key while the door mints - the door's intent is cancelled, the runner's kept", async () => {
+      await grownBooking("card", 1_000);
+      const result = await removeLeavingGuest();
+      const stripe = fakeStripe();
+      const recovery = await reissueRecovery(result.bookingModificationId!);
+      const { REISSUED_ASK_REASON } = await import("@/lib/payment-recovery-keys");
+      const { runPaymentRecoveryOperationNow } = await import("@/lib/payment-recovery");
+      const cancelled: string[] = [];
+      stripeRaceHooks.cancel = (async (id: string) => {
+        cancelled.push(id);
+        return { paymentIntent: { id, status: "canceled" }, canceled: true };
+      }) as never;
+      let doorFirst = true;
+      let doorKey: string | undefined;
+      stripeRaceHooks.create = (async (args: Parameters<typeof stripe.create>[0]) => {
+        if (doorFirst && args.metadata?.reason === REISSUED_ASK_REASON) {
+          doorFirst = false;
+          doorKey = args.idempotencyKey;
+          await askMintedSinceReduction();
+          await prisma.paymentRecoveryOperation.update({ where: { id: recovery.id }, data: { nextRetryAt: new Date("2026-06-30T00:00:00.000Z") } });
+          expect(await runPaymentRecoveryOperationNow(recovery.id, CLUB_FORMAT_TEST)).toBe("succeeded");
+        }
+        return stripe.create(args);
+      }) as never;
+
+      expect((await mintAtDoor(result)).additionalPaymentIntentId).toBeUndefined();
+
+      const door = [...stripe.intents.values()].find((intent) => intent.amount === 3_000)!;
+      const live = await liveAsks();
+      expect(live).toEqual([{ stripePaymentIntentId: expect.any(String), amountCents: 5_000, carriedAskCents: 5_000, reason: REISSUED_ASK_REASON }]);
+      expect(live[0]!.stripePaymentIntentId).not.toBe(door.id);
+      expect(doorKey).toBe(recovery.paymentIntentId);
+      expect(await prisma.paymentTransaction.findUnique({ where: { stripePaymentIntentId: door.id } })).toBeNull();
+      expect(cancelled.filter((id) => id === door.id)).toEqual([door.id]);
+      expect(cancelled).not.toContain(live[0]!.stripePaymentIntentId);
     });
 
     // #4052: a declined card fails the row and nothing more; only a retiring
