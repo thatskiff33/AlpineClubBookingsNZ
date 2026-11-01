@@ -5456,12 +5456,20 @@ Ledger M3b adds no advisory key and no new lock site. Its participants:
   request's PAID), the modification poster (every edit door), review close and
   the cancellation poster (every cancel path, the hold-release and capacity
   crons, the Xero late-capacity cancel, the organiser's child cancel), and the
-  booking-ledger back-post filling a door's gap. Each
-  already holds `lock(1)` then its lodge key (`INV-LOCK-001`/`002`); the engine
-  asserts `lock(1)` for every correction and re-charge and refuses without it.
+  booking-ledger back-post filling a door's gap. Every one holds `lock(1)`
+  before it posts, which is all the engine asserts (it refuses a correction or
+  re-charge without it). Most also hold their lodge key; two do not: an edit
+  review's closure, and the organiser's per-child cancel (which reconciles beds
+  under `lock(1)` alone). The adapter reads nothing that depends on capacity,
+  so it relies on `lock(1)` and the booking row, never on a lodge key.
 - **The booking row.** Before it reads the owner the adapter takes the booking's
-  row lock, `FOR NO KEY UPDATE`, the strength the door's own status or price
-  UPDATE already takes in the same transaction, so it adds no new edge.
+  row lock, `FOR NO KEY UPDATE`, the strength an UPDATE takes. Most doors have
+  already UPDATEd the row in the same transaction, so for them it adds nothing.
+  A review closure whose re-base declines writes no booking row, and could
+  otherwise take this lock late, after an account-credit mint's KEY SHARE on the
+  owner's Member row, an inversion against member merge (owner move, then
+  `Member … FOR UPDATE`). So `recordReviewClosurePricing` takes the booking row
+  first, before any of its writes.
 - **Member merge** takes no `lock(1)` (see "Merge joins the bed-allocation
   cohort"). Its transfer posts no revenue, so the engine needs no key, and it
   runs after the booking-owner move and the sorted `Member … FOR UPDATE` set. The

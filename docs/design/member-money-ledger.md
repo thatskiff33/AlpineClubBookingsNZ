@@ -286,20 +286,41 @@ promotion, any agreed adjustment and a cancellation's kept fee fold into one
 booking charge component, `booking:<id>:charge`, whose gross is what those live
 lines add up to; each change fee is a component of its own (R03), keyed by its
 legacy posting key. A later event corrects a whole component and charges the
-remainder. A reduction the charge cannot absorb, such as a review give-back after
-a cancellation, comes off the live change fees in key order, so no component
-goes below zero; one beyond them all is refused.
+remainder. A component a reduction would take below zero draws what it lacks
+from the booking's other live components, symmetrically: a review give-back
+larger than the charge draws on the change fees, and a later cancellation that
+reverses such a fee draws it back from the charge. Only a negative total across
+the booking's components is refused, since the legacy ledger promises no more.
 Each line with money is bridged by its own receivable leg; a zero-cent line has
 no leg to carry it and is not linked. The debtor is the booking's owner, member
-or organisation, read after the adapter takes the booking's row lock. R01 opens
-the booking's one CHARGE obligation; later movements are attributed by booking
-until M4's applications. Only a booking whose R01 is in the journal posts later
-events, since one confirmed before M3b is M9's to back-post whole, and an event
-already posted is a no-op. A tax setting the door could not read refuses only a
-batch that needs a fresh split. Member merge posts D4's transfer (section 10).
-The booking-ledger back-post is a legacy writer too: for a booking whose R01 is
-in the journal it posts the lines it fills in (a door's logged gap) as one R26
-batch, named by the first line it writes; for any other booking it posts nothing.
+or organisation, read after the adapter takes the booking's row lock. A
+booking's first confirmation always posts R01, as an explicit ZERO event when it
+carries no money (every line $0, or a legacy plan that wrote none): R01 is what
+puts the booking in the journal's population. R01 opens the booking's one CHARGE
+obligation; later movements are attributed by booking until M4's applications.
+Only a booking whose R01 is in the journal posts later events, since one
+confirmed before M3b is M9's to back-post whole, and an event already posted is
+a no-op. A review closure is keyed by its task and the first line it writes, so
+a reopened task's second closure is an event of its own. A tax setting the door
+could not read refuses only a batch that needs a fresh split. Member merge posts
+D4's transfer (section 10). The booking-ledger back-post is a legacy writer too:
+for a booking whose R01 is in the journal it posts the lines it fills in (a
+door's logged gap, its confirmation's included) as one R26 batch, named by the
+first line it writes; for any other booking it posts nothing.
+
+The journal posts in the currency card charges use. A club whose stored
+currency no card can be charged in, a state the product tolerates (#3567 D3),
+has an inactive journal: `bookingJournalInactiveReason` decides it before each
+door's transaction, the door proceeds and posts nothing, exactly as for a
+booking confirmed before M3b, the condition is logged once, and the census
+reports `JOURNAL_INACTIVE` until the currency is fixed. This is a decision taken
+before the transaction, never a refused posting caught after it. The census
+also raises `CONFIRMED_WITHOUT_R01` for a booking created after the journal's
+first R01 and confirmed on the ledger without one; a booking created before
+that and confirmed after cannot be told from one confirmed before M3b, which is
+a stated limit. Its `JOURNAL` identity compares each booking's total, not
+component by component, because the rebalancing above legitimately moves money
+between a booking's components.
 
 Use the existing lock classification, never a new generic journal advisory key.
 Settlement/lifecycle commands take global `lock(1)` under `INV-LOCK-001`; capacity

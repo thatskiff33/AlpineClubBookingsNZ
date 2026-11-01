@@ -1065,28 +1065,27 @@ keys RESTRICT both ways), `booking-financial-history.realdb.test.ts` and
 
 From Ledger M3b (#4627), every legacy booking charge line a door writes is
 posted into the member-money journal once, in the same transaction, from the
-same stored lines. The chokepoints are the confirmation poster (R01, group
-children included), the modification poster (R02/R03), review close (R21) and
-the cancellation poster (R04), and the back-post filling a door's gap (R26);
-each calls `postBookingLedgerJournal` after its
-legacy write, with a context the door resolved before its transaction. Nothing
-is re-priced: `journalComponentOfLegacyLine` maps each line to one component.
-Nights, the signed promotion, agreed adjustments and a cancellation's kept fee
-fold into the booking's charge component; each change fee is its own component,
-keyed by its legacy posting key. A later event corrects a whole component and
-charges the remainder; a reduction the charge cannot absorb comes off the live
-change fees, never below zero. Each line with
-money is bridged by its own receivable leg. The debtor is the booking's owner,
-member or organisation, read under the booking's row lock. R01 opens the
-booking's one CHARGE obligation. Only a booking whose R01 is in the journal
-posts later events; one confirmed before M3b is M9's to back-post. An event
-already posted is a no-op, and a refusal is never caught, so it rolls the
-business change back. Member merge transfers each receivable balance of the
-merged-away member to the survivor after the owner move, under its
-`Member … FOR UPDATE` set (D4). `booking-ledger:census` checks, for each booking
-whose R01 is posted, that live components add up to the bridged lines
-(identity `JOURNAL`) and that no charge line is unbridged (`UNBRIDGED_CHARGE_LINE`). Pins:
-`member-money-booking-charges.test.ts`,
+same stored lines: the confirmation poster (R01, group children included), the
+modification poster (R02/R03), review close (R21, keyed per closure), the
+cancellation poster (R04) and the back-post filling a door's gap (R26), each
+through `postBookingLedgerJournal` with a context resolved before the
+transaction. Nothing is re-priced: `journalComponentOfLegacyLine` maps each line
+to a component. Nights, the promotion, agreed adjustments and a kept
+cancellation fee fold into the booking's charge component; each change fee is
+its own. An event corrects a whole component and charges the remainder; a
+component a reduction would take below zero draws on the booking's others, and
+only a negative total is refused. Each line with money is bridged by its own
+receivable leg; the debtor is the booking's owner, read under its row lock. A
+first confirmation always posts R01, a ZERO event when it carries no money,
+and opens the booking's CHARGE obligation. Later events post only for a booking
+whose R01 is in the journal; one confirmed before M3b is M9's. A repeated event
+is a no-op, and a refusal is never caught. A club whose currency no card can be
+charged in has an inactive journal: decided before the transaction, its doors
+post nothing and proceed. Member merge transfers the merged-away member's
+receivable balances after the owner move, under its `Member … FOR UPDATE` set
+(D4). `booking-ledger:census` checks each R01 booking's total (`JOURNAL`), and
+raises `UNBRIDGED_CHARGE_LINE`, `CONFIRMED_WITHOUT_R01` and `JOURNAL_INACTIVE`.
+Pins: `member-money-booking-charges.test.ts`,
+`member-money-journal-activity.test.ts`,
 `booking-ledger-projection-census-journal.test.ts`,
-`booking-ledger-journal.realdb.test.ts` and
-`member-money-journal-inert-census.test.ts`.
+`booking-ledger-journal.realdb.test.ts`.

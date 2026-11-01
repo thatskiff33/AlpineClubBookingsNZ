@@ -1917,7 +1917,10 @@ owed — against the ledger lines that project them. Since Ledger M3b (#4627,
 [`INV-MONEY-044`](invariants/money.md#inv-money-044)) an eighth, `JOURNAL`,
 compares, for each booking whose confirmation is in the member-money journal,
 the total of the journal's live charge components with the ledger lines it links; a booking
-confirmed earlier is not compared (M9 back-posts it). It prints:
+confirmed earlier is not compared (M9 back-posts it). The comparison is of each
+booking's total, not component by component (a give-back may legitimately be
+taken from a change fee), so money posted to the wrong component of the right
+booking is not caught here; the mapping is pinned by its tests. It prints:
 
 - per identity, how many bookings it applies to, agree, disagree, are
   classified, or are a coverage gap;
@@ -1933,7 +1936,11 @@ confirmed earlier is not compared (M9 back-posts it). It prints:
   second live line for one guest-night, an unknown posting-key namespace or one
   on an anchor it never posts under, and a live line its source row (or a
   cancellation's frozen kept figure) no longer bears out, and (`UNBRIDGED_CHARGE_LINE`)
-  a charge line on a journal-confirmed booking that no journal batch links.
+  a charge line on a journal-confirmed booking that no journal batch links,
+  (`CONFIRMED_WITHOUT_R01`) a booking created after the journal's first
+  confirmation and confirmed on the ledger with none, and (`JOURNAL_INACTIVE`,
+  once) a club whose currency no card can be charged in, for which the journal
+  posts nothing.
   PostgreSQL's update and delete counts for the table are printed as
   information only;
 - **named classes** — expected differences, each matched to the cent from the
