@@ -100,7 +100,6 @@ import {
   PAYMENT_PROCESSING_MESSAGE,
 } from "@/lib/payment-recovery-contract";
 import type { ClubFormat } from "@/lib/club-format";
-import { GROUP_SETTLEMENT_INTENT_TYPE } from "@/lib/stripe-app-intent-metadata";
 
 /** Statuses an organiser-settled child can hold before it is settled. */
 const SETTLEABLE_CHILD_STATUSES = [
@@ -405,7 +404,7 @@ export async function createGroupSettlementIntent(
     amountCents,
     customerId: customer.id,
     metadata: {
-      type: GROUP_SETTLEMENT_INTENT_TYPE,
+      type: "group_settlement",
       groupBookingId: group.id,
       organiserMemberId: group.organiserMemberId,
     },

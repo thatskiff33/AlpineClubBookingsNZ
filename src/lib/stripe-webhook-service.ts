@@ -474,8 +474,6 @@ async function handlePaymentIntentSucceeded(
 
   const bookingId = paymentIntent.metadata?.bookingId;
   if (!bookingId) {
-    // Unreachable: `isAppCreatedPaymentIntent` let through only a bookingId or
-    // the group type, which returned above. Kept as the type's narrowing.
     logger.warn({ paymentIntentId: paymentIntent.id }, "PaymentIntent succeeded but no bookingId in metadata");
     return;
   }
