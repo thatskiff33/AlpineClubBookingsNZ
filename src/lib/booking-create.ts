@@ -1222,14 +1222,9 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
           reason: "internet_banking_booking_payment",
           store: tx,
         });
-        // #4628 (Ledger M3c, R01): the invoice this create raises is a payable
-        // obligation now, before any money arrives, so the journal holds the
-        // charge from here: planned from the rows just written, as the later
-        // confirmation will plan its lines, under this transaction's lock(1)
-        // and lodge key. The context came in resolved (`INV-LOCK-004`).
-        if (!input.journal) {
-          throw new Error("An internet-banking create needs the journal context its caller resolves before the transaction (#4628).");
-        }
+        // #4628 (M3c, R01): the invoice binds the charge now, planned as the later confirmation plans its
+        // lines, under this transaction's lock(1) and lodge key; the context came in resolved (`INV-LOCK-004`).
+        if (!input.journal) throw new Error("An internet-banking create needs its pre-transaction journal context (#4628).");
         await postBindingCharge(tx, input.journal, newBooking.id, bookingLodgeId);
       }
 

@@ -129,6 +129,7 @@ File: [`invariants/money.md`](invariants/money.md). Prefix `INV-MONEY`.
 | `INV-MONEY-042` | Sealed journals reject later legs; accounts and source identities persist |
 | `INV-MONEY-043` | Money lines, credit links and group settlements refuse booking deletion |
 | `INV-MONEY-044` | Booking doors post their legacy charge lines into the journal once |
+| `INV-MONEY-045` | Bank-transfer charges post at binding; confirmation links, never recharges |
 
 ## Booking Dates And Capacity
 
