@@ -11,7 +11,7 @@ import {
 } from "@/lib/club-tax-settings";
 import { requireCalendarDate } from "@/lib/club-time";
 
-const MIGRATION = readFileSync("prisma/migrations/20261128010000_club_tax_settings/migration.sql", "utf8");
+const MIGRATION = readFileSync("prisma/migrations/20261128050000_club_tax_settings/migration.sql", "utf8");
 const day = requireCalendarDate;
 
 describe("club tax settings", () => {
