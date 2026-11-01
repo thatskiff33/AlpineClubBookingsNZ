@@ -216,6 +216,10 @@ async function seed(options: { priorFreeNightsUsed?: number } = {}): Promise<voi
       xeroInvoiceNumber: "INV-4533",
     },
   });
+  // The stay's confirmation lines, as its settle posted them: an edit posts
+  // its own ledger lines only onto a booking the ledger already holds.
+  const ledger = await import("@/lib/booking-ledger-confirmation-sync");
+  await prisma.$transaction((tx) => ledger.postStoredBookingConfirmationLedgerLines(tx, BOOKING_ID));
   await freeTextRequest(REQUEST_ID);
   if (options.priorFreeNightsUsed) {
     await ownerStay(PRIOR_BOOKING_ID, "race-4533-prior-guest", {
@@ -484,8 +488,12 @@ async function promoState() {
     expect(ops[0]).toMatchObject({ localId: modification.id });
     expect(ops[0]!.idempotencyKey).toMatch(/account-credit/);
 
-    // Ledger lines posted for the edit.
-    expect(await prisma.bookingLedgerLine.count({ where: { bookingId: BOOKING_ID, anchorId: modification.id } })).toBeGreaterThan(0);
+    // Ledger lines posted for the edit, under its own anchor.
+    expect(
+      await prisma.bookingLedgerLine.count({
+        where: { bookingId: BOOKING_ID, anchorKind: "MODIFICATION", anchorId: modification.id },
+      }),
+    ).toBeGreaterThan(0);
 
     // The request joined to what it produced, the entry recorded on it.
     const request = await prisma.bookingChangeRequest.findUniqueOrThrow({ where: { id: REQUEST_ID } });
