@@ -3,6 +3,7 @@ import { type XeroObjectLinkInput } from "@/lib/xero-sync";
 import { isRefundCreditNoteLinkCancelledInXero } from "@/lib/xero-refund-note-status";
 import { type ResolvedXeroObjectLink } from "./types";
 import { BOOKING_SCOPED_OUTBOUND_MODELS } from "./constants";
+import { isLiveXeroPaymentStatus } from "@/lib/xero-payment-status";
 
 export function dedupeXeroObjectLinks(links: XeroObjectLinkInput[]): XeroObjectLinkInput[] {
   const seen = new Map<string, XeroObjectLinkInput>();
@@ -99,19 +100,9 @@ export const BOOKING_INVOICE_PAYMENT_ROLES = [
  */
 export const INVOICE_DERIVED_PAYMENT_ROLES: readonly string[] = Object.values(INVOICE_LINK_PAYMENT_ROLES);
 
-/** #4531: the status Xero gives a payment it has deleted (reversed). Terminal: never live again. */
-export const DELETED_XERO_PAYMENT_STATUS = "DELETED";
-
-/**
- * #4531 (`INV-INT-031`): whether a Xero payment status is DELETED. The inbound
- * reconcile, the payment-link readers in this file and the cash quantifier use
- * it; four older inline copies elsewhere (two of them case-sensitive) are
- * tracked by #4576. An inbound write of a payment Xero reports deleted lands
- * its link inactive, so a deleted payment is never re-adopted.
- */
-export function isDeletedXeroPaymentStatus(status: unknown): boolean {
-  return String(status ?? "").toUpperCase() === DELETED_XERO_PAYMENT_STATUS;
-}
+// The payment-status rule lives in one pure module (#4576); re-exported here for
+// the inbound reconcile's existing callers.
+export { DELETED_XERO_PAYMENT_STATUS, isDeletedXeroPaymentStatus } from "@/lib/xero-payment-status";
 
 /**
  * #3643: whether a stored link records money paid against a booking's invoice.
@@ -132,9 +123,8 @@ export function isRecordedBookingInvoicePayment(link: {
     link.metadata && typeof link.metadata === "object"
       ? (link.metadata as { status?: unknown }).status
       : null;
-  // Xero's payment statuses are AUTHORISED and DELETED; VOIDED is refused too
-  // because the #3535 audit always did, and one list now serves both.
-  return !isDeletedXeroPaymentStatus(status) && String(status ?? "").toUpperCase() !== "VOIDED";
+  // Neither DELETED nor VOIDED: the one live-payment rule (#4576).
+  return isLiveXeroPaymentStatus(status);
 }
 
 export function getDerivedInboundAllocationRole(creditNoteRole: string) {
