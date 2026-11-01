@@ -1579,7 +1579,14 @@ describe("adoptSavedCardChargeAttemptForIntent (a webhook for an intent the ledg
       expect(row(attempt.attemptRowId)).toMatchObject({ status: PaymentStatus.PENDING, stripePaymentIntentId: null });
     });
 
-    it("refuses a row whose payment is another booking's", async () => {
+    it("refuses a row whose key is this booking's but whose payment is another booking's", async () => {
+      const misfiled = seedAttempt({ id: "txn_misfiled", paymentId: "pay_other", reference: savedCardChargeIdempotencyKey(BOOKING, "txn_misfiled") });
+
+      expect(await adopt({ idempotencyKey: null, metadata: sentMetadata(misfiled.id) })).toBeNull();
+      expect(row(misfiled.id)).toMatchObject({ status: PaymentStatus.PENDING, stripePaymentIntentId: null });
+    });
+
+    it("refuses metadata naming another booking than the row's", async () => {
       const attempt = await begin();
 
       expect(await adopt({ idempotencyKey: null, bookingId: "bk_other", metadata: { ...sentMetadata(attempt.attemptRowId), bookingId: "bk_other" } })).toBeNull();
