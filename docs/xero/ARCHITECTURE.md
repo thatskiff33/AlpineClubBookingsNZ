@@ -1101,6 +1101,14 @@ ever; the event completes. The treasurer codes the money against the Stripe
 clearing account by hand. Posting a mapped Payment Link to Xero automatically is
 #4532's part 2 and is not built. `INV-INT-032`.
 
+The app's own intent can fall through too: one carrying a `bookingId` that no
+PRIMARY payment transaction names (for example, a saved-card charge whose lost
+answer cannot be adopted). Since #4624 that branch writes the same row with
+`reason` `APP_INTENT_NO_TRANSACTION` or `APP_INTENT_NOT_PRIMARY` and the booking
+id, and raises `admin-unmatched-app-stripe-payment` under the same once-ever
+key. Nothing is queued to the outbox and the booking is not settled: the money
+is the booking's, matched or refunded by a person. `INV-INT-033`.
+
 ## Flow 2 — Inbound reconciliation (webhooks + incremental cursors)
 
 An edit's credit note can reach Xero before the treasurer sends its refund

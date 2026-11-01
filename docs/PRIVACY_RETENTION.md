@@ -93,7 +93,7 @@ see [backups](guides/backups.md), the
 | `ManualRefundTask` | Payment, refund, recovery and officer decision evidence | Kept with booking / financial records for reconciliation and evidence; no new automatic deletion | Keep |
 | `PaymentTransaction` | Payment, refund, recovery and officer decision evidence | Kept with booking / financial records for reconciliation and evidence; no new automatic deletion | Keep |
 | `PaymentRefund` | Payment, refund, recovery and officer decision evidence | Kept with booking / financial records for reconciliation and evidence; no new automatic deletion | Keep |
-| `UnrecognisedStripePayment` | Stripe payments taken outside the app: provider references, amount and the description the payer saw or typed | Kept with booking / financial records for reconciliation and evidence; no new automatic deletion | Keep |
+| `UnrecognisedStripePayment` | Stripe payments no app path settled: provider references, amount, the description the payer saw or typed, and for the app's own payment its booking id | Kept with booking / financial records for reconciliation and evidence; no new automatic deletion | Keep |
 | `RateLimitCounter` | Pseudonymous requester keys for abuse prevention | Until counter reset / existing rate-limit cleanup | Delete through existing cleanup |
 | `AlertCooldown` | Alert deduplication keys that may reference an entity | Kept for the operational purpose while needed; no new automatic deletion | Keep |
 | `PaymentRecoveryOperation` | Payment, refund, recovery and officer decision evidence | Kept with booking / financial records for reconciliation and evidence; no new automatic deletion | Keep |

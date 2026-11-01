@@ -677,3 +677,14 @@ A succeeded Stripe payment the app did not create is recorded once and alerted o
 - **Nothing else.** The event completes; no booking, settlement, ledger or Xero document is touched, and no advisory lock is taken. Coding the money in Xero is the treasurer's, by hand.
 
 Pinned by `stripe-app-intent-metadata.test.ts`, `unrecognised-stripe-payment.test.ts`, `stripe-webhook-alerts.test.ts`, `admin-unrecognised-stripe-payment-alert.test.ts` and, against a real database, `unrecognised-stripe-payment.realdb.test.ts`.
+
+## A succeeded app intent no payment row settles (#4624)
+
+### INV-INT-033
+A succeeded PaymentIntent the app created for a booking that matches no PRIMARY payment transaction is recorded once and alerted once; it never completes silently.
+
+- **Where.** `handlePaymentIntentSucceeded` (`stripe-webhook-service.ts`), after the group-settlement, superseded-capture and additional-ask routes and the saved-card attempt adoption: no row names the intent (`APP_INTENT_NO_TRANSACTION`), or the row is not `PRIMARY` (`APP_INTENT_NOT_PRIMARY`). Those routes are the expected cases and never reach it. [`STATE_MACHINES.md`](../STATE_MACHINES.md#a-succeeded-app-intent-no-primary-row-settles-4624) lists every minting flow and whether it can.
+- **One record, one alert.** `recordUnmatchedAppStripePayment` reuses `INV-INT-032`'s `UnrecognisedStripePayment` row (with `reason` and the metadata `bookingId`; no Checkout read) and its once-ever key, so one PaymentIntent has one row and one alert whichever case recorded it first; the stored row's reason picks the mail. The alert is `admin-unmatched-app-stripe-payment`: unmuteable, delivery-locked, to Finance editors. A send that fails gives the claim back and fails the event, so Stripe redelivers.
+- **Nothing else.** The booking, its payment, ledger, capacity and Xero are untouched, and no advisory lock is taken: matching the money to the booking or refunding it is a person's.
+
+Pinned by `unrecognised-stripe-payment.test.ts`, `stripe-webhook-alerts.test.ts` ("#4624"), `admin-unrecognised-stripe-payment-alert.test.ts` and, against a real database, `unrecognised-stripe-payment.realdb.test.ts`.
