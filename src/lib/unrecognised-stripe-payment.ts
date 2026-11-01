@@ -243,9 +243,11 @@ async function ensureAlert(
   if (!heldAt) {
     throw new UnrecognisedStripePaymentAlertNotSentError(row.stripePaymentIntentId);
   }
-  // A sibling delivery of another event still owns a fresh claim. The same
-  // event's redelivery reaches here only once that attempt's lease expired, and
-  // then finds a claim taken within the margin of that lease expired (#4647).
+  // A fresh claim held here belongs to a sibling still sending. This delivery's
+  // own failed send gave its claim back above (#4670), so the same event's
+  // redelivery reaches a claim only when an attempt crashed: that attempt's
+  // lease then holds the redelivery off until the claim is past this window
+  // (#4647).
   if (Date.now() - heldAt.getTime() < UNRECOGNISED_ALERT_IN_FLIGHT_MS) return;
 
   await releaseAlertCooldown({ key, claimedAt: heldAt });
