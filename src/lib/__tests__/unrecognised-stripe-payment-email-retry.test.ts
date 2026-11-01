@@ -272,7 +272,7 @@ describe("the unrecognised Stripe payment alert has one retry owner (#4647)", ()
       name: "a payment the app did not create (#4532)",
       template: "admin-unrecognised-stripe-payment",
       record: (pi: Stripe.PaymentIntent, evt: Stripe.Event) => recordUnrecognisedStripePayment(pi, evt, CLUB_FORMAT_TEST),
-      metadata: {},
+      metadata: {} as Record<string, string>,
     },
     {
       name: "the app's own intent no payment transaction names (#4624)",
