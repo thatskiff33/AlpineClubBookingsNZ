@@ -99,7 +99,7 @@ function objectLabel(type: string | null | undefined): string {
  * The late object as an officer reads it: "credit note CN-B for $200.00
  * (Xero id cn-b, booking b-1)".
  */
-export function unrecordedObjectDescription(late: UnrecordedXeroObject): string {
+function unrecordedObjectDescription(late: UnrecordedXeroObject): string {
   return `${objectLabel(late.xeroObjectType)} ${late.xeroObjectNumber ?? late.xeroObjectId}${late.amount ? ` for ${late.amount}` : ""} (Xero id ${late.xeroObjectId}${late.bookingId ? `, booking ${late.bookingId}` : ""})`;
 }
 
