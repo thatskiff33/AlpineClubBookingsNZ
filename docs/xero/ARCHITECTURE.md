@@ -4111,9 +4111,11 @@ once, by card, and Xero is told about the payment without a second invoice.
   payment may be in Xero (`gapPaymentMayBeInXero`; `readRecordedByPrimaryOrGap`, the
   reader the receipt uses, which counts the invoice body a send stores before any
   Xero call), and waits, silently, for one that cannot have paid yet only while it
-  can still send (`gapRowCanStillSend`: queued, sending or waiting, or FAILED and
-  replayable, within seven days of being queued, `GAP_SEND_WAIT_MS`); past that it
-  holds and alerts daily, naming the row. A PARTIAL repair skips a gap payload
+  can still send (`gapRowCanStillSend`: it can run again - live, or FAILED or PARTIAL
+  and replayable, unresolved - within seven days of being queued, `GAP_SEND_WAIT_MS`); past that it
+  holds and alerts daily, naming the row: retry it or wait, for a row that can still
+  run (`isRerunnableOperation`, the in-memory twin of `rerunnableOperationWhere`);
+  record the payment by hand, for one that cannot (`gapUnsentAlertDetail`). A PARTIAL repair skips a gap payload
   already set unpaid without asking again. The
   gap invoice's send, an officer's Retry and the PARTIAL repair record no payment on
   overlap and alert (`unpaidGapPayloadIfOverlapping`, `skipPartialGapRepairPayment`):

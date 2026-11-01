@@ -34,6 +34,7 @@ import {
   CREDIT_RELEASE_PAYMENT_ROLE,
   creditReleasePaymentIdempotencyKey,
   gapPaymentOverlapsCreditRelease,
+  gapUnsentAlertDetail,
   recordCreditReleasePayments,
   skipPartialGapRepairPayment,
   unpaidGapPayloadIfOverlapping,
@@ -361,15 +362,29 @@ describe("#4494: one recorder per capture, beside a #3980 gap invoice", () => {
     });
 
     it.each([
-      ["marked non-replayable", "FAILED", { replayable: false }],
-      ["queued longer than the wait bound", "PENDING", { createdAt: new Date(NOW.getTime() - 8 * 24 * 60 * 60 * 1000) }],
-    ])("MUTATION (g) d-3: holds, and tells an officer which row, for an unsent gap invoice %s", async (_name, status, over) => {
+      ["marked non-replayable", "FAILED", { replayable: false }, "record the card payment against the booking's invoice by hand"],
+      ["queued longer than the wait bound", "PENDING", { createdAt: new Date(NOW.getTime() - 8 * 24 * 60 * 60 * 1000) }, "Retry that operation"],
+    ])("MUTATION (g) d-3: holds, and tells an officer which row, for an unsent gap invoice %s", async (_name, status, over, says) => {
       outbox.gapRows = [gapRow(status, "pi_1", 1000, over as Partial<GapRow>)];
       const d = deps();
       expect(await recordCreditReleasePayments({ deps: d, now: NOW })).toEqual({ recorded: 0, held: 1, failed: 0, waiting: 0 });
       expect(d.createPayment).not.toHaveBeenCalled();
       expect(mocks.claimAlertCooldown).toHaveBeenCalledWith(expect.objectContaining({ key: "credit-release-payment-gap-unsent:ask-1" }));
-      expect(mocks.sendAlert).toHaveBeenCalledWith(expect.objectContaining({ errorMessage: expect.stringContaining(outbox.gapRows[0]!.id) }));
+      const message = mocks.sendAlert.mock.calls[0]![0].errorMessage as string;
+      expect(message).toContain(outbox.gapRows[0]!.id);
+      expect(message).toContain(says);
+    });
+
+    it("r2-2: tells an officer what to do by why the gap invoice is unsent, and never to cancel it", () => {
+      const runs = gapUnsentAlertDetail({ operationId: "op-gap", rerunnable: true });
+      expect(runs).toContain("Retry that operation in Xero Operations, or wait for it to send");
+      expect(runs).toContain("recorded automatically");
+      expect(runs).not.toMatch(/by hand|cancel/i);
+      const stuck = gapUnsentAlertDetail({ operationId: "op-gap", rerunnable: false });
+      expect(stuck).toContain("will not be recorded automatically");
+      expect(stuck).toContain("record the card payment against the booking's invoice by hand");
+      expect(stuck).toContain("Do not resolve the extra invoice");
+      expect(stuck).not.toMatch(/cancel|Retry that/i);
     });
 
     it("MUTATION (f): holds for a FAILED gap invoice with a live invoice or payment link on its change", async () => {

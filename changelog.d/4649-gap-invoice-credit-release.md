@@ -9,5 +9,6 @@
   if what it would take, together with the credit-release money, is more than
   the card took. The sweep waits for such an invoice that has not been sent and
   still can be, and holds, telling an officer, where it may already have
-  recorded part of the card payment or will not be sent on its own. Members see
-  no change.
+  recorded part of the card payment, cannot be sent any more, or is still
+  unsent after a week, saying whether to retry the invoice or record the
+  payment by hand. Members see no change.

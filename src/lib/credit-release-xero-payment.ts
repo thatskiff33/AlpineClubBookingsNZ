@@ -122,6 +122,20 @@ async function alertOnce(key: string, bookingId: string, headline: string, detai
   }
 }
 
+/**
+ * #4494 (delta review r2-2): what an officer is told about a credit-release
+ * payment held behind an unsent gap invoice, by why it is held. One that can
+ * still run (queued, or FAILED and replayable, only past the wait) records on
+ * its own once sent; one that cannot (marked non-replayable) never will, and
+ * resolving it only makes the hold permanent.
+ */
+export function gapUnsentAlertDetail(gapSend: { operationId: string; rerunnable: boolean }): string {
+  const lead = `The member paid by card for credit that was used in Xero, but the booking's extra invoice for its remaining balance (Xero operation ${gapSend.operationId}) names the same card payment and has not been sent. Nothing was recorded.`;
+  return gapSend.rerunnable
+    ? `${lead} Retry that operation in Xero Operations, or wait for it to send: once it has, this payment is recorded automatically.`
+    : `${lead} That operation will not run again, so this payment will not be recorded automatically. Please record the card payment against the booking's invoice by hand. Do not resolve the extra invoice expecting this payment to record itself.`;
+}
+
 export async function recordCreditReleasePayments(
   options: { limit?: number; deps?: Partial<CreditReleasePaymentDeps>; now?: Date } = {},
 ): Promise<CreditReleasePaymentRunResult> {
@@ -299,7 +313,7 @@ async function recordOne({
         `credit-release-payment-gap-unsent:${item.askRowId}`,
         payment.bookingId,
         "A card payment for credit used in Xero is waiting on an unsent invoice",
-        `The member paid by card for credit that was used in Xero, but the booking's extra invoice for its remaining balance (Xero operation ${gapSend.operationId}) names the same card payment and has not been sent, and will not send on its own. Nothing was recorded. Retry or cancel that operation in Xero Operations; once it is sent or cancelled this payment is recorded automatically.`,
+        gapUnsentAlertDetail(gapSend),
       );
       return "held";
     }

@@ -566,7 +566,7 @@ describe("readRecordedByPrimaryOrGap and creditReleaseShareOverlaps (#4494)", ()
     await expect(readRecordedByPrimaryOrGap("pi_release", null, store as never, { withGapSendState: { now } })).resolves.toEqual({
       kind: "part",
       cents: 3_000,
-      gapSend: { operationId: "op_gap", mayBeInXero: false, canStillSend: true },
+      gapSend: { operationId: "op_gap", mayBeInXero: false, canStillSend: true, rerunnable: true },
     });
     // The receipt's reading is unchanged: a queued gap's cents count, with no send state.
     await expect(readRecordedByPrimaryOrGap("pi_release", null, store as never)).resolves.toEqual({ kind: "part", cents: 3_000 });
@@ -635,12 +635,13 @@ describe("gapRowCanStillSend (#4494 delta review d-3)", () => {
   const row = (over: Record<string, unknown>) => ({ status: "PENDING", replayable: true, manuallyResolvedAt: null, createdAt: queuedAgo(60_000), ...over }) as never;
 
   it("is yes while the row is queued, sending, waiting, or FAILED and still replayable, within the bound", () => {
-    for (const status of ["PENDING", "RUNNING", "WAITING_PAYMENT", "FAILED"]) expect(gapRowCanStillSend(row({ status }), now)).toBe(true);
+    for (const status of ["PENDING", "RUNNING", "WAITING_PAYMENT", "FAILED", "PARTIAL"]) expect(gapRowCanStillSend(row({ status }), now)).toBe(true);
     expect(gapRowCanStillSend(row({ createdAt: queuedAgo(GAP_SEND_WAIT_MS) }), now)).toBe(true);
   });
 
   it("MUTATION: is no once it cannot send, or is past the bound", () => {
     expect(gapRowCanStillSend(row({ status: "FAILED", replayable: false }), now)).toBe(false);
+    expect(gapRowCanStillSend(row({ status: "SKIPPED" }), now)).toBe(false);
     expect(gapRowCanStillSend(row({ manuallyResolvedAt: now }), now)).toBe(false);
     expect(gapRowCanStillSend(row({ createdAt: queuedAgo(GAP_SEND_WAIT_MS + 1) }), now)).toBe(false);
   });

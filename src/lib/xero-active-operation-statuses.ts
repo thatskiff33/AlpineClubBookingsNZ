@@ -1,5 +1,7 @@
 import type { Prisma, XeroSyncOperation } from "@prisma/client";
 
+import { isResolvedInXero } from "@/lib/xero-operation-resolution";
+
 /** Active correlation-key population of XeroSyncOperation_active_correlationKey_unique. */
 export const XERO_ACTIVE_OPERATION_STATUSES = [
   "PENDING",
@@ -39,4 +41,19 @@ export function rerunnableOperationWhere(): Prisma.XeroSyncOperationWhereInput {
       { status: { in: [...XERO_RETRYABLE_ENDED_STATUSES] }, replayable: true },
     ],
   };
+}
+
+/**
+ * #4494 (`INV-SSOT`): {@link rerunnableOperationWhere}'s rule for a row already
+ * read - not resolved in Xero, and live, or FAILED or PARTIAL and still
+ * replayable. The one in-memory spelling; a test holds the two in agreement.
+ */
+export function isRerunnableOperation(row: {
+  status: string;
+  replayable: boolean;
+  manuallyResolvedAt: Date | string | null;
+}): boolean {
+  if (isResolvedInXero(row)) return false;
+  const live = (XERO_ACTIVE_OPERATION_STATUSES as readonly string[]).includes(row.status);
+  return live || ((XERO_RETRYABLE_ENDED_STATUSES as readonly string[]).includes(row.status) && row.replayable);
 }

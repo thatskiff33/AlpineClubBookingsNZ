@@ -4135,10 +4135,11 @@ late change capture KEPT on a cancelled, invoiced booking (the #3639 task
   credit-release sweep beside such a gap invoice (#4494): one whose payment
     may be in Xero (SUCCEEDED, PARTIAL, resolved, a Xero id, response or
     link, a stale-RUNNING reset, an invoice body its send stored) -> held, an
-    officer alerted; one that cannot have paid yet and can still send
-    (PENDING, RUNNING, WAITING_PAYMENT, or FAILED and replayable, queued
-    within 7 days) -> waiting, no alert; one that cannot send -> held, an
-    officer alerted daily, naming the row
+    officer alerted; one that cannot have paid yet and can still send (it
+    can run again - PENDING, RUNNING, WAITING_PAYMENT, or FAILED or PARTIAL
+    and replayable, unresolved - queued within 7 days) -> waiting, no alert;
+    otherwise -> held, an officer alerted daily, naming the row: retry it or
+    wait if it can still run, else record the payment by hand
   receipt worker:
     a LIVE invoice create for the booking, or (under the booking's anchor
       lock) a LIVE receipt for it stamped ADDITIONAL_CAPTURE_RECEIPT_PLANNING

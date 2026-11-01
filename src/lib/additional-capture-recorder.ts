@@ -37,7 +37,7 @@ import { LIVE_KEPT_LATE_CAPTURE_INVOICE_WHERE } from "@/lib/late-capture-kept-xe
 import { prisma } from "@/lib/prisma";
 import { asRecord, responseNamesXeroInvoice } from "@/lib/xero-json";
 import { XERO_ORPHANED_STALE_RUNNING_ERROR_CODE } from "@/lib/xero-operation-error-codes";
-import { XERO_ACTIVE_OPERATION_STATUSES } from "@/lib/xero-active-operation-statuses";
+import { isRerunnableOperation } from "@/lib/xero-active-operation-statuses";
 import type { PrimaryInvoiceFeeAtLink } from "@/lib/xero-primary-invoice-fee-at-link";
 import { CAPTURED_TRANSACTION_STATUS_LIST } from "@/lib/payment-transaction-status";
 import { LEDGER_ROWS_OLDEST_FIRST } from "@/lib/payment-ledger-order";
@@ -302,7 +302,8 @@ async function readBaseCaptureRecorder(
  * {@link gapRowCanStillSend}), because a gap that has not sent is re-checked at
  * its send and raised unpaid there - the sweep waits for it while it can.
  */
-export type GapSendState = { operationId: string; mayBeInXero: boolean; canStillSend: boolean };
+/** `rerunnable`: it can still run again (only the wait bound has passed), which decides what an officer is told. */
+export type GapSendState = { operationId: string; mayBeInXero: boolean; canStillSend: boolean; rerunnable: boolean };
 export type RecordedByPrimaryOrGap =
   | { kind: "primary-invoice" }
   | { kind: "gap-invoice"; operationId: string; gapSend?: GapSendState }
@@ -359,13 +360,16 @@ export async function gapPaymentMayBeInXero(
  */
 export const GAP_SEND_WAIT_MS = 7 * 24 * 60 * 60 * 1000;
 
-/** Whether an unsent gap invoice can still send: queued, sending or waiting, or FAILED and still replayable, and within {@link GAP_SEND_WAIT_MS}. Pure. */
+/**
+ * Whether an unsent gap invoice can still send: it can run again
+ * (`isRerunnableOperation`, the outbox's own rule) and was queued within
+ * {@link GAP_SEND_WAIT_MS} - the bound is the only gap-specific part. Pure.
+ */
 export function gapRowCanStillSend(
   row: { status: string; replayable: boolean; manuallyResolvedAt: Date | null; createdAt: Date },
   now: Date,
 ): boolean {
-  if (row.manuallyResolvedAt || now.getTime() - row.createdAt.getTime() > GAP_SEND_WAIT_MS) return false;
-  return (XERO_ACTIVE_OPERATION_STATUSES as readonly string[]).includes(row.status) || (row.status === "FAILED" && row.replayable);
+  return isRerunnableOperation(row) && now.getTime() - row.createdAt.getTime() <= GAP_SEND_WAIT_MS;
 }
 
 /** The row fields {@link gapPaymentMayBeInXero} and {@link gapRowCanStillSend} read. */
@@ -413,6 +417,7 @@ export async function readRecordedByPrimaryOrGap(
         operationId: covering.id,
         mayBeInXero: await gapPaymentMayBeInXero(row, store),
         canStillSend: gapRowCanStillSend(row, options.withGapSendState.now),
+        rerunnable: isRerunnableOperation(row),
       },
     };
   }
