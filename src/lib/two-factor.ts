@@ -15,7 +15,7 @@ import {
   assertTwoFactorActorMayAct,
   recordTwoFactorMutation,
   TWO_FACTOR_AUDIT_ACTIONS,
-  type TwoFactorActor,
+  type TwoFactorPersonActor,
   type TwoFactorRequestContext,
 } from "@/lib/two-factor-audit";
 
@@ -333,8 +333,8 @@ export async function consumeRecoveryCode(memberId: string, code: string) {
 
 export async function replaceRecoveryCodes(params: {
   memberId: string;
-  /** Who replaced them: the member themself on the regenerate route (#3454). */
-  actor: TwoFactorActor;
+  /** Who replaced them: the member themself on the regenerate route (#3454). Never a job. */
+  actor: TwoFactorPersonActor;
   request?: TwoFactorRequestContext;
 }) {
   const { memberId } = params;
@@ -374,8 +374,8 @@ export async function enrollTwoFactor(params: {
   memberId: string;
   method: TwoFactorMethod;
   totpSecret?: string | null;
-  /** Who enrolled — the member themself on the enrolment routes (#3454). */
-  actor: TwoFactorActor;
+  /** Who enrolled — the member themself on the enrolment routes (#3454). Never a job. */
+  actor: TwoFactorPersonActor;
   request?: TwoFactorRequestContext;
 }) {
   // A member actor must be the member being enrolled (#3454 review).

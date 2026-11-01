@@ -715,8 +715,22 @@ export const AUDIT_CENSUS_TOTALS = {
   // 523 -> 526 (subscription-category-decoupling rework, merged onto main
   // 69ade2d95, 29 Oct 2026): the three Subscription Categories admin-CRUD
   // writers (create/update/delete), all `admin` category via `auditLog.create`.
-  // RE-MEASURED with `pnpm run audit:census` on the merged tree.
-  writeSites: 526,
+  // 526 -> 528 (#4432): `XERO_SYNC_NOW` twice (the officer's sync-now outcome and its failure)
+  // and `XERO_WEBHOOK_THRESHOLD_UPDATED`, each an awaited `createAuditLog` with a literal `xero`
+  // category at the call site.
+  // 528 -> 530 (#4457): `privacy.retention.settings_updated` (`admin`) and
+  // `privacy.retention.member_anonymised` (`privacy`, so only membership:view readers see
+  // which member was anonymised), each an awaited `createAuditLog` with a literal category.
+  // 530 -> 531 (#4533): `booking-change-request.create` for the promo correction request an
+  // officer raises from Edit Booking on a finished stay, a `logAudit` with a literal `booking`
+  // category, like the member's own request.
+  // 531 -> 532 (#4426): `xero.refund_credit_note.late_note_not_recorded`, the one row a refund
+  // credit-note create writes when Xero answers after its job was resolved by hand recording a
+  // note, an awaited `createAuditLog` with a literal `xero` category.
+  // 532 -> ??? (this main-sync, 2 Nov 2026): RE-MEASURED with `pnpm run audit:census` on the
+  // merged tree; this placeholder is intentionally wrong so the census script's own mismatch
+  // output names the true number.
+  writeSites: 999999,
   /**
    * Of those, sites whose event object carries no `category` key.
    *
@@ -819,7 +833,8 @@ export const AUDIT_CENSUS_TOTALS = {
     // 273 -> 273 (#4149): the two handlers' refund entries, one shared writer,
     // and the lost-record recovery's own entry.
     // 273 -> 274 (#4170): the refunded-outside-the-app entry.
-    logAudit: { total: 274, uncategorised: 0 },
+    // 274 -> 275 (#4533): the officer's finished-stay promo correction request, above.
+    logAudit: { total: 275, uncategorised: 0 },
     // 101 -> 102 (#2627): the deletion-approval release, above.
     // 102 -> 104 (#2595): the two reviewed-move writes, above.
     // 104 -> 105 (#2649): the return-to-waitlist repair, above.
@@ -932,7 +947,10 @@ export const AUDIT_CENSUS_TOTALS = {
     // 157 -> 158 (#4253 release 2 fix round): the left-to-officers note, above.
     // 158 -> 161: the central-server lane (#4262) merged. RE-MEASURED with `pnpm run audit:census` on the merged tree (central-server lane + main b7466a631, 27 Oct 2026): the lane's four sites and upstream's are disjoint, composed, never added.
     // 161 -> 162 (#4359): the re-send hold's row, above.
-    createAuditLog: { total: 162, uncategorised: 0 },
+    // 162 -> 165 (#4432): the sync-now outcome, its failure and the webhook threshold, above.
+    // 165 -> 167 (#4457): the retention settings update and the member anonymisation, above.
+    // 167 -> 168 (#4426): the late refund note's row, above.
+    createAuditLog: { total: 168, uncategorised: 0 },
     // 8 -> 9 (#2581 child 2 review): `recordAgeUpParentEmailHandoffAudit`
     // moved off its hand-built `prisma.auditLog.create`, the last one in `src/`.
     // Same row, same dedupe keys (`action` + `subjectMemberId` + `outcome`) —
@@ -1066,7 +1084,9 @@ export const AUDIT_CENSUS_TOTALS = {
     // money changing, read by booking officers like every `booking.modify.*`.
     // 107 -> 108 (#3750): the executed change-request approval, `booking` like
     // the acknowledgement of the same action.
-    booking: 108,
+    // 108 -> 109 (#4533): the officer's finished-stay promo correction request,
+    // `booking` like the member's own request — the same readers.
+    booking: 109,
     // 16 -> 33 (#2581 child 2): the seventeen money writers — subscription
     // billing, member credit, fee configuration, saved-card charges and the five
     // Stripe webhook outcomes. `payment` is `support` plus `finance`, the
@@ -1308,7 +1328,12 @@ export const AUDIT_CENSUS_TOTALS = {
     // Subscription Categories admin-CRUD writers, all `admin` — officer-only
     // config, no member data, readable with support:view like every sibling
     // writer in this category.
-    admin: 113, // 108/109 -> 110 (central-server lane, 20 Oct 2026): #62 and #58 are disjoint from upstream's. RE-MEASURED.
+    // 113 -> ??? (#4457, disjoint from the category rework): `privacy.retention.settings_updated`.
+    // A deliberate +1 to the support:view-only population: it records only retention
+    // settings, never a member. RE-MEASURED with `pnpm run audit:census` on the merged tree;
+    // this placeholder is intentionally wrong so the census script's own mismatch output
+    // names the true number.
+    admin: 999999, // 108/109 -> 110 (central-server lane, 20 Oct 2026): #62 and #58 are disjoint from upstream's. RE-MEASURED.
     // 16 -> 19 (#2581 child 2): `member.password-reset-sent` and
     // `member.setup-invite-sent` (decision 3 — the affected domain is the
     // CREDENTIAL, not the mailing), plus the `member.bulk-set-role` branch
@@ -1417,7 +1442,11 @@ export const AUDIT_CENSUS_TOTALS = {
     // Nobody's readership changes.
     // 42 -> 44 (#4270): `xero.credit_note.outside_spend_mirrored` and `.outside_spend_restored`.
     // Nobody's readership changes.
-    xero: 44,
+    // 44 -> 47 (#4432): `XERO_SYNC_NOW` (outcome and failure) and
+    // `XERO_WEBHOOK_THRESHOLD_UPDATED`, beside the other `xero` rows. Nobody's readership changes.
+    // 47 -> 48 (#4426): `xero.refund_credit_note.late_note_not_recorded`, beside the other `xero` rows.
+    // Nobody's readership changes.
+    xero: 48,
     // 12 -> 14 (#2581 child 2): `BULK_COMMUNICATION_SENT` and
     // `EMAIL_SUPPRESSION_CLEARED`. Safe only BECAUSE child 1 moved
     // `communication` out of the support-only system entry into the membership
@@ -1446,7 +1475,8 @@ export const AUDIT_CENSUS_TOTALS = {
     // filter, so they read it there in full. What the category picks is the AI
     // Diagnostics correlation entry, which for `privacy` needs membership too.
     // 20 -> 21 (#3492): the guest promo-code lookup, above.
-    privacy: 21,
+    // 21 -> 22 (#4457): `privacy.retention.member_anonymised`, readable only with membership:view.
+    privacy: 22,
     // UNCHANGED by #2581 child 2. `system` is for genuine platform events with
     // no narrower business domain, and none of the 82 was one.
     system: 4,

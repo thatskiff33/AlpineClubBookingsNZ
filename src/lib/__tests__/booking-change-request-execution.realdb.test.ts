@@ -30,6 +30,7 @@
  */
 import { Role, type PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { releaseBookingJournalForTeardown } from "./support/booking-financial-history-teardown";
 
 import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 import { realElapsedMs } from "@/lib/__tests__/helpers/clock";
@@ -143,6 +144,8 @@ async function clean(): Promise<void> {
   });
   await prisma.bookingChangeRequest.deleteMany({ where: { bookingId: BOOKING_ID } });
   await prisma.paymentRecoveryOperation.deleteMany({ where: { bookingId: BOOKING_ID } });
+  // #4627: the doors post journal batches bridged to these lines; release them first.
+  await releaseBookingJournalForTeardown(prisma, [BOOKING_ID]);
   await prisma.bookingLedgerLine.deleteMany({ where: { bookingId: BOOKING_ID } });
   await prisma.bookingEvent.deleteMany({ where: { bookingId: BOOKING_ID } });
   await prisma.manualRefundTask.deleteMany({ where: { paymentId: PAYMENT_ID } });

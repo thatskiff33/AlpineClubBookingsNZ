@@ -822,11 +822,9 @@ export function BookingBedAllocationPanel({
                 Refresh
               </Button>
             ) : null}
-            <Link href={boardHref}>
-              <Button type="button" variant="outline" size="sm">
-                Open on the board
-              </Button>
-            </Link>
+            <Button asChild variant="outline" size="sm">
+              <Link href={boardHref}>Open on the board</Link>
+            </Button>
           </div>
         </div>
 

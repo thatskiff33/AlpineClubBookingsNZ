@@ -163,6 +163,13 @@ export interface ClassifyXeroBookingEditSettlementInput {
    * aggregate alone would refuse the correction.
    */
   internetBankingReceiptCaptured?: boolean;
+  /**
+   * #4299 (N-b): a place the group organiser paid for by Internet Banking. It
+   * has no primary invoice of its own - its `hasIssuedXeroInvoice` is the
+   * organiser's combined invoice, which an edit never updates - so neither a
+   * primary update nor a "skipped" one is recorded for it.
+   */
+  organiserBankPlace?: boolean;
 }
 
 export interface QueueXeroBookingEditSettlementInput
@@ -287,6 +294,11 @@ export function classifyXeroBookingEditSettlement(
     primaryInvoiceUpdateAction = {
       type: "none",
       reason: "No primary invoice date or narration update is required.",
+    };
+  } else if (input.organiserBankPlace) {
+    primaryInvoiceUpdateAction = {
+      type: "none",
+      reason: "An organiser-paid Internet Banking place has no primary invoice of its own; the group's combined invoice is not updated.",
     };
   } else if (wouldQueueCheckInDatedInvoiceUpdate(input)) {
     // The shared predicate (#1729) IS this queue decision — the ordinary-edit

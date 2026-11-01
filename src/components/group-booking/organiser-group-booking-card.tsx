@@ -15,6 +15,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { OptionCard, OptionCardGroup } from "@/components/ui/option-card";
 import StripeProvider from "@/components/stripe/StripeProvider";
 import PaymentForm from "@/components/stripe/PaymentForm";
 import {
@@ -614,56 +615,33 @@ export function OrganiserGroupBookingCard({
                 </p>
 
                 {internetBankingEnabled ? (
-                  <div className="space-y-2">
-                    <p className="text-sm font-medium text-muted-foreground">
-                      How would you like to pay?
-                    </p>
-                    <div className="grid gap-2 sm:grid-cols-2">
-                      <button
-                        type="button"
-                        onClick={() => setSettleMethod("stripe")}
-                        className={`flex min-h-16 items-start gap-3 rounded-md border p-3 text-left text-sm ${
-                          settleMethod === "stripe"
-                            ? "border-info-7 bg-info-3 text-info-11"
-                            : "border-border bg-card text-muted-foreground hover:border-border"
-                        }`}
-                      >
-                        <CreditCard className="mt-0.5 h-4 w-4 shrink-0" />
-                        <span>
-                          <span className="block font-medium">Card</span>
-                          <span className="block text-xs opacity-80">
-                            Pay now to settle the group.
-                          </span>
-                        </span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setSettleMethod("internet_banking")}
-                        className={`flex min-h-16 items-start gap-3 rounded-md border p-3 text-left text-sm ${
-                          settleMethod === "internet_banking"
-                            ? "border-info-7 bg-info-3 text-info-11"
-                            : "border-border bg-card text-muted-foreground hover:border-border"
-                        }`}
-                      >
-                        <Landmark className="mt-0.5 h-4 w-4 shrink-0" />
-                        <span>
-                          <span className="block font-medium">Internet Banking</span>
-                          <span className="block text-xs opacity-80">
-                            {renderClientBookingMessage({
-                              template:
-                                bookingMessages[
-                                  "groupBooking.internetBanking.description"
-                                ],
-                              fallback:
-                                "Receive one Xero invoice by email for the organiser-settled group bookings.",
-                              clubTokens: messageTokens,
-                              lodgeName,
-                            })}
-                          </span>
-                        </span>
-                      </button>
-                    </div>
-                  </div>
+                  <OptionCardGroup label="How would you like to pay?">
+                    <OptionCard
+                      selected={settleMethod === "stripe"}
+                      onSelect={() => setSettleMethod("stripe")}
+                      icon={CreditCard}
+                      title="Card"
+                    >
+                      Pay now to settle the group.
+                    </OptionCard>
+                    <OptionCard
+                      selected={settleMethod === "internet_banking"}
+                      onSelect={() => setSettleMethod("internet_banking")}
+                      icon={Landmark}
+                      title="Internet Banking"
+                    >
+                      {renderClientBookingMessage({
+                        template:
+                          bookingMessages[
+                            "groupBooking.internetBanking.description"
+                          ],
+                        fallback:
+                          "Receive one Xero invoice by email for the organiser-settled group bookings.",
+                        clubTokens: messageTokens,
+                        lodgeName,
+                      })}
+                    </OptionCard>
+                  </OptionCardGroup>
                 ) : null}
 
                 <Button onClick={() => startSettle()} disabled={settleBusy}>

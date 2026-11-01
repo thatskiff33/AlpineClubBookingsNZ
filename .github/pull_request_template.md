@@ -4,6 +4,22 @@
 
 ## Summary
 
+<!-- Over 800 changed lines (files `.gitattributes` marks `linguist-generated`
+     not counted)? Add a one-line reason on its own line, starting `large-pr:`.
+     A soft limit: `verify` warns, never fails. -->
+
+-
+
+## Plan Deviation
+
+<!-- A material deviation from the issue's approved plan, as defined in
+     docs/agents/ISSUE_WORKFLOW.md → "Plan deviation", goes to the owner first.
+     Write `None` when the PR is built to the plan; otherwise one item per
+     deviation, each linking the owner's answer: the comment URL, or the
+     `#<number>` of the issue whose body records the decision. `verify` warns
+     on a missing, empty or unlinked section; it becomes a failure after the
+     rollout (#4463). -->
+
 -
 
 ## Risk Level
@@ -95,7 +111,8 @@
 
 ## Changelog Entry
 
-- Fragment added (`changelog.d/<pr-number>-<slug>.md`):
+- Fragment added (`changelog.d/<pr-number>-<slug>.md`; name it `*.feature.md`
+  when it adds something new, which makes the release minor):
 - Or, if this change genuinely needs no entry, put the no-entry marker
   documented in `changelog.d/README.md` on its own line here, with the reason.
   (The marker is deliberately not pre-filled: a marker in every PR body would

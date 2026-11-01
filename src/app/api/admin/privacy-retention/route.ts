@@ -1,0 +1,78 @@
+import { NextResponse } from "next/server";
+import { hasAdminAreaAccess } from "@/lib/admin-permissions";
+import { getPrivacyRetentionPreview } from "@/lib/privacy-retention";
+import {
+  getPrivacyRetentionSettings, savePrivacyRetentionSettings,
+} from "@/lib/privacy-retention-settings";
+import { MEMBERSHIP_RETENTION_FIELDS, privacyRetentionSettingsSchema } from "@/lib/privacy-retention-shared";
+import { requireAdmin } from "@/lib/session-guards";
+
+export async function GET(request: Request) {
+  const guard = await requireAdmin({
+    permission: { area: "support", level: "view" },
+  });
+  if (!guard.ok) return guard.response;
+
+  const params = new URL(request.url).searchParams;
+  const page = Number(params.get("page") ?? 1);
+  const memberAfter = params.get("memberAfter") ?? undefined;
+  if (memberAfter !== undefined && (memberAfter.length === 0 || memberAfter.length > 200)) {
+    return NextResponse.json({ error: "Invalid member cursor." }, { status: 400 });
+  }
+  if (!Number.isSafeInteger(page) || page < 1) {
+    return NextResponse.json({ error: "Page must be a positive whole number." }, { status: 400 });
+  }
+  const canViewMembership = hasAdminAreaAccess(guard.session.user, {
+    area: "membership", level: "view",
+  });
+  const pageSize = 25;
+  const { settings, ...preview } = await getPrivacyRetentionPreview({
+    page, pageSize, memberAfter, includeMembers: canViewMembership,
+  });
+  return NextResponse.json({
+    settings,
+    preview: {
+      emailLogs: preview.emailLogs,
+      ...(canViewMembership ? {
+        rejectedApplications: preview.rejectedApplications,
+        formerMembers: preview.formerMembers,
+        blockedMembers: preview.blockedMembers,
+        undatedMembers: preview.undatedMembers,
+      } : {}),
+    },
+    ...(canViewMembership ? {
+      formerMemberCandidateCount: preview.formerMemberCandidateCount,
+      memberHasMore: preview.memberHasMore,
+      memberNextCursor: preview.memberNextCursor,
+    } : {}),
+    page,
+    pageSize,
+    canViewMembership,
+  });
+}
+
+export async function PUT(request: Request) {
+  const guard = await requireAdmin({
+    permission: { area: "support", level: "edit" },
+  });
+  if (!guard.ok) return guard.response;
+
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+  }
+  const parsed = privacyRetentionSettingsSchema.safeParse(body);
+  if (!parsed.success) {
+    return NextResponse.json({ error: "Invalid retention settings", details: parsed.error.flatten() }, { status: 400 });
+  }
+  if (!hasAdminAreaAccess(guard.session.user, { area: "membership", level: "edit" })) {
+    const current = await getPrivacyRetentionSettings();
+    if ([...MEMBERSHIP_RETENTION_FIELDS].some(field => parsed.data[field] !== current[field])) {
+      return NextResponse.json({ error: "Membership edit access is required to change member or application retention." }, { status: 403 });
+    }
+  }
+  const settings = await savePrivacyRetentionSettings(parsed.data, guard.session.user.id);
+  return NextResponse.json({ settings });
+}

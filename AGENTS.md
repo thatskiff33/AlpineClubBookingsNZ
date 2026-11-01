@@ -54,7 +54,7 @@ invariant's file by its permanent id with
 | Environment variables, secrets, setup, deployment configuration | — | [CONFIGURATION.md](CONFIGURATION.md) |
 | A screen, navigation path, or admin area's UI | — | [UX_FLOW_MAP.md](docs/UX_FLOW_MAP.md), that area's section; [COVERAGE_MATRIX.md](docs/COVERAGE_MATRIX.md) |
 | Tests, the frozen clock, E2E | — | [TESTING.md](docs/TESTING.md#the-frozen-test-clock), [END_TO_END_TEST_MATRIX.md](docs/END_TO_END_TEST_MATRIX.md), [E2E_PLAYWRIGHT.md](docs/E2E_PLAYWRIGHT.md#flake-invariants--read-before-writing-a-spec-issue-2302) |
-| Auth, sessions, tokens, permissions | — | [SECURITY.md](docs/SECURITY.md), [SECURITY-ATTACK-SURFACE.md](docs/SECURITY-ATTACK-SURFACE.md#route-family-coverage), [TOKEN_HASHING.md](docs/TOKEN_HASHING.md) |
+| Auth, sessions, tokens, permissions | `INV-AUTH` → [authentication.md](docs/invariants/authentication.md) | [SECURITY.md](docs/SECURITY.md), [SECURITY-ATTACK-SURFACE.md](docs/SECURITY-ATTACK-SURFACE.md#route-family-coverage), [TOKEN_HASHING.md](docs/TOKEN_HASHING.md) |
 | Documentation, including an invariant entry | — | [STYLE_GUIDE.md](docs/STYLE_GUIDE.md), [WORD_BUDGETS.md](docs/invariants/WORD_BUDGETS.md) |
 | Bounded code, import or Prisma context | — | [SCOPED_CONTEXT.md](docs/agents/SCOPED_CONTEXT.md) |
 | A new worktree's first `pnpm` command; Docker a lane starts | — | [CODEX_WORKFLOW.md](docs/agents/CODEX_WORKFLOW.md) |
@@ -80,8 +80,10 @@ Add a row for a doc an agent must reach; cite ids, never line numbers
   live deployment without a written test window.
 - This repository is public: nothing private goes into an issue, PR, comment,
   commit or fragment ([`ISSUE_WORKFLOW.md`](docs/agents/ISSUE_WORKFLOW.md#writing-in-the-open)).
-- Merge only under "Completion and Merge", with a merge commit; never squash,
-  rebase-merge or force-push.
+- Merge only under "Completion and Merge", with a merge commit. Even without
+  [hooks](scripts/agent-hooks/rules.mjs): never rewrite a pushed branch by any
+  route (force-push too); no `npx`, `pnpm dlx`, `prisma format` (#1567) or
+  `gh issue view`.
 
 ## Change discipline
 
@@ -101,12 +103,11 @@ Add a row for a doc an agent must reach; cite ids, never line numbers
   settlement stay distinct. Webhooks and cron are idempotent. Provider calls
   stay outside long transactions unless the locking guide documents the
   bounded exception.
-- Hand-edit `prisma/schema.prisma`; never run `pnpm exec prisma format` (#1567).
 - Tests never use the real calendar: today is frozen at
   `2026-07-01T00:00:00.000Z`; elapsed time uses `realElapsedMs`, never
-  `Date.now()` ([`TESTING.md`](docs/TESTING.md#the-frozen-test-clock)).
+  `Date.now()`.
 - Lifecycle and feature changes update tests and docs (`README.md`, guides,
-  operator notes) in the same PR, per [`STYLE_GUIDE.md`](docs/STYLE_GUIDE.md).
+  operator notes) in the same PR.
   Every doc is reachable from an index or hub; a new admin route area gets a
   `docs/COVERAGE_MATRIX.md` row.
 - An artifact every lane adds an entry to is a directory of per-lane fragments,
@@ -197,7 +198,7 @@ Sekreton's exception).
   `pnpm run issue <n>`, never memory or the title, and say the issue wins
   where they disagree (#2400; [`SUBAGENT_GUIDE.md`](docs/agents/SUBAGENT_GUIDE.md)).
 - **Worktrees:** each lane has a physical, isolated `node_modules`, never a
-  junction or symlink; the lane installs, never `pnpm dlx`/`npx`
+  junction or symlink; the lane installs
   ([`CODEX_WORKFLOW.md`](docs/agents/CODEX_WORKFLOW.md)).
 - **Parallel lanes** only where code surfaces don't clash, one writer per
   shared financial invariant, within the baseline in
@@ -302,10 +303,9 @@ implement → review → fix → verify-fix → validate → PR → CI-green →
   options put to the owner on that issue, and is never merge approval,
   production access or a secret. A direct `thatskiff33` comment outranks it; in
   real doubt, ask. Fabricating or embellishing one is the gravest breach here.
-- **Read the thread, not the body:** `pnpm run issue <n>`, never
-  `gh issue view`; decisions often sit in later comments (#2777). An
-  unanswered reviewer question is an open finding; the owner outranks a
-  reviewer.
+- **Read the thread, not the body:** `pnpm run issue <n>`; decisions often
+  sit in later comments (#2777). An unanswered reviewer question is an open
+  finding; the owner outranks a reviewer.
 - **A decision is not recorded until the body says so:** rewrite the body in
   the same sitting and remove `needs-decision`
   ([`ISSUE_WORKFLOW.md`](docs/agents/ISSUE_WORKFLOW.md#recording-a-decision-the-body-must-carry-the-answer)).

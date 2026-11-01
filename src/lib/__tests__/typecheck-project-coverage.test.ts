@@ -56,6 +56,13 @@ const JAVASCRIPT_VITEST_TESTS = [
   "scripts/eslint/accessibility.test.mjs",
   "scripts/eslint/fixture-import.test.mjs",
   "scripts/eslint/ratchet.test.mjs",
+  // #4462: the frozen-clock lint rule, a bare-Node .mjs rule like the above.
+  "scripts/eslint/test-clock.test.mjs",
+  // #4467: the design-system control rules, a bare-Node .mjs rule like the above.
+  "scripts/eslint/design-system.test.mjs",
+  // #4462: the agent-rule hook dispatcher runs under bare `node` before every
+  // Bash call an agent makes, so it and its suite stay JavaScript.
+  "scripts/agent-hooks/agent-hooks.test.mjs",
   // #3254 split the dependency audit out of `verify` into its own job and its
   // own `.mjs` tool. Its suite tests that tool, so it stays JavaScript for the
   // same reason every other entry here does. It arrived on `main`, whose copy of
@@ -77,6 +84,10 @@ const JAVASCRIPT_VITEST_TESTS = [
   "scripts/ci/pr-body-file.test.mjs",
   "scripts/ci/check-pr-changelog-fragment.test.mjs",
   "scripts/ci/check-pr-concurrency-declaration.test.mjs",
+  // #4463: the plan-deviation and soft size gates run under bare node before
+  // the install, like the two PR-body gates above.
+  "scripts/ci/check-pr-plan-deviation.test.mjs",
+  "scripts/ci/check-pr-size.test.mjs",
   "scripts/ci/check-prerendered-script-nonces.test.mjs",
   "scripts/ci/check-realdb-ran.test.mjs",
   "scripts/ci/check-semgrep-coverage.test.mjs",
@@ -106,6 +117,9 @@ const JAVASCRIPT_VITEST_TESTS = [
   // suite stays JavaScript like the other script suites here.
   "scripts/lanes-stale.test.mjs",
   "scripts/release/compile-changelog.test.mjs",
+  // #4465: `release:cut` drives the `.mjs` compiler under bare node, so its
+  // suite stays JavaScript beside the compiler's.
+  "scripts/release/cut-release.test.mjs",
   // #3673: the `.mjs` worktree-removal tool's own suite; it stays JavaScript
   // for the same reason as the stale-containers and issue-thread suites.
   "scripts/remove-worktree.test.mjs",

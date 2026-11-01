@@ -457,7 +457,7 @@ describe("#3368: the three families stage 4 (#3369) has to answer for", () => {
 
 /** Measured, not counted by hand. Re-measure by running this test. */
 const OWNERSHIP_COMPARISON_SITES: readonly string[] = [
-  "src/app/(authenticated)/bookings/[id]/_lib/booking-detail-editor-data.ts:234",
+  "src/app/(authenticated)/bookings/[id]/_lib/booking-detail-editor-data.ts:235",
   "src/app/(authenticated)/bookings/[id]/_lib/booking-detail-viewer.ts:38",
   "src/app/(authenticated)/bookings/[id]/page.tsx:205",
   "src/app/(authenticated)/bookings/page.tsx:183",
@@ -466,17 +466,17 @@ const OWNERSHIP_COMPARISON_SITES: readonly string[] = [
   "src/app/api/bookings/[id]/arrival-time/route.ts:248",
   "src/app/api/bookings/[id]/arrival-time/route.ts:298",
   "src/app/api/bookings/[id]/arrival-time/route.ts:367",
-  "src/app/api/bookings/[id]/cancel-preview/route.ts:76",
+  "src/app/api/bookings/[id]/cancel-preview/route.ts:77",
   "src/app/api/bookings/[id]/change-requests/quote/route.ts:76",
-  "src/app/api/bookings/[id]/change-requests/route.ts:175",
-  "src/app/api/bookings/[id]/change-requests/route.ts:485",
+  "src/app/api/bookings/[id]/change-requests/route.ts:179",
+  "src/app/api/bookings/[id]/change-requests/route.ts:504",
   "src/app/api/bookings/[id]/confirm-draft/route.ts:175",
   "src/app/api/bookings/[id]/confirm-draft/route.ts:96",
   "src/app/api/bookings/[id]/confirm-modification-payment/route.ts:70",
   "src/app/api/bookings/[id]/confirm-payment/route.ts:89",
   "src/app/api/bookings/[id]/exception-requests/route.ts:137",
-  "src/app/api/bookings/[id]/guests/route.ts:341",
-  "src/app/api/bookings/[id]/modify-quote/route.ts:367",
+  "src/app/api/bookings/[id]/guests/route.ts:346",
+  "src/app/api/bookings/[id]/modify-quote/route.ts:369",
   "src/app/api/bookings/[id]/notes/route.ts:48",
   "src/app/api/bookings/[id]/refund-request/route.ts:271",
   "src/app/api/bookings/[id]/refund-request/route.ts:49",
@@ -486,18 +486,18 @@ const OWNERSHIP_COMPARISON_SITES: readonly string[] = [
   "src/app/api/payments/create-setup-intent/route.ts:59",
   "src/app/api/payments/switch-to-internet-banking/route.ts:123",
   "src/lib/adult-member-hosting-review.ts:3256",
-  "src/lib/booking-batch-modification-service.ts:1082",
-  "src/lib/booking-cancel.ts:2516",
-  "src/lib/booking-cancel.ts:557",
-  "src/lib/booking-date-modification-service.ts:408",
+  "src/lib/booking-batch-modification-service.ts:1093",
+  "src/lib/booking-cancel.ts:2534",
+  "src/lib/booking-cancel.ts:566",
+  "src/lib/booking-date-modification-service.ts:416",
   "src/lib/booking-delete.ts:120",
   "src/lib/booking-delete.ts:69",
   "src/lib/booking-email-authority.ts:115",
-  "src/lib/booking-guest-removal-service.ts:441",
-  "src/lib/booking-guest-removal-service.ts:668",
+  "src/lib/booking-guest-removal-service.ts:448",
+  "src/lib/booking-guest-removal-service.ts:675",
   "src/lib/booking-linked-date-move-service.ts:245",
   "src/lib/booking-member-night-conflicts.ts:369",
-  "src/lib/booking-modify-validation.ts:602",
+  "src/lib/booking-modify-validation.ts:611",
   "src/lib/diagnostics/tools/packs/booking-evidence.ts:1427",
   "src/lib/group-booking.ts:274",
   "src/lib/kiosk-access.ts:230",
@@ -522,10 +522,10 @@ const OPTIONAL_OWNER_READ_SITES: readonly string[] = [
   // records that store the owner's member id (null for a school), and one
   // admin health snapshot that renders the address with its own `?? ""`.
   "src/lib/diagnostics/tools/packs/booking-evidence.ts:1432",
-  "src/lib/member-guest-consent-service.ts:1344",
+  "src/lib/member-guest-consent-service.ts:1355",
   "src/lib/payment-recovery.ts:2713",
   "src/lib/payment-recovery.ts:2765",
-  "src/lib/xero-admin-health.ts:394",
+  "src/lib/xero-admin-health.ts:396",
 ];
 
 /** Measured, not counted by hand. Re-measure by running this test. */
@@ -785,7 +785,7 @@ const UNROOTED_ORGANISATION_SELECTIONS: readonly string[] = [
   // out of the route file to keep it in budget. Verified by hand: it is passed
   // as `include` to `bookingChangeRequest.findUnique`, and `organisation` sits
   // under its `booking` relation, which declares it.
-  "src/lib/booking-change-request-admin-decision.ts:88",
+  "src/lib/booking-change-request-admin-decision.ts:93",
   // #4042, #3949: the owner-name select, moved out of the organiser hand-back to
   // be shared with the joiner cancel's organiser name. Verified by hand: written
   // through `Prisma.validator<Prisma.BookingSelect>()` and spread into
@@ -793,7 +793,7 @@ const UNROOTED_ORGANISATION_SELECTIONS: readonly string[] = [
   // `organisation`.
   "src/lib/booking-owner-name.ts:12",
   "src/lib/cron-additional-payment-reminders.ts:439",
-  "src/lib/cron-confirm-pending.ts:189",
+  "src/lib/cron-confirm-pending.ts:190",
   "src/lib/diagnostics/tools/packs/booking-evidence.ts:885",
   // #3740: `resolveManualRefundTask`'s select, moved out of that module to keep
   // it in budget. Verified by hand: written through
@@ -809,8 +809,8 @@ const UNROOTED_ORGANISATION_SELECTIONS: readonly string[] = [
   // build. The walk cannot root it only because the literal names no delegate.
   "src/lib/member-lodge-roster.ts:112",
   "src/lib/payment-link.ts:81",
-  "src/lib/payment-reconciliation.ts:99",
-  "src/lib/stuck-state-dashboard.ts:623",
-  "src/lib/xero-booking-repair-types.ts:235",
+  "src/lib/payment-reconciliation.ts:100",
+  "src/lib/stuck-state-dashboard.ts:628",
+  "src/lib/xero-booking-repair-types.ts:242",
   "src/lib/xero-inbound/settlement-conflicts.ts:155",
 ];

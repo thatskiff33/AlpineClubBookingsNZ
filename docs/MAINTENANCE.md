@@ -1291,6 +1291,45 @@ CREATED on 30 June was covered — it was not. Re-run any sweep whose check-in
 dates mattered; the created/updated/modified findings in an archived report can
 be taken at face value.
 
+**Bill historical increases to an organiser (#4299 B1).** A place paid through
+its organiser's combined internet-banking invoice has no primary invoice of its
+own. For these places the tool reports every recorded positive net change
+(price difference plus late-change fee), including places later reduced or
+cancelled. The JSON finding shows the combined invoice, organiser, amount to
+bill, later reductions, cancellation/refund/credit events, and the payment's
+recorded refunded total. The refunded total covers the whole booking; the dated
+events beside it identify later activity where recorded. Old financial-review
+tasks stay refused and are never turned into charges by this repair.
+
+Review that JSON before billing: **the whole recorded increase is billed even
+when a later reduction or cancellation means the organiser may be over-billed**
+(the owner's B1 decision). This repair does not net those historical cases.
+Copy each selected `queue:organiser-historical:…` action key from the dry run:
+
+```bash
+pnpm run xero:booking-repair --booking <bookingId> --dry-run
+pnpm run xero:booking-repair --booking <bookingId> --apply --apply-action '<exact-action-key>'
+```
+
+A plain `--apply` does not back-bill these changes. Repeat `--apply-action` for
+at most 50 reviewed changes per run. Each key includes a digest of the figures,
+payer, combined invoice and displayed history; stale keys match nothing, and
+apply reads the local evidence again before queueing. Re-run the dry run after
+any change. An edit with any earlier invoice link (including an inactive one)
+or invoice operation is skipped. Repair or retry a failed operation through
+**Admin → Xero → Operations**, rather than requesting another invoice. Missing
+combined invoices are reported for manual review, with no billing action. These
+findings sit beside the place's ordinary repair findings, which still apply.
+The place's missing primary invoice is not one of them: it reports
+`ORGANISER_SETTLED_ON_COMBINED_INVOICE` (info, no action), so a plain `--apply`
+never invoices the joiner, and the invoice queue and its handler refuse such a place.
+
+Each selected edit uses the ordinary supplementary-invoice queue and its
+per-change lock: one invoice on the joiner's change, addressed to the organiser,
+with no payment recorded and no card wait. The existing outbox worker sends it
+and the organiser notice; reconciliation records the organiser's transfer.
+Dry run makes only local reads and raises no invoice, email or contact.
+
 **A supplementary invoice is only offered when the main invoice went out
 FIRST (#3199).** When a booking edit adds money the club normally raises a small
 extra Xero invoice for the difference, and whether that is right depends on
@@ -1874,7 +1913,14 @@ repeatable-read snapshot opened `READ ONLY`, so PostgreSQL itself refuses a
 write inside it; it repairs nothing and calls no provider. For every booking it
 checks seven identities — the price, the captured amount, applied credit, the
 refunded total, change fees, the uncollected ask, and a live booking's balance
-owed — against the ledger lines that project them, and prints:
+owed — against the ledger lines that project them. Since Ledger M3b (#4627,
+[`INV-MONEY-044`](invariants/money.md#inv-money-044)) an eighth, `JOURNAL`,
+compares, for each booking whose confirmation is in the member-money journal,
+the total of the journal's live charge components with the ledger lines it links; a booking
+confirmed earlier is not compared (M9 back-posts it). The comparison is of each
+booking's total, not component by component (a give-back may legitimately be
+taken from a change fee), so money posted to the wrong component of the right
+booking is not caught here; the mapping is pinned by its tests. It prints:
 
 - per identity, how many bookings it applies to, agree, disagree, are
   classified, or are a coverage gap;
@@ -1889,8 +1935,14 @@ owed — against the ledger lines that project them, and prints:
 - **integrity**: reversals that name no line or are not its exact opposite, a
   second live line for one guest-night, an unknown posting-key namespace or one
   on an anchor it never posts under, and a live line its source row (or a
-  cancellation's frozen kept figure) no longer bears out. PostgreSQL's update and delete
-  counts for the table are printed as information only;
+  cancellation's frozen kept figure) no longer bears out, and (`UNBRIDGED_CHARGE_LINE`)
+  a charge line on a journal-confirmed booking that no journal batch links,
+  (`CONFIRMED_WITHOUT_R01`) a booking created after the journal's first
+  confirmation and confirmed on the ledger with none, and (`JOURNAL_INACTIVE`,
+  once) a club whose currency no card can be charged in, for which the journal
+  posts nothing.
+  PostgreSQL's update and delete counts for the table are printed as
+  information only;
 - **named classes** — expected differences, each matched to the cent from the
   booking's own rows (in-flight refunds and hand-backs, a review share kept by
   the club, the refunded total's credit and hand-back allocations, and so on).
@@ -2052,8 +2104,9 @@ DATABASE_URL=<...> pnpm run booking-ledger:back-post --json           # the repo
 ```
 
 **Reading the report.** One summary line — bookings, how many it posted (or
-would) and how many lines, how many had nothing to post, how many it cannot
-post — then one line per booking that posts or cannot:
+would) and how many lines, how many were journal only and how many
+member-money journal batches it posted, how many had nothing to post, how many
+it cannot post — then one line per booking that posts or cannot:
 
 - `POSTED` / `WOULD POST <id>  <n> line(s): …` names the steps: the
   confirmation (one line per guest-night, an evenly split strand included), an
@@ -2064,7 +2117,13 @@ post — then one line per booking that posts or cannot:
   `group plan refund (<cents>)`; its kept figure is the organiser cancel's own
   (the share less every refund made or still owed). A plan refund still being
   retried is not posted: the census names it `IN_FLIGHT_REFUND`, and the retry
-  posts it when it goes through.
+  posts it when it goes through. Since #4627 the line also counts the
+  member-money journal batches posted beside the lines (`, <n> journal batch(es)`).
+- `POSTED` / `WOULD POST <id>  journal only, <n> batch(es)` (#4627,
+  `JOURNAL_ONLY`): no legacy line to fill, but the journal had work — a
+  booking created after the journal's first confirmation that is missing its
+  R01, or lines no journal batch had picked up. A dry run reports these exactly
+  as `--apply` commits them.
 - `CANNOT POST <id>  <reason>: …`. `UNPRICED_NIGHT` — a strand has a night with
   no price, which is an open review: close the review, then re-run.
   `CONFIRMATION_DOES_NOT_RECONCILE` — the night rows and promotion do not make
@@ -2355,6 +2414,65 @@ read-only `RepeatableRead` snapshot, held for up to 120 seconds, and on a very
 large database it may reach that timeout and fail; run it again in a quiet
 window rather than raising the bound.
 
+### Retire links to payments deleted in Xero (#4531)
+
+Before #4531 a payment deleted in Xero kept its link here active, because Xero
+leaves a deleted payment out of its invoice and the inbound sync never saw it
+again. The sync now retires such a link when it next reads the invoice or credit
+note (`INV-INT-031`), and re-checks on a schedule any it could not confirm at
+the time. A payment deleted before that, on an invoice nobody has touched
+since, stays active until this backfill retires it. So does a booking change's
+card payment, whose link the inbound sync never reaches.
+
+```bash
+pnpm run xero:deleted-payment-link-backfill                   # dry run: lists, changes no link
+pnpm run xero:deleted-payment-link-backfill --apply           # retire every confirmed one
+pnpm run xero:deleted-payment-link-backfill --apply --payment <xero payment id>
+pnpm run xero:deleted-payment-link-backfill --json            # machine-readable report too
+```
+
+- **Dry run (the default).** It pages Xero's list of DELETED payments, oldest
+  change first (100 a call, at most 50 calls), checks each row's status itself,
+  and prints every ACTIVE local payment link that points at one: the link, its
+  local record, its role and the invoice or credit note it names. It changes
+  no link; its Xero calls are still recorded on the usage panel, like any
+  other.
+- **`--payment <id>`.** Instead of listing, it asks Xero about each named
+  payment directly (one call each) and keeps only those Xero reports DELETED.
+- **`--apply`.** It retires only the links of a payment Xero confirms DELETED:
+  inactive, with its recorded status `DELETED` and its other fields kept. A
+  listed payment is asked about once more first, so `--apply` costs one extra
+  call per candidate payment it checks, retired or not; a `--payment` id's
+  direct answer is already that confirmation. A payment Xero reports live, or
+  does not answer for, is left active and named. So is one with a Xero
+  operation that may run again and reads the link: a replayable failed card
+  receipt or PARTIAL booking invoice on its record, or an open receipt or
+  supplementary invoice on the same booking. Retiring it then would let that
+  retry pay again. It is marked, and the scheduled re-check retires it once
+  that operation is done, so retry or resolve the operation first. Keep the
+  dry-run output with the change record.
+- **A link the scheduled re-check gave up on.** After five checks Xero did not
+  answer, the re-check stops asking about a link on its own and logs an error;
+  its metadata records `deletionCheckGaveUpAt`. This backfill asks about it
+  again.
+- **Xero calls.** Every call is read-only and a single attempt. A run stops
+  once the day's recorded usage reaches 85% of the usage panel's budget, on a
+  Xero rate limit or outage, or while Xero's own daily limit is in force, and
+  then says it stopped early. A later run lists again from the beginning,
+  re-spending those list calls; it acts only on links still active. An
+  organisation with more than 5,000 deleted payments is never listed in full:
+  name the payments with `--payment` instead.
+
+It changes nothing in Xero and nothing else locally: no booking, payment or
+ledger row. Readers that judge recorded payments skip a `DELETED` status
+(`isRecordedBookingInvoicePayment`), so they stop counting the retired payment
+as money held. Before, they reached the right answer only because a
+replacement payment usually existed. It also removes the double count from the
+"recorded in Xero" totals. A booking change's card payment it retires gets no
+audit row (the audit writer resolves no subject for it), so keep this run's
+output. Design and call budget: [`xero/ARCHITECTURE.md` -> "A payment deleted
+in Xero (#4531)"](xero/ARCHITECTURE.md#a-payment-deleted-in-xero-4531).
+
 ### Count voided bank-transfer refund notes before the follow-up writes (#4162)
 
 `scripts/bank-refund-void-count.ts` sorts every voided bank-transfer refund
@@ -2524,6 +2642,27 @@ document by hand, Xero may now hold it twice. The app may instead have found
 and used yours, by its reference, leaving only one: check Xero before voiding
 a duplicate. If that email cannot reach anyone, it is not sent again; the
 operation's succeeded status on the panel is then the only sign.
+
+A payment refund credit note is the exception (#4426): a refund-note job that
+stalled in Xero, was marked failed and was then resolved by hand with the
+number of the note you made keeps your note when its own call comes back with
+a second one. The app does not record or link the late note, or record a
+refund payment against it in Xero, and the operation stays as you resolved it.
+The audit log gets one Xero entry naming the late note (its number, Xero id,
+amount and booking), and the same **Xero Sync Error** email names it and the
+note the operation keeps: check the late note in Xero, and that it is not
+recorded on the payment, before voiding it. If the late note is the very note
+you recorded (Xero made it but its answer to the app was lost, and you found
+it), nothing is wrong and nothing is sent; recording its refund payment in
+Xero, if one is due, stays with you, as for any note you resolve by hand. A
+job resolved without a note number (a refund request's note) records the late
+note as before and sends the email above.
+
+Limit: if the app stops between deciding not to record the late note and
+writing its audit entry, the app's log is the only record of it; if the email
+cannot reach anyone, the audit entry and the log remain. In the rare case of
+two copies of one job both getting the late note back, each writes an audit
+entry; the email still goes once.
 
 There is no undo on the panel. If you marked one by mistake, fix the Xero side
 by hand, or use **Targeted force sync** for that one booking's invoice: it
@@ -2760,11 +2899,37 @@ A failing drill is a **backup-pipeline incident**, not a routine test flake:
 
 ## Public Reference Release Checklist
 
-Before cutting a public reference release:
+Every production deploy ships a tagged release (#4465), cut with
+[`scripts/release/cut-release.mjs`](../scripts/release/cut-release.mjs). `main`
+only moves through pull requests, so the release is cut in two phases with the
+release-prep pull request between them — the order v0.13.2 was cut in. Both
+phases print their whole plan and change nothing without `--execute`.
 
-1. Create a release-prep branch from fresh `origin/main`.
-2. Update the version in `package.json` (`pnpm-lock.yaml` does not record it), then
-   compile the changelog:
+1. From a clean checkout of `origin/main`, prepare the release-prep commit:
+
+   ```bash
+   git switch --detach origin/main
+   pnpm run release:cut prepare             # dry run: version, fragments, steps
+   pnpm run release:cut prepare --execute   # make the local commit
+   ```
+
+   It fetches `origin/main`, refuses a dirty tree (an untracked `changelog.d/`
+   draft would be released), a checkout that is not exactly `origin/main`, a
+   `release/v<version>` branch that already exists here or on `origin`, a
+   local tag for the version that `origin` does not have, and a release that
+   is prepared but not yet tagged (`package.json` ahead of `origin`'s latest
+   tag, with that version's section in `CHANGELOG.md`) — publish that one, or
+   fold late fragments into it, rather than planning a lower version. The version is the
+   latest `vX.Y.Z` tag **on `origin`** (never this clone's tags) plus a minor
+   bump when any fragment
+   is named `*.feature.md`, or a patch bump otherwise
+   (`changelog.d/README.md`, "Patch or minor"); `--bump patch|minor|major`
+   overrides it and `--date YYYY-MM-DD` overrides the release date. With
+   `--execute` it creates `release/v<version>`, sets `package.json`'s
+   `"version"` (`pnpm-lock.yaml` does not record it), compiles the changelog
+   (step 2) and commits. It never pushes. If it stops part way it prints how to
+   inspect the branch or abandon it.
+2. The compile step runs `scripts/release/compile-changelog.mjs` — on its own:
 
    ```bash
    node scripts/release/compile-changelog.mjs 0.14.0 --dry-run   # show the plan
@@ -2776,9 +2941,10 @@ Before cutting a public reference release:
    `## Unreleased`), deletes the fragments it consumed and the committed,
    clean `size-allowances.d/*.md` fragments made inert by their merge to main,
    and leaves the `## Unreleased` heading and its sentinel-marked pointer note
-   in place. Commit the compiled `CHANGELOG.md` and both sets of fragment
-   deletions together, then read the new section end to end and edit it for
-   order and duplication before pushing —
+   in place. The compiled `CHANGELOG.md` and both sets of fragment deletions
+   are committed together (`release:cut` does it; by hand, do the same), then
+   read the new section end to end and edit it for order and duplication
+   before pushing —
    `changelog.d/README.md` documents the convention. If the run prints
    `WARNING: unrecognised content left under "## Unreleased"`, resolve that
    first: the text it echoes was neither released nor deleted. A release-prep
@@ -2800,9 +2966,61 @@ Before cutting a public reference release:
 5. Run local release validation without live provider credentials, then rely on
    GitHub Actions for Docker image build, static analysis, secret scanning,
    dependency review, and GHCR publication.
-6. After merge, create the annotated release tag on the merged commit and
-   publish the GitHub release with validation evidence, migration notes, image
-   names, commit SHA, and non-blocking maintainability follow-ups.
+6. Push `release/v<version>` and open the release-prep pull request from the
+   template (`pnpm run pr:check <body-file>` first). It merges like any other.
+7. After it merges, tag the merged commit and publish the GitHub release:
+
+   ```bash
+   git fetch origin main
+   pnpm run release:cut publish             # dry run: commit, body, steps
+   pnpm run release:cut publish --execute
+   ```
+
+   It reads the version from `package.json` on the merged commit (default
+   `origin/main`; `--commit <sha>` names another) and publishes to the
+   repository `origin`'s push URL names (its URL when no push URL is set),
+   passing it to every `gh` call; push and fetch URLs that name different
+   repositories are refused. It refuses when:
+
+   - the commit is not on `origin/main`'s **first-parent** chain — only a
+     commit CI pushed to `main` has GHCR images, so only its tag can be
+     deployed (a release-prep branch commit inside a merge never was);
+   - `origin` already has the version's tag on another commit, or the version
+     is not newer than `origin`'s latest tag — nothing new was prepared;
+   - `CHANGELOG.md` has no section for the version, or still has entries
+     written directly under `## Unreleased`;
+   - the commit still holds `changelog.d/` fragments. Required checks are not
+     strict, so a pull request can merge while the release-prep one is open
+     and leave its fragment in the merge commit. Two supported ways out:
+     **fold** them — from a fresh `origin/main`,
+     `pnpm run release:cut prepare --amend --execute` appends them to the
+     untagged `## <version>` section on `release/v<version>-late`; merge that
+     pull request and publish its merge commit. A late `*.feature.md` cannot
+     be folded into a patch release: carry it, or revert the release-prep
+     merge and prepare again as minor. Or **carry** them:
+     `pnpm run release:cut publish --carry-late-fragments --execute` publishes
+     anyway and lists them as carried into the next release.
+
+   The dry run also checks `gh auth status` and that `gh` can reach the
+   repository, and says which release body it will use: the section itself,
+   or — over 120,000 characters, below GitHub's 125,000 limit — a short body
+   with the entry count and a link to the section in `CHANGELOG.md` at the
+   tag. With `--execute` it writes the body to a file, creates the annotated
+   `v<version>` tag, and only then pushes the tag and runs
+   `gh release create`. A failure prints the re-run, always with
+   `--commit <sha>` of the commit being tagged, and the re-run resumes: a
+   local (annotated) tag on the commit resumes at the push, still re-running
+   the content checks; a pushed tag resumes at `gh release create`; an
+   existing release is reported as done. Once `main` has moved on, a pushed
+   tag whose release is missing is resumed on its own commit even without
+   `--commit`, and a local-only tag on another commit is named with the
+   `--commit` that resumes it. A failed push keeps the local tag; a failed
+   publish never deletes the pushed tag. `compile-changelog.mjs --append`
+   only adds to the newest section, so a fold can never rewrite a released
+   version's notes.
+   Add validation evidence, migration notes, image names and non-blocking
+   maintainability follow-ups to the published release by hand.
+8. Deploy the tag (`DEPLOYMENT.md`, "Cut the release first").
 
 ## GitHub Actions Availability
 

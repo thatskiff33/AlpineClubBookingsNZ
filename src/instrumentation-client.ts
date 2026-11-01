@@ -16,9 +16,10 @@ Sentry.init({
   // Performance tracing
   tracesSampleRate: process.env.NODE_ENV === "production" ? 0.2 : 1.0,
 
-  // Session Replay sampling
-  replaysSessionSampleRate: process.env.NODE_ENV === "production" ? 0.1 : 0,
-  replaysOnErrorSampleRate: 1.0,
+  // Replay is started only by SentryReplayPolicy after a club setting opts in.
+  // No error-triggered recording or buffering before that decision.
+  replaysSessionSampleRate: 0,
+  replaysOnErrorSampleRate: 0,
 
   integrations: [
     // Console breadcrumbs come from Sentry's default consoleIntegration since
@@ -28,7 +29,6 @@ Sentry.init({
       fetch: true,
       history: true,
     }),
-    Sentry.replayIntegration(),
   ],
 
   // Scrub sensitive data from Sentry payloads

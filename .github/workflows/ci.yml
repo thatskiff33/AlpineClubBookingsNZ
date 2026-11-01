@@ -826,6 +826,32 @@ jobs:
           PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: node scripts/ci/check-pr-changelog-fragment.mjs
 
+      # #4463: every PR says whether it deviates materially from its issue's
+      # plan (`## Plan Deviation`: `None`, or items linking the owner's answer).
+      # WARNING ONLY until `PLAN_DEVIATION_ENFORCED` in the script is flipped
+      # (owner decision, 1 Nov 2026: warn for seven days, then fail); a warning
+      # is a `::warning::` annotation and the step exits 0.
+      - name: Validate PR plan deviation
+        if: github.event_name == 'pull_request'
+        env:
+          PR_BODY_FILE: ${{ runner.temp }}/pr-body.md
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node scripts/ci/check-pr-plan-deviation.mjs
+
+      # #4463: a PR over 800 changed lines (`linguist-generated` files in
+      # `.gitattributes` not counted) should carry a one-line `large-pr:` reason.
+      # SOFT for good: it only ever annotates a `::warning::` and exits 0.
+      - name: Check PR size (soft limit)
+        if: github.event_name == 'pull_request'
+        env:
+          PR_BODY_FILE: ${{ runner.temp }}/pr-body.md
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: node scripts/ci/check-pr-size.mjs
+
       # #3673: this repository installs with pnpm, and `pnpm-lock.yaml` is the
       # only lockfile. An npm lockfile in the tree means somebody ran npm by
       # habit and committed what it wrote (npm refuses to install here since
@@ -1245,6 +1271,19 @@ jobs:
         env:
           RUN_CONCURRENCY_RACE_TESTS: "1"
         run: pnpm exec vitest run src/lib/__tests__/member-money-journal.realdb.test.ts
+
+      # #4626 (Ledger M3a): the posting command against real PostgreSQL, as the
+      # INSERT/SELECT-only application role. Only the journal's deferred
+      # checks can say whether a built batch really commits, and replay and
+      # the concurrent-poster race are PostgreSQL behaviour, not code a mock
+      # can run. Same shape as the step above: a scratch database of its own,
+      # required, and the advisory realdb-all job runs the file too. It
+      # describe.skip's itself without the env vars, so this step MUST stay
+      # wired — `review-findings-contracts.test.ts` fails if it goes missing.
+      - name: Prove the member-money posting command against dedicated PostgreSQL
+        env:
+          RUN_CONCURRENCY_RACE_TESTS: "1"
+        run: pnpm exec vitest run src/lib/__tests__/member-money-posting.realdb.test.ts
 
       # E8 (#1934): real-Postgres behavior of the member-grouping cutover
       # migration (legacy-rule deactivation, shape-dedupe, backfill, mode seed,
@@ -1710,7 +1749,7 @@ jobs:
           echo "MIGRATE_IMAGE_NAME=${MIGRATE_IMAGE%:*}" >> "$GITHUB_ENV"
 
       - name: Log in to GHCR
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}

@@ -1,6 +1,7 @@
 import { readdirSync } from "node:fs";
 import path from "node:path";
 
+import { E2E_SPEC_SECONDS } from "./e2e-spec-durations.mjs";
 import { escapeRegex } from "./escape-regex.mjs";
 
 // #4397: which `chromium` spec files one E2E shard runs. Playwright's own
@@ -11,9 +12,12 @@ import { escapeRegex } from "./escape-regex.mjs";
 // applied as the project's `testMatch` (a CLI file filter would not hold:
 // Playwright runs a project's dependencies in full whatever the filter).
 //
-// Round-robin over the sorted list keeps every shard's slice stable for a given
-// tree and balanced to within one file; no file took over a minute on
-// 25 Oct 2026 (624 s across 51 files).
+// Files are dealt by measured duration (e2e-spec-durations.mjs), longest first,
+// each to the shard with the least time so far; shard 1 starts already charged
+// with the `pre-setup` specs it alone runs. The deal is a pure function of the
+// tree and the durations file, so every shard computes the same partition. It
+// replaced a round-robin by name, which left the slowest shard about a minute
+// behind the fastest on 27 Oct 2026.
 
 /** `E2E_SHARD=i/N`, or null when unset (an ordinary, unsharded run). */
 export function parseE2eShard(value) {
@@ -54,8 +58,34 @@ export function chromiumSpecFiles(testDir) {
     .sort();
 }
 
-export function specsForShard(files, { index, total }) {
-  return [...files].sort().filter((_, position) => position % total === index - 1);
+/** The seconds a spec file is dealt as: its measurement, or the median of all of them. */
+function secondsFor(durations) {
+  const known = Object.values(durations).sort((a, b) => a - b);
+  const median = known.length === 0 ? 1 : known[Math.floor(known.length / 2)];
+  return (file) => durations[file] ?? median;
+}
+
+/**
+ * Each shard's files, in sorted order: the longest-first greedy deal described
+ * above. Ties go to the lower-numbered shard, and equal durations deal in name
+ * order, so the result never depends on iteration order.
+ */
+export function dealShards(files, total, durations = E2E_SPEC_SECONDS) {
+  const seconds = secondsFor(durations);
+  const preSetup = Object.keys(durations).filter((file) => file.startsWith(`${PRE_SETUP_DIR}/`));
+  const loads = Array.from({ length: total }, (_, i) => (i === 0 && total > 1 ? preSetup.reduce((sum, file) => sum + seconds(file), 0) : 0));
+  const shards = Array.from({ length: total }, () => []);
+  const order = [...files].sort((a, b) => seconds(b) - seconds(a) || (a < b ? -1 : a > b ? 1 : 0));
+  for (const file of order) {
+    const lightest = loads.indexOf(Math.min(...loads));
+    shards[lightest].push(file);
+    loads[lightest] += seconds(file);
+  }
+  return shards.map((shard) => shard.sort());
+}
+
+export function specsForShard(files, { index, total }, durations = E2E_SPEC_SECONDS) {
+  return dealShards(files, total, durations)[index - 1];
 }
 
 /**

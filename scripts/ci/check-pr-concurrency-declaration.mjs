@@ -1,13 +1,13 @@
-import { pathToFileURL } from "node:url";
-
 import { escapeRegex } from "./escape-regex.mjs";
 import {
   fetchLivePrBody,
   gitDiffChangedFiles,
   parseNameStatus,
   readEventPrBody,
+  sectionAfterHeading,
   selectPrBody,
 } from "./pr-body.mjs";
+import { isMainModule } from "../lib/is-main-module.mjs";
 
 const HEADING = "## Concurrency And Lock Impact";
 
@@ -73,16 +73,14 @@ export function validateConcurrencyDeclaration(body, changedFiles = null) {
   const diffKnown = Array.isArray(changedFiles);
   const sensitiveFiles = (diffKnown ? changedFiles : []).filter(isConcurrencySensitivePath);
 
-  // Anchor to the START OF A LINE. A plain indexOf also matches the heading text
-  // quoted inside prose or a code span — and a PR body that explains this gate
-  // will quote it. When that mention comes first, the "section" starts there and
-  // runs to the next `## `, so the real declaration below is never read and every
-  // field reports missing. Found exactly that way: this gate's own PR body.
-  const headingMatch = new RegExp(
-    `^[^\\S\\r\\n]*${escapeRegex(HEADING)}[^\\S\\r\\n]*\\r?$`,
-    "m",
-  ).exec(body);
-  if (!headingMatch) {
+  // Anchor to the START OF A LINE (`sectionAfterHeading`). A plain indexOf also
+  // matches the heading text quoted inside prose or a code span — and a PR body
+  // that explains this gate will quote it. When that mention comes first, the
+  // "section" starts there and runs to the next `## `, so the real declaration
+  // below is never read and every field reports missing. Found exactly that
+  // way: this gate's own PR body.
+  const section = sectionAfterHeading(body, HEADING);
+  if (section === null) {
     // #2726: when the diff is KNOWN and holds no non-test file on a sensitive
     // path, a missing section is not a failure — the same short-circuit the
     // changelog gate has had since #2452 (`isCodeBearing`), keyed on the very
@@ -112,10 +110,6 @@ export function validateConcurrencyDeclaration(body, changedFiles = null) {
           : ""),
     );
   }
-
-  const afterHeading = body.slice(headingMatch.index + headingMatch[0].length);
-  const nextHeadingIndex = afterHeading.search(/\n##\s+/);
-  const section = nextHeadingIndex >= 0 ? afterHeading.slice(0, nextHeadingIndex) : afterHeading;
 
   if (/^\s*-\s*\[[xX]\]\s*N\/A\b/m.test(section)) {
     // Same three-state reading as the waiver above. `N/A` is a claim ABOUT the
@@ -185,8 +179,7 @@ const OUTCOME_MESSAGES = {
   complete: "the PR body carries a complete declaration.",
 };
 
-const invokedPath = process.argv[1] ? pathToFileURL(process.argv[1]).href : null;
-if (invokedPath === import.meta.url) {
+if (isMainModule(import.meta.url)) {
   try {
     const base = process.env.PR_BASE_SHA;
     const head = process.env.PR_HEAD_SHA;

@@ -77,6 +77,8 @@ const BOOKING_NOTIFY_PROMPTS = [
   "components/admin/booking-requests/booking-approvals-panel.tsx",
   "app/(admin)/admin/waitlist/page.tsx",
   "app/(admin)/admin/refund-requests/page.tsx",
+  // #4533: a finished-stay promo correction may withhold the change email.
+  "components/admin/booking-requests/booking-change-request-officer-entry.tsx",
 ];
 
 /**

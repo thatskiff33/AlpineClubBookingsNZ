@@ -58,7 +58,7 @@ the areas it links to:
 | --- | --- | --- |
 | Initial Setup | Install checklist, club identity, modules, lodge records, health (`/admin/setup/foundations`) | support |
 | Finance | Finance reporting, Xero setup, sync tools, report mappings — collapsed by default (`/admin/setup/finance`) | finance |
-| Booking Rules | Booking policy, seasons, age groups, promos, inventory, copy (`/admin/setup/booking-rules`) | bookings, lodge |
+| Booking Rules | Booking policy, seasons, age groups, promos, inventory, copy (`/admin/setup/booking-rules`) | bookings (the hub page itself, #4581); its cards need bookings, lodge or support |
 | Operational Integrations | Provider readiness, Xero connection, modules, delivery health (`/admin/setup/integrations`) | support, finance |
 | Membership & Members | Membership types, member fields, subscription lockout ([membership-setup](membership-setup.md)) | membership |
 | Cancellation | Cancellation settings, request queues, message copy (`/admin/setup/cancellation`) | membership, support |

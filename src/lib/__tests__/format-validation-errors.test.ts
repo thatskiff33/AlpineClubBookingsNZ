@@ -2,7 +2,10 @@ import { describe, expect, it } from "vitest";
 import {
   formatValidationErrorResponse,
   humanizeFieldKey,
+  joinFieldMessages,
+  labelFieldMessages,
   memberFieldLabel,
+  readValidationDetails,
 } from "@/lib/format-validation-errors";
 
 describe("humanizeFieldKey", () => {
@@ -99,5 +102,52 @@ describe("formatValidationErrorResponse", () => {
   it("uses the generic default when nothing usable is present", () => {
     expect(formatValidationErrorResponse(null)).toEqual(["Save failed"]);
     expect(formatValidationErrorResponse(undefined)).toEqual(["Save failed"]);
+  });
+});
+
+// #4467: the one reader of a refusal's `details`, and the one way a field's
+// messages are joined and labelled, shared with the form layer.
+describe("readValidationDetails", () => {
+  it("reads the full flatten() shape and the bare fieldErrors shape", () => {
+    expect(
+      readValidationDetails({
+        details: { formErrors: ["Whole form"], fieldErrors: { email: ["Bad", " "] } },
+      }),
+    ).toEqual({ formErrors: ["Whole form"], fieldErrors: [["email", ["Bad"]]] });
+    expect(readValidationDetails({ details: { email: ["Bad"] } })).toEqual({
+      formErrors: [],
+      fieldErrors: [["email", ["Bad"]]],
+    });
+    expect(readValidationDetails({ details: { formErrors: ["Only this"] } })).toEqual({
+      formErrors: ["Only this"],
+      fieldErrors: [],
+    });
+  });
+
+  it.each([
+    ["no details", { error: "x" }],
+    ["a list", { details: ["Row 2 refused"] }],
+    ["a provider payload", { details: { code: 7 } }],
+    ["a full shape with a stray key", { details: { fieldErrors: {}, issues: [] } }],
+    ["a non-string message", { details: { email: ["Bad", 3] } }],
+    ["fieldErrors that are not a map", { details: { fieldErrors: { a: "not an array" } } }],
+  ])("reads nothing from %s", (_label, body) => {
+    expect(readValidationDetails(body)).toBeNull();
+  });
+
+  it("leaves the formatter on its fallback for details that are not zod's", () => {
+    expect(
+      formatValidationErrorResponse({ error: "Some rows were refused", details: ["Row 2"] }),
+    ).toEqual(["Some rows were refused"]);
+  });
+});
+
+describe("joinFieldMessages / labelFieldMessages", () => {
+  it("joins with a semicolon and labels with the member label or the humanized key", () => {
+    expect(joinFieldMessages(["One", "Two"])).toBe("One; Two");
+    expect(labelFieldMessages("dateOfBirth", ["Bad", "Worse"])).toBe(
+      "Date of birth: Bad; Worse",
+    );
+    expect(labelFieldMessages("sortOrder", ["Too big"])).toBe("Sort order: Too big");
   });
 });

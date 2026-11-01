@@ -411,6 +411,10 @@ describe("#3366: no existing query changes its result", () => {
  * directory it is CI-caught by design.
  */
 const DECLARED_FILES: Record<string, string> = {
+  // #4627 (Ledger M3b): the journal posts an organisation-owned booking's
+  // charges to the organisation as debtor, through `bookingOwnerProviderMetadata`.
+  "src/lib/member-money/internal/booking-posting.ts":
+    "the booking's owner, member or organisation, read under its row lock as the receivable's debtor",
   // #4162 review (money 3): a hand-made refund credit note must be for the
   // booking's Xero contact - an organisation's own when it owns the booking.
   "src/lib/bank-refund-void-answer.ts":
@@ -441,6 +445,17 @@ const DECLARED_FILES: Record<string, string> = {
   // text of each constraint, and the debtor-kind CHECK names the column.
   "src/lib/member-money/internal/database-shape.ts":
     "pins the member-money journal's catalog definitions verbatim, so the debtor-kind CHECK's text names the organisation column; it reads no row and decides nothing about a school",
+
+  // #4626 (Ledger M3a): a journal debtor is a member or an organisation
+  // (design section 3, INV-MONEY-041), so the posting command carries the column.
+  "src/lib/member-money/internal/plan.ts":
+    "the posting plan's debtor is a member or an organisation, and the builder maps it onto a leg's or obligation's organisationId column; it reads no row and decides nothing about a school",
+  "src/lib/member-money/internal/store.ts":
+    "writes the debtor columns the plan built and checks a leg names its earlier obligation's debtor; it decides nothing about a school",
+
+  // #4457: the privacy-retention census classifies every Prisma model by name.
+  "src/lib/privacy-retention-classification.ts":
+    "names OrganisationContact as a key of the personal-data model inventory; it reads no row and decides nothing about a school",
 
   // ---- carried forward from stage 1, unchanged -------------------------
   "src/lib/member-merge-relations.ts":

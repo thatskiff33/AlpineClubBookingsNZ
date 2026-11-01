@@ -139,7 +139,7 @@ those, and `src/lib/subscription-lockout-facts.ts`'s
 `resolveMemberSubscriptionSettlement` never reads a category — it only ever
 reads `MembershipType.subscriptionBehavior` and `MemberSubscription.status`.
 The billing engine's OWN category-axis exemption decision calls through this
-same resolver for each category-assigned member (`INV-MONEY-043`,
+same resolver for each category-assigned member (`INV-MONEY-045`,
 `INV-LOCKOUT-020`) — not a parallel exemption rule of its own — so a member
 this resolver treats as exempt is never billed on either axis, keeping
 booking-access and billing in agreement for a category-assigned member the

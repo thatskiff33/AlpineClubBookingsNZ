@@ -124,6 +124,43 @@ transaction participant; provider delivery remains outside a database
 transaction. New booking rows keep `htmlBody` null and retain retry HTML only in
 `bookingRetryHtmlBody`, which the old worker cannot select after rollback.
 
+### Organiser bank-transfer extra invoices (#4299)
+
+Extras are money writers in the existing global cohort (`INV-LOCK-001`).
+Each edit queues its change-anchored invoice after writing the change history,
+inside its existing global → lodge → member locks, then takes the existing
+supplementary-anchor key last (`INV-LOCK-002`). Historical repair uses that
+same anchor protocol without booking or payment mutations. Contact resolution,
+invoice creation and app email delivery happen outside these transactions.
+
+`syncOrganiserExtraInvoiceCash` takes global then the child's Payment row,
+materialises its original combined-invoice share before introducing extra cash
+transactions, and records only the cash delta. Cancellation and reduction
+planners reserve waived amounts and invoice-specific refund notes under their
+existing global claims; group cancellation freezes this plan under global and
+re-reads each Payment under its row lock. Raced cash's compensating
+hand-backs (`reserveOrganiserExtraRacedCash`) also take global: every plan's
+share is a delta over the rows re-read under it, backed by unique scope and
+occurrence keys. A queued invoice
+waived whole is retired by a status-guarded `updateMany` inside the reserving
+claim, only while never attempted (`PENDING` or `WAITING_PAYMENT`, no
+`startedAt`), so a `RUNNING` or `FAILED` create keeps its invoice and the
+waiver is reserved against it. The supplementary enqueue refuses a change so
+retired under its anchor key, and the create re-asks in a short transaction
+holding that key alone, just before its Xero call, so neither an edit's
+after-commit re-enqueue nor an officer's retry raises it.
+The group cancel records each child's refund on its payment rows under the
+child's claim (global, then the Payment row in `applyLocalRefundAllocation`).
+These new sites are registered under `INV-LOCK-003`; no new advisory namespace
+is introduced.
+
+Provider execution uses the committed outbox's guarded RUNNING claim and
+claim token. Invoice reads, voids, credit creation, allocation and refund-note
+settlement run outside database transactions. Refund notes wait for the
+matching bank-transfer hand-back's completion; a lost outbox claim cannot save
+its outcome. This composes with the existing cancel/capture/refund cohort and
+with the supplementary-anchor protocol rather than holding a lock across Xero.
+
 ### One refund credit note in flight per payment, by claim order (#3880)
 
 A delta refund note sizes itself off the notes already recorded on its payment
@@ -292,6 +329,7 @@ are the literal `1`.
 | **Member partner link** | sorted `hashtext("member-partner-link:<memberId>")` keys | `acquireMemberPartnerLinkLocks` (`member-partner-lock.ts`), called by `lockPartnerMembers` (`member-partner-link.ts`), existing-member parent-link writers, nomination mapping, the reviewed move (`bed-allocation-move.ts`) and member merge (`member-merge.ts`) | — | Serialises partner-link invariants across every member touched by a link, including the direct parent/partner exclusion in `INV-LIFE-024`; same-family keys are sorted. The CONFIRMED partial uniques are per side (`memberAId`, `memberBId`), so "at most one confirmed partner" is enforced by this key alone — every writer of a partner link, every existing-member writer that adds a direct parent, and every reader whose relationship read decides such a write must hold the complete affected set. Partner-only service paths take ONLY this family. Parent writers take any member-lifecycle keys first, then this family; the reviewed move and merge likewise take it after member-lifecycle, so the edge remains one-way (#2595, #3271). Create-new-member paths are structurally outside this cross-table race because the generated child id cannot already own a partner row; the closed-world writer census records those sites rather than silently exempting them. |
 | **Xero member contact link (legacy key)** | `hashtext(<memberId>)` | short local-link transactions (`xero-contacts.ts`) | — | First-writer-wins local `Member.xeroContactId` linking after provider work. This legacy unnamespaced key is shared by both Xero contact-link writers; do not copy it for new domains. |
 | **Diagnostics budget reserve (per month)** | `hashtext("diagnostics-budget-reserve"), hashtext(<month>)` | `reserveDiagnosticsBudget` **and** `settleDiagnosticsRoundtrip` (`ai-diagnostics-usage.ts`, AID-2 #2371) | — | Serialises every AI Diagnostics budget RESERVE **and** SETTLE for one billing month so the reserve's read-check-insert (sum live reservations + settled spend, compare to budget, insert reservation) is atomic against concurrent reservers AND against a settle's reservation-delete + `settledCents` increment. A burst of paid diagnostics roundtrips therefore cannot push `settled + reserved` over the monthly budget, and a settle can never commit mid-reserve to under-count committed spend; a lost claim (over budget) inserts nothing and denies the paid call. Different months do not contend. Held only for the milliseconds of each short transaction; the provider call runs entirely OUTSIDE both. Both take ONLY this key (no second lock), so no ordering cycle is possible. See "Composition: diagnostics budget reserve" below. |
+| **Xero inbound cycle run claim** | session `hashtext("cron-run-claim"), hashtext(jobName)` | `withCronRunClaim` through `runXeroCronTaskList` (#4432) | — | Scheduled inbound, HTTP cron and whole-club sync-now share one dedicated autocommit connection's fail-fast claim. It wraps the cycle without an open transaction; domain writers retain their own transaction locks. Connection death recovers it, with no expiring live-holder lease. See the Xero inbound cycle run claim section below. |
 | **Backup run claim** | `hashtext("backup:run-lock")` | `claimBackupRun` (`backup-run.ts`, #2095) | — | Single-flights managed database backups across containers (nightly cron vs admin run-now). Held only for the milliseconds of the reap-stale → active-check → insert-RUNNING claim transaction; the `pg_dump`/upload pipeline runs entirely outside any transaction, so a crashed run can never wedge the lock (a dead RUNNING row is reaped by heartbeat age on the next claim). Single-lock holder; composes with no other family. The config-transfer pre-apply safety backup deliberately bypasses this claim (it must run inline; concurrent dumps are independent snapshots writing uniquely-named files). |
 | **Xero supplementary invoice per anchor** | `hashtext("xero-supplementary-invoice"), hashtext(<BookingModification id, or ManualRefundTask id for a second ask, or Booking id for the change-capture receipt's planning gate and plan store and the enqueue's booking-first key, #3953>)` | `enqueueXeroSupplementaryInvoiceOperation` (`xero-operation-outbox.ts`, #3170) | anchor | Single-flights "does this booking change already have a supplementary invoice going out?" so one edit can never send two. Held only for the milliseconds of the link-check -> queued-check -> raise-or-create transaction; the Xero round trip happens later, in the outbox worker, entirely outside it. No holder of this key takes a new lock after it, so wherever it composes it is the LAST lock of its transaction; three holders take more than one of these keys (the supplementary ENQUEUE, booking then change, #3953 round 7 below; the SUPERSEDED-INVOICE MOVE, #3403 below; and since #4324 a #3980 GAP invoice's enqueue, every anchor it bills, sorted, below). FOUR callers compose it after other locks. #3947's (owner decision 22 Oct 2026, option 2): an officer's review charge on the `invoice` route queues its edit's supplementary invoice INSIDE the completion's transaction through `enqueueEditReviewChargeInvoiceInTransaction`, after that transaction's `lock(1)` and member-credit keys and as its last lock, so the order there is global -> (member-credit) -> this key and no cycle is possible; only the outbox row is written, the kick runs after the commit, and the invoice commits with the share, so the next share of the edit, behind it on `lock(1)`, always sees it (`supplementaryInvoiceStillComingWhere`). A unique violation there aborts the completion, which leaves the task OPEN. And since #4324 (`INV-PAY-144`) three after a #3639 approval task's row, set out below: the KEEP'S DECISION (task row -> anchor), the APPROVAL's settlement (task row -> anchor) and the PAID-ANOTHER-WAY CLOSE (lock(1) -> Payment -> task row -> anchor). Its other FOURTEEN callers - the six enqueue callers below, the LATE-CAPTURE RE-QUEUE, the CHANGE-CAPTURE RECEIPT, its PLANNING GATE, its PLAN STORE, its UNSENT-INVOICE SWITCH, the OFFICER RETRY's re-check after them, the SUPERSEDED-INVOICE MOVE and its RETURN (#3403) - arrive holding nothing, save the CHANGE-CAPTURE RECEIPT's enqueue where the keep's decision calls it on its own transaction (`store`), holding the task row and the anchor it re-takes: the edit-settlement callers reach it post-commit through a fire-and-forget `queueXeroBookingEditSettlement`; the booking-vs-Xero repair pass (`xero-booking-repair-passes.ts`, `QUEUE_SUPPLEMENTARY_INVOICE`) calls it DIRECTLY from an operator-driven admin/CLI action that opens no transaction and takes no advisory lock; and since #3181 the payment-recovery worker calls it through `completeDeferredXeroSupplementaryInvoice` when it raises the supplementary invoice a failed additional-payment mint deferred - that worker claims its recovery row with a status-guarded `updateMany` rather than a transaction and holds no advisory lock, and its Stripe round trip has completed before this line; and since #3193 the SECOND ASK (`raiseSecondEditReviewChargeInvoice` -> `enqueueXeroSecondSupplementaryInvoiceOperation`) takes it on a review task's id, from the settlement's own fire-and-forget continuation after that settlement has committed, so it too holds nothing and takes exactly one; since #3954 the RE-ISSUED ASK's invoice (`queueReissuedAskInvoice`, `reissued-ask-invoice.ts`) is queued by the minter after its Stripe round trip and by the payment-recovery replay, neither inside a transaction nor holding an advisory lock; and since #3955 the PRIMARY-INVOICE CHANGE-FEE GAP (`queuePrimaryInvoiceChangeFeeGap`, `xero-primary-invoice-fee-gap.ts`) is queued by the outbox worker's booking-invoice handler after its Xero call returns, on the module client with no transaction or advisory lock open. Since #3641 (`INV-PAY-104`) the key has ONE spelling, `lockSupplementaryInvoiceAnchor` (anchor = the operation's `localId`), called by the enqueue and by the LATE-CAPTURE RE-QUEUE (`releaseXeroSupplementaryInvoiceForCapturedPaymentIntent`, `xero-supplementary-invoice-late-capture.ts`), which takes it on a reaper-retired operation's anchor for covered-check -> link-check -> queued-check -> revive, so a revived invoice and a fresh enqueue can never both go out (since #3953 round 8 the revive also asks `anchorCaptureHasReceipt` under that lock and revives the invoice unpaid where the capture's own receipt is linked, RUNNING or holding a stored decision - which it stores under this same key - so the capture keeps one recorder; proven against real PostgreSQL in `additional-capture-receipt.realdb.test.ts`, the revive queueing behind a plan store holding the anchor); its callers, the Stripe webhook's additional-payment handler, the confirm-modification-payment route and the waiting-invoice reaper (`xero-waiting-invoice-reaper.ts`, for an invoice whose payment already arrived), reach it after the capture is recorded, holding no transaction and no advisory lock, and no provider round trip runs inside it (the reaper's Stripe reads run in its plain loop, before and outside). Since #3953 (`INV-PAY-139`) the CHANGE-CAPTURE RECEIPT (`enqueueAdditionalCaptureReceiptOperation`, `additional-capture-receipt-enqueue.ts`) takes it on the change the capture pays for (`PaymentTransaction.bookingModificationId`, else the booking - anchors it already serialises, so no new key) for find-by-correlation-key -> who-records-this-capture (`readCaptureRecorder`, on the transaction's client) -> create of the capture's one `ADDITIONAL_CAPTURE_RECEIPT` row, so it serialises with the change's own supplementary-invoice enqueue on the same anchor; it is reached from that same release's `none-queued` branch, after the capture is recorded, from the primary invoice create's link save before its gap check (`queueReceiptsForUnrecordedCaptures`, after the link's own transaction has committed), and from the repair pass's `QUEUE_ADDITIONAL_CAPTURE_RECEIPT`, all holding nothing (and, since #4324, inside the keep's decision, below). The worker plans one receipt per booking at a time through a PLANNING GATE (review round 4, `passPlanningGate` in `additional-capture-receipt-gate.ts`): on a transaction of its own it takes this lock on the BOOKING's id - an anchor the lock already serialises, so no new key - and there looks for a LIVE receipt row on the booking already stamped `ADDITIONAL_CAPTURE_RECEIPT_PLANNING`; it waits (back to `PENDING`) for one, or stamps its own RUNNING row with that code, status-guarded, and commits. Whichever takes the lock second sees the first's stamp, so exactly one passes whatever order the outbox's claims committed in, and there is no both-wait to break (round 3's `(startedAt, id)` order read the app's clock, which is not commit order). It arrives holding nothing, holds the lock for the check and the stamp only, and runs every Xero read and write after committing; the stamp ends with the row (a wait, failure or refusal writes its own code, success clears it) and a dead row stops counting past the staleness threshold (`liveRunningXeroOperationFilter`). It also waits while a LIVE invoice create for the booking runs. Round 6: the receipt STORES its decision in a further short transaction under this lock on the change its capture pays for (else the booking), after reading who records the capture again there, and the supplementary ENQUEUE, under the same anchor, raises its invoice unpaid where a capture of the change (or the one it names) has a receipt that is linked, RUNNING or carrying a stored decision (`anchorCaptureHasReceipt`), so the two serialise on one key and one capture never gets two recorders whatever a repair sweep read. A retry whose own payment is in Xero and finds another invoice that would record the capture switches that invoice, if it has not sent, to unpaid in its own transaction under that invoice's anchor (`switchUnsentRecorderUnpaid`). Each of these transactions holds its one anchor key and nothing else - the gate's and the plan store's booking key is never held with a change's key - and no Xero call runs under any of them. Round 7 (the change a capture pays for, where its ledger row carries no stamp): REACHABLE, so settled here. Two such captures can meet an enqueue asking to record a payment - an officer's review charge (reason `edit_financial_review_charge_<change>`, no stamp), whose change the repair pass queues paid and naming the capture through `planEditReviewChargeInvoicePayment`'s `covers-ask` plan (`xero-booking-repair-classify.ts`, `queue:supplementary-invoice:<change>`); and an older member ask from before the #3954 stamp, whose change nothing records, for which the same arm with no review queues the invoice at the enqueue's default (`recordPayment` true, naming nothing). A review charge's change is read from its reason (`captureChangeId`, `additional-capture-receipt-link.ts`), so its receipt enqueue and plan store take that change's key and `anchorCaptureHasReceipt` finds it by the reason. A capture no change can be read from (`bookingHasUnattributedCaptures` - a fixed set, since every mint stamps its row, so read before any lock) stores its plan under the BOOKING's key and refuses (`change-unknown`, an officer told) where a paid supplementary invoice on the booking names no capture (`bookingHasPaidUnnamedSupplementary`); a paying, non-gap supplementary ENQUEUE on such a booking takes the BOOKING's key first and then its anchor's, and `anchorCaptureHasReceipt` counts every such capture on the booking. Round 9: only an invoice NAMING NO capture can record such a capture, so only that enqueue takes the booking's key first and only it counts them - an invoice naming its capture records that one alone. The unsent-invoice switch sets unpaid only the change's own invoice or one naming the capture, never a #3980 gap invoice (which may pay for other captures), and an officer's inline Retry of a change's invoice (`xero-operation-retry.ts`) asks again, in its own short transaction under this key on the change and holding nothing else, whether the row is now unpaid or a capture's receipt records it (`supplementaryReplayMayRecordPayment`), before its Xero call, outside the lock; round 11: where a receipt records it, that transaction sets the row itself unpaid, guarded on the unsent statuses (round 12: FAILED or PARTIAL, and only a receipt that linked its payment or stored its decision counts - a bare RUNNING one reads the row again under this key before it decides), and the late card charge's change-invoice requeue asks the same before it requeues, keeping the stored payload rather than writing back the one it read. That enqueue is one of three transactions holding more than one of these keys: it, booking -> change; #3403's move, below, booking -> change or two changes sorted; and the #3980 gap enqueue, next, its anchors sorted. No holder of a change's key takes a booking's, so no cycle. Since #4324 (4384-R2, `INV-PAY-144`) a #3980 GAP invoice's enqueue takes the key of EVERY racing edit its combined amount bills (`primaryInvoiceGap.billedChangeIds`, its anchors), sorted - the one order - and never the booking's, then asks of each whether a kept capture's own invoice bills it (`keptInvoiceBillsChangeCapture`), refusing (the treasurer's UNDERBILLED task, naming that change) where one does; every other holder of a change's key holds that one alone (the keep, the approval and the paid-another-way close, each after its task row, as its last lock) or takes the booking's key first and then change keys in that same sorted order (the supplementary enqueue, #3403's move), so the sorted set cannot cycle with them, and a keep on a non-first anchor serialises with the gap that bills it. Proven against real PostgreSQL by `kept-change-capture-record.realdb.test.ts` (the keep holding the second anchor, the gap check queued behind it). Since #4324 (`INV-PAY-144`) the KEEP'S DECISION for a kept change capture on a cancelled, invoiced booking (`planKeptLateCaptureXeroRecord`, `late-capture-kept-xero.ts`) takes this key on the change (else the booking) AFTER the #3639 approval task's row (see "Kept late-capture task row") and as its last lock - inside the dismissal's claim, and in the repair tool's `QUEUE_KEPT_LATE_CAPTURE_RECORD` transaction - and there finds the capture's receipt or kept-capture invoice, reads the change's evidence and queues one recorder (the receipt's enqueue on the same transaction, re-taking the key it holds); the APPROVAL's settlement (`settleKeptLateCaptureRecordOnApproval`) takes it the same way, after its claim and before its first outbox write (`lockKeptCaptureAnchor`), to withdraw a receipt that has stored no decision; a PAID-ANOTHER-WAY CLOSE takes it after `lock(1)`, the Payment row and the task row, inside its plan (`paidAnotherWayXeroPlan`, review CONC-1), so what records a change capture is read under it and its kept-capture invoice queued under it (`queuePaidAnotherWayXero`): lock(1) -> Payment -> task row -> anchor; and the receipt's worker, where its unlocked read finds the capture no longer kept, decides again in its own short transaction under it before any Xero call, and in every case its PLAN STORE reads the approval task again under it and, where the capture is no longer kept, closes its row CANCELLED in that same transaction (a status-guarded `updateMany` on its RUNNING claim), so a re-keep queued behind the key finds no live receipt and queues a fresh one. The supplementary ENQUEUE raises no invoice under it for a change a live kept-capture invoice bills (`keptInvoiceBillsChangeCapture`). Task row -> anchor, never the reverse, and no anchor holder takes a task row, so no cycle. Proven against real PostgreSQL by `kept-change-capture-record.realdb.test.ts`. #3947's in-transaction caller passes `recordPayment: false`, so it never takes the booking key and stays global -> (member-credit) -> one anchor key. Proven against real PostgreSQL by `additional-capture-receipt-unattributed.realdb.test.ts`: a review charge's planned receipt makes its change's paid invoice unpaid, and the enqueue queues behind a holder of the booking's key, then raises its invoice unpaid. The gap invoice never pays itself from a capture a receipt row claims, the gap invoice naming the captures it does take. It writes only the outbox row; the worker's Xero reads and payment run later, in the outbox, outside any lock or transaction. Proven against real PostgreSQL by `additional-capture-receipt.realdb.test.ts`: an enqueue queueing behind a holder of the anchor, the webhook and the confirm route racing through it, and - for the planning gate - two receipts driven through the outbox's real claim and the real worker from one barrier, of which only one reaches Xero while the other waits for it, with a dead create blocking neither and a live one blocking both. Its guarded `updateMany` writes (status CANCELLED and code `STALE_WAITING_PAYMENT`) are what make the racing callers revive once and alert at most once. Proven against real PostgreSQL by the "FORCES the revive-versus-enqueue interleaving" case in `edit-financial-review-races.realdb.test.ts`. Since #3403 (`INV-PAY-140`) the SUPERSEDED-INVOICE MOVE (`followSupersededAskInvoicesToCarrier`, `superseded-ask-invoice-carry.ts`) takes it on each change whose `WAITING_PAYMENT` invoice it re-points at the request carrying that change's balance, AND on that carrier's own key - the change its capture pays for (`captureChangeId`), else the booking - so the cover check over everything naming the carrier and the decision whether its capture's receipt already records it are one act with every other move onto it and with that receipt (review C2, C3). Order: the booking's key first, else the two changes' keys sorted; one key where they are the same change. One short transaction per change, holding those keys and nothing else, for re-read ledger and booking -> link-check -> queued-check -> carrier-cover check -> an `updateMany` guarded on `WAITING_PAYMENT`, the intent it waited on, the correlation key it read, no error code and no resolve mark. Its callers - the supersede's cancel step in the recovery worker and the Stripe webhook's cancel completion (each after its FAILED write, before the recovery row completes, or after the captured hand-off's claim committed), every superseding minter after its cancels (`cancelSupersededAdditionalIntentsNow`, after the minter's Payment-row-locked writes have committed), an edit's Xero leg after its own enqueue committed (`followSupersededAskInvoicesForIntentSafely`) and the waiting-invoice reaper's loop - hold no transaction, advisory key or row lock there, and a captured carrier's late-capture release runs after the move commits. Its RETURN (`returnMovedInvoicesToCapturedIntent`, `superseded-ask-invoice-return.ts`) runs inside that release for a kept capture of the FIRST intent, before the release reads: one short transaction per change holding that change's key alone (where such a capture's receipt decides), which asks `anchorCaptureHasReceipt` for that capture there, the same guarded write back. The unlocked restate (`restatePendingSupplementaryInvoiceAmount` from the review charge's post-commit caller) guards its write on the intent it read, and the move its write on the correlation key a raise rewrites, so neither writes the other's payload back (review C1). A price reduction's retire (`retireUnpaidAskChain`) holds the Payment row, not this key: the move's guard and the retire's `WAITING_PAYMENT` filter over every intent of the chain (re-evaluated on the moved row) decide, so whichever writes second matches nothing or retires the moved row, and the retire attributes a moved invoice by the intent it first waited on (`parkedFromPaymentIntentId`). Proven against real PostgreSQL by `superseded-ask-invoice-carry.realdb.test.ts`, each order FORCED on the key: against that retire and against the repair pass's enqueue, both orders; the move against the captured carrier's real receipt plan store on the carrier's key, both orders; and the carrier's capture and release landing while the move waits on the change's key. The retire's read-then-write and the move's in-transaction read-then-commit are not split by a hook: their exclusion rests on the guarded writes above, which the unit suites drive by landing a writer between read and write. So no ordering cycle is possible. This enumeration is written to be audited, so a new caller belongs in it before it belongs in the tree. It exists because #3170 made two review settlements of ONE edit contribute to one combined total: both restate first, both find nothing queued, and the queued-operation lookup deduped on a `correlationKey` BUILT FROM THE AMOUNT - so $200 and $30 were two keys, two operations and two invoices. The lookup is now scoped to the anchor, and an operation asking for less is RAISED through `restatePendingSupplementaryInvoiceAmount`, which refuses to lower. Note that `startXeroSyncOperation` runs on this transaction's client, so its P2002 fallback (re-read the winner's row) cannot run here - a unique violation aborts the surrounding transaction. Under this key that fallback is unreachable rather than needed: a concurrent enqueue for the same anchor is serialised behind us and finds our row through the queued-check. Residual, stated: a share settled AFTER the worker has claimed the operation (RUNNING) or after the invoice has been sent cannot join it, so the invoice bills the earlier figure and the difference is collected by hand. The enqueue reports that as `outcome: "short-sent"` (the invoice exists) or `outcome: "short-in-flight"` (the worker has merely claimed the row) and the settlement writes `booking.editFinancialReview.chargeShareUncollected` (leg `xero-invoice`) so an officer can find it - one invoice, never two, and never a silent shortfall. Proven against real PostgreSQL by the "FORCES the two-settlement interleaving" case in `edit-financial-review-races.realdb.test.ts`, which the #1881 harness runs in CI. Since #3193 that stated residual is BILLED rather than collected by hand, and the way it is billed does not add a lock site: `enqueueXeroSecondSupplementaryInvoiceOperation` is a named wrapper over this same enqueue, so the link-check -> queued-check -> write stays the one place that decides whether an ask already has an invoice going out. What widens is the KEYSPACE - the anchor is now the `BookingModification`, or the `ManualRefundTask` whose settled share the invoice bills. A second ask therefore contends with nothing: it is fenced against its own replays and invisible to every read that decides whether the booking change already has an invoice going out, which is what stops the change's own restate raising a $30 follow-on to the $230 combined total on top of an invoice already sent. One read is scoped by PAYLOAD rather than by anchor and so could have seen it - `attachPaymentIntentToWaitingSupplementaryInvoiceOperations`, which matches `requestPayload.bookingModificationId`; since the #3193 fix round it also filters `localModel: "BookingModification"`, so the separation is structural rather than a consequence of the wrapper's call-site flags. It bills that ONE share, never a difference, so two shares settling concurrently after the invoice went out queue two independent invoices for two different amounts rather than two copies of one difference. ONLY `short-sent` buys a second ask (#3193 fix round). A RUNNING row can be returned to PENDING un-attempted by exactly one route - a process-global Xero cooldown refusal, which `processXeroOutbox` un-claims because nothing was sent (an operator Requeue, and the repair pass's `REQUEUE_XERO_OPERATION` through the same helper, leave the original FAILED and replay a separate `REQUEUE` row inline; the stale-RUNNING reset writes FAILED) - and the next settlement then raises it to the COMBINED total, which already contains any share billed separately in the meantime. Since the second ask is anchored elsewhere by design, that restate cannot see it and cannot cap itself, so shares of $200/$30/$50 would bill $310 for a $280 edit. `short-in-flight` therefore raises nothing and takes the recorded-shortfall path, and the record tells the officer to compare the booking against Xero rather than to bill. |
 
@@ -1662,7 +1700,10 @@ only where the lock key can change under you. Booking creation used to lock on
 the code to its immutable id first and refuses a row whose code changed in
 between, so every site below keys on an immutable cuid (or materialises its
 singleton before locking) and cannot see a row appear between the two
-statements.
+statements, except the message-board mirror's post lock (#4586), which keys on
+the mutable `ClubPost.serverPostId` and reads a zero count as not found, and the
+login-throttle claim (#4609), whose row a clear can delete between its ensure and
+its lock, which reads a zero count as lost and ensures and locks once more.
 
 The reason is not tidiness. `$queryRaw<SomeRow[]>` is an **unchecked cast**: raw
 SQL returns the *physical* column names and the generic declares whatever the
@@ -1963,6 +2004,65 @@ mispricing a booking.
     never the same rows, and neither takes the other's parent row, so they are
     table-disjoint for locking purposes.
 
+- **Login throttle claim** — `src/lib/login-throttle.ts`
+  (`claimPasswordAttempt`, #4609, `INV-AUTH-003`): before a password is
+  compared, one short transaction ensures the account's `LoginThrottle` row
+  (`createMany … skipDuplicates`), locks it
+  (`$executeRaw`SELECT 1 FROM "LoginThrottle" WHERE "id" = … FOR UPDATE``),
+  reads it typed, decides with the pure policy and, when admitted, counts the
+  attempt. Parallel guesses on one account queue on the row, so two failures
+  both count and a burst fired the moment a wait ends admits exactly one — the
+  gap a bare upsert-increment after the password check would leave, since every
+  guess in the burst would pass the check before any failure landed. The key is
+  an immutable HMAC id. No advisory key, never composed with any other lock, no
+  provider call, and the bcrypt compare runs after commit, so INV-LOCK-001 and
+  INV-LOCK-002 ordering is not engaged.
+
+  The wait is bounded (#4637 review), because the threat is many concurrent
+  guesses on ONE account and every waiter holds a pooled connection:
+  - an unlocked read first refuses an account already waiting, so most of an
+    attack never queues on the row (concurrent claims only make that answer
+    stricter; a clear racing it costs at most one refused attempt);
+  - the transaction sets `lock_timeout` to one second for itself
+    (`set_config(…, true)`) and runs with explicit `maxWait` 1 s / `timeout`
+    3 s. A claim that cannot have the row within the second gets SQLSTATE
+    `55P03` and answers "waiting", uncounted — contention on that account, not a
+    store failure. A claim holds the row for milliseconds, so an ordinary race
+    still queues and counts;
+  - the attempt's instant is taken once the row is held, so on one server's
+    clock lock order is time order and `lastFailureAt` never moves backwards;
+    replicas' clocks can differ by their skew (app time is still the rule,
+    never SQL `now()`).
+
+  Counterpart writers, and why they are safe against the claim:
+  - **Clear** (`clearPasswordAttempts`, after a valid password or a completed
+    reset) and the **idle sweep** (`sweepIdleLoginThrottleRows`, deleting rows
+    whose `lastFailureAt` is over an hour old, from the daily `data-pruning` job
+    and a ten-minute timer in a process handling sign-ins, in id-ordered batches
+    of 100 so no statement holds rows long enough to push a claim past its
+    lock timeout) are `deleteMany` statements, each repeating its condition, with
+    no lock of their own. Against a claim holding the row they wait, then
+    delete the committed row (the clear: correct, the password was proven) or
+    re-check it and skip it (the sweep: the claim just refreshed
+    `lastFailureAt`).
+  - Either can instead delete the row between the claim's ensure and its lock.
+    The lock then matches nothing (count 0), so the claim ensures and locks
+    once more inside the same transaction, and gives up as a store failure only
+    if the second lock still matches nothing.
+  - Any other store failure, including a pool too busy to give the claim a
+    connection within `maxWait`, falls back to the per-process count (#1142
+    divisor) and never blocks sign-in.
+
+  `src/lib/__tests__/login-throttle.realdb.test.ts` forces each of these on real
+  PostgreSQL: two racing failures both count; a burst at the end of a wait admits
+  one; two first-ever claims both count; a row held past the lock timeout
+  answers "waiting" in about a second, uncounted and without the fallback; a
+  clear waits on a held row and then deletes it; the sweep re-checks a row a
+  claim refreshed under it and keeps it; and a row deleted between the ensure
+  and the lock is re-ensured. The unlocked pre-read, the post-lock instant and
+  the store-failure fallback are unit-tested against a mocked client
+  (`login-throttle.test.ts`), not on PostgreSQL.
+
 - **Member photo writer** — `src/app/api/members/[id]/photo/route.ts` (epic #171):
   the upload (POST) and remove (DELETE) transactions each take
   `$executeRaw`SELECT 1 FROM "Member" WHERE "id" = $1 FOR UPDATE`` and then read
@@ -2127,6 +2227,44 @@ mispricing a booking.
   money clusters. The #4436 race suite forces a sync and address move in both
   orders, including a warmed old-key cache, and a sync holding the old address
   while the move and a new key's save queue behind it.
+  Since #4470 four more writers join, with no new lock. Key replacement
+  carries the address its setup page showed and, after the settings lock,
+  re-reads the stored address. It refuses with `ServerNzAddressChangedError`
+  (the credentials route's 409), having written nothing, when another save
+  moved it, so a key issued by the old server never lands beside the new
+  address. A key saved first is removed by the move queued behind it.
+  Address replacement also deletes the old server's `push_secret` in its
+  transaction, after the API key (settings row, `api_key` row,
+  `push_secret` row, audit); key replacement deletes it after the new key
+  (settings row, `api_key` row, `push_secret` row, answer reset, audit). `ensurePushRegistration` stores a newly issued
+  secret through `serverNzAnswerWriter` for the identity its registration
+  was sent on (settings row, credential read, `push_secret` write, audit),
+  so a registration in flight across a move stores nothing and the next pass
+  registers with the new server. The message-board mirror (`runMirrorSync`)
+  writes each page through `serverNzAnswerWriter(page.sentOn)`: post
+  create/update/removal, failure count, cursor and last-sync time, each one
+  short transaction (settings row, credential read, then the `ClubPost` row
+  lock and re-read before any `ClubPostImage` row, or the settings write; see
+  "Message-board posts and their images" below). Every cursor and
+  failure-count write also re-reads the stored cursor pair and failure count
+  under the lock and refuses if any moved since the pass read or last wrote
+  them (`writePosition`). A refusal stops the pass; its single-flight claim
+  (`commsSyncStartedAt`) stays on the global client. Since #4586 the release
+  is an `updateMany` matching the exact stamp the claim wrote, so a pass whose
+  claim went stale and was taken over clears nothing, and the second pass's
+  claim stands until it ends. Since #4588 every page write also re-reads that
+  stamp under the settings-row lock and refuses once another pass holds the
+  claim, so a taken-over pass writes nothing more and stops as
+  `claim-taken-over`. The three recorders in
+  `servernz-settings.ts` (download, upload watermark, version) require a
+  branded `ServerNzAnswerTx`, which only `withCurrentServerNzConnection`
+  mints after its identity check, so calling them outside the fence does not
+  compile. The download's and the mirror's other writes are held to the fence
+  by source censuses (`servernz-version-record.test.ts`,
+  `club-post-mirror.test.ts`), not by type. The race suite forces a key save
+  against a move in both orders, an address move under an in-flight download
+  and under an in-flight mirror page, a push registration across a move, and
+  a key replacement removing the push secret.
 - **Owned-lodge list writer, and every Other lodges download write** —
   `src/lib/servernz-settings.ts` (`lockServerNzSettings`, #64), through the
   connection fence above (#4262 review): `downloadOtherClubsFromServer` builds
@@ -2178,6 +2316,42 @@ mispricing a booking.
   The transaction uses the settings fence's bounded wait
   (`SERVERNZ_TRANSACTION_OPTIONS`). No advisory lock; disjoint from the
   booking/capacity/credit and money clusters.
+- **Message-board posts and their images** (#4586, #4588): every writer that changes
+  both a `ClubPost` row and its `ClubPostImage` rows takes the **post row
+  first**. `ClubPostImage.postId` cascades on delete, so a post delete reaches
+  the image rows after the post. Taking the images first deadlocked an admin
+  removal against a mirror tombstone or retention on the same post.
+
+  | Writer | Order |
+  | --- | --- |
+  | Mirror upsert and tombstone (`club-post-mirror.ts`) | Settings row (the page's fence, which since #4588 also refuses unless `commsSyncStartedAt` is still this pass's claim stamp), then `$executeRaw`SELECT 1 FROM "ClubPost" WHERE "serverPostId" = $1 FOR UPDATE`` (`lockMirroredPost`) and a re-read under it; create or update, or delete, then image rows. A zero count is not found. A row this club removed is never rewritten; a "hidden" tombstone scrubs it to a marker (author and origin name blanked, its reports and image rows deleted under the post lock), and a "removed" one deletes it (#4588). |
+  | Admin removal (`removeClubPost`, `club-posts-admin.ts`) | Status-guarded `updateMany` (`removedAt: null`) takes the post row; images and share state re-read under it, then the image rows deleted. A lost claim is a no-op, or not found when the row is gone. Files deleted after commit. |
+  | Retention (`runClubPostCleanup`, #4588) | Batches of 200: `$executeRaw`SELECT 1 FROM "ClubPost" WHERE "id" IN (…) ORDER BY "id" FOR UPDATE``, the images re-read under those locks, the posts deleted (image rows by cascade); the files after commit. Its single-flight claim (`cleanupStartedAt`) is released, since #4590, only while it still holds the stamp this pass wrote. |
+  | Share send and stamp (`shareOnePost`, `stampShare`, `club-post-sharing.ts`, #4588, #4590) | Before the send, the CLAIM (#4590 review, #4592): `clubPost.updateMany` taking `shareRequestedAt` off our post, guarded on the value read and on no `sharedAt`/`serverPostId`; a count of 0 sends nothing. So the remote send is at most once: a second caller, a failed stamp, a database outage or a process killed mid-send leaves no request to re-send. Only a share the server did NOT take puts the request back (a retryable failure, or a version pause); if that write fails the share is lost, never duplicated. After acceptance, the stamp: settings row (`lockServerNzSettings`), then, only when the mirror already copied our own post under the server's id, our post and that copy (`SELECT 1 … WHERE "id" IN (…, …) ORDER BY "id" FOR UPDATE`), the copy deleted (image rows by cascade, files after commit) and our post stamped while it holds no id or this one. Retried with the id already returned: the locked stamp, then `clubPost.updateMany` of our post alone while its `serverPostId` is null (no settings lock; the unique `serverPostId` refuses it while a mirror copy holds the id), then the locked stamp again. Every exit names the server id: a copy that is not ours, or a different id already held (never overwritten), is a final failure whose `shareError` names it; all three attempts failing records it in `shareError`; a post deleted meanwhile, or that last write failing, leaves it in the error log only. No screen shows `shareError` yet (docs/guides/message-board.md, Troubleshooting). |
+  | Member post create (`createClubPost`) | One transaction since #4590: inserts the new post, then claims the member's unclaimed images (`updateMany`, `postId: null`), and rolls back, refusing the post, when fewer are claimed than the body names (an upload the orphan sweep deleted first). Nothing else can hold the new post. |
+
+  Retention and the share stamp take two or more posts in id order. Two other
+  writers update many posts in scan order, not id order, and take no image
+  row: member merge, which moves `ClubPost.authorMemberId` from the loser to
+  the master in one `updateMany` (`member-merge-relations.ts`,
+  `member-merge.ts`), and member deletion, whose `onDelete: SetNull` clears
+  the same column. Either can meet a retention batch in the opposite order on
+  two posts; PostgreSQL detects that deadlock and aborts one transaction, a
+  risk the single `deleteMany` retention used before #4588 carried too.
+  Making those writers id-ordered is not done here. Post-only writers (hide, edit, the
+  share's failure record, the withdrawal stamp, the mirror's own-post takedown)
+  take no image row. The image-only writers touch no post row: upload, and the
+  orphan sweep, which since #4588 deletes one row at a time and only while
+  `postId` is still null, deleting a file only for a row it deleted, so a
+  claim committing first keeps its image and a single-row delete cannot
+  deadlock against the claim's multi-row update. No advisory key; disjoint
+  from the booking/capacity/credit and money clusters.
+  `club-post-mirror-concurrency.realdb.test.ts` holds a tombstone and an admin
+  removal of one post after their first lock in both orders (neither
+  deadlocks; the images-first order deadlocks in both), and since #4588 a
+  pass taken over mid-pass, a claim queued ahead of the orphan sweep on one
+  upload, and a mirror update adding a picture to a post retention is
+  expiring.
 
 - **Deletion-request approval release** — `src/lib/deletion-request-decision.ts`
   (`releaseDeletionRequestApprovalClaim`, #2627): takes
@@ -3303,7 +3477,31 @@ claim (`holdAdditionalIntentRecoveryClaim`, one transaction that re-stamps
 `processingStartedAt`), so whichever commits first wins. A re-issued ask's
 recovery is written in the edit's transaction; the door's own mint completes it
 fenced the same way (`writeReissuedAskUnderRecovery`). An increase folding a
-waiting re-issue in closes it with the same fence. All proven on real Postgres.
+waiting re-issue in closes it with the same fence. #4052: when the door's write
+loses that fence and the recovery ended SUCCEEDED without the door's intent (a
+net-off, a fold, or the runner writing another intent under an amount-suffixed
+key), or is still PROCESSING but already repointed by the runner's locked write
+at another intent, and no row or recovery names it, the door cancels that
+intent at Stripe after commit, under no lock; a runner claim still naming the
+key, or one that wrote the same intent, leaves it alone. No lock or key changes. All proven on real Postgres.
+#4631: the runner's side. When its claim hold matches nothing it wrote nothing,
+and its transaction has ended; the runner then re-reads the recovery under no
+lock, and only one closed SUCCEEDED by a net-off or fold note
+(`reissueClosedUnminted`) with no row or recovery naming the intent has that
+intent cancelled at Stripe, by #4052's own proof and cancel
+(`settleLostRecoveryClaimHold`) - unless the runner adopted that intent by
+matching (#4036) rather than minting it under its own key, which is never
+cancelled. That terminal close is what the proof leans
+on: every writer under that recovery - the hold, the door's fenced write, a
+stale-reclaiming runner - is fenced on a claimable one, so none records the
+intent after it. The owner check runs just before the cancel, as the door's
+does, and sees any write that landed first; the gap between the two is #4052's.
+The one recorder not fenced on that recovery is another edit's refused
+replay adopting by match, and it takes only a sole open match of its own door
+and amount, created by its own recovery row's creation plus the 60 s skew
+(`latestAdoptableIntentCreatedAt`, #4036, #4079); that adoption landing
+between the owner check and the cancel is the gap left. Reads and one provider call
+only: no lock, key, participant or order changes. Proven on real Postgres.
 Round 6: the retire closes waiting recoveries before it stamps the rows - the
 runner's own order (its claim hold writes the recovery, then its row; since
 #4217 both take the `Payment` row before either) - and a
@@ -3323,8 +3521,14 @@ kind, a FAILED one counting as present. Round 7 also: the door's mint
 re-reads its new intent's row after its Stripe cancels and queues no invoice,
 and offers no client secret, when a reduction withdrew it meanwhile (a retire
 landing after that read leaves an invoice parked on a cancelled intent, which
-the stale-wait reaper retires). Round 8: only a withdrawn or FAILED row is
-"retired" there - a paid one, one not found or a failed re-read is live - and
+the stale-wait reaper retires). Round 8: only a retired row is "retired"
+there - a paid one, one not found or a failed re-read is live; #4052: retired
+is withdrawn, or FAILED with a queued Stripe cancellation, the supersede stamp,
+or Stripe reporting the intent cancelled or gone, so a declined card is live.
+That Stripe read (`readOpenProviderIntent` from `isMintedAskStillLive`) is a
+provider call made only outside any transaction or lock: the door's after its
+commit, the runner's after `holdAdditionalIntentRecoveryClaim`'s transaction
+has ended - and
 the door still returns the intent's id, so the increase's Xero leg parks its
 invoice on it rather than raising it unpaid; the reduction names the
 increase from the edit its mint stamped on the row
@@ -5290,6 +5494,79 @@ DB-enforced NULL-distinct unique column, `openStateKey`, present on both the new
   never awaited inside the request path and its failure is logged, so an alert
   outage cannot fail or roll back a member's request.
 
+## The member-money posting command: the caller's `lock(1)`, asserted, no key of its own (#4626)
+
+`postMemberMoneyEvent` and `reverseMemberMoneyJournal` (`src/lib/member-money`,
+Ledger M3a) take no advisory key and add no lock site. They run inside the
+caller's business transaction and inherit its tiers (`INV-LOCK-001`,
+`INV-LOCK-003`). Two of their checks read and then write, which only the global
+key keeps true until commit:
+
+- a **correction** reads what a revenue component still carries, then posts its
+  exact opposite. Two corrections of one component under different event keys
+  would both pass the read under READ COMMITTED;
+- an **exact reversal** of a journal that posted revenue reads that each
+  component is unchanged since, then copies the journal's legs;
+- a **fresh charge of a component that already has posted legs** (a remainder
+  after a full correction) would otherwise race a reversal of that correction,
+  and the component would carry its revenue twice.
+
+So the store asks `assertGlobalLockHeld` (`src/lib/global-lock-held.ts`, a
+`pg_locks` read for this backend's advisory key `1`) before any of them (for a
+fresh charge, after one indexed read finds the component's earlier legs), and refuses
+with `GlobalLockNotHeldError` when the caller does not hold `lock(1)`. It is an
+assertion, not an acquisition, so the advisory-lock census has no new site to
+register. Every door that will post one of these (R01-R04, R21) already holds
+the key. Only the first charge of a new component, a plan with no revenue
+component, and a reversal of a journal without revenue components need no key:
+their event key's unique index makes a duplicate post collapse to one, and
+`ON CONFLICT DO NOTHING` makes a concurrent poster of the same key wait and then
+replay. A refused check looks the key up once more,
+because a same-key poster may have committed in between. Proved against real
+PostgreSQL by `member-money-posting.realdb.test.ts`.
+
+## The M3b booking doors and member merge's journal transfer (#4627)
+
+Ledger M3b adds no advisory key and no new lock site. Its participants:
+
+- **The booking doors** post through `postBookingLedgerJournal` inside the
+  transaction of the legacy chokepoint that called it: the confirmation poster
+  (the settle body, the group settle, the whole-lodge $0 paths and the school
+  request's PAID), the modification poster (every edit door), review close and
+  the cancellation poster (every cancel path, the hold-release and capacity
+  crons, the Xero late-capacity cancel, the organiser's child cancel), and the
+  booking-ledger back-post filling a door's gap. Every one holds `lock(1)`
+  before it posts, which is all the engine asserts (it refuses a correction or
+  re-charge without it). Most also hold their lodge key; two do not: an edit
+  review's closure, and the organiser's per-child cancel (which reconciles beds
+  under `lock(1)` alone). The adapter reads nothing that depends on capacity,
+  so it relies on `lock(1)` and the booking row, never on a lodge key.
+- **The booking row.** Before it reads the owner the adapter takes the booking's
+  row lock, `FOR NO KEY UPDATE`, the strength an UPDATE takes. Most doors have
+  already UPDATEd the row in the same transaction, so for them it adds nothing.
+  A review closure whose re-base declines writes no booking row, and could
+  otherwise take this lock late, after an account-credit mint's KEY SHARE on the
+  owner's Member row, an inversion against member merge (owner move, then
+  `Member … FOR UPDATE`). The same inversion was already reachable through the
+  closure's credit give-back and local refund allocation, which insert
+  `MemberCredit` rows. So `resolveManualRefundTask` takes an edit review's
+  booking row straight after its status claim, before any of those writes.
+- **Member merge** takes no `lock(1)` (see "Merge joins the bed-allocation
+  cohort"). Its transfer posts no revenue, so the engine needs no key, and it
+  runs after the booking-owner move and the sorted `Member … FOR UPDATE` set. The
+  owner move UPDATEs each booking row, so it waits for any door that holds one.
+  That door's charge to the merged-away member is then committed and in the
+  balances the transfer re-reads. A door that starts later blocks on the row the
+  merge holds and then reads the survivor as owner. Neither order strands a
+  balance or posts one twice (`booking-ledger-journal.realdb.test.ts`).
+- **The posting context** (club date, currency, tax treatment) is resolved
+  before each door's transaction (`INV-LOCK-004`), on the club zone the door
+  already read where it has one, so the door keeps one club day.
+
+Reconciled against #4626 (the command and its `lock(1)` assertion), #4564 (M2's
+RESTRICT keys and the journal-aware teardown), #4622, #4629 and #4630, the last
+merges touching these writers.
+
 ## A credit note spent outside the app: global, then the member's credit ledger (#4219)
 
 `convergeCreditNoteSpentOutsideApp` releases a booking's applied credit and writes
@@ -5372,8 +5649,15 @@ the stamp boundary of the existing guarded claim in `cron-additional-payment-rem
 read and the bank-transfer offer that decide whether a released-credit reminder goes
 (`credit-release-reminder-gate.ts`, `INV-ADDPAY-051`) run before that claim and outside any
 transaction, in the cron and in the manual re-send alike; a withheld reminder claims nothing,
-and its one audit note is written outside any lock. A release waiting behind an unpaid edit
-request goes back through the recovery runner's one failure write
+and its one audit note is written outside any lock. A release merging into an unpaid edit
+request (`INV-ADDPAY-052`, #4491) takes nothing new: its merge decision is read before the
+Stripe mint and again inside the claim's existing transaction, after the `Payment` row lock
+and the sizing fence, with a change throwing to retry; the supersede and the invoice move
+then run as for every superseding minter (`INV-PAY-140`). Stated limit, shared with every
+superseding minter: the move passes over the superseded edit ask while its cancel is still in
+flight, so if the immediate cancel fails and the edit's invoice is old enough for the
+waiting-invoice reaper, the reaper can retire it before the cancel lands (#4665). A release that cannot merge, waiting behind an unpaid edit
+request, goes back through the recovery runner's one failure write
 (`markPaymentRecoveryOperationFailed`), fenced on the attempt its worker holds, with that
 attempt handed back; it takes no lock and changes no money.
 
@@ -6006,9 +6290,10 @@ of the #2901 repair apply and of the funnel's own pointer release (#4046).
 **The accepted inversion, and why it cannot deadlock.** Two writers take the
 same two rows Payment first, inside their own transactions:
 
-- the refund-note create's record (`createXeroCreditNote`): the pointer, then
-  the link write, whose single-canonical rule updates the payment's other
-  active links;
+- the refund-note create's record (`recordCreatedRefundNote`, from
+  `createXeroCreditNote`): the pointer, then its claim of its own operation
+  row (#4426), then the link write, whose single-canonical rule updates the
+  payment's other active links;
 - the outbox enqueue's existing-note branch
   (`enqueueXeroRefundCreditNoteOperation`, "already linked"): the pointer,
   then the link write, inside the caller's transaction (a group cancel or an
@@ -6032,6 +6317,77 @@ reordered: the create's one-transaction record is `INV-PAY-111`'s, and the
 enqueue joins its caller's transaction. An inbound void racing a create's
 record on one payment can take the same two rows in the opposite order; that
 predates #4161 and is not changed here.
+
+## Retiring a deleted Xero payment's link (#4531)
+
+The inbound invoice and credit-note reconcile retires a `PAYMENT` link once Xero
+confirms its payment DELETED (`retireDeletedXeroPaymentLink`,
+`xero-inbound/deleted-payment-links.ts`, `INV-INT-031`). The scheduled re-check
+`recheckPendingDeletedPaymentLinks` (run by the inbound cron cycle) and the
+operator backfill `applyDeletedPaymentLinkBackfill` use the same write. So do
+the marker writes on a candidate Xero could not judge (mark, count a failed
+answer, clear on live). They write only `XeroObjectLink.active` and that link's
+metadata: no money column, no booking status, no pointer. Under `INV-LOCK-001` it joins no advisory cohort and
+takes no advisory key (`INV-LOCK-002`, `INV-LOCK-003` unchanged), and it takes
+no explicit row lock.
+
+- **Provider call outside any transaction.** The reconcile is not wrapped in a
+  transaction (its callers: the stored-event worker under the event's
+  status claim, the incremental cursor, "Sync now", the bank-refund void
+  answer, and "Resolve by hand" on a Xero operation, which reconciles the
+  credit note it names). The confirming `GET /Payments/{id}` runs between its
+  short link writes, never inside one (`INV-INT-003`). It is one attempt: it
+  never sleeps on a rate limit and never arms the process-wide outage breaker
+  (`DEFERRABLE_XERO_READ`).
+- **The claim.** One statement per link:
+  `updateMany where { id, xeroObjectType: "PAYMENT", active: true, metadata = <as read> }`.
+  A concurrent writer that changed the metadata, or retired it first, makes
+  the count 0. The retire then re-reads and tries once more over the fresh
+  metadata, or stops if the link is already inactive. It never overwrites a
+  field it did not read. DELETED is terminal in Xero, so retiring over a
+  newer reading is always right.
+- **No counterpart deadlock.** It holds one row lock for one statement and
+  waits on nothing else. The link funnel's canonical rules
+  (`deactivateOtherCanonicalLinksWithClient`, the `REFUND_PAYMENT`
+  single-active rule) run only for a write that leaves its link active, so the
+  retire never retires a sibling.
+- **Stated limit.** A reconcile holding a payload read before the deletion can
+  upsert the link live after the retire, because the funnel takes no row lock
+  first. The link is then a candidate again on the next read of the document,
+  and the backfill finds it.
+- **Counterpart readers, and the hold-back that protects them.** Writers that
+  skip re-sending a payment while an active link records it: the booking
+  change's card receipt (`recordAdditionalCaptureReceipt`), the primary
+  invoice's PARTIAL payment repair (`recordedRepairPayment`) and the kept late
+  capture's invoice, each on the link's own record. Two more read across
+  records on one booking: a receipt refuses while a supplementary invoice's
+  payment link is active (`bookingHasPaidUnnamedSupplementary`), and a
+  supplementary invoice reads the receipts' links (`anchorCaptureHasReceipt`).
+  Their payment is made by a separate operation that writes the link before
+  the parent completes, so a parent whose completion failed retries with the
+  link in place. The retire therefore never runs while an operation matching
+  `rerunnableOperationWhere` (live, or FAILED/PARTIAL and still `replayable`,
+  with `manuallyResolvedAt: null`) sits on the link's own record, or, for a
+  supplementary payment link or a receipt's link, among the booking's open
+  receipts or supplementary invoices (`findRerunnableOperation`). It is asked
+  immediately before each guarded `updateMany`, not under a lock or in one
+  transaction with it, and no writer can invalidate the answer in between. An
+  operation leaves the set only by finishing, which merely holds back more
+  than needed. It never re-enters (a recorded outcome is final, `INV-INT-029`;
+  a retry claim moves FAILED or PARTIAL to RUNNING, inside the set), and a new
+  operation never holds this payment's link. A held link stays active and
+  marked, and the scheduled re-check retires it once the operation is done.
+  The readers are unchanged.
+- **The re-check's slot.** `recheckPendingDeletedPaymentLinks` claims its run
+  before any call: it creates the `DELETED_PAYMENT_RECHECK` cursor row once (a
+  lost unique race reads as "claimed elsewhere"), or moves
+  `lastSuccessfulSyncAt` forward in one `updateMany` guarded on it being six
+  hours old. So the cron and every webhook's kick, which run the cycle without
+  single-flight, spend the cap once per interval.
+
+Reconciled against the last ten merges touching `src/lib/xero-inbound`
+(#4543, #4555, #4539, #4437, #4443, #4339, #4341, #4228, #4289, #4231). None
+writes a `PAYMENT` link's `active` flag or reads one this retire changes.
 
 ## Voided bank-transfer refund note follow-up (#4162)
 
@@ -6213,6 +6569,45 @@ queued on the advisory lock, ending with one record of the note; and the void
 path - the inbound void of the recorded note retires its link, coverage drops to
 $0 and the nightly follow-up undoes the refund and asks once.
 
+**The create's own late answer (#4426).** The create whose row this resolve
+records can still be waiting on Xero: a create stalled past the stale
+threshold, an officer pressed Mark failed, then Resolve by hand. Its Xero call
+holds no lock, as before. When Xero answers, `recordCreatedRefundNote`
+(`xero-refund-note-record.ts`) records the note in one short transaction, in
+the claim's own order: the `Payment` row - only when the note takes the
+pointer (a canonical note; a refund request's or a per-refund note takes no
+`Payment` lock here) - then the operation row, a status-guarded `updateMany`
+refusing a row whose resolve recorded a note (`manuallyResolvedAt` and
+`xeroObjectId` both set), which is the claim and the write of the row's note
+in one statement, then the link through the funnel. Classified under
+`INV-LOCK-001`: no global cohort and no advisory key. The create moves no
+settlement money and no booking status in this transaction, and the one fact
+it shares with the resolve - which note this row records - lives on the
+operation row, so that row's lock decides it: whichever commits second reads
+the first. A resolve that commits first leaves the create's `updateMany`
+matching nothing; the create throws inside its transaction, rolling back its
+pointer, records nothing, and then - outside any transaction, logging the note
+first - writes one audit row and raises #4374's alert (or, when the late note
+is the one the resolve recorded, only logs it) and returns without settling
+or completing. A create that commits first leaves the row naming its note, so
+the resolve's re-read under its locks no longer asks a number and its claim is
+lost: the route answers as for a lost resolve. With the pointer, the resolve
+queues on the `Payment` row behind the create's record; without it, the
+resolve passes its reads (the record has not committed) and its `updateMany`
+queues on the operation row, then matches nothing (`xeroObjectId` is set).
+Both take the `Payment` row before the operation row and the link after it, so
+they never wait on each other in a cycle; before #4426 the create wrote the
+link before the row, the reverse of a completion (row, then link). A plain
+resolve records no note, so the create's claim still wins over it and the
+completion's #4374 alert follows. No new advisory key, registered site or
+row-lock site. Proven against real PostgreSQL by
+`xero-late-refund-note-after-resolve.realdb.test.ts`: the outbox's create held
+inside its Xero call while Mark failed and the resolve's claim run, then
+answered; and the create's record held open at its link write while the
+resolve's claim runs, shown queued (`pg_blocking_pids`) on the `Payment` row
+for a canonical note and on the operation row for a per-refund note, and lost
+either way.
+
 ## Refund-note link writes racing a void (#4195, #4223)
 
 A refund note's mirror goes inactive when the inbound sync records it VOIDED
@@ -6362,6 +6757,56 @@ the same note with an active historical sibling can deadlock (40P01). The
 therefore excludes old refund-note writers, including web/direct retries,
 before new ones start. Nightly healing of old mirror state does not make the
 two lock orders compatible.
+
+## The link funnel's metadata merge: one statement, no lock (#4445)
+
+A link write with `mergeMetadata` (the inbound reconcile, the refund-note
+status recorder and answers, the canonical-link heal, a school's contact link)
+lays its record over the stored metadata instead of replacing it. Before #4445
+the funnel read the stored metadata with no row lock and wrote the JavaScript
+spread, so two writers of one link that both read before either wrote kept
+only the later writer's keys. That held for a missing row too: both first
+writers read nothing, and the second's upsert overwrote the first's insert.
+
+The upsert now writes no metadata on that path, and one `UPDATE` keyed on the
+row it wrote applies the merge (`xero-object-link-metadata-merge.ts`): jsonb
+`||` over a stored object, less any key the record sent as `undefined`, or the
+value whole over anything else. That is the spread's meaning, top-level keys
+only. Under READ COMMITTED the statement re-reads the row it updates, and the
+upsert before it already holds that row in the same transaction, so a second
+writer's merge lands on the first's committed result. It adds no row lock, no
+advisory key and no lock-order edge: the row it touches is the row the upsert
+just took. It writes no money column, no booking status and calls no
+provider, so it joins no advisory cohort (`INV-LOCK-001`) and
+`INV-LOCK-003`'s registry has no entry for it. Refund-note writes still take
+their own row first (above); the merge then runs inside that lock.
+
+Each value the old spread wrote is still written, with one difference: a
+stored value is no longer re-run through `sanitizeForJson`. A value written
+through the funnel was redacted then; one written directly, such as the bank
+refund void marker's free-text note (`writeBankRefundVoidMarker`), is now kept
+as written rather than masked on the next merge. Redact such a value at its
+own writer if it needs it. During a blue-green overlap an
+old-release writer still reads then writes, so the window closes when the old
+colour stops.
+
+`xero-object-link-metadata-merge.realdb.test.ts` holds two writers at the
+funnel's upsert until both arrive, past the old read and before either write,
+on an existing row and a missing one. Both keys survive; on the pre-#4445 code
+all four cases lose one. It also compares the statement with the old spread
+across stored and incoming shapes.
+
+#4657: the same merge serves a second writer that is not the funnel. The
+erased-member contact status check (`recordObservation` in
+`xero-erased-member-contact-status-check.ts`) found each retired Member
+`CONTACT` link with `findMany`, read its metadata and wrote back a spread, so a
+concurrent writer's key on that link could be lost. It now selects only the row
+ids and calls `mergeXeroObjectLinkMetadata` with a plan from
+`planXeroObjectLinkMetadataMerge`, with the same top-level meaning. It takes no
+lock and joins no advisory cohort for the same reason: it writes only link
+metadata. `xero-erased-contact-status-metadata.realdb.test.ts` holds the
+observation between its read and its write while another writer merges a key;
+on the old read-then-write code that key is lost.
 
 ## One Xero contact, one local home: the contact-home key (#3367)
 
@@ -6729,3 +7174,37 @@ operator's copy of that is
   generic is an unchecked cast and a column that does not exist arrives
   `undefined`, not as an error. If a statement genuinely cannot be a model read,
   validate its rows with `decodeRawRows` (`src/lib/raw-sql-rows.ts`).
+
+## Xero inbound cycle run claim (#4432)
+
+Scheduled and whole-club manual inbound syncs share one database-held claim
+through `runXeroCronTaskList` and
+`withCronRunClaim("xero-inbound-reconcile", ...)`. The HTTP cron and standalone
+mirror participate too. A competing caller reports “A sync is already running”
+and performs no provider or domain work.
+
+The claim is the session advisory key
+`hashtext('cron-run-claim'), hashtext(jobName)`, acquired fail-fast on a dedicated
+`pg.Client` connection, never borrowed from Prisma's pool. There is no open
+transaction during provider work. Closing the dedicated connection in `finally`
+releases the claim on success and failure; PostgreSQL also releases it when a
+holder dies or the connection closes. TCP keepalive detects a lost peer. There
+is no lease expiry that could admit a second live cycle. A connection error
+fails the holder closed at the next task boundary and at completion.
+
+This outer coordination key takes no domain tier (`INV-LOCK-001`), is acquired
+before any existing writer runs, and is never taken from inside a domain
+transaction (`INV-LOCK-002`). The existing writers' global → lodge → member
+order is unchanged. The explicit session-key inventory in
+`advisory-lock-guard.test.ts` registers this exception (`INV-LOCK-003`); domain
+locks remain transaction-scoped. Real PostgreSQL tests exercise both scheduler
+and manual entry points and a dead connection's recovery.
+
+Drain the previous release's scheduler at rollout: old code cannot participate
+in a claim added by this release. The additive migration leaves its reads and
+writes compatible. Counterparts reconciled: #4539 (alert retry before inbound),
+#4536 and #4443 (outcome ownership), #4505 (provider fakes), #4384 and #4406
+(receipt routing), #4471 and #4372 (monotone outcomes), #4424 (note cover),
+and #4501 (lane coordination only). No open Xero PR appeared in the pre-edit
+public GitHub query. Scoped sync invokes the inbound handlers directly, without
+advancing the club cursors or taking a whole-cycle claim.

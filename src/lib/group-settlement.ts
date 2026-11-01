@@ -36,6 +36,7 @@ import { bookingOwner } from "@/lib/booking-owner";
 import { prisma } from "@/lib/prisma";
 import { clubToday, dateOnlyInstantOf } from "@/lib/club-time";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
+import { GROUP_SETTLEMENT_INTENT_TYPE } from "@/lib/stripe-app-intent-metadata";
 import {
   cancelPaymentIntentIfCancellable,
   createPaymentIntent,
@@ -50,6 +51,7 @@ import { enqueueOwnHostingCoverageReevaluation } from "@/lib/adult-member-hostin
 import { reconcileBedAllocationsForBookingWithLodgeLockHeld } from "@/lib/bed-allocation-lifecycle";
 import { recordBookingEvent } from "@/lib/booking-events";
 import { postGroupSettlementLedgerLines } from "@/lib/booking-ledger-group-settlement-sync";
+import { resolveBookingMoneyPostingContext } from "@/lib/member-money/doors";
 import {
   enqueueXeroBookingInvoiceOperation,
   kickQueuedXeroOutboxOperationsIfConnected,
@@ -404,7 +406,7 @@ export async function createGroupSettlementIntent(
     amountCents,
     customerId: customer.id,
     metadata: {
-      type: "group_settlement",
+      type: GROUP_SETTLEMENT_INTENT_TYPE,
       groupBookingId: group.id,
       organiserMemberId: group.organiserMemberId,
     },
@@ -1047,6 +1049,8 @@ async function settleConfirmedChildrenAndNotify(
   // #3672: joiners the paid bill did not cover are moved to member-pays below;
   // the club's day (read here, outside the lock) decides who is emailed.
   const clubTodayDateOnly = await clubTodayForStartedStay();
+  // #4627: the journal's posting context, likewise read outside the lock.
+  const journal = await resolveBookingMoneyPostingContext();
   let leftBehind: JoinerPayerSwitch = NO_PAYER_SWITCH;
   const settled = await prisma.$transaction(async (tx) => {
     leftBehind = NO_PAYER_SWITCH;
@@ -1274,7 +1278,7 @@ async function settleConfirmedChildrenAndNotify(
       settledIds.push(child.id);
     }
     // #3854: each child's confirmation and share post in this claim, keyed.
-    await postGroupSettlementLedgerLines({ store: tx, settlement: { id: settlement.id, source: options.source, amountCents: recordedCents }, children });
+    await postGroupSettlementLedgerLines({ store: tx, journal, settlement: { id: settlement.id, source: options.source, amountCents: recordedCents }, children });
 
     // Status-guarded settlement SUCCEEDED claim (#1881): never overwrite a
     // settlement a concurrent reaper/refund already moved to a terminal state.
@@ -1307,7 +1311,7 @@ async function settleConfirmedChildrenAndNotify(
     );
 
     return settledIds;
-  });
+  }, { maxWait: 10_000, timeout: 30_000 }); // #4627: each child's R01 adds journal round trips; the lock(1) holders' bound.
 
   if (settled === "refunded") {
     logger.warn(

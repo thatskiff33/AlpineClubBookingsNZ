@@ -67,6 +67,10 @@ vi.mock("@/lib/prisma", () => ({
   prisma: mockPrisma,
 }));
 
+// #4514 (D1): which expired drafts financial history names; none by default.
+const financialHistory = vi.hoisted(() => ({ bookingsWithFinancialHistory: vi.fn() }));
+vi.mock("@/lib/booking-financial-history", () => financialHistory);
+
 vi.mock("node-cron", () => ({
   default: {
     schedule: vi.fn(
@@ -156,6 +160,7 @@ vi.mock("@/lib/health-check", () => ({
 }));
 
 import { prisma } from "@/lib/prisma";
+import logger from "@/lib/logger";
 import { auth } from "@/lib/auth";
 import { getDetailedHealthReport } from "@/lib/health-check";
 
@@ -379,6 +384,7 @@ describe("OBS-03: cron job run recording", { timeout: 30_000 }, () => {
     vi.resetModules();
     vi.clearAllMocks();
     scheduledCronJobs.length = 0;
+    financialHistory.bookingsWithFinancialHistory.mockResolvedValue(new Set());
   });
 
   afterEach(() => {
@@ -433,6 +439,7 @@ describe("OBS-03: cron job run recording", { timeout: 30_000 }, () => {
         status: "SUCCESS",
         resultSummary: {
           deletedDrafts: 1,
+          withheldForFinancialHistory: [],
           promoRedemptions: 1,
           changeRequests: 0,
           modifications: 1,
@@ -491,6 +498,38 @@ describe("OBS-03: cron job run recording", { timeout: 30_000 }, () => {
     ]);
   });
 
+  it("keeps and reports an expired draft that financial history names, deleting only the rest (#4514)", async () => {
+    const draftCleanup = await registerCronJobs();
+    mockTransactionWithPrisma();
+    const drafts = [
+      { id: "draft-with-money", promoRedemptions: [] },
+      { id: "draft-plain", promoRedemptions: [] },
+    ];
+    vi.mocked(prisma.booking.findMany).mockResolvedValue(drafts as any);
+    financialHistory.bookingsWithFinancialHistory.mockResolvedValue(new Set(["draft-with-money"]));
+    vi.mocked(prisma.bookingChangeRequest.deleteMany).mockResolvedValue({ count: 0 } as any);
+    vi.mocked(prisma.bookingModification.deleteMany).mockResolvedValue({ count: 0 } as any);
+    vi.mocked(prisma.bookingEvent.deleteMany).mockResolvedValue({ count: 0 } as any);
+    vi.mocked(prisma.booking.deleteMany).mockResolvedValue({ count: 1 } as any);
+
+    await draftCleanup.callback();
+
+    expect(prisma.booking.deleteMany).toHaveBeenCalledWith({
+      where: { id: { in: ["draft-plain"] }, status: "DRAFT", draftExpiresAt: { lt: expect.any(Date) } },
+    });
+    expect(logger.warn).toHaveBeenCalledWith(
+      { job: "draft-cleanup", bookingIds: ["draft-with-money"] },
+      expect.stringContaining("financial history"),
+    );
+    expect(prisma.cronJobRun.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        jobName: "draft-cleanup",
+        status: "SUCCESS",
+        resultSummary: expect.objectContaining({ deletedDrafts: 1, withheldForFinancialHistory: ["draft-with-money"] }),
+      }),
+    });
+  });
+
   it("records draft cleanup zero-delete successes and failures", async () => {
     const draftCleanup = await registerCronJobs();
     // Draft cleanup scans once for lock-key selection and re-scans under the
@@ -508,6 +547,7 @@ describe("OBS-03: cron job run recording", { timeout: 30_000 }, () => {
         status: "SUCCESS",
         resultSummary: {
           deletedDrafts: 0,
+          withheldForFinancialHistory: [],
           promoRedemptions: 0,
           changeRequests: 0,
           modifications: 0,

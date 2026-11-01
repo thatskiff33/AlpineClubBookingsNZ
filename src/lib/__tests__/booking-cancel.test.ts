@@ -392,7 +392,7 @@ describe("cancelBooking credit refunds", () => {
           );
           const mockTx = {
             bookingEvent: { create: mocks.txBookingEventCreate },
-            bookingModification: { findFirst: mocks.txBookingModificationFindFirst },
+            bookingModification: { findFirst: mocks.txBookingModificationFindFirst, findMany: vi.fn(async () => []) },
             $executeRaw: mocks.txExecuteRaw,
             member: { findMany: fenceMemberFindMany() },
             // #2623 T5: the seam reads the lodge's hosting mode before the fence, so
@@ -2958,7 +2958,7 @@ describe("cancelBooking credit refunds", () => {
         );
         // The card's own refund is what the plan carries, and its event says it is a part.
         expect(mocks.refundPaymentTransactions).toHaveBeenCalledWith(expect.objectContaining({ amountCents: 3000 }));
-        expect(mocks.enqueueXeroRefundCreditNoteOperation).toHaveBeenCalledWith("payment_1", 3000, expect.anything());
+        expect(mocks.enqueueXeroRefundCreditNoteOperation).toHaveBeenCalledWith("payment_1", 3000, expect.objectContaining({ refundMethod: "card" }));
         expect(mocks.recordBookingEvent).toHaveBeenCalledWith(
           expect.objectContaining({ type: "REFUNDED", amountCents: 3000, reason: "$30.00 of the 50% refund ($50.00) refunded to the original payment method." }),
         );
@@ -3138,6 +3138,8 @@ describe("cancelBooking credit refunds", () => {
       expect(cancellationLedger.postCancellationLedgerLines).toHaveBeenCalledTimes(1);
       expect(cancellationLedger.postCancellationLedgerLines).toHaveBeenCalledWith({
         store: mocks.lastTx,
+        // #4627: the context resolved before the claim's transaction.
+        journal: expect.objectContaining({ policyVersion: "booking-ledger-bridge-1" }),
         bookingId: "booking_1",
         lodgeId: "lodge_1",
         keptCents: 10000 - 5000,
@@ -4168,6 +4170,7 @@ describe("cancelBooking credit refunds", () => {
         expect(cancellationLedger.postCancellationLedgerLines).toHaveBeenCalledTimes(1);
         expect(cancellationLedger.postCancellationLedgerLines).toHaveBeenCalledWith({
           store: mocks.lastTx,
+          journal: expect.objectContaining({ policyVersion: "booking-ledger-bridge-1" }),
           bookingId: id,
           lodgeId: "lodge_1",
           keptCents: 0,
@@ -4670,7 +4673,7 @@ describe("cancelBooking detaches the held booking-request pointer (issue #1254)"
             bookingEvent: { create: mocks.txBookingEventCreate },
             // #3835: the reviews settled before the cancel, frozen on its event.
             manualRefundTask: { findMany: vi.fn().mockResolvedValue([]) },
-            bookingModification: { findFirst: mocks.txBookingModificationFindFirst },
+            bookingModification: { findFirst: mocks.txBookingModificationFindFirst, findMany: vi.fn(async () => []) },
             $executeRaw: mocks.txExecuteRaw,
             member: { findMany: fenceMemberFindMany() },
             // #2623 T5: the seam reads the lodge's hosting mode before the fence, so
@@ -4837,7 +4840,7 @@ describe("cancelBooking no-payment claim-first (issue #1311)", () => {
             bookingEvent: { create: mocks.txBookingEventCreate },
             // #3835: the reviews settled before the cancel, frozen on its event.
             manualRefundTask: { findMany: vi.fn().mockResolvedValue([]) },
-            bookingModification: { findFirst: mocks.txBookingModificationFindFirst },
+            bookingModification: { findFirst: mocks.txBookingModificationFindFirst, findMany: vi.fn(async () => []) },
             $executeRaw: mocks.txExecuteRaw,
             member: { findMany: fenceMemberFindMany() },
             // #2623 T5: the seam reads the lodge's hosting mode before the fence, so
@@ -5135,7 +5138,7 @@ describe("cancelBooking requireRequestHold guard (issue #1406)", () => {
               // #3827 (`INV-PAY-117`): no open edit refund hand-back on file.
               aggregate: vi.fn(async () => ({ _sum: { amountCents: null } })),
             },
-            bookingModification: { findFirst: mocks.txBookingModificationFindFirst },
+            bookingModification: { findFirst: mocks.txBookingModificationFindFirst, findMany: vi.fn(async () => []) },
             $executeRaw: mocks.txExecuteRaw,
             member: { findMany: fenceMemberFindMany() },
             // #2623 T5: the seam reads the lodge's hosting mode before the fence, so

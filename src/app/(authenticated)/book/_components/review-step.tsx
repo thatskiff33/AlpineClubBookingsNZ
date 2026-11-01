@@ -17,6 +17,7 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { OptionCard, OptionCardGroup } from "@/components/ui/option-card";
 import { Textarea } from "@/components/ui/textarea";
 import {
   Select,
@@ -49,7 +50,7 @@ import {
 } from "@/lib/booking-exception-offer";
 import { useAgeTierOptions } from "@/lib/use-age-tier-options";
 import { formatCents } from "@/lib/utils";
-import { CheckCircle2, CreditCard, Landmark } from "lucide-react";
+import { CreditCard, Landmark } from "lucide-react";
 import { useClubFormat } from "@/components/club-format-provider";
 import type {
   AvailablePromoCode,
@@ -610,72 +611,42 @@ export function ReviewStep({
           )}
 
           {showPaymentMethodChoice && (
-            <div className="space-y-3 rounded-md border border-border p-4">
-              <p className="text-sm font-medium text-foreground">Payment method</p>
-              <div className="grid gap-2 sm:grid-cols-2">
-                <button
-                  type="button"
-                  onClick={() => setPaymentMethod("stripe")}
-                  aria-pressed={paymentMethod === "stripe"}
-                  className={`flex min-h-20 items-start gap-3 rounded-md border p-3 text-left text-sm ${
-                    paymentMethod === "stripe"
-                      ? "border-info bg-info-muted text-info"
-                      : "border-border bg-card text-card-foreground hover:border-foreground"
-                  }`}
+            <OptionCardGroup
+              label="Payment method"
+              className="space-y-3 rounded-md border border-border p-4"
+            >
+              <OptionCard
+                selected={paymentMethod === "stripe"}
+                onSelect={() => setPaymentMethod("stripe")}
+                icon={CreditCard}
+                title="Card"
+                className="min-h-20"
+              >
+                {cardPaymentDescription}
+              </OptionCard>
+              {internetBankingEnabled ? (
+                <OptionCard
+                  selected={paymentMethod === "internet_banking"}
+                  onSelect={() => setPaymentMethod("internet_banking")}
+                  icon={Landmark}
+                  title="Internet Banking"
+                  className="min-h-20"
                 >
-                  <CreditCard className="mt-0.5 h-4 w-4 shrink-0" />
+                  {internetBankingPaymentDescription}
+                  {internetBankingHoldSummary ? (
+                    <span className="mt-1 block">{internetBankingHoldSummary}</span>
+                  ) : null}
+                </OptionCard>
+              ) : internetBankingUnavailableReason ? (
+                <div className="flex min-h-20 items-start gap-3 rounded-md border border-border bg-muted p-3 text-left text-sm text-muted-foreground">
+                  <Landmark aria-hidden className="mt-0.5 h-4 w-4 shrink-0" />
                   <span>
-                    <span className="block font-medium">Card</span>
-                    <span className="block text-xs">
-                      {cardPaymentDescription}
-                    </span>
-                    {paymentMethod === "stripe" ? (
-                      <span className="mt-1 inline-flex items-center gap-1 text-xs font-semibold">
-                        <CheckCircle2 aria-hidden className="h-3.5 w-3.5" />
-                        Selected
-                      </span>
-                    ) : null}
+                    <span className="block font-medium">Internet Banking</span>
+                    <span className="block text-xs">{internetBankingUnavailableCopy}</span>
                   </span>
-                </button>
-                {internetBankingEnabled ? (
-                  <button
-                    type="button"
-                    onClick={() => setPaymentMethod("internet_banking")}
-                    aria-pressed={paymentMethod === "internet_banking"}
-                    className={`flex min-h-20 items-start gap-3 rounded-md border p-3 text-left text-sm ${
-                      paymentMethod === "internet_banking"
-                        ? "border-info bg-info-muted text-info"
-                        : "border-border bg-card text-card-foreground hover:border-foreground"
-                    }`}
-                  >
-                    <Landmark className="mt-0.5 h-4 w-4 shrink-0" />
-                    <span>
-                      <span className="block font-medium">Internet Banking</span>
-                      <span className="block text-xs">
-                        {internetBankingPaymentDescription}
-                        {internetBankingHoldSummary ? (
-                          <span className="mt-1 block">{internetBankingHoldSummary}</span>
-                        ) : null}
-                      </span>
-                      {paymentMethod === "internet_banking" ? (
-                        <span className="mt-1 inline-flex items-center gap-1 text-xs font-semibold">
-                          <CheckCircle2 aria-hidden className="h-3.5 w-3.5" />
-                          Selected
-                        </span>
-                      ) : null}
-                    </span>
-                  </button>
-                ) : internetBankingUnavailableReason ? (
-                  <div className="flex min-h-20 items-start gap-3 rounded-md border border-border bg-muted p-3 text-left text-sm text-muted-foreground">
-                    <Landmark className="mt-0.5 h-4 w-4 shrink-0" />
-                    <span>
-                      <span className="block font-medium">Internet Banking</span>
-                      <span className="block text-xs">{internetBankingUnavailableCopy}</span>
-                    </span>
-                  </div>
-                ) : null}
-              </div>
-            </div>
+                </div>
+              ) : null}
+            </OptionCardGroup>
           )}
         </CardContent>
       </Card>

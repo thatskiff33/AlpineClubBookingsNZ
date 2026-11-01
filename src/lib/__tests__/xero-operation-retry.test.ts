@@ -52,6 +52,12 @@ const mocks = vi.hoisted(() => ({
   deallocateExcessAppliedCreditForBooking: vi.fn(),
   // #3953 round 9: the replay's recordPayment, asked again under the change's anchor lock.
   supplementaryReplayMayRecordPayment: vi.fn(),
+  // #4494: the PARTIAL repair's credit-release check for a gap invoice (resets to undefined: repair as before).
+  skipPartialGapRepairPayment: vi.fn(),
+}));
+
+vi.mock("@/lib/credit-release-xero-payment", () => ({
+  skipPartialGapRepairPayment: async (...args: unknown[]) => (await mocks.skipPartialGapRepairPayment(...args)) ?? null,
 }));
 
 vi.mock("@/lib/additional-capture-receipt-gate", async (importOriginal) => ({
@@ -964,6 +970,18 @@ describe("retryXeroSyncOperation", () => {
     ).toBeLessThan(mocks.createXeroInvoiceForBooking.mock.invocationCallOrder[0]);
   });
 
+  it.each([
+    { recorded: { skipped: true, refusal: "ORGANISER_PAID_INTERNET_BANKING" }, says: /^No invoice was created: The group organiser paid this place by internet banking/ },
+    { recorded: { skipped: true, reason: "Booking was manually marked paid" }, says: /manually marked paid \(cash \/ off-Xero\)/ },
+  ])("#4299 B1: a refused booking-invoice retry names the fence the handler recorded ($recorded.refusal)", async ({ recorded, says }) => {
+    mocks.findUniqueOperation.mockResolvedValueOnce(makeOperation()).mockResolvedValueOnce({ responsePayload: recorded });
+    mocks.findUniquePayment.mockResolvedValue({ bookingId: "book_123" });
+    mocks.createXeroInvoiceForBooking.mockResolvedValue(null);
+
+    const { message } = await retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST, { createdByMemberId: "admin_1" });
+    expect(message).toMatch(says);
+  });
+
   it("409s a booking-invoice retry whose claim lost (already queued or claimed elsewhere) without calling Xero (#2262 H3)", async () => {
     mocks.findUniqueOperation.mockResolvedValue(makeOperation());
     mocks.findUniquePayment.mockResolvedValue({ bookingId: "book_123" });
@@ -1581,7 +1599,7 @@ describe("retryXeroSyncOperation", () => {
 
     // Round 11: the officer is told it was raised unpaid, and why.
     await expect(retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST, { createdByMemberId: "admin_1" })).resolves.toEqual({
-      message: "Retried Xero supplementary invoice creation, raised unpaid: the card payment it would record is recorded by its own receipt.",
+      message: "Retried Xero supplementary invoice creation, raised unpaid: the card payment it would record is recorded by its own receipt, or overlaps a credit-release payment.",
     });
 
     expect(mocks.supplementaryReplayMayRecordPayment).toHaveBeenCalledWith({
@@ -2380,6 +2398,31 @@ describe("retryXeroSyncOperation", () => {
         amountCents: 3000,
       },
     });
+  });
+
+  it("MUTATION #4494: a PARTIAL gap invoice whose payment would overlap the credit-release sweep's share is closed with no payment", async () => {
+    const operation = makeOperation({
+      status: "PARTIAL",
+      localModel: "BookingModification",
+      localId: "mod_123",
+      xeroObjectId: "inv_sup_123",
+      requestPayload: { primaryInvoiceGap: true, bookingId: "booking_1", coveredPaymentIntentIds: ["pi_release"] },
+      responsePayload: { invoice: { invoices: [{ total: 30 }] } },
+    });
+    mocks.findUniqueOperation.mockResolvedValue(operation);
+    const paymentOutcome = { payment: null, paymentSkipped: true, paymentSkipReason: "Not recorded: credit release." };
+    mocks.skipPartialGapRepairPayment.mockResolvedValueOnce({ paymentOutcome, message: "Closed without recording a payment." });
+
+    await expect(retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST, { createdByMemberId: "admin_1" })).resolves.toEqual({
+      message: "Closed without recording a payment.",
+    });
+    expect(mocks.skipPartialGapRepairPayment).toHaveBeenCalledWith(operation, expect.objectContaining({ id: "op_123" }));
+    expect(mocks.createXeroPaymentForInvoice).not.toHaveBeenCalled();
+    expect(mocks.completeXeroSyncOperation).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "op_123" }),
+      expect.objectContaining({ responsePayload: expect.objectContaining(paymentOutcome) }),
+      expect.anything(),
+    );
   });
 
   it("marks zero-total booking invoice partials as repaired without creating a payment", async () => {

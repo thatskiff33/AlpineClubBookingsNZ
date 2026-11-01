@@ -132,7 +132,11 @@ reduction that goes back partly to the card and partly as account credit names
 both. A reduction that
 cancels the member's unpaid additional payment outright adds "The additional
 payment we asked for has been cancelled, so you no longer need to pay it."
-(#3954).
+(#3954). An amount still to pay is named by one rule at every edit: on a
+booking the club asks by card it reads "An additional payment of $X is
+required.", also while the card request waits to be retried; on a booking paid
+by internet banking it names an Internet Banking payment against the Xero
+invoice; any other amount still to pay is named without a method (#4052).
 
 `{{refundSentence}}` on the **Refund Appeal Approved** message works the same
 way. A card refund reads "A refund of $X will be processed to your original
@@ -153,6 +157,21 @@ Organiser Joiner Refund** (#3956). Its `{{refundSentence}}` names the joiner and
 says the amount for their share is being refunded to the card the organiser paid
 with; `{{joinerName}}` and `{{amount}}` are there for an override too. It is not
 sent when the admin chose not to email, or when the organiser is the joiner.
+
+**Group Organiser Extra Invoice** (#4299) goes to the organiser of a group they
+paid for by internet banking when a change makes a joiner's place cost more:
+the extra, with any late-change fee, is billed to the organiser on its own Xero
+invoice. `{{joinerName}}` names the place, `{{changeSummary}}` the kind of
+change ("Dates Changed", "Guests Added" and so on), `{{additionalAmount}}` what
+is still owed on the invoice and `{{xeroInvoiceNumber}}` the reference to quote.
+It is sent once per invoice, scoped to the organiser's own booking, so that
+booking's **No emails** switch withholds it; an admin's choice not to email the
+member about the joiner's change does not. If the change was cut back or
+cancelled before the invoice reached Xero, it names only what is still owed,
+and is not sent when nothing is. The joiner's own **Booking Modified** message
+reads "The extra $X for this change has been invoiced to the group organiser,
+because the group organiser paid for this booking. There is nothing for you to
+pay." instead of asking them for a payment.
 
 `{{amountDue}}` on the **Booking Request Approved** and **Split Guest Payment
 Link** messages is what the pay link asks the member to pay: the booking's price
@@ -427,7 +446,8 @@ Two consequences worth knowing before you edit one:
   needs `{{additionalAmount}}`, `{{requestedOn}}`, `{{checkIn}}`, `{{checkOut}}` and
   `{{askCauseSentence}}`, which says why the amount is owed: the credit was used
   elsewhere in the club's accounts, or that and a change to the booking when the two
-  were merged into one request (#4253). A customised body saved before
+  were merged into one request (#4253; in either order, #4491). A merged request
+  raised by the release is emailed at once for the combined amount. A customised body saved before
   `{{askCauseSentence}}` existed is flagged stale; put it back in when you re-save. Put
   `{{bankTransferNote}}` on a line of its own above the Pay Now line: it prints the
   whole bank-transfer paragraph (with the booking's invoice number as the payment

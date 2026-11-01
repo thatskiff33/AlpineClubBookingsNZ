@@ -1,3 +1,4 @@
+import { queueOrganiserExtraForChange } from "@/lib/organiser-extra-invoice-queue";
 import { isUnpaidConfirmedWholeLodge } from "@/lib/booking-payment-flow";
 import { postStoredBookingConfirmationLedgerLines } from "@/lib/booking-ledger-confirmation-sync";
 import { LEDGER_ROWS_OLDEST_FIRST } from "@/lib/payment-ledger-order";
@@ -101,6 +102,7 @@ import {
 import { SELF_REMOVABLE_GUEST_BOOKING_STATUSES } from "@/lib/booking-guest-self-removal";
 import { bookingFinalPriceCents } from "@/lib/booking-final-price";
 import { postModificationLedgerLines } from "@/lib/booking-ledger-modification-sync";
+import type { BookingJournalContext } from "@/lib/member-money/doors";
 import { computeModificationPricing } from "@/lib/booking-modification-pricing";
 import { reserveOrganiserChildModificationRefund } from "@/lib/organiser-child-refund";
 import logger from "@/lib/logger";
@@ -128,6 +130,8 @@ export type RemoveBookingGuestResult = {
   accountCreditAmountCents: number;
   pendingRefundAmountCents: number;
   additionalAmountCents: number;
+  /** #4299 (`INV-PAY-148`): the increase invoiced to the group organiser instead of this member. */
+  billedToOrganiserCents: number;
   /**
    * #3371: the minter's own value, carrying what minting it would absorb. The
    * plain figure above is what the emails and the response body read; the two
@@ -294,6 +298,7 @@ export async function removeBookingGuestInTransaction({
   hostingCoverageOverride,
   today,
   format,
+  journal,
 }: {
   tx: Prisma.TransactionClient;
   bookingId: string;
@@ -365,6 +370,8 @@ export async function removeBookingGuestInTransaction({
   };
   /** The club's format (#3565), resolved before any transaction by the caller. */
   format: ClubFormat;
+  /** #4627: the journal's posting context, resolved before any transaction by the caller (`INV-LOCK-004`). */
+  journal: BookingJournalContext;
 }): Promise<RemoveBookingGuestResult> {
   // Two-tier lock protocol (#1881). A single-guest removal computes a reduction
   // refund (money) AND re-checks capacity, so it takes BOTH locks: the global
@@ -1000,8 +1007,10 @@ export async function removeBookingGuestInTransaction({
 
   // #3582: the same before and after, per night, on the booking ledger — under
   // the `lock(1)` this function took first.
+  await queueOrganiserExtraForChange(tx, booking, bookingModification);
   await postModificationLedgerLines({
     store: tx,
+    journal,
     bookingId,
     lodgeId: booking.lodgeId,
     bookingModification,
@@ -1011,7 +1020,7 @@ export async function removeBookingGuestInTransaction({
   // #4019: this new whole-lodge PAID path bypasses the ordinary settle.
   // Post after guest/night writes and the edit, at the final price only.
   if (lifecycle.zeroDollarAutoPaid && isUnpaidConfirmedWholeLodge(booking)) {
-    await postStoredBookingConfirmationLedgerLines(tx, bookingId);
+    await postStoredBookingConfirmationLedgerLines(tx, bookingId, journal);
   }
 
   // D-3813-6 (`INV-PAY-117`): a reduction on a booking paid by internet
@@ -1090,6 +1099,7 @@ export async function removeBookingGuestInTransaction({
     accountCreditAmountCents: paymentImpact.accountCreditAmountCents,
     pendingRefundAmountCents: paymentImpact.pendingRefundAmountCents,
     additionalAmountCents: paymentImpact.additionalAmountCents,
+    billedToOrganiserCents: paymentImpact.billedToOrganiserCents,
     additionalAsk: paymentImpact.additionalAsk,
     retiredAdditionalAsks: paymentImpact.retiredAdditionalAsks,
     unpaidAskCancelled: paymentImpact.unpaidAskCancelled,

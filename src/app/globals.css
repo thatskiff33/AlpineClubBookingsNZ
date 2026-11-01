@@ -310,8 +310,15 @@
      page (#f6f8f7), 4.31:1 on a hovered menu item, 3.74:1 inside its own
      `bg-destructive/10` alert box. red-700 clears every one of them (lowest
      4.97:1, on the --accent hover surface) and lifts the solid button's
-     white label from 4.57:1 to 6.15:1. Restated in `.website-theme` below. */
-  --destructive: oklch(0.505 0.213 27.518);
+     white label from 4.57:1 to 6.15:1.
+     #4563 — red-800, the light `--danger` value, not red-700. An error box
+     laid on a grey panel (`bg-destructive/10` inside `bg-muted`, as the
+     booking-request release confirmation is) read 4.49:1 at red-700, and
+     4.40:1 on `--danger-muted`. red-800 clears every surface in every box
+     alpha, and light mode now uses one error red, as dark mode does since
+     #4553. Restated in `.website-theme` below; `destructive-contrast-contract`
+     measures both from this file. */
+  --destructive: var(--danger);
   --destructive-foreground: oklch(0.985 0 0);
   --border: oklch(0.922 0 0);
   --input: oklch(0.922 0 0);
@@ -348,8 +355,9 @@
      structure (accent text / -foreground on solid / -muted tinted background) so
      the StatusChip renders one uniform muted-chip family across all five tones.
      `--danger` is added rather than reusing the solid `--destructive` pair because
-     that pair is only 2.63:1 in dark mode (red-on-red) and would fail WCAG AA in a
-     status chip. Light values equal the previous red/blue badge Tailwind pairings
+     that pair was only 2.63:1 in dark mode (red-on-red) and would fail WCAG AA in a
+     status chip (#4553 has since pointed the dark `--destructive` pair at this
+     one). Light values equal the previous red/blue badge Tailwind pairings
      (blue-800/100, red-800/100); the `.dark` block re-tints to the existing
      colored-callout dark tones (hue 250 / 27). All pairs clear WCAG AA (measured
      with club-theme-schema.ts contrastRatio: info 7.15/7.37, danger 6.80/7.06,
@@ -396,8 +404,17 @@
     --placeholder-foreground: var(--muted-foreground);
     --accent: oklch(0.32 0 0);
     --accent-foreground: oklch(0.985 0 0);
-    --destructive: oklch(0.396 0.141 25.723);
-    --destructive-foreground: oklch(0.637 0.237 25.331);
+    /* #4553 — dark mode's error ink is the dark `--danger` red. The old pair
+       (red-900 oklch(0.396 0.141 25.723) under a red-500 foreground) put
+       `text-destructive` at 1.23–1.80:1 on the dark surfaces and its own
+       foreground on it at 2.63:1. The `--danger` tone clears 4.5:1 on every
+       dark surface, including the `bg-destructive/10` and `/5` alert boxes on
+       them (lowest 5.68:1, a /10 box on `--danger-muted`), and its near-black
+       foreground reads 10.24:1 on it. Pinned from this block by
+       `destructive-contrast-contract.test.ts`. A `var()` resolves here, on the
+       element that declares it, so `.dark` must also declare `--danger`. */
+    --destructive: var(--danger);
+    --destructive-foreground: var(--danger-foreground);
     --border: oklch(0.55 0 0);
     --input: oklch(0.55 0 0);
     --ring: oklch(0.55 0 0);
@@ -454,7 +471,7 @@
      overrides these per-club by source order (see `src/lib/theme/app-tokens.ts`,
      `WEBSITE_ROLE_ALIASES`). The BRANDED look is preserved deliberately: a light
      page (neutral-1), a GOLD (accent-9) primary/ring, and a DARK charcoal
-     (neutral-12) nav. `--destructive*` stay fixed oklch (not brand-derived).
+     (neutral-12) nav. `--destructive*` stay fixed, not brand-derived (`--destructive` is `var(--danger)`).
      Pinned against the resolver in `app-theme-layout-contract.test.ts` so the
      CSS literals and the derivation cannot drift. */
   --background: #f6f8f7;
@@ -473,8 +490,8 @@
   --placeholder-foreground: var(--muted-foreground);
   --accent: #e0e3e1;
   --accent-foreground: #1c211d;
-  /* #4466 — the AA error ink; see the `:root` note. */
-  --destructive: oklch(0.505 0.213 27.518);
+  /* #4466, #4563 — the AA error ink; see the `:root` note. */
+  --destructive: var(--danger);
   --destructive-foreground: oklch(0.985 0 0);
   --border: #d0d3d0;
   --input: #c5c8c5;

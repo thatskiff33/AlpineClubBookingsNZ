@@ -13,6 +13,10 @@ import {
   FINANCE_SYNC_CRON_JOB_NAME,
   FINANCE_SYNC_CRON_SCHEDULE,
 } from "@/lib/finance-sync-cron-config";
+import {
+  FORMER_MEMBER_ANONYMISATION_JOB_NAME,
+  PRIVACY_DATA_PRUNE_JOB_NAME,
+} from "@/lib/privacy-retention-shared";
 
 const DAILY_STALE_AFTER_MINUTES = 36 * 60;
 const THREE_HOURLY_STALE_AFTER_MINUTES = 6 * 60 + 30;
@@ -554,6 +558,12 @@ export function getAdminCronJobDefinitions(
       },
       globalDisabledReason
     ),
+    ...([ [PRIVACY_DATA_PRUNE_JOB_NAME, "Email and rejected-application retention"],
+      [FORMER_MEMBER_ANONYMISATION_JOB_NAME, "Former member anonymisation"] ] as const).map(([jobName, label]) =>
+      defineCronJob({ jobName, label, schedule: "30 3 * * *", timezone: clubTimeZone,
+        expectedLocalTime: `03:30 daily in ${clubTimeZone}`, staleAfterMinutes: DAILY_STALE_AFTER_MINUTES,
+        note: "Ships off. Review Admin → Privacy retention before enabling; disabled jobs record SKIPPED.",
+      }, globalDisabledReason)),
     defineCronJob(
       {
         jobName: "draft-cleanup",

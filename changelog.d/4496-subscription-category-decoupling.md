@@ -1,8 +1,5 @@
 - **A subscription billing category can now be set independently of a
-  member's membership type.**
-  <!-- TODO: add (#<issue>) to the headline above once the maintainers open
-       the dedicated issue for this feature — #4305 was a wrong/unrelated,
-       already-closed issue. -->
+  member's membership type (#4554).**
   Previously, the only way to bill two
   members as a couple or a family was the "Family" membership type itself —
   which also changed their booking rights and hut rate, since membership

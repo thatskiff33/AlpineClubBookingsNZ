@@ -13,11 +13,10 @@
 import fs from "node:fs";
 import process from "node:process";
 import { randomBytes } from "node:crypto";
-import { realpathSync } from "node:fs";
-import { pathToFileURL } from "node:url";
 
 import { assessThread, renderDecisionSummary } from "../issue-thread.mjs";
 import { ghJson } from "../lib/github-cli.mjs";
+import { isMainModule } from "../lib/is-main-module.mjs";
 
 const ISSUE_FIELDS = "number,title,body,labels,url,state,comments";
 
@@ -166,15 +165,7 @@ function main(args) {
   }
 }
 
-function invokedPath() {
-  try {
-    return realpathSync(process.argv[1] ?? "");
-  } catch {
-    return process.argv[1] ?? "";
-  }
-}
-
-if (import.meta.url === pathToFileURL(invokedPath()).href) {
+if (isMainModule(import.meta.url)) {
   try {
     main(process.argv.slice(2));
   } catch (error) {

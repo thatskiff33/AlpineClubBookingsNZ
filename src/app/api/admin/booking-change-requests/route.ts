@@ -8,9 +8,12 @@ import { isFinishedStay } from "@/lib/booking-edit-policy";
 import {
   describeRequestedGuestNights,
   storedRequestNamesNoChange,
+  storedRequestPromoFacts,
 } from "@/lib/booking-change-request-stored";
 import { hasAdminAreaAccess } from "@/lib/admin-permissions";
 import { loadMemberGuestFindGate } from "@/lib/member-guest-find-service";
+import { carriedPromoCodes } from "@/lib/booking-change-request-promo";
+import { multiPromoCodesEnabled } from "@/lib/promo-redemption-slot";
 
 const querySchema = z.object({
   status: z.enum(["REQUESTED", "APPROVED", "REJECTED", "ALL"]).optional().default("REQUESTED"),
@@ -72,6 +75,11 @@ export async function GET(req: NextRequest) {
             },
             // #3369: the owner may be an Organisation; bookingOwner() reads both.
             organisation: { select: { name: true, email: true } },
+            // #4533 (#2259): the "No emails" switch drops the card's email choice.
+            noEmails: true,
+            // #4533 review: the codes the booking carries, so the card's promo
+            // entry keeps them (a correction only adds a code).
+            promoRedemptions: { select: { promoCode: { select: { code: true, internal: true } } } },
             // #4030: the member ids already on the booking, and nothing else
             // about its guests, so the officer's member finder disables them.
             guests: { where: { memberId: { not: null } }, select: { memberId: true } },
@@ -129,7 +137,12 @@ export async function GET(req: NextRequest) {
   // finished — answered here from the same `isFinishedStay` the decision route
   // asks, so the panel's wording and the route's behaviour cannot disagree.
   const today = await clubTodayDateOnlyInstant();
-  const data = requests.map(({ booking: { guests, ...booking }, ...request }) => {
+  // #4533 review: the club's switch, read once and only when a booking already
+  // carries a code — the card then sends those codes with the new one.
+  const multiPromoCodes = requests.some((request) => request.booking.promoRedemptions.length > 0)
+    ? await multiPromoCodesEnabled(prisma)
+    : false;
+  const data = requests.map(({ booking: { guests, promoRedemptions, ...booking }, ...request }) => {
     const executesOnApproval = isFinishedStay(booking, today);
     // #4030 Part B: a pending request on a finished stay that names no change
     // (a member's free-text note) — the officer may enter the guests it
@@ -139,6 +152,9 @@ export async function GET(req: NextRequest) {
       executesOnApproval &&
       request.status === "REQUESTED" &&
       storedRequestNamesNoChange(request.requestedChanges, booking);
+    // #4533: the promo change a request carries, and whether the officer may
+    // enter one on approval — asked through the executor's schema and mapping.
+    const promoFacts = storedRequestPromoFacts(request.requestedChanges, booking);
     return {
       ...request,
       // #4030 review S7: the guests' member ids reach the screen only where
@@ -146,6 +162,19 @@ export async function GET(req: NextRequest) {
       booking: acceptsOfficerGuests ? { ...booking, guests } : booking,
       executesOnApproval,
       acceptsOfficerGuests,
+      acceptsOfficerPromo: executesOnApproval && request.status === "REQUESTED" && promoFacts.takesPromoEntry,
+      // #4533 review: what the card's promo entry is built on — the booker's own
+      // codes (a working-bee code follows its own carry rule) and the switch.
+      officerPromoBase:
+        executesOnApproval && request.status === "REQUESTED" && promoFacts.takesPromoEntry
+          ? {
+              bookerCodes: carriedPromoCodes(promoRedemptions)
+                .filter((entry) => !entry.internal)
+                .map((entry) => entry.code),
+              multiPromoCodes,
+            }
+          : null,
+      promoCorrection: promoFacts.promoCorrection,
       // #4088: each guest's requested nights, as runs, for the card; #4157:
       // a pending request read against the live rows approval reads.
       requestedGuestNights: describeRequestedGuestNights(request.requestedChanges, {

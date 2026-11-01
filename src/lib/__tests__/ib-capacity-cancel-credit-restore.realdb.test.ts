@@ -29,8 +29,10 @@
 import type { PrismaClient } from "@prisma/client";
 import type { Invoice } from "xero-node";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { releaseBookingJournalForTeardown } from "./support/booking-financial-history-teardown";
 
 import { bookingLedgerBalance } from "@/lib/booking-ledger-balance";
+import { realElapsedMs } from "@/lib/__tests__/helpers/clock";
 import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 
 const RUN = process.env.RUN_CONCURRENCY_RACE_TESTS === "1";
@@ -105,6 +107,8 @@ async function clean(): Promise<void> {
   const slices = await prisma.memberCreditNoteAllocation.findMany({ where: { appliedToBookingId: BOOKING_ID }, select: { id: true } });
   await prisma.xeroObjectLink.deleteMany({ where: { localModel: "MemberCreditNoteAllocation", localId: { in: slices.map((slice) => slice.id) } } });
   await prisma.memberCreditNoteAllocation.deleteMany({ where: { appliedToBookingId: BOOKING_ID } });
+  // #4627: the doors post journal batches bridged to these lines; release them first.
+  await releaseBookingJournalForTeardown(prisma, [BOOKING_ID]);
   await prisma.bookingLedgerLine.deleteMany({ where: { bookingId: BOOKING_ID } });
   await prisma.bookingEvent.deleteMany({ where: { bookingId: BOOKING_ID } });
   await prisma.xeroSyncOperation.deleteMany({ where: { localId: { in: [PAYMENT_ID, BOOKING_ID] } } });
@@ -422,12 +426,12 @@ async function reconcile(cashCents: number) {
 
     // Wait until the cancel is queued on an advisory key: in the canonical
     // order it waits there holding no Payment row lock.
-    const deadline = Date.now() + 10_000;
+    const started = process.hrtime.bigint();
     for (;;) {
       const [{ waiting }] = await prisma.$queryRaw<{ waiting: bigint }[]>`
         SELECT count(*) AS waiting FROM pg_locks WHERE locktype = 'advisory' AND NOT granted`;
       if (Number(waiting) > 0) break;
-      if (Date.now() > deadline) throw new Error("the cancel never queued on the member key");
+      if (realElapsedMs(started) > 10_000) throw new Error("the cancel never queued on the member key");
       await new Promise((resolve) => setTimeout(resolve, 25));
     }
     // Then the sync writes the Payment row. Under the old order the cancel

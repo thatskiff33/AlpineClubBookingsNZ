@@ -25,6 +25,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { isMainModule } from "./lib/is-main-module.mjs";
 
 const MARKER = "<!-- managed-by:sync-user-guide-wiki";
 const SOURCE_DIR = "docs/user-guide";
@@ -235,6 +236,4 @@ function main() {
   console.log(`wrote ${wrote} wiki pages to ${outDir}${removed ? `, removed ${removed}` : ""}`);
 }
 
-const invokedDirectly =
-  process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
-if (invokedDirectly) main();
+if (isMainModule(import.meta.url)) main();

@@ -2,6 +2,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   bookingFindUnique: vi.fn(),
+  groupBookingFindUnique: vi.fn(),
+  sendOrganiserEmail: vi.fn(),
+  // #4299 F4: the organiser extra state the notice is sized from.
+  bookingModificationFindMany: vi.fn(),
+  xeroSyncOperationFindMany: vi.fn(),
   bookingModificationFindUnique: vi.fn(),
   xeroSyncOperationUpdate: vi.fn(),
   xeroSyncOperationFindUnique: vi.fn(),
@@ -21,17 +26,37 @@ const mocks = vi.hoisted(() => ({
   manualRefundTaskFindUnique: vi.fn(),
   readStripeCaptureDocumentDate: vi.fn(),
   queueWaitingPaidAnotherWayNote: vi.fn(),
+  // #4299 S1: the anchor-locked check just before the Xero call.
+  lockAnchor: vi.fn(),
+  xeroSyncOperationFindFirst: vi.fn(),
+  xeroSyncOperationUpdateMany: vi.fn(),
+  // #4494: the gap invoice's send-time check (resets to undefined: no overlap).
+  unpaidGapPayloadIfOverlapping: vi.fn(),
 }));
+
+vi.mock("@/lib/credit-release-xero-payment", () => ({
+  unpaidGapPayloadIfOverlapping: async (...a: unknown[]) => (await mocks.unpaidGapPayloadIfOverlapping(...a)) ?? null,
+}));
+
+vi.mock("@/lib/xero-operation-outbox", () => ({ lockSupplementaryInvoiceAnchor: mocks.lockAnchor }));
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
+    // #4299 S1: the organiser create's short anchor-locked transaction.
+    $transaction: async (run: (tx: unknown) => unknown) => run({
+      xeroSyncOperation: { findFirst: mocks.xeroSyncOperationFindFirst, updateMany: mocks.xeroSyncOperationUpdateMany },
+    }),
     booking: {
       findUnique: mocks.bookingFindUnique,
       findUniqueOrThrow: mocks.bookingFindUniqueOrThrow,
     },
+    groupBooking: { findUnique: mocks.groupBookingFindUnique },
     bookingModification: {
       findUnique: mocks.bookingModificationFindUnique,
+      findMany: mocks.bookingModificationFindMany,
     },
+    xeroObjectLink: { findMany: async () => [] },
+    paymentTransaction: { findMany: async () => [] },
     manualRefundTask: {
       findMany: mocks.manualRefundTaskFindMany,
       // #3635 round-3 R2: no kept late capture unless a test says so.
@@ -40,9 +65,12 @@ vi.mock("@/lib/prisma", () => ({
     xeroSyncOperation: {
       update: mocks.xeroSyncOperationUpdate,
       findUnique: mocks.xeroSyncOperationFindUnique,
+      findMany: mocks.xeroSyncOperationFindMany,
     },
   },
 }));
+
+vi.mock("@/lib/email/groups", () => ({ sendGroupOrganiserExtraInvoiceEmail: mocks.sendOrganiserEmail }));
 
 vi.mock("@/lib/logger", () => ({
   default: {
@@ -846,73 +874,21 @@ describe("a second ask survives a Xero rejection replayably (#3193)", () => {
     ).toEqual({ supported: true, reason: null });
   });
 
-  /**
-   * #3635 round-3 R2: a KEPT late capture's change invoice (case e2) is its
-   * card receipt, dated the day Stripe took the money, and the day is stored
-   * on the row before the Xero call. Every other supplementary invoice keeps
-   * today's date.
-   */
-  const sendQueuedChange = async () => {
-    mocks.xeroSyncOperationFindUnique.mockResolvedValue({
-      requestPayload: {
-        queueType: "SUPPLEMENTARY_INVOICE",
-        bookingId: "bk1",
-        priceDiffCents: 3000,
-        changeFeeCents: 0,
-        bookingModificationId: "mod_123",
-        recordPayment: true,
-        paymentIntentId: "pi_kept_change",
-      },
-    });
-    mocks.retryXeroWriteWithContactRepair.mockRejectedValue(new Error("Account code 200 has been archived"));
-    await expect(
-      createXeroSupplementaryInvoice({
-        format: CLUB_FORMAT_TEST,
-        bookingId: "bk1",
-        priceDiffCents: 3000,
-        changeFeeCents: 0,
-        bookingModificationId: "mod_123",
-        recordPayment: true,
-        syncOperation: xeroClaim("op_q"),
-      }),
-    ).rejects.toThrow("Account code 200 has been archived");
-    return mocks.xeroSyncOperationUpdate.mock.calls.map((call) => call[0].data.requestPayload);
-  };
-
-  it("dates a kept late capture's change invoice the day of its Stripe charge, stored before the send", async () => {
-    mocks.manualRefundTaskFindUnique.mockResolvedValue({ status: "DISMISSED" });
-    mocks.readStripeCaptureDocumentDate.mockResolvedValue("2026-06-10");
-
-    const [stored, sent] = await sendQueuedChange();
-    expect(stored).toMatchObject({ keptLateCaptureDay: "2026-06-10" });
-    expect(sent.invoices[0].date).toBe("2026-06-10");
-    expect(sent.keptLateCaptureDay).toBe("2026-06-10");
-  });
-
-  it("records a kept late capture's change payment on the day of its Stripe charge too", async () => {
-    mocks.manualRefundTaskFindUnique.mockResolvedValue({ status: "DISMISSED" });
-    mocks.readStripeCaptureDocumentDate.mockResolvedValue("2026-06-10");
-    mocks.xeroSyncOperationFindUnique.mockResolvedValue({
-      requestPayload: {
-        queueType: "SUPPLEMENTARY_INVOICE",
-        bookingId: "bk1",
-        priceDiffCents: 3000,
-        changeFeeCents: 0,
-        bookingModificationId: "mod_123",
-        recordPayment: true,
-        paymentIntentId: "pi_kept_change",
-      },
-    });
-    const createPayments = vi.fn().mockResolvedValue({ body: { payments: [{ paymentID: "pay_1" }] } });
-    mocks.getAuthenticatedXeroClient.mockResolvedValue({
-      xero: { accountingApi: { createPayments } },
-      tenantId: "tenant_1",
-    });
-    mocks.retryXeroWriteWithContactRepair.mockResolvedValue({
-      body: { invoices: [{ invoiceID: "inv_supp", invoiceNumber: "INV-0042" }] },
-    });
-
-    await createXeroSupplementaryInvoice({
+  describe("#4494: a gap invoice whose payment would overlap the credit-release sweep's share", () => {
+    const gapPayload = {
+      queueType: "SUPPLEMENTARY_INVOICE",
+      bookingId: "bk1",
+      priceDiffCents: 3000,
+      changeFeeCents: 0,
+      bookingModificationId: "mod_123",
+      recordPayment: true,
+      primaryInvoiceGap: true,
+      coveredPaymentIntentIds: ["pi_release"],
+      coveredCaptureCents: { pi_release: 3000 },
+    };
+    // What the check answers on overlap (here, a row provably never sent: it names nothing).
+    const unpaid = { ...gapPayload, recordPayment: false, coveredPaymentIntentIds: [], coveredCaptureCents: {} };
+    const params = {
       format: CLUB_FORMAT_TEST,
       bookingId: "bk1",
       priceDiffCents: 3000,
@@ -920,24 +896,43 @@ describe("a second ask survives a Xero rejection replayably (#3193)", () => {
       bookingModificationId: "mod_123",
       recordPayment: true,
       syncOperation: xeroClaim("op_q"),
+    };
+    const sendRejected = async () => {
+      mocks.xeroSyncOperationFindUnique.mockResolvedValue({ requestPayload: gapPayload });
+      mocks.retryXeroWriteWithContactRepair.mockRejectedValue(new Error("Account code 200 has been archived"));
+      await expect(createXeroSupplementaryInvoice(params)).rejects.toThrow("Account code 200 has been archived");
+      return mocks.xeroSyncOperationUpdate.mock.calls[0][0].data.requestPayload;
+    };
+
+    it("MUTATION: stores the payload the check answers, before the Xero call, so a retry replays it unpaid", async () => {
+      mocks.unpaidGapPayloadIfOverlapping.mockResolvedValue(unpaid);
+      const written = await sendRejected();
+      expect(mocks.unpaidGapPayloadIfOverlapping).toHaveBeenCalledWith({ operationId: "op_q", bookingId: "bk1", payload: gapPayload });
+      expect(written).toMatchObject({ recordPayment: false, primaryInvoiceGap: true, coveredPaymentIntentIds: [], coveredCaptureCents: {} });
+      expect(readQueuedOutboxPayload(written)).toMatchObject({ recordPayment: false });
     });
 
-    expect(createPayments).toHaveBeenCalledTimes(1);
-    expect(createPayments.mock.calls[0][1].payments[0].date).toBe("2026-06-10");
+    it("MUTATION: sends no Xero payment for it on that same attempt", async () => {
+      mocks.unpaidGapPayloadIfOverlapping.mockResolvedValue(unpaid);
+      mocks.xeroSyncOperationFindUnique.mockResolvedValue({ requestPayload: gapPayload });
+      const createPayments = vi.fn().mockResolvedValue({ body: { payments: [{ paymentID: "pay_1" }] } });
+      mocks.getAuthenticatedXeroClient.mockResolvedValue({ xero: { accountingApi: { createPayments } }, tenantId: "tenant_1" });
+      mocks.retryXeroWriteWithContactRepair.mockResolvedValue({ body: { invoices: [{ invoiceID: "inv_gap", invoiceNumber: "INV-0043" }] } });
+      await createXeroSupplementaryInvoice(params);
+      expect(createPayments).not.toHaveBeenCalled();
+      // Control: the same send pays where nothing overlaps.
+      mocks.unpaidGapPayloadIfOverlapping.mockResolvedValue(null);
+      await createXeroSupplementaryInvoice(params);
+      expect(createPayments).toHaveBeenCalledTimes(1);
+    });
+
+    it("pays as queued where nothing overlaps", async () => {
+      mocks.unpaidGapPayloadIfOverlapping.mockResolvedValue(null);
+      const written = await sendRejected();
+      expect(written).toMatchObject({ recordPayment: true, coveredPaymentIntentIds: ["pi_release"], coveredCaptureCents: { pi_release: 3000 } });
+    });
   });
 
-  it("leaves every other supplementary invoice dated today, with no Stripe read", async () => {
-    mocks.manualRefundTaskFindUnique.mockResolvedValue(null);
-
-    const payloads = await sendQueuedChange();
-    expect(payloads).toHaveLength(1);
-    expect(payloads[0].invoices[0].date).not.toBe("2026-06-10");
-    expect(mocks.readStripeCaptureDocumentDate).not.toHaveBeenCalled();
-  });
-
-  // #3924 round 8 (owner, 8 Oct 2026: "Raise a refund note for all"): a change
-  // invoice released for a late capture may be the receipt a paid-another-way
-  // close's note waits for.
   describe("the note a paid-another-way close waits for", () => {
     const sendReleasedChange = async (paymentIntentId: string | null) => {
       mocks.manualRefundTaskFindUnique.mockResolvedValue(null);
@@ -993,5 +988,99 @@ describe("a second ask survives a Xero rejection replayably (#3193)", () => {
       await sendReleasedChange(null);
       expect(mocks.queueWaitingPaidAnotherWayNote).not.toHaveBeenCalled();
     });
+  });
+});
+
+
+describe("organiser-paid bank group supplementary invoice (#4299)", () => {
+  const createPayments = vi.fn();
+  beforeEach(() => {
+    vi.resetAllMocks();
+    mocks.manualRefundTaskFindMany.mockResolvedValue([]);
+    mocks.bookingFindUnique.mockResolvedValue({ id: "child", memberId: "joiner", organisationId: null,
+      member: { id: "joiner", firstName: "Place", lastName: "Member" }, organisation: null,
+      organiserSettled: true, parentBookingId: "organiser-booking", payment: { source: "INTERNET_BANKING", xeroInvoiceId: null } });
+    mocks.groupBookingFindUnique.mockResolvedValue({ organiserBookingId: "organiser-booking", organiserMemberId: "organiser",
+      organiserMember: { id: "organiser", firstName: "Group", lastName: "Organiser", email: "organiser@example.test" },
+      settlement: { id: "settlement", source: "INTERNET_BANKING", xeroInvoiceId: "combined" } });
+    mocks.bookingModificationFindUnique.mockResolvedValue({ createdAt: new Date("2026-07-01T00:00:00.000Z"), modificationType: "DATE_CHANGE" });
+    mocks.getAuthenticatedXeroClient.mockResolvedValue({ xero: { accountingApi: { createPayments } }, tenantId: "tenant" });
+    mocks.findOrCreateXeroContact.mockResolvedValue("organiser-contact");
+    mocks.getResolvedAccountMapping.mockResolvedValue({ code: "200", codeExplicitlyConfigured: true });
+    mocks.startXeroSyncOperation.mockResolvedValue({ id: "operation" });
+    mocks.retryXeroWriteWithContactRepair.mockResolvedValue({ body: { invoices: [{ invoiceID: "extra", invoiceNumber: "INV-EXTRA" }] } });
+    mocks.callXeroApi.mockImplementation((fn: () => unknown) => fn());
+    mocks.sendOrganiserEmail.mockResolvedValue({ status: "sent" });
+    mocks.bookingModificationFindMany.mockResolvedValue([{ id: "change", priceDiffCents: 5000, changeFeeCents: 1000 }]);
+    mocks.xeroSyncOperationFindFirst.mockResolvedValue(null);
+    waivers([]);
+  });
+  /** The invoice debts a cancel or reduction reserved while this invoice was queued. */
+  const waivers = (amounts: number[]) => mocks.xeroSyncOperationFindMany.mockImplementation(async ({ where }: { where: { queueType: string } }) =>
+    where.queueType === "SUPPLEMENTARY_INVOICE"
+      ? [{ localId: "change", requestPayload: {} }]
+      : amounts.map((amountCents, index) => ({ requestPayload: { queueType: "ORGANISER_EXTRA_ADJUSTMENT", bookingId: "child", scopeId: `cut-${index}`,
+        modificationId: "change", invoiceId: null, amountCents, purpose: "waive", cashAtPlanCents: 0, refundPercentage: 50 } })));
+  const create = () => createXeroSupplementaryInvoice({ format: CLUB_FORMAT_TEST, bookingId: "child", bookingModificationId: "change",
+    priceDiffCents: 5000, changeFeeCents: 1000, recordPayment: true });
+  it("bills organiser price plus fee against the combined reference, without recording payment, and emails the organiser", async () => {
+    expect(await create()).toBe("extra");
+    expect(mocks.findOrCreateXeroContact).toHaveBeenCalledWith("organiser", expect.any(Object));
+    const request = mocks.startXeroSyncOperation.mock.calls[0][0];
+    expect(request.localModel).toBe("BookingModification");
+    expect(request.localId).toBe("change");
+    const invoice = request.requestPayload.invoices[0];
+    expect(invoice.contact.contactID).toBe("organiser-contact");
+    expect(invoice.reference).toContain("combined");
+    expect(invoice.reference).toContain("child");
+    expect(invoice.lineItems.reduce((sum: number, line: { unitAmount: number }) => sum + line.unitAmount, 0)).toBe(60);
+    expect(createPayments).not.toHaveBeenCalled();
+    expect(mocks.sendOrganiserEmail).toHaveBeenCalledWith(expect.objectContaining({ amountCents: 6000, invoiceId: "extra", invoiceNumber: "INV-EXTRA",
+      bookingModificationId: "change", placeName: "Place Member", modificationType: "DATE_CHANGE", billing: expect.objectContaining({ organiserMemberId: "organiser" }) }), CLUB_FORMAT_TEST);
+    expect(mocks.completeXeroSyncOperation).toHaveBeenCalledWith(expect.any(Object), expect.objectContaining({ extraLinks: expect.arrayContaining([
+      expect.objectContaining({ role: "SUPPLEMENTARY_INVOICE", metadata: expect.objectContaining({ organiserBilling: true, combinedInvoiceId: "combined", priceDiffCents: 5000, changeFeeCents: 1000 }) })]) }));
+  });
+  it("F4: names only what is still owed after a waiver reserved while the invoice was queued", async () => {
+    waivers([2000]);
+    expect(await create()).toBe("extra");
+    expect(mocks.sendOrganiserEmail).toHaveBeenCalledWith(expect.objectContaining({ amountCents: 4000 }), CLUB_FORMAT_TEST);
+  });
+  it("F4: emails nothing when reserved waivers cover the whole invoice", async () => {
+    waivers([4000, 2000]);
+    expect(await create()).toBe("extra");
+    expect(mocks.sendOrganiserEmail).not.toHaveBeenCalled();
+    expect(mocks.completeXeroSyncOperation).toHaveBeenCalled();
+  });
+  it("S1: a retry or re-enqueue after a waiver retired the extra whole is refused under the anchor lock, before createInvoices", async () => {
+    const startedAt = new Date("2026-07-01T00:00:00.000Z");
+    mocks.startXeroSyncOperation.mockResolvedValue({ id: "retry-row", startedAt });
+    mocks.xeroSyncOperationFindFirst.mockResolvedValue({ id: "skipped-original" });
+    expect(await create()).toBeNull();
+    expect(mocks.lockAnchor).toHaveBeenCalledWith(expect.anything(), "change");
+    expect(mocks.xeroSyncOperationFindFirst).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({
+      localModel: "BookingModification", localId: "change", status: "SKIPPED", lastErrorCode: "ORGANISER_EXTRA_WAIVED_BEFORE_RAISED" }) }));
+    expect(mocks.retryXeroWriteWithContactRepair).not.toHaveBeenCalled();
+    expect(mocks.sendOrganiserEmail).not.toHaveBeenCalled();
+    // Its own row is closed with the waiver's code, so the state reads the extra waived, not owed.
+    expect(mocks.xeroSyncOperationUpdateMany).toHaveBeenCalledWith({ where: { id: "retry-row", status: "RUNNING", startedAt },
+      data: expect.objectContaining({ status: "SKIPPED", lastErrorCode: "ORGANISER_EXTRA_WAIVED_BEFORE_RAISED" }) });
+  });
+  it("S1: with no waiver on the change the anchor check passes and the invoice is raised", async () => {
+    mocks.xeroSyncOperationFindFirst.mockResolvedValue(null);
+    expect(await create()).toBe("extra");
+    expect(mocks.lockAnchor).toHaveBeenCalledOnce();
+    expect(mocks.xeroSyncOperationUpdateMany).not.toHaveBeenCalled();
+  });
+  it("refuses a missing combined record before contacting Xero", async () => {
+    mocks.groupBookingFindUnique.mockResolvedValue({ settlement: { source: "INTERNET_BANKING", xeroInvoiceId: null } });
+    await expect(create()).rejects.toThrow("combined invoice is not on record");
+    expect(mocks.getAuthenticatedXeroClient).not.toHaveBeenCalled();
+    expect(mocks.sendOrganiserEmail).not.toHaveBeenCalled();
+  });
+  it("keeps invoice work retryable when a durable organiser notice cannot be recorded", async () => {
+    mocks.sendOrganiserEmail.mockRejectedValue(new Error("email queue unavailable"));
+    await expect(create()).rejects.toThrow("email queue unavailable");
+    expect(mocks.failXeroSyncOperation).toHaveBeenCalled();
+    expect(mocks.completeXeroSyncOperation).not.toHaveBeenCalled();
   });
 });

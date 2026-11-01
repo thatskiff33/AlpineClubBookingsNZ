@@ -1293,8 +1293,10 @@ the seed does not overwrite existing seasonal assignments.
 for disposable local demo databases and must never be run on a deployment host.
 It requires `ALLOW_DEMO_SEED=1`, refuses `NODE_ENV=production`, refuses
 non-local `DATABASE_URL` hosts, and refuses to run when the `Member` table
-contains any email outside `demo.alpineclub.test`. The demo seed then deletes
-demo plus transactional rows before rebuilding a broad sample dataset. The demo
+contains any email outside `demo.alpineclub.test`. It also refuses, before
+deleting anything, a database where a booking carries booking-ledger or journal
+lines: that history is never deleted (#4514), so recreate such a database instead. The demo seed then
+deletes demo plus transactional rows before rebuilding a broad sample dataset. The demo
 seed uses fake emails under `demo.alpineclub.test` and fake provider
 identifiers only. Set `DEMO_SEED_PASSWORD` to override the default local demo
 password.
@@ -2521,6 +2523,26 @@ Only these operational-tuning env vars remain (they are not credentials):
 Existing env-configured deployments upgrading past #2079 must re-enter Xero
 credentials in-app and reconnect Xero — see the **upgrade runbook** in
 `DEPLOYMENT.md`.
+
+## GST treatment (member-money ledger)
+
+The club's GST treatment is a database setting, `ClubTaxSettings`
+(`INV-CONFIG-007`, #4626). It records three things: whether the club is
+GST-registered, the rate in basis points (1500 is 15%), and the club date it
+applies from. There is no environment variable and, for now, no screen.
+
+- **Default.** With no row, the club is GST-registered at 15% from 1 October
+  2010, with GST included in every price. That is the treatment the Xero
+  invoices already show (the inclusive `OUTPUT2` code), so a deployment that
+  never sets it records charges exactly as it invoices them.
+- **Who reads it.** Only the member-money ledger, which splits tax out of each
+  charge in whole cents. Xero does not read it yet: its documents still
+  hard-code the inclusive 15% code until #4632.
+- **Nothing writes it yet,** on purpose. Changing it before Xero reads it would
+  give the ledger and the invoices two different answers, so a census fails on
+  any code that writes the row. A club that is not GST-registered needs the
+  screen #4632 brings before the ledger starts recording its booking charges
+  (M3b). Until then the ledger posts nothing for any club.
 
 ## Finance dashboard
 

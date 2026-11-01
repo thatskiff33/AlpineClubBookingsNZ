@@ -1,8 +1,8 @@
 import { spawn } from "node:child_process";
 import fs from "node:fs";
-import { pathToFileURL } from "node:url";
 
 import { applyMitigation, formatMitigatedReport } from "./dependency-mitigation.mjs";
+import { isMainModule } from "../lib/is-main-module.mjs";
 
 /**
  * Runs this repository's dependency audit and says **which of three things
@@ -767,5 +767,4 @@ export async function main({ run, sleep, now = new Date(), root = process.cwd() 
   process.exitCode = exitCode;
 }
 
-const invokedPath = process.argv[1] ? pathToFileURL(process.argv[1]).href : null;
-if (invokedPath === import.meta.url) await main();
+if (isMainModule(import.meta.url)) await main();

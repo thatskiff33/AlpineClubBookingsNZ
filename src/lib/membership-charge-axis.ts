@@ -2,7 +2,7 @@
  * The single place allowed to read a `MembershipSubscriptionCharge`'s billing
  * axis columns (`membershipTypeId`/`Key`/`Name` vs
  * `subscriptionCategoryId`/`Key`/`Name`) to build a family-dedup key or a
- * display name (INV-SSOT-007, INV-MONEY-043).
+ * display name (INV-SSOT-007, INV-MONEY-045).
  *
  * Both axes widened/added to nullable across a windowed migration pair
  * (20261128010000/20261128020000) precisely because the currently-deployed

@@ -420,6 +420,10 @@ describe("newly-registered hardcoded email templates (#1797)", () => {
       "admin-late-capture-hand-back-conflict",
       // #4170: money left the club with no record the app wrote - never muteable.
       "admin-late-capture-refunded-outside-app",
+      // #4532: money arrived with no record the app wrote and no screen listing it.
+      "admin-unrecognised-stripe-payment",
+      // #4624: a member was charged and the booking does not show it.
+      "admin-unmatched-app-stripe-payment",
     ] as const) {
       const definition = getEmailTemplateDefinition(name);
       if (!definition) throw new Error(`missing ${name}`);

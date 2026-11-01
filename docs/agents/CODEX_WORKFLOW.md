@@ -81,6 +81,8 @@ Run before delegating validation in every new worktree. npm-to-pnpm mapping:
 - **The orchestrator installs, not implementors.** `ERR_PNPM_VERIFY_DEPS_BEFORE_RUN`
   from `pnpm run`/`pnpm exec` is the orchestrator's cue to install.
 - **No `pnpm dlx` or `npx`** fallback that downloads an unreviewed package.
+- **Trust the agent-rule hooks** in `.codex/hooks.json` with `/hooks`; until
+  then Codex skips them, and the rules bind regardless.
 - **An `allowBuilds` failure stops for review**: pnpm runs install scripts only
   for the exact versions listed in `pnpm-workspace.yaml`; never extend the list
   by guesswork.

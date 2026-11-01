@@ -28,7 +28,8 @@
  *
  * and the in-transaction forms of 1 and 3 (`…InTransaction(params)`, #3454),
  * which take the same params object plus the caller's `tx` (including ServerNZ
- * connection replacement and its answer reset under one fence, #4436);
+ * connection replacement and its answer reset under one fence, #4436, and the
+ * push secret an address move removes or a registration stores, #4470);
  *
  * and one way to go round them all:
  *
@@ -86,6 +87,7 @@ import {
   unwrap,
   type ResolvedObject,
 } from "./ts-call-site-scan";
+import { isMainModule } from "../lib/is-main-module.mjs";
 
 /**
  * The modules that OWN the credential boundary; their own writes are not sites.
@@ -777,11 +779,7 @@ function main(): void {
 }
 
 // `tsx scripts/audit/credential-actor-census.ts` runs the census; importing it
-// (the contract test does) must not. The path is matched in full rather than by
-// a substring, and through `toPosix`, so the guard behaves the same on Windows.
-if (
-  process.argv[1] &&
-  toPosix(process.argv[1]).endsWith("scripts/audit/credential-actor-census.ts")
-) {
+// (the contract test does) must not.
+if (isMainModule(import.meta.url)) {
   main();
 }

@@ -153,13 +153,19 @@ the code path (`database-roles.realdb.test.ts`). The other routes are closed too
 - `SECURITY DEFINER` routines are refused;
 - a booking's or lodge's key cannot be changed at all: a `BEFORE UPDATE OF "id"`
   trigger on each parent raises `restrict_violation`
-  (`20261125010000_restrict_booking_ledger_key_updates`), so the foreign keys'
-  `ON UPDATE CASCADE` never rewrites `bookingId` or `lodgeId`.
+  (`20261125010000_restrict_booking_ledger_key_updates`), and since #4514 the
+  foreign keys are `ON UPDATE RESTRICT` as well, so nothing rewrites `bookingId`
+  or `lodgeId`.
 
-Two things the grant does not cover. Migrations run as the role that owns the
-table. And `bookingId`'s `ON DELETE CASCADE` runs with the owner's rights, so
-**deleting a booking still removes its lines**. That is booking deletion's
-behaviour, and whether it should change belongs to this design, not to the grant (#4482).
+Migrations run as the role that owns the table, which the grant does not
+cover. Referential actions run with the owner's rights too, so a cascade would
+be a route around the grant; **none reaches a line**. Owner decision D1 on
+[#4482](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/4482), delivered by
+[#4514](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/4514)
+(`20261127050000_retain_ledger_history_on_booking_delete`, `INV-MONEY-043`), made
+every key a line holds `ON DELETE RESTRICT ON UPDATE RESTRICT`. Deleting a booking
+that has lines is refused for every role, so a booking with money is
+soft-deleted or left as it is, never hard-deleted.
 
 ### 4.1 Derived quantities, and the one place they are derived
 
@@ -417,8 +423,8 @@ was restored instead, anchored on the `CANCELLATION` because it returns
 credit the member already spent, where every other `CREDIT_ISSUED` converts
 money the booking held. The anchor says nothing about `refundedAmountCents`:
 whether a credit row moved it depends on its writer, and C4 must not classify
-by anchor. (Deleting a booking nulls its credit rows' link — the one change
-the database makes — and its lines cascade with it.)
+by anchor. (The database refuses to delete a booking that a credit row or a
+line names, so neither a link nor a line goes with it: `INV-MONEY-043`, #4514.)
 
 | Event today | Lines posted | Anchor | Writer |
 | --- | --- | --- | --- |
@@ -593,7 +599,9 @@ it is left to a later change.
 
 `pnpm run booking-ledger:census` (#3583, `INV-MONEY-037`; read-only, one
 `RepeatableRead`, `READ ONLY` snapshot — the `censusBookingMoneyReconciliation`
-pattern, `INV-MONEY-031`) evaluates those seven identities for every booking and
+pattern, `INV-MONEY-031`) evaluates those seven identities, and since #4627 an
+eighth, `JOURNAL` (the member-money journal's charges against the lines it
+links, `INV-MONEY-044`), for every booking and
 reports, per identity, the count that applies, agrees, disagrees, is
 classified or is a coverage gap, and per disagreeing booking both figures and
 the delta — never a repair. It also reports **coverage** (bookings with money
@@ -980,7 +988,7 @@ to bundle.
 | [#3581](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3581) | Settlement lines from payment rows — card capture, bank receipt, cash recorded, card refund, and their reversals — converging where the payment mirror is derived | lines nothing reads | High (money writers touched, no behaviour change) |
 | [#3599](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3599) | Settlement lines from account credit (applied, issued, restored) and the hand-back — split from #3581, whose chokepoint never sees them | lines nothing reads | High |
 | [#3582](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3582) | Posting from the edit, review-share, rebase and cancellation writers | lines nothing reads | High |
-| [#3583](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3583) | The back-post script for every existing booking, and `pnpm run booking-ledger:census`: the seven identities (§6), coverage, the invariant entry, the CI seed run | a dry-run report and a read-only census — **the cut-over gate** | High |
+| [#3583](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3583) | The back-post script for every existing booking, and `pnpm run booking-ledger:census`: the seven identities (§6; `JOURNAL` joined them in #4627), coverage, the invariant entry, the CI seed run | a dry-run report and a read-only census — **the cut-over gate** | High |
 | [#3854](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3854) | A group organiser's settlement: the `GROUP_SETTLEMENT` anchor (expand), each settled child's confirmation and share, the organiser cancel's plan refunds — owner decision 2A on #3583, before #3584 moves a reader that shows a group child | lines nothing reads | High (schema, money writers) |
 | [#3584](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3584) | Reads switch, one surface per PR: statement, emails, history, reports, officer panel | member-visible figures from the ledger, census-proven equal | High |
 | [#3585](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3585) | Xero renderers read ledger slices; `settlementMethod` names the method on every credit note | Xero documents unchanged in content | High |

@@ -52,6 +52,12 @@ sequencing):
 | `ServerNzSettings`                                                 | club-wide singleton (`id = "default"`)                             | NOT converted to a per-lodge row, deliberately: one club holds ONE connection to the central server (one base URL, one API key, one sync cursor), and the registry it exchanges is a list of other CLUBS rather than of this club's buildings. A per-lodge row would imply a lodge could sync independently, which the central server has no concept of; the one per-lodge fact it does hold, which of ITS lodges a club lodge is (`Lodge.centralLodgeId`, triyder/AlpineClubBookingsNZ#62), lives on `Lodge` |
 | Lodge identity fields (`lodgeName`, `doorCode`, `lodgeTravelNote`) | resolve from `Lodge` (default lodge when no `lodgeId` is in scope) | dropped from the `EmailMessageSetting` singleton (migration `20260709130000`)                                                                                                                                                                                                                                                                           |
 
+## Privacy retention
+
+`PrivacyRetentionSettings` is a club-wide singleton (`id = "default"`). Email
+logs, applications and member identity are club-wide; retention previews and
+jobs cover all lodges while preserving booking and financial lodge references.
+
 ## Member money journal (#4513)
 
 `MemberMoneyEvent`, `MemberMoneyJournal`, `MemberMoneyObligation`,
@@ -67,7 +73,9 @@ leaves posted journal rows untouched and moves the merged-away member's open
 balances to the survivor by an explicit journal transfer with an audit trail
 ([decision D4](../design/member-money-ledger.md#d4-member-merge-transfer-open-balances-explicitly);
 posted from M3 on, for charges (M3), refunds owed (M4) and member credit (M5);
-M1 posts nothing).
+M1 posts nothing). The booking ledger's `BookingLedgerLine.lodgeId` and
+`bookingId` keys are RESTRICT both ways as well (#4514, `INV-MONEY-043`): a lodge
+or booking a line names can neither be deleted nor re-keyed.
 
 ## Club-Wide Defaults With Per-Lodge Overrides
 
@@ -569,6 +577,11 @@ new ADR:
   groups, applications, subscriptions, lifecycle requests.
 - Payments: `Payment`, `PaymentTransaction`, `PaymentRefund`, Stripe
   references. Payments attach to bookings; the booking carries the lodge.
+  `UnrecognisedStripePayment` (#4532) is a payment taken on the club's Stripe
+  account outside the app, so it has no booking and therefore no lodge. Since
+  #4624 it also records an app booking payment nothing settles; it then names
+  the intent's `bookingId` as plain text with no relation (the booking may not
+  exist here), and is still club-wide Finance evidence with no lodge.
 - Xero and finance: all `Xero*` models (including `XeroConnection`, the one
   operational connection row, #3806), `FinanceSnapshot`,
   `FinanceReportCategory*`, item/account mappings. One club-wide ledger and

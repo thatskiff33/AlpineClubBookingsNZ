@@ -279,6 +279,7 @@ describe("xero operation outbox payload parsing", () => {
       "MEMBERSHIP_SUBSCRIPTION_INVOICE",
       "KEPT_LATE_CAPTURE_INVOICE",
       "ADDITIONAL_CAPTURE_RECEIPT",
+      "ORGANISER_EXTRA_ADJUSTMENT",
     ]);
     expect(new Set(XERO_OUTBOX_QUEUE_TYPES).size).toBe(
       XERO_OUTBOX_QUEUE_TYPES.length
@@ -372,6 +373,7 @@ describe("xero operation outbox payload parsing", () => {
     // Every queueType the scan selects must resolve to a concrete claim guard,
     // so the column scan can never surface a type the dispatch path lacks.
     const expectedEntityTypes = new Map<string, string>([
+      ["ORGANISER_EXTRA_ADJUSTMENT", "CREDIT_NOTE"],
       ["ENTRANCE_FEE_INVOICE", "INVOICE"],
       ["BOOKING_INVOICE", "INVOICE"],
       ["BOOKING_INVOICE_UPDATE", "INVOICE"],

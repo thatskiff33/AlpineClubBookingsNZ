@@ -117,6 +117,11 @@ const RAW_READ_INVENTORY: Record<string, number> = {
   // boolean first, also decoded, because naming the table on a `db push`
   // database that lacks it would abort the transaction.
   "src/lib/migration-finished-at.ts": 2,
+  // #4626 (INV-LOCK-001): whether this transaction holds lock(1), asked by the
+  // member-money store before a correction or reversal reads live component
+  // state. `pg_locks` is a catalog view no Prisma model covers; its one boolean
+  // is schema-decoded before the store decides.
+  "src/lib/global-lock-held.ts": 1,
 };
 
 /**

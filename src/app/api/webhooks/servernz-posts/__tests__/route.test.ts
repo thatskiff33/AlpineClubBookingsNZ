@@ -33,7 +33,6 @@ vi.mock("@/lib/logger", () => ({
 
 vi.mock("@/lib/club-post-mirror", () => ({
   runMirrorSync: mocks.runMirrorSync,
-  SERVERNZ_PUSH_SECRET_KEY: "push_secret",
 }));
 
 vi.mock("@/lib/integration-credentials", () => ({
@@ -100,6 +99,8 @@ describe("POST /api/webhooks/servernz-posts", () => {
     const res = await POST(signedRequest());
     expect(res.status).toBe(200);
     expect(mocks.runMirrorSync).toHaveBeenCalled();
+    // The one stored key, from servernz-config (#4470), not a copy.
+    expect(mocks.getIntegrationCredentialValue).toHaveBeenCalledWith("servernz", "push_secret");
   });
 
   it("rejects a signature made with the wrong secret", async () => {

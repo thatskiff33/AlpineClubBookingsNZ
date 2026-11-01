@@ -48,7 +48,9 @@ export const stripeRaceHooks: {
   customer: null | ((args: Parameters<Stripe["findOrCreateCustomer"]>[0]) => Promise<unknown>);
   /** #4357: a saved card's off-session charge, which every saved-card door makes. */
   charge: null | ((args: Parameters<Stripe["chargePaymentMethod"]>[0]) => Promise<unknown>);
-} = { update: null, get: null, create: null, findByMetadata: null, list: null, cancel: null, refund: null, listRefunds: null, listChargeRefunds: null, customer: null, charge: null };
+  /** #4532: the Checkout Session a payment the app did not create went through. */
+  checkoutSession: null | ((paymentIntentId: string) => Promise<unknown>);
+} = { update: null, get: null, create: null, findByMetadata: null, list: null, cancel: null, refund: null, listRefunds: null, listChargeRefunds: null, customer: null, charge: null, checkoutSession: null };
 
 export function resetStripeRaceHooks(): void {
   stripeRaceHooks.update = null;
@@ -62,6 +64,7 @@ export function resetStripeRaceHooks(): void {
   stripeRaceHooks.listChargeRefunds = null;
   stripeRaceHooks.customer = null;
   stripeRaceHooks.charge = null;
+  stripeRaceHooks.checkoutSession = null;
   refundsMadeByIntent.clear();
 }
 
@@ -110,5 +113,9 @@ export function stripeRaceDouble(actual: Stripe): Stripe {
       stripeRaceHooks.customer ? stripeRaceHooks.customer(args) : actual.findOrCreateCustomer(args)) as Stripe["findOrCreateCustomer"],
     chargePaymentMethod: ((args: Parameters<Stripe["chargePaymentMethod"]>[0]) =>
       stripeRaceHooks.charge ? stripeRaceHooks.charge(args) : actual.chargePaymentMethod(args)) as Stripe["chargePaymentMethod"],
+    findCheckoutSessionForPaymentIntent: ((paymentIntentId: string) =>
+      stripeRaceHooks.checkoutSession
+        ? stripeRaceHooks.checkoutSession(paymentIntentId)
+        : actual.findCheckoutSessionForPaymentIntent(paymentIntentId)) as Stripe["findCheckoutSessionForPaymentIntent"],
   };
 }

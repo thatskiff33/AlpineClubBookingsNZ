@@ -36,6 +36,11 @@ import "./support/race-harness-outbox-guard";
 // creates/drops its own unique schema. Importing registers the trigger proofs in
 // the explicit CI race command without changing the workflow or making ordinary
 // `pnpm test` depend on a database.
+// #4432: scheduled/manual inbound exclusion and dead-holder recovery.
+import "./xero-inbound-run-claim.realdb.test";
+import "./xero-sync-now.realdb.test";
+// #4531: a payment deleted in Xero retires its link; the replay and the backfill write nothing more.
+import "./xero-deleted-payment-links.realdb.test";
 import "./minimum-stay-policy-trigger.realdb.test";
 // #2532 reuses the same guarded harness to prove the AI Diagnostics monthly
 // budget (AID-2, #2371) can never be overspent by concurrent reservers. Its
@@ -602,6 +607,13 @@ import "./ended-booking-ask-mint-race.realdb.test";
 // unless RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own `race-3403-`
 // fixtures.
 import "./superseded-ask-invoice-carry.realdb.test";
+// #4491 (`INV-ADDPAY-052`) reuses it to prove a credit release merges into an
+// unpaid edit request: one request for both, the edit's invoice following it,
+// and the one card payment recorded against both invoices once; the wait where
+// the edit's invoice cannot follow; and the edit paid or withdrawn between the
+// release's read and its claim. Skipped unless RUN_CONCURRENCY_RACE_TESTS=1; it
+// owns and cleans its own `race-4491-` fixtures.
+import "./credit-release-merge-into-edit.realdb.test";
 // #4357 reuses it to prove every saved-card door charges the booking's worth:
 // a change fee the edit lifecycle's writer recorded on an unsettled payment is
 // charged by the charge-saved-method route and the officer's
@@ -625,6 +637,21 @@ import "./servernz-version-record-race.realdb.test";
 
 // #4436: address/key replacement and request capture share the settings fence.
 import "./servernz-connection-race.realdb.test";
+// #4586 reuses it to prove the message-board mirror's release leaves a claim a
+// second pass took over, and that a mirror tombstone and an admin removal of
+// one post, each held after its first lock, finish without deadlock in both
+// orders (post row before image rows). Skipped unless
+// RUN_CONCURRENCY_RACE_TESTS=1; it owns `race-4586-` posts and the singleton
+// settings row. #4588 adds the board lifecycle races there: a pass taken over
+// writes nothing more, a removed mirror keeps its blank words, a claim queued
+// ahead of the orphan sweep keeps its upload, and retention lists a picture a
+// mirror update adds mid-pass. It owns `race-4588-` rows and puts the board's
+// settings row back. #4590 adds a share the server accepted recorded through
+// the mirror's copy and never re-sent, a retention pass taken over leaving the
+// new claim, and a post refused when the sweep deleted its upload first
+// (`race-4590-` rows). Its review adds the inline share and the cron retry
+// sending once (#4592), and an accepted share recorded nowhere never re-sent.
+import "./club-post-mirror-concurrency.realdb.test";
 // #4262: the other-lodge name-index pair's windowed declaration measured, not
 // asserted: the previous release's name-keyed upsert refused once it applies,
 // and each reverse script's duplicate-name refusal and order. Skipped unless
@@ -638,6 +665,28 @@ import "./other-lodge-name-index-window.realdb.test";
 // follow-up through the link the resolve wrote. Skipped unless
 // RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own `race-4421-` fixtures.
 import "./resolve-records-refund-note.realdb.test";
+// #4426 reuses it to prove a refund credit-note create that stalls in Xero, is
+// marked failed and is resolved by hand recording the officer's note, records
+// nothing when it returns: the officer's note stays recorded and linked, the
+// late note is alerted once and never linked or settled; and with no resolve the
+// late note lands as before. Skipped unless RUN_CONCURRENCY_RACE_TESTS=1; it
+// owns and cleans its own `race-4426-` fixtures.
+import "./xero-late-refund-note-after-resolve.realdb.test";
+// #4609 reuses it to prove the per-account password throttle's claim: two
+// failures racing on one account both count, a burst at the end of a wait admits
+// exactly one guess, two first-ever claims both count, and a row deleted between
+// the ensure and the lock is re-ensured. Skipped unless
+// RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own `race-4609-` rows.
+import "./login-throttle.realdb.test";
+// #4445 reuses it to prove two writers merging metadata onto one Xero link
+// (an existing row, or a missing one both create) both keep their keys, and
+// that the one-statement merge writes what the old spread wrote. Skipped
+// unless RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own `race-4445-`
+// links.
+import "./xero-object-link-metadata-merge.realdb.test";
+// #4657 reuses it to prove the erased-member contact status check keeps a
+// concurrent writer's link metadata; it owns and cleans its own `race-4657-` links.
+import "./xero-erased-contact-status-metadata.realdb.test";
 // #2374 (AID-5) deliberately is NOT imported here, unlike the two suites above.
 // `ai-diagnostics-select-only-role.realdb.test.ts` provisions and drops a cluster
 // ROLE and revokes `TEMPORARY ... FROM PUBLIC` on the shared throwaway database
@@ -654,6 +703,7 @@ import {
 } from "vitest";
 
 import { realElapsedMs } from "@/lib/__tests__/helpers/clock";
+import { releaseBookingFinancialHistoryForTeardown } from "@/lib/__tests__/support/booking-financial-history-teardown";
 
 let prisma: typeof import("@/lib/prisma")["prisma"];
 let markGroupSettlementIntentFailed: typeof import("@/lib/group-settlement")["markGroupSettlementIntentFailed"];
@@ -1157,7 +1207,9 @@ describe("concurrency race DB safety guard (#1881)", () => {
       await prisma.$executeRawUnsafe(
         `CREATE TABLE IF NOT EXISTS "${PROBE_TABLE}" (id text PRIMARY KEY, status text NOT NULL)`
       );
-      // Idempotent recovery from an interrupted earlier opt-in run.
+      // Idempotent recovery from an interrupted earlier opt-in run. #4514: a
+      // group's settlement no longer goes with it (INV-MONEY-043).
+      await releaseBookingFinancialHistoryForTeardown(prisma, [APP_BOOKING_ID, MOVE_BOOKING_ID, MOVE_BLOCKER_BOOKING_ID]);
       await prisma.groupBooking.deleteMany({ where: { id: APP_GROUP_ID } });
       await prisma.booking.deleteMany({
         where: { id: { in: [MOVE_BOOKING_ID, MOVE_BLOCKER_BOOKING_ID] } },
@@ -1308,6 +1360,10 @@ describe("concurrency race DB safety guard (#1881)", () => {
 
       if (typeof prisma !== "undefined") {
         await attemptCleanup(() => clearBaselineFixtures());
+        // #4514: a group's settlement no longer goes with it (INV-MONEY-043).
+        await attemptCleanup(() =>
+          releaseBookingFinancialHistoryForTeardown(prisma, [APP_BOOKING_ID, MOVE_BOOKING_ID, MOVE_BLOCKER_BOOKING_ID])
+        );
         await attemptCleanup(() =>
           prisma.groupBooking.deleteMany({ where: { id: APP_GROUP_ID } })
         );

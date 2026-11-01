@@ -13,6 +13,25 @@ It complements the two documents next to it and does not repeat them:
   synced and roll it onto a running database and deployment without losing data
   or breaking the live app color mid-deploy.
 
+## Review privacy retention before enabling cleanup (#4457)
+
+The three new automatic jobs ship OFF. After upgrading, review the
+[personal-data retention schedule](PRIVACY_RETENTION.md) and visit
+**Admin → Privacy retention** (`/admin/privacy-retention`) to inspect counts,
+member candidates and the configured periods before enabling any job. Defaults
+are 2 years for email logs, 1 year after reviewedAt for rejected applications,
+and 7 years after explicit leavingDate for former-member profile anonymisation.
+The periods are club settings. Disabling a job stops future cleanup; it cannot
+restore already deleted logs or applications, or anonymised profile values.
+
+Inactive members without leavingDate are listed separately and are never
+automatically erased. Establish a departure date from evidence rather than
+assuming an old login or inactive flag means the person left. Stable member
+IDs and financial references survive anonymisation for reconciliation.
+Existing audit, token, report and communications retention remains governed by
+its own lifecycle. Sentry Replay defaults OFF; before opting in, update the
+privacy notice to name Sentry Replay as described in [security notes](SECURITY.md#personal-data-retention-and-sentry-replay).
+
 ## Principles
 
 1. **Upgrade tag-to-tag, one release at a time.** Deploy released tags
@@ -119,6 +138,36 @@ as a red flag and check the release notes before deploying.
 
 ## Unreleased
 
+### Booking-ledger history outlives its booking (#4514)
+
+**What changes.** Migration `20261127050000_retain_ledger_history_on_booking_delete`
+makes every key a booking-ledger line holds, a member-credit row's three booking
+links and a group settlement's group key refuse deletion (`ON DELETE RESTRICT ON
+UPDATE RESTRICT`). The database now refuses, whatever role asks, to delete a
+booking that any of those rows, or a payment or refund record, names. Nothing a
+member or officer does changes: the app only ever hard-deletes draft bookings,
+which never carry money, and soft-deletes cancelled ones. A draft that somehow
+did is refused (409), or left out of the nightly cleanup and logged.
+
+**Deploy.** The migration drops and re-adds seven foreign keys, which the deploy
+guard treats as breaking: set `ALLOW_BREAKING_BLUE_GREEN_MIGRATIONS=1` and a
+`BLUE_GREEN_MIGRATION_OVERRIDE_REASON` such as "#4514 foreign keys change to
+RESTRICT; old colour compatible". No maintenance window is needed: the old
+colour keeps working. The keys' swap locks `Booking`, `Lodge`,
+`BookingModification`, `GroupBooking`, `MemberCredit`, `BookingLedgerLine`,
+`GroupBookingSettlement` and the empty `MemberMoneyObligation` for its one short
+transaction (about 120 ms on 200,000 ledger lines), so deploy at a quiet time
+([ledger row](BLUE_GREEN_MIGRATION_SAFETY.tsv)). Each lock waits at most one
+second: if a busy table makes the deploy stop with `55P03` (lock timeout) or
+`40P01` (deadlock detected), nothing was applied and the old colour is still
+serving; follow [the runbook's §2.1a](PRODUCTION_UPGRADE_RUNBOOK.md#21a-step-1320-stopped-on-a-lock-timeout)
+and deploy again at a quieter moment. No provisioning step is needed for either
+role set-up.
+
+**Local demo databases.** `pnpm run db:seed:demo` now refuses to run on a
+database where a booking carries booking-ledger or journal lines, rather than
+deleting them. Recreate the demo database and seed again.
+
 ### Member money journal foundation (#4513)
 
 **What changes.** Migration `20261127010000_member_money_journal` adds seven
@@ -196,9 +245,9 @@ connection into separate roles:
 - a narrow audit-retention role runs the nightly audit clean-up.
 
 The superuser is kept for people. With the split, the application cannot change a
-ledger line or an audit entry by any route, even if its credential leaks. **Deleting
-a booking still deletes its ledger lines**, through the foreign key's
-`ON DELETE CASCADE`, exactly as today.
+ledger line or an audit entry by any route, even if its credential leaks. Deleting
+a booking cannot remove its ledger lines either: since #4514 the database refuses
+it for every role ([Booking-ledger history outlives its booking](#booking-ledger-history-outlives-its-booking-4514)).
 
 The new settings are `APP_DB_USER`, `APP_DB_PASSWORD`, `MIGRATION_DB_USER`,
 `MIGRATION_DB_PASSWORD` and `AUDIT_RETENTION_DATABASE_URL`. Each one left empty

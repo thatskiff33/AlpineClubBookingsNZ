@@ -1,3 +1,4 @@
+import { leavingDateForDeactivation } from "@/lib/member-leaving-date";
 import {
   MemberLifecycleAction,
   MemberLifecycleActionRequestStatus,
@@ -27,6 +28,7 @@ import {
   sendMemberArchiveRejectedEmail,
 } from "@/lib/email";
 import logger from "@/lib/logger";
+import { journalRowsNamingDebtor } from "@/lib/member-money";
 import { prisma } from "@/lib/prisma";
 import { retireInheritedEmailCopies } from "@/lib/member-email-inheritance";
 import {
@@ -57,6 +59,7 @@ const archiveTargetMemberSelect = {
   lastName: true,
   email: true,
   active: true,
+  leavingDate: true,
   canLogin: true,
   cancelledAt: true,
   cancelledReason: true,
@@ -531,6 +534,13 @@ const MEMBER_DELETE_BLOCKER_SPECS: readonly BlockerSpec[] = [
       db.bookingChangeRequest.count({
         where: { requestedByMemberId: memberId, status: "REQUESTED" },
       }),
+  },
+  {
+    // #4514 (D1 on #4482): a journal debtor is a retained identity string, not a
+    // key; a member whose balance the journal moves is archived instead.
+    code: "journal_debtor",
+    label: "Member money journal rows name this member as debtor.",
+    query: (db, memberId) => journalRowsNamingDebtor(db, memberId),
   },
   {
     code: "account_deletion_requests",
@@ -1620,6 +1630,7 @@ export async function reviewMemberArchiveRequest({
         archivedReason: request.reason,
         archivedViaLifecycleActionRequestId: request.id,
         active: false,
+        leavingDate: leavingDateForDeactivation(member, clubTodayForFanout),
         canLogin: false,
       },
     });

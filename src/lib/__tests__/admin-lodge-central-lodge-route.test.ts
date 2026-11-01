@@ -48,7 +48,6 @@ vi.mock("@/lib/servernz-settings", () => ({
 vi.mock("@/lib/integration-credentials", () => ({
   getIntegrationCredentialValue: (...args: unknown[]) => mockSecret(...args),
 }));
-vi.mock("@/lib/club-post-mirror", () => ({ SERVERNZ_PUSH_SECRET_KEY: "push_secret" }));
 
 import { GET, PUT } from "@/app/api/admin/lodges/[id]/central-lodge/route";
 
@@ -146,6 +145,7 @@ describe("GET /api/admin/lodges/[id]/central-lodge", () => {
     mockSecret.mockResolvedValue(null);
     const body = await (await GET(new Request("http://localhost"), params())).json();
     expect(body.registeredWithCentralServer).toBe(false);
+    expect(mockSecret).toHaveBeenCalledWith("servernz", "push_secret");
   });
 });
 

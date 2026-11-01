@@ -334,8 +334,44 @@ describe("kiosk Mark Departed follows the check-out flag, not the badge (#2631)"
     // in yet.
     expect(within(row).getByRole("button", { name: "Mark Arrived" })).toBeVisible();
     expect(within(row).queryByRole("button", { name: "Arrived" })).toBeNull();
-    // And the row is not greyed out as departed while they are standing there.
-    expect(row.className).not.toContain("opacity-60");
+    // And the row is not marked departed while they are standing there.
+    expect(within(row).queryByText("Departed")).toBeNull();
+    expect(row.className).not.toContain("border-dashed");
+  });
+
+  it("says Departed in words for a guest who has gone, never fading the row (#4594)", async () => {
+    // Checked out, and the morning's check-out control is no longer offered:
+    // nothing else on the row says they have left, so a chip does.
+    installFetchMock(
+      guestPayload({
+        isDeparting: false,
+        canMarkDeparted: false,
+        arrivedAt: "2026-07-11T06:00:00.000Z",
+        departedAt: "2026-07-15T21:00:00.000Z",
+      }),
+    );
+
+    const row = await openGuestRow(FINAL_DEPARTURE);
+
+    expect(within(row).getByText("Departed")).toBeVisible();
+    expect(row.className).toContain("border-dashed");
+    expect(row.className).not.toMatch(/(?<![:\w-])opacity-/);
+  });
+
+  it("does not repeat Departed when the check-out button already says it (#4594)", async () => {
+    installFetchMock(
+      guestPayload({
+        isDeparting: true,
+        canMarkDeparted: true,
+        arrivedAt: "2026-07-11T06:00:00.000Z",
+        departedAt: "2026-07-15T21:00:00.000Z",
+      }),
+    );
+
+    const row = await openGuestRow(FINAL_DEPARTURE);
+
+    expect(within(row).getByRole("button", { name: "Departed" })).toBeVisible();
+    expect(within(row).getAllByText("Departed")).toHaveLength(1);
   });
 
   it("STILL WITHHOLDS the button where the server would refuse", async () => {

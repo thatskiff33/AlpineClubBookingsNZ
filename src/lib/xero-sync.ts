@@ -12,6 +12,7 @@ import {
   readCanonicalRefundNoteField,
 } from "./xero-refund-note-status";
 import { buildXeroObjectUrl, stripXeroOrgShortCode } from "./xero-links";
+import { mergeXeroObjectLinkMetadata, planXeroObjectLinkMetadataMerge } from "./xero-object-link-metadata-merge";
 import {
   redactSensitiveRecord,
   redactSensitiveText,
@@ -88,6 +89,9 @@ export interface XeroObjectLinkInput {
    * refresh drop the provenance the adopted-contact reshape depends on, so
    * "correcting" it back on the strength of the general rule disables that
    * reshape without failing anything.
+   *
+   * #4445: the merge is one statement over the stored row, so two writers of
+   * one link both keep their keys (`xero-object-link-metadata-merge.ts`).
    */
   mergeMetadata?: boolean;
 }
@@ -794,38 +798,14 @@ async function upsertXeroObjectLinkWithClient(
       ),
   );
 
-  let metadataForUpdate: unknown = normalizedLink.metadata;
-  if (normalizedLink.mergeMetadata) {
-    const existing = await client.xeroObjectLink.findUnique({
-      where: {
-        localModel_localId_xeroObjectType_xeroObjectId_role: {
-          localModel: normalizedLink.localModel,
-          localId: normalizedLink.localId,
-          xeroObjectType: normalizedLink.xeroObjectType,
-          xeroObjectId: normalizedLink.xeroObjectId,
-          role: normalizedLink.role,
-        },
-      },
-      select: { metadata: true },
-    });
-    const existingRecord =
-      existing?.metadata &&
-      typeof existing.metadata === "object" &&
-      !Array.isArray(existing.metadata)
-        ? (existing.metadata as Record<string, unknown>)
-        : null;
-    const incomingRecord =
-      normalizedLink.metadata &&
-      typeof normalizedLink.metadata === "object" &&
-      !Array.isArray(normalizedLink.metadata)
-        ? (normalizedLink.metadata as Record<string, unknown>)
-        : null;
-    if (existingRecord || incomingRecord) {
-      metadataForUpdate = { ...(existingRecord ?? {}), ...(incomingRecord ?? {}) };
-    }
-  }
+  const metadata = sanitizeForJson(normalizedLink.metadata);
+  // #4445: a merge is written by one statement that reads the row it writes,
+  // after the upsert below takes that row (`xero-object-link-metadata-merge.ts`).
+  const merge = normalizedLink.mergeMetadata
+    ? planXeroObjectLinkMetadataMerge(normalizedLink.metadata, metadata)
+    : null;
 
-  const written = await client.xeroObjectLink.upsert({
+  let written = await client.xeroObjectLink.upsert({
     where: {
       localModel_localId_xeroObjectType_xeroObjectId_role: {
         localModel: normalizedLink.localModel,
@@ -844,15 +824,19 @@ async function upsertXeroObjectLinkWithClient(
       xeroObjectUrl,
       role: normalizedLink.role,
       active: normalizedLink.active ?? true,
-      metadata: sanitizeForJson(normalizedLink.metadata),
+      metadata,
     },
     update: {
       xeroObjectNumber: normalizedLink.xeroObjectNumber ?? null,
       xeroObjectUrl,
       active: normalizedLink.active ?? true,
-      metadata: sanitizeForJson(metadataForUpdate),
+      ...(normalizedLink.mergeMetadata ? {} : { metadata }),
     },
   });
+  if (merge) {
+    await mergeXeroObjectLinkMetadata(client, written.id, merge);
+    written = await client.xeroObjectLink.findUniqueOrThrow({ where: { id: written.id } });
+  }
 
   // After the link row, matching the refund-note repair apply. The nightly
   // report treats Payment.xeroRefundCreditNoteId as a promise that an active

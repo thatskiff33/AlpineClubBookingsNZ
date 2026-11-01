@@ -1,6 +1,6 @@
 /**
  * A FAMILY-DEDUP KEY FOR A MEMBERSHIP SUBSCRIPTION CHARGE IS BUILT IN ONE
- * PLACE (INV-SSOT-007, INV-MONEY-043).
+ * PLACE (INV-SSOT-007, INV-MONEY-045).
  *
  * `chargeFamilyAxisKey`/`chargeAxisDisplayName` in
  * `src/lib/membership-charge-axis.ts` are the only place allowed to turn a

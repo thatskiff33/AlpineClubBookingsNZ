@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Prisma } from "@prisma/client";
 
 const mocks = vi.hoisted(() => ({
+  executeOrganiserExtraAdjustment: vi.fn(),
+  findUniqueGroupBooking: vi.fn(),
   readPaidAnotherWayCloseShare: vi.fn(),
   createAuditLog: vi.fn(),
   findFirstLink: vi.fn(),
@@ -71,6 +73,8 @@ const mocks = vi.hoisted(() => ({
   executeRaw: vi.fn(),
 }));
 
+vi.mock("@/lib/organiser-extra-adjustment", () => ({ executeOrganiserExtraAdjustment: mocks.executeOrganiserExtraAdjustment }));
+
 /**
  * #3193 fix round: the double-bill regression below drives the REAL
  * `recordShortEditReviewChargeInvoice` - the function that decides whether a
@@ -109,6 +113,8 @@ vi.mock("@/lib/prisma", () => {
     groupBookingSettlement: {
       findUnique: mocks.findUniqueGroupSettlement,
     },
+    // #4299: an organiser-paid place's combined invoice (none unless a case says so).
+    groupBooking: { findUnique: mocks.findUniqueGroupBooking },
     paymentTransaction: {
       findFirst: mocks.findFirstPaymentTransaction,
     },
@@ -333,6 +339,7 @@ import {
   restatePendingSupplementaryInvoiceAmount,
 } from "@/lib/xero-operation-outbox";
 import { enqueueXeroRefundRequestCreditNoteOperation } from "@/lib/xero-refund-request-credit-note-outbox";
+import { ORGANISER_COMBINED_INVOICE_PLACE_REFUSAL } from "@/lib/organiser-billing";
 import {
   attachRecoveredIntentToWaitingSupplementaryInvoice,
   releaseXeroSupplementaryInvoiceForCapturedPaymentIntent,
@@ -521,6 +528,32 @@ describe("enqueueXeroBookingInvoiceOperation", () => {
       queueOperationId: "op_booking_1",
       overrodeResolvedInXeroOperationId: "op_resolved_invoice",
     });
+  });
+
+  it("#4299 B1: refuses, with no row, a place the group organiser paid by internet banking", async () => {
+    mocks.findUniqueBooking.mockResolvedValue({
+      id: "booking_1",
+      organiserSettled: true,
+      parentBookingId: "organiser_booking",
+      payment: { id: "payment_1", xeroInvoiceId: null, manuallyMarkedPaidAt: null, source: "INTERNET_BANKING" },
+    });
+
+    await expect(enqueueXeroBookingInvoiceOperation("booking_1", { invoiceEmailDelivery: null, overrideResolvedInXero: true }))
+      .resolves.toMatchObject({ queueOperationId: null, refusal: ORGANISER_COMBINED_INVOICE_PLACE_REFUSAL });
+    expect(mocks.startXeroSyncOperation).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { organiserSettled: true, parentBookingId: "organiser_booking", source: "STRIPE" },
+    { organiserSettled: false, parentBookingId: null, source: "INTERNET_BANKING" },
+  ])("#4299 B1: still queues $source / organiserSettled=$organiserSettled", async ({ organiserSettled, parentBookingId, source }) => {
+    mocks.findUniqueBooking.mockResolvedValue({
+      id: "booking_1", organiserSettled, parentBookingId,
+      payment: { id: "payment_1", xeroInvoiceId: null, manuallyMarkedPaidAt: null, source },
+    });
+
+    await expect(enqueueXeroBookingInvoiceOperation("booking_1", { invoiceEmailDelivery: null }))
+      .resolves.toMatchObject({ queueOperationId: "op_booking_1" });
   });
 
   it("skips queueing when the booking payment is already linked to Xero", async () => {
@@ -856,6 +889,22 @@ describe("enqueueXeroSupplementaryInvoiceOperation", () => {
     expect(locks).toEqual([expect.stringContaining("mod_a_second"), expect.stringContaining("mod_b_first")]);
     expect(mocks.executeRaw.mock.invocationCallOrder[1]).toBeLessThan(mocks.keptInvoiceBillsChangeCapture.mock.invocationCallOrder[0]!);
     mocks.keptInvoiceBillsChangeCapture.mockReset();
+  });
+
+  it("#4299 S1: refuses, under the anchor lock, an organiser extra a waiver retired whole before it was raised", async () => {
+    mocks.findUniqueBooking.mockResolvedValue({ id: "booking_1", organiserSettled: true, parentBookingId: "organiser_booking", payment: { xeroInvoiceId: null, source: "INTERNET_BANKING" } });
+    mocks.findUniqueGroupBooking.mockResolvedValue({ organiserBookingId: "organiser_booking", organiserMemberId: "organiser", organiserMember: null,
+      settlement: { id: "settlement", source: "INTERNET_BANKING", xeroInvoiceId: "combined" } });
+    mocks.findFirstOperation.mockImplementation(async ({ where }: { where: Record<string, unknown> }) =>
+      where.status === "SKIPPED" && where.lastErrorCode === "ORGANISER_EXTRA_WAIVED_BEFORE_RAISED" && where.localId === "mod_1" ? { id: "op_skipped" } : null);
+    mocks.executeRaw.mockClear();
+    await expect(
+      enqueueXeroSupplementaryInvoiceOperation({ bookingId: "booking_1", priceDiffCents: 5000, changeFeeCents: 1000, bookingModificationId: "mod_1" }, { recordPayment: false }),
+    ).resolves.toMatchObject({ queueOperationId: null, outcome: "none", refusedBy: "organiser-extra-waived" });
+    expect(mocks.startXeroSyncOperation).not.toHaveBeenCalled();
+    expect(mocks.executeRaw.mock.invocationCallOrder[0]).toBeLessThan(mocks.findFirstOperation.mock.invocationCallOrder[0]!);
+    mocks.findFirstOperation.mockReset();
+    mocks.findUniqueGroupBooking.mockReset();
   });
 
   it("4384-R2 control: an ordinary change invoice takes its own key alone", async () => {
@@ -2400,6 +2449,40 @@ describe("processQueuedXeroOutboxOperations", () => {
     mocks.updateManyOperation.mockResolvedValue({ count: 1 });
   });
 
+  // #4663: `createdAt` is JS-filled, so rows queued in one millisecond tie (all
+  // of them under the frozen test clock). Without an `id` tiebreak PostgreSQL
+  // hands tied rows back in arbitrary physical order and a `limit: 1` worker
+  // claims whichever it likes. Mutation probe: dropping `{ id: "asc" }` fails
+  // both the shape check and the ordering check below.
+  it("breaks createdAt ties by id, so the scan order is deterministic (#4663)", async () => {
+    mocks.findManyOperations.mockResolvedValue([]);
+    await processQueuedXeroOutboxOperations({ limit: 1 });
+    const { orderBy } = mocks.findManyOperations.mock.calls[0][0];
+    expect(orderBy).toEqual([{ createdAt: "asc" }, { id: "asc" }]);
+
+    // Apply that orderBy to rows that all tie on createdAt, shuffled each way:
+    // the result is the same whatever the stored order.
+    const tied = new Date("2026-07-01T00:00:00.000Z");
+    const rows = [
+      { id: "c3", createdAt: tied },
+      { id: "c1", createdAt: tied },
+      { id: "c2", createdAt: tied },
+      { id: "c0", createdAt: new Date(tied.getTime() - 1) },
+    ];
+    const sortBy = (stored: typeof rows) =>
+      [...stored].sort((a, b) =>
+        (orderBy as Array<Record<string, "asc">>).reduce((cmp, key) => {
+          if (cmp !== 0) return cmp;
+          const [field] = Object.keys(key) as Array<"id" | "createdAt">;
+          const av = a[field] instanceof Date ? (a[field] as Date).getTime() : a[field];
+          const bv = b[field] instanceof Date ? (b[field] as Date).getTime() : b[field];
+          return av < bv ? -1 : av > bv ? 1 : 0;
+        }, 0),
+      ).map((row) => row.id);
+    expect(sortBy(rows)).toEqual(["c0", "c1", "c2", "c3"]);
+    expect(sortBy([...rows].reverse())).toEqual(["c0", "c1", "c2", "c3"]);
+  });
+
   it("scans the pending outbox by the indexed queueType column, not a requestPayload JSON predicate (#1272)", async () => {
     mocks.findManyOperations.mockResolvedValue([]);
 
@@ -2417,11 +2500,14 @@ describe("processQueuedXeroOutboxOperations", () => {
       // #3954 round 8 and #3953 round 3: rows waiting their turn are spaced out.
       AND: [expect.objectContaining({ OR: expect.any(Array) }), expect.objectContaining({ OR: expect.any(Array) })],
     });
-    expect(args.where.queueType.in).toHaveLength(18);
+    // #4299: the eighteen pinned types and the organiser extra adjustment.
+    expect(args.where.queueType.in).toHaveLength(19);
+    expect(args.where.queueType.in).toContain("ORGANISER_EXTRA_ADJUSTMENT");
     // The legacy `requestPayload->>'queueType'` OR predicate is gone.
     expect(args.where.OR).toBeUndefined();
     expect(JSON.stringify(args.where)).not.toContain("requestPayload");
-    expect(args.orderBy).toEqual({ createdAt: "asc" });
+    // #4663: oldest first, `createdAt` ties broken by `id`.
+    expect(args.orderBy).toEqual([{ createdAt: "asc" }, { id: "asc" }]);
     expect(args.take).toBe(7);
   });
 
@@ -3546,6 +3632,14 @@ describe("processQueuedXeroOutboxOperations dispatch domain (#1272)", () => {
       },
       handler: mocks.createXeroMembershipSubscriptionInvoice,
     },
+    // #4299: an organiser's extra-invoice waiver, run by its own executor.
+    ORGANISER_EXTRA_ADJUSTMENT: {
+      op: {
+        id: "op_organiser_adjustment_1", localId: "booking_1", localModel: "Booking", createdByMemberId: "admin_1",
+        requestPayload: { queueType: "ORGANISER_EXTRA_ADJUSTMENT", bookingId: "booking_1", scopeId: "cancel", modificationId: "mod_1", invoiceId: "extra_1", amountCents: 4000, purpose: "waive", cashAtPlanCents: 2000, refundPercentage: 50 },
+      },
+      handler: mocks.executeOrganiserExtraAdjustment,
+    },
     // #3635: a late capture a treasurer kept, anchored on its approval task.
     KEPT_LATE_CAPTURE_INVOICE: {
       op: {
@@ -3587,6 +3681,7 @@ describe("processQueuedXeroOutboxOperations dispatch domain (#1272)", () => {
     vi.clearAllMocks();
     mocks.updateManyOperation.mockResolvedValue({ count: 1 });
     // Every dispatch target resolves so a routed op reports success.
+    mocks.executeOrganiserExtraAdjustment.mockResolvedValue(undefined);
     mocks.createXeroEntranceFeeInvoice.mockResolvedValue("inv");
     mocks.createXeroInvoiceForBooking.mockResolvedValue("inv");
     mocks.updateXeroBookingInvoiceForBooking.mockResolvedValue("inv");

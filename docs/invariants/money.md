@@ -588,7 +588,9 @@ verified aggregate) and **`INV-MOD-058`** (an edit's stored lines).
   `booking-ledger-posting-key.realdb.test.ts` proves the skip, the surviving
   transaction and the fence against PostgreSQL itself.
 
-  Whole-batch keys in the member journal: `INV-MONEY-041`, `INV-MONEY-042`.
+  Whole-batch keys in the member journal: `INV-MONEY-041`, `INV-MONEY-042`. From
+  M3b the journal's booking charge is keyed once per booking too, and a door's
+  repeat of an event already posted is a no-op (`INV-MONEY-044`).
 
 ## INV-MONEY-034
 
@@ -635,8 +637,8 @@ verified aggregate) and **`INV-MOD-058`** (an edit's stored lines).
   fails a credit write with no sync after it.
 
   **Insert-only, because credit rows are.** No code changes a row's amount,
-  type or booking link — the census fails one that tries; only deleting a
-  booking nulls the link, and its lines go with it — so each row posts one
+  type or booking link — the census fails one that tries, and the database
+  refuses to delete a booking a row names (`INV-MONEY-043`) — so each row posts one
   line keyed `credit:<id>`, never reversed, for the row's negation: applied
   credit `CREDIT_APPLIED` (a give-back is negative), minted credit
   `CREDIT_ISSUED`. While a booking's applied rows net to zero or less — every
@@ -799,7 +801,7 @@ check the others.
   charge. A later family member produces a visible exception; neither coverage
   mutation nor a second invoice is allowed.
 
-## INV-MONEY-043
+## INV-MONEY-045
 
 - Subscription category is a second, independent billing axis (`INV-LIFE-094`),
   resolved before and separately from `MembershipType`'s own fee. A
@@ -1029,7 +1031,8 @@ PostgreSQL CHECKs, foreign keys, unique indexes and deferred constraint triggers
 enforce this even through direct SQL. `member_money_batch_errors` is the shared
 validation rule used by the triggers and the read-only verifier.
 M1 is inert: no legacy writer cohort is activated and no old source is required
-to have a journal link. Mandatory legacy links need backfill and worker drain
+to have a journal link. M3a (#4626) adds one command, `postMemberMoneyEvent`;
+its store is the only writer; the booking doors reach it from M3b (`INV-MONEY-044`). Mandatory legacy links need backfill and worker drain
 in their writer milestone; a nullable bridge is never universal posting proof.
 
 ## INV-MONEY-042
@@ -1045,7 +1048,7 @@ Every bridge to `BookingLedgerLine` retains its exact source identity through a
 unique RESTRICT foreign key. Its `MemberMoneySourcePosting` rows name exact
 legs in that same journal; a bridge to a nonzero journal requires leg coverage.
 Posted financial parents use RESTRICT with no
-update cascade. No existing legacy cascade is changed by M1; M2 owns that work.
+update cascade. No legacy cascade was changed by M1; M2 did (`INV-MONEY-043`).
 
 The account chart uses stable internal enums; Xero account codes remain settings
 in the existing mapping registry. Keys the chart only proposes live in
@@ -1054,3 +1057,59 @@ step that first reads one registers it. System receivables, member-credit and
 tax controls are reached through document/control bridges, never direct
 journals. An unset mapping cannot prevent local posting. No provider adapter is
 activated by registering an account.
+
+## INV-MONEY-043
+
+Financial history outlives its booking (#4514, Ledger M2; owner decision D1 on
+[#4482](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/4482), 28 Oct
+2026). These keys are `ON DELETE RESTRICT ON UPDATE RESTRICT`: every key a money
+line holds (`BookingLedgerLine`'s booking, lodge and reversed line, and every
+`MemberMoney*` key), a `MemberCredit` row's three booking links and a
+`GroupBookingSettlement`'s group. A referential action runs with the table
+owner's rights, so a cascade or a set-null would be a route around the
+application role's INSERT/SELECT grant; none exists. With the payment and
+refund records, already RESTRICT, they are the relations
+`booking-financial-history.ts` names once: the database refuses, for every
+role, to delete a booking any of them names.
+
+Such a booking is soft-deleted or left as it is, never hard-deleted. Only
+drafts are hard-deleted, and a draft never carries money. The draft route
+answers 409 and writes nothing for a draft those relations name; the nightly
+cleanup leaves such a draft out and reports it. Should money reach a draft
+between that read and the delete, the refusal rolls the night's whole batch
+back, nothing deleted. Member hard delete refuses a member the journal names as
+debtor, a retained identity string rather than a key. Personal data follows the
+retention schedule (#4457), which keeps these rows. Pins:
+`booking-financial-history-census.test.ts` (relations classified, money-line
+keys RESTRICT both ways), `booking-financial-history.realdb.test.ts` and
+`database-roles.realdb.test.ts` (an application-role delete is refused).
+
+## INV-MONEY-044
+
+From Ledger M3b (#4627), every legacy booking charge line a door writes is
+posted into the member-money journal once, in the same transaction, from the
+same stored lines: the confirmation poster (R01, group children included), the
+modification poster (R02/R03), review close (R21, keyed per closure), the
+cancellation poster (R04) and the back-post filling a door's gap (R26), each
+through `postBookingLedgerJournal` with a context resolved before the
+transaction. Nothing is re-priced: `journalComponentOfLegacyLine` maps each line
+to a component. Nights, the promotion, agreed adjustments and a kept
+cancellation fee fold into the booking's charge component; each change fee is
+its own. An event corrects a whole component and charges the remainder; a
+component a reduction would take below zero draws on the booking's others, and
+only a negative total is refused. Each line with money is bridged by its own
+receivable leg; the debtor is the booking's owner, read under its row lock. A
+first confirmation always posts R01, a ZERO event when it carries no money,
+and opens the booking's CHARGE obligation. Later events post only for a booking
+whose R01 is in the journal; one confirmed before M3b is M9's. A repeated event
+is a no-op, and a refusal is never caught. A club whose currency no card can be
+charged in has an inactive journal: decided before the transaction, its doors
+post nothing and proceed; once active, a booking's next event first fills what
+was missed, and the back-post fills the rest. Member merge refuses while it is
+inactive, and otherwise transfers the merged-away member's receivable balances
+after the owner move, under its `Member … FOR UPDATE` set (D4). `booking-ledger:census` checks each R01 booking's total (`JOURNAL`), and
+raises `UNBRIDGED_CHARGE_LINE`, `CONFIRMED_WITHOUT_R01` and `JOURNAL_INACTIVE`.
+Pins: `member-money-booking-charges.test.ts`,
+`member-money-journal-activity.test.ts`,
+`booking-ledger-projection-census-journal.test.ts`,
+`booking-ledger-journal.realdb.test.ts`.

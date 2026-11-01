@@ -30,6 +30,11 @@ const specKeys = MEMBER_MERGE_RELATION_SPECS.map((s) => s.key);
 // than having to go and find it (#2691).
 
 describe("member-merge relation classification completeness", () => {
+  it("keeps retention-setting author attribution as an immutable snapshot (#4457)", () => {
+    expect(MEMBER_MERGE_SNAPSHOT_SCALAR_COLUMNS).toContain("PrivacyRetentionSettings.updatedByMemberId");
+    expect(schemaText).toMatch(/model PrivacyRetentionSettings[\s\S]*?updatedByMemberId\s+String\?/);
+  });
+
   it("classifies pair-state endpoints as trigger-derived rather than snapshots", () => {
     expect(MEMBER_MERGE_DERIVED_MEMBER_ID_COLUMNS).toEqual([
       "MemberParentPartnerExclusion.memberAId",

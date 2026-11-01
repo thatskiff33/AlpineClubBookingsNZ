@@ -1,7 +1,8 @@
-import { PaymentRecoveryOperationType, type Prisma } from "@prisma/client";
+import type { Prisma } from "@prisma/client";
 import { isLateCaptureHandlerWrite } from "@/lib/cancellation-settled-money";
 import { LEDGER_ROWS_OLDEST_FIRST } from "@/lib/payment-ledger-order";
 import { prisma } from "@/lib/prisma";
+import { intentCancellationQueuedWhere } from "@/lib/queued-intent-cancellation";
 
 /**
  * The durable evidence that a capture on a cancelled booking landed AFTER the
@@ -19,7 +20,7 @@ export async function readCaptureLandedAfterCancellation(
 ): Promise<boolean> {
   if (isLateCaptureHandlerWrite(capture.reason)) return true;
   const cancelIntentOperation = await store.paymentRecoveryOperation.findFirst({
-    where: cancelClaimWhere([capture.paymentIntentId]),
+    where: intentCancellationQueuedWhere([capture.paymentIntentId]),
     select: { id: true },
   });
   return cancelIntentOperation !== null;
@@ -45,16 +46,9 @@ export async function findCapturesLandedAfterCancellation(
   const unmarked = ids.filter((id) => !landed.has(id));
   if (unmarked.length === 0) return landed;
   const claims = await store.paymentRecoveryOperation.findMany({
-    where: cancelClaimWhere(unmarked),
+    where: intentCancellationQueuedWhere(unmarked),
     select: { paymentIntentId: true },
   });
   for (const claim of claims ?? []) landed.add(claim.paymentIntentId);
   return landed;
-}
-
-function cancelClaimWhere(paymentIntentIds: string[]): Prisma.PaymentRecoveryOperationWhereInput {
-  return {
-    type: PaymentRecoveryOperationType.CANCEL_PAYMENT_INTENT,
-    paymentIntentId: paymentIntentIds.length === 1 ? paymentIntentIds[0] : { in: paymentIntentIds },
-  };
 }

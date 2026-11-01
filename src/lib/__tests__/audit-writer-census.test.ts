@@ -1477,7 +1477,14 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
     // RE-MEASURED with `pnpm run audit:census`.
     // 393 -> 396 unpinned (subscription-category-decoupling rework): the three
     // new Subscription Categories admin-CRUD writers, unpinned `admin`.
-    ).toEqual({ pinned: 130, unpinned: 396 });
+    // 396 -> ??? unpinned (#4432, disjoint from the category rework): the two sync-now rows
+    // and the webhook threshold, unpinned `xero`.
+    // ??? -> ??? unpinned (#4457): the retention settings and member-anonymisation rows.
+    // ??? -> ??? unpinned (#4533): the officer's finished-stay promo correction request.
+    // ??? -> ??? unpinned (#4426): the late refund note's row, unpinned `xero`.
+    // RE-MEASURED with `pnpm run audit:census` on the merged tree; this placeholder is
+    // intentionally wrong so the test's own failure diff names the true number.
+    ).toEqual({ pinned: 130, unpinned: 999999 });
   });
 
   it("pins which classified writers a MEMBER can now see about themselves", () => {

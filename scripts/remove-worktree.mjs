@@ -86,7 +86,7 @@
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
+import { isMainModule } from "./lib/is-main-module.mjs";
 
 export const USAGE =
   "Usage: pnpm run worktree:remove <worktree-path> [--base <ref>] [--allow-unmerged] [--forget-missing]";
@@ -505,5 +505,4 @@ export function main(argv = process.argv.slice(2)) {
   }
 }
 
-const invokedPath = process.argv[1] ? pathToFileURL(process.argv[1]).href : null;
-if (invokedPath === import.meta.url) process.exitCode = main();
+if (isMainModule(import.meta.url)) process.exitCode = main();

@@ -1,0 +1,21 @@
+/** Shared scalar contact erasure for requested deletion and former-member retention. */
+export const MEMBER_CONTACT_ERASURE_PATCH = {
+  firstName: "Deleted",
+  lastName: "Member",
+  phoneCountryCode: null,
+  phoneAreaCode: null,
+  phoneNumber: null,
+  dateOfBirth: null,
+  streetAddressLine1: null,
+  streetAddressLine2: null,
+  streetCity: null,
+  streetRegion: null,
+  streetPostalCode: null,
+  streetCountry: null,
+  postalAddressLine1: null,
+  postalAddressLine2: null,
+  postalCity: null,
+  postalRegion: null,
+  postalPostalCode: null,
+  postalCountry: null,
+} as const;

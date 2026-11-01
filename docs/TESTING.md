@@ -24,6 +24,15 @@ in Tailwind classes, inline `fontSize` properties, CSS declarations and CSS
 expressions still need browser/design review. CSS uses the tolerant parser for
 Tailwind syntax; it is not a general CSS validity gate.
 
+The local `accessibility/no-nested-interactive` rule (#4553) rejects a link or
+button inside another one: a `next/link` `Link`, the ui `Button`, `<a>` or
+`<button>` nested in any of them: two tab stops for one action, and invalid
+HTML. axe's `nested-interactive` reports only a link inside a button, never a
+button inside a link, so this rule is the check for that direction. Write `<Button asChild><Link>…</Link></Button>`; an `asChild` Button renders no
+element of its own (only a bare `asChild` or `asChild={true}` counts). Link
+and Button are matched by import, so a wrapper
+component that renders one is outside the rule.
+
 [`eslint-suppressions.json`](../eslint-suppressions.json) records existing debt
 using ESLint's built-in per-file/per-rule counts. Normal `pnpm run lint` applies
 it automatically: new files and increased counts fail, and unused suppressions
@@ -34,9 +43,75 @@ the baseline to pass lint. After fixing debt, run
 commands do not modify it.
 
 Focused rule and ratchet contracts run with
-`pnpm run test:named scripts/eslint/accessibility.test.mjs scripts/eslint/ratchet.test.mjs scripts/eslint/fixture-import.test.mjs`.
+`pnpm run test:named scripts/eslint/accessibility.test.mjs scripts/eslint/ratchet.test.mjs scripts/eslint/fixture-import.test.mjs scripts/eslint/design-system.test.mjs`.
 The shared axe fixture and mobile project are described in
 [`E2E_PLAYWRIGHT.md`](E2E_PLAYWRIGHT.md#accessibility-and-mobile-checks-4466).
+
+### Design-system control ratchet (#4467)
+
+Five local rules in `scripts/eslint/design-system.mjs` report what bypasses the
+primitives in `src/components/ui/`, each naming the one to use:
+`design-system/no-raw-button`, `no-raw-input`, `no-raw-select` and
+`no-raw-table` for the intrinsic JSX element, and `no-native-confirm` for the
+browser's confirm box: called through `window`, `globalThis`, `self`, `top` or
+`parent`, destructured from one of them, or called bare when the name resolves
+to the global. A `confirm` from `useConfirm()` is the sanctioned one.
+Today's usages are recorded in `eslint-suppressions.json` with the debt above,
+per file and per rule, so swapping a raw `<select>` for a raw `<button>` still
+fails. Migrate, then prune; never add a count.
+
+**Never an eslint-disable comment: migrate to the primitive.**
+`design-system.test.mjs` fails on any disable or rule-config comment naming a
+`design-system/` rule, and on a disable naming no rule where they apply.
+
+A suppression is keyed by path, so `ratchet.test.mjs` fails on an entry whose
+file no longer exists: a new file at that path would inherit the allowance. A
+deleted file's entries go in the same PR. A moved or renamed file's entries
+move to the new path in the same PR, at the same count; the count never rises.
+
+The exceptions are named:
+
+- **By path** (`eslint.config.mjs`): `src/components/ui/` itself; test files
+  (`__tests__/`, `*.test.*`, `src/test/`), which are not app UI and mock
+  primitives with raw stand-ins; and the files in `PRIMITIVE_IMPLEMENTATIONS`,
+  each excused one rule with a written reason: the admin table shell and sort
+  header (#1805).
+- **By element** (the rule): `<input type="hidden">`, and an
+  `<input type="file">` hidden by a literal `hidden` attribute or an
+  unprefixed `hidden` or `sr-only` class, the picker a `Button` opens. Neither
+  holds when a JSX spread comes after an attribute it relies on, or when a
+  class could show the input again (`block`, `md:flex`, `focus:not-sr-only`).
+  A visible file input uses `<Input type="file">`.
+
+Not covered: `React.createElement`, an element named through a variable
+(`const Tag = "button"; <Tag />`), a `confirm` reached through an alias, and
+`<textarea>`.
+
+### Testing a form on the shared form layer (#4467)
+
+The pattern is in [`UX_FLOW_MAP.md`](UX_FLOW_MAP.md#forms-4467). A form on it
+is tested in jsdom, like
+`src/app/(admin)/admin/committee/__tests__/committee-role-form.test.tsx`:
+
+- **Assert the wiring by resolving it.** Read the control's
+  `aria-describedby`, look each id up with `document.getElementById`, and
+  check the text and the order: error first, example last. Testing Library's
+  `toHaveAccessibleDescription` does the same in one step where the order does
+  not matter.
+- **Assert the summary holds focus, not that it got it.** Use
+  `expectToHoldFocus` from `src/lib/__tests__/helpers/focus.ts`.
+  react-hook-form's own focus-the-first-error runs again on a timer, so a
+  bare `waitFor` passes even while it steals focus a tick later.
+- **Wrap a submit in `act`.** The submit is asynchronous: the resolver, then
+  the handler, then the state update that raises `submitCount` and moves
+  focus.
+- **Assert the payload and the route, as well as the errors.** A migrated
+  form must send what it sent before.
+
+`src/components/ui/__tests__/form.test.tsx` pins the primitives themselves.
+`src/lib/__tests__/shared-form-schema-census.test.ts` reads source from disk,
+so `test:related` cannot select it; run it with `test:named` when you add or
+move a schema in `src/lib/forms/`, its route or its form.
 
 ## Stateful Xero and Stripe fakes
 
@@ -656,6 +731,10 @@ generalised.
    await shouldNotHaveWaited();
    expect(realElapsedMs(before)).toBeLessThan(20);
    ```
+
+   `pnpm run lint` reports a `Date.now()` stopwatch or deadline in a Vitest
+   file (`test-clock/no-date-now-elapsed`, #4462): `Date.now()` measured against
+   an earlier `Date.now()` reading held inline or in a plain variable.
 
    `process.hrtime.bigint()` is monotonic, so neither the freeze nor the canary's
    libfaketime shim touches it. `performance.now()` also stays real, but it is

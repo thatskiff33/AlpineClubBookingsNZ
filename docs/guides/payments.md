@@ -271,6 +271,10 @@ the money was taken on the group's combined invoice), so once you mark one paid
 back the finance contacts get a **Xero Sync Error** email naming the amount,
 the organiser and the invoice: in Xero, raise a credit note for that amount to
 the organiser against the group's invoice and record the bank refund against it.
+A place that has an extra invoice for a later price increase (#4299) is the
+exception: there the app raises the notes itself once you mark the task paid
+back (one against the group's invoice for the share, one against the extra
+invoice for the extra's part), so do not raise a note by hand for it.
 When the joiner cancels their own place with a refund due, the cancel raises
 one of these tasks too, for the policy's card-tier refund, to the organiser
 (never account credit for the joiner), and admins get the **Manual refund
@@ -1028,6 +1032,61 @@ stops it being run again (it stays listed), and ask the treasurer what Xero
 needs for that refund. Don't also make a credit note by hand: the treasurer
 decides. A part-done job that names no credit note is refused the same way:
 retry it, or ask the treasurer.
+
+### A Stripe payment the app did not create
+
+The club's Stripe account can take money that never went through the app: a
+Stripe Payment Link for donations, a Checkout page, or a charge made in the
+Stripe dashboard. The app has no booking for it and sends nothing to Xero, so
+without a note the Stripe clearing account in Xero stops reconciling (#4532).
+
+When one succeeds, Finance editors get **"Stripe payment the app did not
+create - code it in Xero"**, once per payment. It cannot be muted. It names the
+amount, when it was paid, what was bought (the Checkout line items, or the
+payment's own description), and the Stripe payment, charge, Checkout session and
+Payment Link ids, with a link to the payment in Stripe. It never contains card
+details or who paid.
+
+What to do:
+
+1. Open the payment in Stripe from the link and decide what it is: a donation,
+   or income and its GST treatment.
+2. Record it in Xero by hand against the Stripe clearing account (a Receive
+   Money for the amount, and Stripe's fee if your club records fees), so the
+   clearing account reconciles.
+
+The app keeps its own record of each such payment, but no screen lists them yet;
+the email is the notice. A payment the app made itself (any booking or group
+payment) never raises this alert.
+
+### A booking card payment the app could not match
+
+Rarely, a member's card is charged for a booking but the app cannot tie the
+payment to anything it was waiting for on that booking. The usual cause is a
+saved-card charge whose answer from Stripe was lost and arrived later in a form
+the app cannot link back (#4624). The app does not mark the booking paid and
+sends nothing to Xero. A charge whose answer simply arrives a moment after
+Stripe's notification is not this case: the app looks for the payment once
+more before alerting, finds it, and settles the booking as usual.
+
+When it happens, Finance editors get **"Booking card payment the app could not
+match - check it"**, once per payment. It cannot be muted. It names the amount,
+when it was paid, the booking reference, what the app found for the payment,
+and the Stripe payment and charge ids, with a link to the payment in Stripe.
+
+What to do:
+
+1. Open the booking and the payment in Stripe and work out whether the booking
+   still owes this money.
+2. Do **not** use **Record manual payment** for it (that records cash), and do
+   not code it in Xero as a donation or other income: the money belongs to the
+   booking.
+3. Ask whoever supports your booking system to match it to the booking, or, if
+   the booking does not owe it, refund it in Stripe.
+
+The app keeps a record of each such payment, but no screen lists them yet; the
+email is the notice. The booking's own payments, additional payment requests,
+group payments and refunds of replaced payments never raise this alert.
 
 ### Follow a payment into Stripe or Xero
 

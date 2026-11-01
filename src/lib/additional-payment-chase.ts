@@ -295,6 +295,26 @@ export type AdditionalPaymentDoorAnswer<Intent> =
   | { state: "closed" };
 
 /**
+ * Stripe's half of the door alone: the intent, or null when Stripe has no such
+ * intent or has cancelled it - the one case a local FAILED row cannot tell from
+ * a declined card. Also read by a just-minted ask's liveness re-read (#4052,
+ * `isMintedAskStillLive`). Any other read error propagates.
+ */
+export async function readOpenProviderIntent<Intent extends { status: string }>(
+  paymentIntentId: string,
+  retrieve: (paymentIntentId: string) => Promise<Intent>,
+): Promise<Intent | null> {
+  let intent: Intent;
+  try {
+    intent = await retrieve(paymentIntentId);
+  } catch (err) {
+    if (isStripeResourceMissingError(err)) return null;
+    throw err;
+  }
+  return intent.status === "canceled" ? null : intent;
+}
+
+/**
  * THE MEMBER'S PAY DOOR (#3641, `INV-PAY-104`). The additional-payment-secret
  * route hands out a client secret only on `payable`, and the Xero outbox reaper
  * retires a waiting supplementary invoice only on `closed`, so an invoice is
@@ -320,14 +340,8 @@ export async function resolveAdditionalPaymentDoor<
   const paymentIntentId = payableAdditionalPaymentIntentId(input);
   if (!paymentIntentId) return { state: "closed" };
 
-  let intent: Intent;
-  try {
-    intent = await retrieve(paymentIntentId);
-  } catch (err) {
-    if (isStripeResourceMissingError(err)) return { state: "closed" };
-    throw err;
-  }
-  if (intent.status === "canceled") return { state: "closed" };
+  const intent = await readOpenProviderIntent(paymentIntentId, retrieve);
+  if (!intent) return { state: "closed" };
   if (PROVIDER_CAPTURED_INTENT_STATUSES.includes(intent.status)) {
     return { state: "captured-at-provider", intent };
   }

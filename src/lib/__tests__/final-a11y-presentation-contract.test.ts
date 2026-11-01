@@ -117,17 +117,86 @@ describe("#1819 final accessibility presentation contract", () => {
   });
 
   it("exposes payment selection without relying on colour or weakened opacity", () => {
-    const review = source(
-      "src/app/(authenticated)/book/_components/review-step.tsx",
-    );
+    // #4563 — every payment picker renders the shared OptionCard, which carries
+    // `aria-pressed` and a visible "Selected" label (its own jsdom test,
+    // `src/components/ui/__tests__/option-card.test.tsx`, proves both). Here:
+    // the primitive keeps both cues, and no picker draws its own card again.
+    const optionCard = source("src/components/ui/option-card.tsx");
+    expect(optionCard).toContain("aria-pressed={selected}");
+    expect(optionCard).toMatch(/<CheckCircle2 aria-hidden[^>]*\/>\s*Selected\s*<\/span>/);
+    expect(optionCard).toContain('role="group"');
 
-    expect(review).toContain('aria-pressed={paymentMethod === "stripe"}');
-    expect(review).toContain(
-      'aria-pressed={paymentMethod === "internet_banking"}',
+    const pickers = [
+      "src/app/(authenticated)/book/_components/review-step.tsx",
+      "src/components/group-booking/organiser-group-booking-card.tsx",
+      "src/app/(website-dynamic)/join/[code]/member-group-join-panel.tsx",
+      "src/app/(admin)/admin/book/page.tsx",
+    ];
+    for (const file of pickers) {
+      const text = source(file);
+      expect(text.match(/<OptionCard\b(?!Group)/g), file).toHaveLength(2);
+      expect(text, file).toContain("<OptionCardGroup");
+      // A hand-drawn card is a raw element whose click sets the method.
+      expect(text, file).not.toMatch(/onClick=\{\(\) => set(?:Payment|Settle)Method\(/);
+    }
+    expect(source(pickers[0]!)).not.toContain("opacity-80");
+  });
+
+  it("never fades option and event text below its AA ink with opacity (#4553)", () => {
+    // Each of these spans sits on a pair that already clears 4.5:1 (muted or
+    // info-11 ink on a payment option, primary/accent foreground on an event
+    // chip). Stacking opacity on it blends the ink toward its surface and
+    // drops it under AA, so the text inherits the pair as is.
+    //
+    // #4563 adds the inactive rows: an archived chore, committee role or
+    // assignment, booking policy or period, family member, or a fully covered
+    // hut-leader candidate used to fade the whole row. The row now says
+    // "Inactive" (or "Archived") in its status badge, and a card adds a dashed
+    // border; the text keeps its full-strength pair.
+    //
+    // #4594 adds the rest that review found: a past day's bed count and "+N
+    // more" on the admin calendar, a departed kiosk guest, a removed guest on
+    // the edit-booking card, a locked alert, an already-added member-guest
+    // option and the page editor's read-only inputs. Each says its state in
+    // words instead. Not here: `login-holder-section.tsx`, whose faded rows are
+    // labels of a genuinely `disabled` radio, which axe exempts.
+    const files = [
+      "src/components/admin-booking-calendar.tsx",
+      "src/app/(lodge)/lodge/kiosk/page.tsx",
+      "src/components/edit-booking/existing-guest-row.tsx",
+      "src/app/(admin)/admin/notifications/notifications-settings.tsx",
+      "src/components/book/member-guest-find-panel.tsx",
+      "src/components/admin/page-content-panel.tsx",
+      "src/components/group-booking/organiser-group-booking-card.tsx",
+      "src/app/(website-dynamic)/join/[code]/member-group-join-panel.tsx",
+      "src/app/(admin)/admin/book/page.tsx",
+      "src/app/(authenticated)/book/_components/review-step.tsx",
+      "src/components/ui/option-card.tsx",
+      "src/components/calendar/day-events-dialog.tsx",
+      "src/components/calendar/month-calendar.tsx",
+      "src/components/ui/dropdown-menu.tsx",
+      "src/app/(admin)/admin/chores/page.tsx",
+      "src/app/(admin)/admin/committee/page.tsx",
+      "src/app/(admin)/admin/members/[id]/_components/member-committee-assignments-card.tsx",
+      "src/components/admin/booking-policies/minimum-night-stay-section.tsx",
+      "src/components/admin/booking-policies/booking-periods-section.tsx",
+      "src/app/(admin)/admin/family-groups/page.tsx",
+      "src/app/(admin)/admin/hut-leaders/_components/assignment-form.tsx",
+    ];
+    for (const file of files) {
+      // Any class string on any element — a `className` literal, a template or a
+      // `cn(…)` argument, not only a literal on a `<span>`. Two uses are not
+      // text and stay allowed: an `aria-hidden` icon, and `opacity-0` on a
+      // control that a hover or focus variant reveals at full opacity.
+      const faded = source(file)
+        .split("\n")
+        .filter((line) => !line.includes("aria-hidden"))
+        .filter((line) => /["'`][^"'`]*(?<![:\w-])opacity-(?:[1-9]\d?)\b/.test(line));
+      expect(faded, file).toEqual([]);
+    }
+    expect(source("src/components/ui/dropdown-menu.tsx")).toContain(
+      '"ml-auto text-xs tracking-widest text-muted-foreground"',
     );
-    expect(review.match(/>\s*Selected\s*<\/span>/g)).toHaveLength(2);
-    expect(review.match(/<CheckCircle2 aria-hidden/g)).toHaveLength(2);
-    expect(review).not.toContain("opacity-80");
   });
 
   it("pins non-colour calendar and bed-allocation cues", () => {

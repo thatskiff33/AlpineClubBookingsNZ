@@ -68,6 +68,7 @@ import {
   classifyXeroContactStatus,
   type XeroContactLiveness,
 } from "@/lib/xero-contact-status";
+import { mergeXeroObjectLinkMetadata, planXeroObjectLinkMetadataMerge } from "@/lib/xero-object-link-metadata-merge";
 import { isXeroConnected } from "@/lib/xero-token-store";
 import { XeroResyncUnavailableError } from "@/lib/xero-mismatch-resync";
 
@@ -215,9 +216,12 @@ export async function checkErasedMemberContactStatuses(
  * Stamp one contact's observation onto every RETIRED `Member` → `CONTACT` link
  * that names it.
  *
- * Read-modify-write per row rather than an `updateMany`, because Prisma cannot
- * merge into a `Json` column and a blind overwrite would drop `linkedVia` and
- * anything else a link already carries. Bounded by the review's own row limit,
+ * One atomic merge statement per row (`mergeXeroObjectLinkMetadata`, #4445,
+ * reused here by #4657), because Prisma cannot merge into a `Json` column and a
+ * blind overwrite would drop `linkedVia` and anything else a link already
+ * carries. The rows are found first, but the stored metadata is never read
+ * into JavaScript: a read-then-write would lose a concurrent writer's keys.
+ * Bounded by the review's own row limit,
  * and each write is its own short statement: a failure part-way leaves earlier
  * rows correctly stamped and later ones simply unobserved, which is the state
  * they were already in.
@@ -226,34 +230,30 @@ export async function checkErasedMemberContactStatuses(
  * points at is not on this screen at all, and stamping it would put a key about
  * erasure on a live member's link.
  */
-async function recordObservation(
+export async function recordObservation(
   contactId: string,
   observation: ErasedContactStatusObservation,
+  // A parameter so the real-database race test can hold the writer between its
+  // read of the rows and its write (#4657); production passes nothing.
+  store: Pick<Prisma.TransactionClient, "xeroObjectLink" | "$executeRaw"> = prisma,
 ): Promise<void> {
-  const rows = await prisma.xeroObjectLink.findMany({
+  const rows = await store.xeroObjectLink.findMany({
     where: {
       localModel: "Member",
       xeroObjectType: "CONTACT",
       xeroObjectId: contactId,
       active: false,
     },
-    select: { id: true, metadata: true },
+    select: { id: true },
   });
+  const incoming = { [ERASED_CONTACT_REVIEW_METADATA_KEY]: { ...observation } };
+  const merge = planXeroObjectLinkMetadataMerge(incoming, incoming);
   for (const row of rows) {
-    const existing =
-      row.metadata && typeof row.metadata === "object" && !Array.isArray(row.metadata)
-        ? (row.metadata as Record<string, unknown>)
-        : {};
     try {
-      await prisma.xeroObjectLink.update({
-        where: { id: row.id },
-        data: {
-          metadata: {
-            ...existing,
-            [ERASED_CONTACT_REVIEW_METADATA_KEY]: { ...observation },
-          },
-        },
-      });
+      // One statement over the stored row (#4657, the #4445 merge): a
+      // concurrent writer of this link's metadata keeps its keys, and a
+      // stored value that is not an object is replaced, as the spread did.
+      if (merge) await mergeXeroObjectLinkMetadata(store, row.id, merge);
     } catch (error) {
       // A row deleted under us is not a failure of the check: the observation
       // it would have carried is about a link that no longer exists.

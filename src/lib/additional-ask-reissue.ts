@@ -18,7 +18,7 @@
 import { PaymentRecoveryOperationStatus, PaymentTransactionKind, type Prisma } from "@prisma/client";
 
 import { ADDITIONAL_ASK_QUEUE_TRANSACTION_OPTIONS, lockAdditionalAskQueue } from "@/lib/additional-ask-queue-transaction";
-import { closeWaitingAskRecoveries } from "@/lib/additional-ask-recovery-close";
+import { closeWaitingAskRecoveries, PENDING_ASK_NETTED_BY_REDUCTION_NOTE } from "@/lib/additional-ask-recovery-close";
 import {
   inFlightAskRecoveries,
   reductionLeftAfterAskCents,
@@ -136,7 +136,7 @@ export async function settleReductionAgainstUnpaidAsk(
     unpaidAskOffsetCents: reduction.offsetCents,
     unpaidAskCancelled: reduction.offsetCents > 0 && reduction.askLeftCents === 0,
   };
-  if (reduction.offsetCents <= 0 || !booking.payment) {
+  if (reduction.organiserExtras || reduction.offsetCents <= 0 || !booking.payment) {
     return {
       ...settled,
       retiredAdditionalAsks: [],
@@ -405,6 +405,21 @@ export async function readReissuedAskRecovery(
       lastError: true,
     },
   });
+}
+
+/**
+ * #4052: whether an additional ask's recovery was closed without its mint, and by
+ * whom: a later reduction that netted it off, or a later increase that folded
+ * it into its own ask (`closeWaitingAskRecoveries`, each with its note). Either
+ * way nobody mints under its Stripe key again. Null for anything else - still
+ * waiting, claimed by the runner, completed with a mint, or failed.
+ */
+export function reissueClosedUnminted(
+  recovery: Pick<ReissuedAskRecovery, "status" | "lastError"> | null,
+): "netted" | "folded" | null {
+  if (recovery?.status !== PaymentRecoveryOperationStatus.SUCCEEDED) return null;
+  if (recovery.lastError === PENDING_ASK_NETTED_BY_REDUCTION_NOTE) return "netted";
+  return recovery.lastError === WAITING_REISSUE_FOLDED_BY_INCREASE_NOTE ? "folded" : null;
 }
 
 /**

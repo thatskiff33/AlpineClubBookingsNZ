@@ -634,7 +634,7 @@ export default function ChoresPage() {
                   </TableHeader>
                   <TableBody>
                     {grouped.map((chore) => (
-                      <TableRow key={chore.id} className={!chore.active ? "opacity-50" : ""}>
+                      <TableRow key={chore.id}>
                         <TableCell className="font-mono text-muted-foreground">
                           {chore.sortOrder}
                         </TableCell>

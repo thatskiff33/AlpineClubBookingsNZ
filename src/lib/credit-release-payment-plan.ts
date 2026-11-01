@@ -106,3 +106,21 @@ export function planCreditReleasePayments(rows: readonly AskLedgerRow[]): Credit
   }
   return { items, unexplainedRowIds, unexplainedCaptureIntentIds: [...unexplainedCaptureIntentIds] };
 }
+
+/**
+ * #4494 (`INV-SSOT`): ONE CAPTURE'S CREDIT-RELEASE SHARE, read off a plan - the
+ * own money of every request it collected, and whether the sweep holds it for
+ * an officer. The one fold the share reader (`readCreditReleaseCaptureShare`)
+ * and the sweep's overlap hold both use, so they cannot disagree.
+ */
+export function creditReleaseShareFromPlan(
+  plan: CreditReleasePaymentPlan,
+  paymentIntentId: string,
+): { ownCents: number; held: boolean } {
+  return {
+    ownCents: plan.items
+      .filter((item) => item.capturedByIntentId === paymentIntentId)
+      .reduce((sum, item) => sum + item.ownCents, 0),
+    held: plan.unexplainedCaptureIntentIds.includes(paymentIntentId),
+  };
+}

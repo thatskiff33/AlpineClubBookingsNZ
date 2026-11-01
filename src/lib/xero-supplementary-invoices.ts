@@ -14,6 +14,9 @@ import {
   Payment as XeroPayment,
 } from "xero-node";
 import { prisma } from "./prisma";
+import { resolveOrganiserBilling, resolveOrganiserXeroContact } from "@/lib/organiser-billing";
+import { sendGroupOrganiserExtraInvoiceEmail } from "@/lib/email/groups";
+import { ORGANISER_EXTRA_WAIVED_UNRAISED_CODE, organiserExtraWaivedBeforeRaised, readOrganiserExtraState } from "@/lib/organiser-extra-state";
 import { bookingOwner } from "@/lib/booking-owner";
 import logger from "@/lib/logger";
 import { buildXeroInvoiceUrl } from "@/lib/xero-links";
@@ -110,7 +113,7 @@ export async function createXeroSupplementaryInvoice(params: {
     bookingModificationId,
     shortfallReviewTaskId,
     createdByMemberId,
-    recordPayment = true,
+    recordPayment: requestedRecordPayment = true,
     repairExistingLink,
     syncOperation,
   } = params;
@@ -152,7 +155,11 @@ export async function createXeroSupplementaryInvoice(params: {
     include: { payment: true, member: true, organisation: { select: { name: true, email: true } } },
   });
 
-  if (!booking?.payment?.xeroInvoiceId) {
+  const organiserBilling = booking ? await resolveOrganiserBilling(prisma, booking) : null;
+  const originalInvoiceId = organiserBilling?.combinedInvoiceId ?? booking?.payment?.xeroInvoiceId;
+  let recordPayment = organiserBilling ? false : requestedRecordPayment;
+
+  if (!booking || !originalInvoiceId) {
     if (syncOperation) {
       await completeXeroSyncOperation(syncOperation, {
         responsePayload: {
@@ -169,10 +176,10 @@ export async function createXeroSupplementaryInvoice(params: {
   // A supplementary invoice bills the same customer the original invoice did,
   // and on a returning school that customer is the school. Where no
   // organisation is linked, this is the same member resolved the same way.
-  const contactId = await findOrCreateXeroContactForInvoicedParty(booking, {
-    createdByMemberId,
-    repairExistingLink,
-  });
+  const contactOptions = { createdByMemberId, repairExistingLink };
+  const contactId = organiserBilling
+    ? await resolveOrganiserXeroContact(organiserBilling, contactOptions)
+    : await findOrCreateXeroContactForInvoicedParty(booking, contactOptions);
   const incomeMapping = await getResolvedAccountMapping("hutFeesIncome");
   // A negative price adjustment is a give-back, so it posts to the
   // hutFeeRefunds mapping like the standalone-reduction credit-note path
@@ -183,7 +190,7 @@ export async function createXeroSupplementaryInvoice(params: {
 
   const bookingModification = await prisma.bookingModification.findUnique({
     where: { id: bookingModificationId },
-    select: { createdAt: true, ...MODIFICATION_DOCUMENT_LINES_SELECT },
+    select: { createdAt: true, modificationType: true, ...MODIFICATION_DOCUMENT_LINES_SELECT },
   });
 
   /**
@@ -273,6 +280,14 @@ export async function createXeroSupplementaryInvoice(params: {
       data: { requestPayload: sanitizeForJson(queuedRequestPayload) },
     });
   }
+  // #4494 (`INV-ADDPAY-046`): a gap invoice queued before the fix, or by the
+  // previous colour, may pay from cash overlapping the credit-release sweep's
+  // share. Raised unpaid instead; the payload is stored below before the Xero call.
+  if (recordPayment && queuedRequestPayload && syncOperation) {
+    const { unpaidGapPayloadIfOverlapping } = await import("@/lib/credit-release-xero-payment");
+    const unpaid = await unpaidGapPayloadIfOverlapping({ operationId: syncOperation.id, bookingId, payload: queuedRequestPayload });
+    if (unpaid) [recordPayment, queuedRequestPayload] = [false, unpaid];
+  }
   // Read the club day ONCE. `buildInvoice` is called for the recorded
   // `requestPayload` and again for each contact-repair attempt, so a per-call
   // clock read could record one date and send another across midnight.
@@ -285,7 +300,9 @@ export async function createXeroSupplementaryInvoice(params: {
     lineItems,
     date: supplementaryInvoiceIssueDate,
     dueDate: supplementaryInvoiceDueDate,
-    reference: shortfallReviewTaskId
+    reference: organiserBilling
+      ? `Group place ${bookingId.slice(0, 8)} extra (combined invoice: ${originalInvoiceId})`
+      : shortfallReviewTaskId
       ? `Further supplementary for booking ${bookingId.slice(0, 8)}${booking.payment?.xeroInvoiceId ? ` (original: ${booking.payment.xeroInvoiceId})` : ""}`
       : `Supplementary for booking ${bookingId.slice(0, 8)}${booking.payment?.xeroInvoiceId ? ` (original: ${booking.payment.xeroInvoiceId})` : ""}`,
     status: Invoice.StatusEnum.AUTHORISED,
@@ -378,13 +395,35 @@ export async function createXeroSupplementaryInvoice(params: {
     operationClaim = operation;
   }
 
+  // #4299 S1 (`INV-PAY-148`): a waiver may have retired this organiser extra
+  // whole before it was raised - after this row was queued, or before an
+  // officer's retry or requeue minted it. Asked under the change's anchor lock
+  // (the key the waiver's enqueue refusal reads under), immediately before the
+  // Xero call; such a row is closed SKIPPED with the waiver's code and raises nothing.
+  if (organiserBilling && localModel === "BookingModification") {
+    const claim = operationClaim!;
+    const waived = await prisma.$transaction(async (tx) => {
+      const { lockSupplementaryInvoiceAnchor } = await import("@/lib/xero-operation-outbox");
+      await lockSupplementaryInvoiceAnchor(tx, localId);
+      if (!(await organiserExtraWaivedBeforeRaised(tx, localId))) return false;
+      await tx.xeroSyncOperation.updateMany({
+        where: { id: claim.id, status: "RUNNING", startedAt: claim.startedAt },
+        data: { status: "SKIPPED", lastErrorCode: ORGANISER_EXTRA_WAIVED_UNRAISED_CODE, completedAt: new Date(),
+          lastErrorMessage: "Not raised: a cancellation or reduction waived the whole extra before it reached Xero." },
+      });
+      return true;
+    });
+    if (waived) return null;
+  }
+
   let createdInvoiceId: string;
   try {
     const response = await retryXeroWriteWithContactRepair({
-      memberId: bookingOwner(booking).memberId,
+      memberId: organiserBilling?.organiserMemberId ?? bookingOwner(booking).memberId,
       currentContactId: contactId,
-      // The repair entity matches the invoiced party (#3368, `INV-INT-019`).
-      repairContactLink: invoicedPartyContactRepair(booking),
+      // The repair entity matches the invoiced party (#3368, `INV-INT-019`): the
+      // organiser is a member, repaired by the default member-keyed repair.
+      repairContactLink: organiserBilling ? undefined : invoicedPartyContactRepair(booking),
       workflow: "createXeroSupplementaryInvoice",
       operationId: operationId!,
       repairExistingLink,
@@ -487,6 +526,26 @@ export async function createXeroSupplementaryInvoice(params: {
       );
     }
 
+    if (organiserBilling) {
+      // F4: a cancel or reduction may already have reserved a waiver of this
+      // invoice while it was queued. The organiser is told only what is still
+      // owed after it, and nothing at all when the waiver covers the invoice.
+      const extras = await readOrganiserExtraState(prisma, bookingId);
+      const waivedCents = extras.invoices.find((row) => row.modificationId === bookingModificationId)?.waivedCents ?? 0;
+      const dueCents = netAmountCents - waivedCents;
+      if (dueCents > 0) {
+        const place = bookingOwner(booking).member;
+        await sendGroupOrganiserExtraInvoiceEmail({
+          billing: organiserBilling,
+          bookingModificationId,
+          invoiceId: created.invoiceID,
+          invoiceNumber: created.invoiceNumber,
+          amountCents: dueCents,
+          placeName: `${place.firstName} ${place.lastName}`.trim(),
+          modificationType: bookingModification?.modificationType ?? "BATCH_MODIFY",
+        }, params.format);
+      }
+    }
     await completeXeroSyncOperation(operationClaim!, {
       status: paymentError ? "PARTIAL" : "SUCCEEDED",
       responsePayload: {
@@ -509,6 +568,13 @@ export async function createXeroSupplementaryInvoice(params: {
           xeroObjectNumber: created.invoiceNumber ?? null,
           xeroObjectUrl: buildXeroInvoiceUrl(created.invoiceID),
           role: "SUPPLEMENTARY_INVOICE",
+          ...(organiserBilling ? { metadata: {
+            organiserBilling: true,
+            priceDiffCents,
+            changeFeeCents,
+            combinedInvoiceId: organiserBilling.combinedInvoiceId,
+            bookingId,
+          } } : {}),
         },
         ...(paymentResponseBody?.paymentID
           ? [

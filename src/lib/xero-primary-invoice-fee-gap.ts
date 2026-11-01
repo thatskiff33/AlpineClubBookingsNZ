@@ -45,6 +45,7 @@ import {
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 import { asRecord } from "@/lib/xero-json";
+import { isLiveXeroPaymentStatus } from "@/lib/xero-payment-status";
 import {
   intentsRecordedByPrimaryCash,
   PRIMARY_INVOICE_FEE_AT_LINK_KEY,
@@ -174,7 +175,7 @@ export function existingPrimaryInvoiceStripePayment(
       (payment) =>
         Boolean(payment.paymentID) &&
         payment.reference === reference &&
-        String(payment.status ?? "").toUpperCase() !== "DELETED",
+        isLiveXeroPaymentStatus(payment.status),
     ) ?? null
   );
 }
@@ -596,6 +597,7 @@ export async function queuePrimaryInvoiceWorthGap(input: {
   // #3953 (`INV-PAY-139`): one recorder per capture - cash a receipt row
   // claimed is that receipt's, never the gap's, and the captures the gap's
   // own payment takes are named on its payload so their receipts stand down.
+  // #4494: nor the credit-release sweep's share of a capture (`sweptCents`).
   const payment = await prisma.payment.findUnique({
     where: { bookingId },
     select: {

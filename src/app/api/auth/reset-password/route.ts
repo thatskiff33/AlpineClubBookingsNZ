@@ -11,6 +11,7 @@ import {
 } from "@/lib/audit";
 import { loadLoginSecuritySettings } from "@/lib/login-security-settings";
 import { buildPasswordSchema } from "@/lib/password-policy";
+import { clearPasswordAttempts } from "@/lib/login-throttle";
 
 // The password field is validated against the club's configured login-security
 // policy (min length + optional character classes; hard 128 ceiling always).
@@ -108,6 +109,10 @@ export async function POST(req: NextRequest) {
         })
       ),
     ]);
+
+    // #4609 (owner decision): a completed reset proves the mailbox, so the
+    // account's sign-in throttle starts again from zero. Never throws.
+    await clearPasswordAttempts(resetToken.member.email);
 
     return NextResponse.json({ success: true });
   } catch (err) {

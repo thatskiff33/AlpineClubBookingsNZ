@@ -115,6 +115,10 @@ import { noReductionAgainstUnpaidAsk } from "@/lib/additional-ask-reduction";
 import { reissueUnpaidAdditionalAsk } from "@/lib/additional-payment-ask";
 import { requireCalendarDate } from "@/lib/club-time";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
+import { memberMoneyTestContext } from "./support/member-money-fixtures";
+
+/** #4627: a posting context; the ledger sync that would use it is mocked here. */
+const JOURNAL = memberMoneyTestContext();
 import { ORGANISER_REFUND_DEBT_STATES, primeOrganiserRefundDebt } from "./support/organiser-refund-debt-reread";
 import { expectQueuedOnce, ownCardRefundPlan, OWN_CARD_REFUND_STATES, primeOwnCardRefund } from "./support/own-card-refund-outcome";
 
@@ -195,7 +199,7 @@ async function accept(loaded: ReturnType<typeof booking>) {
     acceptedGuestId: "g-cara",
     actorMemberId: "cara",
     todayAtClub: TODAY,
-    format: CLUB_FORMAT_TEST,
+    format: CLUB_FORMAT_TEST, journal: JOURNAL,
   });
 }
 
@@ -261,7 +265,7 @@ describe("the full reduction goes back the way it was paid (D-3813-5)", () => {
       acceptedGuestId: "g-cara",
       actorMemberId: "cara",
       todayAtClub: TODAY,
-      format: CLUB_FORMAT_TEST,
+      format: CLUB_FORMAT_TEST, journal: JOURNAL,
     });
     expect(result).toMatchObject({
       repriced: true,
@@ -457,14 +461,16 @@ describe("after commit: the card refund, the Xero correction, the email and the 
 // #3954 round 9: the re-issued ask is named as due only while it is live - the
 // same liveness that withholds its client secret.
 describe("the email names a re-issued ask only while it is live", () => {
-  async function emailedAdditionalCents(additionalAskRetired: boolean): Promise<number> {
+  // #4052: the email's terms as the shared decision returns them; the minter
+  // is mocked here, so this suite reads only what reaches the email.
+  async function emailedTerms(additionalAskRetired: boolean, minted = true) {
     const reprice = await accept(booking());
     if (!reprice.repriced) throw new Error("expected a re-price");
     h.executeBookingModificationRefund.mockResolvedValue({ stripeRefundId: undefined, refundDestination: "own" });
     h.sendBookingModifiedEmail.mockResolvedValue(undefined);
     vi.mocked(createModificationAdditionalPaymentIntent).mockResolvedValueOnce({
-      additionalPaymentClientSecret: additionalAskRetired ? undefined : "secret",
-      additionalPaymentIntentId: "pi_reissued",
+      additionalPaymentClientSecret: additionalAskRetired || !minted ? undefined : "secret",
+      additionalPaymentIntentId: minted ? "pi_reissued" : undefined,
       additionalAskRetired,
     });
     await settleGuestAcceptanceRepriceAfterCommit({
@@ -473,8 +479,10 @@ describe("the email names a re-issued ask only while it is live", () => {
       reprice: { ...reprice, additionalAsk: reissueUnpaidAdditionalAsk({ askLeftCents: 3000 }) },
       format: CLUB_FORMAT_TEST,
     });
-    return h.sendBookingModifiedEmail.mock.calls.at(-1)?.[0].additionalAmountCents;
+    return h.sendBookingModifiedEmail.mock.calls.at(-1)?.[0];
   }
+  const emailedAdditionalCents = async (retired: boolean): Promise<number> => (await emailedTerms(retired)).additionalAmountCents;
+  const emailedMethod = async (retired: boolean, minted = true): Promise<unknown> => (await emailedTerms(retired, minted)).additionalPaymentMethod;
 
   it("a live re-issue is named", async () => {
     expect(await emailedAdditionalCents(false)).toBe(3000);
@@ -482,6 +490,18 @@ describe("the email names a re-issued ask only while it is live", () => {
 
   it("MUTATION (round 9): a re-issue a later reduction retired is not", async () => {
     expect(await emailedAdditionalCents(true)).toBe(0);
+  });
+
+  it("#4052: a live re-issue is named as a card payment", async () => {
+    expect(await emailedMethod(false)).toBe("STRIPE");
+  });
+
+  it("MUTATION (#4052): a re-issue whose mint failed, its retry queued, is still named as a card payment", async () => {
+    expect(await emailedMethod(false, false)).toBe("STRIPE");
+  });
+
+  it("#4052: a retired re-issue names no method", async () => {
+    expect(await emailedMethod(true)).toBeUndefined();
   });
 });
 
@@ -521,7 +541,7 @@ describe("an internet-banking reduction asks the treasurer to send it back (D-38
       acceptedGuestId: "g-cara",
       actorMemberId: "cara",
       todayAtClub: TODAY,
-      format: CLUB_FORMAT_TEST,
+      format: CLUB_FORMAT_TEST, journal: JOURNAL,
     });
     expect(client.manualRefundTask.createMany).toHaveBeenCalledTimes(1);
     expect(client.manualRefundTask.createMany).toHaveBeenCalledWith({
@@ -555,7 +575,7 @@ describe("an internet-banking reduction asks the treasurer to send it back (D-38
       acceptedGuestId: "g-cara",
       actorMemberId: "cara",
       todayAtClub: TODAY,
-      format: CLUB_FORMAT_TEST,
+      format: CLUB_FORMAT_TEST, journal: JOURNAL,
     });
     expect(client.manualRefundTask.createMany).not.toHaveBeenCalled();
     if (!reprice.repriced) throw new Error("expected a re-price");
@@ -578,7 +598,7 @@ describe("a split payment gets the WHOLE reduction back: cash first, then credit
       acceptedGuestId: "g-cara",
       actorMemberId: "cara",
       todayAtClub: TODAY,
-      format: CLUB_FORMAT_TEST,
+      format: CLUB_FORMAT_TEST, journal: JOURNAL,
     });
     return { result, client };
   }
@@ -658,7 +678,7 @@ describe("a split payment gets the WHOLE reduction back: cash first, then credit
       acceptedGuestId: "g-cara",
       actorMemberId: "cara",
       todayAtClub: TODAY,
-      format: CLUB_FORMAT_TEST,
+      format: CLUB_FORMAT_TEST, journal: JOURNAL,
     });
     expect(result).toMatchObject({ repriced: true, refundAmountCents: 2000, accountCreditAmountCents: 4000 });
     expect(h.clampAppliedCreditToBookingPrice).toHaveBeenCalledWith(
@@ -706,7 +726,7 @@ describe("cash an earlier edit already promised back is not refunded again (#382
       acceptedGuestId: "g-cara",
       actorMemberId: "cara",
       todayAtClub: TODAY,
-      format: CLUB_FORMAT_TEST,
+      format: CLUB_FORMAT_TEST, journal: JOURNAL,
     });
     expect(client.manualRefundTask.aggregate).toHaveBeenCalledWith({
       where: expect.objectContaining({
@@ -785,7 +805,7 @@ describe("an organiser-paid child's reduction goes back to the organiser's card,
       acceptedGuestId: "g-cara",
       actorMemberId: "cara",
       todayAtClub: TODAY,
-      format: CLUB_FORMAT_TEST,
+      format: CLUB_FORMAT_TEST, journal: JOURNAL,
     });
   }
 

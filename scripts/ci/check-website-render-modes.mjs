@@ -1,6 +1,5 @@
 import fs from "node:fs";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
 
 // Node runs this file directly (ci.yml: `node scripts/ci/check-website-render-modes.mjs`)
 // with no transpiler, so the import below is resolved by Node, not by a bundler:
@@ -14,6 +13,7 @@ import { pathToFileURL } from "node:url";
 // extensionless one does not resolve to `.mjs` or `.mts` under this
 // `moduleResolution`. Measured both ways before settling on this one (#3132).
 import { stripComments } from "../../src/lib/__tests__/support/strip-comments.ts";
+import { isMainModule } from "../lib/is-main-module.mjs";
 
 /**
  * Guards the public website's STRUCTURE: its two route groups, their render modes,
@@ -678,8 +678,7 @@ export function checkWorkingTree(repoRoot) {
   };
 }
 
-const invokedPath = process.argv[1] ? pathToFileURL(process.argv[1]).href : null;
-if (invokedPath === import.meta.url) {
+if (isMainModule(import.meta.url)) {
   try {
     const { fileCount, problems } = checkWorkingTree(process.cwd());
 

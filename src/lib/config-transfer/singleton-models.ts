@@ -69,6 +69,10 @@ export const SINGLETON_MODELS_REGISTERED_ELSEWHERE: Record<string, string> = {
  * a real, currently singleton-shaped model (both asserted by the guard test).
  */
 export const MODEL_LEVEL_EXCLUSIONS: Record<string, string> = {
+  XeroInboundSettings:
+    "webhook receipt and quiet-period monitoring policy belong to this install's " +
+    "Xero subscription (#4432); importing either could hide a target install's " +
+    "silent webhook — instance-local",
   XeroConnection:
     "this install's live Xero connection (#3806): the connected tenant, the " +
     "token expiry and the refresh lease. It belongs to the grant an " +
@@ -173,6 +177,27 @@ export const MODEL_LEVEL_EXCLUSIONS: Record<string, string> = {
     "bookkeeping beside it (cleanupStartedAt, lastCleanupAt, lastCleanupDeleted) " +
     "is this install's own run history and is meaningless on another -- " +
     "instance-local",
+  ClubTaxSettings:
+    "the club's GST registration, rate and effective-from date (#4626, Ledger " +
+    "M3a; decision D3): the tax treatment the member-money journal splits every " +
+    "charge under. Like ClubFormatSettings it re-states how a club's money is " +
+    "recorded, and it is a legal fact about THIS club, not policy another club " +
+    "can share: importing it would post a target's future charges under a " +
+    "registration or rate the target never declared. A fresh import keeps the " +
+    "target's own setting, and a target with none keeps the defaults (INV-CONFIG-001) " +
+    "-- instance-local",
+  PrivacyRetentionSettings:
+    "the personal-data retention schedule (#4457): the windows after which the " +
+    "nightly jobs PERMANENTLY DELETE email logs and rejected applications and " +
+    "anonymise former members, the switches that turn those jobs on, and the " +
+    "Sentry Session Replay opt-in. ClubPostSettings' case: the jobs ship off and " +
+    "a club turns them on only after checking THIS install's dry-run list (owner " +
+    "decision, 28 Oct 2026), so importing an enabled switch would start deleting " +
+    "a target club's records on a schedule it never checked, and importing the " +
+    "Replay opt-in would start an overseas disclosure the target's privacy notice " +
+    "never named. The run leases beside them are this install's own job state. A " +
+    "fresh import keeps the target's own schedule, and a target with none keeps " +
+    "the defaults with every job off (fail-closed) -- instance-local",
   ServerNzSettings:
     "this install's own Alpine Central Server connection: a base URL bound to the " +
     "server THIS club was issued a key for (the key itself lives in the encrypted " +

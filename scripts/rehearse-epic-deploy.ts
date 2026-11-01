@@ -92,12 +92,12 @@ import { randomBytes } from "node:crypto";
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
 
 import { Client } from "pg";
 
 import { splitSqlStatements } from "../prisma/migration-verification/split-statements";
 import { resolveBaseRef } from "./lib/file-size-base";
+import { isMainModule } from "./lib/is-main-module.mjs";
 
 /** The ref a rehearsal compares against when none is named. */
 export const DEFAULT_BASE_REF = "origin/main";
@@ -866,10 +866,7 @@ function gitShowMigration(root: string, baseSha: string, migration: string): str
   return git(root, ["show", `${baseSha}:prisma/migrations/${migration}/migration.sql`]);
 }
 
-if (
-  process.argv[1] &&
-  import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href
-) {
+if (isMainModule(import.meta.url)) {
   run(process.cwd(), process.argv.slice(2))
     .then((code) => {
       process.exitCode = code;

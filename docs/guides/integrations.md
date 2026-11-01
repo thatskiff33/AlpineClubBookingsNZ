@@ -138,6 +138,18 @@ Changing the server address clears the previous server's API key and answers
 in the same save. A sync running at that moment either uses the previous
 connection together or waits for the change; it cannot send the old key to
 the new address. Enter a key issued by the new server before syncing again.
+The same save clears every sync position and the previous server's push
+secret (replacing the API key clears the push secret too), so the next sync
+registers this site with the new server for pushes. Pushes and free-beds
+questions signed with the old secret stop being accepted within 45 seconds
+(the time another running copy of the site may still hold it in memory). A
+download, upload, message-board sync or push registration still running
+against the old connection writes nothing more from it; lodges and posts it
+had already brought over stay. **Save key** stays off while the address box
+holds an address you have not saved: save the address first. A key saved
+from a page that still shows the old address is refused with "The central
+server address was changed after this page was loaded": reload the page,
+check the address, and enter the key again.
 
 **Read this before you turn it on.** This is the one integration that sends data
 *out* of your club. When you enable a shared item, everything recorded on **your

@@ -190,9 +190,9 @@ export async function processQueuedXeroOperationRetries(
       status: "PENDING",
       operationType: XERO_REQUEUE_OPERATION_TYPE,
     },
-    orderBy: {
-      createdAt: "asc",
-    },
+    // `createdAt` ties (same millisecond; every row under the frozen test clock)
+    // fall to `id`: deterministic, not insertion order (#4663).
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     take: limit,
   });
 

@@ -22,7 +22,12 @@ const mocks = vi.hoisted(() => {
     // checked against in one transaction. Its payload read is the
     // transaction's own, so the global read of the email instruction below
     // stays countable.
-    xeroSyncOperation: { update: vi.fn(), findUnique: vi.fn().mockResolvedValue({ requestPayload: {} }) },
+    xeroSyncOperation: {
+      update: vi.fn(),
+      findUnique: vi.fn().mockResolvedValue({ requestPayload: {} }),
+      // #4426: a refund note's record claims its row; no row here is resolved by hand.
+      updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+    },
     // #3980: and with the booking's worth, read after the link's own update.
     // Review M1: the create's own read runs in a transaction too, so the
     // booking read is shared with the global client's.

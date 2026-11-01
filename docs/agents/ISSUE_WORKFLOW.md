@@ -12,14 +12,10 @@ reaches them, and whoever picks it up months later when everybody who discussed
 it has forgotten. So the body opens with what a person needs, and the execution
 contract sits underneath it.
 
-This is a correction rather than a new idea. An August 2026 portfolio cleanup
-rewrote a batch of issue bodies for the coding agent that would implement them
-and dropped the human half — what somebody actually experiences today, who
-notices, why the work is worth doing, and which alternatives were weighed and
-rejected. The bodies came out precise and unreadable: correct instructions to an
-implementor, and no way for a person to judge whether the thing should be built
-at all. The technical brief was not the problem and must not be thinned. The fix
-is to put the explanation above it.
+This corrects an August 2026 cleanup that rewrote issue bodies for the
+implementing agent and dropped the human half: they came out precise and
+unreadable, with no way for a person to judge whether to build the thing. Do not
+thin the technical brief; put the explanation above it.
 
 **Write a new or materially rewritten issue in this order.** A section that does
 not apply is left out, not padded.
@@ -81,12 +77,10 @@ person and still briefs an agent.
 
 **A finding that touches a payment instrument, invoice, refund or credit says
 what happens to the money, not only to the row** — the finding form's required
-"What happens to the money?" field. The worked example is #486 → #543 → #3340:
-the audit saw the exact two-edits trigger but framed it as a `PaymentTransaction`
-stuck in `PENDING`; #543 did precisely what it asked and retired the instrument;
-nobody asked what became of the debt it represented, and members were
-under-charged $135 four months later. A money seam's test is held to the same
-standard by `INV-OPS-015`.
+"What happens to the money?" field. In #486 → #543 → #3340 a `PaymentTransaction`
+stuck in `PENDING` was retired as asked, nobody asked what became of its debt,
+and members were under-charged $135. `INV-OPS-015` holds a money seam's test to
+the same standard.
 
 ## Epics
 
@@ -101,15 +95,29 @@ One issue equals one branch and one PR unless the issue explicitly says
 otherwise. Use a branch name that includes the issue number or clear workstream,
 for example `codex/issue-812-payment-recovery-idempotency`.
 
-Do not bundle unrelated fixes or opportunistic refactors into the same PR. The
-line is `AGENTS.md` → "Change discipline": a defect the PR introduces, or one
-that blocks its agreed behaviour, is fixed in the PR; a pre-existing defect
-found nearby is filed as a new issue.
+Do not bundle unrelated fixes or refactors (`AGENTS.md` → "Change
+discipline"): a defect the PR introduces or that blocks it is fixed in the PR;
+a pre-existing defect found nearby is filed as a new issue.
 
 Open the PR from `.github/pull_request_template.md`, copying headings and labels
 verbatim with values on the label's line. The diff decides when the changelog
 and `## Concurrency And Lock Impact` sections are required, but fill the whole
 template regardless. `Closes #NNN` works only in the PR description.
+
+### Plan deviation
+
+The owner approves an issue's plan, not the diff (27 Oct 2026): a PR built to
+plan merges on the `AGENTS.md` gate; a **material deviation** goes to the owner
+first. It is material when the PR adds a table or column not in the plan; adds
+a money path or provider call; adds or changes an invariant; goes beyond the
+issue's allowed scope; or takes a Decision option the owner did not pick. The
+PR's `## Plan Deviation` section answers `None`, or lists each, linking the
+owner's answer: its comment URL, or the `#<number>` of the issue whose body
+records it. `verify` checks it (#4463).
+
+Over 800 changed lines (`linguist-generated` files in `.gitattributes` not
+counted), add a one-line `large-pr:` reason; `verify` warns otherwise. Split
+money work test-first: tests pinning the scenario land, then the implementation.
 
 ## Risk And Attendance
 
@@ -124,9 +132,7 @@ issue has complete scope and validation commands and does not touch money
 movement, booking capacity, membership lifecycle, live providers, schema,
 production config, or deployment behavior. Such eligible runs may also push,
 monitor CI to green, and merge their own PR with a merge commit per the
-`AGENTS.md` "Completion and Merge" merge gate (#3959). A High or critical PR
-merges on the same gate, with the lenses chosen for its risk; an open owner
-decision on it still waits for the owner.
+`AGENTS.md` "Completion and Merge" merge gate (#3959).
 
 ## Conflict Handling
 
@@ -160,8 +166,7 @@ following:
   - **A public GitHub handle is not a private real name.** Tagging somebody's
     handle to answer their review is correct and expected; it is the real name
     that must not appear. Reading this rule too broadly once left an external
-    reviewer's direct question unanswered for a day, while their feedback held a
-    live defect and a better answer than the options being drafted.
+    reviewer's question, and the live defect it held, unanswered for a day.
   - **The rule binds new writing only.** Occurrences already published on `main`
     — fork issue links, and the credit in `src/lib/integration-crypto.ts` to
     somebody who corrected the key-derivation design — stay as historical
@@ -193,13 +198,9 @@ comment** in order with author and timestamp, a DECISION SUMMARY, and a one-line
 state for each issue the body references. It has **no flag that prints less** —
 that is the feature, not an oversight.
 
-Use it instead of `gh issue view <n>`, which prints the body and stops.
-Comments need `--comments` or `--json comments`, so the short, obvious, default
-command returns the **stale half** — and in this repository the decision is very
-often in a comment written after the body. An agent then reads a list of
-unticked `- [ ] **Recommended** …` options, concludes the question is open, and
-either re-asks the owner something they answered last night or builds the option
-they turned down. #2777 is the canonical case and it is not the first.
+A hook blocks `gh issue view`, which prints the body without the comments
+where decisions often sit (#2777); a `--json` metadata read without `body` or
+`comments` is allowed (#4572).
 
 The summary calls out one state loudly: **the body still offers unticked options
 and a comment records a decision.** When you see that warning, the body is the

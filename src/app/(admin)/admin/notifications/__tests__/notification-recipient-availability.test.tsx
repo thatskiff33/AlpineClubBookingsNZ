@@ -80,6 +80,22 @@ describe("Recipients grid availability (#2548)", () => {
     expect(refunds).toBeDisabled();
   });
 
+  it("says Locked, with its reason, on a locked alert instead of fading it (#4594)", () => {
+    render(<AdminNotificationSettings initialAdmins={[officerCard()]} />);
+
+    const refunds = screen.getByLabelText("Refund requests");
+    expect(refunds).toHaveAccessibleDescription(/^Locked: this alert belongs to an area/);
+    const row = refunds.closest("div.rounded-lg")!;
+    expect(within(row as HTMLElement).getByText("Locked:")).toBeVisible();
+    expect(row.className).toContain("border-dashed");
+    expect(row.className).not.toMatch(/(?<![:\w-])opacity-/);
+
+    // An alert in the officer's own area is neither locked nor described as one.
+    const bookingChange = screen.getByLabelText("Booking change requests");
+    expect(bookingChange).not.toHaveAttribute("aria-describedby");
+    expect(bookingChange.closest("div.rounded-lg")!.className).not.toContain("border-dashed");
+  });
+
   it("keeps a locked category locked and unticked while editing", () => {
     render(<AdminNotificationSettings initialAdmins={[officerCard()]} />);
     fireEvent.click(screen.getByRole("button", { name: /^Edit$/i }));

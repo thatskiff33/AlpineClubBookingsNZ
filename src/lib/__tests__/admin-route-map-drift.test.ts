@@ -109,6 +109,11 @@ const OVERVIEW_ALLOWLIST: Record<string, string> = {
   // hide the "who can fix this" message from exactly the admins who need to read it.
   "/admin/ai-diagnostics":
     "AI Diagnostics workspace shell; admitted on ADMISSION rather than on this area (ADR-002 §1) and per-tool area checks gate every read, so landing on overview here is correct and harmless.",
+  // The route-error probe (#4467): a TEST-ONLY page that 404s in a real production
+  // runtime and otherwise renders a fixed heading or throws a fixed error. It reads
+  // no data, so no area is more correct than the admin shell's own.
+  "/admin/testing/route-error":
+    "Test-only route-error probe (src/lib/route-error-probe.ts); 404 in production, reads no data, so overview is correct and harmless.",
 };
 
 // State-changing GET endpoints (EDIT_ON_GET_PREFIXES in admin-permissions.ts).

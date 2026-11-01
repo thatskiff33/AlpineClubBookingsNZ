@@ -621,6 +621,11 @@ caught by a count contract in `field-hint.test.tsx`: `useFieldHint(`,
 `.fieldProps` and `.hintProps` must occur the same number of times across
 `src/`.
 
+On the shared form layer (#4467) a field's example is `FormDescription`,
+which renders `FieldHint` and wires it the same way: `FormControl` lists the
+field's error first, then any id passed to it, then the hint, and names the
+hint only while it is rendered.
+
 **A person-entered money amount uses `MoneyInput`.**
 `src/components/ui/money-input.tsx` is the controlled text field for dollars
 and cents: it preserves invalid text for the caller's visible validation, refuses
@@ -1174,15 +1179,15 @@ Booking Policies sections (#2142) and is now the **default across the admin
 tree** (#2160, extended by #2168 and #2324) — not a claim that nothing is left.
 Measured
 on the current tree by `view-only-banner-contract.test.ts`, which asserts these
-figures rather than trusting a hand count: **102 components render a banner, and
- 331 of the 386 `ViewOnlyActionButton` call sites opt out** of the per-button
+figures rather than trusting a hand count: **PLACEHOLDER-RECOMPUTE components render a banner, and
+ PLACEHOLDER-RECOMPUTE of PLACEHOLDER-RECOMPUTE `ViewOnlyActionButton` call sites opt out** of the per-button
 reason. (Earlier revisions of this page published 76/232/264/211 — those were
 upstream-historical and had drifted; the numbers here are the ones the contract
-test currently pins, which is the only authority.) Those 331 split by WHICH rule
-covers them: **294** pass the literal
-`describeReason={false}` and are covered by a banner in the same file, and **37**
+test currently pins, which is the only authority.) Those PLACEHOLDER-RECOMPUTE split by WHICH rule
+covers them: **PLACEHOLDER-RECOMPUTE** pass the literal
+`describeReason={false}` and are covered by a banner in the same file, and **PLACEHOLDER-RECOMPUTE**
 pass `describeReason={!ancestorRendersViewOnlyBanner}` and are covered by a
-verified vouching parent — 32 by a parent's own JSX render site (#2168), 5 by the
+verified vouching parent — 33 by a parent's own JSX render site (#2168), 5 by the
 guided-setup shell (#2324); see *Vouching for a child's coverage* and *Vouching
 through the wizard shell* below. The
 remaining **55 controls across 30 files deliberately keep the per-button
@@ -1637,6 +1642,7 @@ and the boxes can already be out of date. What keeps stale display from becoming
 a stale WRITE is the changed-fields-only patch above, not the gate. What the
 gate adds is that the dirty comparison is against the card's own snapshot, which
 is what is on screen, so a stale box never arms Save by itself.
+
 The rule binds sections that are NEW or MODIFIED. Known departures that this
 rule does not itself retrofit are the `/admin/modules` grid (deliberate bulk
 toggles), the older staged-but-ungated settings forms, the age-tier and
@@ -1834,6 +1840,23 @@ also be RECOVERABLE without leaving the page: it carries a **Try again** action
 that re-runs the current key's load in place. All three keyed booking-policy
 sections (default cancellation, booking periods, minimum night stay) carry this.
 
+**The shared form layer (#4467) validates fields; it is not an edit model.**
+Its pattern is in [`UX_FLOW_MAP.md`](UX_FLOW_MAP.md#forms-4467): a zod schema
+in `src/lib/forms/` shared with the write route, `useZodForm`, inline errors
+and a `FormErrorSummary` that takes focus. A settings section that adopts it
+keeps every rule above: `useSectionEditState` still owns Edit, Cancel to the
+snapshot and the dirty- and view-gated Save, and the section's permanently
+mounted banner and feedback regions still carry its request-level outcomes.
+The summary is the one region the layer adds, and it follows
+`FocusedActionError` rather than the permanently-mounted rule: a
+`role="alert"` mounted when a submit fails, already filled, and announced by
+taking focus as the submit completes, so it does not depend on a live region
+being registered first. Between submits its text never changes; entries only
+disappear as their fields are fixed, so nothing is announced while the person
+types. The first form on the layer is the committee page's role form, a
+submit-style form rather than a staged section; no staged section uses the
+layer yet.
+
 The `/admin/xero` and `/admin/members` routes are route shells with local
 `_components` and `_hooks` folders; the member `/book` wizard follows the same
 shape, keeping its wizard-step views in `src/app/(authenticated)/book/_components`
@@ -1906,16 +1929,24 @@ obligations and applications. A debtor is a member or an organisation, never bot
 `MemberMoneyObligation` retains face terms, `MemberMoneyApplication` attributes
 identified money to an obligation, and `MemberMoneySourceLink` bridges source
 facts, including retained `BookingLedgerLine` ids. `MemberMoneySourcePosting`
-retains each bridge's exact leg coverage, including links attached later. New financial parent links
-use RESTRICT. Existing booking-ledger cascades await M2.
+retains each bridge's exact leg coverage, including links attached later. Financial parent links
+use RESTRICT, and since M2 (#4514) the booking ledger's keys, credit rows' booking links and a
+group settlement's group key do too (`INV-MONEY-043`): a booking with money is never hard-deleted.
 
 Database CHECKs, deferred triggers and INSERT/SELECT-only application grants
 carry `INV-MONEY-041`, `INV-MONEY-042` and `INV-OPS-016`. No legacy source is made
-mandatory yet. `src/lib/member-money/index.ts` exposes the account registry and
-operator verifier only; implementation lives in `internal/`. No posting API or
-production consumer is enabled. Later writer commands must implement the
-existing advisory tiers (`INV-LOCK-001`–`003`); M1 adds no advisory key, lifecycle
-participant, outbox or provider call. The verifier reads a repeatable-read,
+mandatory yet. `src/lib/member-money/index.ts` exposes the account registry, the
+operator verifier, since M2 (#4514) two read-only references the deletion guards
+consult (`INV-MONEY-043`), since M3a (#4626) the posting command
+`postMemberMoneyEvent` with its context, keys and tax split, and since M3b
+(#4627) `journalComponentOfLegacyLine`, `bookingChargeIdentity`,
+`readBookingJournalCharges` and `bookingJournalInactiveReason`; implementation
+lives in `internal/`. The booking-ledger chokepoints (confirmation, modification
+and review close, cancellation, the group settle and the back-post) and member
+merge post only through the server-only `src/lib/member-money/doors.ts`
+(`INV-MONEY-044`); `member-money-journal-inert-census.test.ts` admits exactly
+those callers. Writers implement the existing advisory tiers
+(`INV-LOCK-001`–`003`); the journal adds no advisory key, outbox or provider call. The verifier reads a repeatable-read,
 read-only snapshot. See [deployment grants](../DEPLOYMENT.md#member-money-journal-grants-m1)
 and [lodge scoping](multi-lodge/lodge-scoping-contract.md#member-money-journal-4513).
 
@@ -3359,8 +3390,8 @@ flowchart TD
 | `xero-reconciliation-report` | Daily | Send the Xero reconciliation report |
 | `xero-credit-sync-check` | Daily | Reconcile BookingApp's stamped applied credit against Xero's live invoice allocations and warn admins on drift with the exact amount (#2501); read-only, self-throttled |
 | `finance-daily-sync` | Daily when the finance dashboard module is enabled | Refresh finance report/invoice/balance snapshots from the operational Xero connection |
-| `data-pruning` | Daily | Prune expired tokens/logs and run audit retention |
-| `draft-cleanup` | Daily | Delete expired draft bookings |
+| `data-pruning` | Daily | Prune expired tokens/logs and idle login-throttle rows, and run audit retention |
+| `draft-cleanup` | Daily | Delete expired draft bookings; leave out and report any that financial history names (`INV-MONEY-043`) |
 | `member-guest-consent-expiry` | Daily at 04:30 NZT when the member-guests module is enabled | Expire lapsed member-guest consent requests, release the bed, and settle the reduction as account credit to the booking owner; rows the shared removal path refuses are counted separately for the admin exception list |
 | `pending-deadline-alerts` | Daily | Alert admins about pending bookings approaching deadline |
 | `credit-reconciliation` | Daily | Reconcile account-credit ledger state and alert on refunded Stripe payments missing Xero credit notes |

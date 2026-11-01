@@ -42,6 +42,7 @@
 import { NextRequest } from "next/server";
 import type Stripe from "stripe";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { releaseBookingJournalForTeardown } from "./support/booking-financial-history-teardown";
 
 import { frozenTestNow } from "@/lib/__tests__/helpers/clock";
 import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
@@ -134,6 +135,8 @@ function answerRefundsAsStripeWould() {
     async function clearRun() {
       await prisma.processedWebhookEvent.deleteMany({ where: { eventId: { startsWith: "evt_race_4312_" } } });
       await prisma.webhookLog.deleteMany({ where: { eventId: { startsWith: "evt_race_4312_" } } });
+      // #4627: the doors post journal batches bridged to these lines; release them first.
+      await releaseBookingJournalForTeardown(prisma, [BOOKING_ID]);
       await prisma.bookingLedgerLine.deleteMany({ where: { bookingId: BOOKING_ID } });
       await prisma.bookingEvent.deleteMany({ where: { bookingId: BOOKING_ID } });
       await prisma.xeroObjectLink.deleteMany({ where: { localId: { in: [PAYMENT_ID] } } });

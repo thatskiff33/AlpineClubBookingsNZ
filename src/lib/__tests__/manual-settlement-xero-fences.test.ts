@@ -201,6 +201,63 @@ describe("level 3 — the createXeroInvoiceForBooking handler re-check", () => {
     expect(mocks.warn).toHaveBeenCalled();
   });
 
+  it("#4299 B1: a row that bypassed the enqueue for an organiser-paid bank place closes with the same refusal, raising no invoice to the joiner", async () => {
+    vi.resetModules();
+    vi.clearAllMocks();
+
+    vi.doMock("@/lib/xero-sync", async (importOriginal) => ({
+      ...((await importOriginal()) as typeof import("@/lib/xero-sync")),
+      startXeroSyncOperation: mocks.startXeroSyncOperation,
+      completeXeroSyncOperation: mocks.completeXeroSyncOperation,
+      upsertXeroObjectLink: mocks.upsertXeroObjectLink,
+    }));
+    vi.doMock("@/lib/xero-client", () => ({
+      getAuthenticatedXeroClient: mocks.getAuthenticatedXeroClient,
+    }));
+    vi.doMock("@/lib/xero-api-client", () => ({
+      getAuthenticatedXeroClient: mocks.getAuthenticatedXeroClient,
+      callXeroApi: mocks.callXeroApi,
+    }));
+
+    mocks.bookingFindUnique.mockResolvedValue({
+      id: "booking-1",
+      memberId: "member-1",
+      status: BookingStatus.PAID,
+      organiserSettled: true,
+      parentBookingId: "organiser-booking",
+      checkIn: new Date("2026-08-01"),
+      checkOut: new Date("2026-08-03"),
+      guests: [],
+      member: { email: "ada@example.org" },
+      promoRedemption: null,
+      payment: {
+        id: "payment-1",
+        xeroInvoiceId: null,
+        xeroInvoiceNumber: null,
+        source: PaymentSource.INTERNET_BANKING,
+        manuallyMarkedPaidAt: null,
+      },
+    });
+
+    const { createXeroInvoiceForBooking } = await import("@/lib/xero-booking-invoices");
+    const { ORGANISER_COMBINED_INVOICE_PLACE_REFUSAL } = await import("@/lib/organiser-billing");
+
+    // Straight to the handler: no enqueue ran, so only this fence stands.
+    const result = await createXeroInvoiceForBooking("booking-1", { syncOperation: xeroClaim("op-for-an-organiser-place") });
+
+    expect(result).toBeNull();
+    expect(mocks.getAuthenticatedXeroClient).not.toHaveBeenCalled();
+    expect(mocks.startXeroSyncOperation).not.toHaveBeenCalled();
+    expect(mocks.completeXeroSyncOperation).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "op-for-an-organiser-place" }),
+      expect.objectContaining({
+        status: "CANCELLED",
+        responsePayload: expect.objectContaining({ skipped: true, refusal: ORGANISER_COMBINED_INVOICE_PLACE_REFUSAL }),
+      }),
+    );
+    expect(mocks.warn).toHaveBeenCalled();
+  }, 30_000);
+
   it("H3 — re-asserts provenance AFTER the operation exists: a settle that committed during the contact/mapping reads still abandons the mint", async () => {
     vi.resetModules();
     vi.clearAllMocks();

@@ -19,8 +19,8 @@ with their role name under their email address.
 **Alerts follow the areas a role can edit.** Each alert belongs to one admin
 area, and an admin is only offered — and only ever sent — the alerts for the
 areas their access role can **edit**. A Booking Officer therefore starts with
-the booking alerts switched on and sees the finance and membership ones greyed
-out as *Not available*; a Treasurer gets the money alerts; a Full Admin can edit
+the booking alerts switched on and sees the finance and membership ones with
+their box greyed out and marked *Locked*; a Treasurer gets the money alerts; a Full Admin can edit
 every area, so they get everything, exactly as before.
 
 **There is no per-person override.** An alert outside an admin's areas cannot be
@@ -78,7 +78,7 @@ offered to them at all:
 | Payment failures | Finance | A booking payment fails; an expired internet banking hold needs attention because money may be paid against its invoice or Xero cannot read it (#3643); an expired hold is left for reconciliation by hand because its stay has started (#3663); a paid group's unpaid joiners were switched to paying for themselves mid-stay and the treasurer must collect by hand (#3672); or a card payment that went through after its booking was cancelled is held for a treasurer's approval (*Late payment held for approval*, once per payment; if nobody could receive it, the payments cron tries it again a day later while the item is still waiting, #3635) |
 | Pending deadlines | Bookings | Bookings approach their pending deadline (digest) |
 | Bookings bumped | Bookings | A pending booking is bumped by another booking |
-| Xero sync errors | Finance | Xero contact or invoice sync fails, or a refund the app does not yet note in Xero needs crediting by hand (#3949, until #4292) |
+| Xero sync errors | Finance | Xero contact or invoice sync fails, or a refund the app does not yet note in Xero needs crediting by hand (#3949, until #4292), or a Xero call succeeds after its operation was resolved by hand, including a refund credit note the app did not record (#4374, #4426) |
 | Capacity warnings | Bookings | Occupancy is nearing full capacity |
 | Daily digest | Admin Overview | A daily summary of the previous 24 hours of admin alerts |
 | Waitlist offers | Bookings | A waitlist spot is offered to a member |
@@ -94,10 +94,11 @@ offered to them at all:
 
 ### Always-on alerts
 
-Nine alerts are sent outside this grid. They have no checkbox anywhere and cannot
+Eleven alerts are sent outside this grid. They have no checkbox anywhere and cannot
 be muted — not here, and not in [Delivery Rules](notification-rules.md), because
 their templates (`admin-email-failure`, `admin-late-capture-auto-refund`,
 `admin-late-capture-hand-back-conflict`, `admin-late-capture-refunded-outside-app`,
+`admin-unrecognised-stripe-payment`, `admin-unmatched-app-stripe-payment`,
 `admin-second-instrument-settlement-conflict`,
 `admin-bank-transfer-settlement-figure`, `admin-duplicate-capture-kept`,
 `admin-superseded-capture-refused`) are locked to always-send:
@@ -109,6 +110,8 @@ their templates (`admin-email-failure`, `admin-late-capture-auto-refund`,
 | *Payment refunded automatically — booking already deleted / already cancelled* | Every admin whose role can **edit** Finance | A member's payment landed after the booking had already been cancelled, so the charge was returned to them automatically. This happens for a booking's own payment and for a payment for a change to it, and the mail says which. Nothing failed and nothing is owed — the mail exists so the money movement is not invisible, and it names whether the booking was also deleted, in which case remaking it means charging the member again |
 | *Automatic refund withheld — already paid back by hand* / *Payment may have been refunded TWICE — reconcile* | Every admin whose role can **edit** Finance | Somebody had already marked a hand-back task for that payment as paid back, which records the refund in the ledger. The automatic refund was withheld so the member is not paid twice — or, if the hand-back was recorded at the exact moment the refund was going out, it went as well and the two have to be reconciled. This is the one mail that may be telling you money left the club twice, which is why it cannot be switched off either |
 | *Late payment refunded outside the app - check Xero* | Every admin whose role can **edit** Finance | A card payment that arrived after its booking was cancelled was refunded somewhere other than the app - in the Stripe dashboard, for example (#4170). The app has no record of that refund and raised no Xero credit note, because Xero never received the payment. Sent once per payment, and again by the nightly check if a send failed; money left the club with no record the app wrote, which is why it cannot be switched off |
+| *Stripe payment the app did not create - code it in Xero* | Every admin whose role can **edit** Finance | A payment succeeded on the club's Stripe account that the app did not create - a Stripe Payment Link, a Checkout page or a dashboard charge (#4532). There is no booking for it and nothing was sent to Xero, so the Stripe clearing account will not reconcile until somebody codes it. Sent once per payment; a send that fails is retried when Stripe redelivers the payment's notification. No screen lists these payments, so the mail is the whole notice, which is why it cannot be switched off. See [Payments](payments.md#a-stripe-payment-the-app-did-not-create) |
+| *Booking card payment the app could not match - check it* | Every admin whose role can **edit** Finance | A card payment the app started for a booking went through in Stripe, but nothing the app holds on that booking matches it, so the booking was not marked paid and nothing was sent to Xero (#4624). A member was charged and the booking does not show it. Sent once per payment; a send that fails is retried when Stripe redelivers the payment's notification. No screen lists these payments, which is why it cannot be switched off. See [Payments](payments.md#a-booking-card-payment-the-app-could-not-match) |
 | *Booking may have been paid twice — card and Xero* | Every admin whose role can **edit** Finance | A card payment had already settled the booking (or settled it before it was cancelled), and Xero then reported its Internet Banking invoice paid as well. The bank payment is recorded and nothing was refunded or credited automatically, so the mail links the booking and the Xero invoice for a person to reconcile. The club may be holding the price twice, which is why it cannot be switched off |
 | *Bank transfer amount needs checking* | Every admin whose role can **edit** Finance | Xero reported a booking's bank-transfer invoice paid, and the app either kept the amount it had recorded instead of the cash the invoice collected (it could not tie that cash to this booking alone), or the cash is not what the booking owes (#3979). A wrong recorded amount sizes every later refund and credit, which is why it cannot be switched off |
 | *Booking may have been paid twice — check by hand* | Every admin whose role can **edit** Finance | A card payment arrived on a booking that was already paid while another payment on it still held money, and the app had no usable record of which payment settled the booking (paid before it kept one, or the recorded payment no longer holds money), so it kept the card payment and refunded nothing (#4211); or, on a booking paid with credit, at a zero total or by a group organiser, a card payment the app had never recorded arrived with no other payment holding money (#4285). At most once a day per payment while the payment repeats; a #4285 alert that could not be sent is retried until it is |
@@ -166,7 +169,7 @@ Which means, out of the box:
 | The checkboxes won't tick | You haven't clicked **Edit**, or your role is support view-only | Click **Edit**; if still locked, request Support & System edit access |
 | An admin isn't listed | They are inactive, cannot sign in, or hold no admin access role | Give them an admin access role, and reactivate or re-enable their login in [Members](members.md) |
 | A committee member gets nothing | Every alert is unticked for them, or their role cannot edit any area that owns an alert | Tick the alerts they should own and Save; if the boxes are greyed out, widen their role in [Access Roles](access-roles.md) |
-| An alert is greyed out as *Not available* | It belongs to an area their access role cannot edit. It cannot be ticked here for one person | Give the role edit access to that area in [Access Roles](access-roles.md), or assign the alert to someone who already has it |
+| An alert is marked *Locked* and its box is greyed out | It belongs to an area their access role cannot edit. It cannot be ticked here for one person | Give the role edit access to that area in [Access Roles](access-roles.md), or assign the alert to someone who already has it |
 | Nobody receives a particular alert | It is muted club-wide upstream | Check [Delivery Rules](notification-rules.md) for that template |
 | Save failed with a permission error | The write route rejected a support-view session | Ask a full admin to make the change |
 | One admin's card would not save but the rest did | That admin's save was refused on its own — usually a stale page whose role has since changed | Reload the page and redo just that card |

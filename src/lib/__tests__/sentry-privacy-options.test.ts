@@ -10,6 +10,13 @@ const INIT_FILES = [
   "src/instrumentation-client.ts",
 ];
 
+it("ships both automatic Replay rates at zero without a recording integration", () => {
+  const source = readFileSync(path.join(ROOT, "src/instrumentation-client.ts"), "utf8");
+  expect(source).toMatch(/replaysSessionSampleRate:\s*0,/);
+  expect(source).toMatch(/replaysOnErrorSampleRate:\s*0,/);
+  expect(source).not.toMatch(/Sentry\.replayIntegration\(/);
+});
+
 describe("Sentry 11 collects no more than v10 did (#3892, INV-INT-005, INV-PRIV-011)", () => {
   it("keeps the v10 data-collection baseline", () => {
     const { dataCollection, attachStacktrace } = SENTRY_PRIVACY_INIT_OPTIONS;

@@ -129,6 +129,20 @@ const TWO_TIER_LOCK_INVARIANTS = ["INV-LOCK-001", "INV-LOCK-002", "INV-LOCK-003"
  */
 const GLOBAL_LOCK_SITE_REGISTRY: readonly RegisteredGlobalLockSite[] = [
   {
+    site: "anonymiseFormerMember#1", tier: "GLOBAL", invariant: "INV-LOCK-002",
+    reason: "Retention tests open booking money before erasing identity, excluding capture/cancel/refund; global then member lifecycle and credit, then the Xero Member row fence. Preserves all money and booking references.",
+  },
+  {
+    site: "syncOrganiserExtraInvoiceCash#1", tier: "GLOBAL",
+    reason: "#4299: record supplementary organiser bank-transfer cash against the child's payment and materialise its original combined-invoice share once. Serialises with edits/cancels; takes Payment row after global and re-reads the money. No provider calls in the transaction.",
+    invariant: "INV-LOCK-002",
+  },
+  {
+    site: "reserveOrganiserExtraRacedCash#1", tier: "GLOBAL",
+    reason: "#4299: cash that arrived while extra waivers were queued reserves every plan's policy-tiered organiser hand-back and refund note atomically. Each plan's reservation is a delta over the rows re-read under this key, so two waivers of one invoice (or of one plan) never reserve the same raced cash; the scope and occurrence keys back it. Provider calls run outside.",
+    invariant: "INV-LOCK-001",
+  },
+  {
     // The one spelling of the carrying-ask queue's order, taken by the inline
     // mint, the re-issue's completion and the recovery runner's claim hold.
     site: "lockAdditionalAskQueue#1",
@@ -742,6 +756,12 @@ const GLOBAL_LOCK_SITE_REGISTRY: readonly RegisteredGlobalLockSite[] = [
   },
   {
     site: "settleGroupBookingOnOrganiserCancel#3",
+    tier: "GLOBAL",
+    reason: "#4299: freeze organiser bank-transfer child refunds and their extra-invoice waiver/refund debts atomically with the group plan. Inbound cash imports and edit writers take this key; all provider calls run after commit.",
+    invariant: "INV-LOCK-001",
+  },
+  {
+    site: "settleGroupBookingOnOrganiserCancel#4",
     tier: "GLOBAL",
     reason:
       "Each child's cancel and its refund credit-note enqueue commit inside one transaction on the settlement cohort's key, and reconcile that child's allocations through the lock-held seam. #4042: on an Internet Banking settlement the same claim books the joiner's share on the organiser's hand-back task (create, grow while OPEN, or a supplementary task once closed), which this key makes single.",
@@ -1365,6 +1385,11 @@ const SCOPED_ADVISORY_LOCK_INVENTORY: Record<string, number> = {
   // callers (the supersede's cancel step, the minters after their cancels, an
   // edit's Xero leg, the reaper, the release) hold nothing there. Still no new
   // raw site, no new key.
+  // #4299 S1 (`INV-PAY-148`): the enqueue refuses, under this key, a change
+  // whose organiser extra a waiver retired whole before it was raised, and
+  // the organiser create re-asks in a short transaction holding this key
+  // alone, from the outbox worker or an officer's retry holding nothing,
+  // before its Xero call. Same helper, no new raw site, no new key.
 };
 
 // Every entry here is now a LOCK-ONLY statement (#2289): it selects a constant,
@@ -1425,6 +1450,15 @@ const ROW_LOCK_SITE_INVENTORY: Record<string, number> = {
   // Singleton-keyed; no advisory lock; disjoint from booking/money writers. See
   // docs/CONCURRENCY_AND_LOCKING.md -> "Club-theme logo writer".
   "src/lib/club-theme.ts": 1,
+  // Per-account password throttle (#4609, INV-AUTH): `claimPasswordAttempt`
+  // ensures the account's `LoginThrottle` row, then locks it
+  // (`SELECT 1 … FOR UPDATE`) before the read-decide-count, so parallel guesses
+  // queue and a burst at the end of a wait admits one. Keyed on an immutable
+  // HMAC id; no advisory key, never composed with another lock, no provider
+  // call, and the password compare runs after commit. A row lost between the
+  // ensure and the lock (a clear or the idle sweep) is ensured and locked once
+  // more. See docs/CONCURRENCY_AND_LOCKING.md -> "Login throttle claim".
+  "src/lib/login-throttle.ts": 1,
   // #3029 C3: the held-party dietary rebuild locks the booking's guest rows
   // (`SELECT 1 … FOR UPDATE`, id order) before reading the values it carries,
   // so a concurrent single-row admin edit is read or refused, never lost.
@@ -1438,6 +1472,18 @@ const ROW_LOCK_SITE_INVENTORY: Record<string, number> = {
   // refund writer takes it. See docs/CONCURRENCY_AND_LOCKING.md ->
   // "Booking-ledger back-post".
   "src/lib/booking-ledger-back-post.ts": 2,
+  // #4627 (Ledger M3b): the journal adapter takes the booking row
+  // (`SELECT 1 … FOR NO KEY UPDATE`) before it reads the owner it posts as the
+  // receivable's debtor. Every door has already UPDATEd that row in the same
+  // transaction, after lock(1) and its lodge key, so this adds no edge; member
+  // merge's owner move is its counterpart. See docs/CONCURRENCY_AND_LOCKING.md ->
+  // "The M3b booking doors and member merge's journal transfer".
+  "src/lib/member-money/internal/booking-posting.ts": 1,
+  // #4627: an edit review's closure takes its booking row straight after its claim,
+  // before any credit write (giveBackCancelledShareCredit, applyLocalRefundAllocation,
+  // an account-credit mint: each a KEY SHARE on the owner's Member row), so neither
+  // those nor the journal adapter's owner read invert against member merge's owner move.
+  "src/lib/manual-refund-task-resolution.ts": 1,
   // #3635 (review outbox F1/F4): the kept-late-capture enqueue and the
   // worker's send-time decision lock the #3639 approval task's row
   // (`SELECT 1 … FOR UPDATE`), the row the dismissal, reopen and approval
@@ -1480,7 +1526,43 @@ const ROW_LOCK_SITE_INVENTORY: Record<string, number> = {
   // Amenity/Lodge rows -> audit. No advisory key; disjoint from booking/money
   // writers. See docs/CONCURRENCY_AND_LOCKING.md -> "Owned-lodge list writer,
   // and every Other lodges download write".
+  // #4470, two more participants of the same one statement, no new lock: the
+  // key save compares the address its page showed under the connection fence
+  // (settings -> credential -> audit, as before), and a push registration
+  // stores its secret through the answer fence (settings -> credential read ->
+  // push-secret write -> audit). The address move removes that secret in its
+  // own fenced transaction. The answer recorders take a `ServerNzAnswerTx`
+  // that only the answer fence mints.
   "src/lib/servernz-settings.ts": 1,
+  // Message-board mirror (#4586): inside the page's answer fence (settings row
+  // first, counted under servernz-settings.ts), `lockMirroredPost` locks the
+  // `ClubPost` row a server post id names (`SELECT 1 … FOR UPDATE`, the one
+  // statement counted here) and re-reads it, so create-or-update and a
+  // tombstone are decided under the lock. Order: settings -> ClubPost ->
+  // ClubPostImage, the post-before-images order the admin removal (its
+  // status-guarded claim) and retention (its cascade) also follow. No advisory
+  // key; disjoint from booking/money writers. See
+  // docs/CONCURRENCY_AND_LOCKING.md -> "Message-board posts and their images".
+  "src/lib/club-post-mirror.ts": 1,
+  // Message-board retention (#4588): each batch of expired posts is locked
+  // (`SELECT 1 … WHERE "id" IN (…) ORDER BY "id" FOR UPDATE`, the one statement
+  // counted here) before their images are read and the posts deleted, so no
+  // writer adds an image row the batch did not list. Order: ClubPost rows (id
+  // order) -> ClubPostImage rows by cascade. The share stamp below also takes
+  // its two posts in id order. Member merge (an `updateMany` of
+  // `authorMemberId`) and member deletion (`SetNull`) update many posts in
+  // scan order; a deadlock with a batch is detected and one side aborted, as
+  // with the single `deleteMany` before #4588. No advisory key. See
+  // docs/CONCURRENCY_AND_LOCKING.md -> "Message-board posts and their images".
+  "src/lib/club-post-retention.ts": 1,
+  // Message-board share stamp (#4588): under the settings row
+  // (`lockServerNzSettings`, counted under servernz-settings.ts), when the
+  // mirror already copied our own post back, it locks our post and that copy
+  // (`SELECT 1 … WHERE "id" IN (…, …) ORDER BY "id" FOR UPDATE`, the one
+  // statement counted here), deletes the copy and stamps our post. Order:
+  // settings -> ClubPost rows (id order) -> ClubPostImage by cascade, the
+  // mirror's and retention's order. No advisory key.
+  "src/lib/club-post-sharing.ts": 1,
   // Adult-member-hosting queue participants (#2597): the shared helper mints
   // one reviewed `FOR UPDATE` protocol for member merge over master, loser and
   // every planned ancillary owner, plus the shared standing-subject barrier
@@ -2089,6 +2171,19 @@ describe("advisory lock guard (#182 / H1 regression class)", () => {
         "writers, and acquisition order in docs/CONCURRENCY_AND_LOCKING.md, " +
         "then update this inventory with PR compatibility evidence.",
     ).toEqual(SCOPED_ADVISORY_LOCK_INVENTORY);
+  });
+
+  it("keeps whole-cycle session advisory claims in their explicit inventory", () => {
+    const found: Record<string, number> = {};
+    for (const { rel, text } of sources) {
+      const count = countCodeOccurrences(text, /pg_(?:try_)?advisory_lock\(/g);
+      if (count > 0) found[rel] = count;
+    }
+    // #4432: one dedicated autocommit connection, outside every domain
+    // transaction; scheduled inbound, HTTP cron and the whole-club button
+    // exclude one another. Connection death recovers the claim, without a
+    // lease expiry admitting another live cycle. INV-LOCK-001/002/003.
+    expect(found).toEqual({ "src/lib/cron-run-claim.ts": 1 });
   });
 
   it("keeps every SELECT row-lock protocol inside the reviewed inventory", () => {

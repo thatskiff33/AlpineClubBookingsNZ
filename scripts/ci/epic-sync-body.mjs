@@ -23,9 +23,9 @@
 import { execFileSync } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import process from "node:process";
-import { pathToFileURL } from "node:url";
 
 import { FULL_SHA, renderHandSyncPrBody } from "./render-epic-sync-pr-body.mjs";
+import { isMainModule } from "../lib/is-main-module.mjs";
 
 function git(args, { cwd, allowExit = [] } = {}) {
   try {
@@ -118,8 +118,7 @@ export function readSyncMerge({ branch, main = "origin/main", cwd }) {
   return { branch, headSha, epicSha, mainSha, resolvedFiles };
 }
 
-const invokedPath = process.argv[1] ? pathToFileURL(process.argv[1]).href : null;
-if (invokedPath === import.meta.url) {
+if (isMainModule(import.meta.url)) {
   try {
     const args = parseArgs(process.argv.slice(2));
     const body = renderHandSyncPrBody(readSyncMerge(args));

@@ -4,6 +4,8 @@ export const BOOKING_SCOPED_OUTBOUND_MODELS = ["Booking", "BookingModification"]
 
 export const MEMBERSHIP_SYNC_CURSOR_RESOURCE = "MEMBERSHIP_INVOICE_SYNC";
 export const CONTACT_SYNC_CURSOR_RESOURCE = "CONTACT_SYNC";
+/** #4531: when links pending a deleted-payment check were last re-checked. */
+export const DELETED_PAYMENT_RECHECK_CURSOR_RESOURCE = "DELETED_PAYMENT_RECHECK";
 export const DEFAULT_XERO_SYNC_SCOPE = "default";
 export const DEFAULT_XERO_SYNC_SCOPE_PREFIX = "season:";
 export const DEFAULT_XERO_INBOUND_BATCH_SIZE = 10;

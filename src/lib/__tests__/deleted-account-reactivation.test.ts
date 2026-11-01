@@ -97,6 +97,14 @@ vi.mock("@/lib/runtime-config", () => ({
   getAuthTrustHost: vi.fn(() => true),
 }));
 
+// #4609: the per-account throttle is its own subject (login-throttle-auth.test.ts);
+// here every attempt is admitted so a refusal can only be this suite's guard.
+vi.mock("@/lib/login-throttle", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/login-throttle")),
+  claimPasswordAttempt: vi.fn().mockResolvedValue({ allowed: true }),
+  clearPasswordAttempts: vi.fn().mockResolvedValue(undefined),
+}));
+
 vi.mock("next-auth/providers/credentials", () => ({
   default: vi.fn((config) => config),
 }));
@@ -651,7 +659,7 @@ describe("#2620 reactivation refusals, one path at a time", () => {
     const res = await bulkUpdate(bulkReactivateRequest(["m1"]));
     expect(res.status).toBe(200);
     expect(updateMany).toHaveBeenCalledWith(
-      expect.objectContaining({ data: { active: true } }),
+      expect.objectContaining({ data: { active: true, leavingDate: null } }),
     );
   });
 

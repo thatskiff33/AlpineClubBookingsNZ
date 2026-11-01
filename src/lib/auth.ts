@@ -49,9 +49,20 @@ import {
 } from "./google-oauth";
 import { getGoogleOAuthConfig, recordGoogleVerified } from "./google-config";
 import { isDeletedAccountRecord } from "./deleted-account";
+import {
+  claimPasswordAttempt,
+  clearPasswordAttempts,
+  normaliseSignInEmail,
+} from "./login-throttle";
+import { LOGIN_THROTTLED_CODE } from "./login-throttle-policy";
 
 class EmailNotVerifiedError extends CredentialsSignin {
   override code = "EMAIL_NOT_VERIFIED";
+}
+
+// #4609: one answer for every throttled account, real or not (INV-AUTH).
+class LoginThrottledError extends CredentialsSignin {
+  override code = LOGIN_THROTTLED_CODE;
 }
 
 // A magic link must never trap a member who has a pending forced password
@@ -69,6 +80,8 @@ const DUMMY_PASSWORD_HASH =
   // Not a live credential: a bcrypt hash of a random throwaway value, only ever
   // compared against to equalise response timing (see comment above).
   "$2b$12$vgnj5fAMZNzi.jYdELu0f.rjCvFqb/tgzYxtvBWJu8vCJYVO64SKC";
+const burnDummyCompare = (password: string) =>
+  bcrypt.compare(password, DUMMY_PASSWORD_HASH);
 
 declare module "next-auth" {
   interface Session {
@@ -219,9 +232,16 @@ export const authConfig = {
         const email = credentials.email as string;
         const password = credentials.password as string;
 
+        // #4609: claimed before any Member read or password compare, so a
+        // throttled real account and an unknown email answer identically.
+        if (!(await claimPasswordAttempt(email)).allowed) {
+          await burnDummyCompare(password);
+          throw new LoginThrottledError();
+        }
+
         // Only members with canLogin=true (adults with unique email + password) can log in
         const member = await prisma.member.findFirst({
-          where: { email: email.toLowerCase(), canLogin: true },
+          where: { email: normaliseSignInEmail(email), canLogin: true },
         });
 
         // #2620: `isDeletedAccountRecord` is an INDEPENDENT refusal, not a
@@ -233,7 +253,7 @@ export const authConfig = {
         // Still burns the dummy compare, so the refusal is timing-identical to
         // an unknown email and cannot be used to enumerate deleted accounts.
         if (!member || !member.active || isDeletedAccountRecord(member)) {
-          await bcrypt.compare(password, DUMMY_PASSWORD_HASH);
+          await burnDummyCompare(password);
           return null;
         }
 
@@ -241,6 +261,7 @@ export const authConfig = {
         if (!isValid) {
           return null;
         }
+        await clearPasswordAttempts(email);
 
         // Block unverified members from creating a session
         if (!member.emailVerified) {

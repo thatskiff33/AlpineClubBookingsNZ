@@ -1,5 +1,5 @@
 /**
- * THE ACCESSOR'S OWN BEHAVIOUR (INV-SSOT-007, INV-MONEY-043).
+ * THE ACCESSOR'S OWN BEHAVIOUR (INV-SSOT-007, INV-MONEY-045).
  *
  * The census beside this file proves every family-dedup-key/display-name
  * read goes THROUGH `chargeFamilyAxisKey`/`chargeAxisDisplayName`. This one

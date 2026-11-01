@@ -55,6 +55,7 @@ import {
 
 import { formatCents } from "@/lib/utils";
 import { CreditCard, Landmark } from "lucide-react";
+import { OptionCard, OptionCardGroup } from "@/components/ui/option-card";
 import { useClubFormat } from "@/components/club-format-provider";
 
 type BookingPaymentMethod = "stripe" | "internet_banking";
@@ -1394,44 +1395,25 @@ export default function AdminBookPage() {
 
           {showPaymentMethodChoice && (
             <Card>
-              <CardContent className="space-y-3 pt-6">
-                <p className="text-sm font-medium text-foreground">Payment method</p>
-                <div className="grid gap-2 sm:grid-cols-2">
-                  <button
-                    type="button"
-                    onClick={() => setPaymentMethod("stripe")}
-                    className={`flex min-h-16 items-start gap-3 rounded-md border p-3 text-left text-sm ${
-                      paymentMethod === "stripe"
-                        ? "border-info-7 bg-info-3 text-info-11"
-                        : "border-border bg-card text-muted-foreground hover:border-muted-foreground"
-                    }`}
+              <CardContent className="pt-6">
+                <OptionCardGroup label="Payment method" className="space-y-3">
+                  <OptionCard
+                    selected={paymentMethod === "stripe"}
+                    onSelect={() => setPaymentMethod("stripe")}
+                    icon={CreditCard}
+                    title="Card"
                   >
-                    <CreditCard className="mt-0.5 h-4 w-4 shrink-0" />
-                    <span>
-                      <span className="block font-medium">Card</span>
-                      <span className="block text-xs opacity-80">
-                        The member pays by card to secure the booking.
-                      </span>
-                    </span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setPaymentMethod("internet_banking")}
-                    className={`flex min-h-16 items-start gap-3 rounded-md border p-3 text-left text-sm ${
-                      paymentMethod === "internet_banking"
-                        ? "border-info-7 bg-info-3 text-info-11"
-                        : "border-border bg-card text-muted-foreground hover:border-muted-foreground"
-                    }`}
+                    The member pays by card to secure the booking.
+                  </OptionCard>
+                  <OptionCard
+                    selected={paymentMethod === "internet_banking"}
+                    onSelect={() => setPaymentMethod("internet_banking")}
+                    icon={Landmark}
+                    title="Internet Banking"
                   >
-                    <Landmark className="mt-0.5 h-4 w-4 shrink-0" />
-                    <span>
-                      <span className="block font-medium">Internet Banking</span>
-                      <span className="block text-xs opacity-80">
-                        Email the member a Xero invoice to pay by bank transfer.
-                      </span>
-                    </span>
-                  </button>
-                </div>
+                    Email the member a Xero invoice to pay by bank transfer.
+                  </OptionCard>
+                </OptionCardGroup>
               </CardContent>
             </Card>
           )}

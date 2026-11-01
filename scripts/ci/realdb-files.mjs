@@ -12,6 +12,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { isMainModule } from "../lib/is-main-module.mjs";
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 export const REALDB_FILE = /\.realdb\.test\.[cm]?[jt]sx?$/;
@@ -54,6 +55,6 @@ export function realdbFilesToRun(repoRoot = REPO_ROOT) {
   return findRealdbFiles(repoRoot).filter((file) => !quarantined.has(file));
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (isMainModule(import.meta.url)) {
   process.stdout.write(`${realdbFilesToRun().join("\n")}\n`);
 }

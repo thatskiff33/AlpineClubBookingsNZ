@@ -17,21 +17,26 @@ vi.mock("@/lib/prisma", () => ({
 
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import { normalizeBaseUrl } from "@/lib/servernz-base-url";
 import {
   SERVERNZ_SETTINGS_ID,
   clearOtherLodgesOwnedNames,
   clearServerVersionCheck,
   forgetServerConnectionAnswers,
   loadServerNzSettings,
-  normalizeBaseUrl,
   loadOwnedOtherLodges,
   readOwnedOtherLodges,
   recordOtherLodgesDownload,
   recordOtherLodgesUpload,
   recordServerVersionCheck,
   validateCentralServerBaseUrl,
+  type ServerNzAnswerTx,
   type ServerNzConnectionTx,
 } from "@/lib/servernz-settings";
+
+// The mocked global client standing in for the answer fence's transaction:
+// only `withCurrentServerNzConnection` mints the type in production (#4470).
+const answerTx = prisma as unknown as ServerNzAnswerTx;
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -141,18 +146,36 @@ describe("validateCentralServerBaseUrl", () => {
   });
 });
 
+describe("the answer recorders take only the answer fence's client (#4470)", () => {
+  it("refuses the global client, a plain transaction and the connection fence's client at compile time", () => {
+    // Type-level: each line below fails typecheck if the brand stops refusing
+    // it, because the directive above it is then unused.
+    // @ts-expect-error the global client never compared the connection
+    const global: Parameters<typeof recordOtherLodgesDownload>[2]["db"] = prisma;
+    // @ts-expect-error nor did a transaction that never took the answer fence
+    const plain: ServerNzAnswerTx = {} as Prisma.TransactionClient;
+    // @ts-expect-error the connection-change fence is a different fence
+    const connection: ServerNzAnswerTx = {} as ServerNzConnectionTx;
+    // @ts-expect-error the upload watermark is an answer too
+    const upload: Parameters<typeof recordOtherLodgesUpload>[1] = prisma;
+    // @ts-expect-error and so is the server's version
+    const version: Parameters<typeof recordServerVersionCheck>[2] = prisma;
+    expect([global, plain, connection, upload, version]).toHaveLength(5);
+  });
+});
+
 describe("recordOtherLodgesDownload", () => {
   it("never overwrites a stored cursor with a null one", async () => {
     // A server that omits the cursor must not silently reset the club to a full
     // re-fetch of the entire registry.
-    await recordOtherLodgesDownload(null, undefined, { db: prisma });
+    await recordOtherLodgesDownload(null, undefined, { db: answerTx });
     const [args] = mocks.upsert.mock.calls[0];
     expect(args.where).toEqual({ id: SERVERNZ_SETTINGS_ID });
     expect(args.update).not.toHaveProperty("otherLodgesCursor");
   });
 
   it("persists a cursor the server did return", async () => {
-    await recordOtherLodgesDownload("c-900", undefined, { db: prisma });
+    await recordOtherLodgesDownload("c-900", undefined, { db: answerTx });
     const [args] = mocks.upsert.mock.calls[0];
     expect(args.update.otherLodgesCursor).toBe("c-900");
   });
@@ -298,7 +321,7 @@ describe("the owned lodge list, by central id (#52, #62, #69)", () => {
   });
 
   it("stores the list the download carried with its timestamp, and leaves the old name-only list alone", async () => {
-    await recordOtherLodgesDownload("c-900", AORANGI, { db: prisma });
+    await recordOtherLodgesDownload("c-900", AORANGI, { db: answerTx });
     const [args] = mocks.upsert.mock.calls[0];
     expect(args.update.otherLodgesOwnedLodges).toEqual(AORANGI);
     expect(args.update.otherLodgesOwnedNamesAt).toBeInstanceOf(Date);
@@ -308,13 +331,13 @@ describe("the owned lodge list, by central id (#52, #62, #69)", () => {
   });
 
   it("stores an empty list, the server's answer that the club owns nothing", async () => {
-    await recordOtherLodgesDownload("c-900", [], { db: prisma });
+    await recordOtherLodgesDownload("c-900", [], { db: answerTx });
     expect(mocks.upsert.mock.calls[0][0].update.otherLodgesOwnedLodges).toEqual([]);
   });
 
   it("leaves the stored list and its timestamp untouched when the download carried none", async () => {
     // A list refused for its bounds, or not sent, must not clear what is stored.
-    await recordOtherLodgesDownload("c-900", undefined, { db: prisma });
+    await recordOtherLodgesDownload("c-900", undefined, { db: answerTx });
     const [args] = mocks.upsert.mock.calls[0];
     for (const key of ["otherLodgesOwnedLodges", "otherLodgesOwnedNames", "otherLodgesOwnedNamesAt"]) {
       expect(args.update).not.toHaveProperty(key);
@@ -325,8 +348,9 @@ describe("the owned lodge list, by central id (#52, #62, #69)", () => {
 
 describe("the version column has one writer (#4366)", () => {
   it("is called only by the fenced recorder, which passes its transaction", () => {
-    // `recordServerVersionCheck` takes no default client, but any client still
-    // satisfies its type; this census is what keeps an unfenced caller out.
+    // `recordServerVersionCheck` takes no default client, and since #4470 only
+    // the answer fence's client satisfies its type; this census still pins
+    // its one caller, so a second writer of the column is a reviewed change.
     const srcRoot = resolve(__dirname, "../..");
     const callers = (readdirSync(srcRoot, { recursive: true }) as string[])
       .filter((file) => /\.tsx?$/.test(file) && !/__tests__|\.test\.tsx?$/.test(file))
@@ -338,9 +362,9 @@ describe("the version column has one writer (#4366)", () => {
 });
 describe("recordOtherLodgesDownload: the keyed marker (#64)", () => {
   it("sets otherLodgesKeyedAt only when told the whole registry merged", async () => {
-    await recordOtherLodgesDownload("c-1", undefined, { keyed: true, db: prisma });
+    await recordOtherLodgesDownload("c-1", undefined, { keyed: true, db: answerTx });
     expect(mocks.upsert.mock.calls[0][0].update.otherLodgesKeyedAt).toBeInstanceOf(Date);
-    await recordOtherLodgesDownload("c-2", undefined, { db: prisma });
+    await recordOtherLodgesDownload("c-2", undefined, { db: answerTx });
     expect(mocks.upsert.mock.calls[1][0].update).not.toHaveProperty("otherLodgesKeyedAt");
   });
 

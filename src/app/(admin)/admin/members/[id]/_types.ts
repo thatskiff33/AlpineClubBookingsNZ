@@ -225,6 +225,7 @@ export interface MemberDetail {
    */
   xeroContactLifecycleBlocker?: MemberContactChangeBlocker | null;
   joinedDate: string | null;
+  leavingDate?: string | null;
   lifeMemberDate: string | null;
   occupation: string | null;
   /**

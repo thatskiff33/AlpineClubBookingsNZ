@@ -233,6 +233,20 @@ describe("two-factor helpers", () => {
     expect(mockPrisma.twoFactorRecoveryCode.deleteMany).not.toHaveBeenCalled();
   });
 
+  it("refuses a job as the enrolling or replacing actor before any write (#4457)", async () => {
+    const job = { kind: "system", actor: "former-member-anonymisation" } as never;
+    await expect(
+      enrollTwoFactor({ memberId: "member-1", method: "EMAIL", actor: job }),
+    ).rejects.toThrow(/may only clear a second factor/);
+    await expect(replaceRecoveryCodes({ memberId: "member-1", actor: job })).rejects.toThrow(
+      /may only clear a second factor/,
+    );
+    expect(mockPrisma.$transaction).not.toHaveBeenCalled();
+    expect(mockPrisma.member.update).not.toHaveBeenCalled();
+    expect(mockPrisma.twoFactorRecoveryCode.deleteMany).not.toHaveBeenCalled();
+    expect(mockPrisma.auditLog.create).not.toHaveBeenCalled();
+  });
+
   it("refuses an enrolment that names no actor, and writes nothing (#3454)", async () => {
     await expect(
       enrollTwoFactor({

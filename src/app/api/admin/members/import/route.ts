@@ -653,6 +653,8 @@ export async function POST(req: NextRequest) {
               // no CSV column and stays null.
               active: row.cancelledAt ? false : true,
               cancelledAt: row.cancelledAt,
+              // Cancellation history is not evidence of an explicit leaving date.
+              leavingDate: null,
               canLogin: row.canLogin,
               emailVerified: true, // Admin-imported members don't need email verification
               passwordHash: row.passwordHash,

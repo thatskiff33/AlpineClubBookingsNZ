@@ -36,6 +36,9 @@ export const ADMIN_ROUTE_AREA_ANCHORS: Record<AdminPermissionArea, string[]> = {
     "/admin/bookings",
     "/admin/waitlist",
     "/admin/booking-requests",
+    // #4581: the Booking Rules hub is bookings work, not the support-area
+    // /admin/setup wizard it sits under.
+    "/admin/setup/booking-rules",
     "/api/admin/bookings",
     "/api/admin/waitlist",
   ],
@@ -43,6 +46,10 @@ export const ADMIN_ROUTE_AREA_ANCHORS: Record<AdminPermissionArea, string[]> = {
     "/admin/members",
     "/admin/member-applications",
     "/admin/family-groups",
+    // #4581: each page needs the area of the API it calls.
+    "/admin/lockers",
+    "/admin/subscription-lockout",
+    "/api/admin/membership-lockout-settings",
     "/api/admin/members",
     "/api/admin/family-groups",
   ],

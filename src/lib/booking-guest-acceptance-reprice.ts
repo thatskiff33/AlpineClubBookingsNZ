@@ -1,10 +1,7 @@
 import { Role, type Prisma } from "@prisma/client";
 
 import { queueReductionAskFollowUps } from "@/lib/unpaid-ask-billed-offset-note";
-import {
-  readReductionAgainstUnpaidAsk,
-  type RetiredAdditionalAsk,
-} from "@/lib/additional-ask-reduction";
+import { readReductionAgainstUnpaidAsk, type RetiredAdditionalAsk } from "@/lib/additional-ask-reduction";
 import { NO_ADDITIONAL_ASK, type AdditionalAsk } from "@/lib/additional-payment-ask";
 import { logAudit } from "@/lib/audit";
 import { getBookingEditPolicy } from "@/lib/booking-edit-policy";
@@ -17,8 +14,8 @@ import {
   type ModificationLine,
 } from "@/lib/booking-modification-lines";
 import { computeModificationPricing } from "@/lib/booking-modification-pricing";
+import { additionalAskEmailTerms } from "@/lib/additional-ask-email-terms";
 import {
-  additionalAmountToName,
   createModificationAdditionalPaymentIntent,
   drainSupersededPrimaryIntents,
   executeBookingModificationRefund,
@@ -54,6 +51,7 @@ import { editRefundBankTransferPayee, raiseEditRefundHandBackIfOwed } from "@/li
 import { fullReductionReturnRoute } from "@/lib/booking-guest-acceptance-return-route";
 import { getDefaultLodgeId } from "@/lib/lodges";
 import { reserveOrganiserChildModificationRefund } from "@/lib/organiser-child-refund";
+import { queueOrganiserExtraForChange } from "@/lib/organiser-extra-invoice-queue";
 import logger from "@/lib/logger";
 import {
   clampAppliedCreditToBookingPrice,
@@ -97,7 +95,8 @@ import { primaryInvoiceSettlementHistory } from "@/lib/booking-primary-invoice-c
  *   exactly as an ordinary edit of a CONFIRMED booking leaves it.
  * The ledger posting, the history row, the Xero correction (queued after commit
  * by `settleGuestAcceptanceRepriceAfterCommit`), the member's email and the
- * audit row are the ordinary edit's own.
+ * audit row are the ordinary edit's own; an organiser's extra invoice (#4299)
+ * is queued with the history row.
  *
  * FREE NIGHTS ARE USED ONLY FOR WHAT IS RETURNED. The re-price is decided under
  * the locks and WRITTEN only once the settlement above is known to return the
@@ -192,12 +191,12 @@ export async function repriceBookingAfterGuestAcceptance(
     acceptedGuestId: string;
     /** The member who accepted (the guest, or their delegate) — the history row's actor. */
     actorMemberId: string;
-    /** The club's day, resolved before the transaction opened (`INV-LOCK-004`). */
-    todayAtClub: CalendarDate;
+    /** The club's day and (#4627) the journal's context, resolved before the transaction opened (`INV-LOCK-004`). */
+    todayAtClub: CalendarDate; journal: Parameters<typeof postModificationLedgerLines>[0]["journal"];
     format: ClubFormat;
   },
 ): Promise<GuestAcceptanceReprice> {
-  const { bookingId, todayAtClub, format } = params;
+  const { bookingId, todayAtClub, format, journal } = params;
   const booking = await tx.booking.findUnique({
     where: { id: bookingId },
     include: {
@@ -496,8 +495,9 @@ export async function repriceBookingAfterGuestAcceptance(
       ...(priceLines ? { priceLines } : {}),
     },
   });
+  await queueOrganiserExtraForChange(tx, booking, bookingModification);
   await postModificationLedgerLines({
-    store: tx,
+    store: tx, journal,
     bookingId,
     lodgeId,
     bookingModification,
@@ -506,7 +506,7 @@ export async function repriceBookingAfterGuestAcceptance(
   });
   // #4019: a whole-lodge PAID at $0 bypasses the settle; post as the other edit doors do.
   if (lifecycle.zeroDollarAutoPaid && isUnpaidConfirmedWholeLodge(booking)) {
-    await postStoredBookingConfirmationLedgerLines(tx, bookingId);
+    await postStoredBookingConfirmationLedgerLines(tx, bookingId, journal);
   }
   // D-3813-6 (`INV-PAY-117`): the cash share of a reduction on a booking paid
   // by internet banking or by hand is the treasurer's to send back.
@@ -689,8 +689,8 @@ export async function settleGuestAcceptanceRepriceAfterCommit(params: {
       refundByBankTransfer: reprice.bankTransferRefundPayee, // #3949: the member, or the group organiser
       refundDestination: refund.refundDestination,
       lodgeId: reprice.lodgeId,
-      // #3954 round 9: not named once a later reduction retired the re-issue.
-      additionalAmountCents: additionalAmountToName(reprice.additionalAsk.amountCents, additionalMint),
+      // #4052: a re-price's only ask is a card re-issue, named with its method; never a retired one (#3954).
+      ...additionalAskEmailTerms({ ...reprice, additionalAmountCents: reprice.additionalAsk.amountCents, paymentSource: null }, additionalMint),
       unpaidAskCancelled: reprice.unpaidAskCancelled,
     },
     format,

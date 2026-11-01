@@ -489,10 +489,10 @@ describe("outstanding additional payment panel visibility (#2350)", () => {
     const source = bookingPageSource();
 
     expect(source).toMatch(
-      /\{nonOwnerAdminViewer && !isDeleted && booking\.payment \? \(\s*<BookingAdditionalPaymentPanel/,
+      /\{nonOwnerAdminViewer && !isDeleted && booking\.payment \? \(\s*<BookingAdditionalPaymentPanelMount>\s*<BookingAdditionalPaymentPanel/,
     );
     // Exactly one render site, so a second ungated copy cannot creep in.
-    expect(source.match(/<BookingAdditionalPaymentPanel/g)).toHaveLength(1);
+    expect(source.match(/<BookingAdditionalPaymentPanel\s/g)).toHaveLength(1);
     // …and the re-send is handed the edit gate, never the view gate.
     expect(source).toMatch(/canResend=\{canSeeAdminTools\}/);
   });
@@ -780,6 +780,20 @@ describe("admin route requirements", () => {
       area: "support",
       level: "view",
     });
+    // #4581: the Booking Rules hub is bookings work, though it sits under the
+    // support-area /admin/setup prefix; first-match-wins ordering puts it first.
+    expect(getAdminRouteRequirement("/admin/setup/booking-rules", "GET")).toEqual({
+      area: "bookings",
+      level: "view",
+    });
+    // #4581: the lockout page needs the area of its API, membership.
+    expect(getAdminRouteRequirement("/admin/subscription-lockout", "GET")).toEqual({
+      area: "membership",
+      level: "view",
+    });
+    expect(
+      getAdminRouteRequirement("/api/admin/membership-lockout-settings", "GET"),
+    ).toEqual({ area: "membership", level: "view" });
     expect(
       canOpenAdminPath({ canLogin: true, accessRoles: ["ADMIN_CONTENT"] }, "/admin/page-content"),
     ).toBe(true);
@@ -1602,5 +1616,32 @@ describe("embedded session permission matrix (#1367)", () => {
         lodge: 3,
       }),
     ).toEqual({ ...ALL_NONE, bookings: "edit" });
+  });
+});
+
+describe("admin page area alignment (#4581)", () => {
+  const only = (area: "bookings" | "membership" | "lodge" | "support") => ({
+    ...emptyAdminPermissionMatrix(),
+    [area]: "view" as const,
+  });
+
+  it("a lodge-only admin cannot open the lockers page the lodge hub used to link to", () => {
+    expect(canViewAdminHrefWithMatrix(only("lodge"), "/admin/lockers")).toBe(false);
+    expect(canViewAdminHrefWithMatrix(only("membership"), "/admin/lockers")).toBe(true);
+  });
+
+  it("the subscription-lockout page and its API need the same area", () => {
+    const page = getAdminRouteRequirement("/admin/subscription-lockout", "GET");
+    const api = getAdminRouteRequirement("/api/admin/membership-lockout-settings", "GET");
+    expect(page?.area).toBe(api?.area);
+    expect(canViewAdminHrefWithMatrix(only("membership"), "/admin/subscription-lockout")).toBe(true);
+    expect(canViewAdminHrefWithMatrix(only("support"), "/admin/subscription-lockout")).toBe(false);
+  });
+
+  it("the booking-rules hub opens for a bookings-only admin, and /admin/setup stays support", () => {
+    expect(canViewAdminHrefWithMatrix(only("bookings"), "/admin/setup/booking-rules")).toBe(true);
+    expect(canViewAdminHrefWithMatrix(only("bookings"), "/admin/setup")).toBe(false);
+    expect(canViewAdminHrefWithMatrix(only("bookings"), "/admin/setup/foundations")).toBe(false);
+    expect(canViewAdminHrefWithMatrix(only("support"), "/admin/setup/booking-rules")).toBe(false);
   });
 });

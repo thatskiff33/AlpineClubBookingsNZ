@@ -16,6 +16,7 @@ import { isNonNegativeIntegerCents } from "@/lib/edit-financial-review-context";
 import { chooseEditReviewSettlementRoute, executeEditReviewSettlement, queueEditReviewChargeInvoiceInTransaction, type EditReviewSettlementRoute } from "@/lib/edit-financial-review-settlement";
 import { giveBackCancelledShareCredit, writeEditReviewAccountCredit, type EditReviewAccountCreditOutcome } from "@/lib/edit-financial-review-account-credit";
 import { cancelledBookingRefundInvoiceId, queueCancelledBookingHandBackNoteInTransaction, queueRefundRequestCreditNoteInTransaction, refundMethodForEditReviewRoute } from "@/lib/edit-financial-review-xero-leg";
+import { releaseOrganiserExtraRefundNotes } from "@/lib/organiser-extra-netting";
 import { applyGroupSettlementMirrorRefund, isBankTransferHandBackRoute } from "@/lib/group-settlement-mirror-hand-back"; // #3949
 import { MANUAL_PAYMENT_NOTE_MAX, normaliseManualPaymentNote } from "@/lib/manual-subscription-payment";
 import { requireMemberCreditRecipient } from "@/lib/member-credit";
@@ -27,7 +28,7 @@ import { readCapacityRaceStripeRefundedForTask } from "@/lib/capacity-race-refun
 import { settlementWriteRefusal } from "@/lib/manual-refund-task-settlement-refusal";
 import { prisma } from "@/lib/prisma";
 import { clubToday } from "@/lib/club-time";
-import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
+import { resolveBookingDoorClock } from "@/lib/member-money/doors";
 // #3195: the $0 refusal is said by the settle SCREEN as well as thrown here, and
 // this module is `server-only` - so the sentence lives in a client-safe home and
 // both read it (`INV-SSOT`).
@@ -145,8 +146,8 @@ export async function resolveManualRefundTask(
   }
 
   // #3219 `INV-LOCK-004`: read outside the transaction; dates the promo window,
-  // and (#3635) the day a kept late capture's Xero receipt is dated.
-  const clubZone = await readClubTimeZoneOutsideRequest();
+  // (#3635) the day a kept late capture's Xero receipt is dated, and (#4627) the journal.
+  const { zone: clubZone, journal } = await resolveBookingDoorClock();
   const todayAtClub = clubToday(clubZone);
   const capacityRaceStripe = resolution === "completed" ? await readCapacityRaceStripeRefundedForTask(taskId) : null; // #4154 review (M1): a provider call, so here, bounded
   const { chargeInvoice, ...result } = await prisma.$transaction(async (tx) => { // #3947: chargeInvoice is internal, never returned
@@ -373,11 +374,10 @@ export async function resolveManualRefundTask(
       },
     });
     if (claimed.count === 0) {
-      throw new ManualBookingPaymentError(
-        "This refund task changed while you were closing it — refresh and try again.",
-        409
-      );
+      throw new ManualBookingPaymentError("This refund task changed while you were closing it — refresh and try again.", 409);
     }
+    // #4627: an edit review's booking row before any credit write (a KEY SHARE on the owner's Member row): no inversion against merge.
+    if (isEditReview) await tx.$executeRaw`SELECT 1 FROM "Booking" WHERE "id" = ${task.bookingId} FOR NO KEY UPDATE`;
 
     if (settlement && settlementRoute) {
       // #3835: the credit part goes back FIRST: member ledger lock before any Payment row (INV-LOCK-002).
@@ -471,6 +471,8 @@ export async function resolveManualRefundTask(
       await recordBankRefundVoidAnswerInTransaction({ task, route: settlementRoute, answer: input.resolution === "completed" ? (input.bankRefundVoidAnswer ?? null) : null, actingMemberId, store: tx });
     }
 
+    if (resolution === "completed") await releaseOrganiserExtraRefundNotes(tx, task.id);
+
     // #3635 (`INV-PAY-110`): DISMISSED keeps the money, recorded in Xero from
     // inside this claim, so a replayed dismissal queues nothing.
     const keptLateCaptureXeroPlan: KeptLateCaptureXeroPlan =
@@ -539,7 +541,7 @@ export async function resolveManualRefundTask(
         settlementRoute,
         settlementAmountCents: settledCents,
         settlementDirection: settlement ? settlementDirection : null,
-        store: tx,
+        store: tx, journal,
       });
     }
     const chargeInvoice = settlement ? await queueEditReviewChargeInvoiceInTransaction({ bookingId: task.bookingId, route: settlementRoute, hasIssuedXeroInvoice, createdByMemberId: actingMemberId, store: tx }) : null; // #3947: the invoice route's invoice, queued LAST - its anchor key after every other lock

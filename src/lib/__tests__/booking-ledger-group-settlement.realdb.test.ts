@@ -33,10 +33,14 @@
 import type Stripe from "stripe";
 import type { Invoice } from "xero-node";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { releaseBookingJournalForTeardown } from "./support/booking-financial-history-teardown";
+import { memberMoneyTestContext } from "./support/member-money-fixtures";
 
 import { bookingLedgerBalance } from "@/lib/booking-ledger-balance";
 import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 
+/** #4627: a posting context for the doors this suite drives directly. */
+const JOURNAL = memberMoneyTestContext();
 const RUN = process.env.RUN_CONCURRENCY_RACE_TESTS === "1";
 const RACE_DB_URL = process.env.CONCURRENCY_RACE_DATABASE_URL ?? "";
 
@@ -158,6 +162,8 @@ let census: typeof import("@/lib/booking-ledger-projection-census-store");
       await prisma.memberCredit.deleteMany({ where: { memberId: MEMBER_ID } });
       await prisma.bookingModification.deleteMany({ where: { bookingId: { in: ALL_BOOKINGS } } });
       await prisma.manualRefundTask.deleteMany({ where: { bookingId: { in: ALL_BOOKINGS } } });
+      // #4627: the doors post journal batches bridged to these lines; release them first.
+      await releaseBookingJournalForTeardown(prisma, ALL_BOOKINGS);
       await prisma.bookingLedgerLine.deleteMany({ where: { bookingId: { in: ALL_BOOKINGS } } });
       await prisma.auditLog.deleteMany({ where: { targetId: { in: ALL_BOOKINGS } } });
       await prisma.paymentRecoveryOperation.deleteMany({ where: { bookingId: { in: ALL_BOOKINGS } } });
@@ -348,6 +354,7 @@ let census: typeof import("@/lib/booking-ledger-projection-census-store");
         await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
         return groupSync.postGroupSettlementLedgerLines({
           store: tx,
+          journal: JOURNAL,
           settlement: { id: CARD.settlement, source: "STRIPE", amountCents: 2 * CHILD_CENTS },
           children,
         });
@@ -602,7 +609,7 @@ let census: typeof import("@/lib/booking-ledger-projection-census-store");
       await prisma.$transaction(async (tx) => {
         await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
         await postModificationLedgerLines({
-          store: tx, bookingId: ord.id, lodgeId: LODGE_ID,
+          store: tx, journal: JOURNAL, bookingId: ord.id, lodgeId: LODGE_ID,
           bookingModification: { id: edit.id, priceDiffCents: -1_500, changeFeeCents: 0 },
           sides: { before: side(NIGHT_CENTS), after: side(NIGHT_CENTS - 1_500) },
           site: "race-3854",

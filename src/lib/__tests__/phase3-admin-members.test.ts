@@ -39,6 +39,9 @@ vi.mock("@/lib/prisma", () => ({
     memberSubscription: { count: vi.fn().mockResolvedValue(0) },
     seasonalMembershipAssignment: { findUnique: vi.fn().mockResolvedValue(null) },
     membershipSubscriptionCharge: { count: vi.fn().mockResolvedValue(0) },
+    // #4514: member hard-delete eligibility reads the journal's debtors.
+    memberMoneyLine: { count: vi.fn().mockResolvedValue(0) },
+    memberMoneyObligation: { count: vi.fn().mockResolvedValue(0) },
     membershipSubscriptionBillingSettings: { findUnique: vi.fn().mockResolvedValue(null) },
     auditLog: { create: vi.fn().mockResolvedValue({}), findMany: vi.fn() },
     promoCodeAssignment: { count: vi.fn().mockResolvedValue(0), findMany: vi.fn() },
@@ -2346,6 +2349,7 @@ describe("Phase 3: Admin Member Management", () => {
     });
 
     it("performs bulk deactivation in a transaction with audit logs", async () => {
+      const updateMany = vi.fn().mockResolvedValue({ count: 1 });
       mockedAuth.mockResolvedValue(adminSession);
       vi.mocked(prisma.member.findMany).mockResolvedValue([
         { id: "m2", firstName: "Bob", lastName: "Smith", email: "bob@test.com" },
@@ -2354,7 +2358,7 @@ describe("Phase 3: Admin Member Management", () => {
         const tx = {
           $executeRaw: vi.fn().mockResolvedValue(1),
           member: {
-            updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+            updateMany,
             // #1604 last-admin end-state guard counts active Full Admins
             // inside the tx; two survive the set, so it does not block.
             count: vi.fn().mockResolvedValue(2),
@@ -2379,6 +2383,10 @@ describe("Phase 3: Admin Member Management", () => {
       expect(res.status).toBe(200);
       const body = await res.json();
       expect(body.updated).toBe(1);
+      expect(updateMany).toHaveBeenCalledWith({
+        where: { id: { in: ["m2"] }, OR: [{ active: true }, { leavingDate: null }] },
+        data: { active: false, leavingDate: new Date("2026-07-01T00:00:00.000Z") },
+      });
       expect(prisma.$transaction).toHaveBeenCalled();
       expect(logAudit).toHaveBeenCalledWith(expect.objectContaining({
         action: "member.bulk-deactivate",

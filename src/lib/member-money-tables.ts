@@ -8,4 +8,3 @@ export const MEMBER_MONEY_RELATIONS = [
   "MemberMoneySourceLink",
   "MemberMoneySourcePosting",
 ] as const;
-

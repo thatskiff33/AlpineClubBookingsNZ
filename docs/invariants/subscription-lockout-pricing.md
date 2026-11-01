@@ -375,7 +375,7 @@ nights, so counting them as repriced would inflate the violation's count and emi
 a rate notice about a charge nobody received.
 
 Subscription-category billing's own exemption decision routes through this SAME
-`resolveMemberSubscriptionSettlement` resolver (INV-MONEY-043) for each
+`resolveMemberSubscriptionSettlement` resolver (INV-MONEY-045) for each
 category-assigned member, rather than a fourth, independently-invented exemption
 rule — a member this resolver treats as exempt is never billed via a category
 either, keeping booking-access and billing in agreement for a category-assigned

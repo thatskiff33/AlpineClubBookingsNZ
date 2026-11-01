@@ -1,3 +1,6 @@
+vi.mock("@/lib/cron-run-claim", () => ({
+  withCronRunClaim: vi.fn(async (_name: string, work: (assertOwned: () => Promise<void>) => Promise<unknown>) => ({ claimed: true, result: await work(async () => {}) })),
+}));
 import { describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/admin-modules", () => ({

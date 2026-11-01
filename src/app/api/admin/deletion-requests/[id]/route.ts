@@ -1,3 +1,5 @@
+import { MEMBER_CONTACT_ERASURE_PATCH } from "@/lib/member-contact-erasure";
+import { leavingDateForDeactivation } from "@/lib/member-leaving-date";
 /**
  * F-COMP-04: Admin — Approve, Reject, or Release a Deletion Request
  * POST /api/admin/deletion-requests/[id]
@@ -926,27 +928,11 @@ export async function POST(
       await tx.member.update({
         where: { id: member.id },
         data: {
-          firstName: "Deleted",
-          lastName: "Member",
+          ...MEMBER_CONTACT_ERASURE_PATCH,
           email: anonymisedEmail,
-          phoneCountryCode: null,
-          phoneAreaCode: null,
-          phoneNumber: null,
-          dateOfBirth: null,
-          streetAddressLine1: null,
-          streetAddressLine2: null,
-          streetCity: null,
-          streetRegion: null,
-          streetPostalCode: null,
-          streetCountry: null,
-          postalAddressLine1: null,
-          postalAddressLine2: null,
-          postalCity: null,
-          postalRegion: null,
-          postalPostalCode: null,
-          postalCountry: null,
           passwordHash: DELETED_ACCOUNT_PASSWORD_HASH,
           active: false,
+          leavingDate: leavingDateForDeactivation(member, clubTodayForSweep),
           // #3541: make account erasure structural in the same row write as
           // the anonymisation. No reader consumes this marker until #3542.
           deletedAt: new Date(),

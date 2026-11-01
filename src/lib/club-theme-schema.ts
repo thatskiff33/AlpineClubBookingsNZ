@@ -555,10 +555,10 @@ function colourToRgb(colour: string): { r: number; g: number; b: number } | null
 }
 
 /**
- * `foreground` mixed toward `towards` in gamma-encoded sRGB, matching CSS
- * `color-mix(in srgb, <foreground> <weight>%, <towards>)`, as a `#rrggbb` hex.
+ * `foreground` mixed toward `towards` in gamma-encoded sRGB — CSS `color-mix(in srgb, …)`, or a
+ * translucent fill over a surface — as a `#rrggbb` hex. Test seam: `bg-destructive/<n>` boxes.
  */
-function mixSrgb(
+export function mixSrgb(
   foreground: string,
   towards: string,
   foregroundWeight: number,

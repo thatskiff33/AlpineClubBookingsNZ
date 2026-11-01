@@ -28,9 +28,9 @@
  */
 import fs from "node:fs";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
 
 import { parseWorkflowYaml } from "./check-workflow-suite-checkout-depth.mjs";
+import { isMainModule } from "../lib/is-main-module.mjs";
 
 export const WORKSPACE_FILE = "pnpm-workspace.yaml";
 export const LOCKFILE = "pnpm-lock.yaml";
@@ -237,8 +237,7 @@ export function checkWorkingTree(root) {
   return { allowBuilds, dependabot, approvals };
 }
 
-const invokedPath = process.argv[1] ? pathToFileURL(process.argv[1]).href : null;
-if (invokedPath === import.meta.url) {
+if (isMainModule(import.meta.url)) {
   try {
     const { allowBuilds, dependabot, approvals } = checkWorkingTree(process.cwd());
     if (allowBuilds.length > 0) {

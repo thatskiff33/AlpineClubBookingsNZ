@@ -157,3 +157,10 @@ describe("model-level classification is well-formed (no drift, no double-classif
     }
   });
 });
+
+
+it("keeps webhook receipt history and monitoring policy local to the target install", () => {
+  expect(SINGLETON_MODELS).toContain("XeroInboundSettings");
+  expect(MODEL_LEVEL_EXCLUSIONS.XeroInboundSettings).toContain("instance-local");
+  expect(CLUB_SETTINGS_SINGLETON_MODELS).not.toContain("XeroInboundSettings");
+});

@@ -221,7 +221,7 @@ export function buildSavedCardChargeMetadata(
    * organisation id under a name that says member.
    */
   memberId: string | null
-): Record<string, string> {
+): Record<string, string> & { bookingId: string } {
   return memberId ? { bookingId, memberId } : { bookingId };
 }
 

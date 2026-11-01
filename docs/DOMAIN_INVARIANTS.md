@@ -37,6 +37,7 @@ description, so you can find the right file without opening more than one.
 | [`operations.md`](invariants/operations.md) | `INV-OPS`, `INV-LOCK` | raw SQL, advisory or row locking, which lock tier a writer takes, deployment, dropping a column, changing what a value already stored in a column means (an audit `category`, a status string) so the rows already written no longer match the code, what may be used as test input, mocking a money seam in a test that asserts money |
 | [`product-configuration.md`](invariants/product-configuration.md) | `INV-CONFIG` | adding a value or feature a club could answer differently, a new setting existing deployments will not have, or a default an upgrade must fall back to |
 | [`single-source-of-truth.md`](invariants/single-source-of-truth.md) | `INV-SSOT` | adding a constant, helper, formatter, type, validation rule or config value a second place will need; comparing two values; putting a default on a parameter that resolves an environment or configuration authority; or writing a guard, census or ratchet that claims to cross-check another one |
+| [`authentication.md`](invariants/authentication.md) | `INV-AUTH` | password sign-in, the per-account password throttle, what a refused or throttled sign-in answers |
 
 Three supporting files sit beside them: the full id scheme in
 [`SCHEME.md`](invariants/SCHEME.md); the word-budget register of approved
@@ -116,7 +117,7 @@ File: [`invariants/money.md`](invariants/money.md). Prefix `INV-MONEY`.
 | `INV-MONEY-012` | Club `familyBillingMode` decides whether family billing exists; stale schedules raise exceptions |
 | `INV-MONEY-013` | A multi-family member's per-family fee bills only via their admin-chosen billing family |
 | `INV-MONEY-014` | One family/type/membership-year tuple carries at most one durable charge |
-| `INV-MONEY-043` | Subscription category is a second billing axis; type xor category per charge, shared accessor, shared exemption/reversal rules |
+| `INV-MONEY-045` | Subscription category is a second billing axis; type xor category per charge, shared accessor, shared exemption/reversal rules |
 | `INV-MONEY-015` | Approval stands when billing setup is incomplete; billing records a visible exception |
 | `INV-MONEY-016` | Membership type governs liability, including archived role defaults; role grants no exemption |
 | `INV-MONEY-017` | Paid-up: NOT_REQUIRED type, PAID current-season row, exempt tier; nomination honours first |
@@ -127,6 +128,8 @@ File: [`invariants/money.md`](invariants/money.md). Prefix `INV-MONEY`.
 | `INV-MONEY-022` | At most one joining-fee invoice per member; conflicts surface, never adopted |
 | `INV-MONEY-041` | Member journals commit complete balanced batches with exact reversals |
 | `INV-MONEY-042` | Sealed journals reject later legs; accounts and source identities persist |
+| `INV-MONEY-043` | Money lines, credit links and group settlements refuse booking deletion |
+| `INV-MONEY-044` | Booking doors post their legacy charge lines into the journal once |
 
 ## Booking Dates And Capacity
 
@@ -356,6 +359,7 @@ Prefix `INV-PAY`.
 | `INV-PAY-145` | Charge-backed refund recovery checks Stripe and holds unexpected dashboard refunds |
 | `INV-PAY-146` | Edit card refunds freeze allocation before Stripe and preserve replay keys |
 | `INV-PAY-147` | Refund slice evidence prevents replay after Stripe forgets idempotency keys |
+| `INV-PAY-148` | Organiser bank-transfer edit invoices, unpaid-first netting and historical repair |
 | `INV-PAY-031` | Organiser-pays settlement applies only if payment matches the settleable children |
 | `INV-PAY-032` | Group children confirmed before payment have a reaper releasing beds and notifying |
 | `INV-PAY-033` | Reverted group children end terminally: a second reap window cancels once |
@@ -560,6 +564,7 @@ File:
 | `INV-REQ-010` | A corrected request never keeps beds held for its old shape |
 | `INV-REQ-011` | A request names a structured change; officers enter guests atomically |
 | `INV-REQ-012` | A range repeating a guest's own dates keeps their nights |
+| `INV-REQ-013` | An officer applies a missed promo to a finished stay |
 
 ### Subscription-lockout pricing, admin date overrides and member-facing email
 
@@ -747,6 +752,7 @@ Prefix `INV-ADDPAY`.
 | `INV-ADDPAY-049` | Released-credit request emails can offer bank transfer payment |
 | `INV-ADDPAY-050` | Earlier credit releases are asked for in audited, switchable batches |
 | `INV-ADDPAY-051` | An unchaseable released-credit request fails closed to the officers |
+| `INV-ADDPAY-052` | A release on an unpaid edit request merges into one request |
 
 ## Analytics And Privacy
 
@@ -930,6 +936,9 @@ File: [`invariants/integrations.md`](invariants/integrations.md). Prefix
 | `INV-INT-028` | A refund note resolved by hand records its Xero note, once |
 | `INV-INT-029` | Xero outcomes never replace better ones nor land on another claim |
 | `INV-INT-030` | Free-beds answer: module and toggle on, signed first, counts only |
+| `INV-INT-031` | A Xero payment link retires only on confirmed DELETED, never absence |
+| `INV-INT-032` | Stripe payments the app did not create: recorded and alerted once |
+| `INV-INT-033` | App booking payments no payment row settles: recorded, alerted once |
 
 ## Operations
 
@@ -981,6 +990,7 @@ headings the index keeps verbatim.
 | `INV-CONFIG-004` | Every application-controlled send passes one environment-aware boundary; four outcomes, all distinguishable |
 | `INV-CONFIG-005` | Every application-managed Xero contact write consumes the canonical role; copies contained |
 | `INV-CONFIG-006` | One persisted currency and locale; the environment seeds them once |
+| `INV-CONFIG-007` | One GST treatment setting, today's default, unwritten until Xero reads it |
 
 ## Single Source Of Truth
 
@@ -1002,3 +1012,18 @@ ten pre-split domain headings the index keeps verbatim.
 | `INV-SSOT-005` | Who owns a booking is answered by `bookingOwner()` and nowhere else |
 | `INV-SSOT-006` | Id- or input-carrying Prisma `startsWith` prefixes go through `exactPrefix` |
 | `INV-SSOT-007` | A charge's family-dedup key/display name are built by `chargeFamilyAxisKey`/`chargeAxisDisplayName`, nowhere else |
+
+## Authentication
+
+How the app decides whether a sign-in attempt may proceed, without telling
+anyone which accounts exist.
+File: [`invariants/authentication.md`](invariants/authentication.md).
+Prefix `INV-AUTH`. Added by #4609; it is not one of the ten pre-split domain
+headings the index keeps verbatim.
+
+| ID | Covers |
+| --- | --- |
+| `INV-AUTH-001` | Accounts keyed by an HMAC of the lookup-normalised email, never stored |
+| `INV-AUTH-002` | Throttle decides before any Member read; one answer for every account |
+| `INV-AUTH-003` | Claimed under row lock before the compare; password or reset clears it |
+| `INV-AUTH-004` | Fixed security floor, idle-hour reset, password only, per-process fallback |

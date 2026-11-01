@@ -115,8 +115,8 @@ Audience: Operator.
 By default every container connects as `tac`, the PostgreSQL superuser. Since
 #4453 a deployment can split that into roles that each hold only what their job
 needs. The application then cannot change a booking-ledger line or an audit entry,
-even if its credential leaks (owner decision, 27 Oct 2026). One route remains on
-purpose: **deleting a booking still deletes its ledger lines** (below).
+even if its credential leaks (owner decision, 27 Oct 2026). Deleting a booking
+cannot remove its ledger lines either (below).
 
 | Role | Default name | Used by | May |
 | --- | --- | --- | --- |
@@ -132,16 +132,19 @@ statements. It cannot reach a ledger line or audit row by another route either:
 - a view or rule over them is SELECT-only;
 - a `SECURITY DEFINER` routine is refused;
 - changing a booking's or a lodge's key is refused (a trigger on each parent,
-  so the foreign keys' `ON UPDATE CASCADE` can never fire).
+  and since #4514 the ledger's keys are `ON UPDATE RESTRICT` as well).
 
 `src/lib/__tests__/database-roles.realdb.test.ts` proves each of these against
 PostgreSQL. The AI Diagnostics role (ADR-007) and the audit archive database's
 role are separate and unchanged.
 
-**Deleting a booking still deletes its ledger lines.** `BookingLedgerLine.bookingId`
-is `ON DELETE CASCADE`, and a cascade runs with the table owner's rights, not the
-application's. That is how booking deletion works today. Whether it should change
-belongs to the ledger design, not to these grants; #4482 tracks it.
+**Deleting a booking cannot remove its ledger lines.** A cascade would run with
+the table owner's rights, not the application's, so since #4514 every key a ledger
+line holds, a member-credit row's booking links and a group settlement's group
+key are `ON DELETE RESTRICT ON UPDATE RESTRICT` (#4482's decision D1,
+`INV-MONEY-043`). The database refuses to delete a booking any of those rows, or
+a payment or refund record, names, for every role, including on a single-role
+install. Such a booking is soft-deleted or left as it is.
 
 ### Switching a deployment over (blue/green)
 
@@ -357,8 +360,8 @@ REFERENCES on a journal table, or one of those rights on a column.
 A successful empty journal is valid M1 evidence, not proof of backfill,
 legacy posting coverage, historical parity or readiness to switch readers.
 No provider credentials are needed. Source links can later attach legacy
-confirmation evidence without extending sealed legs. M2 owns the existing
-booking-ledger deletion cascade; this migration does not change old writers.
+confirmation evidence without extending sealed legs. This migration does not
+change old writers; M2 (#4514) removed the booking-ledger deletion cascade.
 
 M1 adds no Xero account-mapping setting and changes nothing on the Xero
 setup screen. The internal chart in `src/lib/member-money/` names the mapping
@@ -803,6 +806,9 @@ updates for review. The pnpm minimum release age matches the npm Dependabot
 cooldown: seven days (`10080` minutes).
 The already-locked `nodemailer@10.2.1` has an exact-version exception so frozen
 installs work during rollout; remove it after the next Nodemailer update.
+`follow-redirects@1.16.2` has one too: it is the fix for a high advisory, and
+it was still inside the cooldown when the advisory blocked the required audit
+(#4565). Remove it once that version is seven days old.
 
 Both published images include a BuildKit SBOM and maximum build provenance,
 plus a GitHub build provenance attestation tied to the pushed image digest.
@@ -890,6 +896,32 @@ allowed, the last duplicate wins). Step 3/8 prints which source each name came
 from, because a default that silently points at the upstream registry is how
 a fork's deploy fails at step 9 with "not found". Note that `sudo` strips the
 shell environment; the `.env` route survives it.
+
+### Cut the release first (#4465)
+
+Every production deploy runs a tagged release, so adopting clubs and forks can
+tell which `main` commit is a known-good release, and a rollback has a version
+to name. Before the deploy, cut the release with `pnpm run release:cut`
+([`scripts/release/cut-release.mjs`](scripts/release/cut-release.mjs)) — the
+full order, its refusals and its recovery messages are in
+[`docs/MAINTENANCE.md`](docs/MAINTENANCE.md#public-reference-release-checklist),
+"Public Reference Release Checklist":
+
+1. `pnpm run release:cut prepare --execute` on a clean checkout of
+   `origin/main` builds the `release/v<version>` commit; push it and merge it
+   as the release-prep pull request.
+2. `pnpm run release:cut publish --execute` tags the merged commit, pushes the
+   tag and publishes the GitHub release.
+3. Deploy that tag from the host's source checkout:
+
+   ```bash
+   git fetch origin tag v0.14.0
+   DEPLOY_REF=v0.14.0 ./scripts/run-production-blue-green-deploy.sh
+   ```
+
+   `DEPLOY_REF` pins the deploy to the tagged commit even if `main` has moved
+   since; while nothing has merged after the release, `origin/main` is that
+   commit and the plain command deploys the same thing.
 
 ### The deploy refuses a commit that exists on no remote (#3539)
 

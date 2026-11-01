@@ -1,3 +1,5 @@
+import { readOrganiserExtraAdjustmentPayload } from "@/lib/organiser-extra-adjustment-payload";
+import { ORGANISER_COMBINED_INVOICE_PLACE_MESSAGE, ORGANISER_COMBINED_INVOICE_PLACE_REFUSAL } from "@/lib/organiser-billing";
 import type { XeroContactUpdateData } from "@/lib/xero-contacts";
 import { supplementaryReplayMayRecordPayment } from "@/lib/additional-capture-receipt-gate";
 import {
@@ -1037,6 +1039,12 @@ export function getXeroOperationRetryMeta(operation: RetryableOperation): XeroOp
     };
   }
 
+  if (readOrganiserExtraAdjustmentPayload(operation.requestPayload)) {
+    return ["FAILED", "PARTIAL"].includes(operation.status)
+      ? { supported: true, reason: null }
+      : { supported: false, reason: "Only a failed organiser invoice adjustment can be retried." };
+  }
+
   if (
     appliedCreditRequeueType(operation) &&
     (operation.status === "FAILED" || operation.status === "PARTIAL")
@@ -1372,6 +1380,12 @@ export async function retryXeroSyncOperation(
   }
   if (await isRetryOfVoidedRefundRequestNote(operation, prisma)) throw new XeroOperationRetryError(VOIDED_REQUEST_NOTE_RETRY_REASON, 409);
 
+  const organiserExtra = readOrganiserExtraAdjustmentPayload(operation.requestPayload);
+  if (organiserExtra) {
+    await requeueOutboxRowForRetry(operation, { ...organiserExtra }, ["FAILED", "PARTIAL"], "organiser invoice adjustment");
+    return { message: "Queued organiser invoice adjustment retry." };
+  }
+
   const appliedCreditType = appliedCreditRequeueType(operation);
   if (appliedCreditType) {
     // These handlers make multi-step provider calls and have their own durable
@@ -1469,9 +1483,7 @@ export async function retryXeroSyncOperation(
   const createdByMemberId = options?.createdByMemberId ?? undefined;
 
   if (operation.status === "PARTIAL") {
-    const partialInvoiceRepair = partialInvoiceOperationHasPaymentFault(operation)
-      ? parsePartialInvoiceRepairInput(operation)
-      : null;
+    const partialInvoiceRepair = partialInvoiceOperationHasPaymentFault(operation) ? parsePartialInvoiceRepairInput(operation) : null;
     if (
       operation.entityType === "INVOICE" &&
       operation.operationType === "CREATE" &&
@@ -1531,6 +1543,8 @@ export async function retryXeroSyncOperation(
               "The payment is already recorded in Xero; retry once to close this operation.",
             );
           }
+          const gapSkip = await (await import("@/lib/credit-release-xero-payment")).skipPartialGapRepairPayment(operation, claim);
+          if (gapSkip) return close(gapSkip.paymentOutcome, gapSkip.message); // #4494: overlaps the credit-release sweep's share.
           const paymentId = await xero.createXeroPaymentForInvoice({
             localModel: operation.localModel!,
             localId: operation.localId!,
@@ -1693,9 +1707,15 @@ export async function retryXeroSyncOperation(
         }),
       );
       if (invoiceId === null) {
-        // The handler abandoned the mint (manual mark-paid provenance re-check)
-        // and already closed the operation CANCELLED with the reason. Report
-        // honestly — this retry created nothing and never will.
+        // The handler abandoned the mint and already closed the operation
+        // CANCELLED with the reason. Report honestly — this retry created
+        // nothing and never will. #4299 B1: the reason it recorded says which
+        // fence: a place the group organiser paid by internet banking, or the
+        // manual mark-paid provenance re-check.
+        const closed = await prisma.xeroSyncOperation.findUnique({ where: { id: operation.id }, select: { responsePayload: true } });
+        if (asRecord(closed?.responsePayload)?.refusal === ORGANISER_COMBINED_INVOICE_PLACE_REFUSAL) {
+          return { message: `No invoice was created: ${ORGANISER_COMBINED_INVOICE_PLACE_MESSAGE} The operation was closed.` };
+        }
         return {
           message:
             "No invoice was created: this booking's payment was manually marked paid (cash / off-Xero), so no Xero invoice is expected. The operation was closed.",
@@ -1771,7 +1791,7 @@ export async function retryXeroSyncOperation(
         repairExistingLink: true,
         format,
       });
-      if (replay?.raisedUnpaid) return { message: "Retried Xero supplementary invoice creation, raised unpaid: the card payment it would record is recorded by its own receipt." };
+      if (replay?.raisedUnpaid) return { message: "Retried Xero supplementary invoice creation, raised unpaid: the card payment it would record is recorded by its own receipt, or overlaps a credit-release payment." };
       return { message: "Retried Xero supplementary invoice creation." };
     }
 

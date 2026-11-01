@@ -114,6 +114,9 @@ export interface BookingData {
     // Issue #1668: an admin may override the date-window locks for this booking.
     // Optional so pre-existing fixtures stay valid; the booking page sets it.
     adminOverrideAvailable?: boolean;
+    // #4533: an officer on a FINISHED stay, where Save cannot apply and a promo
+    // code is sent as a correction request instead. Absent for everyone else.
+    finishedStayPromoCorrection?: boolean;
   };
   // #2104: an already-flagged/reviewed booking (requiresAdminReview && a
   // non-null adminReviewStatus) must not re-prompt for a justification — the
@@ -293,6 +296,12 @@ export interface QuoteResult {
    * stays off while it is set.
    */
   priceChangeRefusal?: string | null;
+  /**
+   * #4299 N4 (`INV-PAY-148`): the place is one the group organiser paid for by Internet Banking, so the organiser is
+   * billed for it - its combined invoice, and on save an increase's own invoice. The ONE fact the panel reads to name
+   * who is billed for an increase instead of an additional charge, and to show this member nothing remaining to pay.
+   */
+  billedToOrganiser?: boolean;
   // #2266: the member's live credit balance (create-flow quote parity).
   availableCreditCents?: number;
   capacityAvailable: boolean;
