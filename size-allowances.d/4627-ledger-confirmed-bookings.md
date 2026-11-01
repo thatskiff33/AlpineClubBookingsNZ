@@ -15,7 +15,7 @@ lines: 1601
 reason: the guest-add door resolves the journal's posting context beside its other pre-transaction reads and passes it to the modification poster in its transaction.
 
 file: src/lib/booking-batch-modification-service.ts
-lines: 2752
+lines: 2759
 reason: the journal's posting context joins the one pre-transaction preparation this module allows (prepareBookingBatchModification), so it covers both the owned and the caller transaction.
 
 file: src/lib/booking-cancel.ts
@@ -39,7 +39,7 @@ lines: 1071
 reason: the organiser cancel resolves the journal's posting context before its per-child claims and passes it to each child's cancellation lines.
 
 file: src/lib/group-settlement.ts
-lines: 1669
+lines: 1670
 reason: the group settle resolves the journal's posting context outside its lock, beside its club day, for the children's confirmation lines.
 
 file: src/lib/member-guest-consent-service.ts
