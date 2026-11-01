@@ -1,8 +1,13 @@
 import {
+  adminUnmatchedAppStripePaymentTemplate,
   adminUnrecognisedStripePaymentTemplate,
+  type UnmatchedAppStripePaymentAlertFields,
   type UnrecognisedStripePaymentAlertFields,
 } from "@/lib/email-templates/admin-unrecognised-stripe-payment";
-import { UNRECOGNISED_STRIPE_PAYMENT_NOTE } from "@/lib/unrecognised-stripe-payment-note";
+import {
+  UNMATCHED_APP_STRIPE_PAYMENT_NOTE,
+  UNRECOGNISED_STRIPE_PAYMENT_NOTE,
+} from "@/lib/unrecognised-stripe-payment-note";
 import { renderEmailHtml } from "@/lib/email-theme";
 import { type AdminAlertSendOutcome } from "./admin-alert-send-result";
 import { sendUnmuteableAdminAlert } from "./admin-alerts-shared";
@@ -24,6 +29,25 @@ export async function sendAdminUnrecognisedStripePaymentAlert(
     templateName: "admin-unrecognised-stripe-payment",
     templateData: { ...fields, unrecognisedPaymentNote: UNRECOGNISED_STRIPE_PAYMENT_NOTE },
     // The people who reconcile the club's money own it, as every finance alert.
+    requirement: { area: "finance", level: "edit" },
+  });
+}
+
+/**
+ * #4624 (`INV-INT-033`): a succeeded card payment the app started for a booking
+ * that matches no payment the booking is waiting on. The same unmuteable,
+ * delivery-locked path and Finance-editor audience as the alert above, for the
+ * same reason - a member was charged and nothing the app shows says so - and
+ * the same once-ever claim per PaymentIntent (`unrecognised-stripe-payment.ts`).
+ */
+export async function sendAdminUnmatchedAppStripePaymentAlert(
+  fields: UnmatchedAppStripePaymentAlertFields,
+): Promise<AdminAlertSendOutcome> {
+  return sendUnmuteableAdminAlert({
+    subject: `Booking card payment the app could not match - check it: ${fields.amount}`,
+    html: await renderEmailHtml(() => adminUnmatchedAppStripePaymentTemplate(fields)),
+    templateName: "admin-unmatched-app-stripe-payment",
+    templateData: { ...fields, unmatchedAppPaymentNote: UNMATCHED_APP_STRIPE_PAYMENT_NOTE },
     requirement: { area: "finance", level: "edit" },
   });
 }

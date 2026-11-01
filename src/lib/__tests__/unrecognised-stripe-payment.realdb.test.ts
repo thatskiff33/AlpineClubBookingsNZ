@@ -10,6 +10,10 @@
  * real unmuteable sender. The only double is Stripe's Checkout read, through the
  * harness's one shared `@/lib/stripe` double; no Stripe call is made.
  *
+ * #4624 (`INV-INT-033`): an app intent (it carries a `bookingId`) that no
+ * payment transaction names is recorded and alerted the same way, under its own
+ * reason and alert, once, under redelivery and under concurrent deliveries.
+ *
  * Ordinary Vitest runs skip the whole file. It needs the guarded, disposable
  * loopback PostgreSQL every realdb suite uses (`CONCURRENCY_RACE_DATABASE_URL`,
  * `RUN_CONCURRENCY_RACE_TESTS=1`), and owns and cleans its own `race-4532`
@@ -34,6 +38,7 @@ const EVENT_PREFIX = "evt_race_4532_";
 const INTENT_PREFIX = "pi_race_4532_";
 const BOOKING_ID = "race-4532-no-such-booking";
 const TEMPLATE = "admin-unrecognised-stripe-payment";
+const UNMATCHED_TEMPLATE = "admin-unmatched-app-stripe-payment";
 
 let prisma: (typeof import("@/lib/prisma"))["prisma"];
 let processStripeWebhookEvent: (typeof import("@/lib/stripe-webhook-service"))["processStripeWebhookEvent"];
@@ -52,7 +57,7 @@ let harnessRole: { before: string | undefined; restore: () => void } | undefined
       await prisma.alertCooldown.deleteMany({ where: { key: { contains: INTENT_PREFIX } } });
       await prisma.processedWebhookEvent.deleteMany({ where: { eventId: { startsWith: EVENT_PREFIX } } });
       await prisma.webhookLog.deleteMany({ where: { eventId: { startsWith: EVENT_PREFIX } } });
-      await prisma.emailLog.deleteMany({ where: { templateName: TEMPLATE } });
+      await prisma.emailLog.deleteMany({ where: { templateName: { in: [TEMPLATE, UNMATCHED_TEMPLATE] } } });
     }
 
     function succeededEvent(paymentIntentId: string, metadata: Record<string, string> = {}, eventId?: string): Stripe.Event {
@@ -202,14 +207,51 @@ let harnessRole: { before: string | undefined; restore: () => void } | undefined
       expect(await completed(b.id)).toBe(1);
     });
 
-    it("leaves an app intent alone, even one whose booking cannot be found", async () => {
+    // #4624 inverts #4532's "leaves an app intent alone": an app intent no
+    // payment transaction names is money nothing records, so it is recorded
+    // and alerted under its own reason - never through the Checkout read.
+    it("records an app intent no payment transaction names once, alerts once, and completes - then a redelivery and a replay add nothing (#4624)", async () => {
       const intent = `${INTENT_PREFIX}app`;
+      const first = succeededEvent(intent, { bookingId: BOOKING_ID });
 
-      expect(await deliver(succeededEvent(intent, { bookingId: BOOKING_ID }))).toBe(200);
+      expect(await deliver(first)).toBe(200);
 
-      expect(await rows(intent)).toHaveLength(0);
-      expect(await alertClaims(intent)).toBe(0);
+      const [row] = await rows(intent);
+      expect(row).toMatchObject({
+        reason: "APP_INTENT_NO_TRANSACTION",
+        bookingId: BOOKING_ID,
+        stripeChargeId: `ch_${intent}`,
+        stripeCheckoutSessionId: null,
+        stripePaymentLinkId: null,
+        amountCents: 2500,
+        stripeEventId: first.id,
+      });
+      expect(row.alertedAt).toBeInstanceOf(Date);
+      expect(await alertClaims(intent)).toBe(1);
+      expect(await completed(first.id)).toBe(1);
+
+      expect(await deliver(first)).toBe(200);
+      const replay = succeededEvent(intent, { bookingId: BOOKING_ID });
+      expect(await deliver(replay)).toBe(200);
+
+      expect(await rows(intent)).toHaveLength(1);
+      expect(await alertClaims(intent)).toBe(1);
+      expect(await completed(replay.id)).toBe(1);
       expect(checkoutReads).toEqual([]);
+    });
+
+    it("writes one row and one alert claim when four deliveries of one app intent run at once (#4624)", async () => {
+      const intent = `${INTENT_PREFIX}app_race`;
+      const events = [1, 2, 3, 4].map(() => succeededEvent(intent, { bookingId: BOOKING_ID }));
+
+      const statuses = await Promise.all(events.map(deliver));
+
+      expect(statuses).toEqual([200, 200, 200, 200]);
+      const stored = await rows(intent);
+      expect(stored).toHaveLength(1);
+      expect(stored[0]).toMatchObject({ reason: "APP_INTENT_NO_TRANSACTION", bookingId: BOOKING_ID });
+      expect(await alertClaims(intent)).toBe(1);
+      for (const event of events) expect(await completed(event.id)).toBe(1);
     });
   },
 );

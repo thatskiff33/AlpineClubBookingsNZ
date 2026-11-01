@@ -934,6 +934,7 @@ File: [`invariants/integrations.md`](invariants/integrations.md). Prefix
 | `INV-INT-030` | Free-beds answer: module and toggle on, signed first, counts only |
 | `INV-INT-031` | A Xero payment link retires only on confirmed DELETED, never absence |
 | `INV-INT-032` | Stripe payments the app did not create: recorded and alerted once |
+| `INV-INT-033` | App booking payments no payment row settles: recorded, alerted once |
 
 ## Operations
 

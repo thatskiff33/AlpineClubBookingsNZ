@@ -11,6 +11,7 @@
  */
 import type { Prisma } from "@prisma/client";
 import { exactProviderAmountToCents } from "@/lib/money-provider-amount";
+import { isLiveXeroPaymentStatus } from "@/lib/xero-payment-status";
 import type { XeroNoteAllocation, XeroNotePayment } from "@/lib/xero-credit-note-spent-outside-app";
 import { BOOKING_INVOICE_LINK_MODELS } from "@/lib/xero-credit-note-write-down";
 
@@ -31,7 +32,7 @@ export function xeroPaymentsOf(
   payments: ReadonlyArray<{ paymentID?: string; amount?: unknown; status?: unknown }> | null | undefined,
 ): XeroNotePayment[] {
   return (payments ?? []).flatMap((payment) => {
-    if (String(payment.status ?? "") === "DELETED") return [];
+    if (!isLiveXeroPaymentStatus(payment.status)) return [];
     const cents = exactProviderAmountToCents(payment.amount);
     return payment.paymentID && cents !== null ? [{ paymentId: payment.paymentID, cents }] : [];
   });

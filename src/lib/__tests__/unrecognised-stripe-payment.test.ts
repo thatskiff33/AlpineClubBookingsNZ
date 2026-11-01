@@ -23,6 +23,8 @@ type Row = {
   stripeEventId: string;
   alertedAt: Date | null;
   createdAt: Date;
+  reason: "NOT_APP_CREATED" | "APP_INTENT_NO_TRANSACTION" | "APP_INTENT_NOT_PRIMARY";
+  bookingId: string | null;
 };
 
 const state = vi.hoisted(() => ({
@@ -35,6 +37,7 @@ const state = vi.hoisted(() => ({
 const mocks = vi.hoisted(() => ({
   findCheckoutSession: vi.fn(),
   sendAlert: vi.fn<(...args: unknown[]) => Promise<"sent" | "undelivered">>(async () => "sent"),
+  sendUnmatchedAlert: vi.fn<(...args: unknown[]) => Promise<"sent" | "undelivered">>(async () => "sent"),
   createMany: vi.fn(),
 }));
 
@@ -90,6 +93,7 @@ vi.mock("@/lib/stripe", () => ({
 
 vi.mock("@/lib/email", () => ({
   sendAdminUnrecognisedStripePaymentAlert: (...args: unknown[]) => mocks.sendAlert(...args),
+  sendAdminUnmatchedAppStripePaymentAlert: (...args: unknown[]) => mocks.sendUnmatchedAlert(...args),
 }));
 
 // The real helper's rule, over a key set: claim, send, keep - or give the claim
@@ -114,6 +118,7 @@ vi.mock("@/lib/logger", () => ({ default: { info: vi.fn(), warn: vi.fn(), error:
 
 import {
   describeUnrecognisedPayment,
+  recordUnmatchedAppStripePayment,
   recordUnrecognisedStripePayment,
   UNRECOGNISED_ALERT_IN_FLIGHT_MS,
   stripeDashboardPaymentUrl,
@@ -186,6 +191,8 @@ describe("recordUnrecognisedStripePayment (#4532)", () => {
           stripeCreatedAt: new Date("2026-06-30T21:00:00.000Z"),
           description: "Winter donation; 3 x Raffle ticket",
           stripeEventId: "evt_donation",
+          reason: "NOT_APP_CREATED",
+          bookingId: null,
         },
       ],
       skipDuplicates: true,
@@ -281,6 +288,8 @@ describe("recordUnrecognisedStripePayment (#4532)", () => {
         stripeEventId: "evt_other",
         alertedAt: null,
         createdAt: new Date(),
+        reason: "NOT_APP_CREATED",
+        bookingId: null,
       });
       // The winner already holds a fresh alert claim and has not stamped the row.
       state.heldKeys.set(unrecognisedStripePaymentAlertKey("pi_donation"), new Date());
@@ -307,6 +316,8 @@ describe("recordUnrecognisedStripePayment (#4532)", () => {
       stripeEventId: "evt_donation",
       alertedAt: null,
       createdAt: new Date(),
+      reason: "NOT_APP_CREATED",
+      bookingId: null,
     });
 
     await recordUnrecognisedStripePayment(paymentIntent(), event(), CLUB_FORMAT_TEST);
@@ -330,6 +341,8 @@ describe("recordUnrecognisedStripePayment (#4532)", () => {
       stripeEventId: "evt_donation",
       alertedAt: null,
       createdAt: new Date(),
+      reason: "NOT_APP_CREATED",
+      bookingId: null,
     });
     state.heldKeys.set(key, new Date(Date.now() - 16 * 60 * 1000));
 
@@ -406,5 +419,160 @@ describe("what the record and alert say (#4532)", () => {
   it("links the Stripe dashboard in the event's mode", () => {
     expect(stripeDashboardPaymentUrl("pi_1", true)).toBe("https://dashboard.stripe.com/payments/pi_1");
     expect(stripeDashboardPaymentUrl("pi_1", false)).toBe("https://dashboard.stripe.com/test/payments/pi_1");
+  });
+});
+
+/**
+ * #4624 (`INV-INT-033`): a succeeded PaymentIntent the app created for a booking
+ * that no PRIMARY payment transaction names - the same record, the same claim
+ * and the same once-ever key, with its own alert and reason.
+ */
+describe("recordUnmatchedAppStripePayment (#4624)", () => {
+  function appIntent(overrides: Partial<Stripe.PaymentIntent> = {}): Stripe.PaymentIntent {
+    return paymentIntent({
+      id: "pi_app",
+      amount: 12000,
+      amount_received: 12000,
+      latest_charge: "ch_app",
+      metadata: { bookingId: "booking-1" },
+      ...overrides,
+    });
+  }
+  const NO_ROW = { bookingId: "booking-1", matchedKind: null };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    state.rows.clear();
+    state.heldKeys.clear();
+    state.beforeInsert = null;
+  });
+
+  it("records an app intent no payment transaction names once, with its booking, and alerts once with its own alert", async () => {
+    await recordUnmatchedAppStripePayment(appIntent(), event("evt_app"), CLUB_FORMAT_TEST, NO_ROW);
+
+    // The app makes no Checkout session, so Stripe is not asked for one.
+    expect(mocks.findCheckoutSession).not.toHaveBeenCalled();
+    expect(mocks.createMany).toHaveBeenCalledWith({
+      data: [
+        {
+          stripePaymentIntentId: "pi_app",
+          stripeChargeId: "ch_app",
+          stripeCheckoutSessionId: null,
+          stripePaymentLinkId: null,
+          amountCents: 12000,
+          currency: "nzd",
+          stripeCreatedAt: new Date("2026-06-30T21:00:00.000Z"),
+          description: null,
+          stripeEventId: "evt_app",
+          reason: "APP_INTENT_NO_TRANSACTION",
+          bookingId: "booking-1",
+        },
+      ],
+      skipDuplicates: true,
+    });
+    expect(mocks.sendAlert).not.toHaveBeenCalled();
+    expect(mocks.sendUnmatchedAlert).toHaveBeenCalledTimes(1);
+    expect(mocks.sendUnmatchedAlert).toHaveBeenCalledWith({
+      amount: "$120.00",
+      receivedAt: expect.any(String),
+      bookingId: "booking-1",
+      ledgerMatch: "No payment record names this Stripe payment",
+      paymentIntentId: "pi_app",
+      chargeId: "ch_app",
+      stripeDashboardUrl: "https://dashboard.stripe.com/payments/pi_app",
+    });
+    expect(state.rows.get("pi_app")?.alertedAt).toBeInstanceOf(Date);
+    expect(state.heldKeys.has(unrecognisedStripePaymentAlertKey("pi_app"))).toBe(true);
+  });
+
+  it("records an app intent whose only row is not PRIMARY as APP_INTENT_NOT_PRIMARY, and says so", async () => {
+    await recordUnmatchedAppStripePayment(appIntent(), event("evt_app"), CLUB_FORMAT_TEST, {
+      bookingId: "booking-1",
+      matchedKind: "ADDITIONAL",
+    });
+
+    expect(state.rows.get("pi_app")?.reason).toBe("APP_INTENT_NOT_PRIMARY");
+    expect(mocks.sendUnmatchedAlert).toHaveBeenCalledWith(
+      expect.objectContaining({ ledgerMatch: expect.stringContaining("An additional-payment request names this Stripe payment") }),
+    );
+  });
+
+  it("records nothing new and alerts nothing on redelivery", async () => {
+    await recordUnmatchedAppStripePayment(appIntent(), event("evt_app"), CLUB_FORMAT_TEST, NO_ROW);
+    vi.clearAllMocks();
+
+    await recordUnmatchedAppStripePayment(appIntent(), event("evt_app_redelivered"), CLUB_FORMAT_TEST, NO_ROW);
+
+    expect(state.rows.size).toBe(1);
+    expect(state.rows.get("pi_app")!.stripeEventId).toBe("evt_app");
+    expect(mocks.createMany).not.toHaveBeenCalled();
+    expect(mocks.sendUnmatchedAlert).not.toHaveBeenCalled();
+    expect(mocks.sendAlert).not.toHaveBeenCalled();
+  });
+
+  it("alerts nothing when a concurrent delivery won the insert and holds a fresh claim", async () => {
+    state.beforeInsert = () => {
+      state.rows.set("pi_app", {
+        id: "row_other",
+        stripePaymentIntentId: "pi_app",
+        stripeChargeId: "ch_app",
+        stripeCheckoutSessionId: null,
+        stripePaymentLinkId: null,
+        amountCents: 12000,
+        currency: "nzd",
+        stripeCreatedAt: new Date("2026-06-30T21:00:00.000Z"),
+        description: null,
+        stripeEventId: "evt_other",
+        alertedAt: null,
+        createdAt: new Date(),
+        reason: "APP_INTENT_NO_TRANSACTION",
+        bookingId: "booking-1",
+      });
+      state.heldKeys.set(unrecognisedStripePaymentAlertKey("pi_app"), new Date());
+    };
+
+    await recordUnmatchedAppStripePayment(appIntent(), event("evt_app"), CLUB_FORMAT_TEST, NO_ROW);
+
+    expect(state.rows.size).toBe(1);
+    expect(state.rows.get("pi_app")!.stripeEventId).toBe("evt_other");
+    expect(mocks.sendUnmatchedAlert).not.toHaveBeenCalled();
+  });
+
+  it("throws when the alert is not delivered, keeping the row, and the redelivery sends it", async () => {
+    mocks.sendUnmatchedAlert.mockResolvedValueOnce("undelivered");
+
+    await expect(
+      recordUnmatchedAppStripePayment(appIntent(), event("evt_app"), CLUB_FORMAT_TEST, NO_ROW),
+    ).rejects.toBeInstanceOf(UnrecognisedStripePaymentAlertNotSentError);
+    expect(state.rows.size).toBe(1);
+    expect(state.heldKeys.size).toBe(0);
+
+    await recordUnmatchedAppStripePayment(appIntent(), event("evt_app"), CLUB_FORMAT_TEST, NO_ROW);
+
+    expect(mocks.sendUnmatchedAlert).toHaveBeenCalledTimes(2);
+    expect(state.rows.get("pi_app")?.alertedAt).toBeInstanceOf(Date);
+  });
+
+  it("alerts by the STORED row's reason: one PaymentIntent is one record and one alert, whichever case recorded it", async () => {
+    await recordUnrecognisedStripePayment(paymentIntent({ id: "pi_app" }), event("evt_first"), CLUB_FORMAT_TEST);
+    vi.clearAllMocks();
+
+    await recordUnmatchedAppStripePayment(appIntent(), event("evt_second"), CLUB_FORMAT_TEST, NO_ROW);
+
+    expect(state.rows.get("pi_app")?.reason).toBe("NOT_APP_CREATED");
+    expect(mocks.createMany).not.toHaveBeenCalled();
+    expect(mocks.sendUnmatchedAlert).not.toHaveBeenCalled();
+    expect(mocks.sendAlert).not.toHaveBeenCalled();
+  });
+
+  it("refuses a PRIMARY match, which the webhook settles and never records", async () => {
+    await expect(
+      recordUnmatchedAppStripePayment(appIntent(), event("evt_app"), CLUB_FORMAT_TEST, {
+        bookingId: "booking-1",
+        matchedKind: "PRIMARY",
+      }),
+    ).rejects.toThrow("A PRIMARY payment transaction matches this PaymentIntent");
+    expect(state.rows.size).toBe(0);
+    expect(mocks.sendUnmatchedAlert).not.toHaveBeenCalled();
   });
 });

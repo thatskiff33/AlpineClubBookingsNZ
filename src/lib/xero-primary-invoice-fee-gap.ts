@@ -45,6 +45,7 @@ import {
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 import { asRecord } from "@/lib/xero-json";
+import { isLiveXeroPaymentStatus } from "@/lib/xero-payment-status";
 import {
   intentsRecordedByPrimaryCash,
   PRIMARY_INVOICE_FEE_AT_LINK_KEY,
@@ -174,7 +175,7 @@ export function existingPrimaryInvoiceStripePayment(
       (payment) =>
         Boolean(payment.paymentID) &&
         payment.reference === reference &&
-        String(payment.status ?? "").toUpperCase() !== "DELETED",
+        isLiveXeroPaymentStatus(payment.status),
     ) ?? null
   );
 }

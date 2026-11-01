@@ -4824,6 +4824,12 @@ model ProcessedWebhookEvent {
 // application role can still update or delete it, so part 2 (#4621) must not
 // treat the row as privilege-narrowed if it records a Xero posting here.
 // Club-wide: no booking, so no lodge.
+//
+// #4624 (`INV-INT-033`): the same record, claim and once-ever alert hold a
+// succeeded PaymentIntent the app DID create (it carries the app's `bookingId`)
+// that matches no PRIMARY payment transaction, so no path settles it. `reason`
+// says which; `bookingId` is the metadata's, stored as text with no relation
+// because the booking may not exist here. The row still has no lodge.
 model UnrecognisedStripePayment {
   id                      String   @id @default(cuid())
   stripePaymentIntentId   String   @unique
@@ -4845,6 +4851,24 @@ model UnrecognisedStripePayment {
   // null sends again; a held cooldown without this stamp is not a sent alert.
   alertedAt               DateTime?
   createdAt               DateTime @default(now())
+  // #4624: why it was recorded. The default is #4532's case, so a row the
+  // previous release inserts without the column reads as what it is.
+  reason                  UnrecognisedStripePaymentReason @default(NOT_APP_CREATED)
+  // #4624: the app intent's metadata `bookingId`; null for NOT_APP_CREATED.
+  bookingId               String?
+}
+
+// #4624 (`INV-INT-033`): why a succeeded Stripe payment is an
+// `UnrecognisedStripePayment`.
+enum UnrecognisedStripePaymentReason {
+  // #4532: the PaymentIntent carries none of the app's metadata.
+  NOT_APP_CREATED
+  // The app's intent (a `bookingId`), but no payment transaction names it,
+  // even after the saved-card attempt adoption.
+  APP_INTENT_NO_TRANSACTION
+  // The app's intent, but the transaction that names it is not PRIMARY while
+  // the intent is not marked an additional ask, so neither path settles it.
+  APP_INTENT_NOT_PRIMARY
 }
 
 // ---------------------------------------------------------------------------
