@@ -15,6 +15,7 @@ import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import logger from "@/lib/logger";
 import { decodeRawRows, rawIntColumn } from "@/lib/raw-sql-rows";
+import { DEGRADED_AUTH_LIMIT_DIVISOR } from "@/lib/degraded-auth-limit";
 
 interface RateLimitEntry {
   count: number;
@@ -67,13 +68,6 @@ export interface RateLimitConfig {
    */
   authSensitive?: boolean;
 }
-
-/**
- * Divisor applied to an auth-sensitive limiter's budget while running on the
- * per-process fallback. 4 covers the blue/green double-slot deployment plus
- * headroom for process restarts resetting in-memory counters mid-window.
- */
-export const DEGRADED_AUTH_LIMIT_DIVISOR = 4;
 
 export interface RateLimitResult {
   success: boolean;

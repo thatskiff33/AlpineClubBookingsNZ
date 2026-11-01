@@ -21,6 +21,7 @@ import "server-only";
 
 import { createHash, createHmac } from "node:crypto";
 
+import { DEGRADED_AUTH_LIMIT_DIVISOR } from "./degraded-auth-limit";
 import logger from "./logger";
 import {
   LOGIN_THROTTLE_FREE_FAILURES,
@@ -31,15 +32,14 @@ import {
   type LoginThrottleState,
 } from "./login-throttle-policy";
 import { prisma } from "./prisma";
-import { DEGRADED_AUTH_LIMIT_DIVISOR } from "./rate-limit";
 import { getAuthSecret } from "./runtime-config";
 
 /** Domain label so this HMAC can never collide with another use of the secret. */
 const ACCOUNT_KEY_LABEL = "login-throttle:v1:";
 /**
  * The per-process fallback's free budget: the full budget divided as the
- * auth-sensitive limiters divide theirs in degraded mode (`rate-limit.ts`,
- * #1142), never below one.
+ * auth-sensitive limiters divide theirs in degraded mode (#1142), never below
+ * one.
  */
 export const LOGIN_THROTTLE_DEGRADED_FREE_FAILURES = Math.max(
   1,
@@ -199,10 +199,10 @@ export async function claimPasswordAttempt(email: string): Promise<{ allowed: bo
  * or the idle hour clears.
  */
 export async function clearPasswordAttempts(email: string): Promise<void> {
-  const key = memoryKeyFor(email);
-  memoryStore.delete(key);
-  if (!getAuthSecret()) return;
   try {
+    const key = memoryKeyFor(email);
+    memoryStore.delete(key);
+    if (!getAuthSecret()) return;
     await prisma.loginThrottle.deleteMany({ where: { id: key } });
   } catch (err) {
     noteStoreFailure(err, new Date());
