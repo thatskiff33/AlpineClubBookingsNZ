@@ -71,6 +71,7 @@ const DOORS: Record<string, string> = {
   "src/lib/booking-ledger-modification-sync.ts": "R02/R03 an edit's lines; R21 a review closure's",
   "src/lib/booking-ledger-cancellation-sync.ts": "R04: a cancellation's lines",
   "src/lib/member-merge.ts": "D4: the merged-away member's receivable balances, transferred",
+  "src/lib/booking-ledger-back-post.ts": "R26: lines a door could not post, filled in for a booking already in the journal",
 };
 /**
  * M3b (#4627): the doors' callers, which resolve the posting context BEFORE

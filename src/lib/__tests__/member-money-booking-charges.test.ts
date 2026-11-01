@@ -215,6 +215,16 @@ describe("R02/R03/R04/R21: later events correct whole components (#4627)", () =>
   });
 });
 
+describe("the back-post's batch (#4627, R26)", () => {
+  it("is named by the first line it fills in, posted as legacy, correcting like any later event", () => {
+    const night = line({ kind: "GUEST_NIGHT", amountCents: -4000, reversesLineId: "n1" });
+    const built = plan({ kind: "back-post", firstLineId: night.id }, [night], live([["BOOKING_REVENUE", CHARGE, 10000]])) as Legs;
+    expect(built).toMatchObject({ kind: "ADJUSTMENT", eventKey: `back-post:${night.id}`, origin: "LEGACY", source: { kind: "BOOKING", id: BOOKING } });
+    expect(legsOf(built).slice(1)).toEqual([["BOOKING_REVENUE", "DEBIT", 10000, CHARGE], ["BOOKING_REVENUE", "CREDIT", 6000, CHARGE]]);
+    expect(() => buildMemberMoneyBatch(context, built)).not.toThrow();
+  });
+});
+
 describe("the component rule the census shares (#4627)", () => {
   it("names the folded component (the kept cancellation fee included), each change fee by its key, a fee reversal by its target's, and nothing for settlement", () => {
     expect(journalComponentOfLegacyLine(line({ kind: "PROMOTION", amountCents: -1 }))).toEqual({ account: "BOOKING_REVENUE", chargeIdentity: CHARGE });

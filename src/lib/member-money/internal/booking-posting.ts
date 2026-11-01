@@ -77,7 +77,8 @@ async function unbridgedLines(tx: Db, bookingId: string, postingKeys: readonly s
 export interface BookingLedgerJournalInput {
   bookingId: string;
   lodgeId: string;
-  event: BookingChargeEvent;
+  /** The back-post's event is named by the first line it writes, which this reads back. */
+  event: Exclude<BookingChargeEvent, { kind: "back-post" }> | { kind: "back-post" };
   /** The posting keys of the legacy lines this event just wrote. */
   postingKeys: readonly string[];
 }
@@ -88,18 +89,20 @@ export async function postBookingLedgerJournal(
   context: MemberMoneyPostingContext,
   input: BookingLedgerJournalInput,
 ): Promise<MemberMoneyPosting | null> {
-  const { eventKey } = bookingChargeEventIdentity(input.bookingId, input.event);
-  if (await eventPosted(tx, eventKey)) return null;
+  if (input.event.kind !== "back-post" && await eventPosted(tx, bookingChargeEventIdentity(input.bookingId, input.event).eventKey)) {
+    return null;
+  }
   if (input.event.kind !== "confirmation" && !(await eventPosted(tx, memberMoneyEventKeys.bookingCharge(input.bookingId)))) {
     return null;
   }
   const lines = (await unbridgedLines(tx, input.bookingId, input.postingKeys)).filter((line) => line.amountCents !== 0);
   if (lines.length === 0) return null;
+  const event: BookingChargeEvent = input.event.kind === "back-post" ? { kind: "back-post", firstLineId: lines[0]!.id } : input.event;
   const debtor = await lockedBookingDebtor(tx, input.bookingId);
   const plan = planBookingChargeEvent({
     bookingId: input.bookingId,
     lodgeId: input.lodgeId,
-    event: input.event,
+    event,
     debtor,
     lines,
     liveComponents: await readBookingLiveComponents(tx, input.bookingId),

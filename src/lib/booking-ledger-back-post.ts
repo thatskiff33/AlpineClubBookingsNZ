@@ -70,7 +70,8 @@ import type { Prisma, PrismaClient } from "@prisma/client";
 
 import { planGroupChildBackPost } from "@/lib/booking-ledger-back-post-group";
 import { postHandBackLedgerLine } from "@/lib/booking-ledger-hand-back";
-import { LEGACY_HISTORY_ONLY, postCancellationLedgerLines } from "@/lib/booking-ledger-cancellation-sync";
+import { postCancellationLedgerLines } from "@/lib/booking-ledger-cancellation-sync";
+import { postBookingLedgerJournal, resolveBookingMoneyPostingContext, type MemberMoneyPostingContext } from "@/lib/member-money/doors";
 import { planConfirmationChargeLines } from "@/lib/booking-ledger-confirmation-posting";
 import { syncBookingLedgerCredits } from "@/lib/booking-ledger-credit-sync";
 import {
@@ -494,7 +495,7 @@ function namedClasses(evaluation: BookingLedgerEvaluation): string[] {
  * and judge the result. Throws `BackPostRollback` for a refusal; returns the
  * outcome otherwise (the caller rolls a dry run back itself).
  */
-async function backPostBooking(tx: Tx, bookingId: string): Promise<BookingBackPostOutcome> {
+async function backPostBooking(tx: Tx, bookingId: string, journal: MemberMoneyPostingContext): Promise<BookingBackPostOutcome> {
   if (!(await lockBookingForBackPost(tx, bookingId))) return { bookingId, kind: "NOTHING_TO_POST", classes: [] };
   const lineIds = async () =>
     (await tx.bookingLedgerLine.findMany({ where: { bookingId }, select: { id: true } })).map((line) => line.id);
@@ -549,6 +550,14 @@ async function backPostBooking(tx: Tx, bookingId: string): Promise<BookingBackPo
   if ("kind" in charges) throw refuse(charges);
   await writeBookingLedgerRows(tx, buildBookingLedgerRows([...charges.postings, ...(group?.postings ?? [])]));
   steps.push(...charges.steps, ...(group?.steps ?? []));
+  // #4627 (R26): a booking whose confirmation is in the member-money journal
+  // gets the charge lines filled in here too; one confirmed before it posts
+  // nothing (M9 back-posts its history whole). A confirmation is never filled
+  // for a journal booking: its R01 posted with its confirmation lines.
+  await postBookingLedgerJournal(tx, journal, {
+    bookingId, lodgeId: booking.lodgeId, event: { kind: "back-post" },
+    postingKeys: charges.postings.filter((posting) => posting.anchorKind !== "CONFIRMATION").map((posting) => posting.postingKey),
+  });
 
   // The cancellation, once the stay it takes back is on the ledger.
   const cancellationPosted = first.lines.some((line) => line.anchorKind === "CANCELLATION" && line.side !== "SETTLEMENT");
@@ -557,7 +566,7 @@ async function backPostBooking(tx: Tx, bookingId: string): Promise<BookingBackPo
     if (kept === null) {
       throw refuse(cannotPost(bookingId, "CENSUS_WOULD_NOT_PASS", "the CANCELLED event's snapshot holds no kept or retained figure"));
     }
-    await postCancellationLedgerLines({ store: tx, journal: LEGACY_HISTORY_ONLY, bookingId, lodgeId: booking.lodgeId, ...kept, site: "booking-ledger-back-post" });
+    await postCancellationLedgerLines({ store: tx, journal, bookingId, lodgeId: booking.lodgeId, ...kept, site: "booking-ledger-back-post" });
     steps.push(`cancellation (kept ${kept.keptCents})`);
   }
 
@@ -619,11 +628,12 @@ async function backPostOne(
   client: Pick<PrismaClient, "$transaction">,
   bookingId: string,
   apply: boolean,
+  journal: MemberMoneyPostingContext,
 ): Promise<BookingBackPostOutcome> {
   try {
     return await client.$transaction(
       async (tx) => {
-        const result = await backPostBooking(tx, bookingId);
+        const result = await backPostBooking(tx, bookingId, journal);
         // A dry run posts, judges and then rolls everything back.
         if (!apply) throw new BackPostRollback(result.kind === "POSTED" ? { ...result, lineIds: [] } : result);
         return result;
@@ -651,8 +661,10 @@ export async function runBookingLedgerBackPost(args: {
   const runId = randomUUID();
   const startedAt = new Date().toISOString();
   const outcomes: BookingBackPostOutcome[] = [];
+  // #4627: the journal's posting context, once per run, before any booking's transaction.
+  const journal = await resolveBookingMoneyPostingContext();
   const one = async (bookingId: string) => {
-    const outcome = await backPostOne(args.client, bookingId, args.apply);
+    const outcome = await backPostOne(args.client, bookingId, args.apply, journal);
     outcomes.push(outcome);
     args.onOutcome?.(outcome);
   };

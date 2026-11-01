@@ -297,6 +297,9 @@ until M4's applications. Only a booking whose R01 is in the journal posts later
 events, since one confirmed before M3b is M9's to back-post whole, and an event
 already posted is a no-op. A tax setting the door could not read refuses only a
 batch that needs a fresh split. Member merge posts D4's transfer (section 10).
+The booking-ledger back-post is a legacy writer too: for a booking whose R01 is
+in the journal it posts the lines it fills in (a door's logged gap) as one R26
+batch, named by the first line it writes; for any other booking it posts nothing.
 
 Use the existing lock classification, never a new generic journal advisory key.
 Settlement/lifecycle commands take global `lock(1)` under `INV-LOCK-001`; capacity

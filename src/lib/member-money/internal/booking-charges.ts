@@ -116,7 +116,9 @@ export type BookingChargeEvent =
   | { kind: "confirmation" }
   | { kind: "modification"; modificationId: string }
   | { kind: "cancellation" }
-  | { kind: "review-close"; taskId: string; officerMemberId: string };
+  | { kind: "review-close"; taskId: string; officerMemberId: string }
+  /** The back-post, named by the first line it writes (`memberMoneyEventKeys.backPost`). */
+  | { kind: "back-post"; firstLineId: string };
 
 /**
  * A booking is cancelled once: `CANCELLED` is terminal and every cancel path
@@ -130,7 +132,7 @@ export function bookingChargeEventIdentity(bookingId: string, event: BookingChar
   eventKey: MemberMoneyEventKey;
   source: MemberMoneySource;
   origin: MemberMoneyOrigin;
-  rule: "R01" | "R02" | "R04" | "R21";
+  rule: "R01" | "R02" | "R04" | "R21" | "R26";
   actorMemberId: string | null;
 } {
   switch (event.kind) {
@@ -146,6 +148,9 @@ export function bookingChargeEventIdentity(bookingId: string, event: BookingChar
     case "review-close":
       return { eventKey: memberMoneyEventKeys.reviewClose(event.taskId), rule: "R21", origin: "OFFICER",
         actorMemberId: event.officerMemberId, source: { kind: "OFFICER_FACT", id: event.taskId, version: "review-close" } };
+    case "back-post":
+      return { eventKey: memberMoneyEventKeys.backPost(event.firstLineId), rule: "R26", origin: "LEGACY", actorMemberId: null,
+        source: { kind: "BOOKING", id: bookingId, version: `back-post:${event.firstLineId}` } };
   }
 }
 
@@ -154,6 +159,7 @@ const REASONS = {
   R02: "Booking edited: its charge components re-posted as the edit priced them (R02/R03)",
   R04: "Booking cancelled: its extinguished charges reversed and what the club keeps charged (R04)",
   R21: "Booking review closed: its re-price and agreed adjustment posted (R21)",
+  R26: "Booking-ledger back-post: lines a door could not post, filled in for a booking already in the journal (R26)",
 } as const;
 
 const lineSource = (line: LegacyChargeLine): MemberMoneySource => ({

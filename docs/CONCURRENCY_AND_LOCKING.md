@@ -5455,7 +5455,8 @@ Ledger M3b adds no advisory key and no new lock site. Its participants:
   (the settle body, the group settle, the whole-lodge $0 paths and the school
   request's PAID), the modification poster (every edit door), review close and
   the cancellation poster (every cancel path, the hold-release and capacity
-  crons, the Xero late-capacity cancel, the organiser's child cancel). Each
+  crons, the Xero late-capacity cancel, the organiser's child cancel), and the
+  booking-ledger back-post filling a door's gap. Each
   already holds `lock(1)` then its lodge key (`INV-LOCK-001`/`002`); the engine
   asserts `lock(1)` for every correction and re-charge and refuses without it.
 - **The booking row.** Before it reads the owner the adapter takes the booking's

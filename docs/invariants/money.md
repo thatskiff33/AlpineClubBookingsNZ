@@ -1067,7 +1067,8 @@ From Ledger M3b (#4627), every legacy booking charge line a door writes is
 posted into the member-money journal once, in the same transaction, from the
 same stored lines. The chokepoints are the confirmation poster (R01, group
 children included), the modification poster (R02/R03), review close (R21) and
-the cancellation poster (R04); each calls `postBookingLedgerJournal` after its
+the cancellation poster (R04), and the back-post filling a door's gap (R26);
+each calls `postBookingLedgerJournal` after its
 legacy write, with a context the door resolved before its transaction. Nothing
 is re-priced: `journalComponentOfLegacyLine` maps each line to one component.
 Nights, the signed promotion, agreed adjustments and a cancellation's kept fee

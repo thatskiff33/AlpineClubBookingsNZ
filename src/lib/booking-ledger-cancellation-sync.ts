@@ -31,14 +31,6 @@ import { buildBookingLedgerRows, writeBookingLedgerRows } from "@/lib/booking-le
 import logger from "@/lib/logger";
 import { postBookingLedgerJournal, type MemberMoneyPostingContext } from "@/lib/member-money/doors";
 
-/**
- * What the back-post of history passes instead of a posting context: it writes
- * legacy lines for bookings confirmed before the ledger, whose journal history
- * is M9's to back-post as a whole (#4627). Every live cancel path passes a
- * context, resolved before its transaction.
- */
-export const LEGACY_HISTORY_ONLY = "legacy-history-only" as const;
-
 export async function postCancellationLedgerLines({
   store,
   journal,
@@ -49,8 +41,8 @@ export async function postCancellationLedgerLines({
   site,
 }: {
   store: Prisma.TransactionClient;
-  /** The context the cancel path resolved before its transaction, or the back-post's `LEGACY_HISTORY_ONLY`. */
-  journal: MemberMoneyPostingContext | typeof LEGACY_HISTORY_ONLY;
+  /** The context the cancel path (or the back-post) resolved before its transaction. */
+  journal: MemberMoneyPostingContext;
   bookingId: string;
   lodgeId: string;
   /**
@@ -102,7 +94,7 @@ export async function postCancellationLedgerLines({
     return;
   }
   await writeBookingLedgerRows(store, rows);
-  if (journal !== LEGACY_HISTORY_ONLY && rows.length > 0) {
+  if (rows.length > 0) {
     await postBookingLedgerJournal(store, journal, {
       bookingId,
       lodgeId,
