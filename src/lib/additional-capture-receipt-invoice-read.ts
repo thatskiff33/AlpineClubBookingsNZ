@@ -6,6 +6,7 @@
  */
 import type { Invoice } from "xero-node";
 import { readXeroInvoiceOperationOutcome } from "@/lib/xero-booking-invoice-outcome";
+import { isLiveXeroPaymentStatus } from "@/lib/xero-payment-status";
 
 /** The invoice as the worker read it from Xero. */
 export type InvoiceRead = { status: string; amountDueCents: number; invoice: Invoice };
@@ -17,7 +18,7 @@ export function findRecordedPayment(read: InvoiceRead | null, reference: string)
       (payment) =>
         Boolean(payment.paymentID) &&
         payment.reference === reference &&
-        String(payment.status ?? "").toUpperCase() !== "DELETED",
+        isLiveXeroPaymentStatus(payment.status),
     ) ?? null
   );
 }

@@ -17,6 +17,7 @@ import { Prisma, type PrismaClient } from "@prisma/client";
 import { z } from "zod";
 
 import { evaluateBookingLedgerIdentities, type BookingLedgerEvaluation } from "@/lib/booking-ledger-projection-census";
+import { withJournalChargeComparison, withJournalInactiveFinding } from "@/lib/booking-ledger-projection-census-journal";
 import {
   summarizeBookingLedgerCensus,
   type BookingLedgerAcknowledgement,
@@ -28,6 +29,7 @@ import type { BookingLedgerCensusRow } from "@/lib/booking-ledger-projection-cen
 import type { CancellationEventSnapshot } from "@/lib/booking-events";
 import { INTERNET_BANKING_SETTLEMENT_EVIDENCE_SELECT } from "@/lib/internet-banking-settlement-evidence";
 import { bookingIdOfCreditRow, bookingsCreditRowsWhere } from "@/lib/member-credit-booking-rows";
+import { readBookingJournalCharges, type BookingJournalCharges } from "@/lib/member-money";
 import { LEDGER_ROWS_OLDEST_FIRST } from "@/lib/payment-ledger-order";
 import { decodeRawRows } from "@/lib/raw-sql-rows";
 import { withReadOnlySnapshot } from "@/lib/read-only-snapshot";
@@ -44,6 +46,7 @@ const CENSUS_SELECT = {
   deletedAt: true,
   organiserSettled: true,
   finalPriceCents: true,
+  createdAt: true,
   parentBookingId: true,
   payment: {
     select: {
@@ -248,6 +251,7 @@ export function toCensusRow(
   inFlightGroupRefundSettlementIds: ReadonlySet<string> = new Set(),
   groupChildren: ReadonlyMap<string, NonNullable<BookingLedgerCensusRow["groupChild"]>> = new Map(),
   appeals: ReadonlyMap<string, BookingLedgerCensusRow["appeals"]> = new Map(),
+  journal: ReadonlyMap<string, BookingJournalCharges> = new Map(),
 ): BookingLedgerCensusRow {
   const { payment } = booking;
   const settlement = booking.organiserSettled ? (booking.parentBooking?.groupBookingAsOrganiser?.settlement ?? null) : null;
@@ -258,6 +262,7 @@ export function toCensusRow(
       deletedAt: booking.deletedAt,
       organiserSettled: booking.organiserSettled,
       finalPriceCents: booking.finalPriceCents,
+      createdAt: booking.createdAt,
     },
     payment: payment
       ? {
@@ -294,6 +299,7 @@ export function toCensusRow(
       : null,
     groupChild: groupChildren.get(booking.id) ?? null,
     lines: booking.ledgerLines,
+    journal: journal.get(booking.id) ?? null,
   };
 }
 
@@ -337,12 +343,18 @@ export async function readBookingLedgerCensusRow(
   )[0]!;
 }
 
+/** The census's own evaluation: the seven identities, then the journal comparison (#4627). */
+export function evaluateWithJournal(row: BookingLedgerCensusRow): BookingLedgerEvaluation {
+  return withJournalChargeComparison(evaluateBookingLedgerIdentities(row), row);
+}
+
 /** Bookings read per page inside the snapshot: bounds memory on a whole history. */
 export const CENSUS_PAGE_SIZE = 500;
 
 type CensusReadStore = Pick<
   Prisma.TransactionClient,
   "booking" | "memberCredit" | "paymentRecoveryOperation" | "payment" | "auditLog" | "manualRefundTask"
+  | "memberMoneyEvent" | "memberMoneyLine" | "memberMoneySourceLink"
 >;
 
 /**
@@ -405,11 +417,13 @@ async function censusRows(
 ): Promise<BookingLedgerCensusRow[]> {
   const inFlight = await inFlightGroupRefunds(tx, page);
   const appeals = await approvedAppeals(tx, page);
-  const rows = page.map((booking) => toCensusRow(booking, creditsOf(booking.id), inFlight, new Map(), appeals));
+  // #4627: the journal's charges for the page, read in the same snapshot.
+  const journal = await readBookingJournalCharges(tx, page.map((booking) => booking.id));
+  const rows = page.map((booking) => toCensusRow(booking, creditsOf(booking.id), inFlight, new Map(), appeals, journal));
   const candidates = page.filter((_, index) => rows[index]!.groupSettlement !== null && isGroupSettlementOffLedger(rows[index]!));
   if (candidates.length === 0) return rows;
   const groupChildren = await groupChildEvidence(tx, candidates);
-  return page.map((booking) => toCensusRow(booking, creditsOf(booking.id), inFlight, groupChildren, appeals));
+  return page.map((booking) => toCensusRow(booking, creditsOf(booking.id), inFlight, groupChildren, appeals, journal));
 }
 
 /**
@@ -481,7 +495,7 @@ async function groupChildEvidence(
 export async function evaluateBookingLedgerPages(
   tx: CensusReadStore,
   pageSize: number = CENSUS_PAGE_SIZE,
-  evaluate: (row: BookingLedgerCensusRow) => BookingLedgerEvaluation = evaluateBookingLedgerIdentities,
+  evaluate: (row: BookingLedgerCensusRow) => BookingLedgerEvaluation = evaluateWithJournal,
 ): Promise<BookingLedgerEvaluation[]> {
   const evaluations: BookingLedgerEvaluation[] = [];
   let after: string | null = null;
@@ -514,7 +528,12 @@ export async function evaluateBookingLedgerPages(
  */
 export async function censusBookingLedgerProjection(
   client: Pick<PrismaClient, "$transaction">,
-  options: { acknowledgements?: readonly BookingLedgerAcknowledgement[]; pageSize?: number } = {},
+  options: {
+    acknowledgements?: readonly BookingLedgerAcknowledgement[];
+    pageSize?: number;
+    /** #4627: why the journal is inactive for this club (`bookingJournalInactiveReason`), reported as one finding. */
+    journalInactive?: string | null;
+  } = {},
 ): Promise<BookingLedgerCensusReport> {
   const { evaluations, tableStatistics } = await withReadOnlySnapshot(
     client,
@@ -525,5 +544,6 @@ export async function censusBookingLedgerProjection(
     // A whole-history read: give it room, and fail rather than queue forever.
     { maxWait: 10_000, timeout: 600_000 },
   );
-  return summarizeBookingLedgerCensus(evaluations, tableStatistics, options.acknowledgements ?? []);
+  const report = summarizeBookingLedgerCensus(evaluations, tableStatistics, options.acknowledgements ?? []);
+  return options.journalInactive ? withJournalInactiveFinding(report, options.journalInactive) : report;
 }

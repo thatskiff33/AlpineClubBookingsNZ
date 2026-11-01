@@ -175,7 +175,11 @@ import {
   recordingBookingDouble,
 } from "@/lib/__tests__/support/hosting-participant-fence-double";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
+import { memberMoneyTestContext } from "./support/member-money-fixtures";
 import { NEGATIVE_STORED_GUEST_TOTAL_MESSAGE } from "@/lib/edit-night-valuation";
+
+/** #4627: a posting context; the ledger sync that would use it is mocked here. */
+const JOURNAL = memberMoneyTestContext();
 
 const BOOKING = "bk-1";
 const OWNER = "m-owner";
@@ -500,6 +504,7 @@ async function remove(
 ) {
   return removeBookingGuestInTransaction({
     format: CLUB_FORMAT_TEST,
+    journal: JOURNAL,
     today: CLUB_TODAY_DATE_ONLY,
     tx: tx as never,
     bookingId: BOOKING,
@@ -1146,6 +1151,7 @@ describe("the self-removal window is judged on the day the caller supplies (#312
     const tx = makeTx(booking as ReturnType<typeof makeBooking>);
     return removeBookingGuestInTransaction({
       format: CLUB_FORMAT_TEST,
+      journal: JOURNAL,
       today,
       tx: tx as never,
       bookingId: BOOKING,

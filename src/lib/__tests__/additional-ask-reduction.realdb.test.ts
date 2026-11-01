@@ -46,10 +46,12 @@
  */
 import type { PrismaClient } from "@prisma/client";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { releaseBookingJournalForTeardown } from "./support/booking-financial-history-teardown";
 
 import { realElapsedMs } from "@/lib/__tests__/helpers/clock";
 
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
+import { memberMoneyTestContext } from "./support/member-money-fixtures";
 import { resetStripeRaceHooks, stripeRaceHooks } from "./support/stripe-race-double";
 
 // Round 6: the harness's one shared Stripe double - pass-through unless a case
@@ -90,6 +92,8 @@ vi.mock("@/lib/payment-recovery-alert", async (importOriginal) => {
   };
 });
 
+/** #4627: a posting context for the removal door. */
+const JOURNAL = memberMoneyTestContext();
 const RUN = process.env.RUN_CONCURRENCY_RACE_TESTS === "1";
 const RACE_DB_URL = process.env.CONCURRENCY_RACE_DATABASE_URL ?? "";
 
@@ -136,6 +140,8 @@ let webhookClient: PrismaClient;
         where: { OR: [{ id: WAITING_OP_ID }, { localId: { in: [PAYMENT_ID, BOOKING_ID, ...modifications.map((row) => row.id)] } }] },
       });
       await prisma.xeroObjectLink.deleteMany({ where: { localId: { in: [PAYMENT_ID, BOOKING_ID, ...modifications.map((row) => row.id)] } } });
+      // #4627: the doors post journal batches bridged to these lines; release them first.
+      await releaseBookingJournalForTeardown(prisma, [BOOKING_ID]);
       await prisma.bookingLedgerLine.deleteMany({ where: { bookingId: BOOKING_ID } });
       await prisma.memberCredit.deleteMany({ where: { memberId: MEMBER_ID } });
       await prisma.bookingEvent.deleteMany({ where: { bookingId: BOOKING_ID } });
@@ -342,7 +348,7 @@ let webhookClient: PrismaClient;
       const { removeBookingGuestInTransaction } = await import("@/lib/booking-guest-removal-service");
       return prisma.$transaction(
         (tx) => removeBookingGuestInTransaction({
-          tx, bookingId: BOOKING_ID, guestId: LEAVING_GUEST_ID, actorMemberId: MEMBER_ID, actorRole: "ADMIN", today: TODAY, format: CLUB_FORMAT_TEST,
+          tx, bookingId: BOOKING_ID, guestId: LEAVING_GUEST_ID, actorMemberId: MEMBER_ID, actorRole: "ADMIN", today: TODAY, format: CLUB_FORMAT_TEST, journal: JOURNAL,
           settlementMethod: "card",
         }),
         { maxWait: 10_000, timeout: 20_000 },
@@ -1199,7 +1205,7 @@ let webhookClient: PrismaClient;
         .$transaction(
           async (tx) => {
             const result = await removeBookingGuestInTransaction({
-              tx, bookingId: BOOKING_ID, guestId: LEAVING_GUEST_ID, actorMemberId: MEMBER_ID, actorRole: "ADMIN", today: TODAY, format: CLUB_FORMAT_TEST,
+              tx, bookingId: BOOKING_ID, guestId: LEAVING_GUEST_ID, actorMemberId: MEMBER_ID, actorRole: "ADMIN", today: TODAY, format: CLUB_FORMAT_TEST, journal: JOURNAL,
               settlementMethod: "card",
             });
             reductionId = result.bookingModificationId!;

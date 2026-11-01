@@ -27,6 +27,7 @@ import type { CreditNote as XeroCreditNote, Payment as XeroPayment } from "xero-
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 import { providerAmountToCents } from "@/lib/money-provider-amount";
+import { isLiveXeroPaymentStatus } from "@/lib/xero-payment-status";
 import { callXeroApi, getAuthenticatedXeroClient } from "@/lib/xero-api-client";
 import { asRecord, readNumber, readString } from "@/lib/xero-json";
 import {
@@ -395,7 +396,7 @@ export async function refundNoteSettlementInterrupted(
 }
 
 function isLivePayment(payment: XeroPayment): boolean {
-  return Boolean(payment.paymentID) && String(payment.status ?? "") !== "DELETED";
+  return Boolean(payment.paymentID) && isLiveXeroPaymentStatus(payment.status);
 }
 
 function readSettledState(note: XeroCreditNote, totalCents: number) {

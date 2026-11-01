@@ -48,6 +48,7 @@ import { formatCents } from "@/lib/utils";
 import type { ClubFormat } from "@/lib/club-format";
 import { syncBookingLedgerSettlements } from "@/lib/booking-ledger-settlement-sync";
 import { postCancellationLedgerLines } from "@/lib/booking-ledger-cancellation-sync";
+import { resolveBookingMoneyPostingContext } from "@/lib/member-money/doors";
 import { syncBookingLedgerCredits } from "@/lib/booking-ledger-credit-sync";
 import { sumInternetBankingMintedCentsForBookings } from "@/lib/internet-banking-late-cash-credit";
 import { lockMemberCreditLedger, restoreCreditFromBooking } from "@/lib/member-credit";
@@ -440,6 +441,8 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
     new Set(payments.map((payment) => payment.bookingId))
   );
 
+  // #4627: the journal's posting context, resolved before any payment's transaction (`INV-LOCK-004`).
+  const journal = payments.length > 0 ? await resolveBookingMoneyPostingContext() : null;
   for (const payment of payments) {
     // #3979: written inside the transaction, alerted only after it commits.
     // Declared through `as` so the read after the await is not narrowed to null.
@@ -1245,7 +1248,7 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
           // #3611: the cash goes back as credit, so nothing is kept; a booking
           // already confirmed on the ledger (a mark-paid since reversed) has its
           // stay taken back, under the lock(1) this transaction took first.
-          await postCancellationLedgerLines({ store: tx, bookingId: fresh.bookingId, lodgeId: locked.booking.lodgeId, keptCents: 0, site: "xero-inbound:late-capacity-cancel" });
+          await postCancellationLedgerLines({ store: tx, journal: journal!, bookingId: fresh.bookingId, lodgeId: locked.booking.lodgeId, keptCents: 0, site: "xero-inbound:late-capacity-cancel" });
 
           // #1459: this arm mints too, so it takes the same quantified-cash
           // clamp as the already-cancelled arm — a live booking's invoice can

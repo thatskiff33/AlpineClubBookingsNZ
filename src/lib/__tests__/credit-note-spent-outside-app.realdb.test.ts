@@ -24,6 +24,7 @@
  *   pnpm exec vitest run src/lib/__tests__/credit-note-spent-outside-app.realdb.test.ts
  */
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { releaseBookingJournalForTeardown } from "./support/booking-financial-history-teardown";
 
 import { ENVIRONMENT_ROLE_ENV_VAR } from "@/lib/environment-role-declaration";
 import { realElapsedMs } from "@/lib/__tests__/helpers/clock";
@@ -169,6 +170,8 @@ let observerClient: import("@prisma/client").PrismaClient;
       await prisma.xeroObjectLink.deleteMany({ where: { localId: { in: localIds } } });
       await prisma.memberCreditNoteAllocation.deleteMany({ where: { appliedToBookingId: { in: bookingIds } } });
       await prisma.memberCreditNoteAllocation.deleteMany({ where: { memberCredit: { memberId: MEMBER_ID } } });
+      // #4627: the doors post journal batches bridged to these lines; release them first.
+      await releaseBookingJournalForTeardown(prisma, bookingIds);
       await prisma.bookingLedgerLine.deleteMany({ where: { bookingId: { in: bookingIds } } });
       await prisma.memberCredit.deleteMany({ where: { memberId: MEMBER_ID } });
       await prisma.bookingEvent.deleteMany({ where: { bookingId: { in: bookingIds } } });

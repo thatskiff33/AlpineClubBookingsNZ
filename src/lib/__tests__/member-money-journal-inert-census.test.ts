@@ -1,12 +1,15 @@
 /**
- * M1 (#4513) ships the member-money journal inert: no production path posts to
- * it, and only the deletion guards M2 (#4514) names below read it. M3a (#4626)
- * adds the posting command, whose store is the boundary's single writer, and
- * still no production caller: no door posts until M3b. This census reads every non-test source file under `src/` and
- * `scripts/`, and the seeds and other top-level files in `prisma/`, and fails on
- * a journal reference outside the module boundary and the files that only name,
- * provision or verify it. The migration is SQL, outside the scan. A later child that adds a writer or reader edits this
- * list in the same PR, so the switch is a reviewed decision, not a side effect.
+ * M1 (#4513) shipped the member-money journal inert, and M3a (#4626) added the
+ * posting command, whose store is the boundary's single writer. M3b (#4627) is
+ * the first step where production paths post: the three legacy booking-ledger
+ * chokepoints (confirmation, modification with review close, cancellation), the
+ * group settle's child confirmations and member merge's D4 transfer, each
+ * through the boundary's `./doors` entry, never the command itself. This census
+ * reads every non-test source file under `src/` and `scripts/`, and the seeds
+ * and other top-level files in `prisma/`, and fails on a journal reference
+ * outside the boundary and the files listed below. The migration is SQL,
+ * outside the scan. A later child that adds a writer or reader edits these
+ * lists in the same PR, so each switch is a reviewed decision, not a side effect.
  */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -42,12 +45,72 @@ const READERS: Record<string, { reason: string; importOnly: boolean }> = {
     reason: "member hard delete refuses a journal debtor (read-only count)",
     importOnly: true,
   },
+  // M3b (#4627): comparison report v1, through `readBookingJournalCharges` in the census snapshot.
+  "src/lib/booking-ledger-projection-census-store.ts": {
+    reason: "the census reads the journal's charges for each page (read-only)",
+    importOnly: false,
+  },
+  "src/lib/booking-ledger-projection-census-row.ts": {
+    reason: "the census row carries the journal's charges (a type import)",
+    importOnly: false,
+  },
+  "scripts/booking-ledger-census.ts": {
+    reason: "the census command asks whether the club's journal is inactive (a pure decision on its format)",
+    importOnly: false,
+  },
+  "src/lib/booking-ledger-projection-census-journal.ts": {
+    reason: "the pure JOURNAL comparison of the journal's charges with the bridged lines",
+    importOnly: false,
+  },
 };
+/**
+ * M3b (#4627): THE POSTING CALLERS, exactly. Each posts through
+ * `postBookingLedgerJournal` or `postMemberMergeTransfer` from `./doors`, in the
+ * transaction of the business change it records. It may only read a journal
+ * delegate, and may run no raw SQL that writes a journal table (some of these
+ * files run other raw SQL, such as member merge's member delete).
+ */
+const DOORS: Record<string, string> = {
+  "src/lib/booking-ledger-confirmation-sync.ts": "R01: a confirmation's lines, beside the legacy write",
+  "src/lib/booking-ledger-group-settlement-sync.ts": "R01: a group-settled child's confirmation lines",
+  "src/lib/booking-ledger-modification-sync.ts": "R02/R03 an edit's lines; R21 a review closure's",
+  "src/lib/booking-ledger-cancellation-sync.ts": "R04: a cancellation's lines",
+  "src/lib/member-merge.ts": "D4: the merged-away member's receivable balances, transferred",
+  "src/lib/booking-ledger-back-post.ts": "R26: lines a door could not post, filled in for a booking already in the journal",
+};
+/**
+ * M3b (#4627): the doors' callers, which resolve the posting context BEFORE
+ * their transaction (`INV-LOCK-004`) and pass it down. They post nothing and read
+ * no journal delegate; each may name only the boundary's `./doors` entry and its
+ * context type.
+ */
+const CONTEXT_RESOLVERS: readonly string[] = [
+  "src/app/api/bookings/[id]/guests/route.ts",
+  "src/app/api/bookings/[id]/guests/[guestId]/route.ts",
+  "src/lib/booking-batch-modification-service.ts",
+  "src/lib/booking-cancel.ts",
+  "src/lib/booking-date-modification-service.ts",
+  "src/lib/booking-guest-removal-service.ts",
+  "src/lib/cron-confirm-pending.ts",
+  "src/lib/group-cancel.ts",
+  "src/lib/group-settlement.ts",
+  "src/lib/internet-banking-payment-cron.ts",
+  "src/lib/manual-refund-task-resolution.ts",
+  "src/lib/member-guest-consent-service.ts",
+  "src/lib/payment-reconciliation.ts",
+  "src/lib/school-booking-request.ts",
+  "src/lib/stored-night-price-repair-store.ts",
+  "src/lib/xero-inbound/invoice-paid-effects.ts",
+];
+/** Anything a context resolver may say about the journal: the `./doors` entry, the resolvers and the context type. */
+const RESOLVER_VOCABULARY = /["']@\/lib\/member-money\/doors["']|\bresolveBookingMoneyPostingContext\b|\bresolveBookingDoorClock\b|\bMemberMoneyPostingContext\b|\bBookingJournalContext\b/g;
 const BOUNDARY = "src/lib/member-money/";
 /** M3a (#4626): the one file that creates journal rows. */
 const WRITER = "src/lib/member-money/internal/store.ts";
-/** The command's entry points; nothing outside the boundary calls them until a door is wired (M3b). */
+/** The command's entry points: nothing outside the boundary calls them; M3b's doors go through `./doors`. */
 const POSTING_COMMAND = /\b(postMemberMoneyEvent|reverseMemberMoneyJournal|writeMemberMoneyBatch)\b/;
+/** M3b's door entry points (#4627). */
+const DOOR_COMMAND = /\b(postBookingLedgerJournal|postMemberMergeTransfer)\b/;
 const DELEGATE_WRITE = /\.memberMoney\w*\s*\.\s*(create|update|upsert|delete)/;
 /**
  * Every name that reaches a journal row through Prisma: each relation's
@@ -99,6 +162,12 @@ const WRITE_STATEMENT = new RegExp([
   String.raw`\bTRUNCATE\b(?!\s+(?:ON|OR)\b)`,
 ].join("|"), "i");
 
+/** A raw write naming a journal table, for files that may run other raw SQL (member merge deletes a member). */
+const JOURNAL_WRITE_STATEMENT = new RegExp(
+  String.raw`\b(?:INSERT\s+INTO|DELETE\s+FROM|UPDATE|MERGE\s+INTO|COPY|TRUNCATE(?:\s+TABLE)?)\s+(?:ONLY\s+)?(?:"?public"?\.)?"?MemberMoney`,
+  "i",
+);
+
 function referencing(): string[] {
   return productionSourceFiles(ROOT)
     .filter((file) => REFERENCE.some((pattern) => pattern.test(readFileSync(join(ROOT, file), "utf8"))));
@@ -108,12 +177,15 @@ describe("member money journal stays inert in M1 (#4513)", () => {
   const found = referencing();
 
   it("has no reader or writer outside the boundary and its named support files", () => {
-    const offenders = found.filter((file) => !file.startsWith(BOUNDARY) && !(file in ALLOWED) && !(file in READERS));
-    expect(offenders, "a production path names the member-money journal; M1 ships it inert").toEqual([]);
+    const offenders = found.filter((file) => !file.startsWith(BOUNDARY) && !(file in ALLOWED) && !(file in READERS)
+      && !(file in DOORS) && !CONTEXT_RESOLVERS.includes(file));
+    expect(offenders, "a production path names the member-money journal outside the reviewed lists").toEqual([]);
   });
 
   it("is not vacuous: every allowed file and the boundary still match", () => {
-    for (const file of [...Object.keys(ALLOWED), ...Object.keys(READERS)]) expect(found).toContain(file);
+    for (const file of [...Object.keys(ALLOWED), ...Object.keys(READERS), ...Object.keys(DOORS), ...CONTEXT_RESOLVERS]) {
+      expect(found).toContain(file);
+    }
     expect(found.some((file) => file.startsWith(BOUNDARY))).toBe(true);
   });
 
@@ -165,6 +237,25 @@ describe("member money journal stays inert in M1 (#4513)", () => {
     }
   });
 
+  it("writes no raw SQL to a journal table from a door, a context resolver or a reader (#4627)", () => {
+    const outside = [...Object.keys(DOORS), ...CONTEXT_RESOLVERS, ...Object.keys(READERS)];
+    for (const file of outside) {
+      expect(stripComments(readFileSync(join(ROOT, file), "utf8")), file).not.toMatch(JOURNAL_WRITE_STATEMENT);
+    }
+    // Fixture proof: each write form naming a journal table is caught; a write elsewhere is not.
+    for (const write of [
+      '$executeRaw`INSERT INTO "MemberMoneyLine" (id) VALUES (1)`',
+      'await tx.$executeRaw`DELETE FROM public."MemberMoneyEvent" WHERE id = ${id}`',
+      'UPDATE ONLY "MemberMoneySourceLink" SET id = id',
+      'TRUNCATE "MemberMoneyJournal"',
+      'COPY "MemberMoneyObligation" FROM STDIN',
+      'MERGE INTO "MemberMoneyApplication" USING x ON true WHEN MATCHED THEN DELETE',
+    ]) {
+      expect(write).toMatch(JOURNAL_WRITE_STATEMENT);
+    }
+    expect('DELETE FROM "Member" WHERE id = ${loserId}').not.toMatch(JOURNAL_WRITE_STATEMENT);
+  });
+
   it("writes only through Prisma delegates in the store, never raw SQL (#4626)", () => {
     const text = stripComments(readFileSync(join(ROOT, WRITER), "utf8"));
     expect(text, "the store is the writer; if it stops writing, retire WRITER").toMatch(DELEGATE_WRITE);
@@ -175,9 +266,27 @@ describe("member money journal stays inert in M1 (#4513)", () => {
   it("has no production caller of the posting command outside the boundary (#4626)", () => {
     const callers = found.filter((file) => !file.startsWith(BOUNDARY)
       && POSTING_COMMAND.test(readFileSync(join(ROOT, file), "utf8")));
-    expect(callers, "a door posts to the journal; M3a ships the command with no caller").toEqual([]);
+    expect(callers, "a door calls the command directly; M3b's doors go through ./doors").toEqual([]);
     // Fixture proof: an import of the command is caught.
     expect('import { postMemberMoneyEvent } from "@/lib/member-money";').toMatch(POSTING_COMMAND);
+  });
+
+  it("admits exactly the M3b doors as posting callers (#4627)", () => {
+    const callers = found.filter((file) => !file.startsWith(BOUNDARY)
+      && DOOR_COMMAND.test(stripComments(readFileSync(join(ROOT, file), "utf8"))));
+    expect(callers.sort(), "the set of production paths that post to the journal changed").toEqual(Object.keys(DOORS).sort());
+    expect('await postBookingLedgerJournal(tx, journal, input);').toMatch(DOOR_COMMAND);
+  });
+
+  it("lets a context resolver name only the doors entry, its resolver and the context type (#4627)", () => {
+    for (const file of CONTEXT_RESOLVERS) {
+      const rest = stripComments(readFileSync(join(ROOT, file), "utf8")).replace(RESOLVER_VOCABULARY, "");
+      expect(REFERENCE.filter((pattern) => pattern.test(rest)).map(String), file).toEqual([]);
+    }
+    // Fixture proof: the vocabulary alone passes, a delegate beside it does not.
+    const vocabulary = 'import { resolveBookingMoneyPostingContext, type MemberMoneyPostingContext } from "@/lib/member-money/doors";';
+    expect(REFERENCE.some((pattern) => pattern.test(vocabulary.replace(RESOLVER_VOCABULARY, "")))).toBe(false);
+    expect(REFERENCE.some((pattern) => pattern.test(`${vocabulary}\nawait tx.memberMoneyLine.count();`.replace(RESOLVER_VOCABULARY, "")))).toBe(true);
   });
 
   it("lets an import-only reader name the journal in its boundary import and nowhere else (#4514)", () => {

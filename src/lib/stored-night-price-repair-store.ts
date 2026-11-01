@@ -5,6 +5,7 @@ import { dateOnlyInstantOf, type CalendarDate } from "@/lib/club-time";
 import { bookingOwner } from "@/lib/booking-owner";
 import { createAuditLog } from "@/lib/audit";
 import { postReviewClosureLedgerLines } from "@/lib/booking-ledger-modification-sync";
+import type { BookingJournalContext } from "@/lib/member-money/doors";
 import type { EditReviewSettlementRoute } from "@/lib/edit-financial-review-settlement";
 import { editReviewSettlementIssuesXeroDocument } from "@/lib/edit-financial-review-xero-leg";
 import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
@@ -129,6 +130,7 @@ export async function recordReviewClosurePricing({
   settleAgainstRebase,
   store,
   format,
+  journal,
 }: {
   /**
    * What the officer recorded, one entry per repairable strand, EMPTY where the
@@ -187,7 +189,12 @@ export async function recordReviewClosurePricing({
   store: Prisma.TransactionClient;
   /** The club's format (#3565), resolved by the caller before any transaction. */
   format: ClubFormat;
+  /** #4627: the journal's posting context, resolved by the caller before any transaction. */
+  journal: BookingJournalContext;
 }): Promise<void> {
+  // #4627: the caller (`resolveManualRefundTask`) has already taken the booking
+  // row, straight after its claim and before any credit write, so the journal's
+  // owner read at the end adds no edge against member merge.
   // Sequentially, on the caller's transaction: each write is its own
   // compare-and-set, and a refusal from any of them rolls the whole closure back
   // - so a half-repaired booking is not a reachable state.
@@ -268,6 +275,7 @@ export async function recordReviewClosurePricing({
   // Under the `lock(1)` the completion took before its claim.
   await postReviewClosureLedgerLines({
     store,
+    journal,
     bookingId: task.bookingId,
     lodgeId: task.booking.lodgeId,
     manualRefundTaskId: task.id,

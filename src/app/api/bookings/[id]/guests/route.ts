@@ -157,6 +157,7 @@ import {
 } from "@/lib/booking-member-night-conflicts";
 import { bookingFinalPriceCents } from "@/lib/booking-final-price";
 import { postModificationLedgerLines } from "@/lib/booking-ledger-modification-sync";
+import { resolveBookingMoneyPostingContext } from "@/lib/member-money/doors";
 import { computeModificationPricing } from "@/lib/booking-modification-pricing";
 import {
   loadModificationLinesAuditFields,
@@ -289,6 +290,8 @@ export async function POST(
   // The club's format (#3565), resolved once, before any transaction or
   // lock below — never per amount and never inside a transaction.
   const format = await clubFormatValues();
+  // #4627: the journal's posting context, resolved before the transaction (`INV-LOCK-004`).
+  const journal = await resolveBookingMoneyPostingContext();
 
   try {
     const result = await prisma.$transaction(async (tx) => {
@@ -1185,6 +1188,7 @@ export async function POST(
       await queueOrganiserExtraForChange(tx, booking, bookingModification);
       await postModificationLedgerLines({
         store: tx,
+        journal,
         bookingId,
         lodgeId: booking.lodgeId,
         bookingModification,
