@@ -202,6 +202,18 @@ describe("recordUnrecognisedStripePayment (#4532)", () => {
     );
   });
 
+  it("alerts each payment under its own claim, so a second payment is never silenced by the first", async () => {
+    await recordUnrecognisedStripePayment(paymentIntent(), event(), CLUB_FORMAT_TEST);
+    await recordUnrecognisedStripePayment(paymentIntent({ id: "pi_second" }), event("evt_second"), CLUB_FORMAT_TEST);
+
+    expect(state.rows.size).toBe(2);
+    expect(mocks.sendAlert).toHaveBeenCalledTimes(2);
+    expect([...state.heldKeys].sort()).toEqual([
+      "unrecognised-stripe-payment:pi_donation",
+      "unrecognised-stripe-payment:pi_second",
+    ]);
+  });
+
   it("still records the payment when the Checkout read fails", async () => {
     mocks.findCheckoutSession.mockRejectedValue(new Error("Stripe unavailable"));
 
