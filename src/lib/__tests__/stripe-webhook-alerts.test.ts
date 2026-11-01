@@ -4481,6 +4481,39 @@ describe("Stripe webhook Xero alerting", () => {
       expectCompletedWithoutSettling();
     });
 
+    it("re-reads after a failed adoption: a saved-card charge whose own settle wrote the intent meanwhile is settled, never alerted (#4624 review)", async () => {
+      mockConstructWebhookEvent.mockReturnValue(appSucceededEvent("evt_app_settled_meanwhile", { bookingId: "booking-1" }));
+      // First read: no row yet. The adoption finds no null-intent attempt row (the
+      // request's settle has just written the intent onto it). The re-read finds it.
+      mockPaymentTransactionFindFirst.mockResolvedValue(null);
+      mockFindPaymentTransactionByIntentId.mockResolvedValueOnce(null).mockResolvedValueOnce({
+        id: "txn_attempt_settled",
+        paymentId: "payment-1",
+        kind: "PRIMARY",
+        amountCents: 12000,
+        status: "SUCCEEDED",
+      });
+      mockBookingFindUnique.mockResolvedValue({
+        id: "booking-1",
+        status: "PAYMENT_PENDING",
+        finalPriceCents: 12000,
+        checkIn: new Date("2026-07-10"),
+        checkOut: new Date("2026-07-12"),
+        member: { firstName: "Alice", lastName: "Example", email: "alice@example.com" },
+        payment: null,
+      });
+      mockMarkBookingPaymentSucceeded.mockResolvedValueOnce({ outcome: "already_paid", bookingId: "booking-1", bumpedBookingIds: [] });
+
+      const response = await POST(makeRequest());
+
+      expect(response.status).toBe(200);
+      expect(mockFindPaymentTransactionByIntentId).toHaveBeenCalledTimes(2);
+      expect(mockRecordUnmatchedAppStripePayment).not.toHaveBeenCalled();
+      expect(mockMarkBookingPaymentSucceeded).toHaveBeenCalledWith(
+        expect.objectContaining({ bookingId: "booking-1", paymentIntentId: "pi_app", recordedByCaller: false }),
+      );
+    });
+
     it("answers 500 and gives the claim back when the record or alert fails, so Stripe redelivers", async () => {
       mockConstructWebhookEvent.mockReturnValue(appSucceededEvent("evt_app_fail", { bookingId: "booking-1" }));
       mockRecordUnmatchedAppStripePayment.mockRejectedValueOnce(new Error("alert not sent"));

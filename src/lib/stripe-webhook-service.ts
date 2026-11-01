@@ -495,10 +495,14 @@ async function handlePaymentIntentSucceeded(
   }
 
   let recordedByCaller = false; // #4285 review: an adoption that just wrote the capture tells the settle it is new money
+  // #4624 review: the last read is a re-read. A saved-card charge's own settle can write this intent onto its attempt
+  // row between the first read and the adoption, which then finds no row to adopt; that is not an unmatched payment.
   const paymentTransaction =
     (await findPaymentTransactionByIntentId({
       paymentIntentId: paymentIntent.id,
-    })) ?? (await adoptUnknownIntentsAttemptRow(paymentIntent, event, bookingId, (adopted) => (recordedByCaller = adopted)));
+    })) ??
+    (await adoptUnknownIntentsAttemptRow(paymentIntent, event, bookingId, (adopted) => (recordedByCaller = adopted))) ??
+    (await findPaymentTransactionByIntentId({ paymentIntentId: paymentIntent.id }));
 
   // #4624 (`INV-INT-033`): the app's own intent, but no PRIMARY row to settle it with - money taken that nothing records.
   if (!paymentTransaction || paymentTransaction.kind !== PaymentTransactionKind.PRIMARY) {
