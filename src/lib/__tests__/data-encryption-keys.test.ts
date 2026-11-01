@@ -160,8 +160,19 @@ describe("no key material reaches a log, an error or a report (#4456)", () => {
     const consoleSpies = (["log", "info", "warn", "error", "debug"] as const).map((method) =>
       vi.spyOn(console, method).mockImplementation(() => {}),
     );
+    const ROTATED = "rotated-auth-secret-for-key-ring-tests-0123456789";
     try {
+      // A legacy row, then the auth secret rotated under it: the legacy failure path.
+      const legacyRow = encryptCredential({ provider: "xero", key: "client_id", plaintext: "v" });
+      process.env.AUTH_SECRET = ROTATED;
+      capture(() => decryptCredential({ ...legacyRow, provider: "xero", key: "client_id" }));
+      process.env.AUTH_SECRET = AUTH;
       process.env.DATA_ENCRYPTION_KEYS = `k2:${K2},k1:${K1}`;
+      const derived = codeHashKeys().flatMap((key) =>
+        ["integration-credential:v2", "two-factor-secret:v2", "two-factor-code:v2"].map((purpose) =>
+          deriveDataSubkey(key, purpose).toString("hex"),
+        ),
+      );
       const ring = encryptCredential({ provider: "xero", key: "client_secret", plaintext: "v" });
       capture(() => decryptCredential({ ...ring, provider: "xero", key: "client_secret" }));
       capture(() => decryptCredential({ ...ring, provider: "xero", key: "client_secret", secretSource: "DATA_ENCRYPTION_KEY:k9" }));
@@ -176,9 +187,9 @@ describe("no key material reaches a log, an error or a report (#4456)", () => {
         Object.values(mocks.logger).map((fn) => fn.mock.calls),
         consoleSpies.map((spy) => spy.mock.calls),
       ]);
-      expect(thrown.length).toBeGreaterThanOrEqual(4);
+      expect(thrown.length).toBeGreaterThanOrEqual(5);
       expect(thrown.some((error) => (error as Error).name === WeakAuthSecretError.name)).toBe(true);
-      for (const secret of [K1, K2, testKey(5, 12), AUTH]) {
+      for (const secret of [K1, K2, testKey(5, 12), AUTH, ROTATED, ...derived]) {
         expect(emitted).not.toContain(secret);
       }
       for (const material of [K1, K2]) {
