@@ -6,6 +6,7 @@ import { Client } from "pg";
 import type { PrismaClient } from "@prisma/client";
 import { Prisma } from "@prisma/client";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { releaseBookingJournalForTeardown } from "./support/booking-financial-history-teardown";
 
 import { splitSqlStatements } from "../../../prisma/migration-verification/split-statements";
 import { jobBlock } from "./helpers/ci-workflow";
@@ -97,6 +98,9 @@ it("runs the pending-adult database proof in CI", () => {
   beforeEach(async () => {
     await prisma.member.deleteMany({ where: { id: { in: ["matching-adult", "matching-contact"] } } });
     await prisma.bookingRequest.deleteMany({ where: { id: "pending-request" } });
+    // #4628: an approval binds the school's charge in the journal, whose rows the database keeps; release them first.
+    await releaseBookingJournalForTeardown(prisma, ["pending-hold"]);
+    await prisma.paymentTransaction.deleteMany({ where: { payment: { bookingId: "pending-hold" } } });
     await prisma.payment.deleteMany({ where: { bookingId: "pending-hold" } });
     await prisma.booking.deleteMany({ where: { id: "pending-hold" } });
     await prisma.member.deleteMany({ where: { id: "linked-child" } });
@@ -278,6 +282,11 @@ it("runs the pending-adult database proof in CI", () => {
     expect((await prisma.bookingRequest.findUniqueOrThrow({ where: { id: "pending-request" } })).acceptedQuoteSnapshot).toEqual(snapshot);
     expect(await prisma.bookingRequestPendingAdultReservationNight.count()).toBe(0);
     await approve({ requestId: "pending-request", adminMemberId: "officer" });
+    // #4628 (#4659 review): pay-on-account binds the school's charge, once, priced as its confirmation will be.
+    const bindings = await prisma.memberMoneyEvent.findMany({ where: { eventKey: "booking-charge:pending-hold" }, select: { kind: true, sourceVersion: true } });
+    expect(bindings).toEqual([{ kind: "CHARGE", sourceVersion: "binding" }]);
+    const receivable = await prisma.memberMoneyLine.findMany({ where: { bookingId: "pending-hold", account: "MEMBER_RECEIVABLE" }, select: { side: true, amountCents: true, organisationId: true } });
+    expect(receivable).toEqual([{ side: "DEBIT", amountCents: 601, organisationId: "pending-school" }]);
     const approved = await prisma.bookingGuest.findMany({ where: { bookingId: "pending-hold" }, orderBy: { id: "asc" }, include: { nights: { orderBy: { stayDate: "asc" } } }, omit: { dietaryRequirements: false } });
     for (const named of current) {
       const after = approved.find((guest) => guest.firstName === named.firstName && guest.lastName === named.lastName)!;

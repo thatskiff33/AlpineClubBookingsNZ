@@ -39,6 +39,9 @@ const names = historyNames(PREFIX);
 const JOURNAL = memberMoneyTestContext();
 /** Two guests, two nights each, at 50.00: what `createHistoryBooking` makes. */
 const PRICE = 20_000;
+const SEASON = `${PREFIX}season`;
+const STAY_IN = new Date("2027-08-01T00:00:00.000Z");
+const STAY_OUT = new Date("2027-08-03T00:00:00.000Z");
 
 let prisma: PrismaClient;
 let pendingCharge: typeof import("@/lib/booking-ledger-pending-charge");
@@ -157,6 +160,7 @@ async function expectLinkedToBinding(bookingId: string, lineCount: number): Prom
     await cleanup();
     await seedHistoryFixtures(prisma, PREFIX);
     await prisma.member.update({ where: { id: names.memberId }, data: { canLogin: true } });
+    await seedPricing();
     priorModules = await prisma.clubModuleSettings.findUnique({ where: { id: "default" }, select: { xeroIntegration: true, internetBankingPayments: true } });
     await prisma.clubModuleSettings.upsert({
       where: { id: "default" },
@@ -167,10 +171,34 @@ async function expectLinkedToBinding(bookingId: string, lineCount: number): Prom
   }, 120_000);
 
   async function cleanup() {
-    const ids = (await prisma.booking.findMany({ where: { id: { startsWith: PREFIX } }, select: { id: true } })).map((row) => row.id);
+    const ids = (await prisma.booking.findMany({ where: { OR: [{ id: { startsWith: PREFIX } }, { lodgeId: names.lodgeId }] }, select: { id: true } })).map((row) => row.id);
     await prisma.xeroObjectLink.deleteMany({ where: { localId: { in: ids.map((id) => `${id}-payment`) } } });
     await prisma.xeroSyncOperation.deleteMany({ where: { localId: { in: ids.map((id) => `${id}-payment`) } } });
+    await prisma.bookingRequest.deleteMany({ where: { lodgeId: names.lodgeId } });
+    await prisma.membershipTypeSeasonRate.deleteMany({ where: { seasonId: SEASON } });
+    await prisma.season.deleteMany({ where: { id: SEASON } });
+    await prisma.lodgeSettings.deleteMany({ where: { lodgeId: names.lodgeId } });
+    await prisma.seasonalMembershipAssignment.deleteMany({ where: { memberId: names.memberId } });
+    await prisma.memberSubscription.deleteMany({ where: { memberId: names.memberId } });
     await cleanHistories(prisma, PREFIX);
+  }
+
+  /** The rates and lodge setting the real create and the real approval price against (the history support seeds none). */
+  async function seedPricing() {
+    await prisma.lodgeSettings.create({ data: { id: names.lodgeId, lodgeId: names.lodgeId, capacity: 10 } });
+    const nonMember = await prisma.membershipType.findUniqueOrThrow({ where: { key: "NON_MEMBER" } });
+    const fullMember = await prisma.membershipType.findUniqueOrThrow({ where: { key: "FULL" } });
+    await prisma.seasonalMembershipAssignment.create({ data: { memberId: names.memberId, seasonYear: 2027, membershipTypeId: fullMember.id } });
+    await prisma.memberSubscription.create({ data: { memberId: names.memberId, seasonYear: 2027, status: "PAID", paidAt: new Date("2026-06-01T00:00:00.000Z") } });
+    await prisma.season.create({ data: { id: SEASON, name: "Race 4628 season", lodgeId: names.lodgeId, type: "WINTER", active: true,
+      startDate: new Date("2027-06-01T00:00:00.000Z"), endDate: new Date("2027-09-30T00:00:00.000Z"),
+      membershipTypeRates: { create: [
+        { membershipTypeId: nonMember.id, ageTier: "ADULT", pricePerNightCents: 7_000 },
+        { membershipTypeId: nonMember.id, ageTier: null, pricePerNightCents: 7_000 },
+        { membershipTypeId: fullMember.id, ageTier: "ADULT", pricePerNightCents: 4_000 },
+        { membershipTypeId: fullMember.id, ageTier: null, pricePerNightCents: 4_000 },
+      ] },
+    } });
   }
 
   afterAll(async () => {
@@ -301,5 +329,49 @@ async function expectLinkedToBinding(bookingId: string, lineCount: number): Prom
     await postHistoryEdit(prisma, names, id, `${id}-edit`, { removeGuestId: `${id}-g2`, changeFeeCents: 0, journal: JOURNAL });
     expect(await events(id)).toEqual([]);
     expect((await judged(id)).identity).toMatchObject({ identity: "JOURNAL", status: "NOT_APPLICABLE" });
+  });
+
+  it("the real createConfirmedBooking's internet-banking arm posts R01 once, priced as its own nights (#4659 review)", async () => {
+    const { createConfirmedBooking } = await import("@/lib/booking-create");
+    const { bookingGuestDietarySeeding } = await import("@/lib/member-dietary-booking-writes");
+    const { requireCalendarDate } = await import("@/lib/club-time");
+    const outcome = await createConfirmedBooking({
+      format: CLUB_FORMAT_TEST, todayAtClub: requireCalendarDate("2026-07-01"), journal: JOURNAL,
+      effectiveMemberId: names.memberId, isOnBehalf: true, sessionUserId: names.officerId, lodgeId: names.lodgeId,
+      checkIn: STAY_IN, checkOut: STAY_OUT,
+      guests: [{ firstName: "History", lastName: "Proof", ageTier: "ADULT", isMember: true, memberId: names.memberId, stayStart: STAY_IN, stayEnd: STAY_OUT }],
+      status: "PAYMENT_PENDING", shouldBePending: false, holdDays: 7, notifyMember: false, confirmOverCapacity: true,
+      paymentMethod: "internet_banking", internetBankingSettings: { holdBedSlots: false, holdDays: 7, minimumDaysBeforeCheckIn: 0 },
+      guestDietarySeeding: bookingGuestDietarySeeding(false),
+    });
+    expect(outcome.type, JSON.stringify(outcome)).toBe("created");
+    const booking = (outcome as Extract<typeof outcome, { type: "created" }>).booking;
+    expect(booking.finalPriceCents).toBeGreaterThan(0);
+    expect(await events(booking.id)).toEqual([{ eventKey: `booking-charge:${booking.id}`, kind: "CHARGE", sourceVersion: "binding" }]);
+    expect(await receivable(booking.id)).toBe(booking.finalPriceCents);
+    await expectJudged(booking.id, "JOURNAL_PENDING", booking.finalPriceCents);
+  });
+
+  it("the real member whole-lodge approval's pay-on-account arm posts R01 once (#4659 review)", async () => {
+    // The legacy arm runs only with the payment modules off: the member does not choose how to pay.
+    await prisma.clubModuleSettings.update({ where: { id: "default" }, data: { xeroIntegration: false, internetBankingPayments: false }, select: { id: true } });
+    try {
+      const requestId = `${PREFIX}request`;
+      await prisma.bookingRequest.create({ data: {
+        id: requestId, lodgeId: names.lodgeId, type: "GENERAL", status: "VERIFIED", requestedByMemberId: names.memberId,
+        exclusivityRequested: true, applyAccountCredit: false, checkIn: STAY_IN, checkOut: STAY_OUT,
+        contactFirstName: "History", contactLastName: "Proof", contactEmail: `${names.memberId}@example.invalid`,
+        guests: [{ firstName: "Guest", lastName: "Proof", ageTier: "ADULT" }],
+      } });
+      const { approveMemberWholeLodgeRequest } = await import("@/lib/school-booking-request");
+      const approved = await approveMemberWholeLodgeRequest({ requestId, adminMemberId: names.officerId, override: { priceOverrideCents: 30_000, pricedHeadcount: 1 } });
+      expect(approved.type, JSON.stringify(approved)).toBe("approved");
+      const bookingId = (approved as Extract<typeof approved, { type: "approved" }>).bookingId;
+      expect(await events(bookingId)).toEqual([{ eventKey: `booking-charge:${bookingId}`, kind: "CHARGE", sourceVersion: "binding" }]);
+      expect(await receivable(bookingId)).toBe(30_000);
+      await expectJudged(bookingId, "JOURNAL_PENDING", 30_000);
+    } finally {
+      await prisma.clubModuleSettings.update({ where: { id: "default" }, data: { xeroIntegration: true, internetBankingPayments: true }, select: { id: true } });
+    }
   });
 });
