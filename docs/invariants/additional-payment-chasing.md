@@ -1919,20 +1919,21 @@ _Legacy: settles tasks raised before #4317._
   release's mint carries the live request's balance (`INV-PAY-098`) and
   supersedes it; the supersede moves each waiting edit invoice onto the release
   request (`followSupersededAskInvoicesToCarrier`, `INV-PAY-140`). No separate
-  release request is raised. The cause reads `mixed`; a merged request offers no
-  bank transfer [INV-ADDPAY-049]. Its first email goes out at once.
+  release request is raised. The cause reads `mixed`; no bank transfer is
+  offered [INV-ADDPAY-049]. A request only of released credit supersedes as
+  before.
 - **One card payment, each share on its own invoice, once.** Its capture
   releases the edit's invoice for the edit's own amount; the sweep records the
   released credit on the booking's invoice [INV-ADDPAY-046]; the capture's
-  receipt stands down (`readCaptureRecorder`). Nothing new in Xero.
-- **It merges only where every edit invoice will follow**
-  (`decideCreditReleaseMerge`): the request's rows carry one another in full;
-  each edit row's money is either on the booking's invoice (made before it) or
-  on a supplementary invoice waiting on the request that the move would take
-  (`readAskInvoicesForCarry`, the move's own test); no other invoice names the
-  request; never both kinds of billing. Otherwise it waits [INV-ADDPAY-051],
-  with the reason on the officers' note, and is asked for alone once the edit
-  is paid or withdrawn.
+  receipt stands down (`readCaptureRecorder`).
+- **It merges only where every edit invoice can follow**
+  (`decideCreditReleaseMerge`): the rows carry one another in full; each
+  edit's money is on the booking's invoice (made before it, with no invoice of
+  its own, a #3980 gap invoice included) or on a supplementary invoice waiting
+  on the request that passes the move's own test
+  (`anchorInvoicesMoveRefusal`); no other invoice names the request; never both
+  kinds of billing. Otherwise it waits [INV-ADDPAY-051], the officers' note
+  saying why, and is asked for alone once the edit is paid or withdrawn.
 - **Decided twice, before the Stripe mint and on the claim's store under the
   `Payment` row lock**, beside the sizing fence: a change in between throws and
   the row retries; a lost claim supersedes and moves nothing. No new lock or
