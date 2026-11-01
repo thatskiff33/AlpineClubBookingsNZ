@@ -102,6 +102,7 @@
     "xero:booking-repair": "tsx --conditions=react-server scripts/xero-booking-repair.ts",
     "xero:refund-note-link-repair": "tsx --conditions=react-server scripts/xero-refund-note-link-repair.ts",
     "xero:bank-refund-void-count": "tsx --conditions=react-server scripts/bank-refund-void-count.ts",
+    "xero:deleted-payment-link-backfill": "tsx --conditions=react-server scripts/xero-deleted-payment-link-backfill.ts",
     "calendar:diagnose-access": "tsx --conditions=react-server scripts/diagnose-calendar-access.ts",
     "finance:backfill-monthly-facts": "tsx --conditions=react-server scripts/backfill-finance-monthly-facts.ts",
     "payments:backfill-cancel-flattened": "tsx --conditions=react-server scripts/backfill-cancel-flattened-payments.ts",

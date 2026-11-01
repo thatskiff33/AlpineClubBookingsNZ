@@ -6146,6 +6146,77 @@ enqueue joins its caller's transaction. An inbound void racing a create's
 record on one payment can take the same two rows in the opposite order; that
 predates #4161 and is not changed here.
 
+## Retiring a deleted Xero payment's link (#4531)
+
+The inbound invoice and credit-note reconcile retires a `PAYMENT` link once Xero
+confirms its payment DELETED (`retireDeletedXeroPaymentLink`,
+`xero-inbound/deleted-payment-links.ts`, `INV-INT-031`). The scheduled re-check
+`recheckPendingDeletedPaymentLinks` (run by the inbound cron cycle) and the
+operator backfill `applyDeletedPaymentLinkBackfill` use the same write. So do
+the marker writes on a candidate Xero could not judge (mark, count a failed
+answer, clear on live). They write only `XeroObjectLink.active` and that link's
+metadata: no money column, no booking status, no pointer. Under `INV-LOCK-001` it joins no advisory cohort and
+takes no advisory key (`INV-LOCK-002`, `INV-LOCK-003` unchanged), and it takes
+no explicit row lock.
+
+- **Provider call outside any transaction.** The reconcile is not wrapped in a
+  transaction (its callers: the stored-event worker under the event's
+  status claim, the incremental cursor, "Sync now", the bank-refund void
+  answer, and "Resolve by hand" on a Xero operation, which reconciles the
+  credit note it names). The confirming `GET /Payments/{id}` runs between its
+  short link writes, never inside one (`INV-INT-003`). It is one attempt: it
+  never sleeps on a rate limit and never arms the process-wide outage breaker
+  (`DEFERRABLE_XERO_READ`).
+- **The claim.** One statement per link:
+  `updateMany where { id, xeroObjectType: "PAYMENT", active: true, metadata = <as read> }`.
+  A concurrent writer that changed the metadata, or retired it first, makes
+  the count 0. The retire then re-reads and tries once more over the fresh
+  metadata, or stops if the link is already inactive. It never overwrites a
+  field it did not read. DELETED is terminal in Xero, so retiring over a
+  newer reading is always right.
+- **No counterpart deadlock.** It holds one row lock for one statement and
+  waits on nothing else. The link funnel's canonical rules
+  (`deactivateOtherCanonicalLinksWithClient`, the `REFUND_PAYMENT`
+  single-active rule) run only for a write that leaves its link active, so the
+  retire never retires a sibling.
+- **Stated limit.** A reconcile holding a payload read before the deletion can
+  upsert the link live after the retire, because the funnel takes no row lock
+  first. The link is then a candidate again on the next read of the document,
+  and the backfill finds it.
+- **Counterpart readers, and the hold-back that protects them.** Writers that
+  skip re-sending a payment while an active link records it: the booking
+  change's card receipt (`recordAdditionalCaptureReceipt`), the primary
+  invoice's PARTIAL payment repair (`recordedRepairPayment`) and the kept late
+  capture's invoice, each on the link's own record. Two more read across
+  records on one booking: a receipt refuses while a supplementary invoice's
+  payment link is active (`bookingHasPaidUnnamedSupplementary`), and a
+  supplementary invoice reads the receipts' links (`anchorCaptureHasReceipt`).
+  Their payment is made by a separate operation that writes the link before
+  the parent completes, so a parent whose completion failed retries with the
+  link in place. The retire therefore never runs while an operation matching
+  `rerunnableOperationWhere` (live, or FAILED/PARTIAL and still `replayable`,
+  with `manuallyResolvedAt: null`) sits on the link's own record, or, for a
+  supplementary payment link or a receipt's link, among the booking's open
+  receipts or supplementary invoices (`findRerunnableOperation`). It is asked
+  immediately before each guarded `updateMany`, not under a lock or in one
+  transaction with it, and no writer can invalidate the answer in between. An
+  operation leaves the set only by finishing, which merely holds back more
+  than needed. It never re-enters (a recorded outcome is final, `INV-INT-029`;
+  a retry claim moves FAILED or PARTIAL to RUNNING, inside the set), and a new
+  operation never holds this payment's link. A held link stays active and
+  marked, and the scheduled re-check retires it once the operation is done.
+  The readers are unchanged.
+- **The re-check's slot.** `recheckPendingDeletedPaymentLinks` claims its run
+  before any call: it creates the `DELETED_PAYMENT_RECHECK` cursor row once (a
+  lost unique race reads as "claimed elsewhere"), or moves
+  `lastSuccessfulSyncAt` forward in one `updateMany` guarded on it being six
+  hours old. So the cron and every webhook's kick, which run the cycle without
+  single-flight, spend the cap once per interval.
+
+Reconciled against the last ten merges touching `src/lib/xero-inbound`
+(#4543, #4555, #4539, #4437, #4443, #4339, #4341, #4228, #4289, #4231). None
+writes a `PAYMENT` link's `active` flag or reads one this retire changes.
+
 ## Voided bank-transfer refund note follow-up (#4162)
 
 `followUpVoidedBankRefundNote` (`src/lib/bank-refund-void-follow-up.ts`, owner

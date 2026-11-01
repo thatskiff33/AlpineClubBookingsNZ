@@ -1,4 +1,4 @@
-import { XERO_ACTIVE_OPERATION_STATUSES } from "./xero-active-operation-statuses";
+import { XERO_RERUNNABLE_OPERATION_STATUSES } from "./xero-active-operation-statuses";
 import { Prisma } from "@prisma/client";
 import {
   XERO_OUTBOX_APPLIED_CREDIT_ALLOCATION_TYPE,
@@ -126,7 +126,7 @@ export async function findUnconvergedAppliedCreditDeallocation(
       localId: paymentId,
       queueType: XERO_OUTBOX_APPLIED_CREDIT_DEALLOCATION_TYPE,
       status: {
-        in: [...XERO_ACTIVE_OPERATION_STATUSES, "FAILED", "PARTIAL"],
+        in: [...XERO_RERUNNABLE_OPERATION_STATUSES],
       },
     },
     select: { id: true, status: true },
@@ -162,7 +162,7 @@ export async function findAppliedCreditDeallocationFence(
       localId: paymentId,
       queueType: XERO_OUTBOX_APPLIED_CREDIT_DEALLOCATION_TYPE,
       status: {
-        in: [...XERO_ACTIVE_OPERATION_STATUSES, "FAILED", "PARTIAL"],
+        in: [...XERO_RERUNNABLE_OPERATION_STATUSES],
       },
     },
     select: { id: true, status: true, requestPayload: true },

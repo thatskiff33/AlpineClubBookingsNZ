@@ -481,7 +481,7 @@ function parseXeroRetryAfterSeconds(value: string | undefined): number | null {
   return null;
 }
 
-function isRetryableXeroTransientStatus(statusCode: number | undefined): boolean {
+export function isRetryableXeroTransientStatus(statusCode: number | undefined): boolean {
   return (
     statusCode === 408 ||
     (statusCode !== undefined && statusCode >= 500 && statusCode <= 599)
