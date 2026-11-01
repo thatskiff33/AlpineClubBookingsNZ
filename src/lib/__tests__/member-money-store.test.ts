@@ -11,7 +11,7 @@ import { memberMoneyEventKeys, MemberMoneyPlanError, type MemberMoneyPlan } from
 import { GlobalLockNotHeldError } from "@/lib/global-lock-held";
 import { buildMemberMoneyBatch } from "@/lib/member-money/internal/plan";
 import { writeMemberMoneyBatch } from "@/lib/member-money/internal/store";
-import { memberMoneyTestContext } from "./support/member-money-fixtures";
+import { bookingChargePlan, memberMoneyTestContext } from "./support/member-money-fixtures";
 
 const MEMBER = { kind: "MEMBER", memberId: "member-1" } as const;
 const correction: MemberMoneyPlan = {
@@ -27,8 +27,9 @@ const leg = (side: "CREDIT" | "DEBIT") => ({ account: "BOOKING_REVENUE", chargeI
   grossCents: 11500, netCents: 10000, taxCents: 1500, taxCode: "GST_INCLUSIVE_1500BP", bookingId: null, lodgeId: null });
 
 /** A transaction whose event lookups answer in turn, holding lock(1) unless told otherwise. */
-function fakeTx(lookups: unknown[], { lockHeld = true } = {}) {
+function fakeTx(lookups: unknown[], { lockHeld = true, componentHasLegs = true } = {}) {
   const writes: string[] = [];
+  const write = (table: string) => ({ createMany: async () => { writes.push(table); return { count: 1 }; } });
   const tx = {
     $queryRaw: async () => [{ held: lockHeld }],
     memberMoneyEvent: {
@@ -36,7 +37,15 @@ function fakeTx(lookups: unknown[], { lockHeld = true } = {}) {
       createMany: async () => { writes.push("event"); return { count: 1 }; },
     },
     // The component was corrected by the same-key poster that just committed.
-    memberMoneyLine: { findMany: async () => [leg("CREDIT"), leg("DEBIT")] },
+    memberMoneyLine: {
+      findMany: async () => [leg("CREDIT"), leg("DEBIT")],
+      findFirst: async () => (componentHasLegs ? { id: "earlier-leg" } : null),
+      ...write("line"),
+    },
+    memberMoneyObligation: { findMany: async () => [], ...write("obligation") },
+    memberMoneyJournal: write("journal"),
+    memberMoneySourceLink: write("source"),
+    memberMoneySourcePosting: write("posting"),
   };
   return { tx: tx as unknown as Prisma.TransactionClient, writes };
 }
@@ -54,6 +63,18 @@ describe("writeMemberMoneyBatch", () => {
     const { tx, writes } = fakeTx([null, null]);
     await expect(writeMemberMoneyBatch(tx, draft)).rejects.toBeInstanceOf(MemberMoneyPlanError);
     expect(writes).toEqual([]);
+  });
+
+  it("refuses a charge of a component that already has posted legs without lock(1), and posts a first charge without it", async () => {
+    const charge = buildMemberMoneyBatch(memberMoneyTestContext(), bookingChargePlan({
+      eventKey: memberMoneyEventKeys.bookingCharge("b1"), debtor: MEMBER, grossCents: 11500,
+      components: [{ chargeIdentity: "nights:1", grossCents: 11500 }] }));
+    const again = fakeTx([null], { lockHeld: false, componentHasLegs: true });
+    await expect(writeMemberMoneyBatch(again.tx, charge)).rejects.toBeInstanceOf(GlobalLockNotHeldError);
+    expect(again.writes).toEqual([]);
+    const first = fakeTx([null], { lockHeld: false, componentHasLegs: false });
+    await expect(writeMemberMoneyBatch(first.tx, charge)).resolves.toMatchObject({ replayed: false });
+    expect(first.writes).toEqual(["event", "journal", "source", "obligation", "line"]);
   });
 
   it("refuses a correction when the caller does not hold lock(1), before reading or writing", async () => {

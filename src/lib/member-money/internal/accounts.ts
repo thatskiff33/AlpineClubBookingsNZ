@@ -46,6 +46,9 @@ export const DEBTOR_ACCOUNTS: readonly Account[] = flagged("requiresDebtor");
 
 /** The revenue accounts the builder splits tax out of, derived from the registry. */
 export const TAXED_REVENUE_ACCOUNTS = flagged("taxedRevenue") as readonly TaxedRevenueAccount[];
+/** Whether an account is one the builder splits tax out of. */
+export const isTaxedRevenue = (account: string): account is TaxedRevenueAccount =>
+  (TAXED_REVENUE_ACCOUNTS as readonly string[]).includes(account);
 export type TaxedRevenueAccount = {
   [K in Account]: (typeof MEMBER_MONEY_ACCOUNTS)[K] extends { taxedRevenue: true } ? K : never;
 }[Account];

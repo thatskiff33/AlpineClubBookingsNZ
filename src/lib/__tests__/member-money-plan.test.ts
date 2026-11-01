@@ -326,6 +326,20 @@ describe("an exact reversal needs the components it undoes unchanged", () => {
     expect(reversalLiveProblems(journal("DEBIT"), [posted(), posted({ side: "DEBIT" })])).toEqual([]);
   });
 
+  it("allows a correction with a remainder charge in the same batch, whether the remainder is smaller or larger", () => {
+    for (const remainder of [5750, 15000]) {
+      const mixed = { lines: [
+        ...journal("DEBIT").lines,
+        { ...journal("CREDIT").lines[0]!, amountCents: remainder, grossCents: remainder, netCents: remainder, taxCents: 0, id: "l-rem" },
+      ] };
+      const live = [posted(), posted({ side: "DEBIT" }), posted({ amountCents: remainder, grossCents: remainder, netCents: remainder, taxCents: 0 })];
+      expect(reversalLiveProblems(mixed, live), String(remainder)).toEqual([]);
+      // The remainder corrected since: refused.
+      const corrected = [...live, posted({ side: "DEBIT", amountCents: remainder, grossCents: remainder, netCents: remainder, taxCents: 0 })];
+      expect(reversalLiveProblems(mixed, corrected).join("\n")).toMatch(/has changed since/);
+    }
+  });
+
   it("refuses a charge corrected since, and a correction whose component was charged again", () => {
     expect(reversalLiveProblems(journal("CREDIT"), [posted(), posted({ side: "DEBIT" })]).join("\n"))
       .toMatch(/nights:1 has changed since this journal posted it \(it carries 0\.00, not 115\.00\)/);

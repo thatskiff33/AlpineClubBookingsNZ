@@ -12,7 +12,7 @@ import { isCalendarDate, type CalendarDate, type Instant } from "../../club-time
 import { MAX_INTEGER_CENTS } from "../../money-input";
 import { stableDigest, stableStringify } from "../../stable-digest";
 import { formatCentsPlain } from "../../utils";
-import { DEBTOR_ACCOUNTS, MEMBER_MONEY_ACCOUNTS, TAXED_REVENUE_ACCOUNTS, type TaxedRevenueAccount } from "./accounts";
+import { DEBTOR_ACCOUNTS, isTaxedRevenue, MEMBER_MONEY_ACCOUNTS, type TaxedRevenueAccount } from "./accounts";
 import { memberMoneyEventKeys, type MemberMoneyEventKey } from "./keys";
 import { splitTaxInclusiveGross, type MemberMoneyTaxSplit } from "./tax";
 
@@ -250,8 +250,6 @@ export interface BuiltBatch {
 const blank = (value: unknown): boolean => typeof value !== "string" || value.trim().length === 0;
 const cents = (value: number): boolean => Number.isSafeInteger(value) && value > 0 && value <= MAX_INTEGER_CENTS;
 const sourceKey = (source: MemberMoneySource): string => `${source.kind}\u0000${source.id}\u0000${source.version}`;
-const isTaxedRevenue = (account: string): account is TaxedRevenueAccount =>
-  (TAXED_REVENUE_ACCOUNTS as readonly string[]).includes(account);
 const untaxed = { grossCents: null, netCents: null, taxCents: null, taxCode: null } as const;
 
 function debtorColumns(debtor: MemberMoneyDebtor | undefined) {

@@ -262,10 +262,10 @@ booking (the legacy component keys do). Every leg of a component must name the
 same booking and lodge, and so must its correction. Once a component is fully
 corrected, the remainder charge may reuse its identity, even at a new rate:
 only a tax code that still carries money counts. A component carrying money
-under two codes at once cannot be corrected this way. A correction, and an
-exact reversal of a journal that posted revenue, read live component state and
-then write, so the caller must hold `lock(1)` (`INV-LOCK-001`); the store
-refuses otherwise. A reversal is also refused once a component it would undo
+under two codes at once cannot be corrected this way. A correction, an exact
+reversal of a journal that posted revenue, and a fresh charge of a component
+that already has legs depend on live component state until commit, so the
+caller must hold `lock(1)` (`INV-LOCK-001`); the store refuses otherwise. A reversal is also refused once a component it would undo
 has changed since. The payload hash covers the economics, not the reason or
 actor. The store, `internal/store.ts`, is the one writer of these tables. It
 looks up a replay first, then completes corrections, then writes in the order

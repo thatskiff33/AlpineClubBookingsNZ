@@ -9,6 +9,7 @@ import {
   reversalLiveProblems,
   type PostedRevenueLeg,
 } from "./components";
+import { isTaxedRevenue } from "./accounts";
 import { MemberMoneyPlanError, type BuiltBatch, type MemberMoneyJournalToReverse } from "./plan";
 
 /**
@@ -121,10 +122,12 @@ async function postedComponents(
  *
  * A correction, and a reversal of a journal that posted revenue components,
  * read live component state and then write, which only `lock(1)` keeps true
- * until commit (`INV-LOCK-001`). So both refuse unless the caller's transaction
- * holds it. If a check refuses, the key is looked up once more: a concurrent
- * poster of this same event may have committed in between, and its batch is
- * the answer.
+ * until commit (`INV-LOCK-001`). So does a fresh charge of a component that
+ * already has posted legs: unlocked, it could race a reversal of that
+ * component's correction and double its revenue. All three refuse unless the
+ * caller's transaction holds the key; the first charge of a new identity needs
+ * none. If a check refuses, the key is looked up once more: a concurrent poster
+ * of this same event may have committed in between, and its batch is the answer.
  */
 export async function writeMemberMoneyBatch(
   db: Db,
@@ -134,8 +137,14 @@ export async function writeMemberMoneyBatch(
   const earlier = await replay(db, draft, false);
   if (earlier) return earlier;
   const reversed = reversing ? componentsPostedBy(reversing) : [];
-  if (draft.corrections.length > 0 || reversed.length > 0) {
-    await assertGlobalLockHeld(db, "A member-money correction or revenue reversal");
+  const lockNeeded = draft.corrections.length > 0 || reversed.length > 0;
+  if (lockNeeded) await assertGlobalLockHeld(db, "A member-money correction or revenue reversal");
+  const recharged = reversing ? [] : draft.lines.flatMap(({ account, side, chargeIdentity }) =>
+    side === "CREDIT" && chargeIdentity !== null && isTaxedRevenue(account) ? [{ account, chargeIdentity }] : []);
+  if (!lockNeeded && recharged.length > 0 && await db.memberMoneyLine.findFirst({
+    where: { OR: recharged }, select: { id: true },
+  })) {
+    await assertGlobalLockHeld(db, "A member-money charge of a component that already has posted legs");
   }
   let batch: BuiltBatch;
   try {

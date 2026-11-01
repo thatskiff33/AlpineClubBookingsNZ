@@ -9029,6 +9029,8 @@ model MemberMoneyLine {
   @@index([bookingId])
   @@index([lodgeId])
   @@index([obligationId])
+  /// A component (#4626): corrections, reversals and re-charges read its legs.
+  @@index([account, chargeIdentity])
   sourcePostings MemberMoneySourcePosting[]
   @@unique([id, journalId])
 }

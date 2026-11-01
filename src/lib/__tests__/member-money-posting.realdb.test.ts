@@ -157,6 +157,37 @@ const untouchable = new Proxy({}, {
       .rejects.toMatchObject({ name: "MemberMoneyPlanError", problems: [expect.stringMatching(new RegExp(`${component} has changed since`))] });
   });
 
+  it("reverses a correction that charged a remainder in the same batch; a re-charge needs lock(1)", async () => {
+    const charge = bookingChargePlan({ eventKey: key("charge-mixed"), debtor: MEMBER, grossCents: 11500,
+      components: [{ chargeIdentity: `nights:${sequence}:mixed`, grossCents: 11500 }] });
+    const component = charge.legs[1]!.chargeIdentity!;
+    // The first charge of a new component needs no key.
+    await post(charge);
+    // A whole-component correction plus a 57.50 remainder on the same identity, at today's rate.
+    const mixed = await postLocked({
+      kind: "ADJUSTMENT", eventKey: key("modification-mixed"), origin: "APP", reason: "reduce to one night",
+      source: { kind: "BOOKING", id: `modification-mixed-${sequence}`, version: "1" },
+      legs: [
+        { type: "revenue", account: "BOOKING_REVENUE", side: "DEBIT", grossCents: 11500, chargeIdentity: component, evidence: {} },
+        { type: "revenue", account: "BOOKING_REVENUE", side: "CREDIT", grossCents: 5750, chargeIdentity: component, evidence: {} },
+        { type: "amount", account: "MEMBER_RECEIVABLE", side: "CREDIT", amountCents: 5750, debtor: MEMBER, evidence: {} },
+      ],
+    });
+    expect(await verified()).toEqual({ findings: [], grantCheck: "checked" });
+    // A later re-charge of that component without the caller's lock(1) is refused (it could race the reversal below).
+    const recharge = bookingChargePlan({ eventKey: key("recharge"), debtor: MEMBER, grossCents: 100,
+      components: [{ chargeIdentity: component, grossCents: 100 }] });
+    await expect(post(recharge)).rejects.toBeInstanceOf(GlobalLockNotHeldError);
+    // The component carries the remainder the batch left there, so the exact reversal is allowed.
+    const reversal = await underGlobalLock((tx) => reverseMemberMoneyJournal(tx, context, { reversesJournalId: mixed.journalId,
+      origin: "OFFICER", reason: "undo the reduction", source: { kind: "OFFICER_FACT", id: `undo-mixed-${sequence}`, version: "1" } }));
+    expect(reversal.replayed).toBe(false);
+    const live = await app.query(`SELECT sum(CASE side WHEN 'CREDIT' THEN coalesce("grossCents", "amountCents") ELSE -coalesce("grossCents", "amountCents") END)::int AS gross
+      FROM "MemberMoneyLine" WHERE account = 'BOOKING_REVENUE' AND "chargeIdentity" = $1`, [component]);
+    expect(live.rows).toEqual([{ gross: 11500 }]);
+    expect(await verified()).toEqual({ findings: [], grantCheck: "checked" });
+  });
+
   it("posts what needs no fresh split when the tax setting starts after the date, and refuses what does", async () => {
     const later = memberMoneyTestContext({ taxSettings: { effectiveFrom: "2027-04-01" as never } });
     await post({ kind: "ZERO", eventKey: key("zero-untaxed"), origin: "APP", reason: "no-invoice outcome",

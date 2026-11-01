@@ -65,11 +65,13 @@ export function resolveMemberMoneyPostingContext(input: {
  * `MemberMoneyPostingConflictError`. A database refusal at commit rolls the
  * caller's business mutation back too: no caller may catch it and commit.
  *
- * PRECONDITION (`INV-LOCK-001`): a plan that corrects a revenue component reads
- * the component's live state and then writes, so the caller's transaction must
- * already hold `pg_advisory_xact_lock(1)`. The store checks and refuses with
- * `GlobalLockNotHeldError` otherwise. Every door that will post a correction
- * (R02-R04, R21) already holds it. A plan with no correction needs no key.
+ * PRECONDITION (`INV-LOCK-001`): a plan that corrects a revenue component, or
+ * charges a component that already has posted legs, depends on that
+ * component's live state until commit, so the caller's transaction must already
+ * hold `pg_advisory_xact_lock(1)`. The store checks and refuses with
+ * `GlobalLockNotHeldError` otherwise. Every door that will post one (R01-R04,
+ * R21) already holds it. Only the first charge of a new component, and a plan
+ * with no revenue component at all, need no key.
  */
 export async function postMemberMoneyEvent(
   tx: Prisma.TransactionClient,
