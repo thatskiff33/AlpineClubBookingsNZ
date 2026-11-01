@@ -51,12 +51,18 @@ function runGate(root, body) {
  * ticked `N/A` is the truthful declaration for them.
  *
  * The heading and the checkbox line are copied verbatim from
- * `.github/pull_request_template.md`; the gate matches them exactly.
+ * `.github/pull_request_template.md`; the gate matches them exactly. It answers
+ * `## Plan Deviation` too (#4463), so these verdicts survive that gate's switch
+ * from warning to failure.
  */
 const BODY_WITHOUT_FRAGMENT = [
   "## Summary",
   "",
   "- adds a source file",
+  "",
+  "## Plan Deviation",
+  "",
+  "- None",
   "",
   "## Concurrency And Lock Impact",
   "",
@@ -254,7 +260,7 @@ describe("pr:check offline gate runner", () => {
   */
   it("reports a missing plan-deviation section as WARN and still exits 0", () => {
     root = makeRepo({ "docs/note.md": "hello\n" });
-    const { status, output } = runGate(root, BODY_WITHOUT_FRAGMENT);
+    const { status, output } = runGate(root, BODY_WITHOUT_FRAGMENT.replace("## Plan Deviation\n\n- None\n", ""));
     expect(output).toContain("WARN  Plan deviation");
     expect(output).toContain("PASS  PR size");
     expect(output).toContain("passes every enforced gate, with 1 warning(s)");
@@ -264,7 +270,7 @@ describe("pr:check offline gate runner", () => {
   it("passes the plan-deviation section answered None, and warns on an unexplained large PR", () => {
     const big = Array.from({ length: 900 }, (_, i) => `line ${i}`).join("\n");
     root = makeRepo({ "docs/note.md": `${big}\n` });
-    const answered = `${BODY_WITHOUT_FRAGMENT}\n## Plan Deviation\n\n- None\n`;
+    const answered = BODY_WITHOUT_FRAGMENT;
     let result = runGate(root, answered);
     expect(result.output).toContain("PASS  Plan deviation");
     expect(result.output).toContain("WARN  PR size");
