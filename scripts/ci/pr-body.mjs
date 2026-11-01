@@ -14,6 +14,41 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 
+import { escapeRegex } from "./escape-regex.mjs";
+
+/**
+ * A PR body without the text no gate should read as an answer: HTML comments
+ * (the template's own instructions mention `None`, `#<number>` and
+ * `large-pr:`) and fenced code blocks (a body explaining a gate may quote its
+ * heading or marker). An unclosed comment or fence runs to the end of the body,
+ * as it does when GitHub renders it. Used by the plan-deviation and size gates
+ * (#4463); the concurrency and changelog gates read the raw body.
+ */
+export function stripNonAnswerText(body) {
+  return (body ?? "")
+    .replace(/<!--[\s\S]*?(?:-->|$)/g, "")
+    .replace(/^ {0,3}(`{3,}|~{3,})[\s\S]*?(?:^ {0,3}\1[^\S\r\n]*$|(?![\s\S]))/gm, "");
+}
+
+/**
+ * The text of a `## Heading` section, or null when the body has no line that
+ * is exactly that heading. The heading must fill its own line (surrounding
+ * horizontal whitespace allowed) — anchoring to a whole line is what stops a
+ * mention of the heading inside prose or a code span from being taken for the
+ * section. The section runs to the next line opening with `##` and whitespace
+ * — the rule the concurrency gate has always used, kept byte-for-byte so its
+ * verdicts did not move when the plan-deviation gate (#4463) began sharing it.
+ * A caller that must not read comments or fences passes the body through
+ * `stripNonAnswerText` first.
+ */
+export function sectionAfterHeading(body, heading) {
+  const match = new RegExp(`^[^\\S\\r\\n]*${escapeRegex(heading)}[^\\S\\r\\n]*\\r?$`, "m").exec(body);
+  if (!match) return null;
+  const after = body.slice(match.index + match[0].length);
+  const next = after.search(/\n##\s+/);
+  return next >= 0 ? after.slice(0, next) : after;
+}
+
 /**
  * Body-source selection, factored pure so it can be unit tested without network
  * access. A successfully fetched live body (even an empty one, which fails
