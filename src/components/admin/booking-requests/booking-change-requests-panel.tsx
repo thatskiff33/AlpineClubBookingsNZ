@@ -28,18 +28,18 @@ import { useAgeTierOptions } from "@/lib/use-age-tier-options";
 import {
   decisionToastMessage,
   FinishedStayApprovalNotice,
-  FinishedStaySettlementField,
   FinishedStayQuoteSummary,
   expectedFiguresOf,
-  OfficerGuestEntry,
-  officerGuestsKey,
-  officerGuestsPayload,
+  officerEntryKey,
   OverCapacityConfirmation,
   quoteIsCurrent,
-  requestStay,
   RequestedGuestAdds,
   useFinishedStayQuotes,
 } from "@/components/admin/booking-requests/booking-change-request-finished-stay";
+import {
+  FinishedStayEntryFields,
+  officerEntryOf,
+} from "@/components/admin/booking-requests/booking-change-request-officer-entry";
 import { DecidedChangeRequestSummary } from "@/components/admin/booking-requests/booking-change-request-decided";
 import { RequestedGuestNights } from "@/components/admin/booking-requests/requested-guest-nights";
 import {
@@ -174,11 +174,8 @@ export function BookingChangeRequestsPanel({
   const OfficerEntryButton = useCallback((props: ButtonProps) => (
     <ViewOnlyActionButton canEdit={canEdit} describeReason={false} {...props} />
   ), [canEdit]);
-  /** This row's officer-entered guests as sent, or null (#4030). */
-  const officerGuestsFor = (request: BookingChangeRequestData) =>
-    request.acceptsOfficerGuests
-      ? officerGuestsPayload(decisionDraftFor(request.id).officerGuests, requestStay(request.booking))
-      : null;
+  /** This row's officer entry as sent (#4030, #4533). */
+  const entryOf = (request: BookingChangeRequestData) => officerEntryOf(request, decisionDraftFor(request.id));
   const currentPath = buildBookingChangeRequestsPath(
     basePath,
     searchParams.toString(),
@@ -227,6 +224,7 @@ export function BookingChangeRequestsPanel({
     // half-written note is not this member's. Trimmed here so the stored draft
     // keeps the officer's own spacing while the wire body carries neither.
     const draft = decisionDraftFor(request.id);
+    const entry = entryOf(request);
     setError("");
 
     try {
@@ -257,7 +255,8 @@ export function BookingChangeRequestsPanel({
                 ...(quotes.quoteFor(request.id)?.confirmOverCapacity
                   ? { confirmOverCapacity: true }
                   : {}),
-                ...(officerGuestsFor(request) ? { officerGuests: officerGuestsFor(request) } : {}),
+                // #4030 / #4533: the officer's entry and email choice, as sent.
+                ...entry.approvalFields,
                 // #4030 review C4: the figures this approval was shown.
                 expectedFigures: expectedFiguresOf(quotes.quoteFor(request.id)),
               }
@@ -389,11 +388,11 @@ export function BookingChangeRequestsPanel({
             // #3750: the nights this card's approval is waiting to have confirmed.
             const quote = quotes.quoteFor(request.id);
             const overCapacityNights = quote?.overCapacityNights ?? null;
-            const officerGuests = officerGuestsFor(request);
+            const { officerGuests, officerPromo } = entryOf(request);
             const quoteCurrent = quoteIsCurrent(
               quote,
               decisionDraftFor(request.id).settlementMethod,
-              officerGuestsKey(officerGuests),
+              officerEntryKey(officerGuests, officerPromo),
             );
 
             return (
@@ -547,35 +546,18 @@ export function BookingChangeRequestsPanel({
                           placeholder="Context for the next officer. The member never reads this."
                         />
                       </div>
-                      {request.acceptsOfficerGuests ? (
-                        <OfficerGuestEntry
-                          requestId={request.id}
-                          bookingId={request.booking.id}
-                          stay={requestStay(request.booking)}
-                          guests={decisionDraftFor(request.id).officerGuests}
-                          onChange={(officerGuests) => {
-                            updateDecisionDraft(request.id, { officerGuests });
-                            quotes.clear(request.id); // #4030 review M1: figures belong to their list
-                          }}
-                          ageTierOptions={ageTierOptions}
-                          memberGuestFind={memberGuestFind}
-                          existingMemberIds={(request.booking.guests ?? []).flatMap((guest) =>
-                            guest.memberId ? [guest.memberId] : [],
-                          )}
-                          canEdit={canEdit}
-                          ActionButton={OfficerEntryButton}
-                        />
-                      ) : null}
-                      {request.executesOnApproval ? (
-                        <FinishedStaySettlementField
-                          requestId={request.id}
-                          value={decisionDraftFor(request.id).settlementMethod}
-                          canEdit={canEdit}
-                          onChange={(settlementMethod) =>
-                            updateDecisionDraft(request.id, { settlementMethod })
-                          }
-                        />
-                      ) : null}
+                      <FinishedStayEntryFields
+                        request={request}
+                        draft={decisionDraftFor(request.id)}
+                        canEdit={canEdit}
+                        onDraftChange={(patch, clearsFigures) => {
+                          updateDecisionDraft(request.id, patch);
+                          if (clearsFigures) quotes.clear(request.id); // #4030 review M1
+                        }}
+                        ageTierOptions={ageTierOptions}
+                        memberGuestFind={memberGuestFind}
+                        ActionButton={OfficerEntryButton}
+                      />
                       {request.executesOnApproval ? (
                         <FinishedStayQuoteSummary
                           quote={quote}
@@ -587,6 +569,7 @@ export function BookingChangeRequestsPanel({
                               settlementMethod: decisionDraftFor(request.id).settlementMethod,
                               confirmOverCapacity: quote?.confirmOverCapacity === true, // a list change clears it (M1)
                               officerGuests,
+                              officerPromo,
                             })
                           }
                         />
@@ -623,6 +606,7 @@ export function BookingChangeRequestsPanel({
                                   settlementMethod: decisionDraftFor(request.id).settlementMethod,
                                   confirmOverCapacity: true,
                                   officerGuests,
+                                  officerPromo,
                                 })
                               }
                               disabled={quote?.loading === true}

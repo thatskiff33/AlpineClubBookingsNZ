@@ -3,6 +3,8 @@ import { describe, expect, it, vi } from "vitest";
 import {
   classifyFinishedStayChangeFeeRule,
   defaultCorrectionSettlementMethod,
+  finishedStayReductionReturnedInFull,
+  finishedStayRemovalIsCharged,
   FINISHED_STAY_INVOICE_RAISED_MESSAGE,
   finishedStayNoticeDay,
   finishedStayRemovalFeeCents,
@@ -148,6 +150,56 @@ describe("finished-stay change-fee rule (#3750 owner decision)", () => {
     ).toBe("SAME_DAY_NOTICE");
   });
 
+  it("a promo-only correction is PROMO_ONLY_NO_FEE and returns its reduction in full (#4533)", () => {
+    const rule = classifyFinishedStayChangeFeeRule({
+      addedGuestCount: 0,
+      removedGuestCount: 0,
+      remainingGuests: [unchanged],
+      changesPromoCodes: true,
+    });
+    expect(rule).toBe("PROMO_ONLY_NO_FEE");
+    expect(finishedStayRemovalIsCharged(rule)).toBe(false);
+    expect(finishedStayReductionReturnedInFull(rule, true)).toBe(true);
+  });
+
+  it("a promo with a removal or a trimmed night stays a same-day change (#4533)", () => {
+    expect(
+      classifyFinishedStayChangeFeeRule({
+        addedGuestCount: 0,
+        removedGuestCount: 1,
+        remainingGuests: [unchanged],
+        changesPromoCodes: true,
+      }),
+    ).toBe("SAME_DAY_NOTICE");
+    expect(
+      classifyFinishedStayChangeFeeRule({
+        addedGuestCount: 0,
+        removedGuestCount: 0,
+        remainingGuests: [
+          {
+            stored: { stayStart: day("2026-06-10"), stayEnd: day("2026-06-14") },
+            proposed: { stayStart: day("2026-06-10"), stayEnd: day("2026-06-13") },
+          },
+        ],
+        changesPromoCodes: true,
+      }),
+    ).toBe("SAME_DAY_NOTICE");
+  });
+
+  it("an add with a promo is add-only, but its reduction comes back in full (#4533)", () => {
+    const rule = classifyFinishedStayChangeFeeRule({
+      addedGuestCount: 1,
+      removedGuestCount: 0,
+      remainingGuests: [unchanged],
+      changesPromoCodes: true,
+    });
+    expect(rule).toBe("ADD_ONLY_NO_FEE");
+    expect(finishedStayReductionReturnedInFull(rule, true)).toBe(true);
+    // Without a promo an add-only correction keeps the tiered path it always had.
+    expect(finishedStayReductionReturnedInFull(rule, false)).toBe(false);
+    expect(finishedStayReductionReturnedInFull("SAME_DAY_NOTICE", false)).toBe(true);
+  });
+
   it("a date or range change with nobody added is a same-day notice change", () => {
     expect(
       classifyFinishedStayChangeFeeRule({
@@ -185,8 +237,18 @@ describe("resolveTargetDates — finished-stay correction window (#3750)", () =>
     expect(dates.isFinishedStayCorrection).toBe(true);
   });
 
+  it("admits the promo fields a change request carries (#4533)", () => {
+    expect(resolve({ promoCode: "SUMMER" }).isFinishedStayCorrection).toBe(true);
+    expect(resolve({ promoCode: "SUMMER", promoGuestIds: ["g1"] }).isFinishedStayCorrection).toBe(true);
+    expect(resolve({ promoCodes: [{ code: "SUMMER" }] }).isFinishedStayCorrection).toBe(true);
+  });
+
   it("refuses anything a change request cannot carry", () => {
-    expect(() => resolve({ promoCode: "SUMMER" })).toThrow(
+    // #4533: a removal, and targets for added guests, are not a request's shape.
+    expect(() => resolve({ removePromoCode: true })).toThrow(
+      FINISHED_STAY_CORRECTION_FIELD_MESSAGE,
+    );
+    expect(() => resolve({ promoCode: "SUMMER", promoAddedGuestIndexes: [0] })).toThrow(
       FINISHED_STAY_CORRECTION_FIELD_MESSAGE,
     );
     expect(() =>
@@ -353,6 +415,13 @@ describe("the removed portion a correction is charged on (#3955 F3/F4/F5)", () =
     expect(defaultCorrectionSettlementMethod({ amountCents: 10_000, creditAppliedCents: 0 })).toBe("card");
     expect(defaultCorrectionSettlementMethod({ amountCents: 0, creditAppliedCents: 10_000 })).toBe("credit");
     expect(defaultCorrectionSettlementMethod(null)).toBe("card");
+  });
+
+  it("defaults a promo correction's reduction to account credit (#4533)", () => {
+    expect(
+      defaultCorrectionSettlementMethod({ amountCents: 10_000, creditAppliedCents: 0 }, { changesPromoCodes: true }),
+    ).toBe("credit");
+    expect(defaultCorrectionSettlementMethod(null, { changesPromoCodes: true })).toBe("credit");
   });
 });
 

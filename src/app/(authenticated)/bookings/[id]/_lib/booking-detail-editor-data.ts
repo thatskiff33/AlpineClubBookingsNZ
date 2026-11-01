@@ -64,6 +64,7 @@ export async function buildBookingDetailEditorData({
     isDeleted,
     canModify,
     canAdminOverride,
+    canRequestFinishedStayPromoCorrection,
     canEditNonMemberGuestNames,
     canFixNonMemberGuestNameTypos,
     editPolicy,
@@ -329,6 +330,9 @@ export async function buildBookingDetailEditorData({
         : null,
       checkInEditable: editPolicy.checkInEditable,
       adminOverrideAvailable: canAdminOverride,
+      // #4533: officer-only, and a conditional spread so no other viewer's
+      // payload gains the key (#2259's reasoning above).
+      ...(canRequestFinishedStayPromoCorrection ? { finishedStayPromoCorrection: true } : {}),
     },
     // #2266: null (rather than omitted) when ineligible, so the panel renders
     // no credit card at all for a booking whose election nothing would honour.

@@ -1033,6 +1033,32 @@ needs for that refund. Don't also make a credit note by hand: the treasurer
 decides. A part-done job that names no credit note is refused the same way:
 retry it, or ask the treasurer.
 
+### A Stripe payment the app did not create
+
+The club's Stripe account can take money that never went through the app: a
+Stripe Payment Link for donations, a Checkout page, or a charge made in the
+Stripe dashboard. The app has no booking for it and sends nothing to Xero, so
+without a note the Stripe clearing account in Xero stops reconciling (#4532).
+
+When one succeeds, Finance editors get **"Stripe payment the app did not
+create - code it in Xero"**, once per payment. It cannot be muted. It names the
+amount, when it was paid, what was bought (the Checkout line items, or the
+payment's own description), and the Stripe payment, charge, Checkout session and
+Payment Link ids, with a link to the payment in Stripe. It never contains card
+details or who paid.
+
+What to do:
+
+1. Open the payment in Stripe from the link and decide what it is: a donation,
+   or income and its GST treatment.
+2. Record it in Xero by hand against the Stripe clearing account (a Receive
+   Money for the amount, and Stripe's fee if your club records fees), so the
+   clearing account reconciles.
+
+The app keeps its own record of each such payment, but no screen lists them yet;
+the email is the notice. A payment the app made itself (any booking or group
+payment) never raises this alert.
+
 ### Follow a payment into Stripe or Xero
 
 1. Click the Stripe id to open the payment in the Stripe dashboard, or the Xero

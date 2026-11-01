@@ -57,6 +57,8 @@ import {
 } from "@/lib/email/admin-alerts-finance";
 import { sendAdminInternetBankingHoldKeptAlert } from "@/lib/email/admin-alerts-internet-banking";
 import { sendAdminLateCaptureRefundedOutsideAppAlert } from "@/lib/email/admin-alerts-late-capture";
+import { sendAdminUnrecognisedStripePaymentAlert } from "@/lib/email/admin-alerts-unrecognised-stripe-payment";
+import { UNRECOGNISED_STRIPE_PAYMENT_NOTE } from "@/lib/unrecognised-stripe-payment-note";
 import { LATE_CAPTURE_REFUNDED_OUTSIDE_APP_NOTE } from "@/lib/late-capture-outside-app-note";
 import {
   sendAdminBankTransferSettlementFigureAlert,
@@ -495,6 +497,38 @@ describe("#2320 review — senders supply the composed notes their defaults rend
     ];
     expect(args.subject).toBe("Late payment refunded outside the app - check Xero: Alice Example");
     expect(args.templateName).toBe("admin-late-capture-refunded-outside-app");
+    expect(args.requirement).toEqual({ area: "finance", level: "edit" });
+    expect(mocks.sendToAdmins).not.toHaveBeenCalled();
+  });
+
+  it("admin-unrecognised-stripe-payment: {{unrecognisedPaymentNote}} says how to code it, and every Stripe id renders (#4532)", async () => {
+    await sendAdminUnrecognisedStripePaymentAlert({
+      amount: "$50.00",
+      receivedAt: "1 Jul 2026, 9:00 am",
+      description: "Donation",
+      paymentIntentId: "pi_foreign_1",
+      chargeId: "ch_foreign_1",
+      checkoutSessionId: "cs_foreign_1",
+      paymentLinkId: "plink_foreign_1",
+      stripeDashboardUrl: "https://dashboard.stripe.com/payments/pi_foreign_1",
+    });
+
+    const data = capturedUnmuteableTemplateData();
+    expect(data.unrecognisedPaymentNote).toBe(UNRECOGNISED_STRIPE_PAYMENT_NOTE);
+    const rendered = renderDefaultBody("admin-unrecognised-stripe-payment", data);
+    expect(rendered).toContain("Stripe clearing account");
+    expect(rendered).toContain("Amount: $50.00");
+    expect(rendered).toContain("Description: Donation");
+    expect(rendered).toContain("Stripe payment: pi_foreign_1");
+    expect(rendered).toContain("Charge: ch_foreign_1");
+    expect(rendered).toContain("Checkout session: cs_foreign_1");
+    expect(rendered).toContain("Payment Link: plink_foreign_1");
+    expect(rendered).toContain("Open in Stripe: https://dashboard.stripe.com/payments/pi_foreign_1");
+    const [args] = mocks.sendUnmuteableAdminAlert.mock.calls[0] as [
+      { subject: string; templateName: string; requirement: unknown },
+    ];
+    expect(args.subject).toBe("Stripe payment the app did not create - code it in Xero: $50.00");
+    expect(args.templateName).toBe("admin-unrecognised-stripe-payment");
     expect(args.requirement).toEqual({ area: "finance", level: "edit" });
     expect(mocks.sendToAdmins).not.toHaveBeenCalled();
   });

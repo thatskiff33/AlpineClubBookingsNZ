@@ -577,6 +577,8 @@ new ADR:
   groups, applications, subscriptions, lifecycle requests.
 - Payments: `Payment`, `PaymentTransaction`, `PaymentRefund`, Stripe
   references. Payments attach to bookings; the booking carries the lodge.
+  `UnrecognisedStripePayment` (#4532) is a payment taken on the club's Stripe
+  account outside the app, so it has no booking and therefore no lodge.
 - Xero and finance: all `Xero*` models (including `XeroConnection`, the one
   operational connection row, #3806), `FinanceSnapshot`,
   `FinanceReportCategory*`, item/account mappings. One club-wide ledger and

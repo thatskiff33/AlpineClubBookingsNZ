@@ -71,8 +71,9 @@ function liveGuest(id: string, nights: string[], bookingId = "booking-1") {
   };
 }
 
-function row(id: string, requestedChanges: unknown, booking: unknown, status = "REQUESTED") {
-  return { id, status, requestedChanges, booking };
+function row(id: string, requestedChanges: unknown, booking: object, status = "REQUESTED") {
+  // #4533 review: the list reads the codes a booking carries, for the card's promo entry.
+  return { id, status, requestedChanges, booking: { promoRedemptions: [], ...booking } };
 }
 
 async function list() {

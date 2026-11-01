@@ -665,3 +665,15 @@ A Xero payment link is retired only when Xero says its payment is DELETED, never
 - **Backfill.** `scripts/xero-deleted-payment-link-backfill.ts` is report-only by default; `--apply` retires only payments Xero confirms DELETED, through the same write.
 
 Pinned by `xero-deleted-payment-links.test.ts`, `xero-deleted-payment-link-backfill.test.ts`, `xero-inbound-reconciliation.test.ts`, `xero-inbound-audit-summary.test.ts`, `xero-api-usage.test.ts` and, against a real database, `xero-deleted-payment-links.realdb.test.ts`.
+
+## Stripe payments the app did not create (#4532)
+
+### INV-INT-032
+A succeeded Stripe payment the app did not create is recorded once and alerted once; it never completes silently.
+
+- **Recognised means routed.** `isAppCreatedPaymentIntent` (`stripe-app-intent-metadata.ts`) is the one definition: a non-empty `bookingId`, or `type: "group_settlement"`. Both PaymentIntent wire functions in `stripe.ts` require `AppPaymentIntentMetadata`, and a census holds every Stripe money-object creation (PaymentIntent, Checkout session, Payment Link, invoice, subscription, charge) to those two. Key presence is not recognition: a Payment Link's own `type` or `memberId` metadata is still foreign.
+- **One record.** `payment_intent.succeeded` for any other intent writes one `UnrecognisedStripePayment` row: amount in Stripe's smallest unit, currency, created instant, PaymentIntent, charge, Checkout session and Payment Link ids, and the line items (else the intent's description), capped. The unique PaymentIntent id is the claim; a later delivery reads the stored row and asks Stripe nothing. The Checkout read is best effort and runs before the write, outside any transaction.
+- **One alert.** `admin-unrecognised-stripe-payment`, unmuteable and delivery-locked, to Finance editors, claimed once ever per PaymentIntent. Every delivery asks for it, so one that died between row and send is finished by the next. A send that throws gives the claim back and fails the event, so Stripe redelivers. No card data or payer identity is sent.
+- **Nothing else.** The event completes; no booking, settlement, ledger or Xero document is touched, and no advisory lock is taken. Coding the money in Xero is the treasurer's, by hand.
+
+Pinned by `stripe-app-intent-metadata.test.ts`, `unrecognised-stripe-payment.test.ts`, `stripe-webhook-alerts.test.ts`, `admin-unrecognised-stripe-payment-alert.test.ts` and, against a real database, `unrecognised-stripe-payment.realdb.test.ts`.
