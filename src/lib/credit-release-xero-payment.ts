@@ -287,11 +287,22 @@ async function recordOne({
   // #4494: a gap invoice queued before the fix may pay itself from this capture.
   // What it and the primary recorded, beside the sweep's share, must fit inside
   // what the card took (the reader the receipt's recorder uses). A gap that has
-  // not sent is re-checked at its send, so the sweep waits for it, silently.
+  // not sent is re-checked at its send, so the sweep waits for it, silently,
+  // while it can still send; past that an officer is told which row it is.
   const figures = await readPrimaryInvoiceFeeAtLink(payment.bookingId, invoiceId);
-  const recorded = await readRecordedByPrimaryOrGap(item.capturedByIntentId, figures?.atLink, prisma, { withGapSendState: true });
+  const recorded = await readRecordedByPrimaryOrGap(item.capturedByIntentId, figures?.atLink, prisma, { withGapSendState: { now } });
   if (creditReleaseShareOverlaps(recorded, capture.share, capture.amountCents)) {
-    if (recorded.kind !== "primary-invoice" && recorded.gapPaymentMayBeInXero === false) return "waiting";
+    const gapSend = recorded.kind === "primary-invoice" ? undefined : recorded.gapSend;
+    if (gapSend && !gapSend.mayBeInXero) {
+      if (gapSend.canStillSend) return "waiting";
+      await alertOnce(
+        `credit-release-payment-gap-unsent:${item.askRowId}`,
+        payment.bookingId,
+        "A card payment for credit used in Xero is waiting on an unsent invoice",
+        `The member paid by card for credit that was used in Xero, but the booking's extra invoice for its remaining balance (Xero operation ${gapSend.operationId}) names the same card payment and has not been sent, and will not send on its own. Nothing was recorded. Retry or cancel that operation in Xero Operations; once it is sent or cancelled this payment is recorded automatically.`,
+      );
+      return "held";
+    }
     await alertOnce(
       `credit-release-payment-gap-overlap:${item.askRowId}`,
       payment.bookingId,
@@ -435,7 +446,9 @@ export async function unpaidGapPayloadIfOverlapping(input: {
  * in Xero, its payment not recorded - records no payment where it would
  * overlap the sweep's share. The unpaid payload, still naming its captures (a
  * payment call that errored may have landed), is written under the repair's
- * claim, and the repair closes with the reason. Null: repair as before.
+ * claim, and the repair closes with the reason. A gap payload already unpaid
+ * is skipped without asking again (d-2: the write and the close are separate,
+ * so a failed close leaves that decision behind). Null: repair as before.
  */
 export async function skipPartialGapRepairPayment(
   operation: { id: string; localModel: string | null; requestPayload: unknown },
@@ -444,12 +457,17 @@ export async function skipPartialGapRepairPayment(
   const payload = asRecord(operation.requestPayload);
   const bookingId = payload?.bookingId;
   if (operation.localModel !== "BookingModification" || !payload || typeof bookingId !== "string") return null;
-  const unpaid = await unpaidGapPayloadIfOverlapping({ operationId: operation.id, bookingId, payload });
-  if (!unpaid) return null;
-  await prisma.xeroSyncOperation.updateMany({
-    where: { id: claim.id, status: "RUNNING", startedAt: claim.startedAt },
-    data: { requestPayload: sanitizeForJson(unpaid) },
-  });
+  // Delta review d-2: a gap payload already set unpaid is a decision made (by an
+  // earlier repair whose close failed, or at its queue): never paid, never re-asked.
+  const decided = payload.primaryInvoiceGap === true && payload.recordPayment === false;
+  if (!decided) {
+    const unpaid = await unpaidGapPayloadIfOverlapping({ operationId: operation.id, bookingId, payload });
+    if (!unpaid) return null;
+    await prisma.xeroSyncOperation.updateMany({
+      where: { id: claim.id, status: "RUNNING", startedAt: claim.startedAt },
+      data: { requestPayload: sanitizeForJson(unpaid) },
+    });
+  }
   const reason =
     "Not recorded: the card payment this extra invoice would record is the member's payment for credit used in Xero, which belongs on the booking's own invoice.";
   return {

@@ -20,6 +20,8 @@ import {
   attributeGapCash,
   creditReleaseShareOverlaps,
   gapPaymentMayBeInXero,
+  gapRowCanStillSend,
+  GAP_SEND_WAIT_MS,
   readCapturedStripeCash,
   readCaptureRecorder,
   readRecordedByPrimaryOrGap,
@@ -547,12 +549,24 @@ describe("readRecordedByPrimaryOrGap and creditReleaseShareOverlaps (#4494)", ()
     await expect(readRecordedByPrimaryOrGap("pi_release", null, store as never)).resolves.toEqual({ kind: "gap-invoice", operationId: "op_gap" });
   });
 
-  it("#4494 fix round: says, for the sweep only, whether the gap row's payment can be in Xero yet", async () => {
-    rows = [{ ...gapRow("PENDING", 3_000), xeroObjectId: null, responsePayload: null, lastErrorCode: null, manuallyResolvedAt: null, localModel: null, localId: null } as never];
-    await expect(readRecordedByPrimaryOrGap("pi_release", null, store as never, { withGapSendState: true })).resolves.toEqual({
+  it("#4494 fix round: says, for the sweep only, whether the gap row's payment can be in Xero yet and whether it can still send", async () => {
+    const now = new Date("2026-07-01T00:00:00.000Z");
+    const unsent = {
+      ...gapRow("PENDING", 3_000),
+      xeroObjectId: null,
+      responsePayload: null,
+      lastErrorCode: null,
+      manuallyResolvedAt: null,
+      localModel: null,
+      localId: null,
+      replayable: true,
+      createdAt: new Date("2026-06-30T00:00:00.000Z"),
+    };
+    rows = [unsent as never];
+    await expect(readRecordedByPrimaryOrGap("pi_release", null, store as never, { withGapSendState: { now } })).resolves.toEqual({
       kind: "part",
       cents: 3_000,
-      gapPaymentMayBeInXero: false,
+      gapSend: { operationId: "op_gap", mayBeInXero: false, canStillSend: true },
     });
     // The receipt's reading is unchanged: a queued gap's cents count, with no send state.
     await expect(readRecordedByPrimaryOrGap("pi_release", null, store as never)).resolves.toEqual({ kind: "part", cents: 3_000 });
@@ -578,6 +592,7 @@ describe("readRecordedByPrimaryOrGap and creditReleaseShareOverlaps (#4494)", ()
 describe("gapPaymentMayBeInXero (#4494 fix round)", () => {
   const row = (over: Record<string, unknown>) => ({
     status: "FAILED",
+    requestPayload: { primaryInvoiceGap: true, coveredPaymentIntentIds: ["pi_release"] },
     xeroObjectId: null,
     responsePayload: null,
     lastErrorCode: null,
@@ -601,6 +616,8 @@ describe("gapPaymentMayBeInXero (#4494 fix round)", () => {
     await expect(ask({ responsePayload: { invoice: { invoices: [{ invoiceID: "inv_gap" }] } } })).resolves.toBe(true);
     await expect(ask({ responsePayload: { payment: { paymentID: "pay_gap" } } })).resolves.toBe(true);
     await expect(ask({ lastErrorCode: "ORPHANED_STALE_RUNNING" })).resolves.toBe(true);
+    // Delta review d-1: a send stores the invoice body before any Xero call, so a payment that landed before its completion failed still counts.
+    await expect(ask({ requestPayload: { primaryInvoiceGap: true, invoices: [{ type: "ACCREC" }] } })).resolves.toBe(true);
     store.xeroObjectLink.findFirst.mockResolvedValueOnce({ id: "link_gap" });
     await expect(ask({})).resolves.toBe(true);
   });
@@ -609,5 +626,22 @@ describe("gapPaymentMayBeInXero (#4494 fix round)", () => {
     await expect(ask({ responsePayload: { message: "Account code 200 has been archived" } })).resolves.toBe(false);
     await expect(ask({ status: "PENDING" })).resolves.toBe(false);
     await expect(ask({ status: "RUNNING", localModel: null })).resolves.toBe(false);
+  });
+});
+
+describe("gapRowCanStillSend (#4494 delta review d-3)", () => {
+  const now = new Date("2026-07-01T00:00:00.000Z");
+  const queuedAgo = (ms: number) => new Date(now.getTime() - ms);
+  const row = (over: Record<string, unknown>) => ({ status: "PENDING", replayable: true, manuallyResolvedAt: null, createdAt: queuedAgo(60_000), ...over }) as never;
+
+  it("is yes while the row is queued, sending, waiting, or FAILED and still replayable, within the bound", () => {
+    for (const status of ["PENDING", "RUNNING", "WAITING_PAYMENT", "FAILED"]) expect(gapRowCanStillSend(row({ status }), now)).toBe(true);
+    expect(gapRowCanStillSend(row({ createdAt: queuedAgo(GAP_SEND_WAIT_MS) }), now)).toBe(true);
+  });
+
+  it("MUTATION: is no once it cannot send, or is past the bound", () => {
+    expect(gapRowCanStillSend(row({ status: "FAILED", replayable: false }), now)).toBe(false);
+    expect(gapRowCanStillSend(row({ manuallyResolvedAt: now }), now)).toBe(false);
+    expect(gapRowCanStillSend(row({ createdAt: queuedAgo(GAP_SEND_WAIT_MS + 1) }), now)).toBe(false);
   });
 });

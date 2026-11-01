@@ -83,6 +83,8 @@ type GapRow = {
   manuallyResolvedAt: Date | null;
   localModel: string;
   localId: string;
+  replayable: boolean;
+  createdAt: Date;
 };
 /** What the outbox holds: an attempt in doubt, and #3980 gap invoices (#4494). */
 const outbox: { inDoubt: { createdAt: Date } | null; gapRows: GapRow[] } = { inDoubt: null, gapRows: [] };
@@ -95,6 +97,8 @@ const gapRow = (status: string, intent: string, cents?: number, over: Partial<Ga
   manuallyResolvedAt: null,
   localModel: "BookingModification",
   localId: "mod-gap",
+  replayable: true,
+  createdAt: new Date(NOW.getTime() - 24 * 60 * 60 * 1000),
   ...over,
   requestPayload: {
     primaryInvoiceGap: true,
@@ -349,6 +353,25 @@ describe("#4494: one recorder per capture, beside a #3980 gap invoice", () => {
       expect((await recordCreditReleasePayments({ deps: deps(), now: NOW })).held).toBe(1);
     });
 
+    it("MUTATION (f) d-1: holds for a FAILED gap invoice whose send stored its invoice body - the payment may have landed before its completion failed", async () => {
+      const row = gapRow("FAILED", "pi_1", 1000);
+      outbox.gapRows = [{ ...row, requestPayload: { ...row.requestPayload, invoices: [{ type: "ACCREC" }] } }];
+      expect((await recordCreditReleasePayments({ deps: deps(), now: NOW })).held).toBe(1);
+      expect(mocks.claimAlertCooldown).toHaveBeenCalledWith(expect.objectContaining({ key: "credit-release-payment-gap-overlap:ask-1" }));
+    });
+
+    it.each([
+      ["marked non-replayable", "FAILED", { replayable: false }],
+      ["queued longer than the wait bound", "PENDING", { createdAt: new Date(NOW.getTime() - 8 * 24 * 60 * 60 * 1000) }],
+    ])("MUTATION (g) d-3: holds, and tells an officer which row, for an unsent gap invoice %s", async (_name, status, over) => {
+      outbox.gapRows = [gapRow(status, "pi_1", 1000, over as Partial<GapRow>)];
+      const d = deps();
+      expect(await recordCreditReleasePayments({ deps: d, now: NOW })).toEqual({ recorded: 0, held: 1, failed: 0, waiting: 0 });
+      expect(d.createPayment).not.toHaveBeenCalled();
+      expect(mocks.claimAlertCooldown).toHaveBeenCalledWith(expect.objectContaining({ key: "credit-release-payment-gap-unsent:ask-1" }));
+      expect(mocks.sendAlert).toHaveBeenCalledWith(expect.objectContaining({ errorMessage: expect.stringContaining(outbox.gapRows[0]!.id) }));
+    });
+
     it("MUTATION (f): holds for a FAILED gap invoice with a live invoice or payment link on its change", async () => {
       outbox.gapRows = [gapRow("FAILED", "pi_1", 1000)];
       mocks.prisma.xeroObjectLink.findFirst.mockResolvedValue({ id: "link-gap" });
@@ -426,6 +449,16 @@ describe("#4494 fix round: the unpaid payload a gap invoice is sent with", () =>
     });
   });
 
+  it("MUTATION d-1: keeps naming its captures on a FAILED row whose earlier send stored its invoice body", async () => {
+    const failed = { ...sent, status: "FAILED", requestPayload: { ...sent.requestPayload, invoices: [{ type: "ACCREC" }] } };
+    outbox.gapRows = [failed];
+    mocks.prisma.xeroSyncOperation.findUnique.mockResolvedValue(failed);
+    await expect(unpaidGapPayloadIfOverlapping({ operationId: failed.id, bookingId: "bk-12345678", payload: failed.requestPayload })).resolves.toEqual({
+      ...failed.requestPayload,
+      recordPayment: false,
+    });
+  });
+
   it("MUTATION: keeps naming its captures where an earlier attempt's payment may be in Xero, so the sweep keeps holding", async () => {
     mocks.prisma.xeroSyncOperation.findUnique.mockResolvedValue({ ...sent, lastErrorCode: "ORPHANED_STALE_RUNNING" });
     await expect(unpaidGapPayloadIfOverlapping({ operationId: sent.id, bookingId: "bk-12345678", payload: sent.requestPayload })).resolves.toEqual({
@@ -469,6 +502,15 @@ describe("#4494 fix round: the unpaid payload a gap invoice is sent with", () =>
         },
       });
       expect(mocks.sendAlert).toHaveBeenCalledTimes(1);
+    });
+
+    it("MUTATION d-2: skips a gap payload already set unpaid - an earlier repair whose close failed - without asking again or writing", async () => {
+      const decided = { ...operation, requestPayload: { ...operation.requestPayload, recordPayment: false } };
+      mocks.prisma.paymentTransaction.findMany.mockResolvedValue([]);
+      await expect(skipPartialGapRepairPayment(decided, claim)).resolves.toEqual(
+        expect.objectContaining({ paymentOutcome: expect.objectContaining({ payment: null, paymentSkipped: true }) }),
+      );
+      expect(mocks.prisma.xeroSyncOperation.updateMany).not.toHaveBeenCalled();
     });
 
     it("is null, writing nothing, for a repair that is not a gap invoice's", async () => {

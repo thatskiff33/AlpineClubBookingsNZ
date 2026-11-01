@@ -296,29 +296,34 @@ async function readBaseCaptureRecorder(
  * WHY THE TWO CALLERS ASK DIFFERENT THINGS OF A QUEUED GAP ROW (#4494 fix
  * round). The receipt counts a gap row's cents whatever its status: that row
  * will pay them when it sends, so the receipt records only the rest. The sweep
- * must also know whether those cents can be in Xero YET
- * (`withGapSendState`: `gapPaymentMayBeInXero`, {@link gapPaymentMayBeInXero}),
- * because a gap that has not sent is re-checked at its send and raised unpaid
- * there - the sweep waits for it rather than holding.
+ * must also know whether those cents can be in Xero YET, and whether the row
+ * can still send (`withGapSendState`: `gapSend`, {@link gapPaymentMayBeInXero},
+ * {@link gapRowCanStillSend}), because a gap that has not sent is re-checked at
+ * its send and raised unpaid there - the sweep waits for it while it can.
  */
+export type GapSendState = { operationId: string; mayBeInXero: boolean; canStillSend: boolean };
 export type RecordedByPrimaryOrGap =
   | { kind: "primary-invoice" }
-  | { kind: "gap-invoice"; operationId: string; gapPaymentMayBeInXero?: boolean }
-  | { kind: "part"; cents: number; gapPaymentMayBeInXero?: boolean };
+  | { kind: "gap-invoice"; operationId: string; gapSend?: GapSendState }
+  | { kind: "part"; cents: number; gapSend?: GapSendState };
 
 /**
  * #4494 fix round: WHETHER A GAP INVOICE'S OWN STRIPE PAYMENT CAN BE IN XERO.
  * Yes for a row that SUCCEEDED, went PARTIAL (a payment call that errored may
  * still have landed) or was resolved by hand, and for any row with evidence an
  * attempt reached Xero: a Xero id on the row, a response naming an invoice or
- * carrying a payment, a stale-RUNNING reset (it died mid-call), or a live
- * `SUPPLEMENTARY_INVOICE` or `SUPPLEMENTARY_INVOICE_PAYMENT` link on its change.
+ * carrying a payment, a stale-RUNNING reset (it died mid-call), a live
+ * `SUPPLEMENTARY_INVOICE` or `SUPPLEMENTARY_INVOICE_PAYMENT` link on its change,
+ * or (delta review d-1) the Xero invoice body a send stores on the row before
+ * any Xero call (`requestPayload.invoices`; the enqueued payload never has
+ * one) - so a payment that landed before its completion failed still counts.
  * No only for a row that provably never reached Xero. The one rule the sweep's
  * hold and every send-time rewrite of a gap row use.
  */
 export async function gapPaymentMayBeInXero(
   row: {
     status: string;
+    requestPayload: Prisma.JsonValue | null;
     xeroObjectId: string | null;
     responsePayload: Prisma.JsonValue | null;
     lastErrorCode: string | null;
@@ -331,6 +336,7 @@ export async function gapPaymentMayBeInXero(
   if (row.status === "SUCCEEDED" || row.status === "PARTIAL" || row.manuallyResolvedAt) return true;
   if (row.xeroObjectId || row.lastErrorCode === XERO_ORPHANED_STALE_RUNNING_ERROR_CODE) return true;
   if (responseNamesXeroInvoice(row.responsePayload) || asRecord(asRecord(row.responsePayload)?.payment)) return true;
+  if (asRecord(row.requestPayload)?.invoices !== undefined) return true;
   if (!row.localModel || !row.localId) return false;
   const link = await store.xeroObjectLink.findFirst({
     where: {
@@ -344,9 +350,29 @@ export async function gapPaymentMayBeInXero(
   return link !== null;
 }
 
-/** The row fields {@link gapPaymentMayBeInXero} reads. */
+/**
+ * #4494 delta review (d-3): how long the sweep waits, silently, for a gap
+ * invoice that has not sent, counted from when it was queued. Past it - or
+ * once the row can no longer send (resolved by hand, marked non-replayable) -
+ * the sweep holds and tells an officer, naming the row.
+ */
+export const GAP_SEND_WAIT_MS = 7 * 24 * 60 * 60 * 1000;
+
+/** Whether an unsent gap invoice can still send: queued, sending or waiting, or FAILED and still replayable, and within {@link GAP_SEND_WAIT_MS}. Pure. */
+export function gapRowCanStillSend(
+  row: { status: string; replayable: boolean; manuallyResolvedAt: Date | null; createdAt: Date },
+  now: Date,
+): boolean {
+  if (row.manuallyResolvedAt || now.getTime() - row.createdAt.getTime() > GAP_SEND_WAIT_MS) return false;
+  return ["PENDING", "RUNNING", "WAITING_PAYMENT"].includes(row.status) || (row.status === "FAILED" && row.replayable);
+}
+
+/** The row fields {@link gapPaymentMayBeInXero} and {@link gapRowCanStillSend} read. */
 export const GAP_SEND_STATE_SELECT = {
   status: true,
+  requestPayload: true,
+  replayable: true,
+  createdAt: true,
   xeroObjectId: true,
   responsePayload: true,
   lastErrorCode: true,
@@ -359,7 +385,7 @@ export async function readRecordedByPrimaryOrGap(
   paymentIntentId: string,
   atLink: PrimaryInvoiceFeeAtLink | null | undefined,
   store: Pick<RecorderStore, "xeroSyncOperation" | "paymentTransaction" | "xeroObjectLink"> = prisma,
-  options: { withGapSendState?: boolean } = {},
+  options: { withGapSendState?: { now: Date } } = {},
 ): Promise<RecordedByPrimaryOrGap> {
   if (atLink?.paymentIntentIdsRecordedAtLink?.includes(paymentIntentId)) return { kind: "primary-invoice" };
   const partial = atLink?.partiallyRecordedCaptureAtLink;
@@ -378,9 +404,17 @@ export async function readRecordedByPrimaryOrGap(
     },
   });
   if (!covering) return { kind: "part", cents: primaryPartCents };
-  const sendState = options.withGapSendState
-    ? { gapPaymentMayBeInXero: await gapPaymentMayBeInXero(covering as Parameters<typeof gapPaymentMayBeInXero>[0], store) }
-    : {};
+  let sendState: { gapSend?: GapSendState } = {};
+  if (options.withGapSendState) {
+    const row = covering as typeof covering & Parameters<typeof gapPaymentMayBeInXero>[0] & Parameters<typeof gapRowCanStillSend>[0];
+    sendState = {
+      gapSend: {
+        operationId: covering.id,
+        mayBeInXero: await gapPaymentMayBeInXero(row, store),
+        canStillSend: gapRowCanStillSend(row, options.withGapSendState.now),
+      },
+    };
+  }
   const covered = asRecord(asRecord(covering.requestPayload)?.[GAP_COVERED_CENTS_KEY])?.[paymentIntentId];
   if (typeof covered !== "number") return { kind: "gap-invoice", operationId: covering.id, ...sendState };
   const capture = await store.paymentTransaction.findUnique({
