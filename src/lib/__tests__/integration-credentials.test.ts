@@ -30,7 +30,7 @@ const mocks = vi.hoisted(() => {
 
 vi.mock("@/lib/prisma", () => ({ prisma: mocks.prisma }));
 
-import { encryptCredential, INTEGRATION_CREDENTIAL_LABEL } from "@/lib/integration-crypto";
+import { encryptCredential } from "@/lib/integration-crypto";
 import { credentialVersionOf, type CredentialActor } from "@/lib/integration-credential-actor";
 import {
   CACHE_TTL_MS,
@@ -53,7 +53,6 @@ function storedRow(provider: string, key: string, value: string) {
     provider,
     key,
     plaintext: value,
-    label: INTEGRATION_CREDENTIAL_LABEL,
   });
   return {
     id: `${provider}-${key}`,

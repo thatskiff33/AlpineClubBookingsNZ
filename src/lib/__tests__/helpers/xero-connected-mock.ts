@@ -11,7 +11,6 @@
  */
 import {
   encryptCredential,
-  INTEGRATION_CREDENTIAL_LABEL,
   isAuthSecretStrongEnough,
 } from "@/lib/integration-crypto";
 import { XERO_OAUTH_TOKEN_KEY, XERO_OAUTH_TOKEN_PROVIDER } from "@/lib/xero-token-store";
@@ -67,7 +66,6 @@ export function connectedXeroFixture(params: {
     provider: XERO_OAUTH_TOKEN_PROVIDER,
     key: XERO_OAUTH_TOKEN_KEY,
     plaintext,
-    label: INTEGRATION_CREDENTIAL_LABEL,
   });
   return {
     connection: {

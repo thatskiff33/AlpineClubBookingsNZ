@@ -44,7 +44,7 @@
 import { createHash } from "crypto";
 
 import { createAuditLog, type AuditLogClient } from "@/lib/audit";
-import type { AuthSecretSource } from "@/lib/integration-crypto";
+import type { WrappingKeySource } from "@/lib/integration-crypto";
 
 // ---------------------------------------------------------------------------
 // Who wrote it
@@ -457,8 +457,8 @@ export interface CredentialRequestContext {
  * every row — the one piece of evidence that says which environment variable
  * wrapped this credential, which is exactly what an operator planning an
  * auth-secret rotation needs, and the only field of this payload that was
- * being lost. The value is an env var NAME (`AUTH_SECRET` / `NEXTAUTH_SECRET`),
- * never a secret, so the redaction was a false positive on the field's
+ * being lost. The value is an env var NAME (`AUTH_SECRET` / `NEXTAUTH_SECRET`)
+ * or a ring key's id (`DATA_ENCRYPTION_KEY:<id>`, #4456), never a secret, so the redaction was a false positive on the field's
  * spelling. Renaming the evidence key is the fix; the redactor keeps its
  * deliberately blunt rule, which is right for everything it was aimed at.
  */
@@ -467,7 +467,7 @@ function buildCredentialAuditEvidence(params: {
   key: string;
   actor: CredentialActor;
   expectation: string | null;
-  secretSource?: AuthSecretSource;
+  secretSource?: WrappingKeySource;
   labelVersion?: string;
   cause?: CredentialMutationCause;
 }): Record<string, string | null> {
@@ -507,7 +507,7 @@ export async function recordCredentialMutation(
     provider: string;
     key: string;
     expectation: string | null;
-    secretSource?: AuthSecretSource;
+    secretSource?: WrappingKeySource;
     labelVersion?: string;
     cause?: CredentialMutationCause;
     request?: CredentialRequestContext;

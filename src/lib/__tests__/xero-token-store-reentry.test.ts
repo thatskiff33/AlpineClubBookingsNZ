@@ -23,7 +23,7 @@ const h = vi.hoisted(() => ({
 
 vi.mock("@/lib/prisma", () => ({ prisma: h.prisma }));
 
-import { encryptCredential, INTEGRATION_CREDENTIAL_LABEL } from "@/lib/integration-crypto";
+import { encryptCredential } from "@/lib/integration-crypto";
 import {
   XERO_OAUTH_TOKEN_KEY,
   XERO_OAUTH_TOKEN_PROVIDER,
@@ -44,7 +44,6 @@ function storeRow(plaintext: string) {
     provider: XERO_OAUTH_TOKEN_PROVIDER,
     key: XERO_OAUTH_TOKEN_KEY,
     plaintext,
-    label: INTEGRATION_CREDENTIAL_LABEL,
   });
   return {
     id: "ic-1",

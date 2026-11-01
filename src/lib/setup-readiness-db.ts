@@ -25,6 +25,8 @@ import {
   canonicalKeyResolvedRateHolderBookingBehavior,
 } from "@/lib/membership-types";
 import { type SetupDatabaseSnapshot } from "@/lib/setup-readiness";
+import { wrappingKeyIdOf } from "@/lib/integration-crypto";
+import type { DataKeyUsageSnapshot } from "@/lib/setup-readiness-data-keys";
 import { collapseHutFeeColumns } from "@/lib/public-hut-fee-columns";
 import { getXeroTokenReadability } from "@/lib/xero-token-store";
 import { getStripeSetupState } from "@/lib/stripe-config";
@@ -120,6 +122,8 @@ export async function getSetupDatabaseSnapshot(): Promise<SetupDatabaseSnapshot>
     an injected snapshot — and outside the `Promise.all` for the same reason too.
   */
   const withheldEmail = await readWithheldApplicationEmail();
+  // #4456: which key each stored row names, for the Data Encryption Key step.
+  const dataKeyUsage = await readDataKeyUsage();
   const [
     adminCount,
     adminModuleSettings,
@@ -601,5 +605,24 @@ export async function getSetupDatabaseSnapshot(): Promise<SetupDatabaseSnapshot>
     ),
     environmentRole,
     withheldEmail,
+    dataKeyUsage,
   };
+}
+
+/**
+ * Stored data by the key each row names (#4456): credential rows grouped by
+ * `secretSource`, and authenticator secrets still in the legacy `v1` format.
+ * Counts only; no ciphertext leaves the database.
+ */
+async function readDataKeyUsage(): Promise<DataKeyUsageSnapshot> {
+  const [bySource, legacyTotpSecrets] = await Promise.all([
+    prisma.integrationCredential.groupBy({ by: ["secretSource"], _count: { _all: true } }),
+    prisma.member.count({ where: { totpSecret: { startsWith: "v1:" } } }),
+  ]);
+  const credentialRowsByKeyId: Record<string, number> = {};
+  for (const row of bySource) {
+    const id = wrappingKeyIdOf(row.secretSource) ?? `unrecognised:${row.secretSource}`;
+    credentialRowsByKeyId[id] = (credentialRowsByKeyId[id] ?? 0) + row._count._all;
+  }
+  return { credentialRowsByKeyId, legacyTotpSecrets };
 }

@@ -26,13 +26,13 @@ const mockPrisma = vi.hoisted(() => ({
   twoFactorEmailCode: {
     deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
     create: vi.fn().mockResolvedValue({ id: "email-code-1" }),
-    findUnique: vi.fn(),
+    findFirst: vi.fn(),
     updateMany: vi.fn().mockResolvedValue({ count: 1 }),
   },
   twoFactorRecoveryCode: {
     deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
     createMany: vi.fn().mockResolvedValue({ count: 10 }),
-    findUnique: vi.fn(),
+    findFirst: vi.fn(),
     updateMany: vi.fn().mockResolvedValue({ count: 1 }),
   },
   twoFactorSessionChallenge: {
@@ -97,7 +97,7 @@ describe("two-factor helpers", () => {
     expect(createCall.data.codeHash).toBe(hashEmailOtpCode(issued.code));
     expect(createCall.data.codeHash).not.toBe(issued.code);
 
-    mockPrisma.twoFactorEmailCode.findUnique.mockResolvedValue({
+    mockPrisma.twoFactorEmailCode.findFirst.mockResolvedValue({
       id: "email-code-1",
       memberId: "member-1",
       used: false,
@@ -114,7 +114,7 @@ describe("two-factor helpers", () => {
   });
 
   it("rejects expired email OTP codes", async () => {
-    mockPrisma.twoFactorEmailCode.findUnique.mockResolvedValue({
+    mockPrisma.twoFactorEmailCode.findFirst.mockResolvedValue({
       id: "email-code-1",
       memberId: "member-1",
       used: false,
@@ -128,7 +128,7 @@ describe("two-factor helpers", () => {
 
   it("consumes recovery codes once", async () => {
     const code = "ABCD-EFGH-IJKL";
-    mockPrisma.twoFactorRecoveryCode.findUnique.mockResolvedValue({
+    mockPrisma.twoFactorRecoveryCode.findFirst.mockResolvedValue({
       id: "recovery-1",
       memberId: "member-1",
       codeHash: hashRecoveryCode(code),
@@ -141,7 +141,7 @@ describe("two-factor helpers", () => {
       data: { usedAt: expect.any(Date) },
     });
 
-    mockPrisma.twoFactorRecoveryCode.findUnique.mockResolvedValue({
+    mockPrisma.twoFactorRecoveryCode.findFirst.mockResolvedValue({
       id: "recovery-1",
       memberId: "member-1",
       usedAt: new Date(),
@@ -337,7 +337,7 @@ describe("two-factor helpers", () => {
       mockPrisma.twoFactorSessionChallenge.deleteMany,
     ).toHaveBeenCalledWith({
       where: {
-        tokenHash: hashTwoFactorCode("raw-token"),
+        tokenHash: { in: [hashTwoFactorCode("raw-token")] },
         memberId: "member-1",
         expiresAt: { gt: expect.any(Date) },
       },

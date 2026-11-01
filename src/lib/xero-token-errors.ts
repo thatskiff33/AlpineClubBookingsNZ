@@ -7,7 +7,7 @@
  * part every caller still relies on.
  */
 
-import { requireStrongAuthSecretForCapture } from "@/lib/integration-crypto";
+import { requireCredentialCaptureKey } from "@/lib/integration-crypto";
 
 /**
  * Thrown when the stored Xero tokens cannot be used: the credential-store copy
@@ -56,7 +56,7 @@ export class XeroTokenSaveUnavailableError extends Error {
  */
 export async function assertXeroTokensCanBeStored(): Promise<void> {
   try {
-    requireStrongAuthSecretForCapture();
+    requireCredentialCaptureKey();
   } catch {
     throw new XeroTokenSaveUnavailableError();
   }

@@ -178,3 +178,17 @@ describe("two-factor verification completion", () => {
     expect(screen.queryByText(/Invalid code|Network unavailable/)).toBeNull();
   });
 });
+
+describe("retired recovery codes notice on the sign-in challenge (#4456)", () => {
+  it("tells the member their saved codes no longer work and how to sign in instead", () => {
+    render(<TwoFactorVerifyPanel callbackUrl={deepLink} enrolledMethod="EMAIL" recoveryCodesRetired />);
+    const notice = screen.getByTestId("retired-recovery-codes-notice");
+    expect(notice).toHaveTextContent("Your saved recovery codes no longer work");
+    expect(notice).toHaveTextContent("Sign in with your email code, then generate new recovery codes from your profile.");
+  });
+
+  it("shows nothing when the member's codes still work", () => {
+    render(<TwoFactorVerifyPanel callbackUrl={deepLink} enrolledMethod="TOTP" />);
+    expect(screen.queryByTestId("retired-recovery-codes-notice")).toBeNull();
+  });
+});
