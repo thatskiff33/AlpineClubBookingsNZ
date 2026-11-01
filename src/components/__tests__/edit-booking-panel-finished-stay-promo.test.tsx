@@ -12,7 +12,10 @@ import "@testing-library/jest-dom/vitest";
 import { render, screen, fireEvent, waitFor, within } from "@/lib/__tests__/support/club-time-render";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { EditBookingPanel } from "@/components/edit-booking-panel";
-import { FINISHED_STAY_SAVE_LOCKED_MESSAGE } from "@/components/edit-booking/finished-stay-promo-correction-card";
+import {
+  FINISHED_STAY_SAVE_LOCKED_MESSAGE,
+  FinishedStayPromoCorrectionCard,
+} from "@/components/edit-booking/finished-stay-promo-correction-card";
 
 const routerPush = vi.fn();
 vi.mock("next/navigation", () => ({
@@ -155,3 +158,41 @@ describe("EditBookingPanel on a finished stay (#4533)", () => {
   });
 });
 
+describe("FinishedStayPromoCorrectionCard's announcements (#4533 review)", () => {
+  it("keeps one live region mounted, changing only its text, and describes a disabled Send by it", () => {
+    const { rerender } = render(
+      <FinishedStayPromoCorrectionCard
+        bookingId="bk-4533"
+        promoChange={{ promoCode: "FREENIGHT" }}
+        otherChanges
+        promoRemoved={false}
+      />,
+    );
+    const status = screen.getByRole("status");
+    expect(status).toHaveTextContent("Undo the other changes first.");
+    const send = screen.getByRole("button", { name: "Send as a promo correction request" });
+    expect(send).toBeDisabled();
+    expect(send).toHaveAttribute("aria-describedby", status.id);
+
+    rerender(
+      <FinishedStayPromoCorrectionCard
+        bookingId="bk-4533"
+        promoChange={{ promoCode: "FREENIGHT" }}
+        otherChanges={false}
+        promoRemoved={false}
+      />,
+    );
+    // The same element, now empty: nothing re-mounted for a reader to miss.
+    expect(screen.getByRole("status")).toBe(status);
+    expect(status).toHaveTextContent("");
+    expect(screen.getByRole("button", { name: "Send as a promo correction request" })).not.toHaveAttribute(
+      "aria-describedby",
+    );
+
+    rerender(
+      <FinishedStayPromoCorrectionCard bookingId="bk-4533" promoChange={null} otherChanges={false} promoRemoved />,
+    );
+    expect(screen.getByRole("status")).toBe(status);
+    expect(status).toHaveTextContent("A promo code can't be removed from a finished stay.");
+  });
+});

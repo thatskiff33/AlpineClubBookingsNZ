@@ -2,7 +2,11 @@ import { z } from "zod";
 
 import { BOOKING_PARTY_GUESTS_MAX } from "@/lib/booking-guest-stay-range-input";
 import type { BatchModifyInput } from "@/lib/booking-modify-validation";
-import { requestedPromoCodeList } from "@/lib/booking-modify-promo-request";
+import {
+  promoRequestReadsMultiPromoSwitch,
+  requestedPromoCodeList,
+  requestedPromoCodeListFor,
+} from "@/lib/booking-modify-promo-request";
 
 /**
  * #4533: the promo change a LOCKED_PERIOD change request can carry on a
@@ -27,7 +31,8 @@ import { requestedPromoCodeList } from "@/lib/booking-modify-promo-request";
  *
  * WHAT IT IS NOT. A removal. Taking a code off a finished stay would bill the
  * member more after the event, which is not the correction this exists for, so
- * the shape cannot say "no codes".
+ * the shape cannot say "no codes", and a change that would release a code the
+ * booking carries is refused (`promoChangeRefusal`).
  */
 
 const promoCodeField = z.string().trim().min(1).max(50);
@@ -139,17 +144,78 @@ export function promoCodesDriftedFromRequest(
   return before.length !== current.length || before.some((code, index) => code !== current[index]);
 }
 
+/** A code the booking carries, with whether the system applied it (a working-bee discount). */
+export type CarriedPromoCode = { code: string; internal: boolean };
+
 /**
- * Whether a change asks for anything the booking does not already carry. A
- * list naming exactly the codes the booking holds, with no guest choice, would
- * only re-price them: there is nothing to correct.
+ * #4533 review: what a promo change does to the booking's codes, read through
+ * the edit's OWN reader (`requestedPromoCodeListFor`) — the list
+ * `modifyBookingBatch` will apply — so "is this a change?" and "does it take a
+ * code off?" are judged on exactly what approval writes, and on one list. ONE
+ * helper for the request route, the queue card's entry and the executor.
+ *
+ * - `changesCodes`: the resulting codes differ from the carried ones, or the
+ *   change chooses guests. Both sides of the comparison include working-bee
+ *   codes, so neither drops what the other keeps.
+ * - `removedBookerCodes`: the booker's own codes the change would release.
+ *   The legacy one-code field replaces the booking's code, and a plural list
+ *   can leave one out; either would free its cap and raise the bill, so a
+ *   correction carrying one is refused. A working-bee (internal) code follows
+ *   its own carry rule (carried while `multiPromoCodes` is on); where it would
+ *   be released instead, the price rises, and the executor refuses a
+ *   promo-only correction that raises the price.
  */
-export function promoChangeChangesCodes(change: PromoChangeFields, current: ReadonlyArray<string>): boolean {
+export function promoChangeOutcome(
+  change: PromoChangeFields,
+  carried: ReadonlyArray<CarriedPromoCode>,
+  multiPromoCodes: boolean,
+): { resultingCodes: string[]; changesCodes: boolean; removedBookerCodes: string[] } {
+  const resultingCodes = (
+    requestedPromoCodeListFor(promoChangeBatchFields(change), carried, multiPromoCodes) ?? []
+  ).map((entry) => entry.code);
   const namesGuests =
     Boolean(change.promoGuestIds?.length) || Boolean(change.promoCodes?.some((entry) => entry.promoGuestIds?.length));
-  if (namesGuests) return true;
-  const asked = promoChangeCodes(change).sort();
-  return asked.length !== current.length || asked.some((code, index) => code !== current[index]);
+  const after = [...resultingCodes].sort();
+  const before = carried.map((entry) => entry.code).sort();
+  const changesCodes =
+    namesGuests || after.length !== before.length || after.some((code, index) => code !== before[index]);
+  const kept = new Set(resultingCodes);
+  return {
+    resultingCodes,
+    changesCodes,
+    removedBookerCodes: carried.filter((entry) => !entry.internal && !kept.has(entry.code)).map((entry) => entry.code),
+  };
+}
+
+/** The codes a booking's redemptions carry, as `promoChangeOutcome` reads them. */
+export function carriedPromoCodes(
+  redemptions: ReadonlyArray<{ promoCode: CarriedPromoCode | null }>,
+): CarriedPromoCode[] {
+  return redemptions.flatMap((redemption) =>
+    redemption.promoCode ? [{ code: redemption.promoCode.code, internal: redemption.promoCode.internal }] : [],
+  );
+}
+
+/** Whether the club's `multiPromoCodes` switch can change what this change means (the edit's own rule). */
+export function promoChangeReadsMultiPromoSwitch(
+  change: PromoChangeFields,
+  carried: ReadonlyArray<CarriedPromoCode>,
+): boolean {
+  return promoRequestReadsMultiPromoSwitch(promoChangeBatchFields(change), carried);
+}
+
+/**
+ * The refusal a promo change earns against the codes the booking carries, or
+ * null: one that takes a booker's code off, or changes nothing.
+ */
+export function promoChangeRefusal(
+  change: PromoChangeFields,
+  carried: ReadonlyArray<CarriedPromoCode>,
+  multiPromoCodes: boolean,
+): string | null {
+  const outcome = promoChangeOutcome(change, carried, multiPromoCodes);
+  if (outcome.removedBookerCodes.length > 0) return promoChangeRemovesCodeMessage(outcome.removedBookerCodes);
+  return outcome.changesCodes ? null : PROMO_CHANGE_ALREADY_APPLIED_MESSAGE;
 }
 
 /** The words a promo change adds to a request's summary. */
@@ -215,6 +281,15 @@ export const PROMO_CHANGE_OFFICER_FINISHED_STAY_ONLY_MESSAGE =
 export const PROMO_CHANGE_ALONE_MESSAGE =
   "A promo correction request carries only the promo code. Undo the other changes, or send them separately.";
 
+/** #4533 review: a correction only adds a code; the booking's own codes stay. */
+export function promoChangeRemovesCodeMessage(codes: ReadonlyArray<string>): string {
+  return `A promo correction can only add a promo code, never take one off. This booking already carries ${codes.join(", ")}, so it has to stay on the booking alongside the new code.`;
+}
+
+/** #4533 review: a missed promo can only lower the price. */
+export const PROMO_CORRECTION_RAISES_PRICE_MESSAGE =
+  "This promo change would raise the booking's price, so nothing has been applied. A missed promo code can only lower what the member paid. The request is still pending.";
+
 /** #4533: the booking already carries exactly these codes. */
 export const PROMO_CHANGE_ALREADY_APPLIED_MESSAGE =
   "This booking already carries that promo code, so there is nothing to correct.";
@@ -222,6 +297,10 @@ export const PROMO_CHANGE_ALREADY_APPLIED_MESSAGE =
 /** #4533: the officer's promo entry on a request that already carries one. */
 export const OFFICER_PROMO_ON_PROMO_REQUEST_MESSAGE =
   "This request already names a promo code, so another cannot be entered for it. Reload the queue; nothing has been changed and the request is still pending.";
+
+/** #4533 review: a promo correction is not raised beside another pending request on the booking. */
+export const PROMO_CORRECTION_PENDING_REQUEST_MESSAGE =
+  "A change request is already pending for this booking. Enter the promo code on that request when you approve it, or decide it first.";
 
 /** #4533: an officer's promo entry outside an approval that applies the request. */
 export const OFFICER_PROMO_NEEDS_EXECUTION_MESSAGE =

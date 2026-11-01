@@ -445,13 +445,20 @@ export function finishedStayRemovalFeeCents(args: {
  *
  * #4533: a correction that applies a promo code defaults to account credit
  * instead — the issue's "account credit by default for a finished stay" —
- * and the officer may still choose a refund to the original method.
+ * and the officer may still choose a refund to the original method; except on
+ * an organiser-paid joiner's booking, below.
  */
 export function defaultCorrectionSettlementMethod(
   payment: { readonly amountCents: number; readonly creditAppliedCents: number } | null,
-  correction: { readonly changesPromoCodes: boolean } = { changesPromoCodes: false },
+  correction: { readonly changesPromoCodes: boolean; readonly paidByOrganiser?: boolean } = {
+    changesPromoCodes: false,
+  },
 ): "card" | "credit" {
-  if (correction.changesPromoCodes) return "credit";
+  // #4533 review: a joiner's booking the organiser paid returns its money to
+  // the organiser and can hold none as the joiner's credit
+  // (`calculateFullReductionSettlementOptions`, `INV-PAY-114`), so it keeps the
+  // way-it-was-paid default, which settles to the organiser.
+  if (correction.changesPromoCodes && !correction.paidByOrganiser) return "credit";
   return payment && payment.amountCents <= 0 && payment.creditAppliedCents > 0 ? "credit" : "card";
 }
 

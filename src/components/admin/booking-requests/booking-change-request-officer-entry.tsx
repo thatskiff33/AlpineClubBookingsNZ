@@ -55,7 +55,9 @@ export function officerEntryOf(
   const officerGuests = request.acceptsOfficerGuests
     ? officerGuestsPayload(draft.officerGuests, requestStay(request.booking))
     : null;
-  const officerPromo = request.acceptsOfficerPromo ? officerPromoPayload(draft.officerPromoCode) : null;
+  const officerPromo = request.acceptsOfficerPromo
+    ? officerPromoPayload(draft.officerPromoCode, request.officerPromoBase ?? null)
+    : null;
   const promoOnly = request.promoCorrection
     ? request.promoCorrection.onlyChange
     : Boolean(request.acceptsOfficerGuests && officerPromo && !officerGuests);
@@ -187,10 +189,23 @@ export function OfficerPromoEntry({
   );
 }
 
-/** #4533: the officer's promo entry as the approval sends it, or null when none. */
-export function officerPromoPayload(code: string): ChangeRequestPromoChange | null {
+/**
+ * #4533: the officer's promo entry as the approval sends it, or null when none.
+ * A correction only ADDS a code (#4533 review): where the club's
+ * `multiPromoCodes` switch is on and the booking already carries codes, the
+ * complete list — those codes, then the new one — is sent; otherwise the one
+ * code, which the server refuses if it would replace a code the booking holds.
+ */
+export function officerPromoPayload(
+  code: string,
+  base: { bookerCodes: string[]; multiPromoCodes: boolean } | null,
+): ChangeRequestPromoChange | null {
   const trimmed = code.trim();
-  return trimmed ? { promoCode: trimmed } : null;
+  if (!trimmed) return null;
+  if (base?.multiPromoCodes && base.bookerCodes.length > 0) {
+    return { promoCodes: [...base.bookerCodes.map((held) => ({ code: held })), { code: trimmed }] };
+  }
+  return { promoCode: trimmed };
 }
 
 /**

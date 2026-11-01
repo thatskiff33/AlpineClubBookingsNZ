@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useId, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { Button } from "@/components/ui/button";
@@ -64,6 +64,16 @@ export function FinishedStayPromoCorrectionCard({
   const [error, setError] = useState("");
   const [pendingRequestId, setPendingRequestId] = useState<string | null>(null);
   const canSend = Boolean(promoChange) && !otherChanges && !submitting;
+  const statusId = useId();
+  // Why Send is unavailable, or why nothing can be sent at all — one sentence
+  // in the card's persistent status region.
+  const statusMessage = promoRemoved
+    ? "A promo code can't be removed from a finished stay."
+    : !promoChange
+      ? "Only a promo code can be sent as a correction from here. A guest or date correction is made by approving the member's change request."
+      : otherChanges
+        ? "Only the promo code can be sent as a correction from here. Undo the other changes first."
+        : "";
 
   async function send() {
     if (!promoChange || otherChanges) return;
@@ -101,9 +111,7 @@ export function FinishedStayPromoCorrectionCard({
           request, so the fee rules, settlement and Xero all run the way they
           do for any other correction.
         </p>
-        {promoRemoved ? (
-          <p role="status">A promo code can&rsquo;t be removed from a finished stay.</p>
-        ) : promoChange ? (
+        {promoChange && !promoRemoved ? (
           <>
             <p>
               To apply this promo code, send it as a promo correction request.
@@ -112,39 +120,41 @@ export function FinishedStayPromoCorrectionCard({
               counts it as used, and settles the reduction — as account credit
               unless you choose a refund.
             </p>
-            {otherChanges ? (
-              <p role="status">
-                Only the promo code can be sent as a correction from here. Undo
-                the other changes first.
-              </p>
-            ) : null}
-            <Button type="button" onClick={send} disabled={!canSend}>
+            <Button
+              type="button"
+              onClick={send}
+              disabled={!canSend}
+              aria-describedby={statusMessage ? statusId : undefined}
+            >
               {submitting ? "Sending..." : "Send as a promo correction request"}
             </Button>
           </>
-        ) : (
-          <p role="status">
-            Only a promo code can be sent as a correction from here. A guest or
-            date correction is made by approving the member&rsquo;s change
-            request.
-          </p>
-        )}
-        {error ? (
-          <p role="alert" className="text-destructive">
-            {error}
-            {pendingRequestId ? (
-              <>
-                {" "}
-                <Link
-                  className="underline"
-                  href={buildBookingRequestsHref("changes", { requestId: pendingRequestId })}
-                >
-                  Open the pending request
-                </Link>
-              </>
-            ) : null}
-          </p>
         ) : null}
+        {/* Mounted for the card's whole life and only its text changes, so a
+            screen reader announces each new reason: a live region inserted
+            already populated is dropped by some screen-reader/browser pairings
+            (the pattern `requested-room-editor.tsx` documents). */}
+        <p id={statusId} role="status" className="min-h-4">
+          {statusMessage}
+        </p>
+        <div role="alert" className="text-destructive">
+          {error ? (
+            <>
+              {error}
+              {pendingRequestId ? (
+                <>
+                  {" "}
+                  <Link
+                    className="underline"
+                    href={buildBookingRequestsHref("changes", { requestId: pendingRequestId })}
+                  >
+                    Open the pending request
+                  </Link>
+                </>
+              ) : null}
+            </>
+          ) : null}
+        </div>
       </CardContent>
     </Card>
   );

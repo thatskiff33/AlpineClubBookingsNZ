@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { toast } from "sonner";
 
 import { BookingChangeRequestsPanel } from "@/components/admin/booking-requests/booking-change-requests-panel";
+import { decisionToastMessage } from "@/components/admin/booking-requests/booking-change-request-finished-stay";
 
 /**
  * #4533: on a finished stay's request, the officer may enter the promo code the
@@ -80,7 +81,7 @@ beforeEach(() => {
     if (init?.method === "PATCH") {
       return jsonResponse({
         id: "req-1",
-        execution: { executed: true, followUpFailed: false, promoCodesApplied: ["FREENIGHT"], memberEmailWithheld: true },
+        execution: { executed: true, followUpFailed: false, promoCodesApplied: ["FREENIGHT"], memberEmailed: false },
       });
     }
     if (url.includes("/api/admin/booking-change-requests")) {
@@ -186,5 +187,28 @@ describe("change-request panel — the officer enters a promo code (#4533)", () 
     ];
     render(<BookingChangeRequestsPanel />);
     expect(await screen.findByLabelText("Apply and email member about the correction")).toBeChecked();
+  });
+
+  it("adds the code to those the booking carries where several codes are on, never replacing one (#4533 review)", async () => {
+    rows = [request({ officerPromoBase: { bookerCodes: ["OLD"], multiPromoCodes: true } })];
+    render(<BookingChangeRequestsPanel />);
+    fireEvent.change(await screen.findByLabelText(/Promo code to apply/), { target: { value: "FREENIGHT" } });
+    fireEvent.click(screen.getByRole("button", { name: /Check the figures/i }));
+    await waitFor(() => expect(quoteBodies()).toHaveLength(1));
+    expect(quoteBodies()[0]).toEqual({ officerPromo: { promoCodes: [{ code: "OLD" }, { code: "FREENIGHT" }] } });
+  });
+
+  it("words the toast from whether the member was really emailed (#4533 review)", () => {
+    const executed = { executed: true, followUpFailed: false };
+    expect(
+      decisionToastMessage({ status: "APPROVED", execution: { ...executed, memberEmailed: false }, linkedModificationId: "" }),
+    ).toBe("Request approved and applied to the booking. Emails are off for this booking, so the member was not emailed.");
+    expect(
+      decisionToastMessage({
+        status: "APPROVED",
+        execution: { ...executed, promoCodesApplied: ["FREENIGHT"], memberEmailed: true },
+        linkedModificationId: "",
+      }),
+    ).toBe("Promo code FREENIGHT applied to the booking and the request approved. The member is emailed the change.");
   });
 });

@@ -83,11 +83,16 @@ let clubTimeServer: typeof import("@/lib/club-time/server");
 const pendingXeroWork: Promise<unknown>[] = [];
 let restoreXeroQueue: (() => void) | undefined;
 
+const ORGANISER_BOOKING_ID = "race-4533-organiser-booking";
+const GROUP_ID = "race-4533-group";
+const SETTLEMENT_ID = "race-4533-group-settlement";
+/** The owner's own bookings; the organiser's is deleted after them (its child points at it). */
 const ALL_BOOKINGS = [BOOKING_ID, PRIOR_BOOKING_ID, FUTURE_BOOKING_ID];
+const EVERY_BOOKING = [...ALL_BOOKINGS, ORGANISER_BOOKING_ID];
 
 async function modificationIds(): Promise<string[]> {
   const rows = await prisma.bookingModification.findMany({
-    where: { bookingId: { in: ALL_BOOKINGS } },
+    where: { bookingId: { in: EVERY_BOOKING } },
     select: { id: true },
   });
   return rows.map((row) => row.id);
@@ -127,26 +132,31 @@ async function clean(): Promise<void> {
       ],
     },
   });
-  await prisma.bookingChangeRequest.deleteMany({ where: { bookingId: { in: ALL_BOOKINGS } } });
-  await prisma.paymentRecoveryOperation.deleteMany({ where: { bookingId: { in: ALL_BOOKINGS } } });
-  await prisma.bookingLedgerLine.deleteMany({ where: { bookingId: { in: ALL_BOOKINGS } } });
-  await prisma.bookingEvent.deleteMany({ where: { bookingId: { in: ALL_BOOKINGS } } });
+  await prisma.bookingChangeRequest.deleteMany({ where: { bookingId: { in: EVERY_BOOKING } } });
+  await prisma.paymentRecoveryOperation.deleteMany({ where: { bookingId: { in: EVERY_BOOKING } } });
+  await prisma.bookingLedgerLine.deleteMany({ where: { bookingId: { in: EVERY_BOOKING } } });
+  await prisma.bookingEvent.deleteMany({ where: { bookingId: { in: EVERY_BOOKING } } });
   await prisma.manualRefundTask.deleteMany({ where: { paymentId: PAYMENT_ID } });
   await prisma.memberCreditNoteAllocation.deleteMany({ where: { memberCredit: { memberId: OWNER_ID } } });
   await prisma.memberCredit.deleteMany({ where: { memberId: OWNER_ID } });
-  await prisma.bookingGuestNightAdjustment.deleteMany({ where: { bookingId: { in: ALL_BOOKINGS } } });
-  await prisma.promoRedemptionAllocation.deleteMany({ where: { bookingId: { in: ALL_BOOKINGS } } });
-  await prisma.promoRedemption.deleteMany({ where: { bookingId: { in: ALL_BOOKINGS } } });
+  await prisma.bookingGuestNightAdjustment.deleteMany({ where: { bookingId: { in: EVERY_BOOKING } } });
+  await prisma.promoRedemptionAllocation.deleteMany({ where: { bookingId: { in: EVERY_BOOKING } } });
+  await prisma.promoRedemption.deleteMany({ where: { bookingId: { in: EVERY_BOOKING } } });
   await prisma.promoCode.updateMany({ where: { id: PROMO_ID }, data: { currentRedemptions: 0 } });
-  await prisma.bookingModification.deleteMany({ where: { bookingId: { in: ALL_BOOKINGS } } });
+  await prisma.bookingModification.deleteMany({ where: { bookingId: { in: EVERY_BOOKING } } });
   await prisma.hostingCoverageReevaluation.deleteMany({ where: { memberId: OWNER_ID } });
-  await prisma.hostingCoverageIncident.deleteMany({ where: { bookingId: { in: ALL_BOOKINGS } } });
-  await prisma.bedAllocation.deleteMany({ where: { bookingId: { in: ALL_BOOKINGS } } });
-  await prisma.paymentTransaction.deleteMany({ where: { payment: { bookingId: { in: ALL_BOOKINGS } } } });
-  await prisma.payment.deleteMany({ where: { bookingId: { in: ALL_BOOKINGS } } });
-  await prisma.bookingGuestNight.deleteMany({ where: { bookingGuest: { bookingId: { in: ALL_BOOKINGS } } } });
-  await prisma.bookingGuest.deleteMany({ where: { bookingId: { in: ALL_BOOKINGS } } });
+  await prisma.hostingCoverageIncident.deleteMany({ where: { bookingId: { in: EVERY_BOOKING } } });
+  await prisma.bedAllocation.deleteMany({ where: { bookingId: { in: EVERY_BOOKING } } });
+  await prisma.paymentTransaction.deleteMany({ where: { payment: { bookingId: { in: EVERY_BOOKING } } } });
+  await prisma.paymentRefund.deleteMany({ where: { paymentId: PAYMENT_ID } });
+  await prisma.xeroSyncOperation.deleteMany({ where: { localModel: "Payment", localId: PAYMENT_ID } });
+  await prisma.payment.deleteMany({ where: { bookingId: { in: EVERY_BOOKING } } });
+  await prisma.bookingGuestNight.deleteMany({ where: { bookingGuest: { bookingId: { in: EVERY_BOOKING } } } });
+  await prisma.bookingGuest.deleteMany({ where: { bookingId: { in: EVERY_BOOKING } } });
   await prisma.booking.deleteMany({ where: { id: { in: ALL_BOOKINGS } } });
+  await prisma.groupBookingSettlement.deleteMany({ where: { id: SETTLEMENT_ID } });
+  await prisma.groupBooking.deleteMany({ where: { id: GROUP_ID } });
+  await prisma.booking.deleteMany({ where: { id: ORGANISER_BOOKING_ID } });
   if (enqueueErrors.length > 0) {
     throw new AggregateError(enqueueErrors, "#4533: real Xero fixture enqueues failed; owned fixtures cleaned");
   }
@@ -156,7 +166,14 @@ async function clean(): Promise<void> {
 async function ownerStay(
   bookingId: string,
   guestId: string,
-  stay: { checkIn: Date; checkOut: Date; nights: Date[]; status: "COMPLETED" | "PAID" },
+  stay: {
+    checkIn: Date;
+    checkOut: Date;
+    nights: Date[];
+    status: "COMPLETED" | "PAID";
+    /** #4533 review: a joiner's booking the group organiser paid. */
+    parentBookingId?: string;
+  },
 ) {
   const total = stay.nights.length * STORED_NIGHT_CENTS;
   await prisma.booking.create({
@@ -169,6 +186,7 @@ async function ownerStay(
       status: stay.status,
       totalPriceCents: total,
       finalPriceCents: total,
+      ...(stay.parentBookingId ? { parentBookingId: stay.parentBookingId, organiserSettled: true } : {}),
     },
   });
   await prisma.bookingGuest.create({
@@ -197,24 +215,63 @@ async function ownerStay(
  * (`REQUEST_ID`), on which the officer enters the code when approving; and,
  * where asked, the free nights the owner already used on an earlier stay.
  */
-async function seed(options: { priorFreeNightsUsed?: number } = {}): Promise<void> {
+async function seed(options: { priorFreeNightsUsed?: number; organiserPaid?: boolean } = {}): Promise<void> {
+  if (options.organiserPaid) {
+    // An organiser-pays group whose one settlement, by card, paid the owner's
+    // joiner booking (`paidByOrganiserCard`).
+    await prisma.booking.create({
+      data: {
+        id: ORGANISER_BOOKING_ID,
+        memberId: OWNER_ID,
+        lodgeId: LODGE_ID,
+        checkIn: CHECK_IN,
+        checkOut: CHECK_OUT,
+        status: "COMPLETED",
+        totalPriceCents: 0,
+        finalPriceCents: 0,
+      },
+    });
+    await prisma.groupBooking.create({
+      data: {
+        id: GROUP_ID,
+        organiserBookingId: ORGANISER_BOOKING_ID,
+        organiserMemberId: OWNER_ID,
+        joinCode: GROUP_ID,
+        paymentMode: "ORGANISER_PAYS",
+      },
+    });
+    await prisma.groupBookingSettlement.create({
+      data: {
+        id: SETTLEMENT_ID,
+        groupBookingId: GROUP_ID,
+        stripePaymentIntentId: "pi_race_4533_group",
+        source: "STRIPE",
+        amountCents: 2 * STORED_NIGHT_CENTS,
+        status: "SUCCEEDED",
+      },
+    });
+  }
   const total = await ownerStay(BOOKING_ID, GUEST_ID, {
     checkIn: CHECK_IN,
     checkOut: CHECK_OUT,
     nights: [CHECK_IN, NIGHT_2],
     status: "COMPLETED",
+    ...(options.organiserPaid ? { parentBookingId: ORGANISER_BOOKING_ID } : {}),
   });
   await prisma.payment.create({
-    data: {
-      id: PAYMENT_ID,
-      bookingId: BOOKING_ID,
-      amountCents: total,
-      source: "STRIPE",
-      stripePaymentIntentId: "pi_race_4533",
-      status: "SUCCEEDED",
-      xeroInvoiceId: "race-4533-xero-invoice",
-      xeroInvoiceNumber: "INV-4533",
-    },
+    data: options.organiserPaid
+      ? // The child's mirror of the organiser's settlement: no intent of its own.
+        { id: PAYMENT_ID, bookingId: BOOKING_ID, amountCents: total, source: "STRIPE", status: "SUCCEEDED" }
+      : {
+          id: PAYMENT_ID,
+          bookingId: BOOKING_ID,
+          amountCents: total,
+          source: "STRIPE",
+          stripePaymentIntentId: "pi_race_4533",
+          status: "SUCCEEDED",
+          xeroInvoiceId: "race-4533-xero-invoice",
+          xeroInvoiceNumber: "INV-4533",
+        },
   });
   // The stay's confirmation lines, as its settle posted them: an edit posts
   // its own ledger lines only onto a booking the ledger already holds.
@@ -575,6 +632,25 @@ async function promoState() {
     expect(await prisma.bookingChangeRequest.findUniqueOrThrow({ where: { id: REQUEST_2_ID } })).toMatchObject({
       status: "REQUESTED",
       version: 1,
+    });
+  }, 60_000);
+  it("returns an organiser-paid joiner's reduction to the organiser on the default, never as credit", async () => {
+    await seed({ priorFreeNightsUsed: 1, organiserPaid: true });
+    const result = await approve();
+    expect(result, JSON.stringify(result)).toMatchObject({
+      outcome: "executed",
+      priceDiffCents: -STORED_NIGHT_CENTS,
+      changeFeeCents: 0,
+      // The way it was paid — the organiser's card — not the joiner's credit.
+      settlementMethod: "card",
+      refundAmountCents: STORED_NIGHT_CENTS,
+      accountCreditAmountCents: 0,
+    });
+    const state = await promoState();
+    expect(state.redemptions).toHaveLength(1);
+    expect(state.credits.filter((credit) => credit.amountCents > 0)).toEqual([]);
+    expect(await prisma.bookingChangeRequest.findUniqueOrThrow({ where: { id: REQUEST_ID } })).toMatchObject({
+      status: "APPROVED",
     });
   }, 60_000);
 });

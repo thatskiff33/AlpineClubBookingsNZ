@@ -491,27 +491,36 @@ export function decisionToastMessage(args: {
         followUpFailed?: boolean;
         officerEnteredGuestCount?: number;
         promoCodesApplied?: string[];
-        memberEmailWithheld?: boolean;
+        /**
+         * #4533 review: whether the change email is really sent — false when
+         * the officer withheld it or the booking's emails are off (#2259).
+         * Absent on an older response, which always emailed.
+         */
+        memberEmailed?: boolean;
       }
     | undefined;
   linkedModificationId: string;
 }): string {
   if (args.status !== "APPROVED") return "Request rejected";
   if (args.execution?.executed) {
+    const emailed = args.execution.memberEmailed !== false;
     // #4533: a promo correction says what it applied and whether the member hears.
     if (args.execution.promoCodesApplied?.length && !args.execution.followUpFailed) {
       return `Promo code ${args.execution.promoCodesApplied.join(", ")} applied to the booking and the request approved.${
-        args.execution.memberEmailWithheld === true
-          ? " The member was not emailed."
-          : " The member is emailed the change."
+        emailed ? " The member is emailed the change." : " The member was not emailed."
       }`;
     }
     if (args.execution.officerEnteredGuestCount && !args.execution.followUpFailed) {
-      return "Guests recorded on the member's behalf, and the request approved and applied to the booking. The member is emailed the change and any amount due.";
+      return emailed
+        ? "Guests recorded on the member's behalf, and the request approved and applied to the booking. The member is emailed the change and any amount due."
+        : "Guests recorded on the member's behalf, and the request approved and applied to the booking. Emails are off for this booking, so the member was not emailed.";
     }
-    return args.execution.followUpFailed
-      ? "Request approved and applied to the booking, but some follow-up work (the payment request, the member's email or Xero) did not complete. Check the booking."
-      : "Request approved and applied to the booking. The member is emailed the change and any amount due.";
+    if (args.execution.followUpFailed) {
+      return "Request approved and applied to the booking, but some follow-up work (the payment request, the member's email or Xero) did not complete. Check the booking.";
+    }
+    return emailed
+      ? "Request approved and applied to the booking. The member is emailed the change and any amount due."
+      : "Request approved and applied to the booking. Emails are off for this booking, so the member was not emailed.";
   }
   return args.linkedModificationId
     ? "Request approved and linked to the booking modification."

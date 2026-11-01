@@ -5,8 +5,11 @@ import {
   changeRequestPromoChangeSchema,
   PROMO_CHANGE_SUMMARY_SUFFIX,
   promoChangeBatchFields,
-  promoChangeChangesCodes,
   promoChangeCodes,
+  promoChangeOutcome,
+  promoChangeRefusal,
+  promoChangeRemovesCodeMessage,
+  PROMO_CHANGE_ALREADY_APPLIED_MESSAGE,
   promoCodesDriftedFromRequest,
   withPromoChange,
 } from "@/lib/booking-change-request-promo";
@@ -101,13 +104,43 @@ describe("the promo change's shape (#4533)", () => {
 });
 
 describe("judging a promo change against the booking's codes (#4533)", () => {
+  const booker = (code: string) => ({ code, internal: false });
+  const workingBee = (code: string) => ({ code, internal: true });
+
   it("is no change when the list names exactly the codes the booking holds", () => {
-    expect(promoChangeChangesCodes({ promoCodes: [{ code: "a" }] }, ["A"])).toBe(false);
-    expect(promoChangeChangesCodes({ promoCode: "A" }, ["A"])).toBe(false);
-    expect(promoChangeChangesCodes({ promoCode: "B" }, ["A"])).toBe(true);
-    expect(promoChangeChangesCodes({ promoCode: "A" }, [])).toBe(true);
+    expect(promoChangeOutcome({ promoCodes: [{ code: "a" }] }, [booker("A")], true).changesCodes).toBe(false);
+    expect(promoChangeOutcome({ promoCode: "A" }, [booker("A")], false).changesCodes).toBe(false);
+    expect(promoChangeOutcome({ promoCode: "A" }, [], false).changesCodes).toBe(true);
     // Choosing guests for a held code is a change in who it covers.
-    expect(promoChangeChangesCodes({ promoCode: "A", promoGuestIds: ["g1"] }, ["A"])).toBe(true);
+    expect(promoChangeOutcome({ promoCode: "A", promoGuestIds: ["g1"] }, [booker("A")], false).changesCodes).toBe(true);
+    expect(promoChangeRefusal({ promoCode: "a" }, [booker("A")], false)).toBe(PROMO_CHANGE_ALREADY_APPLIED_MESSAGE);
+  });
+
+  it("refuses a change that would take a booker's code off — the one-code field replaces, a list can omit (#4533 review)", () => {
+    expect(promoChangeOutcome({ promoCode: "NEW" }, [booker("OLD")], false).removedBookerCodes).toEqual(["OLD"]);
+    expect(promoChangeRefusal({ promoCode: "NEW" }, [booker("OLD")], true)).toBe(promoChangeRemovesCodeMessage(["OLD"]));
+    expect(promoChangeRefusal({ promoCodes: [{ code: "NEW" }] }, [booker("OLD")], true)).toBe(
+      promoChangeRemovesCodeMessage(["OLD"]),
+    );
+    // Kept alongside the new code, it is an ordinary addition.
+    expect(promoChangeRefusal({ promoCodes: [{ code: "OLD" }, { code: "NEW" }] }, [booker("OLD")], true)).toBeNull();
+  });
+
+  it("judges both sides on the same list, working-bee codes included (#4533 review)", () => {
+    // The switch on: the working-bee code is carried, so re-sending the booker's
+    // own code changes nothing — the old guard compared ["A"] with ["A", "WB"].
+    expect(promoChangeRefusal({ promoCode: "A" }, [workingBee("WB"), booker("A")], true)).toBe(
+      PROMO_CHANGE_ALREADY_APPLIED_MESSAGE,
+    );
+    // A new code beside a carried working-bee code is a change that removes nothing.
+    expect(promoChangeOutcome({ promoCode: "NEW" }, [workingBee("WB")], true)).toEqual({
+      resultingCodes: ["WB", "NEW"],
+      changesCodes: true,
+      removedBookerCodes: [],
+    });
+    // The switch off: the one-code field replaces the working-bee code. That is
+    // the working-bee rule, not a booker code, so it is left to the price check.
+    expect(promoChangeOutcome({ promoCode: "NEW" }, [workingBee("WB")], false).removedBookerCodes).toEqual([]);
   });
 
   it("drifts when a code is applied or released since the snapshot, and not without one", () => {

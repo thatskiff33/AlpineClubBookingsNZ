@@ -33,6 +33,12 @@ export interface BookingChangeRequestData {
    */
   acceptsOfficerPromo?: boolean;
   /**
+   * #4533 review: the booker's codes the booking carries and the club's
+   * `multiPromoCodes` switch, so the officer's code is ADDED to them, never
+   * sent as a replacement.
+   */
+  officerPromoBase?: { bookerCodes: string[]; multiPromoCodes: boolean } | null;
+  /**
    * #4533: the promo change the request carries, and whether it is the
    * request's one change (the only shape whose email the officer may withhold).
    */

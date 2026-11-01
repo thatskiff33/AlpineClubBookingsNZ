@@ -36,12 +36,15 @@ vi.mock("@/lib/booking-batch-modification-service", () => ({
 
 import {
   approveAndExecuteLockedPeriodChangeRequest,
+  FINISHED_STAY_NOT_FINISHED_MESSAGE,
   LOCKED_PERIOD_REQUEST_DRIFT_MESSAGE,
 } from "@/lib/booking-change-request-execution";
 import {
   NOTIFY_CHOICE_PROMO_ONLY_MESSAGE,
   OFFICER_PROMO_ON_PROMO_REQUEST_MESSAGE,
   PROMO_CHANGE_ALREADY_APPLIED_MESSAGE,
+  PROMO_CORRECTION_RAISES_PRICE_MESSAGE,
+  promoChangeRemovesCodeMessage,
   withPromoChange,
 } from "@/lib/booking-change-request-promo";
 import type { BatchModificationPreTransaction } from "@/lib/booking-batch-modification-service";
@@ -87,7 +90,7 @@ function promoRequest(codesWhenEntered: string[] = []) {
   );
 }
 
-function booking(codes: string[] = []) {
+function booking(codes: string[] = [], extra: Record<string, unknown> = {}) {
   return {
     memberId: "member-1",
     checkIn: new Date("2026-06-10T00:00:00.000Z"),
@@ -96,7 +99,8 @@ function booking(codes: string[] = []) {
     guests: [{ id: "g1", stayStart: new Date("2026-06-10T00:00:00.000Z"), stayEnd: new Date("2026-06-14T00:00:00.000Z"), nights: [] }],
     // Paid by card: the ordinary default would refund it to the card.
     payment: { amountCents: 24_000, creditAppliedCents: 0 },
-    promoRedemptions: codes.map((code) => ({ promoCode: { code } })),
+    promoRedemptions: codes.map((code) => ({ promoCode: { code, internal: false } })),
+    ...extra,
   };
 }
 
@@ -242,4 +246,95 @@ describe("a request raised from Edit Booking with a promo change (#4533)", () =>
     expect(mocks.updateMany).not.toHaveBeenCalled();
     expect(mocks.modifyBookingBatch).not.toHaveBeenCalled();
   });
+
+describe("the review's fixes (#4533 review)", () => {
+  it("refuses a code that would replace one the booking carries, and writes nothing", async () => {
+    mocks.bookingFindUnique.mockResolvedValue(booking(["OLD"]));
+    const result = await run({ officerPromoChange: { promoCode: "NEW" } });
+    expect(result.outcome).toBe("keptPending");
+    expect((result as { message: string }).message).toContain(promoChangeRemovesCodeMessage(["OLD"]));
+    expect(mocks.updateMany).not.toHaveBeenCalled();
+    expect(mocks.modifyBookingBatch).not.toHaveBeenCalled();
+  });
+
+  it("refuses a stored list that leaves a carried code out", async () => {
+    primeRequest(
+      withPromoChange(
+        freeTextRequest(),
+        { promoCodes: [{ code: "NEW" }] },
+        { officerMemberId: "officer-1", enteredAt: new Date("2026-07-01T00:00:00.000Z"), enteredOn: "request" },
+        ["OLD"],
+      ),
+    );
+    mocks.bookingFindUnique.mockResolvedValue(booking(["OLD"]));
+    const result = await run();
+    expect((result as { message: string }).message).toContain(promoChangeRemovesCodeMessage(["OLD"]));
+    expect(mocks.modifyBookingBatch).not.toHaveBeenCalled();
+  });
+
+  it("refuses a promo-only correction that would raise the price, in the quote and the approval", async () => {
+    mocks.modifyBookingBatch.mockResolvedValue({
+      bookingModificationId: "mod-1",
+      priceDiffCents: 500,
+      changeFeeCents: 0,
+      additionalAmountCents: 500,
+      refundAmountCents: 0,
+      accountCreditAmountCents: 0,
+      capacityOverridden: false,
+    });
+    await expect(run({ officerPromoChange: { promoCode: "FREENIGHT" } })).rejects.toThrow(
+      PROMO_CORRECTION_RAISES_PRICE_MESSAGE,
+    );
+    primeRequest(freeTextRequest());
+    await expect(
+      approveAndExecuteLockedPeriodChangeRequest({
+        dryRun: true,
+        requestId: "cr-1",
+        expectedVersion: 2,
+        actorMemberId: "officer-1",
+        adminNotes: null,
+        internalNotes: null,
+        confirmOverCapacity: false,
+        todayAtClub: TODAY,
+        format: CLUB_FORMAT_TEST,
+        preTransaction: {} as BatchModificationPreTransaction,
+        ipAddress: "127.0.0.1",
+        officerPromoChange: { promoCode: "FREENIGHT" },
+        db,
+      }),
+    ).rejects.toThrow(PROMO_CORRECTION_RAISES_PRICE_MESSAGE);
+  });
+
+  it("reports the member not emailed when the booking's emails are off, whatever the choice", async () => {
+    mocks.bookingFindUnique.mockResolvedValue(booking([], { noEmails: true }));
+    const result = await run({ officerPromoChange: { promoCode: "FREENIGHT" } });
+    expect(result).toMatchObject({ outcome: "executed", notifyMember: true, memberEmailed: false });
+    mocks.bookingFindUnique.mockResolvedValue(booking());
+    primeRequest(freeTextRequest());
+    expect(await run({ officerPromoChange: { promoCode: "FREENIGHT" } })).toMatchObject({ memberEmailed: true });
+  });
+
+  it("returns an organiser-paid joiner's reduction the way it was paid, not as credit", async () => {
+    mocks.bookingFindUnique.mockResolvedValue(
+      booking([], {
+        organiserSettled: true,
+        parentBookingId: "organiser-booking",
+        payment: { amountCents: 24_000, creditAppliedCents: 0, source: "STRIPE" },
+      }),
+    );
+    await run({ officerPromoChange: { promoCode: "FREENIGHT" } });
+    expect(batchInput()).toMatchObject({ settlementMethod: "card" });
+  });
+
+  it("keeps a request about a stay that has not finished pending, before any claim", async () => {
+    const running = freeTextRequest();
+    primeRequest({ ...running, original: { ...running.original, checkOut: "2026-07-03" } });
+    mocks.bookingFindUnique.mockResolvedValue(
+      booking([], { status: "PAID", checkOut: new Date("2026-07-03T00:00:00.000Z") }),
+    );
+    const result = await run({ officerPromoChange: { promoCode: "FREENIGHT" } });
+    expect(result).toEqual({ outcome: "keptPending", message: FINISHED_STAY_NOT_FINISHED_MESSAGE });
+    expect(mocks.updateMany).not.toHaveBeenCalled();
+  });
+});
 });

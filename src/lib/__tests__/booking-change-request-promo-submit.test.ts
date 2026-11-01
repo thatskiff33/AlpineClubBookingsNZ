@@ -52,6 +52,8 @@ import {
   PROMO_CHANGE_ALREADY_APPLIED_MESSAGE,
   PROMO_CHANGE_OFFICER_FINISHED_STAY_ONLY_MESSAGE,
   PROMO_CHANGE_SUMMARY_SUFFIX,
+  PROMO_CORRECTION_PENDING_REQUEST_MESSAGE,
+  promoChangeRemovesCodeMessage,
 } from "@/lib/booking-change-request-promo";
 
 const OFFICER = { user: { id: "officer-1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } };
@@ -168,7 +170,7 @@ describe("POST change-requests with a promo change (#4533)", () => {
   });
 
   it("refuses a code the booking already carries, and a guest not on it", async () => {
-    mocks.promoRedemptionFindMany.mockResolvedValue([{ promoCode: { code: "FREENIGHT" } }]);
+    mocks.promoRedemptionFindMany.mockResolvedValue([{ promoCode: { code: "FREENIGHT", internal: false } }]);
     let response = await post({ promoChange: { promoCode: "FREENIGHT" } });
     expect((await response.json()).error).toBe(PROMO_CHANGE_ALREADY_APPLIED_MESSAGE);
     response = await post({ promoChange: { promoCode: "OTHER", promoGuestIds: ["someone-else"] } });
@@ -176,11 +178,25 @@ describe("POST change-requests with a promo change (#4533)", () => {
     expect(mocks.bookingChangeRequestCreate).not.toHaveBeenCalled();
   });
 
-  it("points at the officer's pending request rather than raising a second", async () => {
+  it("points at ANY pending request on the booking rather than raising a second (#4533 review)", async () => {
     mocks.bookingChangeRequestFindFirst.mockResolvedValue({ id: "request-0" });
     const response = await post({ promoChange: { promoCode: "FREENIGHT" } });
     expect(response.status).toBe(409);
-    expect((await response.json()).requestId).toBe("request-0");
+    expect(await response.json()).toMatchObject({ requestId: "request-0", error: PROMO_CORRECTION_PENDING_REQUEST_MESSAGE });
+    // Whoever sent it: the query names the booking and the status, not the officer.
+    expect(mocks.bookingChangeRequestFindFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { bookingId: "booking-1", kind: "LOCKED_PERIOD", status: "REQUESTED" } }),
+    );
+  });
+
+  it("refuses a code that would replace or leave out one the booking carries (#4533 review)", async () => {
+    mocks.promoRedemptionFindMany.mockResolvedValue([{ promoCode: { code: "OLD", internal: false } }]);
+    let response = await post({ promoChange: { promoCode: "NEW" } });
+    expect(response.status).toBe(400);
+    expect((await response.json()).error).toBe(promoChangeRemovesCodeMessage(["OLD"]));
+    response = await post({ promoChange: { promoCodes: [{ code: "NEW" }] } });
+    expect((await response.json()).error).toBe(promoChangeRemovesCodeMessage(["OLD"]));
+    expect(mocks.bookingChangeRequestCreate).not.toHaveBeenCalled();
   });
 
   it("refuses a removal: the shape cannot say it", async () => {

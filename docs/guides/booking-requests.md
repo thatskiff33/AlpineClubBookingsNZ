@@ -160,8 +160,15 @@ are listed on the booking for you to relay.
        says why and offers **Send as a promo correction request**. That raises
        a request carrying only the code, entered by you on the member's behalf,
        and opens it here.
+       It can't be raised while another change request on the booking is
+       pending; enter the code on that request instead.
      - On any request about a finished stay that names no promo code, type it
        into **Promo code to apply**.
+
+     A correction only adds a code: a code the booking already carries stays
+     on it (where the club allows several codes, the card keeps it beside the
+     new one; otherwise the booking can't take a second code), and a change
+     that would raise the price is refused.
 
      Either way **Check the figures** prices it, and **Approve and apply**
      applies it exactly as Edit Booking would on a future stay: who the code is
@@ -170,7 +177,8 @@ are listed on the booking for you to relay.
      the booking editor gives. The free night is then counted as used. A promo
      code carries no change fee, and its reduction comes back in full — as
      account credit unless you choose a refund under **If the change lowers the
-     price**; credit raises an unapplied account-credit note in Xero. Where the
+     price**; credit raises an unapplied account-credit note in Xero. On a
+     booking a group organiser paid for, it goes back to the organiser. Where the
      code is the request's only change, you can untick **Apply and email member
      about the correction**; a guest or date change always emails them, and a
      booking whose emails are off shows the usual notice instead. If a code

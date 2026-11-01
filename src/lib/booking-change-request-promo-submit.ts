@@ -3,15 +3,14 @@ import type { Prisma } from "@prisma/client";
 
 import { logAudit } from "@/lib/audit";
 import { bookingOwner } from "@/lib/booking-owner";
-import { activeLifecycleEditRefusal, isFinishedStay } from "@/lib/booking-edit-policy";
+import { finishedStayCorrectionEligibility } from "@/lib/booking-edit-policy";
 import { changeRequestStoredProposal } from "@/lib/booking-change-request-stored";
 import type { ChangeRequestDelta } from "@/lib/booking-change-request-input";
 import {
-  bookingPromoCodeSnapshot,
+  carriedPromoCodes,
   PROMO_CHANGE_ALONE_MESSAGE,
-  PROMO_CHANGE_ALREADY_APPLIED_MESSAGE,
   PROMO_CHANGE_OFFICER_FINISHED_STAY_ONLY_MESSAGE,
-  promoChangeChangesCodes,
+  PROMO_CORRECTION_PENDING_REQUEST_MESSAGE,
   promoChangeCodes,
   withPromoChange,
   type ChangeRequestPromoChange,
@@ -23,6 +22,7 @@ import {
 import { sendAdminBookingChangeRequestAlert } from "@/lib/email";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
+import { promoChangeRefusalFor } from "@/lib/booking-change-request-promo-server";
 import { getClientIp } from "@/lib/rate-limit";
 import { calendarDateOfDateOnlyInstant } from "@/lib/club-time";
 
@@ -108,13 +108,16 @@ export async function finishedStayPromoCorrectionRequestResponse(
   if (carriesAnotherChange(args.delta)) {
     return NextResponse.json({ error: PROMO_CHANGE_ALONE_MESSAGE }, { status: 400 });
   }
-  // The same two questions the executor asks again under its locks.
-  if (!isFinishedStay(booking, args.today)) {
-    return NextResponse.json({ error: PROMO_CHANGE_OFFICER_FINISHED_STAY_ONLY_MESSAGE }, { status: 400 });
-  }
-  const statusRefusal = activeLifecycleEditRefusal(booking.status, "ADMIN", { includeFinishedStay: true });
-  if (statusRefusal) {
-    return NextResponse.json({ error: statusRefusal }, { status: 400 });
+  // The one eligibility answer the executor asks again under its locks.
+  const eligibility = finishedStayCorrectionEligibility(booking, args.today);
+  if (!eligibility.eligible) {
+    return NextResponse.json(
+      {
+        error:
+          eligibility.reason === "not-finished" ? PROMO_CHANGE_OFFICER_FINISHED_STAY_ONLY_MESSAGE : eligibility.message,
+      },
+      { status: 400 },
+    );
   }
   const onBooking = new Set(booking.guests.map((guest) => guest.id));
   const namedGuests = [
@@ -127,25 +130,32 @@ export async function finishedStayPromoCorrectionRequestResponse(
       { status: 400 },
     );
   }
+  // #4533 review: ANY pending locked-period request on the booking, whoever
+  // sent it — its own approval card takes the code, and a second request about
+  // the same finished stay would be judged against a booking the first changes.
   const existing = await prisma.bookingChangeRequest.findFirst({
-    where: { bookingId: booking.id, requestedByMemberId: args.actorMemberId, status: "REQUESTED" },
+    where: { bookingId: booking.id, kind: "LOCKED_PERIOD", status: "REQUESTED" },
     select: { id: true },
   });
   if (existing) {
     return NextResponse.json(
-      { error: "A booking change request is already pending for this booking", requestId: existing.id },
+      { error: PROMO_CORRECTION_PENDING_REQUEST_MESSAGE, requestId: existing.id },
       { status: 409 },
     );
   }
-  const codesNow = bookingPromoCodeSnapshot(
+  const carried = carriedPromoCodes(
     await prisma.promoRedemption.findMany({
       where: { bookingId: booking.id },
-      select: { promoCode: { select: { code: true } } },
+      select: { promoCode: { select: { code: true, internal: true } } },
     }),
   );
-  if (!promoChangeChangesCodes(promoChange, codesNow)) {
-    return NextResponse.json({ error: PROMO_CHANGE_ALREADY_APPLIED_MESSAGE }, { status: 400 });
+  // #4533 review: never a code taken off, never nothing — the one rule the
+  // queue card's entry and the executor read too.
+  const promoRefusal = await promoChangeRefusalFor(prisma, promoChange, carried);
+  if (promoRefusal) {
+    return NextResponse.json({ error: promoRefusal }, { status: 400 });
   }
+  const codesNow = carried.map((entry) => entry.code);
 
   // The approval-relevant record from submission's own builder (`INV-SSOT-001`):
   // the booking as it stands, and no date or guest change.

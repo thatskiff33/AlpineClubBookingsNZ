@@ -624,6 +624,7 @@ async function runFinishedStayApproval(
           }
         : null,
       notifyMember: result.notifyMember,
+      memberEmailed: result.memberEmailed,
     },
     ipAddress,
   });
@@ -645,7 +646,7 @@ async function runFinishedStayApproval(
       capacityOverridden: result.capacityOverridden,
       officerEnteredGuestCount: officerEntered?.length ?? 0,
       promoCodesApplied: promoChange?.codes ?? [],
-      memberEmailWithheld: !result.notifyMember,
+      memberEmailed: result.memberEmailed,
       followUpFailed: result.followUpFailed === true,
     },
   });

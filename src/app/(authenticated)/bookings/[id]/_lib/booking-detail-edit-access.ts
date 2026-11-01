@@ -1,10 +1,9 @@
 import type { FeatureFlags } from "@/config/schema";
 import type { Instant } from "@/lib/club-time";
 import {
-  activeLifecycleEditRefusal,
   bookingStayHasStarted,
+  finishedStayCorrectionEligibility,
   getBookingEditPolicy,
-  isFinishedStay,
 } from "@/lib/booking-edit-policy";
 import { isBookingFullyPaidForGuestNameEdits } from "@/lib/booking-modify";
 import {
@@ -133,13 +132,10 @@ export async function resolveBookingDetailEditAccess({
     !isDeleted &&
     overridePolicy.canModify;
   // #4533: an officer on a FINISHED stay may send a promo code as a correction
-  // request from Edit Booking — the same finished-stay and status questions the
-  // request route and the executor ask, so the panel never offers a request
-  // they would refuse.
+  // request from Edit Booking — the one eligibility answer the request route and
+  // the executor read, so the panel never offers a request they would refuse.
   const canRequestFinishedStayPromoCorrection =
-    canAdminOverride &&
-    isFinishedStay(booking, clubTodayDateOnly) &&
-    activeLifecycleEditRefusal(booking.status, "ADMIN", { includeFinishedStay: true }) === null;
+    canAdminOverride && finishedStayCorrectionEligibility(booking, clubTodayDateOnly).eligible;
   const canEditRequestedRoom = isDeleted
     ? false
     : isAdmin
