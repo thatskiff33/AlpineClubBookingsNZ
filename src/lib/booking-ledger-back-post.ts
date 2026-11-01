@@ -70,7 +70,7 @@ import type { Prisma, PrismaClient } from "@prisma/client";
 
 import { planGroupChildBackPost } from "@/lib/booking-ledger-back-post-group";
 import { postHandBackLedgerLine } from "@/lib/booking-ledger-hand-back";
-import { postCancellationLedgerLines } from "@/lib/booking-ledger-cancellation-sync";
+import { LEGACY_HISTORY_ONLY, postCancellationLedgerLines } from "@/lib/booking-ledger-cancellation-sync";
 import { planConfirmationChargeLines } from "@/lib/booking-ledger-confirmation-posting";
 import { syncBookingLedgerCredits } from "@/lib/booking-ledger-credit-sync";
 import {
@@ -557,7 +557,7 @@ async function backPostBooking(tx: Tx, bookingId: string): Promise<BookingBackPo
     if (kept === null) {
       throw refuse(cannotPost(bookingId, "CENSUS_WOULD_NOT_PASS", "the CANCELLED event's snapshot holds no kept or retained figure"));
     }
-    await postCancellationLedgerLines({ store: tx, bookingId, lodgeId: booking.lodgeId, ...kept, site: "booking-ledger-back-post" });
+    await postCancellationLedgerLines({ store: tx, journal: LEGACY_HISTORY_ONLY, bookingId, lodgeId: booking.lodgeId, ...kept, site: "booking-ledger-back-post" });
     steps.push(`cancellation (kept ${kept.keptCents})`);
   }
 

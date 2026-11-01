@@ -1,4 +1,5 @@
 import type { LedgerLineKind, LedgerSide, MemberMoneyOrigin } from "@prisma/client";
+import { formatCentsPlain } from "../../utils";
 import { componentKey } from "./components";
 import { memberMoneyEventKeys, type MemberMoneyEventKey } from "./keys";
 import {
@@ -224,7 +225,7 @@ export function planBookingChargeEvent(input: BookingChargePlanInput): MemberMon
     const live = input.liveGrossCents.get(key) ?? 0;
     const after = live + delta;
     if (after < 0) {
-      problems.push(`component ${component.chargeIdentity} would carry ${after} cents: its legacy lines take away more than it holds`);
+      problems.push(`component ${component.chargeIdentity} would carry ${formatCentsPlain(after)}: its legacy lines take away more than it holds`);
       continue;
     }
     const source = touching.length === 1 ? lineSource(touching[0]!) : undefined;

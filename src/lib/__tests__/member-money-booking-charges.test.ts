@@ -5,7 +5,14 @@
  * accepts, door by door, is `booking-ledger-journal.realdb.test.ts`.
  */
 import { describe, expect, it } from "vitest";
-import { bookingChargeIdentity, journalComponentOfLegacyLine, MemberMoneyPlanError, type MemberMoneyPlan } from "@/lib/member-money";
+import { requireClubTimeZone, requireInstant } from "@/lib/club-time";
+import {
+  bookingChargeIdentity,
+  journalComponentOfLegacyLine,
+  MemberMoneyPlanError,
+  resolveMemberMoneyPostingContext,
+  type MemberMoneyPlan,
+} from "@/lib/member-money";
 import {
   planBookingChargeEvent,
   planMemberMergeTransfer,
@@ -14,6 +21,8 @@ import {
 } from "@/lib/member-money/internal/booking-charges";
 import { componentKey } from "@/lib/member-money/internal/components";
 import { buildMemberMoneyBatch } from "@/lib/member-money/internal/plan";
+import { FROZEN_TEST_CLOCK_BASE_ISO } from "./helpers/clock";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 import { memberMoneyTestContext } from "./support/member-money-fixtures";
 
 const BOOKING = "b1";
@@ -182,7 +191,7 @@ describe("R02/R03/R04/R21: later events correct whole components (#4627)", () =>
       }
       return "";
     };
-    expect(refuse([line({ kind: "GUEST_NIGHT", amountCents: -5000 })], live([["BOOKING_REVENUE", CHARGE, 4000]]))).toMatch(/would carry -1000/);
+    expect(refuse([line({ kind: "GUEST_NIGHT", amountCents: -5000 })], live([["BOOKING_REVENUE", CHARGE, 4000]]))).toMatch(/would carry -10\.00/);
     expect(refuse([line({ kind: "CARD_CAPTURE", side: "SETTLEMENT", amountCents: -100 })])).toMatch(/not a charge/);
     expect(refuse([line({ kind: "GUEST_NIGHT", amountCents: 100, bookingId: "other" })])).toMatch(/another booking/);
   });
@@ -214,5 +223,23 @@ describe("D4: a member merge's transfer (#4627)", () => {
     expect(built.legs.every((leg) => leg.type === "amount")).toBe(true);
     expect(() => buildMemberMoneyBatch(context, built)).not.toThrow();
     expect(planMemberMergeTransfer({ fromMemberId: "a", toMemberId: "b", actorMemberId: "c", balances: [] })).toBeNull();
+  });
+});
+
+describe("a tax setting the door could not read (#4627)", () => {
+  const unreadable = resolveMemberMoneyPostingContext({
+    effectiveAt: requireInstant(FROZEN_TEST_CLOCK_BASE_ISO), zone: requireClubTimeZone("Pacific/Auckland"), format: CLUB_FORMAT_TEST,
+    policyVersion: "p", codingVersion: "c", taxSettings: { unreadable: "connection refused" },
+  });
+
+  it("refuses a batch needing a fresh split, never guessing one", () => {
+    const built = plan({ kind: "confirmation" }, [line({ kind: "GUEST_NIGHT", amountCents: 5000 })]) as Legs;
+    expect(() => buildMemberMoneyBatch(unreadable, built)).toThrow(/tax setting could not be read \(connection refused\)/);
+  });
+
+  it("still builds a correction-only batch, which repeats its posted split", () => {
+    const built = plan({ kind: "cancellation" }, [line({ kind: "GUEST_NIGHT", amountCents: -5000, reversesLineId: "n" })],
+      live([["BOOKING_REVENUE", CHARGE, 5000]])) as Legs;
+    expect(() => buildMemberMoneyBatch(unreadable, built)).not.toThrow();
   });
 });

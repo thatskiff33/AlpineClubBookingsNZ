@@ -8,6 +8,8 @@ import { describe, expect, it, vi } from "vitest";
 vi.mock("server-only", () => ({}));
 const log = vi.hoisted(() => ({ warn: vi.fn(), error: vi.fn(), info: vi.fn() }));
 vi.mock("@/lib/logger", () => ({ default: log }));
+// #4627: the journal half runs on PostgreSQL (`booking-ledger-journal.realdb.test.ts`), not on this fake store.
+vi.mock("@/lib/member-money/doors", () => ({ postBookingLedgerJournal: vi.fn(async () => null) }));
 
 import { bookingLedgerBalance } from "@/lib/booking-ledger-balance";
 import { planConfirmationChargeLines } from "@/lib/booking-ledger-confirmation-posting";
@@ -17,6 +19,7 @@ import {
 } from "@/lib/booking-ledger-modification-sync";
 import { buildBookingLedgerRows } from "@/lib/booking-ledger-write";
 import type { BookingPriceRebase } from "@/lib/booking-review-price-rebase";
+import { memberMoneyTestContext } from "./support/member-money-fixtures";
 
 const D1 = new Date("2026-08-01T00:00:00.000Z");
 const D2 = new Date("2026-08-02T00:00:00.000Z");
@@ -174,7 +177,7 @@ const SIDES_REMOVE_G2 = {
 
 describe("postModificationLedgerLines (#3582)", () => {
   const row = { id: "m1", priceDiffCents: -10_000, changeFeeCents: 0 };
-  const base = { bookingId: "b1", lodgeId: "l1", bookingModification: row, site: "guest-removal" };
+  const base = { bookingId: "b1", lodgeId: "l1", bookingModification: row, site: "guest-removal", journal: memberMoneyTestContext() };
 
   it("posts an edit's reversals on a booking confirmed on the ledger, leaving owed(b) at the refund due", async () => {
     const ledger = confirmedLedger();
@@ -255,7 +258,7 @@ describe("postModificationLedgerLines (#3582)", () => {
 });
 
 describe("postReviewClosureLedgerLines — one record of the share's money, per direction (#3582)", () => {
-  const base = { bookingId: "b1", lodgeId: "l1", manualRefundTaskId: "t1", note: "Agreed", officerMemberId: "o1" };
+  const base = { bookingId: "b1", lodgeId: "l1", manualRefundTaskId: "t1", note: "Agreed", officerMemberId: "o1", journal: memberMoneyTestContext() };
 
   it("REFUND, re-priced: the re-price reverses the removed guest and posts NO adjustment; owed(b) settles to zero", async () => {
     const ledger = confirmedLedger();
@@ -432,6 +435,7 @@ describe("postReviewClosureLedgerLines — sibling reviews never count one parke
     for (const step of steps) {
       const s = store(lines, step.guests.map(guestRow));
       await postReviewClosureLedgerLines({
+        journal: memberMoneyTestContext(),
         bookingId: "b1",
         lodgeId: "l1",
         manualRefundTaskId: step.task,

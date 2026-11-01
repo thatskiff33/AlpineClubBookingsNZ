@@ -29,6 +29,7 @@ import { realElapsedMs } from "@/lib/__tests__/helpers/clock";
 import { ENVIRONMENT_ROLE_ENV_VAR } from "@/lib/environment-role-declaration";
 import type { SuiteEnvironmentRoleDeclaration } from "./helpers/environment-role";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
+import { memberMoneyTestContext } from "./support/member-money-fixtures";
 import { currentXeroClaim } from "@/lib/__tests__/helpers/xero-claim";
 
 const RUN = process.env.RUN_CONCURRENCY_RACE_TESTS === "1";
@@ -321,7 +322,7 @@ let harnessRole: SuiteEnvironmentRoleDeclaration | undefined;
       const { removeBookingGuestInTransaction } = await import("@/lib/booking-guest-removal-service");
       const result = await prisma.$transaction(
         (tx) => removeBookingGuestInTransaction({
-          tx, bookingId: BOOKING_ID, guestId: LEAVING_GUEST_ID, actorMemberId: MEMBER_ID, actorRole: "ADMIN", today: TODAY, format: CLUB_FORMAT_TEST,
+          tx, bookingId: BOOKING_ID, guestId: LEAVING_GUEST_ID, actorMemberId: MEMBER_ID, actorRole: "ADMIN", today: TODAY, format: CLUB_FORMAT_TEST, journal: memberMoneyTestContext(),
           ...(settlementMethod ? { settlementMethod } : {}),
         }),
         { maxWait: 10_000, timeout: 20_000 },

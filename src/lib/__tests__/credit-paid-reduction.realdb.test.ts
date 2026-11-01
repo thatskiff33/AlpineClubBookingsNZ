@@ -24,6 +24,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { realElapsedMs } from "@/lib/__tests__/helpers/clock";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
+import { memberMoneyTestContext } from "./support/member-money-fixtures";
 
 const RUN = process.env.RUN_CONCURRENCY_RACE_TESTS === "1";
 const RACE_DB_URL = process.env.CONCURRENCY_RACE_DATABASE_URL ?? "";
@@ -175,7 +176,7 @@ let observerClient: PrismaClient;
       const { removeBookingGuestInTransaction } = await import("@/lib/booking-guest-removal-service");
       const result = await prisma.$transaction(
         (tx) => removeBookingGuestInTransaction({
-          tx, bookingId: BOOKING_ID, guestId: LEAVING_GUEST_ID, actorMemberId: MEMBER_ID, actorRole: "ADMIN", today: TODAY, format: CLUB_FORMAT_TEST,
+          tx, bookingId: BOOKING_ID, guestId: LEAVING_GUEST_ID, actorMemberId: MEMBER_ID, actorRole: "ADMIN", today: TODAY, format: CLUB_FORMAT_TEST, journal: memberMoneyTestContext(),
           ...(settlementMethod ? { settlementMethod } : {}),
         }),
         { maxWait: 10_000, timeout: 20_000 },

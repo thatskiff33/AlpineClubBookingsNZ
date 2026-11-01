@@ -50,6 +50,7 @@ import { enqueueOwnHostingCoverageReevaluation } from "@/lib/adult-member-hostin
 import { reconcileBedAllocationsForBookingWithLodgeLockHeld } from "@/lib/bed-allocation-lifecycle";
 import { recordBookingEvent } from "@/lib/booking-events";
 import { postGroupSettlementLedgerLines } from "@/lib/booking-ledger-group-settlement-sync";
+import { resolveBookingMoneyPostingContext } from "@/lib/member-money/doors";
 import {
   enqueueXeroBookingInvoiceOperation,
   kickQueuedXeroOutboxOperationsIfConnected,
@@ -1047,6 +1048,8 @@ async function settleConfirmedChildrenAndNotify(
   // #3672: joiners the paid bill did not cover are moved to member-pays below;
   // the club's day (read here, outside the lock) decides who is emailed.
   const clubTodayDateOnly = await clubTodayForStartedStay();
+  // #4627: the journal's posting context, likewise read outside the lock.
+  const journal = await resolveBookingMoneyPostingContext();
   let leftBehind: JoinerPayerSwitch = NO_PAYER_SWITCH;
   const settled = await prisma.$transaction(async (tx) => {
     leftBehind = NO_PAYER_SWITCH;
@@ -1274,7 +1277,7 @@ async function settleConfirmedChildrenAndNotify(
       settledIds.push(child.id);
     }
     // #3854: each child's confirmation and share post in this claim, keyed.
-    await postGroupSettlementLedgerLines({ store: tx, settlement: { id: settlement.id, source: options.source, amountCents: recordedCents }, children });
+    await postGroupSettlementLedgerLines({ store: tx, journal, settlement: { id: settlement.id, source: options.source, amountCents: recordedCents }, children });
 
     // Status-guarded settlement SUCCEEDED claim (#1881): never overwrite a
     // settlement a concurrent reaper/refund already moved to a terminal state.

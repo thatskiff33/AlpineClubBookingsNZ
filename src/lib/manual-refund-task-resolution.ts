@@ -28,6 +28,7 @@ import { readCapacityRaceStripeRefundedForTask } from "@/lib/capacity-race-refun
 import { settlementWriteRefusal } from "@/lib/manual-refund-task-settlement-refusal";
 import { prisma } from "@/lib/prisma";
 import { clubToday } from "@/lib/club-time";
+import { resolveBookingMoneyPostingContext } from "@/lib/member-money/doors";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 // #3195: the $0 refusal is said by the settle SCREEN as well as thrown here, and
 // this module is `server-only` - so the sentence lives in a client-safe home and
@@ -149,6 +150,8 @@ export async function resolveManualRefundTask(
   // and (#3635) the day a kept late capture's Xero receipt is dated.
   const clubZone = await readClubTimeZoneOutsideRequest();
   const todayAtClub = clubToday(clubZone);
+  // #4627: the journal's posting context, likewise read outside the transaction.
+  const journal = await resolveBookingMoneyPostingContext({ zone: clubZone });
   const capacityRaceStripe = resolution === "completed" ? await readCapacityRaceStripeRefundedForTask(taskId) : null; // #4154 review (M1): a provider call, so here, bounded
   const { chargeInvoice, ...result } = await prisma.$transaction(async (tx) => { // #3947: chargeInvoice is internal, never returned
     // #3740 (concurrency F1): only the immutable `kind` is read unlocked. An
@@ -543,6 +546,7 @@ export async function resolveManualRefundTask(
         settlementAmountCents: settledCents,
         settlementDirection: settlement ? settlementDirection : null,
         store: tx,
+        journal,
       });
     }
     const chargeInvoice = settlement ? await queueEditReviewChargeInvoiceInTransaction({ bookingId: task.bookingId, route: settlementRoute, hasIssuedXeroInvoice, createdByMemberId: actingMemberId, store: tx }) : null; // #3947: the invoice route's invoice, queued LAST - its anchor key after every other lock

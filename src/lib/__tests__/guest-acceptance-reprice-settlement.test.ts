@@ -115,6 +115,10 @@ import { noReductionAgainstUnpaidAsk } from "@/lib/additional-ask-reduction";
 import { reissueUnpaidAdditionalAsk } from "@/lib/additional-payment-ask";
 import { requireCalendarDate } from "@/lib/club-time";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
+import { memberMoneyTestContext } from "./support/member-money-fixtures";
+
+/** #4627: a posting context; the ledger sync that would use it is mocked here. */
+const JOURNAL = memberMoneyTestContext();
 import { ORGANISER_REFUND_DEBT_STATES, primeOrganiserRefundDebt } from "./support/organiser-refund-debt-reread";
 import { expectQueuedOnce, ownCardRefundPlan, OWN_CARD_REFUND_STATES, primeOwnCardRefund } from "./support/own-card-refund-outcome";
 
@@ -195,7 +199,7 @@ async function accept(loaded: ReturnType<typeof booking>) {
     acceptedGuestId: "g-cara",
     actorMemberId: "cara",
     todayAtClub: TODAY,
-    format: CLUB_FORMAT_TEST,
+    format: CLUB_FORMAT_TEST, journal: JOURNAL,
   });
 }
 
@@ -261,7 +265,7 @@ describe("the full reduction goes back the way it was paid (D-3813-5)", () => {
       acceptedGuestId: "g-cara",
       actorMemberId: "cara",
       todayAtClub: TODAY,
-      format: CLUB_FORMAT_TEST,
+      format: CLUB_FORMAT_TEST, journal: JOURNAL,
     });
     expect(result).toMatchObject({
       repriced: true,
@@ -537,7 +541,7 @@ describe("an internet-banking reduction asks the treasurer to send it back (D-38
       acceptedGuestId: "g-cara",
       actorMemberId: "cara",
       todayAtClub: TODAY,
-      format: CLUB_FORMAT_TEST,
+      format: CLUB_FORMAT_TEST, journal: JOURNAL,
     });
     expect(client.manualRefundTask.createMany).toHaveBeenCalledTimes(1);
     expect(client.manualRefundTask.createMany).toHaveBeenCalledWith({
@@ -571,7 +575,7 @@ describe("an internet-banking reduction asks the treasurer to send it back (D-38
       acceptedGuestId: "g-cara",
       actorMemberId: "cara",
       todayAtClub: TODAY,
-      format: CLUB_FORMAT_TEST,
+      format: CLUB_FORMAT_TEST, journal: JOURNAL,
     });
     expect(client.manualRefundTask.createMany).not.toHaveBeenCalled();
     if (!reprice.repriced) throw new Error("expected a re-price");
@@ -594,7 +598,7 @@ describe("a split payment gets the WHOLE reduction back: cash first, then credit
       acceptedGuestId: "g-cara",
       actorMemberId: "cara",
       todayAtClub: TODAY,
-      format: CLUB_FORMAT_TEST,
+      format: CLUB_FORMAT_TEST, journal: JOURNAL,
     });
     return { result, client };
   }
@@ -674,7 +678,7 @@ describe("a split payment gets the WHOLE reduction back: cash first, then credit
       acceptedGuestId: "g-cara",
       actorMemberId: "cara",
       todayAtClub: TODAY,
-      format: CLUB_FORMAT_TEST,
+      format: CLUB_FORMAT_TEST, journal: JOURNAL,
     });
     expect(result).toMatchObject({ repriced: true, refundAmountCents: 2000, accountCreditAmountCents: 4000 });
     expect(h.clampAppliedCreditToBookingPrice).toHaveBeenCalledWith(
@@ -722,7 +726,7 @@ describe("cash an earlier edit already promised back is not refunded again (#382
       acceptedGuestId: "g-cara",
       actorMemberId: "cara",
       todayAtClub: TODAY,
-      format: CLUB_FORMAT_TEST,
+      format: CLUB_FORMAT_TEST, journal: JOURNAL,
     });
     expect(client.manualRefundTask.aggregate).toHaveBeenCalledWith({
       where: expect.objectContaining({
@@ -801,7 +805,7 @@ describe("an organiser-paid child's reduction goes back to the organiser's card,
       acceptedGuestId: "g-cara",
       actorMemberId: "cara",
       todayAtClub: TODAY,
-      format: CLUB_FORMAT_TEST,
+      format: CLUB_FORMAT_TEST, journal: JOURNAL,
     });
   }
 

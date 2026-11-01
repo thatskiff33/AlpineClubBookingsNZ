@@ -16,6 +16,7 @@ import {
   removeBookingGuestInTransaction,
   type RemoveBookingGuestResult,
 } from "@/lib/booking-guest-removal-service";
+import { resolveBookingMoneyPostingContext, type MemberMoneyPostingContext } from "@/lib/member-money/doors";
 import { createModificationAdditionalPaymentIntent } from "@/lib/booking-modification-settlement";
 import { AdditionalAskChangedDuringReductionError } from "@/lib/additional-ask-reduction-error";
 import { GroupCancelInProgressError } from "@/lib/group-cancel-in-progress";
@@ -359,6 +360,8 @@ async function removeClaimedConsentGuest(
     today: Date;
     /** The club's format (#3565), resolved with `today` and for the same reason. */
     format: ClubFormat;
+    /** #4627: the journal's posting context, resolved with `today` and for the same reason. */
+    journal: MemberMoneyPostingContext;
   },
 ): Promise<{
   removed: true;
@@ -375,6 +378,7 @@ async function removeClaimedConsentGuest(
       actorRole: "MEMBER",
       today: params.today,
       format: params.format,
+      journal: params.journal,
       ...(params.settlementMethod ? { settlementMethod: params.settlementMethod } : {}),
       consentAuthority: {
         kind: params.kind,
@@ -562,12 +566,15 @@ export async function respondToMemberGuestConsent(params: {
   // RUNTIME reader, not the server binding: this module is reached from
   // `instrumentation.node.ts` through `cron-member-guest-consent-expiry`, where
   // `server-only` is a bare throw at import.
-  const clubTodayCalendar = clubToday(await readClubTimeZoneOutsideRequest());
+  const clubZone = await readClubTimeZoneOutsideRequest();
+  const clubTodayCalendar = clubToday(clubZone);
   const clubTodayDateOnly = dateOnlyInstantOf(clubTodayCalendar);
   // #3029 S5 — the dietary seeding toggle, read here for the same reason. A
   // member guest's profile note is NOT copied onto the row while their consent
   // is pending; granting it below fills the row, if still empty (`INV-MOD-059`).
   const guestDietarySeeding = await resolveBookingGuestDietarySeeding();
+  // #4627: the journal's posting context, resolved here for the same reason, on the same zone.
+  const journal = await resolveBookingMoneyPostingContext({ zone: clubZone });
 
   try {
     return await db.$transaction(async (tx) => {
@@ -625,6 +632,7 @@ export async function respondToMemberGuestConsent(params: {
           actorMemberId,
           todayAtClub: clubTodayCalendar,
           format,
+          journal,
         });
         if (!reprice.repriced && reprice.reason !== "NO_PROMOTION") {
           logger.info(
@@ -661,6 +669,7 @@ export async function respondToMemberGuestConsent(params: {
         kind: "CONSENT_DECLINE",
         today: clubTodayDateOnly,
         format,
+        journal,
       });
 
       return {
@@ -716,9 +725,10 @@ export async function expireMemberGuestConsent(params: {
   // RUNTIME reader, not the server binding: this module is reached from
   // `instrumentation.node.ts` through `cron-member-guest-consent-expiry`, where
   // `server-only` is a bare throw at import.
-  const clubTodayDateOnly = dateOnlyInstantOf(
-    clubToday(await readClubTimeZoneOutsideRequest()),
-  );
+  const clubZone = await readClubTimeZoneOutsideRequest();
+  const clubTodayDateOnly = dateOnlyInstantOf(clubToday(clubZone));
+  // #4627: the journal's posting context, resolved here for the same reason, on the same zone.
+  const journal = await resolveBookingMoneyPostingContext({ zone: clubZone });
 
   // The member the expiry was judged for, read under the lock below; the
   // blocked-claim fallback runs after the rollback and must match it (#3029 P2).
@@ -797,6 +807,7 @@ export async function expireMemberGuestConsent(params: {
         ...(paidByOrganiser(guest.booking) ? {} : { settlementMethod: "credit" as const }),
         today: clubTodayDateOnly,
         format,
+        journal,
       });
 
       return {

@@ -2,6 +2,7 @@ import { queueOrganiserExtraForChange } from "@/lib/organiser-extra-invoice-queu
 import { paidByOrganiserInternetBanking } from "@/lib/group-organiser-paid";
 import { isUnpaidConfirmedWholeLodge } from "@/lib/booking-payment-flow";
 import { postStoredBookingConfirmationLedgerLines } from "@/lib/booking-ledger-confirmation-sync";
+import { resolveBookingMoneyPostingContext, type MemberMoneyPostingContext } from "@/lib/member-money/doors";
 import { LEDGER_ROWS_OLDEST_FIRST } from "@/lib/payment-ledger-order";
 import {
   type Booking,
@@ -532,6 +533,8 @@ interface BatchModificationPreparation {
    * the field toggle, a settings read that belongs out here with the others.
    */
   readonly guestDietarySeeding: BookingGuestDietarySeeding;
+  /** #4627: the journal's posting context, a settings read that belongs out here too. */
+  readonly journal: MemberMoneyPostingContext;
 }
 
 /**
@@ -597,7 +600,7 @@ async function prepareBookingBatchModification(options: {
       options.adminOverride.requestedCheckIn,
     );
   }
-  const [memberGuestPolicy, subscriptionLockoutMode, xeroLockDates, guestDietarySeeding] =
+  const [memberGuestPolicy, subscriptionLockoutMode, xeroLockDates, guestDietarySeeding, journal] =
     await Promise.all([
       loadMemberGuestAddPolicy(),
       resolveSubscriptionLockoutMode(),
@@ -605,8 +608,9 @@ async function prepareBookingBatchModification(options: {
         audience: options.audience,
       }),
       resolveBookingGuestDietarySeeding(),
+      resolveBookingMoneyPostingContext(),
     ]);
-  return { memberGuestPolicy, subscriptionLockoutMode, xeroLockDates, guestDietarySeeding };
+  return { memberGuestPolicy, subscriptionLockoutMode, xeroLockDates, guestDietarySeeding, journal };
 }
 
 /**
@@ -2033,6 +2037,7 @@ export async function modifyBookingBatch({
     await queueOrganiserExtraForChange(tx, booking, bookingModification);
     await postModificationLedgerLines({
       store: tx,
+      journal: preparation.journal,
       bookingId,
       lodgeId: booking.lodgeId,
       bookingModification,
@@ -2042,7 +2047,7 @@ export async function modifyBookingBatch({
     // #4019: this new whole-lodge PAID path bypasses the ordinary settle.
     // Post after guest/night writes and the edit, at the final price only.
     if (lifecycle.zeroDollarAutoPaid && isUnpaidConfirmedWholeLodge(booking)) {
-      await postStoredBookingConfirmationLedgerLines(tx, bookingId);
+      await postStoredBookingConfirmationLedgerLines(tx, bookingId, preparation.journal);
     }
 
     // D-3813-6 (`INV-PAY-117`): a reduction on a booking paid by internet

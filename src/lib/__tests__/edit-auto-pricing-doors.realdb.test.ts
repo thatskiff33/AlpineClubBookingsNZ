@@ -39,6 +39,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vites
 import { raceSession } from "@/lib/__tests__/support/race-session-double";
 
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
+import { memberMoneyTestContext } from "./support/member-money-fixtures";
 
 // The quote route reads the session through `@/lib/auth`: the harness's one
 // shared double, set per call on `raceSession` and put back to signed out.
@@ -411,6 +412,7 @@ async function removeGuest(guestId: string) {
         actorRole: "ADMIN",
         today: TODAY,
         format: CLUB_FORMAT_TEST,
+        journal: memberMoneyTestContext(),
       }),
     { maxWait: 10_000, timeout: 20_000 },
   );

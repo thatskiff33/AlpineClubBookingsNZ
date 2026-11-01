@@ -11,6 +11,7 @@ import { NextRequest } from "next/server";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { raceSession } from "./support/race-session-double";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
+import { memberMoneyTestContext } from "./support/member-money-fixtures";
 import { assertSafeRaceDbUrl } from "./support/race-db-url";
 import { realElapsedMs } from "./helpers/clock";
 import type { SuiteEnvironmentRoleDeclaration } from "./helpers/environment-role";
@@ -231,7 +232,7 @@ async function readBooking() {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
       const { acquireLodgeCapacityLock } = await import("@/lib/lodge-capacity-lock");
       await acquireLodgeCapacityLock(tx, LODGE);
-      await poster.postStoredBookingConfirmationLedgerLines(tx, bookingId!);
+      await poster.postStoredBookingConfirmationLedgerLines(tx, bookingId!, memberMoneyTestContext());
     });
     expect(await prisma.bookingLedgerLine.count({ where: { bookingId: bookingId! } })).toBe(lines.length);
   }, 60_000);
@@ -307,7 +308,7 @@ async function readBooking() {
       const guest = await prisma.bookingGuest.findFirstOrThrow({ where: { bookingId: bookingId!, firstName: "Guest 2" } });
       await prisma.$transaction((tx) => removal.removeBookingGuestInTransaction({
         tx, bookingId: bookingId!, guestId: guest.id, actorMemberId: OFFICER, actorRole: "ADMIN",
-        today: dateOnlyInstantOf(todayAtClub), format: CLUB_FORMAT_TEST,
+        today: dateOnlyInstantOf(todayAtClub), format: CLUB_FORMAT_TEST, journal: memberMoneyTestContext(),
       }), { timeout: 30_000 });
     }
     const recovery = await import("@/lib/payment-recovery");

@@ -12,6 +12,8 @@ import { describe, expect, it, vi } from "vitest";
 vi.mock("server-only", () => ({}));
 const log = vi.hoisted(() => ({ warn: vi.fn(), error: vi.fn(), info: vi.fn() }));
 vi.mock("@/lib/logger", () => ({ default: log }));
+// #4627: the journal half runs on PostgreSQL (`booking-ledger-journal.realdb.test.ts`), not on this fake store.
+vi.mock("@/lib/member-money/doors", () => ({ postBookingLedgerJournal: vi.fn(async () => null) }));
 
 import { bookingLedgerBalance } from "@/lib/booking-ledger-balance";
 import { planCancellationChargeLines } from "@/lib/booking-ledger-cancellation-posting";
@@ -22,12 +24,15 @@ import { postModificationLedgerLines } from "@/lib/booking-ledger-modification-s
 import { buildBookingLedgerRows, type BookingLedgerPosting } from "@/lib/booking-ledger-write";
 import type { ModificationPricingSide } from "@/lib/booking-modification-lines";
 import { paidCancellationMoney } from "@/lib/paid-cancellation-money";
+import { memberMoneyTestContext } from "./support/member-money-fixtures";
 import type { CancellationRule } from "@/lib/policies/cancellation";
 
 const D1 = new Date("2026-08-01T00:00:00.000Z");
 const D2 = new Date("2026-08-02T00:00:00.000Z");
 
 type Row = ReturnType<typeof buildBookingLedgerRows>[number] & { id: string };
+
+const journal = memberMoneyTestContext();
 
 /**
  * The ledger table in memory, with the two unique constraints that matter here
@@ -146,7 +151,7 @@ function paidCancel(payment: {
 }
 
 async function cancel(book: ReturnType<typeof ledger>, keptCents: number): Promise<void> {
-  await postCancellationLedgerLines({ store: book.store, bookingId: "b1", lodgeId: "l1", keptCents, site: "test" });
+  await postCancellationLedgerLines({ store: book.store, journal, bookingId: "b1", lodgeId: "l1", keptCents, site: "test" });
 }
 
 function chargeLinesOf(book: ReturnType<typeof ledger>) {
@@ -299,6 +304,7 @@ describe("postCancellationLedgerLines: owed(b) is zero once the settlement lines
       ],
     });
     await postModificationLedgerLines({
+      journal,
       store: book.store,
       bookingId: "b1",
       lodgeId: "l1",
@@ -342,7 +348,7 @@ describe("postCancellationLedgerLines: owed(b) is zero once the settlement lines
   it("D1: the sync carries the policy figure through, so a kept line holding more than the fee is named for what it is", async () => {
     const book = ledger();
     confirm(book);
-    await postCancellationLedgerLines({ store: book.store, bookingId: "b1", lodgeId: "l1", keptCents: 8_000, policyKeptCents: 5_000, site: "test" });
+    await postCancellationLedgerLines({ store: book.store, journal, bookingId: "b1", lodgeId: "l1", keptCents: 8_000, policyKeptCents: 5_000, site: "test" });
     expect(book.rows.find((row) => row.kind === "CANCELLATION_FEE")).toMatchObject({
       amountCents: 8_000,
       narration: "Cancellation: amount retained (policy fee plus earlier charges)",

@@ -291,6 +291,7 @@ import {
   recordingBookingDouble,
 } from "@/lib/__tests__/support/hosting-participant-fence-double";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
+import { memberMoneyTestContext } from "./support/member-money-fixtures";
 
 const mockedAuth = vi.mocked(auth);
 const mockedCheckCapacity = vi.mocked(checkCapacity);
@@ -779,6 +780,7 @@ describe("guest removal prices remaining guests over their stored nights (#1093)
 
     await removeBookingGuestInTransaction({
       format: CLUB_FORMAT_TEST,
+      journal: memberMoneyTestContext(),
       today: CLUB_TODAY_DATE_ONLY,
       tx: tx as any,
       bookingId: "bk1",

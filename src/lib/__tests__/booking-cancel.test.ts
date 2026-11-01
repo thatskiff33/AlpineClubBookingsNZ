@@ -3138,6 +3138,8 @@ describe("cancelBooking credit refunds", () => {
       expect(cancellationLedger.postCancellationLedgerLines).toHaveBeenCalledTimes(1);
       expect(cancellationLedger.postCancellationLedgerLines).toHaveBeenCalledWith({
         store: mocks.lastTx,
+        // #4627: the context resolved before the claim's transaction.
+        journal: expect.objectContaining({ policyVersion: "booking-ledger-bridge-1" }),
         bookingId: "booking_1",
         lodgeId: "lodge_1",
         keptCents: 10000 - 5000,
@@ -4168,6 +4170,7 @@ describe("cancelBooking credit refunds", () => {
         expect(cancellationLedger.postCancellationLedgerLines).toHaveBeenCalledTimes(1);
         expect(cancellationLedger.postCancellationLedgerLines).toHaveBeenCalledWith({
           store: mocks.lastTx,
+          journal: expect.objectContaining({ policyVersion: "booking-ledger-bridge-1" }),
           bookingId: id,
           lodgeId: "lodge_1",
           keptCents: 0,

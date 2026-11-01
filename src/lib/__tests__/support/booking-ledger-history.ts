@@ -18,6 +18,7 @@ import { expect, vi } from "vitest";
 
 import type { CalendarDate } from "@/lib/club-time";
 import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
+import { memberMoneyTestContext } from "@/lib/__tests__/support/member-money-fixtures";
 
 const D1 = new Date("2027-08-01T00:00:00.000Z");
 const D2 = new Date("2027-08-02T00:00:00.000Z");
@@ -206,6 +207,7 @@ async function postedEdit(
     });
     await postModificationLedgerLines({
       store: tx,
+      journal: memberMoneyTestContext(),
       bookingId,
       lodgeId: booking.lodgeId,
       bookingModification: row,

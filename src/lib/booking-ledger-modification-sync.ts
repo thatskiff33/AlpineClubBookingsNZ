@@ -13,6 +13,11 @@ import "server-only";
  * Build in pure code, caught and logged; write unwrapped. A refused statement
  * has already aborted the transaction (#3590's review), so the write is never
  * the thing anyone is invited to swallow.
+ *
+ * #4627 (Ledger M3b, R02/R03 and R21): the lines then post into the
+ * member-money journal in the same transaction, from the context the door
+ * resolved before it opened, for a booking whose confirmation is there. A
+ * journal refusal is never caught: it rolls the edit or the closure back.
  */
 import type { BookingModification, ManualRefundTaskDirection, Prisma } from "@prisma/client";
 
@@ -36,8 +41,7 @@ import type { ModificationPricingSides } from "@/lib/booking-modification-pricin
 import type { BookingPriceRebase } from "@/lib/booking-review-price-rebase";
 import { rebasedPriceMovementCents } from "@/lib/booking-review-price-rebase-history";
 import logger from "@/lib/logger";
-
-type LedgerStore = Pick<Prisma.TransactionClient, "bookingLedgerLine">;
+import { postBookingLedgerJournal, type MemberMoneyPostingContext } from "@/lib/member-money/doors";
 
 /**
  * One priced edit's lines, anchored on the `BookingModification` row it just
@@ -52,13 +56,16 @@ type LedgerStore = Pick<Prisma.TransactionClient, "bookingLedgerLine">;
  */
 export async function postModificationLedgerLines({
   store,
+  journal,
   bookingId,
   lodgeId,
   bookingModification,
   sides,
   site,
 }: {
-  store: LedgerStore;
+  store: Prisma.TransactionClient;
+  /** The context the edit resolved before its transaction (`INV-LOCK-004`). */
+  journal: MemberMoneyPostingContext;
   bookingId: string;
   lodgeId: string;
   bookingModification: Pick<BookingModification, "id" | "priceDiffCents" | "changeFeeCents">;
@@ -97,6 +104,14 @@ export async function postModificationLedgerLines({
     return;
   }
   await writeBookingLedgerRows(store, rows);
+  if (rows.length > 0) {
+    await postBookingLedgerJournal(store, journal, {
+      bookingId,
+      lodgeId,
+      event: { kind: "modification", modificationId: bookingModificationId },
+      postingKeys: rows.flatMap((row) => (row.postingKey ? [row.postingKey] : [])),
+    });
+  }
 }
 
 /**
@@ -107,6 +122,7 @@ export async function postModificationLedgerLines({
  */
 export async function postReviewClosureLedgerLines({
   store,
+  journal,
   bookingId,
   lodgeId,
   manualRefundTaskId,
@@ -117,7 +133,9 @@ export async function postReviewClosureLedgerLines({
   officerMemberId,
   agreedGiveBackCents = null,
 }: {
-  store: Pick<Prisma.TransactionClient, "bookingLedgerLine" | "bookingGuest">;
+  store: Prisma.TransactionClient;
+  /** The context the closure resolved before its transaction (`INV-LOCK-004`). */
+  journal: MemberMoneyPostingContext;
   bookingId: string;
   lodgeId: string;
   manualRefundTaskId: string;
@@ -214,5 +232,14 @@ export async function postReviewClosureLedgerLines({
     );
   }
 
-  await writeBookingLedgerRows(store, [...repriceRows, ...shareRows]);
+  const rows = [...repriceRows, ...shareRows];
+  await writeBookingLedgerRows(store, rows);
+  if (rows.length > 0) {
+    await postBookingLedgerJournal(store, journal, {
+      bookingId,
+      lodgeId,
+      event: { kind: "review-close", taskId: manualRefundTaskId, officerMemberId },
+      postingKeys: rows.flatMap((row) => (row.postingKey ? [row.postingKey] : [])),
+    });
+  }
 }

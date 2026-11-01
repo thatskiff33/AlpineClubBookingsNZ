@@ -6,6 +6,7 @@ import { loadFeesAddedToAmountOwed } from "@/lib/booking-finished-stay-correctio
 import { bookingHasConfirmationLines } from "@/lib/booking-ledger-read";
 import { buildBookingLedgerRows, writeBookingLedgerRows } from "@/lib/booking-ledger-write";
 import logger from "@/lib/logger";
+import { postBookingLedgerJournal, type MemberMoneyPostingContext } from "@/lib/member-money/doors";
 
 /**
  * One charge poster after a successful PAID claim (INV-PAY-047). The caller
@@ -13,10 +14,15 @@ import logger from "@/lib/logger";
  * even if a later reversal and re-settle arrive with different guest/night ids.
  * Pure planning errors are logged; database reads/writes propagate because an
  * aborted transaction cannot recover by catching a statement failure (#3590).
+ *
+ * #4627 (Ledger M3b, R01): the same lines then post into the member-money
+ * journal, in this transaction, from the context the door resolved before it
+ * opened. A journal refusal is never caught: it rolls the settle back.
  */
 export async function postBookingConfirmationLedgerLines(
   tx: Prisma.TransactionClient,
   booking: ConfirmationPostingBooking & { payment?: { changeFeeCents: number } | null },
+  journal: MemberMoneyPostingContext,
 ): Promise<void> {
   const alreadyConfirmedOnLedger = await bookingHasConfirmationLines(tx, booking.id);
   // #3750 (owner, 7 Oct 2026, "Add fee to amount owed"): a fee a finished-stay
@@ -75,12 +81,21 @@ export async function postBookingConfirmationLedgerLines(
       "Booking ledger: some confirmation lines were already posted under their keys (#3595)"
     );
   }
+  if (ledgerRows.length > 0) {
+    await postBookingLedgerJournal(tx, journal, {
+      bookingId: booking.id,
+      lodgeId: booking.lodgeId,
+      event: { kind: "confirmation" },
+      postingKeys: ledgerRows.flatMap((row) => (row.postingKey ? [row.postingKey] : [])),
+    });
+  }
 }
 
 /** Re-read after an edit's guest/night writes, or a new approval's PAID write. */
 export async function postStoredBookingConfirmationLedgerLines(
   tx: Prisma.TransactionClient,
   bookingId: string,
+  journal: MemberMoneyPostingContext,
 ): Promise<void> {
   const booking = await tx.booking.findUniqueOrThrow({
     where: { id: bookingId },
@@ -89,5 +104,5 @@ export async function postStoredBookingConfirmationLedgerLines(
       payment: { select: { changeFeeCents: true } },
     },
   });
-  await postBookingConfirmationLedgerLines(tx, booking);
+  await postBookingConfirmationLedgerLines(tx, booking, journal);
 }

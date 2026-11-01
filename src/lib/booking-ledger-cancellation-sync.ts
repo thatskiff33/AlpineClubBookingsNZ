@@ -14,6 +14,10 @@ import "server-only";
  * Build in pure code, caught and logged; write unwrapped. A refused statement
  * has already aborted the transaction (#3590's review), so the write is never
  * the thing anyone is invited to swallow.
+ *
+ * #4627 (Ledger M3b, R04): the lines then post into the member-money journal
+ * in the same transaction, for a booking whose confirmation is there. A journal
+ * refusal is never caught: it rolls the cancellation back.
  */
 import type { Prisma } from "@prisma/client";
 
@@ -25,16 +29,28 @@ import {
 } from "@/lib/booking-ledger-read";
 import { buildBookingLedgerRows, writeBookingLedgerRows } from "@/lib/booking-ledger-write";
 import logger from "@/lib/logger";
+import { postBookingLedgerJournal, type MemberMoneyPostingContext } from "@/lib/member-money/doors";
+
+/**
+ * What the back-post of history passes instead of a posting context: it writes
+ * legacy lines for bookings confirmed before the ledger, whose journal history
+ * is M9's to back-post as a whole (#4627). Every live cancel path passes a
+ * context, resolved before its transaction.
+ */
+export const LEGACY_HISTORY_ONLY = "legacy-history-only" as const;
 
 export async function postCancellationLedgerLines({
   store,
+  journal,
   bookingId,
   lodgeId,
   keptCents,
   policyKeptCents,
   site,
 }: {
-  store: Pick<Prisma.TransactionClient, "bookingLedgerLine">;
+  store: Prisma.TransactionClient;
+  /** The context the cancel path resolved before its transaction, or the back-post's `LEGACY_HISTORY_ONLY`. */
+  journal: MemberMoneyPostingContext | typeof LEGACY_HISTORY_ONLY;
   bookingId: string;
   lodgeId: string;
   /**
@@ -86,4 +102,12 @@ export async function postCancellationLedgerLines({
     return;
   }
   await writeBookingLedgerRows(store, rows);
+  if (journal !== LEGACY_HISTORY_ONLY && rows.length > 0) {
+    await postBookingLedgerJournal(store, journal, {
+      bookingId,
+      lodgeId,
+      event: { kind: "cancellation" },
+      postingKeys: rows.flatMap((row) => (row.postingKey ? [row.postingKey] : [])),
+    });
+  }
 }

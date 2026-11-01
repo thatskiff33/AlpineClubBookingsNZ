@@ -8,6 +8,7 @@ import { getBookingEditPolicy } from "@/lib/booking-edit-policy";
 import { bookingFinalPriceCents } from "@/lib/booking-final-price";
 import { postModificationLedgerLines } from "@/lib/booking-ledger-modification-sync";
 import { postStoredBookingConfirmationLedgerLines } from "@/lib/booking-ledger-confirmation-sync";
+import type { MemberMoneyPostingContext } from "@/lib/member-money/doors";
 import {
   loadModificationLinesAuditFields,
   pricingSideFromStoredGuests,
@@ -194,9 +195,11 @@ export async function repriceBookingAfterGuestAcceptance(
     /** The club's day, resolved before the transaction opened (`INV-LOCK-004`). */
     todayAtClub: CalendarDate;
     format: ClubFormat;
+    /** #4627: the journal's posting context, resolved before the transaction opened (`INV-LOCK-004`). */
+    journal: MemberMoneyPostingContext;
   },
 ): Promise<GuestAcceptanceReprice> {
-  const { bookingId, todayAtClub, format } = params;
+  const { bookingId, todayAtClub, format, journal } = params;
   const booking = await tx.booking.findUnique({
     where: { id: bookingId },
     include: {
@@ -498,6 +501,7 @@ export async function repriceBookingAfterGuestAcceptance(
   await queueOrganiserExtraForChange(tx, booking, bookingModification);
   await postModificationLedgerLines({
     store: tx,
+    journal,
     bookingId,
     lodgeId,
     bookingModification,
@@ -506,7 +510,7 @@ export async function repriceBookingAfterGuestAcceptance(
   });
   // #4019: a whole-lodge PAID at $0 bypasses the settle; post as the other edit doors do.
   if (lifecycle.zeroDollarAutoPaid && isUnpaidConfirmedWholeLodge(booking)) {
-    await postStoredBookingConfirmationLedgerLines(tx, bookingId);
+    await postStoredBookingConfirmationLedgerLines(tx, bookingId, journal);
   }
   // D-3813-6 (`INV-PAY-117`): the cash share of a reduction on a booking paid
   // by internet banking or by hand is the treasurer's to send back.
