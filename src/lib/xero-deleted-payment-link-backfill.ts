@@ -17,20 +17,16 @@
  * Runbook: docs/MAINTENANCE.md, "Retire links to payments deleted in Xero".
  */
 import { prisma } from "@/lib/prisma";
-import {
-  callXeroApi,
-  isRetryableXeroTransientStatus,
-  XeroDailyLimitError,
-  XeroTransientOutageError,
-  type getAuthenticatedXeroClient,
-} from "@/lib/xero-api-client";
-import { getXeroErrorStatusCode } from "@/lib/xero-error-shape";
+import { callXeroApi, type getAuthenticatedXeroClient } from "@/lib/xero-api-client";
 import { xeroDailyBudgetAllowsDeferrableCall } from "@/lib/xero-api-usage";
 import {
   auditRetiredPaymentLinks,
   confirmXeroPaymentDeleted,
   DEFERRABLE_XERO_READ,
+  deferrableXeroFailure,
   DELETED_PAYMENT_LINK_SELECT,
+  documentNamedByLink,
+  groupByPayment,
   holdBackIfEveryLinkBlocked,
   retireDeletedXeroPaymentLink,
   type DeletedPaymentLinkRow,
@@ -102,16 +98,10 @@ async function listDeletedXeroPaymentIds(session: XeroClientSession) {
       );
       payments = response.body.payments ?? [];
     } catch (err) {
-      if (err instanceof XeroDailyLimitError || err instanceof XeroTransientOutageError) {
-        if (!err.preHttp) calls += 1;
-        break;
-      }
-      const statusCode = getXeroErrorStatusCode(err);
-      if (statusCode === 429 || isRetryableXeroTransientStatus(statusCode)) {
-        calls += 1;
-        break;
-      }
-      throw err;
+      const deferrable = deferrableXeroFailure(err);
+      if (!deferrable) throw err;
+      if (deferrable.called) calls += 1;
+      break;
     }
     calls += 1;
     pagesRead += 1;
@@ -165,10 +155,7 @@ export async function findDeletedPaymentLinkBackfill(
           select: DELETED_PAYMENT_LINK_SELECT,
           orderBy: [{ xeroObjectId: "asc" }, { id: "asc" }],
         });
-  const byPayment = new Map<string, DeletedPaymentLinkRow[]>();
-  for (const row of rows) {
-    byPayment.set(row.xeroObjectId, [...(byPayment.get(row.xeroObjectId) ?? []), row]);
-  }
+  const byPayment = groupByPayment(rows);
   return {
     source: direct ? "direct" : "list",
     listedDeletedPayments: listed.ids.size,
@@ -237,11 +224,10 @@ export async function applyDeletedPaymentLinkBackfill(
   return result;
 }
 
-function linkDocument(metadata: unknown): string {
-  const record = metadata && typeof metadata === "object" ? (metadata as Record<string, unknown>) : {};
-  if (typeof record.invoiceId === "string") return `invoice ${record.invoiceId}`;
-  if (typeof record.creditNoteId === "string") return `credit note ${record.creditNoteId}`;
-  return "no document recorded";
+function linkDocument(link: DeletedPaymentLinkRow): string {
+  const document = documentNamedByLink(link);
+  if (!document) return "no document recorded";
+  return document.kind === "INVOICE" ? `invoice ${document.id}` : `credit note ${document.id}`;
 }
 
 export function formatDeletedPaymentLinkBackfillReport(report: DeletedPaymentBackfillReport): string {
@@ -257,7 +243,7 @@ export function formatDeletedPaymentLinkBackfillReport(report: DeletedPaymentBac
   for (const candidate of report.candidates) {
     lines.push(`- payment ${candidate.paymentId} (Xero: DELETED)`);
     for (const link of candidate.links) {
-      lines.push(`    link ${link.id}: ${link.localModel} ${link.localId}, ${link.role}, ${linkDocument(link.metadata)}`);
+      lines.push(`    link ${link.id}: ${link.localModel} ${link.localId}, ${link.role}, ${linkDocument(link)}`);
     }
   }
   return lines.join("\n");

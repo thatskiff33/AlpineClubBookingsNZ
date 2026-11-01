@@ -12,7 +12,7 @@ const mocks = vi.hoisted(() => ({
   transaction: vi.fn(),
   xeroSyncOperationFindMany: vi.fn(),
   xeroSyncCursorFindUnique: vi.fn(),
-  xeroSyncCursorUpsert: vi.fn(),
+  xeroSyncCursorCreate: vi.fn(),
   xeroSyncOperationFindFirst: vi.fn(),
   memberFindMany: vi.fn(),
   memberFindUnique: vi.fn(),
@@ -145,8 +145,8 @@ vi.mock("@/lib/prisma", () => ({
     },
     xeroSyncCursor: {
       findUnique: mocks.xeroSyncCursorFindUnique,
-      // #4531: the deleted-payment re-check records when it last ran.
-      upsert: mocks.xeroSyncCursorUpsert,
+      // #4531: the deleted-payment re-check claims its slot before it runs.
+      create: mocks.xeroSyncCursorCreate,
     },
     member: {
       findMany: mocks.memberFindMany,
@@ -7551,7 +7551,7 @@ describe("runXeroInboundReconciliationCycle", () => {
     mocks.inboundFindMany.mockResolvedValue([]);
     mocks.xeroSyncCursorFindUnique.mockResolvedValue(null);
     mocks.linkFindMany.mockResolvedValue([]);
-    mocks.xeroSyncCursorUpsert.mockResolvedValue({});
+    mocks.xeroSyncCursorCreate.mockResolvedValue({});
     const options = {
       includeContactReconciliation: false,
       includeMembershipReconciliation: false,
@@ -7564,8 +7564,8 @@ describe("runXeroInboundReconciliationCycle", () => {
     expect(mocks.linkFindMany).toHaveBeenCalledWith(
       expect.objectContaining({ where: expect.objectContaining({ metadata: { path: ["deletionCheckPending"], equals: true } }) }),
     );
-    expect(mocks.xeroSyncCursorUpsert).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { resourceType_scope: { resourceType: "DELETED_PAYMENT_RECHECK", scope: "default" } } }),
+    expect(mocks.xeroSyncCursorCreate).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ resourceType: "DELETED_PAYMENT_RECHECK", scope: "default" }) }),
     );
 
     mocks.linkFindMany.mockRejectedValue(new Error("db hiccup"));

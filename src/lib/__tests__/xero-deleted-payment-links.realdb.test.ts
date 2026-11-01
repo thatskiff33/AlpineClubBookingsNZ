@@ -213,6 +213,43 @@ let invoicePayload: Record<string, unknown>;
     expect(await paymentLink(DELETED)).toMatchObject({ active: false, metadata: { status: "DELETED" } });
   });
 
+  it("a FAILED REQUEUE row that can never run again holds nothing back", async () => {
+    const { reconcileXeroInvoice } = await import("@/lib/xero-inbound/invoice");
+    await db.xeroSyncOperation.create({
+      data: {
+        direction: "OUTBOUND",
+        entityType: "INVOICE",
+        operationType: "REQUEUE",
+        localModel: "Payment",
+        localId: LOCAL_PAYMENT,
+        status: "FAILED",
+        replayable: false,
+        correlationKey: `${P}-failed-requeue`,
+      },
+    });
+
+    const result = await reconcileXeroInvoice(INVOICE, CLUB_FORMAT_TEST, { skipSubscriptionRefresh: true });
+
+    expect(result.deletedPaymentLinks).toMatchObject({ confirmedDeleted: [DELETED], retiredLinks: 1, blocked: [] });
+    expect(await paymentLink(DELETED)).toMatchObject({ active: false, metadata: { status: "DELETED" } });
+  });
+
+  it("two re-checks at once claim the slot once and ask Xero once", async () => {
+    const { reconcileXeroInvoice } = await import("@/lib/xero-inbound/invoice");
+    const { recheckPendingDeletedPaymentLinks } = await import("@/lib/xero-inbound/deleted-payment-links");
+    const { getAuthenticatedXeroClient } = await import("@/lib/xero-api-client");
+    getPayment.mockRejectedValueOnce(Object.assign(new Error("Xero 503"), { response: { statusCode: 503, headers: {} } }));
+    await reconcileXeroInvoice(INVOICE, CLUB_FORMAT_TEST, { skipSubscriptionRefresh: true });
+    getPayment.mockClear();
+    const session = await getAuthenticatedXeroClient();
+
+    const runs = await Promise.all([recheckPendingDeletedPaymentLinks({ session }), recheckPendingDeletedPaymentLinks({ session })]);
+
+    expect(runs.filter((run) => run.skipped)).toHaveLength(1);
+    expect(getPayment).toHaveBeenCalledTimes(1);
+    expect(await paymentLink(DELETED)).toMatchObject({ active: false, metadata: { status: "DELETED" } });
+  });
+
   it("the backfill's --apply retires through the same write, once", async () => {
     const { applyDeletedPaymentLinkBackfill } = await import("@/lib/xero-deleted-payment-link-backfill");
     const { getAuthenticatedXeroClient } = await import("@/lib/xero-api-client");

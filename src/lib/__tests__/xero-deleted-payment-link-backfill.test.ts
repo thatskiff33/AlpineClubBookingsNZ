@@ -20,6 +20,8 @@ vi.mock("@/lib/prisma", () => ({
   prisma: {
     xeroObjectLink: { findMany: h.linkFindMany, updateMany: h.linkUpdateMany, findUnique: h.linkFindUnique },
     xeroSyncOperation: { findFirst: h.opFindFirst },
+    // #4531 D2: a card receipt's link also waits for the booking's open supplementary invoice.
+    paymentTransaction: { findUnique: async () => ({ payment: { bookingId: "booking-1" } }) },
   },
 }));
 vi.mock("@/lib/xero-api-usage", () => ({ xeroDailyBudgetAllowsDeferrableCall: h.budgetAllows }));

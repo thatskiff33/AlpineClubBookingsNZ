@@ -15,8 +15,7 @@ import { buildEditFinancialReviewChargeReason } from "@/lib/payment-recovery-key
 import { exactPrefix } from "@/lib/prisma-exact-prefix";
 import { SUPPLEMENTARY_INVOICE_PAYMENT_ROLE } from "@/lib/xero-inbound/object-links";
 
-/** A receipt that will still run: live, or failed/partial and not resolved by hand. */
-import { XERO_RERUNNABLE_OPERATION_STATUSES as XERO_RERUNNABLE_RECEIPT_STATUSES } from "@/lib/xero-active-operation-statuses";
+import { XERO_RERUNNABLE_OPERATION_STATUSES } from "@/lib/xero-active-operation-statuses";
 
 /** The link the capture's Xero payment writes, on its `PaymentTransaction`. */
 export const ADDITIONAL_CAPTURE_PAYMENT_ROLE = "ADDITIONAL_CAPTURE_PAYMENT";
@@ -260,7 +259,8 @@ export async function anchorCaptureHasReceipt(
         // capture when it runs, so a paying invoice must not be put in front of it.
         (options?.queuedCounts === true &&
           receipt.manuallyResolvedAt === null &&
-          (XERO_RERUNNABLE_RECEIPT_STATUSES as readonly string[]).includes(receipt.status)),
+          // A receipt that will still run: live, or failed/partial and not resolved by hand.
+          (XERO_RERUNNABLE_OPERATION_STATUSES as readonly string[]).includes(receipt.status)),
     )
   );
 }

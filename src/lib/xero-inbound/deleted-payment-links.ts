@@ -34,8 +34,10 @@ import {
 } from "@/lib/xero-api-client";
 import { getXeroErrorStatusCode } from "@/lib/xero-error-shape";
 import { xeroDailyBudgetAllowsDeferrableCall } from "@/lib/xero-api-usage";
-import { getXeroSyncCursor, upsertXeroSyncCursor } from "@/lib/xero-sync-cursors";
-import { XERO_RERUNNABLE_OPERATION_STATUSES } from "@/lib/xero-active-operation-statuses";
+import { rerunnableOperationWhere } from "@/lib/xero-active-operation-statuses";
+import { isPrismaUniqueConstraintError } from "@/lib/prisma-errors";
+import { XERO_OUTBOX_ADDITIONAL_CAPTURE_RECEIPT_TYPE } from "@/lib/additional-capture-receipt-payload";
+import { XERO_OUTBOX_SUPPLEMENTARY_INVOICE_TYPE } from "@/lib/xero-operation-outbox-payload";
 import { quantifyXeroInvoiceCashCents } from "./invoice-paid-effects";
 import { sumListedXeroPaymentCents } from "./amounts";
 import { DEFAULT_XERO_SYNC_SCOPE, DELETED_PAYMENT_RECHECK_CURSOR_RESOURCE } from "./constants";
@@ -70,12 +72,17 @@ const DELETION_CHECK_ATTEMPTS_KEY = "deletionCheckAttempts";
 /** The operation that held a retire back, and when; rewritten on each check so a held link rotates to the back. */
 const DELETION_CHECK_BLOCKED_BY_KEY = "deletionCheckBlockedBy";
 const DELETION_CHECK_BLOCKED_AT_KEY = "deletionCheckBlockedAt";
+/** When the re-check stopped asking about a link Xero never answered for; the backfill is its remedy. */
+const DELETION_CHECK_GAVE_UP_AT_KEY = "deletionCheckGaveUpAt";
+/** Failed answers after which the scheduled re-check stops asking on its own. */
+export const MAX_DELETION_CHECK_ATTEMPTS = 5;
 const DELETION_CHECK_KEYS = [
   DELETION_CHECK_PENDING_KEY,
   DELETION_CHECK_PENDING_SINCE_KEY,
   DELETION_CHECK_ATTEMPTS_KEY,
   DELETION_CHECK_BLOCKED_BY_KEY,
   DELETION_CHECK_BLOCKED_AT_KEY,
+  DELETION_CHECK_GAVE_UP_AT_KEY,
 ];
 
 type XeroClientSession = Awaited<ReturnType<typeof getAuthenticatedXeroClient>>;
@@ -111,8 +118,9 @@ export function deletedPaymentCandidateRoles(document: DeletedPaymentDocument): 
 
 /**
  * The payments a payload lists, or why it cannot be trusted to list them all.
- * Every entry must carry an id and a readable amount: an entry without an id
- * may be the very payment a link names.
+ * Every entry must carry an id (an entry without one may be the very payment a
+ * link names), and every counted entry - every one not already DELETED - a
+ * readable amount.
  */
 function listedPayments(payments: PayloadPayment[] | undefined | null): PaymentsForAbsence & { cents?: number } {
   if (!Array.isArray(payments)) {
@@ -160,6 +168,19 @@ export function creditNotePaymentsForAbsence(creditNote: CreditNote): PaymentsFo
 
 export type DeletedPaymentConfirmation = "DELETED" | "LIVE" | "UNCONFIRMED" | "DEFERRED";
 
+/**
+ * Whether a failed deferrable read should wait for a later run rather than be
+ * judged: Xero's daily limit or outage cooldown (`called` only when the HTTP
+ * request went out), a rate limit (429) or a server error. Null otherwise.
+ */
+export function deferrableXeroFailure(err: unknown): { called: boolean } | null {
+  if (err instanceof XeroDailyLimitError || err instanceof XeroTransientOutageError) {
+    return { called: !err.preHttp };
+  }
+  const statusCode = getXeroErrorStatusCode(err);
+  return statusCode === 429 || isRetryableXeroTransientStatus(statusCode) ? { called: true } : null;
+}
+
 /** A read that can always wait: no retry, no backoff sleep, no global outage breaker. */
 export const DEFERRABLE_XERO_READ = { maxRetries: 0, maxTransientRetries: 0, armTransientBreaker: false } as const;
 
@@ -202,13 +223,8 @@ export async function confirmXeroPaymentDeleted(
     );
     payment = response.body.payments?.[0];
   } catch (err) {
-    if (err instanceof XeroDailyLimitError || err instanceof XeroTransientOutageError) {
-      return { confirmation: "DEFERRED", called: !err.preHttp };
-    }
-    const statusCode = getXeroErrorStatusCode(err);
-    if (statusCode === 429 || isRetryableXeroTransientStatus(statusCode)) {
-      return { confirmation: "DEFERRED", called: true };
-    }
+    const deferrable = deferrableXeroFailure(err);
+    if (deferrable) return { confirmation: "DEFERRED", called: deferrable.called };
     logger.warn({ err, paymentId }, "Xero did not answer whether a payment was deleted");
     return { confirmation: "UNCONFIRMED", called: true };
   }
@@ -275,30 +291,77 @@ function isPendingDeletionCheck(metadata: unknown): boolean {
 /** A Xero operation on a link's local row that may still run. */
 export type RerunnableOperation = { id: string; status: string; entityType: string; operationType: string };
 
+const RERUNNABLE_OPERATION_SELECT = { id: true, status: true, entityType: true, operationType: true } as const;
+
 /**
- * #4531 (PR #4596 review, finding 11): the Xero operation on this link's local
- * row (`localModel`/`localId`, a Payment or a PaymentTransaction) that may
- * still run: live, or FAILED/PARTIAL and not resolved by hand
- * (`XERO_RERUNNABLE_OPERATION_STATUSES`). Two such parents - the booking
- * change's card receipt and the primary invoice's PARTIAL payment repair - skip
- * re-sending a payment while an active link records it, and their payment is
- * made by a separate operation that writes the link before the parent
- * completes. While one is open, retiring the link would let its retry pay
- * again, so the retire waits.
+ * #4531 (PR #4596 review, finding 11 and D1/D2): a Xero operation that may run
+ * again (`rerunnableOperationWhere`: live, or FAILED/PARTIAL and replayable,
+ * not resolved in Xero) and would read this link's absence as "not recorded"
+ * and pay again.
+ *
+ * - On the link's own record (`localModel`/`localId`): the booking change's
+ *   card receipt, the primary invoice's PARTIAL payment repair and the kept
+ *   late capture's invoice skip re-sending a payment while an active link
+ *   records it, and their payment is made by a separate operation that writes
+ *   the link before the parent completes.
+ * - Across records, on the same booking: a card receipt (on a
+ *   `PaymentTransaction`) refuses while a supplementary invoice's payment link
+ *   (on a `BookingModification`) is active (`bookingHasPaidUnnamedSupplementary`),
+ *   and a supplementary invoice reads the receipts' links the other way
+ *   (`anchorCaptureHasReceipt`). So a supplementary payment link waits for the
+ *   booking's open receipts, and a receipt's link for its open supplementary
+ *   invoices.
  */
 export async function findRerunnableOperation(
   link: Pick<DeletedPaymentLinkRow, "localModel" | "localId">,
 ): Promise<RerunnableOperation | null> {
-  return prisma.xeroSyncOperation.findFirst({
-    where: {
-      localModel: link.localModel,
-      localId: link.localId,
-      status: { in: [...XERO_RERUNNABLE_OPERATION_STATUSES] },
-      manuallyResolvedAt: null,
-    },
-    select: { id: true, status: true, entityType: true, operationType: true },
+  const own = await prisma.xeroSyncOperation.findFirst({
+    where: { localModel: link.localModel, localId: link.localId, ...rerunnableOperationWhere() },
+    select: RERUNNABLE_OPERATION_SELECT,
     orderBy: { createdAt: "asc" },
   });
+  return own ?? findRerunnableOperationOnSameBooking(link);
+}
+
+async function findRerunnableOperationOnSameBooking(
+  link: Pick<DeletedPaymentLinkRow, "localModel" | "localId">,
+): Promise<RerunnableOperation | null> {
+  if (link.localModel === "BookingModification") {
+    const modification = await prisma.bookingModification.findUnique({ where: { id: link.localId }, select: { bookingId: true } });
+    if (!modification) return null;
+    const captures = await prisma.paymentTransaction.findMany({
+      where: { payment: { bookingId: modification.bookingId } },
+      select: { id: true },
+    });
+    if (captures.length === 0) return null;
+    return prisma.xeroSyncOperation.findFirst({
+      where: {
+        localModel: "PaymentTransaction",
+        localId: { in: captures.map((capture) => capture.id) },
+        queueType: XERO_OUTBOX_ADDITIONAL_CAPTURE_RECEIPT_TYPE,
+        ...rerunnableOperationWhere(),
+      },
+      select: RERUNNABLE_OPERATION_SELECT,
+      orderBy: { createdAt: "asc" },
+    });
+  }
+  if (link.localModel === "PaymentTransaction") {
+    const capture = await prisma.paymentTransaction.findUnique({
+      where: { id: link.localId },
+      select: { payment: { select: { bookingId: true } } },
+    });
+    if (!capture?.payment) return null;
+    return prisma.xeroSyncOperation.findFirst({
+      where: {
+        queueType: XERO_OUTBOX_SUPPLEMENTARY_INVOICE_TYPE,
+        requestPayload: { path: ["bookingId"], equals: capture.payment.bookingId },
+        ...rerunnableOperationWhere(),
+      },
+      select: RERUNNABLE_OPERATION_SELECT,
+      orderBy: { createdAt: "asc" },
+    });
+  }
+  return null;
 }
 
 type GuardedWriteResult = { result: "written" } | { result: "unchanged" } | { result: "blocked"; operation: RerunnableOperation };
@@ -383,13 +446,18 @@ async function markPendingDeletionCheck(
   await writeActivePaymentLink(link, (metadata) => {
     const record = asMetadataRecord(metadata);
     if (record[DELETION_CHECK_PENDING_KEY] === true && !failedAnswer && !blockedBy) return null;
-    const attempts = typeof record[DELETION_CHECK_ATTEMPTS_KEY] === "number" ? (record[DELETION_CHECK_ATTEMPTS_KEY] as number) : 0;
+    const attempts = (typeof record[DELETION_CHECK_ATTEMPTS_KEY] === "number" ? (record[DELETION_CHECK_ATTEMPTS_KEY] as number) : 0) + (failedAnswer ? 1 : 0);
+    // D5: after MAX_DELETION_CHECK_ATTEMPTS failed answers the re-check stops
+    // asking on its own; the link stays active, and only a fresh inbound read
+    // of its document or the backfill asks again.
+    const gaveUp = attempts >= MAX_DELETION_CHECK_ATTEMPTS;
     return {
       metadata: {
         ...record,
-        [DELETION_CHECK_PENDING_KEY]: true,
+        [DELETION_CHECK_PENDING_KEY]: !gaveUp,
         [DELETION_CHECK_PENDING_SINCE_KEY]: record[DELETION_CHECK_PENDING_SINCE_KEY] ?? new Date().toISOString(),
-        [DELETION_CHECK_ATTEMPTS_KEY]: attempts + (failedAnswer ? 1 : 0),
+        [DELETION_CHECK_ATTEMPTS_KEY]: attempts,
+        ...(gaveUp ? { [DELETION_CHECK_GAVE_UP_AT_KEY]: record[DELETION_CHECK_GAVE_UP_AT_KEY] ?? new Date().toISOString() } : {}),
         ...(blockedBy
           ? { [DELETION_CHECK_BLOCKED_BY_KEY]: blockedBy.id, [DELETION_CHECK_BLOCKED_AT_KEY]: new Date().toISOString() }
           : {}),
@@ -401,7 +469,7 @@ async function markPendingDeletionCheck(
 /** Clear the marker once Xero says the payment is live. */
 async function clearPendingDeletionCheck(link: DeletedPaymentLinkRow): Promise<void> {
   await writeActivePaymentLink(link, (metadata) =>
-    isPendingDeletionCheck(metadata) ? { metadata: withoutPendingMarker(metadata) } : null,
+    DELETION_CHECK_KEYS.some((key) => key in asMetadataRecord(metadata)) ? { metadata: withoutPendingMarker(metadata) } : null,
   );
 }
 
@@ -428,6 +496,8 @@ export type DeletedPaymentLinkOutcome = {
   deferred: string[];
   /** Payments with a link held back by an operation on its record that may still run. */
   blocked: string[];
+  /** Payments the re-check stopped asking about after `MAX_DELETION_CHECK_ATTEMPTS` failed answers. */
+  gaveUp: string[];
   retiredLinks: number;
 };
 
@@ -471,6 +541,14 @@ async function judgeCandidatePayments(input: {
     } else if (confirmation === "UNCONFIRMED") {
       outcome.unconfirmed.push(paymentId);
       for (const link of links) await markPendingDeletionCheck(link, true);
+      const attempts = asMetadataRecord(links[0]?.metadata)[DELETION_CHECK_ATTEMPTS_KEY];
+      if ((typeof attempts === "number" ? attempts : 0) + 1 >= MAX_DELETION_CHECK_ATTEMPTS) {
+        outcome.gaveUp.push(paymentId);
+        logger.error(
+          { paymentId, attempts: MAX_DELETION_CHECK_ATTEMPTS },
+          "Xero has not answered whether this payment was deleted; the scheduled re-check stopped asking - run the deleted-payment link backfill",
+        );
+      }
     } else {
       outcome.confirmedDeleted.push(paymentId);
       for (const link of links) {
@@ -484,8 +562,9 @@ async function judgeCandidatePayments(input: {
   return { outcome, retired };
 }
 
-function groupByPayment(rows: DeletedPaymentLinkRow[]): Map<string, DeletedPaymentLinkRow[]> {
-  const byPayment = new Map<string, DeletedPaymentLinkRow[]>();
+/** Candidate links grouped by Xero payment, so each payment is asked about once. */
+export function groupByPayment<Row extends { xeroObjectId: string }>(rows: Row[]): Map<string, Row[]> {
+  const byPayment = new Map<string, Row[]>();
   for (const row of rows) {
     byPayment.set(row.xeroObjectId, [...(byPayment.get(row.xeroObjectId) ?? []), row]);
   }
@@ -519,6 +598,7 @@ function emptyOutcome(skippedReason?: string): DeletedPaymentLinkOutcome {
     unconfirmed: [],
     deferred: [],
     blocked: [],
+    gaveUp: [],
     retiredLinks: 0,
   };
 }
@@ -582,29 +662,66 @@ export async function retireDeletedPaymentLinksAbsentFromPayload(input: {
 
 export type DeletedPaymentRecheckOutcome = DeletedPaymentLinkOutcome & { skipped?: true; reason?: string };
 
-/** The document a pending link names, so its answer is judged against it. */
-function documentNamedBy(links: DeletedPaymentLinkRow[]): DeletedPaymentDocument | undefined {
-  const metadata = asMetadataRecord(links[0]?.metadata);
-  if (typeof metadata.invoiceId === "string") return { kind: "INVOICE", id: metadata.invoiceId };
-  if (typeof metadata.creditNoteId === "string") return { kind: "CREDIT_NOTE", id: metadata.creditNoteId };
-  return undefined;
+/**
+ * #4531 (PR #4596 review D3): the Xero document a payment link records its
+ * payment on, chosen by role. A refund payment sits on its credit note, though
+ * its link also names the invoice it refunds; every other payment link names
+ * its invoice. Read by the re-check (so an answer is judged against that
+ * document) and by the backfill's report.
+ */
+export function documentNamedByLink(link: Pick<DeletedPaymentLinkRow, "role" | "metadata">): DeletedPaymentDocument | undefined {
+  const metadata = asMetadataRecord(link.metadata);
+  const key = link.role === REFUND_PAYMENT_ROLE ? "creditNoteId" : "invoiceId";
+  const id = metadata[key];
+  if (typeof id !== "string") return undefined;
+  return key === "creditNoteId" ? { kind: "CREDIT_NOTE", id } : { kind: "INVOICE", id };
+}
+
+/**
+ * D4: claim this run's slot before any call - create the cursor row once, or
+ * move its `lastSuccessfulSyncAt` forward only if the interval has passed, in
+ * one guarded write - so concurrent cycles (the cron and each webhook's kick)
+ * cannot each spend the cap. A run that dies after its claim waits a full
+ * interval; the links stay marked.
+ */
+async function claimRecheckSlot(minimumIntervalMs: number): Promise<boolean> {
+  const now = new Date();
+  try {
+    await prisma.xeroSyncCursor.create({
+      data: { resourceType: DELETED_PAYMENT_RECHECK_CURSOR_RESOURCE, scope: DEFAULT_XERO_SYNC_SCOPE, lastSuccessfulSyncAt: now },
+    });
+    return true;
+  } catch (error) {
+    if (!isPrismaUniqueConstraintError(error)) throw error;
+  }
+  const { count } = await prisma.xeroSyncCursor.updateMany({
+    where: {
+      resourceType: DELETED_PAYMENT_RECHECK_CURSOR_RESOURCE,
+      scope: DEFAULT_XERO_SYNC_SCOPE,
+      OR: [{ lastSuccessfulSyncAt: null }, { lastSuccessfulSyncAt: { lte: new Date(now.getTime() - minimumIntervalMs) } }],
+    },
+    data: { lastSuccessfulSyncAt: now },
+  });
+  return count === 1;
 }
 
 /**
  * The scheduled re-check, run by the inbound cron cycle: at most every
- * `DELETED_PAYMENT_RECHECK_MIN_INTERVAL_MS`, it asks Xero again about links
- * still marked pending, least recently written first (a failed answer rewrites
- * the link, so a payment Xero never answers for cannot starve the others),
- * under the same cap and budget gate. It reads only marked links: there is no
- * sweep of all links. Provider failures defer, never throw.
+ * `DELETED_PAYMENT_RECHECK_MIN_INTERVAL_MS` (claimed before any call), it asks
+ * Xero again about links still marked pending, least recently written first (a
+ * failed answer or a held-back check rewrites the link, so one cannot starve
+ * the others), under the same cap and budget gate. After
+ * `MAX_DELETION_CHECK_ATTEMPTS` failed answers a link is no longer pending, and
+ * only the backfill or a fresh read of its document asks again. It reads only
+ * marked links: there is no sweep of all links. Provider failures defer, never
+ * throw.
  */
 export async function recheckPendingDeletedPaymentLinks(options?: {
   minimumIntervalMs?: number;
   session?: XeroClientSession;
 }): Promise<DeletedPaymentRecheckOutcome> {
   const minimumIntervalMs = options?.minimumIntervalMs ?? DELETED_PAYMENT_RECHECK_MIN_INTERVAL_MS;
-  const cursor = await getXeroSyncCursor(DELETED_PAYMENT_RECHECK_CURSOR_RESOURCE, DEFAULT_XERO_SYNC_SCOPE);
-  if (minimumIntervalMs > 0 && cursor?.lastSuccessfulSyncAt && Date.now() - cursor.lastSuccessfulSyncAt.getTime() < minimumIntervalMs) {
+  if (!(await claimRecheckSlot(minimumIntervalMs))) {
     return { ...emptyOutcome(), skipped: true, reason: "Pending deleted-payment checks ran recently." };
   }
   const rows = await prisma.xeroObjectLink.findMany({
@@ -614,20 +731,19 @@ export async function recheckPendingDeletedPaymentLinks(options?: {
     take: 50,
   });
   const pending = rows.filter((row) => row.xeroObjectType === "PAYMENT" && row.active && isPendingDeletionCheck(row.metadata));
-  let result: { outcome: DeletedPaymentLinkOutcome; retired: DeletedPaymentLinkRow[] } = { outcome: emptyOutcome(), retired: [] };
-  if (pending.length > 0) {
-    result = await judgeCandidatePayments({
-      session: options?.session ?? (await getAuthenticatedXeroClient()),
-      byPayment: groupByPayment(pending),
-      expectedFor: documentNamedBy,
-      workflow: "recheckPendingDeletedPaymentLinks",
-    });
-    await auditRetiredPaymentLinks(DELETED_PAYMENT_RETIRED_AUDIT_SOURCE, result.retired, { recheck: true });
-  }
-  await upsertXeroSyncCursor({
-    resourceType: DELETED_PAYMENT_RECHECK_CURSOR_RESOURCE,
-    scope: DEFAULT_XERO_SYNC_SCOPE,
-    lastSuccessfulSyncAt: new Date(),
+  if (pending.length === 0) return emptyOutcome();
+  const { outcome, retired } = await judgeCandidatePayments({
+    session: options?.session ?? (await getAuthenticatedXeroClient()),
+    byPayment: groupByPayment(pending),
+    expectedFor: (links) => (links[0] ? documentNamedByLink(links[0]) : undefined),
+    workflow: "recheckPendingDeletedPaymentLinks",
   });
-  return result.outcome;
+  await auditRetiredPaymentLinks(DELETED_PAYMENT_RETIRED_AUDIT_SOURCE, retired, { recheck: true });
+  if (outcome.blocked.length > 0 || outcome.unconfirmed.length > 0 || outcome.deferred.length > 0) {
+    logger.warn(
+      { blocked: outcome.blocked, unconfirmed: outcome.unconfirmed, deferred: outcome.deferred, gaveUp: outcome.gaveUp },
+      "Links pending a deleted-payment check were left active by the scheduled re-check",
+    );
+  }
+  return outcome;
 }

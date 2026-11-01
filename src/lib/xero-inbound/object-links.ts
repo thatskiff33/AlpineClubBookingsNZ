@@ -58,23 +58,27 @@ export const SUPPLEMENTARY_INVOICE_PAYMENT_ROLE = "SUPPLEMENTARY_INVOICE_PAYMENT
 export const SUBSCRIPTION_PAYMENT_ROLE = "SUBSCRIPTION_PAYMENT";
 export const REFUND_PAYMENT_ROLE = "REFUND_PAYMENT";
 
+/**
+ * #4531 (`INV-SSOT`): an invoice link's role -> the role of a payment on that
+ * invoice. The one map `getDerivedInboundPaymentRole` reads and
+ * `INVOICE_DERIVED_PAYMENT_ROLES` is built from, so an invoice role added here
+ * is both derived and a deleted-payment candidate.
+ */
+export const INVOICE_LINK_PAYMENT_ROLES = {
+  PRIMARY_INVOICE: INVOICE_PAYMENT_ROLE,
+  SUPPLEMENTARY_INVOICE: SUPPLEMENTARY_INVOICE_PAYMENT_ROLE,
+  SUBSCRIPTION_INVOICE: SUBSCRIPTION_PAYMENT_ROLE,
+} as const;
+
 export function getDerivedInboundPaymentRole(link: Pick<ResolvedXeroObjectLink, "xeroObjectType" | "role">) {
   if (link.xeroObjectType === "PAYMENT") {
     return link.role;
   }
 
-  switch (link.role) {
-    case "PRIMARY_INVOICE":
-      return INVOICE_PAYMENT_ROLE;
-    case "SUPPLEMENTARY_INVOICE":
-      return SUPPLEMENTARY_INVOICE_PAYMENT_ROLE;
-    case "SUBSCRIPTION_INVOICE":
-      return SUBSCRIPTION_PAYMENT_ROLE;
-    case "REFUND_CREDIT_NOTE":
-      return REFUND_PAYMENT_ROLE;
-    default:
-      return null;
+  if (Object.hasOwn(INVOICE_LINK_PAYMENT_ROLES, link.role)) {
+    return INVOICE_LINK_PAYMENT_ROLES[link.role as keyof typeof INVOICE_LINK_PAYMENT_ROLES];
   }
+  return link.role === "REFUND_CREDIT_NOTE" ? REFUND_PAYMENT_ROLE : null;
 }
 
 /**
@@ -93,11 +97,7 @@ export const BOOKING_INVOICE_PAYMENT_ROLES = [
  * candidate on an invoice read; a refund payment naming the invoice sits on its
  * credit note, never in the invoice's `Payments`.
  */
-export const INVOICE_DERIVED_PAYMENT_ROLES = [
-  INVOICE_PAYMENT_ROLE,
-  SUPPLEMENTARY_INVOICE_PAYMENT_ROLE,
-  SUBSCRIPTION_PAYMENT_ROLE,
-] as const;
+export const INVOICE_DERIVED_PAYMENT_ROLES: readonly string[] = Object.values(INVOICE_LINK_PAYMENT_ROLES);
 
 /** #4531: the status Xero gives a payment it has deleted (reversed). Terminal: never live again. */
 export const DELETED_XERO_PAYMENT_STATUS = "DELETED";

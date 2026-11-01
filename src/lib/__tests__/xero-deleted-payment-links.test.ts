@@ -28,12 +28,30 @@ type LinkRow = {
   updatedAt: Date;
 };
 
-type OperationRow = { id: string; localModel: string; localId: string; status: string; manuallyResolvedAt: Date | null; entityType: string; operationType: string };
+type OperationRow = {
+  id: string;
+  localModel: string | null;
+  localId: string | null;
+  status: string;
+  manuallyResolvedAt: Date | null;
+  replayable: boolean;
+  queueType: string | null;
+  requestPayload: unknown;
+  entityType: string;
+  operationType: string;
+  createdAt: Date;
+};
+type CursorRow = { resourceType: string; scope: string; lastSuccessfulSyncAt: Date | null };
 
 const h = vi.hoisted(() => ({
   store: [] as LinkRow[],
   operations: [] as OperationRow[],
+  cursors: [] as CursorRow[],
+  modifications: [] as Array<{ id: string; bookingId: string }>,
+  captures: [] as Array<{ id: string; bookingId: string }>,
   opFindFirst: vi.fn(),
+  cursorCreate: vi.fn(),
+  cursorUpdateMany: vi.fn(),
   tick: 0,
   linkFindMany: vi.fn(),
   linkUpdateMany: vi.fn(),
@@ -42,8 +60,6 @@ const h = vi.hoisted(() => ({
   writeAudit: vi.fn(),
   getPayment: vi.fn(),
   callOptions: [] as unknown[],
-  getCursor: vi.fn(),
-  upsertCursor: vi.fn(),
   getClient: vi.fn(),
 }));
 
@@ -51,11 +67,22 @@ vi.mock("@/lib/prisma", () => ({
   prisma: {
     xeroObjectLink: { findMany: h.linkFindMany, updateMany: h.linkUpdateMany, findUnique: h.linkFindUnique },
     xeroSyncOperation: { findFirst: h.opFindFirst },
+    xeroSyncCursor: { create: h.cursorCreate, updateMany: h.cursorUpdateMany },
+    bookingModification: {
+      findUnique: async (args: { where: { id: string } }) => h.modifications.find((row) => row.id === args.where.id) ?? null,
+    },
+    paymentTransaction: {
+      findMany: async (args: { where: { payment: { bookingId: string } } }) =>
+        h.captures.filter((row) => row.bookingId === args.where.payment.bookingId).map((row) => ({ id: row.id })),
+      findUnique: async (args: { where: { id: string } }) => {
+        const row = h.captures.find((capture) => capture.id === args.where.id);
+        return row ? { payment: { bookingId: row.bookingId } } : null;
+      },
+    },
   },
 }));
 vi.mock("@/lib/xero-api-usage", () => ({ xeroDailyBudgetAllowsDeferrableCall: h.budgetAllows }));
 vi.mock("@/lib/xero-inbound/audit", () => ({ writeXeroInboundAuditLogs: h.writeAudit }));
-vi.mock("@/lib/xero-sync-cursors", () => ({ getXeroSyncCursor: h.getCursor, upsertXeroSyncCursor: h.upsertCursor }));
 vi.mock("@/lib/logger", () => ({ default: { warn: vi.fn(), info: vi.fn(), error: vi.fn(), debug: vi.fn() } }));
 vi.mock("@/lib/xero-api-client", async (importOriginal) => {
   const actual = (await importOriginal()) as typeof import("@/lib/xero-api-client");
@@ -76,13 +103,15 @@ import {
   creditNotePaymentsForAbsence,
   DELETED_PAYMENT_RECHECK_MIN_INTERVAL_MS,
   deletedPaymentCandidateRoles,
+  documentNamedByLink,
   invoicePaymentsForAbsence,
+  MAX_DELETION_CHECK_ATTEMPTS,
   MAX_DELETED_PAYMENT_CONFIRMATIONS_PER_RECONCILE,
   recheckPendingDeletedPaymentLinks,
   retireDeletedPaymentLinksAbsentFromPayload,
   retireDeletedXeroPaymentLink,
 } from "@/lib/xero-inbound/deleted-payment-links";
-import { getDerivedInboundPaymentRole, INVOICE_DERIVED_PAYMENT_ROLES } from "@/lib/xero-inbound/object-links";
+import { getDerivedInboundPaymentRole, INVOICE_DERIVED_PAYMENT_ROLES, INVOICE_LINK_PAYMENT_ROLES } from "@/lib/xero-inbound/object-links";
 
 const INVOICE = "inv-4531";
 const NOTE = "cn-4531";
@@ -94,14 +123,14 @@ function readPath(value: unknown, path: string[]): unknown {
   return path.reduce<unknown>((current, key) => (current && typeof current === "object" ? (current as Record<string, unknown>)[key] : undefined), value);
 }
 
-function matches(row: LinkRow, where: Record<string, unknown>): boolean {
+function matches(row: object, where: Record<string, unknown>): boolean {
   for (const [key, condition] of Object.entries(where)) {
     if (key === "OR") {
       if (!(condition as Array<Record<string, unknown>>).some((branch) => matches(row, branch))) return false;
       continue;
     }
     const value = (row as Record<string, unknown>)[key];
-    if (key === "metadata") {
+    if (condition && typeof condition === "object" && !(condition instanceof Date) && ("path" in condition || "equals" in condition)) {
       const filter = condition as { path?: string[]; equals: unknown };
       if (filter.path) {
         if (!isDeepStrictEqual(readPath(value, filter.path), filter.equals)) return false;
@@ -117,11 +146,12 @@ function matches(row: LinkRow, where: Record<string, unknown>): boolean {
       continue;
     }
     if (condition && typeof condition === "object") {
-      const operators = condition as { in?: unknown[]; notIn?: unknown[] };
-      const unknownOperator = Object.keys(operators).find((operator) => operator !== "in" && operator !== "notIn");
+      const operators = condition as { in?: unknown[]; notIn?: unknown[]; lte?: Date };
+      const unknownOperator = Object.keys(operators).find((operator) => !["in", "notIn", "lte"].includes(operator));
       if (unknownOperator) throw new Error(`The link double does not understand ${key}.${unknownOperator}`);
       if (operators.in && !operators.in.includes(value)) return false;
       if (operators.notIn && operators.notIn.includes(value)) return false;
+      if (operators.lte && !(value instanceof Date && value.getTime() <= operators.lte.getTime())) return false;
       continue;
     }
     if (value !== condition) return false;
@@ -152,16 +182,23 @@ function honourQueries() {
     const row = h.store.find((candidate) => candidate.id === args.where.id);
     return row ? { ...row } : null;
   });
-  h.opFindFirst.mockImplementation(async (args: { where: { localModel: string; localId: string; status: { in: string[] }; manuallyResolvedAt: null } }) => {
-    const { where } = args;
-    const row = h.operations.find(
-      (operation) =>
-        operation.localModel === where.localModel &&
-        operation.localId === where.localId &&
-        where.status.in.includes(operation.status) &&
-        (where.manuallyResolvedAt !== null || operation.manuallyResolvedAt === null),
-    );
+  h.opFindFirst.mockImplementation(async (args: { where: Record<string, unknown> }) => {
+    const row = [...h.operations]
+      .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
+      .find((operation) => matches(operation, args.where));
     return row ? { id: row.id, status: row.status, entityType: row.entityType, operationType: row.operationType } : null;
+  });
+  h.cursorCreate.mockImplementation(async (args: { data: CursorRow }) => {
+    if (h.cursors.some((row) => row.resourceType === args.data.resourceType && row.scope === args.data.scope)) {
+      throw Object.assign(new Error("Unique constraint failed"), { code: "P2002" });
+    }
+    h.cursors.push({ ...args.data });
+    return args.data;
+  });
+  h.cursorUpdateMany.mockImplementation(async (args: { where: Record<string, unknown>; data: Partial<CursorRow> }) => {
+    const hit = h.cursors.filter((row) => matches(row, args.where));
+    for (const row of hit) Object.assign(row, args.data);
+    return { count: hit.length };
   });
 }
 
@@ -172,8 +209,12 @@ function seedOperation(overrides: Partial<OperationRow>): OperationRow {
     localId: "pay-local-1",
     status: "PARTIAL",
     manuallyResolvedAt: null,
+    replayable: true,
+    queueType: null,
+    requestPayload: null,
     entityType: "INVOICE",
     operationType: "CREATE",
+    createdAt: new Date(Date.UTC(2026, 5, 29, 0, 0, h.operations.length)),
     ...overrides,
   };
   h.operations.push(row);
@@ -222,9 +263,11 @@ beforeEach(() => {
   vi.clearAllMocks();
   h.store.length = 0;
   h.operations.length = 0;
+  h.cursors.length = 0;
+  h.modifications.length = 0;
+  h.captures.length = 0;
   h.callOptions.length = 0;
   h.budgetAllows.mockResolvedValue(true);
-  h.getCursor.mockResolvedValue(null);
   h.getClient.mockResolvedValue(session);
   honourQueries();
 });
@@ -277,11 +320,15 @@ describe("which payloads may nominate a candidate (#4531)", () => {
 });
 
 describe("which roles a document nominates (#4531)", () => {
-  it("an invoice nominates exactly the payment roles its own reconcile derives", () => {
-    const derived = ["PRIMARY_INVOICE", "SUPPLEMENTARY_INVOICE", "SUBSCRIPTION_INVOICE"].map((role) =>
-      getDerivedInboundPaymentRole({ xeroObjectType: "INVOICE", role }),
-    );
-    expect([...INVOICE_DERIVED_PAYMENT_ROLES].sort()).toEqual([...derived].sort());
+  it("an invoice nominates exactly the payment roles its own reconcile derives, from one map", () => {
+    // Every invoice role the derivation knows is in the map, so a new one is a candidate too.
+    for (const [invoiceRole, paymentRole] of Object.entries(INVOICE_LINK_PAYMENT_ROLES)) {
+      expect(getDerivedInboundPaymentRole({ xeroObjectType: "INVOICE", role: invoiceRole })).toBe(paymentRole);
+      expect(INVOICE_DERIVED_PAYMENT_ROLES).toContain(paymentRole);
+    }
+    expect(INVOICE_DERIVED_PAYMENT_ROLES).toHaveLength(Object.keys(INVOICE_LINK_PAYMENT_ROLES).length);
+    expect(getDerivedInboundPaymentRole({ xeroObjectType: "INVOICE", role: "GROUP_SETTLEMENT_INVOICE" })).toBeNull();
+    expect(getDerivedInboundPaymentRole({ xeroObjectType: "CREDIT_NOTE", role: "REFUND_CREDIT_NOTE" })).toBe("REFUND_PAYMENT");
     expect(deletedPaymentCandidateRoles({ kind: "INVOICE", id: INVOICE })).toEqual(INVOICE_DERIVED_PAYMENT_ROLES);
     expect(deletedPaymentCandidateRoles({ kind: "CREDIT_NOTE", id: NOTE })).toEqual(["REFUND_PAYMENT"]);
   });
@@ -515,8 +562,11 @@ describe("an operation that may still run holds the retire back (#4531, PR #4596
     expect(h.opFindFirst.mock.calls[0][0].where).toEqual({
       localModel: "Payment",
       localId: "pay-local-1",
-      status: { in: ["PENDING", "RUNNING", "WAITING_PAYMENT", "FAILED", "PARTIAL"] },
       manuallyResolvedAt: null,
+      OR: [
+        { status: { in: ["PENDING", "RUNNING", "WAITING_PAYMENT"] } },
+        { status: { in: ["FAILED", "PARTIAL"] }, replayable: true },
+      ],
     });
     expect(stored("link-deleted-pay-local-1")).toMatchObject({
       active: true,
@@ -565,6 +615,52 @@ describe("an operation that may still run holds the retire back (#4531, PR #4596
     expect(stored("link-deleted-booking-1").active).toBe(true);
   });
 
+  it("a FAILED row that can never run again (not replayable, like a REQUEUE row) holds nothing back", async () => {
+    seedLink("deleted");
+    seedOperation({ status: "FAILED", replayable: false, operationType: "REQUEUE" });
+    h.getPayment.mockResolvedValue(xeroPayment("deleted", "DELETED"));
+    expect(await retire()).toMatchObject({ retiredLinks: 1, blocked: [] });
+  });
+
+  it("a replayable PARTIAL holds the retire back, and so does a live non-replayable REQUEUE row", async () => {
+    seedLink("deleted");
+    const partial = seedOperation({ status: "PARTIAL", replayable: true });
+    expect(await retire()).toMatchObject({ blocked: ["deleted"], retiredLinks: 0 });
+    partial.status = "SUCCEEDED";
+    seedOperation({ status: "RUNNING", replayable: false, operationType: "REQUEUE" });
+    expect(await retire()).toMatchObject({ blocked: ["deleted"], retiredLinks: 0 });
+  });
+
+  it("a supplementary invoice's payment link waits for the booking's open card receipt", async () => {
+    h.modifications.push({ id: "mod-1", bookingId: "booking-1" });
+    h.captures.push({ id: "txn-1", bookingId: "booking-1" });
+    seedLink("supplementary-deleted", { localModel: "BookingModification", localId: "mod-1", role: "SUPPLEMENTARY_INVOICE_PAYMENT" });
+    const receipt = seedOperation({ localModel: "PaymentTransaction", localId: "txn-1", status: "FAILED", queueType: "ADDITIONAL_CAPTURE_RECEIPT" });
+    h.getPayment.mockResolvedValue(xeroPayment("supplementary-deleted", "DELETED"));
+    const scope = [{ localModel: "BookingModification", localId: "mod-1" }];
+    const run = () =>
+      retireDeletedPaymentLinksAbsentFromPayload({ session, document: { kind: "INVOICE", id: INVOICE }, payments: invoicePaymentsForAbsence(invoice()), localScope: scope });
+
+    expect(await run()).toMatchObject({ blocked: ["supplementary-deleted"], retiredLinks: 0 });
+    receipt.status = "SUCCEEDED";
+    expect(await run()).toMatchObject({ retiredLinks: 1, blocked: [] });
+  });
+
+  it("a card receipt's payment link waits for the booking's open supplementary invoice", async () => {
+    h.captures.push({ id: "txn-1", bookingId: "booking-1" });
+    const row = seedLink("capture-deleted", {
+      localModel: "PaymentTransaction",
+      localId: "txn-1",
+      role: "ADDITIONAL_CAPTURE_PAYMENT",
+      metadata: { invoiceId: INVOICE, deletionCheckPending: true },
+    });
+    seedOperation({ localModel: "BookingModification", localId: "mod-1", status: "PENDING", queueType: "SUPPLEMENTARY_INVOICE", requestPayload: { bookingId: "booking-1" } });
+    seedOperation({ localModel: "BookingModification", localId: "mod-9", status: "PENDING", queueType: "SUPPLEMENTARY_INVOICE", requestPayload: { bookingId: "another-booking" } });
+    expect(await retireDeletedXeroPaymentLink(row)).toBe("blocked");
+    h.operations.shift();
+    expect(await retireDeletedXeroPaymentLink({ ...row, metadata: stored(row.id).metadata })).toBe("retired");
+  });
+
   it("a held link is rewritten on every check, so it moves behind the others", async () => {
     const row = seedLink("deleted", { metadata: { invoiceId: INVOICE, deletionCheckPending: true } });
     seedOperation({ status: "PARTIAL" });
@@ -603,11 +699,10 @@ describe("the scheduled re-check of pending links (#4531)", () => {
   const pending = (attempts = 0) => ({ deletionCheckPending: true, deletionCheckPendingSince: "2026-06-29T00:00:00.000Z", deletionCheckAttempts: attempts });
 
   it("waits out its interval without reading a link", async () => {
-    h.getCursor.mockResolvedValue({ lastSuccessfulSyncAt: new Date(Date.now() - DELETED_PAYMENT_RECHECK_MIN_INTERVAL_MS + 60_000) });
+    h.cursors.push({ resourceType: "DELETED_PAYMENT_RECHECK", scope: "default", lastSuccessfulSyncAt: new Date(Date.now() - DELETED_PAYMENT_RECHECK_MIN_INTERVAL_MS + 60_000) });
     const outcome = await recheckPendingDeletedPaymentLinks();
     expect(outcome).toMatchObject({ skipped: true, xeroCalls: 0 });
     expect(h.linkFindMany).not.toHaveBeenCalled();
-    expect(h.upsertCursor).not.toHaveBeenCalled();
   });
 
   it("reads only marked links, and with none asks Xero nothing", async () => {
@@ -620,7 +715,7 @@ describe("the scheduled re-check of pending links (#4531)", () => {
     });
     expect(outcome.candidatePayments).toBe(0);
     expect(h.getClient).not.toHaveBeenCalled();
-    expect(h.upsertCursor).toHaveBeenCalledWith(expect.objectContaining({ resourceType: "DELETED_PAYMENT_RECHECK", lastSuccessfulSyncAt: expect.any(Date) }));
+    expect(h.cursors).toEqual([{ resourceType: "DELETED_PAYMENT_RECHECK", scope: "default", lastSuccessfulSyncAt: expect.any(Date) }]);
   });
 
   it("retires a confirmed one, clears a live one and counts a failed answer", async () => {
@@ -655,6 +750,45 @@ describe("the scheduled re-check of pending links (#4531)", () => {
     h.getPayment.mockClear();
     await recheckPendingDeletedPaymentLinks({ minimumIntervalMs: 0 });
     expect(h.getPayment.mock.calls[0][1]).toBe(ids.at(-1));
+  });
+
+  it("judges a pending refund payment against its credit note, not the invoice it refunds", async () => {
+    const refund = { role: "REFUND_PAYMENT", metadata: { invoiceId: INVOICE, creditNoteId: NOTE, ...pending() } };
+    expect(documentNamedByLink(refund)).toEqual({ kind: "CREDIT_NOTE", id: NOTE });
+    expect(documentNamedByLink({ role: "INVOICE_PAYMENT", metadata: { invoiceId: INVOICE, creditNoteId: NOTE } })).toEqual({ kind: "INVOICE", id: INVOICE });
+    seedLink("refund-deleted", refund);
+    h.getPayment.mockResolvedValue({ body: { payments: [{ paymentID: "refund-deleted", status: "DELETED", creditNote: { creditNoteID: "another-note" } }] } });
+    expect(await recheckPendingDeletedPaymentLinks()).toMatchObject({ unconfirmed: ["refund-deleted"], retiredLinks: 0 });
+  });
+
+  it("claims its slot before any call, so two cycles at once spend the cap once", async () => {
+    seedLink("deleted", { metadata: { invoiceId: INVOICE, ...pending() } });
+    h.getPayment.mockResolvedValue(xeroPayment("deleted", "AUTHORISED"));
+    h.cursors.push({ resourceType: "DELETED_PAYMENT_RECHECK", scope: "default", lastSuccessfulSyncAt: new Date(Date.now() - DELETED_PAYMENT_RECHECK_MIN_INTERVAL_MS - 1) });
+    const [first, second] = await Promise.all([recheckPendingDeletedPaymentLinks(), recheckPendingDeletedPaymentLinks()]);
+    expect([first.skipped, second.skipped].filter(Boolean)).toHaveLength(1);
+    expect(h.getPayment).toHaveBeenCalledTimes(1);
+  });
+
+  it(`stops asking on its own after ${MAX_DELETION_CHECK_ATTEMPTS} unanswered attempts`, async () => {
+    seedLink("silent", { metadata: { invoiceId: INVOICE, ...pending(MAX_DELETION_CHECK_ATTEMPTS - 1) } });
+    h.getPayment.mockRejectedValue(new Error("404 Not Found"));
+    const outcome = await recheckPendingDeletedPaymentLinks({ minimumIntervalMs: 0 });
+    expect(outcome).toMatchObject({ unconfirmed: ["silent"], gaveUp: ["silent"] });
+    expect(stored("link-silent-pay-local-1")).toMatchObject({
+      active: true,
+      metadata: { deletionCheckPending: false, deletionCheckAttempts: MAX_DELETION_CHECK_ATTEMPTS, deletionCheckGaveUpAt: "2026-07-01T00:00:00.000Z" },
+    });
+    h.getPayment.mockClear();
+    expect(await recheckPendingDeletedPaymentLinks({ minimumIntervalMs: 0 })).toMatchObject({ candidatePayments: 0 });
+    expect(h.getPayment).not.toHaveBeenCalled();
+  });
+
+  it("an inbound read that finds a given-up payment live clears its marker", async () => {
+    seedLink("live", { metadata: { invoiceId: INVOICE, deletionCheckPending: false, deletionCheckAttempts: 5, deletionCheckGaveUpAt: "x" } });
+    h.getPayment.mockResolvedValue(xeroPayment("live", "AUTHORISED"));
+    await retireDeletedPaymentLinksAbsentFromPayload({ session, document: { kind: "INVOICE", id: INVOICE }, payments: invoicePaymentsForAbsence(invoice()), localScope: SCOPE });
+    expect(stored("link-live-pay-local-1").metadata).toEqual({ invoiceId: INVOICE });
   });
 
   it("judges a pending link against the document it names", async () => {
