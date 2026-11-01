@@ -349,7 +349,7 @@ function answerRefundsAsStripeWould(params: { paymentIntentId: string; amountCen
         await resolveManualRefundTask({
           taskId: task.id, resolution: "dismissed", note: "No bank payment was made.",
           actingMemberId: OFFICER_ID, confirmedAmountCents: null,
-          direction: "REFUND_TO_MEMBER", recordedNightPrices: null,
+          direction: null, recordedNightPrices: null,
         }, CLUB_FORMAT_TEST);
         expect(await prisma.manualRefundTask.findUniqueOrThrow({ where: { id: task.id } })).toMatchObject({ status: "DISMISSED" });
         await reconcile(noteId, 5_000, "AUTHORISED", true);
