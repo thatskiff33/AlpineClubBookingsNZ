@@ -16,7 +16,10 @@ import {
   stripeChargeCurrency,
 } from "@/lib/stripe-charge-currency";
 import { refundRequestStripeMetadata } from "@/lib/refund-slice-evidence";
-import type { AppPaymentIntentMetadata } from "@/lib/stripe-app-intent-metadata";
+import {
+  assertAppPaymentIntentMetadata,
+  type AppPaymentIntentMetadata,
+} from "@/lib/stripe-app-intent-metadata";
 
 // DB-only credential resolution (#2082): the secret key lives in the encrypted
 // IntegrationCredential store, so client construction is now ASYNC. We memoize
@@ -75,6 +78,7 @@ export async function createPaymentIntent({
 }): Promise<Stripe.PaymentIntent> {
   const currency = stripeChargeCurrency(format);
   refuseBelowStripeMinimum(amountCents, format);
+  assertAppPaymentIntentMetadata(metadata);
   const stripe = await getStripe();
   return stripe.paymentIntents.create(
     {
@@ -134,6 +138,7 @@ export async function chargePaymentMethod({
 }): Promise<Stripe.PaymentIntent> {
   const currency = stripeChargeCurrency(format);
   refuseBelowStripeMinimum(amountCents, format);
+  assertAppPaymentIntentMetadata(metadata);
   const stripe = await getStripe();
   return stripe.paymentIntents.create(
     {
@@ -317,11 +322,23 @@ export async function findCheckoutSessionForPaymentIntent(
   paymentIntentId: string,
 ): Promise<Stripe.Checkout.Session | null> {
   const stripe = await getStripe();
+  const requestOptions = { timeout: 10_000, maxNetworkRetries: 0 };
   const sessions = await stripe.checkout.sessions.list(
     { payment_intent: paymentIntentId, limit: 1, expand: ["data.line_items"] },
-    { timeout: 10_000, maxNetworkRetries: 0 },
+    requestOptions,
   );
-  return sessions.data[0] ?? null;
+  const session = sessions.data[0];
+  if (!session) return null;
+  // The expand returns the first page (10). A longer Checkout is named in full
+  // up to one more page, and the description says when that is still not all.
+  if (session.line_items?.has_more) {
+    session.line_items = await stripe.checkout.sessions.listLineItems(
+      session.id,
+      { limit: 100 },
+      requestOptions,
+    );
+  }
+  return session;
 }
 
 export async function getPaymentIntent(

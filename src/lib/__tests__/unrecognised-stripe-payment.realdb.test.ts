@@ -62,6 +62,7 @@ let harnessRole: { before: string | undefined; restore: () => void } | undefined
         object: "event",
         type: "payment_intent.succeeded",
         livemode: false,
+        created: Date.parse("2026-06-30T20:00:00.000Z") / 1000,
         request: null,
         data: {
           object: {

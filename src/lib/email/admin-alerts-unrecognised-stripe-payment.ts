@@ -4,6 +4,7 @@ import {
 } from "@/lib/email-templates/admin-unrecognised-stripe-payment";
 import { UNRECOGNISED_STRIPE_PAYMENT_NOTE } from "@/lib/unrecognised-stripe-payment-note";
 import { renderEmailHtml } from "@/lib/email-theme";
+import { type AdminAlertSendOutcome } from "./admin-alert-send-result";
 import { sendUnmuteableAdminAlert } from "./admin-alerts-shared";
 
 /**
@@ -16,8 +17,8 @@ import { sendUnmuteableAdminAlert } from "./admin-alerts-shared";
  */
 export async function sendAdminUnrecognisedStripePaymentAlert(
   fields: UnrecognisedStripePaymentAlertFields,
-): Promise<void> {
-  await sendUnmuteableAdminAlert({
+): Promise<AdminAlertSendOutcome> {
+  return sendUnmuteableAdminAlert({
     subject: `Stripe payment the app did not create - code it in Xero: ${fields.amount}`,
     html: await renderEmailHtml(() => adminUnrecognisedStripePaymentTemplate(fields)),
     templateName: "admin-unrecognised-stripe-payment",

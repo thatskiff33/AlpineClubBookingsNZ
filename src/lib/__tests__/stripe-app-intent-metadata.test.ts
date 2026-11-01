@@ -7,6 +7,7 @@ import { stripCommentsAndStrings } from "@/lib/__tests__/support/strip-comments"
 import { buildSavedCardChargeMetadata } from "@/lib/saved-card-charge-attempt";
 import {
   GROUP_SETTLEMENT_INTENT_TYPE,
+  assertAppPaymentIntentMetadata,
   isAppCreatedPaymentIntent,
   type AppPaymentIntentMetadata,
 } from "@/lib/stripe-app-intent-metadata";
@@ -59,6 +60,14 @@ describe("isAppCreatedPaymentIntent (#4532)", () => {
     // @ts-expect-error - the group type needs its group
     const group: CreateMetadata = { type: GROUP_SETTLEMENT_INTENT_TYPE };
     expect([create, charge, group]).toHaveLength(3);
+  });
+
+  it("refuses an empty bookingId before Stripe is called", () => {
+    expect(() => assertAppPaymentIntentMetadata({ bookingId: "" })).toThrow(/non-empty/);
+    expect(() => assertAppPaymentIntentMetadata({ bookingId: "bk_1" })).not.toThrow();
+    expect(() =>
+      assertAppPaymentIntentMetadata({ type: GROUP_SETTLEMENT_INTENT_TYPE, groupBookingId: "g_1" }),
+    ).not.toThrow();
   });
 });
 

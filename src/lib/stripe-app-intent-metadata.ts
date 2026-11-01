@@ -21,8 +21,18 @@
 /** The `type` a group organiser's combined settlement intent carries. */
 export const GROUP_SETTLEMENT_INTENT_TYPE = "group_settlement";
 
-/** What a booking's intent carries: the booking it pays. */
+/** What a booking's intent carries: the booking it pays. An empty id is not one. */
 type BookingIntentMetadata = { readonly bookingId: string };
+
+/**
+ * The type allows `bookingId: ""`. Refuse it before Stripe sees it: the webhook
+ * would treat that charge as a payment the app did not create.
+ */
+export function assertAppPaymentIntentMetadata(metadata: AppPaymentIntentMetadata): void {
+  if ("bookingId" in metadata && metadata.bookingId.length === 0) {
+    throw new Error("An app PaymentIntent's bookingId must be non-empty");
+  }
+}
 
 /** What a group organiser's settlement intent carries. */
 type GroupSettlementIntentMetadata = {

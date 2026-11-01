@@ -11,6 +11,7 @@ CREATE TABLE "UnrecognisedStripePayment" (
     "stripeCreatedAt" TIMESTAMP(3) NOT NULL,
     "description" TEXT,
     "stripeEventId" TEXT NOT NULL,
+    "alertedAt" TIMESTAMP(3),
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT "UnrecognisedStripePayment_pkey" PRIMARY KEY ("id")

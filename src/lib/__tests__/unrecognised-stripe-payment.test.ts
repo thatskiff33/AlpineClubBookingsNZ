@@ -21,28 +21,37 @@ type Row = {
   stripeCreatedAt: Date;
   description: string | null;
   stripeEventId: string;
+  alertedAt: Date | null;
   createdAt: Date;
 };
 
 const state = vi.hoisted(() => ({
   rows: new Map<string, Row>(),
-  heldKeys: new Set<string>(),
+  heldKeys: new Map<string, Date>(),
   /** Runs inside createMany before the insert: a concurrent delivery's row. */
   beforeInsert: null as null | (() => void),
 }));
 
 const mocks = vi.hoisted(() => ({
   findCheckoutSession: vi.fn(),
-  sendAlert: vi.fn<(...args: unknown[]) => Promise<void>>(async () => undefined),
+  sendAlert: vi.fn<(...args: unknown[]) => Promise<"sent" | "undelivered">>(async () => "sent"),
   createMany: vi.fn(),
 }));
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     unrecognisedStripePayment: {
-      findUnique: async ({ where }: { where: { stripePaymentIntentId: string } }) =>
-        state.rows.get(where.stripePaymentIntentId) ?? null,
-      createMany: async (args: { data: Omit<Row, "id" | "createdAt">[]; skipDuplicates: boolean }) => {
+      findUnique: async ({ where }: { where: { stripePaymentIntentId?: string; id?: string } }) => {
+        if (where.stripePaymentIntentId) return state.rows.get(where.stripePaymentIntentId) ?? null;
+        return [...state.rows.values()].find((row) => row.id === where.id) ?? null;
+      },
+      update: async ({ where, data }: { where: { id: string }; data: { alertedAt: Date } }) => {
+        const row = [...state.rows.values()].find((item) => item.id === where.id);
+        if (!row) throw new Error("missing row");
+        Object.assign(row, data);
+        return row;
+      },
+      createMany: async (args: { data: Omit<Row, "id" | "createdAt" | "alertedAt">[]; skipDuplicates: boolean }) => {
         mocks.createMany(args);
         state.beforeInsert?.();
         let count = 0;
@@ -51,10 +60,25 @@ vi.mock("@/lib/prisma", () => ({
             if (!args.skipDuplicates) throw Object.assign(new Error("unique"), { code: "P2002" });
             continue;
           }
-          state.rows.set(data.stripePaymentIntentId, { ...data, id: `row_${state.rows.size + 1}`, createdAt: new Date() });
+          state.rows.set(data.stripePaymentIntentId, {
+            ...data,
+            id: `row_${state.rows.size + 1}`,
+            alertedAt: null,
+            createdAt: new Date(),
+          });
           count += 1;
         }
         return { count };
+      },
+    },
+    alertCooldown: {
+      deleteMany: async ({ where }: { where: { key: string; lastAlertedAt: Date } }) => {
+        const held = state.heldKeys.get(where.key);
+        if (held && held.getTime() === where.lastAlertedAt.getTime()) {
+          state.heldKeys.delete(where.key);
+          return { count: 1 };
+        }
+        return { count: 0 };
       },
     },
   },
@@ -73,7 +97,7 @@ vi.mock("@/lib/email", () => ({
 vi.mock("@/lib/admin-alert-once", () => ({
   sendAdminAlertOnceEver: async ({ key, send }: { key: string; send: () => Promise<unknown> }) => {
     if (state.heldKeys.has(key)) return false;
-    state.heldKeys.add(key);
+    state.heldKeys.set(key, new Date());
     try {
       await send();
       return true;
@@ -82,7 +106,8 @@ vi.mock("@/lib/admin-alert-once", () => ({
       return false;
     }
   },
-  findHeldOnceEverAlertKeys: async (keys: readonly string[]) => new Set(keys.filter((key) => state.heldKeys.has(key))),
+  readHeldOnceEverAlertTimes: async (keys: readonly string[]) =>
+    new Map([...state.heldKeys].filter(([key]) => keys.includes(key))),
 }));
 
 vi.mock("@/lib/logger", () => ({ default: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() } }));
@@ -90,12 +115,14 @@ vi.mock("@/lib/logger", () => ({ default: { info: vi.fn(), warn: vi.fn(), error:
 import {
   describeUnrecognisedPayment,
   recordUnrecognisedStripePayment,
+  UNRECOGNISED_ALERT_IN_FLIGHT_MS,
   stripeDashboardPaymentUrl,
   unrecognisedPaymentAmountLabel,
   unrecognisedStripePaymentAlertKey,
   UnrecognisedStripePaymentAlertNotSentError,
   UNRECOGNISED_PAYMENT_DESCRIPTION_MAX_LENGTH,
 } from "@/lib/unrecognised-stripe-payment";
+import { STRIPE_WEBHOOK_PROCESSING_LEASE_MINUTES } from "@/lib/stripe-webhook-service";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 const CREATED = Date.parse("2026-06-30T21:00:00.000Z") / 1000;
@@ -116,7 +143,7 @@ function paymentIntent(overrides: Partial<Stripe.PaymentIntent> = {}): Stripe.Pa
 }
 
 function event(id = "evt_donation", livemode = true): Stripe.Event {
-  return { id, livemode, type: "payment_intent.succeeded" } as Stripe.Event;
+  return { id, livemode, type: "payment_intent.succeeded", created: CREATED } as Stripe.Event;
 }
 
 function checkoutSession(): Stripe.Checkout.Session {
@@ -208,19 +235,21 @@ describe("recordUnrecognisedStripePayment (#4532)", () => {
 
     expect(state.rows.size).toBe(2);
     expect(mocks.sendAlert).toHaveBeenCalledTimes(2);
-    expect([...state.heldKeys].sort()).toEqual([
+    expect([...state.heldKeys.keys()].sort()).toEqual([
       "unrecognised-stripe-payment:pi_donation",
       "unrecognised-stripe-payment:pi_second",
     ]);
   });
 
-  it("still records the payment when the Checkout read fails", async () => {
+  it("does not record the payment when the Checkout read fails, so Stripe redelivers", async () => {
     mocks.findCheckoutSession.mockRejectedValue(new Error("Stripe unavailable"));
 
-    await recordUnrecognisedStripePayment(paymentIntent(), event(), CLUB_FORMAT_TEST);
+    await expect(recordUnrecognisedStripePayment(paymentIntent(), event(), CLUB_FORMAT_TEST)).rejects.toThrow(
+      "Stripe unavailable",
+    );
 
-    expect(state.rows.get("pi_donation")).toMatchObject({ stripeCheckoutSessionId: null, description: null });
-    expect(mocks.sendAlert).toHaveBeenCalledWith(expect.objectContaining({ description: "None" }));
+    expect(state.rows.size).toBe(0);
+    expect(mocks.sendAlert).not.toHaveBeenCalled();
   });
 
   it("writes and alerts nothing more on redelivery, and asks Stripe nothing", async () => {
@@ -250,10 +279,11 @@ describe("recordUnrecognisedStripePayment (#4532)", () => {
         stripeCreatedAt: new Date("2026-06-30T21:00:00.000Z"),
         description: "Theirs",
         stripeEventId: "evt_other",
+        alertedAt: null,
         createdAt: new Date(),
       });
-      // The winner already holds the alert claim.
-      state.heldKeys.add(unrecognisedStripePaymentAlertKey("pi_donation"));
+      // The winner already holds a fresh alert claim and has not stamped the row.
+      state.heldKeys.set(unrecognisedStripePaymentAlertKey("pi_donation"), new Date());
     };
 
     await recordUnrecognisedStripePayment(paymentIntent(), event(), CLUB_FORMAT_TEST);
@@ -275,6 +305,7 @@ describe("recordUnrecognisedStripePayment (#4532)", () => {
       stripeCreatedAt: new Date("2026-06-30T21:00:00.000Z"),
       description: null,
       stripeEventId: "evt_donation",
+      alertedAt: null,
       createdAt: new Date(),
     });
 
@@ -282,6 +313,42 @@ describe("recordUnrecognisedStripePayment (#4532)", () => {
 
     expect(mocks.createMany).not.toHaveBeenCalled();
     expect(mocks.sendAlert).toHaveBeenCalledTimes(1);
+  });
+
+  it("releases a claim older than the webhook lease that never stamped the row, and sends", async () => {
+    const key = unrecognisedStripePaymentAlertKey("pi_donation");
+    state.rows.set("pi_donation", {
+      id: "row_1",
+      stripePaymentIntentId: "pi_donation",
+      stripeChargeId: "ch_donation",
+      stripeCheckoutSessionId: null,
+      stripePaymentLinkId: null,
+      amountCents: 5000,
+      currency: "nzd",
+      stripeCreatedAt: new Date("2026-06-30T21:00:00.000Z"),
+      description: null,
+      stripeEventId: "evt_donation",
+      alertedAt: null,
+      createdAt: new Date(),
+    });
+    state.heldKeys.set(key, new Date(Date.now() - 16 * 60 * 1000));
+
+    await recordUnrecognisedStripePayment(paymentIntent(), event(), CLUB_FORMAT_TEST);
+
+    expect(mocks.sendAlert).toHaveBeenCalledTimes(1);
+    expect(state.rows.get("pi_donation")?.alertedAt).toBeInstanceOf(Date);
+    expect(state.heldKeys.has(key)).toBe(true);
+  });
+
+  it("throws when the sender reports the mail undelivered, so Stripe redelivers", async () => {
+    mocks.sendAlert.mockResolvedValueOnce("undelivered");
+
+    await expect(recordUnrecognisedStripePayment(paymentIntent(), event(), CLUB_FORMAT_TEST)).rejects.toBeInstanceOf(
+      UnrecognisedStripePaymentAlertNotSentError,
+    );
+    expect(state.rows.size).toBe(1);
+    expect(state.heldKeys.size).toBe(0);
+    expect(state.rows.get("pi_donation")?.alertedAt).toBeNull();
   });
 
   it("throws when the alert could not be sent, keeping the row, so Stripe redelivers and the alert is retried", async () => {
@@ -319,6 +386,21 @@ describe("what the record and alert say (#4532)", () => {
       ),
     ).toBe("Donation");
     expect(describeUnrecognisedPayment({ description: "  " }, null)).toBeNull();
+    expect(
+      describeUnrecognisedPayment(
+        { description: "intent" },
+        { line_items: { data: [{ description: "Donation", quantity: 1 }], has_more: true } } as unknown as Stripe.Checkout.Session,
+      ),
+    ).toBe("Donation; further line items were not listed");
+  });
+
+  it("dates the payment from the succeeded event, not from when the PaymentIntent was opened", async () => {
+    await recordUnrecognisedStripePayment(paymentIntent({ created: CREATED - 3600 }), event(), CLUB_FORMAT_TEST);
+    expect(state.rows.get("pi_donation")?.stripeCreatedAt).toEqual(new Date(CREATED * 1000));
+  });
+
+  it("treats a claim older than the webhook lease as abandoned", () => {
+    expect(UNRECOGNISED_ALERT_IN_FLIGHT_MS).toBe(STRIPE_WEBHOOK_PROCESSING_LEASE_MINUTES * 60 * 1000);
   });
 
   it("links the Stripe dashboard in the event's mode", () => {

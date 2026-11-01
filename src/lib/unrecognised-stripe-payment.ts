@@ -12,12 +12,15 @@
  * ONE admin alert per PaymentIntent, both claimed by a unique key:
  * - the row by its unique `stripePaymentIntentId` (insert, duplicates skipped),
  *   so a redelivery, a lease takeover or a concurrent delivery writes nothing
- *   more; a later delivery reads the stored row and makes no Stripe call;
- * - the alert by its once-ever `AlertCooldown` key, claimed before the send.
- *   Every delivery asks for it, so a delivery that died between the row and the
- *   send is finished by the next one, and the key makes every later ask a no-op.
- *   A send that throws gives the claim back and this throws, so the webhook
- *   answers 500 and Stripe redelivers; the row is already there.
+ *   more; a later delivery reads the stored row;
+ * - the alert by its once-ever `AlertCooldown` key, claimed before the send,
+ *   and by `alertedAt` on the row, written only after a recipient was sent.
+ *   A send that does not go out throws, the claim is given back, and the
+ *   webhook answers 500 so Stripe redelivers. A claim still held with no
+ *   `alertedAt` is a delivery that died: inside the webhook lease it belongs
+ *   to a sibling still sending; older than that lease, this delivery releases
+ *   it and sends. A Checkout read that throws is not stored as "no Checkout":
+ *   nothing is inserted, and Stripe redelivers.
  *
  * No advisory lock: nothing here touches a booking, settlement money, capacity
  * or credit, and the only race — two deliveries of one payment — is decided by
@@ -27,7 +30,8 @@
 import type Stripe from "stripe";
 import type { UnrecognisedStripePayment } from "@prisma/client";
 
-import { findHeldOnceEverAlertKeys, sendAdminAlertOnceEver } from "@/lib/admin-alert-once";
+import { readHeldOnceEverAlertTimes, sendAdminAlertOnceEver } from "@/lib/admin-alert-once";
+import { releaseAlertCooldown } from "@/lib/alert-cooldown";
 import { currencyHasTwoDecimalPlaces, canonicalCurrencyCode } from "@/lib/club-currency-minor-unit";
 import type { ClubFormat } from "@/lib/club-format";
 import { sendAdminUnrecognisedStripePaymentAlert } from "@/lib/email";
@@ -49,6 +53,13 @@ const NONE = "None";
 export function unrecognisedStripePaymentAlertKey(paymentIntentId: string): string {
   return `unrecognised-stripe-payment:${paymentIntentId}`;
 }
+
+/**
+ * A claim younger than this belongs to a delivery still inside the webhook
+ * processing lease (`STRIPE_WEBHOOK_PROCESSING_LEASE_MINUTES`). Older than
+ * that, with no `alertedAt`, the holder is gone.
+ */
+export const UNRECOGNISED_ALERT_IN_FLIGHT_MS = 15 * 60 * 1000;
 
 /** The alert was neither sent nor left claimed, so the webhook must fail and Stripe redeliver. */
 export class UnrecognisedStripePaymentAlertNotSentError extends Error {
@@ -78,24 +89,58 @@ export async function recordUnrecognisedStripePayment(
     "Stripe payment the app did not create: recorded for the treasurer to code in Xero (#4532)",
   );
 
+  await ensureAlert(row, event, format);
+}
+
+/** Send the one alert, or fail the webhook so Stripe redelivers. */
+async function ensureAlert(
+  row: UnrecognisedStripePayment,
+  event: Stripe.Event,
+  format: ClubFormat,
+): Promise<void> {
   const key = unrecognisedStripePaymentAlertKey(row.stripePaymentIntentId);
   const fields = alertFields(row, event.livemode, format);
-  const kept = await sendAdminAlertOnceEver({
-    key,
-    label: "unrecognised Stripe payment alert",
-    context: { paymentIntentId: row.stripePaymentIntentId },
-    send: async () => {
-      await sendAdminUnrecognisedStripePaymentAlert(fields);
-      return UNMUTEABLE_ALERT_SENT;
-    },
-  });
-  if (kept) return;
-  // Not kept: either an earlier delivery holds the claim (sent, or sending now),
-  // or this send threw and gave it back. Only the second must fail the event.
-  const held = await findHeldOnceEverAlertKeys([key], new Date());
-  if (!held.has(key)) {
+  const send = () =>
+    sendAdminAlertOnceEver({
+      key,
+      label: "unrecognised Stripe payment alert",
+      context: { paymentIntentId: row.stripePaymentIntentId },
+      send: async () => {
+        const outcome = await sendAdminUnrecognisedStripePaymentAlert(fields);
+        if (outcome !== "sent") {
+          throw new UnrecognisedStripePaymentAlertNotSentError(row.stripePaymentIntentId);
+        }
+        await prisma.unrecognisedStripePayment.update({
+          where: { id: row.id },
+          data: { alertedAt: new Date() },
+        });
+        return UNMUTEABLE_ALERT_SENT;
+      },
+    });
+
+  if (await send()) return;
+  if (await alertWasSent(row.id)) return;
+
+  const heldAt = (await readHeldOnceEverAlertTimes([key], new Date())).get(key);
+  if (!heldAt) {
     throw new UnrecognisedStripePaymentAlertNotSentError(row.stripePaymentIntentId);
   }
+  // A sibling delivery of another event still owns a fresh claim. The same
+  // event's redelivery never reaches here while that attempt's lease is live.
+  if (Date.now() - heldAt.getTime() < UNRECOGNISED_ALERT_IN_FLIGHT_MS) return;
+
+  await releaseAlertCooldown({ key, claimedAt: heldAt });
+  if (await send()) return;
+  if (await alertWasSent(row.id)) return;
+  throw new UnrecognisedStripePaymentAlertNotSentError(row.stripePaymentIntentId);
+}
+
+async function alertWasSent(id: string): Promise<boolean> {
+  const current = await prisma.unrecognisedStripePayment.findUnique({
+    where: { id },
+    select: { alertedAt: true },
+  });
+  return current?.alertedAt != null;
 }
 
 /** The stored row for this intent: the existing one, or the one this delivery inserts. */
@@ -121,20 +166,12 @@ async function claimRecord(
 }
 
 /**
- * The Checkout Session the payment went through, or `null`. Best effort: a
- * failed read records the payment without it rather than leaving it unrecorded,
- * and the alert's PaymentIntent id still finds it in Stripe.
+ * The Checkout Session the payment went through, or `null` when Stripe lists
+ * none (a dashboard charge). A failed read throws: storing null would freeze
+ * "there was no Checkout" and the one alert would omit the Payment Link.
  */
 async function readCheckoutSession(paymentIntentId: string): Promise<Stripe.Checkout.Session | null> {
-  try {
-    return await findCheckoutSessionForPaymentIntent(paymentIntentId);
-  } catch (err) {
-    logger.warn(
-      { err, paymentIntentId },
-      "Could not read the Checkout Session of a Stripe payment the app did not create; recording it without one (#4532)",
-    );
-    return null;
-  }
+  return findCheckoutSessionForPaymentIntent(paymentIntentId);
 }
 
 function idOf(value: string | { id: string } | null | undefined): string | null {
@@ -147,13 +184,15 @@ export function describeUnrecognisedPayment(
   paymentIntent: Pick<Stripe.PaymentIntent, "description">,
   session: Pick<Stripe.Checkout.Session, "line_items"> | null,
 ): string | null {
-  const lines = (session?.line_items?.data ?? [])
+  const lineItems = session?.line_items;
+  const lines = (lineItems?.data ?? [])
     .map((item) => {
       const text = item.description?.trim();
       if (!text) return null;
       return item.quantity && item.quantity !== 1 ? `${item.quantity} x ${text}` : text;
     })
     .filter((line): line is string => line !== null);
+  if (lineItems?.has_more) lines.push("further line items were not listed");
   const text = lines.length > 0 ? lines.join("; ") : paymentIntent.description?.trim() || null;
   return text ? text.slice(0, UNRECOGNISED_PAYMENT_DESCRIPTION_MAX_LENGTH) : null;
 }
@@ -170,7 +209,7 @@ function buildRecord(
     stripePaymentLinkId: idOf(session?.payment_link),
     amountCents: paymentIntent.amount_received || paymentIntent.amount,
     currency: paymentIntent.currency,
-    stripeCreatedAt: new Date(paymentIntent.created * 1000),
+    stripeCreatedAt: new Date(event.created * 1000),
     description: describeUnrecognisedPayment(paymentIntent, session),
     stripeEventId: event.id,
   };
