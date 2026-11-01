@@ -25,8 +25,7 @@ import {
   canonicalKeyResolvedRateHolderBookingBehavior,
 } from "@/lib/membership-types";
 import { type SetupDatabaseSnapshot } from "@/lib/setup-readiness";
-import { wrappingKeyIdOf } from "@/lib/integration-crypto";
-import type { DataKeyUsageSnapshot } from "@/lib/setup-readiness-data-keys";
+import { tallyDataKeyUsage, type DataKeyUsageSnapshot } from "@/lib/setup-readiness-data-keys";
 import { collapseHutFeeColumns } from "@/lib/public-hut-fee-columns";
 import { getXeroTokenReadability } from "@/lib/xero-token-store";
 import { getStripeSetupState } from "@/lib/stripe-config";
@@ -123,7 +122,9 @@ export async function getSetupDatabaseSnapshot(): Promise<SetupDatabaseSnapshot>
   */
   const withheldEmail = await readWithheldApplicationEmail();
   // #4456: which key each stored row names, for the Data Encryption Key step.
-  const dataKeyUsage = await readDataKeyUsage();
+  // Defensive like the lodge read: a failed count omits the signal (the step
+  // then reports stored data as not checked) rather than failing the snapshot.
+  const dataKeyUsage = await readDataKeyUsage().catch(() => undefined);
   const [
     adminCount,
     adminModuleSettings,
@@ -619,10 +620,8 @@ async function readDataKeyUsage(): Promise<DataKeyUsageSnapshot> {
     prisma.integrationCredential.groupBy({ by: ["secretSource"], _count: { _all: true } }),
     prisma.member.count({ where: { totpSecret: { startsWith: "v1:" } } }),
   ]);
-  const credentialRowsByKeyId: Record<string, number> = {};
-  for (const row of bySource) {
-    const id = wrappingKeyIdOf(row.secretSource) ?? `unrecognised:${row.secretSource}`;
-    credentialRowsByKeyId[id] = (credentialRowsByKeyId[id] ?? 0) + row._count._all;
-  }
-  return { credentialRowsByKeyId, legacyTotpSecrets };
+  return tallyDataKeyUsage(
+    bySource.map((row) => ({ secretSource: row.secretSource, count: row._count._all })),
+    legacyTotpSecrets,
+  );
 }

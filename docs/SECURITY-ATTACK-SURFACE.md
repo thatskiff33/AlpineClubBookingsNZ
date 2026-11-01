@@ -362,15 +362,19 @@ Admin route subfamilies are:
 | Email/SNS data | Contact, application, admin communications, email templates, SES/SNS webhook. | Rate limits for public senders, template escaping, SNS signature verification, email suppression records. | #616 for SES/SNS topic allowlist and outbound email abuse. |
 | Audit, webhook, cron, and provider logs | `AuditLog`, `WebhookLog`, `CronJobRun`, Xero operation/inbound records. | Structured logging with redaction helpers for known sensitive URL tokens; webhook logs redact error text. | #615/#616 for callback URL and token redaction review; compromised log reader threat below. |
 | CI/deploy secrets | GitHub Actions secrets/vars, `.env`, Compose, GHCR tokens, Sentry token. | CI permission scoping, gitleaks, deployment docs warn not to commit secrets. | #619 for workflow permissions, provenance, and secret-scope review. |
-| Encrypted integration credentials (#2079, #2082, #2087, #2095, #2211, #2371) | `IntegrationCredential` — seven provider namespaces, enumerated once under "Credentials at rest" below and not re-listed anywhere else (#2720): `xero`, `stripe`, `google`, `backup`, `anthropic`, `anthropic-diagnostics`, `servernz`. | AES-256-GCM under an HKDF-SHA256 key derived from `AUTH_SECRET`/`NEXTAUTH_SECRET`, per-write random IV, AAD context-binding to `(provider,key,labelVersion)`; write-only Full-Admin API; secret values never returned/logged/exported; excluded from config-transfer. The Stripe publishable key is the ONE value delivered to the browser (it is not secret) — at runtime via `GET /api/stripe/publishable-key`, never a secret. Google's client id/secret are resolved server-side into the request-scoped NextAuth config and never leave the server; the resolver **fails open** (a DB/decrypt failure omits the Google provider, never breaking password/magic-link/2FA sign-in — #2087). | See "Credentials at rest" and "Backup S3 blast radius" below. |
+| Encrypted integration credentials (#2079, #2082, #2087, #2095, #2211, #2371) | `IntegrationCredential` — seven provider namespaces, enumerated once under "Credentials at rest" below and not re-listed anywhere else (#2720): `xero`, `stripe`, `google`, `backup`, `anthropic`, `anthropic-diagnostics`, `servernz`. | AES-256-GCM under an HKDF-SHA256 key derived from the current data-encryption key (`DATA_ENCRYPTION_KEYS`, or `AUTH_SECRET`/`NEXTAUTH_SECRET` while that is unset, #4456), the key named on the row, per-write random IV, AAD context-binding to `(provider,key,labelVersion)`; write-only Full-Admin API; secret values never returned/logged/exported; excluded from config-transfer. The Stripe publishable key is the ONE value delivered to the browser (it is not secret) — at runtime via `GET /api/stripe/publishable-key`, never a secret. Google's client id/secret are resolved server-side into the request-scoped NextAuth config and never leave the server; the resolver **fails open** (a DB/decrypt failure omits the Google provider, never breaking password/magic-link/2FA sign-in — #2087). | See "Credentials at rest" and "Backup S3 blast radius" below. |
 | Backup S3 destination + credentials (#2095) | `IntegrationCredential` provider `backup`; consumed by `src/lib/backup.ts` (pg_dump → gzip → `aws s3 cp`) and the `/admin/backups` surface. | S3 access key/secret and the restore-validation DSN are write-only Full-Admin secrets (never returned/logged); the destination (bucket/region) is ALSO Full-Admin-only to write even though it is not secret (see below); the S3 secrets ride the child process env (`AWS_*`), never argv, and the Postgres password rides `PGPASSWORD`, never argv; bucket/region are strictly format-validated before any CLI call. | See "Backup S3 blast radius" below. |
 
 ## Credentials at rest (#2079)
 
-Provider credentials are stored encrypted in `IntegrationCredential` and
-decrypted with a key derived from the app auth secret
-(`AUTH_SECRET`/`NEXTAUTH_SECRET`) via HKDF-SHA256. This concentrates trust in
-that single secret:
+Provider credentials are stored encrypted in `IntegrationCredential` under a
+key derived via HKDF-SHA256 from the data-encryption key their row names: a
+`DATA_ENCRYPTION_KEYS` ring key, or — for rows written before a ring was set,
+and every row while none is — the app auth secret
+(`AUTH_SECRET`/`NEXTAUTH_SECRET`). Until every row is on a ring key this
+concentrates trust in that single secret (#4456 and
+[`SECURITY.md`](SECURITY.md#data-encryption-key-ring-4456) say how the ring
+removes it):
 
 ### The provider list, and the one place it lives (#2720)
 
@@ -595,16 +599,20 @@ itself — the type is what covers its callers, and the census covers the
 wrapper. It is worth stating plainly because "every
 writer" would be a stronger claim than the instrument makes.
 
-- **A database backup + the auth secret decrypts everything.** Anyone who holds
-  both a DB dump (or replica) and the auth-secret value can recover every stored
-  provider credential. Treat the auth secret with the same care as the database
-  itself.
-- **Production and staging/clones must NEVER share an auth secret.** A restored
+- **A database backup + the key decrypts everything.** Anyone who holds both a
+  DB dump (or replica) and the key the rows name — the auth secret for legacy
+  rows, a ring key for the rest — can recover every stored provider credential.
+  Treat both with the same care as the database itself, and never store a key
+  beside the backups.
+- **Production and staging/clones must NEVER share an auth secret** (nor a
+  data-encryption key, #4456). A restored
   clone (or staging seeded from prod) is **expected** to fail GCM decryption of
   every credential and enter the "needs re-entry (encryption key changed)"
   state — that is the correct, safe outcome, not a bug. If a clone shared prod's
   secret it would silently hold live, decryptable credentials.
-- **Rotation blast radius.** Rotating the auth secret strands the credentials of
+- **Rotation blast radius.** Rotating the auth secret strands the credentials
+  still on it — none once setup readiness's "Data Encryption Key" step is green,
+  and otherwise the credentials of
   **every** provider in the list above — all seven namespaces, not just the two an
   operator is likely to be thinking about — on top of dropping sessions and all 2FA enrolments/recovery codes. See the
   auth-secret rotation runbook in `DEPLOYMENT.md`, which sequences the re-entry

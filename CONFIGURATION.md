@@ -1248,8 +1248,9 @@ test/demo mode or disabled:
 | `DB_PASSWORD`           | PostgreSQL password used by Docker Compose. It is the operator (superuser) `tac`'s password, and every service's password unless the least-privilege roles below are set. |
 | `POSTGRES_MAX_CONNECTIONS` | Postgres `max_connections` for the compose `postgres` service (default `40`). Raise it, for example to `80`, when a deploy's warm-up gate blocks with "too many database connections opened": a live host was measured holding 39 client connections across three app containers during a routine handover, before #4269 gave each container one pool. Applied when the `postgres` container is next created. The deploy refuses, at step 3, a value that is not a whole number above the pools the resolved Compose model can open together (27 shipped) or that is above `1000`. See DEPLOYMENT.md "Connection pool sizing". |
 | `POSTGRES_MEM_LIMIT` | Memory limit of the compose `postgres` container (default `768m`). Raise it in step with `POSTGRES_MAX_CONNECTIONS`: each backend costs its `work_mem` and connection overhead, so a ceiling of `80` wants the limit taken towards `1g`. Applied when the container is next created. |
-| `AUTH_SECRET`           | Auth.js session secret. Also the root of 2FA-secret and in-app provider-credential encryption (#2079) — use a strong value (>= 32 chars); rotating it is a planned maintenance event (see `DEPLOYMENT.md`). |
+| `AUTH_SECRET`           | Auth.js session secret — use a strong value (>= 32 chars). Until `DATA_ENCRYPTION_KEYS` is set it is also the key 2FA secrets and in-app provider credentials are encrypted under (#2079), which makes rotating it a planned maintenance event (see `DEPLOYMENT.md`). |
 | `NEXTAUTH_SECRET`       | Legacy Auth.js secret fallback; keep aligned with `AUTH_SECRET`. |
+| `DATA_ENCRYPTION_KEYS`  | Optional, recommended (#4456). The data-encryption key ring: comma-separated `<id>:<base64 key>` entries, each exactly 32 random bytes (`openssl rand -base64 32`), the **first** used for new data. Once set, stored provider credentials and authenticator secrets no longer depend on `AUTH_SECRET`. Read [Data-encryption keys](#data-encryption-keys-4456) before setting it. |
 | `NEXTAUTH_URL`          | Exact app origin, for example `http://localhost:3000`.           |
 | `AUTH_TRUST_HOST`       | Set `true` behind trusted proxies/Compose.                       |
 | `CRON_SECRET`           | Shared secret for cron and deploy status endpoints.              |
@@ -2207,7 +2208,7 @@ allowed because every login-capable member keeps password login.
 
 **Where credentials live (#2087).** The per-club Google OAuth client id and
 secret are stored **only** in the encrypted `IntegrationCredential` store
-(AES-256-GCM, key derived from `AUTH_SECRET`), entered through the in-app setup
+(AES-256-GCM under the data-encryption key (`DATA_ENCRYPTION_KEYS`, or `AUTH_SECRET` while that is unset — see [Data-encryption keys](#data-encryption-keys-4456))), entered through the in-app setup
 wizard — never in the environment. The NextAuth config is **request-scoped**
 (`NextAuth((request) => config)`): the Google provider is resolved from the DB
 per request and is **omitted entirely** when unconfigured (no ghost button, no
@@ -2266,16 +2267,19 @@ now **ignored** (a readiness warning flags them). Re-enter the same credentials
 in the wizard, verify, then delete the env vars.
 
 Users enroll either an authenticator app (TOTP) or an email one-time code. TOTP
-secrets are encrypted at rest using key material derived from `AUTH_SECRET` (or
-`NEXTAUTH_SECRET` fallback), so rotating that secret invalidates stored TOTP
-secrets and recovery-code hashes. Email codes are short-lived, hashed at rest,
+secrets are encrypted, and recovery and email codes keyed-hashed, at rest under
+the data-encryption key (`DATA_ENCRYPTION_KEYS`, or `AUTH_SECRET`/`NEXTAUTH_SECRET`
+while that is unset — see [Data-encryption keys](#data-encryption-keys-4456)).
+Email codes are short-lived, hashed at rest,
 and the `two-factor-code` email template is marked sensitive so rendered code
 content is not retained in email logs. Recovery codes are generated on
 enrollment and profile regeneration, shown once, hashed at rest, and consumed
 once.
 
-> **Operational note — rotating `AUTH_SECRET`/`NEXTAUTH_SECRET` is a planned
-> event, not a casual credential refresh.** Because members' TOTP secrets and
+> **Operational note — while `DATA_ENCRYPTION_KEYS` is unset, rotating
+> `AUTH_SECRET`/`NEXTAUTH_SECRET` is a planned event, not a casual credential
+> refresh.** Once a data key is set and the setup step "Data Encryption Key" is
+> green, rotating the auth secret only signs everyone out. Until then: because members' TOTP secrets and
 > recovery-code hashes are bound to key material derived from the secret,
 > rotating it **invalidates every member's enrolled authenticator and recovery
 > codes at once** — on their next sign-in each member is forced back through
@@ -2288,6 +2292,42 @@ once.
 > their authenticator device); never rotate ad hoc. See the **auth-secret
 > rotation runbook** in `DEPLOYMENT.md`. Short-lived email one-time codes are
 > unaffected (re-issued per attempt).
+
+### Data-encryption keys (#4456)
+
+`DATA_ENCRYPTION_KEYS` separates the key that protects stored data from the
+session secret. Without it, `AUTH_SECRET` both signs sessions and encrypts every
+stored provider credential and authenticator secret, so a leak of that one value
+exposes both and rotating it destroys the stored data.
+
+- **Format.** Comma-separated `<id>:<base64 key>` entries. An id is 1–32
+  letters, digits, `-` or `_`, starting with a letter or digit;
+  `legacy-auth-secret` is reserved. Each key is exactly 32 random bytes:
+  generate one with `openssl rand -base64 32` (or
+  `node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"`).
+  Example: `DATA_ENCRYPTION_KEYS=k2026:<that value>`.
+- **The first key is current.** Every new credential, authenticator secret and
+  two-factor code hash uses it. The other keys stay readable: each stored row
+  names the key it was written under and is read with that key only.
+- **A bad value is refused whole**, never used in part: a malformed entry, a
+  key that is not 32 bytes, a key repeating one byte, a duplicate id or a
+  duplicate key. Credential capture then refuses to save, and the setup step
+  "Data Encryption Key" goes red naming why (never the value).
+- **Rows written before the ring** stay readable under `AUTH_SECRET` until they
+  are re-encrypted; the setup step counts them. Rotate `AUTH_SECRET` only once
+  it reports nothing left on it.
+- **Recovery codes are the exception** (owner decision on #4456): codes issued
+  before a ring was set stop working the moment it is set, because a hash cannot
+  be re-keyed. A member holding them is told, on the sign-in challenge and on
+  their profile, to generate a new set. Email codes last ten minutes and simply
+  expire.
+- **Rollout.** Set it only once every running container is on a release that
+  understands it: an older release cannot read data written under a data key.
+  Steps: [`DEPLOYMENT.md` → Adding a data-encryption key](DEPLOYMENT.md#adding-a-data-encryption-key-4456).
+- **Removing a key** strands every row still naming it ("needs re-entry" for a
+  credential; an authenticator that no longer verifies; recovery codes that no
+  longer match). Keep an old key in the ring until nothing names it.
+- Production and every copy must use **different** keys, as with `AUTH_SECRET`.
 
 Invalid two-factor attempts are rate-limited and tracked per member. Five
 invalid app, email, or recovery-code attempts lock the two-factor challenge for
@@ -2313,8 +2353,8 @@ webhook badge.
 There are **no** `STRIPE_SECRET_KEY`, `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY`, or
 `STRIPE_WEBHOOK_SECRET` environment variables any more — if any are still present
 they are **ignored** and setup readiness raises a warning naming them for removal
-(never silently honoured). Secrets are encrypted at rest with AES-256-GCM under a
-key derived from `AUTH_SECRET`/`NEXTAUTH_SECRET` via HKDF-SHA256.
+(never silently honoured). Secrets are encrypted at rest with AES-256-GCM under
+the data-encryption key (`DATA_ENCRYPTION_KEYS`, or `AUTH_SECRET` while that is unset — see [Data-encryption keys](#data-encryption-keys-4456)) via HKDF-SHA256.
 
 The **publishable key** is not secret; it is delivered to the card form at
 **runtime** from the store via `GET /api/stripe/publishable-key` — there is no
@@ -2395,8 +2435,8 @@ encrypted `IntegrationCredential` store (provider `anthropic`, key `api_key`),
 captured write-only on **Admin → Integrations** (Full Admin only). There is **no**
 `ANTHROPIC_API_KEY` environment variable — the key is never read from the
 environment for operation, and it is never returned to a browser, logged, or put
-in an audit row. It is encrypted at rest with AES-256-GCM under a key derived
-from `AUTH_SECRET`/`NEXTAUTH_SECRET`; if the auth secret is rotated the key drops
+in an audit row. It is encrypted at rest with AES-256-GCM under
+the data-encryption key (`DATA_ENCRYPTION_KEYS`, or `AUTH_SECRET` while that is unset — see [Data-encryption keys](#data-encryption-keys-4456)); if the key it was written under is lost it drops
 to a "needs re-entry" state and the assistant stops answering until it is
 re-entered.
 
@@ -2489,9 +2529,8 @@ shown for copy-paste in the wizard. There are **no**
 `XERO_ENCRYPTION_KEY`, or `XERO_WEBHOOK_KEY` environment variables any more — if
 any are still present they are **ignored** and setup readiness raises a warning
 naming them for removal (never silently honoured). Credentials are encrypted at
-rest with AES-256-GCM under a key derived from `AUTH_SECRET`/`NEXTAUTH_SECRET`
-via HKDF-SHA256 (a strong auth secret is required — see the auth-secret note
-above). The separate wrapped Xero token-encryption key earlier releases
+rest with AES-256-GCM under the data-encryption key (`DATA_ENCRYPTION_KEYS`, or `AUTH_SECRET` while that is unset — see [Data-encryption keys](#data-encryption-keys-4456)) via HKDF-SHA256 (with no ring set, a
+strong auth secret is required — see the auth-secret note above). The separate wrapped Xero token-encryption key earlier releases
 generated is retired (#3806).
 
 The wizard then finishes the connection (#2081): an optional **Webhooks** step

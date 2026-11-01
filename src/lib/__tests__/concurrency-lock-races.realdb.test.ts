@@ -687,6 +687,12 @@ import "./xero-object-link-metadata-merge.realdb.test";
 // #4657 reuses it to prove the erased-member contact status check keeps a
 // concurrent writer's link metadata; it owns and cleans its own `race-4657-` links.
 import "./xero-erased-contact-status-metadata.realdb.test";
+// #4456 reuses it to prove a credential written under a data-encryption ring key
+// survives an AUTH_SECRET rotation and goes through the store's version-guarded
+// claim like any other: a re-key of a legacy row, a write that lost to a row
+// changed underneath it (no side effect, retried), and two writers forced to meet
+// at the claim. It owns and cleans its own `race-4456` credential rows.
+import "./data-encryption-key-ring.realdb.test";
 // #2374 (AID-5) deliberately is NOT imported here, unlike the two suites above.
 // `ai-diagnostics-select-only-role.realdb.test.ts` provisions and drops a cluster
 // ROLE and revokes `TEMPORARY ... FROM PUBLIC` on the shared throwaway database

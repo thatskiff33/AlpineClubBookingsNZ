@@ -16,6 +16,7 @@ import {
   LEGACY_AUTH_SECRET_KEY_ID,
   parseDataEncryptionKeys,
 } from "@/lib/data-encryption-keys";
+import { wrappingKeyIdOf } from "@/lib/integration-crypto";
 
 /** What the database holds, by the key each row names. Never a value. */
 export interface DataKeyUsageSnapshot {
@@ -23,6 +24,23 @@ export interface DataKeyUsageSnapshot {
   credentialRowsByKeyId: Readonly<Record<string, number>>;
   /** Authenticator-app secrets still in the legacy `v1` format. */
   legacyTotpSecrets: number;
+}
+
+/**
+ * Fold credential row counts per stored `secretSource` into counts per key id:
+ * both auth-secret spellings are the legacy key, and a source no write
+ * produces is kept visible as `unrecognised:<source>` so the step names it.
+ */
+export function tallyDataKeyUsage(
+  bySource: ReadonlyArray<{ secretSource: string; count: number }>,
+  legacyTotpSecrets: number,
+): DataKeyUsageSnapshot {
+  const credentialRowsByKeyId: Record<string, number> = {};
+  for (const { secretSource, count } of bySource) {
+    const id = wrappingKeyIdOf(secretSource) ?? `unrecognised:${secretSource}`;
+    credentialRowsByKeyId[id] = (credentialRowsByKeyId[id] ?? 0) + count;
+  }
+  return { credentialRowsByKeyId, legacyTotpSecrets };
 }
 
 export interface DataKeyCheckResult {

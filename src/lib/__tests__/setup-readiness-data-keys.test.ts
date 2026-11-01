@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import { buildSetupReadiness } from "@/lib/setup-readiness";
-import { buildDataEncryptionKeyCheck, type DataKeyUsageSnapshot } from "@/lib/setup-readiness-data-keys";
+import {
+  buildDataEncryptionKeyCheck,
+  tallyDataKeyUsage,
+  type DataKeyUsageSnapshot,
+} from "@/lib/setup-readiness-data-keys";
 
 function testKey(seed: number, bytes = 32): string {
   return Buffer.from(Array.from({ length: bytes }, (_, index) => (seed * 43 + index * 17) % 256)).toString("base64");
@@ -77,6 +81,23 @@ describe("setup readiness: the Data Encryption Key step (#4456)", () => {
     });
     expect(check.status).toBe("complete");
     expect(check.message).toBe('Data is encrypted under the data key "k2".');
+  });
+
+  it("tallies stored rows per key id, folding both auth-secret spellings into the legacy key", () => {
+    expect(
+      tallyDataKeyUsage(
+        [
+          { secretSource: "AUTH_SECRET", count: 2 },
+          { secretSource: "NEXTAUTH_SECRET", count: 1 },
+          { secretSource: "DATA_ENCRYPTION_KEY:k1", count: 4 },
+          { secretSource: "SOMETHING_ELSE", count: 1 },
+        ],
+        5,
+      ),
+    ).toEqual({
+      credentialRowsByKeyId: { "legacy-auth-secret": 3, k1: 4, "unrecognised:SOMETHING_ELSE": 1 },
+      legacyTotpSecrets: 5,
+    });
   });
 
   it("appears in the foundation category of the readiness report, read from the env it is given", () => {
