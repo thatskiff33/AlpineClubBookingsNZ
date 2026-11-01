@@ -192,11 +192,13 @@ describe("per-account password throttle through authorize (#4609)", () => {
 
     const waits: number[] = [];
     for (let n = 6; n <= 11; n += 1) {
-      // Step one second at a time until the account admits the next guess.
-      const startedAt = Date.now();
+      // Step the frozen clock one second at a time until the account admits
+      // the next guess; the wait is the number of steps taken.
+      let seconds = 0;
       let outcome: "throttled" | "refused" = "throttled";
       while (outcome === "throttled") {
         advance(1_000);
+        seconds += 1;
         outcome = await attempt(OFFICER_EMAIL, "wrong").then(
           () => "refused" as const,
           (error: { code?: string }) => {
@@ -205,7 +207,7 @@ describe("per-account password throttle through authorize (#4609)", () => {
           },
         );
       }
-      waits.push((Date.now() - startedAt) / 1000);
+      waits.push(seconds);
     }
     // The wait each counted failure opened: after the 5th..10th.
     expect(waits).toEqual([30, 60, 120, 240, 480, 900]);
