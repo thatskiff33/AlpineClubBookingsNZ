@@ -207,12 +207,14 @@ Members** hub (`/admin/membership-setup`) and their guides open with the hub nav
 path; `lockers` is lodge-scoped (ADR-005), reached from the lodge configuration
 hub's **Lockers** card, and its guide correctly opens route-first (the
 `seasons.md` precedent — there is no clean `Admin → X` path without first
-picking a lodge). Note also that `subscription-lockout`'s page admission is
-gated to the **support** area even though its settings span membership/finance/
-bookings — the guide documents this. `fees` sits under both **bookings** and **finance**: its admission is OR
+picking a lodge; the lodge hub hides that card from an admin without membership
+access, since `/admin/lockers` is a membership page, #4581). Note also that
+`subscription-lockout`'s page admission is the **membership** area, matching its
+API, even though its settings span membership/finance/bookings (#4581) — the
+guide documents this. `fees` sits under both **bookings** and **finance**: its admission is OR
 (bookings *or* finance view), and it self-gates editing per section (hut fees need
 bookings edit; joining/annual/family fees need finance edit). The `subscription-lockout`
-page's own route is **support**, but it embeds membership, finance, and (read-only)
+page's own route is **membership**, but it embeds membership, finance, and (read-only)
 bookings settings — the Batch column tracks the finance grouping used for #2050
 delivery.
 
