@@ -71,7 +71,7 @@ import type { Prisma, PrismaClient } from "@prisma/client";
 import { planGroupChildBackPost } from "@/lib/booking-ledger-back-post-group";
 import { postHandBackLedgerLine } from "@/lib/booking-ledger-hand-back";
 import { postCancellationLedgerLines } from "@/lib/booking-ledger-cancellation-sync";
-import { isJournalEraBooking, readJournalSince } from "@/lib/member-money";
+import { countBookingJournalEvents, isJournalEraBooking, readJournalSince } from "@/lib/member-money";
 import { postBookingLedgerJournal, resolveBookingMoneyPostingContext, type BookingJournalContext } from "@/lib/member-money/doors";
 import { planConfirmationChargeLines } from "@/lib/booking-ledger-confirmation-posting";
 import { syncBookingLedgerCredits } from "@/lib/booking-ledger-credit-sync";
@@ -105,6 +105,7 @@ import {
   type ModificationPricingSide,
 } from "@/lib/booking-modification-lines";
 import {
+  backPostTotals,
   type BackPostRefusal,
   type BookingBackPostOutcome,
   type BookingLedgerBackPostRun,
@@ -501,6 +502,7 @@ async function backPostBooking(tx: Tx, bookingId: string, journal: BookingJourna
   const lineIds = async () =>
     (await tx.bookingLedgerLine.findMany({ where: { bookingId }, select: { id: true } })).map((line) => line.id);
   const before = new Set(await lineIds());
+  const journalBefore = await countBookingJournalEvents(tx, bookingId);
 
   const first = await readBookingLedgerCensusRow(tx, bookingId);
   if (!first) return { bookingId, kind: "NOTHING_TO_POST", classes: [] };
@@ -590,8 +592,9 @@ async function backPostBooking(tx: Tx, bookingId: string, journal: BookingJourna
   }
   const inserted = (await lineIds()).filter((id) => !before.has(id)).sort();
   const classes = namedClasses(evaluation);
-  if (inserted.length === 0) return { bookingId, kind: "NOTHING_TO_POST", classes };
-  return { bookingId, kind: "POSTED", lines: inserted.length, lineIds: inserted, steps, classes };
+  const journalBatches = (await countBookingJournalEvents(tx, bookingId)) - journalBefore;
+  if (inserted.length === 0) return journalBatches > 0 ? { bookingId, kind: "JOURNAL_ONLY", journalBatches, steps, classes } : { bookingId, kind: "NOTHING_TO_POST", classes };
+  return { bookingId, kind: "POSTED", lines: inserted.length, lineIds: inserted, journalBatches, steps, classes };
 }
 
 // ---------------------------------------------------------------------------
@@ -688,12 +691,5 @@ export async function runBookingLedgerBackPost(args: {
     }
   }
 
-  const totals = {
-    bookings: outcomes.length,
-    posted: outcomes.filter((outcome) => outcome.kind === "POSTED").length,
-    lines: outcomes.reduce((sum, outcome) => sum + (outcome.kind === "POSTED" ? outcome.lines : 0), 0),
-    nothingToPost: outcomes.filter((outcome) => outcome.kind === "NOTHING_TO_POST").length,
-    cannotPost: outcomes.filter((outcome) => outcome.kind === "CANNOT_POST").length,
-  };
-  return { mode: args.apply ? "apply" : "dry-run", runId, startedAt, finishedAt: new Date().toISOString(), outcomes, totals };
+  return { mode: args.apply ? "apply" : "dry-run", runId, startedAt, finishedAt: new Date().toISOString(), outcomes, totals: backPostTotals(outcomes) };
 }

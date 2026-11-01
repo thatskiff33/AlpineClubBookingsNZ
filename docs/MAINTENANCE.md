@@ -2104,8 +2104,9 @@ DATABASE_URL=<...> pnpm run booking-ledger:back-post --json           # the repo
 ```
 
 **Reading the report.** One summary line — bookings, how many it posted (or
-would) and how many lines, how many had nothing to post, how many it cannot
-post — then one line per booking that posts or cannot:
+would) and how many lines, how many were journal only and how many
+member-money journal batches it posted, how many had nothing to post, how many
+it cannot post — then one line per booking that posts or cannot:
 
 - `POSTED` / `WOULD POST <id>  <n> line(s): …` names the steps: the
   confirmation (one line per guest-night, an evenly split strand included), an
@@ -2116,7 +2117,13 @@ post — then one line per booking that posts or cannot:
   `group plan refund (<cents>)`; its kept figure is the organiser cancel's own
   (the share less every refund made or still owed). A plan refund still being
   retried is not posted: the census names it `IN_FLIGHT_REFUND`, and the retry
-  posts it when it goes through.
+  posts it when it goes through. Since #4627 the line also counts the
+  member-money journal batches posted beside the lines (`, <n> journal batch(es)`).
+- `POSTED` / `WOULD POST <id>  journal only, <n> batch(es)` (#4627,
+  `JOURNAL_ONLY`): no legacy line to fill, but the journal had work — a
+  booking created after the journal's first confirmation that is missing its
+  R01, or lines no journal batch had picked up. A dry run reports these exactly
+  as `--apply` commits them.
 - `CANNOT POST <id>  <reason>: …`. `UNPRICED_NIGHT` — a strand has a night with
   no price, which is an open review: close the review, then re-run.
   `CONFIRMATION_DOES_NOT_RECONCILE` — the night rows and promotion do not make

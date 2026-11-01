@@ -23,6 +23,7 @@ export { splitTaxInclusiveGross } from "./internal/tax";
 // so a plain-Node operator command can still import this index.
 export { bookingChargeIdentity, journalComponentOfLegacyLine } from "./internal/booking-charges";
 export {
+  countBookingJournalEvents,
   isJournalEraBooking,
   readBookingJournalCharges,
   readJournalSince,

@@ -112,3 +112,12 @@ export async function readBookingJournalCharges(
   }
   return result;
 }
+
+/**
+ * How many journal events name the booking as their source (#4627): what the
+ * back-post compares before and after a booking's transaction to report the
+ * batches it posted, R01, R26 and R04 alike. A read only.
+ */
+export async function countBookingJournalEvents(db: Pick<Prisma.TransactionClient, "memberMoneyEvent">, bookingId: string): Promise<number> {
+  return db.memberMoneyEvent.count({ where: { sourceKind: "BOOKING", sourceIdentity: bookingId } });
+}

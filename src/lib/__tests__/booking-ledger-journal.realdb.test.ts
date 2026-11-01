@@ -400,7 +400,7 @@ async function untilSomeoneWaits(): Promise<void> {
     expect((await judged(id)).journal.status).toBe("AGREE"); // nothing bridged is missing yet; the legacy gap is the census's coverage
     const { runBookingLedgerBackPost } = await import("@/lib/booking-ledger-back-post");
     const run = await runBookingLedgerBackPost({ client: prisma, apply: true, bookingIds: [id] });
-    expect(run.outcomes[0]).toMatchObject({ kind: "POSTED" });
+    expect(run.outcomes[0]).toMatchObject({ kind: "POSTED", journalBatches: 1 });
     expect((await journalEvents(id)).map((event) => event.eventKey).some((key) => key.startsWith("back-post:"))).toBe(true);
     expect(await receivable(id)).toEqual({ [names.memberId]: PRICE - 2_000 });
     await expectAgreed(id);
@@ -460,8 +460,14 @@ async function untilSomeoneWaits(): Promise<void> {
     const flagged = evaluateWithJournal((await readBookingLedgerCensusRow(prisma, id))!).integrity.map((finding) => finding.kind);
     expect(flagged).toContain("CONFIRMED_WITHOUT_R01");
     const { runBookingLedgerBackPost } = await import("@/lib/booking-ledger-back-post");
+    // The dry run reports exactly what --apply commits: no legacy line, one journal batch (the R01).
+    const dry = await runBookingLedgerBackPost({ client: prisma, apply: false, bookingIds: [id] });
+    expect(dry.outcomes[0]).toMatchObject({ kind: "JOURNAL_ONLY", journalBatches: 1 });
+    expect(dry.totals).toMatchObject({ journalOnly: 1, journalBatches: 1, nothingToPost: 0 });
+    expect(await prisma.memberMoneyEvent.count({ where: { eventKey: `booking-charge:${id}` } })).toBe(0);
     const run = await runBookingLedgerBackPost({ client: prisma, apply: true, bookingIds: [id] });
-    expect(run.outcomes[0]?.kind).not.toBe("CANNOT_POST");
+    expect(run.outcomes[0]?.kind).toBe("JOURNAL_ONLY");
+    expect(run.outcomes[0]).toMatchObject({ journalBatches: 1 });
     expect(await prisma.memberMoneyEvent.count({ where: { eventKey: `booking-charge:${id}` } })).toBe(1);
     expect(evaluateWithJournal((await readBookingLedgerCensusRow(prisma, id))!).integrity).toEqual([]);
     await expectAgreed(id);
