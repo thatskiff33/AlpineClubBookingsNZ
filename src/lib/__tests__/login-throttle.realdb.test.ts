@@ -72,6 +72,16 @@ let logger: typeof import("@/lib/logger")["default"];
 let holderClient: PrismaClient;
 let observerClient: PrismaClient;
 const keys: string[] = [];
+/**
+ * The account key needs an auth secret. This suite sets one only when none is
+ * present and puts the variable back as it found it in `afterAll`: the race
+ * harness imports it beside forty other suites and fails any that leaves
+ * `process.env` changed (#4107, `support/race-harness-env-guard.ts`).
+ */
+const savedAuthSecret: { saved: boolean; value: string | undefined } = {
+  saved: false,
+  value: undefined,
+};
 
 (RUN ? describe : describe.skip)(
   "login throttle claim — real PostgreSQL (#4609)",
@@ -166,6 +176,8 @@ const keys: string[] = [];
     beforeAll(async () => {
       assertSafeRaceDbUrl(RACE_DB_URL, LABEL);
       process.env.DATABASE_URL = RACE_DB_URL;
+      savedAuthSecret.value = process.env.AUTH_SECRET;
+      savedAuthSecret.saved = true;
       process.env.AUTH_SECRET ??= "login-throttle-race-secret";
       ({ prisma } = await import("@/lib/prisma"));
       throttle = await import("@/lib/login-throttle");
@@ -200,6 +212,10 @@ const keys: string[] = [];
           client ? client.$disconnect().catch(() => {}) : Promise.resolve(),
         ),
       );
+      if (savedAuthSecret.saved) {
+        if (savedAuthSecret.value === undefined) delete process.env.AUTH_SECRET;
+        else process.env.AUTH_SECRET = savedAuthSecret.value;
+      }
     }, 60_000);
 
     it("two failures racing on one account both count", async () => {
