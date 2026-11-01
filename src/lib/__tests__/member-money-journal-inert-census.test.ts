@@ -8,13 +8,14 @@
  * provision or verify it. The migration is SQL, outside the scan. A later child that adds a writer or reader edits this
  * list in the same PR, so the switch is a reviewed decision, not a side effect.
  */
-import { readdirSync, readFileSync } from "node:fs";
-import { join, relative, sep } from "node:path";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { MEMBER_MONEY_RELATIONS } from "@/lib/member-money-tables";
+import { delegateUsesBeyondReads, productionSourceFiles } from "./support/prisma-delegate-read-scan";
+import { stripComments } from "./support/strip-comments";
 
 const ROOT = process.cwd();
-const SOURCE = /\.(ts|tsx|mts|cts|js|mjs|cjs)$/;
-const SKIPPED_DIRS = new Set(["node_modules", "__tests__", "generated", ".next"]);
 
 /** Files allowed to name the journal, and why. Nothing here writes a row. */
 const ALLOWED: Record<string, string> = {
@@ -48,6 +49,16 @@ const WRITER = "src/lib/member-money/internal/store.ts";
 /** The command's entry points; nothing outside the boundary calls them until a door is wired (M3b). */
 const POSTING_COMMAND = /\b(postMemberMoneyEvent|reverseMemberMoneyJournal|writeMemberMoneyBatch)\b/;
 const DELEGATE_WRITE = /\.memberMoney\w*\s*\.\s*(create|update|upsert|delete)/;
+/**
+ * Every name that reaches a journal row through Prisma: each relation's
+ * delegate, and the relation fields other models carry (`Booking.memberMoneyLines`).
+ */
+const JOURNAL_DELEGATES = new Set([
+  ...MEMBER_MONEY_RELATIONS.map((relation) => relation[0]!.toLowerCase() + relation.slice(1)),
+  ...[...readFileSync(join(ROOT, "prisma/schema.prisma"), "utf8").matchAll(/^\s+(memberMoney\w+)\s+MemberMoney\w+/gm)]
+    .map((match) => match[1]!),
+]);
+const isJournalDelegate = (name: string) => JOURNAL_DELEGATES.has(name);
 /** One `import { … } from "@/lib/member-money";` statement, on its own line(s). */
 const BOUNDARY_IMPORT = /^import\s*\{[^}]*\}\s*from\s*["']@\/lib\/member-money["'];?[ \t]*$/gm;
 
@@ -80,25 +91,9 @@ const WRITE_STATEMENT = new RegExp([
   String.raw`\bTRUNCATE\b(?!\s+(?:ON|OR)\b)`,
 ].join("|"), "i");
 
-function sourceFiles(dir: string): string[] {
-  return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
-    const path = join(dir, entry.name);
-    if (entry.isDirectory()) return SKIPPED_DIRS.has(entry.name) ? [] : sourceFiles(path);
-    return SOURCE.test(entry.name) && !/\.test\.|\.spec\./.test(entry.name) ? [path] : [];
-  });
-}
-
-/** The top-level files of `prisma/` (seeds, config); not its migration fixtures. */
-function prismaFiles(): string[] {
-  return readdirSync(join(ROOT, "prisma"), { withFileTypes: true })
-    .filter((entry) => entry.isFile() && SOURCE.test(entry.name))
-    .map((entry) => join(ROOT, "prisma", entry.name));
-}
-
 function referencing(): string[] {
-  return [...["src", "scripts"].flatMap((dir) => sourceFiles(join(ROOT, dir))), ...prismaFiles()]
-    .filter((file) => REFERENCE.some((pattern) => pattern.test(readFileSync(file, "utf8"))))
-    .map((file) => relative(ROOT, file).split(sep).join("/"));
+  return productionSourceFiles(ROOT)
+    .filter((file) => REFERENCE.some((pattern) => pattern.test(readFileSync(join(ROOT, file), "utf8"))));
 }
 
 describe("member money journal stays inert in M1 (#4513)", () => {
@@ -114,21 +109,51 @@ describe("member money journal stays inert in M1 (#4513)", () => {
     expect(found.some((file) => file.startsWith(BOUNDARY))).toBe(true);
   });
 
-  it("posts nothing from inside the boundary but its one store, the verifier or an M2 reader", () => {
-    for (const file of [
-      ...found.filter((f) => f.startsWith(BOUNDARY) && f !== WRITER),
-      "scripts/verify-member-money-journal.ts",
-      ...Object.keys(READERS),
-    ]) {
-      const text = readFileSync(join(ROOT, file), "utf8");
-      expect(text, file).not.toMatch(WRITE_STATEMENT);
-      expect(text, file).not.toMatch(DELEGATE_WRITE);
+  it("only reads journal delegates outside the store: no alias, bracket, destructuring or optional-chain escape (#4626)", () => {
+    const offenders = found.filter((file) => file !== WRITER).flatMap((file) =>
+      delegateUsesBeyondReads(readFileSync(join(ROOT, file), "utf8"), file, isJournalDelegate)
+        .map(({ line, text }) => `${file}:${line} ${text}`));
+    expect(offenders, "a journal delegate is used for something other than a read").toEqual([]);
+  });
+
+  it("writes no raw SQL from the boundary, the verifier or an M2 reader", () => {
+    for (const file of [...found.filter((f) => f.startsWith(BOUNDARY)), "scripts/verify-member-money-journal.ts", ...Object.keys(READERS)]) {
+      expect(stripComments(readFileSync(join(ROOT, file), "utf8")), file).not.toMatch(WRITE_STATEMENT);
     }
     expect(readFileSync(join(ROOT, "scripts/verify-member-money-journal.ts"), "utf8")).toMatch(/READ ONLY/);
   });
 
+  it("finds every escape a delegate write could take (fixture proof)", () => {
+    expect([...JOURNAL_DELEGATES].sort()).toEqual(expect.arrayContaining(["memberMoneyLine", "memberMoneyLines", "memberMoneySourceLink"]));
+    const caught = (code: string) => delegateUsesBeyondReads(code, "fixture.ts", isJournalDelegate).length;
+    for (const write of [
+      "await tx.memberMoneyLine.create({ data });",
+      "const lines = tx.memberMoneyLine; await lines.create({ data });",
+      'await tx["memberMoneyLine"].create({ data });',
+      'await tx.memberMoneyLine["createMany"]({ data });',
+      "const { memberMoneyLine } = tx; await memberMoneyLine.deleteMany();",
+      "const { memberMoneyLine: lines } = tx;",
+      "await tx?.memberMoneyLine?.update({ where, data });",
+      "await tx.memberMoneyLine.findMany.call(tx.memberMoneyLine, {});",
+      'const name = "memberMoneyLine"; await tx[name].create({ data });',
+      "await helper(tx.memberMoneyLine);",
+      "await tx.booking.update({ where, data: { memberMoneyLines: { create: [] } } });",
+    ]) {
+      expect(caught(write), write).toBeGreaterThan(0);
+    }
+    for (const read of [
+      "await tx.memberMoneyLine.findMany({ where });",
+      "await tx?.memberMoneyLine.count();",
+      'await tx["memberMoneyObligation"].findUnique({ where });',
+      "await tx.booking.findMany({ include: { memberMoneyLines: true }, where: { memberMoneyLines: { some: {} } } });",
+      'type Db = Pick<Prisma.TransactionClient, "memberMoneyLine" | "memberMoneyObligation">;',
+    ]) {
+      expect(caught(read), read).toBe(0);
+    }
+  });
+
   it("writes only through Prisma delegates in the store, never raw SQL (#4626)", () => {
-    const text = readFileSync(join(ROOT, WRITER), "utf8");
+    const text = stripComments(readFileSync(join(ROOT, WRITER), "utf8"));
     expect(text, "the store is the writer; if it stops writing, retire WRITER").toMatch(DELEGATE_WRITE);
     expect(text).not.toMatch(WRITE_STATEMENT);
     expect(text).not.toMatch(/\$(executeRaw|queryRaw)/);
