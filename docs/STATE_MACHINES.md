@@ -3900,7 +3900,10 @@ The settlement-figure alert's marker retries it (#4446). The unrecognised and
 unmatched Stripe payment alerts (#4647, `INV-INT-032`, `INV-INT-033`) give
 their once-ever claim back when nobody received them and fail the webhook, so
 Stripe's redelivery sends them again; a cron replay as well would send them
-twice.
+twice. The webhook fails even when that give-back fails: the delivery gives
+back its own claim, by its exact stamp, again. A sent alert whose `alertedAt`
+write fails keeps its claim and a sent marker, so the event completes and no
+redelivery sends it again (#4670).
 
 Stated limit, shared with the settlement-figure alert: these alerts count as
 sent once any recipient receives them, so a copy one recipient lost while

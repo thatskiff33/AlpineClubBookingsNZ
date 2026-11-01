@@ -16,10 +16,13 @@
  * - the alert by its once-ever `AlertCooldown` key, claimed before the send,
  *   and by `alertedAt` on the row, written only after a recipient was sent.
  *   A send that does not go out throws, the claim is given back, and the
- *   webhook answers 500 so Stripe redelivers. A claim still held with no
- *   `alertedAt` is a delivery that died: younger than the webhook lease less
- *   a margin it belongs to a sibling still sending; older, this delivery
- *   releases it and sends (`UNRECOGNISED_ALERT_IN_FLIGHT_MS`). A Checkout
+ *   webhook answers 500 so Stripe redelivers; #4670: a delivery whose
+ *   give-back failed gives back its own claim again and still fails. A claim
+ *   still held with no `alertedAt` is a delivery that died: younger than the
+ *   webhook lease less a margin it belongs to a sibling still sending; older,
+ *   this delivery releases it and sends (`UNRECOGNISED_ALERT_IN_FLIGHT_MS`),
+ *   unless the sent marker, written when a sent alert's `alertedAt` write
+ *   failed, says it went out. A Checkout
  *   read that throws is not stored as "no Checkout": nothing is inserted, and
  *   Stripe redelivers.
  *
