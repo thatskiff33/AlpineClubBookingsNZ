@@ -20,6 +20,7 @@
 import type { Prisma } from "@prisma/client";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { assertSafeRaceDbUrl } from "./support/race-db-url";
+import { preFix4445MetadataMerge } from "./support/xero-link-metadata-merge-double";
 
 const RUN = process.env.RUN_CONCURRENCY_RACE_TESTS === "1";
 const RACE_DB_URL = process.env.CONCURRENCY_RACE_DATABASE_URL ?? "";
@@ -117,17 +118,6 @@ async function storedMetadata(link: LinkCase) {
   return row.metadata;
 }
 
-/** The funnel's merge before #4445, kept here as the meaning the statement must reproduce. */
-function preFixMerge(stored: unknown, incoming: unknown): unknown {
-  const isRecord = (value: unknown): value is Record<string, unknown> =>
-    Boolean(value) && typeof value === "object" && !Array.isArray(value);
-  const storedRecord = isRecord(stored) ? stored : null;
-  const incomingRecord = isRecord(incoming) ? incoming : null;
-  const next = storedRecord || incomingRecord ? { ...(storedRecord ?? {}), ...(incomingRecord ?? {}) } : incoming;
-  // Prisma leaves the column alone when the value is undefined.
-  return next === undefined ? stored : xeroSync.sanitizeForJson(next);
-}
-
 (RUN ? describe : describe.skip)(
   "two writers merging metadata onto one Xero link both keep their keys - real PostgreSQL (#4445)",
   { timeout: 60_000 },
@@ -207,7 +197,7 @@ function preFixMerge(stored: unknown, incoming: unknown): unknown {
 
         const written = await xeroSync.upsertXeroObjectLink({ ...identity(link), metadata: incoming, mergeMetadata: true });
 
-        const expected = preFixMerge(before, incoming) ?? null;
+        const expected = preFix4445MetadataMerge(before, incoming, xeroSync.sanitizeForJson) ?? null;
         expect(await storedMetadata(link)).toEqual(expected);
         expect(written.metadata).toEqual(expected);
       },

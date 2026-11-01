@@ -1,6 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { CreditNoteSpentOutsideAppError } from "@/lib/xero-credit-note-spent-outside-app";
 import type { Prisma } from "@prisma/client";
+import {
+  applyLinkMetadataMerge,
+  isLinkMetadataMergeStatement,
+  LINK_METADATA_MERGE_SQL_HEAD,
+  rawSqlText,
+  readLinkMetadataMerge,
+} from "./support/xero-link-metadata-merge-double";
 
 const mocks = vi.hoisted(() => ({
   inboundFindUnique: vi.fn(),
@@ -403,27 +410,20 @@ describe("findCanonicalPaymentRefundCreditNote", () => {
 });
 
 /**
- * #4445: a `mergeMetadata` write is one statement over the stored row
- * (`xero-object-link-metadata-merge.ts`), so these mocks see its parameters,
- * not a merged object. `metadataWrittenOver(stored)` is what the first link
- * write leaves on a row holding `stored`: a replace's own value, or the
- * statement's CASE applied to `stored`. The realdb suite
- * (`xero-object-link-metadata-merge.realdb.test.ts`) pins that statement
- * against the pre-#4445 spread on PostgreSQL.
+ * #4445: a `mergeMetadata` write is one statement over the stored row, so these
+ * mocks see its bound values, not a merged object. `metadataWrittenOver(stored)`
+ * is what the first link write leaves on a row holding `stored`: a replace's
+ * own value, or the statement applied by its one test double.
  */
-const MERGE_SQL_HEAD = 'UPDATE "XeroObjectLink" SET "metadata" = CASE';
-const rawSql = (call: unknown[]) => (call[0] as TemplateStringsArray).join("?").replace(/\s+/g, " ").trim();
-const mergeCalls = () => mocks.txExecuteRaw.mock.calls.filter((call) => rawSql(call).startsWith(MERGE_SQL_HEAD));
-const lockCalls = () => mocks.txExecuteRaw.mock.calls.filter((call) => !rawSql(call).startsWith(MERGE_SQL_HEAD));
+const MERGE_SQL_HEAD = LINK_METADATA_MERGE_SQL_HEAD;
+const rawSql = (call: unknown[]) => rawSqlText(call[0] as TemplateStringsArray);
+const mergeCalls = () => mocks.txExecuteRaw.mock.calls.filter((call) => isLinkMetadataMergeStatement(call[0] as TemplateStringsArray));
+const lockCalls = () => mocks.txExecuteRaw.mock.calls.filter((call) => !isLinkMetadataMergeStatement(call[0] as TemplateStringsArray));
 function metadataWrittenOver(stored: unknown): unknown {
   const [{ update }] = mocks.txLinkUpsert.mock.calls[0] as [{ update: Record<string, unknown> }];
   if ("metadata" in update) return update.metadata;
   const merge = mergeCalls()[0];
-  if (!merge) return stored;
-  const [, removedKeys, overlay, replacement] = merge as [unknown, string[], string, string];
-  if (!stored || typeof stored !== "object" || Array.isArray(stored)) return JSON.parse(replacement);
-  const kept = Object.entries(stored).filter(([key]) => !removedKeys.includes(key));
-  return { ...Object.fromEntries(kept), ...JSON.parse(overlay) };
+  return merge ? applyLinkMetadataMerge(stored, readLinkMetadataMerge(merge.slice(1))) : stored;
 }
 
 describe("upsertXeroObjectLink", () => {
