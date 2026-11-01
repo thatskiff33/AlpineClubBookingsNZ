@@ -4,6 +4,21 @@
 
 ## Summary
 
+<!-- Over 800 changed lines (files `.gitattributes` marks `linguist-generated`
+     not counted)? Add a one-line reason on its own line, starting `large-pr:`.
+     A soft limit: `verify` warns, never fails. -->
+
+-
+
+## Plan Deviation
+
+<!-- A material deviation from the issue's approved plan, as defined in
+     docs/agents/ISSUE_WORKFLOW.md → "Plan deviation", goes to the owner first.
+     Write `None` when the PR is built to the plan; otherwise one item per
+     deviation, each linking the owner's answer: the comment URL, or the
+     `#<number>` of the issue whose body records the decision. An item with no
+     link fails `verify` (a warning during the rollout week, #4463). -->
+
 -
 
 ## Risk Level

@@ -220,7 +220,7 @@ describe("pr:check offline gate runner", () => {
     const { status, output } = runGateWithUnresolvableBase(root, BODY_WITHOUT_FRAGMENT);
     expect(output).toContain("FAIL  Concurrency declaration");
     expect(output).toContain("FAIL  Changelog fragment");
-    expect(output).not.toContain("passes both gates");
+    expect(output).not.toContain("passes every enforced gate");
     expect(status).toBe(1);
   });
 
@@ -245,5 +245,34 @@ describe("pr:check offline gate runner", () => {
     expect(output).toContain("PASS  Concurrency declaration");
     expect(output).toContain("FAIL  Changelog fragment");
     expect(status).toBe(1);
+  });
+
+  /*
+    #4463: the plan-deviation section reports WARN, not FAIL, during its rollout
+    week (the exit code is decided by the enforced gates alone), and PASS once
+    answered; the soft size gate reports WARN for a large PR with no reason.
+  */
+  it("reports a missing plan-deviation section as WARN and still exits 0", () => {
+    root = makeRepo({ "docs/note.md": "hello\n" });
+    const { status, output } = runGate(root, BODY_WITHOUT_FRAGMENT);
+    expect(output).toContain("WARN  Plan deviation");
+    expect(output).toContain("PASS  PR size");
+    expect(output).toContain("passes every enforced gate, with 1 warning(s)");
+    expect(status).toBe(0);
+  });
+
+  it("passes the plan-deviation section answered None, and warns on an unexplained large PR", () => {
+    const big = Array.from({ length: 900 }, (_, i) => `line ${i}`).join("\n");
+    root = makeRepo({ "docs/note.md": `${big}\n` });
+    const answered = `${BODY_WITHOUT_FRAGMENT}\n## Plan Deviation\n\n- None\n`;
+    let result = runGate(root, answered);
+    expect(result.output).toContain("PASS  Plan deviation");
+    expect(result.output).toContain("WARN  PR size");
+    expect(result.status).toBe(0);
+
+    result = runGate(root, `${answered}\nlarge-pr: a generated docs table\n`);
+    expect(result.output).toContain("PASS  PR size");
+    expect(result.output).not.toContain("warning(s)");
+    expect(result.status).toBe(0);
   });
 });

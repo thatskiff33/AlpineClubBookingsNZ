@@ -21,6 +21,8 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 import { validateChangelogFragment } from "./check-pr-changelog-fragment.mjs";
+import { planDeviationVerdict } from "./check-pr-plan-deviation.mjs";
+import { LARGE_PR_LINE_THRESHOLD, prSizeVerdict } from "./check-pr-size.mjs";
 import {
   REQUIRED_FIELDS,
   validateConcurrencyDeclaration,
@@ -75,6 +77,14 @@ describe("the epic-sync pull request description", () => {
     expect(validateChangelogFragment(render(), HOSTILE_CHANGES)).toEqual({
       outcome: "none-marker",
     });
+  });
+
+  // #4463: a sync is huge by nature and builds no plan of its own, so its body
+  // answers both new sections; tested ENFORCED so the flip cannot redden syncs.
+  it("answers the plan-deviation section and gives the large-PR reason", () => {
+    expect(planDeviationVerdict(render(), { enforced: true })).toMatchObject({ status: "pass", outcome: "none" });
+    const big = { lines: LARGE_PR_LINE_THRESHOLD * 10, excludedLines: 0, excluded: [] };
+    expect(prSizeVerdict(render(), big)).toMatchObject({ status: "pass", outcome: "reason-given" });
   });
 
   it("uses the field labels verbatim from .github/pull_request_template.md", () => {

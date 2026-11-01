@@ -485,6 +485,13 @@ describe("repository agent workflow contract", () => {
     // — nothing else notices that it stopped running on pull requests.
     expect(ci).toContain("Validate PR changelog entry");
     expect(ci).toContain("node scripts/ci/check-pr-changelog-fragment.mjs");
+    // #4463: the plan-deviation section and the soft size gate, pinned likewise.
+    expect(template).toContain("## Plan Deviation");
+    expect(template).toContain("large-pr:");
+    expect(ci).toContain("Validate PR plan deviation");
+    expect(ci).toContain("node scripts/ci/check-pr-plan-deviation.mjs");
+    expect(ci).toContain("Check PR size (soft limit)");
+    expect(ci).toContain("node scripts/ci/check-pr-size.mjs");
   });
 
   /*
