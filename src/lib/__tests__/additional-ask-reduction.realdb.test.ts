@@ -365,6 +365,19 @@ let webhookClient: PrismaClient;
     const waitingOp = () =>
       prisma.xeroSyncOperation.findUniqueOrThrow({ where: { id: WAITING_OP_ID }, select: { status: true, lastErrorCode: true } });
 
+    /**
+     * #4631: transactions open on the app client's connections (the webhook
+     * client's and this probe's own excluded) - a Stripe call made inside one shows here.
+     */
+    async function openRaceTransactions(): Promise<number> {
+      const rows = await webhookClient.$queryRaw<Array<{ count: number }>>`
+        SELECT COUNT(*)::int AS "count" FROM pg_stat_activity
+        WHERE datname = current_database() AND pid <> pg_backend_pid()
+          AND application_name <> 'race-3954-webhook' AND xact_start IS NOT NULL
+      `;
+      return rows[0]?.count ?? 0;
+    }
+
     async function waitForWebhookLock() {
       const startedAt = process.hrtime.bigint();
       for (;;) {
@@ -923,6 +936,12 @@ let webhookClient: PrismaClient;
       await grownBooking("credit", 4_000, 100, "awaiting-retry");
       const frozenNow = new Date();
       const stripe = fakeStripe();
+      // #4631: the Stripe cancels, with how many of this process's transactions were open at each.
+      const cancelled: Array<{ id: string; openTransactions: number }> = [];
+      stripeRaceHooks.cancel = (async (id: string) => {
+        cancelled.push({ id, openTransactions: await openRaceTransactions() });
+        return { paymentIntent: { id, status: "canceled" }, canceled: true };
+      }) as never;
       const { readUnpaidPriceAsk, retireUnpaidAskChain } = await import("@/lib/additional-ask-reduction");
       const { runPaymentRecoveryOperationNow } = await import("@/lib/payment-recovery");
 
@@ -994,6 +1013,13 @@ let webhookClient: PrismaClient;
       expect(closed.status).toBe("SUCCEEDED");
       expect(closed.lastError ?? "").not.toMatch(/deadlock|40P01/);
       expect(await liveAsks()).toEqual([]);
+
+      // #4631: the intent the runner minted and could not write is nobody's -
+      // cancelled at Stripe as abandoned, once, with no transaction open.
+      expect(stripe.intents.size).toBe(1);
+      const [minted] = [...stripe.intents.values()];
+      expect(cancelled).toEqual([{ id: minted!.id, openTransactions: 0 }]);
+      expect(await prisma.paymentTransaction.findUnique({ where: { stripePaymentIntentId: minted!.id } })).toBeNull();
     });
 
     it("ROUND 4 (item 4): a shrunk ask's re-issue is durable from the commit - its recovery waits out the door's grace, and the door's mint completes it with its row in one write", async () => {
@@ -1559,6 +1585,68 @@ let webhookClient: PrismaClient;
       expect(cancelled.filter((id) => id === door.id)).toEqual([door.id]);
       expect(cancelled).not.toContain(live[0]!.stripePaymentIntentId);
       expect(await prisma.paymentTransaction.findUnique({ where: { stripePaymentIntentId: door.id } })).toBeNull();
+    });
+
+    // #4631: the RUNNER's side. It claimed the waiting re-issue and minted;
+    // ten minutes on its claim reads as stalled, and a later edit closes the
+    // recovery through its real writers before the runner's claim hold. The
+    // hold writes nothing, and the runner's intent is cancelled after it.
+    async function runnerLosesHoldMidMint(onMint: (intentId: string) => Promise<void>) {
+      await grownBooking("card", 1_000);
+      const result = await removeLeavingGuest();
+      const stripe = fakeStripe();
+      const recovery = await reissueRecovery(result.bookingModificationId!);
+      await prisma.paymentRecoveryOperation.update({ where: { id: recovery.id }, data: { nextRetryAt: new Date("2026-06-30T00:00:00.000Z") } });
+      const cancelled: Array<{ id: string; openTransactions: number }> = [];
+      stripeRaceHooks.cancel = (async (id: string) => {
+        cancelled.push({ id, openTransactions: await openRaceTransactions() });
+        if (stripe.intents.has(id)) stripe.intents.get(id)!.status = "canceled";
+        return { paymentIntent: { id, status: "canceled" }, canceled: true };
+      }) as never;
+      const frozenNow = new Date();
+      stripeRaceHooks.create = (async (args: Parameters<typeof stripe.create>[0]) => {
+        const intent = await stripe.create(args);
+        vi.setSystemTime(new Date(frozenNow.getTime() + 10 * 60_000));
+        await onMint(intent.id);
+        return intent;
+      }) as never;
+      const { runPaymentRecoveryOperationNow } = await import("@/lib/payment-recovery");
+      try {
+        expect(await runPaymentRecoveryOperationNow(recovery.id, CLUB_FORMAT_TEST)).toBe("succeeded");
+      } finally {
+        vi.setSystemTime(frozenNow);
+      }
+      expect(stripe.intents.size).toBe(1);
+      const [minted] = [...stripe.intents.values()];
+      return { recovery, minted: minted!, cancelled };
+    }
+
+    it.each(["netted", "folded"] as const)(
+      "#4631: the runner's claim hold loses to a re-issue %s by a later edit mid-mint - its unwritten intent is cancelled at Stripe, outside every transaction",
+      async (by) => {
+        const { recovery, minted, cancelled } = await runnerLosesHoldMidMint(() => closeWaitingReissue(by));
+
+        expect(cancelled.filter(({ id }) => id === minted.id)).toEqual([{ id: minted.id, openTransactions: 0 }]);
+        expect(await prisma.paymentTransaction.findUnique({ where: { stripePaymentIntentId: minted.id } })).toBeNull();
+        expect((await cancellations()).filter((row) => row.paymentIntentId === minted.id)).toEqual([]);
+        // Closed by the edit, never repointed at the runner's intent.
+        expect(await prisma.paymentRecoveryOperation.findUniqueOrThrow({ where: { id: recovery.id }, select: { status: true, paymentIntentId: true } }))
+          .toEqual({ status: "SUCCEEDED", paymentIntentId: recovery.paymentIntentId });
+        expect(await liveAsks()).toEqual([]);
+      },
+    );
+
+    it("#4631: a runner whose lost hold's intent a payment row names leaves it to that row - never cancelled", async () => {
+      const { minted, cancelled } = await runnerLosesHoldMidMint(async (intentId) => {
+        await closeWaitingReissue("netted");
+        // A writer recorded the intent before the runner's proof re-read it.
+        await webhookClient.paymentTransaction.create({
+          data: { id: "race-4631-named", paymentId: PAYMENT_ID, kind: "ADDITIONAL", source: "STRIPE", status: "FAILED", amountCents: 3_000, stripePaymentIntentId: intentId },
+        });
+      });
+
+      expect(cancelled.map(({ id }) => id)).not.toContain(minted.id);
+      expect(await prisma.paymentTransaction.findUniqueOrThrow({ where: { stripePaymentIntentId: minted.id }, select: { id: true } })).toEqual({ id: "race-4631-named" });
     });
 
     // #4052: a declined card fails the row and nothing more; only a retiring
