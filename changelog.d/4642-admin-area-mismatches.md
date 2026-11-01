@@ -1,0 +1,1 @@
+- Fixed three admin permission mismatches (#4581): the lodge hub hides the Lockers card from admins who cannot open `/admin/lockers` (membership area); `/admin/subscription-lockout` now needs the membership area, matching its API; and the Booking Rules hub (`/admin/setup/booking-rules`) opens for Booking Officers. No one gains access their API did not already allow.
