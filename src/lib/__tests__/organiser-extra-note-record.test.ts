@@ -182,7 +182,7 @@ describe("#4655: an organiser adjustment's late credit note is recorded where a 
     seedRow(RESET);
     const { prisma } = await import("@/lib/prisma");
     vi.mocked(prisma.xeroSyncOperation.updateManyAndReturn)
-      .mockImplementationOnce(async () => [])
+      .mockResolvedValueOnce([] as never)
       .mockRejectedValueOnce(Object.assign(new Error("Unique constraint failed"), { code: "P2002" }));
     await expect(recordCreatedOrganiserNote(LATE)).resolves.toEqual({ outcome: "not-recorded" });
     expect(state.row).toMatchObject({ status: "FAILED", xeroObjectId: null });
