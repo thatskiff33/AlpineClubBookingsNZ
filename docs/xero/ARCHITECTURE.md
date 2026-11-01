@@ -1893,6 +1893,26 @@ on `manuallyResolvedAt`.
   not the listing) and asks the treasurer. A refund request's note (#4391), a row that already names its note
   and every other row resolve as before. Legacy: a row resolved before #4421
   names no note and stays so - nothing can backfill a number nobody recorded.
+- **A stalled create never overwrites the officer's note (#4426,
+  `INV-INT-028`, `INV-INT-029`).** A create can stall in Xero past the stale
+  threshold, be marked failed, and be resolved by hand while its own call is
+  still waiting. When Xero then answers, the create records its note through
+  `recordCreatedRefundNote` (`xero-refund-note-record.ts`): one transaction
+  writing the payment's pointer (when the note takes it), then a
+  status-guarded `updateMany` claiming the row on `manuallyResolvedAt: null`
+  and writing its note, then the link. A lost claim rolls the whole record
+  back, so the row keeps the note the resolve recorded (or none, after a plain
+  resolve), no link names the late note and the pointer is untouched; the
+  create then returns without settling or completing, so the late note is
+  never paid out against. The officers get #4374's **Xero Sync Error** alert
+  (`XERO_SUCCESS_AFTER_RESOLUTION`, `unrecordedLateSuccessAlert`) naming the
+  late note's number and Xero id and the note the row keeps, keyed per late
+  object (`xero-success-after-resolution:<operation id>:<object id>`), with a
+  logged warning. A row reset with no resolve is a row no claim holds, so the
+  late note lands there as before and the completion closes it SUCCEEDED; a
+  row a later claim holds RUNNING records it too, as a refused success records
+  its links. Same limit as #4374: an alert that reaches nobody is not sent
+  again, and the warning in the log is then the only trace of the late note.
 - **The outbox.** After it claims a row and before any Xero call, the outbox
   asks `findResolvedSiblingSince`: was a sibling for the same document (same
   correlation key) resolved after this copy was queued? If so the copy is

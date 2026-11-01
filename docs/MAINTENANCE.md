@@ -2623,6 +2623,15 @@ and used yours, by its reference, leaving only one: check Xero before voiding
 a duplicate. If that email cannot reach anyone, it is not sent again; the
 operation's succeeded status on the panel is then the only sign.
 
+A payment refund credit note is the exception (#4426): a refund-note job that
+stalled in Xero, was marked failed and was then resolved by hand keeps the
+note you recorded when its own call comes back with a second note. The app
+does not record, link or pay out the late note, and the operation stays as you
+resolved it. The same **Xero Sync Error** email names the late note's number
+and Xero id and the note the operation keeps: check the late note in Xero and
+void it if it duplicates yours. If that email cannot reach anyone, the app's
+log is the only record of the late note.
+
 There is no undo on the panel. If you marked one by mistake, fix the Xero side
 by hand, or use **Targeted force sync** for that one booking's invoice: it
 raises the invoice anyway, and its audit entry records that it overrode the

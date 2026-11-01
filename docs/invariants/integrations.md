@@ -539,10 +539,14 @@ officer made, and that note records no other refund: one note, one refund
   answer ends with one record. A withdrawn mark retires its link (audited; a
   failed withdrawal alerts); only that row takes it back. Every refusal is
   audited.
-- **Legacy.** A row resolved before #4421 names no note and stays so.
+- **Legacy.** A row resolved before #4421 names no note.
+- **A late create keeps out (#4426).** A stalled create's note lands only on a
+  row not resolved by hand (`recordCreatedRefundNote`); else officers are
+  alerted and it is never linked or settled.
 
 Pinned by `xero-resolve-refund-note.test.ts`,
-`resolve-records-refund-note.realdb.test.ts`, `advisory-lock-guard.test.ts`.
+`resolve-records-refund-note.realdb.test.ts`, `advisory-lock-guard.test.ts`,
+`xero-late-refund-note-after-resolve.realdb.test.ts`.
 
 ## One outcome per Xero operation row (#4356)
 
