@@ -1,4 +1,5 @@
 import type { LedgerLineKind, LedgerSide, MemberMoneyOrigin } from "@prisma/client";
+import { compareOrdinal } from "@/lib/ordinal-order";
 import { formatCentsPlain } from "../../utils";
 import { componentKey } from "./components";
 import { memberMoneyEventKeys, type MemberMoneyEventKey } from "./keys";
@@ -199,9 +200,8 @@ export interface BookingChargePlanInput {
 
 type Moved = { component: BookingChargeComponent; live: number; after: number; lines: LegacyChargeLine[] };
 
-/** Plain code-unit order: the same on every node, whatever its locale. */
-const byIdentity = (a: Moved, b: Moved) =>
-  a.component.chargeIdentity < b.component.chargeIdentity ? -1 : a.component.chargeIdentity > b.component.chargeIdentity ? 1 : 0;
+/** Plain code-unit order (`compareOrdinal`): the same on every node, whatever its locale. */
+const byIdentity = (a: Moved, b: Moved) => compareOrdinal(a.component.chargeIdentity, b.component.chargeIdentity);
 
 /**
  * No component may go below zero, but the legacy ledger only promises the
