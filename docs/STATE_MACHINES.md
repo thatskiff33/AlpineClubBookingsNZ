@@ -815,8 +815,10 @@ reduction edit, under the door's locks
          and the intent it minted, once no row or recovery names it, is
          cancelled at Stripe (`abandoned`, best-effort, after its claim hold's
          transaction ended; logged as `reissued-ask.abandoned-intent-cleanup`;
-         #4631); a recovery reset or reclaimed meanwhile, or an intent it
-         adopted by matching (#4036), keeps it
+         #4631), as it is when a stale reclaim's runner closed the recovery
+         SUCCEEDED with another intent or none (#4652); a recovery reset,
+         PENDING, FAILED or still claimed (even by a runner that already wrote
+         another intent), or an intent it adopted by matching (#4036), keeps it
   -> enqueue CANCEL_PAYMENT_INTENT for each retired intent (same transaction)
   -> WAITING_PAYMENT supplementary invoices on it, or on a closed recovery's
        edit -> read for what they bill, then CANCELLED
@@ -2351,6 +2353,14 @@ inbound fence records its conflict the same way, under the
        -> superseded         by a later ask that carries it (INV-PAY-098): an edit made while
                                the request is unpaid MERGES into one request (cause "mixed"),
                                chased and worded as both
+  claim hold lost mid-mint (a stale claim reaped and reclaimed): nothing written; the intent
+                               it minted under the release's key is cancelled at Stripe
+                               (`abandoned`, best-effort, after the hold's transaction; logged
+                               as `reissued-ask.abandoned-intent-cleanup`) only once the
+                               reclaiming runner closed the row SUCCEEDED without it and no row
+                               or recovery names it; a row still claimable or claimed, or failed
+                               for good, keeps it: a retry may mint under the same key and get
+                               it back, otherwise it stays open, never offered (#4652, INV-PAY-120)
   chase while unpaid (INV-ADDPAY-048): request email now, reminders at 7, 14, 21 and 28
                                days; after the fourth reminder only the officers' queues chase
   reminder withheld for an officer (INV-ADDPAY-051): Xero shows the invoice owing less than the

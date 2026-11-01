@@ -3502,6 +3502,23 @@ and amount, created by its own recovery row's creation plus the 60 s skew
 (`latestAdoptableIntentCreatedAt`, #4036, #4079); that adoption landing
 between the owner check and the cancel is the gap left. Reads and one provider call
 only: no lock, key, participant or order changes. Proven on real Postgres.
+#4652: the same proof, widened to the door's own rule (`closedWithoutIntent`):
+any recovery closed SUCCEEDED without naming the intent, so also a stale
+reclaim's runner that closed it with an amount-suffixed intent or none. Closed
+is terminal: the claim takes only PENDING or FAILED, and the one re-arm of a
+closed additional-ask recovery is a review charge's, whose replay never reaches
+a lost hold. The credit-release ask settles its lost hold the same way. Its
+recovery is never netted off or folded (`inFlightAskRecoveries` leaves it out),
+so only the stale reaper and a reclaim move it; its Stripe key is scoped to its
+release and minted only by that recovery's runner, and no refused replay adopts
+its reason (`isIntentForOrdinaryAskPlan`), so once closed nothing records its
+intent and its owner-check gap is empty. Accepted window, a stated limit: a
+recovery still claimed, even by a runner that already wrote another intent,
+handed back to retry, or failed for good, keeps the stale attempt's intent - a credit-release retry
+re-sizes and may mint under the same key, and Stripe answers with that intent.
+It stays open, never offered, logged under the cleanup event. Reads and one
+provider call only, after the hold's transaction: no lock, key, participant or
+order changes. Proven on real Postgres through the credit-release writers.
 Round 6: the retire closes waiting recoveries before it stamps the rows - the
 runner's own order (its claim hold writes the recovery, then its row; since
 #4217 both take the `Payment` row before either) - and a
