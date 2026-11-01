@@ -59,6 +59,25 @@ export async function readBookingLiveComponents(
   return liveChargeComponents(await db.memberMoneyLine.findMany({ where: chargeLegsOf([bookingId]), orderBy: { id: "asc" }, select: LEG_SELECT }));
 }
 
+/**
+ * When the journal took its first R01 (#4627): the boundary between a booking
+ * confirmed before M3b (M9's to back-post) and one in the journal era. Null
+ * before the first.
+ */
+export async function readJournalSince(db: Pick<Prisma.TransactionClient, "memberMoneyEvent">): Promise<Date | null> {
+  const first = await db.memberMoneyEvent.aggregate({ where: { eventKey: { startsWith: "booking-charge:" } }, _min: { recordedAt: true } });
+  return first._min.recordedAt ?? null;
+}
+
+/**
+ * Whether a booking belongs to the journal era: created after the journal's
+ * first R01, so its confirmation must post one. One created before and
+ * confirmed after cannot be told from one confirmed before M3b (a stated limit).
+ */
+export function isJournalEraBooking(createdAt: Date | null | undefined, journalSince: Date | null): boolean {
+  return journalSince !== null && createdAt != null && createdAt > journalSince;
+}
+
 export async function readBookingJournalCharges(
   db: Pick<Prisma.TransactionClient, "memberMoneyEvent" | "memberMoneyLine" | "memberMoneySourceLink">,
   bookingIds: readonly string[],
@@ -69,8 +88,7 @@ export async function readBookingJournalCharges(
   const charged = await db.memberMoneyEvent.findMany({ where: { eventKey: { in: [...keys.keys()] } }, select: { eventKey: true } });
   const chargedIds = new Set(charged.map((event) => keys.get(event.eventKey)));
   const legs = await db.memberMoneyLine.findMany({ where: chargeLegsOf(bookingIds), orderBy: { id: "asc" }, select: LEG_SELECT });
-  const first = await db.memberMoneyEvent.aggregate({ where: { eventKey: { startsWith: "booking-charge:" } }, _min: { recordedAt: true } });
-  const journalSince = first._min.recordedAt ?? null;
+  const journalSince = await readJournalSince(db);
   const links = await db.memberMoneySourceLink.findMany({
     where: { bookingLedgerLine: { bookingId: { in: [...bookingIds] } } },
     orderBy: { id: "asc" },

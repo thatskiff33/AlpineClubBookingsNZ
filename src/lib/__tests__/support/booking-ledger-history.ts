@@ -109,9 +109,19 @@ async function createBooking(
   });
 }
 
+/**
+ * #4627: a history is a booking made before the journal too, so it is created
+ * before any R01 the shared database holds; otherwise the census would read a
+ * journal-era booking confirmed without one (`CONFIRMED_WITHOUT_R01`).
+ */
+async function madeBeforeTheJournal(prisma: PrismaClient, bookingId: string): Promise<void> {
+  await prisma.booking.update({ where: { id: bookingId }, data: { createdAt: new Date("2020-01-01T00:00:00.000Z") } });
+}
+
 /** The ledger as it stood before #3580: no lines at all, and (#4627) no journal batch bridging them. */
 export async function stripAllLines(prisma: PrismaClient, bookingId: string): Promise<void> {
   await releaseBookingJournalForTeardown(prisma, [bookingId]);
+  await madeBeforeTheJournal(prisma, bookingId);
   await prisma.bookingLedgerLine.deleteMany({ where: { bookingId, reversesLineId: { not: null } } });
   await prisma.bookingLedgerLine.deleteMany({ where: { bookingId } });
 }
@@ -123,6 +133,7 @@ export async function stripAllLines(prisma: PrismaClient, bookingId: string): Pr
  */
 async function stripModificationLines(prisma: PrismaClient, bookingId: string, modificationId: string): Promise<void> {
   await releaseBookingJournalForTeardown(prisma, [bookingId]);
+  await madeBeforeTheJournal(prisma, bookingId);
   await prisma.bookingLedgerLine.deleteMany({ where: { bookingId, anchorKind: "MODIFICATION", anchorId: modificationId, reversesLineId: { not: null } } });
   await prisma.bookingLedgerLine.deleteMany({ where: { bookingId, anchorKind: "MODIFICATION", anchorId: modificationId } });
 }

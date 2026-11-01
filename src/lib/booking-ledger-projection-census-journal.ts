@@ -20,7 +20,7 @@
  * legacy line and skipped the journal), which holds the gate. A booking
  * confirmed before M3b is NOT_APPLICABLE: M9 back-posts its whole history.
  */
-import { journalComponentOfLegacyLine, MemberMoneyPlanError } from "@/lib/member-money";
+import { isJournalEraBooking, journalComponentOfLegacyLine, MemberMoneyPlanError } from "@/lib/member-money";
 import type { BookingLedgerEvaluation, BookingLedgerIdentityResult, BookingLedgerIntegrityFinding } from "@/lib/booking-ledger-projection-census";
 import type { BookingLedgerCensusRow } from "@/lib/booking-ledger-projection-census-row";
 import type { BookingLedgerCensusReport } from "@/lib/booking-ledger-projection-census-report";
@@ -34,10 +34,8 @@ export function journalChargeComparison(row: BookingLedgerCensusRow): {
     // Confirmed before M3b, or never confirmed: not compared. But a booking
     // created after the journal's first R01 and confirmed on the ledger must
     // have one; without it, a door wrote its lines and skipped the journal.
-    const since = row.journal?.journalSince ?? null;
-    const createdAt = row.booking.createdAt ?? null;
     const confirmation = row.lines.find((line) => line.anchorKind === "CONFIRMATION");
-    const skipped = since !== null && createdAt !== null && createdAt > since && confirmation !== undefined;
+    const skipped = confirmation !== undefined && isJournalEraBooking(row.booking.createdAt, row.journal?.journalSince ?? null);
     return {
       identity: { ...notApplicable, explainedBy: [] },
       integrity: skipped ? [{ bookingId: row.booking.id, lineId: confirmation.id, kind: "CONFIRMED_WITHOUT_R01",

@@ -22,5 +22,10 @@ export { splitTaxInclusiveGross } from "./internal/tax";
 // which reads settings through the server's client, is `./doors` (server-only),
 // so a plain-Node operator command can still import this index.
 export { bookingChargeIdentity, journalComponentOfLegacyLine } from "./internal/booking-charges";
-export { readBookingJournalCharges, type BookingJournalCharges } from "./internal/booking-journal-read";
+export {
+  isJournalEraBooking,
+  readBookingJournalCharges,
+  readJournalSince,
+  type BookingJournalCharges,
+} from "./internal/booking-journal-read";
 export { bookingJournalInactiveReason } from "./internal/journal-activity";

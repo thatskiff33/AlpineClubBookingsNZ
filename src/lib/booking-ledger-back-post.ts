@@ -71,6 +71,7 @@ import type { Prisma, PrismaClient } from "@prisma/client";
 import { planGroupChildBackPost } from "@/lib/booking-ledger-back-post-group";
 import { postHandBackLedgerLine } from "@/lib/booking-ledger-hand-back";
 import { postCancellationLedgerLines } from "@/lib/booking-ledger-cancellation-sync";
+import { isJournalEraBooking, readJournalSince } from "@/lib/member-money";
 import { postBookingLedgerJournal, resolveBookingMoneyPostingContext, type BookingJournalContext } from "@/lib/member-money/doors";
 import { planConfirmationChargeLines } from "@/lib/booking-ledger-confirmation-posting";
 import { syncBookingLedgerCredits } from "@/lib/booking-ledger-credit-sync";
@@ -190,6 +191,7 @@ async function lockBookingForBackPost(tx: Tx, bookingId: string): Promise<boolea
 
 const BOOKING_SELECT = {
   id: true,
+  createdAt: true,
   lodgeId: true,
   status: true,
   totalPriceCents: true,
@@ -549,10 +551,16 @@ async function backPostBooking(tx: Tx, bookingId: string, journal: BookingJourna
   if ("kind" in charges) throw refuse(charges);
   await writeBookingLedgerRows(tx, buildBookingLedgerRows([...charges.postings, ...(group?.postings ?? [])]));
   steps.push(...charges.steps, ...(group?.steps ?? []));
-  // #4627 (R26): a booking whose R01 is in the member-money journal gets the
-  // charge lines filled in here too, its confirmation's included (a door whose
-  // legacy plan failed still posted R01, as a ZERO event); one confirmed before
-  // M3b posts nothing (M9 back-posts its history whole).
+  // #4627: a journal-era booking (created after the journal's first R01) whose
+  // confirmation this fills, an internet-banking settle that posted none, say,
+  // posts its R01 here; then a booking whose R01 is in the journal gets the rest
+  // of the filled lines as one R26 batch (its confirmation's too, where a door
+  // posted R01 as a ZERO event). A booking confirmed before M3b posts nothing:
+  // M9 back-posts its history whole.
+  const confirmationKeys = charges.postings.filter((posting) => posting.anchorKind === "CONFIRMATION").map((posting) => posting.postingKey);
+  if (confirmationKeys.length > 0 && isJournalEraBooking(booking.createdAt, await readJournalSince(tx))) {
+    await postBookingLedgerJournal(tx, journal, { bookingId, lodgeId: booking.lodgeId, event: { kind: "confirmation" }, postingKeys: confirmationKeys });
+  }
   await postBookingLedgerJournal(tx, journal, {
     bookingId, lodgeId: booking.lodgeId, event: { kind: "back-post" },
     postingKeys: charges.postings.map((posting) => posting.postingKey),
