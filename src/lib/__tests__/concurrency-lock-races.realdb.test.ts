@@ -658,6 +658,12 @@ import "./other-lodge-name-index-window.realdb.test";
 // follow-up through the link the resolve wrote. Skipped unless
 // RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own `race-4421-` fixtures.
 import "./resolve-records-refund-note.realdb.test";
+// #4609 reuses it to prove the per-account password throttle's claim: two
+// failures racing on one account both count, a burst at the end of a wait admits
+// exactly one guess, two first-ever claims both count, and a row deleted between
+// the ensure and the lock is re-ensured. Skipped unless
+// RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own `race-4609-` rows.
+import "./login-throttle.realdb.test";
 // #2374 (AID-5) deliberately is NOT imported here, unlike the two suites above.
 // `ai-diagnostics-select-only-role.realdb.test.ts` provisions and drops a cluster
 // ROLE and revokes `TEMPORARY ... FROM PUBLIC` on the shared throwaway database
