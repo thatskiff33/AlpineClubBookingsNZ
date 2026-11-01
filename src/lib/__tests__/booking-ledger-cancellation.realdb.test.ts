@@ -34,6 +34,7 @@
  */
 import type { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { releaseBookingJournalForTeardown } from "./support/booking-financial-history-teardown";
 
 import { bookingLedgerBalance } from "@/lib/booking-ledger-balance";
 import type { ModificationPricingSide } from "@/lib/booking-modification-lines";
@@ -103,6 +104,8 @@ async function lines(bookingId = BOOKING_ID) {
 
 async function clean(): Promise<void> {
   for (const id of [BOOKING_ID, UNCONFIRMED_ID]) {
+    // #4627: the doors post journal batches bridged to these lines; release them first.
+    await releaseBookingJournalForTeardown(prisma, [id]);
     await prisma.bookingLedgerLine.deleteMany({ where: { bookingId: id } });
     await prisma.bookingModification.deleteMany({ where: { bookingId: id } });
     await prisma.bookingEvent.deleteMany({ where: { bookingId: id } });

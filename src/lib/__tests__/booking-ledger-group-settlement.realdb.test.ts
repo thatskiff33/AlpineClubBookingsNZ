@@ -33,6 +33,7 @@
 import type Stripe from "stripe";
 import type { Invoice } from "xero-node";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { releaseBookingJournalForTeardown } from "./support/booking-financial-history-teardown";
 import { memberMoneyTestContext } from "./support/member-money-fixtures";
 
 import { bookingLedgerBalance } from "@/lib/booking-ledger-balance";
@@ -161,6 +162,8 @@ let census: typeof import("@/lib/booking-ledger-projection-census-store");
       await prisma.memberCredit.deleteMany({ where: { memberId: MEMBER_ID } });
       await prisma.bookingModification.deleteMany({ where: { bookingId: { in: ALL_BOOKINGS } } });
       await prisma.manualRefundTask.deleteMany({ where: { bookingId: { in: ALL_BOOKINGS } } });
+      // #4627: the doors post journal batches bridged to these lines; release them first.
+      await releaseBookingJournalForTeardown(prisma, ALL_BOOKINGS);
       await prisma.bookingLedgerLine.deleteMany({ where: { bookingId: { in: ALL_BOOKINGS } } });
       await prisma.auditLog.deleteMany({ where: { targetId: { in: ALL_BOOKINGS } } });
       await prisma.paymentRecoveryOperation.deleteMany({ where: { bookingId: { in: ALL_BOOKINGS } } });

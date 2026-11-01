@@ -12,6 +12,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vites
 import { raceSession } from "./support/race-session-double";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 import { memberMoneyTestContext } from "./support/member-money-fixtures";
+import { releaseBookingJournalForTeardown } from "./support/booking-financial-history-teardown";
 import { assertSafeRaceDbUrl } from "./support/race-db-url";
 import { realElapsedMs } from "./helpers/clock";
 import type { SuiteEnvironmentRoleDeclaration } from "./helpers/environment-role";
@@ -59,6 +60,8 @@ async function clean() {
     const ids = [bookingId, ...payments.map((p) => p.id), ...edits.map((e) => e.id)];
     await prisma.xeroSyncOperation.deleteMany({ where: { localId: { in: ids } } });
     await prisma.xeroObjectLink.deleteMany({ where: { localId: { in: ids } } });
+    // #4627: the doors now post journal batches bridged to these lines; release them first.
+    await releaseBookingJournalForTeardown(prisma, [bookingId]);
     await prisma.bookingLedgerLine.deleteMany({ where: { bookingId } });
     await prisma.bookingEvent.deleteMany({ where: { bookingId } });
     await prisma.paymentRecoveryOperation.deleteMany({ where: { bookingId } });

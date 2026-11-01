@@ -46,6 +46,7 @@
  */
 import type { PrismaClient } from "@prisma/client";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { releaseBookingJournalForTeardown } from "./support/booking-financial-history-teardown";
 
 import { realElapsedMs } from "@/lib/__tests__/helpers/clock";
 
@@ -139,6 +140,8 @@ let webhookClient: PrismaClient;
         where: { OR: [{ id: WAITING_OP_ID }, { localId: { in: [PAYMENT_ID, BOOKING_ID, ...modifications.map((row) => row.id)] } }] },
       });
       await prisma.xeroObjectLink.deleteMany({ where: { localId: { in: [PAYMENT_ID, BOOKING_ID, ...modifications.map((row) => row.id)] } } });
+      // #4627: the doors post journal batches bridged to these lines; release them first.
+      await releaseBookingJournalForTeardown(prisma, [BOOKING_ID]);
       await prisma.bookingLedgerLine.deleteMany({ where: { bookingId: BOOKING_ID } });
       await prisma.memberCredit.deleteMany({ where: { memberId: MEMBER_ID } });
       await prisma.bookingEvent.deleteMany({ where: { bookingId: BOOKING_ID } });

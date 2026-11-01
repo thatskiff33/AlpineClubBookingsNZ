@@ -21,6 +21,7 @@
  */
 import type { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { releaseBookingJournalForTeardown } from "./support/booking-financial-history-teardown";
 
 import { realElapsedMs } from "@/lib/__tests__/helpers/clock";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
@@ -88,6 +89,8 @@ let observerClient: PrismaClient;
       const slices = await prisma.memberCreditNoteAllocation.findMany({ where: { appliedToBookingId: BOOKING_ID }, select: { id: true } });
       await prisma.xeroObjectLink.deleteMany({ where: { localModel: "MemberCreditNoteAllocation", localId: { in: slices.map((slice) => slice.id) } } });
       await prisma.memberCreditNoteAllocation.deleteMany({ where: { appliedToBookingId: BOOKING_ID } });
+      // #4627: the doors post journal batches bridged to these lines; release them first.
+      await releaseBookingJournalForTeardown(prisma, [BOOKING_ID]);
       await prisma.bookingLedgerLine.deleteMany({ where: { bookingId: BOOKING_ID } });
       await prisma.memberCredit.deleteMany({ where: { memberId: MEMBER_ID } });
       await prisma.bookingEvent.deleteMany({ where: { bookingId: BOOKING_ID } });
