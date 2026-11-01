@@ -26,6 +26,7 @@ const mocks = vi.hoisted(() => ({
   fetchXeroContactsByIdsFromXero: vi.fn(),
   linkFindMany: vi.fn(),
   linkUpdate: vi.fn(),
+  executeRaw: vi.fn(),
   contactCacheUpsert: vi.fn(),
   contactCacheDeleteMany: vi.fn(),
 }));
@@ -33,6 +34,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     xeroObjectLink: { findMany: mocks.linkFindMany, update: mocks.linkUpdate },
+    $executeRaw: mocks.executeRaw,
     // Present so a write to it would be RECORDED rather than crash with
     // "undefined is not a function", which reads like a harness fault instead
     // of the contract breach it is.
@@ -57,6 +59,11 @@ import {
   readErasedContactStatusObservation,
 } from "@/lib/xero-erased-member-contact-status-check";
 import { XeroResyncUnavailableError } from "@/lib/xero-mismatch-resync";
+import {
+  applyLinkMetadataMerge,
+  isLinkMetadataMergeStatement,
+  readLinkMetadataMerge,
+} from "./support/xero-link-metadata-merge-double";
 
 /** One Xero contact as the provider returns it — details and all. */
 function xeroContact(contactID: string, contactStatus: string) {
@@ -82,6 +89,7 @@ describe("erased-member contact status check (#3058)", () => {
     mocks.fetchXeroContactsByIdsFromXero.mockResolvedValue([]);
     mocks.linkFindMany.mockResolvedValue([]);
     mocks.linkUpdate.mockResolvedValue({});
+    mocks.executeRaw.mockResolvedValue(1);
   });
 
   it("fetches with archived contacts included, which is the whole point", async () => {
@@ -108,8 +116,15 @@ describe("erased-member contact status check (#3058)", () => {
 
     await checkErasedMemberContactStatuses(["contact-1"]);
 
-    expect(mocks.linkUpdate).toHaveBeenCalledTimes(1);
-    const written = mocks.linkUpdate.mock.calls[0][0].data.metadata;
+    // #4657: one atomic merge statement, never a read-then-write of the metadata.
+    expect(mocks.linkUpdate).not.toHaveBeenCalled();
+    expect(mocks.executeRaw).toHaveBeenCalledTimes(1);
+    const [template, ...values] = mocks.executeRaw.mock.calls[0] as [TemplateStringsArray, ...unknown[]];
+    expect(isLinkMetadataMergeStatement(template)).toBe(true);
+    const merge = readLinkMetadataMerge(values);
+    expect(merge.linkId).toBe("link-1");
+    expect(merge.removedKeys).toEqual([]);
+    const written = applyLinkMetadataMerge({ linkedVia: "email_match" }, merge);
     expect(written).toEqual({
       // What the link already carried survives — the write MERGES.
       linkedVia: "email_match",
@@ -118,6 +133,12 @@ describe("erased-member contact status check (#3058)", () => {
         observedAt: expect.any(String),
       },
     });
+    // A stored value that is not an object is replaced by the record, as the spread did.
+    for (const stored of [null, [1, 2], "legacy"]) {
+      expect(applyLinkMetadataMerge(stored, merge)).toEqual({
+        [ERASED_CONTACT_REVIEW_METADATA_KEY]: { contactStatus: "ARCHIVED", observedAt: expect.any(String) },
+      });
+    }
 
     /*
       The privacy pin, asserted on the whole serialised write rather than on
@@ -125,7 +146,7 @@ describe("erased-member contact status check (#3058)", () => {
       pass that weaker form. Erasure removed these from this application, and a
       button on the erasure screen must not put them back.
     */
-    const serialised = JSON.stringify(mocks.linkUpdate.mock.calls[0][0]);
+    const serialised = JSON.stringify(mocks.executeRaw.mock.calls[0].slice(1));
     for (const detail of [
       "Jane",
       "Real-Person",
