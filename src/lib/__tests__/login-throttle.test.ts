@@ -88,7 +88,10 @@ beforeEach(() => {
   mockLock.mockResolvedValue(1);
   mockPrisma.loginThrottle.findUnique.mockResolvedValue(null);
   mockTx.loginThrottle.update.mockResolvedValue({});
-  mockPrisma.loginThrottle.deleteMany.mockResolvedValue({ count: 1 });
+  // mockReset, not just clearAllMocks: a test's unconsumed *Once values must
+  // not leak into the next test.
+  mockPrisma.loginThrottle.deleteMany.mockReset().mockResolvedValue({ count: 1 });
+  mockPrisma.loginThrottle.findMany.mockReset().mockResolvedValue([]);
   storeRow(0);
 });
 
