@@ -270,10 +270,30 @@ has changed since. The payload hash covers the economics, not the reason or
 actor. The store, `internal/store.ts`, is the one writer of these tables. It
 looks up a replay first, then completes corrections, then writes in the order
 the foreign keys need. `reverseMemberMoneyJournal` posts the exact whole-batch
-reversal under the journal's own key, so a retry replays. No door calls the
-command until M3b. `member-money-journal-inert-census.test.ts` holds that, and
-outside the store it lets a journal delegate only be read. Applications are not
-yet in the plan: M4 adds them with receipts.
+reversal under the journal's own key, so a retry replays. Outside the store a
+journal delegate is only ever read (`member-money-journal-inert-census.test.ts`).
+Applications are not yet in the plan: M4 adds them with receipts.
+
+M3b ([#4627](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/4627))
+wired the booking doors, through the boundary's server-only `./doors` entry; the
+census admits exactly those callers. Each legacy chokepoint (confirmation, R01,
+group-settled children included; modification, R02/R03; review close, R21;
+cancellation, R04) calls `postBookingLedgerJournal` after its legacy write, in
+the same transaction, with a context the door resolved before it opened. The
+adapter reads back the lines the door just wrote and maps each to a component by
+`journalComponentOfLegacyLine`, so nothing is re-priced. Every night, the signed
+promotion and any agreed adjustment fold into one booking charge component,
+`booking:<id>:charge`, whose gross is what the booking's live lines add up to;
+each change or cancellation fee is a component of its own, keyed by its legacy
+posting key. A later event corrects a whole component and charges the remainder.
+Each line with money is bridged by its own receivable leg; a zero-cent line has
+no leg to carry it and is not linked. The debtor is the booking's owner, member
+or organisation, read after the adapter takes the booking's row lock. R01 opens
+the booking's one CHARGE obligation; later movements are attributed by booking
+until M4's applications. Only a booking whose R01 is in the journal posts later
+events, since one confirmed before M3b is M9's to back-post whole, and an event
+already posted is a no-op. A tax setting the door could not read refuses only a
+batch that needs a fresh split. Member merge posts D4's transfer (section 10).
 
 Use the existing lock classification, never a new generic journal advisory key.
 Settlement/lifecycle commands take global `lock(1)` under `INV-LOCK-001`; capacity
@@ -691,8 +711,10 @@ remains with M9. Until the Xero tax-type issue
 ([#4632](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/4632)) makes
 Xero's renders read the setting, nothing may write it, because the renderers
 hard-code the inclusive OUTPUT2 code and the two would disagree
-(`club-tax-settings-writer-census.test.ts`, `INV-CONFIG-007`). A club that is not
-GST-registered therefore needs that surface before M3b posts its charges.
+(`club-tax-settings-writer-census.test.ts`, `INV-CONFIG-007`). So M3b (#4627)
+posts every club's charges at the default treatment, which is what Xero renders
+today. A club that is not GST-registered needs that surface before its journal's
+tax legs can be right; no reader uses them yet.
 
 ### D4. Member merge: transfer open balances explicitly
 
@@ -705,7 +727,13 @@ What follows for the journal: merge leaves posted journal rows untouched, so
 they keep the merged-away member's id. The debtor says whose balance a row
 moved; it is not an actor snapshot, and the database refuses to rewrite it.
 The transfer is posted from M3 on, for the balances each step posts: charges
-(M3), refunds owed (M4) and member credit (M5).
+(M3), refunds owed (M4) and member credit (M5). M3b (#4627) delivered the
+charges: after the booking-owner move and the sorted `Member … FOR UPDATE` set,
+`postMemberMergeTransfer` re-reads every receivable balance the merged-away
+member carries and moves each, booking by booking, to the survivor. A door
+holding one of that member's bookings makes the owner move wait, so its charge
+is in the balances read; a door after it reads the survivor. The transfer posts
+no revenue, so it needs no `lock(1)`, which merge deliberately does not take.
 
 ## 11. Proposed children, in shipping order
 
@@ -736,6 +764,11 @@ than opening a competing implementation lane.
 | M16 — Stop writing mirrors and retire reconstruction | #3586 stop-writing release: compatible nullable/ignored columns, remove writes and mirror-only guards, contract census, remove drained repair arms, executable reconstruction/downgrade rehearsal and operator rollback records. | M15 deployed/drained, M14 behaviour covered or no old IB dependency, all source/repair inventories closed | Critical: blue/green money |
 | M17 — Drop six obsolete money columns | #3586 contract release, migration ledger/rollback, old-client rehearsal; no unrelated transaction-field or build-up deletion. | M16 deployed, old colours drained, owner timing | Critical: destructive schema |
 | M18 — Retire drained compatibility and legacy backfills | Remove old writable credit/booking compatibility plumbing and obsolete repair/backfill exports after proving zero callers, unresolved legacy operations or rollback dependency; retain posted history and coverage monitor. Further schema contracts are separate later releases. | M17, closed rollback window and per-module evidence | High: cleanup/data retention |
+
+M3 ships as three PRs (the plan on #4515): M3a, the posting command (#4626,
+delivered); M3b, the confirmed population bridged one-to-one with comparison
+report v1 (#4627, delivered); M3c, bank-transfer charges before settlement
+(#4628). M3 closes when M3c merges.
 
 M12 is the existing explicitly multi-PR reader programme; M13 and M15 likewise
 split by complete document/decision cohorts when filed. Each PR must have one

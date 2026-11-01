@@ -588,7 +588,9 @@ verified aggregate) and **`INV-MOD-058`** (an edit's stored lines).
   `booking-ledger-posting-key.realdb.test.ts` proves the skip, the surviving
   transaction and the fence against PostgreSQL itself.
 
-  Whole-batch keys in the member journal: `INV-MONEY-041`, `INV-MONEY-042`.
+  Whole-batch keys in the member journal: `INV-MONEY-041`, `INV-MONEY-042`. From
+  M3b the journal's booking charge is keyed once per booking too, and a door's
+  repeat of an event already posted is a no-op (`INV-MONEY-044`).
 
 ## INV-MONEY-034
 
@@ -1007,7 +1009,7 @@ enforce this even through direct SQL. `member_money_batch_errors` is the shared
 validation rule used by the triggers and the read-only verifier.
 M1 is inert: no legacy writer cohort is activated and no old source is required
 to have a journal link. M3a (#4626) adds one command, `postMemberMoneyEvent`;
-its store is the only writer, and no door calls it until M3b. Mandatory legacy links need backfill and worker drain
+its store is the only writer; the booking doors reach it from M3b (`INV-MONEY-044`). Mandatory legacy links need backfill and worker drain
 in their writer milestone; a nullable bridge is never universal posting proof.
 
 ## INV-MONEY-042
@@ -1058,3 +1060,31 @@ retention schedule (#4457), which keeps these rows. Pins:
 `booking-financial-history-census.test.ts` (relations classified, money-line
 keys RESTRICT both ways), `booking-financial-history.realdb.test.ts` and
 `database-roles.realdb.test.ts` (an application-role delete is refused).
+
+## INV-MONEY-044
+
+From Ledger M3b (#4627), every legacy booking charge line a door writes is
+posted into the member-money journal once, in the same transaction, from the
+same stored lines. The chokepoints are the confirmation poster (R01, group
+children included), the modification poster (R02/R03), review close (R21) and
+the cancellation poster (R04); each calls `postBookingLedgerJournal` after its
+legacy write, with a context the door resolved before its transaction. Nothing
+is re-priced: `journalComponentOfLegacyLine` maps each line to one component.
+Nights, the signed promotion and agreed adjustments fold into the booking's
+charge component, whose gross is what its live lines add up to; each change or
+cancellation fee is its own component, keyed by its legacy posting key. A later
+event corrects a whole component and charges the remainder. Each line with
+money is bridged by its own receivable leg. The debtor is the booking's owner,
+member or organisation, read under the booking's row lock. R01 opens the
+booking's one CHARGE obligation. Only a booking whose R01 is in the journal
+posts later events; one confirmed before M3b is M9's to back-post. An event
+already posted is a no-op, and a refusal is never caught, so it rolls the
+business change back. Member merge transfers each receivable balance of the
+merged-away member to the survivor after the owner move, under its
+`Member … FOR UPDATE` set (D4). `booking-ledger:census` checks, for each booking
+whose R01 is posted, that live components equal the bridged lines (identity
+`JOURNAL`) and that no charge line is unbridged (`UNBRIDGED_CHARGE_LINE`). Pins:
+`member-money-booking-charges.test.ts`,
+`booking-ledger-projection-census-journal.test.ts`,
+`booking-ledger-journal.realdb.test.ts` and
+`member-money-journal-inert-census.test.ts`.

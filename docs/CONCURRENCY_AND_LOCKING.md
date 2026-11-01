@@ -5446,6 +5446,37 @@ replay. A refused check looks the key up once more,
 because a same-key poster may have committed in between. Proved against real
 PostgreSQL by `member-money-posting.realdb.test.ts`.
 
+## The M3b booking doors and member merge's journal transfer (#4627)
+
+Ledger M3b adds no advisory key and no new lock site. Its participants:
+
+- **The booking doors** post through `postBookingLedgerJournal` inside the
+  transaction of the legacy chokepoint that called it: the confirmation poster
+  (the settle body, the group settle, the whole-lodge $0 paths and the school
+  request's PAID), the modification poster (every edit door), review close and
+  the cancellation poster (every cancel path, the hold-release and capacity
+  crons, the Xero late-capacity cancel, the organiser's child cancel). Each
+  already holds `lock(1)` then its lodge key (`INV-LOCK-001`/`002`); the engine
+  asserts `lock(1)` for every correction and re-charge and refuses without it.
+- **The booking row.** Before it reads the owner the adapter takes the booking's
+  row lock, `FOR NO KEY UPDATE`, the strength the door's own status or price
+  UPDATE already takes in the same transaction, so it adds no new edge.
+- **Member merge** takes no `lock(1)` (see "Merge joins the bed-allocation
+  cohort"). Its transfer posts no revenue, so the engine needs no key, and it
+  runs after the booking-owner move and the sorted `Member … FOR UPDATE` set. The
+  owner move UPDATEs each booking row, so it waits for any door that holds one.
+  That door's charge to the merged-away member is then committed and in the
+  balances the transfer re-reads. A door that starts later blocks on the row the
+  merge holds and then reads the survivor as owner. Neither order strands a
+  balance or posts one twice (`booking-ledger-journal.realdb.test.ts`).
+- **The posting context** (club date, currency, tax treatment) is resolved
+  before each door's transaction (`INV-LOCK-004`), on the club zone the door
+  already read where it has one, so the door keeps one club day.
+
+Reconciled against #4626 (the command and its `lock(1)` assertion), #4564 (M2's
+RESTRICT keys and the journal-aware teardown), #4622, #4629 and #4630, the last
+merges touching these writers.
+
 ## A credit note spent outside the app: global, then the member's credit ledger (#4219)
 
 `convergeCreditNoteSpentOutsideApp` releases a booking's applied credit and writes

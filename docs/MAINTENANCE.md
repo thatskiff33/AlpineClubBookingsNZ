@@ -1913,7 +1913,11 @@ repeatable-read snapshot opened `READ ONLY`, so PostgreSQL itself refuses a
 write inside it; it repairs nothing and calls no provider. For every booking it
 checks seven identities — the price, the captured amount, applied credit, the
 refunded total, change fees, the uncollected ask, and a live booking's balance
-owed — against the ledger lines that project them, and prints:
+owed — against the ledger lines that project them. Since Ledger M3b (#4627,
+[`INV-MONEY-044`](invariants/money.md#inv-money-044)) an eighth, `JOURNAL`,
+compares, for each booking whose confirmation is in the member-money journal,
+the journal's live charge components with the ledger lines it links; a booking
+confirmed earlier is not compared (M9 back-posts it). It prints:
 
 - per identity, how many bookings it applies to, agree, disagree, are
   classified, or are a coverage gap;
@@ -1928,8 +1932,10 @@ owed — against the ledger lines that project them, and prints:
 - **integrity**: reversals that name no line or are not its exact opposite, a
   second live line for one guest-night, an unknown posting-key namespace or one
   on an anchor it never posts under, and a live line its source row (or a
-  cancellation's frozen kept figure) no longer bears out. PostgreSQL's update and delete
-  counts for the table are printed as information only;
+  cancellation's frozen kept figure) no longer bears out, and (`UNBRIDGED_CHARGE_LINE`)
+  a charge line on a journal-confirmed booking that no journal batch links.
+  PostgreSQL's update and delete counts for the table are printed as
+  information only;
 - **named classes** — expected differences, each matched to the cent from the
   booking's own rows (in-flight refunds and hand-backs, a review share kept by
   the club, the refunded total's credit and hand-back allocations, and so on).
