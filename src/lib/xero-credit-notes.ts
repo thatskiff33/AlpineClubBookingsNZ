@@ -17,6 +17,7 @@
 
 import { reviewTaskKeyParts } from "@/lib/xero-review-task-key";
 import { assertNoRefundCreditNoteInFlight } from "@/lib/xero-refund-note-in-flight";
+import { recordCreatedRefundNote } from "@/lib/xero-refund-note-record";
 import { assertFreshRefundNoteFromCreate, mayRecordAsCanonicalRefundNote, readCanonicalRefundNoteField, refundNoteKeyAfterVoidParts, refundRequestOwnNotes, type RefundNoteKeyScope } from "@/lib/xero-refund-note-status";
 import {
   XERO_OUTBOX_ACCOUNT_CREDIT_NOTE_TYPE,
@@ -782,36 +783,21 @@ export async function createXeroCreditNote(
     const createdNoteId = createdNote.creditNoteID;
     const createdNoteNumber = createdNote.creditNoteNumber ?? null;
     await assertFreshRefundNoteFromCreate(paymentId, operationId!, { creditNoteID: createdNoteId, status: createdNote.status }, prisma);
-    await prisma.$transaction(async (tx) => {
+    // #4426 (`INV-INT-029`): recorded only while the row is not resolved by
+    // hand; a row an officer resolved while Xero answered keeps their note, and
+    // this one is alerted, not linked, settled or completed.
+    const record = await recordCreatedRefundNote({
+      paymentId,
+      operationId: operationId!,
+      creditNoteId: createdNoteId,
+      creditNoteNumber: createdNoteNumber,
       // #3827 (D-3813-8): a request's own note never takes the pointer, nor
       // does a per-refund note (#3880 F1).
-      if (refundRequestId === null && !perRefundNote) {
-        await tx.payment.update({
-          where: { id: paymentId },
-          data: { xeroRefundCreditNoteId: createdNoteId },
-        });
-      }
-      await upsertXeroObjectLink(
-        {
-          localModel: "Payment",
-          localId: paymentId,
-          xeroObjectType: "CREDIT_NOTE",
-          xeroObjectId: createdNoteId,
-          xeroObjectNumber: createdNoteNumber,
-          role: noteLinkRole,
-          metadata: noteLinkMetadata,
-        },
-        { store: tx }
-      );
-      await tx.xeroSyncOperation.update({
-        where: { id: operationId! },
-        data: {
-          xeroObjectType: "CREDIT_NOTE",
-          xeroObjectId: createdNoteId,
-          xeroObjectNumber: createdNoteNumber,
-        },
-      });
+      writesPointer: refundRequestId === null && !perRefundNote,
+      linkRole: noteLinkRole,
+      linkMetadata: noteLinkMetadata,
     });
+    if (record === "resolved-by-hand") return "";
 
     // The first attempt's settlement and completion, shared with the retry
     // that finishes an interrupted attempt (#3548): one path, one payload.

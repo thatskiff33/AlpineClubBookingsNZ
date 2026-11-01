@@ -31,9 +31,13 @@ import {
   resolutionLabel,
 } from "@/lib/xero-operation-resolution";
 
-/** The once-ever claim key of one operation's alert. */
-export function xeroSuccessAfterResolutionAlertKey(operationId: string): string {
-  return `xero-success-after-resolution:${operationId}`;
+/**
+ * The once-ever claim key of one operation's alert. #4426: a late Xero object
+ * the app did not record is keyed by its own id too, so each one is told.
+ */
+export function xeroSuccessAfterResolutionAlertKey(operationId: string, unrecordedObjectId?: string): string {
+  const key = `xero-success-after-resolution:${operationId}`;
+  return unrecordedObjectId ? `${key}:${unrecordedObjectId}` : key;
 }
 
 /** The alert's body: what happened, and what an officer should check in Xero. */
@@ -67,20 +71,62 @@ export function successAfterResolutionAlert(
   operation: XeroSyncOperation | null,
 ): (() => Promise<void>) | null {
   if (operation?.status !== "SUCCEEDED" || !isResolvedInXero(operation)) return null;
-  const context = {
-    operationId: operation.id,
-    localModel: operation.localModel,
-    localId: operation.localId,
-    xeroObjectId: operation.xeroObjectId,
-  };
-  const errorMessage = alertMessage(operation);
+  return alertOnce(
+    operation,
+    xeroSuccessAfterResolutionAlertKey(operation.id),
+    { xeroObjectId: operation.xeroObjectId },
+    alertMessage(operation),
+    "Xero success landed on an operation already resolved in Xero; Xero may now hold the item twice (INV-INT-029)",
+  );
+}
+
+/** A Xero object a late success made, which the app did not record (#4426). */
+export interface UnrecordedXeroObject {
+  xeroObjectType: string;
+  xeroObjectId: string;
+  xeroObjectNumber: string | null;
+}
+
+/**
+ * #4426 (`INV-INT-029`): a late success the executor did NOT record, because
+ * an officer resolved its row by hand while Xero was answering - a refund
+ * credit note's create (`recordCreatedRefundNote`). The row keeps what the
+ * resolve recorded; the late object is named here, once per object, so an
+ * officer can check it against the one made by hand and void the duplicate.
+ * Same thunk contract as `successAfterResolutionAlert`: run outside any
+ * transaction; never throws.
+ */
+export function unrecordedLateSuccessAlert(
+  operation: XeroSyncOperation,
+  late: UnrecordedXeroObject,
+): () => Promise<void> {
+  const made = `${late.xeroObjectType} ${late.xeroObjectNumber ?? late.xeroObjectId} (Xero id ${late.xeroObjectId})`;
+  const kept = operation.xeroObjectId
+    ? `${operation.xeroObjectType ?? "the object"} ${operation.xeroObjectNumber ?? operation.xeroObjectId}, which the resolve recorded`
+    : "its resolution";
+  const errorMessage = `This Xero operation was marked "${resolutionLabel(operation.manuallyResolvedReason)}" while an earlier attempt at the same Xero call was still waiting on Xero. That attempt then came back: it made ${made} in Xero. The app did not record it or link it to anything, and the operation keeps ${kept}. Xero may now hold the item twice: check ${made} against the one made by hand, and void it in Xero if it is a duplicate.`;
+  return alertOnce(
+    operation,
+    xeroSuccessAfterResolutionAlertKey(operation.id, late.xeroObjectId),
+    { unrecordedXeroObjectId: late.xeroObjectId, unrecordedXeroObjectNumber: late.xeroObjectNumber, recordedXeroObjectId: operation.xeroObjectId },
+    errorMessage,
+    "Xero success arrived after its operation was resolved in Xero and was not recorded; Xero may now hold the item twice (INV-INT-029)",
+  );
+}
+
+/** The warning and the once-ever alert both shapes send. */
+function alertOnce(
+  operation: XeroSyncOperation,
+  key: string,
+  objects: Record<string, unknown>,
+  errorMessage: string,
+  warning: string,
+): () => Promise<void> {
+  const context = { operationId: operation.id, localModel: operation.localModel, localId: operation.localId, ...objects };
   return async () => {
-    logger.warn(
-      context,
-      "Xero success landed on an operation already resolved in Xero; Xero may now hold the item twice (INV-INT-029)",
-    );
+    logger.warn(context, warning);
     await sendAdminAlertOnceEver({
-      key: xeroSuccessAfterResolutionAlertKey(operation.id),
+      key,
       label: "Xero success-after-resolution alert",
       context,
       send: async () => {
