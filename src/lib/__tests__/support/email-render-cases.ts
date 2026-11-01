@@ -94,6 +94,7 @@ import {
 } from "@/lib/email-templates/admin-finance";
 import { adminInternetBankingHoldKeptTemplate } from "@/lib/email-templates/admin-internet-banking";
 import { adminLateCaptureRefundedOutsideAppTemplate } from "@/lib/email-templates/admin-late-capture-outside-app";
+import { adminUnrecognisedStripePaymentTemplate } from "@/lib/email-templates/admin-unrecognised-stripe-payment";
 import { adminBankTransferSettlementFigureTemplate } from "@/lib/email-templates/admin-bank-transfer-settlement";
 import { adminDuplicateCaptureKeptTemplate } from "@/lib/email-templates/admin-duplicate-capture-kept";
 import { adminSupersededCaptureRefusedTemplate } from "@/lib/email-templates/admin-superseded-capture-refused";
@@ -875,6 +876,9 @@ const GENERATED_CASES: EmailRenderCase[] = [
     adminManualRefundTaskTemplate({ memberName: "memberName-1", checkIn: new Date("2026-03-03T00:00:00.000Z"), checkOut: new Date("2026-03-04T00:00:00.000Z"), refundAmountCents: 104, bookingId: "bookingId-5", reason: "reason-6", reviewUrl: "reviewUrl-7", situation: "group-organiser-internet-banking" }, CLUB_FORMAT_TEST) },
   { id: "adminLateCaptureRefundedOutsideAppTemplate:minimal", fn: "adminLateCaptureRefundedOutsideAppTemplate", render: () =>
     adminLateCaptureRefundedOutsideAppTemplate({ memberName: "memberName-1", checkIn: new Date("2026-03-03T00:00:00.000Z"), checkOut: new Date("2026-03-04T00:00:00.000Z"), bookingId: "bookingId-4", paymentIntentId: "paymentIntentId-5", refundedCents: 106, reviewUrl: "reviewUrl-7" }, CLUB_FORMAT_TEST) },
+  // #4532: a Stripe payment the app did not create.
+  { id: "adminUnrecognisedStripePaymentTemplate:minimal", fn: "adminUnrecognisedStripePaymentTemplate", render: () =>
+    adminUnrecognisedStripePaymentTemplate({ amount: "amount-1", receivedAt: "receivedAt-2", description: "description-3", paymentIntentId: "paymentIntentId-4", chargeId: "chargeId-5", checkoutSessionId: "checkoutSessionId-6", paymentLinkId: "paymentLinkId-7", stripeDashboardUrl: "https://dashboard.stripe.com/test/payments/paymentIntentId-4" }) },
   { id: "adminLateCaptureHeldTemplate:minimal", fn: "adminLateCaptureHeldTemplate", render: () =>
     adminLateCaptureHeldTemplate({ memberName: "memberName-1", checkIn: new Date("2026-03-03T00:00:00.000Z"), checkOut: new Date("2026-03-04T00:00:00.000Z"), amountCents: 104, bookingId: "bookingId-5", reviewUrl: "reviewUrl-6" }, CLUB_FORMAT_TEST) },
   { id: "adminPendingDeadlineTemplate:minimal", fn: "adminPendingDeadlineTemplate", render: () =>

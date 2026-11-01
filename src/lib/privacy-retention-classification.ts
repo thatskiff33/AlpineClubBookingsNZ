@@ -65,6 +65,7 @@ export const PRIVACY_RETENTION_CLASSIFICATION = {
   ManualRefundTask: "personal",
   PaymentTransaction: "personal",
   PaymentRefund: "personal",
+  UnrecognisedStripePayment: "personal",
   RateLimitCounter: "personal",
   AlertCooldown: "personal",
   PaymentRecoveryOperation: "personal",

@@ -4798,6 +4798,41 @@ model ProcessedWebhookEvent {
   @@index([source])
 }
 
+// #4532 (`INV-INT-032`): a succeeded Stripe payment on the club's account that
+// the app did not create - a Stripe Payment Link, a Checkout page or a dashboard
+// charge, whose PaymentIntent carries none of the app's metadata
+// (`isAppCreatedPaymentIntent`). One row per PaymentIntent, written by the
+// `payment_intent.succeeded` webhook and claimed by the unique intent id, so a
+// redelivery or a concurrent delivery writes nothing more. Nothing reaches
+// Xero from here (part 2 of #4532 would); the treasurer codes it by hand from
+// the admin alert. The webhook inserts the row and later stamps `alertedAt`
+// once that mail has gone out; it does not otherwise change the row. The
+// application role can still update or delete it, so part 2 (#4621) must not
+// treat the row as privilege-narrowed if it records a Xero posting here.
+// Club-wide: no booking, so no lodge.
+model UnrecognisedStripePayment {
+  id                      String   @id @default(cuid())
+  stripePaymentIntentId   String   @unique
+  stripeChargeId          String?
+  stripeCheckoutSessionId String?
+  stripePaymentLinkId     String?
+  // Stripe's smallest currency unit: cents for every two-decimal currency.
+  amountCents             Int
+  // As Stripe gives it: lower-case ISO 4217.
+  currency                String
+  // When the succeeded event was created: when it was paid, not when the
+  // PaymentIntent was first opened. An instant, not a lodge night.
+  stripeCreatedAt         DateTime
+  // The Checkout line items, else the PaymentIntent's own description; capped.
+  description             String?
+  // The webhook event that recorded it.
+  stripeEventId           String
+  // Set only after the Finance alert was sent. A later delivery that finds it
+  // null sends again; a held cooldown without this stamp is not a sent alert.
+  alertedAt               DateTime?
+  createdAt               DateTime @default(now())
+}
+
 // ---------------------------------------------------------------------------
 // Webhook Delivery Monitoring (OBS-08)
 // ---------------------------------------------------------------------------

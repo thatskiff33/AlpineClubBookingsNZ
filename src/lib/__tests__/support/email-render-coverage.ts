@@ -172,6 +172,8 @@ export const REGISTRY_KEY_RENDERERS: Record<string, string> = {
   "admin-duplicate-capture-kept": "adminDuplicateCaptureKeptTemplate",
   // admin-alerts-settlement (#4300), template in ./admin-superseded-capture-refused
   "admin-superseded-capture-refused": "adminSupersededCaptureRefusedTemplate",
+  // admin-alerts-unrecognised-stripe-payment (#4532), template in ./admin-unrecognised-stripe-payment
+  "admin-unrecognised-stripe-payment": "adminUnrecognisedStripePaymentTemplate",
   "admin-payment-failure": "adminPaymentFailureTemplate",
   "admin-refund-request": "adminRefundRequestTemplate",
   "admin-xero-reconciliation-report": "adminXeroReconciliationReportTemplate",

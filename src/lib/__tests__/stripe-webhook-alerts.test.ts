@@ -427,6 +427,13 @@ vi.mock("@/lib/logger", () => ({
   },
 }));
 
+// #4532: the record-and-alert of a payment the app did not create, pinned on its own
+// in `unrecognised-stripe-payment.test.ts`; here only the dispatch reaches it.
+const mockRecordUnrecognisedStripePayment = vi.hoisted(() => vi.fn<(...args: unknown[]) => Promise<void>>(async () => undefined));
+vi.mock("@/lib/unrecognised-stripe-payment", () => ({
+  recordUnrecognisedStripePayment: (...args: unknown[]) => mockRecordUnrecognisedStripePayment(...args),
+}));
+
 import { POST } from "@/app/api/webhooks/stripe/route";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
@@ -4355,6 +4362,64 @@ describe("Stripe webhook Xero alerting", () => {
   // longer ACKs every redelivery as a duplicate; (b) a concurrent redelivery is
   // no longer ACKed while an in-flight attempt later fails.
   // ---------------------------------------------------------------------------
+  describe("a succeeded payment the app did not create (#4532, INV-INT-032)", () => {
+    function foreignSucceededEvent(eventId: string, metadata: Record<string, string>) {
+      return {
+        id: eventId,
+        type: "payment_intent.succeeded",
+        livemode: true,
+        data: { object: { id: "pi_foreign", amount: 5000, currency: "nzd", metadata } },
+      } as any;
+    }
+
+    it.each([
+      ["no metadata at all (a dashboard charge)", {}],
+      ["a Payment Link's own metadata", { type: "donation", memberId: "m_1" }],
+    ])("records and alerts it, never reaches a booking, and completes the event: %s", async (_label, metadata) => {
+      const event = foreignSucceededEvent("evt_foreign", metadata);
+      mockConstructWebhookEvent.mockReturnValue(event);
+
+      const response = await POST(makeRequest());
+
+      expect(response.status).toBe(200);
+      expect(mockRecordUnrecognisedStripePayment).toHaveBeenCalledTimes(1);
+      expect(mockRecordUnrecognisedStripePayment).toHaveBeenCalledWith(event.data.object, event, CLUB_FORMAT_TEST);
+      expect(mockFindPaymentTransactionByIntentId).not.toHaveBeenCalled();
+      expect(mockApplyGroupSettlementSucceeded).not.toHaveBeenCalled();
+      expect(mockQueueSupersededPaymentIntentRefundRecovery).not.toHaveBeenCalled();
+      expect(mockSendBookingConfirmedEmail).not.toHaveBeenCalled();
+      expect(mockProcessedWebhookUpdateMany).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ status: "COMPLETED" }) }),
+      );
+    });
+
+    it.each([
+      ["a booking's intent", { bookingId: "booking-1" }],
+      ["a group settlement", { type: "group_settlement", groupBookingId: "group-1" }],
+    ])("leaves the app's own intents to their paths: %s", async (_label, metadata) => {
+      mockConstructWebhookEvent.mockReturnValue(foreignSucceededEvent("evt_ours", metadata));
+
+      await POST(makeRequest());
+
+      expect(mockRecordUnrecognisedStripePayment).not.toHaveBeenCalled();
+    });
+
+    it("answers 500 and gives the claim back when the record or alert fails, so Stripe redelivers", async () => {
+      mockConstructWebhookEvent.mockReturnValue(foreignSucceededEvent("evt_foreign_fail", {}));
+      mockRecordUnrecognisedStripePayment.mockRejectedValueOnce(new Error("alert not sent"));
+
+      const response = await POST(makeRequest());
+
+      expect(response.status).toBe(500);
+      expect(mockProcessedWebhookDeleteMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: expect.objectContaining({ eventId: "evt_foreign_fail", status: "PROCESSING" }) }),
+      );
+      expect(mockProcessedWebhookUpdateMany).not.toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ status: "COMPLETED" }) }),
+      );
+    });
+  });
+
   describe("webhook dedup processing lease (#1887)", () => {
     function succeededEvent(eventId: string) {
       return {
