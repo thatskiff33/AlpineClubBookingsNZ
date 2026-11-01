@@ -12,7 +12,13 @@
  *   3. two first-ever claims on an account with no row yet both count;
  *   4. a row deleted (by a clear or the idle sweep) between the ensure and the
  *      lock is ensured and locked again, so the claim still counts in the store
- *      instead of falling back to per-process memory.
+ *      instead of falling back to per-process memory;
+ *   5. a row held past the claim's one-second lock timeout answers "waiting"
+ *      promptly, uncounted, without the per-process fallback (#4637 review);
+ *   6. a clear waits on a claim holding the row, then deletes the committed row;
+ *   7. the idle sweep waits on a claim holding an idle row, re-checks it after
+ *      the claim refreshes it, and leaves it, while deleting an idle row nobody
+ *      holds.
  *
  * ## The interleaving is FORCED, not raced
  *
@@ -254,6 +260,89 @@ const keys: string[] = [];
 
       expect(await Promise.all(claims)).toEqual([{ allowed: true }, { allowed: true }]);
       expect((await row(key))?.failureCount).toBe(2);
+    });
+
+    it("answers a row held past the lock timeout as waiting, promptly and uncounted", async () => {
+      const { email, key } = freshAccount();
+      await prisma.loginThrottle.create({
+        data: { id: key, failureCount: 2, lastFailureAt: T0 },
+      });
+      const errors = vi.spyOn(logger, "error");
+      const holder = holdRow(key, "lock");
+      await holder.held;
+
+      const startedAt = process.hrtime.bigint();
+      let outcome: { allowed: boolean };
+      try {
+        outcome = await throttle.claimPasswordAttempt(email);
+      } finally {
+        holder.release();
+        await holder.done;
+      }
+      const elapsed = realElapsedMs(startedAt);
+
+      expect(outcome).toEqual({ allowed: false });
+      // Bounded by the one-second lock timeout, not Prisma's transaction limits.
+      expect(elapsed).toBeLessThan(2_500);
+      expect(await row(key)).toEqual({ id: key, failureCount: 2, lastFailureAt: T0 });
+      expect(errors).not.toHaveBeenCalled();
+    });
+
+    it("a clear waits on a claim holding the row, then deletes the committed row", async () => {
+      const { email, key } = freshAccount();
+      await prisma.loginThrottle.create({
+        data: { id: key, failureCount: 3, lastFailureAt: T0 },
+      });
+      // The holder stands in for a claim: it holds the row and counts once more.
+      const holder = holdRow(key, "lock", (tx) =>
+        tx.loginThrottle.update({ where: { id: key }, data: { failureCount: 4 } }),
+      );
+      await holder.held;
+
+      const clear = throttle.clearPasswordAttempts(email);
+      try {
+        await waitForBlockedClaims(1, false);
+        expect(await row(key)).not.toBeNull();
+      } finally {
+        holder.release();
+        await holder.done;
+      }
+
+      await clear;
+      expect(await row(key)).toBeNull();
+    });
+
+    it("the idle sweep skips a row a claim refreshes under it, and deletes an idle row nobody holds", async () => {
+      const held = freshAccount();
+      const idle = freshAccount();
+      const twoHoursAgo = new Date(T0.getTime() - 2 * 60 * 60 * 1000);
+      await prisma.loginThrottle.createMany({
+        data: [
+          { id: held.key, failureCount: 7, lastFailureAt: twoHoursAgo },
+          { id: idle.key, failureCount: 7, lastFailureAt: twoHoursAgo },
+        ],
+      });
+      // The holder stands in for a claim on the idle row: it holds the row and
+      // refreshes it (an idle row's next claim counts afresh at now).
+      const holder = holdRow(held.key, "lock", (tx) =>
+        tx.loginThrottle.update({
+          where: { id: held.key },
+          data: { failureCount: 1, lastFailureAt: T0 },
+        }),
+      );
+      await holder.held;
+
+      const sweep = throttle.sweepIdleLoginThrottleRows();
+      try {
+        await waitForBlockedClaims(1, false);
+      } finally {
+        holder.release();
+        await holder.done;
+      }
+
+      await expect(sweep).resolves.toBe(1);
+      expect(await row(held.key)).toEqual({ id: held.key, failureCount: 1, lastFailureAt: T0 });
+      expect(await row(idle.key)).toBeNull();
     });
 
     it("re-ensures a row deleted between the ensure and the lock, and still counts in the store", async () => {
