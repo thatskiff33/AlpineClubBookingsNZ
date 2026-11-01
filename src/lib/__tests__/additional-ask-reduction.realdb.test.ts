@@ -1320,12 +1320,120 @@ let webhookClient: PrismaClient;
         return stripe.create(args);
       }) as never;
 
+      // #4052: the door lost its fence to the runner, which owns this intent - never cancelled.
+      const cancelled: string[] = [];
+      stripeRaceHooks.cancel = (async (id: string) => {
+        cancelled.push(id);
+        return { paymentIntent: { id, status: "canceled" }, canceled: true };
+      }) as never;
+
       expect((await mintAtDoor(result)).additionalPaymentIntentId).toBeUndefined();
 
       expect(stripe.intents.size).toBe(1);
       const [intent] = [...stripe.intents.values()];
       expect((await liveAsks()).map((row) => row.stripePaymentIntentId)).toEqual([intent!.id]);
       expect((await payment()).additionalPaymentIntentId).toBe(intent!.id);
+      expect(cancelled).toEqual([]);
+    });
+
+    // #4052: a later edit closes the waiting re-issue's recovery without a mint
+    // (`closeWaitingAskRecoveries`, through its real writers) - a reduction
+    // netting it off, or an increase folding it into its own ask.
+    async function closeWaitingReissue(by: "netted" | "folded") {
+      const [{ readUnpaidPriceAsk, retireUnpaidAskChain }, { foldWaitingReissuedAsks }] = await Promise.all([
+        import("@/lib/additional-ask-reduction"),
+        import("@/lib/additional-ask-reissue"),
+      ]);
+      await webhookClient.$transaction(async (tx) => {
+        const booking = await tx.booking.findUniqueOrThrow({ where: { id: BOOKING_ID }, include: { payment: true } });
+        if (by === "folded") {
+          expect((await foldWaitingReissuedAsks(tx as never, booking as never)).cents).toBe(3_000);
+          return;
+        }
+        const ask = await readUnpaidPriceAsk(tx as never, booking as never);
+        await retireUnpaidAskChain(tx as never, { bookingId: BOOKING_ID, paymentId: PAYMENT_ID, ask });
+      });
+    }
+
+    it.each(["netted", "folded"] as const)(
+      "#4052: a re-issue %s by a later edit while the door mints it - the door's unused intent is cancelled at Stripe, and nothing is written for it",
+      async (by) => {
+        await grownBooking("card", 1_000);
+        const result = await removeLeavingGuest();
+        const stripe = fakeStripe();
+        const recovery = await reissueRecovery(result.bookingModificationId!);
+        const cancelled: string[] = [];
+        stripeRaceHooks.cancel = (async (id: string) => {
+          cancelled.push(id);
+          stripe.intents.get(id)!.status = "canceled";
+          return { paymentIntent: { id, status: "canceled" }, canceled: true };
+        }) as never;
+        let doorFirst = true;
+        stripeRaceHooks.create = (async (args: Parameters<typeof stripe.create>[0]) => {
+          if (doorFirst) {
+            doorFirst = false;
+            // The door read its recovery PENDING and is minting.
+            await closeWaitingReissue(by);
+          }
+          return stripe.create(args);
+        }) as never;
+
+        const minted = await mintAtDoor(result);
+
+        expect(minted).toEqual({ additionalPaymentClientSecret: undefined, additionalPaymentIntentId: undefined, additionalAskRetired: by === "netted" });
+        expect(stripe.intents.size).toBe(1);
+        const [intent] = [...stripe.intents.values()];
+        expect(cancelled).toEqual([intent!.id]);
+        expect(await prisma.paymentTransaction.findUnique({ where: { stripePaymentIntentId: intent!.id } })).toBeNull();
+        expect((await cancellations()).filter((row) => row.paymentIntentId === intent!.id)).toEqual([]);
+        expect(await prisma.paymentRecoveryOperation.findUniqueOrThrow({ where: { id: recovery.id }, select: { status: true, paymentIntentId: true } }))
+          .toEqual({ status: "SUCCEEDED", paymentIntentId: recovery.paymentIntentId });
+        expect(await liveAsks()).toEqual([]);
+
+        // Repeated: Stripe answers "already cancelled", and nothing else moves.
+        const { settleLostReissuedAskFence } = await import("@/lib/reissued-ask-abandoned-intent");
+        stripeRaceHooks.cancel = (async (id: string) => {
+          cancelled.push(id);
+          return { paymentIntent: { id, status: "canceled" }, canceled: false };
+        }) as never;
+        await settleLostReissuedAskFence({ bookingId: BOOKING_ID, bookingModificationId: result.bookingModificationId!, paymentIntentId: intent!.id });
+        expect(cancelled).toEqual([intent!.id, intent!.id]);
+        expect(await prisma.paymentTransaction.findUnique({ where: { stripePaymentIntentId: intent!.id } })).toBeNull();
+      },
+    );
+
+    it("#4052: a re-issue a later reduction netted off BEFORE the door minted is not minted, and nothing is cancelled", async () => {
+      await grownBooking("card", 1_000);
+      const result = await removeLeavingGuest();
+      const stripe = fakeStripe();
+      const cancelled: string[] = [];
+      stripeRaceHooks.cancel = (async (id: string) => {
+        cancelled.push(id);
+        return { paymentIntent: { id, status: "canceled" }, canceled: true };
+      }) as never;
+      await closeWaitingReissue("netted");
+
+      expect(await mintAtDoor(result)).toEqual({ additionalPaymentClientSecret: undefined, additionalPaymentIntentId: undefined, additionalAskRetired: true });
+      expect(stripe.intents.size).toBe(0);
+      expect(cancelled).toEqual([]);
+    });
+
+    // #4052: a declined card fails the row and nothing more; only a retiring
+    // writer's evidence makes it retired - here a supersede's queued cancel.
+    it("#4052: a declined ask stays live; once a supersede queues its cancellation it is retired", async () => {
+      await grownBooking("card", 1_000);
+      const [{ markPaymentIntentTransactionFailed }, { isMintedAskStillLive }, { queueSupersededAdditionalIntentCancellationRows }] = await Promise.all([
+        import("@/lib/payment-transactions"),
+        import("@/lib/reissued-ask-invoice"),
+        import("@/lib/booking-payment-cleanup"),
+      ]);
+      await markPaymentIntentTransactionFailed({ paymentIntentId: ASK_INTENT });
+      expect(await askAfter()).toEqual({ status: "FAILED", withdrawnAt: null });
+      expect(await isMintedAskStillLive(ASK_INTENT)).toBe(true);
+
+      await queueSupersededAdditionalIntentCancellationRows({ bookingId: BOOKING_ID, paymentId: PAYMENT_ID, newPaymentIntentId: null });
+      expect((await cancellations()).map((row) => row.paymentIntentId)).toEqual([ASK_INTENT]);
+      expect(await isMintedAskStillLive(ASK_INTENT)).toBe(false);
     });
 
     // #4442 review M4: the re-issue's two writers re-read the live ask they

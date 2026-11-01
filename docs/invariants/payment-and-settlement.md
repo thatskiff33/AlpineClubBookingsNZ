@@ -2798,7 +2798,8 @@ _Legacy: settles tasks raised before #4317._
   unpaid fence; cancellations queued; parked invoices CANCELLED. A capture or
   deadlock in between rolls the edit back (409); a capture after commit is
   refunded in full. The re-issue's recovery and the billed-offset note are
-  written in the same transaction.
+  written in the same transaction. A declined card is not retired (#4052).
+  An intent the door minted as a later edit closed its re-issue is cancelled.
 - **Asks awaiting a failed mint's retry** count, sized as the replay would. A
   retry claimed within two minutes refuses the edit; an older claim is closed.
   A later increase folds a waiting re-issue in and records it, so its own

@@ -3416,7 +3416,10 @@ claim (`holdAdditionalIntentRecoveryClaim`, one transaction that re-stamps
 `processingStartedAt`), so whichever commits first wins. A re-issued ask's
 recovery is written in the edit's transaction; the door's own mint completes it
 fenced the same way (`writeReissuedAskUnderRecovery`). An increase folding a
-waiting re-issue in closes it with the same fence. All proven on real Postgres.
+waiting re-issue in closes it with the same fence. #4052: when the door's write
+loses that fence to a net-off or fold, it re-reads the recovery and, with no row
+naming its intent, cancels that intent at Stripe after commit, under no lock; a
+runner's claim or completion leaves it alone. No lock or key changes. All proven on real Postgres.
 Round 6: the retire closes waiting recoveries before it stamps the rows - the
 runner's own order (its claim hold writes the recovery, then its row; since
 #4217 both take the `Payment` row before either) - and a
@@ -3436,8 +3439,10 @@ kind, a FAILED one counting as present. Round 7 also: the door's mint
 re-reads its new intent's row after its Stripe cancels and queues no invoice,
 and offers no client secret, when a reduction withdrew it meanwhile (a retire
 landing after that read leaves an invoice parked on a cancelled intent, which
-the stale-wait reaper retires). Round 8: only a withdrawn or FAILED row is
-"retired" there - a paid one, one not found or a failed re-read is live - and
+the stale-wait reaper retires). Round 8: only a retired row is "retired"
+there - a paid one, one not found or a failed re-read is live; #4052: so is a
+declined card's FAILED row, retired only once withdrawn or its cancellation is
+queued - and
 the door still returns the intent's id, so the increase's Xero leg parks its
 invoice on it rather than raising it unpaid; the reduction names the
 increase from the edit its mint stamped on the row
