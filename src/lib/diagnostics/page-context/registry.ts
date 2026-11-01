@@ -307,12 +307,13 @@ const ROUTES: readonly DiagnosticsPageContextRoute[] = [
     requiredAreas: ["support"],
     recordKind: null,
     // These are the guided-setup SUB-PAGES, not in-page steps, and each one's own
-    // lattice requirement must be covered by this row. All four resolve to
-    // `support`; `/admin/setup/finance` resolves to `finance`, so it is NOT a step
-    // here — it has its own row below, gated on `finance`. Widening this list to it
-    // would let a support-only admin resolve context for a page the lattice
-    // redirects them away from.
-    steps: ["foundations", "booking-rules", "cancellation", "integrations"],
+    // lattice requirement must be covered by this row. All three resolve to
+    // `support`. `/admin/setup/finance` resolves to `finance` and
+    // `/admin/setup/booking-rules` to `bookings` (#4581), so neither is a step
+    // here — each has its own row below, gated on its own area. Widening this list
+    // to either would let a support-only admin resolve context for a page the
+    // lattice redirects them away from.
+    steps: ["foundations", "cancellation", "integrations"],
     errorCodes: DIAGNOSTICS_PAGE_ERROR_CODES,
   }),
   route({
@@ -328,6 +329,17 @@ const ROUTES: readonly DiagnosticsPageContextRoute[] = [
     pathname: "/admin/setup/finance",
     label: "Guided setup — finance",
     requiredAreas: ["finance"],
+    recordKind: null,
+    errorCodes: DIAGNOSTICS_PAGE_ERROR_CODES,
+  }),
+  route({
+    // The Booking Rules hub is bookings work (#4581): the admin layout resolves
+    // `/admin/setup/booking-rules` to `bookings:view`, so it gets its own row
+    // requiring exactly `bookings`, mirroring the page as the finance row does.
+    key: "admin.setup-booking-rules",
+    pathname: "/admin/setup/booking-rules",
+    label: "Guided setup — booking rules",
+    requiredAreas: ["bookings"],
     recordKind: null,
     errorCodes: DIAGNOSTICS_PAGE_ERROR_CODES,
   }),
