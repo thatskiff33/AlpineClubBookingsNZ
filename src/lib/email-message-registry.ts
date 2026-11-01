@@ -1,5 +1,5 @@
 import { LATE_CAPTURE_REFUNDED_OUTSIDE_APP_NOTE } from "@/lib/late-capture-outside-app-note";
-import { UNRECOGNISED_STRIPE_PAYMENT_NOTE } from "@/lib/unrecognised-stripe-payment-note";
+import { UNMATCHED_APP_STRIPE_PAYMENT_NOTE, UNRECOGNISED_STRIPE_PAYMENT_NOTE } from "@/lib/unrecognised-stripe-payment-note";
 import {
   EMAIL_AUDIT_DEFAULTS,
   type EmailAuditTemplateName,
@@ -141,6 +141,8 @@ const ADMIN_SYSTEM_TEMPLATE_NAMES = new Set<EmailAuditTemplateName>([
   // #4532: a Stripe payment the app did not create (a Payment Link, Checkout or
   // dashboard charge) - nothing reaches Xero. Same audience, sender and lock.
   "admin-unrecognised-stripe-payment",
+  // #4624: the app's own booking payment that matches no payment record.
+  "admin-unmatched-app-stripe-payment",
   "admin-pending-deadline",
   "admin-booking-bumped",
   "admin-capacity-warning",
@@ -241,6 +243,8 @@ const LOCKED_DELIVERY_TEMPLATE_NAMES = new Set<EmailAuditTemplateName>([
   // #4532: the same lock - money arrived with no record the app wrote and no
   // screen that lists it, so muting it would leave it uncoded in Xero.
   "admin-unrecognised-stripe-payment",
+  // #4624: the same lock - a member was charged and the booking does not show it.
+  "admin-unmatched-app-stripe-payment",
   // #3638: the same lock for the same reason as #2774 — this alert says the
   // club may hold the price twice (a card payment and a Xero payment on one
   // booking), and nothing is refunded or credited automatically, so muting it
@@ -699,6 +703,8 @@ const REQUIRED_TEMPLATE_TOKENS: Partial<Record<EmailAuditTemplateName, string[]>
   "admin-late-capture-refunded-outside-app": ["memberName", "paymentIntentId", "amount", "outsideAppRefundNote"],
   // #4532: {{unrecognisedPaymentNote}} is the instruction - what it is and how to code it.
   "admin-unrecognised-stripe-payment": ["amount", "paymentIntentId", "unrecognisedPaymentNote"],
+  // #4624: {{unmatchedAppPaymentNote}} says the money is the booking's and what to do.
+  "admin-unmatched-app-stripe-payment": ["amount", "bookingId", "paymentIntentId", "unmatchedAppPaymentNote"],
   // #2774: {{handBackConflictNote}} is the whole message - it is the sentence
   // that says whether the money went out or was withheld. An override that drops
   // it turns a reconciliation notice into an unexplained mention of a booking, on
@@ -1028,6 +1034,12 @@ const TEMPLATE_TRIGGER_METADATA: Partial<
       "A card payment that went through after its booking was cancelled was refunded outside the app - for example in the Stripe dashboard - so the app holds no record of the refund and raised no Xero credit note for it",
     frequency:
       "Once ever per capture - claim-guarded, and raised again by the nightly check if a send failed",
+  },
+  "admin-unmatched-app-stripe-payment": {
+    triggerSummary:
+      "A card payment the app started for a booking succeeded in Stripe, but no payment the app holds on that booking matches it, so the booking was not marked paid and nothing was sent to Xero",
+    frequency:
+      "Once ever per Stripe payment - claim-guarded; a send that fails is retried by Stripe's redelivery of the payment's notification",
   },
   "admin-unrecognised-stripe-payment": {
     triggerSummary:
@@ -1640,6 +1652,9 @@ export function sampleValue(token: string): string {
   if (token === "outsideAppRefundNote") return LATE_CAPTURE_REFUNDED_OUTSIDE_APP_NOTE;
   // #4532: the one passage, and the Stripe ids an unrecognised payment names.
   if (token === "unrecognisedPaymentNote") return UNRECOGNISED_STRIPE_PAYMENT_NOTE;
+  // #4624: the unmatched app payment's instruction, and what the app found for it.
+  if (token === "unmatchedAppPaymentNote") return UNMATCHED_APP_STRIPE_PAYMENT_NOTE;
+  if (token === "ledgerMatch") return "No payment record names this Stripe payment";
   if (token === "chargeId") return "ch_example";
   if (token === "checkoutSessionId") return "cs_example";
   if (token === "paymentLinkId") return "plink_example";
@@ -2228,6 +2243,9 @@ const APPROVED_EMAIL_TEMPLATE_TOKENS = [
   // #4532: a Stripe payment the app did not create - its instruction, when it
   // arrived, and the Stripe ids and dashboard link a treasurer looks it up by.
   "unrecognisedPaymentNote",
+  // #4624: the unmatched app payment's instruction, and what the app found for it.
+  "unmatchedAppPaymentNote",
+  "ledgerMatch",
   "receivedAt",
   "chargeId",
   "checkoutSessionId",
