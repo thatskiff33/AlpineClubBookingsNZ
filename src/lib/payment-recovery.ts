@@ -3187,10 +3187,10 @@ async function processCreateAdditionalPaymentIntentOperation(
     });
   });
   if (held === null) {
-    logger.warn(
-      { operationId: operation.id, bookingId: operation.bookingId, paymentIntentId: pi.id },
-      "Additional intent recovery lost its claim before writing its row (a price reduction netted it off, #3954); nothing written - the minted intent was never offered to anyone and is left uncollectable",
-    );
+    // #4631 (`INV-PAY-120`): the hold's transaction has ended; #4052's proof and
+    // Stripe cancel run outside it. Dynamic import: that module imports this one.
+    const { settleLostRecoveryClaimHold } = await import("@/lib/reissued-ask-abandoned-intent");
+    await settleLostRecoveryClaimHold({ operationId: operation.id, bookingId: operation.bookingId, paymentIntentId: pi.id });
     return "done";
   }
   await cancelSupersededAdditionalIntentsNow({
