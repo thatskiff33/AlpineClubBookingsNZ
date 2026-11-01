@@ -96,7 +96,7 @@ function seedRow(overrides: Row = {}) {
     id: OPERATION_ID, status: "RUNNING", startedAt: STARTED_AT,
     operationType: "CREATE", entityType: "CREDIT_NOTE", localModel: "Booking", localId: "booking-1",
     xeroObjectType: null, xeroObjectId: null, xeroObjectNumber: null, lastErrorCode: null, lastErrorMessage: null, completedAt: null,
-    manuallyResolvedAt: null, manuallyResolvedById: null, manuallyResolvedReason: null,
+    manuallyResolvedAt: null, manuallyResolvedById: null, manuallyResolvedReason: null, replayable: true,
     ...overrides,
   } as Partial<XeroSyncOperation>;
 }
@@ -176,6 +176,15 @@ describe("#4655: an organiser adjustment's late credit note is recorded where a 
         expect(matchesWhere(state.row!, { id: OPERATION_ID, ...outcomeWriteGuard(LATE.claim, status, {}) })).toBe(false);
       }
     });
+  });
+
+  it("MUTATION: a reset row an officer marked non-replayable is never taken back: nothing written; audited and alerted once", async () => {
+    seedRow({ ...RESET, replayable: false });
+    vi.setSystemTime(LANDED_AT);
+    await expect(recordCreatedOrganiserNote(LATE)).resolves.toEqual({ outcome: "not-recorded" });
+    expect(state.row).toMatchObject({ status: "FAILED", replayable: false, xeroObjectId: null });
+    expect(mocks.audit).toHaveBeenCalledTimes(1);
+    expect(mocks.send).toHaveBeenCalledTimes(1);
   });
 
   it("a re-take that loses to a live row holding the correlation key is not recorded: traced once, nothing thrown", async () => {

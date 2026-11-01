@@ -42,6 +42,7 @@ import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 import { isPrismaUniqueConstraintError } from "@/lib/prisma-errors";
 import { traceUnrecordedLateNote } from "@/lib/xero-late-note-trace";
+import { runningClaimTransition } from "@/lib/xero-operation-claim";
 import type { XeroOperationClaim } from "@/lib/xero-operation-outcome-guard";
 import { isResolvedInXero, resolutionLabel } from "@/lib/xero-operation-resolution";
 import { stalledAttemptCameBack, type UnrecordedXeroObject } from "@/lib/xero-success-after-resolution-alert";
@@ -89,8 +90,9 @@ export function createdOrganiserNoteWrites(
   return {
     own: { where: { id, status: "RUNNING", startedAt: note.claim.startedAt, AND: [noOtherNote] }, data: fields },
     retake: {
-      where: { id, status: "FAILED", manuallyResolvedAt: null, AND: [noOtherNote] },
-      data: { ...fields, status: "RUNNING", startedAt: retakenAt, completedAt: null, lastErrorCode: null, lastErrorMessage: null },
+      // `replayable`: a row an officer marked non-replayable is dead to every runner (#4672 review).
+      where: { id, status: "FAILED", manuallyResolvedAt: null, replayable: true, AND: [noOtherNote] },
+      data: { ...fields, ...runningClaimTransition(retakenAt) },
     },
     queued: { where: { id, status: "PENDING", manuallyResolvedAt: null, AND: [noOtherNote] }, data: fields },
   } satisfies Record<string, Prisma.XeroSyncOperationUpdateManyArgs>;
@@ -135,7 +137,7 @@ export async function recordCreatedOrganiserNote(note: CreatedOrganiserNote): Pr
     { operationId: note.claim.id, bookingId: note.bookingId, creditNoteId: note.creditNoteId, creditNoteNumber: note.creditNoteNumber, amountCents: note.amountCents },
     {
       subject: "Organiser adjustment credit note",
-      lostTo: "its operation was reset and may not take the note (resolved by hand, held by another attempt, recording another note or closed)",
+      lostTo: "its operation was reset and may not take the note (resolved by hand, marked non-replayable, held by another attempt or a live row with its key, recording another note or closed)",
       issue: "#4655",
       context: { purpose: note.purpose },
       sameNote: "The late answer is the note the operation records: nothing to record or alert (#4655)",

@@ -3,6 +3,15 @@ import { prisma } from "@/lib/prisma";
 import type { XeroOperationClaim } from "@/lib/xero-operation-outcome-guard";
 
 /**
+ * The data every take of a Xero operation to RUNNING writes: the outbox claim
+ * here and the organiser late note's re-take (INV-INT-034). One definition, so
+ * a field added to the claim reaches every taker (INV-SSOT).
+ */
+export function runningClaimTransition(startedAt: Date) {
+  return { status: "RUNNING", startedAt, completedAt: null, lastErrorCode: null, lastErrorMessage: null } as const;
+}
+
+/**
  * Atomically claim a single PENDING `XeroSyncOperation` row to RUNNING (#1272).
  *
  * This is the shared single-flight primitive behind both background workers:
@@ -37,13 +46,7 @@ export async function claimXeroSyncOperationToRunning(
       status: "PENDING",
       ...guard,
     },
-    data: {
-      status: "RUNNING",
-      startedAt,
-      completedAt: null,
-      lastErrorCode: null,
-      lastErrorMessage: null,
-    },
+    data: runningClaimTransition(startedAt),
   });
 
   return result.count === 1 ? { id: operationId, startedAt } : null;
