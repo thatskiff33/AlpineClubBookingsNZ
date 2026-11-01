@@ -58,6 +58,7 @@ import { emailClubDateTime } from "@/lib/email-templates-club-time";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 import { findCheckoutSessionForPaymentIntent } from "@/lib/stripe";
+import { STRIPE_WEBHOOK_PROCESSING_LEASE_MINUTES } from "@/lib/stripe-webhook-lease";
 import { UNMATCHED_APP_LEDGER_MATCH_LABEL } from "@/lib/unrecognised-stripe-payment-note";
 import { formatCents } from "@/lib/utils";
 
@@ -73,11 +74,27 @@ export function unrecognisedStripePaymentAlertKey(paymentIntentId: string): stri
 }
 
 /**
- * A claim younger than this belongs to a delivery still inside the webhook
- * processing lease (`STRIPE_WEBHOOK_PROCESSING_LEASE_MINUTES`). Older than
- * that, with no `alertedAt`, the holder is gone.
+ * The most a delivery's alert claim may trail its own webhook lease stamp: the
+ * handler's work before the claim - database reads and, for a foreign payment,
+ * the Checkout read (two calls of at most 10 seconds each). Real runtime is
+ * seconds. Both stamps come from the delivering instance's clock, so a later
+ * delivery compares both against one clock and no skew enters.
  */
-export const UNRECOGNISED_ALERT_IN_FLIGHT_MS = 15 * 60 * 1000;
+export const UNRECOGNISED_ALERT_CLAIM_LAG_MARGIN_MS = 5 * 60_000;
+
+/**
+ * A claim younger than this, with no `alertedAt`, belongs to a delivery that may
+ * still be sending; older, the holder is gone and this delivery sends.
+ *
+ * #4647: the webhook processing lease LESS {@link UNRECOGNISED_ALERT_CLAIM_LAG_MARGIN_MS},
+ * never equal to it. The claim is stamped after the lease starts, so with an
+ * equal window a takeover arriving just after the lease expired could find the
+ * dead attempt's claim still "fresh", return, and complete the event: the alert
+ * would never be sent. A takeover comes more than one lease after the lease
+ * stamp, so it finds a claim taken within the margin of that stamp expired.
+ */
+export const UNRECOGNISED_ALERT_IN_FLIGHT_MS =
+  STRIPE_WEBHOOK_PROCESSING_LEASE_MINUTES * 60_000 - UNRECOGNISED_ALERT_CLAIM_LAG_MARGIN_MS;
 
 /** The alert was neither sent nor left claimed, so the webhook must fail and Stripe redeliver. */
 export class UnrecognisedStripePaymentAlertNotSentError extends Error {
@@ -199,7 +216,8 @@ async function ensureAlert(
     throw new UnrecognisedStripePaymentAlertNotSentError(row.stripePaymentIntentId);
   }
   // A sibling delivery of another event still owns a fresh claim. The same
-  // event's redelivery never reaches here while that attempt's lease is live.
+  // event's redelivery reaches here only once that attempt's lease expired, and
+  // then always finds its claim older than the window (#4647).
   if (Date.now() - heldAt.getTime() < UNRECOGNISED_ALERT_IN_FLIGHT_MS) return;
 
   await releaseAlertCooldown({ key, claimedAt: heldAt });

@@ -67,6 +67,7 @@ import {
 import { adoptSavedCardChargeAttemptForIntent } from "@/lib/saved-card-charge-settle";
 import { GROUP_SETTLEMENT_INTENT_TYPE, appPaymentIntentRoute } from "@/lib/stripe-app-intent-metadata";
 import { recordUnmatchedAppStripePayment, recordUnrecognisedStripePayment } from "@/lib/unrecognised-stripe-payment";
+import { STRIPE_WEBHOOK_PROCESSING_LEASE_MINUTES } from "@/lib/stripe-webhook-lease";
 import { PaymentStatus, PaymentTransactionKind } from "@prisma/client";
 import { isCapturedTransactionStatus, isRefusedRefundStatus } from "@/lib/payment-transaction-status";
 import { keyAfterStripeRefusals, refusedRefundMessage } from "@/lib/refused-card-refund-retry";
@@ -83,12 +84,7 @@ function jsonResult(body: unknown, init?: ResponseInit): JsonRouteResult {
   return { body, init };
 }
 
-// F16 (#1887): the ProcessedWebhookEvent claim is a processing LEASE. A
-// PROCESSING claim older than this window is treated as a crashed prior
-// attempt and taken over; a fresher one forces a provider retry. Sized well
-// above real handler runtime (seconds) and far below Stripe's redelivery
-// backoff, so a live handler is never pre-empted by a concurrent redelivery.
-export const STRIPE_WEBHOOK_PROCESSING_LEASE_MINUTES = 15;
+// The processing lease (F16, #1887): `STRIPE_WEBHOOK_PROCESSING_LEASE_MINUTES`.
 const PROCESSED_WEBHOOK_STATUS_PROCESSING = "PROCESSING";
 const PROCESSED_WEBHOOK_STATUS_COMPLETED = "COMPLETED";
 
