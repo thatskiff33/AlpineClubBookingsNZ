@@ -1103,6 +1103,20 @@ clearing account by hand. Posting a mapped Payment Link to Xero automatically is
 
 ## Flow 2 — Inbound reconciliation (webhooks + incremental cursors)
 
+An edit's credit note can reach Xero before the treasurer sends its refund
+(#4315, `INV-PAY-117`). The refunded-total readers exclude the edit's own note
+while its matching `editRefundHandBackOccurrenceKey` task is OPEN or DISMISSED.
+Once COMPLETED, its note counts normally; the completion already recorded the
+cash. The rule lives in `noCashModificationNoteIds`, shared by the current-note
+sync and later recounts. A no-cash note retains its matched payment with zero
+contribution, so resync also corrects totals inflated by an older worker.
+Separately scoped review notes and legacy edits with
+no matching hand-back keep their existing treatment. The cancellation's card
+branch explicitly queues `refundMethod: "card"`, so its note's wording and
+settlement method survive a worker or retry without inferring them from the
+payment source. Current cancellation policy forces a member's bank-transfer
+payment to account credit (`cancelRefundDisposition`); #4315 changes no policy.
+
 Xero pushes CONTACT, INVOICE, and CREDITNOTE events (the credit-note
 category has no underscore); the webhook stores each signed event as sent and
 returns fast. A category this app does not reconcile is logged and left

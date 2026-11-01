@@ -141,6 +141,9 @@ let webhookClient: PrismaClient;
       await prisma.bookingEvent.deleteMany({ where: { bookingId: BOOKING_ID } });
       await prisma.auditLog.deleteMany({ where: { OR: [{ memberId: MEMBER_ID }, { actorMemberId: MEMBER_ID }, { targetId: BOOKING_ID }] } });
       await prisma.paymentRecoveryOperation.deleteMany({ where: { bookingId: BOOKING_ID } });
+      // #4052: the Stripe webhook deliveries a case sends through the real processor.
+      await prisma.processedWebhookEvent.deleteMany({ where: { eventId: { startsWith: "evt_race_4052_" } } });
+      await prisma.webhookLog.deleteMany({ where: { eventId: { startsWith: "evt_race_4052_" } } });
       await prisma.manualRefundTask.deleteMany({ where: { bookingId: BOOKING_ID } });
       await prisma.bookingModification.deleteMany({ where: { bookingId: BOOKING_ID } });
       await prisma.paymentRefund.deleteMany({ where: { paymentId: PAYMENT_ID } });
@@ -1320,12 +1323,262 @@ let webhookClient: PrismaClient;
         return stripe.create(args);
       }) as never;
 
+      // #4052: the door lost its fence to the runner, which owns this intent - never cancelled.
+      const cancelled: string[] = [];
+      stripeRaceHooks.cancel = (async (id: string) => {
+        cancelled.push(id);
+        return { paymentIntent: { id, status: "canceled" }, canceled: true };
+      }) as never;
+
       expect((await mintAtDoor(result)).additionalPaymentIntentId).toBeUndefined();
 
       expect(stripe.intents.size).toBe(1);
       const [intent] = [...stripe.intents.values()];
       expect((await liveAsks()).map((row) => row.stripePaymentIntentId)).toEqual([intent!.id]);
       expect((await payment()).additionalPaymentIntentId).toBe(intent!.id);
+      expect(cancelled.filter((id) => stripe.intents.has(id))).toEqual([]); // the retired ask's own cancel is not this one
+    });
+
+    // #4052: a later edit closes the waiting re-issue's recovery without a mint
+    // (`closeWaitingAskRecoveries`, through its real writers) - a reduction
+    // netting it off, or an increase folding it into its own ask.
+    async function closeWaitingReissue(by: "netted" | "folded") {
+      const [{ readUnpaidPriceAsk, retireUnpaidAskChain }, { foldWaitingReissuedAsks }] = await Promise.all([
+        import("@/lib/additional-ask-reduction"),
+        import("@/lib/additional-ask-reissue"),
+      ]);
+      await webhookClient.$transaction(async (tx) => {
+        const booking = await tx.booking.findUniqueOrThrow({ where: { id: BOOKING_ID }, include: { payment: true } });
+        if (by === "folded") {
+          expect((await foldWaitingReissuedAsks(tx as never, booking as never)).cents).toBe(3_000);
+          return;
+        }
+        const ask = await readUnpaidPriceAsk(tx as never, booking as never);
+        await retireUnpaidAskChain(tx as never, { bookingId: BOOKING_ID, paymentId: PAYMENT_ID, ask });
+      });
+    }
+
+    it.each(["netted", "folded"] as const)(
+      "#4052: a re-issue %s by a later edit while the door mints it - the door's unused intent is cancelled at Stripe, and nothing is written for it",
+      async (by) => {
+        await grownBooking("card", 1_000);
+        const result = await removeLeavingGuest();
+        const stripe = fakeStripe();
+        const recovery = await reissueRecovery(result.bookingModificationId!);
+        const cancelled: string[] = [];
+        stripeRaceHooks.cancel = (async (id: string) => {
+          cancelled.push(id);
+          stripe.intents.get(id)!.status = "canceled";
+          return { paymentIntent: { id, status: "canceled" }, canceled: true };
+        }) as never;
+        let doorFirst = true;
+        stripeRaceHooks.create = (async (args: Parameters<typeof stripe.create>[0]) => {
+          if (doorFirst) {
+            doorFirst = false;
+            // The door read its recovery PENDING and is minting.
+            await closeWaitingReissue(by);
+          }
+          return stripe.create(args);
+        }) as never;
+
+        const minted = await mintAtDoor(result);
+
+        expect(minted).toEqual({ additionalPaymentClientSecret: undefined, additionalPaymentIntentId: undefined, additionalAskRetired: by === "netted" });
+        expect(stripe.intents.size).toBe(1);
+        const [intent] = [...stripe.intents.values()];
+        expect(cancelled.filter((id) => stripe.intents.has(id))).toEqual([intent!.id]);
+        expect(await prisma.paymentTransaction.findUnique({ where: { stripePaymentIntentId: intent!.id } })).toBeNull();
+        expect((await cancellations()).filter((row) => row.paymentIntentId === intent!.id)).toEqual([]);
+        expect(await prisma.paymentRecoveryOperation.findUniqueOrThrow({ where: { id: recovery.id }, select: { status: true, paymentIntentId: true } }))
+          .toEqual({ status: "SUCCEEDED", paymentIntentId: recovery.paymentIntentId });
+        expect(await liveAsks()).toEqual([]);
+
+        // Repeated: Stripe answers "already cancelled", and nothing else moves.
+        const { settleLostReissuedAskFence } = await import("@/lib/reissued-ask-abandoned-intent");
+        stripeRaceHooks.cancel = (async (id: string) => {
+          cancelled.push(id);
+          return { paymentIntent: { id, status: "canceled" }, canceled: false };
+        }) as never;
+        await settleLostReissuedAskFence({ bookingId: BOOKING_ID, bookingModificationId: result.bookingModificationId!, paymentIntentId: intent!.id, stripeKey: recovery.paymentIntentId });
+        expect(cancelled.filter((id) => stripe.intents.has(id))).toEqual([intent!.id, intent!.id]);
+        expect(await prisma.paymentTransaction.findUnique({ where: { stripePaymentIntentId: intent!.id } })).toBeNull();
+      },
+    );
+
+    it("#4052: a re-issue a later reduction netted off BEFORE the door minted is not minted, and nothing is cancelled", async () => {
+      await grownBooking("card", 1_000);
+      const result = await removeLeavingGuest();
+      const stripe = fakeStripe();
+      const cancelled: string[] = [];
+      stripeRaceHooks.cancel = (async (id: string) => {
+        cancelled.push(id);
+        return { paymentIntent: { id, status: "canceled" }, canceled: true };
+      }) as never;
+      await closeWaitingReissue("netted");
+
+      expect(await mintAtDoor(result)).toEqual({ additionalPaymentClientSecret: undefined, additionalPaymentIntentId: undefined, additionalAskRetired: true });
+      expect(stripe.intents.size).toBe(0);
+      expect(cancelled.filter((id) => stripe.intents.has(id))).toEqual([]); // the retired ask's own cancel is not this one
+    });
+
+    // #4052 review (F2): Stripe's own `payment_intent.canceled` (a dashboard
+    // cancel) and `payment_intent.payment_failed` (a decline), through the real
+    // webhook processor. Both leave the row FAILED alone; Stripe tells them apart.
+    let webhookSequence = 0;
+    async function deliverIntentWebhook(type: "payment_intent.canceled" | "payment_intent.payment_failed") {
+      webhookSequence += 1;
+      const { processStripeWebhookEvent } = await import("@/lib/stripe-webhook-service");
+      const status = type === "payment_intent.canceled" ? "canceled" : "requires_payment_method";
+      const delivered = await processStripeWebhookEvent({
+        id: `evt_race_4052_${webhookSequence}`,
+        object: "event",
+        type,
+        request: null,
+        data: {
+          object: {
+            id: ASK_INTENT, object: "payment_intent", amount: 5_000, currency: "nzd", status, payment_method: null,
+            metadata: { bookingId: BOOKING_ID, type: "modification_additional" }, latest_charge: null,
+            cancellation_reason: type === "payment_intent.canceled" ? "requested_by_customer" : null,
+            last_payment_error: type === "payment_intent.payment_failed" ? { message: "Your card was declined." } : null,
+          },
+        },
+      } as unknown as import("stripe").Stripe.Event);
+      expect(delivered.init?.status ?? 200, JSON.stringify(delivered.body)).toBe(200);
+      stripeRaceHooks.get = (async (id: string) => ({ id, status })) as never;
+    }
+
+    it.each([
+      ["cancelled in the Stripe dashboard", "payment_intent.canceled", false],
+      ["declined", "payment_intent.payment_failed", true],
+    ] as const)("#4052 review (F2): an ask %s reads FAILED alone; liveness asks Stripe, and reads it %s", async (_label, type, live) => {
+      await grownBooking("card", 1_000);
+      await deliverIntentWebhook(type);
+      expect(await askAfter()).toEqual({ status: "FAILED", withdrawnAt: null });
+      expect(await cancellations()).toEqual([]);
+      const { isMintedAskStillLive } = await import("@/lib/reissued-ask-invoice");
+      expect(await isMintedAskStillLive(ASK_INTENT)).toBe(live);
+    });
+
+    // #4052 review (F1): an ask minted since the reduction (C) makes the runner
+    // size the re-issue larger and mint under an amount-suffixed key
+    // (`planReissuedAskMint`); it writes THAT intent, so the door's own request -
+    // sized before C, under the plain key - is nobody's.
+    it("#4052 review (F1): the runner writes the re-issue under an amount-suffixed key while the door mints - the door's intent is cancelled, the runner's kept", async () => {
+      await grownBooking("card", 1_000);
+      const result = await removeLeavingGuest();
+      const stripe = fakeStripe();
+      const recovery = await reissueRecovery(result.bookingModificationId!);
+      const { REISSUED_ASK_REASON } = await import("@/lib/payment-recovery-keys");
+      const { runPaymentRecoveryOperationNow } = await import("@/lib/payment-recovery");
+      const cancelled: string[] = [];
+      stripeRaceHooks.cancel = (async (id: string) => {
+        cancelled.push(id);
+        return { paymentIntent: { id, status: "canceled" }, canceled: true };
+      }) as never;
+      let doorFirst = true;
+      let doorKey: string | undefined;
+      stripeRaceHooks.create = (async (args: Parameters<typeof stripe.create>[0]) => {
+        if (doorFirst && args.metadata?.reason === REISSUED_ASK_REASON) {
+          doorFirst = false;
+          doorKey = args.idempotencyKey;
+          await askMintedSinceReduction();
+          await prisma.paymentRecoveryOperation.update({ where: { id: recovery.id }, data: { nextRetryAt: new Date("2026-06-30T00:00:00.000Z") } });
+          expect(await runPaymentRecoveryOperationNow(recovery.id, CLUB_FORMAT_TEST)).toBe("succeeded");
+        }
+        return stripe.create(args);
+      }) as never;
+
+      expect((await mintAtDoor(result)).additionalPaymentIntentId).toBeUndefined();
+
+      const door = [...stripe.intents.values()].find((intent) => intent.amount === 3_000)!;
+      const live = await liveAsks();
+      expect(live).toEqual([{ stripePaymentIntentId: expect.any(String), amountCents: 5_000, carriedAskCents: 5_000, reason: REISSUED_ASK_REASON }]);
+      expect(live[0]!.stripePaymentIntentId).not.toBe(door.id);
+      expect(doorKey).toBe(recovery.paymentIntentId);
+      expect(await prisma.paymentTransaction.findUnique({ where: { stripePaymentIntentId: door.id } })).toBeNull();
+      expect(cancelled.filter((id) => id === door.id)).toEqual([door.id]);
+      expect(cancelled).not.toContain(live[0]!.stripePaymentIntentId);
+    });
+
+    // #4052 delta review: the same race, but the door re-reads the recovery
+    // while the runner, past its locked write (row written, recovery repointed
+    // at its own intent), is still running its Stripe cancels - PROCESSING.
+    it("#4052 delta review: a runner still finishing after writing ANOTHER intent - the door's intent is cancelled while the recovery is PROCESSING", async () => {
+      await grownBooking("card", 1_000);
+      const result = await removeLeavingGuest();
+      const stripe = fakeStripe();
+      const recovery = await reissueRecovery(result.bookingModificationId!);
+      const { REISSUED_ASK_REASON } = await import("@/lib/payment-recovery-keys");
+      const { runPaymentRecoveryOperationNow } = await import("@/lib/payment-recovery");
+      const cancelled: string[] = [];
+      let c: string | undefined;
+      let doorSettled!: () => void;
+      const doorDone = new Promise<void>((resolve) => { doorSettled = resolve; });
+      let statusSeenByDoor: string | undefined;
+      stripeRaceHooks.cancel = (async (id: string) => {
+        // The runner's cancel of C waits until the door has settled its lost fence.
+        if (id === c) {
+          await doorDone;
+        } else if (stripe.intents.has(id)) {
+          statusSeenByDoor = (await prisma.paymentRecoveryOperation.findUniqueOrThrow({ where: { id: recovery.id }, select: { status: true } })).status;
+        }
+        cancelled.push(id);
+        return { paymentIntent: { id, status: "canceled" }, canceled: true };
+      }) as never;
+      let runner: Promise<string> | undefined;
+      let doorFirst = true;
+      stripeRaceHooks.create = (async (args: Parameters<typeof stripe.create>[0]) => {
+        if (doorFirst && args.metadata?.reason === REISSUED_ASK_REASON) {
+          doorFirst = false;
+          c = await askMintedSinceReduction();
+          await prisma.paymentRecoveryOperation.update({ where: { id: recovery.id }, data: { nextRetryAt: new Date("2026-06-30T00:00:00.000Z") } });
+          runner = runPaymentRecoveryOperationNow(recovery.id, CLUB_FORMAT_TEST);
+          // Wait for the runner's locked write to repoint the recovery at its own intent.
+          const startedAt = process.hrtime.bigint();
+          for (;;) {
+            const now = await prisma.paymentRecoveryOperation.findUniqueOrThrow({ where: { id: recovery.id }, select: { paymentIntentId: true } });
+            if (now.paymentIntentId !== recovery.paymentIntentId) break;
+            if (realElapsedMs(startedAt) > 10_000) throw new Error("The runner never wrote its intent");
+            await new Promise((resolve) => setTimeout(resolve, 10));
+          }
+        }
+        return stripe.create(args);
+      }) as never;
+
+      try {
+        expect((await mintAtDoor(result)).additionalPaymentIntentId).toBeUndefined();
+      } finally {
+        doorSettled();
+      }
+      expect(await runner).toBe("succeeded");
+
+      const door = [...stripe.intents.values()].find((intent) => intent.amount === 3_000)!;
+      const live = await liveAsks();
+      expect(live).toEqual([{ stripePaymentIntentId: expect.any(String), amountCents: 5_000, carriedAskCents: 5_000, reason: REISSUED_ASK_REASON }]);
+      expect(statusSeenByDoor).toBe("PROCESSING");
+      expect(cancelled.filter((id) => id === door.id)).toEqual([door.id]);
+      expect(cancelled).not.toContain(live[0]!.stripePaymentIntentId);
+      expect(await prisma.paymentTransaction.findUnique({ where: { stripePaymentIntentId: door.id } })).toBeNull();
+    });
+
+    // #4052: a declined card fails the row and nothing more; only a retiring
+    // writer's evidence makes it retired - here a supersede's queued cancel.
+    it("#4052: a declined ask stays live; once a supersede queues its cancellation it is retired", async () => {
+      await grownBooking("card", 1_000);
+      const [{ markPaymentIntentTransactionFailed }, { isMintedAskStillLive }, { queueSupersededAdditionalIntentCancellationRows }] = await Promise.all([
+        import("@/lib/payment-transactions"),
+        import("@/lib/reissued-ask-invoice"),
+        import("@/lib/booking-payment-cleanup"),
+      ]);
+      await markPaymentIntentTransactionFailed({ paymentIntentId: ASK_INTENT });
+      // Review (F2): FAILED alone is asked of Stripe, where a declined intent is still open.
+      stripeRaceHooks.get = (async (id: string) => ({ id, status: "requires_payment_method" })) as never;
+      expect(await askAfter()).toEqual({ status: "FAILED", withdrawnAt: null });
+      expect(await isMintedAskStillLive(ASK_INTENT)).toBe(true);
+
+      await queueSupersededAdditionalIntentCancellationRows({ bookingId: BOOKING_ID, paymentId: PAYMENT_ID, newPaymentIntentId: null });
+      expect((await cancellations()).map((row) => row.paymentIntentId)).toEqual([ASK_INTENT]);
+      expect(await isMintedAskStillLive(ASK_INTENT)).toBe(false);
     });
 
     // #4442 review M4: the re-issue's two writers re-read the live ask they

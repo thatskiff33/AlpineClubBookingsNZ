@@ -126,7 +126,7 @@ export async function resolveModificationRefundAmountsByPaymentId(input: {
     invoiceCorrectionNoteIds([input.creditNoteId]),
   ]);
   const isCorrection = corrections.has(input.creditNoteId);
-  if (noCash.has(input.creditNoteId) && !isCorrection) return amounts;
+  const excludesCash = noCash.has(input.creditNoteId) && !isCorrection;
   const paymentIdsByInvoiceId = await resolvePaymentIdsByInvoiceTargets(
     input.creditNoteId,
     input.allocationTargets
@@ -137,7 +137,11 @@ export async function resolveModificationRefundAmountsByPaymentId(input: {
   for (const target of input.allocationTargets) {
     const paymentId = paymentIdsByInvoiceId.get(target.invoiceId);
     if (!paymentId || (counting && !counting.has(paymentId))) continue;
-    amounts.set(paymentId, (amounts.get(paymentId) ?? 0) + target.amountCents);
+    // #4315: retain the affected payment even when this note contributes zero.
+    // A resync must remove an early refund counted before this fix; an empty
+    // map skips that payment's repair entirely. The shared classifier owns
+    // which notes moved no cash (including OPEN and DISMISSED edit hand-backs).
+    amounts.set(paymentId, (amounts.get(paymentId) ?? 0) + (excludesCash ? 0 : target.amountCents));
   }
   return amounts;
 }

@@ -257,6 +257,12 @@ let CLUB_FORMAT_TEST: (typeof import("@/lib/__tests__/support/club-format-fixtur
       expect(result.status).toBe(200);
       expect(result).toMatchObject({ data: { refundAmountCents: PRICE_CENTS, ownCardRefund: { method: "card", amountCents: CARD_CENTS, byHandCents: BANK_CENTS } } });
       expect(asked).toEqual([CARD_CENTS]);
+      // #4315 item 3: a real cancellation records the card method on the
+      // queued note; a worker/retry must not infer it from a payment source.
+      expect(await prisma.xeroSyncOperation.findFirstOrThrow({
+        where: { localModel: "Payment", localId: PAYMENT_ID, entityType: "CREDIT_NOTE", operationType: "CREATE" },
+        select: { requestPayload: true },
+      })).toMatchObject({ requestPayload: { refundMethod: "card", refundAmountCents: CARD_CENTS } });
       const tasks = await prisma.manualRefundTask.findMany({ where: { bookingId: BOOKING_ID } });
       expect(tasks).toHaveLength(1);
       expect(tasks[0]).toMatchObject({

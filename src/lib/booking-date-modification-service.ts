@@ -41,8 +41,8 @@ import {
 import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-coverage-drain";
 import type { HostingCoverageOverrideInput } from "@/lib/adult-member-hosting-same-owner";
 import type { HostingCoverageLinkedMoveInput } from "@/lib/adult-member-hosting-linked-move";
+import { additionalAskEmailTerms } from "@/lib/additional-ask-email-terms";
 import {
-  additionalAmountToName,
   createModificationAdditionalPaymentIntent,
   type ModificationAdditionalAskMint,
   executeBookingModificationRefund,
@@ -1613,8 +1613,6 @@ async function dispatchDatePostTransactionSideEffects({
       result.booking.id,
     );
 
-    // #3954 round 9: an ask a reduction retired before it was offered is not named.
-    const namedAdditionalCents = additionalAmountToName(result.additionalAmountCents, additionalMint);
     sendBookingModifiedEmail({
       addedGuests: [], // #4030: a date change adds nobody
       bookingId: result.booking.id,
@@ -1634,16 +1632,10 @@ async function dispatchDatePostTransactionSideEffects({
       refundAmountCents: result.refundAmountCents,
       accountCreditAmountCents: result.accountCreditAmountCents,
       appliedCreditGivenBackCents: result.appliedCreditGivenBackCents,
-      additionalAmountCents: namedAdditionalCents,
+      // #4052: the figure and its method, decided together; never a retired ask (#3954 round 9).
+      ...additionalAskEmailTerms(result, additionalMint),
       billedToOrganiserCents: result.billedToOrganiserCents, // #4299
       unpaidAskCancelled: result.unpaidAskCancelled,
-      additionalPaymentMethod:
-        namedAdditionalCents > 0 &&
-        result.paymentSource === PaymentSource.INTERNET_BANKING
-          ? "INTERNET_BANKING"
-          : namedAdditionalCents > 0 && result.hasSucceededPayment
-            ? "STRIPE"
-            : undefined,
       paymentReference: result.paymentReference,
       xeroInvoiceNumber: result.xeroInvoiceNumber,
       // #2390: same words as the edit preview and the booking history.

@@ -14,8 +14,8 @@ import {
   type ModificationLine,
 } from "@/lib/booking-modification-lines";
 import { computeModificationPricing } from "@/lib/booking-modification-pricing";
+import { additionalAskEmailTerms } from "@/lib/additional-ask-email-terms";
 import {
-  additionalAmountToName,
   createModificationAdditionalPaymentIntent,
   drainSupersededPrimaryIntents,
   executeBookingModificationRefund,
@@ -689,8 +689,8 @@ export async function settleGuestAcceptanceRepriceAfterCommit(params: {
       refundByBankTransfer: reprice.bankTransferRefundPayee, // #3949: the member, or the group organiser
       refundDestination: refund.refundDestination,
       lodgeId: reprice.lodgeId,
-      // #3954 round 9: not named once a later reduction retired the re-issue.
-      additionalAmountCents: additionalAmountToName(reprice.additionalAsk.amountCents, additionalMint),
+      // #4052: a re-price's only ask is a card re-issue, named with its method; never a retired one (#3954).
+      ...additionalAskEmailTerms({ ...reprice, additionalAmountCents: reprice.additionalAsk.amountCents, paymentSource: null }, additionalMint),
       unpaidAskCancelled: reprice.unpaidAskCancelled,
     },
     format,

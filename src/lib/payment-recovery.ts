@@ -74,7 +74,7 @@ import { MAX_PAYMENT_RECOVERY_ATTEMPTS, PAYMENT_RECOVERY_CLAIMABLE_LATER_WHERE }
 import { stripeReferenceId } from "@/lib/stripe-references";
 import { claimAlertCooldown } from "@/lib/alert-cooldown";
 import { formatCents } from "@/lib/utils";
-import { isCapturedTransactionStatus, OPEN_INTENT_TRANSACTION_STATUS_LIST } from "@/lib/payment-transaction-status";
+import { isCapturedTransactionStatus, OPEN_INTENT_TRANSACTION_STATUS_LIST, SUPERSEDED_ASK_TRANSACTION_REASON } from "@/lib/payment-transaction-status";
 import { replayNotingEachRefund } from "@/lib/card-refund-own-note";
 import { finishApprovedLateCaptureRefundAfterReplay } from "@/lib/late-capture-refund-credit-note";
 import { holdSupersededLateCaptureIfRequired } from "@/lib/late-capture-refund-hold";
@@ -1759,7 +1759,7 @@ async function markSupersededTransactionFailed(
     },
     data: {
       status: PaymentStatus.FAILED,
-      reason: "zero_dollar_batch_modification_superseded",
+      reason: SUPERSEDED_ASK_TRANSACTION_REASON, // #4052: what `isMintedAskStillLive` reads as superseded
     },
   });
 

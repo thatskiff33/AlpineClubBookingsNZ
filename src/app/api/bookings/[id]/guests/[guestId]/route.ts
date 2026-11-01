@@ -40,8 +40,8 @@ import {
   buildPaidUpAdultRefusalBodyForOtherPartyMember,
   PaidUpAdultMemberRequiredError,
 } from "@/lib/subscription-lockout-enforcement";
+import { additionalAskEmailTerms } from "@/lib/additional-ask-email-terms";
 import {
-  additionalAmountToName,
   createModificationAdditionalPaymentIntent,
   drainSupersededPrimaryIntents,
   executeBookingModificationRefund,
@@ -328,10 +328,8 @@ export async function DELETE(
       firstName: result.memberFirstName,
     };
     if (notifyMember) {
-      const namedAdditionalCents = additionalAmountToName(
-        result.hasIssuedXeroInvoice || additionalPaymentIntentId ? result.additionalAmountCents : 0,
-        additionalMint,
-      );
+      // #4052: the figure and its method, decided together as every door's are.
+      const additionalTerms = additionalAskEmailTerms({ ...result, paymentSource: result.booking.payment?.source ?? null }, additionalMint);
       sendBookingModifiedEmail({
         bookingId: result.booking.id,
         recipientMemberId: result.memberId,
@@ -369,22 +367,11 @@ export async function DELETE(
         refundByBankTransfer: editRefundBankTransferPayee(result, result.booking), // #3949: the member or the group organiser
         lodgeId: result.booking.lodgeId,
         // Removing a guest can raise the price when it invalidates a group
-        // promo the remaining guests relied on. Surface the increase when a
-        // way to pay it exists: the Xero supplementary invoice on the
-        // issued-invoice (Internet Banking) path, or the additional
-        // PaymentIntent now created for captured Stripe payments (#1042). If
-        // Stripe intent creation failed, stay silent — an "additional payment
-        // required" note with no way to pay is worse than saying nothing; the
-        // price change still shows via old/new total. #3954 round 9: nor is an
-        // ask a reduction retired before it was offered named as due.
-        additionalAmountCents: namedAdditionalCents,
+        // promo the remaining guests relied on (#1042). #4052: a card ask is
+        // named as one even while its failed mint waits for its retry - never
+        // as Internet Banking because no intent came back.
+        ...additionalTerms,
         billedToOrganiserCents: result.billedToOrganiserCents, // #4299
-        additionalPaymentMethod:
-          namedAdditionalCents > 0 && additionalPaymentIntentId
-            ? "STRIPE"
-            : namedAdditionalCents > 0
-              ? "INTERNET_BANKING"
-              : undefined,
       }, format).catch((err) =>
         logger.error({ err, bookingId }, "Failed to send booking modified email")
       );
