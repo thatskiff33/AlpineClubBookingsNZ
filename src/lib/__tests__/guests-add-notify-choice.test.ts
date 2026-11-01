@@ -23,6 +23,13 @@ const mockMemberFindUnique = vi.fn();
 // read is `makeTx`'s, so the two lodges can be told apart.
 const mockGlobalLodgeSettingsFindUnique = vi.fn(async () => ({ capacity: 100 }));
 
+// #4628: a bank-transfer booking's pending journal charge is proved against PostgreSQL
+// (`booking-ledger-pending-charge.realdb.test.ts`); this fake store does not carry the journal.
+vi.mock("@/lib/booking-ledger-pending-charge", () => ({
+  postBindingCharge: vi.fn(async () => {}),
+  postPendingModificationCharge: vi.fn(async () => {}),
+  postPendingCancellationCharge: vi.fn(async () => {}),
+}));
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     /*

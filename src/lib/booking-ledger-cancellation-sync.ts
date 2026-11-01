@@ -17,7 +17,9 @@ import "server-only";
  *
  * #4627 (Ledger M3b, R04): the lines then post into the member-money journal
  * in the same transaction, for a booking whose confirmation is there. A journal
- * refusal is never caught: it rolls the cancellation back.
+ * refusal is never caught: it rolls the cancellation back. #4628 (M3c): a
+ * booking bound by bank transfer and not yet confirmed re-states its pending
+ * journal charge instead (`booking-ledger-pending-charge.ts`).
  */
 import type { Prisma } from "@prisma/client";
 
@@ -30,6 +32,7 @@ import {
 import { buildBookingLedgerRows, writeBookingLedgerRows } from "@/lib/booking-ledger-write";
 import logger from "@/lib/logger";
 import { postBookingLedgerJournal, type BookingJournalContext } from "@/lib/member-money/doors";
+import { postPendingCancellationCharge } from "@/lib/booking-ledger-pending-charge";
 
 export async function postCancellationLedgerLines({
   store,
@@ -56,7 +59,12 @@ export async function postCancellationLedgerLines({
   /** Which cancel path posted, for the log line a gap leaves. */
   site: string;
 }): Promise<void> {
-  if (!(await bookingHasConfirmationLines(store, bookingId))) return;
+  if (!(await bookingHasConfirmationLines(store, bookingId))) {
+    // #4628: a bank-transfer booking bound before settlement carries its charge
+    // in the journal only; its cancellation re-states it to what the club keeps.
+    await postPendingCancellationCharge(store, journal, { bookingId, lodgeId, keptCents, ...(policyKeptCents === undefined ? {} : { policyKeptCents }), site });
+    return;
+  }
   const chargeLines = await findPostedCancellableChargeLines(store, bookingId);
   const adjustmentLines = await findPostedAdjustmentLines(store, bookingId);
   let rows: ReturnType<typeof buildBookingLedgerRows> = [];

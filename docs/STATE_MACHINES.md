@@ -230,6 +230,16 @@ renders, plus an operator alert. `PENDING -> PAID` via the public payment link i
 the exception that never needs it: that route refuses a booking carrying an
 election outright rather than charging the pre-credit price.
 
+A bank-transfer booking's charge is in the member-money journal before its
+`PAID` (#4628, `INV-MONEY-045`): the transitions that issue its payable invoice
+(the internet-banking create into `PAYMENT_PENDING` or `CONFIRMED`, the switch
+to internet banking, the school pay-on-account approval) post R01; an edit or
+`CANCELLED` before payment re-states it; and the later `PAID` (the settle, or
+the Internet Banking reconcile's flip, which now writes the confirmation's
+ledger lines as the settle does) links its lines to that charge rather than
+charging again. Every writer that sets `PAID` or `CANCELLED` is classified by
+`booking-sale-status-writer-census.test.ts`.
+
 Waitlist confirmation and expiry serialize on the offered booking's lodge lock.
 Confirmation re-reads `WAITLIST_OFFERED` and the deadline after acquiring the
 lock and uses a status/deadline-guarded claim, so an expiry that wins first
