@@ -53,6 +53,13 @@ const MEMORY_MAX_ENTRIES = 10_000;
 const STORE_ERROR_LOG_INTERVAL_MS = 60 * 1000;
 const CLEANUP_INTERVAL_MS = 10 * 60 * 1000;
 /**
+ * Rows the idle sweep deletes per statement. Small, so no sweep statement
+ * holds rows long enough to push a claim on one of them past its lock timeout
+ * (#4637 review); the cap on batches bounds one run.
+ */
+export const LOGIN_THROTTLE_SWEEP_BATCH_SIZE = 100;
+const SWEEP_MAX_BATCHES = 1_000;
+/**
  * How long a claim waits for its account's row before answering "waiting".
  * A claim holds the row for a few milliseconds, so an ordinary race still
  * queues and counts; a burst on one account cannot hold pooled connections
@@ -166,15 +173,31 @@ async function lockAccountRow(tx: ThrottleTx, key: string, now: Date): Promise<v
 /**
  * Deletes rows idle for an hour or more, which already count as zero. Run by
  * the daily `data-pruning` job and, while this process handles password
- * sign-ins, every ten minutes. One `deleteMany`: against a claim holding a row
- * it waits, then re-checks the refreshed row and skips it.
+ * sign-ins, every ten minutes. Works in batches of
+ * `LOGIN_THROTTLE_SWEEP_BATCH_SIZE`, in id order: an unlocked read picks the
+ * batch, and its `deleteMany` repeats the idle condition, so against a claim
+ * holding one of those rows it waits, then re-checks the refreshed row and
+ * skips it.
  */
 export async function sweepIdleLoginThrottleRows(): Promise<number> {
   const cutoff = new Date(Date.now() - LOGIN_THROTTLE_IDLE_RESET_MS);
-  const { count } = await prisma.loginThrottle.deleteMany({
-    where: { lastFailureAt: { lt: cutoff } },
-  });
-  return count;
+  const idle = { lastFailureAt: { lt: cutoff } };
+  let deleted = 0;
+  for (let batch = 0; batch < SWEEP_MAX_BATCHES; batch += 1) {
+    const rows = await prisma.loginThrottle.findMany({
+      where: idle,
+      select: { id: true },
+      orderBy: { id: "asc" },
+      take: LOGIN_THROTTLE_SWEEP_BATCH_SIZE,
+    });
+    if (rows.length === 0) break;
+    const { count } = await prisma.loginThrottle.deleteMany({
+      where: { id: { in: rows.map((row) => row.id) }, ...idle },
+    });
+    deleted += count;
+    if (rows.length < LOGIN_THROTTLE_SWEEP_BATCH_SIZE) break;
+  }
+  return deleted;
 }
 
 function scheduleCleanup(): void {
@@ -212,8 +235,10 @@ export async function claimPasswordAttempt(email: string): Promise<{ allowed: bo
     }
     const allowed = await prisma.$transaction(async (tx) => {
       await lockAccountRow(tx, key, seenAt);
-      // The instant is taken once the row is held, so lock order is time order
-      // and lastFailureAt can never move backwards (#4637 review).
+      // The instant is taken once the row is held, so on one server's clock
+      // lock order is time order and lastFailureAt never moves backwards
+      // (#4637 review). Replicas' clocks can differ; app time is still the
+      // rule here, never SQL now().
       const now = new Date();
       const row = await tx.loginThrottle.findUniqueOrThrow({
         where: { id: key },

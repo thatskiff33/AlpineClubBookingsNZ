@@ -32,7 +32,7 @@ const {
     mockSetLockTimeout,
     mockPrisma: {
       $transaction: vi.fn(),
-      loginThrottle: { deleteMany: vi.fn(), findUnique: vi.fn() },
+      loginThrottle: { deleteMany: vi.fn(), findUnique: vi.fn(), findMany: vi.fn() },
     },
     mockGetAuthSecret: vi.fn<() => string | undefined>(() => "test-secret"),
     mockLoggerError: vi.fn(),
@@ -48,6 +48,7 @@ vi.mock("@/lib/logger", () => ({
 import { FROZEN_TEST_CLOCK_BASE_ISO } from "@/lib/__tests__/helpers/clock";
 import {
   LOGIN_THROTTLE_DEGRADED_FREE_FAILURES,
+  LOGIN_THROTTLE_SWEEP_BATCH_SIZE,
   claimPasswordAttempt,
   clearPasswordAttempts,
   loginAccountKey,
@@ -296,11 +297,56 @@ describe("clearPasswordAttempts (#4609)", () => {
 });
 
 describe("sweepIdleLoginThrottleRows (#4609 review)", () => {
-  it("deletes only rows idle for an hour or more and reports how many", async () => {
-    mockPrisma.loginThrottle.deleteMany.mockResolvedValue({ count: 3 });
-    await expect(sweepIdleLoginThrottleRows()).resolves.toBe(3);
-    expect(mockPrisma.loginThrottle.deleteMany).toHaveBeenCalledWith({
-      where: { lastFailureAt: { lt: new Date(T0.getTime() - 3_600_000) } },
+  const CUTOFF = new Date(T0.getTime() - 3_600_000);
+  const ids = (from: number, n: number) =>
+    Array.from({ length: n }, (_, i) => ({ id: `k${String(from + i).padStart(4, "0")}` }));
+
+  it("deletes idle rows in id-ordered batches until a short batch, repeating the idle condition", async () => {
+    const size = LOGIN_THROTTLE_SWEEP_BATCH_SIZE;
+    expect(size).toBe(100);
+    mockPrisma.loginThrottle.findMany
+      .mockResolvedValueOnce(ids(0, size))
+      .mockResolvedValueOnce(ids(size, size))
+      .mockResolvedValueOnce(ids(2 * size, 30));
+    // The second batch loses one row to a claim that refreshed it meanwhile.
+    mockPrisma.loginThrottle.deleteMany
+      .mockResolvedValueOnce({ count: size })
+      .mockResolvedValueOnce({ count: size - 1 })
+      .mockResolvedValueOnce({ count: 30 });
+
+    await expect(sweepIdleLoginThrottleRows()).resolves.toBe(2 * size + 29);
+
+    expect(mockPrisma.loginThrottle.findMany).toHaveBeenCalledTimes(3);
+    expect(mockPrisma.loginThrottle.findMany).toHaveBeenCalledWith({
+      where: { lastFailureAt: { lt: CUTOFF } },
+      select: { id: true },
+      orderBy: { id: "asc" },
+      take: size,
     });
+    expect(mockPrisma.loginThrottle.deleteMany).toHaveBeenCalledTimes(3);
+    expect(mockPrisma.loginThrottle.deleteMany.mock.calls[1][0]).toEqual({
+      where: {
+        id: { in: ids(size, size).map((row) => row.id) },
+        lastFailureAt: { lt: CUTOFF },
+      },
+    });
+  });
+
+  it("stops after an empty read and deletes nothing", async () => {
+    mockPrisma.loginThrottle.findMany.mockResolvedValueOnce([]);
+    await expect(sweepIdleLoginThrottleRows()).resolves.toBe(0);
+    expect(mockPrisma.loginThrottle.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it("reads again after a full batch, and stops when that read is empty", async () => {
+    mockPrisma.loginThrottle.findMany
+      .mockResolvedValueOnce(ids(0, LOGIN_THROTTLE_SWEEP_BATCH_SIZE))
+      .mockResolvedValueOnce([]);
+    mockPrisma.loginThrottle.deleteMany.mockResolvedValueOnce({
+      count: LOGIN_THROTTLE_SWEEP_BATCH_SIZE,
+    });
+    await expect(sweepIdleLoginThrottleRows()).resolves.toBe(LOGIN_THROTTLE_SWEEP_BATCH_SIZE);
+    expect(mockPrisma.loginThrottle.findMany).toHaveBeenCalledTimes(2);
+    expect(mockPrisma.loginThrottle.deleteMany).toHaveBeenCalledTimes(1);
   });
 });

@@ -2029,14 +2029,18 @@ mispricing a booking.
     `55P03` and answers "waiting", uncounted — contention on that account, not a
     store failure. A claim holds the row for milliseconds, so an ordinary race
     still queues and counts;
-  - the attempt's instant is taken once the row is held, so lock order is time
-    order and `lastFailureAt` never moves backwards.
+  - the attempt's instant is taken once the row is held, so on one server's
+    clock lock order is time order and `lastFailureAt` never moves backwards;
+    replicas' clocks can differ by their skew (app time is still the rule,
+    never SQL `now()`).
 
   Counterpart writers, and why they are safe against the claim:
   - **Clear** (`clearPasswordAttempts`, after a valid password or a completed
     reset) and the **idle sweep** (`sweepIdleLoginThrottleRows`, deleting rows
     whose `lastFailureAt` is over an hour old, from the daily `data-pruning` job
-    and a ten-minute timer in a process handling sign-ins) are single `deleteMany` statements with
+    and a ten-minute timer in a process handling sign-ins, in id-ordered batches
+    of 100 so no statement holds rows long enough to push a claim past its
+    lock timeout) are `deleteMany` statements, each repeating its condition, with
     no lock of their own. Against a claim holding the row they wait, then
     delete the committed row (the clear: correct, the password was proven) or
     re-check it and skip it (the sweep: the claim just refreshed
