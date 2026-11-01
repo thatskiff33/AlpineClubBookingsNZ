@@ -3384,7 +3384,7 @@ flowchart TD
 | `xero-reconciliation-report` | Daily | Send the Xero reconciliation report |
 | `xero-credit-sync-check` | Daily | Reconcile BookingApp's stamped applied credit against Xero's live invoice allocations and warn admins on drift with the exact amount (#2501); read-only, self-throttled |
 | `finance-daily-sync` | Daily when the finance dashboard module is enabled | Refresh finance report/invoice/balance snapshots from the operational Xero connection |
-| `data-pruning` | Daily | Prune expired tokens/logs and run audit retention |
+| `data-pruning` | Daily | Prune expired tokens/logs and idle login-throttle rows, and run audit retention |
 | `draft-cleanup` | Daily | Delete expired draft bookings; leave out and report any that financial history names (`INV-MONEY-043`) |
 | `member-guest-consent-expiry` | Daily at 04:30 NZT when the member-guests module is enabled | Expire lapsed member-guest consent requests, release the bed, and settle the reduction as account credit to the booking owner; rows the shared removal path refuses are counted separately for the admin exception list |
 | `pending-deadline-alerts` | Daily | Alert admins about pending bookings approaching deadline |

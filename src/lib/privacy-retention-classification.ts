@@ -67,6 +67,7 @@ export const PRIVACY_RETENTION_CLASSIFICATION = {
   PaymentRefund: "personal",
   UnrecognisedStripePayment: "personal",
   RateLimitCounter: "personal",
+  LoginThrottle: "personal",
   AlertCooldown: "personal",
   PaymentRecoveryOperation: "personal",
   PromoCode: "non-personal",
