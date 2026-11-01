@@ -29,6 +29,7 @@ import {
   BookingGuestRemovalError,
   removeBookingGuestInTransaction,
 } from "@/lib/booking-guest-removal-service";
+import { resolveBookingMoneyPostingContext } from "@/lib/member-money/doors";
 import {
   getMembershipTypeBookingPolicyErrorBody,
   MembershipTypeBookingPolicyError,
@@ -140,11 +141,14 @@ export async function DELETE(
   // The club's format (#3565), resolved once, before any transaction or
   // lock below — never per amount and never inside a transaction.
   const format = await clubFormatValues();
+  // #4627: the journal's posting context, likewise resolved before the transaction.
+  const journal = await resolveBookingMoneyPostingContext();
 
   try {
     const result = await prisma.$transaction((tx) =>
       removeBookingGuestInTransaction({
         format,
+        journal,
         tx,
         bookingId,
         guestId,

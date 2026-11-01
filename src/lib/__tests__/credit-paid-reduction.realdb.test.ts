@@ -21,9 +21,11 @@
  */
 import type { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { releaseBookingJournalForTeardown } from "./support/booking-financial-history-teardown";
 
 import { realElapsedMs } from "@/lib/__tests__/helpers/clock";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
+import { memberMoneyTestContext } from "./support/member-money-fixtures";
 
 const RUN = process.env.RUN_CONCURRENCY_RACE_TESTS === "1";
 const RACE_DB_URL = process.env.CONCURRENCY_RACE_DATABASE_URL ?? "";
@@ -87,6 +89,8 @@ let observerClient: PrismaClient;
       const slices = await prisma.memberCreditNoteAllocation.findMany({ where: { appliedToBookingId: BOOKING_ID }, select: { id: true } });
       await prisma.xeroObjectLink.deleteMany({ where: { localModel: "MemberCreditNoteAllocation", localId: { in: slices.map((slice) => slice.id) } } });
       await prisma.memberCreditNoteAllocation.deleteMany({ where: { appliedToBookingId: BOOKING_ID } });
+      // #4627: the doors post journal batches bridged to these lines; release them first.
+      await releaseBookingJournalForTeardown(prisma, [BOOKING_ID]);
       await prisma.bookingLedgerLine.deleteMany({ where: { bookingId: BOOKING_ID } });
       await prisma.memberCredit.deleteMany({ where: { memberId: MEMBER_ID } });
       await prisma.bookingEvent.deleteMany({ where: { bookingId: BOOKING_ID } });
@@ -175,7 +179,7 @@ let observerClient: PrismaClient;
       const { removeBookingGuestInTransaction } = await import("@/lib/booking-guest-removal-service");
       const result = await prisma.$transaction(
         (tx) => removeBookingGuestInTransaction({
-          tx, bookingId: BOOKING_ID, guestId: LEAVING_GUEST_ID, actorMemberId: MEMBER_ID, actorRole: "ADMIN", today: TODAY, format: CLUB_FORMAT_TEST,
+          tx, bookingId: BOOKING_ID, guestId: LEAVING_GUEST_ID, actorMemberId: MEMBER_ID, actorRole: "ADMIN", today: TODAY, format: CLUB_FORMAT_TEST, journal: memberMoneyTestContext(),
           ...(settlementMethod ? { settlementMethod } : {}),
         }),
         { maxWait: 10_000, timeout: 20_000 },

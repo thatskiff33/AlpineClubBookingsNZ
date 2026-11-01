@@ -64,6 +64,7 @@
 import type { PrismaClient } from "@prisma/client";
 import type Stripe from "stripe";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { releaseBookingJournalForTeardown } from "./support/booking-financial-history-teardown";
 
 import { realElapsedMs } from "@/lib/__tests__/helpers/clock";
 
@@ -148,6 +149,8 @@ function deferred() {
       await prisma.alertCooldown.deleteMany({ where: { key: { contains: BOOKING_ID } } });
       await prisma.emailLog.deleteMany({ where: { bookingId: BOOKING_ID } });
       await prisma.auditLog.deleteMany({ where: { OR: [{ targetId: BOOKING_ID }, { subjectMemberId: MEMBER_ID }] } });
+      // #4627: the doors post journal batches bridged to these lines; release them first.
+      await releaseBookingJournalForTeardown(prisma, [BOOKING_ID]);
       await prisma.bookingLedgerLine.deleteMany({ where: { bookingId: BOOKING_ID } });
       await prisma.bookingEvent.deleteMany({ where: { bookingId: BOOKING_ID } });
       await prisma.memberCredit.deleteMany({ where: { memberId: MEMBER_ID } });

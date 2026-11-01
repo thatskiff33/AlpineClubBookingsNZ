@@ -23,6 +23,7 @@
  */
 import type { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { releaseBookingJournalForTeardown } from "./support/booking-financial-history-teardown";
 
 const RUN = process.env.RUN_CONCURRENCY_RACE_TESTS === "1";
 const RACE_DB_URL = process.env.CONCURRENCY_RACE_DATABASE_URL ?? "";
@@ -79,6 +80,8 @@ function changeFee(postingKey: string) {
 }
 
 async function clearLedger(): Promise<void> {
+  // #4627: the doors post journal batches bridged to these lines; release them first.
+  await releaseBookingJournalForTeardown(prisma, [BOOKING_ID]);
   await prisma.bookingLedgerLine.deleteMany({ where: { bookingId: BOOKING_ID } });
 }
 
@@ -92,6 +95,8 @@ async function clearLedger(): Promise<void> {
       ({ writeBookingLedgerRows, buildBookingLedgerRows } = await import("@/lib/booking-ledger-write"));
       ({ bookingHasConfirmationLines } = await import("@/lib/booking-ledger-read"));
 
+      // #4627: the doors post journal batches bridged to these lines; release them first.
+      await releaseBookingJournalForTeardown(prisma, [BOOKING_ID]);
       await prisma.bookingLedgerLine.deleteMany({ where: { bookingId: BOOKING_ID } });
       await prisma.booking.deleteMany({ where: { id: BOOKING_ID } });
       await prisma.lodge.deleteMany({ where: { id: LODGE_ID } });

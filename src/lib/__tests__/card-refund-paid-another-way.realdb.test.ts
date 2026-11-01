@@ -36,6 +36,7 @@
  * over real eligible cash, never the payment-wide gap.
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { releaseBookingJournalForTeardown } from "./support/booking-financial-history-teardown";
 import { currentXeroClaim } from "@/lib/__tests__/helpers/xero-claim";
 
 /** A plain test label for the skipped outbox row (not a credential). */
@@ -115,6 +116,8 @@ const LOCK_POLL_TIMEOUT_MS = 5_000;
       await prisma.xeroObjectLink.deleteMany({ where: { localModel: "Payment", localId: PAYMENT_ID } });
       await prisma.xeroSyncOperation.deleteMany({ where: { localModel: "ManualRefundTask", localId: APPROVAL_TASK_ID } });
       await prisma.xeroObjectLink.deleteMany({ where: { localModel: "ManualRefundTask", localId: APPROVAL_TASK_ID } });
+      // #4627: the doors post journal batches bridged to these lines; release them first.
+      await releaseBookingJournalForTeardown(prisma, [BOOKING_ID]);
       await prisma.bookingLedgerLine.deleteMany({ where: { bookingId: BOOKING_ID } });
       await prisma.manualRefundTask.deleteMany({ where: { bookingId: BOOKING_ID } });
       await prisma.paymentRefund.deleteMany({ where: { paymentId: PAYMENT_ID } });
@@ -124,6 +127,8 @@ const LOCK_POLL_TIMEOUT_MS = 5_000;
     async function deleteFixtures() {
       await deleteCloseRecords();
       await prisma.paymentRecoveryOperation.deleteMany({ where: { id: OPERATION_ID } });
+      // #4627: the doors post journal batches bridged to these lines; release them first.
+      await releaseBookingJournalForTeardown(prisma, [BOOKING_ID]);
       await prisma.bookingLedgerLine.deleteMany({ where: { bookingId: BOOKING_ID } });
       await prisma.paymentRefund.deleteMany({ where: { paymentId: PAYMENT_ID } });
       await prisma.paymentTransaction.deleteMany({ where: { paymentId: PAYMENT_ID } });

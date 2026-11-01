@@ -39,7 +39,7 @@ let appPrisma: PrismaClient;
 let app: Client;
 let sequence = 0;
 /** A fresh event key per case; a review-close key is just a well-formed one here. */
-const key = (label: string) => memberMoneyEventKeys.reviewClose(`t4626-${label}-${++sequence}`);
+const key = (label: string) => memberMoneyEventKeys.reviewClose(`t4626-${label}-${++sequence}`, "l1");
 
 /** The verifier as the operator command runs it: its own read-only snapshot, as the application role. */
 async function verified() {

@@ -45,6 +45,22 @@ export async function releaseBookingFinancialHistoryForTeardown(
     WHERE "groupBookingId" IN (SELECT "id" FROM "GroupBooking" WHERE "organiserBookingId" = ANY(${ids}::text[]))`;
 }
 
+/**
+ * The journal part alone (#4627, Ledger M3b): from M3b the real booking doors
+ * post journal batches bridged to the legacy lines they write, so a suite that
+ * deletes ledger lines itself (a history made to look pre-ledger, or its own
+ * teardown order) releases the journal rows naming those bookings first. The
+ * booking is then, for the journal too, one confirmed before M3b.
+ */
+export async function releaseBookingJournalForTeardown(
+  db: Pick<PrismaClient, "$transaction">,
+  bookingIds: readonly string[],
+): Promise<void> {
+  const ids = [...new Set(bookingIds)];
+  if (ids.length === 0) return;
+  await db.$transaction((tx) => releaseMemberMoneyJournalForTeardown(tx, ids));
+}
+
 async function releaseMemberMoneyJournalForTeardown(tx: Prisma.TransactionClient, ids: string[]): Promise<void> {
   const batches = await tx.$queryRaw<{ journalId: string; eventId: string }[]>`
     WITH RECURSIVE named(id) AS (

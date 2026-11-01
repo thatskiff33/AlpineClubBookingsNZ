@@ -1472,6 +1472,18 @@ const ROW_LOCK_SITE_INVENTORY: Record<string, number> = {
   // refund writer takes it. See docs/CONCURRENCY_AND_LOCKING.md ->
   // "Booking-ledger back-post".
   "src/lib/booking-ledger-back-post.ts": 2,
+  // #4627 (Ledger M3b): the journal adapter takes the booking row
+  // (`SELECT 1 … FOR NO KEY UPDATE`) before it reads the owner it posts as the
+  // receivable's debtor. Every door has already UPDATEd that row in the same
+  // transaction, after lock(1) and its lodge key, so this adds no edge; member
+  // merge's owner move is its counterpart. See docs/CONCURRENCY_AND_LOCKING.md ->
+  // "The M3b booking doors and member merge's journal transfer".
+  "src/lib/member-money/internal/booking-posting.ts": 1,
+  // #4627: an edit review's closure takes its booking row straight after its claim,
+  // before any credit write (giveBackCancelledShareCredit, applyLocalRefundAllocation,
+  // an account-credit mint: each a KEY SHARE on the owner's Member row), so neither
+  // those nor the journal adapter's owner read invert against member merge's owner move.
+  "src/lib/manual-refund-task-resolution.ts": 1,
   // #3635 (review outbox F1/F4): the kept-late-capture enqueue and the
   // worker's send-time decision lock the #3639 approval task's row
   // (`SELECT 1 … FOR UPDATE`), the row the dismissal, reopen and approval

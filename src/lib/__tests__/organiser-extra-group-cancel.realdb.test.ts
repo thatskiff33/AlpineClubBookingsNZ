@@ -18,6 +18,7 @@
  *   pnpm exec vitest run src/lib/__tests__/organiser-extra-group-cancel.realdb.test.ts
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { releaseBookingJournalForTeardown } from "./support/booking-financial-history-teardown";
 
 import { assertSafeRaceDbUrl } from "@/lib/__tests__/support/race-db-url";
 import { readOrganiserExtraAdjustmentPayload } from "@/lib/organiser-extra-adjustment-payload";
@@ -50,6 +51,8 @@ let resolution: typeof import("@/lib/manual-refund-task-resolution");
     await prisma.xeroObjectLink.deleteMany({ where: { localId: { in: [modificationId, childId, paymentId] } } });
     await prisma.manualRefundTask.deleteMany({ where: { bookingId: { in: [childId, organiserId] } } });
     await prisma.paymentRecoveryOperation.deleteMany({ where: { bookingId: { in: [childId, organiserId] } } });
+    // #4627: the doors post journal batches bridged to these lines; release them first.
+    await releaseBookingJournalForTeardown(prisma, [childId, organiserId]);
     await prisma.bookingLedgerLine.deleteMany({ where: { bookingId: { in: [childId, organiserId] } } });
     await prisma.bookingEvent.deleteMany({ where: { bookingId: { in: [childId, organiserId] } } });
     await prisma.auditLog.deleteMany({ where: { OR: [{ targetId: { in: [childId, organiserId] } }, { memberId }, { actorMemberId: memberId }, { subjectMemberId: memberId }] } });

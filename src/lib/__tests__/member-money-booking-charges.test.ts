@@ -1,0 +1,309 @@
+/**
+ * The M3b adapter from stored legacy booking-ledger lines to journal batches
+ * (#4627). Pure: every plan here is also run through the M3a builder, which
+ * refuses an unbalanced or ill-shaped batch before any write. What the database
+ * accepts, door by door, is `booking-ledger-journal.realdb.test.ts`.
+ */
+import { describe, expect, it } from "vitest";
+import { requireClubTimeZone, requireInstant } from "@/lib/club-time";
+import {
+  bookingChargeIdentity,
+  journalComponentOfLegacyLine,
+  MemberMoneyPlanError,
+  resolveMemberMoneyPostingContext,
+  type MemberMoneyPlan,
+} from "@/lib/member-money";
+import {
+  planBookingChargeEvent,
+  planMemberMergeTransfer,
+  type BookingChargeEvent,
+  type LegacyChargeLine,
+} from "@/lib/member-money/internal/booking-charges";
+import { buildMemberMoneyBatch } from "@/lib/member-money/internal/plan";
+import { FROZEN_TEST_CLOCK_BASE_ISO } from "./helpers/clock";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
+import { memberMoneyTestContext } from "./support/member-money-fixtures";
+
+const BOOKING = "b1";
+const LODGE = "l1";
+const MEMBER = { kind: "MEMBER", memberId: "m1" } as const;
+const CHARGE = bookingChargeIdentity(BOOKING);
+const context = memberMoneyTestContext();
+let sequence = 0;
+
+function line(overrides: Partial<LegacyChargeLine> & Pick<LegacyChargeLine, "kind" | "amountCents">): LegacyChargeLine {
+  sequence += 1;
+  return {
+    id: `line-${sequence}`,
+    bookingId: BOOKING,
+    lodgeId: LODGE,
+    side: "CHARGE",
+    quantity: 1,
+    unitCents: Math.abs(overrides.amountCents),
+    postingKey: `key-${sequence}`,
+    reversesLineId: null,
+    reversedPostingKey: null,
+    bookingGuestId: overrides.kind === "GUEST_NIGHT" ? "g1" : null,
+    night: overrides.kind === "GUEST_NIGHT" ? "2026-08-01" : null,
+    ...overrides,
+  };
+}
+
+const live = (entries: Array<["BOOKING_REVENUE" | "FEE_REVENUE", string, number]>) =>
+  entries.map(([account, chargeIdentity, liveGrossCents]) => ({ account, chargeIdentity, liveGrossCents }));
+
+function plan(event: BookingChargeEvent, lines: LegacyChargeLine[], liveComponents = live([])) {
+  return planBookingChargeEvent({ bookingId: BOOKING, lodgeId: LODGE, event, debtor: MEMBER, lines, liveComponents });
+}
+
+type Legs = Extract<MemberMoneyPlan, { legs: unknown }>;
+const legsOf = (built: MemberMoneyPlan | null) =>
+  (built as Legs).legs.map((leg) => [leg.account, leg.side, leg.type === "amount" ? leg.amountCents : leg.grossCents, leg.chargeIdentity ?? null]);
+
+describe("R01: a confirmation's lines (#4627)", () => {
+  it("folds the nights and the signed promotion into one component whose gross is the final price", () => {
+    const nightA = line({ kind: "GUEST_NIGHT", amountCents: 6000 });
+    const nightB = line({ kind: "GUEST_NIGHT", amountCents: 6000 });
+    const promo = line({ kind: "PROMOTION", amountCents: -1500, unitCents: 1500 });
+    const built = plan({ kind: "confirmation" }, [nightA, nightB, promo]) as Legs;
+    expect(built.kind).toBe("CHARGE");
+    expect(legsOf(built)).toEqual([
+      ["MEMBER_RECEIVABLE", "DEBIT", 6000, null],
+      ["MEMBER_RECEIVABLE", "DEBIT", 6000, null],
+      ["MEMBER_RECEIVABLE", "CREDIT", 1500, null],
+      ["BOOKING_REVENUE", "CREDIT", 10500, CHARGE],
+    ]);
+    // No separate promotion debit: the only revenue leg is the folded component.
+    expect(built.legs.filter((leg) => leg.type === "revenue" && leg.side === "DEBIT")).toEqual([]);
+    expect(built.obligations).toEqual([expect.objectContaining({ kind: "CHARGE", faceCents: 10500, debtor: MEMBER })]);
+    // Every line is linked, and its receivable leg names it.
+    expect(built.additionalSources?.map((source) => source.id)).toEqual([nightA.id, nightB.id, promo.id]);
+    expect(built.legs.slice(0, 3).map((leg) => leg.source?.id)).toEqual([nightA.id, nightB.id, promo.id]);
+    const batch = buildMemberMoneyBatch(context, built);
+    expect(batch.sources.filter((source) => source.kind === "BOOKING_LEDGER")).toHaveLength(3);
+  });
+
+  it("posts a fee added to the amount owed as its own fee component, sourced to its line", () => {
+    const night = line({ kind: "GUEST_NIGHT", amountCents: 8000 });
+    const fee = line({ kind: "CHANGE_FEE", amountCents: 2500, postingKey: "modification:mod1:change-fee" });
+    const built = plan({ kind: "confirmation" }, [night, fee]) as Legs;
+    const feeLeg = built.legs.find((leg) => leg.account === "FEE_REVENUE");
+    expect(feeLeg).toMatchObject({ side: "CREDIT", grossCents: 2500, chargeIdentity: "modification:mod1:change-fee", source: { id: fee.id } });
+    expect(built.obligations?.[0]?.faceCents).toBe(10500);
+    expect(() => buildMemberMoneyBatch(context, built)).not.toThrow();
+  });
+
+  it("posts a booking fully discounted with no revenue and no obligation, every line still bridged", () => {
+    const night = line({ kind: "GUEST_NIGHT", amountCents: 5000 });
+    const promo = line({ kind: "PROMOTION", amountCents: -5000 });
+    const built = plan({ kind: "confirmation" }, [night, promo]) as Legs;
+    expect(legsOf(built)).toEqual([["MEMBER_RECEIVABLE", "DEBIT", 5000, null], ["MEMBER_RECEIVABLE", "CREDIT", 5000, null]]);
+    expect(built.obligations).toEqual([]);
+    expect(() => buildMemberMoneyBatch(context, built)).not.toThrow();
+  });
+
+  it("posts a confirmation with no money as an explicit ZERO R01, so the booking is in the journal; any other event posts nothing", () => {
+    const free = line({ kind: "GUEST_NIGHT", amountCents: 0 });
+    const zero = plan({ kind: "confirmation" }, [free]);
+    expect(zero).toMatchObject({ kind: "ZERO", eventKey: `booking-charge:${BOOKING}`, source: { kind: "BOOKING", id: BOOKING } });
+    expect(plan({ kind: "confirmation" }, [])).toMatchObject({ kind: "ZERO" });
+    expect(() => buildMemberMoneyBatch(context, zero!)).not.toThrow();
+    expect(plan({ kind: "modification", modificationId: "m0" }, [free])).toBeNull();
+  });
+
+  it("leaves a zero-cent line unlinked beside lines with money", () => {
+    const free = line({ kind: "GUEST_NIGHT", amountCents: 0 });
+    const paid = line({ kind: "GUEST_NIGHT", amountCents: 4000 });
+    const built = plan({ kind: "confirmation" }, [free, paid]) as Legs;
+    expect(built.additionalSources?.map((source) => source.id)).toEqual([paid.id]);
+  });
+
+  it("names an organisation as the debtor of an organisation-owned booking", () => {
+    const organisation = { kind: "ORGANISATION", organisationId: "org1" } as const;
+    const built = planBookingChargeEvent({
+      bookingId: BOOKING, lodgeId: LODGE, event: { kind: "confirmation" }, debtor: organisation,
+      lines: [line({ kind: "GUEST_NIGHT", amountCents: 7000 })], liveComponents: [],
+    }) as Legs;
+    expect(built.legs[0]).toMatchObject({ account: "MEMBER_RECEIVABLE", debtor: organisation });
+    expect(built.obligations?.[0]?.debtor).toEqual(organisation);
+    expect(() => buildMemberMoneyBatch(context, built)).not.toThrow();
+  });
+});
+
+describe("R02/R03/R04/R21: later events correct whole components (#4627)", () => {
+  it("re-posts an edit as the whole component corrected and the remainder charged", () => {
+    const original = line({ kind: "GUEST_NIGHT", amountCents: 10000 });
+    const reversal = line({ kind: "GUEST_NIGHT", amountCents: -10000, reversesLineId: original.id });
+    const added = line({ kind: "GUEST_NIGHT", amountCents: 12000 });
+    const fee = line({ kind: "CHANGE_FEE", amountCents: 2000, postingKey: "modification:mod2:change-fee" });
+    const built = plan({ kind: "modification", modificationId: "mod2" }, [reversal, added, fee],
+      live([["BOOKING_REVENUE", CHARGE, 30000]])) as Legs;
+    expect(built.kind).toBe("ADJUSTMENT");
+    expect(built.eventKey).toBe("modification:mod2");
+    expect(legsOf(built)).toEqual([
+      ["MEMBER_RECEIVABLE", "CREDIT", 10000, null],
+      ["MEMBER_RECEIVABLE", "DEBIT", 12000, null],
+      ["MEMBER_RECEIVABLE", "DEBIT", 2000, null],
+      ["BOOKING_REVENUE", "DEBIT", 30000, CHARGE],
+      ["BOOKING_REVENUE", "CREDIT", 32000, CHARGE],
+      ["FEE_REVENUE", "CREDIT", 2000, "modification:mod2:change-fee"],
+    ]);
+    expect(built.obligations).toEqual([]);
+    expect(() => buildMemberMoneyBatch(context, built)).not.toThrow();
+  });
+
+  it("moves no revenue when an edit's lines net to zero, and still bridges them", () => {
+    const reversal = line({ kind: "GUEST_NIGHT", amountCents: -9000, reversesLineId: "old" });
+    const added = line({ kind: "GUEST_NIGHT", amountCents: 9000 });
+    const built = plan({ kind: "modification", modificationId: "mod3" }, [reversal, added], live([["BOOKING_REVENUE", CHARGE, 9000]]));
+    expect(legsOf(built)).toEqual([["MEMBER_RECEIVABLE", "CREDIT", 9000, null], ["MEMBER_RECEIVABLE", "DEBIT", 9000, null]]);
+  });
+
+  it("cancels by correcting a reversed change fee whole and leaving the booking charge at what the club keeps", () => {
+    const stay = line({ kind: "GUEST_NIGHT", amountCents: -20000, reversesLineId: "n1" });
+    const feeBack = line({ kind: "CHANGE_FEE", amountCents: -2000, reversesLineId: "f1", reversedPostingKey: "modification:mod2:change-fee" });
+    const kept = line({ kind: "CANCELLATION_FEE", amountCents: 5000, postingKey: "cancellation:b1:fee" });
+    const built = plan({ kind: "cancellation" }, [stay, feeBack, kept], live([
+      ["BOOKING_REVENUE", CHARGE, 20000], ["FEE_REVENUE", "modification:mod2:change-fee", 2000],
+    ])) as Legs;
+    expect(built.eventKey).toBe("cancellation:b1:0");
+    expect(legsOf(built).filter(([account]) => account !== "MEMBER_RECEIVABLE")).toEqual([
+      ["BOOKING_REVENUE", "DEBIT", 20000, CHARGE],
+      ["BOOKING_REVENUE", "CREDIT", 5000, CHARGE],
+      ["FEE_REVENUE", "DEBIT", 2000, "modification:mod2:change-fee"],
+    ]);
+    expect(() => buildMemberMoneyBatch(context, built)).not.toThrow();
+  });
+
+  it("takes a give-back the booking charge cannot absorb from the live change fees, never below zero", () => {
+    // After a cancellation the charge holds what was kept (1000); a 1500 give-back takes the last 500 off the fee.
+    const giveBack = line({ kind: "AGREED_ADJUSTMENT", side: "ADJUSTMENT", amountCents: -1500, postingKey: "agreed-adjustment:t9" });
+    const built = plan({ kind: "review-close", taskId: "t9", officerMemberId: "officer", firstLineId: giveBack.id }, [giveBack], live([
+      ["BOOKING_REVENUE", CHARGE, 1000], ["FEE_REVENUE", "modification:m1:change-fee", 2500],
+    ])) as Legs;
+    expect(legsOf(built)).toEqual([
+      ["MEMBER_RECEIVABLE", "CREDIT", 1500, null],
+      ["BOOKING_REVENUE", "DEBIT", 1000, CHARGE],
+      ["FEE_REVENUE", "DEBIT", 2500, "modification:m1:change-fee"],
+      ["FEE_REVENUE", "CREDIT", 2000, "modification:m1:change-fee"],
+    ]);
+    // The untouched fee's legs name the event, not a legacy line.
+    expect(built.legs.filter((leg) => leg.account === "FEE_REVENUE").every((leg) => leg.source === undefined)).toBe(true);
+    expect(() => buildMemberMoneyBatch(context, built)).not.toThrow();
+  });
+
+  it("folds an agreed adjustment into the charge component and names the officer on a review close", () => {
+    const concession = line({ kind: "AGREED_ADJUSTMENT", side: "ADJUSTMENT", amountCents: -3000, postingKey: "agreed-adjustment:t1" });
+    const built = plan({ kind: "review-close", taskId: "t1", officerMemberId: "officer", firstLineId: concession.id }, [concession],
+      live([["BOOKING_REVENUE", CHARGE, 20000]])) as Legs;
+    // Named by the task AND the first line this closure wrote: a reopened task's second closure is a new event.
+    expect(built).toMatchObject({ eventKey: `review-close:t1:${concession.id}`, origin: "OFFICER", actorMemberId: "officer",
+      source: { kind: "OFFICER_FACT", id: "t1", version: `review-close:${concession.id}` } });
+    const again = plan({ kind: "review-close", taskId: "t1", officerMemberId: "officer", firstLineId: "line-later" }, [concession],
+      live([["BOOKING_REVENUE", CHARGE, 20000]])) as Legs;
+    expect(again.eventKey).toBe("review-close:t1:line-later");
+    expect(legsOf(built)).toEqual([
+      ["MEMBER_RECEIVABLE", "CREDIT", 3000, null],
+      ["BOOKING_REVENUE", "DEBIT", 20000, CHARGE],
+      ["BOOKING_REVENUE", "CREDIT", 17000, CHARGE],
+    ]);
+  });
+
+  it("lets a cancellation reverse a change fee an earlier give-back already drew on: the fee draws back from the charge", () => {
+    // Nights 10000, fee K 2000. A 12000 give-back takes the charge to 0 and draws 2000 from K.
+    const giveBack = line({ kind: "AGREED_ADJUSTMENT", side: "ADJUSTMENT", amountCents: -12000, postingKey: "agreed-adjustment:t7" });
+    const first = plan({ kind: "review-close", taskId: "t7", officerMemberId: "o", firstLineId: giveBack.id }, [giveBack], live([
+      ["BOOKING_REVENUE", CHARGE, 10000], ["FEE_REVENUE", "modification:k:change-fee", 2000],
+    ])) as Legs;
+    expect(legsOf(first).filter(([account]) => account !== "MEMBER_RECEIVABLE")).toEqual([
+      ["BOOKING_REVENUE", "DEBIT", 10000, CHARGE],
+      ["FEE_REVENUE", "DEBIT", 2000, "modification:k:change-fee"],
+    ]);
+    // Then the cancellation keeps nothing (below the change fee): nights -10000, the give-back reversed +12000,
+    // K reversed -2000. K would go to -2000; it draws from the charge's +2000 instead of refusing.
+    const nights = line({ kind: "GUEST_NIGHT", amountCents: -10000, reversesLineId: "n" });
+    const backAgain = line({ kind: "AGREED_ADJUSTMENT", side: "ADJUSTMENT", amountCents: 12000, reversesLineId: giveBack.id });
+    const feeBack = line({ kind: "CHANGE_FEE", amountCents: -2000, reversesLineId: "k", reversedPostingKey: "modification:k:change-fee" });
+    const cancel = plan({ kind: "cancellation" }, [nights, backAgain, feeBack], live([
+      ["BOOKING_REVENUE", CHARGE, 0], ["FEE_REVENUE", "modification:k:change-fee", 0],
+    ])) as Legs;
+    // Both components end where they are (0): only the bridging receivable legs post, and they net to nothing.
+    expect(legsOf(cancel).every(([account]) => account === "MEMBER_RECEIVABLE")).toBe(true);
+    expect(() => buildMemberMoneyBatch(context, cancel)).not.toThrow();
+  });
+
+  it("refuses lines that would take the booking's total below zero, a settlement line, and another booking's line", () => {
+    const refuse = (lines: LegacyChargeLine[], liveGross = live([])) => {
+      try {
+        plan({ kind: "modification", modificationId: "m" }, lines, liveGross);
+      } catch (error) {
+        if (error instanceof MemberMoneyPlanError) return error.problems.join("; ");
+        throw error;
+      }
+      return "";
+    };
+    expect(refuse([line({ kind: "GUEST_NIGHT", amountCents: -5000 })], live([["BOOKING_REVENUE", CHARGE, 4000]]))).toMatch(/booking's charges would carry -10\.00/);
+    expect(refuse([line({ kind: "CHANGE_FEE", amountCents: -3000, reversesLineId: "f", reversedPostingKey: "fee" })], live([["FEE_REVENUE", "fee", 2000]])))
+      .toMatch(/booking's charges would carry -10\.00/);
+    expect(refuse([line({ kind: "CARD_CAPTURE", side: "SETTLEMENT", amountCents: -100 })])).toMatch(/not a charge/);
+    expect(refuse([line({ kind: "GUEST_NIGHT", amountCents: 100, bookingId: "other" })])).toMatch(/another booking/);
+  });
+});
+
+describe("the back-post's batch (#4627, R26)", () => {
+  it("is named by the first line it fills in, posted as legacy, correcting like any later event", () => {
+    const night = line({ kind: "GUEST_NIGHT", amountCents: -4000, reversesLineId: "n1" });
+    const built = plan({ kind: "back-post", firstLineId: night.id }, [night], live([["BOOKING_REVENUE", CHARGE, 10000]])) as Legs;
+    expect(built).toMatchObject({ kind: "ADJUSTMENT", eventKey: `back-post:${night.id}`, origin: "LEGACY", source: { kind: "BOOKING", id: BOOKING } });
+    expect(legsOf(built).slice(1)).toEqual([["BOOKING_REVENUE", "DEBIT", 10000, CHARGE], ["BOOKING_REVENUE", "CREDIT", 6000, CHARGE]]);
+    expect(() => buildMemberMoneyBatch(context, built)).not.toThrow();
+  });
+});
+
+describe("the component rule the census shares (#4627)", () => {
+  it("names the folded component (the kept cancellation fee included), each change fee by its key, a fee reversal by its target's, and nothing for settlement", () => {
+    expect(journalComponentOfLegacyLine(line({ kind: "PROMOTION", amountCents: -1 }))).toEqual({ account: "BOOKING_REVENUE", chargeIdentity: CHARGE });
+    expect(journalComponentOfLegacyLine(line({ kind: "AGREED_ADJUSTMENT", amountCents: 1 }))?.chargeIdentity).toBe(CHARGE);
+    expect(journalComponentOfLegacyLine(line({ kind: "CANCELLATION_FEE", amountCents: 1, postingKey: "k" }))).toEqual({ account: "BOOKING_REVENUE", chargeIdentity: CHARGE });
+    expect(journalComponentOfLegacyLine(line({ kind: "CHANGE_FEE", amountCents: 1, postingKey: "k" }))).toEqual({ account: "FEE_REVENUE", chargeIdentity: "k" });
+    expect(journalComponentOfLegacyLine(line({ kind: "CHANGE_FEE", amountCents: -1, reversesLineId: "x", reversedPostingKey: "fee" }))?.chargeIdentity).toBe("fee");
+    expect(journalComponentOfLegacyLine(line({ kind: "BANK_RECEIPT", amountCents: -1 }))).toBeNull();
+    expect(() => journalComponentOfLegacyLine(line({ kind: "CHANGE_FEE", amountCents: -1, reversesLineId: "x", reversedPostingKey: null })))
+      .toThrow(MemberMoneyPlanError);
+  });
+});
+
+describe("D4: a member merge's transfer (#4627)", () => {
+  it("moves each open receivable balance to the survivor, booking by booking, and posts no revenue", () => {
+    const built = planMemberMergeTransfer({
+      fromMemberId: "loser", toMemberId: "master", actorMemberId: "admin",
+      balances: [{ bookingId: "b1", lodgeId: "l1", cents: 7000 }, { bookingId: "b2", lodgeId: "l1", cents: 0 }],
+    }) as Legs;
+    expect(built).toMatchObject({ kind: "ADJUSTMENT", eventKey: "merge:loser:master", origin: "OFFICER", actorMemberId: "admin" });
+    expect(built.legs.map((leg) => [leg.side, leg.debtor, leg.booking?.bookingId])).toEqual([
+      ["CREDIT", { kind: "MEMBER", memberId: "loser" }, "b1"],
+      ["DEBIT", { kind: "MEMBER", memberId: "master" }, "b1"],
+    ]);
+    expect(built.legs.every((leg) => leg.type === "amount")).toBe(true);
+    expect(() => buildMemberMoneyBatch(context, built)).not.toThrow();
+    expect(planMemberMergeTransfer({ fromMemberId: "a", toMemberId: "b", actorMemberId: "c", balances: [] })).toBeNull();
+  });
+});
+
+describe("a tax setting the door could not read (#4627)", () => {
+  const unreadable = resolveMemberMoneyPostingContext({
+    effectiveAt: requireInstant(FROZEN_TEST_CLOCK_BASE_ISO), zone: requireClubTimeZone("Pacific/Auckland"), format: CLUB_FORMAT_TEST,
+    policyVersion: "p", codingVersion: "c", taxSettings: { unreadable: "connection refused" },
+  });
+
+  it("refuses a batch needing a fresh split, never guessing one", () => {
+    const built = plan({ kind: "confirmation" }, [line({ kind: "GUEST_NIGHT", amountCents: 5000 })]) as Legs;
+    expect(() => buildMemberMoneyBatch(unreadable, built)).toThrow(/tax setting could not be read \(connection refused\)/);
+  });
+
+  it("still builds a correction-only batch, which repeats its posted split", () => {
+    const built = plan({ kind: "cancellation" }, [line({ kind: "GUEST_NIGHT", amountCents: -5000, reversesLineId: "n" })],
+      live([["BOOKING_REVENUE", CHARGE, 5000]])) as Legs;
+    expect(() => buildMemberMoneyBatch(unreadable, built)).not.toThrow();
+  });
+});

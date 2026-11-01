@@ -51,6 +51,7 @@
  * shared `@/lib/stripe` double (`support/stripe-race-double.ts`).
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { releaseBookingJournalForTeardown } from "./support/booking-financial-history-teardown";
 
 import { resetStripeRaceHooks, stripeRaceHooks } from "./support/stripe-race-double";
 import { assertNoForeignPendingXeroOperations } from "./support/race-harness-outbox-guard";
@@ -121,6 +122,8 @@ let CLUB_FORMAT_TEST: (typeof import("@/lib/__tests__/support/club-format-fixtur
     async function clean(): Promise<void> {
       await prisma.auditLog.deleteMany({ where: { targetId: BOOKING_ID } });
       await prisma.bookingEvent.deleteMany({ where: { bookingId: BOOKING_ID } });
+      // #4627: the doors post journal batches bridged to these lines; release them first.
+      await releaseBookingJournalForTeardown(prisma, [BOOKING_ID]);
       await prisma.bookingLedgerLine.deleteMany({ where: { bookingId: BOOKING_ID } });
       await prisma.alertCooldown.deleteMany({ where: { key: { startsWith: `card-refund-cap-overflow:${CARD_TXN}:` } } });
       await prisma.xeroObjectLink.deleteMany({ where: { localId: { in: [PAYMENT_ID, BOOKING_ID] } } });

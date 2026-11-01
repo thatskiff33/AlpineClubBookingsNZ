@@ -34,10 +34,15 @@
  */
 import type { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { releaseBookingJournalForTeardown } from "./support/booking-financial-history-teardown";
 
 import { bookingLedgerBalance } from "@/lib/booking-ledger-balance";
 import type { ModificationPricingSide } from "@/lib/booking-modification-lines";
 import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
+import { memberMoneyTestContext } from "./support/member-money-fixtures";
+
+/** #4627: a posting context; these bookings are confirmed by direct legacy writes, so no journal batch posts. */
+const JOURNAL = memberMoneyTestContext();
 
 const RUN = process.env.RUN_CONCURRENCY_RACE_TESTS === "1";
 const RACE_DB_URL = process.env.CONCURRENCY_RACE_DATABASE_URL ?? "";
@@ -99,6 +104,8 @@ async function lines(bookingId = BOOKING_ID) {
 
 async function clean(): Promise<void> {
   for (const id of [BOOKING_ID, UNCONFIRMED_ID]) {
+    // #4627: the doors post journal batches bridged to these lines; release them first.
+    await releaseBookingJournalForTeardown(prisma, [id]);
     await prisma.bookingLedgerLine.deleteMany({ where: { bookingId: id } });
     await prisma.bookingModification.deleteMany({ where: { bookingId: id } });
     await prisma.bookingEvent.deleteMany({ where: { bookingId: id } });
@@ -259,6 +266,7 @@ function reversedTwice(all: Awaited<ReturnType<typeof lines>>): boolean {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
       await modificationSync.postModificationLedgerLines({
         store: tx,
+        journal: JOURNAL,
         bookingId: BOOKING_ID,
         lodgeId: LODGE_ID,
         bookingModification: { id: edit.id, priceDiffCents: 1_000, changeFeeCents: 0 },
@@ -277,7 +285,7 @@ function reversedTwice(all: Awaited<ReturnType<typeof lines>>): boolean {
     const cancel = () =>
       prisma.$transaction(async (tx) => {
         await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
-        await cancellationSync.postCancellationLedgerLines({ store: tx, bookingId: BOOKING_ID, lodgeId: LODGE_ID, keptCents, site: "race-3611" });
+        await cancellationSync.postCancellationLedgerLines({ store: tx, journal: JOURNAL, bookingId: BOOKING_ID, lodgeId: LODGE_ID, keptCents, site: "race-3611" });
         // Still usable: a refused statement would have aborted it.
         await tx.booking.findUniqueOrThrow({ where: { id: BOOKING_ID }, select: { id: true } });
       });
@@ -297,7 +305,7 @@ function reversedTwice(all: Awaited<ReturnType<typeof lines>>): boolean {
   it("posts nothing for a booking not yet confirmed on the ledger", async () => {
     await prisma.$transaction(async (tx) => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
-      await cancellationSync.postCancellationLedgerLines({ store: tx, bookingId: UNCONFIRMED_ID, lodgeId: LODGE_ID, keptCents: 5_000, site: "race-3611" });
+      await cancellationSync.postCancellationLedgerLines({ store: tx, journal: JOURNAL, bookingId: UNCONFIRMED_ID, lodgeId: LODGE_ID, keptCents: 5_000, site: "race-3611" });
     });
     expect(await lines(UNCONFIRMED_ID)).toEqual([]);
   });
@@ -364,7 +372,7 @@ function reversedTwice(all: Awaited<ReturnType<typeof lines>>): boolean {
     const staleAdjustments = await ledgerRead.findPostedAdjustmentLines(prisma, BOOKING_ID);
     await prisma.$transaction(async (tx) => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
-      await cancellationSync.postCancellationLedgerLines({ store: tx, bookingId: BOOKING_ID, lodgeId: LODGE_ID, keptCents: 8_000, site: "race-3611" });
+      await cancellationSync.postCancellationLedgerLines({ store: tx, journal: JOURNAL, bookingId: BOOKING_ID, lodgeId: LODGE_ID, keptCents: 8_000, site: "race-3611" });
     });
     const once = await lines();
 
@@ -407,7 +415,7 @@ function reversedTwice(all: Awaited<ReturnType<typeof lines>>): boolean {
     });
     await prisma.$transaction(async (tx) => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
-      await cancellationSync.postCancellationLedgerLines({ store: tx, bookingId: BOOKING_ID, lodgeId: LODGE_ID, keptCents: money.ledgerKeptCents, site: "race-3611" });
+      await cancellationSync.postCancellationLedgerLines({ store: tx, journal: JOURNAL, bookingId: BOOKING_ID, lodgeId: LODGE_ID, keptCents: money.ledgerKeptCents, site: "race-3611" });
     });
     const all = await lines();
     expect(all.some((line) => line.kind === "AGREED_ADJUSTMENT" && line.reversesLineId !== null && line.anchorKind === "CANCELLATION")).toBe(true);

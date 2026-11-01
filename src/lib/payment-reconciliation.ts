@@ -89,6 +89,7 @@ import {
 import { postCancellationLedgerLines } from "@/lib/booking-ledger-cancellation-sync";
 import { syncBookingLedgerSettlements } from "@/lib/booking-ledger-settlement-sync";
 import { postBookingConfirmationLedgerLines } from "@/lib/booking-ledger-confirmation-sync";
+import { resolveBookingMoneyPostingContext, type BookingJournalContext } from "@/lib/member-money/doors";
 import type { ClubFormat } from "@/lib/club-format";
 
 type ReconciliationBooking = Prisma.BookingGetPayload<{
@@ -692,7 +693,9 @@ async function prepareManualSettlement(
 async function settleBookingPaymentInTransaction(
   tx: Prisma.TransactionClient,
   bookingId: string,
-  settlement: BookingSettlementSource
+  settlement: BookingSettlementSource,
+  /** #4627: the journal's posting context, resolved before the caller's transaction (`INV-LOCK-004`). */
+  journal: BookingJournalContext,
 ) {
     // Two-tier lock protocol (#1881). A Stripe capture does BOTH tiers of work:
     // it flips the booking's status + moves money (the booking-status/money
@@ -1176,7 +1179,7 @@ async function settleBookingPaymentInTransaction(
       // #3611: the whole charge goes back, so nothing is kept; a booking already
       // confirmed on the ledger (a mark-paid since reversed) has its stay taken
       // back, under the lock(1) this settle took first.
-      await postCancellationLedgerLines({ store: tx, bookingId: booking.id, lodgeId: bookingLodgeId, keptCents: 0, site: "settle:capacity-void" });
+      await postCancellationLedgerLines({ store: tx, journal, bookingId: booking.id, lodgeId: bookingLodgeId, keptCents: 0, site: "settle:capacity-void" });
 
       // Durable refund debt, ATOMIC with the cancel claim (mirrors the #1349
       // enqueue-then-execute pattern in booking-cancel): freeze the refund
@@ -1334,7 +1337,7 @@ async function settleBookingPaymentInTransaction(
 
     // INV-PAY-047: the same fenced charge poster serves cash and the new
     // whole-lodge zero-cash settlements, after this successful PAID claim.
-    await postBookingConfirmationLedgerLines(tx, booking);
+    await postBookingConfirmationLedgerLines(tx, booking, journal);
 
     // #3581: the manual settle writes its transaction rows and the payment's
     // columns itself, so it never passes through `reconcilePaymentAggregates`
@@ -1631,6 +1634,7 @@ export async function markBookingPaymentSucceeded({
   /** #4285 review: the caller just wrote this capture SUCCEEDED itself (`SettledSavedCardChargeAttempt.newlyCaptured`). */
   recordedByCaller?: boolean;
 }): Promise<MarkBookingPaymentSucceededResult> {
+  const journal = await resolveBookingMoneyPostingContext();
   const reconciliation = await prisma.$transaction((tx) =>
     settleBookingPaymentInTransaction(tx, bookingId, {
       kind: "stripe",
@@ -1639,7 +1643,7 @@ export async function markBookingPaymentSucceeded({
       paymentMethodId,
       format,
       recordedByCaller,
-    })
+    }, journal)
   );
 
 
@@ -2180,6 +2184,7 @@ export async function markBookingPaymentManuallySettled({
   /** The club's format (#3565), resolved before any transaction by the caller. */
   format: ClubFormat;
 }): Promise<ManualBookingSettlementResult> {
+  const journal = await resolveBookingMoneyPostingContext();
   const reconciliation = await prisma.$transaction((tx) =>
     settleBookingPaymentInTransaction(tx, bookingId, {
       kind: "manual",
@@ -2188,7 +2193,7 @@ export async function markBookingPaymentManuallySettled({
       expectedAmountCents,
       notifyMember,
       additionalCoverage,
-    })
+    }, journal)
   );
 
 

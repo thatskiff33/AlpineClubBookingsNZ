@@ -2,6 +2,14 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
+
+// #4627 (D4): the transfer's journal half runs on PostgreSQL
+// (`booking-ledger-journal.realdb.test.ts`); here, that the merge calls it.
+const journalDoors = vi.hoisted(() => ({ postMemberMergeTransfer: vi.fn(async () => null) }));
+vi.mock("@/lib/member-money/doors", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/member-money/doors")),
+  postMemberMergeTransfer: journalDoors.postMemberMergeTransfer,
+}));
 import {
   buildMemberMergePreviewToken,
   executeMemberMerge,
