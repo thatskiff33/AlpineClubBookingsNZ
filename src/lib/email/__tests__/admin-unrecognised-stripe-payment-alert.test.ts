@@ -16,8 +16,11 @@ vi.mock("@/lib/email/admin-alerts-shared", () => ({
   sendUnmuteableAdminAlert: mocks.sendUnmuteableAdminAlert,
 }));
 
-import { sendAdminUnrecognisedStripePaymentAlert } from "@/lib/email/admin-alerts-unrecognised-stripe-payment";
-import { UNRECOGNISED_STRIPE_PAYMENT_NOTE } from "@/lib/unrecognised-stripe-payment-note";
+import {
+  sendAdminUnmatchedAppStripePaymentAlert,
+  sendAdminUnrecognisedStripePaymentAlert,
+} from "@/lib/email/admin-alerts-unrecognised-stripe-payment";
+import { UNMATCHED_APP_STRIPE_PAYMENT_NOTE, UNRECOGNISED_STRIPE_PAYMENT_NOTE } from "@/lib/unrecognised-stripe-payment-note";
 
 type CapturedAlert = {
   subject: string;
@@ -58,5 +61,36 @@ describe("sendAdminUnrecognisedStripePaymentAlert (#4532)", () => {
     // A payer-typed description is escaped, never markup.
     expect(alert.html).toContain("Donation &lt;b&gt;");
     expect(alert.html).not.toContain("Donation <b>");
+  });
+});
+
+describe("sendAdminUnmatchedAppStripePaymentAlert (#4624)", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  const UNMATCHED = {
+    amount: "$120.00",
+    receivedAt: "1 Jul 2026, 9:00 am",
+    bookingId: "booking_<1>",
+    ledgerMatch: "No payment record names this Stripe payment",
+    paymentIntentId: "pi_app_1",
+    chargeId: "ch_app_1",
+    stripeDashboardUrl: "https://dashboard.stripe.com/payments/pi_app_1",
+  };
+
+  it("sends its own template, unmuteable, to Finance editors, naming the booking", async () => {
+    await sendAdminUnmatchedAppStripePaymentAlert(UNMATCHED);
+
+    expect(mocks.sendToAdmins).not.toHaveBeenCalled();
+    expect(mocks.sendUnmuteableAdminAlert).toHaveBeenCalledTimes(1);
+    const [alert] = mocks.sendUnmuteableAdminAlert.mock.calls[0] as [CapturedAlert];
+    expect(alert.subject).toBe("Booking card payment the app could not match - check it: $120.00");
+    expect(alert.templateName).toBe("admin-unmatched-app-stripe-payment");
+    expect(alert.requirement).toEqual({ area: "finance", level: "edit" });
+    expect(alert.templateData).toEqual({ ...UNMATCHED, unmatchedAppPaymentNote: UNMATCHED_APP_STRIPE_PAYMENT_NOTE });
+    expect(alert.html).toContain("Booking Card Payment the App Could Not Match");
+    expect(alert.html).toContain("pi_app_1");
+    expect(alert.html).toContain("booking_&lt;1&gt;");
+    // It is the booking's money, never #4532's "code it as income" instruction.
+    expect(alert.html).not.toContain("a donation, or income and its GST treatment");
   });
 });

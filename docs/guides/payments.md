@@ -1059,6 +1059,35 @@ The app keeps its own record of each such payment, but no screen lists them yet;
 the email is the notice. A payment the app made itself (any booking or group
 payment) never raises this alert.
 
+### A booking card payment the app could not match
+
+Rarely, a member's card is charged for a booking but the app cannot tie the
+payment to anything it was waiting for on that booking. The usual cause is a
+saved-card charge whose answer from Stripe was lost and arrived later in a form
+the app cannot link back (#4624). The app does not mark the booking paid and
+sends nothing to Xero. A charge whose answer simply arrives a moment after
+Stripe's notification is not this case: the app looks for the payment once
+more before alerting, finds it, and settles the booking as usual.
+
+When it happens, Finance editors get **"Booking card payment the app could not
+match - check it"**, once per payment. It cannot be muted. It names the amount,
+when it was paid, the booking reference, what the app found for the payment,
+and the Stripe payment and charge ids, with a link to the payment in Stripe.
+
+What to do:
+
+1. Open the booking and the payment in Stripe and work out whether the booking
+   still owes this money.
+2. Do **not** use **Record manual payment** for it (that records cash), and do
+   not code it in Xero as a donation or other income: the money belongs to the
+   booking.
+3. Ask whoever supports your booking system to match it to the booking, or, if
+   the booking does not owe it, refund it in Stripe.
+
+The app keeps a record of each such payment, but no screen lists them yet; the
+email is the notice. The booking's own payments, additional payment requests,
+group payments and refunds of replaced payments never raise this alert.
+
 ### Follow a payment into Stripe or Xero
 
 1. Click the Stripe id to open the payment in the Stripe dashboard, or the Xero

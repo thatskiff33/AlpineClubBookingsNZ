@@ -1949,6 +1949,47 @@ narrative counts every settlement event of a capacity race, so the task
 marked paid back (its REFUNDED event) removes the follow-up line; dismissed,
 the line says the club checked the rest and closed it.
 
+### A succeeded app intent no PRIMARY row settles (#4624)
+
+`handlePaymentIntentSucceeded` routes an intent the app created (it carries
+`bookingId`, `isAppCreatedPaymentIntent`) through its routes in order, and only
+an intent that falls through all of them reaches the unmatched branch:
+
+```text
+payment_intent.succeeded, app metadata
+  type group_settlement            -> organiser settlement (never unmatched)
+  superseded machinery owns it     -> its refund or hold   (never unmatched)
+  type modification_additional     -> additional-ask handler (never unmatched)
+  row by intent id, else saved-card attempt adopted by event.request.idempotency_key,
+  else the row by intent id read once more
+    PRIMARY row                    -> settle the booking as usual
+    no row | non-PRIMARY row       -> UnrecognisedStripePayment (APP_INTENT_NO_TRANSACTION |
+                                      APP_INTENT_NOT_PRIMARY), one admin alert, event COMPLETED
+```
+
+Nothing about the booking, its payment, ledger or Xero is written on that
+branch; the alert is once ever per PaymentIntent and a failed send fails the
+event so Stripe redelivers (`INV-INT-033`). Which minting flows can reach it:
+
+| Flow or kind | Reaches it? | Expected or lost money | Why |
+| --- | --- | --- | --- |
+| Pay step and `/pay` link, PRIMARY | No | - | `attachMintedCardIntent` writes the PRIMARY row under lock(1) before the client secret leaves the server; a refused attach cancels the intent and never hands the secret out |
+| Saved-card charge, answer received (`chargeSavedCardAttempt`) | No | - | The request's `settleSavedCardChargeAttempt` writes the intent onto the attempt row. It can commit after the webhook's first read and before `adoptSavedCardChargeAttemptForIntent`, which then finds no row without an intent; so the webhook reads the row by intent id once more before calling the payment unmatched, finds the PRIMARY row, and settles as usual (`already_paid` when the request settled first) |
+| Saved-card charge, answer lost, Stripe attributes the capture to the request | No | - | `adoptSavedCardChargeAttemptForIntent` adopts it by `event.request.idempotency_key` |
+| Saved-card charge, answer lost, capture asynchronous (`event.request` null) or the attempt row already ended | Yes, `APP_INTENT_NO_TRANSACTION` | Lost money | The card was charged and no row can be linked; the attempt ends at `attempt_key_expired`, and a redelivered event reaches the same branch |
+| An app intent confirmed outside the app after its attach was refused or never ran (dashboard or API) | Yes, `APP_INTENT_NO_TRANSACTION` | Lost money | No row was ever written for it |
+| An intent another deployment minted on the same Stripe account (its `bookingId` is not here) | Yes, `APP_INTENT_NO_TRANSACTION` | Unexpected: money this app holds no record of | One deployment serves one club, so it should not happen. Each deployment needs its own Stripe account or test sandbox: staging, development and CI sharing one test account would record each other's app intents. Their emails are held off production, so the cost there is only rows |
+| Additional asks: edit, review charge, currency and price re-issue, released credit | No | - | Each carries `type: ADDITIONAL_ASK_INTENT_TYPE` and is routed to `handleAdditionalModificationPaymentSucceeded` first |
+| An ADDITIONAL row whose intent is not marked an additional ask: no current minter writes one; a legacy row `ensurePaymentTransactionsBackfilled` writes from `Payment.additionalPaymentIntentId` for an intent minted without the type would be one | Yes, `APP_INTENT_NOT_PRIMARY` | Lost money | Neither the booking path nor the additional-ask path settles it |
+| Group organiser settlement | No | - | `type: GROUP_SETTLEMENT_INTENT_TYPE`, routed first to `applyGroupSettlementSucceeded` |
+| Superseded intent with a live cancel or owed-back capture | No | - | `queueSupersededPaymentIntentRefundRecovery` owns it |
+| Pre-ledger payment (intent only on `Payment`) | No | - | `findPaymentTransactionByIntentId` backfills a PRIMARY row |
+| Booking hard-deleted | No | - | Only a DRAFT with no financial history is deleted (`deleteBooking`) |
+
+So every case that reaches the branch today is money nothing records, and
+each alerts; the expected cases are the routes above it, each pinned silent in
+`stripe-webhook-alerts.test.ts` ("#4624").
+
 ### Saved card (SetupIntent) on a PENDING non-member-guest booking (#3266)
 
 A PENDING booking with non-member guests is not charged at booking time; the

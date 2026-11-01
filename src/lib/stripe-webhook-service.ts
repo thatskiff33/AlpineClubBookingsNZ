@@ -66,7 +66,7 @@ import {
 } from "@/lib/group-settlement";
 import { adoptSavedCardChargeAttemptForIntent } from "@/lib/saved-card-charge-settle";
 import { GROUP_SETTLEMENT_INTENT_TYPE, isAppCreatedPaymentIntent } from "@/lib/stripe-app-intent-metadata";
-import { recordUnrecognisedStripePayment } from "@/lib/unrecognised-stripe-payment";
+import { recordUnmatchedAppStripePayment, recordUnrecognisedStripePayment } from "@/lib/unrecognised-stripe-payment";
 import { PaymentStatus, PaymentTransactionKind } from "@prisma/client";
 import { isCapturedTransactionStatus, isRefusedRefundStatus } from "@/lib/payment-transaction-status";
 import { keyAfterStripeRefusals, refusedRefundMessage } from "@/lib/refused-card-refund-retry";
@@ -495,16 +495,15 @@ async function handlePaymentIntentSucceeded(
   }
 
   let recordedByCaller = false; // #4285 review: an adoption that just wrote the capture tells the settle it is new money
+  // #4624 review: re-read after a failed adoption - a saved-card charge's own settle may just have written the intent on its row.
   const paymentTransaction =
-    (await findPaymentTransactionByIntentId({
-      paymentIntentId: paymentIntent.id,
-    })) ?? (await adoptUnknownIntentsAttemptRow(paymentIntent, event, bookingId, (adopted) => (recordedByCaller = adopted)));
+    (await findPaymentTransactionByIntentId({ paymentIntentId: paymentIntent.id })) ??
+    (await adoptUnknownIntentsAttemptRow(paymentIntent, event, bookingId, (adopted) => (recordedByCaller = adopted))) ??
+    (await findPaymentTransactionByIntentId({ paymentIntentId: paymentIntent.id }));
 
+  // #4624 (`INV-INT-033`): the app's own intent, but no PRIMARY row to settle it with - money taken that nothing records.
   if (!paymentTransaction || paymentTransaction.kind !== PaymentTransactionKind.PRIMARY) {
-    logger.warn(
-      { paymentIntentId: paymentIntent.id, bookingId },
-      "No primary payment transaction found for PaymentIntent"
-    );
+    await recordUnmatchedAppStripePayment(paymentIntent, event, format, { bookingId, matchedKind: paymentTransaction?.kind ?? null });
     return;
   }
 
