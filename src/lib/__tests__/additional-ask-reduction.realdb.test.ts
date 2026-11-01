@@ -1510,6 +1510,8 @@ let webhookClient: PrismaClient;
         import("@/lib/booking-payment-cleanup"),
       ]);
       await markPaymentIntentTransactionFailed({ paymentIntentId: ASK_INTENT });
+      // Review (F2): FAILED alone is asked of Stripe, where a declined intent is still open.
+      stripeRaceHooks.get = (async (id: string) => ({ id, status: "requires_payment_method" })) as never;
       expect(await askAfter()).toEqual({ status: "FAILED", withdrawnAt: null });
       expect(await isMintedAskStillLive(ASK_INTENT)).toBe(true);
 
