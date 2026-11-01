@@ -2424,12 +2424,17 @@ pnpm run xero:deleted-payment-link-backfill --json            # machine-readable
   listed payment is asked about once more first, so `--apply` costs one extra
   call per candidate payment it checks, retired or not; a `--payment` id's
   direct answer is already that confirmation. A payment Xero reports live, or
-  does not answer for, is left active and named. So is one whose local record
-  still has a Xero operation that may run again (a failed card receipt, or a
-  PARTIAL booking invoice): retiring it then would let that retry pay again. It
-  is marked, and the scheduled re-check retires it once that operation is done,
-  so resolve the operation first. Keep the dry-run output with the change
-  record.
+  does not answer for, is left active and named. So is one with a Xero
+  operation that may run again and reads the link: a replayable failed card
+  receipt or PARTIAL booking invoice on its record, or an open receipt or
+  supplementary invoice on the same booking. Retiring it then would let that
+  retry pay again. It is marked, and the scheduled re-check retires it once
+  that operation is done, so retry or resolve the operation first. Keep the
+  dry-run output with the change record.
+- **A link the scheduled re-check gave up on.** After five checks Xero did not
+  answer, the re-check stops asking about a link on its own and logs an error;
+  its metadata records `deletionCheckGaveUpAt`. This backfill asks about it
+  again.
 - **Xero calls.** Every call is read-only and a single attempt. A run stops
   once the day's recorded usage reaches 85% of the usage panel's budget, on a
   Xero rate limit or outage, or while Xero's own daily limit is in force, and

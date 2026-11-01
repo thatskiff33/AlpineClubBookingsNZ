@@ -1607,36 +1607,56 @@ payment-link writes, it retires those links
   caught exactly that overwrite. Each retired link gets an audit row (source
   `xero-inbound-deleted-payment-retired`) whose summary says it was retired. A
   replay finds no candidate.
-- **Not while an operation on the link's record may still run.** Two writers
-  skip re-sending a payment while an active link records it: the booking
-  change's card receipt and the primary invoice's PARTIAL payment repair. Their
-  payment is made by a separate operation that writes the link before the
-  parent completes, so a parent whose completion failed retries with the link
-  in place. Retiring the link then would let that retry pay again. So no link
-  is retired while its own record (`localModel`/`localId`) has an operation in
-  `XERO_RERUNNABLE_OPERATION_STATUSES` (live, FAILED or PARTIAL) that no
-  officer resolved in Xero (`findRerunnableOperation`). It is asked immediately
-  before each guarded write rather than in one transaction with it, because no
-  writer can make the answer wrong in between. An operation leaves the set by
-  finishing, which only holds back more than needed. It never re-enters the set
-  (a recorded outcome is final, `INV-INT-029`, and a retry claim moves FAILED or
-  PARTIAL to RUNNING, inside it), and a new operation never holds this
-  payment's link. A held link stays active, is marked with the operation that
-  held it, and is retired by the scheduled re-check once that operation is
-  done. A payment whose every link is held is not asked about.
+- **Not while an operation that reads the link may still run.** Some writers
+  skip re-sending a payment while an active link records it. Their payment is
+  made by a separate operation that writes the link before the parent
+  completes, so a parent whose completion failed retries with the link in
+  place, and retiring the link then would let that retry pay again. So no link
+  is retired while an operation that may run again holds it
+  (`findRerunnableOperation`, over `rerunnableOperationWhere`: live, or FAILED
+  or PARTIAL and still `replayable`, and not resolved by an officer in Xero; a
+  REQUEUE row or one marked non-replayable never runs again and holds nothing).
+  Two places are checked:
+  - **The link's own record** (`localModel`/`localId`): the booking change's
+    card receipt, the primary invoice's PARTIAL payment repair, and the kept
+    late capture's invoice.
+  - **The same booking, across records:** a card receipt (on a
+    `PaymentTransaction`) refuses while a supplementary invoice's payment link
+    (on a `BookingModification`) is active (`bookingHasPaidUnnamedSupplementary`),
+    and a supplementary invoice reads the receipts' links the other way
+    (`anchorCaptureHasReceipt`). So a supplementary payment link waits for the
+    booking's open card receipts, and a receipt's link for the booking's open
+    supplementary invoices.
+
+  It is asked immediately before each guarded write rather than in one
+  transaction with it, because no writer can make the answer wrong in between.
+  An operation leaves the set by finishing, which only holds back more than
+  needed. It never re-enters the set (a recorded outcome is final,
+  `INV-INT-029`, and a retry claim moves FAILED or PARTIAL to RUNNING, inside
+  it), and a new operation never holds this payment's link. A held link stays
+  active, is marked with the operation that held it, and is retired by the
+  scheduled re-check once that operation is done. A payment whose every link is
+  held is not asked about.
 - **A candidate Xero could not judge is re-checked.** A deferred candidate, or
   one whose answer failed, is marked in its own metadata
   (`deletionCheckPending`, when it was first marked, and how many answers
   failed), through the same guarded write. The inbound cron cycle
   (`runXeroInboundReconciliationCycle`) then runs
-  `recheckPendingDeletedPaymentLinks` at most every six hours (a
-  `DELETED_PAYMENT_RECHECK` sync cursor). It reads only marked links, least
-  recently written first, under the same cap and budget gate. It retires a
-  confirmed one, clears the marker from a live one, and counts another failed
-  answer, which moves that link to the back of the queue, as does a check that
-  is held back again. It never fails the
-  cycle. A paid invoice is rarely read again, so without this a deferral would
-  have lasted until someone ran the backfill.
+  `recheckPendingDeletedPaymentLinks` at most every six hours. It claims the
+  slot before any call (it creates the `DELETED_PAYMENT_RECHECK` sync cursor
+  once, or moves it forward only if six hours have passed, in one guarded
+  write), so the cron and every webhook's kick cannot each spend the cap. It
+  reads only marked links, least recently written first, under the same cap
+  and budget gate, and judges each against the document its role records it on
+  (`documentNamedByLink`: a refund payment against its credit note). It
+  retires a confirmed one and clears the marker from a live one. It counts
+  another failed answer, which moves that link to the back of the queue, as
+  does a check that is held back again. After `MAX_DELETION_CHECK_ATTEMPTS` (5)
+  failed answers it stops asking on its own: the link stays active, the
+  marker records when it gave up, an error is logged, and only a fresh read of
+  its document or the backfill asks again. It logs what it left active and
+  never fails the cycle. A paid invoice is rarely read again, so without this
+  a deferral would have lasted until someone ran the backfill.
 - **Never re-adopted.** A retired payment is absent from every later payload,
   so no inbound write touches it again. A payload or payment read that reports
   a payment DELETED writes its link inactive (`isDeletedXeroPaymentStatus`), on
@@ -1648,8 +1668,9 @@ every active candidate-role link of the document is in the payload, which is
 the steady state (one indexed query). Otherwise one `GET /Payments/{id}` per
 distinct missing payment, at most `MAX_DELETED_PAYMENT_CONFIRMATIONS_PER_RECONCILE`
 (5); none for a degraded payload. The scheduled re-check spends at most 5 calls
-a run and runs at most every six hours, so at most 20 a day, and none while no
-link is marked. Every one of these is a deferrable call: it is not made once
+a run and claims at most one run every six hours, so at most 20 a day, and none
+while no link is marked; a link it never gets an answer for costs at most 5
+calls in all. Every one of these is a deferrable call: it is not made once
 today's recorded usage reaches the usage panel's "critical" threshold (85% of
 its 1,000-call budget, `xeroDailyBudgetAllowsDeferrableCall`), nor while Xero's
 own daily-limit or outage cooldown is in force. A deferred candidate stays

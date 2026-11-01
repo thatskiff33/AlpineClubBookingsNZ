@@ -6183,22 +6183,35 @@ no explicit row lock.
   upsert the link live after the retire, because the funnel takes no row lock
   first. The link is then a candidate again on the next read of the document,
   and the backfill finds it.
-- **Counterpart readers, and the hold-back that protects them.** Two writers
-  skip re-sending a payment when an active link records it: the booking
-  change's card receipt (`recordAdditionalCaptureReceipt`) and the primary
-  invoice's PARTIAL payment repair (`recordedRepairPayment`). Their payment is
-  made by a separate operation that writes the link before the parent
-  completes, so a parent whose completion failed retries with the link in
-  place. The retire therefore never runs while the link's own record has an
-  operation in `XERO_RERUNNABLE_OPERATION_STATUSES` with `manuallyResolvedAt:
-  null` (`findRerunnableOperation`). It is asked immediately before each guarded
-  `updateMany`, not under a lock or in one transaction with it, and no writer
-  can invalidate the answer in between. An operation leaves the set only by
-  finishing, which merely holds back more than needed. It never re-enters (a
-  recorded outcome is final, `INV-INT-029`; a retry claim moves FAILED or
-  PARTIAL to RUNNING, inside the set), and a new operation never holds this
-  payment's link. A held link stays active and marked, and the scheduled
-  re-check retires it once the operation is done. The readers are unchanged.
+- **Counterpart readers, and the hold-back that protects them.** Writers that
+  skip re-sending a payment while an active link records it: the booking
+  change's card receipt (`recordAdditionalCaptureReceipt`), the primary
+  invoice's PARTIAL payment repair (`recordedRepairPayment`) and the kept late
+  capture's invoice, each on the link's own record. Two more read across
+  records on one booking: a receipt refuses while a supplementary invoice's
+  payment link is active (`bookingHasPaidUnnamedSupplementary`), and a
+  supplementary invoice reads the receipts' links (`anchorCaptureHasReceipt`).
+  Their payment is made by a separate operation that writes the link before
+  the parent completes, so a parent whose completion failed retries with the
+  link in place. The retire therefore never runs while an operation matching
+  `rerunnableOperationWhere` (live, or FAILED/PARTIAL and still `replayable`,
+  with `manuallyResolvedAt: null`) sits on the link's own record, or, for a
+  supplementary payment link or a receipt's link, among the booking's open
+  receipts or supplementary invoices (`findRerunnableOperation`). It is asked
+  immediately before each guarded `updateMany`, not under a lock or in one
+  transaction with it, and no writer can invalidate the answer in between. An
+  operation leaves the set only by finishing, which merely holds back more
+  than needed. It never re-enters (a recorded outcome is final, `INV-INT-029`;
+  a retry claim moves FAILED or PARTIAL to RUNNING, inside the set), and a new
+  operation never holds this payment's link. A held link stays active and
+  marked, and the scheduled re-check retires it once the operation is done.
+  The readers are unchanged.
+- **The re-check's slot.** `recheckPendingDeletedPaymentLinks` claims its run
+  before any call: it creates the `DELETED_PAYMENT_RECHECK` cursor row once (a
+  lost unique race reads as "claimed elsewhere"), or moves
+  `lastSuccessfulSyncAt` forward in one `updateMany` guarded on it being six
+  hours old. So the cron and every webhook's kick, which run the cycle without
+  single-flight, spend the cap once per interval.
 
 Reconciled against the last ten merges touching `src/lib/xero-inbound`
 (#4543, #4555, #4539, #4437, #4443, #4339, #4341, #4228, #4289, #4231). None
