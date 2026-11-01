@@ -6711,6 +6711,44 @@ therefore excludes old refund-note writers, including web/direct retries,
 before new ones start. Nightly healing of old mirror state does not make the
 two lock orders compatible.
 
+## The link funnel's metadata merge: one statement, no lock (#4445)
+
+A link write with `mergeMetadata` (the inbound reconcile, the refund-note
+status recorder and answers, the canonical-link heal, a school's contact link)
+lays its record over the stored metadata instead of replacing it. Before #4445
+the funnel read the stored metadata with no row lock and wrote the JavaScript
+spread, so two writers of one link that both read before either wrote kept
+only the later writer's keys. That held for a missing row too: both first
+writers read nothing, and the second's upsert overwrote the first's insert.
+
+The upsert now writes no metadata on that path, and one `UPDATE` keyed on the
+row it wrote applies the merge (`xero-object-link-metadata-merge.ts`): jsonb
+`||` over a stored object, less any key the record sent as `undefined`, or the
+value whole over anything else. That is the spread's meaning, top-level keys
+only. Under READ COMMITTED the statement re-reads the row it updates, and the
+upsert before it already holds that row in the same transaction, so a second
+writer's merge lands on the first's committed result. It adds no row lock, no
+advisory key and no lock-order edge: the row it touches is the row the upsert
+just took. It writes no money column, no booking status and calls no
+provider, so it joins no advisory cohort (`INV-LOCK-001`) and
+`INV-LOCK-003`'s registry has no entry for it. Refund-note writes still take
+their own row first (above); the merge then runs inside that lock.
+
+Each value the old spread wrote is still written, with one difference: a
+stored value is no longer re-run through `sanitizeForJson`. A value written
+through the funnel was redacted then; one written directly, such as the bank
+refund void marker's free-text note (`writeBankRefundVoidMarker`), is now kept
+as written rather than masked on the next merge. Redact such a value at its
+own writer if it needs it. During a blue-green overlap an
+old-release writer still reads then writes, so the window closes when the old
+colour stops.
+
+`xero-object-link-metadata-merge.realdb.test.ts` holds two writers at the
+funnel's upsert until both arrive, past the old read and before either write,
+on an existing row and a missing one. Both keys survive; on the pre-#4445 code
+all four cases lose one. It also compares the statement with the old spread
+across stored and incoming shapes.
+
 ## One Xero contact, one local home: the contact-home key (#3367)
 
 **Audience: developer.** The rule this key enforces is `INV-INT-018`
