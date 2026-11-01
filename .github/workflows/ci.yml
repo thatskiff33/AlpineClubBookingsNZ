@@ -1272,6 +1272,19 @@ jobs:
           RUN_CONCURRENCY_RACE_TESTS: "1"
         run: pnpm exec vitest run src/lib/__tests__/member-money-journal.realdb.test.ts
 
+      # #4626 (Ledger M3a): the posting command against real PostgreSQL, as the
+      # INSERT/SELECT-only application role. Only the journal's deferred
+      # checks can say whether a built batch really commits, and replay and
+      # the concurrent-poster race are PostgreSQL behaviour, not code a mock
+      # can run. Same shape as the step above: a scratch database of its own,
+      # required, and the advisory realdb-all job runs the file too. It
+      # describe.skip's itself without the env vars, so this step MUST stay
+      # wired — `review-findings-contracts.test.ts` fails if it goes missing.
+      - name: Prove the member-money posting command against dedicated PostgreSQL
+        env:
+          RUN_CONCURRENCY_RACE_TESTS: "1"
+        run: pnpm exec vitest run src/lib/__tests__/member-money-posting.realdb.test.ts
+
       # E8 (#1934): real-Postgres behavior of the member-grouping cutover
       # migration (legacy-rule deactivation, shape-dedupe, backfill, mode seed,
       # idempotent re-run). Self-provisions a throwaway schema (needs PG 15+

@@ -1,23 +1,26 @@
 /** M1 contracts against the shipped migration and provisioning, never mock SQL. */
-import { randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { Client } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { addCalendarDays, clubCalendarDateOf, requireClubTimeZone, requireInstant } from "@/lib/club-time";
-import { buildDatabaseRolesSql } from "@/lib/database-roles";
 import { MEMBER_MONEY_RELATIONS } from "@/lib/member-money-tables";
 import { verifyMemberMoneyJournal } from "@/lib/member-money";
 import { MEMBER_MONEY_DATABASE_SHAPE } from "@/lib/member-money/internal/database-shape";
 import { readMemberMoneyDefinitions } from "@/lib/member-money/internal/verify";
 import { FROZEN_TEST_CLOCK_BASE_ISO } from "./helpers/clock";
-import { assertSafeRaceDbUrl } from "./support/race-db-url";
+import {
+  createMemberMoneyScratchDatabase,
+  MEMBER_MONEY_JOURNAL_MIGRATION as MIGRATION,
+  memberMoneyScratchName,
+  memberMoneyScratchRoles,
+  type MemberMoneyScratchDatabase,
+} from "./support/member-money-fixtures";
 
 const RUN = process.env.RUN_CONCURRENCY_RACE_TESTS === "1";
 const url = process.env.CONCURRENCY_RACE_DATABASE_URL ?? "";
-const MIGRATION = "prisma/migrations/20261127010000_member_money_journal/migration.sql";
-const prefix = `mm4513_${randomBytes(5).toString("hex")}`;
-const roles = { migrator: `${prefix}_migration`, app: `${prefix}_app`, retention: `${prefix}_retention` };
-let admin: Client;
+const prefix = memberMoneyScratchName("mm4513");
+const roles = memberMoneyScratchRoles(prefix);
+let scratch: MemberMoneyScratchDatabase | undefined;
 let db: Client;
 let app: Client;
 let sequence = 0;
@@ -108,34 +111,16 @@ async function taxedCharge(c: Client, broken: { gst?: number; revenueAmount?: nu
 
 describe.skipIf(!RUN)("member money journal database contracts (#4513)", () => {
   beforeAll(async () => {
-    assertSafeRaceDbUrl(url, "member money journal");
-    admin = new Client({ connectionString: url });
-    await admin.connect();
-    await admin.query(`CREATE DATABASE "${prefix}"`);
-    const ownUrl = new URL(url); ownUrl.pathname = `/${prefix}`;
-    db = new Client({ connectionString: ownUrl.toString() }); await db.connect();
-    // Apply the actual additive migration in isolation, with only its legacy FK parents.
+    // The shipped journal migration in isolation, with only its legacy FK parents
+    // and the provisioned roles (the shared fixture holds the one definition).
     // Full-history/migration-role rehearsal belongs to database-roles.realdb.test.ts.
-    await db.query(`CREATE TABLE "Lodge" (id text PRIMARY KEY);
-      CREATE TABLE "Booking" (id text PRIMARY KEY, "lodgeId" text REFERENCES "Lodge"(id));
-      CREATE TABLE "BookingLedgerLine" (id text PRIMARY KEY);
-      CREATE TABLE "AuditLog" (id text PRIMARY KEY, "ipAddress" text, "userAgent" text)`);
-    await db.query(readFileSync(MIGRATION, "utf8"));
-    const statements = buildDatabaseRolesSql({ databaseName: prefix,
-      migrator: { roleName: roles.migrator, password: "m".repeat(28) },
-      app: { roleName: roles.app, password: "a".repeat(28) },
-      auditRetention: { roleName: roles.retention, password: "r".repeat(28) } });
-    await transaction(db, async () => { for (const statement of statements) await db.query(statement); });
-    ownUrl.username = roles.app; ownUrl.password = "a".repeat(28);
-    app = new Client({ connectionString: ownUrl.toString() }); await app.connect();
+    scratch = await createMemberMoneyScratchDatabase(url, "member money journal", prefix);
+    db = scratch.owner;
+    app = new Client({ connectionString: scratch.appUrl }); await app.connect();
   }, 30_000);
   afterAll(async () => {
-    await app?.end(); await db?.end();
-    if (admin) {
-      await admin.query(`DROP DATABASE IF EXISTS "${prefix}" WITH (FORCE)`);
-      for (const role of Object.values(roles)) await admin.query(`DROP ROLE IF EXISTS "${role}"`);
-      await admin.end();
-    }
+    await app?.end();
+    await scratch?.drop();
   });
 
   it("commits a balanced complete batch as the INSERT/SELECT-only role and verifies it", async () => {
