@@ -40,16 +40,26 @@
  * ask's as well as a re-issue's. The recovery runner mints before it writes, and
  * writes only while it still holds its claim (`holdAdditionalIntentRecoveryClaim`).
  * When that hold loses, its intent is in the door's position: once the recovery
- * is closed terminally by a net-off or a fold (`reissueClosedUnminted`), nobody
- * writes under it again - the hold, the door's write and a stale runner's are
- * all fenced on a claimable recovery - so the same proof, re-read after the
+ * has ended SUCCEEDED without naming it, nobody writes under it again - the
+ * hold, the door's write and a stale runner's are all fenced on a claimable
+ * recovery, and nothing reopens a closed one but an officer's review-charge
+ * re-arm (`rearmEditFinancialReviewChargeRecovery`), whose replay never reaches
+ * this - so the door's proof, re-read after the
  * hold's transaction has ended, and the same cancel apply
- * (`settleLostRecoveryClaimHold`). Anything else - a recovery reset or
- * reclaimed by another runner, still PROCESSING, PENDING or FAILED - may yet
- * record it, and is left. So is an intent the runner ADOPTED by matching
- * (#4036) rather than minted under its own key: it is not the runner's own,
- * and another edit's stalled door or recovery may still record it under that
- * edit's key, which the owner check cannot see.
+ * (`settleLostRecoveryClaimHold`). #4652: that covers a net-off or fold
+ * (`reissueClosedUnminted`) and a stale reclaim whose runner closed it with
+ * another intent or none. Anything else - a recovery reset, or reclaimed by a
+ * runner still PROCESSING (even one that wrote another intent), PENDING or
+ * FAILED - may yet record it, and is left. So is an intent the runner ADOPTED
+ * by matching (#4036) rather than minted under its own key: it is not the
+ * runner's own, and another edit's stalled door or recovery may still record it
+ * under that edit's key, which the owner check cannot see.
+ *
+ * #4652: THE CREDIT-RELEASE ASK (`processCreditReleaseAskOperation`) mints under
+ * a Stripe key scoped to its release and writes under the same claim hold; its
+ * recovery is never netted off or folded, so only a stale reclaim moves it. Its
+ * lost hold takes the same proof: no door, no adoption and no other recovery
+ * mints or matches under its key or reason, so a closed one is terminal.
  */
 import { PaymentRecoveryOperationStatus } from "@prisma/client";
 
@@ -86,8 +96,9 @@ export async function settleLostReissuedAskFence({
     return null;
   });
   if (!moved || moved.paymentIntentId === call.paymentIntentId) return moved;
-  if (moved.status === PaymentRecoveryOperationStatus.SUCCEEDED) {
-    await cancelAbandonedReissuedAskIntent({ ...call, closedBy: reissueClosedUnminted(moved) ?? "minted-elsewhere" });
+  const closedBy = closedWithoutIntent(moved, call.paymentIntentId);
+  if (closedBy) {
+    await cancelAbandonedReissuedAskIntent({ ...call, closedBy });
   } else if (moved.status === PaymentRecoveryOperationStatus.PROCESSING && moved.paymentIntentId !== stripeKey) {
     await cancelAbandonedReissuedAskIntent({ ...call, closedBy: "runner-wrote-another" });
   }
@@ -95,9 +106,24 @@ export async function settleLostReissuedAskFence({
 }
 
 /**
- * #4631: after the runner's claim hold lost (its transaction ended, nothing
- * written): re-read the recovery, and cancel the intent the runner minted when
- * a net-off or a fold closed it and no row or recovery names that intent.
+ * #4052's proof, one rule for the door and the runner: the recovery ended
+ * SUCCEEDED without naming this intent - a net-off or fold (`reissueClosedUnminted`),
+ * or its own runner closed it with another intent or none ("minted-elsewhere").
+ * Null for anything else, which may yet record it.
+ */
+function closedWithoutIntent(
+  moved: Pick<ReissuedAskRecovery, "status" | "lastError" | "paymentIntentId"> | null,
+  paymentIntentId: string,
+): ClosedBy | null {
+  if (moved?.status !== PaymentRecoveryOperationStatus.SUCCEEDED || moved.paymentIntentId === paymentIntentId) return null;
+  return reissueClosedUnminted(moved) ?? "minted-elsewhere";
+}
+
+/**
+ * #4631, #4652: after a runner's claim hold lost (its transaction ended, nothing
+ * written) - the recovery runner's or the credit-release ask's: re-read the
+ * recovery, and cancel the intent the runner minted when the recovery ended
+ * without it (`closedWithoutIntent`) and no row or recovery names that intent.
  * Never throws: an unread or unproven recovery cancels nothing, and the run
  * ends as before.
  */
@@ -110,13 +136,13 @@ export async function settleLostRecoveryClaimHold(call: {
   adopted: boolean;
 }): Promise<void> {
   const moved = await prisma.paymentRecoveryOperation
-    .findUnique({ where: { id: call.operationId }, select: { status: true, lastError: true } })
+    .findUnique({ where: { id: call.operationId }, select: { status: true, lastError: true, paymentIntentId: true } })
     .catch((err: unknown) => {
       logger.error({ err, ...call, event: ABANDONED_REISSUE_INTENT_LOG_EVENT, outcome: "unread" }, "Could not re-read a recovery whose claim was lost; its minted intent is not cancelled (#4631)");
       return null;
     });
   const { adopted, ...intent } = call;
-  const closedBy = reissueClosedUnminted(moved);
+  const closedBy = closedWithoutIntent(moved, call.paymentIntentId);
   if (closedBy && adopted) {
     logger.warn(
       { ...intent, event: ABANDONED_REISSUE_INTENT_LOG_EVENT, closedBy, outcome: "adopted" },
@@ -125,11 +151,13 @@ export async function settleLostRecoveryClaimHold(call: {
     return;
   }
   logger.warn(
-    { ...call, status: moved?.status, closedBy },
-    "Additional intent recovery lost its claim before writing its row; nothing written - the minted intent was never offered to anyone, and is cancelled at Stripe only when a net-off or fold closed the recovery (#3954, #4631)",
+    { ...call, status: moved?.status, recoveryPaymentIntentId: moved?.paymentIntentId, closedBy },
+    "Additional intent recovery lost its claim before writing its row; nothing written - the minted intent was never offered to anyone, and is cancelled at Stripe only when its recovery ended without it (#3954, #4631, #4652)",
   );
   if (closedBy) await cancelAbandonedReissuedAskIntent({ ...intent, closedBy });
 }
+
+type ClosedBy = "netted" | "folded" | "minted-elsewhere";
 
 async function cancelAbandonedReissuedAskIntent(call: {
   bookingId: string;
@@ -137,7 +165,7 @@ async function cancelAbandonedReissuedAskIntent(call: {
   bookingModificationId?: string;
   operationId?: string;
   paymentIntentId: string;
-  closedBy: "netted" | "folded" | "minted-elsewhere" | "runner-wrote-another";
+  closedBy: ClosedBy | "runner-wrote-another";
 }): Promise<void> {
   const context = { event: ABANDONED_REISSUE_INTENT_LOG_EVENT, ...call };
   try {
