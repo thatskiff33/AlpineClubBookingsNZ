@@ -1,6 +1,8 @@
 /**
  * M1 (#4513) ships the member-money journal inert: no production path posts to
- * it, and only the deletion guards M2 (#4514) names below read it. This census reads every non-test source file under `src/` and
+ * it, and only the deletion guards M2 (#4514) names below read it. M3a (#4626)
+ * adds the posting command, whose store is the boundary's single writer, and
+ * still no production caller: no door posts until M3b. This census reads every non-test source file under `src/` and
  * `scripts/`, and the seeds and other top-level files in `prisma/`, and fails on
  * a journal reference outside the module boundary and the files that only name,
  * provision or verify it. The migration is SQL, outside the scan. A later child that adds a writer or reader edits this
@@ -41,6 +43,11 @@ const READERS: Record<string, { reason: string; importOnly: boolean }> = {
   },
 };
 const BOUNDARY = "src/lib/member-money/";
+/** M3a (#4626): the one file that creates journal rows. */
+const WRITER = "src/lib/member-money/internal/store.ts";
+/** The command's entry points; nothing outside the boundary calls them until a door is wired (M3b). */
+const POSTING_COMMAND = /\b(postMemberMoneyEvent|reverseMemberMoneyJournal|writeMemberMoneyBatch)\b/;
+const DELEGATE_WRITE = /\.memberMoney\w*\s*\.\s*(create|update|upsert|delete)/;
 /** One `import { … } from "@/lib/member-money";` statement, on its own line(s). */
 const BOUNDARY_IMPORT = /^import\s*\{[^}]*\}\s*from\s*["']@\/lib\/member-money["'];?[ \t]*$/gm;
 
@@ -107,17 +114,32 @@ describe("member money journal stays inert in M1 (#4513)", () => {
     expect(found.some((file) => file.startsWith(BOUNDARY))).toBe(true);
   });
 
-  it("posts nothing from inside the boundary, the verifier or an M2 reader", () => {
+  it("posts nothing from inside the boundary but its one store, the verifier or an M2 reader", () => {
     for (const file of [
-      ...found.filter((f) => f.startsWith(BOUNDARY)),
+      ...found.filter((f) => f.startsWith(BOUNDARY) && f !== WRITER),
       "scripts/verify-member-money-journal.ts",
       ...Object.keys(READERS),
     ]) {
       const text = readFileSync(join(ROOT, file), "utf8");
       expect(text, file).not.toMatch(WRITE_STATEMENT);
-      expect(text, file).not.toMatch(/\.memberMoney\w*\s*\.\s*(create|update|upsert|delete)/);
+      expect(text, file).not.toMatch(DELEGATE_WRITE);
     }
     expect(readFileSync(join(ROOT, "scripts/verify-member-money-journal.ts"), "utf8")).toMatch(/READ ONLY/);
+  });
+
+  it("writes only through Prisma delegates in the store, never raw SQL (#4626)", () => {
+    const text = readFileSync(join(ROOT, WRITER), "utf8");
+    expect(text, "the store is the writer; if it stops writing, retire WRITER").toMatch(DELEGATE_WRITE);
+    expect(text).not.toMatch(WRITE_STATEMENT);
+    expect(text).not.toMatch(/\$(executeRaw|queryRaw)/);
+  });
+
+  it("has no production caller of the posting command outside the boundary (#4626)", () => {
+    const callers = found.filter((file) => !file.startsWith(BOUNDARY)
+      && POSTING_COMMAND.test(readFileSync(join(ROOT, file), "utf8")));
+    expect(callers, "a door posts to the journal; M3a ships the command with no caller").toEqual([]);
+    // Fixture proof: an import of the command is caught.
+    expect('import { postMemberMoneyEvent } from "@/lib/member-money";').toMatch(POSTING_COMMAND);
   });
 
   it("lets an import-only reader name the journal in its boundary import and nowhere else (#4514)", () => {
