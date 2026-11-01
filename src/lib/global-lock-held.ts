@@ -14,7 +14,7 @@ const HELD_ROW = z.object({ held: z.boolean() });
 
 export class GlobalLockNotHeldError extends Error {
   constructor(readonly context: string) {
-    super(`${context} requires the caller's transaction to hold pg_advisory_xact_lock(1) (INV-LOCK-001).`);
+    super(`${context} requires the caller's transaction to hold the global advisory key 1 (INV-LOCK-001).`);
     this.name = "GlobalLockNotHeldError";
   }
 }
