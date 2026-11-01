@@ -1470,10 +1470,11 @@ const ROW_LOCK_SITE_INVENTORY: Record<string, number> = {
   // merge's owner move is its counterpart. See docs/CONCURRENCY_AND_LOCKING.md ->
   // "The M3b booking doors and member merge's journal transfer".
   "src/lib/member-money/internal/booking-posting.ts": 1,
-  // #4627: a review closure takes its booking row before any account-credit mint
-  // (a KEY SHARE on the owner's Member row), so the journal adapter's late owner
-  // read never inverts against member merge's owner move.
-  "src/lib/stored-night-price-repair-store.ts": 1,
+  // #4627: an edit review's closure takes its booking row straight after its claim,
+  // before any credit write (giveBackCancelledShareCredit, applyLocalRefundAllocation,
+  // an account-credit mint: each a KEY SHARE on the owner's Member row), so neither
+  // those nor the journal adapter's owner read invert against member merge's owner move.
+  "src/lib/manual-refund-task-resolution.ts": 1,
   // #3635 (review outbox F1/F4): the kept-late-capture enqueue and the
   // worker's send-time decision lock the #3639 approval task's row
   // (`SELECT 1 … FOR UPDATE`), the row the dismissal, reopen and approval

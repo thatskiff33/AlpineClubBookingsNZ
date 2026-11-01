@@ -164,7 +164,7 @@ const REASONS = {
   R02: "Booking edited: its charge components re-posted as the edit priced them (R02/R03)",
   R04: "Booking cancelled: its extinguished charges reversed and what the club keeps charged (R04)",
   R21: "Booking review closed: its re-price and agreed adjustment posted (R21)",
-  R26: "Booking-ledger back-post: lines a door could not post, filled in for a booking already in the journal (R26)",
+  R26: "Booking-ledger gap fill: lines no batch posted (a door's logged gap, or written while the journal was inactive), filled in for a booking already in the journal (R26)",
 } as const;
 
 const lineSource = (line: LegacyChargeLine): MemberMoneySource => ({

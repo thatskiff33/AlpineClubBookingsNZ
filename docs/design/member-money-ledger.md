@@ -314,7 +314,13 @@ has an inactive journal: `bookingJournalInactiveReason` decides it before each
 door's transaction, the door proceeds and posts nothing, exactly as for a
 booking confirmed before M3b, the condition is logged once, and the census
 reports `JOURNAL_INACTIVE` until the currency is fixed. This is a decision taken
-before the transaction, never a refused posting caught after it. The census
+before the transaction, never a refused posting caught after it. It heals
+itself once the currency is fixed: the next event on a booking whose R01 is in
+the journal first posts every money line written meanwhile as one R26 gap-fill
+batch, so it never plans against stale components; the back-post does the same
+for every booking, and posts the R01 a journal-era booking confirmed meanwhile
+lacks. Member merge refuses while the journal is inactive, since a skipped D4
+transfer could not be posted later. The census
 also raises `CONFIRMED_WITHOUT_R01` for a booking created after the journal's
 first R01 and confirmed on the ledger without one; a booking created before
 that and confirmed after cannot be told from one confirmed before M3b, which is

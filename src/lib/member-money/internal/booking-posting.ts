@@ -11,7 +11,7 @@ import {
 import { readBookingLiveComponents } from "./booking-journal-read";
 import { memberMoneyEventKeys, type MemberMoneyEventKey } from "./keys";
 import { isBookingJournalInactive, type BookingJournalContext } from "./journal-activity";
-import { MemberMoneyPlanError, type MemberMoneyDebtor } from "./plan";
+import { MemberMoneyPlanError, type MemberMoneyDebtor, type MemberMoneyPostingContext } from "./plan";
 import { postMemberMoneyEvent } from "./post";
 import type { MemberMoneyPosting } from "./store";
 
@@ -38,7 +38,9 @@ import type { MemberMoneyPosting } from "./store";
  * M9, never piecemeal here. An event already posted is a no-op, as the legacy
  * write's `ON CONFLICT DO NOTHING` is; a closure and the back-post are named by
  * the first line they write, so a repeat finds nothing unbridged. A club whose
- * journal is inactive (`journal-activity.ts`) posts nothing at all.
+ * journal is inactive (`journal-activity.ts`) posts nothing at all; once it is
+ * active again, the next event on a booking in the journal first posts, as one
+ * gap-fill batch, every money line written meanwhile (`postCatchUp`).
  */
 
 type Db = Prisma.TransactionClient;
@@ -61,11 +63,17 @@ async function eventPosted(tx: Db, eventKey: MemberMoneyEventKey): Promise<boole
   return (await tx.memberMoneyEvent.findUnique({ where: { eventKey }, select: { id: true } })) !== null;
 }
 
-/** This event's legacy lines, read back by the keys the door just wrote, that no batch bridges yet. */
-async function unbridgedLines(tx: Db, bookingId: string, postingKeys: readonly string[]): Promise<LegacyChargeLine[]> {
-  if (postingKeys.length === 0) return [];
+/**
+ * Legacy lines no batch bridges yet: this event's, read back by the keys the
+ * door just wrote, or (`"every charge line"`) every charge-side line of the
+ * booking with money, for the catch-up below.
+ */
+async function unbridgedLines(tx: Db, bookingId: string, postingKeys: readonly string[] | "every charge line"): Promise<LegacyChargeLine[]> {
+  if (postingKeys !== "every charge line" && postingKeys.length === 0) return [];
   const rows = await tx.bookingLedgerLine.findMany({
-    where: { bookingId, postingKey: { in: [...postingKeys] }, memberMoneySourceLink: { is: null } },
+    where: postingKeys === "every charge line"
+      ? { bookingId, side: { not: "SETTLEMENT" }, amountCents: { not: 0 }, memberMoneySourceLink: { is: null } }
+      : { bookingId, postingKey: { in: [...postingKeys] }, memberMoneySourceLink: { is: null } },
     orderBy: { id: "asc" },
     select: {
       id: true, bookingId: true, lodgeId: true, side: true, kind: true, amountCents: true, quantity: true, unitCents: true,
@@ -106,15 +114,18 @@ export async function postBookingLedgerJournal(
     && await eventPosted(tx, bookingChargeEventIdentity(input.bookingId, named).eventKey)) {
     return null;
   }
-  if (named.kind !== "confirmation" && !(await eventPosted(tx, memberMoneyEventKeys.bookingCharge(input.bookingId)))) {
-    return null;
-  }
+  const charged = named.kind !== "confirmation" && await eventPosted(tx, memberMoneyEventKeys.bookingCharge(input.bookingId));
+  if (named.kind !== "confirmation" && !charged) return null;
   const lines = (await unbridgedLines(tx, input.bookingId, input.postingKeys)).filter((line) => line.amountCents !== 0);
+  const debtor = await lockedBookingDebtor(tx, input.bookingId);
+  // Self-healing: a booking in the journal whose money lines a door wrote while
+  // the journal was inactive posts them first, as one gap-fill batch, so the
+  // live components match the legacy lines before this event plans against them.
+  if (charged) await postCatchUp(tx, context, input, new Set(lines.map((line) => line.id)), debtor);
   // A confirmation posts R01 even with no money (a ZERO event); nothing else does.
   if (lines.length === 0 && named.kind !== "confirmation") return null;
   const event: BookingChargeEvent = named.kind === "back-post" ? { kind: "back-post", firstLineId: lines[0]!.id }
     : named.kind === "review-close" ? { ...named, firstLineId: lines[0]!.id } : named;
-  const debtor = await lockedBookingDebtor(tx, input.bookingId);
   const plan = planBookingChargeEvent({
     bookingId: input.bookingId,
     lodgeId: input.lodgeId,
@@ -124,6 +135,27 @@ export async function postBookingLedgerJournal(
     liveComponents: await readBookingLiveComponents(tx, input.bookingId),
   });
   return plan ? postMemberMoneyEvent(tx, context, plan) : null;
+}
+
+/** The catch-up: every unbridged charge line of the booking but this event's own, as one R26 batch. */
+async function postCatchUp(
+  tx: Db,
+  context: MemberMoneyPostingContext,
+  input: BookingLedgerJournalInput,
+  own: ReadonlySet<string>,
+  debtor: MemberMoneyDebtor,
+): Promise<void> {
+  const pending = (await unbridgedLines(tx, input.bookingId, "every charge line")).filter((line) => !own.has(line.id));
+  if (pending.length === 0) return;
+  const plan = planBookingChargeEvent({
+    bookingId: input.bookingId,
+    lodgeId: input.lodgeId,
+    event: { kind: "back-post", firstLineId: pending[0]!.id },
+    debtor,
+    lines: pending,
+    liveComponents: await readBookingLiveComponents(tx, input.bookingId),
+  });
+  if (plan) await postMemberMoneyEvent(tx, context, plan);
 }
 
 /**
@@ -138,7 +170,9 @@ export async function postMemberMergeTransfer(
   context: BookingJournalContext,
   input: { fromMemberId: string; toMemberId: string; actorMemberId: string },
 ): Promise<MemberMoneyPosting | null> {
-  if (isBookingJournalInactive(context)) return null;
+  // Merge refuses before its transaction while the journal is inactive (a lost
+  // transfer could never be recovered); reaching here inactive is a caller bug.
+  if (isBookingJournalInactive(context)) throw new Error("A member merge cannot post its D4 transfer while the journal is inactive (#4627).");
   if (await eventPosted(tx, memberMoneyEventKeys.merge(input.fromMemberId, input.toMemberId))) return null;
   const sums = await tx.memberMoneyLine.groupBy({
     by: ["bookingId", "lodgeId", "side"],

@@ -5468,8 +5468,10 @@ Ledger M3b adds no advisory key and no new lock site. Its participants:
   A review closure whose re-base declines writes no booking row, and could
   otherwise take this lock late, after an account-credit mint's KEY SHARE on the
   owner's Member row, an inversion against member merge (owner move, then
-  `Member … FOR UPDATE`). So `recordReviewClosurePricing` takes the booking row
-  first, before any of its writes.
+  `Member … FOR UPDATE`). The same inversion was already reachable through the
+  closure's credit give-back and local refund allocation, which insert
+  `MemberCredit` rows. So `resolveManualRefundTask` takes an edit review's
+  booking row straight after its status claim, before any of those writes.
 - **Member merge** takes no `lock(1)` (see "Merge joins the bed-allocation
   cohort"). Its transfer posts no revenue, so the engine needs no key, and it
   runs after the booking-owner move and the sorted `Member … FOR UPDATE` set. The

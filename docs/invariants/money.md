@@ -1081,9 +1081,10 @@ and opens the booking's CHARGE obligation. Later events post only for a booking
 whose R01 is in the journal; one confirmed before M3b is M9's. A repeated event
 is a no-op, and a refusal is never caught. A club whose currency no card can be
 charged in has an inactive journal: decided before the transaction, its doors
-post nothing and proceed. Member merge transfers the merged-away member's
-receivable balances after the owner move, under its `Member … FOR UPDATE` set
-(D4). `booking-ledger:census` checks each R01 booking's total (`JOURNAL`), and
+post nothing and proceed; once active, a booking's next event first fills what
+was missed, and the back-post fills the rest. Member merge refuses while it is
+inactive, and otherwise transfers the merged-away member's receivable balances
+after the owner move, under its `Member … FOR UPDATE` set (D4). `booking-ledger:census` checks each R01 booking's total (`JOURNAL`), and
 raises `UNBRIDGED_CHARGE_LINE`, `CONFIRMED_WITHOUT_R01` and `JOURNAL_INACTIVE`.
 Pins: `member-money-booking-charges.test.ts`,
 `member-money-journal-activity.test.ts`,

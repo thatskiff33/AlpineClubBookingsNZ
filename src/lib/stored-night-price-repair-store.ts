@@ -192,11 +192,9 @@ export async function recordReviewClosurePricing({
   /** #4627: the journal's posting context, resolved by the caller before any transaction. */
   journal: BookingJournalContext;
 }): Promise<void> {
-  // #4627: the booking row first (an UPDATE's strength), before any write here
-  // takes a KEY SHARE on its owner's Member row (an account-credit mint), so the
-  // journal's owner read at the end adds no edge against member merge's owner
-  // move, even where the re-base declines and writes no booking row.
-  await store.$executeRaw`SELECT 1 FROM "Booking" WHERE "id" = ${task.bookingId} FOR NO KEY UPDATE`;
+  // #4627: the caller (`resolveManualRefundTask`) has already taken the booking
+  // row, straight after its claim and before any credit write, so the journal's
+  // owner read at the end adds no edge against member merge.
   // Sequentially, on the caller's transaction: each write is its own
   // compare-and-set, and a refusal from any of them rolls the whole closure back
   // - so a half-repaired booking is not a reachable state.

@@ -22,7 +22,7 @@ import {
 import { OPEN_DELETION_REQUEST_STATUSES } from "@/lib/deletion-request-decision";
 import { deleteOwnedMemberPhotoBlobs } from "@/lib/member-photo";
 import { memberDisplayName } from "@/lib/member-serialization";
-import { postMemberMergeTransfer, resolveBookingMoneyPostingContext } from "@/lib/member-money/doors";
+import { isBookingJournalInactive, postMemberMergeTransfer, resolveBookingMoneyPostingContext } from "@/lib/member-money/doors";
 import { prisma } from "@/lib/prisma";
 import { findMemberContactChangeMergeBlocker } from "@/lib/xero-contact-create-recovery";
 import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-coverage-drain";
@@ -1622,6 +1622,12 @@ export async function executeMemberMerge(params: {
   // #4627 (D4): the journal's posting context, resolved before the transaction
   // for the same reason (`INV-LOCK-004`).
   const journal = await resolveBookingMoneyPostingContext({ db: client });
+  if (isBookingJournalInactive(journal)) {
+    // D4's transfer cannot be skipped and posted later, so a merge waits for an active journal.
+    await refuseMergeOrRethrow(client, refusalContext, new MemberMergeError(
+      "Members cannot be merged while the club's currency cannot be charged by card: the money journal is paused. Fix the club currency first.",
+      409, "journal_inactive", { detail: journal.detail }));
+  }
 
   const result = await client.$transaction(async (tx) => {
     // Policy reconciliation enumerates bookings and inserts required queue rows

@@ -374,11 +374,10 @@ export async function resolveManualRefundTask(
       },
     });
     if (claimed.count === 0) {
-      throw new ManualBookingPaymentError(
-        "This refund task changed while you were closing it — refresh and try again.",
-        409
-      );
+      throw new ManualBookingPaymentError("This refund task changed while you were closing it — refresh and try again.", 409);
     }
+    // #4627: an edit review's booking row before any credit write (a KEY SHARE on the owner's Member row): no inversion against merge.
+    if (isEditReview) await tx.$executeRaw`SELECT 1 FROM "Booking" WHERE "id" = ${task.bookingId} FOR NO KEY UPDATE`;
 
     if (settlement && settlementRoute) {
       // #3835: the credit part goes back FIRST: member ledger lock before any Payment row (INV-LOCK-002).

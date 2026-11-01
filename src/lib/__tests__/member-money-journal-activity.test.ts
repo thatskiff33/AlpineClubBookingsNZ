@@ -49,11 +49,16 @@ describe("an inactive journal for a club whose currency no card can be charged i
     expect(await resolveBookingMoneyPostingContext({ db: taxRow })).toMatchObject({ currency: "NZD" });
   });
 
-  it("makes every door post nothing, without a single journal read", async () => {
+  it("makes every booking door post nothing, without a single journal read", async () => {
     const inactive = { inactive: "unusable-currency", detail: "test" } as const;
     expect(await postBookingLedgerJournal(untouchable, inactive, {
       bookingId: "b1", lodgeId: "l1", event: { kind: "confirmation" }, postingKeys: ["k"],
     })).toBeNull();
-    expect(await postMemberMergeTransfer(untouchable, inactive, { fromMemberId: "a", toMemberId: "b", actorMemberId: "c" })).toBeNull();
+  });
+
+  it("never lets a merge transfer be skipped: reaching it inactive throws (merge itself refuses first)", async () => {
+    const inactive = { inactive: "unusable-currency", detail: "test" } as const;
+    await expect(postMemberMergeTransfer(untouchable, inactive, { fromMemberId: "a", toMemberId: "b", actorMemberId: "c" }))
+      .rejects.toThrow(/while the journal is inactive/);
   });
 });

@@ -10,6 +10,6 @@ import "server-only";
  * and member merge call these (`member-money-journal-inert-census.test.ts`).
  */
 export type { BookingChargeEvent } from "./internal/booking-charges";
-export type { BookingJournalContext } from "./internal/journal-activity";
+export { isBookingJournalInactive, type BookingJournalContext } from "./internal/journal-activity";
 export { postBookingLedgerJournal, postMemberMergeTransfer } from "./internal/booking-posting";
 export { resolveBookingDoorClock, resolveBookingMoneyPostingContext } from "./internal/door-context";

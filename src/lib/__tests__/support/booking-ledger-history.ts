@@ -17,6 +17,7 @@ import type { PrismaClient } from "@prisma/client";
 import { expect, vi } from "vitest";
 
 import type { CalendarDate } from "@/lib/club-time";
+import type { BookingJournalContext } from "@/lib/member-money/doors";
 import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 import { releaseBookingJournalForTeardown } from "@/lib/__tests__/support/booking-financial-history-teardown";
 import { memberMoneyTestContext } from "@/lib/__tests__/support/member-money-fixtures";
@@ -167,7 +168,13 @@ async function postedEdit(
   names: HistoryNames,
   bookingId: string,
   modificationId: string,
-  edit: { removeGuestId?: string; reprice?: { guestId: string; stayDate: Date; priceCents: number }; changeFeeCents: number },
+  edit: {
+    removeGuestId?: string;
+    reprice?: { guestId: string; stayDate: Date; priceCents: number };
+    changeFeeCents: number;
+    /** #4627: the journal context the door resolved; an active test context unless given. */
+    journal?: BookingJournalContext;
+  },
 ): Promise<void> {
   tick();
   const before = await prisma.bookingGuest.findMany({
@@ -225,7 +232,7 @@ async function postedEdit(
     });
     await postModificationLedgerLines({
       store: tx,
-      journal: memberMoneyTestContext(),
+      journal: edit.journal ?? memberMoneyTestContext(),
       bookingId,
       lodgeId: booking.lodgeId,
       bookingModification: row,

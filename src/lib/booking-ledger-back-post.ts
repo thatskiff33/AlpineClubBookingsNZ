@@ -551,10 +551,11 @@ async function backPostBooking(tx: Tx, bookingId: string, journal: BookingJourna
   if ("kind" in charges) throw refuse(charges);
   await writeBookingLedgerRows(tx, buildBookingLedgerRows([...charges.postings, ...(group?.postings ?? [])]));
   steps.push(...charges.steps, ...(group?.steps ?? []));
-  // #4627: a journal-era booking whose confirmation this fills posts its R01 here;
-  // a booking with R01 then gets the rest as one R26 batch (its confirmation's too,
-  // after a ZERO R01). One confirmed before M3b posts nothing: M9's whole.
-  const confirmationKeys = charges.postings.filter((posting) => posting.anchorKind === "CONFIRMATION").map((posting) => posting.postingKey);
+  // #4627: a journal-era booking confirmed with no R01 (this fill, or a door while the journal was
+  // inactive) posts it here; then every unbridged charge line of an R01 booking goes as R26 batches
+  // (the door's catch-up). One confirmed before M3b posts nothing: M9's whole.
+  const confirmationKeys = (await tx.bookingLedgerLine.findMany({ where: { bookingId, anchorKind: "CONFIRMATION", side: "CHARGE" }, select: { postingKey: true } }))
+    .flatMap((line) => (line.postingKey ? [line.postingKey] : []));
   if (confirmationKeys.length > 0 && isJournalEraBooking(booking.createdAt, await readJournalSince(tx))) {
     await postBookingLedgerJournal(tx, journal, { bookingId, lodgeId: booking.lodgeId, event: { kind: "confirmation" }, postingKeys: confirmationKeys });
   }

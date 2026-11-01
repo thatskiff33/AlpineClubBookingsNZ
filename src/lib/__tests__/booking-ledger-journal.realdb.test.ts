@@ -426,6 +426,66 @@ async function untilSomeoneWaits(): Promise<void> {
     }
   });
 
+  it("an inactive spell heals: an edit skipped while inactive is filled by the next event, so the cancel succeeds", async () => {
+    const id = await newBooking();
+    await settleHistoryByCard(id, PRICE); // R01 while active
+    await prisma.clubFormatSettings.create({ data: { id: "default", currencyCode: "JPY", locale: "ja-JP" } });
+    try {
+      const inactive = await doors.resolveBookingMoneyPostingContext();
+      expect(inactive).toMatchObject({ inactive: "unusable-currency" });
+      await postHistoryEdit(prisma, names, id, `${id}-edit`, { removeGuestId: `${id}-g2`, changeFeeCents: 0, journal: inactive });
+    } finally {
+      await prisma.clubFormatSettings.deleteMany({ where: { currencyCode: "JPY" } });
+    }
+    expect((await judged(id)).unbridged.length).toBeGreaterThan(0); // the edit's lines, written while inactive
+    // Active again: the cancellation first fills the skipped edit, then reverses the live stay.
+    const active = await doors.resolveBookingMoneyPostingContext();
+    expect(await cancelDoor(id, 0, active)).toBe(true);
+    const keys = (await journalEvents(id)).map((event) => event.eventKey);
+    expect(keys.some((key) => key.startsWith("back-post:"))).toBe(true);
+    expect(keys).toContain(`cancellation:${id}:0`);
+    expect(await receivable(id)).toEqual({ [names.memberId]: 0 });
+    await expectAgreed(id);
+  });
+
+  it("a journal-era booking confirmed while inactive gets its R01 from the back-post, and the census clears", async () => {
+    const id = await newBooking();
+    await prisma.clubFormatSettings.create({ data: { id: "default", currencyCode: "JPY", locale: "ja-JP" } });
+    try {
+      await settleHistoryByCard(id, PRICE); // the settle goes ahead and posts nothing
+    } finally {
+      await prisma.clubFormatSettings.deleteMany({ where: { currencyCode: "JPY" } });
+    }
+    const { evaluateWithJournal, readBookingLedgerCensusRow } = census;
+    const flagged = evaluateWithJournal((await readBookingLedgerCensusRow(prisma, id))!).integrity.map((finding) => finding.kind);
+    expect(flagged).toContain("CONFIRMED_WITHOUT_R01");
+    const { runBookingLedgerBackPost } = await import("@/lib/booking-ledger-back-post");
+    const run = await runBookingLedgerBackPost({ client: prisma, apply: true, bookingIds: [id] });
+    expect(run.outcomes[0]?.kind).not.toBe("CANNOT_POST");
+    expect(await prisma.memberMoneyEvent.count({ where: { eventKey: `booking-charge:${id}` } })).toBe(1);
+    expect(evaluateWithJournal((await readBookingLedgerCensusRow(prisma, id))!).integrity).toEqual([]);
+    await expectAgreed(id);
+  });
+
+  it("a member merge refuses while the journal is inactive, rather than lose its D4 transfer", async () => {
+    const [from, to] = [`${PREFIX}inactive-loser`, `${PREFIX}inactive-master`];
+    for (const memberId of [from, to]) {
+      await prisma.member.create({ data: { id: memberId, email: `${memberId}@example.invalid`, passwordHash: "not-a-real-password", firstName: "Merge", lastName: memberId, ageTier: "ADULT" } });
+    }
+    await prisma.clubFormatSettings.create({ data: { id: "default", currencyCode: "JPY", locale: "ja-JP" } });
+    try {
+      const preview = await merge.buildMemberMergePreview({ masterId: to, loserId: from, actorMemberId: ADMIN });
+      await expect(merge.executeMemberMerge({
+        masterId: to, loserId: from, actorMemberId: ADMIN, previewToken: preview.previewToken, confirmationText: preview.confirmationPhrase,
+      })).rejects.toMatchObject({ code: "journal_inactive", statusCode: 409 });
+      expect(await prisma.member.count({ where: { id: from } })).toBe(1);
+    } finally {
+      await prisma.clubFormatSettings.deleteMany({ where: { currencyCode: "JPY" } });
+      await prisma.auditLog.deleteMany({ where: { OR: [{ targetId: { in: [from, to] } }, { memberId: { in: [from, to] } }] } });
+      await prisma.member.deleteMany({ where: { id: { in: [from, to] } } });
+    }
+  });
+
   it("a group settle of 40 children posts each child's R01 inside the settle's bounded transaction", async () => {
     const ids: string[] = [];
     for (let child = 0; child < 40; child += 1) ids.push(await newBooking());
