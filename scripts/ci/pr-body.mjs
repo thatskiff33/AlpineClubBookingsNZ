@@ -24,12 +24,36 @@ import { escapeRegex } from "./escape-regex.mjs";
  * as it does when GitHub renders it. Used by the plan-deviation and size gates
  * (#4463); the concurrency and changelog gates read the raw body.
  */
+/** A fence line: 0–3 spaces, then a run of backticks or of tildes, then the rest of the line. */
+const FENCE_LINE = /^ {0,3}(`{3,}|~{3,})(.*)$/;
+
+/**
+ * Remove fenced blocks. The closing run may be longer than the opener, which
+ * CommonMark allows; it must be the same character, and a shorter run does not
+ * close. An unclosed fence runs to the end of the body, as GitHub renders it.
+ */
+function stripFences(text) {
+  const newline = text.includes("\r\n") ? "\r\n" : "\n";
+  const kept = [];
+  let open = null;
+  for (const line of text.split(/\r?\n/)) {
+    const fence = FENCE_LINE.exec(line);
+    if (!open) {
+      if (fence) open = { char: fence[1][0], length: fence[1].length };
+      else kept.push(line);
+      continue;
+    }
+    const closes =
+      fence && fence[1][0] === open.char && fence[1].length >= open.length && fence[2].trim() === "";
+    if (closes) open = null;
+  }
+  return kept.join(newline);
+}
+
 export function stripNonAnswerText(body) {
   // `-{2}`, not `--`: Semgrep reads a regex opening `<!--` as an HTML-like
   // comment and leaves the rest of the line unparsed (the coverage gate, #2842).
-  return (body ?? "")
-    .replace(/<!-{2}[\s\S]*?(?:-{2}>|$)/g, "")
-    .replace(/^ {0,3}(`{3,}|~{3,})[\s\S]*?(?:^ {0,3}\1[^\S\r\n]*$|(?![\s\S]))/gm, "");
+  return stripFences((body ?? "").replace(/<!-{2}[\s\S]*?(?:-{2}>|$)/g, ""));
 }
 
 /**

@@ -77,14 +77,21 @@ const GATE_LABEL = "PR plan deviation check";
  * Actions), else parsed from the `origin` remote (a local `pr:check`), else
  * null — and with null no URL counts, only a `#<number>`.
  */
-export function thisRepository(env = process.env) {
+function readOriginUrl() {
+  return execFileSync("git", ["remote", "get-url", "origin"], {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "ignore"],
+  }).trim();
+}
+
+/**
+ * `readOrigin` is the `origin` URL, defaulting to `git remote get-url`. Tests
+ * pass their own so a mirror checkout does not change the result.
+ */
+export function thisRepository(env = process.env, readOrigin = readOriginUrl) {
   if (env.GITHUB_REPOSITORY) return env.GITHUB_REPOSITORY;
   try {
-    const url = execFileSync("git", ["remote", "get-url", "origin"], {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-    }).trim();
-    return /github\.com[:/]([\w.-]+\/[\w.-]+?)(?:\.git)?\/?$/i.exec(url)?.[1] ?? null;
+    return /github\.com[:/]([\w.-]+\/[\w.-]+?)(?:\.git)?\/?$/i.exec(readOrigin())?.[1] ?? null;
   } catch {
     return null;
   }
@@ -104,6 +111,16 @@ export function ownerAnswerLink(repository) {
 /** A list item opener: its indent, marker (`-`, `*`, `+`, `1.`, `1)`), and following spaces. */
 const ITEM_MARKER = /^([^\S\r\n]*)([-*+]|\d+[.)])([^\S\r\n]+|$)/;
 
+/** A thematic break (`* * *`, `---`), which is not a list item. */
+const THEMATIC_BREAK = /^ {0,3}(?:-[ \t]*){3,}$|^ {0,3}(?:\*[ \t]*){3,}$|^ {0,3}(?:_[ \t]*){3,}$/;
+
+/** Column after `text`, counting a tab as the next stop of 4. */
+function advanceColumn(column, text) {
+  let next = column;
+  for (const char of text) next = char === "\t" ? next + (4 - (next % 4)) : next + 1;
+  return next;
+}
+
 class PlanDeviationError extends Error {}
 
 /** The section's text with comments and fences removed, or null when there is no heading. */
@@ -116,36 +133,66 @@ export function planDeviationSection(body) {
  *
  * With list items: each item with its continuation lines. A marker line starts
  * a NEW item only when it sits left of the current item's content column (the
- * column its text starts in), so `  - it is nullable` under `- Added a column`
- * is part of that item, not an unlinked item of its own. Prose before the first
- * marker ("One deviation, agreed with the owner:") is an introduction, not an
- * answer, and is ignored.
+ * column its text starts in; a tab is the next stop of 4), so `  - it is
+ * nullable` under `- Added a column` is part of that item, not an unlinked
+ * item of its own. A thematic break is skipped. Prose before the first marker
+ * ("One deviation, agreed with the owner:") is an introduction, not an answer,
+ * and is ignored. A blank line and then an unindented paragraph is not part of
+ * the item above it.
  *
  * With no list items: the whole of the prose is one answer, which is how a
  * plain `None` line is read.
  */
 export function planDeviationItems(section) {
   const lines = section.split(/\r?\n/);
-  const first = lines.findIndex((line) => ITEM_MARKER.test(line));
+  const first = lines.findIndex((line) => ITEM_MARKER.test(line) && !THEMATIC_BREAK.test(line));
   if (first < 0) {
-    const prose = lines.join("\n").trim();
+    const prose = lines
+      .filter((line) => !THEMATIC_BREAK.test(line))
+      .join("\n")
+      .trim();
     return prose ? [prose] : [];
   }
   const items = [];
   let contentColumn = -1;
+  let sawBlank = false;
+  let ignoringLoose = false;
   for (const line of lines.slice(first)) {
+    if (THEMATIC_BREAK.test(line)) continue;
+    if (!line.trim()) {
+      sawBlank = true;
+      continue;
+    }
     const marker = ITEM_MARKER.exec(line);
-    if (marker && (contentColumn < 0 || marker[1].length < contentColumn)) {
-      contentColumn = marker[1].length + marker[2].length + Math.max(1, marker[3].length);
+    const indent = advanceColumn(0, marker ? marker[1] : (/^[^\S\r\n]*/.exec(line)?.[0] ?? ""));
+    if (marker && (contentColumn < 0 || indent < contentColumn)) {
+      contentColumn = advanceColumn(advanceColumn(0, marker[1] + marker[2]), marker[3] || " ");
       items.push(line.slice(marker[0].length));
-    } else if (line.trim()) {
+      sawBlank = false;
+      ignoringLoose = false;
+    } else if (ignoringLoose || (sawBlank && indent === 0)) {
+      ignoringLoose = true;
+      sawBlank = false;
+    } else {
       items[items.length - 1] += `\n${line}`;
+      sawBlank = false;
     }
   }
   return items.map((item) => item.trim()).filter(Boolean);
 }
 
-const isNone = (item) => /^none\b/i.test(item.replace(/[`*_~[\]]/g, "").trim());
+/**
+ * `None` by itself, or with a trailing full stop or a dash-led note
+ * (`None — built to the plan.`). `None, except …` is an answer, not None.
+ */
+const NONE_ANSWER = /^none(?:\s*[.!]|\s*[—–-]\s+\S.*)?\s*$/i;
+
+const isNone = (item) => NONE_ANSWER.test(item.replace(/[`*_~[\]]/g, "").trim());
+
+/** A Markdown link counts by its target, so link text `#1` cannot launder another repository's URL. */
+function answerLinks(item) {
+  return item.replace(/!?\[(?:[^\]]*)\]\((https?:\/\/[^)\s]+)\)/g, "$1");
+}
 
 /**
  * Decide the section. Returns `{ outcome }` or throws a `PlanDeviationError`
@@ -176,7 +223,7 @@ export function validatePlanDeviation(body, { repository = thisRepository() } = 
     );
   }
   const link = ownerAnswerLink(repository);
-  const unlinked = items.filter((item) => !link.test(item));
+  const unlinked = items.filter((item) => !link.test(answerLinks(item)));
   if (unlinked.length > 0) {
     const first = unlinked[0].split("\n")[0];
     throw new PlanDeviationError(

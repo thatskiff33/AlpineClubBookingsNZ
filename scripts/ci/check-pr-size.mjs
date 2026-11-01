@@ -54,7 +54,12 @@ export function parseNumstat(stdout) {
   for (let i = 0; i < tokens.length; i++) {
     const token = tokens[i];
     if (!token) continue;
-    const [added, deleted, path = ""] = token.split("\t");
+    // A path may itself contain a tab. Split only on the two numstat separators.
+    const firstTab = token.indexOf("\t");
+    const secondTab = firstTab < 0 ? -1 : token.indexOf("\t", firstTab + 1);
+    const added = firstTab < 0 ? token : token.slice(0, firstTab);
+    const deleted = secondTab < 0 ? "" : token.slice(firstTab + 1, secondTab);
+    const path = secondTab < 0 ? "" : token.slice(secondTab + 1);
     const binary = added === "-" || deleted === "-";
     const counts = {
       added: binary ? 0 : Number(added),
@@ -134,7 +139,9 @@ export function measurePrSize(base, head, { cwd } = {}) {
  */
 export function largePrReason(body) {
   const text = stripNonAnswerText(body);
-  const match = /^[^\S\r\n]*(?:[-*+>][^\S\r\n]*)*[`*_]*large-pr:[`*_]*[^\S\r\n]*(\S[^\r\n]*?)[^\S\r\n]*\r?$/im.exec(
+  // The reason must contain a letter or digit. Otherwise `**large-pr:**` gives
+  // its last `*` up as the reason when the emphasis after the colon backtracks.
+  const match = /^[^\S\r\n]*(?:[-*+>][^\S\r\n]*)*[`*_]*large-pr:[`*_]*[^\S\r\n]*([^\r\n]*?[^\W_][^\r\n]*?)[^\S\r\n]*\r?$/im.exec(
     text,
   );
   return match ? match[1] : null;

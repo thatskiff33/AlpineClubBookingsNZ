@@ -87,6 +87,8 @@ describe("validatePlanDeviation", () => {
       // Another repository's issue is not this project's owner answering.
       "- Column added, https://github.com/prisma/prisma/issues/123",
       "- Column added, https://github.com/example-owner/example-repo-fork/issues/12",
+      // Link text `#12` is not a bare reference; the target is another repository.
+      "- Column added, [#12](https://github.com/prisma/prisma/issues/12)",
     ]) {
       expect(() => validatePlanDeviation(body(fake)), fake).toThrow(/do not link/);
     }
@@ -99,6 +101,7 @@ describe("validatePlanDeviation", () => {
       `- Column: https://github.com/${REPO}/discussions/12`,
       `- Column: https://github.com/${REPO.toUpperCase()}/issues/12`,
       "- Column: #4470",
+      `- Column: [#12](${COMMENT_URL})`,
       // A bare #n is TRUSTED, not resolved (documented in the gate's header):
       // the gate proves a reference was given, a reviewer reads it.
       "- Skipped step #2 of the plan",
@@ -112,9 +115,12 @@ describe("validatePlanDeviation", () => {
     expect(ownerAnswerLink(null).test("see #12")).toBe(true);
   });
 
-  it("names the repository from GITHUB_REPOSITORY, else the origin remote", () => {
+  it("names the repository from GITHUB_REPOSITORY, else a GitHub origin URL", () => {
     expect(thisRepository({ GITHUB_REPOSITORY: "a/b" })).toBe("a/b");
-    expect(thisRepository({})).toMatch(/^[\w.-]+\/[\w.-]+$/);
+    expect(thisRepository({}, () => "git@github.com:acme/lodge.git")).toBe("acme/lodge");
+    expect(thisRepository({}, () => "https://github.com/acme/lodge")).toBe("acme/lodge");
+    expect(thisRepository({}, () => "https://origin.cursor.com/acme/lodge")).toBeNull();
+    expect(thisRepository({}, () => { throw new Error("no remote"); })).toBeNull();
   });
 
   it("keeps a sub-bullet indented under an item as part of that item", () => {
@@ -144,6 +150,30 @@ describe("validatePlanDeviation", () => {
   it("reads prose as the answer when there is no list", () => {
     expect(validatePlanDeviation(body("None — built to the plan."))).toEqual({ outcome: "none" });
     expect(() => validatePlanDeviation(body("Added a column without asking."))).toThrow(/do not link/);
+    expect(() => validatePlanDeviation(body("None, except I added a column"))).toThrow(/do not link/);
+  });
+
+  it("keeps a tab-indented sub-bullet inside the item", () => {
+    expect(validatePlanDeviation(body("-\tAdded a column #4", "\t- still that column"))).toEqual({
+      outcome: "listed",
+      count: 1,
+    });
+  });
+
+  it("does not credit the last item with a later unindented paragraph", () => {
+    expect(() => validatePlanDeviation(body("- Kept the plan: #1", "- Changed a column", "", "Both agreed: #12"))).toThrow(
+      /first: "Changed a column"/,
+    );
+    expect(validatePlanDeviation(body("- Changed a column", "", "  owner agreed #12"))).toEqual({
+      outcome: "listed",
+      count: 1,
+    });
+  });
+
+  it("skips a thematic break instead of reading it as an item", () => {
+    expect(
+      validatePlanDeviation(body("- Kept the plan: #1", "* * *", "- Changed a column: #2")),
+    ).toEqual({ outcome: "listed", count: 2 });
   });
 
   it("fails None alongside listed items", () => {
@@ -153,6 +183,17 @@ describe("validatePlanDeviation", () => {
   it("ignores the heading and answers inside HTML comments and code fences", () => {
     const quoted = ["```md", PLAN_DEVIATION_HEADING, "- None", "```", "<!-- ## Plan Deviation\n- None -->", ""].join("\n");
     expect(() => validatePlanDeviation(quoted)).toThrow(/must include/);
+    // A longer closing fence still closes. If it did not, the strip would run
+    // to the end and the real section below would disappear.
+    const longerClose = ["```", PLAN_DEVIATION_HEADING, "- None", "````", PLAN_DEVIATION_HEADING, "", "- Added a column", ""].join("\n");
+    expect(() => validatePlanDeviation(longerClose)).toThrow(/do not link/);
+  });
+
+  it("does not let a #n inside the template comment satisfy a prose answer", () => {
+    const template = readFileSync(join(repoRoot, ".github", "pull_request_template.md"), "utf8");
+    const filled = template.replace(/(## Plan Deviation\r?\n)[\s\S]*?\n-\r?\n/, "$1\nAdded a column without asking.\n");
+    expect(filled).not.toBe(template);
+    expect(() => validatePlanDeviation(filled)).toThrow(/do not link/);
   });
 
   it("stops the section at the next heading, so a later section's link does not count", () => {

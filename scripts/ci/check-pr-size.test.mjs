@@ -33,6 +33,12 @@ describe("parseNumstat", () => {
       { path: "src/new café.ts", oldPath: "src/old name.ts", added: 2, deleted: 0, binary: false },
     ]);
   });
+
+  it("keeps a tab that is part of the path", () => {
+    expect(parseNumstat("1\t0\tsrc/a\tb.ts\0")).toEqual([
+      { path: "src/a\tb.ts", oldPath: null, added: 1, deleted: 0, binary: false },
+    ]);
+  });
 });
 
 describe("countReviewableLines", () => {
@@ -177,6 +183,8 @@ describe("largePrReason", () => {
 
   it("refuses an empty reason, prose mentioning it, and the template's comment", () => {
     expect(largePrReason("large-pr:\n- next bullet\n")).toBeNull();
+    expect(largePrReason("**large-pr:**")).toBeNull();
+    expect(largePrReason("**large-pr:***")).toBeNull();
     expect(largePrReason("Add a large-pr: line if needed")).toBeNull();
     expect(largePrReason("<!-- \nlarge-pr: <reason>\n -->")).toBeNull();
     expect(largePrReason("Write it like this:\n\n```text\nlarge-pr: generated seed data\n```\n")).toBeNull();
