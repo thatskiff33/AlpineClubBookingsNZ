@@ -17,9 +17,9 @@
  *   and by `alertedAt` on the row, written only after a recipient was sent.
  *   A send that does not go out throws, the claim is given back, and the
  *   webhook answers 500 so Stripe redelivers. A claim still held with no
- *   `alertedAt` is a delivery that died: inside the webhook lease it belongs
- *   to a sibling still sending; older than that lease, this delivery releases
- *   it and sends. A Checkout read that throws is not stored as "no Checkout":
+ *   `alertedAt` is a delivery that died: younger than the webhook lease less
+ *   a margin it belongs to a sibling still sending; older, this delivery
+ *   releases it and sends (`UNRECOGNISED_ALERT_IN_FLIGHT_MS`). A Checkout read that throws is not stored as "no Checkout":
  *   nothing is inserted, and Stripe redelivers.
  *
  * #4624 (`INV-INT-033`): the same record, claim and alert hold a succeeded
@@ -217,7 +217,7 @@ async function ensureAlert(
   }
   // A sibling delivery of another event still owns a fresh claim. The same
   // event's redelivery reaches here only once that attempt's lease expired, and
-  // then always finds its claim older than the window (#4647).
+  // then finds a claim taken within the margin of that lease expired (#4647).
   if (Date.now() - heldAt.getTime() < UNRECOGNISED_ALERT_IN_FLIGHT_MS) return;
 
   await releaseAlertCooldown({ key, claimedAt: heldAt });
