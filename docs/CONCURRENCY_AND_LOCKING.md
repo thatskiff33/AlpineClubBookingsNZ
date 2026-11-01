@@ -4483,7 +4483,12 @@ the pre-#4217 code). Now:
   the Stripe settle (`settleBookingPaymentInTransaction`, straight after its
   `Payment` upsert, before the ledger lookup that may backfill). On the root
   client the saved-card settle runs in a short transaction of its own, so a
-  unique violation there rolls it back whole and it runs once more.
+  unique violation there rolls it back whole and it runs once more. The
+  webhook's adoption of a lost-answer attempt row is that settle (#4646), with
+  its row write also claimed on "still no intent" under the payment lock: of
+  two adoptions (by key and by metadata), or an adoption and the charging
+  code's own settle, one writes, and the loser writes and reconciles nothing.
+  It adds no lock.
 - The Internet Banking settle (#4094) takes it after `lock(1)`, the lodge key
   and the member key, and re-reads the payment's figures under it; its rows are
   read under it. Its figure logic (#3979, `INV-PAY-126`) is unchanged, except

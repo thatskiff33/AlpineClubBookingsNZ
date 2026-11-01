@@ -262,7 +262,7 @@ Prefix `INV-PAY`.
 | `INV-PAY-086` | Captured money on any PRIMARY row refuses a new attempt; INV-PAY-054 ordering |
 | `INV-PAY-087` | The refusal alert is capped and anchored; an expected INV-PAY-053 card copy |
 | `INV-PAY-088` | Stripe's answer is recorded on the attempt row, forward only |
-| `INV-PAY-089` | A key is only re-sent inside Stripe's window, or recovered by it |
+| `INV-PAY-089` | A key is only re-sent in Stripe's window; lost answers adopted exactly |
 | `INV-PAY-090` | The pre-charge sweep excludes attempt rows by the key prefix |
 | `INV-PAY-056` | A payment recovery becomes terminally failed in exactly one place |
 | `INV-PAY-091` | Terminality is an argument, not a re-derivation; the write is fenced |
