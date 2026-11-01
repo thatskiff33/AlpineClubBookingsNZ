@@ -58,6 +58,7 @@ import { emailClubDateTime } from "@/lib/email-templates-club-time";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 import { findCheckoutSessionForPaymentIntent } from "@/lib/stripe";
+import { UNMATCHED_APP_LEDGER_MATCH_LABEL } from "@/lib/unrecognised-stripe-payment-note";
 import { formatCents } from "@/lib/utils";
 
 /** The stored description's cap: line items are short; a typed description is not. */
@@ -332,12 +333,8 @@ function alertMail(
   return { label: "unmatched app Stripe payment alert", send: () => sendAdminUnmatchedAppStripePaymentAlert(fields) };
 }
 
-/** #4624: what the app found for an unmatched app intent, as the alert says it. */
-const UNMATCHED_APP_LEDGER_MATCH_LABEL = {
-  APP_INTENT_NO_TRANSACTION: "No payment record names this Stripe payment",
-  APP_INTENT_NOT_PRIMARY:
-    "An additional-payment request names this Stripe payment, but the payment is not marked as one, so neither the booking payment nor the additional payment was settled",
-} as const satisfies Record<AppIntentReason, string>;
+/** #4624: the label map, typed here so a new app-intent reason without a label does not compile. */
+const LEDGER_MATCH_LABEL: Record<AppIntentReason, string> = UNMATCHED_APP_LEDGER_MATCH_LABEL;
 
 function unmatchedAppAlertFields(
   row: UnrecognisedStripePayment,
@@ -349,7 +346,7 @@ function unmatchedAppAlertFields(
     amount: unrecognisedPaymentAmountLabel(row.amountCents, row.currency, format),
     receivedAt: emailClubDateTime(row.stripeCreatedAt),
     bookingId: row.bookingId ?? NONE,
-    ledgerMatch: UNMATCHED_APP_LEDGER_MATCH_LABEL[reason],
+    ledgerMatch: LEDGER_MATCH_LABEL[reason],
     paymentIntentId: row.stripePaymentIntentId,
     chargeId: row.stripeChargeId ?? NONE,
     stripeDashboardUrl: stripeDashboardPaymentUrl(row.stripePaymentIntentId, livemode),

@@ -1,5 +1,5 @@
 import { LATE_CAPTURE_REFUNDED_OUTSIDE_APP_NOTE } from "@/lib/late-capture-outside-app-note";
-import { UNMATCHED_APP_STRIPE_PAYMENT_NOTE, UNRECOGNISED_STRIPE_PAYMENT_NOTE } from "@/lib/unrecognised-stripe-payment-note";
+import { UNMATCHED_APP_LEDGER_MATCH_LABEL, UNMATCHED_APP_STRIPE_PAYMENT_NOTE, UNRECOGNISED_STRIPE_PAYMENT_NOTE } from "@/lib/unrecognised-stripe-payment-note";
 import {
   EMAIL_AUDIT_DEFAULTS,
   type EmailAuditTemplateName,
@@ -1654,7 +1654,7 @@ export function sampleValue(token: string): string {
   if (token === "unrecognisedPaymentNote") return UNRECOGNISED_STRIPE_PAYMENT_NOTE;
   // #4624: the unmatched app payment's instruction, and what the app found for it.
   if (token === "unmatchedAppPaymentNote") return UNMATCHED_APP_STRIPE_PAYMENT_NOTE;
-  if (token === "ledgerMatch") return "No payment record names this Stripe payment";
+  if (token === "ledgerMatch") return UNMATCHED_APP_LEDGER_MATCH_LABEL.APP_INTENT_NO_TRANSACTION;
   if (token === "chargeId") return "ch_example";
   if (token === "checkoutSessionId") return "cs_example";
   if (token === "paymentLinkId") return "plink_example";

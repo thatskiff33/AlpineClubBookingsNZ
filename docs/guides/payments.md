@@ -1063,9 +1063,11 @@ payment) never raises this alert.
 
 Rarely, a member's card is charged for a booking but the app cannot tie the
 payment to anything it was waiting for on that booking. The usual cause is a
-card charge whose answer from Stripe was lost and arrived later in a form the
-app cannot link back (#4624). The app does not mark the booking paid and sends
-nothing to Xero.
+saved-card charge whose answer from Stripe was lost and arrived later in a form
+the app cannot link back (#4624). The app does not mark the booking paid and
+sends nothing to Xero. A charge whose answer simply arrives a moment after
+Stripe's notification is not this case: the app looks for the payment once
+more before alerting, finds it, and settles the booking as usual.
 
 When it happens, Finance editors get **"Booking card payment the app could not
 match - check it"**, once per payment. It cannot be muted. It names the amount,

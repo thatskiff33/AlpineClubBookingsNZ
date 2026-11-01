@@ -24,3 +24,15 @@ export const UNMATCHED_APP_STRIPE_PAYMENT_NOTE =
   "The money belongs to that booking: do not record it as a cash payment or code it in Xero as a donation or other income. " +
   "Ask whoever supports your booking system to match it to the booking, or refund it in Stripe if the booking does not owe it. " +
   "The app has recorded it and will not alert about this payment again.";
+
+/**
+ * #4624 (`INV-INT-033`): what the app found for an unmatched app intent, as the
+ * alert's `{{ledgerMatch}}` says it, keyed by the row's reason. The one copy:
+ * the alert (`unrecognised-stripe-payment.ts`) and the registry's preview sample
+ * both read it.
+ */
+export const UNMATCHED_APP_LEDGER_MATCH_LABEL = {
+  APP_INTENT_NO_TRANSACTION: "No payment record names this Stripe payment",
+  APP_INTENT_NOT_PRIMARY:
+    "An additional-payment request names this Stripe payment, but the payment is not marked as one, so neither the booking payment nor the additional payment was settled",
+} as const;
