@@ -46,7 +46,9 @@ export async function claimXeroSyncOperationToRunning(
       status: "PENDING",
       ...guard,
     },
-    data: runningClaimTransition(startedAt),
+    // Spelled as a literal so the write guard reads it (#2314): the transition
+    // carries no xeroObjectUrl.
+    data: { ...runningClaimTransition(startedAt) },
   });
 
   return result.count === 1 ? { id: operationId, startedAt } : null;
