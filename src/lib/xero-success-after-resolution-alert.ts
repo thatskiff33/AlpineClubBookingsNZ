@@ -96,32 +96,52 @@ function objectLabel(type: string | null | undefined): string {
 }
 
 /**
+ * The late object as an officer reads it: "credit note CN-B for $200.00
+ * (Xero id cn-b, booking b-1)".
+ */
+export function unrecordedObjectDescription(late: UnrecordedXeroObject): string {
+  return `${objectLabel(late.xeroObjectType)} ${late.xeroObjectNumber ?? late.xeroObjectId}${late.amount ? ` for ${late.amount}` : ""} (Xero id ${late.xeroObjectId}${late.bookingId ? `, booking ${late.bookingId}` : ""})`;
+}
+
+/** The sentence every late-object alert opens its story with: a stalled attempt came back and made it. */
+export function stalledAttemptCameBack(late: UnrecordedXeroObject): string {
+  return `an earlier attempt at the same Xero call, which had stalled, came back: it made ${unrecordedObjectDescription(late)} in Xero.`;
+}
+
+/**
  * #4426 (`INV-INT-029`): a late success the executor did NOT record, because
  * an officer resolved its row by hand, recording a note, while Xero was
  * answering - a refund credit note's create (`recordCreatedRefundNote`). The
  * row keeps what the resolve recorded; the late object is named here, once
  * per object, so an officer can check it against the one made by hand. A
  * resolve withdrawn since (the re-read row is no longer resolved) is said so.
+ * #4655: a caller whose late object was kept out for another reason (an
+ * organiser adjustment's note, `recordCreatedOrganiserNote`) says why in
+ * `errorMessage`; the key, the once-ever send and the warning stay this one's.
  * Same thunk contract as `successAfterResolutionAlert`: run outside any
  * transaction; never throws.
  */
 export function unrecordedLateSuccessAlert(
   operation: XeroSyncOperation,
   late: UnrecordedXeroObject,
+  errorMessage: string = refundNoteLateMessage(operation, late),
 ): () => Promise<void> {
-  const label = objectLabel(late.xeroObjectType);
-  const made = `${label} ${late.xeroObjectNumber ?? late.xeroObjectId}${late.amount ? ` for ${late.amount}` : ""} (Xero id ${late.xeroObjectId}${late.bookingId ? `, booking ${late.bookingId}` : ""})`;
-  const came = `an earlier attempt at the same Xero call, which had stalled, came back: it made ${made} in Xero. The app did not record it, link it to the payment or record a refund payment against it in Xero.`;
-  const errorMessage = isResolvedInXero(operation)
-    ? `This Xero operation was marked "${resolutionLabel(operation.manuallyResolvedReason)}", recording ${objectLabel(operation.xeroObjectType)} ${operation.xeroObjectNumber ?? operation.xeroObjectId ?? "(none)"}, and then ${came} The operation keeps the one the resolve recorded. Xero may now hold two for one item: check the late one in Xero and that it is not recorded on the payment before voiding it.`
-    : `This Xero operation was resolved by hand, recording a ${label}, and then ${came} That resolve has since been withdrawn, so the operation now records no ${label}. Check the late one in Xero: if it is the one this operation should record, resolve the operation by hand with its number rather than voiding it.`;
   return alertOnce(
     operation,
     xeroSuccessAfterResolutionAlertKey(operation.id, late.xeroObjectId),
     { unrecordedXeroObjectId: late.xeroObjectId, unrecordedXeroObjectNumber: late.xeroObjectNumber, recordedXeroObjectId: operation.xeroObjectId, bookingId: late.bookingId ?? null },
     errorMessage,
-    "Xero success arrived after its operation was resolved in Xero and was not recorded; Xero may now hold the item twice (INV-INT-029)",
+    "Xero success arrived after its operation was reset or resolved and was not recorded on it; Xero may now hold the item twice (INV-INT-029)",
   );
+}
+
+/** #4426: a refund note's late answer, kept out by a resolve recording a note (or one withdrawn since). */
+function refundNoteLateMessage(operation: XeroSyncOperation, late: UnrecordedXeroObject): string {
+  const label = objectLabel(late.xeroObjectType);
+  const came = `${stalledAttemptCameBack(late)} The app did not record it, link it to the payment or record a refund payment against it in Xero.`;
+  return isResolvedInXero(operation)
+    ? `This Xero operation was marked "${resolutionLabel(operation.manuallyResolvedReason)}", recording ${objectLabel(operation.xeroObjectType)} ${operation.xeroObjectNumber ?? operation.xeroObjectId ?? "(none)"}, and then ${came} The operation keeps the one the resolve recorded. Xero may now hold two for one item: check the late one in Xero and that it is not recorded on the payment before voiding it.`
+    : `This Xero operation was resolved by hand, recording a ${label}, and then ${came} That resolve has since been withdrawn, so the operation now records no ${label}. Check the late one in Xero: if it is the one this operation should record, resolve the operation by hand with its number rather than voiding it.`;
 }
 
 /** The warning and the once-ever alert both shapes send. */

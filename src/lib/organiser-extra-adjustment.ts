@@ -10,6 +10,7 @@ import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { settleRefundNoteFromXero } from "@/lib/xero-refund-note-settlement";
 import { syncOrganiserExtraInvoiceCash } from "@/lib/organiser-extra-receipt";
 import { reserveOrganiserExtraRacedCash } from "@/lib/organiser-extra-raced-cash";
+import { recordCreatedOrganiserNote } from "@/lib/organiser-extra-note-record";
 import { XeroAppliedCreditOperationBusyError } from "@/lib/xero-applied-credit-operation-serialization";
 import type { XeroOperationClaim } from "@/lib/xero-operation-outcome-guard";
 import type { OrganiserExtraAdjustmentPayload } from "@/lib/organiser-extra-adjustment-payload";
@@ -103,15 +104,18 @@ export async function executeOrganiserExtraAdjustment(payload: OrganiserExtraAdj
       }] }, undefined, undefined, `${key}:credit-note`),
       { operation: "createCreditNotes", resourceType: "CREDIT_NOTE", workflow: "organiserExtraAdjustment", context: `credit organiser invoice ${extraInvoiceId}` },
     );
-    noteId = created.body.creditNotes?.[0]?.creditNoteID ?? null;
+    const createdNote = created.body.creditNotes?.[0];
+    noteId = createdNote?.creditNoteID ?? null;
     if (!noteId) throw new Error("Xero did not create the organiser credit note");
     // Persist the returned identity BEFORE allocation/payment. A retry never
-    // depends solely on the provider's expiring idempotency cache.
-    const saved = await prisma.xeroSyncOperation.updateMany({
-      where: { id: claim.id, status: "RUNNING", startedAt: claim.startedAt },
-      data: { xeroObjectId: noteId, xeroObjectType: "CREDIT_NOTE" },
+    // depends solely on the provider's expiring idempotency cache. #4655
+    // (`INV-INT-029`): a run that stalled past a reset still records it on a
+    // row no claim holds; one it may not land on is audited and alerted, and
+    // this run stops without failing the row an officer reset, resolved or queued.
+    const record = await recordCreatedOrganiserNote({
+      claim, bookingId: payload.bookingId, purpose: payload.purpose, creditNoteId: noteId, creditNoteNumber: createdNote?.creditNoteNumber ?? null, amountCents,
     });
-    if (saved.count !== 1) throw new Error("Organiser adjustment lost its operation claim");
+    if (record === "not-recorded" || record === "queued") return;
   }
   const creditNoteId = noteId;
   if (payload.purpose === "waive") {

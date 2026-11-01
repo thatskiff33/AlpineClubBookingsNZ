@@ -6,7 +6,7 @@ const mocks = vi.hoisted(() => ({
   invoice: {} as Invoice,
   note: {} as CreditNote,
   getInvoice: vi.fn(), getCreditNote: vi.fn(), createCreditNotes: vi.fn(), createCreditNoteAllocation: vi.fn(), updateInvoice: vi.fn(),
-  complete: vi.fn(), save: vi.fn(), start: vi.fn(), settle: vi.fn(),
+  complete: vi.fn(), save: vi.fn(), start: vi.fn(), settle: vi.fn(), record: vi.fn(),
   updateCreditNote: vi.fn(), task: vi.fn(),
   // Every adjustment row of the booking, oldest first: the waivers' own rows and what they reserve.
   plans: [] as { requestPayload: unknown; correlationKey?: string }[],
@@ -40,6 +40,8 @@ vi.mock("@/lib/xero-api-client", () => ({
 }));
 vi.mock("@/lib/xero-sync", () => ({ completeXeroSyncOperation: mocks.complete, startXeroSyncOperation: mocks.start }));
 vi.mock("@/lib/xero-refund-note-settlement", () => ({ settleRefundNoteFromXero: mocks.settle }));
+// #4655: the note's record on the row has its own suite (`organiser-extra-note-record.test.ts`).
+vi.mock("@/lib/organiser-extra-note-record", () => ({ recordCreatedOrganiserNote: mocks.record }));
 vi.mock("@/lib/xero-mappings", () => ({ getResolvedAccountMapping: vi.fn(async () => ({ code: "219" })) }));
 vi.mock("@/lib/club-time-zone-runtime", () => ({ readClubTimeZoneOutsideRequest: vi.fn(async () => "Pacific/Auckland") }));
 
@@ -72,6 +74,7 @@ describe("organiser extra adjustment provider execution", () => {
     mocks.getCreditNote.mockImplementation(async () => ({ body: { creditNotes: [mocks.note] } }));
     mocks.createCreditNotes.mockImplementation(async () => ({ body: { creditNotes: [mocks.note] } }));
     mocks.save.mockImplementation(async (input: { data: { xeroObjectId: string } }) => { mocks.operation.xeroObjectId = input.data.xeroObjectId; return { count: 1 }; });
+    mocks.record.mockImplementation(async (input: { creditNoteId: string }) => { mocks.operation.xeroObjectId = input.creditNoteId; return "claimed"; });
     mocks.createCreditNoteAllocation.mockImplementation(async () => { mocks.note.allocations = [{ invoice: { invoiceID: "extra" }, amount: 40, date: "2026-07-01" }]; return { body: {} }; });
     mocks.updateInvoice.mockResolvedValue({ body: {} });
     mocks.updateCreditNote.mockResolvedValue({ body: {} });
@@ -252,11 +255,33 @@ describe("organiser extra adjustment provider execution", () => {
     expect(mocks.createCreditNoteAllocation).not.toHaveBeenCalled();
     expect(mocks.operation.xeroObjectId).toBe("waiver");
   });
-  it("a lost operation claim stops before any allocation", async () => {
-    mocks.save.mockResolvedValueOnce({ count: 0 });
-    await expect(executeOrganiserExtraAdjustment(payload(), claim)).rejects.toThrow("lost its operation claim");
+  it("records the created note with its number and amount under this run's claim before any allocation", async () => {
+    mocks.note = { ...mocks.note, creditNoteNumber: "CN-9" };
+    await executeOrganiserExtraAdjustment(payload(), claim);
+    expect(mocks.record).toHaveBeenCalledWith({ claim, bookingId: "child", purpose: "waive", creditNoteId: "waiver", creditNoteNumber: "CN-9", amountCents: 4_000 });
+    expect(mocks.record.mock.invocationCallOrder[0]).toBeLessThan(mocks.createCreditNoteAllocation.mock.invocationCallOrder[0]!);
+  });
+  // #4655: a note no row may take is traced by the record; the run stops quietly, so the
+  // outbox's catch never fails the row an officer reset, resolved or queued again.
+  it("MUTATION: a note not recorded stops before any allocation or payout, and throws nothing into the outbox", async () => {
+    mocks.record.mockResolvedValueOnce("not-recorded");
+    await expect(executeOrganiserExtraAdjustment(payload(), claim)).resolves.toBeUndefined();
+    expect(mocks.getCreditNote).not.toHaveBeenCalled();
     expect(mocks.createCreditNoteAllocation).not.toHaveBeenCalled();
     expect(mocks.complete).not.toHaveBeenCalled();
+  });
+  it("a note landed on a row queued again stops: the queued run finishes from it", async () => {
+    mocks.invoice = { ...mocks.invoice, amountDue: 0, amountCredited: 40 };
+    mocks.record.mockResolvedValueOnce("queued");
+    await expect(executeOrganiserExtraAdjustment(payload({ purpose: "refund", amountCents: 500, handBackTaskId: "hand-back" }), claim)).resolves.toBeUndefined();
+    expect(mocks.settle).not.toHaveBeenCalled();
+    expect(mocks.complete).not.toHaveBeenCalled();
+  });
+  it("a note landed on a row a reset left FAILED is finished by this run: allocated and completed onto its claim", async () => {
+    mocks.record.mockImplementationOnce(async (input: { creditNoteId: string }) => { mocks.operation.xeroObjectId = input.creditNoteId; return "landed"; });
+    await executeOrganiserExtraAdjustment(payload(), claim);
+    expect(mocks.createCreditNoteAllocation).toHaveBeenCalledOnce();
+    expect(mocks.complete).toHaveBeenCalledWith(claim, expect.objectContaining({ xeroObjectId: "waiver", xeroObjectType: "CREDIT_NOTE" }));
   });
   it("holds a refund until the organiser's bank-transfer hand-back completes", async () => {
     mocks.invoice = { ...mocks.invoice, amountDue: 0, amountCredited: 40 };
