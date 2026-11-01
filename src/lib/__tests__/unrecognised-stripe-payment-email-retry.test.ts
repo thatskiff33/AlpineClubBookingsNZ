@@ -23,6 +23,10 @@ const state = vi.hoisted(() => ({
   emailLogs: new Map<string, Record<string, unknown> & { id: string }>(),
   delivered: [] as { to: string; subject: string }[],
   transportDown: false,
+  /** #4670: how many coming claim releases fail. */
+  releaseFailures: 0,
+  /** #4670: how many coming `alertedAt` writes fail. */
+  stampFailures: 0,
 }));
 
 /** A field filter the queries under test use; anything else fails loudly rather than matching silently. */
@@ -65,6 +69,10 @@ vi.mock("@/lib/prisma", () => ({
         return { count };
       },
       update: async ({ where, data }: { where: { id: string }; data: Record<string, unknown> }) => {
+        if (state.stampFailures > 0) {
+          state.stampFailures -= 1;
+          throw new Error("database blip");
+        }
         const row = [...state.stripeRows.values()].find((item) => item.id === where.id);
         if (!row) throw new Error("missing row");
         return Object.assign(row, data);
@@ -85,6 +93,10 @@ vi.mock("@/lib/prisma", () => ({
         return data;
       },
       deleteMany: async ({ where }: { where: { key: string; lastAlertedAt: Date } }) => {
+        if (state.releaseFailures > 0) {
+          state.releaseFailures -= 1;
+          throw new Error("database blip");
+        }
         const held = state.cooldowns.get(where.key);
         if (!held || held.getTime() !== where.lastAlertedAt.getTime()) return { count: 0 };
         state.cooldowns.delete(where.key);
@@ -256,6 +268,8 @@ describe("the unrecognised Stripe payment alert has one retry owner (#4647)", ()
     state.emailLogs.clear();
     state.delivered = [];
     state.transportDown = false;
+    state.releaseFailures = 0;
+    state.stampFailures = 0;
     vi.stubEnv("NODE_ENV", "production");
     vi.stubEnv("NEXTAUTH_URL", "https://bookings.example.test");
     // A live installation, so the send and the retry cron both transmit.
@@ -308,6 +322,61 @@ describe("the unrecognised Stripe payment alert has one retry owner (#4647)", ()
     vi.setSystemTime(new Date(start.getTime() + 60 * MINUTE));
     await retryFailedEmails();
     await record(intent, event("evt_4647"));
+    expect(state.delivered).toHaveLength(1);
+  });
+});
+
+/**
+ * #4670: exactly once across the writes around the send, through the real
+ * once-ever helper and its real claim stamps.
+ */
+describe("the unrecognised Stripe payment alert across a failed write around the send (#4670)", () => {
+  let start: Date;
+
+  beforeEach(() => {
+    start = new Date();
+    state.stripeRows.clear();
+    state.cooldowns.clear();
+    state.emailLogs.clear();
+    state.delivered = [];
+    state.transportDown = false;
+    state.releaseFailures = 0;
+    state.stampFailures = 0;
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("NEXTAUTH_URL", "https://bookings.example.test");
+    declareEnvironmentRole("production");
+  });
+
+  afterEach(() => {
+    vi.setSystemTime(start);
+    vi.unstubAllEnvs();
+  });
+
+  const record = (eventId: string) => recordUnrecognisedStripePayment(paymentIntent("pi_4670", {}), event(eventId), CLUB_FORMAT_TEST);
+
+  it("fails the webhook on its own leftover claim when giving it back failed, and Stripe's redelivery sends it once", async () => {
+    state.transportDown = true;
+    state.releaseFailures = 1;
+    await expect(record("evt_4670")).rejects.toBeInstanceOf(UnrecognisedStripePaymentAlertNotSentError);
+    expect(state.cooldowns.size).toBe(0);
+
+    // A redelivery well inside the in-flight window: the claim was given back, so it claims afresh.
+    state.transportDown = false;
+    vi.setSystemTime(new Date(start.getTime() + 2 * MINUTE));
+    await record("evt_4670");
+    expect(state.delivered).toHaveLength(1);
+    expect(state.stripeRows.get("pi_4670")?.alertedAt).toBeInstanceOf(Date);
+  });
+
+  it("completes when the alert went out but its alertedAt write failed, and no later delivery sends it again", async () => {
+    state.stampFailures = 1;
+    await record("evt_4670");
+    expect(state.delivered).toHaveLength(1);
+    expect(state.stripeRows.get("pi_4670")?.alertedAt).toBeNull();
+
+    // Past the in-flight window, the kept claim with no alertedAt is not taken over.
+    vi.setSystemTime(new Date(start.getTime() + 60 * MINUTE));
+    await record("evt_4670_again");
     expect(state.delivered).toHaveLength(1);
   });
 });
