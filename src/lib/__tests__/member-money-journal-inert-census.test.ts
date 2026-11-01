@@ -84,7 +84,6 @@ const CONTEXT_RESOLVERS: readonly string[] = [
   "src/lib/booking-batch-modification-service.ts",
   "src/lib/booking-cancel.ts",
   "src/lib/booking-date-modification-service.ts",
-  "src/lib/booking-guest-acceptance-reprice.ts",
   "src/lib/booking-guest-removal-service.ts",
   "src/lib/cron-confirm-pending.ts",
   "src/lib/group-cancel.ts",
