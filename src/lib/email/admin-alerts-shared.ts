@@ -392,7 +392,13 @@ export async function sendUnmuteableAdminAlert({
           templateName,
           templateData,
         });
-        return { status: outcome.status === "sent" ? "sent" : "suppressed" };
+        // A confirmed copy holds the message back and records that. Nothing is
+        // wrong and nothing should retry, so a once-ever caller keeps its claim.
+        // The other withhold reasons are faults and stay undelivered.
+        const heldOnACopy =
+          outcome.status === "withheld_for_environment" &&
+          outcome.reason === "environment_non_production";
+        return { status: outcome.status === "sent" || heldOnACopy ? "sent" : "suppressed" };
       } catch (err) {
         logger.error(
           { err, to: email, templateName },
