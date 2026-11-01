@@ -533,6 +533,8 @@ async function promoState() {
       () => null,
       (error: Error) => error.message,
     );
+    // Refused in its own right, and with exactly the ordinary edit's reason.
+    expect(refused).toBeTruthy();
     expect(refused).toBe(ordinary);
 
     const state = await promoState();
