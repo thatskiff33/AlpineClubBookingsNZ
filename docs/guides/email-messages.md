@@ -446,7 +446,8 @@ Two consequences worth knowing before you edit one:
   needs `{{additionalAmount}}`, `{{requestedOn}}`, `{{checkIn}}`, `{{checkOut}}` and
   `{{askCauseSentence}}`, which says why the amount is owed: the credit was used
   elsewhere in the club's accounts, or that and a change to the booking when the two
-  were merged into one request (#4253). A customised body saved before
+  were merged into one request (#4253; in either order, #4491). A merged request
+  raised by the release is emailed at once for the combined amount. A customised body saved before
   `{{askCauseSentence}}` existed is flagged stale; put it back in when you re-save. Put
   `{{bankTransferNote}}` on a line of its own above the Pay Now line: it prints the
   whole bank-transfer paragraph (with the booking's invoice number as the payment

@@ -5631,8 +5631,12 @@ the stamp boundary of the existing guarded claim in `cron-additional-payment-rem
 read and the bank-transfer offer that decide whether a released-credit reminder goes
 (`credit-release-reminder-gate.ts`, `INV-ADDPAY-051`) run before that claim and outside any
 transaction, in the cron and in the manual re-send alike; a withheld reminder claims nothing,
-and its one audit note is written outside any lock. A release waiting behind an unpaid edit
-request goes back through the recovery runner's one failure write
+and its one audit note is written outside any lock. A release merging into an unpaid edit
+request (`INV-ADDPAY-052`, #4491) takes nothing new: its merge decision is read before the
+Stripe mint and again inside the claim's existing transaction, after the `Payment` row lock
+and the sizing fence, with a change throwing to retry; the supersede and the invoice move
+then run as for every superseding minter (`INV-PAY-140`). A release that cannot merge, waiting behind an unpaid edit
+request, goes back through the recovery runner's one failure write
 (`markPaymentRecoveryOperationFailed`), fenced on the attempt its worker holds, with that
 attempt handed back; it takes no lock and changes no money.
 
