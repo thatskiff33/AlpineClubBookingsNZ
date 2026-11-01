@@ -4619,6 +4619,27 @@ Rendered panel tests cover accepted, pending, rejected and network-failed reques
 direct browser journeys require protected content after Continue and verification,
 without a later helper navigation (#4060).
 
+## Password Sign-In Throttle (#4609)
+
+A per-account count in front of the password check (`INV-AUTH`). It keeps no
+status column: the state is the `LoginThrottle` row's count and its last
+counted attempt, read through the pure policy in
+`src/lib/login-throttle-policy.ts`.
+
+```text
+no row / count < 5 -> free: attempt claimed (count+1) before the password compare
+count >= 5 and now < lastFailureAt + wait(count) -> waiting: dummy compare, LOGIN_THROTTLED, nothing counted, no member read
+waiting and now reaches lastFailureAt + wait(count) -> free for one more claimed attempt (wait doubles 30 s -> 15 min)
+valid password (any count, after a claim) -> row deleted (cleared)
+completed password reset -> row deleted (cleared)
+an hour with no counted attempt -> count reads as 0; idle sweep deletes the row
+store failure -> same states, counted per process at the #1142 divided budget
+```
+
+To verify: `login-throttle-policy.test.ts` (the waits and the idle reset on the
+frozen clock), `login-throttle-auth.test.ts` (through the real password provider)
+and `login-throttle.realdb.test.ts` (the row lock under forced interleavings).
+
 ## Magic-Link Sign-In Lifecycle
 
 Passwordless email sign-in (issue #2034, epic #2030). Additive to password

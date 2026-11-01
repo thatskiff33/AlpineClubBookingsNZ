@@ -140,6 +140,64 @@ endpoint is rate limited and caches only the non-personal opt-in in process.
 A failed policy read stops recording once the cached policy expires; background browser timer
 throttling can delay the periodic refresh until the tab becomes visible.
 
+## Per-account password throttle (#4609)
+
+Audience: Operator, Developer.
+
+The per-address limiter (10 attempts per 15 minutes per internet address)
+cannot see one account guessed from many addresses — a botnet, a phone
+network, a cloud provider. A second count, kept per account, closes that gap.
+The rules are `INV-AUTH-001` to `INV-AUTH-004` in
+[`invariants/authentication.md`](invariants/authentication.md); this section
+holds the threat, the behaviour and the limits.
+
+**What a member sees.** Five unsuccessful password attempts on one account,
+from any addresses, start a wait: 30 seconds, doubling after each further
+attempt to 15 minutes. An hour with no attempt forgets the count. During the
+wait the sign-in page says "Too many sign-in attempts for this account. Please
+wait a few minutes and try again", adding "or use another way to sign in below"
+when the club has emailed sign-in links or Google switched on. A correct
+password after the wait signs in as before and clears the count; so does a
+completed password reset.
+
+**Enumeration parity.** The throttle answers before any member record is read,
+and its answer — `LOGIN_THROTTLED`, one message — is the same for a real, an
+unknown, an inactive and a deleted account, after the same dummy bcrypt
+compare. Unknown emails are counted exactly as real ones, so the wait cannot
+reveal who has an account.
+
+**What is stored.** `LoginThrottle` holds an HMAC-SHA256 of the lower-cased
+email under `AUTH_SECRET` (domain label `login-throttle:v1:`), a count and the
+time of the last counted attempt. No address is stored or logged. Rows are
+deleted on a valid password, a completed reset, or by a best-effort sweep an
+hour after the last attempt ([retention schedule](PRIVACY_RETENTION.md)).
+**Rotating `AUTH_SECRET` changes every key, which resets every count.**
+
+**If the store fails.** The claim falls back to a bounded per-process count at
+the #1142 divided budget (one free attempt, then the same doubling wait), logs
+at most once a minute naming no address or key, and never refuses a sign-in
+because of the failure itself.
+
+**Stated limits.**
+
+- **An attacker can keep re-triggering the wait.** Refused attempts cost the
+  attacker nothing on the account's count, and the per-address limiter does not
+  stop many addresses. Someone who knows an officer's email can send a guess
+  each time the 15-minute wait ends and keep password sign-in waiting, and a
+  password reset buys back only five attempts. The officer still has any other
+  way in the club has switched on — emailed sign-in links (off by default) or
+  Google. The owner accepted this on #4609; an exemption for known devices
+  would need a new plan on #4454.
+- **During a blue/green cutover the old slot has no per-account throttle.** The
+  migration is expand-only and the draining release never names the table, so
+  guesses routed to the old slot are counted only by the per-address limiter.
+  Protection is complete once the old slot drains.
+- **In-memory fallback counts per process.** While the store is down each
+  replica counts on its own, at the divided budget; a restart forgets them.
+- Password sign-in only: emailed sign-in links, Google, two-factor code entry
+  (its own lockout) and lodge PIN sign-in are separate, and forgot-password and
+  sign-in-link request limits per account are #4613.
+
 ## Dietary/allergy information (special-category data)
 
 Audience: Developer, Agent, Operator.

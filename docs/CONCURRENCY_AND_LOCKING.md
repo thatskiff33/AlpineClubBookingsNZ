@@ -1701,7 +1701,9 @@ the code to its immutable id first and refuses a row whose code changed in
 between, so every site below keys on an immutable cuid (or materialises its
 singleton before locking) and cannot see a row appear between the two
 statements, except the message-board mirror's post lock (#4586), which keys on
-the mutable `ClubPost.serverPostId` and reads a zero count as not found.
+the mutable `ClubPost.serverPostId` and reads a zero count as not found, and the
+login-throttle claim (#4609), whose row a clear can delete between its ensure and
+its lock, which reads a zero count as lost and ensures and locks once more.
 
 The reason is not tidiness. `$queryRaw<SomeRow[]>` is an **unchecked cast**: raw
 SQL returns the *physical* column names and the generic declares whatever the
@@ -2001,6 +2003,38 @@ mispricing a booking.
     `MEMBER_PHOTO` blobs. The two protocols share the `MediaImage` table but
     never the same rows, and neither takes the other's parent row, so they are
     table-disjoint for locking purposes.
+
+- **Login throttle claim** — `src/lib/login-throttle.ts`
+  (`claimPasswordAttempt`, #4609, `INV-AUTH-003`): before a password is
+  compared, one short transaction ensures the account's `LoginThrottle` row
+  (`createMany … skipDuplicates`), locks it
+  (`$executeRaw`SELECT 1 FROM "LoginThrottle" WHERE "id" = … FOR UPDATE``),
+  reads it typed, decides with the pure policy and, when admitted, counts the
+  attempt. Parallel guesses on one account queue on the row, so two failures
+  both count and a burst fired the moment a wait ends admits exactly one — the
+  gap a bare upsert-increment after the password check would leave, since every
+  guess in the burst would pass the check before any failure landed. The key is
+  an immutable HMAC id. No advisory key, never composed with any other lock, no
+  provider call, and the bcrypt compare runs after commit, so INV-LOCK-001 and
+  INV-LOCK-002 ordering is not engaged.
+
+  Counterpart writers, and why they are safe against the claim:
+  - **Clear** (`clearPasswordAttempts`, after a valid password or a completed
+    reset) and the **idle sweep** (an unref'd timer deleting rows whose
+    `lastFailureAt` is over an hour old) are single `deleteMany` statements with
+    no lock of their own. Against a claim holding the row they wait, then
+    delete the committed row (the clear: correct, the password was proven) or
+    re-check it and skip it (the sweep: the claim just refreshed
+    `lastFailureAt`).
+  - Either can instead delete the row between the claim's ensure and its lock.
+    The lock then matches nothing (count 0), so the claim ensures and locks
+    once more inside the same transaction, and gives up as a store failure only
+    if the second lock still matches nothing.
+  - A store failure of any kind falls back to the per-process count (#1142
+    divisor) and never blocks sign-in.
+
+  Proven on real PostgreSQL by `src/lib/__tests__/login-throttle.realdb.test.ts`
+  with forced interleavings for all of the above.
 
 - **Member photo writer** — `src/app/api/members/[id]/photo/route.ts` (epic #171):
   the upload (POST) and remove (DELETE) transactions each take
