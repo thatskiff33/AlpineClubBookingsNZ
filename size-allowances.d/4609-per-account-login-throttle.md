@@ -14,3 +14,10 @@ reason: the claim has to sit inside `authorize`, before the member lookup,
   those statements; moving the throttle logic out already left only the calls,
   and splitting NextAuth's provider configuration to save twenty lines would
   separate the throttle from the lookup it must precede.
+
+file: src/instrumentation.node.ts
+lines: 1725
+reason: the idle login-throttle sweep joins the existing daily data-pruning
+  job as one more isolated step beside the token sweeps it resembles, so the
+  retention row's bound holds even in a process that handles no sign-ins;
+  moving the scheduler out to make room for five lines is a refactor of its own.

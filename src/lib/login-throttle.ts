@@ -9,9 +9,12 @@
  *
  * An attempt is CLAIMED before its password is compared, under the
  * `LoginThrottle` row lock, so parallel guesses on one account queue and a
- * burst fired the moment a wait ends admits exactly one. A throttled claim
- * writes nothing; a valid password (or a completed password reset) clears the
- * row. Unknown emails are claimed exactly like real ones: the caller decides
+ * burst fired the moment a wait ends admits exactly one. The wait for the row
+ * is bounded: a claim that cannot have it within a second answers "waiting",
+ * so one account under attack cannot hold the connection pool. An account
+ * already waiting is refused from an unlocked read without queuing at all. A
+ * throttled claim writes nothing; a valid password (or a completed password
+ * reset) clears the row. Unknown emails are claimed exactly like real ones: the caller decides
  * before it reads any Member.
  *
  * If the store fails, the claim falls back to a bounded per-process map at
@@ -32,6 +35,7 @@ import {
   type LoginThrottleState,
 } from "./login-throttle-policy";
 import { prisma } from "./prisma";
+import { isPostgresLockNotAvailable } from "./prisma-errors";
 import { getAuthSecret } from "./runtime-config";
 
 /** Domain label so this HMAC can never collide with another use of the secret. */
@@ -48,6 +52,15 @@ export const LOGIN_THROTTLE_DEGRADED_FREE_FAILURES = Math.max(
 const MEMORY_MAX_ENTRIES = 10_000;
 const STORE_ERROR_LOG_INTERVAL_MS = 60 * 1000;
 const CLEANUP_INTERVAL_MS = 10 * 60 * 1000;
+/**
+ * How long a claim waits for its account's row before answering "waiting".
+ * A claim holds the row for a few milliseconds, so an ordinary race still
+ * queues and counts; a burst on one account cannot hold pooled connections
+ * for longer than this each (#4637 review).
+ */
+const ROW_LOCK_TIMEOUT_MS = 1_000;
+/** The claim transaction's own bounds, explicit rather than Prisma's defaults. */
+const CLAIM_TRANSACTION_OPTIONS = { maxWait: 1_000, timeout: 3_000 } as const;
 
 /**
  * The one sign-in email normaliser. The Credentials member lookup matches on
@@ -130,12 +143,14 @@ function claimInMemory(key: string, now: Date): boolean {
 type ThrottleTx = Parameters<Parameters<typeof prisma.$transaction>[0]>[0];
 
 /**
- * Ensures the row exists, then locks it. A clear or the idle sweep can delete
- * the row between those two statements (READ COMMITTED), and the lock then
- * matches nothing, so a lost row is ensured and locked once more before the
- * claim gives up as a store failure.
+ * Ensures the row exists, then locks it, waiting at most `ROW_LOCK_TIMEOUT_MS`
+ * (a longer wait raises SQLSTATE 55P03, which the claim answers as "waiting").
+ * A clear or the idle sweep can delete the row between the ensure and the lock
+ * (READ COMMITTED), and the lock then matches nothing, so a lost row is ensured
+ * and locked once more before the claim gives up as a store failure.
  */
 async function lockAccountRow(tx: ThrottleTx, key: string, now: Date): Promise<void> {
+  await tx.$executeRaw`SELECT set_config('lock_timeout', ${String(ROW_LOCK_TIMEOUT_MS)}, true)`;
   for (let attempt = 0; attempt < 2; attempt += 1) {
     await tx.loginThrottle.createMany({
       data: [{ id: key, failureCount: 0, lastFailureAt: now }],
@@ -148,31 +163,58 @@ async function lockAccountRow(tx: ThrottleTx, key: string, now: Date): Promise<v
   throw new Error("Login throttle row could not be locked");
 }
 
+/**
+ * Deletes rows idle for an hour or more, which already count as zero. Run by
+ * the daily `data-pruning` job and, while this process handles password
+ * sign-ins, every ten minutes. One `deleteMany`: against a claim holding a row
+ * it waits, then re-checks the refreshed row and skips it.
+ */
+export async function sweepIdleLoginThrottleRows(): Promise<number> {
+  const cutoff = new Date(Date.now() - LOGIN_THROTTLE_IDLE_RESET_MS);
+  const { count } = await prisma.loginThrottle.deleteMany({
+    where: { lastFailureAt: { lt: cutoff } },
+  });
+  return count;
+}
+
 function scheduleCleanup(): void {
   if (cleanupTimer) return;
   cleanupTimer = setInterval(() => {
-    const cutoff = new Date(Date.now() - LOGIN_THROTTLE_IDLE_RESET_MS);
-    prisma.loginThrottle
-      .deleteMany({ where: { lastFailureAt: { lt: cutoff } } })
-      .catch(() => {
-        // Best-effort: an idle row already counts as zero.
-      });
+    sweepIdleLoginThrottleRows().catch(() => {
+      // Best-effort: an idle row already counts as zero.
+    });
   }, CLEANUP_INTERVAL_MS);
   if (typeof cleanupTimer === "object" && "unref" in cleanupTimer) cleanupTimer.unref();
 }
 
 /**
  * Claims one password attempt for `email` BEFORE its password is compared.
- * `allowed: false` means the account is waiting: the caller must not compare
- * the real password, and nothing was counted. Never throws.
+ * `allowed: false` means the account is waiting — or another claim on it held
+ * the row past the lock timeout: the caller must not compare the real
+ * password, and nothing was counted. Never throws.
+ *
+ * An unlocked read first refuses an account already waiting without touching
+ * the lock: concurrent claims only make that answer stricter, and a clear
+ * racing it costs at most one refused attempt. Most of an attack on one
+ * account therefore never queues on its row.
  */
 export async function claimPasswordAttempt(email: string): Promise<{ allowed: boolean }> {
-  const now = new Date();
+  const seenAt = new Date();
   try {
     const key = loginAccountKey(email);
     scheduleCleanup();
+    const seen = await prisma.loginThrottle.findUnique({
+      where: { id: key },
+      select: { failureCount: true, lastFailureAt: true },
+    });
+    if (evaluateLoginThrottle(seen, seenAt, LOGIN_THROTTLE_FREE_FAILURES).throttled) {
+      return { allowed: false };
+    }
     const allowed = await prisma.$transaction(async (tx) => {
-      await lockAccountRow(tx, key, now);
+      await lockAccountRow(tx, key, seenAt);
+      // The instant is taken once the row is held, so lock order is time order
+      // and lastFailureAt can never move backwards (#4637 review).
+      const now = new Date();
       const row = await tx.loginThrottle.findUniqueOrThrow({
         where: { id: key },
         select: { failureCount: true, lastFailureAt: true },
@@ -185,9 +227,13 @@ export async function claimPasswordAttempt(email: string): Promise<{ allowed: bo
         data: nextLoginThrottleState(row, now),
       });
       return true;
-    });
+    }, CLAIM_TRANSACTION_OPTIONS);
     return { allowed };
   } catch (err) {
+    // Another claim held the row past the lock timeout: answer "waiting",
+    // uncounted. It is contention on this account, not a store failure.
+    if (isPostgresLockNotAvailable(err)) return { allowed: false };
+    const now = new Date();
     noteStoreFailure(err, now);
     return { allowed: claimInMemory(memoryKeyFor(email), now) };
   }

@@ -24,6 +24,10 @@ const { rows, mockPrisma, mockBcryptCompare, mockLoadEffectiveModuleFlags, REAL_
         }
         return { count };
       }),
+      findUnique: vi.fn(async ({ where }: { where: { id: string } }) => {
+        const row = rows.get(where.id);
+        return row ? { ...row } : null;
+      }),
       findUniqueOrThrow: vi.fn(async ({ where }: { where: { id: string } }) => {
         const row = rows.get(where.id);
         if (!row) throw new Error("No LoginThrottle found");

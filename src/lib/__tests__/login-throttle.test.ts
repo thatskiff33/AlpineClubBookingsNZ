@@ -7,7 +7,14 @@
 import { createHash } from "node:crypto";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { mockTx, mockPrisma, mockGetAuthSecret, mockLoggerError } = vi.hoisted(() => {
+const {
+  mockTx,
+  mockLock,
+  mockSetLockTimeout,
+  mockPrisma,
+  mockGetAuthSecret,
+  mockLoggerError,
+} = vi.hoisted(() => {
   const mockTx = {
     loginThrottle: {
       createMany: vi.fn(),
@@ -16,11 +23,16 @@ const { mockTx, mockPrisma, mockGetAuthSecret, mockLoggerError } = vi.hoisted(()
     },
     $executeRaw: vi.fn(),
   };
+  // The row-lock statement, split out of $executeRaw from the lock-timeout one.
+  const mockLock = vi.fn();
+  const mockSetLockTimeout = vi.fn();
   return {
     mockTx,
+    mockLock,
+    mockSetLockTimeout,
     mockPrisma: {
       $transaction: vi.fn(),
-      loginThrottle: { deleteMany: vi.fn() },
+      loginThrottle: { deleteMany: vi.fn(), findUnique: vi.fn() },
     },
     mockGetAuthSecret: vi.fn<() => string | undefined>(() => "test-secret"),
     mockLoggerError: vi.fn(),
@@ -41,6 +53,7 @@ import {
   loginAccountKey,
   normaliseSignInEmail,
   resetLoginThrottleProcessState,
+  sweepIdleLoginThrottleRows,
 } from "@/lib/login-throttle";
 
 const EMAIL = "Treasurer@Example.org";
@@ -64,7 +77,15 @@ beforeEach(() => {
     fn(mockTx),
   );
   mockTx.loginThrottle.createMany.mockResolvedValue({ count: 0 });
-  mockTx.$executeRaw.mockResolvedValue(1);
+  mockTx.$executeRaw.mockImplementation(
+    (sql: TemplateStringsArray, ...values: unknown[]) =>
+      sql.join("?").includes("set_config")
+        ? mockSetLockTimeout(sql, ...values)
+        : mockLock(sql, ...values),
+  );
+  mockSetLockTimeout.mockResolvedValue(1);
+  mockLock.mockResolvedValue(1);
+  mockPrisma.loginThrottle.findUnique.mockResolvedValue(null);
   mockTx.loginThrottle.update.mockResolvedValue({});
   mockPrisma.loginThrottle.deleteMany.mockResolvedValue({ count: 1 });
   storeRow(0);
@@ -104,7 +125,13 @@ describe("claimPasswordAttempt (#4609)", () => {
       data: [{ id: key, failureCount: 0, lastFailureAt: T0 }],
       skipDuplicates: true,
     });
-    const [lockSql, ...lockValues] = mockTx.$executeRaw.mock.calls[0];
+    expect(mockPrisma.$transaction.mock.calls[0][1]).toEqual({ maxWait: 1_000, timeout: 3_000 });
+    const [timeoutSql, ...timeoutValues] = mockSetLockTimeout.mock.calls[0];
+    expect((timeoutSql as TemplateStringsArray).join("?")).toBe(
+      "SELECT set_config('lock_timeout', ?, true)",
+    );
+    expect(timeoutValues).toEqual(["1000"]);
+    const [lockSql, ...lockValues] = mockLock.mock.calls[0];
     expect((lockSql as TemplateStringsArray).join("?")).toBe(
       'SELECT 1 FROM "LoginThrottle" WHERE "id" = ? FOR UPDATE',
     );
@@ -114,24 +141,65 @@ describe("claimPasswordAttempt (#4609)", () => {
       data: { failureCount: 1, lastFailureAt: T0 },
     });
     const order = [
+      mockPrisma.loginThrottle.findUnique,
+      mockSetLockTimeout,
       mockTx.loginThrottle.createMany,
-      mockTx.$executeRaw,
+      mockLock,
       mockTx.loginThrottle.findUniqueOrThrow,
       mockTx.loginThrottle.update,
     ].map((mock) => mock.mock.invocationCallOrder[0]);
     expect(order).toEqual([...order].sort((a, b) => a - b));
   });
 
-  it("refuses a waiting account and writes nothing", async () => {
+  it("refuses a waiting account under the lock and writes nothing", async () => {
     storeRow(5, new Date(T0.getTime() - 1000));
     await expect(claimPasswordAttempt(EMAIL)).resolves.toEqual({ allowed: false });
     expect(mockTx.loginThrottle.update).not.toHaveBeenCalled();
+  });
+
+  it("refuses an account already waiting from the unlocked read, without queuing on the row", async () => {
+    mockPrisma.loginThrottle.findUnique.mockResolvedValue({
+      failureCount: 5,
+      lastFailureAt: new Date(T0.getTime() - 1000),
+    });
+    await expect(claimPasswordAttempt(EMAIL)).resolves.toEqual({ allowed: false });
+    expect(mockPrisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it("answers a row held past the lock timeout as waiting: uncounted, no fallback, no store-failure log", async () => {
+    mockLock.mockRejectedValue(
+      Object.assign(new Error("canceling statement due to lock timeout"), { code: "55P03" }),
+    );
+    for (let i = 0; i < 3; i += 1) {
+      await expect(claimPasswordAttempt(EMAIL)).resolves.toEqual({ allowed: false });
+    }
+    expect(mockTx.loginThrottle.update).not.toHaveBeenCalled();
+    expect(mockLoggerError).not.toHaveBeenCalled();
+    // The per-process fallback was never consulted: once the row frees, the
+    // store decides as usual.
+    mockLock.mockResolvedValue(1);
+    await expect(claimPasswordAttempt(EMAIL)).resolves.toEqual({ allowed: true });
+  });
+
+  it("stamps the attempt with the instant the row was held, not when the claim started", async () => {
+    const heldAt = new Date(T0.getTime() + 2_500);
+    mockLock.mockImplementation(async () => {
+      vi.setSystemTime(heldAt);
+      return 1;
+    });
+    storeRow(3, new Date(T0.getTime() + 2_000));
+    await claimPasswordAttempt(EMAIL);
+    expect(mockTx.loginThrottle.update).toHaveBeenCalledWith({
+      where: { id: loginAccountKey(EMAIL) },
+      data: { failureCount: 4, lastFailureAt: heldAt },
+    });
   });
 
   it("never passes the address to the store", async () => {
     await claimPasswordAttempt(EMAIL);
     await clearPasswordAttempts(EMAIL);
     const seen = everythingPassedTo(
+      mockPrisma.loginThrottle.findUnique,
       mockTx.loginThrottle.createMany,
       mockTx.$executeRaw,
       mockTx.loginThrottle.findUniqueOrThrow,
@@ -142,22 +210,22 @@ describe("claimPasswordAttempt (#4609)", () => {
   });
 
   it("re-ensures and re-locks once when the row vanished between ensure and lock", async () => {
-    mockTx.$executeRaw.mockResolvedValueOnce(0).mockResolvedValueOnce(1);
+    mockLock.mockResolvedValueOnce(0).mockResolvedValueOnce(1);
 
     await expect(claimPasswordAttempt(EMAIL)).resolves.toEqual({ allowed: true });
 
     expect(mockTx.loginThrottle.createMany).toHaveBeenCalledTimes(2);
-    expect(mockTx.$executeRaw).toHaveBeenCalledTimes(2);
+    expect(mockLock).toHaveBeenCalledTimes(2);
     expect(mockTx.loginThrottle.update).toHaveBeenCalledTimes(1);
     expect(mockLoggerError).not.toHaveBeenCalled();
   });
 
   it("gives up as a store failure only when the row is lost twice", async () => {
-    mockTx.$executeRaw.mockResolvedValue(0);
+    mockLock.mockResolvedValue(0);
 
     await expect(claimPasswordAttempt(EMAIL)).resolves.toEqual({ allowed: true });
 
-    expect(mockTx.$executeRaw).toHaveBeenCalledTimes(2);
+    expect(mockLock).toHaveBeenCalledTimes(2);
     expect(mockTx.loginThrottle.update).not.toHaveBeenCalled();
     expect(mockLoggerError).toHaveBeenCalledTimes(1);
   });
@@ -224,5 +292,15 @@ describe("clearPasswordAttempts (#4609)", () => {
   it("swallows a failed delete", async () => {
     mockPrisma.loginThrottle.deleteMany.mockRejectedValue(new Error("down"));
     await expect(clearPasswordAttempts(EMAIL)).resolves.toBeUndefined();
+  });
+});
+
+describe("sweepIdleLoginThrottleRows (#4609 review)", () => {
+  it("deletes only rows idle for an hour or more and reports how many", async () => {
+    mockPrisma.loginThrottle.deleteMany.mockResolvedValue({ count: 3 });
+    await expect(sweepIdleLoginThrottleRows()).resolves.toBe(3);
+    expect(mockPrisma.loginThrottle.deleteMany).toHaveBeenCalledWith({
+      where: { lastFailureAt: { lt: new Date(T0.getTime() - 3_600_000) } },
+    });
   });
 });

@@ -990,6 +990,11 @@ export async function register() {
             where: { OR: [{ expiresAt: { lt: new Date() } }, { used: true }] },
           }),
         );
+        // Idle per-account password-throttle rows (#4609): they already count
+        // as zero; this bounds how long one outlives a quiet process.
+        await runStep("prune-login-throttle", async () =>
+          (await import("./lib/login-throttle")).sweepIdleLoginThrottleRows(),
+        );
         // Expired partner-invite tokens (#1682): idempotent hard-delete sweep.
         await runStep("expire-partner-invite-tokens", () =>
           expireStalePartnerInviteTokens(),
