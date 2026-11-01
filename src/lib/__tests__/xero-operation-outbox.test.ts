@@ -2449,6 +2449,40 @@ describe("processQueuedXeroOutboxOperations", () => {
     mocks.updateManyOperation.mockResolvedValue({ count: 1 });
   });
 
+  // #4663: `createdAt` is JS-filled, so rows queued in one millisecond tie (all
+  // of them under the frozen test clock). Without an `id` tiebreak PostgreSQL
+  // hands tied rows back in arbitrary physical order and a `limit: 1` worker
+  // claims whichever it likes. Mutation probe: dropping `{ id: "asc" }` fails
+  // both the shape check and the ordering check below.
+  it("breaks createdAt ties by id, so the scan order is deterministic (#4663)", async () => {
+    mocks.findManyOperations.mockResolvedValue([]);
+    await processQueuedXeroOutboxOperations({ limit: 1 });
+    const { orderBy } = mocks.findManyOperations.mock.calls[0][0];
+    expect(orderBy).toEqual([{ createdAt: "asc" }, { id: "asc" }]);
+
+    // Apply that orderBy to rows that all tie on createdAt, shuffled each way:
+    // the result is the same whatever the stored order.
+    const tied = new Date("2026-07-01T00:00:00.000Z");
+    const rows = [
+      { id: "c3", createdAt: tied },
+      { id: "c1", createdAt: tied },
+      { id: "c2", createdAt: tied },
+      { id: "c0", createdAt: new Date(tied.getTime() - 1) },
+    ];
+    const sortBy = (stored: typeof rows) =>
+      [...stored].sort((a, b) =>
+        (orderBy as Array<Record<string, "asc">>).reduce((cmp, key) => {
+          if (cmp !== 0) return cmp;
+          const [field] = Object.keys(key) as Array<"id" | "createdAt">;
+          const av = a[field] instanceof Date ? (a[field] as Date).getTime() : a[field];
+          const bv = b[field] instanceof Date ? (b[field] as Date).getTime() : b[field];
+          return av < bv ? -1 : av > bv ? 1 : 0;
+        }, 0),
+      ).map((row) => row.id);
+    expect(sortBy(rows)).toEqual(["c0", "c1", "c2", "c3"]);
+    expect(sortBy([...rows].reverse())).toEqual(["c0", "c1", "c2", "c3"]);
+  });
+
   it("scans the pending outbox by the indexed queueType column, not a requestPayload JSON predicate (#1272)", async () => {
     mocks.findManyOperations.mockResolvedValue([]);
 
@@ -2472,7 +2506,8 @@ describe("processQueuedXeroOutboxOperations", () => {
     // The legacy `requestPayload->>'queueType'` OR predicate is gone.
     expect(args.where.OR).toBeUndefined();
     expect(JSON.stringify(args.where)).not.toContain("requestPayload");
-    expect(args.orderBy).toEqual({ createdAt: "asc" });
+    // #4663: oldest first, `createdAt` ties broken by `id`.
+    expect(args.orderBy).toEqual([{ createdAt: "asc" }, { id: "asc" }]);
     expect(args.take).toBe(7);
   });
 
