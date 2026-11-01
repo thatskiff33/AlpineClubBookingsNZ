@@ -11,7 +11,7 @@
  * holds no nested write, or a type. Anything else is reported. A name built at
  * runtime from pieces is outside what any static scan can see.
  */
-import { readdirSync, readFileSync } from "node:fs";
+import { readdirSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 import ts from "typescript";
 
@@ -112,7 +112,3 @@ export function delegateUsesBeyondReads(source: string, fileName: string, isDele
   return uses;
 }
 
-/** The file's text, for a census that reads it whole. */
-export function readSource(root: string, file: string): string {
-  return readFileSync(join(root, file), "utf8");
-}
