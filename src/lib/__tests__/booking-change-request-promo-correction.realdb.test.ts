@@ -224,7 +224,7 @@ async function seed(options: { priorFreeNightsUsed?: number } = {}): Promise<voi
       nights: [new Date("2026-06-01T00:00:00.000Z"), new Date("2026-06-02T00:00:00.000Z")],
       status: "COMPLETED",
     });
-    const redemption = await prisma.promoRedemption.create({
+    await prisma.promoRedemption.create({
       data: {
         promoCodeId: PROMO_ID,
         bookingId: PRIOR_BOOKING_ID,
@@ -235,17 +235,8 @@ async function seed(options: { priorFreeNightsUsed?: number } = {}): Promise<voi
         eligibleGuestCount: 1,
       },
     });
-    await prisma.promoRedemptionAllocation.create({
-      data: {
-        promoRedemptionId: redemption.id,
-        promoCodeId: PROMO_ID,
-        bookingId: PRIOR_BOOKING_ID,
-        memberId: OWNER_ID,
-        discountCents: options.priorFreeNightsUsed * STORED_NIGHT_CENTS,
-        priceAdjustmentCents: -options.priorFreeNightsUsed * STORED_NIGHT_CENTS,
-        freeNightsUsed: options.priorFreeNightsUsed,
-      },
-    });
+    // The member's allocation is minted from this row by the database's own
+    // trigger (`sync_promo_redemption_allocation_from_redemption`).
     await prisma.promoCode.update({ where: { id: PROMO_ID }, data: { currentRedemptions: 1 } });
   }
 }

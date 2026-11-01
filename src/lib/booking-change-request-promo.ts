@@ -95,8 +95,6 @@ export const storedPromoChangeSchema = z
   .object({ ...promoChangeShape, enteredBy: promoChangeStampSchema })
   .refine(wellShaped, { message: PROMO_CHANGE_SHAPE_MESSAGE });
 
-export type StoredPromoChange = z.infer<typeof storedPromoChangeSchema>;
-
 /** The batch edit's own promo fields for a change — nothing else travels. */
 export function promoChangeBatchFields(
   change: PromoChangeFields,
