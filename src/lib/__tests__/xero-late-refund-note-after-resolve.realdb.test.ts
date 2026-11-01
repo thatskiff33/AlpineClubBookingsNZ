@@ -17,9 +17,16 @@
  *
  * Proven: when the stalled run returns with note B, note A stays recorded on
  * the row and linked, B is never linked, never takes the payment's pointer and
- * is never settled, and the officers are alerted once naming B. And the
- * control: a reset with no resolve records B as before (a success lands on a
- * row no claim holds), settles it and completes the row.
+ * is never settled, and B is audited once and the officers alerted once. When
+ * the officer resolved with B itself (Xero committed it, its answer was lost),
+ * nothing is written or alerted. A plain resolve (no note recorded,
+ * `claimResolvedInXeroMark`) lets B land, settle and complete as before #4426,
+ * with #4374's alert. The control: a Mark failed with no resolve records B as
+ * before. And the other half of the race, each transaction held open while the
+ * other runs: the create's record holding the Payment row (a canonical note)
+ * makes the resolve's claim wait on it, and holding only the operation row (a
+ * per-refund note) makes the resolve's `updateMany` wait on that row; either
+ * way the create's record stands and the resolve's claim is lost.
  *
  * Ordinary Vitest runs skip the whole file. It reuses the guarded, disposable
  * loopback PostgreSQL `concurrency-lock-races.realdb.test.ts` provisions, which
@@ -29,6 +36,7 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 import { assertSafeRaceDbUrl } from "@/lib/__tests__/support/race-db-url";
+import { realElapsedMs } from "@/lib/__tests__/helpers/clock";
 
 const RUN = process.env.RUN_CONCURRENCY_RACE_TESTS === "1";
 const RACE_DB_URL = process.env.CONCURRENCY_RACE_DATABASE_URL ?? "";
@@ -184,22 +192,112 @@ let prisma: (typeof import("@/lib/prisma"))["prisma"];
       expect(marked).toMatchObject({ outcome: "marked", returnedTo: "FAILED" });
     }
 
-    /** "Resolve by hand" recording note A, through its one writer (#4421), on the row it asks a number of. */
-    async function resolveWithNoteA(operationId: string) {
+    /** "Resolve by hand" recording a note (A by default), through its one writer (#4421); answers the claim's outcome. */
+    async function resolveRecording(operationId: string, noteId = NOTE_A, number = "CN-A", options: { checkPrompt?: boolean } = {}) {
       const { claimResolveRecordingRefundNote, resolveCreditNotePrompt } = await import("@/lib/xero-resolve-refund-note");
-      expect(resolveCreditNotePrompt(await prisma.xeroSyncOperation.findUniqueOrThrow({ where: { id: operationId } }))).toMatchObject({
-        resolveAsksCreditNoteNumber: true,
-        resolveCreditNoteAmountCents: 20_000,
-      });
+      if (options.checkPrompt !== false) {
+        expect(resolveCreditNotePrompt(await prisma.xeroSyncOperation.findUniqueOrThrow({ where: { id: operationId } }))).toMatchObject({
+          resolveAsksCreditNoteNumber: true,
+          resolveCreditNoteAmountCents: 20_000,
+        });
+      }
       const claim = await claimResolveRecordingRefundNote({
         operationId,
         paymentId: PAYMENT_ID,
-        note: { creditNoteId: NOTE_A, creditNoteNumber: "CN-A", amountCents: 20_000, status: "AUTHORISED", total: 200, updatedDateUTC: null },
+        note: { creditNoteId: noteId, creditNoteNumber: number, amountCents: 20_000, status: "AUTHORISED", total: 200, updatedDateUTC: null },
         readAt: new Date(),
         reason: "Made the note by hand in Xero",
         resolvedById: OFFICER_ID,
       });
-      expect(claim.outcome).toBe("claimed");
+      return claim.outcome;
+    }
+
+    async function resolveWithNoteA(operationId: string) {
+      expect(await resolveRecording(operationId)).toBe("claimed");
+    }
+
+    /** The late-note audit rows written for this operation. */
+    async function lateNoteAudits(operationId: string) {
+      const { LATE_REFUND_NOTE_NOT_RECORDED_ACTION } = await import("@/lib/xero-refund-note-record");
+      return prisma.auditLog.findMany({ where: { action: LATE_REFUND_NOTE_NOT_RECORDED_ACTION, entityId: operationId }, select: { category: true, targetId: true, metadata: true } });
+    }
+
+    /**
+     * A completed hand-back on the payment recorded by the real writers with no
+     * note yet, and its own note queued by the real enqueue as a paid-another-way
+     * close's: a per-refund note, which never takes the payment's pointer.
+     */
+    async function queuedPerRefundNote(): Promise<string> {
+      const { applyLocalRefundAllocation } = await import("@/lib/payment-transactions");
+      const { postHandBackLedgerLine } = await import("@/lib/booking-ledger-hand-back");
+      await prisma.$transaction(async (tx) => {
+        await tx.manualRefundTask.create({
+          data: {
+            id: HAND_BACK_ID, bookingId: BOOKING_ID, paymentId: PAYMENT_ID, kind: "CANCELLED_BOOKING_HAND_BACK", amountCents: 20_000, raisedAmountCents: 20_000,
+            status: "COMPLETED", completedAt: new Date(), completedByMemberId: OFFICER_ID, reason: P,
+          },
+        });
+        await applyLocalRefundAllocation({ paymentId: PAYMENT_ID, amountCents: 20_000, store: tx });
+        await postHandBackLedgerLine({
+          bookingId: BOOKING_ID, lodgeId: LODGE_ID, manualRefundTaskId: HAND_BACK_ID, amountCents: 20_000, refundMethod: "internet-banking",
+          paymentSource: "INTERNET_BANKING", officerMemberId: OFFICER_ID, store: tx,
+        });
+      });
+      const { enqueueXeroRefundCreditNoteOperation } = await import("@/lib/xero-operation-outbox");
+      const queued = await enqueueXeroRefundCreditNoteOperation(PAYMENT_ID, 20_000, { refundMethod: "internet-banking", paidAnotherWayTaskId: HAND_BACK_ID });
+      expect(queued.queueOperationId).toEqual(expect.any(String));
+      return queued.queueOperationId!;
+    }
+
+    /**
+     * Holds the create's record transaction open at its link write (after its
+     * pointer UPDATE, when it takes one, and its row claim), reporting that
+     * transaction's backend pid, until `release()`.
+     */
+    async function holdRecordAtLink() {
+      const sync = await import("@/lib/xero-sync");
+      const original = sync.upsertXeroObjectLink;
+      let reportPid!: (pid: number) => void;
+      const holderPid = new Promise<number>((resolve) => (reportPid = resolve));
+      let release!: () => void;
+      const released = new Promise<void>((resolve) => (release = resolve));
+      vi.spyOn(sync, "upsertXeroObjectLink").mockImplementation((async (link: { xeroObjectId: string }, options?: { store?: { $queryRaw: (q: TemplateStringsArray) => Promise<Array<{ pid: number }>> } }) => {
+        if (link.xeroObjectId === NOTE_B && options?.store) {
+          const [{ pid }] = await options.store.$queryRaw`SELECT pg_backend_pid() AS "pid"`;
+          reportPid(pid);
+          await released;
+        }
+        return original(link as never, options as never);
+      }) as never);
+      return { holderPid, release };
+    }
+
+    /** Poll until a backend waits on a lock `blockerPid` holds. */
+    async function waitForBlockedBy(blockerPid: number) {
+      const startedAt = process.hrtime.bigint();
+      while (realElapsedMs(startedAt) < 10_000) {
+        const rows = await prisma.$queryRaw<Array<{ count: number }>>`
+          SELECT COUNT(*)::int AS "count" FROM pg_stat_activity
+          WHERE datname = current_database() AND ${blockerPid}::int = ANY(pg_blocking_pids(pid))
+        `;
+        if ((rows[0]?.count ?? 0) >= 1) return;
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      throw new Error(`Timed out waiting for the resolve to queue behind the create's record held by pid ${blockerPid}.`);
+    }
+
+    /**
+     * Which table's row the backend blocked by `blockerPid` is queued on: a row-lock
+     * waiter holds the row's `tuple` lock while it waits on the holder's transaction.
+     */
+    async function rowWaitedOn(blockerPid: number): Promise<string[]> {
+      const rows = await prisma.$queryRaw<Array<{ relname: string }>>`
+        SELECT DISTINCT c.relname FROM pg_locks l
+        JOIN pg_class c ON c.oid = l.relation
+        JOIN pg_stat_activity a ON a.pid = l.pid
+        WHERE l.locktype = 'tuple' AND ${blockerPid}::int = ANY(pg_blocking_pids(a.pid))
+      `;
+      return rows.map((row) => row.relname);
     }
 
     /** The row, the payment's pointer, and every link of either note, by note. */
@@ -242,10 +340,116 @@ let prisma: (typeof import("@/lib/prisma"))["prisma"];
       expect(send).toHaveBeenCalledTimes(1);
       expect(send).toHaveBeenCalledWith(expect.objectContaining({
         errorType: "XERO_SUCCESS_AFTER_RESOLUTION",
-        errorMessage: expect.stringMatching(/CREDIT_NOTE CN-B \(Xero id race-4426-note-b\).*did not record it.*CREDIT_NOTE CN-A, which the resolve recorded/),
+        errorMessage: expect.stringMatching(/recording credit note CN-A.*credit note CN-B for \$200\.00 \(Xero id race-4426-note-b, booking race-4426-booking\).*did not record it/),
       }));
       const { xeroSuccessAfterResolutionAlertKey } = await import("@/lib/xero-success-after-resolution-alert");
       expect(await prisma.alertCooldown.count({ where: { key: xeroSuccessAfterResolutionAlertKey(operationId, NOTE_B) } })).toBe(1);
+      // The durable record of B: one `xero` audit row naming it, the amount and the booking.
+      expect(await lateNoteAudits(operationId)).toEqual([
+        {
+          category: "xero",
+          targetId: BOOKING_ID,
+          metadata: expect.objectContaining({ creditNoteId: NOTE_B, creditNoteNumber: "CN-B", amountCents: 20_000, bookingId: BOOKING_ID, recordedCreditNoteId: NOTE_A }),
+        },
+      ]);
+    });
+
+    it("MUTATION: the officer resolved with B itself (Xero committed it, its answer was lost) - the stalled run's B changes nothing and alerts nobody", async () => {
+      const operationId = await queuedRefundNote();
+      const stalled = await stalledRaise(operationId);
+      try {
+        await resetStale(operationId);
+        expect(await resolveRecording(operationId, NOTE_B, "CN-B")).toBe("claimed");
+      } finally {
+        stalled.answer();
+      }
+      await stalled.run;
+
+      expect(await recorded(operationId)).toEqual({
+        row: { status: "FAILED", xeroObjectId: NOTE_B, xeroObjectNumber: "CN-B", resolved: true, manuallyResolvedAt: undefined },
+        links: [{ xeroObjectId: NOTE_B, active: true }],
+        pointer: null,
+      });
+      // The resolve's link is the one there is: it names the resolved row.
+      const link = await prisma.xeroObjectLink.findFirstOrThrow({ where: { localId: PAYMENT_ID, xeroObjectId: NOTE_B }, select: { metadata: true } });
+      expect(link.metadata).toMatchObject({ resolvedOperationId: operationId, recordedByHand: true });
+      // Settling B is the officer's, as the resolve already assumes: the create records no payment.
+      expect(stalled.paymentsMade).toEqual([]);
+      expect(send).not.toHaveBeenCalled();
+      expect(await lateNoteAudits(operationId)).toEqual([]);
+    });
+
+    it("MUTATION: a plain resolve recorded no note - B lands, links, settles and completes as before #4426, and #4374's alert tells the officers", async () => {
+      const operationId = await queuedRefundNote();
+      const stalled = await stalledRaise(operationId);
+      const resolvedAt = new Date("2026-07-01T00:30:00.000Z");
+      try {
+        await resetStale(operationId);
+        const { claimResolvedInXeroMark } = await import("@/lib/xero-operation-resolve-guards");
+        await expect(claimResolvedInXeroMark({ id: operationId, resolvedAt, reason: "Done in Xero", resolvedById: OFFICER_ID })).resolves.toBe(true);
+      } finally {
+        stalled.answer();
+      }
+      await stalled.run;
+
+      expect(await recorded(operationId)).toEqual({
+        row: { status: "SUCCEEDED", xeroObjectId: NOTE_B, xeroObjectNumber: "CN-B", resolved: true, manuallyResolvedAt: undefined },
+        links: [{ xeroObjectId: NOTE_B, active: true }],
+        pointer: NOTE_B,
+      });
+      expect(stalled.paymentsMade).toEqual([NOTE_B]);
+      expect(send).toHaveBeenCalledTimes(1);
+      const { xeroSuccessAfterResolutionAlertKey } = await import("@/lib/xero-success-after-resolution-alert");
+      expect(await prisma.alertCooldown.count({ where: { key: xeroSuccessAfterResolutionAlertKey(operationId) } })).toBe(1);
+      expect(await lateNoteAudits(operationId)).toEqual([]);
+    });
+
+    it("race, canonical note: the create's record holding the Payment row makes the resolve's claim wait on it; the record stands and the resolve is lost", async () => {
+      const operationId = await queuedRefundNote();
+      const stalled = await stalledRaise(operationId);
+      await resetStale(operationId);
+      const held = await holdRecordAtLink();
+      stalled.answer();
+      const holder = await held.holderPid;
+      const resolve = resolveRecording(operationId, NOTE_A, "CN-A", { checkPrompt: false });
+      try {
+        await waitForBlockedBy(holder);
+        expect(await rowWaitedOn(holder)).toEqual(["Payment"]);
+      } finally {
+        held.release();
+      }
+      await stalled.run;
+      await expect(resolve).resolves.toBe("lost");
+      expect(await recorded(operationId)).toEqual({
+        row: { status: "SUCCEEDED", xeroObjectId: NOTE_B, xeroObjectNumber: "CN-B", resolved: false, manuallyResolvedAt: undefined },
+        links: [{ xeroObjectId: NOTE_B, active: true }],
+        pointer: NOTE_B,
+      });
+      expect(send).not.toHaveBeenCalled();
+    });
+
+    it("race, per-refund note (no pointer): the resolve's updateMany waits on the row the create's record holds, and loses", async () => {
+      const operationId = await queuedPerRefundNote();
+      const stalled = await stalledRaise(operationId);
+      await resetStale(operationId);
+      const held = await holdRecordAtLink();
+      stalled.answer();
+      const holder = await held.holderPid;
+      const resolve = resolveRecording(operationId, NOTE_A, "CN-A", { checkPrompt: false });
+      try {
+        await waitForBlockedBy(holder);
+        // Not the Payment row: the record took none. The resolve passed its reads and waits on the operation row.
+        expect(await rowWaitedOn(holder)).toEqual(["XeroSyncOperation"]);
+      } finally {
+        held.release();
+      }
+      await stalled.run;
+      await expect(resolve).resolves.toBe("lost");
+      const after = await recorded(operationId);
+      expect(after.row).toEqual({ status: "SUCCEEDED", xeroObjectId: NOTE_B, xeroObjectNumber: "CN-B", resolved: false, manuallyResolvedAt: undefined });
+      expect(after.links).toEqual([{ xeroObjectId: NOTE_B, active: true }]);
+      expect(after.pointer).toBeNull();
+      expect(send).not.toHaveBeenCalled();
     });
 
     it("control: a reset with no resolve - B lands on the row no claim holds (INV-INT-029), is linked, takes the pointer, is settled and completes the row, alerting nobody", async () => {
