@@ -13,3 +13,10 @@ reason: the payment_intent.succeeded dispatcher gains one first branch that
   hands a payment the app did not create to its own module
   (unrecognised-stripe-payment.ts); the branch belongs beside the dispatch it
   precedes, and everything else lives in the new module.
+
+file: src/lib/group-settlement.ts
+lines: 1667
+reason: the organiser settlement now imports GROUP_SETTLEMENT_INTENT_TYPE so
+  the charge and the webhook share one symbol. That is one import in a module
+  already over the ceiling; splitting the settlement writer to absorb it would
+  be a refactor of its own.
