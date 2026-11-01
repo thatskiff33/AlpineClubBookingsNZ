@@ -1058,6 +1058,8 @@ async function executeApprovedNewBooking(args: {
     // #3123 review — the club day the route resolved before this transaction
     // opened, shared with the modification executor above (`INV-LOCK-004`).
     todayAtClub: context.todayAtClub,
+    // #4628: the journal context the route resolved for the batch executor, before this transaction.
+    journal: context.batchPreTransaction.journal,
     effectiveMemberId: request.requestedByMemberId,
     // An officer executing a member's reviewed proposal IS an on-behalf create.
     isOnBehalf: true,

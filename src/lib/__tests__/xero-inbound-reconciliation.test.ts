@@ -122,6 +122,11 @@ const cancellationLedger = vi.hoisted(() => ({
   postCancellationLedgerLines: vi.fn<(input: unknown) => Promise<void>>(async () => {}),
 }));
 vi.mock("@/lib/booking-ledger-cancellation-sync", () => cancellationLedger);
+// #4628: the PAID claim posts the confirmation's lines; proved against PostgreSQL, observed here.
+const confirmationLedger = vi.hoisted(() => ({
+  postStoredBookingConfirmationLedgerLines: vi.fn<(...args: unknown[]) => Promise<void>>(async () => {}),
+}));
+vi.mock("@/lib/booking-ledger-confirmation-sync", () => confirmationLedger);
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
@@ -1412,6 +1417,10 @@ describe("processStoredXeroInboundEvents", () => {
       failed: 0,
       skipped: 0,
     });
+
+    // #4628: the PAID claim is the booking's confirmation, so its charge lines post too, under the same transaction.
+    expect(confirmationLedger.postStoredBookingConfirmationLedgerLines).toHaveBeenCalledTimes(1);
+    expect(confirmationLedger.postStoredBookingConfirmationLedgerLines.mock.calls[0]![1]).toBe("booking_ib_1");
 
     // #3581 (review of #3604): the paid bank transfer posts its receipt to the
     // booking ledger in this transaction. Before the fix, nothing did.

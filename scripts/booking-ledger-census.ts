@@ -113,7 +113,10 @@ function summary(report: BookingLedgerCensusReport, format: ClubFormat): string 
     );
   }
   out.push(
-    "  JOURNAL (#4627): the member-money journal's live charge components against the legacy lines it bridges, for each booking whose confirmation it holds; a booking confirmed before it is back-posted whole by M9 and not compared",
+    "  JOURNAL (#4627): the member-money journal's live charge components against the legacy lines it bridges, for each booking whose confirmation it holds and has linked; a booking confirmed before it is back-posted whole by M9 and not compared",
+  );
+  out.push(
+    "  JOURNAL_PENDING (#4628), in place of JOURNAL for a bank-transfer booking charged at its binding moment and not yet confirmed on the ledger: the journal's live charge against the booking's final price plus the change fees on its payment, or, once cancelled, the kept figure its CANCELLED snapshot froze; acknowledge a disagreement to the cent with identity JOURNAL_PENDING",
   );
   const strands = report.info.ibUnallocatedAppliedCredit;
   out.push(

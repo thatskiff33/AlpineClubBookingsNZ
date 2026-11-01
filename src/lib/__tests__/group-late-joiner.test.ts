@@ -253,6 +253,8 @@ describe("joinGroupBookingAsMember after the organiser has paid (#3672)", () => 
       expect.objectContaining({
         organiserSettled: false,
         paymentMethod: "internet_banking",
+        // #4628 (#4659 review): the create binds the joiner's charge, so it carries the journal context.
+        journal: expect.anything(),
       })
     );
   });

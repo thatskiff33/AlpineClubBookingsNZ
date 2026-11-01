@@ -1090,3 +1090,31 @@ Pins: `member-money-booking-charges.test.ts`,
 `member-money-journal-activity.test.ts`,
 `booking-ledger-projection-census-journal.test.ts`,
 `booking-ledger-journal.realdb.test.ts`.
+
+## INV-MONEY-045
+
+From Ledger M3c (#4628), a bank-transfer booking's charge is in the
+member-money journal from its binding moment: internet-banking create, switch
+to internet banking, and both school pay-on-account paths post R01 inside their
+`lock(1)` and lodge-key transaction, before any money arrives. No legacy line
+exists yet (`INV-MONEY-032`), so the door's legacy side plans, without writing,
+the lines its confirmation would post (`planConfirmationPostings`, the one plan
+the confirmation also writes), and each maps to its component by
+`journalComponentOfLegacyLine`; nothing is re-priced. R01 keeps the
+confirmation's key, so a booking charges once; its source version, `binding`,
+marks it pending. Until the legacy confirmation, an edit (R02) or cancellation
+(R04) re-states the pending charge from the same planners, the cancellation
+planner over the planned lines; a booking never bound posts nothing. The
+booking's first legacy lines, whichever door writes them (the settle, the Xero
+receipt, which now posts the confirmation's lines, an edit's auto-pay, the
+back-post), are linked to the binding R01 by source links appended to that
+sealed batch, with postings naming its receivable leg (`INV-MONEY-042`). They
+post no second charge; where a writer moved the price without posting, the
+journal is re-stated to the lines once (`chargeRestatement`), and that is
+logged. `booking-ledger:census` compares a pending charge with the booking's
+final price plus its recorded fees, or what a cancellation kept
+(`JOURNAL_PENDING`). Every booking write setting PAID or CANCELLED is
+classified as posting, not a sale, or a legacy confirmation gap the back-post
+fills. Pins: `member-money-pending-charges.test.ts`,
+`booking-sale-status-writer-census.test.ts`,
+`booking-ledger-pending-charge.realdb.test.ts`.
