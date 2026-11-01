@@ -24,7 +24,9 @@
  *   row is RUNNING), so no allocation follows an officer's takeover;
  * - #4672 review S2: Retry pressed then is refused too, and when the
  *   allocation then throws the row ends FAILED under the run's own claim, the
- *   note kept for the next retry;
+ *   note kept for the next retry; a Xero cooldown refusing its next call
+ *   gives the row back PENDING under that claim, and the next run finishes
+ *   from the note;
  * - Retry queued: the note lands on the queued row and the stalled run stops;
  *   the queued run continues from it - one note in Xero, never a second;
  * - resolve by hand: nothing written, the row stays as the officer left it
@@ -82,6 +84,7 @@ function fakeXero() {
   /** #4672 review S1/S2: a note read the test holds, so an officer can act while the run is past its record. */
   const reads = { held: null as Promise<void> | null, reached: 0 };
   let allocationFailure: Error | null = null;
+  let readFailure: Error | null = null;
   const accountingApi = {
     getInvoice: async () => ({ body: { invoices: [{ ...invoice }] } }),
     createCreditNotes: (_tenant: string, body: { creditNotes: Array<{ lineItems: Array<{ description: string; unitAmount: number }> }> }) =>
@@ -101,6 +104,11 @@ function fakeXero() {
     getCreditNote: async (_tenant: string, id: string) => {
       reads.reached += 1;
       await reads.held;
+      if (readFailure) {
+        const failure = readFailure;
+        readFailure = null;
+        throw failure;
+      }
       return { body: { creditNotes: [structuredClone(notes.get(id))] } };
     },
     createCreditNoteAllocation: async (_tenant: string, id: string, body: { allocations: Array<{ invoice: { invoiceID: string }; amount: number }> }) => {
@@ -140,7 +148,8 @@ function fakeXero() {
     }
   }
   const failNextAllocation = (error: Error) => { allocationFailure = error; };
-  return { accountingApi, creates, allocations, notes, reached, holdNoteReads, readReached, failNextAllocation };
+  const failNextRead = (error: Error) => { readFailure = error; };
+  return { accountingApi, creates, allocations, notes, reached, holdNoteReads, readReached, failNextAllocation, failNextRead };
 }
 
 (RUN ? describe : describe.skip)(
@@ -412,6 +421,21 @@ function fakeXero() {
       // Now the officer's Retry takes: the queued run finishes from the kept note, never raising a second.
       vi.setSystemTime(new Date("2026-07-01T00:40:00.000Z"));
       await retry(operationId);
+      await expect(runOutbox()).resolves.toMatchObject({ succeeded: 1, failed: 0 });
+      expect(await prisma.xeroSyncOperation.findUniqueOrThrow({ where: { id: operationId } })).toMatchObject({ status: "SUCCEEDED", xeroObjectId: NOTE_LATE });
+      expect(xero.creates).toHaveLength(1);
+      expect(xero.allocations).toEqual([NOTE_LATE]);
+    });
+
+    it("MUTATION (#4672 review S1/S2): the note re-took the row, then a Xero cooldown refuses the run's next call before any request - the row goes back PENDING under the run's claim, and the next run finishes from the note", async () => {
+      const { operationId, run, release } = await landedAndHeld();
+      xero.failNextRead(Object.assign(new Error("Xero cooldown: transient outage"), { name: "XeroTransientOutageError", preHttp: true }));
+      release();
+      await expect(run).resolves.toMatchObject({ succeeded: 0, failed: 0, skipped: 1, cooldownDeferred: 1 });
+      expect(await prisma.xeroSyncOperation.findUniqueOrThrow({ where: { id: operationId } })).toMatchObject({
+        status: "PENDING", startedAt: null, xeroObjectId: NOTE_LATE, manuallyResolvedAt: null,
+      });
+
       await expect(runOutbox()).resolves.toMatchObject({ succeeded: 1, failed: 0 });
       expect(await prisma.xeroSyncOperation.findUniqueOrThrow({ where: { id: operationId } })).toMatchObject({ status: "SUCCEEDED", xeroObjectId: NOTE_LATE });
       expect(xero.creates).toHaveLength(1);
