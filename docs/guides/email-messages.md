@@ -132,7 +132,11 @@ reduction that goes back partly to the card and partly as account credit names
 both. A reduction that
 cancels the member's unpaid additional payment outright adds "The additional
 payment we asked for has been cancelled, so you no longer need to pay it."
-(#3954).
+(#3954). An amount still to pay is named by one rule at every edit: on a
+booking the club asks by card it reads "An additional payment of $X is
+required.", also while the card request waits to be retried; on a booking paid
+by internet banking it names an Internet Banking payment against the Xero
+invoice; any other amount still to pay is named without a method (#4052).
 
 `{{refundSentence}}` on the **Refund Appeal Approved** message works the same
 way. A card refund reads "A refund of $X will be processed to your original

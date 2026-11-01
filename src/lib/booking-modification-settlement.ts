@@ -7,10 +7,12 @@ import type { RetiredAdditionalAsk } from "@/lib/additional-ask-reduction";
 import {
   cancelRetiredAdditionalAsksNow,
   readReissuedAskRecovery,
+  reissueClosedUnminted,
   type ReissuedAskRecovery,
   writeReissuedAskUnderRecovery,
 } from "@/lib/additional-ask-reissue";
-import { PENDING_ASK_NETTED_BY_REDUCTION_NOTE } from "@/lib/additional-ask-recovery-close";
+import { asksMemberCard } from "@/lib/additional-ask-email-terms";
+import { settleLostReissuedAskFence } from "@/lib/reissued-ask-abandoned-intent";
 import { queueFoldedReissuedAskInvoices, queueReissuedAskSupplementaryInvoice } from "@/lib/reissued-ask-invoice";
 import {
   mintedIntentCustomerId,
@@ -324,10 +326,7 @@ const ASK_RETIRED_UNMINTED: ModificationAdditionalAskMint = { ...NOTHING_MINTED,
 function reissueNotMinted(
   recovery: Pick<ReissuedAskRecovery, "status" | "lastError"> | null,
 ): ModificationAdditionalAskMint {
-  const nettedOff =
-    recovery?.status === PaymentRecoveryOperationStatus.SUCCEEDED &&
-    recovery.lastError === PENDING_ASK_NETTED_BY_REDUCTION_NOTE;
-  return nettedOff ? ASK_RETIRED_UNMINTED : NOTHING_MINTED;
+  return reissueClosedUnminted(recovery) === "netted" ? ASK_RETIRED_UNMINTED : NOTHING_MINTED;
 }
 
 function mintedAsk(pi: { id: string; client_secret: string | null }, live: boolean): ModificationAdditionalAskMint {
@@ -336,18 +335,6 @@ function mintedAsk(pi: { id: string; client_secret: string | null }, live: boole
     additionalPaymentIntentId: pi.id,
     additionalAskRetired: !live,
   };
-}
-
-/**
- * #3954 round 9: the additional figure a member-facing message may name as
- * due. An ask a reduction retired before it was offered is owed by nobody -
- * that reduction's own message told the member - so it is never named.
- */
-export function additionalAmountToName(
-  amountCents: number,
-  mint: Pick<ModificationAdditionalAskMint, "additionalAskRetired">,
-): number {
-  return mint.additionalAskRetired ? 0 : amountCents;
 }
 
 /**
@@ -438,15 +425,10 @@ export async function createModificationAdditionalPaymentIntent(
     retired: result.retiredAdditionalAsks,
   });
 
-  if (
-    result.additionalAsk.amountCents <= 0 ||
-    // #3954: a re-issued ask was already asked of this card, so a credit-paid
-    // ($0) booking whose reduction captured nothing still mints it.
-    !(result.hasSucceededPayment || result.additionalAsk.reissuesUnpaidAsk) ||
-    !result.paymentId
-  ) {
-    return NOTHING_MINTED;
-  }
+  // #3954: a re-issued ask was already asked of this card, so a credit-paid
+  // ($0) booking whose reduction captured nothing still mints it. #4052: the
+  // member's email names the method by this same test.
+  if (!asksMemberCard(result) || !result.paymentId) return NOTHING_MINTED;
 
   // #4316: a booking ended since the edit committed is asked nothing, and owes nothing.
   if (await bookingEndedBeforeAskMint(bookingId, result.bookingModificationId)) return ASK_RETIRED_UNMINTED;
@@ -550,12 +532,9 @@ export async function createModificationAdditionalPaymentIntent(
           "A re-issued additional ask's recovery moved while the door minted it (#3954); nothing written - the recovery's owner asks the member",
         );
         // Final review: whoever moved it decides whether it is still owed. A
-        // failed re-read names it, as before.
-        const moved = await readReissuedAskRecovery(result.bookingModificationId).catch((err) => {
-          logger.error({ err, bookingId }, "Could not re-read a re-issued ask's recovery; the email names it (#3954)");
-          return null;
-        });
-        return reissueNotMinted(moved);
+        // failed re-read names it, as before. #4052: an intent this mint left
+        // with no owner is cancelled at Stripe, outside any transaction.
+        return reissueNotMinted(await settleLostReissuedAskFence({ bookingId, bookingModificationId: result.bookingModificationId, paymentIntentId: pi.id, stripeKey: reissueRecovery.paymentIntentId }));
       }
       await cancelSupersededAdditionalIntentsNow({ format, bookingId, paymentId, queued: superseded, newPaymentIntentId: pi.id });
       // #4316: a cancel that committed while this minted could not see it.

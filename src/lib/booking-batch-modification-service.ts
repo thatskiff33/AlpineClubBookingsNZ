@@ -65,8 +65,8 @@ import { bookingHasOpenFinancialReview } from "@/lib/booking-financial-review-vi
 import { linkModificationToOutstandingChangeRequest } from "@/lib/booking-change-request-linkage";
 import { getDefaultLodgeId } from "@/lib/lodges";
 import { assertBookingEnvelopeInvariants } from "@/lib/booking-envelope-invariants";
+import { additionalAskEmailTerms } from "@/lib/additional-ask-email-terms";
 import {
-  additionalAmountToName,
   createModificationAdditionalPaymentIntent,
   type ModificationAdditionalAskMint,
   drainSupersededPrimaryIntents,
@@ -2702,8 +2702,6 @@ async function dispatchBatchPostTransactionSideEffects({
     result.booking.id,
   );
 
-  // #3954 round 9: an ask a reduction retired before it was offered is not named.
-  const namedAdditionalCents = additionalAmountToName(result.additionalAmountCents, additionalMint);
   sendBookingModifiedEmail({
     bookingId: result.booking.id,
     recipientMemberId: result.memberId,
@@ -2722,16 +2720,10 @@ async function dispatchBatchPostTransactionSideEffects({
     refundAmountCents: result.refundAmountCents,
     accountCreditAmountCents: result.accountCreditAmountCents,
     appliedCreditGivenBackCents: result.appliedCreditGivenBackCents,
-    additionalAmountCents: namedAdditionalCents,
+    // #4052: the figure and its method, decided together; never a retired ask (#3954 round 9).
+    ...additionalAskEmailTerms(result, additionalMint),
     billedToOrganiserCents: result.billedToOrganiserCents, // #4299
     unpaidAskCancelled: result.unpaidAskCancelled,
-    additionalPaymentMethod:
-      namedAdditionalCents > 0 &&
-      result.paymentSource === PaymentSource.INTERNET_BANKING
-        ? "INTERNET_BANKING"
-        : namedAdditionalCents > 0 && result.hasSucceededPayment
-          ? "STRIPE"
-          : undefined,
     paymentReference: result.paymentReference,
     xeroInvoiceNumber: result.xeroInvoiceNumber,
     // #2390: if a usage cap stopped the promotion reaching somebody this edit

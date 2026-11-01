@@ -14,7 +14,6 @@ import {
 } from "@/lib/booking-dependant-identity-doors";
 import { hostingCoverageParticipantRetryResponse } from "@/lib/adult-member-hosting-retry-response";
 import {
-  PaymentSource,
   type AgeTier,
   type BookingGuest,
   type MemberGuestConsentStatus,
@@ -77,7 +76,8 @@ import { foldWaitingReissuedAsks } from "@/lib/additional-ask-reissue";
 import { NO_FOLDED_REISSUED_ASKS, NO_UNPAID_ASK_SETTLEMENT, unpaidAskOffsetHistory, type FoldedReissuedAsks } from "@/lib/unpaid-ask-offset-marker";
 import { resolveOrganiserBillingForNet } from "@/lib/organiser-billing";
 import { primaryInvoiceSettlementHistory, writeEditOnPayment } from "@/lib/booking-primary-invoice-claim";
-import { additionalAmountToName, createModificationAdditionalPaymentIntent } from "@/lib/booking-modification-settlement";
+import { createModificationAdditionalPaymentIntent } from "@/lib/booking-modification-settlement";
+import { additionalAskEmailTerms } from "@/lib/additional-ask-email-terms";
 import logger from "@/lib/logger";
 import { requiredNightPriceCents } from "@/lib/required-price-cents";
 import { z } from "zod";
@@ -1389,7 +1389,6 @@ export async function POST(
         result.booking.id,
       );
 
-      const namedAdditionalCents = additionalAmountToName(result.additionalAmountCents, additionalMint); // #3954 round 9: never a retired ask
       sendBookingModifiedEmail({
         bookingId: result.booking.id,
         recipientMemberId: result.memberId,
@@ -1409,17 +1408,10 @@ export async function POST(
         // Guest adds never decrease the price, so nothing is refunded.
         refundByBankTransfer: null,
         appliedCreditGivenBackCents: 0,
-        additionalAmountCents: namedAdditionalCents,
+        ...additionalAskEmailTerms(result, additionalMint), // #4052: the figure and its method, decided together
         billedToOrganiserCents: result.billedToOrganiserCents, // #4299
         // A guest add only raises a price.
         unpaidAskCancelled: false,
-        additionalPaymentMethod:
-          namedAdditionalCents > 0 &&
-          result.paymentSource === PaymentSource.INTERNET_BANKING
-            ? "INTERNET_BANKING"
-            : namedAdditionalCents > 0 && result.hasSucceededPayment
-              ? "STRIPE"
-              : undefined,
         paymentReference: result.paymentReference,
         xeroInvoiceNumber: result.xeroInvoiceNumber,
         // #2390: same words as the edit preview and the booking history.

@@ -708,6 +708,9 @@ census: a narrowed type or filter list copied from it must carry all six.
 ```text
 member/admin starts edit -> quoted delta -> local booking mutation
 positive delta -> additional payment or supplementary Xero invoice
+  (the Booking Modified email names it by one rule: a card ask as a card
+  payment even while its failed mint waits for retry, an Internet Banking
+  booking's invoice as Internet Banking - #4052)
   (minted after the edit's commit; a booking CANCELLED or BUMPED by then is
   asked nothing, and an ask a cancel landing mid-mint could not see is retired
   FAILED by the minter - the door's, the recovery runner's or a currency
@@ -819,6 +822,18 @@ after commit, the minter
        in one transaction with the row (recovery moved meanwhile -> writes nothing;
        the runner, or a later reduction, owns it) -> queue its own supplementary
        invoice, WAITING_PAYMENT on the intent (decision A)
+       the recovery ended SUCCEEDED without this intent (a later reduction
+         netted it off, an increase folded it in, or the runner wrote another
+         intent under an amount-suffixed key), or is still PROCESSING but
+         already repointed at another intent, and no row or recovery names it
+         -> that intent cancelled at Stripe (`abandoned`, best-effort, after
+         commit; logged as `reissued-ask.abandoned-intent-cleanup`; #4052); a
+         runner claim still naming the key, or one that wrote this same
+         intent, keeps it
+  -> the new intent's row re-read before its invoice and secret: retired only
+       when withdrawn, or FAILED with a queued Stripe cancellation, the
+       supersede stamp, or Stripe reporting the intent cancelled or gone; a
+       declined card (FAILED alone, still open at Stripe) is payable (#4052)
 later increase while a re-issue still waits -> folds it in: one ask for both,
   the re-issue's recovery closed under the same fence, the fold recorded on the
   increase's history (its replay asks again; the re-issue's invoice waits on
