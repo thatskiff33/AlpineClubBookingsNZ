@@ -120,6 +120,7 @@ function answerRefundsAsStripeWould(params: { paymentIntentId: string; amountCen
     let refundSpy: { mockRestore: () => void } | undefined;
     beforeEach(async () => {
       await clearRun();
+      await prisma.booking.update({ where: { id: BOOKING_ID }, data: { status: "CANCELLED" } });
       const stripeModule = await import("@/lib/stripe");
       refundSpy = vi.spyOn(stripeModule, "processRefund").mockImplementation(answerRefundsAsStripeWould);
     });
@@ -299,8 +300,10 @@ function answerRefundsAsStripeWould(params: { paymentIntentId: string; amountCen
       return first;
     }
 
-    it("an edit note reconciled before its hand-back moves no cash, including on a later recount; completion records it once (#4315 item 1)", async () => {
+    it.each([false, true])("an early edit note moves no cash before completion, including dismissal/reopen=%s (#4315 item 1)", async (dismissAndReopen) => {
       await paid();
+      // An edit on a live booking can also be dismissed and reopened by an officer.
+      await prisma.booking.update({ where: { id: BOOKING_ID }, data: { status: "CONFIRMED" } });
       const modificationId = `${P}-early-edit`;
       const noteId = `${P}-early-edit-note`;
       // Only the edit's stored price change is seeded. Its hand-back and note
@@ -332,12 +335,35 @@ function answerRefundsAsStripeWould(params: { paymentIntentId: string; amountCen
         modificationRefundAmountsByPaymentId: new Map(), retryPaymentIds: [PAYMENT_ID],
       });
       const refunded = async () => (await prisma.payment.findUniqueOrThrow({ where: { id: PAYMENT_ID } })).refundedAmountCents;
+      // Simulate the mirror an old inbound worker left; the task and note
+      // above were created by real writers. Normal inbound resync must repair
+      // this historical projection without a separate forced recount.
+      await prisma.payment.update({ where: { id: PAYMENT_ID }, data: { refundedAmountCents: 5_000, status: "PARTIALLY_REFUNDED" } });
       await reconcile(noteId, 5_000, "AUTHORISED", true);
       expect(await refunded()).toBe(0);
       await recount();
       expect(await refunded()).toBe(0);
       expect(await prisma.bookingLedgerLine.count({ where: { bookingId: BOOKING_ID, kind: "BANK_REFUND" } })).toBe(0);
+      if (dismissAndReopen) {
+        const { resolveManualRefundTask } = await import("@/lib/manual-refund-task-resolution");
+        await resolveManualRefundTask({
+          taskId: task.id, resolution: "dismissed", note: "No bank payment was made.",
+          actingMemberId: OFFICER_ID, confirmedAmountCents: null,
+          direction: "REFUND_TO_MEMBER", recordedNightPrices: null,
+        }, CLUB_FORMAT_TEST);
+        expect(await prisma.manualRefundTask.findUniqueOrThrow({ where: { id: task.id } })).toMatchObject({ status: "DISMISSED" });
+        await reconcile(noteId, 5_000, "AUTHORISED", true);
+        await recount();
+        expect(await refunded()).toBe(0);
+        expect(await prisma.bookingLedgerLine.count({ where: { bookingId: BOOKING_ID, kind: "BANK_REFUND" } })).toBe(0);
+        const { reopenManualRefundTask } = await import("@/lib/manual-refund-task-reopen");
+        await reopenManualRefundTask({ taskId: task.id, actingMemberId: OFFICER_ID, note: "The bank refund is still owed." });
+        await reconcile(noteId, 5_000, "AUTHORISED", true);
+        await recount();
+        expect(await refunded()).toBe(0);
+      }
       await complete(task.id);
+      expect(await prisma.manualRefundTask.findUniqueOrThrow({ where: { id: task.id } })).toMatchObject({ status: "COMPLETED" });
       expect(await refunded()).toBe(5_000);
       await reconcile(noteId, 5_000, "AUTHORISED", true);
       await recount();

@@ -1093,7 +1093,9 @@ An edit's credit note can reach Xero before the treasurer sends its refund
 while its matching `editRefundHandBackOccurrenceKey` task is OPEN or DISMISSED.
 Once COMPLETED, its note counts normally; the completion already recorded the
 cash. The rule lives in `noCashModificationNoteIds`, shared by the current-note
-sync and later recounts. Separately scoped review notes and legacy edits with
+sync and later recounts. A no-cash note retains its matched payment with zero
+contribution, so resync also corrects totals inflated by an older worker.
+Separately scoped review notes and legacy edits with
 no matching hand-back keep their existing treatment. The cancellation's card
 branch explicitly queues `refundMethod: "card"`, so its note's wording and
 settlement method survive a worker or retry without inferring them from the
