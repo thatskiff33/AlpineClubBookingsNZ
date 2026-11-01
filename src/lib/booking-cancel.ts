@@ -2436,7 +2436,6 @@ async function performBookingCancellation(
       }
     }
 
-    // Queue the Xero credit note durably (allocated against the original invoice).
     try {
       // #4097: the card refund's note, for what the card refund carries; the rest is the hand-back's.
       const queuedCreditNote = await enqueueXeroRefundCreditNoteOperation(
@@ -2444,6 +2443,7 @@ async function performBookingCancellation(
         plannedCardRefundCents,
         {
           createdByMemberId: sessionUserId,
+          refundMethod: "card",
         }
       );
 

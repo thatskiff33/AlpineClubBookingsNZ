@@ -2958,7 +2958,7 @@ describe("cancelBooking credit refunds", () => {
         );
         // The card's own refund is what the plan carries, and its event says it is a part.
         expect(mocks.refundPaymentTransactions).toHaveBeenCalledWith(expect.objectContaining({ amountCents: 3000 }));
-        expect(mocks.enqueueXeroRefundCreditNoteOperation).toHaveBeenCalledWith("payment_1", 3000, expect.anything());
+        expect(mocks.enqueueXeroRefundCreditNoteOperation).toHaveBeenCalledWith("payment_1", 3000, expect.objectContaining({ refundMethod: "card" }));
         expect(mocks.recordBookingEvent).toHaveBeenCalledWith(
           expect.objectContaining({ type: "REFUNDED", amountCents: 3000, reason: "$30.00 of the 50% refund ($50.00) refunded to the original payment method." }),
         );
