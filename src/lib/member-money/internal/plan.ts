@@ -304,9 +304,13 @@ function revenueLines(
  */
 function payloadHashOf(batch: Omit<BuiltBatch, "event"> & { event: Omit<BuiltBatch["event"], "payloadHash"> }): string {
   const sorted = <T>(rows: readonly T[]) => [...rows].map(stableStringify).sort();
-  const { reason: _reason, actorMemberId: _actor, ...event } = batch.event;
+  const event = batch.event;
   return stableDigest({
-    event: { ...event, effectiveAt: event.effectiveAt.toISOString() },
+    event: {
+      eventKey: event.eventKey, kind: event.kind, origin: event.origin,
+      sourceKind: event.sourceKind, sourceIdentity: event.sourceIdentity, sourceVersion: event.sourceVersion,
+      effectiveAt: event.effectiveAt.toISOString(), effectiveDate: event.effectiveDate,
+    },
     journal: batch.journal,
     sources: sorted(batch.sources),
     obligations: sorted(batch.obligations),
