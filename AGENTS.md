@@ -54,7 +54,7 @@ invariant's file by its permanent id with
 | Environment variables, secrets, setup, deployment configuration | — | [CONFIGURATION.md](CONFIGURATION.md) |
 | A screen, navigation path, or admin area's UI | — | [UX_FLOW_MAP.md](docs/UX_FLOW_MAP.md), that area's section; [COVERAGE_MATRIX.md](docs/COVERAGE_MATRIX.md) |
 | Tests, the frozen clock, E2E | — | [TESTING.md](docs/TESTING.md#the-frozen-test-clock), [END_TO_END_TEST_MATRIX.md](docs/END_TO_END_TEST_MATRIX.md), [E2E_PLAYWRIGHT.md](docs/E2E_PLAYWRIGHT.md#flake-invariants--read-before-writing-a-spec-issue-2302) |
-| Auth, sessions, tokens, permissions | — | [SECURITY.md](docs/SECURITY.md), [SECURITY-ATTACK-SURFACE.md](docs/SECURITY-ATTACK-SURFACE.md#route-family-coverage), [TOKEN_HASHING.md](docs/TOKEN_HASHING.md) |
+| Auth, sessions, tokens, permissions | `INV-AUTH` → [authentication.md](docs/invariants/authentication.md) | [SECURITY.md](docs/SECURITY.md), [SECURITY-ATTACK-SURFACE.md](docs/SECURITY-ATTACK-SURFACE.md#route-family-coverage), [TOKEN_HASHING.md](docs/TOKEN_HASHING.md) |
 | Documentation, including an invariant entry | — | [STYLE_GUIDE.md](docs/STYLE_GUIDE.md), [WORD_BUDGETS.md](docs/invariants/WORD_BUDGETS.md) |
 | Bounded code, import or Prisma context | — | [SCOPED_CONTEXT.md](docs/agents/SCOPED_CONTEXT.md) |
 | A new worktree's first `pnpm` command; Docker a lane starts | — | [CODEX_WORKFLOW.md](docs/agents/CODEX_WORKFLOW.md) |
@@ -105,9 +105,9 @@ Add a row for a doc an agent must reach; cite ids, never line numbers
   bounded exception.
 - Tests never use the real calendar: today is frozen at
   `2026-07-01T00:00:00.000Z`; elapsed time uses `realElapsedMs`, never
-  `Date.now()` ([`TESTING.md`](docs/TESTING.md#the-frozen-test-clock)).
+  `Date.now()`.
 - Lifecycle and feature changes update tests and docs (`README.md`, guides,
-  operator notes) in the same PR, per [`STYLE_GUIDE.md`](docs/STYLE_GUIDE.md).
+  operator notes) in the same PR.
   Every doc is reachable from an index or hub; a new admin route area gets a
   `docs/COVERAGE_MATRIX.md` row.
 - An artifact every lane adds an entry to is a directory of per-lane fragments,

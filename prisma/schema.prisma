@@ -3362,6 +3362,20 @@ model RateLimitCounter {
   @@index([resetAt])
 }
 
+// Per-account password sign-in throttle (#4609, INV-AUTH). One row per account
+// key: an HMAC of the normalised sign-in email under the auth secret, never the
+// address itself. Club-wide like RateLimitCounter, so no lodgeId. A claim locks
+// the row before the password is compared (src/lib/login-throttle.ts); a valid
+// password or a password reset deletes it, and rows idle for an hour are
+// swept. No @updatedAt and no defaults: every instant is written by the app.
+model LoginThrottle {
+  id            String   @id
+  failureCount  Int
+  lastFailureAt DateTime
+
+  @@index([lastFailureAt])
+}
+
 // #1211: cross-instance cooldown for repeat operational admin alerts. One row
 // per alert key; the stale payment-recovery-queue alert atomically claims a
 // fresh window here (conditional updateMany on the id, falling back to a

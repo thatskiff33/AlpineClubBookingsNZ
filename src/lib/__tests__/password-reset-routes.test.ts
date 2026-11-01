@@ -46,6 +46,14 @@ vi.mock("bcryptjs", () => ({
   default: { hash: vi.fn().mockResolvedValue("hashed-password") },
 }));
 
+// #4609: a completed reset clears the account's sign-in throttle.
+const { mockClearPasswordAttempts } = vi.hoisted(() => ({
+  mockClearPasswordAttempts: vi.fn().mockResolvedValue(undefined),
+}));
+vi.mock("@/lib/login-throttle", () => ({
+  clearPasswordAttempts: mockClearPasswordAttempts,
+}));
+
 import { prisma } from "@/lib/prisma";
 import { sendPasswordResetEmail } from "@/lib/email";
 import { POST as forgotPassword } from "@/app/api/auth/forgot-password/route";
@@ -116,7 +124,7 @@ describe("password reset routes", () => {
       memberId: "member-1",
       used: false,
       expiresAt: new Date(Date.now() + SELF_SERVICE_PASSWORD_RESET_TTL_MS),
-      member: { id: "member-1" },
+      member: { id: "member-1", email: "member@example.com" },
     } as never);
 
     const req = new NextRequest("http://localhost/api/auth/reset-password", {
@@ -128,6 +136,12 @@ describe("password reset routes", () => {
     const res = await resetPassword(req);
 
     expect(res.status).toBe(200);
+    // #4609 (owner decision): the reset clears the account's throttle, after
+    // the reset transaction has committed.
+    expect(mockClearPasswordAttempts).toHaveBeenCalledExactlyOnceWith("member@example.com");
+    expect(mockClearPasswordAttempts.mock.invocationCallOrder[0]).toBeGreaterThan(
+      mockedTransaction.mock.invocationCallOrder[0],
+    );
     expect(mockedFindToken).toHaveBeenCalledWith({
       where: { tokenHash: hashActionToken(validResetToken) },
       include: { member: true },
@@ -159,6 +173,28 @@ describe("password reset routes", () => {
     expect(mockedTransaction).toHaveBeenCalledTimes(1);
   });
 
+  it("leaves the sign-in throttle alone when the reset link was already used (#4609)", async () => {
+    mockedFindToken.mockResolvedValue({
+      id: "tok1",
+      memberId: "member-1",
+      used: true,
+      expiresAt: new Date(Date.now() + SELF_SERVICE_PASSWORD_RESET_TTL_MS),
+      member: { id: "member-1", email: "member@example.com" },
+    } as never);
+
+    const res = await resetPassword(
+      new NextRequest("http://localhost/api/auth/reset-password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token: validResetToken, password: "123456789012" }),
+      }),
+    );
+
+    expect(res.status).toBe(400);
+    expect(mockedTransaction).not.toHaveBeenCalled();
+    expect(mockClearPasswordAttempts).not.toHaveBeenCalled();
+  });
+
   it("rejects malformed reset tokens before lookup", async () => {
     const req = new NextRequest("http://localhost/api/auth/reset-password", {
       method: "POST",
@@ -170,6 +206,7 @@ describe("password reset routes", () => {
 
     expect(res.status).toBe(400);
     expect(mockedFindToken).not.toHaveBeenCalled();
+    expect(mockClearPasswordAttempts).not.toHaveBeenCalled();
   });
 
   it("returns 400 for malformed forgot-password JSON", async () => {
