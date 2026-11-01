@@ -102,8 +102,12 @@ export const BOOKING_LEDGER_IDENTITIES = [
   "OWED",
   // #4627: the member-money journal's live charge components against the bridged lines.
   "JOURNAL",
+  // #4628: a bank-transfer booking's pending journal charge against its final price plus fees.
+  "JOURNAL_PENDING",
 ] as const;
 export type BookingLedgerIdentity = (typeof BOOKING_LEDGER_IDENTITIES)[number];
+/** The identities the journal comparison adds to every evaluation, never the seven's own judgement. */
+const JOURNAL_IDENTITIES: ReadonlySet<BookingLedgerIdentity> = new Set(["JOURNAL", "JOURNAL_PENDING"]);
 
 export type BookingLedgerIdentityStatus = "NOT_APPLICABLE" | "AGREE" | "DISAGREE" | "CLASSIFIED" | "COVERAGE";
 
@@ -358,7 +362,8 @@ export function evaluateBookingLedgerIdentities(row: BookingLedgerCensusRow): Bo
     if (unpostedCredits(row).length > 0) coverage.add("UNPOSTED_CREDIT");
     return {
       ...base,
-      identities: BOOKING_LEDGER_IDENTITIES.map(notApplicable),
+      // The journal's identities are judged apart (`booking-ledger-projection-census-journal.ts`), once.
+      identities: BOOKING_LEDGER_IDENTITIES.filter((identity) => !JOURNAL_IDENTITIES.has(identity)).map(notApplicable),
       coverage: [...coverage],
       bookingClass: offLedger ? "GROUP_SETTLEMENT_OFF_LEDGER" : null,
       bookingInstances: [],

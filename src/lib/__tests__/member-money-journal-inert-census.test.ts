@@ -65,7 +65,8 @@ const READERS: Record<string, { reason: string; importOnly: boolean }> = {
 };
 /**
  * M3b (#4627): THE POSTING CALLERS, exactly. Each posts through
- * `postBookingLedgerJournal` or `postMemberMergeTransfer` from `./doors`, in the
+ * `postBookingLedgerJournal`, `postMemberMergeTransfer` or (#4628)
+ * `postPendingBookingJournal` from `./doors`, in the
  * transaction of the business change it records. It may only read a journal
  * delegate, and may run no raw SQL that writes a journal table (some of these
  * files run other raw SQL, such as member merge's member delete).
@@ -77,6 +78,8 @@ const DOORS: Record<string, string> = {
   "src/lib/booking-ledger-cancellation-sync.ts": "R04: a cancellation's lines",
   "src/lib/member-merge.ts": "D4: the merged-away member's receivable balances, transferred",
   "src/lib/booking-ledger-back-post.ts": "R26: lines a door could not post, filled in for a booking already in the journal",
+  // #4628 (M3c): through `postPendingBookingJournal`, from the lines the confirmation would post.
+  "src/lib/booking-ledger-pending-charge.ts": "R01 at a bank-transfer binding; R02/R04 for a charge still pending",
 };
 /**
  * M3b (#4627): the doors' callers, which resolve the posting context BEFORE
@@ -101,6 +104,10 @@ const CONTEXT_RESOLVERS: readonly string[] = [
   "src/lib/school-booking-request.ts",
   "src/lib/stored-night-price-repair-store.ts",
   "src/lib/xero-inbound/invoice-paid-effects.ts",
+  // #4628 (M3c): the bank-transfer binding doors' callers, and the create input that carries the context.
+  "src/app/api/bookings/route.ts",
+  "src/app/api/payments/switch-to-internet-banking/route.ts",
+  "src/lib/booking-create-types.ts",
 ];
 /** Anything a context resolver may say about the journal: the `./doors` entry, the resolvers and the context type. */
 const RESOLVER_VOCABULARY = /["']@\/lib\/member-money\/doors["']|\bresolveBookingMoneyPostingContext\b|\bresolveBookingDoorClock\b|\bMemberMoneyPostingContext\b|\bBookingJournalContext\b/g;
@@ -109,8 +116,8 @@ const BOUNDARY = "src/lib/member-money/";
 const WRITER = "src/lib/member-money/internal/store.ts";
 /** The command's entry points: nothing outside the boundary calls them; M3b's doors go through `./doors`. */
 const POSTING_COMMAND = /\b(postMemberMoneyEvent|reverseMemberMoneyJournal|writeMemberMoneyBatch)\b/;
-/** M3b's door entry points (#4627). */
-const DOOR_COMMAND = /\b(postBookingLedgerJournal|postMemberMergeTransfer)\b/;
+/** M3b's door entry points (#4627), and M3c's pending charge (#4628). */
+const DOOR_COMMAND = /\b(postBookingLedgerJournal|postMemberMergeTransfer|postPendingBookingJournal)\b/;
 const DELEGATE_WRITE = /\.memberMoney\w*\s*\.\s*(create|update|upsert|delete)/;
 /**
  * Every name that reaches a journal row through Prisma: each relation's
@@ -271,7 +278,7 @@ describe("member money journal stays inert in M1 (#4513)", () => {
     expect('import { postMemberMoneyEvent } from "@/lib/member-money";').toMatch(POSTING_COMMAND);
   });
 
-  it("admits exactly the M3b doors as posting callers (#4627)", () => {
+  it("admits exactly the M3b and M3c doors as posting callers (#4627, #4628)", () => {
     const callers = found.filter((file) => !file.startsWith(BOUNDARY)
       && DOOR_COMMAND.test(stripComments(readFileSync(join(ROOT, file), "utf8"))));
     expect(callers.sort(), "the set of production paths that post to the journal changed").toEqual(Object.keys(DOORS).sort());
