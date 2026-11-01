@@ -177,7 +177,7 @@ async function expectLinkedToBinding(bookingId: string, lineCount: number): Prom
     if (!prisma) return;
     await cleanup();
     // Restore the module settings this suite changed, as it found them.
-    if (priorModules) await prisma.clubModuleSettings.update({ where: { id: "default" }, data: priorModules });
+    if (priorModules) await prisma.clubModuleSettings.update({ where: { id: "default" }, data: priorModules, select: { id: true } });
     else await prisma.clubModuleSettings.deleteMany({ where: { id: "default" } });
   }, 120_000);
 
