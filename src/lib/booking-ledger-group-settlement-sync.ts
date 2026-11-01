@@ -51,7 +51,7 @@ import {
   type BookingLedgerPosting,
 } from "@/lib/booking-ledger-write";
 import logger from "@/lib/logger";
-import { postBookingLedgerJournal, type MemberMoneyPostingContext } from "@/lib/member-money/doors";
+import { postBookingLedgerJournal, type BookingJournalContext } from "@/lib/member-money/doors";
 import { organiserChildCommittedRefundCents } from "@/lib/organiser-child-refund";
 import {
   groupSettlementChildWorthCents,
@@ -72,7 +72,7 @@ export async function postGroupSettlementLedgerLines({
 }: {
   store: Prisma.TransactionClient;
   /** #4627: the group settle's journal context, resolved before its transaction. */
-  journal: MemberMoneyPostingContext;
+  journal: BookingJournalContext;
   settlement: GroupSettlementForPosting;
   children: ReadonlyArray<{ id: string; lodgeId: string } & GroupSettlementChildWorth>;
 }): Promise<number> {
@@ -129,8 +129,13 @@ export async function postGroupSettlementLedgerLines({
   // (an unpriced or malformed strand) never drops the others' lines.
   const rows: ReturnType<typeof buildBookingLedgerRows> = [];
   const failedBookingIds: string[] = [];
-  // #4627 (R01): each child's confirmation keys, posted into the journal after the write.
-  const confirmations: Array<{ bookingId: string; lodgeId: string; postingKeys: string[] }> = [];
+  // #4627 (R01): each newly confirmed child, with its confirmation keys, posted
+  // into the journal after the write: R01 even for a child whose lines are $0
+  // or could not be built, so its later money posts.
+  const confirmations = new Map<string, { bookingId: string; lodgeId: string; postingKeys: string[] }>(
+    bookings.filter((booking) => unconfirmed.has(booking.id))
+      .map((booking) => [booking.id, { bookingId: booking.id, lodgeId: booking.lodgeId, postingKeys: [] }]),
+  );
   for (const booking of bookings) {
     try {
       const postings: BookingLedgerPosting[] = [];
@@ -148,7 +153,7 @@ export async function postGroupSettlementLedgerLines({
       }
       postings.push(...shares.filter((share) => share.bookingId === booking.id));
       rows.push(...buildBookingLedgerRows(postings));
-      if (confirmationKeys.length > 0) confirmations.push({ bookingId: booking.id, lodgeId: booking.lodgeId, postingKeys: confirmationKeys });
+      confirmations.get(booking.id)?.postingKeys.push(...confirmationKeys);
     } catch (error) {
       logger.error({ err: error, settlementId: settlement.id, bookingId: booking.id }, "Booking ledger: could not build a group-settled child's lines (#3854)");
       failedBookingIds.push(booking.id);
@@ -161,7 +166,7 @@ export async function postGroupSettlementLedgerLines({
     );
   }
   const written = await writeBookingLedgerRows(store, rows);
-  for (const confirmation of confirmations) {
+  for (const confirmation of confirmations.values()) {
     await postBookingLedgerJournal(store, journal, { ...confirmation, event: { kind: "confirmation" } });
   }
   return written;
@@ -277,7 +282,7 @@ export async function postGroupCancelChildLedgerLines(
     refundForChild: number;
     plannedRefundCents: number;
     /** #4627: the organiser cancel's journal context, resolved before its transaction. */
-    journal: MemberMoneyPostingContext;
+    journal: BookingJournalContext;
   },
 ): Promise<void> {
   const { child, settlement } = input;

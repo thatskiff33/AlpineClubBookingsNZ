@@ -32,12 +32,12 @@ import {
  * component of its own (R03), keyed by its legacy posting key, so its later
  * reversal is one whole correction of it.
  *
- * A reduction the booking charge cannot absorb (an agreed give-back larger than
- * what it still carries, say after a cancellation) takes the rest from the
- * booking's live change-fee components, in key order, each corrected whole and
- * charged its remainder: the legacy ledger reduces the booking's total, and a
- * component never goes below zero. A reduction beyond every live component is
- * refused, never guessed.
+ * A reduction a component cannot absorb (an agreed give-back larger than the
+ * booking charge, or a later reversal of a change fee that give-back reduced)
+ * draws on the booking's other live components (`rebalance`), each corrected
+ * whole and charged its remainder: the legacy ledger only keeps the booking's
+ * total non-negative, and a component never goes below zero. A negative total
+ * is refused, never guessed.
  *
  * THE BRIDGE. Every legacy line with money gets one receivable leg sourced to
  * it (Dr for a line that adds to the price, Cr for one that takes away), so each
@@ -116,7 +116,12 @@ export type BookingChargeEvent =
   | { kind: "confirmation" }
   | { kind: "modification"; modificationId: string }
   | { kind: "cancellation" }
-  | { kind: "review-close"; taskId: string; officerMemberId: string }
+  /**
+   * A review closure, named by its task and the first line it writes: a task
+   * can be reopened and closed again, and each closure writes lines of its own
+   * (`memberMoneyEventKeys.reviewClose`).
+   */
+  | { kind: "review-close"; taskId: string; officerMemberId: string; firstLineId: string }
   /** The back-post, named by the first line it writes (`memberMoneyEventKeys.backPost`). */
   | { kind: "back-post"; firstLineId: string };
 
@@ -146,8 +151,8 @@ export function bookingChargeEventIdentity(bookingId: string, event: BookingChar
       return { eventKey: memberMoneyEventKeys.cancellation(bookingId, CANCELLATION_REVISION), rule: "R04", origin: "APP",
         actorMemberId: null, source: { kind: "BOOKING", id: bookingId, version: `cancellation:${CANCELLATION_REVISION}` } };
     case "review-close":
-      return { eventKey: memberMoneyEventKeys.reviewClose(event.taskId), rule: "R21", origin: "OFFICER",
-        actorMemberId: event.officerMemberId, source: { kind: "OFFICER_FACT", id: event.taskId, version: "review-close" } };
+      return { eventKey: memberMoneyEventKeys.reviewClose(event.taskId, event.firstLineId), rule: "R21", origin: "OFFICER",
+        actorMemberId: event.officerMemberId, source: { kind: "OFFICER_FACT", id: event.taskId, version: `review-close:${event.firstLineId}` } };
     case "back-post":
       return { eventKey: memberMoneyEventKeys.backPost(event.firstLineId), rule: "R26", origin: "LEGACY", actorMemberId: null,
         source: { kind: "BOOKING", id: bookingId, version: `back-post:${event.firstLineId}` } };
@@ -192,16 +197,62 @@ export interface BookingChargePlanInput {
   liveComponents: ReadonlyArray<BookingChargeComponent & { liveGrossCents: number }>;
 }
 
+type Moved = { component: BookingChargeComponent; live: number; after: number; lines: LegacyChargeLine[] };
+
+/** Plain code-unit order: the same on every node, whatever its locale. */
+const byIdentity = (a: Moved, b: Moved) =>
+  a.component.chargeIdentity < b.component.chargeIdentity ? -1 : a.component.chargeIdentity > b.component.chargeIdentity ? 1 : 0;
+
 /**
- * The batch one booking charge event posts, or null when its lines carry no
- * money. R01 opens the booking's one CHARGE obligation, face the receivable it
- * posts; later events move the receivable by booking and name no obligation,
- * because attributing a movement to an obligation is M4's application work.
+ * No component may go below zero, but the legacy ledger only promises the
+ * booking's TOTAL charges stay non-negative: a give-back can exceed the booking
+ * charge (taken from a change fee), and a cancellation can later reverse that
+ * fee in full. So a component left negative draws what it lacks from the
+ * booking's others, symmetrically: the booking charge from the change fees in
+ * key order, a change fee from the booking charge and then the other fees. Only
+ * a negative total is refused, never guessed.
+ */
+function rebalance(moved: Map<string, Moved>, chargeIdentity: string, problems: string[]): void {
+  const entries = [...moved.values()];
+  const total = entries.reduce((sum, entry) => sum + entry.after, 0);
+  if (total < 0) {
+    problems.push(`the booking's charges would carry ${formatCentsPlain(total)}: its legacy lines take away more than they hold`);
+    return;
+  }
+  const charge = entries.filter((entry) => entry.component.chargeIdentity === chargeIdentity);
+  const fees = entries.filter((entry) => entry.component.chargeIdentity !== chargeIdentity).sort(byIdentity);
+  for (const short of [...charge, ...fees]) {
+    if (short.after >= 0) continue;
+    let lacking = -short.after;
+    short.after = 0;
+    for (const donor of [...charge, ...fees]) {
+      if (donor === short || lacking === 0) continue;
+      const take = Math.min(lacking, Math.max(0, donor.after));
+      donor.after -= take;
+      lacking -= take;
+    }
+  }
+}
+
+/**
+ * The batch one booking charge event posts. R01 opens the booking's one CHARGE
+ * obligation, face the receivable it posts; later events move the receivable
+ * by booking and name no obligation, because attributing a movement to an
+ * obligation is M4's application work.
+ *
+ * A confirmation with no money (every line $0, or a legacy plan that wrote
+ * none) still posts R01, as an explicit ZERO event: R01 is what puts a booking
+ * in the journal's population, so its later money posts. Any other event whose
+ * lines carry no money posts nothing (null).
  */
 export function planBookingChargeEvent(input: BookingChargePlanInput): MemberMoneyPlan | null {
   const lines = input.lines.filter((line) => line.amountCents !== 0);
-  if (lines.length === 0) return null;
   const identity = bookingChargeEventIdentity(input.bookingId, input.event);
+  if (lines.length === 0) {
+    if (identity.rule !== "R01") return null;
+    return { kind: "ZERO", eventKey: identity.eventKey, origin: identity.origin, source: identity.source,
+      reason: `${REASONS.R01}, with nothing yet to charge`, actorMemberId: identity.actorMemberId };
+  }
   const booking = { bookingId: input.bookingId, lodgeId: input.lodgeId };
   const problems: string[] = [];
   for (const line of lines) {
@@ -225,7 +276,6 @@ export function planBookingChargeEvent(input: BookingChargePlanInput): MemberMon
   }));
 
   // Each component's live gross, and where this event's lines leave it.
-  type Moved = { component: BookingChargeComponent; live: number; after: number; lines: LegacyChargeLine[] };
   const moved = new Map<string, Moved>();
   for (const component of input.liveComponents) {
     moved.set(bookingComponentKey(component), { component, live: component.liveGrossCents, after: component.liveGrossCents, lines: [] });
@@ -242,26 +292,9 @@ export function planBookingChargeEvent(input: BookingChargePlanInput): MemberMon
     entry.lines.push(line);
     moved.set(key, entry);
   }
-  const charge = moved.get(bookingComponentKey({ account: "BOOKING_REVENUE", chargeIdentity: bookingChargeIdentity(input.bookingId) }));
-  if (charge && charge.after < 0) {
-    let shortfall = -charge.after;
-    charge.after = 0;
-    const fees = [...moved.values()].filter((entry) => entry.component.account === "FEE_REVENUE")
-      .sort((a, b) => a.component.chargeIdentity.localeCompare(b.component.chargeIdentity));
-    for (const fee of fees) {
-      const take = Math.min(shortfall, Math.max(0, fee.after));
-      fee.after -= take;
-      shortfall -= take;
-    }
-    if (shortfall > 0) {
-      problems.push(`the booking's charges would carry ${formatCentsPlain(-shortfall)}: its legacy lines take away more than they hold`);
-    }
-  }
+  rebalance(moved, bookingChargeIdentity(input.bookingId), problems);
   for (const { component, live, after, lines: touching } of moved.values()) {
-    if (after < 0) {
-      problems.push(`component ${component.chargeIdentity} would carry ${formatCentsPlain(after)}: its legacy lines take away more than it holds`);
-      continue;
-    }
+    if (after < 0) continue; // `rebalance` has already refused the batch.
     if (after === live) continue;
     const source = touching.length === 1 ? lineSource(touching[0]!) : undefined;
     const shared = { account: component.account, booking, chargeIdentity: component.chargeIdentity,

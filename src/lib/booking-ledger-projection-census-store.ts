@@ -17,7 +17,7 @@ import { Prisma, type PrismaClient } from "@prisma/client";
 import { z } from "zod";
 
 import { evaluateBookingLedgerIdentities, type BookingLedgerEvaluation } from "@/lib/booking-ledger-projection-census";
-import { withJournalChargeComparison } from "@/lib/booking-ledger-projection-census-journal";
+import { withJournalChargeComparison, withJournalInactiveFinding } from "@/lib/booking-ledger-projection-census-journal";
 import {
   summarizeBookingLedgerCensus,
   type BookingLedgerAcknowledgement,
@@ -46,6 +46,7 @@ const CENSUS_SELECT = {
   deletedAt: true,
   organiserSettled: true,
   finalPriceCents: true,
+  createdAt: true,
   parentBookingId: true,
   payment: {
     select: {
@@ -261,6 +262,7 @@ export function toCensusRow(
       deletedAt: booking.deletedAt,
       organiserSettled: booking.organiserSettled,
       finalPriceCents: booking.finalPriceCents,
+      createdAt: booking.createdAt,
     },
     payment: payment
       ? {
@@ -526,7 +528,12 @@ export async function evaluateBookingLedgerPages(
  */
 export async function censusBookingLedgerProjection(
   client: Pick<PrismaClient, "$transaction">,
-  options: { acknowledgements?: readonly BookingLedgerAcknowledgement[]; pageSize?: number } = {},
+  options: {
+    acknowledgements?: readonly BookingLedgerAcknowledgement[];
+    pageSize?: number;
+    /** #4627: why the journal is inactive for this club (`bookingJournalInactiveReason`), reported as one finding. */
+    journalInactive?: string | null;
+  } = {},
 ): Promise<BookingLedgerCensusReport> {
   const { evaluations, tableStatistics } = await withReadOnlySnapshot(
     client,
@@ -537,5 +544,6 @@ export async function censusBookingLedgerProjection(
     // A whole-history read: give it room, and fail rather than queue forever.
     { maxWait: 10_000, timeout: 600_000 },
   );
-  return summarizeBookingLedgerCensus(evaluations, tableStatistics, options.acknowledgements ?? []);
+  const report = summarizeBookingLedgerCensus(evaluations, tableStatistics, options.acknowledgements ?? []);
+  return options.journalInactive ? withJournalInactiveFinding(report, options.journalInactive) : report;
 }

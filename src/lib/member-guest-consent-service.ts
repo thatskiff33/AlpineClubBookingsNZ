@@ -16,7 +16,7 @@ import {
   removeBookingGuestInTransaction,
   type RemoveBookingGuestResult,
 } from "@/lib/booking-guest-removal-service";
-import { resolveBookingMoneyPostingContext, type MemberMoneyPostingContext } from "@/lib/member-money/doors";
+import { resolveBookingMoneyPostingContext, type BookingJournalContext } from "@/lib/member-money/doors";
 import { createModificationAdditionalPaymentIntent } from "@/lib/booking-modification-settlement";
 import { AdditionalAskChangedDuringReductionError } from "@/lib/additional-ask-reduction-error";
 import { GroupCancelInProgressError } from "@/lib/group-cancel-in-progress";
@@ -361,7 +361,7 @@ async function removeClaimedConsentGuest(
     /** The club's format (#3565), resolved with `today` and for the same reason. */
     format: ClubFormat;
     /** #4627: the journal's posting context, resolved with `today` and for the same reason. */
-    journal: MemberMoneyPostingContext;
+    journal: BookingJournalContext;
   },
 ): Promise<{
   removed: true;

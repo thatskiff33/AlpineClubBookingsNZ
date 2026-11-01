@@ -23,13 +23,27 @@
 import { journalComponentOfLegacyLine, MemberMoneyPlanError } from "@/lib/member-money";
 import type { BookingLedgerEvaluation, BookingLedgerIdentityResult, BookingLedgerIntegrityFinding } from "@/lib/booking-ledger-projection-census";
 import type { BookingLedgerCensusRow } from "@/lib/booking-ledger-projection-census-row";
+import type { BookingLedgerCensusReport } from "@/lib/booking-ledger-projection-census-report";
 
 export function journalChargeComparison(row: BookingLedgerCensusRow): {
   identity: BookingLedgerIdentityResult;
   integrity: BookingLedgerIntegrityFinding[];
 } {
   const notApplicable = { identity: "JOURNAL", status: "NOT_APPLICABLE", columnCents: 0, ledgerCents: 0, deltaCents: 0, explainedBy: [] } as const;
-  if (!row.journal?.charged) return { identity: { ...notApplicable, explainedBy: [] }, integrity: [] };
+  if (!row.journal?.charged) {
+    // Confirmed before M3b, or never confirmed: not compared. But a booking
+    // created after the journal's first R01 and confirmed on the ledger must
+    // have one; without it, a door wrote its lines and skipped the journal.
+    const since = row.journal?.journalSince ?? null;
+    const createdAt = row.booking.createdAt ?? null;
+    const confirmation = row.lines.find((line) => line.anchorKind === "CONFIRMATION");
+    const skipped = since !== null && createdAt !== null && createdAt > since && confirmation !== undefined;
+    return {
+      identity: { ...notApplicable, explainedBy: [] },
+      integrity: skipped ? [{ bookingId: row.booking.id, lineId: confirmation.id, kind: "CONFIRMED_WITHOUT_R01",
+        detail: "created after the journal's first confirmation and confirmed on the ledger, but its R01 was never posted" }] : [],
+    };
+  }
 
   const bookingId = row.booking.id;
   const keyById = new Map(row.lines.map((line) => [line.id, line.postingKey]));
@@ -72,4 +86,22 @@ export function journalChargeComparison(row: BookingLedgerCensusRow): {
 export function withJournalChargeComparison(evaluation: BookingLedgerEvaluation, row: BookingLedgerCensusRow): BookingLedgerEvaluation {
   const { identity, integrity } = journalChargeComparison(row);
   return { ...evaluation, identities: [...evaluation.identities, identity], integrity: [...evaluation.integrity, ...integrity] };
+}
+
+/**
+ * #4627: the club's journal is inactive (its currency no card can be charged
+ * in, `bookingJournalInactiveReason`): one integrity finding that holds the gate
+ * until the currency is fixed, because nothing the doors write is posted.
+ */
+export function withJournalInactiveFinding(report: BookingLedgerCensusReport, reason: string): BookingLedgerCensusReport {
+  return {
+    ...report,
+    integrity: {
+      ...report.integrity,
+      counts: { ...report.integrity.counts, JOURNAL_INACTIVE: report.integrity.counts.JOURNAL_INACTIVE + 1 },
+      findings: [...report.integrity.findings, { bookingId: "", lineId: "", kind: "JOURNAL_INACTIVE", detail: reason }],
+    },
+    verdict: "GATE_CLOSED",
+    gateClosedBecause: [...report.gateClosedBecause, `the member-money journal is inactive: ${reason}`],
+  };
 }

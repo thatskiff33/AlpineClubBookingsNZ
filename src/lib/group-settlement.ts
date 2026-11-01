@@ -1310,7 +1310,7 @@ async function settleConfirmedChildrenAndNotify(
     );
 
     return settledIds;
-  });
+  }, { maxWait: 10_000, timeout: 30_000 }); // #4627: each child's R01 adds journal round trips; the lock(1) holders' bound.
 
   if (settled === "refunded") {
     logger.warn(

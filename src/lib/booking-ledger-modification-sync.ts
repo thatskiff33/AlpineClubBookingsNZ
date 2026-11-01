@@ -41,7 +41,7 @@ import type { ModificationPricingSides } from "@/lib/booking-modification-pricin
 import type { BookingPriceRebase } from "@/lib/booking-review-price-rebase";
 import { rebasedPriceMovementCents } from "@/lib/booking-review-price-rebase-history";
 import logger from "@/lib/logger";
-import { postBookingLedgerJournal, type MemberMoneyPostingContext } from "@/lib/member-money/doors";
+import { postBookingLedgerJournal, type BookingJournalContext } from "@/lib/member-money/doors";
 
 /**
  * One priced edit's lines, anchored on the `BookingModification` row it just
@@ -65,7 +65,7 @@ export async function postModificationLedgerLines({
 }: {
   store: Prisma.TransactionClient;
   /** The context the edit resolved before its transaction (`INV-LOCK-004`). */
-  journal: MemberMoneyPostingContext;
+  journal: BookingJournalContext;
   bookingId: string;
   lodgeId: string;
   bookingModification: Pick<BookingModification, "id" | "priceDiffCents" | "changeFeeCents">;
@@ -135,7 +135,7 @@ export async function postReviewClosureLedgerLines({
 }: {
   store: Prisma.TransactionClient;
   /** The context the closure resolved before its transaction (`INV-LOCK-004`). */
-  journal: MemberMoneyPostingContext;
+  journal: BookingJournalContext;
   bookingId: string;
   lodgeId: string;
   manualRefundTaskId: string;

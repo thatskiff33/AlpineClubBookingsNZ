@@ -43,6 +43,11 @@ const mocks = vi.hoisted(() => ({
 // superseded machinery's rows, which this suite's transaction double does not
 // model; nothing here is superseded. Pinned by issue-1992-duplicate-capture-refund
 // and superseded-capture-ownership, and on PostgreSQL by superseded-intent-card-doors.
+// #4627: the journal half runs on PostgreSQL (`booking-ledger-journal.realdb.test.ts`), not on this fake store.
+vi.mock("@/lib/member-money/doors", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/member-money/doors")),
+  postBookingLedgerJournal: vi.fn(async () => null),
+}));
 vi.mock("@/lib/superseded-capture-ownership", async (importOriginal) => ({
   ...((await importOriginal()) as typeof import("@/lib/superseded-capture-ownership")),
   supersededMachineryOwnsCapture: async () => false,

@@ -89,7 +89,7 @@ import {
 import { postCancellationLedgerLines } from "@/lib/booking-ledger-cancellation-sync";
 import { syncBookingLedgerSettlements } from "@/lib/booking-ledger-settlement-sync";
 import { postBookingConfirmationLedgerLines } from "@/lib/booking-ledger-confirmation-sync";
-import { resolveBookingMoneyPostingContext, type MemberMoneyPostingContext } from "@/lib/member-money/doors";
+import { resolveBookingMoneyPostingContext, type BookingJournalContext } from "@/lib/member-money/doors";
 import type { ClubFormat } from "@/lib/club-format";
 
 type ReconciliationBooking = Prisma.BookingGetPayload<{
@@ -695,7 +695,7 @@ async function settleBookingPaymentInTransaction(
   bookingId: string,
   settlement: BookingSettlementSource,
   /** #4627: the journal's posting context, resolved before the caller's transaction (`INV-LOCK-004`). */
-  journal: MemberMoneyPostingContext,
+  journal: BookingJournalContext,
 ) {
     // Two-tier lock protocol (#1881). A Stripe capture does BOTH tiers of work:
     // it flips the booking's status + moves money (the booking-status/money

@@ -14,7 +14,10 @@
  * releasing the immutable journal rows through the teardown support.
  */
 import type { PrismaClient } from "@prisma/client";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+
+import type { BookingJournalContext } from "@/lib/member-money/doors";
+import type { BookingPriceRebase } from "@/lib/booking-review-price-rebase";
 
 import {
   cleanHistories,
@@ -24,6 +27,7 @@ import {
   seedHistoryFixtures,
   settleHistoryByCard,
 } from "./support/booking-ledger-history";
+import { realElapsedMs } from "./helpers/clock";
 import { memberMoneyTestContext } from "./support/member-money-fixtures";
 import { assertSafeRaceDbUrl } from "./support/race-db-url";
 
@@ -49,6 +53,7 @@ let doors: typeof import("@/lib/member-money/doors");
 let census: typeof import("@/lib/booking-ledger-projection-census-store");
 let merge: typeof import("@/lib/member-merge");
 let lodgeLock: typeof import("@/lib/lodge-capacity-lock");
+let modificationSync: typeof import("@/lib/booking-ledger-modification-sync");
 let sequence = 0;
 
 async function newBooking(owner: { memberId?: string; organisationId?: string } = {}): Promise<string> {
@@ -77,13 +82,13 @@ async function settleDoor(bookingId: string, hold?: { posted: () => void; releas
 }
 
 /** A cancel as every cancel path runs one: lock(1), a status-guarded claim, then the cancellation poster. */
-async function cancelDoor(bookingId: string, keptCents = 0): Promise<boolean> {
+async function cancelDoor(bookingId: string, keptCents = 0, journal: BookingJournalContext = JOURNAL): Promise<boolean> {
   return prisma.$transaction(async (tx) => {
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
     const claimed = await tx.booking.updateMany({ where: { id: bookingId, status: { not: "CANCELLED" } }, data: { status: "CANCELLED" } });
     if (claimed.count === 0) return false;
     await cancellationSync.postCancellationLedgerLines({
-      store: tx, journal: JOURNAL, bookingId, lodgeId: names.lodgeId, keptCents, site: "race-4627",
+      store: tx, journal, bookingId, lodgeId: names.lodgeId, keptCents, site: "race-4627",
     });
     return true;
   }, { maxWait: 30_000, timeout: 60_000 });
@@ -150,6 +155,7 @@ async function untilSomeoneWaits(): Promise<void> {
     census = await import("@/lib/booking-ledger-projection-census-store");
     merge = await import("@/lib/member-merge");
     lodgeLock = await import("@/lib/lodge-capacity-lock");
+    modificationSync = await import("@/lib/booking-ledger-modification-sync");
     await cleanup();
     await seedHistoryFixtures(prisma, PREFIX);
     for (const id of [LOSER, MASTER]) {
@@ -173,6 +179,7 @@ async function untilSomeoneWaits(): Promise<void> {
     await prisma.member.deleteMany({ where: { id: { in: [LOSER, MASTER, ADMIN] } } });
     await prisma.organisation.deleteMany({ where: { id: ORGANISATION } });
     await prisma.clubTaxSettings.deleteMany({});
+    await prisma.clubFormatSettings.deleteMany({ where: { currencyCode: "JPY" } });
   }
 
   afterAll(async () => {
@@ -335,6 +342,107 @@ async function untilSomeoneWaits(): Promise<void> {
     expect(await cancelDoor(id)).toBe(true);
     expect(await receivable(id)).toEqual({ [LOSER]: 0, [MASTER]: 0 });
     await expectAgreed(id);
+  });
+
+  it("a $0 confirmation posts R01 as a ZERO event, so the booking's later money posts and agrees", async () => {
+    const id = `${PREFIX}b${++sequence}`;
+    const free = { priceCents: 0, priceSource: "SOLD" } as const;
+    await createHistoryBooking(prisma, names, id, { payment: { amountCents: 0, source: "STRIPE", intent: `pi_${id}` }, guests: [[free, free], [free, free]] });
+    expect(await settleDoor(id)).toBe(true);
+    expect(await prisma.memberMoneyEvent.findUniqueOrThrow({ where: { eventKey: `booking-charge:${id}` }, select: { kind: true } }))
+      .toEqual({ kind: "ZERO" });
+    await postHistoryEdit(prisma, names, id, `${id}-edit`, { reprice: { guestId: `${id}-g1`, stayDate: new Date("2027-08-01T00:00:00.000Z"), priceCents: 7_000 }, changeFeeCents: 0 });
+    expect((await journalEvents(id)).map((event) => event.eventKey)).toEqual([`modification:${id}-edit`]);
+    expect(await receivable(id)).toEqual({ [names.memberId]: 7_000 });
+    await expectAgreed(id);
+  });
+
+  it("a review task reopened and closed again posts both closures, each its own R21 batch", async () => {
+    const id = await newBooking();
+    await settleHistoryByCard(id, PRICE);
+    const task = `${id}-task`;
+    const rebase = (previous: number, next: number): BookingPriceRebase => ({
+      previousTotalPriceCents: previous, previousDiscountCents: 0, previousPromoAdjustmentCents: 0, previousFinalPriceCents: previous,
+      newTotalPriceCents: next, newDiscountCents: 0, newPromoAdjustmentCents: 0, newFinalPriceCents: next, promoRemoved: false,
+    });
+    const close = async (guestId: string, previous: number, next: number) => {
+      await prisma.bookingGuestNight.updateMany({ where: { bookingGuestId: guestId, stayDate: new Date("2027-08-02T00:00:00.000Z") }, data: { priceCents: 5_000 - (previous - next) } });
+      const history = await prisma.bookingModification.create({
+        data: { bookingId: id, memberId: names.officerId, modificationType: "PRICE_REBASE", previousData: {}, newData: {}, priceDiffCents: 0, changeFeeCents: 0 },
+        select: { id: true },
+      });
+      await prisma.$transaction(async (tx) => {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+        await modificationSync.postReviewClosureLedgerLines({
+          store: tx, journal: JOURNAL, bookingId: id, lodgeId: names.lodgeId, manualRefundTaskId: task,
+          rebase: rebase(previous, next), rebaseHistoryId: history.id, settlement: null, note: null, officerMemberId: names.officerId,
+        });
+      });
+    };
+    await close(`${id}-g1`, PRICE, PRICE - 1_000); // dismissed, re-priced
+    await close(`${id}-g2`, PRICE - 1_000, PRICE - 2_500); // reopened, completed, re-priced again
+    const closures = (await journalEvents(id)).map((event) => event.eventKey).filter((key) => key.startsWith(`review-close:${task}:`));
+    expect(closures).toHaveLength(2);
+    expect(await receivable(id)).toEqual({ [names.memberId]: PRICE - 2_500 });
+    await expectAgreed(id);
+  });
+
+  it("R26: the back-post fills a door's logged gap on a journal booking, and the journal follows", async () => {
+    const id = await newBooking();
+    await settleHistoryByCard(id, PRICE);
+    // An edit whose door wrote its rows and logged a gap: no ledger line, no journal batch.
+    vi.setSystemTime(new Date(Date.now() + 60_000));
+    await prisma.bookingGuestNight.updateMany({ where: { bookingGuestId: `${id}-g1`, stayDate: new Date("2027-08-02T00:00:00.000Z") }, data: { priceCents: 3_000 } });
+    await prisma.booking.update({ where: { id }, data: { totalPriceCents: PRICE - 2_000, finalPriceCents: PRICE - 2_000 } });
+    await prisma.bookingModification.create({
+      data: { bookingId: id, memberId: names.officerId, modificationType: "BATCH_MODIFY", previousData: {}, newData: {}, priceDiffCents: -2_000, changeFeeCents: 0 },
+    });
+    expect((await judged(id)).journal.status).toBe("AGREE"); // nothing bridged is missing yet; the legacy gap is the census's coverage
+    const { runBookingLedgerBackPost } = await import("@/lib/booking-ledger-back-post");
+    const run = await runBookingLedgerBackPost({ client: prisma, apply: true, bookingIds: [id] });
+    expect(run.outcomes[0]).toMatchObject({ kind: "POSTED" });
+    expect((await journalEvents(id)).map((event) => event.eventKey).some((key) => key.startsWith("back-post:"))).toBe(true);
+    expect(await receivable(id)).toEqual({ [names.memberId]: PRICE - 2_000 });
+    await expectAgreed(id);
+  });
+
+  it("a club whose currency no card can be charged in: the settle and the cancel go ahead, nothing posts, the census says why", async () => {
+    await prisma.clubFormatSettings.create({ data: { id: "default", currencyCode: "JPY", locale: "ja-JP" } });
+    try {
+      const journal = await doors.resolveBookingMoneyPostingContext();
+      expect(journal).toMatchObject({ inactive: "unusable-currency" });
+      const id = await newBooking();
+      await settleHistoryByCard(id, PRICE);
+      expect((await prisma.booking.findUniqueOrThrow({ where: { id }, select: { status: true } })).status).toBe("PAID");
+      expect(await cancelDoor(id, 0, journal)).toBe(true);
+      expect(await prisma.bookingLedgerLine.count({ where: { bookingId: id, anchorKind: "CANCELLATION" } })).toBeGreaterThan(0);
+      expect(await journalEvents(id)).toEqual([]);
+      const { getClubFormat } = await import("@/lib/club-format-settings");
+      const { bookingJournalInactiveReason } = await import("@/lib/member-money");
+      const report = await census.censusBookingLedgerProjection(prisma, { journalInactive: bookingJournalInactiveReason(await getClubFormat()) });
+      expect(report.integrity.counts.JOURNAL_INACTIVE).toBe(1);
+    } finally {
+      await prisma.clubFormatSettings.deleteMany({ where: { currencyCode: "JPY" } });
+    }
+  });
+
+  it("a group settle of 40 children posts each child's R01 inside the settle's bounded transaction", async () => {
+    const ids: string[] = [];
+    for (let child = 0; child < 40; child += 1) ids.push(await newBooking());
+    const children = await prisma.booking.findMany({
+      where: { id: { in: ids } }, select: { id: true, lodgeId: true, finalPriceCents: true, payment: { select: { changeFeeCents: true } } },
+    });
+    const groupSync = await import("@/lib/booking-ledger-group-settlement-sync");
+    const started = process.hrtime.bigint();
+    await prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+      await groupSync.postGroupSettlementLedgerLines({
+        store: tx, journal: JOURNAL, settlement: { id: `${PREFIX}settlement`, source: "STRIPE", amountCents: 40 * PRICE }, children,
+      });
+    }, { maxWait: 10_000, timeout: 30_000 }); // the group settle's own bound
+    const elapsedMs = realElapsedMs(started);
+    expect(await prisma.memberMoneyEvent.count({ where: { eventKey: { in: ids.map((id) => `booking-charge:${id}`) } } })).toBe(40);
+    expect(elapsedMs).toBeLessThan(30_000);
   });
 
   it("the census reports zero JOURNAL differences and no unbridged line on the whole population", async () => {

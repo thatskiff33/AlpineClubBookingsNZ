@@ -29,7 +29,7 @@ import {
 } from "@/lib/booking-ledger-read";
 import { buildBookingLedgerRows, writeBookingLedgerRows } from "@/lib/booking-ledger-write";
 import logger from "@/lib/logger";
-import { postBookingLedgerJournal, type MemberMoneyPostingContext } from "@/lib/member-money/doors";
+import { postBookingLedgerJournal, type BookingJournalContext } from "@/lib/member-money/doors";
 
 export async function postCancellationLedgerLines({
   store,
@@ -42,7 +42,7 @@ export async function postCancellationLedgerLines({
 }: {
   store: Prisma.TransactionClient;
   /** The context the cancel path (or the back-post) resolved before its transaction. */
-  journal: MemberMoneyPostingContext;
+  journal: BookingJournalContext;
   bookingId: string;
   lodgeId: string;
   /**

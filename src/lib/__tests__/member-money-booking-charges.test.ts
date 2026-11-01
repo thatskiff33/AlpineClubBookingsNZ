@@ -102,9 +102,17 @@ describe("R01: a confirmation's lines (#4627)", () => {
     expect(() => buildMemberMoneyBatch(context, built)).not.toThrow();
   });
 
-  it("leaves a zero-cent line unlinked and posts nothing for lines with no money", () => {
+  it("posts a confirmation with no money as an explicit ZERO R01, so the booking is in the journal; any other event posts nothing", () => {
     const free = line({ kind: "GUEST_NIGHT", amountCents: 0 });
-    expect(plan({ kind: "confirmation" }, [free])).toBeNull();
+    const zero = plan({ kind: "confirmation" }, [free]);
+    expect(zero).toMatchObject({ kind: "ZERO", eventKey: `booking-charge:${BOOKING}`, source: { kind: "BOOKING", id: BOOKING } });
+    expect(plan({ kind: "confirmation" }, [])).toMatchObject({ kind: "ZERO" });
+    expect(() => buildMemberMoneyBatch(context, zero!)).not.toThrow();
+    expect(plan({ kind: "modification", modificationId: "m0" }, [free])).toBeNull();
+  });
+
+  it("leaves a zero-cent line unlinked beside lines with money", () => {
+    const free = line({ kind: "GUEST_NIGHT", amountCents: 0 });
     const paid = line({ kind: "GUEST_NIGHT", amountCents: 4000 });
     const built = plan({ kind: "confirmation" }, [free, paid]) as Legs;
     expect(built.additionalSources?.map((source) => source.id)).toEqual([paid.id]);
@@ -170,7 +178,7 @@ describe("R02/R03/R04/R21: later events correct whole components (#4627)", () =>
   it("takes a give-back the booking charge cannot absorb from the live change fees, never below zero", () => {
     // After a cancellation the charge holds what was kept (1000); a 1500 give-back takes the last 500 off the fee.
     const giveBack = line({ kind: "AGREED_ADJUSTMENT", side: "ADJUSTMENT", amountCents: -1500, postingKey: "agreed-adjustment:t9" });
-    const built = plan({ kind: "review-close", taskId: "t9", officerMemberId: "officer" }, [giveBack], live([
+    const built = plan({ kind: "review-close", taskId: "t9", officerMemberId: "officer", firstLineId: giveBack.id }, [giveBack], live([
       ["BOOKING_REVENUE", CHARGE, 1000], ["FEE_REVENUE", "modification:m1:change-fee", 2500],
     ])) as Legs;
     expect(legsOf(built)).toEqual([
@@ -186,10 +194,14 @@ describe("R02/R03/R04/R21: later events correct whole components (#4627)", () =>
 
   it("folds an agreed adjustment into the charge component and names the officer on a review close", () => {
     const concession = line({ kind: "AGREED_ADJUSTMENT", side: "ADJUSTMENT", amountCents: -3000, postingKey: "agreed-adjustment:t1" });
-    const built = plan({ kind: "review-close", taskId: "t1", officerMemberId: "officer" }, [concession],
+    const built = plan({ kind: "review-close", taskId: "t1", officerMemberId: "officer", firstLineId: concession.id }, [concession],
       live([["BOOKING_REVENUE", CHARGE, 20000]])) as Legs;
-    expect(built).toMatchObject({ eventKey: "review-close:t1", origin: "OFFICER", actorMemberId: "officer",
-      source: { kind: "OFFICER_FACT", id: "t1" } });
+    // Named by the task AND the first line this closure wrote: a reopened task's second closure is a new event.
+    expect(built).toMatchObject({ eventKey: `review-close:t1:${concession.id}`, origin: "OFFICER", actorMemberId: "officer",
+      source: { kind: "OFFICER_FACT", id: "t1", version: `review-close:${concession.id}` } });
+    const again = plan({ kind: "review-close", taskId: "t1", officerMemberId: "officer", firstLineId: "line-later" }, [concession],
+      live([["BOOKING_REVENUE", CHARGE, 20000]])) as Legs;
+    expect(again.eventKey).toBe("review-close:t1:line-later");
     expect(legsOf(built)).toEqual([
       ["MEMBER_RECEIVABLE", "CREDIT", 3000, null],
       ["BOOKING_REVENUE", "DEBIT", 20000, CHARGE],
@@ -197,7 +209,30 @@ describe("R02/R03/R04/R21: later events correct whole components (#4627)", () =>
     ]);
   });
 
-  it("refuses lines that would take a component below zero, a settlement line, and another booking's line", () => {
+  it("lets a cancellation reverse a change fee an earlier give-back already drew on: the fee draws back from the charge", () => {
+    // Nights 10000, fee K 2000. A 12000 give-back takes the charge to 0 and draws 2000 from K.
+    const giveBack = line({ kind: "AGREED_ADJUSTMENT", side: "ADJUSTMENT", amountCents: -12000, postingKey: "agreed-adjustment:t7" });
+    const first = plan({ kind: "review-close", taskId: "t7", officerMemberId: "o", firstLineId: giveBack.id }, [giveBack], live([
+      ["BOOKING_REVENUE", CHARGE, 10000], ["FEE_REVENUE", "modification:k:change-fee", 2000],
+    ])) as Legs;
+    expect(legsOf(first).filter(([account]) => account !== "MEMBER_RECEIVABLE")).toEqual([
+      ["BOOKING_REVENUE", "DEBIT", 10000, CHARGE],
+      ["FEE_REVENUE", "DEBIT", 2000, "modification:k:change-fee"],
+    ]);
+    // Then the cancellation keeps nothing (below the change fee): nights -10000, the give-back reversed +12000,
+    // K reversed -2000. K would go to -2000; it draws from the charge's +2000 instead of refusing.
+    const nights = line({ kind: "GUEST_NIGHT", amountCents: -10000, reversesLineId: "n" });
+    const backAgain = line({ kind: "AGREED_ADJUSTMENT", side: "ADJUSTMENT", amountCents: 12000, reversesLineId: giveBack.id });
+    const feeBack = line({ kind: "CHANGE_FEE", amountCents: -2000, reversesLineId: "k", reversedPostingKey: "modification:k:change-fee" });
+    const cancel = plan({ kind: "cancellation" }, [nights, backAgain, feeBack], live([
+      ["BOOKING_REVENUE", CHARGE, 0], ["FEE_REVENUE", "modification:k:change-fee", 0],
+    ])) as Legs;
+    // Both components end where they are (0): only the bridging receivable legs post, and they net to nothing.
+    expect(legsOf(cancel).every(([account]) => account === "MEMBER_RECEIVABLE")).toBe(true);
+    expect(() => buildMemberMoneyBatch(context, cancel)).not.toThrow();
+  });
+
+  it("refuses lines that would take the booking's total below zero, a settlement line, and another booking's line", () => {
     const refuse = (lines: LegacyChargeLine[], liveGross = live([])) => {
       try {
         plan({ kind: "modification", modificationId: "m" }, lines, liveGross);
@@ -209,7 +244,7 @@ describe("R02/R03/R04/R21: later events correct whole components (#4627)", () =>
     };
     expect(refuse([line({ kind: "GUEST_NIGHT", amountCents: -5000 })], live([["BOOKING_REVENUE", CHARGE, 4000]]))).toMatch(/booking's charges would carry -10\.00/);
     expect(refuse([line({ kind: "CHANGE_FEE", amountCents: -3000, reversesLineId: "f", reversedPostingKey: "fee" })], live([["FEE_REVENUE", "fee", 2000]])))
-      .toMatch(/component fee would carry -10\.00/);
+      .toMatch(/booking's charges would carry -10\.00/);
     expect(refuse([line({ kind: "CARD_CAPTURE", side: "SETTLEMENT", amountCents: -100 })])).toMatch(/not a charge/);
     expect(refuse([line({ kind: "GUEST_NIGHT", amountCents: 100, bookingId: "other" })])).toMatch(/another booking/);
   });

@@ -10,7 +10,8 @@ import {
 } from "./booking-charges";
 import { readBookingLiveComponents } from "./booking-journal-read";
 import { memberMoneyEventKeys, type MemberMoneyEventKey } from "./keys";
-import { MemberMoneyPlanError, type MemberMoneyDebtor, type MemberMoneyPostingContext } from "./plan";
+import { isBookingJournalInactive, type BookingJournalContext } from "./journal-activity";
+import { MemberMoneyPlanError, type MemberMoneyDebtor } from "./plan";
 import { postMemberMoneyEvent } from "./post";
 import type { MemberMoneyPosting } from "./store";
 
@@ -23,17 +24,21 @@ import type { MemberMoneyPosting } from "./store";
  * engine refuses, or a batch the database refuses at commit, rolls the door's
  * business change back with it (design section 3).
  *
- * PRECONDITIONS, the door's: it holds `pg_advisory_xact_lock(1)` (the engine
- * refuses a correction or re-charge without it) and its lodge key, and it has
- * already written the booking's row in this transaction, or this takes that
- * row's lock itself (`FOR NO KEY UPDATE`, an UPDATE's own strength) before it
- * reads the owner: so a member merge's owner move either commits first and is
- * seen here, or waits for this door and then sees what it posted.
+ * PRECONDITION, the door's: it holds `pg_advisory_xact_lock(1)`, which is all
+ * the engine asserts (it refuses a correction or re-charge without it). Most
+ * doors also hold their lodge key, but an edit review's closure and the
+ * organiser's per-child cancel do not, so nothing here reads capacity. This
+ * takes the booking row's lock (`FOR NO KEY UPDATE`, an UPDATE's own strength)
+ * before it reads the owner, so a member merge's owner move either commits
+ * first and is seen here, or waits for this door and then sees what it posted.
  *
- * WHAT POSTS. R01 posts when the confirmation wrote lines. Every later event
- * posts only for a booking whose R01 is in the journal: a booking confirmed
- * before M3b has its history back-posted by M9, never piecemeal here. An event
- * already posted is a no-op, as the legacy write's `ON CONFLICT DO NOTHING` is.
+ * WHAT POSTS. R01 posts at a booking's first confirmation, as a ZERO event when
+ * it carries no money. Every later event posts only for a booking whose R01 is
+ * in the journal: a booking confirmed before M3b has its history back-posted by
+ * M9, never piecemeal here. An event already posted is a no-op, as the legacy
+ * write's `ON CONFLICT DO NOTHING` is; a closure and the back-post are named by
+ * the first line they write, so a repeat finds nothing unbridged. A club whose
+ * journal is inactive (`journal-activity.ts`) posts nothing at all.
  */
 
 type Db = Prisma.TransactionClient;
@@ -75,11 +80,16 @@ async function unbridgedLines(tx: Db, bookingId: string, postingKeys: readonly s
   }));
 }
 
+/** An event as a door names it; a closure and the back-post are named by the first line they write, read back here. */
+export type BookingLedgerJournalEvent =
+  | Exclude<BookingChargeEvent, { kind: "review-close" | "back-post" }>
+  | { kind: "review-close"; taskId: string; officerMemberId: string }
+  | { kind: "back-post" };
+
 export interface BookingLedgerJournalInput {
   bookingId: string;
   lodgeId: string;
-  /** The back-post's event is named by the first line it writes, which this reads back. */
-  event: Exclude<BookingChargeEvent, { kind: "back-post" }> | { kind: "back-post" };
+  event: BookingLedgerJournalEvent;
   /** The posting keys of the legacy lines this event just wrote. */
   postingKeys: readonly string[];
 }
@@ -87,18 +97,23 @@ export interface BookingLedgerJournalInput {
 /** Post one booking charge event beside its legacy lines; null when nothing is posted (see the module doc). */
 export async function postBookingLedgerJournal(
   tx: Db,
-  context: MemberMoneyPostingContext,
+  context: BookingJournalContext,
   input: BookingLedgerJournalInput,
 ): Promise<MemberMoneyPosting | null> {
-  if (input.event.kind !== "back-post" && await eventPosted(tx, bookingChargeEventIdentity(input.bookingId, input.event).eventKey)) {
+  if (isBookingJournalInactive(context)) return null;
+  const named = input.event;
+  if (named.kind !== "back-post" && named.kind !== "review-close"
+    && await eventPosted(tx, bookingChargeEventIdentity(input.bookingId, named).eventKey)) {
     return null;
   }
-  if (input.event.kind !== "confirmation" && !(await eventPosted(tx, memberMoneyEventKeys.bookingCharge(input.bookingId)))) {
+  if (named.kind !== "confirmation" && !(await eventPosted(tx, memberMoneyEventKeys.bookingCharge(input.bookingId)))) {
     return null;
   }
   const lines = (await unbridgedLines(tx, input.bookingId, input.postingKeys)).filter((line) => line.amountCents !== 0);
-  if (lines.length === 0) return null;
-  const event: BookingChargeEvent = input.event.kind === "back-post" ? { kind: "back-post", firstLineId: lines[0]!.id } : input.event;
+  // A confirmation posts R01 even with no money (a ZERO event); nothing else does.
+  if (lines.length === 0 && named.kind !== "confirmation") return null;
+  const event: BookingChargeEvent = named.kind === "back-post" ? { kind: "back-post", firstLineId: lines[0]!.id }
+    : named.kind === "review-close" ? { ...named, firstLineId: lines[0]!.id } : named;
   const debtor = await lockedBookingDebtor(tx, input.bookingId);
   const plan = planBookingChargeEvent({
     bookingId: input.bookingId,
@@ -120,9 +135,10 @@ export async function postBookingLedgerJournal(
  */
 export async function postMemberMergeTransfer(
   tx: Db,
-  context: MemberMoneyPostingContext,
+  context: BookingJournalContext,
   input: { fromMemberId: string; toMemberId: string; actorMemberId: string },
 ): Promise<MemberMoneyPosting | null> {
+  if (isBookingJournalInactive(context)) return null;
   if (await eventPosted(tx, memberMoneyEventKeys.merge(input.fromMemberId, input.toMemberId))) return null;
   const sums = await tx.memberMoneyLine.groupBy({
     by: ["bookingId", "lodgeId", "side"],

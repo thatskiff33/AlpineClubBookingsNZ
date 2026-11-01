@@ -2,7 +2,7 @@ import { queueOrganiserExtraForChange } from "@/lib/organiser-extra-invoice-queu
 import { paidByOrganiserInternetBanking } from "@/lib/group-organiser-paid";
 import { isUnpaidConfirmedWholeLodge } from "@/lib/booking-payment-flow";
 import { postStoredBookingConfirmationLedgerLines } from "@/lib/booking-ledger-confirmation-sync";
-import { resolveBookingMoneyPostingContext, type MemberMoneyPostingContext } from "@/lib/member-money/doors";
+import { resolveBookingMoneyPostingContext, type BookingJournalContext } from "@/lib/member-money/doors";
 import { LEDGER_ROWS_OLDEST_FIRST } from "@/lib/payment-ledger-order";
 import {
   type Booking,
@@ -534,7 +534,7 @@ interface BatchModificationPreparation {
    */
   readonly guestDietarySeeding: BookingGuestDietarySeeding;
   /** #4627: the journal's posting context, a settings read that belongs out here too. */
-  readonly journal: MemberMoneyPostingContext;
+  readonly journal: BookingJournalContext;
 }
 
 /**

@@ -102,7 +102,7 @@ import {
 import { SELF_REMOVABLE_GUEST_BOOKING_STATUSES } from "@/lib/booking-guest-self-removal";
 import { bookingFinalPriceCents } from "@/lib/booking-final-price";
 import { postModificationLedgerLines } from "@/lib/booking-ledger-modification-sync";
-import type { MemberMoneyPostingContext } from "@/lib/member-money/doors";
+import type { BookingJournalContext } from "@/lib/member-money/doors";
 import { computeModificationPricing } from "@/lib/booking-modification-pricing";
 import { reserveOrganiserChildModificationRefund } from "@/lib/organiser-child-refund";
 import logger from "@/lib/logger";
@@ -371,7 +371,7 @@ export async function removeBookingGuestInTransaction({
   /** The club's format (#3565), resolved before any transaction by the caller. */
   format: ClubFormat;
   /** #4627: the journal's posting context, resolved before any transaction by the caller (`INV-LOCK-004`). */
-  journal: MemberMoneyPostingContext;
+  journal: BookingJournalContext;
 }): Promise<RemoveBookingGuestResult> {
   // Two-tier lock protocol (#1881). A single-guest removal computes a reduction
   // refund (money) AND re-checks capacity, so it takes BOTH locks: the global

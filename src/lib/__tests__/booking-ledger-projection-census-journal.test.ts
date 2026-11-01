@@ -5,7 +5,8 @@
  * `booking-ledger-journal.realdb.test.ts`.
  */
 import { describe, expect, it } from "vitest";
-import { journalChargeComparison } from "@/lib/booking-ledger-projection-census-journal";
+import { journalChargeComparison, withJournalInactiveFinding } from "@/lib/booking-ledger-projection-census-journal";
+import { summarizeBookingLedgerCensus } from "@/lib/booking-ledger-projection-census-report";
 import type { BookingLedgerCensusRow, CensusLedgerLine } from "@/lib/booking-ledger-projection-census-row";
 import { bookingChargeIdentity, type BookingJournalCharges } from "@/lib/member-money";
 
@@ -21,11 +22,12 @@ function line(id: string, overrides: Partial<CensusLedgerLine>): CensusLedgerLin
   };
 }
 
-function row(lines: CensusLedgerLine[], journal: BookingJournalCharges | null): BookingLedgerCensusRow {
+function row(lines: CensusLedgerLine[], journal: Omit<BookingJournalCharges, "journalSince"> & { journalSince?: Date | null } | null, createdAt?: Date): BookingLedgerCensusRow {
   return {
-    booking: { id: B, status: "PAID", deletedAt: null, organiserSettled: false, finalPriceCents: 0 },
+    booking: { id: B, status: "PAID", deletedAt: null, organiserSettled: false, finalPriceCents: 0, ...(createdAt ? { createdAt } : {}) },
     payment: null, transactions: [], refunds: [], credits: [], tasks: [], modifications: [], recoveryOperations: [],
-    cancellation: null, appeals: [], groupSettlement: null, groupChild: null, lines, journal,
+    cancellation: null, appeals: [], groupSettlement: null, groupChild: null, lines,
+    journal: journal ? { journalSince: null, ...journal } : null,
   };
 }
 
@@ -103,5 +105,34 @@ describe("the JOURNAL comparison (#4627)", () => {
     expect(result.identity.status).toBe("AGREE");
     // The zero-cent line carries no money and is never bridged; the unbridged night is the finding.
     expect(result.integrity).toEqual([expect.objectContaining({ lineId: "n2", kind: "UNBRIDGED_CHARGE_LINE" })]);
+  });
+
+  it("raises CONFIRMED_WITHOUT_R01 for a booking created after the journal's first R01, confirmed on the ledger, with none", () => {
+    const since = new Date("2026-06-01T00:00:00.000Z");
+    const after = new Date("2026-06-02T00:00:00.000Z");
+    const skipped = journalChargeComparison(row([nightA], { charged: false, components: [], bridgedLineIds: all([]), journalSince: since }, after));
+    expect(skipped.identity.status).toBe("NOT_APPLICABLE");
+    expect(skipped.integrity).toEqual([expect.objectContaining({ kind: "CONFIRMED_WITHOUT_R01", lineId: "n1" })]);
+    // Created before the journal began: confirmed before M3b, for M9, no finding.
+    const before = new Date("2026-05-01T00:00:00.000Z");
+    expect(journalChargeComparison(row([nightA], { charged: false, components: [], bridgedLineIds: all([]), journalSince: since }, before)).integrity).toEqual([]);
+    // Not confirmed on the ledger at all: nothing to say.
+    expect(journalChargeComparison(row([], { charged: false, components: [], bridgedLineIds: all([]), journalSince: since }, after)).integrity).toEqual([]);
+    // A journal with no R01 anywhere yet: no boundary, no finding.
+    expect(journalChargeComparison(row([nightA], { charged: false, components: [], bridgedLineIds: all([]) }, after)).integrity).toEqual([]);
+  });
+
+  it("agrees on a booking whose R01 posted with no money (a ZERO event)", () => {
+    const free = line("z0", { amountCents: 0 });
+    expect(journalChargeComparison(row([free], { charged: true, components: [], bridgedLineIds: all([]) })).identity)
+      .toMatchObject({ status: "AGREE", columnCents: 0, ledgerCents: 0 });
+  });
+
+  it("reports an inactive journal as one integrity finding that closes the gate", () => {
+    const report = withJournalInactiveFinding(summarizeBookingLedgerCensus([], null), "the club's stored currency (JPY) cannot be charged");
+    expect(report.integrity.counts.JOURNAL_INACTIVE).toBe(1);
+    expect(report.integrity.findings).toEqual([expect.objectContaining({ kind: "JOURNAL_INACTIVE" })]);
+    expect(report.verdict).toBe("GATE_CLOSED");
+    expect(report.gateClosedBecause.join(" ")).toMatch(/journal is inactive/);
   });
 });

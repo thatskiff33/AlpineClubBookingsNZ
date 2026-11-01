@@ -410,7 +410,7 @@ const report = (rows: BookingLedgerCensusRow[], acknowledgements: Parameters<typ
 
 /** #4627: a snapshot whose member-money journal holds nothing for these bookings. */
 const EMPTY_JOURNAL = {
-  memberMoneyEvent: { findMany: async () => [] },
+  memberMoneyEvent: { findMany: async () => [], aggregate: async () => ({ _min: { recordedAt: null } }) },
   memberMoneyLine: { findMany: async () => [] },
   memberMoneySourceLink: { findMany: async () => [] },
 };

@@ -36,7 +36,7 @@ import "server-only";
  * that has already posted").
  *
  * NEVER GUESSED. After posting, and inside the same transaction, the booking is
- * judged by the census's own evaluation (`evaluateBookingLedgerIdentities`) on
+ * judged by the census's own evaluation (`evaluateWithJournal`, #4627) on
  * the row it now reads. A booking left with a disagreement, a coverage gap or an
  * integrity finding is rolled back and LISTED with the reason and both figures;
  * a named class is not a refusal (the census reports it, and the owner signs it
@@ -71,7 +71,7 @@ import type { Prisma, PrismaClient } from "@prisma/client";
 import { planGroupChildBackPost } from "@/lib/booking-ledger-back-post-group";
 import { postHandBackLedgerLine } from "@/lib/booking-ledger-hand-back";
 import { postCancellationLedgerLines } from "@/lib/booking-ledger-cancellation-sync";
-import { postBookingLedgerJournal, resolveBookingMoneyPostingContext, type MemberMoneyPostingContext } from "@/lib/member-money/doors";
+import { postBookingLedgerJournal, resolveBookingMoneyPostingContext, type BookingJournalContext } from "@/lib/member-money/doors";
 import { planConfirmationChargeLines } from "@/lib/booking-ledger-confirmation-posting";
 import { syncBookingLedgerCredits } from "@/lib/booking-ledger-credit-sync";
 import {
@@ -82,12 +82,11 @@ import {
 } from "@/lib/booking-ledger-modification-posting";
 import { handBackKey, modificationChangeFeeKey } from "@/lib/booking-ledger-posting-keys";
 import {
-  evaluateBookingLedgerIdentities,
   postConfirmationEditsWithoutLines,
   type BookingLedgerEvaluation,
 } from "@/lib/booking-ledger-projection-census";
 import type { BookingLedgerCensusRow } from "@/lib/booking-ledger-projection-census-row";
-import { cancelledSnapshotKept, readBookingLedgerCensusRow } from "@/lib/booking-ledger-projection-census-store";
+import { cancelledSnapshotKept, evaluateWithJournal, readBookingLedgerCensusRow } from "@/lib/booking-ledger-projection-census-store";
 import { bookingHasConfirmationLines, findPostedChargeLines } from "@/lib/booking-ledger-read";
 import { syncBookingLedgerSettlements } from "@/lib/booking-ledger-settlement-sync";
 import {
@@ -495,7 +494,7 @@ function namedClasses(evaluation: BookingLedgerEvaluation): string[] {
  * and judge the result. Throws `BackPostRollback` for a refusal; returns the
  * outcome otherwise (the caller rolls a dry run back itself).
  */
-async function backPostBooking(tx: Tx, bookingId: string, journal: MemberMoneyPostingContext): Promise<BookingBackPostOutcome> {
+async function backPostBooking(tx: Tx, bookingId: string, journal: BookingJournalContext): Promise<BookingBackPostOutcome> {
   if (!(await lockBookingForBackPost(tx, bookingId))) return { bookingId, kind: "NOTHING_TO_POST", classes: [] };
   const lineIds = async () =>
     (await tx.bookingLedgerLine.findMany({ where: { bookingId }, select: { id: true } })).map((line) => line.id);
@@ -550,13 +549,13 @@ async function backPostBooking(tx: Tx, bookingId: string, journal: MemberMoneyPo
   if ("kind" in charges) throw refuse(charges);
   await writeBookingLedgerRows(tx, buildBookingLedgerRows([...charges.postings, ...(group?.postings ?? [])]));
   steps.push(...charges.steps, ...(group?.steps ?? []));
-  // #4627 (R26): a booking whose confirmation is in the member-money journal
-  // gets the charge lines filled in here too; one confirmed before it posts
-  // nothing (M9 back-posts its history whole). A confirmation is never filled
-  // for a journal booking: its R01 posted with its confirmation lines.
+  // #4627 (R26): a booking whose R01 is in the member-money journal gets the
+  // charge lines filled in here too, its confirmation's included (a door whose
+  // legacy plan failed still posted R01, as a ZERO event); one confirmed before
+  // M3b posts nothing (M9 back-posts its history whole).
   await postBookingLedgerJournal(tx, journal, {
     bookingId, lodgeId: booking.lodgeId, event: { kind: "back-post" },
-    postingKeys: charges.postings.filter((posting) => posting.anchorKind !== "CONFIRMATION").map((posting) => posting.postingKey),
+    postingKeys: charges.postings.map((posting) => posting.postingKey),
   });
 
   // The cancellation, once the stay it takes back is on the ledger.
@@ -572,7 +571,8 @@ async function backPostBooking(tx: Tx, bookingId: string, journal: MemberMoneyPo
 
   // Judged by the census, on what this transaction now reads.
   const after = await readBookingLedgerCensusRow(tx, bookingId);
-  const evaluation = evaluateBookingLedgerIdentities(after ?? first);
+  // With the journal comparison (#4627): a fill that left the journal behind is refused too.
+  const evaluation = evaluateWithJournal(after ?? first);
   const disagrees = evaluation.identities.some((identity) => identity.status === "DISAGREE");
   if (disagrees || evaluation.coverage.length > 0 || evaluation.integrity.length > 0) {
     const what = [
@@ -628,7 +628,7 @@ async function backPostOne(
   client: Pick<PrismaClient, "$transaction">,
   bookingId: string,
   apply: boolean,
-  journal: MemberMoneyPostingContext,
+  journal: BookingJournalContext,
 ): Promise<BookingBackPostOutcome> {
   try {
     return await client.$transaction(

@@ -6,7 +6,7 @@ import {
 } from "@prisma/client";
 import { bookingOwner } from "@/lib/booking-owner";
 import { postCancellationLedgerLines } from "@/lib/booking-ledger-cancellation-sync";
-import { resolveBookingMoneyPostingContext, type MemberMoneyPostingContext } from "@/lib/member-money/doors";
+import { resolveBookingMoneyPostingContext, type BookingJournalContext } from "@/lib/member-money/doors";
 import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-coverage-drain";
 import { reconcileHostingReviewForSystemCancellation } from "@/lib/adult-member-hosting-system-cancellation";
 import { reconcileBedAllocationsForBookingWithLodgeLockHeld } from "@/lib/bed-allocation-lifecycle";
@@ -83,7 +83,7 @@ function releaseOneHold(
   clubTodayDateOnly: Date,
   format: ClubFormat,
   /** #4627: the journal's posting context, resolved once per run before any transaction. */
-  journal: MemberMoneyPostingContext,
+  journal: BookingJournalContext,
 ) {
   return prisma.$transaction(
     async (tx) => {

@@ -30,6 +30,7 @@ import {
   type BookingLedgerCensusReport,
 } from "../src/lib/booking-ledger-projection-census-report";
 import { censusBookingLedgerProjection } from "../src/lib/booking-ledger-projection-census-store";
+import { bookingJournalInactiveReason } from "../src/lib/member-money";
 import { prisma } from "../src/lib/prisma";
 import { formatCents, formatSignedCents } from "../src/lib/utils";
 
@@ -167,7 +168,8 @@ async function main(): Promise<void> {
   // The club's currency (#3565), read once, outside the snapshot. JSON keeps integer cents.
   const format = await getClubFormat();
   const acknowledgements = options.acknowledged ? readAcknowledgements(options.acknowledged) : [];
-  const report = await censusBookingLedgerProjection(prisma, { acknowledgements });
+  // #4627: a club whose currency no card can be charged in has an inactive journal; one finding says so.
+  const report = await censusBookingLedgerProjection(prisma, { acknowledgements, journalInactive: bookingJournalInactiveReason(format) });
   process.stdout.write(options.json ? `${JSON.stringify(report, null, 2)}\n` : `${summary(report, format)}\n`);
   if (options.draft) process.stderr.write(`${writeDraft(options.draft, draftBookingLedgerAcknowledgements(report))}\n`);
   if (options.failOnGap && report.verdict !== "GATE_OPEN") process.exitCode = 2;

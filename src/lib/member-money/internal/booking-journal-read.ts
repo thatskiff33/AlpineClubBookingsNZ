@@ -17,6 +17,12 @@ export interface BookingJournalCharges {
   components: ReadonlyArray<{ account: BookingChargeAccount; chargeIdentity: string; liveGrossCents: number }>;
   /** The booking's legacy lines a journal batch links (`MemberMoneySourceLink`). */
   bridgedLineIds: ReadonlySet<string>;
+  /**
+   * When the journal took its first R01, for any booking: a booking created after
+   * it and confirmed with no R01 is a door that skipped the journal. Null before
+   * the first. The same for every booking in one read.
+   */
+  journalSince: Date | null;
 }
 
 const CHARGE_ACCOUNTS: readonly BookingChargeAccount[] = ["BOOKING_REVENUE", "FEE_REVENUE"];
@@ -63,6 +69,8 @@ export async function readBookingJournalCharges(
   const charged = await db.memberMoneyEvent.findMany({ where: { eventKey: { in: [...keys.keys()] } }, select: { eventKey: true } });
   const chargedIds = new Set(charged.map((event) => keys.get(event.eventKey)));
   const legs = await db.memberMoneyLine.findMany({ where: chargeLegsOf(bookingIds), orderBy: { id: "asc" }, select: LEG_SELECT });
+  const first = await db.memberMoneyEvent.aggregate({ where: { eventKey: { startsWith: "booking-charge:" } }, _min: { recordedAt: true } });
+  const journalSince = first._min.recordedAt ?? null;
   const links = await db.memberMoneySourceLink.findMany({
     where: { bookingLedgerLine: { bookingId: { in: [...bookingIds] } } },
     orderBy: { id: "asc" },
@@ -81,6 +89,7 @@ export async function readBookingJournalCharges(
       charged: chargedIds.has(bookingId),
       components: liveChargeComponents(byBooking.get(bookingId) ?? []),
       bridgedLineIds: bridged.get(bookingId) ?? new Set(),
+      journalSince,
     });
   }
   return result;

@@ -55,6 +55,8 @@ export type BookingLedgerCensusRow = {
     deletedAt: Date | null;
     organiserSettled: boolean;
     finalPriceCents: number;
+    /** #4627: when the booking was created, for the JOURNAL comparison's R01 check; absent where unread. */
+    createdAt?: Date;
   };
   payment: {
     id: string;

@@ -17,7 +17,7 @@ import { recordWithheldBookingEmail } from "@/lib/booking-email-suppression";
 import logger from "@/lib/logger";
 import { revokePaymentLinkById, revokePaymentLinksForBooking } from "@/lib/payment-link";
 import { postCancellationLedgerLines } from "@/lib/booking-ledger-cancellation-sync";
-import { resolveBookingMoneyPostingContext, type MemberMoneyPostingContext } from "@/lib/member-money/doors";
+import { resolveBookingMoneyPostingContext, type BookingJournalContext } from "@/lib/member-money/doors";
 import {
   SPLIT_GUEST_PAYMENT_LINK_TEMPLATE,
   mintSplitGuestPaymentLinkIfAbsent,
@@ -486,7 +486,7 @@ async function resolveHoldWindowUnderLock(
   clubZone: ClubTimeZone,
   format: ClubFormat,
   /** #4627: the journal's posting context, supplied by the caller for the same reason. */
-  journal: MemberMoneyPostingContext
+  journal: BookingJournalContext
 ): Promise<HoldResolution> {
   return prisma.$transaction(async (tx) => {
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;

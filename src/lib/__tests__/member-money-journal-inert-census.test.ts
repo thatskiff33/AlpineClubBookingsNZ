@@ -54,6 +54,10 @@ const READERS: Record<string, { reason: string; importOnly: boolean }> = {
     reason: "the census row carries the journal's charges (a type import)",
     importOnly: false,
   },
+  "scripts/booking-ledger-census.ts": {
+    reason: "the census command asks whether the club's journal is inactive (a pure decision on its format)",
+    importOnly: false,
+  },
   "src/lib/booking-ledger-projection-census-journal.ts": {
     reason: "the pure JOURNAL comparison of the journal's charges with the bridged lines",
     importOnly: false,
@@ -62,8 +66,9 @@ const READERS: Record<string, { reason: string; importOnly: boolean }> = {
 /**
  * M3b (#4627): THE POSTING CALLERS, exactly. Each posts through
  * `postBookingLedgerJournal` or `postMemberMergeTransfer` from `./doors`, in the
- * transaction of the business change it records, and is held to the same
- * "reads only, no raw SQL write" checks as the boundary.
+ * transaction of the business change it records. It may only read a journal
+ * delegate, and may run no raw SQL that writes a journal table (some of these
+ * files run other raw SQL, such as member merge's member delete).
  */
 const DOORS: Record<string, string> = {
   "src/lib/booking-ledger-confirmation-sync.ts": "R01: a confirmation's lines, beside the legacy write",
@@ -98,7 +103,7 @@ const CONTEXT_RESOLVERS: readonly string[] = [
   "src/lib/xero-inbound/invoice-paid-effects.ts",
 ];
 /** Anything a context resolver may say about the journal: the `./doors` entry, the resolvers and the context type. */
-const RESOLVER_VOCABULARY = /["']@\/lib\/member-money\/doors["']|\bresolveBookingMoneyPostingContext\b|\bresolveBookingDoorClock\b|\bMemberMoneyPostingContext\b/g;
+const RESOLVER_VOCABULARY = /["']@\/lib\/member-money\/doors["']|\bresolveBookingMoneyPostingContext\b|\bresolveBookingDoorClock\b|\bMemberMoneyPostingContext\b|\bBookingJournalContext\b/g;
 const BOUNDARY = "src/lib/member-money/";
 /** M3a (#4626): the one file that creates journal rows. */
 const WRITER = "src/lib/member-money/internal/store.ts";
@@ -156,6 +161,12 @@ const WRITE_STATEMENT = new RegExp([
   String.raw`\bCOPY\s+[^;]*?\bFROM\b`,
   String.raw`\bTRUNCATE\b(?!\s+(?:ON|OR)\b)`,
 ].join("|"), "i");
+
+/** A raw write naming a journal table, for files that may run other raw SQL (member merge deletes a member). */
+const JOURNAL_WRITE_STATEMENT = new RegExp(
+  String.raw`\b(?:INSERT\s+INTO|DELETE\s+FROM|UPDATE|MERGE\s+INTO|COPY|TRUNCATE(?:\s+TABLE)?)\s+(?:ONLY\s+)?(?:"?public"?\.)?"?MemberMoney`,
+  "i",
+);
 
 function referencing(): string[] {
   return productionSourceFiles(ROOT)
@@ -224,6 +235,25 @@ describe("member money journal stays inert in M1 (#4513)", () => {
     ]) {
       expect(caught(read), read).toBe(0);
     }
+  });
+
+  it("writes no raw SQL to a journal table from a door, a context resolver or a reader (#4627)", () => {
+    const outside = [...Object.keys(DOORS), ...CONTEXT_RESOLVERS, ...Object.keys(READERS)];
+    for (const file of outside) {
+      expect(stripComments(readFileSync(join(ROOT, file), "utf8")), file).not.toMatch(JOURNAL_WRITE_STATEMENT);
+    }
+    // Fixture proof: each write form naming a journal table is caught; a write elsewhere is not.
+    for (const write of [
+      '$executeRaw`INSERT INTO "MemberMoneyLine" (id) VALUES (1)`',
+      'await tx.$executeRaw`DELETE FROM public."MemberMoneyEvent" WHERE id = ${id}`',
+      'UPDATE ONLY "MemberMoneySourceLink" SET id = id',
+      'TRUNCATE "MemberMoneyJournal"',
+      'COPY "MemberMoneyObligation" FROM STDIN',
+      'MERGE INTO "MemberMoneyApplication" USING x ON true WHEN MATCHED THEN DELETE',
+    ]) {
+      expect(write).toMatch(JOURNAL_WRITE_STATEMENT);
+    }
+    expect('DELETE FROM "Member" WHERE id = ${loserId}').not.toMatch(JOURNAL_WRITE_STATEMENT);
   });
 
   it("writes only through Prisma delegates in the store, never raw SQL (#4626)", () => {

@@ -6,7 +6,7 @@ import { loadFeesAddedToAmountOwed } from "@/lib/booking-finished-stay-correctio
 import { bookingHasConfirmationLines } from "@/lib/booking-ledger-read";
 import { buildBookingLedgerRows, writeBookingLedgerRows } from "@/lib/booking-ledger-write";
 import logger from "@/lib/logger";
-import { postBookingLedgerJournal, type MemberMoneyPostingContext } from "@/lib/member-money/doors";
+import { postBookingLedgerJournal, type BookingJournalContext } from "@/lib/member-money/doors";
 
 /**
  * One charge poster after a successful PAID claim (INV-PAY-047). The caller
@@ -17,12 +17,13 @@ import { postBookingLedgerJournal, type MemberMoneyPostingContext } from "@/lib/
  *
  * #4627 (Ledger M3b, R01): the same lines then post into the member-money
  * journal, in this transaction, from the context the door resolved before it
- * opened. A journal refusal is never caught: it rolls the settle back.
+ * opened, as R01 even when they carry no money. A journal refusal is never
+ * caught: it rolls the settle back.
  */
 export async function postBookingConfirmationLedgerLines(
   tx: Prisma.TransactionClient,
   booking: ConfirmationPostingBooking & { payment?: { changeFeeCents: number } | null },
-  journal: MemberMoneyPostingContext,
+  journal: BookingJournalContext,
 ): Promise<void> {
   const alreadyConfirmedOnLedger = await bookingHasConfirmationLines(tx, booking.id);
   // #3750 (owner, 7 Oct 2026, "Add fee to amount owed"): a fee a finished-stay
@@ -81,7 +82,10 @@ export async function postBookingConfirmationLedgerLines(
       "Booking ledger: some confirmation lines were already posted under their keys (#3595)"
     );
   }
-  if (ledgerRows.length > 0) {
+  // R01 posts for every first confirmation, even one with no money or whose
+  // lines could not be built (a ZERO event): it is what puts the booking in the
+  // journal's population, so its later money posts and the census compares it.
+  if (!alreadyConfirmedOnLedger) {
     await postBookingLedgerJournal(tx, journal, {
       bookingId: booking.id,
       lodgeId: booking.lodgeId,
@@ -95,7 +99,7 @@ export async function postBookingConfirmationLedgerLines(
 export async function postStoredBookingConfirmationLedgerLines(
   tx: Prisma.TransactionClient,
   bookingId: string,
-  journal: MemberMoneyPostingContext,
+  journal: BookingJournalContext,
 ): Promise<void> {
   const booking = await tx.booking.findUniqueOrThrow({
     where: { id: bookingId },

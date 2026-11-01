@@ -140,10 +140,14 @@ describe("postGroupSettlementLedgerLines", () => {
 
     const written = (mocks.createMany.mock.calls[0] as unknown as [{ data: Array<{ bookingId: string; kind: string }> }])[0].data;
     expect(written.map((row) => `${row.bookingId}:${row.kind}`)).toEqual(["good:GUEST_NIGHT", "good:CARD_CAPTURE"]);
-    // #4627 (R01): the confirmed child's charge lines, and only those, go to the journal.
-    expect(mocks.postBookingLedgerJournal).toHaveBeenCalledTimes(1);
+    // #4627 (R01): each newly confirmed child posts R01 with its own charge lines; the one whose
+    // lines could not be built still posts it (a ZERO event), so its later money posts.
+    expect(mocks.postBookingLedgerJournal).toHaveBeenCalledTimes(2);
     expect(mocks.postBookingLedgerJournal).toHaveBeenCalledWith(store, journal, expect.objectContaining({
       bookingId: "good", event: { kind: "confirmation" }, postingKeys: [expect.stringMatching(/^confirmation:good:night:/)],
+    }));
+    expect(mocks.postBookingLedgerJournal).toHaveBeenCalledWith(store, journal, expect.objectContaining({
+      bookingId: "bad", event: { kind: "confirmation" }, postingKeys: [],
     }));
     expect(logger.error).toHaveBeenCalledWith(
       { settlementId: "gs1", failedBookingIds: ["bad"] },

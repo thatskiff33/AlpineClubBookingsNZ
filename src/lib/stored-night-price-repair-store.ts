@@ -5,7 +5,7 @@ import { dateOnlyInstantOf, type CalendarDate } from "@/lib/club-time";
 import { bookingOwner } from "@/lib/booking-owner";
 import { createAuditLog } from "@/lib/audit";
 import { postReviewClosureLedgerLines } from "@/lib/booking-ledger-modification-sync";
-import type { MemberMoneyPostingContext } from "@/lib/member-money/doors";
+import type { BookingJournalContext } from "@/lib/member-money/doors";
 import type { EditReviewSettlementRoute } from "@/lib/edit-financial-review-settlement";
 import { editReviewSettlementIssuesXeroDocument } from "@/lib/edit-financial-review-xero-leg";
 import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
@@ -190,8 +190,13 @@ export async function recordReviewClosurePricing({
   /** The club's format (#3565), resolved by the caller before any transaction. */
   format: ClubFormat;
   /** #4627: the journal's posting context, resolved by the caller before any transaction. */
-  journal: MemberMoneyPostingContext;
+  journal: BookingJournalContext;
 }): Promise<void> {
+  // #4627: the booking row first (an UPDATE's strength), before any write here
+  // takes a KEY SHARE on its owner's Member row (an account-credit mint), so the
+  // journal's owner read at the end adds no edge against member merge's owner
+  // move, even where the re-base declines and writes no booking row.
+  await store.$executeRaw`SELECT 1 FROM "Booking" WHERE "id" = ${task.bookingId} FOR NO KEY UPDATE`;
   // Sequentially, on the caller's transaction: each write is its own
   // compare-and-set, and a refusal from any of them rolls the whole closure back
   // - so a half-repaired booking is not a reachable state.
