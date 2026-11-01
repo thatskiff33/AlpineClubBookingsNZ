@@ -77,6 +77,16 @@ describe("planCreditReleasePayments", () => {
     expect(plan.items.map((item) => [item.askRowId, item.ownCents])).toEqual([[release.id, 4000]]);
   });
 
+  it("#4491: a merged request (a release carrying an edit) partly refunded is held for an officer, never guessed at", () => {
+    const edit = row({ amountCents: 3000, reason: null, status: PaymentStatus.FAILED });
+    const release = row({ amountCents: 7000, carriedAskCents: 3000, status: PaymentStatus.PARTIALLY_REFUNDED });
+    expect(planCreditReleasePayments([edit, release])).toEqual({
+      items: [],
+      unexplainedRowIds: [release.id],
+      unexplainedCaptureIntentIds: [release.stripePaymentIntentId],
+    });
+  });
+
   it("a second release absorbing the first records each release's own money once", () => {
     const first = row({ amountCents: 4000 });
     const second = row({ amountCents: 6500, carriedAskCents: 4000, status: PaymentStatus.SUCCEEDED });

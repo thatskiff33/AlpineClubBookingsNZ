@@ -722,7 +722,10 @@ export const AUDIT_CENSUS_TOTALS = {
   // 528 -> 529 (#4533): `booking-change-request.create` for the promo correction request an
   // officer raises from Edit Booking on a finished stay, a `logAudit` with a literal `booking`
   // category, like the member's own request. RE-MEASURED with `pnpm run audit:census`.
-  writeSites: 529,
+  // 529 -> 530 (#4426): `xero.refund_credit_note.late_note_not_recorded`, the one row a refund
+  // credit-note create writes when Xero answers after its job was resolved by hand recording a
+  // note, an awaited `createAuditLog` with a literal `xero` category. RE-MEASURED with `pnpm run audit:census`.
+  writeSites: 530,
   /**
    * Of those, sites whose event object carries no `category` key.
    *
@@ -941,7 +944,8 @@ export const AUDIT_CENSUS_TOTALS = {
     // 161 -> 162 (#4359): the re-send hold's row, above.
     // 162 -> 165 (#4432): the sync-now outcome, its failure and the webhook threshold, above.
     // 165 -> 167 (#4457): the retention settings update and the member anonymisation, above.
-    createAuditLog: { total: 167, uncategorised: 0 },
+    // 167 -> 168 (#4426): the late refund note's row, above.
+    createAuditLog: { total: 168, uncategorised: 0 },
     // 8 -> 9 (#2581 child 2 review): `recordAgeUpParentEmailHandoffAudit`
     // moved off its hand-built `prisma.auditLog.create`, the last one in `src/`.
     // Same row, same dedupe keys (`action` + `subjectMemberId` + `outcome`) —
@@ -1426,7 +1430,9 @@ export const AUDIT_CENSUS_TOTALS = {
     // Nobody's readership changes.
     // 44 -> 47 (#4432): `XERO_SYNC_NOW` (outcome and failure) and
     // `XERO_WEBHOOK_THRESHOLD_UPDATED`, beside the other `xero` rows. Nobody's readership changes.
-    xero: 47,
+    // 47 -> 48 (#4426): `xero.refund_credit_note.late_note_not_recorded`, beside the other `xero` rows.
+    // Nobody's readership changes.
+    xero: 48,
     // 12 -> 14 (#2581 child 2): `BULK_COMMUNICATION_SENT` and
     // `EMAIL_SUPPRESSION_CLEARED`. Safe only BECAUSE child 1 moved
     // `communication` out of the support-only system entry into the membership

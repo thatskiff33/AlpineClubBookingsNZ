@@ -372,8 +372,14 @@ let outbox: typeof import("@/lib/xero-operation-outbox");
      * L1 of the #3880 review: two sibling hand-backs' rows, both queued at
      * watermark $10 (nothing was recorded when either enqueued), raced through
      * the REAL worker and `createXeroCreditNote` against a Xero that dedupes on
-     * the idempotency key as Xero does. The first row is held inside its Xero
-     * create; the second is claimed by another worker meanwhile.
+     * the idempotency key as Xero does. The row worker A claims is held inside
+     * its Xero create; the other is claimed by another worker meanwhile.
+     *
+     * Which row A claims is not fixed: the frozen clock stamps both with one
+     * `createdAt`, the worker's scan orders by `createdAt` alone, so the tie
+     * falls to PostgreSQL's row order, which every earlier suite in the shared
+     * harness database shapes. The test reads the row A holds rather than
+     * assume it is the first queued.
      */
     it("two sibling bank hand-backs raced through the real worker: the second waits for the first's note, then sizes past it - two notes for the $20", async () => {
       await paid(BANK);
@@ -436,10 +442,21 @@ let outbox: typeof import("@/lib/xero-operation-outbox");
       try {
         const workerA = outbox.processQueuedXeroOutboxOperations({ limit: 1 });
         await firstCreateEntered;
+        const statusById = async () =>
+          new Map((await prisma.xeroSyncOperation.findMany({ where: { id: { in: rows.map((row) => row.id) } }, select: { id: true, status: true } }))
+            .map((row) => [row.id, row.status]));
+        const atEntry = await statusById();
+        // Exactly one of the two is A's, held RUNNING; the other is still queued.
+        expect(rows.map((row) => atEntry.get(row.id)).sort()).toEqual(["PENDING", "RUNNING"]);
+        const heldId = rows.find((row) => atEntry.get(row.id) === "RUNNING")!.id;
+        const waitingId = rows.find((row) => row.id !== heldId)!.id;
         // Worker B, while A is inside Xero with its note unrecorded.
         const workerB = await outbox.processQueuedXeroOutboxOperations({ limit: 5 });
         expect(workerB).toMatchObject({ found: 1, succeeded: 0, failed: 0, skipped: 1 });
-        expect((await prisma.xeroSyncOperation.findUniqueOrThrow({ where: { id: rows[1]!.id } })).status).toBe("PENDING");
+        // B claimed the waiting row, found A's in flight, and put it back; A's is untouched.
+        const afterB = await statusById();
+        expect(afterB.get(waitingId)).toBe("PENDING");
+        expect(afterB.get(heldId)).toBe("RUNNING");
         release();
         expect(await workerA).toMatchObject({ found: 1, succeeded: 1 });
         // The next scan raises the waiting row past the recorded note.

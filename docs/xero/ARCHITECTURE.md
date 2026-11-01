@@ -625,7 +625,7 @@ this (#1208). Shared JSON-guard micro-helpers (`asRecord`/`readString`/
 
 | Module | Owns |
 | --- | --- |
-| `xero-sync` | The ledger primitives: `startXeroSyncOperation` / `completeXeroSyncOperation` / `failXeroSyncOperation`, payload redaction + hashing, `buildXeroIdempotencyKey`, `upsertXeroObjectLink` (enforces single-active canonical links for Member CONTACT, Payment PRIMARY_INVOICE, MemberSubscription SUBSCRIPTION_INVOICE), `recordXeroInboundEvent`. |
+| `xero-sync` | The ledger primitives: `startXeroSyncOperation` / `completeXeroSyncOperation` / `failXeroSyncOperation`, payload redaction + hashing, `buildXeroIdempotencyKey`, `upsertXeroObjectLink` (enforces single-active canonical links for Member CONTACT, Payment PRIMARY_INVOICE, MemberSubscription SUBSCRIPTION_INVOICE; a `mergeMetadata` write lays its record over the stored metadata in one statement, `xero-object-link-metadata-merge.ts`, so two writers of one link both keep their keys, #4445), `recordXeroInboundEvent`. |
 | `xero-sync-cursors` | `XeroSyncCursor` read/write for incremental syncs, plus throttling helpers. |
 | `xero-stale-operations` | Filters/counters for operations stuck in RUNNING and inbound events stuck in PROCESSING (feeds cron health and the admin reset/replay actions). |
 
@@ -1893,6 +1893,50 @@ on `manuallyResolvedAt`.
   not the listing) and asks the treasurer. A refund request's note (#4391), a row that already names its note
   and every other row resolve as before. Legacy: a row resolved before #4421
   names no note and stays so - nothing can backfill a number nobody recorded.
+- **A stalled create never overwrites the officer's note (#4426,
+  `INV-INT-028`, `INV-INT-029`).** A create can stall in Xero past the stale
+  threshold, be marked failed, and be resolved by hand recording the note the
+  officer made while its own call is still waiting. When Xero then answers,
+  the create records its note through `recordCreatedRefundNote`
+  (`xero-refund-note-record.ts`): one transaction writing the payment's
+  pointer (only when the note takes it), then a status-guarded `updateMany`
+  claiming the row and writing its note, then the link. The claim refuses only
+  a row whose resolve RECORDED a note (`manuallyResolvedAt` set and
+  `xeroObjectId` set); a lost claim rolls the whole record back, so the row
+  keeps the officer's note, no link names the late one and the pointer is
+  untouched, and the create returns without settling or completing, so no
+  refund payment is recorded against the late note in Xero. Then, none of it
+  able to throw into the create:
+  - a warning naming the late note (operation, id, number, amount, booking) is
+    logged first;
+  - **the same note** - Xero committed the note, its answer was lost, and the
+    officer found it and resolved with its number - logs at info and nothing
+    else: the row already records it. Settling it (its refund payment in Xero)
+    is the officer's, as the resolve already assumes: `INV-PAY-111`'s finisher
+    skips a row resolved by hand;
+  - any other note gets one `xero` audit row
+    (`xero.refund_credit_note.late_note_not_recorded`, naming the operation,
+    the note's id and number, the amount and the booking), then #4374's
+    **Xero Sync Error** alert (`XERO_SUCCESS_AFTER_RESOLUTION`,
+    `unrecordedLateSuccessAlert`) naming the late credit note, its amount in
+    the club's money format and the booking, and the note the row keeps,
+    keyed per late object (`xero-success-after-resolution:<operation id>:<object id>`).
+    It asks the officer to check the late note in Xero and that it is not
+    recorded on the payment before voiding it; if the resolve was withdrawn
+    since, it says so and suggests resolving with the late note's number
+    instead.
+
+  Every other row is written as before. A plain resolve (a refund request's
+  note, #4391, or any row resolved without a number) records no note, so the
+  late note lands, links and settles, and the completion's #4374 alert tells
+  the officers. A row marked failed with no resolve is a row no claim holds,
+  so the late note lands and the completion closes it SUCCEEDED. The record
+  writes no claim token: a refund-note CREATE row is never handed back to
+  PENDING in place (its retry runs on its own REQUEUE row), so a later claim
+  holding the original RUNNING cannot happen here today. Limits: an alert
+  that reaches nobody is not sent again (the audit row and the log remain); a
+  process that dies between the rollback and the audit row leaves only the
+  warning in the log.
 - **The outbox.** After it claims a row and before any Xero call, the outbox
   asks `findResolvedSiblingSince`: was a sibling for the same document (same
   correlation key) resolved after this copy was queued? If so the copy is
@@ -4096,7 +4140,14 @@ once, by card, and Xero is told about the payment without a second invoice.
   `createXeroPaymentForInvoice` against the booking's invoice, from the Stripe
   account, dated the day Stripe took it. The `XeroObjectLink` (role
   `CREDIT_RELEASE_PAYMENT`) is the done marker. An edit's own money stays on its
-  supplementary invoice, so one card payment is recorded against two invoices.
+  supplementary invoice, so one card payment is recorded against two invoices. That
+  holds in either order: a release on an unpaid edit request merges into one request
+  (#4491, `INV-ADDPAY-052`) only where the edit's waiting invoice can move onto it
+  (`anchorInvoicesMoveRefusal`, the one test the superseded-invoice move itself asks,
+  read through `readAskInvoicesForCarry`), so its capture releases that invoice for the
+  edit's own amount and the sweep records the rest. An edit billed on a #3980 gap
+  invoice anchored on it is not merged: the merged capture's receipt would record it
+  on the booking's invoice.
 - **One writer per capture.** The ordinary additional-capture receipt writer
   (`readCaptureRecorder`) stands down for a capture the sweep owns, and subtracts the
   sweep's share from one it shares with an edit, so the card payment is never recorded

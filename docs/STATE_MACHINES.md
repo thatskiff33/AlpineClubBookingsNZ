@@ -2338,9 +2338,12 @@ inbound fence records its conflict the same way, under the
   -> closed, nothing asked    (not a release / ended booking / payment not captured /
                                organiser-settled / invoice paid in Xero / nothing owed /
                                below the card minimum, the last with an officer alert)
-  -> waiting                  (an unpaid edit request is open: back to the longest retry interval,
-                               no attempt spent, never terminal; officers told once, INV-ADDPAY-051)
-  -> ADDITIONAL row PENDING (reason credit_released_outside_app, carries any live ask)
+  -> waiting                  (an unpaid edit request is open whose invoice would not follow a
+                               merge: back to the longest retry interval, no attempt spent, never
+                               terminal; officers told once, INV-ADDPAY-051)
+  -> ADDITIONAL row PENDING (reason credit_released_outside_app, carries any live ask; an unpaid
+                               edit request is MERGED into it, its waiting invoice moved onto it,
+                               cause "mixed", INV-ADDPAY-052)
        -> SUCCEEDED by card  -> payment recorded on the booking's invoice (sweep, XeroObjectLink)
        -> FAILED+withdrawn   when Xero shows the invoice PAID (the request alone, or carrying only
                                earlier released credit): card payment cancelled first,
@@ -2355,7 +2358,7 @@ inbound fence records its conflict the same way, under the
                                or the request cannot be matched to it (none, a 404, no amount due)
 ```
 
-`INV-ADDPAY-045`, `INV-ADDPAY-046`, `INV-ADDPAY-048`, `INV-ADDPAY-050`, `INV-ADDPAY-051`.
+`INV-ADDPAY-045`, `INV-ADDPAY-046`, `INV-ADDPAY-048`, `INV-ADDPAY-050`, `INV-ADDPAY-051`, `INV-ADDPAY-052`.
 
 ### Manual refund task lifecycle (#2262)
 
@@ -4006,6 +4009,14 @@ FAILED/PARTIAL -> officer marks it resolved in Xero -> done: status unchanged,
   withdrawn mark takes the note and retires the link (audited; a failed
   withdrawal alerts); a PARTIAL row naming no note and an unreadable amount
   are refused (Mark non-replayable)
+  the create's own call, stalled past a Mark failed and a resolve recording a
+  note, then answers (#4426): its note is recorded only under a
+  guarded claim refusing a row whose resolve recorded a note -> lost:
+  nothing written (the row keeps the officer's note, no link, no pointer), no
+  settlement, no completion; the same note as the officer's -> nothing more;
+  any other -> one `xero` audit row and one XERO_SUCCESS_AFTER_RESOLUTION
+  alert naming it. After a plain resolve (no note recorded) or a Mark failed
+  with no resolve the late note lands as any success does (-> SUCCEEDED)
 credit-note allocation refused by Xero as more than the note has left (#4218)
   -> FAILED with code CREDIT_NOTE_SPENT_OUTSIDE_APP when a read of the note
   afterwards CONFIRMS it was spent outside the app. Xero's refusal is the

@@ -607,6 +607,13 @@ import "./ended-booking-ask-mint-race.realdb.test";
 // unless RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own `race-3403-`
 // fixtures.
 import "./superseded-ask-invoice-carry.realdb.test";
+// #4491 (`INV-ADDPAY-052`) reuses it to prove a credit release merges into an
+// unpaid edit request: one request for both, the edit's invoice following it,
+// and the one card payment recorded against both invoices once; the wait where
+// the edit's invoice cannot follow; and the edit paid or withdrawn between the
+// release's read and its claim. Skipped unless RUN_CONCURRENCY_RACE_TESTS=1; it
+// owns and cleans its own `race-4491-` fixtures.
+import "./credit-release-merge-into-edit.realdb.test";
 // #4357 reuses it to prove every saved-card door charges the booking's worth:
 // a change fee the edit lifecycle's writer recorded on an unsettled payment is
 // charged by the charge-saved-method route and the officer's
@@ -658,12 +665,28 @@ import "./other-lodge-name-index-window.realdb.test";
 // follow-up through the link the resolve wrote. Skipped unless
 // RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own `race-4421-` fixtures.
 import "./resolve-records-refund-note.realdb.test";
+// #4426 reuses it to prove a refund credit-note create that stalls in Xero, is
+// marked failed and is resolved by hand recording the officer's note, records
+// nothing when it returns: the officer's note stays recorded and linked, the
+// late note is alerted once and never linked or settled; and with no resolve the
+// late note lands as before. Skipped unless RUN_CONCURRENCY_RACE_TESTS=1; it
+// owns and cleans its own `race-4426-` fixtures.
+import "./xero-late-refund-note-after-resolve.realdb.test";
 // #4609 reuses it to prove the per-account password throttle's claim: two
 // failures racing on one account both count, a burst at the end of a wait admits
 // exactly one guess, two first-ever claims both count, and a row deleted between
 // the ensure and the lock is re-ensured. Skipped unless
 // RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own `race-4609-` rows.
 import "./login-throttle.realdb.test";
+// #4445 reuses it to prove two writers merging metadata onto one Xero link
+// (an existing row, or a missing one both create) both keep their keys, and
+// that the one-statement merge writes what the old spread wrote. Skipped
+// unless RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own `race-4445-`
+// links.
+import "./xero-object-link-metadata-merge.realdb.test";
+// #4657 reuses it to prove the erased-member contact status check keeps a
+// concurrent writer's link metadata; it owns and cleans its own `race-4657-` links.
+import "./xero-erased-contact-status-metadata.realdb.test";
 // #2374 (AID-5) deliberately is NOT imported here, unlike the two suites above.
 // `ai-diagnostics-select-only-role.realdb.test.ts` provisions and drops a cluster
 // ROLE and revokes `TEMPORARY ... FROM PUBLIC` on the shared throwaway database

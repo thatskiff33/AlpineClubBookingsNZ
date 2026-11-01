@@ -14,7 +14,9 @@ import { prisma } from "@/lib/prisma";
  * audit row on the booking says it, in the audit log officers already read:
  *
  * - `waiting-on-edit-request`: a release landed on a booking whose unpaid edit request is still
- *   open; it is asked for once that request is paid or withdrawn.
+ *   open and could not be merged with it (#4491, `INV-ADDPAY-052`: an edit request merges unless
+ *   its Xero invoice cannot follow); it is asked for once that request is paid or withdrawn. The
+ *   note says why it could not merge (`detail`).
  * - `invoice-part-paid`: Xero shows the booking's invoice open but owing less than the released
  *   credit the request asks for (a bank transfer that paid part of it, say), so the automatic
  *   reminder is withheld rather than asking the member to pay by card what may already be paid.
@@ -40,7 +42,7 @@ const ACTION = "payment.credit_release_ask.left_to_officers";
  */
 const SUMMARY: Record<CreditReleaseOfficerSignalReason, string> = {
   "waiting-on-edit-request":
-    "Credit used in Xero was not asked for yet: an unpaid request for a booking change is open, and the released credit will be asked for once it is paid or withdrawn",
+    "Credit used in Xero was not asked for yet: an unpaid request for a booking change is open and could not be combined with it, so the released credit will be asked for once that request is paid or withdrawn",
   "invoice-part-paid":
     "The automatic reminder for credit used in Xero was withheld: Xero shows the booking's invoice owing less than the request asks for (part may have been paid by bank transfer), so an officer should check it",
   "invoice-not-open":
@@ -68,6 +70,8 @@ export async function signalCreditReleaseToOfficers(params: {
   reason: CreditReleaseOfficerSignalReason;
   /** What makes this the same signal again: written once per key. */
   key: string;
+  /** Why, in the officers' words, added to the reason's sentence (#4491: why a release could not merge). */
+  detail?: string;
   metadata?: Record<string, unknown>;
 }): Promise<boolean> {
   try {
@@ -84,7 +88,7 @@ export async function signalCreditReleaseToOfficers(params: {
       category: "payment",
       severity: "important",
       outcome: "success",
-      summary: SUMMARY[params.reason],
+      summary: params.detail ? `${SUMMARY[params.reason]}. Why: ${params.detail}.` : SUMMARY[params.reason],
       details: params.reason,
       metadata: { key: params.key, reason: params.reason, ...params.metadata },
     });
