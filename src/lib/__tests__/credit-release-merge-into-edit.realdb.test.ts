@@ -31,7 +31,12 @@
  *    lets the release be asked for alone once the edit is paid, or withdrawn;
  *  - a race: the edit paid, or withdrawn, between the release's read and its
  *    claim - the claim refuses, nothing is superseded, and the retry asks for
- *    the released credit alone.
+ *    the released credit alone;
+ *  - #4652: a release attempt whose claim goes stale mid-mint and is reclaimed
+ *    (the stale reaper's fenced write, then the real runner): once the
+ *    reclaiming runner closed the row without the stale attempt's intent, that
+ *    intent is cancelled at Stripe, once, with no transaction open; while the
+ *    row may yet record it, or a row names it, it is left.
  *
  * Envelope: identical to `concurrency-lock-races.realdb.test.ts`, which imports
  * this file; the describe runs ONLY when `RUN_CONCURRENCY_RACE_TESTS=1`,
@@ -615,6 +620,153 @@ let previousDatabaseUrl: string | undefined;
         if (previousDatabaseUrl === undefined) delete process.env.DATABASE_URL;
         else process.env.DATABASE_URL = previousDatabaseUrl;
       }
+    });
+
+    /**
+     * #4652 (`INV-PAY-120`): the release's first attempt mints, then stalls past the stale
+     * reaper's threshold before its claim hold. Inside its mint the reaper's own fenced write
+     * hands the row back (`resetStaleProcessingOperations`), and `reclaim` runs whatever comes
+     * next - usually the real runner's second attempt. The first attempt's hold then finds its
+     * claim gone. Stripe here honours idempotency keys, as the real one does within a day.
+     */
+    async function releaseLosesClaimToStaleReclaim(reclaim: (operationId: string) => Promise<void>) {
+      await seedCreditPaidBooking();
+      await convergeSpentCredit();
+      expect(await enqueueRelease()).toBe(1);
+      const operation = await releaseOperation();
+      await prisma.paymentRecoveryOperation.update({ where: { id: operation.id }, data: { nextRetryAt: new Date(0) } });
+      const cancelled: Array<{ id: string; openTransactions: number }> = [];
+      const cancel = stripeRaceHooks.cancel!;
+      stripeRaceHooks.cancel = async (id) => {
+        cancelled.push({ id, openTransactions: await openTransactionsElsewhere() });
+        return cancel(id);
+      };
+      const byKey = new Map<string, string>();
+      const create = stripeRaceHooks.create!;
+      const mint = async (args: Parameters<NonNullable<typeof stripeRaceHooks.create>>[0]) => {
+        const known = args.idempotencyKey ? byKey.get(args.idempotencyKey) : undefined;
+        if (known) return { ...stripe.intents.get(known)! };
+        const intent = (await create(args)) as FakeIntent;
+        if (args.idempotencyKey) byKey.set(args.idempotencyKey, intent.id);
+        return intent;
+      };
+      const frozenNow = new Date();
+      let stale: string | null = null;
+      stripeRaceHooks.create = async (args) => {
+        const intent = await mint(args);
+        if (stale === null && args.metadata?.reason === "credit_released_outside_app") {
+          stale = intent.id;
+          stripeRaceHooks.create = mint;
+          vi.setSystemTime(new Date(frozenNow.getTime() + 31 * 60_000));
+          const held = await prisma.paymentRecoveryOperation.findUniqueOrThrow({ where: { id: operation.id } });
+          // The stale reaper's write (`markPaymentRecoveryOperationFailed`), fenced on the attempt it read.
+          const reaped = await prisma.paymentRecoveryOperation.updateMany({
+            where: { id: operation.id, status: "PROCESSING", attempts: held.attempts, processingStartedAt: held.processingStartedAt },
+            data: { status: "FAILED", lastError: "Payment recovery worker timed out before completion.", processingStartedAt: null, nextRetryAt: new Date() },
+          });
+          expect(reaped.count).toBe(1);
+          await reclaim(operation.id);
+        }
+        return intent;
+      };
+      const { runPaymentRecoveryOperationNow } = await import("@/lib/payment-recovery");
+      try {
+        expect(await runPaymentRecoveryOperationNow(operation.id, CLUB_FORMAT_TEST)).toBe("succeeded");
+      } finally {
+        vi.setSystemTime(frozenNow);
+      }
+      expect(stale).not.toBeNull();
+      return { operationId: operation.id, stale: stale as unknown as string, cancelled };
+    }
+
+    async function reclaimingRunner(operationId: string) {
+      const { runPaymentRecoveryOperationNow } = await import("@/lib/payment-recovery");
+      expect(await runPaymentRecoveryOperationNow(operationId, CLUB_FORMAT_TEST)).toBe("succeeded");
+    }
+
+    /** Transactions open on any other connection to this database - a Stripe call made inside one shows here. */
+    async function openTransactionsElsewhere(): Promise<number> {
+      const rows = await prisma.$queryRaw<Array<{ count: number }>>`
+        SELECT COUNT(*)::int AS "count" FROM pg_stat_activity
+        WHERE datname = current_database() AND pid <> pg_backend_pid() AND xact_start IS NOT NULL
+      `;
+      return rows[0]?.count ?? 0;
+    }
+
+    it("#4652: a stale attempt whose reclaiming runner asked for less under an amount-suffixed key has its own intent cancelled at Stripe, outside every transaction", async () => {
+      const { operationId, stale, cancelled } = await releaseLosesClaimToStaleReclaim(async (id) => {
+        // $10.00 of the released credit was paid in Xero meanwhile: the reclaiming runner asks for $30.00.
+        fakeXero.state.invoiceDueCents.set(INVOICE_ID, CREDIT_CENTS - 1_000);
+        await reclaimingRunner(id);
+      });
+
+      const rows = await additionalRows();
+      expect(rows).toHaveLength(1);
+      const live = rows[0]!.stripePaymentIntentId!;
+      expect(live).not.toBe(stale);
+      expect(rows[0]).toMatchObject({ reason: "credit_released_outside_app", amountCents: CREDIT_CENTS - 1_000, status: "PENDING" });
+      expect(await prisma.paymentRecoveryOperation.findUniqueOrThrow({ where: { id: operationId }, select: { status: true, paymentIntentId: true } }))
+        .toEqual({ status: "SUCCEEDED", paymentIntentId: live });
+      // The stale attempt's intent: nobody's, cancelled once, with no transaction open; the live ask untouched.
+      expect(cancelled).toEqual([{ id: stale, openTransactions: 0 }]);
+      expect(stripe.intents.get(stale)?.status).toBe("canceled");
+      expect(stripe.intents.get(live)?.status).toBe("requires_payment_method");
+      expect(await prisma.paymentTransaction.findUnique({ where: { stripePaymentIntentId: stale } })).toBeNull();
+      expect(await prisma.paymentRecoveryOperation.count({ where: { paymentIntentId: stale } })).toBe(0);
+    });
+
+    it("#4652: a stale attempt whose reclaiming runner found nothing left to ask has its own intent cancelled at Stripe", async () => {
+      const { operationId, stale, cancelled } = await releaseLosesClaimToStaleReclaim(async (id) => {
+        // The booking no longer owes the released credit: its price came down by as much.
+        await prisma.booking.update({ where: { id: BOOKING_ID }, data: { finalPriceCents: { decrement: CREDIT_CENTS } } });
+        await reclaimingRunner(id);
+      });
+
+      expect(await additionalRows()).toEqual([]);
+      expect(await prisma.paymentRecoveryOperation.findUniqueOrThrow({ where: { id: operationId }, select: { status: true, paymentIntentId: true } }))
+        .toEqual({ status: "SUCCEEDED", paymentIntentId: expect.stringMatching(/^credit_release_ask_pi_/) });
+      expect(cancelled).toEqual([{ id: stale, openTransactions: 0 }]);
+      expect(stripe.intents.get(stale)?.status).toBe("canceled");
+    });
+
+    it("#4652: a stale attempt whose reclaiming runner minted under the same key wrote THAT intent - it is the ask, never cancelled", async () => {
+      const { operationId, stale, cancelled } = await releaseLosesClaimToStaleReclaim(reclaimingRunner);
+
+      expect(stripe.created).toEqual([stale]);
+      expect(await prisma.paymentRecoveryOperation.findUniqueOrThrow({ where: { id: operationId }, select: { status: true, paymentIntentId: true } }))
+        .toEqual({ status: "SUCCEEDED", paymentIntentId: stale });
+      expect(cancelled).toEqual([]);
+      expect(stripe.intents.get(stale)?.status).toBe("requires_payment_method");
+      await expectReleaseAskedAlone();
+    });
+
+    it("#4652: a stale attempt whose row the reaper only handed back is left - the retry records that very intent under the same key", async () => {
+      const { operationId, stale, cancelled } = await releaseLosesClaimToStaleReclaim(async () => {});
+
+      expect(cancelled).toEqual([]);
+      expect(stripe.intents.get(stale)?.status).toBe("requires_payment_method");
+      expect((await prisma.paymentRecoveryOperation.findUniqueOrThrow({ where: { id: operationId } })).status).toBe("FAILED");
+      // Why it must be left: the retry's mint is answered with it, and records it as the ask.
+      await runRelease();
+      expect(stripe.created).toEqual([stale]);
+      expect(await prisma.paymentRecoveryOperation.findUniqueOrThrow({ where: { id: operationId }, select: { status: true, paymentIntentId: true } }))
+        .toEqual({ status: "SUCCEEDED", paymentIntentId: stale });
+      await expectReleaseAskedAlone();
+    });
+
+    it("#4652: a stale attempt's intent a payment row names is left to that row, though its recovery closed without it", async () => {
+      const { stale, cancelled } = await releaseLosesClaimToStaleReclaim(async (id) => {
+        fakeXero.state.invoiceDueCents.set(INVOICE_ID, CREDIT_CENTS - 1_000);
+        await reclaimingRunner(id);
+        // A writer recorded the intent before the stale attempt's proof re-read it.
+        await prisma.paymentTransaction.create({
+          data: { id: "race-4652-named", paymentId: PAYMENT_ID, kind: "ADDITIONAL", source: "STRIPE", status: "FAILED", amountCents: CREDIT_CENTS, stripePaymentIntentId: stripe.created[0]! },
+        });
+      });
+
+      expect(cancelled.map(({ id }) => id)).not.toContain(stale);
+      expect(stripe.intents.get(stale)?.status).toBe("requires_payment_method");
+      expect(await prisma.paymentTransaction.findUniqueOrThrow({ where: { stripePaymentIntentId: stale }, select: { id: true } })).toEqual({ id: "race-4652-named" });
     });
 
     it("merges: one request for both, the edit's invoice follows it, and the one card payment is recorded against both invoices, once", async () => {
