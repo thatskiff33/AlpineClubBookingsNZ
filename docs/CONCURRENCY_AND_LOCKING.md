@@ -6283,9 +6283,10 @@ of the #2901 repair apply and of the funnel's own pointer release (#4046).
 **The accepted inversion, and why it cannot deadlock.** Two writers take the
 same two rows Payment first, inside their own transactions:
 
-- the refund-note create's record (`createXeroCreditNote`): the pointer, then
-  the link write, whose single-canonical rule updates the payment's other
-  active links;
+- the refund-note create's record (`recordCreatedRefundNote`, from
+  `createXeroCreditNote`): the pointer, then its claim of its own operation
+  row (#4426), then the link write, whose single-canonical rule updates the
+  payment's other active links;
 - the outbox enqueue's existing-note branch
   (`enqueueXeroRefundCreditNoteOperation`, "already linked"): the pointer,
   then the link write, inside the caller's transaction (a group cancel or an
@@ -6561,6 +6562,45 @@ queued on the advisory lock, ending with one record of the note; and the void
 path - the inbound void of the recorded note retires its link, coverage drops to
 $0 and the nightly follow-up undoes the refund and asks once.
 
+**The create's own late answer (#4426).** The create whose row this resolve
+records can still be waiting on Xero: a create stalled past the stale
+threshold, an officer pressed Mark failed, then Resolve by hand. Its Xero call
+holds no lock, as before. When Xero answers, `recordCreatedRefundNote`
+(`xero-refund-note-record.ts`) records the note in one short transaction, in
+the claim's own order: the `Payment` row - only when the note takes the
+pointer (a canonical note; a refund request's or a per-refund note takes no
+`Payment` lock here) - then the operation row, a status-guarded `updateMany`
+refusing a row whose resolve recorded a note (`manuallyResolvedAt` and
+`xeroObjectId` both set), which is the claim and the write of the row's note
+in one statement, then the link through the funnel. Classified under
+`INV-LOCK-001`: no global cohort and no advisory key. The create moves no
+settlement money and no booking status in this transaction, and the one fact
+it shares with the resolve - which note this row records - lives on the
+operation row, so that row's lock decides it: whichever commits second reads
+the first. A resolve that commits first leaves the create's `updateMany`
+matching nothing; the create throws inside its transaction, rolling back its
+pointer, records nothing, and then - outside any transaction, logging the note
+first - writes one audit row and raises #4374's alert (or, when the late note
+is the one the resolve recorded, only logs it) and returns without settling
+or completing. A create that commits first leaves the row naming its note, so
+the resolve's re-read under its locks no longer asks a number and its claim is
+lost: the route answers as for a lost resolve. With the pointer, the resolve
+queues on the `Payment` row behind the create's record; without it, the
+resolve passes its reads (the record has not committed) and its `updateMany`
+queues on the operation row, then matches nothing (`xeroObjectId` is set).
+Both take the `Payment` row before the operation row and the link after it, so
+they never wait on each other in a cycle; before #4426 the create wrote the
+link before the row, the reverse of a completion (row, then link). A plain
+resolve records no note, so the create's claim still wins over it and the
+completion's #4374 alert follows. No new advisory key, registered site or
+row-lock site. Proven against real PostgreSQL by
+`xero-late-refund-note-after-resolve.realdb.test.ts`: the outbox's create held
+inside its Xero call while Mark failed and the resolve's claim run, then
+answered; and the create's record held open at its link write while the
+resolve's claim runs, shown queued (`pg_blocking_pids`) on the `Payment` row
+for a canonical note and on the operation row for a per-refund note, and lost
+either way.
+
 ## Refund-note link writes racing a void (#4195, #4223)
 
 A refund note's mirror goes inactive when the inbound sync records it VOIDED
@@ -6710,6 +6750,44 @@ the same note with an active historical sibling can deadlock (40P01). The
 therefore excludes old refund-note writers, including web/direct retries,
 before new ones start. Nightly healing of old mirror state does not make the
 two lock orders compatible.
+
+## The link funnel's metadata merge: one statement, no lock (#4445)
+
+A link write with `mergeMetadata` (the inbound reconcile, the refund-note
+status recorder and answers, the canonical-link heal, a school's contact link)
+lays its record over the stored metadata instead of replacing it. Before #4445
+the funnel read the stored metadata with no row lock and wrote the JavaScript
+spread, so two writers of one link that both read before either wrote kept
+only the later writer's keys. That held for a missing row too: both first
+writers read nothing, and the second's upsert overwrote the first's insert.
+
+The upsert now writes no metadata on that path, and one `UPDATE` keyed on the
+row it wrote applies the merge (`xero-object-link-metadata-merge.ts`): jsonb
+`||` over a stored object, less any key the record sent as `undefined`, or the
+value whole over anything else. That is the spread's meaning, top-level keys
+only. Under READ COMMITTED the statement re-reads the row it updates, and the
+upsert before it already holds that row in the same transaction, so a second
+writer's merge lands on the first's committed result. It adds no row lock, no
+advisory key and no lock-order edge: the row it touches is the row the upsert
+just took. It writes no money column, no booking status and calls no
+provider, so it joins no advisory cohort (`INV-LOCK-001`) and
+`INV-LOCK-003`'s registry has no entry for it. Refund-note writes still take
+their own row first (above); the merge then runs inside that lock.
+
+Each value the old spread wrote is still written, with one difference: a
+stored value is no longer re-run through `sanitizeForJson`. A value written
+through the funnel was redacted then; one written directly, such as the bank
+refund void marker's free-text note (`writeBankRefundVoidMarker`), is now kept
+as written rather than masked on the next merge. Redact such a value at its
+own writer if it needs it. During a blue-green overlap an
+old-release writer still reads then writes, so the window closes when the old
+colour stops.
+
+`xero-object-link-metadata-merge.realdb.test.ts` holds two writers at the
+funnel's upsert until both arrive, past the old read and before either write,
+on an existing row and a missing one. Both keys survive; on the pre-#4445 code
+all four cases lose one. It also compares the statement with the old spread
+across stored and incoming shapes.
 
 ## One Xero contact, one local home: the contact-home key (#3367)
 

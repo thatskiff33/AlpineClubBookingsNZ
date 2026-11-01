@@ -64,6 +64,8 @@ vi.mock("@/lib/prisma", () => {
     },
     xeroSyncOperation: {
       update: mocks.xeroSyncOperationUpdate,
+      // #4426: a refund note's record claims its row; no row here is resolved by hand.
+      updateMany: async () => ({ count: 1 }),
       findUnique: async () => null,
       // #3791: the unconverged-deallocation read a review's note defers on.
       findFirst: (...a: unknown[]) => deallocationFence.findFirst(...a),

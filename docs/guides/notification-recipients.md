@@ -78,7 +78,7 @@ offered to them at all:
 | Payment failures | Finance | A booking payment fails; an expired internet banking hold needs attention because money may be paid against its invoice or Xero cannot read it (#3643); an expired hold is left for reconciliation by hand because its stay has started (#3663); a paid group's unpaid joiners were switched to paying for themselves mid-stay and the treasurer must collect by hand (#3672); or a card payment that went through after its booking was cancelled is held for a treasurer's approval (*Late payment held for approval*, once per payment; if nobody could receive it, the payments cron tries it again a day later while the item is still waiting, #3635) |
 | Pending deadlines | Bookings | Bookings approach their pending deadline (digest) |
 | Bookings bumped | Bookings | A pending booking is bumped by another booking |
-| Xero sync errors | Finance | Xero contact or invoice sync fails, or a refund the app does not yet note in Xero needs crediting by hand (#3949, until #4292) |
+| Xero sync errors | Finance | Xero contact or invoice sync fails, or a refund the app does not yet note in Xero needs crediting by hand (#3949, until #4292), or a Xero call succeeds after its operation was resolved by hand, including a refund credit note the app did not record (#4374, #4426) |
 | Capacity warnings | Bookings | Occupancy is nearing full capacity |
 | Daily digest | Admin Overview | A daily summary of the previous 24 hours of admin alerts |
 | Waitlist offers | Bookings | A waitlist spot is offered to a member |
