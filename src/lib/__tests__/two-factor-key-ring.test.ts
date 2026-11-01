@@ -70,6 +70,7 @@ import {
   twoFactorCodeHashCandidates,
   verifyTwoFactorEmailCode,
 } from "@/lib/two-factor";
+import { codeHashKeyId, twoFactorSecretKeyId } from "@/lib/two-factor-key-format";
 
 function testKey(seed: number): string {
   return Buffer.from(Array.from({ length: 32 }, (_, index) => (seed * 41 + index * 13) % 256)).toString("base64");
@@ -130,6 +131,19 @@ describe("authenticator secrets: v1 and v2 (#4456)", () => {
     );
     process.env.DATA_ENCRYPTION_KEYS = `k2:${K2}`;
     expect(() => decryptTwoFactorSecret(underK1)).toThrow(/"k1" this two-factor secret was written under is not in DATA_ENCRYPTION_KEYS/);
+  });
+});
+
+describe("which key a stored secret or hash names, for the readiness counts (#4456 review)", () => {
+  it("reads the key id off what the writers actually store", () => {
+    expect(twoFactorSecretKeyId(encryptTwoFactorSecret("LEGACY"))).toBe("legacy-auth-secret");
+    expect(codeHashKeyId(hashRecoveryCode("AAAA-BBBB-CCCC"))).toBe("legacy-auth-secret");
+    process.env.DATA_ENCRYPTION_KEYS = `k2:${K2},k1:${K1}`;
+    expect(twoFactorSecretKeyId(encryptTwoFactorSecret("RING"))).toBe("k2");
+    expect(codeHashKeyId(hashRecoveryCode("AAAA-BBBB-CCCC"))).toBe("k2");
+    for (const unrecognised of ["v2:legacy-auth-secret:a:b:c", "v3:x:a:b:c", "v1:a:b", "plaintext"]) {
+      expect(twoFactorSecretKeyId(unrecognised)).toBeNull();
+    }
   });
 });
 

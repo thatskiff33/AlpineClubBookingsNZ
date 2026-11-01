@@ -26,7 +26,7 @@ import {
 } from "@/lib/membership-types";
 import { type SetupDatabaseSnapshot } from "@/lib/setup-readiness";
 import { tallyDataKeyUsage, type DataKeyUsageSnapshot } from "@/lib/setup-readiness-data-keys";
-import { codeHashKeyId, twoFactorSecretKeyId } from "@/lib/two-factor";
+import { codeHashKeyId, twoFactorSecretKeyId } from "@/lib/two-factor-key-format";
 import { collapseHutFeeColumns } from "@/lib/public-hut-fee-columns";
 import { getXeroTokenReadability } from "@/lib/xero-token-store";
 import { getStripeSetupState } from "@/lib/stripe-config";

@@ -23,6 +23,11 @@ import {
 } from "@/lib/data-encryption-keys";
 import { prisma } from "@/lib/prisma";
 import {
+  LEGACY_ENCRYPTION_VERSION,
+  RING_ENCRYPTION_VERSION,
+  codeHashKeyId,
+} from "@/lib/two-factor-key-format";
+import {
   assertTwoFactorActorMayAct,
   recordTwoFactorMutation,
   TWO_FACTOR_AUDIT_ACTIONS,
@@ -33,10 +38,6 @@ import {
 const ENCRYPTION_ALGORITHM = "aes-256-gcm";
 const IV_LENGTH = 16;
 const AUTH_TAG_LENGTH = 16;
-/** Authenticator secrets under the auth secret: read-only once a ring is set. */
-const LEGACY_ENCRYPTION_VERSION = "v1";
-/** Authenticator secrets under a ring key (#4456): `v2:<key id>:iv:tag:ct`. */
-const RING_ENCRYPTION_VERSION = "v2";
 /** HKDF purposes of the ring sub-keys; the legacy labels below stay frozen. */
 const TOTP_SECRET_RING_PURPOSE = "two-factor-secret:v2";
 const CODE_HASH_RING_PURPOSE = "two-factor-code:v2";
@@ -197,25 +198,6 @@ export function isRetiredRecoveryCodeHash(codeHash: string): boolean {
   return !codeHashKeys().some((key) => key.id === id);
 }
 
-/** The key id a stored code hash was made under: its prefix, or legacy if bare. */
-export function codeHashKeyId(codeHash: string): string {
-  const separator = codeHash.indexOf(":");
-  return separator === -1 ? LEGACY_AUTH_SECRET_KEY_ID : codeHash.slice(0, separator);
-}
-
-/**
- * The key id a stored authenticator secret names — legacy for `v1`, the id for
- * `v2:<id>:…` — or null for a format no write produces. Counting only; a read
- * goes through `decryptTwoFactorSecret`, which refuses the same formats.
- */
-export function twoFactorSecretKeyId(stored: string): string | null {
-  const parts = stored.split(":");
-  if (parts[0] === LEGACY_ENCRYPTION_VERSION && parts.length === 4) return LEGACY_AUTH_SECRET_KEY_ID;
-  if (parts[0] === RING_ENCRYPTION_VERSION && parts.length === 5 && parts[1] && parts[1] !== LEGACY_AUTH_SECRET_KEY_ID) {
-    return parts[1];
-  }
-  return null;
-}
 
 /**
  * Does this member still hold unused recovery codes that can no longer sign
