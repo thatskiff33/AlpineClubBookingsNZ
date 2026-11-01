@@ -2797,10 +2797,10 @@ _Legacy: settles tasks raised before #4317._
   recoveries closed first, then unpaid rows FAILED and `withdrawnAt` behind an
   unpaid fence; cancellations queued; parked invoices CANCELLED. A capture or
   deadlock in between rolls the edit back (409); a capture after commit is
-  refunded in full. The re-issue's recovery and the billed-offset note are
-  written in it. An orphaned intent, the door's or the runner's (#4631), is
-  cancelled at Stripe, best-effort, unless a row or recovery names it; one
-  uncancellable is left and logged.
+  refunded in full. The re-issue's recovery and billed-offset note are
+  written in it. An orphaned intent, the door's or the runner's own (#4631),
+  is cancelled at Stripe, best-effort, unless a row, recovery or live runner
+  claim may own it; one uncancellable is left and logged.
 - **A declined card stays live** (#4052).
 - **Asks awaiting a failed mint's retry** count, sized as the replay would. A
   retry claimed within two minutes refuses the edit; an older claim is closed.
@@ -2815,8 +2815,8 @@ _Legacy: settles tasks raised before #4317._
   supplementary invoice for what the retired asks' invoices left after the
   offset. The rest of the offset, where evidence shows the primary invoice
   billed it (`unpaidAskBillingEvidence`), takes a scoped invoice-correction
-  note, raised after the edit's own note; where that cannot be established, the
-  repair pass reports it for a person.
+  note, raised after the edit's own note; otherwise the repair pass reports it
+  for a person.
 
 ## INV-PAY-121
 

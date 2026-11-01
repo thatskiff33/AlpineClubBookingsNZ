@@ -805,7 +805,8 @@ reduction edit, under the door's locks
          and the intent it minted, once no row or recovery names it, is
          cancelled at Stripe (`abandoned`, best-effort, after its claim hold's
          transaction ended; logged as `reissued-ask.abandoned-intent-cleanup`;
-         #4631); a recovery reset or reclaimed meanwhile keeps it
+         #4631); a recovery reset or reclaimed meanwhile, or an intent it
+         adopted by matching (#4036), keeps it
   -> enqueue CANCEL_PAYMENT_INTENT for each retired intent (same transaction)
   -> WAITING_PAYMENT supplementary invoices on it, or on a closed recovery's
        edit -> read for what they bill, then CANCELLED

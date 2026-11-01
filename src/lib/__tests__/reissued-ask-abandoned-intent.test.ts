@@ -145,7 +145,7 @@ describe("settleLostReissuedAskFence", () => {
  * `additional-ask-reduction.realdb.test.ts`.
  */
 describe("settleLostRecoveryClaimHold (#4631)", () => {
-  const RUNNER = { operationId: "op_recovery", bookingId: "booking_1", paymentIntentId: "pi_runner" };
+  const RUNNER = { operationId: "op_recovery", bookingId: "booking_1", paymentIntentId: "pi_runner", adopted: false };
 
   it.each([
     ["netted off by a reduction", PENDING_ASK_NETTED_BY_REDUCTION_NOTE, "netted"],
@@ -167,14 +167,18 @@ describe("settleLostRecoveryClaimHold (#4631)", () => {
     h.row = { id: "txn_recorded" };
     await settleLostRecoveryClaimHold(RUNNER);
     expect(h.cancel).not.toHaveBeenCalled();
-    expect(h.warn).toHaveBeenCalledWith(expect.objectContaining({ outcome: "owned", paymentTransactionId: "txn_recorded" }), expect.any(String));
+    // Review (F3): the runner's own recovery id survives beside the owner's.
+    expect(h.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ outcome: "owned", paymentTransactionId: "txn_recorded", operationId: "op_recovery", ownerOperationId: undefined }),
+      expect.any(String),
+    );
   });
 
   it("MUTATION: an intent a recovery names (its own, another's, a queued cancel) is never cancelled", async () => {
     h.ownerOpFind.mockResolvedValueOnce({ id: "op_other" });
     await settleLostRecoveryClaimHold(RUNNER);
     expect(h.cancel).not.toHaveBeenCalled();
-    expect(h.warn).toHaveBeenCalledWith(expect.objectContaining({ outcome: "owned", operationId: "op_other" }), expect.any(String));
+    expect(h.warn).toHaveBeenCalledWith(expect.objectContaining({ outcome: "owned", operationId: "op_recovery", ownerOperationId: "op_other" }), expect.any(String));
   });
 
   it.each([
@@ -189,6 +193,21 @@ describe("settleLostRecoveryClaimHold (#4631)", () => {
     expect(h.rowFind).not.toHaveBeenCalled();
     expect(h.cancel).not.toHaveBeenCalled();
     expect(h.warn).toHaveBeenCalledTimes(1);
+  });
+
+  // Review (F2): an intent the runner found by matching (#4036) is not its own.
+  it.each([
+    ["netted off", PENDING_ASK_NETTED_BY_REDUCTION_NOTE],
+    ["folded in", WAITING_REISSUE_FOLDED_BY_INCREASE_NOTE],
+  ])("MUTATION: an ADOPTED intent is never cancelled, even with its recovery %s", async (_label, lastError) => {
+    h.recovery = { status: "SUCCEEDED", lastError };
+    await settleLostRecoveryClaimHold({ ...RUNNER, adopted: true });
+    expect(h.rowFind).not.toHaveBeenCalled();
+    expect(h.cancel).not.toHaveBeenCalled();
+    expect(h.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ event: ABANDONED_REISSUE_INTENT_LOG_EVENT, outcome: "adopted", operationId: "op_recovery", paymentIntentId: "pi_runner" }),
+      expect.any(String),
+    );
   });
 
   it("a recovery re-read that fails proves nothing: logged, nothing cancelled, nothing thrown", async () => {

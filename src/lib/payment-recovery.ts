@@ -3190,7 +3190,7 @@ async function processCreateAdditionalPaymentIntentOperation(
     // #4631 (`INV-PAY-120`): the hold's transaction has ended; #4052's proof and
     // Stripe cancel run outside it. Dynamic import: that module imports this one.
     const { settleLostRecoveryClaimHold } = await import("@/lib/reissued-ask-abandoned-intent");
-    await settleLostRecoveryClaimHold({ operationId: operation.id, bookingId: operation.bookingId, paymentIntentId: pi.id });
+    await settleLostRecoveryClaimHold({ operationId: operation.id, bookingId: operation.bookingId, paymentIntentId: pi.id, adopted });
     return "done";
   }
   await cancelSupersededAdditionalIntentsNow({

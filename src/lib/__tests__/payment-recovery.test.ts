@@ -392,6 +392,18 @@ vi.mock("@/lib/superseded-additional-refund", () => ({
 
 // #4253 release 2: the released-credit branch, reduced to the one call these tests need - a release
 // blocked by an unpaid edit request asks the runner to put its row back to wait.
+// #4631 review (F2): a pass-through seam that can report the runner's intent as ADOPTED by matching (#4036).
+const ordinaryAskMint4631 = vi.hoisted(() => ({ adopted: false }));
+vi.mock("@/lib/ordinary-ask-mint", async (importOriginal) => {
+  const actual = (await importOriginal()) as typeof import("@/lib/ordinary-ask-mint");
+  return {
+    ...actual,
+    mintOrdinaryAskIntent: async (...args: Parameters<typeof actual.mintOrdinaryAskIntent>) => {
+      const minted = await actual.mintOrdinaryAskIntent(...args);
+      return ordinaryAskMint4631.adopted ? { ...minted, adopted: true } : minted;
+    },
+  };
+});
 vi.mock("@/lib/credit-release-ask", () => ({
   processCreditReleaseAskOperation: vi.fn(
     async (operation: unknown, _format: unknown, deps: { wait: (op: unknown, message: string) => Promise<unknown> }) => {
@@ -3877,7 +3889,10 @@ describe("payment recovery worker", () => {
       const CLOSED_READ = { status: true, lastError: true };
       const transactionsOpenAtCancel: number[] = [];
       // `clearAllMocks` keeps implementations; this one has no `beforeEach` default to restore it.
-      afterEach(() => mockPaymentRecoveryFindFirst.mockReset());
+      afterEach(() => {
+        mockPaymentRecoveryFindFirst.mockReset();
+        ordinaryAskMint4631.adopted = false;
+      });
 
       function loseHoldTo(moved: { status: string; lastError: string | null }, owners: { row?: { id: string } | null; recovery?: { id: string } | null } = {}) {
         const operation = additionalIntentOperation({ status: "PROCESSING", attempts: 1, processingStartedAt: new Date("2026-06-30T23:00:00.000Z") });
@@ -3944,9 +3959,9 @@ describe("payment recovery worker", () => {
         expect(mockCancelPaymentIntentIfCancellableWithResult).not.toHaveBeenCalled();
       });
 
-      // The interleaving: a writer records the intent after the hold lost and
-      // before the proof's re-read - the cancel never reaches a recorded intent.
-      it("MUTATION: a writer recording the intent between the lost hold and the proof's re-read wins - nothing cancelled", async () => {
+      // The interleaving: a writer records the intent after the proof's re-read
+      // of the recovery and before its owner check - the cancel never reaches a recorded intent.
+      it("MUTATION: a writer recording the intent between the proof's re-read and the owner check wins - nothing cancelled", async () => {
         const owners: { row: { id: string } | null } = { row: null };
         loseHoldTo({ status: "SUCCEEDED", lastError: PENDING_ASK_NETTED_BY_REDUCTION_NOTE }, owners);
         const proofRead = mockPaymentRecoveryFindUnique.getMockImplementation()!;
@@ -3961,6 +3976,23 @@ describe("payment recovery worker", () => {
         expectReachedLostHold();
         expect(mockPaymentTransactionFindUnique).toHaveBeenCalledWith({ where: { stripePaymentIntentId: "pi_recovered" }, select: { id: true } });
         expect(mockCancelPaymentIntentIfCancellableWithResult).not.toHaveBeenCalled();
+      });
+
+      // #4631 review (F2): an intent found by matching is not the runner's own -
+      // another edit's stalled door or recovery may still record it under its key.
+      it("MUTATION: an ADOPTED intent (#4036) is never cancelled, even after a net-off", async () => {
+        loseHoldTo({ status: "SUCCEEDED", lastError: PENDING_ASK_NETTED_BY_REDUCTION_NOTE });
+        ordinaryAskMint4631.adopted = true;
+
+        const result = await processPaymentRecoveryOperations({ limit: 1 });
+
+        expectReachedLostHold();
+        expect(mockCancelPaymentIntentIfCancellableWithResult).not.toHaveBeenCalled();
+        expect(logger.warn).toHaveBeenCalledWith(
+          expect.objectContaining({ event: "reissued-ask.abandoned-intent-cleanup", outcome: "adopted", paymentIntentId: "pi_recovered", operationId: "recovery-additional" }),
+          expect.any(String),
+        );
+        expect(result).toMatchObject({ processed: 1, succeeded: 1, failed: 0 });
       });
 
       it.each([

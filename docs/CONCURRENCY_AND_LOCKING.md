@@ -3489,14 +3489,18 @@ and its transaction has ended; the runner then re-reads the recovery under no
 lock, and only one closed SUCCEEDED by a net-off or fold note
 (`reissueClosedUnminted`) with no row or recovery naming the intent has that
 intent cancelled at Stripe, by #4052's own proof and cancel
-(`settleLostRecoveryClaimHold`). That terminal close is what the proof leans
+(`settleLostRecoveryClaimHold`) - unless the runner adopted that intent by
+matching (#4036) rather than minting it under its own key, which is never
+cancelled. That terminal close is what the proof leans
 on: every writer under that recovery - the hold, the door's fenced write, a
 stale-reclaiming runner - is fenced on a claimable one, so none records the
 intent after it. The owner check runs just before the cancel, as the door's
 does, and sees any write that landed first; the gap between the two is #4052's.
 The one recorder not fenced on that recovery is another edit's refused
 replay adopting by match, and it takes only a sole open match of its own door
-and amount created before its own recovery row (#4036, #4079). Reads and one provider call
+and amount, created by its own recovery row's creation plus the 60 s skew
+(`latestAdoptableIntentCreatedAt`, #4036, #4079); that adoption landing
+between the owner check and the cancel is the gap left. Reads and one provider call
 only: no lock, key, participant or order changes. Proven on real Postgres.
 Round 6: the retire closes waiting recoveries before it stamps the rows - the
 runner's own order (its claim hold writes the recovery, then its row; since
