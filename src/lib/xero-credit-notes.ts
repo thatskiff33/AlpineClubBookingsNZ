@@ -783,14 +783,16 @@ export async function createXeroCreditNote(
     const createdNoteId = createdNote.creditNoteID;
     const createdNoteNumber = createdNote.creditNoteNumber ?? null;
     await assertFreshRefundNoteFromCreate(paymentId, operationId!, { creditNoteID: createdNoteId, status: createdNote.status }, prisma);
-    // #4426 (`INV-INT-029`): recorded only while the row is not resolved by
-    // hand; a row an officer resolved while Xero answered keeps their note, and
-    // this one is alerted, not linked, settled or completed.
+    // #4426 (`INV-INT-029`): never recorded over a note a resolve by hand
+    // recorded while Xero answered; that row keeps the officer's note, and this
+    // one is audited and alerted, not linked, settled or completed.
     const record = await recordCreatedRefundNote({
       paymentId,
+      bookingId: payment.booking.id,
       operationId: operationId!,
       creditNoteId: createdNoteId,
       creditNoteNumber: createdNoteNumber,
+      amountCents: effectiveRefundAmountCents,
       // #3827 (D-3813-8): a request's own note never takes the pointer, nor
       // does a per-refund note (#3880 F1).
       writesPointer: refundRequestId === null && !perRefundNote,
