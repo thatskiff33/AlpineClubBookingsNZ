@@ -8,7 +8,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { clubTaxCode, type ClubTaxTreatment } from "@/lib/club-tax-settings";
 import { splitTaxInclusiveGross } from "@/lib/member-money";
-import { MAX_MEMBER_MONEY_CENTS } from "@/lib/member-money/internal/tax";
+import { MAX_INTEGER_CENTS as MAX_MEMBER_MONEY_CENTS } from "@/lib/money-input";
 import { stripComments } from "./support/strip-comments";
 
 const registered = (rateBasisPoints: number): ClubTaxTreatment => ({ registered: true, rateBasisPoints, taxCode: clubTaxCode(rateBasisPoints) });

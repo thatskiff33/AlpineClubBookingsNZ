@@ -1,10 +1,14 @@
 /**
  * Shared member-money journal fixtures for tests (#4626, Ledger M3a): a posting
  * context on the frozen clock, plan builders for the common batch shapes, and a
- * scratch PostgreSQL database holding just the journal migration and its
- * provisioned roles. Door suites (M3b on) build their plans here instead of
- * re-deriving the shapes, and tear down through
- * `booking-financial-history-teardown.ts`.
+ * scratch PostgreSQL database holding only the journal migration, stub parent
+ * tables and the provisioned roles.
+ *
+ * The scratch database proves the engine against the journal's own constraints.
+ * Its stub parents carry no booking columns, so it is NOT for door suites: those
+ * run on the fully migrated race database, post through the plan builders here,
+ * and tear down through `booking-financial-history-teardown.ts`, as
+ * `booking-financial-history.realdb.test.ts` does.
  */
 import { randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
@@ -19,7 +23,9 @@ import {
   type MemberMoneyPostingContext,
   type MemberMoneySource,
 } from "@/lib/member-money";
+import type { MemberMoneyEventKey } from "@/lib/member-money/internal/keys";
 import { FROZEN_TEST_CLOCK_BASE_ISO } from "../helpers/clock";
+import { CLUB_FORMAT_TEST } from "./club-format-fixture";
 import { assertSafeRaceDbUrl } from "./race-db-url";
 
 export const MEMBER_MONEY_JOURNAL_MIGRATION = "prisma/migrations/20261127010000_member_money_journal/migration.sql";
@@ -31,7 +37,7 @@ export function memberMoneyTestContext(
   return resolveMemberMoneyPostingContext({
     effectiveAt: requireInstant(overrides.effectiveAt ?? FROZEN_TEST_CLOCK_BASE_ISO),
     zone: requireClubTimeZone("Pacific/Auckland"),
-    currency: "NZD",
+    format: CLUB_FORMAT_TEST,
     policyVersion: "policy-test-1",
     codingVersion: "coding-test-1",
     taxSettings: { ...CLUB_TAX_SETTINGS_DEFAULTS, ...overrides.taxSettings },
@@ -39,20 +45,21 @@ export function memberMoneyTestContext(
 }
 
 /**
- * A booking charge as R01 posts one: Dr receivable for the gross against a new
- * charge obligation, Cr booking revenue at that gross (split by the context's
- * tax treatment into net revenue and GST).
+ * A booking charge as R01 posts one: Dr receivable for the total against a new
+ * charge obligation, Cr booking revenue for each component at its gross (split
+ * by the context's tax treatment into net revenue and GST).
  */
 export function bookingChargePlan(input: {
-  eventKey: string;
+  eventKey: MemberMoneyEventKey;
   debtor: MemberMoneyDebtor;
   grossCents: number;
+  /** Components the gross is made of; one `<eventKey>:nights` component by default. */
+  components?: readonly { chargeIdentity: string; grossCents: number }[];
   booking?: { bookingId: string; lodgeId: string };
   source?: MemberMoneySource;
   additionalSources?: MemberMoneySource[];
-  chargeIdentity?: string;
 }): Extract<MemberMoneyPlan, { legs: unknown }> {
-  const chargeIdentity = input.chargeIdentity ?? `${input.eventKey}:nights`;
+  const components = input.components ?? [{ chargeIdentity: `${input.eventKey}:nights`, grossCents: input.grossCents }];
   const obligationKey = `${input.eventKey}:obligation`;
   const revenueSource = input.additionalSources?.find((source) => source.kind === "BOOKING_LEDGER");
   return {
@@ -66,12 +73,12 @@ export function bookingChargePlan(input: {
     legs: [
       {
         type: "amount", account: "MEMBER_RECEIVABLE", side: "DEBIT", amountCents: input.grossCents,
-        debtor: input.debtor, obligationKey, booking: input.booking, chargeIdentity, evidence: { test: "receivable" },
+        debtor: input.debtor, obligationKey, booking: input.booking, evidence: { test: "receivable" },
       },
-      {
-        type: "revenue", account: "BOOKING_REVENUE", side: "CREDIT", grossCents: input.grossCents,
+      ...components.map(({ chargeIdentity, grossCents }) => ({
+        type: "revenue" as const, account: "BOOKING_REVENUE" as const, side: "CREDIT" as const, grossCents,
         booking: input.booking, chargeIdentity, source: revenueSource, evidence: { test: "nights" },
-      },
+      })),
     ],
   };
 }
@@ -94,7 +101,6 @@ export interface MemberMoneyScratchDatabase {
   owner: Client;
   /** A URL for the scratch database as the INSERT/SELECT-only application role. */
   appUrl: string;
-  ownerUrl: string;
   drop(): Promise<void>;
 }
 
@@ -141,7 +147,7 @@ export async function createMemberMoneyScratchDatabase(
   appUrl.username = roles.app;
   appUrl.password = "a".repeat(28);
   return {
-    name, roles, admin, owner, appUrl: appUrl.toString(), ownerUrl: ownerUrl.toString(),
+    name, roles, admin, owner, appUrl: appUrl.toString(),
     async drop() {
       await owner.end();
       await admin.query(`DROP DATABASE IF EXISTS "${name}" WITH (FORCE)`);

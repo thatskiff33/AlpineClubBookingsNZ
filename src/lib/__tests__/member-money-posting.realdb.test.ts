@@ -37,7 +37,8 @@ let scratch: MemberMoneyScratchDatabase;
 let appPrisma: PrismaClient;
 let app: Client;
 let sequence = 0;
-const key = (label: string) => `test-4626:${label}:${++sequence}`;
+/** A fresh event key per case; a review-close key is just a well-formed one here. */
+const key = (label: string) => memberMoneyEventKeys.reviewClose(`t4626-${label}-${++sequence}`);
 
 /** The verifier as the operator command runs it: its own read-only snapshot, as the application role. */
 async function verified() {
@@ -95,7 +96,7 @@ const untouchable = new Proxy({}, {
     }));
     expect(posted.replayed).toBe(false);
     expect(await legs(posted.journalId)).toEqual([
-      { account: "MEMBER_RECEIVABLE", side: "DEBIT", amount: 11500, gross: null, net: null, tax: null, code: null, charge: expect.any(String) },
+      { account: "MEMBER_RECEIVABLE", side: "DEBIT", amount: 11500, gross: null, net: null, tax: null, code: null, charge: null },
       { account: "BOOKING_REVENUE", side: "CREDIT", amount: 10000, gross: 11500, net: 10000, tax: 1500, code: "GST_INCLUSIVE_1500BP", charge: expect.any(String) },
       { account: "GST_PAYABLE", side: "CREDIT", amount: 1500, gross: null, net: null, tax: null, code: null, charge: expect.any(String) },
     ]);
@@ -105,23 +106,53 @@ const untouchable = new Proxy({}, {
     expect(await verified()).toEqual({ findings: [], grantCheck: "checked" });
   });
 
-  it("commits an ADJUSTMENT mirroring a component at its frozen split, against the earlier obligation", async () => {
-    const charge = bookingChargePlan({ eventKey: key("charge"), debtor: MEMBER, grossCents: 23000, chargeIdentity: "nights:2026-07-02" });
+  it("commits an ADJUSTMENT correcting a whole component at its posted split, whatever today's rate", async () => {
+    const charge = bookingChargePlan({ eventKey: key("charge"), debtor: MEMBER, grossCents: 23000,
+      components: [{ chargeIdentity: `nights:${sequence}:a`, grossCents: 11500 }, { chargeIdentity: `nights:${sequence}:b`, grossCents: 11500 }] });
+    const component = charge.legs[1]!.chargeIdentity!;
     await post(charge);
-    // R02 style: reverse one component of 11500 at the cents it was posted with.
-    const posted = await post({
+    const reduction = (grossCents: number, chargeIdentity = component): MemberMoneyPlan => ({
       kind: "ADJUSTMENT", eventKey: key("modification"), origin: "APP", reason: "test reduction",
-      source: { kind: "BOOKING", id: "modification-4626", version: "1" },
+      source: { kind: "BOOKING", id: `modification-${sequence}`, version: "1" },
       legs: [
-        { type: "revenue", account: "BOOKING_REVENUE", side: "DEBIT", grossCents: 11500, chargeIdentity: "nights:2026-07-02",
-          frozenTax: { grossCents: 11500, netCents: 10000, taxCents: 1500, taxCode: "GST_INCLUSIVE_1500BP" }, evidence: { reverses: "nights:2026-07-02" } },
-        { type: "amount", account: "MEMBER_RECEIVABLE", side: "CREDIT", amountCents: 11500, debtor: MEMBER,
-          obligationKey: charge.obligations![0]!.key, chargeIdentity: "nights:2026-07-02", evidence: {} },
+        { type: "revenue", account: "BOOKING_REVENUE", side: "DEBIT", grossCents, chargeIdentity, evidence: { reverses: chargeIdentity } },
+        { type: "amount", account: "MEMBER_RECEIVABLE", side: "CREDIT", amountCents: grossCents, debtor: MEMBER,
+          obligationKey: charge.obligations![0]!.key, chargeIdentity, evidence: {} },
       ],
     });
-    expect((await legs(posted.journalId)).map(({ account, side, amount }) => [account, side, amount])).toEqual([
-      ["MEMBER_RECEIVABLE", "CREDIT", 11500], ["BOOKING_REVENUE", "DEBIT", 10000], ["GST_PAYABLE", "DEBIT", 1500],
+    const before = await counts();
+    // A part of a component, and a component never posted, are refused before any write.
+    await expect(post(reduction(5000))).rejects.toMatchObject({ name: "MemberMoneyPlanError",
+      problems: [expect.stringMatching(/takes a whole component/)] });
+    await expect(post(reduction(11500, "nights:never-posted"))).rejects.toMatchObject({ name: "MemberMoneyPlanError",
+      problems: [expect.stringMatching(/no posted BOOKING_REVENUE leg/)] });
+    expect(await counts()).toEqual(before);
+    // The club's rate has since changed; the correction still repeats 10000 + 1500.
+    const plan = reduction(11500);
+    const at1250 = memberMoneyTestContext({ taxSettings: { taxRateBasisPoints: 1250 } });
+    const posted = await post(plan, at1250);
+    expect((await legs(posted.journalId)).map(({ account, side, amount, gross, tax, code }) => [account, side, amount, gross, tax, code])).toEqual([
+      ["MEMBER_RECEIVABLE", "CREDIT", 11500, null, null, null],
+      ["BOOKING_REVENUE", "DEBIT", 10000, 11500, 1500, "GST_INCLUSIVE_1500BP"],
+      ["GST_PAYABLE", "DEBIT", 1500, null, null, null],
     ]);
+    expect(await verified()).toEqual({ findings: [], grantCheck: "checked" });
+    // A retry replays, although the component it corrected is no longer live.
+    expect(await post(plan, at1250)).toEqual({ ...posted, replayed: true });
+  });
+
+  it("posts what needs no fresh split when the tax setting starts after the date, and refuses what does", async () => {
+    const later = memberMoneyTestContext({ taxSettings: { effectiveFrom: "2027-04-01" as never } });
+    await post({ kind: "ZERO", eventKey: key("zero-untaxed"), origin: "APP", reason: "no-invoice outcome",
+      source: { kind: "SUBSCRIPTION", id: `subscription-${sequence}`, version: "1" } }, later);
+    const receipt = await post({ kind: "ADJUSTMENT", eventKey: key("receipt"), origin: "OFFICER", reason: "cash received",
+      source: { kind: "OFFICER_FACT", id: `receipt-${sequence}`, version: "1" }, legs: [
+        { type: "amount", account: "CASH", side: "DEBIT", amountCents: 2000, evidence: {} },
+        { type: "amount", account: "MEMBER_RECEIVABLE", side: "CREDIT", amountCents: 2000, debtor: MEMBER, evidence: {} },
+      ] }, later);
+    expect(await legs(receipt.journalId)).toHaveLength(2);
+    await expect(post(bookingChargePlan({ eventKey: key("charge-untaxed"), debtor: MEMBER, grossCents: 4600 }), later))
+      .rejects.toBeInstanceOf(MemberMoneyPlanError);
     expect(await verified()).toEqual({ findings: [], grantCheck: "checked" });
   });
 
@@ -150,6 +181,9 @@ const untouchable = new Proxy({}, {
     // The same facts walked in another order are the same event.
     const second = await post({ ...plan, legs: [...plan.legs].reverse() });
     expect(second).toEqual({ ...first, replayed: true });
+    // Reason and actor are provenance, not economics: a retry that words them differently replays.
+    expect(await post({ ...plan, reason: "retried by the recovery runner", actorMemberId: "officer-4626" }))
+      .toEqual({ ...first, replayed: true });
     expect(await counts()).toEqual(before);
   });
 
@@ -158,8 +192,7 @@ const untouchable = new Proxy({}, {
     await post(plan);
     const before = await counts();
     const changed = bookingChargePlan({ eventKey: plan.eventKey, debtor: MEMBER, grossCents: 4700 });
-    await expect(post(changed)).rejects.toBeInstanceOf(MemberMoneyPostingConflictError);
-    await expect(post({ ...plan, reason: "a different reason" })).rejects.toMatchObject({
+    await expect(post(changed)).rejects.toMatchObject({
       name: "MemberMoneyPostingConflictError", differences: ["payload hash differs"],
     });
     expect(await counts()).toEqual(before);
@@ -187,18 +220,18 @@ const untouchable = new Proxy({}, {
     expect(await counts()).toEqual(before);
   });
 
-  it("commits an exact REVERSAL of a whole batch, replays it, and the database refuses a second", async () => {
+  it("commits an exact REVERSAL of a whole batch; a retry replays and a different reversal conflicts", async () => {
     const original = await post(bookingChargePlan({ eventKey: key("reversed"), debtor: MEMBER, grossCents: 11500, booking: BOOKING }));
     const plan = { reversesJournalId: original.journalId, origin: "OFFICER" as const, reason: "posted in error",
       source: { kind: "OFFICER_FACT" as const, id: `correction-${original.journalId}`, version: "1" } };
-    const reversal = await appPrisma.$transaction((tx) => reverseMemberMoneyJournal(tx, context, plan));
+    const reverse = (p: typeof plan) => appPrisma.$transaction((tx) => reverseMemberMoneyJournal(tx, context, p));
+    const reversal = await reverse(plan);
     const swapped = (await legs(original.journalId)).map((leg) => ({ ...leg, side: leg.side === "DEBIT" ? "CREDIT" : "DEBIT" }));
     expect(await legs(reversal.journalId)).toEqual(expect.arrayContaining(swapped));
     expect(await verified()).toEqual({ findings: [], grantCheck: "checked" });
-    const again = await appPrisma.$transaction((tx) => reverseMemberMoneyJournal(tx, context, plan));
-    expect(again).toEqual({ ...reversal, replayed: true });
-    await expect(appPrisma.$transaction((tx) => reverseMemberMoneyJournal(tx, context, { ...plan, eventKey: key("second-reversal"),
-      source: { ...plan.source, version: "2" } }))).rejects.toMatchObject({ code: "P2002" });
+    expect(await reverse({ ...plan, reason: "retry" })).toEqual({ ...reversal, replayed: true });
+    // The key is the journal's, so a second, different reversal meets a typed conflict, never a raw P2002.
+    await expect(reverse({ ...plan, source: { ...plan.source, version: "2" } })).rejects.toBeInstanceOf(MemberMoneyPostingConflictError);
   });
 
   it("lets exactly one of two concurrent posters of one key write; the other replays it", async () => {

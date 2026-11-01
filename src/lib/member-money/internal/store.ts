@@ -2,7 +2,13 @@ import { randomUUID } from "node:crypto";
 import type { Prisma } from "@prisma/client";
 import { dateOnlyInstantOf } from "../../club-time";
 import { stableStringify } from "../../stable-digest";
-import { MemberMoneyPlanError, type BuiltBatch, type MemberMoneyJournalToReverse } from "./plan";
+import {
+  completeMemberMoneyBatch,
+  MemberMoneyPlanError,
+  type BuiltBatch,
+  type MemberMoneyJournalToReverse,
+  type PostedRevenueLeg,
+} from "./plan";
 
 /**
  * THE ONLY PRISMA WRITER OF THE MEMBER-MONEY TABLES (#4626, Ledger M3a).
@@ -62,8 +68,12 @@ async function resolveObligations(db: Db, batch: BuiltBatch): Promise<Map<string
   return ids;
 }
 
-/** An identical batch already posted under the key returns it; any difference is a conflict. */
-async function replay(db: Db, batch: BuiltBatch): Promise<MemberMoneyPosting> {
+/**
+ * The batch already posted under the key, compared with this one: identical
+ * returns it, any difference is a conflict. `null` when the key is unposted
+ * (in this transaction's snapshot), unless `required`.
+ */
+async function replay(db: Db, batch: BuiltBatch, required: boolean): Promise<MemberMoneyPosting | null> {
   const winner = await db.memberMoneyEvent.findUnique({
     where: { eventKey: batch.event.eventKey },
     select: {
@@ -71,6 +81,7 @@ async function replay(db: Db, batch: BuiltBatch): Promise<MemberMoneyPosting> {
       journal: { select: { id: true, sources: { select: { sourceKind: true, sourceId: true, sourceVersion: true, bookingLedgerLineId: true } } } },
     },
   });
+  if (!winner && !required) return null;
   if (!winner?.journal) {
     // Only a snapshot older than the winner's commit (REPEATABLE READ or
     // stricter) can miss it; the caller's retry sees it.
@@ -89,7 +100,25 @@ async function replay(db: Db, batch: BuiltBatch): Promise<MemberMoneyPosting> {
   return { eventId: winner.id, journalId: winner.journal.id, replayed: true };
 }
 
-export async function writeMemberMoneyBatch(db: Db, batch: BuiltBatch): Promise<MemberMoneyPosting> {
+/** The posted revenue legs of every component the batch corrects. A read only. */
+async function postedComponents(db: Db, draft: BuiltBatch): Promise<PostedRevenueLeg[]> {
+  if (draft.corrections.length === 0) return [];
+  return db.memberMoneyLine.findMany({
+    where: { OR: draft.corrections.map(({ account, chargeIdentity }) => ({ account, chargeIdentity })) },
+    select: { account: true, chargeIdentity: true, side: true, amountCents: true,
+      grossCents: true, netCents: true, taxCents: true, taxCode: true },
+  });
+}
+
+/**
+ * Replay first, so a retry of a correction is recognised even though its
+ * component is no longer live; then every read that can refuse the plan; then
+ * the first write.
+ */
+export async function writeMemberMoneyBatch(db: Db, draft: BuiltBatch): Promise<MemberMoneyPosting> {
+  const earlier = await replay(db, draft, false);
+  if (earlier) return earlier;
+  const batch = completeMemberMoneyBatch(draft, await postedComponents(db, draft));
   const obligationIds = await resolveObligations(db, batch);
   const eventId = randomUUID();
   // Reserve the event key first: ON CONFLICT DO NOTHING waits for a concurrent
@@ -111,7 +140,7 @@ export async function writeMemberMoneyBatch(db: Db, batch: BuiltBatch): Promise<
     }],
     skipDuplicates: true,
   });
-  if (reserved.count === 0) return replay(db, batch);
+  if (reserved.count === 0) return (await replay(db, batch, true))!;
 
   const journalId = randomUUID();
   await db.memberMoneyJournal.createMany({

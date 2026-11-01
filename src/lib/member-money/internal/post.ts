@@ -1,39 +1,59 @@
 import type { Prisma } from "@prisma/client";
-import type { ClubTaxSettings } from "../../club-tax-settings";
-import { clubTaxTreatmentOn } from "../../club-tax-settings";
+import type { ClubFormat } from "../../club-format";
+import {
+  ClubTaxTreatmentUnavailableError,
+  clubTaxTreatmentOn,
+  type ClubTaxSettings,
+} from "../../club-tax-settings";
 import { clubCalendarDateOf, type ClubTimeZone, type Instant } from "../../club-time";
+import { stripeChargeCurrency } from "../../stripe-charge-currency";
 import {
   buildMemberMoneyBatch,
   buildMemberMoneyReversal,
   type MemberMoneyPlan,
   type MemberMoneyPostingContext,
   type MemberMoneyReversalPlan,
+  type MemberMoneyTaxContext,
 } from "./plan";
 import { readMemberMoneyJournalToReverse, writeMemberMoneyBatch, type MemberMoneyPosting } from "./store";
 
 /**
  * Resolve a posting context BEFORE the business transaction opens
- * (`INV-LOCK-004`): the club civil date of the instant through the club-time
- * kernel (`INV-DATE`, `INV-CONFIG-002`) and the tax treatment in force on it
- * (D3). Pure; the caller has already read the zone, currency and tax setting.
+ * (`INV-LOCK-004`), and the only way to make one. The club civil date of the
+ * instant comes through the club-time kernel (`INV-DATE`, `INV-CONFIG-002`).
+ * The currency comes through the rule card charges use
+ * (`stripeChargeCurrency`), so the journal and the card cannot disagree, and a
+ * stored currency a card cannot be charged in is refused here too. The tax
+ * treatment is the one in force on that date (D3), or "unavailable" when the
+ * setting starts later; only a fresh tax split refuses that.
+ *
+ * `effectiveAt` must be the source fact's own stable instant, never the clock
+ * at processing time: the payload hash includes it.
  */
 export function resolveMemberMoneyPostingContext(input: {
   effectiveAt: Instant;
   zone: ClubTimeZone;
-  currency: string;
+  format: ClubFormat;
   policyVersion: string;
   codingVersion: string;
   taxSettings: ClubTaxSettings;
 }): MemberMoneyPostingContext {
   const effectiveDate = clubCalendarDateOf(input.effectiveAt, input.zone);
+  let tax: MemberMoneyTaxContext;
+  try {
+    tax = { status: "known", treatment: clubTaxTreatmentOn(input.taxSettings, effectiveDate) };
+  } catch (error) {
+    if (!(error instanceof ClubTaxTreatmentUnavailableError)) throw error;
+    tax = { status: "unavailable", effectiveFrom: error.effectiveFrom };
+  }
   return {
     effectiveAt: input.effectiveAt,
     effectiveDate,
-    currency: input.currency,
+    currency: stripeChargeCurrency(input.format).toUpperCase(),
     policyVersion: input.policyVersion,
     codingVersion: input.codingVersion,
-    tax: clubTaxTreatmentOn(input.taxSettings, effectiveDate),
-  };
+    tax,
+  } as MemberMoneyPostingContext;
 }
 
 /**
@@ -52,10 +72,13 @@ export async function postMemberMoneyEvent(
   return writeMemberMoneyBatch(tx, buildMemberMoneyBatch(context, plan));
 }
 
-/** Post the exact whole-batch REVERSAL of a posted journal, once (the database refuses a second). */
+/**
+ * Post the exact whole-batch REVERSAL of a posted journal, once: its key is the
+ * journal's, so a retry replays and a second, different reversal conflicts.
+ */
 export async function reverseMemberMoneyJournal(
   tx: Prisma.TransactionClient,
-  context: Pick<MemberMoneyPostingContext, "effectiveAt" | "effectiveDate">,
+  context: MemberMoneyPostingContext,
   plan: MemberMoneyReversalPlan,
 ): Promise<MemberMoneyPosting> {
   const original = await readMemberMoneyJournalToReverse(tx, plan.reversesJournalId);

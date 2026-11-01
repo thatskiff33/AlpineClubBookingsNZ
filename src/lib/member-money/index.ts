@@ -9,7 +9,6 @@ export { bookingIdsNamedByJournal, journalRowsNamingDebtor } from "./internal/re
 export { memberMoneyEventKeys } from "./internal/keys";
 export {
   MemberMoneyPlanError,
-  TAXED_REVENUE_ACCOUNTS,
   type MemberMoneyDebtor,
   type MemberMoneyPlan,
   type MemberMoneyPostingContext,

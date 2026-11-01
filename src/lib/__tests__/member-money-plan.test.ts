@@ -1,23 +1,69 @@
 /**
- * The posting plan builder and event keys (#4626, Ledger M3a). Pure: every case
- * here is refused or built before the store writes a row. What the database
- * then accepts is `member-money-posting.realdb.test.ts`.
+ * The posting plan builder, its correction completion, the posting context and
+ * event keys (#4626, Ledger M3a). Pure: every case here is refused or built
+ * before the store writes a row. What the database then accepts is
+ * `member-money-posting.realdb.test.ts`.
  */
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { memberMoneyEventKeys, MemberMoneyPlanError, TAXED_REVENUE_ACCOUNTS, type MemberMoneyPlan } from "@/lib/member-money";
-import { buildMemberMoneyBatch, buildMemberMoneyReversal, type BuiltLine } from "@/lib/member-money/internal/plan";
-import { bookingChargePlan, memberMoneyTestContext } from "./support/member-money-fixtures";
+import { CLUB_TAX_SETTINGS_DEFAULTS } from "@/lib/club-tax-settings";
+import { requireClubTimeZone, requireInstant } from "@/lib/club-time";
+import {
+  memberMoneyEventKeys,
+  MemberMoneyPlanError,
+  resolveMemberMoneyPostingContext,
+  type MemberMoneyPlan,
+} from "@/lib/member-money";
+import { DEBTOR_ACCOUNTS, TAXED_REVENUE_ACCOUNTS } from "@/lib/member-money/internal/accounts";
+import {
+  buildMemberMoneyBatch,
+  buildMemberMoneyReversal,
+  completeMemberMoneyBatch,
+  type BuiltLine,
+  type PostedRevenueLeg,
+} from "@/lib/member-money/internal/plan";
+import type { MemberMoneyTaxSplit } from "@/lib/member-money/internal/tax";
+import { UnsupportedChargeCurrencyError } from "@/lib/stripe-charge-currency";
+import { FROZEN_TEST_CLOCK_BASE_ISO } from "./helpers/clock";
+import { CLUB_FORMAT_TEST, CLUB_FORMAT_TEST_OTHER } from "./support/club-format-fixture";
+import { bookingChargePlan, MEMBER_MONEY_JOURNAL_MIGRATION, memberMoneyTestContext } from "./support/member-money-fixtures";
 
 const MEMBER = { kind: "MEMBER", memberId: "member-1" } as const;
 const context = memberMoneyTestContext();
-const charge = (grossCents = 11500) => bookingChargePlan({ eventKey: "booking-charge:b1", debtor: MEMBER, grossCents,
-  booking: { bookingId: "b1", lodgeId: "l1" } });
+const charge = (grossCents = 11500) => bookingChargePlan({ eventKey: memberMoneyEventKeys.bookingCharge("b1"), debtor: MEMBER,
+  grossCents, booking: { bookingId: "b1", lodgeId: "l1" } });
 const legsOf = (lines: readonly BuiltLine[]) => lines.map(({ account, side, amountCents, netCents, taxCents }) => [account, side, amountCents, netCents, taxCents]);
+/** A context whose tax setting starts after the frozen clock's date. */
+const unavailable = memberMoneyTestContext({ taxSettings: { effectiveFrom: "2027-04-01" as never } });
 
 function problems(plan: MemberMoneyPlan, ctx = context): readonly string[] {
   try {
     buildMemberMoneyBatch(ctx, plan);
+  } catch (error) {
+    if (error instanceof MemberMoneyPlanError) return error.problems;
+    throw error;
+  }
+  return [];
+}
+
+/** An ADJUSTMENT taking component `nights:1` (gross 11500) back off the receivable. */
+function correction(frozenTax?: MemberMoneyTaxSplit | "untaxed", grossCents = 11500): MemberMoneyPlan {
+  return {
+    kind: "ADJUSTMENT", eventKey: memberMoneyEventKeys.modification("m1"), origin: "APP", reason: "reduction",
+    source: { kind: "BOOKING", id: "m1", version: "1" },
+    legs: [
+      { type: "revenue", account: "BOOKING_REVENUE", side: "DEBIT", grossCents, chargeIdentity: "nights:1", frozenTax, evidence: {} },
+      { type: "amount", account: "MEMBER_RECEIVABLE", side: "CREDIT", amountCents: grossCents, debtor: MEMBER, evidence: {} },
+    ],
+  };
+}
+const posted = (overrides: Partial<PostedRevenueLeg> = {}): PostedRevenueLeg => ({
+  account: "BOOKING_REVENUE", chargeIdentity: "nights:1", side: "CREDIT", amountCents: 10000,
+  grossCents: 11500, netCents: 10000, taxCents: 1500, taxCode: "GST_INCLUSIVE_1500BP", ...overrides,
+});
+function completionProblems(plan: MemberMoneyPlan, legs: PostedRevenueLeg[], ctx = context): readonly string[] {
+  try {
+    completeMemberMoneyBatch(buildMemberMoneyBatch(ctx, plan), legs);
   } catch (error) {
     if (error instanceof MemberMoneyPlanError) return error.problems;
     throw error;
@@ -41,6 +87,38 @@ describe("member-money event keys", () => {
     expect(() => memberMoneyEventKeys.bookingCharge(" b1")).toThrow();
     expect(() => memberMoneyEventKeys.cancellation("b1", -1)).toThrow(/revision/);
     expect(() => memberMoneyEventKeys.cancellation("b1", 1.5)).toThrow(/revision/);
+  });
+
+  it("is a branded type: a hand-written key does not compile", () => {
+    // @ts-expect-error a plan's event key comes only from memberMoneyEventKeys
+    const plan: MemberMoneyPlan = { ...charge(), eventKey: "booking-charge:b1" };
+    expect(plan.eventKey).toBe("booking-charge:b1");
+  });
+});
+
+describe("resolveMemberMoneyPostingContext", () => {
+  const input = { effectiveAt: requireInstant(FROZEN_TEST_CLOCK_BASE_ISO), zone: requireClubTimeZone("Pacific/Auckland"),
+    policyVersion: "p", codingVersion: "c", taxSettings: CLUB_TAX_SETTINGS_DEFAULTS };
+
+  it("takes the currency through the rule card charges use", () => {
+    expect(resolveMemberMoneyPostingContext({ ...input, format: CLUB_FORMAT_TEST }).currency).toBe("NZD");
+    expect(resolveMemberMoneyPostingContext({ ...input, format: CLUB_FORMAT_TEST_OTHER }).currency).toBe("CHF");
+    expect(() => resolveMemberMoneyPostingContext({ ...input, format: { currencyCode: "JPY", locale: "ja-JP" } }))
+      .toThrow(UnsupportedChargeCurrencyError);
+    expect(() => resolveMemberMoneyPostingContext({ ...input, format: { ...CLUB_FORMAT_TEST, unusableStoredCurrency: "dollars" } }))
+      .toThrow(UnsupportedChargeCurrencyError);
+  });
+
+  it("records an unavailable tax treatment instead of refusing the context", () => {
+    expect(context.tax).toEqual({ status: "known", treatment: { registered: true, rateBasisPoints: 1500, taxCode: "GST_INCLUSIVE_1500BP" } });
+    expect(unavailable.tax).toEqual({ status: "unavailable", effectiveFrom: "2027-04-01" });
+  });
+
+  it("is a branded type: a literal context does not compile", () => {
+    // @ts-expect-error only resolveMemberMoneyPostingContext makes a context
+    const literal: Parameters<typeof buildMemberMoneyBatch>[0] = { effectiveAt: new Date(), effectiveDate: "2026-07-01",
+      currency: "NZD", policyVersion: "p", codingVersion: "c", tax: { status: "known", treatment: { registered: false } } };
+    expect(literal.currency).toBe("NZD");
   });
 });
 
@@ -70,7 +148,7 @@ describe("buildMemberMoneyBatch", () => {
     ]);
   });
 
-  it("repeats a frozen split instead of today's rate", () => {
+  it("repeats a frozen split on a fresh charge instead of today's rate", () => {
     const plan = charge();
     const batch = buildMemberMoneyBatch(context, { ...plan, legs: [plan.legs[0]!, { ...plan.legs[1]!, type: "revenue",
       account: "BOOKING_REVENUE", grossCents: 11500, frozenTax: { grossCents: 11500, netCents: 10223, taxCents: 1277, taxCode: "GST_INCLUSIVE_1250BP" } }] });
@@ -78,19 +156,41 @@ describe("buildMemberMoneyBatch", () => {
   });
 
   it("builds an explicit ZERO event with no legs", () => {
-    const batch = buildMemberMoneyBatch(context, { kind: "ZERO", eventKey: "zero:1", origin: "APP", reason: "no invoice",
-      source: { kind: "SUBSCRIPTION", id: "s1", version: "1" } });
+    const batch = buildMemberMoneyBatch(context, { kind: "ZERO", eventKey: memberMoneyEventKeys.reviewClose("t1"), origin: "APP",
+      reason: "no invoice", source: { kind: "SUBSCRIPTION", id: "s1", version: "1" } });
     expect(batch.lines).toEqual([]);
     expect(batch.sources).toEqual([{ kind: "SUBSCRIPTION", id: "s1", version: "1", bookingLedgerLineId: null }]);
   });
 
-  it("hashes the same facts in any order alike, and any change in cents or wording differently", () => {
+  it("hashes economics: order-independent, blind to reason and actor, sensitive to cents and rate", () => {
     const plan = charge();
-    const hash = (p: MemberMoneyPlan) => buildMemberMoneyBatch(context, p).event.payloadHash;
+    const hash = (p: MemberMoneyPlan, ctx = context) => buildMemberMoneyBatch(ctx, p).event.payloadHash;
     expect(hash({ ...plan, legs: [...plan.legs].reverse() })).toBe(hash(plan));
+    expect(hash({ ...plan, reason: "other", actorMemberId: "officer-9" })).toBe(hash(plan));
     expect(hash(charge(11600))).not.toBe(hash(plan));
-    expect(hash({ ...plan, reason: "other" })).not.toBe(hash(plan));
-    expect(hash(plan)).not.toBe(buildMemberMoneyBatch(memberMoneyTestContext({ taxSettings: { taxRateBasisPoints: 1250 } }), plan).event.payloadHash);
+    expect(hash(plan, memberMoneyTestContext({ effectiveAt: "2026-07-02T00:00:00.000Z" }))).not.toBe(hash(plan));
+    expect(hash(plan, memberMoneyTestContext({ taxSettings: { taxRateBasisPoints: 1250 } }))).not.toBe(hash(plan));
+  });
+
+  describe("with no tax treatment for the date (D3)", () => {
+    it("still builds every batch that needs no fresh split", () => {
+      expect(buildMemberMoneyBatch(unavailable, { kind: "ZERO", eventKey: memberMoneyEventKeys.reviewClose("t1"), origin: "APP",
+        reason: "z", source: { kind: "BOOKING", id: "b", version: "1" } }).lines).toEqual([]);
+      const receipt: MemberMoneyPlan = { kind: "ADJUSTMENT", eventKey: memberMoneyEventKeys.reviewClose("t2"), origin: "OFFICER",
+        reason: "receipt", source: { kind: "OFFICER_FACT", id: "r", version: "1" }, legs: [
+          { type: "amount", account: "BANK", side: "DEBIT", amountCents: 500, evidence: {} },
+          { type: "amount", account: "MEMBER_RECEIVABLE", side: "CREDIT", amountCents: 500, debtor: MEMBER, evidence: {} },
+        ] };
+      expect(buildMemberMoneyBatch(unavailable, receipt).lines).toHaveLength(2);
+      expect(buildMemberMoneyBatch(unavailable, correction()).corrections).toHaveLength(1);
+      const plan = charge();
+      expect(buildMemberMoneyBatch(unavailable, { ...plan, legs: [plan.legs[0]!, { ...plan.legs[1]!, type: "revenue",
+        account: "BOOKING_REVENUE", grossCents: 11500, frozenTax: "untaxed" }] }).lines).toHaveLength(2);
+    });
+
+    it("refuses a revenue leg that needs a fresh split", () => {
+      expect(problems(charge(), unavailable).join("\n")).toMatch(/needs a fresh tax split, but the club's tax setting starts on 2027-04-01/);
+    });
   });
 
   describe("refuses before any write", () => {
@@ -109,11 +209,24 @@ describe("buildMemberMoneyBatch", () => {
       ["a refund-payable leg with no obligation", { ...base, legs: [receivable, { ...receivable, account: "REFUND_PAYABLE", side: "CREDIT", obligationKey: undefined }] }, /needs an obligation/],
       ["a leg naming another debtor than its obligation", { ...base, legs: [{ ...receivable, debtor: { kind: "MEMBER", memberId: "member-2" } }, revenue] }, /other than obligation/],
       ["an obligation planned twice", { ...base, obligations: [base.obligations![0]!, base.obligations![0]!] }, /planned twice/],
+      ["an obligation face its receivable legs do not post", { ...base, obligations: [{ ...base.obligations![0]!, faceCents: 11000 }] }, /face is not the MEMBER_RECEIVABLE its legs post here \(115\.00\)/],
       ["a frozen split that does not add up", { ...base, legs: [receivable, { ...revenue, frozenTax: { grossCents: 11500, netCents: 10000, taxCents: 1499, taxCode: "X" } }] }, /frozen tax split/],
+      ["a revenue correction naming no component", { ...base, legs: [receivable, { ...revenue, side: "DEBIT", chargeIdentity: undefined }] }, /must name the posted component/],
       ["a linked legacy line no leg posts", { ...base, additionalSources: [{ kind: "BOOKING_LEDGER", id: "line-1", version: "1" }] }, /no leg posts it/],
-      ["a blank event key", { ...base, eventKey: " " }, /eventKey is blank/],
+      ["a blank reason", { ...base, reason: " " }, /reason is blank/],
     ])("%s", (_case, plan, problem) => {
       expect(problems(plan).join("\n")).toMatch(problem);
+    });
+
+    it("an obligation whose refund-payable legs net to its face is accepted", () => {
+      const refund: MemberMoneyPlan = { kind: "ADJUSTMENT", eventKey: memberMoneyEventKeys.reviewClose("t3"), origin: "APP",
+        reason: "refund owed", source: { kind: "REFUND", id: "rf", version: "1" },
+        obligations: [{ key: "refund:rf", kind: "REFUND", debtor: MEMBER, faceCents: 800, evidence: {} }],
+        legs: [
+          { type: "amount", account: "MEMBER_RECEIVABLE", side: "DEBIT", amountCents: 800, debtor: MEMBER, evidence: {} },
+          { type: "amount", account: "REFUND_PAYABLE", side: "CREDIT", amountCents: 800, debtor: MEMBER, obligationKey: "refund:rf", evidence: {} },
+        ] };
+      expect(problems(refund)).toEqual([]);
     });
 
     it("an unusable context", () => {
@@ -122,8 +235,57 @@ describe("buildMemberMoneyBatch", () => {
   });
 });
 
+describe("corrections repeat the split their component was posted with", () => {
+  it("leaves the correction for the store to complete, and completes it from the posted legs", () => {
+    const draft = buildMemberMoneyBatch(context, correction());
+    expect(draft.lines.map((line) => line.account)).toEqual(["MEMBER_RECEIVABLE"]);
+    expect(draft.corrections).toHaveLength(1);
+    const complete = completeMemberMoneyBatch(draft, [posted()]);
+    expect(legsOf(complete.lines)).toEqual([
+      ["MEMBER_RECEIVABLE", "CREDIT", 11500, null, null],
+      ["BOOKING_REVENUE", "DEBIT", 10000, 10000, 1500],
+      ["GST_PAYABLE", "DEBIT", 1500, null, null],
+    ]);
+    expect(complete.event.payloadHash).toBe(draft.event.payloadHash);
+  });
+
+  it("uses the posted split, not the context's rate", () => {
+    const at1250 = memberMoneyTestContext({ taxSettings: { taxRateBasisPoints: 1250 } });
+    expect(legsOf(completeMemberMoneyBatch(buildMemberMoneyBatch(at1250, correction()), [posted()]).lines).slice(1))
+      .toEqual([["BOOKING_REVENUE", "DEBIT", 10000, 10000, 1500], ["GST_PAYABLE", "DEBIT", 1500, null, null]]);
+  });
+
+  it("corrects an untaxed component without tax fields", () => {
+    const untaxedLeg = posted({ amountCents: 11500, grossCents: null, netCents: null, taxCents: null, taxCode: null });
+    expect(legsOf(completeMemberMoneyBatch(buildMemberMoneyBatch(context, correction()), [untaxedLeg]).lines).slice(1))
+      .toEqual([["BOOKING_REVENUE", "DEBIT", 11500, null, null]]);
+  });
+
+  it("accepts a frozen split equal to the posted one", () => {
+    expect(completionProblems(correction({ grossCents: 11500, netCents: 10000, taxCents: 1500, taxCode: "GST_INCLUSIVE_1500BP" }), [posted()])).toEqual([]);
+  });
+
+  it.each<[string, MemberMoneyPlan, PostedRevenueLeg[], RegExp]>([
+    ["a component never posted", correction(), [], /no posted BOOKING_REVENUE leg/],
+    ["part of a component", correction(undefined, 5000), [posted()], /takes a whole component: nights:1 still carries 115\.00, not 50\.00/],
+    ["a component already corrected", correction(), [posted(), posted({ side: "DEBIT" })], /still carries 0\.00/],
+    ["a component posted under two treatments", correction(), [posted({ amountCents: 5000, grossCents: 5750, netCents: 5000, taxCents: 750 }),
+      posted({ amountCents: 5111, grossCents: 5750, netCents: 5111, taxCents: 639, taxCode: "GST_INCLUSIVE_1250BP" })], /more than one tax treatment/],
+    ["a frozen split other than the posted one", correction({ grossCents: 11500, netCents: 10223, taxCents: 1277, taxCode: "GST_INCLUSIVE_1250BP" }),
+      [posted()], /not the split it was posted with/],
+    ["untaxed given for a taxed component", correction("untaxed"), [posted()], /not the split it was posted with/],
+  ])("refuses %s", (_case, plan, legs, problem) => {
+    expect(completionProblems(plan, legs).join("\n")).toMatch(problem);
+  });
+
+  it("refuses correcting one component twice in a plan", () => {
+    const plan = correction() as Extract<MemberMoneyPlan, { legs: unknown }>;
+    expect(problems({ ...plan, legs: [plan.legs[0]!, plan.legs[0]!, plan.legs[1]!, plan.legs[1]!] }).join("\n")).toMatch(/corrects component nights:1 twice/);
+  });
+});
+
 describe("buildMemberMoneyReversal", () => {
-  it("copies every leg with its side swapped under the original's coding", () => {
+  it("copies every leg with its side swapped under the original's coding, keyed by the journal", () => {
     const original = buildMemberMoneyBatch(context, charge());
     const reversal = buildMemberMoneyReversal(context, { reversesJournalId: "j1", origin: "OFFICER", reason: "error",
       source: { kind: "OFFICER_FACT", id: "fix-1", version: "1" } },
@@ -136,11 +298,20 @@ describe("buildMemberMoneyReversal", () => {
   });
 });
 
-describe("TAXED_REVENUE_ACCOUNTS", () => {
-  it("is exactly the revenue set the database's tax tie reads", () => {
-    const migration = readFileSync("prisma/migrations/20261127010000_member_money_journal/migration.sql", "utf8");
-    const lists = [...migration.matchAll(/account IN \(('[A-Z_]+'(?:, '[A-Z_]+')*)\)/g)].map((match) => match[1]!.replaceAll("'", "").split(", "));
+describe("account rules come from the registry and match the database", () => {
+  const migration = readFileSync(MEMBER_MONEY_JOURNAL_MIGRATION, "utf8");
+  const quoted = (list: string) => list.replaceAll("'", "").split(", ");
+
+  it("taxed revenue is exactly the set the database's tax tie reads", () => {
+    const lists = [...migration.matchAll(/account IN \(('[A-Z_]+'(?:, '[A-Z_]+')*)\)/g)].map((match) => quoted(match[1]!));
     expect(lists.length).toBeGreaterThanOrEqual(2);
     for (const list of lists) expect(list).toEqual([...TAXED_REVENUE_ACCOUNTS]);
+  });
+
+  it("debtor accounts are exactly the set member_money_line_shape requires a debtor for", () => {
+    const shape = /ADD CONSTRAINT "member_money_line_shape" CHECK \(([\s\S]*?)\n\);/.exec(migration)?.[1] ?? "";
+    const list = /account NOT IN \(('[A-Z_]+'(?:, '[A-Z_]+')*)\) OR "debtorKind" IS NOT NULL/.exec(shape)?.[1];
+    expect(list, "the CHECK's debtor clause").toBeDefined();
+    expect(quoted(list!).sort()).toEqual([...DEBTOR_ACCOUNTS].sort());
   });
 });

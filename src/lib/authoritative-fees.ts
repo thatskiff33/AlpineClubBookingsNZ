@@ -6,6 +6,7 @@ import type {
   Prisma,
 } from "@prisma/client";
 import { formatDateOnly, isDateOnlyString, parseDateOnly } from "@/lib/date-only";
+import { MAX_INTEGER_CENTS } from "@/lib/money-input";
 import { prisma } from "@/lib/prisma";
 import { formatCents } from "@/lib/utils";
 import type { ClubFormat } from "@/lib/club-format";
@@ -56,7 +57,7 @@ export function validateFeeScheduleInput(input: {
   effectiveTo?: string | null;
   billingBasis?: MembershipFeeBillingBasis;
 }) {
-  if (!Number.isSafeInteger(input.amountCents) || input.amountCents < 0 || input.amountCents > 2_147_483_647) {
+  if (!Number.isSafeInteger(input.amountCents) || input.amountCents < 0 || input.amountCents > MAX_INTEGER_CENTS) {
     throw new FeeScheduleValidationError("Amount must be a non-negative integer number of cents.");
   }
   if (!isDateOnlyString(input.effectiveFrom)) {
@@ -113,7 +114,7 @@ export function validateFeeComponents(input: {
     if (!component.label.trim()) {
       throw new FeeScheduleValidationError("Each fee component must have a label.");
     }
-    if (!Number.isSafeInteger(component.amountCents) || component.amountCents < 0 || component.amountCents > 2_147_483_647) {
+    if (!Number.isSafeInteger(component.amountCents) || component.amountCents < 0 || component.amountCents > MAX_INTEGER_CENTS) {
       throw new FeeScheduleValidationError("Each fee component amount must be a non-negative integer number of cents.");
     }
   }

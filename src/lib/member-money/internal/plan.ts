@@ -9,16 +9,20 @@ import type {
 } from "@prisma/client";
 import type { ClubTaxTreatment } from "../../club-tax-settings";
 import { isCalendarDate, type CalendarDate, type Instant } from "../../club-time";
+import { MAX_INTEGER_CENTS } from "../../money-input";
 import { stableDigest, stableStringify } from "../../stable-digest";
 import { formatCentsPlain } from "../../utils";
-import { memberMoneyEventKeys } from "./keys";
-import { MAX_MEMBER_MONEY_CENTS, splitTaxInclusiveGross, type MemberMoneyTaxSplit } from "./tax";
+import { DEBTOR_ACCOUNTS, MEMBER_MONEY_ACCOUNTS, TAXED_REVENUE_ACCOUNTS, type TaxedRevenueAccount } from "./accounts";
+import { memberMoneyEventKeys, type MemberMoneyEventKey } from "./keys";
+import { splitTaxInclusiveGross, type MemberMoneyTaxSplit } from "./tax";
 
 /**
- * A posting plan, and the pure builder that turns it into one complete batch
- * (#4626, Ledger M3a). Every refusal here happens before the store writes a row:
- * an ill-shaped or unbalanced plan never reaches the database. The database's
- * own deferred checks (`member_money_batch_errors`, `INV-MONEY-041`) still hold
+ * A posting plan, and the pure builder that turns it into a draft batch
+ * (#4626, Ledger M3a). Every refusal here happens before the store reads or
+ * writes a row: an ill-shaped or unbalanced plan never reaches the database.
+ * A correction's tax split comes from what was posted, so the store completes
+ * those legs (`completeMemberMoneyBatch`) after one read. The database's own
+ * deferred checks (`member_money_batch_errors`, `INV-MONEY-041`) still hold
  * whatever this builder misses.
  */
 
@@ -39,28 +43,35 @@ export interface MemberMoneySource {
 }
 
 /**
+ * The tax treatment in force on the context's date, or the fact that the club's
+ * setting starts later. Only a revenue leg that needs a fresh split refuses an
+ * unavailable treatment; every other posting goes ahead (D3).
+ */
+export type MemberMoneyTaxContext =
+  | { status: "known"; treatment: ClubTaxTreatment }
+  | { status: "unavailable"; effectiveFrom: CalendarDate };
+
+declare const postingContextBrand: unique symbol;
+
+/**
  * Everything a batch needs that is resolved BEFORE the business transaction
- * (`INV-LOCK-004`): the club civil date from the club-time kernel, the club
- * currency, the policy and coding versions, and the tax treatment in force on
- * that date. The command never computes any of these itself.
+ * (`INV-LOCK-004`). Only `resolveMemberMoneyPostingContext` makes one: the club
+ * civil date from the club-time kernel, the currency through the rule card
+ * charges use, the policy and coding versions, and the tax treatment.
+ *
+ * `effectiveAt` is the source fact's own stable instant (the booking's
+ * confirmation, the modification's creation), never the processing clock: it is
+ * part of the payload hash, so a retry that read the clock again would conflict.
  */
 export interface MemberMoneyPostingContext {
-  effectiveAt: Instant;
-  effectiveDate: CalendarDate;
-  currency: string;
-  policyVersion: string;
-  codingVersion: string;
-  tax: ClubTaxTreatment;
+  readonly [postingContextBrand]: true;
+  readonly effectiveAt: Instant;
+  readonly effectiveDate: CalendarDate;
+  readonly currency: string;
+  readonly policyVersion: string;
+  readonly codingVersion: string;
+  readonly tax: MemberMoneyTaxContext;
 }
-
-/** The revenue accounts the database's tax tie reads (`member_money_batch_errors`). */
-export const TAXED_REVENUE_ACCOUNTS = [
-  "BOOKING_REVENUE",
-  "SUBSCRIPTION_REVENUE",
-  "JOINING_FEE_REVENUE",
-  "FEE_REVENUE",
-] as const satisfies readonly MemberMoneyAccount[];
-export type TaxedRevenueAccount = (typeof TAXED_REVENUE_ACCOUNTS)[number];
 
 interface LegDimensions {
   side: MemberMoneySide;
@@ -71,7 +82,7 @@ interface LegDimensions {
   obligationKey?: string;
   booking?: { bookingId: string; lodgeId: string };
   creditLotId?: string;
-  /** The legacy component key a leg posts, so a later ADJUSTMENT can name it. */
+  /** The legacy component key a leg posts, so a later correction can name it. */
   chargeIdentity?: string;
   refundIdentity?: string;
   evidence: MemberMoneyEvidence;
@@ -85,10 +96,19 @@ export interface MemberMoneyAmountLeg extends LegDimensions {
 }
 
 /**
- * A revenue component at its GST-inclusive gross. The builder splits it under the
- * context's treatment into a net revenue leg and a GST leg on the same side, or
- * repeats a `frozenTax` split an earlier posting recorded (design section 4: a
- * correction uses the original cents, not today's rate).
+ * A revenue component at its GST-inclusive gross.
+ *
+ * On revenue's normal side (CREDIT) it is a fresh charge: the builder splits it
+ * under the context's treatment into net revenue and a GST leg on the same side,
+ * or repeats a `frozenTax` split (a back-post of a historical charge).
+ *
+ * On the other side (DEBIT) it is a CORRECTION of a posted component, named by
+ * `chargeIdentity`, and repeats that component's posted split exactly, never
+ * today's rate (design section 4). A correction takes the WHOLE live component:
+ * its gross must equal what the component's posted legs still carry. A partial
+ * reduction is the whole component corrected plus a fresh charge for what
+ * remains, so no part of a split is ever apportioned. `frozenTax`, if given,
+ * must equal the posted split.
  */
 export interface MemberMoneyRevenueLeg extends LegDimensions {
   type: "revenue";
@@ -99,6 +119,7 @@ export interface MemberMoneyRevenueLeg extends LegDimensions {
 
 export type MemberMoneyLegPlan = MemberMoneyAmountLeg | MemberMoneyRevenueLeg;
 
+/** An obligation's face is the signed sum of the receivable (CHARGE) or refund-payable (REFUND) legs naming it here. */
 export interface MemberMoneyObligationPlan {
   key: string;
   kind: MemberMoneyObligationKind;
@@ -108,21 +129,22 @@ export interface MemberMoneyObligationPlan {
 }
 
 interface PlanCommon {
-  eventKey: string;
+  eventKey: MemberMoneyEventKey;
   origin: MemberMoneyOrigin;
   /** The event's own source; the batch always links it. */
   source: MemberMoneySource;
   /** Further sources the batch links, such as the legacy lines a charge bridges. */
   additionalSources?: readonly MemberMoneySource[];
+  /** Provenance, not economics: neither this nor the actor is part of the payload hash. */
   reason: string;
   actorMemberId?: string | null;
 }
 
 /**
  * CHARGE and ADJUSTMENT carry legs; ZERO records an explicit zero-money event.
- * A partial correction is an ADJUSTMENT with mirrored legs naming each component
- * by `chargeIdentity`: the database allows a REVERSAL only as an exact copy of a
- * whole batch, which `reverseMemberMoneyJournal` posts.
+ * The database allows a REVERSAL only as an exact copy of a whole batch, which
+ * `reverseMemberMoneyJournal` posts; a correction of some components is an
+ * ADJUSTMENT whose revenue legs name them.
  */
 export type MemberMoneyPlan =
   | (PlanCommon & {
@@ -132,10 +154,9 @@ export type MemberMoneyPlan =
     })
   | (PlanCommon & { kind: "ZERO" });
 
+/** Its event key is always `memberMoneyEventKeys.reversal(reversesJournalId)`. */
 export interface MemberMoneyReversalPlan {
   reversesJournalId: string;
-  /** Defaults to `memberMoneyEventKeys.reversal(reversesJournalId)`. */
-  eventKey?: string;
   origin: MemberMoneyOrigin;
   source: MemberMoneySource;
   reason: string;
@@ -190,10 +211,19 @@ export interface BuiltLine {
   evidence: MemberMoneyJson;
 }
 
-/** One complete batch, ids still unassigned. */
+/** A correction of a posted revenue component, completed by the store from that component's posted legs. */
+export interface BuiltCorrection {
+  shared: Omit<BuiltLine, "account" | "amountCents" | "grossCents" | "netCents" | "taxCents" | "taxCode">;
+  account: TaxedRevenueAccount;
+  chargeIdentity: string;
+  grossCents: number;
+  frozenTax: MemberMoneyTaxSplit | "untaxed" | null;
+}
+
+/** One batch, ids still unassigned. Its payload hash covers corrections as planned, before completion. */
 export interface BuiltBatch {
   event: {
-    eventKey: string;
+    eventKey: MemberMoneyEventKey;
     kind: MemberMoneyEventKind;
     origin: MemberMoneyOrigin;
     sourceKind: MemberMoneySourceKind;
@@ -214,11 +244,15 @@ export interface BuiltBatch {
   sources: BuiltSource[];
   obligations: BuiltObligation[];
   lines: BuiltLine[];
+  corrections: BuiltCorrection[];
 }
 
 const blank = (value: unknown): boolean => typeof value !== "string" || value.trim().length === 0;
-const cents = (value: number): boolean => Number.isSafeInteger(value) && value > 0 && value <= MAX_MEMBER_MONEY_CENTS;
+const cents = (value: number): boolean => Number.isSafeInteger(value) && value > 0 && value <= MAX_INTEGER_CENTS;
 const sourceKey = (source: MemberMoneySource): string => `${source.kind}\u0000${source.id}\u0000${source.version}`;
+const isTaxedRevenue = (account: string): account is TaxedRevenueAccount =>
+  (TAXED_REVENUE_ACCOUNTS as readonly string[]).includes(account);
+const untaxed = { grossCents: null, netCents: null, taxCents: null, taxCode: null } as const;
 
 function debtorColumns(debtor: MemberMoneyDebtor | undefined) {
   if (!debtor) return { debtorKind: null, memberId: null, organisationId: null };
@@ -227,7 +261,7 @@ function debtorColumns(debtor: MemberMoneyDebtor | undefined) {
     : { debtorKind: "ORGANISATION" as const, memberId: null, organisationId: debtor.organisationId };
 }
 
-function checkContext(context: Pick<MemberMoneyPostingContext, "effectiveAt" | "effectiveDate">, problems: string[]) {
+function checkContext(context: MemberMoneyPostingContext, problems: string[]) {
   if (!(context.effectiveAt instanceof Date) || Number.isNaN(context.effectiveAt.getTime())) {
     problems.push("effectiveAt is not a valid instant");
   }
@@ -240,19 +274,45 @@ function checkCommon(plan: Pick<PlanCommon, "eventKey" | "reason" | "source">, p
   if (blank(plan.source.id) || blank(plan.source.version)) problems.push("the event source needs an id and a version");
 }
 
+/** A frozen split is integer gross = net + tax with positive net and a code. */
+function frozenSplitProblem(split: MemberMoneyTaxSplit, grossCents: number): boolean {
+  const { netCents, taxCents } = split;
+  return ![split.grossCents, netCents, taxCents].every((value) => Number.isSafeInteger(value) && value >= 0)
+    || split.grossCents !== netCents + taxCents || split.grossCents !== grossCents || netCents <= 0 || blank(split.taxCode);
+}
+
+/** The revenue leg, and its GST leg on the same side when there is tax. */
+function revenueLines(
+  shared: BuiltCorrection["shared"],
+  account: TaxedRevenueAccount,
+  grossCents: number,
+  split: MemberMoneyTaxSplit | null,
+): BuiltLine[] {
+  if (!split) return [{ ...shared, account, amountCents: grossCents, ...untaxed }];
+  const revenue: BuiltLine = { ...shared, account, amountCents: split.netCents,
+    grossCents: split.grossCents, netCents: split.netCents, taxCents: split.taxCents, taxCode: split.taxCode };
+  if (split.taxCents === 0) return [revenue];
+  return [revenue, { ...shared, account: "GST_PAYABLE", amountCents: split.taxCents, debtorKind: null, memberId: null,
+    organisationId: null, obligationKey: null, creditLotId: null, ...untaxed }];
+}
+
 /**
- * The canonical payload a replay must match: everything the batch says, with
- * none of the ids the store assigns. Sources, obligations and lines are sorted
- * so a planner that walks the same facts in another order replays, not conflicts.
+ * The canonical payload a replay must match: the batch's economics, with none
+ * of the ids the store assigns, and without the reason and actor, which are
+ * provenance. Sources, obligations, legs and corrections are sorted so a planner
+ * that walks the same facts in another order replays, not conflicts.
  */
 function payloadHashOf(batch: Omit<BuiltBatch, "event"> & { event: Omit<BuiltBatch["event"], "payloadHash"> }): string {
   const sorted = <T>(rows: readonly T[]) => [...rows].map(stableStringify).sort();
+  const { reason: _reason, actorMemberId: _actor, ...event } = batch.event;
   return stableDigest({
-    event: { ...batch.event, effectiveAt: batch.event.effectiveAt.toISOString() },
+    event: { ...event, effectiveAt: event.effectiveAt.toISOString() },
     journal: batch.journal,
     sources: sorted(batch.sources),
     obligations: sorted(batch.obligations),
     lines: sorted(batch.lines.map(({ source, ...line }) => ({ ...line, source: batch.sources[source] }))),
+    corrections: sorted(batch.corrections.map(({ shared: { source, ...shared }, ...correction }) =>
+      ({ ...correction, shared: { ...shared, source: batch.sources[source] } }))),
   });
 }
 
@@ -288,6 +348,7 @@ export function buildMemberMoneyBatch(context: MemberMoneyPostingContext, plan: 
 
   const obligations: BuiltObligation[] = [];
   const lines: BuiltLine[] = [];
+  const corrections: BuiltCorrection[] = [];
   if (plan.kind !== "ZERO") {
     const planned = new Map<string, MemberMoneyObligationPlan>();
     for (const obligation of plan.obligations ?? []) {
@@ -308,9 +369,7 @@ export function buildMemberMoneyBatch(context: MemberMoneyPostingContext, plan: 
       const label = `leg ${index} (${leg.account})`;
       const debtor = debtorColumns(leg.debtor);
       if (leg.debtor && blank(debtor.memberId ?? debtor.organisationId)) problems.push(`${label} names a blank debtor id`);
-      if (["MEMBER_RECEIVABLE", "MEMBER_CREDIT", "REFUND_PAYABLE"].includes(leg.account) && !leg.debtor) {
-        problems.push(`${label} needs a debtor`);
-      }
+      if ((DEBTOR_ACCOUNTS as readonly string[]).includes(leg.account) && !leg.debtor) problems.push(`${label} needs a debtor`);
       if (leg.account === "MEMBER_CREDIT" && (blank(leg.creditLotId) || leg.debtor?.kind !== "MEMBER")) {
         problems.push(`${label} needs a credit lot and a member debtor`);
       }
@@ -322,7 +381,7 @@ export function buildMemberMoneyBatch(context: MemberMoneyPostingContext, plan: 
       if (obligation && stableStringify(obligation.debtor) !== stableStringify(leg.debtor ?? null)) {
         problems.push(`${label} names a debtor other than obligation ${leg.obligationKey}'s`);
       }
-      const shared = {
+      const shared: BuiltCorrection["shared"] = {
         source: link(leg.source ?? plan.source),
         side: leg.side,
         ...debtor,
@@ -337,60 +396,73 @@ export function buildMemberMoneyBatch(context: MemberMoneyPostingContext, plan: 
       };
 
       if (leg.type === "amount") {
-        const account: string = leg.account;
-        if ((TAXED_REVENUE_ACCOUNTS as readonly string[]).includes(account) || account === "GST_PAYABLE") {
+        if (isTaxedRevenue(leg.account) || (leg.account as string) === "GST_PAYABLE") {
           problems.push(`${label} must be a revenue leg: only the builder splits tax`);
         }
         if (!cents(leg.amountCents)) problems.push(`${label} needs positive integer cents`);
-        lines.push({ ...shared, account: leg.account, amountCents: leg.amountCents,
-          grossCents: null, netCents: null, taxCents: null, taxCode: null });
+        lines.push({ ...shared, account: leg.account, amountCents: leg.amountCents, ...untaxed });
         return;
       }
 
-      if (!(TAXED_REVENUE_ACCOUNTS as readonly string[]).includes(leg.account)) {
+      if (!isTaxedRevenue(leg.account)) {
         problems.push(`${label} is not a revenue account`);
+        return;
       }
       if (!cents(leg.grossCents)) {
         problems.push(`${label} needs positive integer gross cents`);
         return;
       }
-      let split: MemberMoneyTaxSplit | null;
-      if (leg.frozenTax === "untaxed") split = null;
-      else if (leg.frozenTax) {
-        split = leg.frozenTax;
-        const { grossCents, netCents, taxCents } = split;
-        if (![grossCents, netCents, taxCents].every((value) => Number.isSafeInteger(value) && value >= 0)
-          || grossCents !== netCents + taxCents || grossCents !== leg.grossCents || blank(split.taxCode)) {
-          problems.push(`${label} carries a frozen tax split that is not integer gross = net + tax at its gross`);
-          return;
-        }
-      } else split = splitTaxInclusiveGross(leg.grossCents, context.tax);
-
-      if (!split) {
-        lines.push({ ...shared, account: leg.account, amountCents: leg.grossCents,
-          grossCents: null, netCents: null, taxCents: null, taxCode: null });
+      if (leg.frozenTax && leg.frozenTax !== "untaxed" && frozenSplitProblem(leg.frozenTax, leg.grossCents)) {
+        problems.push(`${label} carries a frozen tax split that is not integer gross = net + tax, with net, at its gross`);
         return;
       }
-      if (split.netCents <= 0) {
+
+      if (leg.side !== MEMBER_MONEY_ACCOUNTS[leg.account].normalSide) {
+        if (blank(leg.chargeIdentity)) {
+          problems.push(`${label} corrects revenue, so it must name the posted component by chargeIdentity`);
+          return;
+        }
+        if (corrections.some((c) => c.account === leg.account && c.chargeIdentity === leg.chargeIdentity)) {
+          problems.push(`${label} corrects component ${leg.chargeIdentity} twice`);
+        }
+        corrections.push({ shared, account: leg.account, chargeIdentity: leg.chargeIdentity!, grossCents: leg.grossCents,
+          frozenTax: leg.frozenTax ?? null });
+        return;
+      }
+
+      let split: MemberMoneyTaxSplit | null;
+      if (leg.frozenTax === "untaxed") split = null;
+      else if (leg.frozenTax) split = leg.frozenTax;
+      else if (context.tax.status === "unavailable") {
+        problems.push(`${label} needs a fresh tax split, but the club's tax setting starts on ${context.tax.effectiveFrom}`);
+        return;
+      } else split = splitTaxInclusiveGross(leg.grossCents, context.tax.treatment);
+      if (split && split.netCents <= 0) {
         problems.push(`${label} leaves no net revenue after tax`);
         return;
       }
-      lines.push({ ...shared, account: leg.account, amountCents: split.netCents,
-        grossCents: split.grossCents, netCents: split.netCents, taxCents: split.taxCents, taxCode: split.taxCode });
-      if (split.taxCents > 0) {
-        lines.push({ ...shared, account: "GST_PAYABLE", amountCents: split.taxCents, debtorKind: null, memberId: null,
-          organisationId: null, obligationKey: null, creditLotId: null,
-          grossCents: null, netCents: null, taxCents: null, taxCode: null });
-      }
+      lines.push(...revenueLines(shared, leg.account, leg.grossCents, split));
     });
 
-    if (lines.length < 2) problems.push(`a ${plan.kind} batch needs at least two legs`);
-    const net = lines.reduce((sum, line) => sum + (line.side === "DEBIT" ? line.amountCents : -line.amountCents), 0);
+    // A correction's revenue and GST legs together carry its gross on its side.
+    const signed = (side: MemberMoneySide, amount: number) => (side === "DEBIT" ? amount : -amount);
+    const net = lines.reduce((sum, line) => sum + signed(line.side, line.amountCents), 0)
+      + corrections.reduce((sum, correction) => sum + signed(correction.shared.side, correction.grossCents), 0);
+    if (lines.length + corrections.length < 2) problems.push(`a ${plan.kind} batch needs at least two legs`);
     if (net !== 0) problems.push(`debits and credits do not balance: debits less credits is ${formatCentsPlain(net)}`);
-    sources.forEach((source, index) => {
-      if (source.kind === "BOOKING_LEDGER" && lines.length > 0 && !lines.some((line) => line.source === index)) {
-        problems.push(`legacy line ${source.id} is linked but no leg posts it`);
+    for (const obligation of obligations) {
+      const account = obligation.kind === "CHARGE" ? "MEMBER_RECEIVABLE" : "REFUND_PAYABLE";
+      const increases: MemberMoneySide = obligation.kind === "CHARGE" ? "DEBIT" : "CREDIT";
+      const face = lines
+        .filter((line) => line.obligationKey === obligation.key && line.account === account)
+        .reduce((sum, line) => sum + (line.side === increases ? line.amountCents : -line.amountCents), 0);
+      if (face !== obligation.faceCents) {
+        problems.push(`obligation ${obligation.key}'s face is not the ${account} its legs post here (${formatCentsPlain(face)})`);
       }
+    }
+    sources.forEach((source, index) => {
+      const posted = lines.some((line) => line.source === index) || corrections.some((c) => c.shared.source === index);
+      if (source.kind === "BOOKING_LEDGER" && !posted) problems.push(`legacy line ${source.id} is linked but no leg posts it`);
     });
   }
 
@@ -409,7 +481,73 @@ export function buildMemberMoneyBatch(context: MemberMoneyPostingContext, plan: 
     sources,
     obligations,
     lines,
+    corrections,
   });
+}
+
+/** A posted revenue leg, as a correction reads the component it names. */
+export interface PostedRevenueLeg {
+  account: MemberMoneyAccount;
+  chargeIdentity: string | null;
+  side: MemberMoneySide;
+  amountCents: number;
+  grossCents: number | null;
+  netCents: number | null;
+  taxCents: number | null;
+  taxCode: string | null;
+}
+
+/**
+ * The live split of each corrected component: the signed sum of every posted
+ * leg of that account and charge identity (credits add, debits take away, so an
+ * earlier correction or reversal is already netted). A component posted under
+ * more than one tax code has no single split to repeat and is refused.
+ */
+type LiveSplit = { split: MemberMoneyTaxSplit | null } | { problem: string };
+
+function liveSplit(correction: BuiltCorrection, posted: readonly PostedRevenueLeg[]): LiveSplit {
+  const legs = posted.filter((leg) => leg.account === correction.account && leg.chargeIdentity === correction.chargeIdentity);
+  if (legs.length === 0) return { problem: `component ${correction.chargeIdentity} has no posted ${correction.account} leg` };
+  const codes = new Set(legs.map((leg) => leg.taxCode));
+  if (codes.size > 1) return { problem: `component ${correction.chargeIdentity} was posted under more than one tax treatment` };
+  let gross = 0, net = 0, tax = 0;
+  for (const leg of legs) {
+    const sign = leg.side === "CREDIT" ? 1 : -1;
+    gross += sign * (leg.grossCents ?? leg.amountCents);
+    net += sign * (leg.netCents ?? leg.amountCents);
+    tax += sign * (leg.taxCents ?? 0);
+  }
+  if (gross !== correction.grossCents) {
+    return { problem: `a correction takes a whole component: ${correction.chargeIdentity} still carries `
+      + `${formatCentsPlain(gross)}, not ${formatCentsPlain(correction.grossCents)}` };
+  }
+  const [code] = codes;
+  if (code === null || code === undefined) return { split: null };
+  if (net <= 0) return { problem: `component ${correction.chargeIdentity} has no net revenue left to correct` };
+  return { split: { grossCents: gross, netCents: net, taxCents: tax, taxCode: code } };
+}
+
+/** Complete a draft's corrections from the posted legs of the components they name, or refuse it. */
+export function completeMemberMoneyBatch(batch: BuiltBatch, posted: readonly PostedRevenueLeg[]): BuiltBatch {
+  if (batch.corrections.length === 0) return batch;
+  const problems: string[] = [];
+  const lines = [...batch.lines];
+  for (const correction of batch.corrections) {
+    const live = liveSplit(correction, posted);
+    if ("problem" in live) {
+      problems.push(live.problem);
+      continue;
+    }
+    const split = live.split;
+    if (correction.frozenTax !== null && stableStringify(correction.frozenTax) !== stableStringify(split ?? "untaxed")) {
+      problems.push(`the frozen split given for ${correction.chargeIdentity} is not the split it was posted with`);
+      continue;
+    }
+    lines.push(...revenueLines({ ...correction.shared, chargeIdentity: correction.chargeIdentity }, correction.account,
+      correction.grossCents, split));
+  }
+  if (problems.length > 0) throw new MemberMoneyPlanError(problems);
+  return { ...batch, lines, corrections: [] };
 }
 
 /** A posted journal as the reversal builder needs it: its header and every leg, verbatim. */
@@ -427,12 +565,12 @@ export interface MemberMoneyJournalToReverse {
  * currency, policy and coding versions. All legs link the reversal's own source.
  */
 export function buildMemberMoneyReversal(
-  context: Pick<MemberMoneyPostingContext, "effectiveAt" | "effectiveDate">,
+  context: MemberMoneyPostingContext,
   plan: MemberMoneyReversalPlan,
   original: MemberMoneyJournalToReverse,
 ): BuiltBatch {
   const problems: string[] = [];
-  const eventKey = plan.eventKey ?? memberMoneyEventKeys.reversal(plan.reversesJournalId);
+  const eventKey = memberMoneyEventKeys.reversal(plan.reversesJournalId);
   checkContext(context, problems);
   checkCommon({ ...plan, eventKey }, problems);
   if (original.id !== plan.reversesJournalId) problems.push("the journal read is not the one the plan reverses");
@@ -456,5 +594,6 @@ export function buildMemberMoneyReversal(
     lines: original.lines.map(({ id, ...line }) => ({
       ...line, source: 0, side: line.side === "DEBIT" ? "CREDIT" : "DEBIT", originalLineId: id,
     })),
+    corrections: [],
   });
 }
