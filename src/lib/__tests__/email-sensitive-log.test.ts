@@ -52,3 +52,8 @@ describe("sensitive EmailLog HTML classification", () => {
 it("leaves settlement figure retries to the durable marker rather than EmailLog", () => {
   expect(shouldPersistEmailHtml("admin-bank-transfer-settlement-figure")).toBe(false);
 });
+
+it("leaves the unrecognised and unmatched Stripe payment alerts to Stripe's redelivery rather than EmailLog (#4647)", () => {
+  expect(shouldPersistEmailHtml("admin-unrecognised-stripe-payment")).toBe(false);
+  expect(shouldPersistEmailHtml("admin-unmatched-app-stripe-payment")).toBe(false);
+});

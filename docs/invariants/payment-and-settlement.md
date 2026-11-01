@@ -2796,21 +2796,22 @@ _Legacy: settles tasks raised before #4317._
 - **Retired in the edit's transaction** (`retireUnpaidAskChain`): waiting
   recoveries closed first, then unpaid rows FAILED and `withdrawnAt` behind an
   unpaid fence; cancellations queued; parked invoices CANCELLED. A capture or
-  deadlock in between rolls the edit back (409); a capture after commit is
-  refunded in full. The re-issue's recovery and billed-offset note are
-  written in it. An orphaned intent, the door's or the runner's own (#4631),
-  is cancelled at Stripe, best-effort, unless a row, recovery or live runner
-  claim may own it; one uncancellable is left and logged.
+  deadlock in between rolls the edit back (409); one after commit is
+  refunded in full. It writes the re-issue's recovery and billed-offset note.
+  An orphaned intent (#4052) is cancelled at Stripe, best-effort, unless a
+  row, recovery or live runner claim may own it - a lost claim's, the
+  runner's or credit-release ask's (#4631, #4652), only once its recovery
+  closed without it. One uncancellable is left and logged.
 - **A declined card stays live** (#4052).
 - **Asks awaiting a failed mint's retry** count, sized as the replay would. A
   retry claimed within two minutes refuses the edit; an older claim is closed.
-  A later increase folds a waiting re-issue in and records it, so its own
-  replay asks for it again. Both minters send one Stripe request
+  A later increase folds a waiting re-issue in, recording it so its replay
+  asks for it again. Both minters send one Stripe request
   (`planReissuedAskMint`).
 - **Only the member's price asks.** An officer's review charge is never set
-  against. Nor is a financial review's settled refund share: the officer
-  decided it, so it is paid as decided, and the ledger census reports the
-  booking if the member pays the ask.
+  against. Nor is a financial review's settled refund share: paid as the
+  officer decided, the ledger census reporting the booking if the member
+  pays the ask.
 - **Xero** (`splitUnpaidAskOffsetForXero`). The smaller ask gets its own
   supplementary invoice for what the retired asks' invoices left after the
   offset. The rest of the offset, where evidence shows the primary invoice

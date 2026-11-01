@@ -8,7 +8,14 @@ const mocks = vi.hoisted(() => ({
   prisma: {
     memberCredit: { findUnique: vi.fn() },
     payment: { findUnique: vi.fn() },
+    // #4652: the lost claim's proof re-read and owner check (`settleLostRecoveryClaimHold`, run for real).
+    paymentRecoveryOperation: { findUnique: vi.fn(), findFirst: vi.fn() },
+    paymentTransaction: { findUnique: vi.fn() },
+    $transaction: vi.fn(),
   },
+  cancelIntent: vi.fn(),
+  /** How many transactions are open - the fake claim hold's and any `$transaction`. */
+  openTransactions: 0,
   audit: vi.fn(),
   createIntent: vi.fn(),
   upsert: vi.fn(),
@@ -25,7 +32,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@/lib/prisma", () => ({ prisma: mocks.prisma }));
 vi.mock("@/lib/audit", () => ({ createAuditLog: mocks.audit }));
 vi.mock("@/lib/logger", () => ({ default: { info: vi.fn(), warn: vi.fn(), error: vi.fn() } }));
-vi.mock("@/lib/stripe", () => ({ createPaymentIntent: mocks.createIntent }));
+vi.mock("@/lib/stripe", () => ({ createPaymentIntent: mocks.createIntent, cancelPaymentIntentIfCancellableWithResult: mocks.cancelIntent }));
 vi.mock("@/lib/reissued-ask-mint", () => ({
   resolveAskCustomerId: vi.fn().mockResolvedValue("cus_1"),
   mintedIntentCustomerId: vi.fn().mockReturnValue("cus_1"),
@@ -143,6 +150,10 @@ beforeEach(() => {
   mocks.retireAfterWrite.mockResolvedValue(false);
   mocks.paidCash.mockResolvedValue(0);
   mocks.mergeVerdict.mockResolvedValue({ merge: true });
+  // #4652: a lost claim's re-read finds nothing unless a test says otherwise - no proof, no cancel.
+  mocks.prisma.paymentRecoveryOperation.findUnique.mockResolvedValue(null);
+  mocks.prisma.paymentRecoveryOperation.findFirst.mockResolvedValue(null);
+  mocks.prisma.paymentTransaction.findUnique.mockResolvedValue(null);
   // Under the lock the payment is as it was read, unless a test moves it.
   store.payment.findUnique.mockImplementation(async () => mocks.prisma.payment.findUnique.mock.results.at(-1)?.value);
 });
@@ -410,6 +421,121 @@ describe("processCreditReleaseAskOperation", () => {
     expect(mocks.upsert).not.toHaveBeenCalled();
     expect(deps.complete).not.toHaveBeenCalled();
     expect(mocks.cancelSuperseded).not.toHaveBeenCalled();
+  });
+
+  /**
+   * #4652 (`INV-PAY-120`): the claim hold lost, so the intent this attempt minted under the
+   * release's own key is written nowhere. Only a stale reclaim moves this row (it is never netted
+   * off or folded); once the reclaiming runner has CLOSED it without this intent, nothing can record
+   * it again, and it is cancelled at Stripe as abandoned - after the hold, outside every
+   * transaction, best-effort, and only when no row or recovery names it.
+   */
+  describe("#4652: a lost claim cancels the intent it minted only once its row was closed without it", () => {
+    const KEY = buildCreditReleaseAskStripeIdempotencyKey("rel-1");
+    const PROOF_READ = { where: { id: "op-1" }, select: { status: true, lastError: true, paymentIntentId: true } };
+    const cancelledWithOpen: number[] = [];
+
+    function loseClaimTo(moved: Record<string, unknown> | null, owners: { row?: { id: string } | null; recovery?: { id: string } | null } = {}) {
+      const deps = runnerDeps();
+      // The hold is a transaction; it re-asserts the claim, finds it moved, and writes nothing.
+      deps.holdClaim.mockImplementation((async () => {
+        mocks.openTransactions += 1;
+        await Promise.resolve();
+        mocks.openTransactions -= 1;
+        return null;
+      }) as never);
+      mocks.prisma.paymentRecoveryOperation.findUnique.mockResolvedValue(moved);
+      mocks.prisma.paymentTransaction.findUnique.mockImplementation(async () => owners.row ?? null);
+      mocks.prisma.paymentRecoveryOperation.findFirst.mockImplementation(async () => owners.recovery ?? null);
+      return deps;
+    }
+
+    beforeEach(() => {
+      mocks.openTransactions = 0;
+      cancelledWithOpen.length = 0;
+      mocks.prisma.$transaction.mockImplementation(async (fn: (tx: unknown) => Promise<unknown>) => {
+        mocks.openTransactions += 1;
+        try {
+          return await fn(mocks.prisma);
+        } finally {
+          mocks.openTransactions -= 1;
+        }
+      });
+      mocks.cancelIntent.mockImplementation(async (id: string) => {
+        cancelledWithOpen.push(mocks.openTransactions);
+        return { paymentIntent: { id, status: "canceled" }, canceled: true };
+      });
+    });
+
+    it.each([
+      ["with ANOTHER intent (an amount-suffixed key)", "pi_reclaimer"],
+      ["with no intent (nothing owed by then)", KEY],
+    ])("MUTATION: a reclaiming runner closed the row %s - this attempt's intent is cancelled as abandoned, outside every transaction", async (_label, paymentIntentId) => {
+      const deps = loseClaimTo({ status: "SUCCEEDED", lastError: null, paymentIntentId });
+      await run({ deps });
+      expect(mocks.createIntent).toHaveBeenCalledTimes(1);
+      expect(mocks.upsert).not.toHaveBeenCalled();
+      expect(mocks.prisma.paymentRecoveryOperation.findUnique).toHaveBeenCalledWith(PROOF_READ);
+      expect(mocks.prisma.paymentTransaction.findUnique).toHaveBeenCalledWith({ where: { stripePaymentIntentId: "pi_new" }, select: { id: true } });
+      expect(mocks.prisma.paymentRecoveryOperation.findFirst).toHaveBeenCalledWith({ where: { paymentIntentId: "pi_new" }, select: { id: true } });
+      expect(mocks.cancelIntent).toHaveBeenCalledWith("pi_new", { cancellationReason: "abandoned" });
+      // The pin: the hold's transaction had ended, and none is open around the cancel.
+      expect(cancelledWithOpen).toEqual([0]);
+      expect(deps.holdClaim.mock.invocationCallOrder[0]!).toBeLessThan(mocks.cancelIntent.mock.invocationCallOrder[0]!);
+      expect(deps.complete).not.toHaveBeenCalled();
+      expect(mocks.cancelSuperseded).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ["a payment row", { row: { id: "txn-recorded" } }],
+      ["a recovery (its own, a queued cancel)", { recovery: { id: "op-other" } }],
+    ])("MUTATION: an intent %s names is never cancelled", async (_label, owners) => {
+      const deps = loseClaimTo({ status: "SUCCEEDED", lastError: null, paymentIntentId: "pi_reclaimer" }, owners);
+      await run({ deps });
+      expect(mocks.prisma.paymentRecoveryOperation.findUnique).toHaveBeenCalledWith(PROOF_READ);
+      expect(mocks.cancelIntent).not.toHaveBeenCalled();
+    });
+
+    it("MUTATION: a writer recording the intent between the proof's re-read and the owner check wins - nothing cancelled", async () => {
+      const owners: { row: { id: string } | null } = { row: null };
+      const deps = loseClaimTo({ status: "SUCCEEDED", lastError: null, paymentIntentId: "pi_reclaimer" }, owners);
+      mocks.prisma.paymentRecoveryOperation.findUnique.mockImplementation(async () => {
+        owners.row = { id: "txn-written-meanwhile" };
+        return { status: "SUCCEEDED", lastError: null, paymentIntentId: "pi_reclaimer" };
+      });
+      await run({ deps });
+      expect(mocks.prisma.paymentTransaction.findUnique).toHaveBeenCalledWith({ where: { stripePaymentIntentId: "pi_new" }, select: { id: true } });
+      expect(mocks.cancelIntent).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ["held by a live runner, still naming the key (PROCESSING)", { status: "PROCESSING", lastError: null, paymentIntentId: KEY }],
+      ["held by a live runner that already wrote ANOTHER intent (PROCESSING)", { status: "PROCESSING", lastError: null, paymentIntentId: "pi_reclaimer" }],
+      ["handed back by the stale reaper, to run again (FAILED)", { status: "FAILED", lastError: "Payment recovery worker timed out before completion.", paymentIntentId: KEY }],
+      ["waiting (PENDING)", { status: "PENDING", lastError: null, paymentIntentId: KEY }],
+      ["closed naming THIS intent (the reclaiming runner's mint under the same key)", { status: "SUCCEEDED", lastError: null, paymentIntentId: "pi_new" }],
+      ["gone", null],
+    ])("MUTATION: a row %s is never a proof - nothing cancelled", async (_label, moved) => {
+      const deps = loseClaimTo(moved);
+      await run({ deps });
+      expect(mocks.prisma.paymentRecoveryOperation.findUnique).toHaveBeenCalledWith(PROOF_READ);
+      expect(mocks.prisma.paymentTransaction.findUnique).not.toHaveBeenCalled();
+      expect(mocks.cancelIntent).not.toHaveBeenCalled();
+    });
+
+    it("a re-read that fails proves nothing, and a Stripe cancel that fails is swallowed: the run ends without throwing", async () => {
+      // The row WOULD prove it, but the re-read fails: an unread recovery proves nothing.
+      const unread = loseClaimTo({ status: "SUCCEEDED", lastError: null, paymentIntentId: "pi_reclaimer" });
+      mocks.prisma.paymentRecoveryOperation.findUnique.mockRejectedValueOnce(new Error("connection reset"));
+      await expect(run({ deps: unread })).resolves.toBeDefined();
+      expect(mocks.cancelIntent).not.toHaveBeenCalled();
+
+      const deps = loseClaimTo({ status: "SUCCEEDED", lastError: null, paymentIntentId: "pi_reclaimer" });
+      mocks.cancelIntent.mockRejectedValueOnce(new Error("Stripe is down"));
+      await expect(run({ deps })).resolves.toBeDefined();
+      expect(mocks.cancelIntent).toHaveBeenCalledTimes(1);
+      expect(deps.complete).not.toHaveBeenCalled();
+    });
   });
 
   it("rejects a key that names no release", async () => {

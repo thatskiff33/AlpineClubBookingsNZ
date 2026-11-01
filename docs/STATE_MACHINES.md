@@ -815,8 +815,10 @@ reduction edit, under the door's locks
          and the intent it minted, once no row or recovery names it, is
          cancelled at Stripe (`abandoned`, best-effort, after its claim hold's
          transaction ended; logged as `reissued-ask.abandoned-intent-cleanup`;
-         #4631); a recovery reset or reclaimed meanwhile, or an intent it
-         adopted by matching (#4036), keeps it
+         #4631), as it is when a stale reclaim's runner closed the recovery
+         SUCCEEDED with another intent or none (#4652); a recovery reset,
+         PENDING, FAILED or still claimed (even by a runner that already wrote
+         another intent), or an intent it adopted by matching (#4036), keeps it
   -> enqueue CANCEL_PAYMENT_INTENT for each retired intent (same transaction)
   -> WAITING_PAYMENT supplementary invoices on it, or on a closed recovery's
        edit -> read for what they bill, then CANCELLED
@@ -1968,7 +1970,7 @@ the line says the club checked the rest and closed it.
 ### A succeeded app intent no PRIMARY row settles (#4624)
 
 `handlePaymentIntentSucceeded` routes an intent the app created (it carries
-`bookingId`, `isAppCreatedPaymentIntent`) through its routes in order, and only
+`bookingId`, `appPaymentIntentRoute`) through its routes in order, and only
 an intent that falls through all of them reaches the unmatched branch:
 
 ```text
@@ -2351,6 +2353,14 @@ inbound fence records its conflict the same way, under the
        -> superseded         by a later ask that carries it (INV-PAY-098): an edit made while
                                the request is unpaid MERGES into one request (cause "mixed"),
                                chased and worded as both
+  claim hold lost mid-mint (a stale claim reaped and reclaimed): nothing written; the intent
+                               it minted under the release's key is cancelled at Stripe
+                               (`abandoned`, best-effort, after the hold's transaction; logged
+                               as `reissued-ask.abandoned-intent-cleanup`) only once the
+                               reclaiming runner closed the row SUCCEEDED without it and no row
+                               or recovery names it; a row still claimable or claimed, or failed
+                               for good, keeps it: a retry may mint under the same key and get
+                               it back, otherwise it stays open, never offered (#4652, INV-PAY-120)
   chase while unpaid (INV-ADDPAY-048): request email now, reminders at 7, 14, 21 and 28
                                days; after the fourth reminder only the officers' queues chase
   reminder withheld for an officer (INV-ADDPAY-051): Xero shows the invoice owing less than the
@@ -3893,6 +3903,18 @@ template and booking change. Only the retry worker sends it, after its normal
 15-minute backoff and recipient checks. Replaying invoice creation finds the
 same email row; failure to persist that row leaves the invoice operation
 retryable. This avoids a synchronous send racing email recovery.
+
+A message whose retry belongs to something else keeps no body
+(`NON_RETRYABLE_EMAIL_LOG_TEMPLATES`), so its `FAILED` row is never replayed.
+The settlement-figure alert's marker retries it (#4446). The unrecognised and
+unmatched Stripe payment alerts (#4647, `INV-INT-032`, `INV-INT-033`) give
+their once-ever claim back when nobody received them and fail the webhook, so
+Stripe's redelivery sends them again; a cron replay as well would send them
+twice.
+
+Stated limit, shared with the settlement-figure alert: these alerts count as
+sent once any recipient receives them, so a copy one recipient lost while
+another got it is neither retried nor queued for review (#4669).
 
 To verify: retry backoff, suppression handling, durable recipient identity,
 direct/inherited mailbox drift, revoked-authority fail-closed behavior,
