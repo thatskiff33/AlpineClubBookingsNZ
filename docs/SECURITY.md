@@ -163,15 +163,25 @@ completed password reset.
 **Enumeration parity.** The throttle answers before any member record is read,
 and its answer — `LOGIN_THROTTLED`, one message — is the same for a real, an
 unknown, an inactive and a deleted account, after the same dummy bcrypt
-compare. Unknown emails are counted exactly as real ones, so the wait cannot
-reveal who has an account.
+compare. Unknown emails are counted exactly as real ones, so a throttled real
+account and a throttled unknown email look the same. One thing does differ: a
+valid sign-in or completed reset on a real account clears its count, which an
+unknown email's count never is (see the stated limits).
 
 **What is stored.** `LoginThrottle` holds an HMAC-SHA256 of the lower-cased
 email under `AUTH_SECRET` (domain label `login-throttle:v1:`), a count and the
 time of the last counted attempt. No address is stored or logged. Rows are
-deleted on a valid password, a completed reset, or by a best-effort sweep an
-hour after the last attempt ([retention schedule](PRIVACY_RETENTION.md)).
+deleted on a valid password or a completed reset; a row idle for an hour is
+deleted by the daily `data-pruning` job, or sooner by a ten-minute sweep in a
+process that is handling password sign-ins
+([retention schedule](PRIVACY_RETENTION.md)).
 **Rotating `AUTH_SECRET` changes every key, which resets every count.**
+
+**Under load on one account.** A claim waits at most one second for the
+account's row; a claim that cannot have it answers with the same wait message,
+uncounted. An account already waiting is refused from a plain read, without
+queuing for the row, so a burst of guesses on one account cannot hold the
+connection pool.
 
 **If the store fails.** The claim falls back to a bounded per-process count at
 the #1142 divided budget (one free attempt, then the same doubling wait), logs
@@ -192,8 +202,17 @@ because of the failure itself.
   migration is expand-only and the draining release never names the table, so
   guesses routed to the old slot are counted only by the per-address limiter.
   Protection is complete once the old slot drains.
-- **In-memory fallback counts per process.** While the store is down each
-  replica counts on its own, at the divided budget; a restart forgets them.
+- **A recent valid sign-in shows as a reset count.** A valid password or a
+  completed reset clears the count (the issue's rule, and the owner's decision
+  for resets), and an unknown email's count is never cleared. So someone who
+  sends four wrong guesses and, within the hour, two more can tell from whether
+  the last one waits that a real account's owner signed in or reset in between
+  — proving the account exists and roughly when it was used. A throttled real
+  account and a throttled unknown email still look the same.
+- **In-memory fallback counts per process.** While the store is down — or the
+  connection pool is too busy to give a claim a connection within a second —
+  each replica counts on its own, at the divided budget, without reading the
+  stored count; a restart forgets them.
 - Password sign-in only: emailed sign-in links, Google, two-factor code entry
   (its own lockout) and lodge PIN sign-in are separate, and forgot-password and
   sign-in-link request limits per account are #4613.

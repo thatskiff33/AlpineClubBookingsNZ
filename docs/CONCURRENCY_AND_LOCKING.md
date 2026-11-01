@@ -2018,10 +2018,25 @@ mispricing a booking.
   provider call, and the bcrypt compare runs after commit, so INV-LOCK-001 and
   INV-LOCK-002 ordering is not engaged.
 
+  The wait is bounded (#4637 review), because the threat is many concurrent
+  guesses on ONE account and every waiter holds a pooled connection:
+  - an unlocked read first refuses an account already waiting, so most of an
+    attack never queues on the row (concurrent claims only make that answer
+    stricter; a clear racing it costs at most one refused attempt);
+  - the transaction sets `lock_timeout` to one second for itself
+    (`set_config(…, true)`) and runs with explicit `maxWait` 1 s / `timeout`
+    3 s. A claim that cannot have the row within the second gets SQLSTATE
+    `55P03` and answers "waiting", uncounted — contention on that account, not a
+    store failure. A claim holds the row for milliseconds, so an ordinary race
+    still queues and counts;
+  - the attempt's instant is taken once the row is held, so lock order is time
+    order and `lastFailureAt` never moves backwards.
+
   Counterpart writers, and why they are safe against the claim:
   - **Clear** (`clearPasswordAttempts`, after a valid password or a completed
-    reset) and the **idle sweep** (an unref'd timer deleting rows whose
-    `lastFailureAt` is over an hour old) are single `deleteMany` statements with
+    reset) and the **idle sweep** (`sweepIdleLoginThrottleRows`, deleting rows
+    whose `lastFailureAt` is over an hour old, from the daily `data-pruning` job
+    and a ten-minute timer in a process handling sign-ins) are single `deleteMany` statements with
     no lock of their own. Against a claim holding the row they wait, then
     delete the committed row (the clear: correct, the password was proven) or
     re-check it and skip it (the sweep: the claim just refreshed
@@ -2030,11 +2045,19 @@ mispricing a booking.
     The lock then matches nothing (count 0), so the claim ensures and locks
     once more inside the same transaction, and gives up as a store failure only
     if the second lock still matches nothing.
-  - A store failure of any kind falls back to the per-process count (#1142
+  - Any other store failure, including a pool too busy to give the claim a
+    connection within `maxWait`, falls back to the per-process count (#1142
     divisor) and never blocks sign-in.
 
-  Proven on real PostgreSQL by `src/lib/__tests__/login-throttle.realdb.test.ts`
-  with forced interleavings for all of the above.
+  `src/lib/__tests__/login-throttle.realdb.test.ts` forces each of these on real
+  PostgreSQL: two racing failures both count; a burst at the end of a wait admits
+  one; two first-ever claims both count; a row held past the lock timeout
+  answers "waiting" in about a second, uncounted and without the fallback; a
+  clear waits on a held row and then deletes it; the sweep re-checks a row a
+  claim refreshed under it and keeps it; and a row deleted between the ensure
+  and the lock is re-ensured. The unlocked pre-read, the post-lock instant and
+  the store-failure fallback are unit-tested against a mocked client
+  (`login-throttle.test.ts`), not on PostgreSQL.
 
 - **Member photo writer** — `src/app/api/members/[id]/photo/route.ts` (epic #171):
   the upload (POST) and remove (DELETE) transactions each take

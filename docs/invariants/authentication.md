@@ -44,6 +44,10 @@ This file holds only the rules.
   real, unknown, inactive or deleted. Unknown emails are counted exactly as real
   ones. Throttled real and throttled unknown accounts are therefore identical by
   construction, not by care: the throttled path has no Member to differ on.
+- **This is parity of the throttled answer, not of the count's history.** A
+  valid sign-in or completed reset on a real account clears its count
+  (`INV-AUTH-003`); an unknown email's never is. That difference is a stated
+  limit in [`SECURITY.md`](../SECURITY.md#per-account-password-throttle-4609).
 
 ## INV-AUTH-003
 
