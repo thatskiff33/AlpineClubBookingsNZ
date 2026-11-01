@@ -561,6 +561,7 @@ File:
 | `INV-REQ-010` | A corrected request never keeps beds held for its old shape |
 | `INV-REQ-011` | A request names a structured change; officers enter guests atomically |
 | `INV-REQ-012` | A range repeating a guest's own dates keeps their nights |
+| `INV-REQ-013` | An officer applies a missed promo to a finished stay |
 
 ### Subscription-lockout pricing, admin date overrides and member-facing email
 

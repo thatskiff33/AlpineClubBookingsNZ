@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRef, useState, type ComponentType, type ReactNode } from "react";
 
 import { Button, type ButtonProps } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ADMIN_VIEW_ONLY_ACTION_REASON } from "@/hooks/use-admin-area-edit-access";
@@ -344,18 +345,17 @@ export function FinishedStayNotifyChoice({
   onChange: (notifyMember: boolean) => void;
 }) {
   return (
-    <label className="flex items-start gap-2 text-sm" htmlFor={`notify-member-${requestId}`}>
-      <input
+    <div className="flex items-start gap-2 text-sm">
+      <Checkbox
         id={`notify-member-${requestId}`}
-        type="checkbox"
-        className="mt-1"
+        className="mt-0.5"
         checked={notifyMember}
         disabled={!canEdit}
         title={canEdit === false ? ADMIN_VIEW_ONLY_ACTION_REASON : undefined}
-        onChange={(event) => onChange(event.target.checked)}
+        onCheckedChange={onChange}
       />
-      <span>Email the member about this correction</span>
-    </label>
+      <Label htmlFor={`notify-member-${requestId}`}>Email the member about this correction</Label>
+    </div>
   );
 }
 

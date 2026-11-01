@@ -151,6 +151,30 @@ are listed on the booking for you to relay.
      that dependant, add them with **+ Add a member**, so they are booked as the
      member they are; if it is a different person with the same name, this
      entry can't add them, so leave them off and say so in your explanation.
+   - **A missed promo code** (#4533). When a member should have had a promo
+     code on a finished stay — usually a free night assigned to them that
+     wasn't added when an officer booked the stay for them — the correction is
+     applied through this card, never by hand in Xero. There are two ways in:
+     - On the booking, **Edit Booking**: choose the code in the promo box as
+       usual. A finished stay can't be saved, so instead of **Save** the panel
+       says why and offers **Send as a promo correction request**. That raises
+       a request carrying only the code, entered by you on the member's behalf,
+       and opens it here.
+     - On any request about a finished stay that names no promo code, type it
+       into **Promo code to apply**.
+
+     Either way **Check the figures** prices it, and **Approve and apply**
+     applies it exactly as Edit Booking would on a future stay: who the code is
+     assigned to, its lifetime free-night limit and its uses per member all
+     still apply, and a code that doesn't apply is refused with the same reason
+     the booking editor gives. The free night is then counted as used. A promo
+     code carries no change fee, and its reduction comes back in full — as
+     account credit unless you choose a refund under **If the change lowers the
+     price**; credit raises an unapplied account-credit note in Xero. Where the
+     code is the request's only change, you can untick **Email the member about
+     this correction**; a guest or date change always emails them. If a code
+     was added to or taken off the booking since the request was raised,
+     nothing is applied and the request stays pending.
    - **The figures you approve are the figures charged.** **Approve and apply**
      sends the figures you checked. If anything moved since — a season rate, a
      payment, the lodge's capacity — nothing is applied and you are asked to
@@ -159,7 +183,8 @@ are listed on the booking for you to relay.
      approving will do — the change fee, and the refund, credit or amount due —
      without changing anything, and **Approve and apply** stays off until it
      has. Under **If the change lowers the price** the default is the way the
-     booking was paid; you can choose card or account credit instead.
+     booking was paid (account credit for a promo code); you can choose card or
+     account credit instead.
    - **When nothing is applied.** If the booking has changed since the member
      asked (its dates, its guests, or a guest's nights), the season for those nights has been switched off, a guest cannot
      be booked, nothing
@@ -647,7 +672,7 @@ therefore keeps its **All** context rather than disappearing from view.
 | Tab | Filters | Key actions |
 | --- | --- | --- |
 | Approvals | Pending (default), Approved, Rejected, All | Approve; Reject and cancel (Admin notes required to reject) |
-| Changes | Requested (default), Approved, Rejected, All | Acknowledge as approved (stay still running) or Approve and apply (stay finished, #3750); Reject. Both need the member-facing explanation; optional internal note the member never sees; optional linked modification id (acknowledgement only) |
+| Changes | Requested (default), Approved, Rejected, All | Acknowledge as approved (stay still running) or Approve and apply (stay finished, #3750), with **Promo code to apply** and, on a promo-only correction, the member email choice (#4533); Reject. Both need the member-facing explanation; optional internal note the member never sees; optional linked modification id (acknowledgement only) |
 | Policy Exceptions | Requested (default), Approved, Rejected, Cancelled, Superseded, All | Approve and apply (confirmation required; member-facing explanation required for an adult-member hosting override); Refuse (member-facing explanation required). Both actions also take an optional internal note the member never sees |
 | Public Requests | Queue (default), Awaiting verification, Verified, Priced, Quoted, Quote sent, Query, Modify, Accepted, Approved, Declined, Cancelled, Converted, All | Save quote; Send quote; Approve & send payment link / Approve & invoice school; Decline; Hold slots (school) |
 
