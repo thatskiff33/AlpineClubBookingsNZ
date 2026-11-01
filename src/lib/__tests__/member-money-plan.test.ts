@@ -98,8 +98,8 @@ describe("buildMemberMoneyBatch", () => {
     const [receivable, revenue] = base.legs as [Extract<typeof base.legs[number], { type: "amount" }>, Extract<typeof base.legs[number], { type: "revenue" }>];
 
     it.each<[string, MemberMoneyPlan, RegExp]>([
-      ["a dropped balancing leg", { ...base, legs: [receivable] }, /at least two legs|debits minus credits/],
-      ["unbalanced cents", { ...base, legs: [{ ...receivable, amountCents: 11499 }, revenue] }, /debits minus credits is -1 cents/],
+      ["a dropped balancing leg", { ...base, legs: [receivable] }, /at least two legs|do not balance/],
+      ["unbalanced cents", { ...base, legs: [{ ...receivable, amountCents: 11499 }, revenue] }, /debits less credits is -0\.01/],
       ["non-integer cents", { ...base, legs: [{ ...receivable, amountCents: 11500.5 }, revenue] }, /positive integer cents/],
       ["zero cents", { ...base, legs: [{ ...receivable, amountCents: 0 }, revenue] }, /positive integer cents/],
       ["a receivable with no debtor", { ...base, legs: [{ ...receivable, debtor: undefined, obligationKey: undefined }, revenue] }, /needs a debtor/],
@@ -128,7 +128,7 @@ describe("buildMemberMoneyReversal", () => {
     const reversal = buildMemberMoneyReversal(context, { reversesJournalId: "j1", origin: "OFFICER", reason: "error",
       source: { kind: "OFFICER_FACT", id: "fix-1", version: "1" } },
     { id: "j1", currency: "NZD", policyVersion: "p0", codingVersion: "c0",
-      lines: original.lines.map(({ source: _source, originalLineId: _original, ...line }, index) => ({ ...line, id: `line-${index}` })) });
+      lines: original.lines.map((line, index) => ({ ...line, source: undefined, originalLineId: undefined, id: `line-${index}` })) });
     expect(reversal.event).toMatchObject({ kind: "REVERSAL", eventKey: "reversal:j1" });
     expect(reversal.journal).toEqual({ currency: "NZD", policyVersion: "p0", codingVersion: "c0", reversesJournalId: "j1" });
     expect(reversal.lines.map(({ side, originalLineId, amountCents }) => [side, originalLineId, amountCents]))

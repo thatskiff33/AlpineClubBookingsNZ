@@ -51,7 +51,7 @@ export function bookingChargePlan(input: {
   source?: MemberMoneySource;
   additionalSources?: MemberMoneySource[];
   chargeIdentity?: string;
-}): Extract<MemberMoneyPlan, { kind: "CHARGE" }> {
+}): Extract<MemberMoneyPlan, { legs: unknown }> {
   const chargeIdentity = input.chargeIdentity ?? `${input.eventKey}:nights`;
   const obligationKey = `${input.eventKey}:obligation`;
   const revenueSource = input.additionalSources?.find((source) => source.kind === "BOOKING_LEDGER");

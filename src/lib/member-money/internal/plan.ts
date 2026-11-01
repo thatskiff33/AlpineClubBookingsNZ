@@ -10,6 +10,7 @@ import type {
 import type { ClubTaxTreatment } from "../../club-tax-settings";
 import { isCalendarDate, type CalendarDate, type Instant } from "../../club-time";
 import { stableDigest, stableStringify } from "../../stable-digest";
+import { formatCentsPlain } from "../../utils";
 import { memberMoneyEventKeys } from "./keys";
 import { MAX_MEMBER_MONEY_CENTS, splitTaxInclusiveGross, type MemberMoneyTaxSplit } from "./tax";
 
@@ -385,7 +386,7 @@ export function buildMemberMoneyBatch(context: MemberMoneyPostingContext, plan: 
 
     if (lines.length < 2) problems.push(`a ${plan.kind} batch needs at least two legs`);
     const net = lines.reduce((sum, line) => sum + (line.side === "DEBIT" ? line.amountCents : -line.amountCents), 0);
-    if (net !== 0) problems.push(`debits minus credits is ${net} cents, not 0`);
+    if (net !== 0) problems.push(`debits and credits do not balance: debits less credits is ${formatCentsPlain(net)}`);
     sources.forEach((source, index) => {
       if (source.kind === "BOOKING_LEDGER" && lines.length > 0 && !lines.some((line) => line.source === index)) {
         problems.push(`legacy line ${source.id} is linked but no leg posts it`);
