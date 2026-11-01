@@ -551,12 +551,9 @@ async function backPostBooking(tx: Tx, bookingId: string, journal: BookingJourna
   if ("kind" in charges) throw refuse(charges);
   await writeBookingLedgerRows(tx, buildBookingLedgerRows([...charges.postings, ...(group?.postings ?? [])]));
   steps.push(...charges.steps, ...(group?.steps ?? []));
-  // #4627: a journal-era booking (created after the journal's first R01) whose
-  // confirmation this fills, an internet-banking settle that posted none, say,
-  // posts its R01 here; then a booking whose R01 is in the journal gets the rest
-  // of the filled lines as one R26 batch (its confirmation's too, where a door
-  // posted R01 as a ZERO event). A booking confirmed before M3b posts nothing:
-  // M9 back-posts its history whole.
+  // #4627: a journal-era booking whose confirmation this fills posts its R01 here;
+  // a booking with R01 then gets the rest as one R26 batch (its confirmation's too,
+  // after a ZERO R01). One confirmed before M3b posts nothing: M9's whole.
   const confirmationKeys = charges.postings.filter((posting) => posting.anchorKind === "CONFIRMATION").map((posting) => posting.postingKey);
   if (confirmationKeys.length > 0 && isJournalEraBooking(booking.createdAt, await readJournalSince(tx))) {
     await postBookingLedgerJournal(tx, journal, { bookingId, lodgeId: booking.lodgeId, event: { kind: "confirmation" }, postingKeys: confirmationKeys });
