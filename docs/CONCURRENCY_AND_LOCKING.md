@@ -6283,9 +6283,10 @@ of the #2901 repair apply and of the funnel's own pointer release (#4046).
 **The accepted inversion, and why it cannot deadlock.** Two writers take the
 same two rows Payment first, inside their own transactions:
 
-- the refund-note create's record (`createXeroCreditNote`): the pointer, then
-  the link write, whose single-canonical rule updates the payment's other
-  active links;
+- the refund-note create's record (`recordCreatedRefundNote`, from
+  `createXeroCreditNote`): the pointer, then its claim of its own operation
+  row (#4426), then the link write, whose single-canonical rule updates the
+  payment's other active links;
 - the outbox enqueue's existing-note branch
   (`enqueueXeroRefundCreditNoteOperation`, "already linked"): the pointer,
   then the link write, inside the caller's transaction (a group cancel or an
@@ -6560,6 +6561,45 @@ writer held inside its transaction past its check while the other is shown
 queued on the advisory lock, ending with one record of the note; and the void
 path - the inbound void of the recorded note retires its link, coverage drops to
 $0 and the nightly follow-up undoes the refund and asks once.
+
+**The create's own late answer (#4426).** The create whose row this resolve
+records can still be waiting on Xero: a create stalled past the stale
+threshold, an officer pressed Mark failed, then Resolve by hand. Its Xero call
+holds no lock, as before. When Xero answers, `recordCreatedRefundNote`
+(`xero-refund-note-record.ts`) records the note in one short transaction, in
+the claim's own order: the `Payment` row - only when the note takes the
+pointer (a canonical note; a refund request's or a per-refund note takes no
+`Payment` lock here) - then the operation row, a status-guarded `updateMany`
+refusing a row whose resolve recorded a note (`manuallyResolvedAt` and
+`xeroObjectId` both set), which is the claim and the write of the row's note
+in one statement, then the link through the funnel. Classified under
+`INV-LOCK-001`: no global cohort and no advisory key. The create moves no
+settlement money and no booking status in this transaction, and the one fact
+it shares with the resolve - which note this row records - lives on the
+operation row, so that row's lock decides it: whichever commits second reads
+the first. A resolve that commits first leaves the create's `updateMany`
+matching nothing; the create throws inside its transaction, rolling back its
+pointer, records nothing, and then - outside any transaction, logging the note
+first - writes one audit row and raises #4374's alert (or, when the late note
+is the one the resolve recorded, only logs it) and returns without settling
+or completing. A create that commits first leaves the row naming its note, so
+the resolve's re-read under its locks no longer asks a number and its claim is
+lost: the route answers as for a lost resolve. With the pointer, the resolve
+queues on the `Payment` row behind the create's record; without it, the
+resolve passes its reads (the record has not committed) and its `updateMany`
+queues on the operation row, then matches nothing (`xeroObjectId` is set).
+Both take the `Payment` row before the operation row and the link after it, so
+they never wait on each other in a cycle; before #4426 the create wrote the
+link before the row, the reverse of a completion (row, then link). A plain
+resolve records no note, so the create's claim still wins over it and the
+completion's #4374 alert follows. No new advisory key, registered site or
+row-lock site. Proven against real PostgreSQL by
+`xero-late-refund-note-after-resolve.realdb.test.ts`: the outbox's create held
+inside its Xero call while Mark failed and the resolve's claim run, then
+answered; and the create's record held open at its link write while the
+resolve's claim runs, shown queued (`pg_blocking_pids`) on the `Payment` row
+for a canonical note and on the operation row for a per-refund note, and lost
+either way.
 
 ## Refund-note link writes racing a void (#4195, #4223)
 

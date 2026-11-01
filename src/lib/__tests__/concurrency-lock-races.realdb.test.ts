@@ -658,6 +658,13 @@ import "./other-lodge-name-index-window.realdb.test";
 // follow-up through the link the resolve wrote. Skipped unless
 // RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own `race-4421-` fixtures.
 import "./resolve-records-refund-note.realdb.test";
+// #4426 reuses it to prove a refund credit-note create that stalls in Xero, is
+// marked failed and is resolved by hand recording the officer's note, records
+// nothing when it returns: the officer's note stays recorded and linked, the
+// late note is alerted once and never linked or settled; and with no resolve the
+// late note lands as before. Skipped unless RUN_CONCURRENCY_RACE_TESTS=1; it
+// owns and cleans its own `race-4426-` fixtures.
+import "./xero-late-refund-note-after-resolve.realdb.test";
 // #4609 reuses it to prove the per-account password throttle's claim: two
 // failures racing on one account both count, a burst at the end of a wait admits
 // exactly one guess, two first-ever claims both count, and a row deleted between
