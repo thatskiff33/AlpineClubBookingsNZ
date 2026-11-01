@@ -28,21 +28,18 @@ import { useAgeTierOptions } from "@/lib/use-age-tier-options";
 import {
   decisionToastMessage,
   FinishedStayApprovalNotice,
-  FinishedStayNotifyChoice,
-  FinishedStaySettlementField,
   FinishedStayQuoteSummary,
   expectedFiguresOf,
-  OfficerGuestEntry,
   officerEntryKey,
-  officerGuestsPayload,
-  OfficerPromoEntry,
-  officerPromoPayload,
   OverCapacityConfirmation,
   quoteIsCurrent,
-  requestStay,
   RequestedGuestAdds,
   useFinishedStayQuotes,
 } from "@/components/admin/booking-requests/booking-change-request-finished-stay";
+import {
+  FinishedStayEntryFields,
+  officerEntryOf,
+} from "@/components/admin/booking-requests/booking-change-request-officer-entry";
 import { DecidedChangeRequestSummary } from "@/components/admin/booking-requests/booking-change-request-decided";
 import { RequestedGuestNights } from "@/components/admin/booking-requests/requested-guest-nights";
 import {
@@ -177,24 +174,8 @@ export function BookingChangeRequestsPanel({
   const OfficerEntryButton = useCallback((props: ButtonProps) => (
     <ViewOnlyActionButton canEdit={canEdit} describeReason={false} {...props} />
   ), [canEdit]);
-  /** This row's officer-entered guests as sent, or null (#4030). */
-  const officerGuestsFor = (request: BookingChangeRequestData) =>
-    request.acceptsOfficerGuests
-      ? officerGuestsPayload(decisionDraftFor(request.id).officerGuests, requestStay(request.booking))
-      : null;
-  /** This row's officer-entered promo code as sent, or null (#4533). */
-  const officerPromoFor = (request: BookingChangeRequestData) =>
-    request.acceptsOfficerPromo ? officerPromoPayload(decisionDraftFor(request.id).officerPromoCode) : null;
-  /**
-   * #4533: whether approving would be a promo-only correction — the request's
-   * own promo change is its one change, or it names nothing and the officer
-   * entered only a code — the one shape whose email the officer may withhold.
-   * The executor asks the same question under its locks and refuses otherwise.
-   */
-  const promoOnlyCorrection = (request: BookingChangeRequestData) =>
-    request.promoCorrection
-      ? request.promoCorrection.onlyChange
-      : Boolean(request.acceptsOfficerGuests && officerPromoFor(request) && !officerGuestsFor(request));
+  /** This row's officer entry as sent (#4030, #4533). */
+  const entryOf = (request: BookingChangeRequestData) => officerEntryOf(request, decisionDraftFor(request.id));
   const currentPath = buildBookingChangeRequestsPath(
     basePath,
     searchParams.toString(),
@@ -243,6 +224,7 @@ export function BookingChangeRequestsPanel({
     // half-written note is not this member's. Trimmed here so the stored draft
     // keeps the officer's own spacing while the wire body carries neither.
     const draft = decisionDraftFor(request.id);
+    const entry = entryOf(request);
     setError("");
 
     try {
@@ -273,10 +255,10 @@ export function BookingChangeRequestsPanel({
                 ...(quotes.quoteFor(request.id)?.confirmOverCapacity
                   ? { confirmOverCapacity: true }
                   : {}),
-                ...(officerGuestsFor(request) ? { officerGuests: officerGuestsFor(request) } : {}),
-                ...(officerPromoFor(request) ? { officerPromo: officerPromoFor(request) } : {}),
+                ...(entry.officerGuests ? { officerGuests: entry.officerGuests } : {}),
+                ...(entry.officerPromo ? { officerPromo: entry.officerPromo } : {}),
                 // #4533: the email choice, sent only where it can be honoured.
-                ...(promoOnlyCorrection(request) && !draft.notifyMember ? { notifyMember: false } : {}),
+                ...(entry.promoOnly && !draft.notifyMember ? { notifyMember: false } : {}),
                 // #4030 review C4: the figures this approval was shown.
                 expectedFigures: expectedFiguresOf(quotes.quoteFor(request.id)),
               }
@@ -408,8 +390,7 @@ export function BookingChangeRequestsPanel({
             // #3750: the nights this card's approval is waiting to have confirmed.
             const quote = quotes.quoteFor(request.id);
             const overCapacityNights = quote?.overCapacityNights ?? null;
-            const officerGuests = officerGuestsFor(request);
-            const officerPromo = officerPromoFor(request);
+            const { officerGuests, officerPromo } = entryOf(request);
             const quoteCurrent = quoteIsCurrent(
               quote,
               decisionDraftFor(request.id).settlementMethod,
@@ -567,54 +548,18 @@ export function BookingChangeRequestsPanel({
                           placeholder="Context for the next officer. The member never reads this."
                         />
                       </div>
-                      {request.acceptsOfficerGuests ? (
-                        <OfficerGuestEntry
-                          requestId={request.id}
-                          bookingId={request.booking.id}
-                          stay={requestStay(request.booking)}
-                          guests={decisionDraftFor(request.id).officerGuests}
-                          onChange={(officerGuests) => {
-                            updateDecisionDraft(request.id, { officerGuests });
-                            quotes.clear(request.id); // #4030 review M1: figures belong to their list
-                          }}
-                          ageTierOptions={ageTierOptions}
-                          memberGuestFind={memberGuestFind}
-                          existingMemberIds={(request.booking.guests ?? []).flatMap((guest) =>
-                            guest.memberId ? [guest.memberId] : [],
-                          )}
-                          canEdit={canEdit}
-                          ActionButton={OfficerEntryButton}
-                        />
-                      ) : null}
-                      {request.acceptsOfficerPromo ? (
-                        <OfficerPromoEntry
-                          requestId={request.id}
-                          code={decisionDraftFor(request.id).officerPromoCode}
-                          canEdit={canEdit}
-                          onChange={(officerPromoCode) => {
-                            updateDecisionDraft(request.id, { officerPromoCode });
-                            quotes.clear(request.id); // figures belong to their entry
-                          }}
-                        />
-                      ) : null}
-                      {request.executesOnApproval && promoOnlyCorrection(request) ? (
-                        <FinishedStayNotifyChoice
-                          requestId={request.id}
-                          notifyMember={decisionDraftFor(request.id).notifyMember}
-                          canEdit={canEdit}
-                          onChange={(notifyMember) => updateDecisionDraft(request.id, { notifyMember })}
-                        />
-                      ) : null}
-                      {request.executesOnApproval ? (
-                        <FinishedStaySettlementField
-                          requestId={request.id}
-                          value={decisionDraftFor(request.id).settlementMethod}
-                          canEdit={canEdit}
-                          onChange={(settlementMethod) =>
-                            updateDecisionDraft(request.id, { settlementMethod })
-                          }
-                        />
-                      ) : null}
+                      <FinishedStayEntryFields
+                        request={request}
+                        draft={decisionDraftFor(request.id)}
+                        canEdit={canEdit}
+                        onDraftChange={(patch, clearsFigures) => {
+                          updateDecisionDraft(request.id, patch);
+                          if (clearsFigures) quotes.clear(request.id); // #4030 review M1
+                        }}
+                        ageTierOptions={ageTierOptions}
+                        memberGuestFind={memberGuestFind}
+                        ActionButton={OfficerEntryButton}
+                      />
                       {request.executesOnApproval ? (
                         <FinishedStayQuoteSummary
                           quote={quote}
