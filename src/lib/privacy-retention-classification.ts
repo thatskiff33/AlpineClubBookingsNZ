@@ -130,6 +130,7 @@ export const PRIVACY_RETENTION_CLASSIFICATION = {
   ClubIdentitySettings: "personal",
   ClubTimeSettings: "personal",
   ClubFormatSettings: "personal",
+  ClubTaxSettings: "non-personal",
   LoginSecuritySetting: "personal",
   AnalyticsSettings: "personal",
   EmailTemplateOverride: "personal",

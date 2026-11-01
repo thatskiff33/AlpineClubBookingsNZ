@@ -5712,13 +5712,13 @@ model ClubFormatSettings {
 // backfill is needed. The column defaults equal those values. The migration adds
 // a CHECK holding the rate to whole basis points from 0 to 10000. Nothing writes
 // the row yet; the journal posting command reads a treatment its caller resolves
-// from it before the transaction (INV-LOCK-004).
+// from it before the transaction (INV-LOCK-004). The admin surface that first
+// writes it adds its audit columns (updatedByMemberId) with their registrations.
 model ClubTaxSettings {
   id                 String   @id @default("default")
   gstRegistered      Boolean  @default(true)
   taxRateBasisPoints Int      @default(1500)
   effectiveFrom      DateTime @default(dbgenerated("'2010-10-01'::date")) @db.Date
-  updatedByMemberId  String?
   createdAt          DateTime @default(now())
   updatedAt          DateTime @default(now()) @updatedAt
 }

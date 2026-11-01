@@ -12,7 +12,6 @@ CREATE TABLE "ClubTaxSettings" (
     "gstRegistered" BOOLEAN NOT NULL DEFAULT true,
     "taxRateBasisPoints" INTEGER NOT NULL DEFAULT 1500,
     "effectiveFrom" DATE NOT NULL DEFAULT '2010-10-01'::date,
-    "updatedByMemberId" TEXT,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 

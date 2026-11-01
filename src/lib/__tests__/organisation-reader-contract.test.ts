@@ -442,6 +442,13 @@ const DECLARED_FILES: Record<string, string> = {
   "src/lib/member-money/internal/database-shape.ts":
     "pins the member-money journal's catalog definitions verbatim, so the debtor-kind CHECK's text names the organisation column; it reads no row and decides nothing about a school",
 
+  // #4626 (Ledger M3a): a journal debtor is a member or an organisation
+  // (design section 3, INV-MONEY-041), so the posting command carries the column.
+  "src/lib/member-money/internal/plan.ts":
+    "the posting plan's debtor is a member or an organisation, and the builder maps it onto a leg's or obligation's organisationId column; it reads no row and decides nothing about a school",
+  "src/lib/member-money/internal/store.ts":
+    "writes the debtor columns the plan built and checks a leg names its earlier obligation's debtor; it decides nothing about a school",
+
   // #4457: the privacy-retention census classifies every Prisma model by name.
   "src/lib/privacy-retention-classification.ts":
     "names OrganisationContact as a key of the personal-data model inventory; it reads no row and decides nothing about a school",
