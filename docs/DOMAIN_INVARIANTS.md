@@ -983,6 +983,7 @@ headings the index keeps verbatim.
 | `INV-CONFIG-004` | Every application-controlled send passes one environment-aware boundary; four outcomes, all distinguishable |
 | `INV-CONFIG-005` | Every application-managed Xero contact write consumes the canonical role; copies contained |
 | `INV-CONFIG-006` | One persisted currency and locale; the environment seeds them once |
+| `INV-CONFIG-007` | One GST treatment setting, today's default, unwritten until Xero reads it |
 
 ## Single Source Of Truth
 

@@ -60,6 +60,17 @@ export function stripeChargeCurrency(format: ClubFormat): string {
 }
 
 /**
+ * The club's chargeable currency as an upper-case ISO code — the same rule as
+ * {@link stripeChargeCurrency}, in the case the rest of the app stores codes.
+ * Throws {@link UnsupportedChargeCurrencyError} as that does. The member-money
+ * journal's posting context takes its currency here (#4626), so a club whose
+ * stored currency cannot be charged posts nothing, bank receipts included.
+ */
+export function clubChargeCurrencyCodeOrThrow(format: ClubFormat): string {
+  return stripeChargeCurrency(format).toUpperCase();
+}
+
+/**
  * The currency a card is charged in, as an upper-case ISO code, or `null` when
  * no card can be charged at all (a stored currency that is not usable, or one
  * without two decimal places). The same rule as {@link stripeChargeCurrency},
@@ -69,7 +80,7 @@ export function stripeChargeCurrency(format: ClubFormat): string {
  */
 export function clubChargeCurrencyCode(format: ClubFormat): string | null {
   try {
-    return stripeChargeCurrency(format).toUpperCase();
+    return clubChargeCurrencyCodeOrThrow(format);
   } catch (error) {
     if (error instanceof UnsupportedChargeCurrencyError) return null;
     throw error;

@@ -5739,6 +5739,25 @@ model ClubFormatSettings {
   @@index([updatedByMemberId])
 }
 
+// The club's GST treatment for member-money journal postings (#4626, Ledger
+// M3a; D3 in docs/design/member-money-ledger.md). Singleton (id="default"). An
+// ABSENT row resolves to the code defaults in src/lib/club-tax-settings.ts —
+// registered, 1500 basis points, in force from 2010-10-01 — which reproduce the
+// GST-inclusive 15% treatment every Xero document already renders, so no seed or
+// backfill is needed. The column defaults equal those values. The migration adds
+// a CHECK holding the rate to whole basis points from 0 to 10000. Nothing writes
+// the row yet; the journal posting command reads a treatment its caller resolves
+// from it before the transaction (INV-LOCK-004). The admin surface that first
+// writes it adds its audit columns (updatedByMemberId) with their registrations.
+model ClubTaxSettings {
+  id                 String   @id @default("default")
+  gstRegistered      Boolean  @default(true)
+  taxRateBasisPoints Int      @default(1500)
+  effectiveFrom      DateTime @default(dbgenerated("'2010-10-01'::date")) @db.Date
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @default(now()) @updatedAt
+}
+
 // Club-wide login & security policy singleton (epic #2030, child #2033). Mirrors
 // the BookingDefaults / ClubModuleSettings / ClubIdentitySettings singleton
 // pattern (one row, id "default"). Governs the password-complexity rules applied
@@ -9045,6 +9064,8 @@ model MemberMoneyLine {
   @@index([bookingId])
   @@index([lodgeId])
   @@index([obligationId])
+  /// A component (#4626): corrections, reversals and re-charges read its legs.
+  @@index([account, chargeIdentity])
   sourcePostings MemberMoneySourcePosting[]
   @@unique([id, journalId])
 }

@@ -107,6 +107,19 @@ with new floating-point arithmetic. Preserve current inclusive tax treatment
 and subscription component rounding. Section 10 asks how the journal's tax and
 recognition settings should cover clubs with different accounting policies.
 
+M3a ([#4626](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/4626))
+delivered D3's setting and split. `ClubTaxSettings` records GST registration,
+the rate in basis points and the date it applies from. With no row, the club
+is registered at 1500 basis points from 1 October 2010, which is the
+GST-inclusive 15% treatment the Xero documents already render.
+`splitTaxInclusiveGross` derives tax = round-half-up(gross × rate ÷ (10000 +
+rate)) and net = gross − tax, in integer arithmetic only. An unregistered club
+posts revenue with no tax fields and no GST leg. A date before the setting
+starts has no treatment. Only a revenue leg that needs a fresh split refuses
+that; a receipt, a refund, a correction or a zero event posts as usual. A
+correction never re-splits at today's rate: it repeats the split its component
+was posted with (section 3).
+
 ## 3. Journal model and enforcement
 
 A posted event is an indivisible, balanced batch. The following are proposed
@@ -227,6 +240,40 @@ itself a capability boundary: restricted delegates/typed participants keep money
 tables out of caller clients, and an AST census covers delegate and SQL writes.
 Tests exercise the real import rule with prohibited examples and mutation probes;
 the database balance/refusal tests cover what lint cannot prove (`INV-SSOT-004`).
+
+M3a ([#4626](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/4626))
+delivered the posting command. `postMemberMoneyEvent(tx, context, plan)` takes
+a context that only `resolveMemberMoneyPostingContext` can make, before the
+transaction. It holds the club date from the club-time kernel, the currency by
+the rule card charges use (`stripeChargeCurrency`), the policy and coding
+versions and the tax treatment. Its `effectiveAt` is the source fact's own
+instant, never the processing clock. The plan is CHARGE, ADJUSTMENT or ZERO,
+and its event key comes only from `memberMoneyEventKeys` in `internal/keys.ts`.
+The builder refuses an unbalanced or ill-shaped plan before any read or write.
+That includes an obligation whose face is not the receivable (charge) or
+refund-payable (refund) its legs post. Revenue legs give their gross cents, and
+only the builder splits tax out of them. A debit revenue leg is a correction of
+a posted component, named by `chargeIdentity`. It must take the whole live
+component and repeats the component's posted split. A partial reduction is the
+whole component corrected plus a fresh charge for what remains, so no split is
+ever apportioned. A component is one revenue account and one `chargeIdentity`
+across the whole journal, not per booking, so the identity must name its
+booking (the legacy component keys do). Every leg of a component must name the
+same booking and lodge, and so must its correction. Once a component is fully
+corrected, the remainder charge may reuse its identity, even at a new rate:
+only a tax code that still carries money counts. A component carrying money
+under two codes at once cannot be corrected this way. A correction, an exact
+reversal of a journal that posted revenue, and a fresh charge of a component
+that already has legs depend on live component state until commit, so the
+caller must hold `lock(1)` (`INV-LOCK-001`); the store refuses otherwise. A reversal is also refused once a component it would undo
+has changed since. The payload hash covers the economics, not the reason or
+actor. The store, `internal/store.ts`, is the one writer of these tables. It
+looks up a replay first, then completes corrections, then writes in the order
+the foreign keys need. `reverseMemberMoneyJournal` posts the exact whole-batch
+reversal under the journal's own key, so a retry replays. No door calls the
+command until M3b. `member-money-journal-inert-census.test.ts` holds that, and
+outside the store it lets a journal delegate only be read. Applications are not
+yet in the plan: M4 adds them with receipts.
 
 Use the existing lock classification, never a new generic journal advisory key.
 Settlement/lifecycle commands take global `lock(1)` under `INV-LOCK-001`; capacity
@@ -638,6 +685,14 @@ a defect to fix before that cohort activates, never a guess and never a
 permanent block. Receipts and refunds post their full known gross cents. The
 scope still excludes GST returns and does not assume every adopting club is
 GST-registered. Not taken: a new universal tax or recognition basis.
+Delivered for future charges by M3a (#4626): section 2 describes the setting
+and the split. Back-posting history by the rate in force on each charge date
+remains with M9. Until the Xero tax-type issue
+([#4632](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/4632)) makes
+Xero's renders read the setting, nothing may write it, because the renderers
+hard-code the inclusive OUTPUT2 code and the two would disagree
+(`club-tax-settings-writer-census.test.ts`, `INV-CONFIG-007`). A club that is not
+GST-registered therefore needs that surface before M3b posts its charges.
 
 ### D4. Member merge: transfer open balances explicitly
 
