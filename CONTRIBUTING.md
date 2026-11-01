@@ -353,6 +353,10 @@ Each PR should include:
 
 - a concise summary of the user-facing or operational change
 - a `changelog.d/` fragment, or the no-entry marker in the PR body
+- a `## Plan Deviation` answer: `None`, or each material deviation from the
+  issue's plan with a link to the owner's answer
+  ([`docs/agents/ISSUE_WORKFLOW.md`](docs/agents/ISSUE_WORKFLOW.md#plan-deviation));
+  over 800 changed lines, a one-line `large-pr:` reason
 - validation commands and results
 - migration notes, if schema or data behaviour changes
 - a verification fixture for any migration that **rewrites existing data** (a
@@ -404,7 +408,7 @@ in the gate's `--job` too.
 
 **The PR-body gates read the description from a file, never an environment
 variable** (#4053). `verify` writes `.pull_request.body` from
-`$GITHUB_EVENT_PATH` to `$RUNNER_TEMP/pr-body.md` and the two gates open it
+`$GITHUB_EVENT_PATH` to `$RUNNER_TEMP/pr-body.md` and the gates open it
 through `PR_BODY_FILE` (`readEventPrBody` in `scripts/ci/pr-body.mjs`), as their
 fallback behind the live body fetched from the pulls API. Linux caps one
 environment string at 128 KiB, so a description past that size (PR #3924 reached
@@ -413,6 +417,14 @@ long") and turn `verify` red with no finding. Do not reference
 `github.event.pull_request.body` on any non-comment line of a workflow or action;
 `scripts/ci/pr-body-file.test.mjs` fails if it comes back. Keep a long
 description short anyway: link the review history rather than pasting it.
+
+**Two PR-body checks warn rather than fail** (#4463). The `## Plan Deviation`
+section is a `::warning::` until `PLAN_DEVIATION_ENFORCED` in
+`scripts/ci/check-pr-plan-deviation.mjs` is set to `true` (owner decision, 1 Nov
+2026: warn for seven days, then fail). The size check
+(`scripts/ci/check-pr-size.mjs`) only ever warns: over 800 changed lines, not
+counting files `.gitattributes` marks `linguist-generated`, with no `large-pr:`
+line. `pnpm run pr:check` reports both as `WARN`.
 
 **Adding a required context is a three-step sequence, and doing it out of
 order breaks every open pull request** — whenever a job producing a required
