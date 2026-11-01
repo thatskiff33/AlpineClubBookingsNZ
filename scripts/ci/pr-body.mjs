@@ -25,8 +25,10 @@ import { escapeRegex } from "./escape-regex.mjs";
  * (#4463); the concurrency and changelog gates read the raw body.
  */
 export function stripNonAnswerText(body) {
+  // `-{2}`, not `--`: Semgrep reads a regex opening `<!--` as an HTML-like
+  // comment and leaves the rest of the line unparsed (the coverage gate, #2842).
   return (body ?? "")
-    .replace(/<!--[\s\S]*?(?:-->|$)/g, "")
+    .replace(/<!-{2}[\s\S]*?(?:-{2}>|$)/g, "")
     .replace(/^ {0,3}(`{3,}|~{3,})[\s\S]*?(?:^ {0,3}\1[^\S\r\n]*$|(?![\s\S]))/gm, "");
 }
 
