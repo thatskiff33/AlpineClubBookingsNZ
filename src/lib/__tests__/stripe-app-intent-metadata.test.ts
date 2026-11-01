@@ -7,6 +7,7 @@ import { stripCommentsAndStrings } from "@/lib/__tests__/support/strip-comments"
 import { buildSavedCardChargeMetadata } from "@/lib/saved-card-charge-attempt";
 import {
   GROUP_SETTLEMENT_INTENT_TYPE,
+  appPaymentIntentRoute,
   assertAppPaymentIntentMetadata,
   isAppCreatedPaymentIntent,
   type AppPaymentIntentMetadata,
@@ -60,6 +61,23 @@ describe("isAppCreatedPaymentIntent (#4532)", () => {
     // @ts-expect-error - the group type needs its group
     const group: CreateMetadata = { type: GROUP_SETTLEMENT_INTENT_TYPE };
     expect([create, charge, group]).toHaveLength(3);
+  });
+
+  // #4647: the dispatcher routes on this reading, so a recognised booking
+  // intent always arrives with its booking id and none without one is possible.
+  it("routes a recognised intent with the booking it names, a group settlement as such, and anything else nowhere", () => {
+    expect(appPaymentIntentRoute({ bookingId: "bk_1", memberId: "m_1" })).toEqual({ kind: "booking", bookingId: "bk_1" });
+    expect(appPaymentIntentRoute({ bookingId: "bk_1", type: "additional_modification" })).toEqual({
+      kind: "booking",
+      bookingId: "bk_1",
+    });
+    expect(appPaymentIntentRoute({ type: GROUP_SETTLEMENT_INTENT_TYPE, groupBookingId: "g_1" })).toEqual({
+      kind: "group_settlement",
+    });
+    for (const metadata of [null, undefined, {}, { bookingId: "" }, { type: "donation" }, { memberId: "m_1" }]) {
+      expect(appPaymentIntentRoute(metadata), JSON.stringify(metadata)).toBeNull();
+      expect(isAppCreatedPaymentIntent(metadata), JSON.stringify(metadata)).toBe(false);
+    }
   });
 
   it("refuses an empty bookingId before Stripe is called", () => {

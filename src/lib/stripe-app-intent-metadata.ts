@@ -47,15 +47,33 @@ type GroupSettlementIntentMetadata = {
 export type AppPaymentIntentMetadata = Readonly<Record<string, string>> &
   (BookingIntentMetadata | GroupSettlementIntentMetadata);
 
+/** The app path a recognised intent is routed to: a group settlement, or the booking it names. */
+export type AppPaymentIntentRoute =
+  | { readonly kind: "group_settlement" }
+  | { readonly kind: "booking"; readonly bookingId: string };
+
+/**
+ * The one reading of a PaymentIntent's metadata: the group settlement type, else
+ * a non-empty `bookingId` (#4647: carried on the route, so a booking route with
+ * no booking cannot be represented), else `null` - a payment the app did not
+ * create. The `payment_intent.succeeded` dispatcher routes on exactly this.
+ */
+export function appPaymentIntentRoute(
+  metadata: Readonly<Record<string, string | undefined>> | null | undefined,
+): AppPaymentIntentRoute | null {
+  if (!metadata) return null;
+  if (metadata.type === GROUP_SETTLEMENT_INTENT_TYPE) return { kind: "group_settlement" };
+  const bookingId = metadata.bookingId;
+  return typeof bookingId === "string" && bookingId.length > 0 ? { kind: "booking", bookingId } : null;
+}
+
 /**
  * True when a PaymentIntent's metadata is the app's own: a non-empty `bookingId`,
- * or the group settlement type. The `payment_intent.succeeded` dispatcher routes
- * exactly these to an app path; anything else is a payment the app did not create.
+ * or the group settlement type ({@link appPaymentIntentRoute}). Anything else is
+ * a payment the app did not create.
  */
 export function isAppCreatedPaymentIntent(
   metadata: Readonly<Record<string, string | undefined>> | null | undefined,
 ): boolean {
-  if (!metadata) return false;
-  if (metadata.type === GROUP_SETTLEMENT_INTENT_TYPE) return true;
-  return typeof metadata.bookingId === "string" && metadata.bookingId.length > 0;
+  return appPaymentIntentRoute(metadata) !== null;
 }

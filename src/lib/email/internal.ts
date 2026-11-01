@@ -242,6 +242,12 @@ const NON_RETRYABLE_EMAIL_LOG_TEMPLATES = new Set([
   "hosting-coverage-lost",
   // #4446: the settlement marker owns bounded retries and durable escalation.
   "admin-bank-transfer-settlement-figure",
+  // #4647 (`INV-INT-032`, `INV-INT-033`): a send no recipient received gives
+  // the once-ever claim back and fails the webhook, so Stripe's redelivery owns
+  // the retry. A replayable FAILED row would be a second owner, and the alert
+  // would go out twice.
+  "admin-unrecognised-stripe-payment",
+  "admin-unmatched-app-stripe-payment",
   "admin-email-failure",
 ]);
 

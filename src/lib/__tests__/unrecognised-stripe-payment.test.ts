@@ -120,6 +120,7 @@ import {
   describeUnrecognisedPayment,
   recordUnmatchedAppStripePayment,
   recordUnrecognisedStripePayment,
+  UNRECOGNISED_ALERT_CLAIM_LAG_MARGIN_MS,
   UNRECOGNISED_ALERT_IN_FLIGHT_MS,
   stripeDashboardPaymentUrl,
   unrecognisedPaymentAmountLabel,
@@ -127,7 +128,7 @@ import {
   UnrecognisedStripePaymentAlertNotSentError,
   UNRECOGNISED_PAYMENT_DESCRIPTION_MAX_LENGTH,
 } from "@/lib/unrecognised-stripe-payment";
-import { STRIPE_WEBHOOK_PROCESSING_LEASE_MINUTES } from "@/lib/stripe-webhook-service";
+import { STRIPE_WEBHOOK_PROCESSING_LEASE_MINUTES } from "@/lib/stripe-webhook-lease";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 const CREATED = Date.parse("2026-06-30T21:00:00.000Z") / 1000;
@@ -381,6 +382,85 @@ describe("recordUnrecognisedStripePayment (#4532)", () => {
   });
 });
 
+/**
+ * #4647: the window a held claim with no `alertedAt` counts as in flight is the
+ * webhook lease less a margin. The dead attempt stamped its lease first and its
+ * claim up to the margin later; a takeover comes only once that lease expired.
+ * The clock is frozen, so every age below is exact.
+ */
+describe("the alert claim's in-flight window against the webhook lease (#4647)", () => {
+  const LEASE_MS = STRIPE_WEBHOOK_PROCESSING_LEASE_MINUTES * 60_000;
+  const key = unrecognisedStripePaymentAlertKey("pi_donation");
+
+  /** A stored row a dead delivery wrote, and its claim taken `ageMs` ago. */
+  function deadDeliveryClaim(ageMs: number) {
+    state.rows.set("pi_donation", {
+      id: "row_1",
+      stripePaymentIntentId: "pi_donation",
+      stripeChargeId: "ch_donation",
+      stripeCheckoutSessionId: null,
+      stripePaymentLinkId: null,
+      amountCents: 5000,
+      currency: "nzd",
+      stripeCreatedAt: new Date("2026-06-30T21:00:00.000Z"),
+      description: null,
+      stripeEventId: "evt_donation",
+      alertedAt: null,
+      createdAt: new Date(),
+      reason: "NOT_APP_CREATED",
+      bookingId: null,
+    });
+    state.heldKeys.set(key, new Date(Date.now() - ageMs));
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    state.rows.clear();
+    state.heldKeys.clear();
+    state.beforeInsert = null;
+    mocks.findCheckoutSession.mockResolvedValue(null);
+  });
+
+  it("is the webhook lease less a positive margin, so it is derived and never equal to the lease", () => {
+    expect(UNRECOGNISED_ALERT_CLAIM_LAG_MARGIN_MS).toBeGreaterThan(0);
+    expect(UNRECOGNISED_ALERT_IN_FLIGHT_MS).toBe(LEASE_MS - UNRECOGNISED_ALERT_CLAIM_LAG_MARGIN_MS);
+    expect(UNRECOGNISED_ALERT_IN_FLIGHT_MS).toBeGreaterThan(0);
+  });
+
+  it("sends on a takeover 1 ms after the lease expired, though the dead attempt claimed late in its lease", async () => {
+    // The dead attempt's lease was stamped 1 ms more than a lease ago (so a
+    // takeover is allowed now), and its claim just inside the margin after that.
+    const leaseStampedAgoMs = LEASE_MS + 1;
+    deadDeliveryClaim(leaseStampedAgoMs - (UNRECOGNISED_ALERT_CLAIM_LAG_MARGIN_MS - 1));
+
+    await recordUnrecognisedStripePayment(paymentIntent(), event(), CLUB_FORMAT_TEST);
+
+    expect(mocks.sendAlert).toHaveBeenCalledTimes(1);
+    expect(state.rows.get("pi_donation")?.alertedAt).toBeInstanceOf(Date);
+    expect(state.heldKeys.get(key)).toEqual(new Date());
+  });
+
+  it("leaves a claim 1 ms younger than the window to its holder, and completes without sending", async () => {
+    const heldAt = new Date(Date.now() - (UNRECOGNISED_ALERT_IN_FLIGHT_MS - 1));
+    deadDeliveryClaim(UNRECOGNISED_ALERT_IN_FLIGHT_MS - 1);
+
+    await recordUnrecognisedStripePayment(paymentIntent(), event(), CLUB_FORMAT_TEST);
+
+    expect(mocks.sendAlert).not.toHaveBeenCalled();
+    expect(state.heldKeys.get(key)).toEqual(heldAt);
+    expect(state.rows.get("pi_donation")?.alertedAt).toBeNull();
+  });
+
+  it("releases a claim exactly as old as the window, and sends", async () => {
+    deadDeliveryClaim(UNRECOGNISED_ALERT_IN_FLIGHT_MS);
+
+    await recordUnrecognisedStripePayment(paymentIntent(), event(), CLUB_FORMAT_TEST);
+
+    expect(mocks.sendAlert).toHaveBeenCalledTimes(1);
+    expect(state.rows.get("pi_donation")?.alertedAt).toBeInstanceOf(Date);
+  });
+});
+
 describe("what the record and alert say (#4532)", () => {
   it("formats the amount in the payment's own currency", () => {
     expect(unrecognisedPaymentAmountLabel(5000, "nzd", CLUB_FORMAT_TEST)).toBe("$50.00");
@@ -410,10 +490,6 @@ describe("what the record and alert say (#4532)", () => {
   it("dates the payment from the succeeded event, not from when the PaymentIntent was opened", async () => {
     await recordUnrecognisedStripePayment(paymentIntent({ created: CREATED - 3600 }), event(), CLUB_FORMAT_TEST);
     expect(state.rows.get("pi_donation")?.stripeCreatedAt).toEqual(new Date(CREATED * 1000));
-  });
-
-  it("treats a claim older than the webhook lease as abandoned", () => {
-    expect(UNRECOGNISED_ALERT_IN_FLIGHT_MS).toBe(STRIPE_WEBHOOK_PROCESSING_LEASE_MINUTES * 60 * 1000);
   });
 
   it("links the Stripe dashboard in the event's mode", () => {

@@ -1968,7 +1968,7 @@ the line says the club checked the rest and closed it.
 ### A succeeded app intent no PRIMARY row settles (#4624)
 
 `handlePaymentIntentSucceeded` routes an intent the app created (it carries
-`bookingId`, `isAppCreatedPaymentIntent`) through its routes in order, and only
+`bookingId`, `appPaymentIntentRoute`) through its routes in order, and only
 an intent that falls through all of them reaches the unmatched branch:
 
 ```text
@@ -3893,6 +3893,18 @@ template and booking change. Only the retry worker sends it, after its normal
 15-minute backoff and recipient checks. Replaying invoice creation finds the
 same email row; failure to persist that row leaves the invoice operation
 retryable. This avoids a synchronous send racing email recovery.
+
+A message whose retry belongs to something else keeps no body
+(`NON_RETRYABLE_EMAIL_LOG_TEMPLATES`), so its `FAILED` row is never replayed.
+The settlement-figure alert's marker retries it (#4446). The unrecognised and
+unmatched Stripe payment alerts (#4647, `INV-INT-032`, `INV-INT-033`) give
+their once-ever claim back when nobody received them and fail the webhook, so
+Stripe's redelivery sends them again; a cron replay as well would send them
+twice.
+
+Stated limit, shared with the settlement-figure alert: these alerts count as
+sent once any recipient receives them, so a copy one recipient lost while
+another got it is neither retried nor queued for review (#4669).
 
 To verify: retry backoff, suppression handling, durable recipient identity,
 direct/inherited mailbox drift, revoked-authority fail-closed behavior,
