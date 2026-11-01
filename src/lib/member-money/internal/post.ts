@@ -6,7 +6,7 @@ import {
   type ClubTaxSettings,
 } from "../../club-tax-settings";
 import { clubCalendarDateOf, type ClubTimeZone, type Instant } from "../../club-time";
-import { stripeChargeCurrency } from "../../stripe-charge-currency";
+import { clubChargeCurrencyCodeOrThrow } from "../../stripe-charge-currency";
 import {
   buildMemberMoneyBatch,
   buildMemberMoneyReversal,
@@ -22,8 +22,9 @@ import { readMemberMoneyJournalToReverse, writeMemberMoneyBatch, type MemberMone
  * (`INV-LOCK-004`), and the only way to make one. The club civil date of the
  * instant comes through the club-time kernel (`INV-DATE`, `INV-CONFIG-002`).
  * The currency comes through the rule card charges use
- * (`stripeChargeCurrency`), so the journal and the card cannot disagree, and a
- * stored currency a card cannot be charged in is refused here too. The tax
+ * (`clubChargeCurrencyCodeOrThrow`), so the journal and the card cannot
+ * disagree. A stored currency a card cannot be charged in is refused here, so
+ * such a club posts nothing at all, bank and cash events included. The tax
  * treatment is the one in force on that date (D3), or "unavailable" when the
  * setting starts later; only a fresh tax split refuses that.
  *
@@ -49,7 +50,7 @@ export function resolveMemberMoneyPostingContext(input: {
   return {
     effectiveAt: input.effectiveAt,
     effectiveDate,
-    currency: stripeChargeCurrency(input.format).toUpperCase(),
+    currency: clubChargeCurrencyCodeOrThrow(input.format),
     policyVersion: input.policyVersion,
     codingVersion: input.codingVersion,
     tax,
@@ -63,6 +64,12 @@ export function resolveMemberMoneyPostingContext(input: {
  * returns the batch already posted; different content under the key throws
  * `MemberMoneyPostingConflictError`. A database refusal at commit rolls the
  * caller's business mutation back too: no caller may catch it and commit.
+ *
+ * PRECONDITION (`INV-LOCK-001`): a plan that corrects a revenue component reads
+ * the component's live state and then writes, so the caller's transaction must
+ * already hold `pg_advisory_xact_lock(1)`. The store checks and refuses with
+ * `GlobalLockNotHeldError` otherwise. Every door that will post a correction
+ * (R02-R04, R21) already holds it. A plan with no correction needs no key.
  */
 export async function postMemberMoneyEvent(
   tx: Prisma.TransactionClient,
@@ -74,7 +81,10 @@ export async function postMemberMoneyEvent(
 
 /**
  * Post the exact whole-batch REVERSAL of a posted journal, once: its key is the
- * journal's, so a retry replays and a second, different reversal conflicts.
+ * journal's, so a retry replays and a second, different reversal conflicts. It
+ * is refused if a revenue component the journal posted has changed since (a
+ * later correction or charge): reverse that with an ADJUSTMENT instead. When the
+ * journal posted revenue components, the same `lock(1)` precondition holds.
  */
 export async function reverseMemberMoneyJournal(
   tx: Prisma.TransactionClient,
@@ -82,5 +92,5 @@ export async function reverseMemberMoneyJournal(
   plan: MemberMoneyReversalPlan,
 ): Promise<MemberMoneyPosting> {
   const original = await readMemberMoneyJournalToReverse(tx, plan.reversesJournalId);
-  return writeMemberMoneyBatch(tx, buildMemberMoneyReversal(context, plan, original));
+  return writeMemberMoneyBatch(tx, buildMemberMoneyReversal(context, plan, original), original);
 }

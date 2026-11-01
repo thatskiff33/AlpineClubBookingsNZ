@@ -282,7 +282,7 @@ function frozenSplitProblem(split: MemberMoneyTaxSplit, grossCents: number): boo
 }
 
 /** The revenue leg, and its GST leg on the same side when there is tax. */
-function revenueLines(
+export function revenueLines(
   shared: BuiltCorrection["shared"],
   account: TaxedRevenueAccount,
   grossCents: number,
@@ -487,71 +487,6 @@ export function buildMemberMoneyBatch(context: MemberMoneyPostingContext, plan: 
     lines,
     corrections,
   });
-}
-
-/** A posted revenue leg, as a correction reads the component it names. */
-export interface PostedRevenueLeg {
-  account: MemberMoneyAccount;
-  chargeIdentity: string | null;
-  side: MemberMoneySide;
-  amountCents: number;
-  grossCents: number | null;
-  netCents: number | null;
-  taxCents: number | null;
-  taxCode: string | null;
-}
-
-/**
- * The live split of each corrected component: the signed sum of every posted
- * leg of that account and charge identity (credits add, debits take away, so an
- * earlier correction or reversal is already netted). A component posted under
- * more than one tax code has no single split to repeat and is refused.
- */
-type LiveSplit = { split: MemberMoneyTaxSplit | null } | { problem: string };
-
-function liveSplit(correction: BuiltCorrection, posted: readonly PostedRevenueLeg[]): LiveSplit {
-  const legs = posted.filter((leg) => leg.account === correction.account && leg.chargeIdentity === correction.chargeIdentity);
-  if (legs.length === 0) return { problem: `component ${correction.chargeIdentity} has no posted ${correction.account} leg` };
-  const codes = new Set(legs.map((leg) => leg.taxCode));
-  if (codes.size > 1) return { problem: `component ${correction.chargeIdentity} was posted under more than one tax treatment` };
-  let gross = 0, net = 0, tax = 0;
-  for (const leg of legs) {
-    const sign = leg.side === "CREDIT" ? 1 : -1;
-    gross += sign * (leg.grossCents ?? leg.amountCents);
-    net += sign * (leg.netCents ?? leg.amountCents);
-    tax += sign * (leg.taxCents ?? 0);
-  }
-  if (gross !== correction.grossCents) {
-    return { problem: `a correction takes a whole component: ${correction.chargeIdentity} still carries `
-      + `${formatCentsPlain(gross)}, not ${formatCentsPlain(correction.grossCents)}` };
-  }
-  const [code] = codes;
-  if (code === null || code === undefined) return { split: null };
-  if (net <= 0) return { problem: `component ${correction.chargeIdentity} has no net revenue left to correct` };
-  return { split: { grossCents: gross, netCents: net, taxCents: tax, taxCode: code } };
-}
-
-/** Complete a draft's corrections from the posted legs of the components they name, or refuse it. */
-export function completeMemberMoneyBatch(batch: BuiltBatch, posted: readonly PostedRevenueLeg[]): BuiltBatch {
-  if (batch.corrections.length === 0) return batch;
-  const problems: string[] = [];
-  const lines = [...batch.lines];
-  for (const correction of batch.corrections) {
-    const live = liveSplit(correction, posted);
-    if ("problem" in live) {
-      problems.push(live.problem);
-      continue;
-    }
-    const split = live.split;
-    if (correction.frozenTax !== null && stableStringify(correction.frozenTax) !== stableStringify(split ?? "untaxed")) {
-      problems.push(`the frozen split given for ${correction.chargeIdentity} is not the split it was posted with`);
-      continue;
-    }
-    lines.push(...revenueLines({ ...correction.shared, chargeIdentity: correction.chargeIdentity }, correction.account,
-      correction.grossCents, split));
-  }
-  if (problems.length > 0) throw new MemberMoneyPlanError(problems);
-  return { ...batch, lines, corrections: [] };
 }
 
 /** A posted journal as the reversal builder needs it: its header and every leg, verbatim. */

@@ -1,14 +1,15 @@
 import { randomUUID } from "node:crypto";
 import type { Prisma } from "@prisma/client";
 import { dateOnlyInstantOf } from "../../club-time";
+import { assertGlobalLockHeld } from "../../global-lock-held";
 import { stableStringify } from "../../stable-digest";
 import {
   completeMemberMoneyBatch,
-  MemberMoneyPlanError,
-  type BuiltBatch,
-  type MemberMoneyJournalToReverse,
+  componentsPostedBy,
+  reversalLiveProblems,
   type PostedRevenueLeg,
-} from "./plan";
+} from "./components";
+import { MemberMoneyPlanError, type BuiltBatch, type MemberMoneyJournalToReverse } from "./plan";
 
 /**
  * THE ONLY PRISMA WRITER OF THE MEMBER-MONEY TABLES (#4626, Ledger M3a).
@@ -100,13 +101,16 @@ async function replay(db: Db, batch: BuiltBatch, required: boolean): Promise<Mem
   return { eventId: winner.id, journalId: winner.journal.id, replayed: true };
 }
 
-/** The posted revenue legs of every component the batch corrects. A read only. */
-async function postedComponents(db: Db, draft: BuiltBatch): Promise<PostedRevenueLeg[]> {
-  if (draft.corrections.length === 0) return [];
+/** Every posted revenue leg of the given components. A read only. */
+async function postedComponents(
+  db: Db,
+  components: readonly { account: PostedRevenueLeg["account"]; chargeIdentity: string }[],
+): Promise<PostedRevenueLeg[]> {
+  if (components.length === 0) return [];
   return db.memberMoneyLine.findMany({
-    where: { OR: draft.corrections.map(({ account, chargeIdentity }) => ({ account, chargeIdentity })) },
+    where: { OR: components.map(({ account, chargeIdentity }) => ({ account, chargeIdentity })) },
     select: { account: true, chargeIdentity: true, side: true, amountCents: true,
-      grossCents: true, netCents: true, taxCents: true, taxCode: true },
+      grossCents: true, netCents: true, taxCents: true, taxCode: true, bookingId: true, lodgeId: true },
   });
 }
 
@@ -114,11 +118,37 @@ async function postedComponents(db: Db, draft: BuiltBatch): Promise<PostedRevenu
  * Replay first, so a retry of a correction is recognised even though its
  * component is no longer live; then every read that can refuse the plan; then
  * the first write.
+ *
+ * A correction, and a reversal of a journal that posted revenue components,
+ * read live component state and then write, which only `lock(1)` keeps true
+ * until commit (`INV-LOCK-001`). So both refuse unless the caller's transaction
+ * holds it. If a check refuses, the key is looked up once more: a concurrent
+ * poster of this same event may have committed in between, and its batch is
+ * the answer.
  */
-export async function writeMemberMoneyBatch(db: Db, draft: BuiltBatch): Promise<MemberMoneyPosting> {
+export async function writeMemberMoneyBatch(
+  db: Db,
+  draft: BuiltBatch,
+  reversing?: MemberMoneyJournalToReverse,
+): Promise<MemberMoneyPosting> {
   const earlier = await replay(db, draft, false);
   if (earlier) return earlier;
-  const batch = completeMemberMoneyBatch(draft, await postedComponents(db, draft));
+  const reversed = reversing ? componentsPostedBy(reversing) : [];
+  if (draft.corrections.length > 0 || reversed.length > 0) {
+    await assertGlobalLockHeld(db, "A member-money correction or revenue reversal");
+  }
+  let batch: BuiltBatch;
+  try {
+    const posted = await postedComponents(db, [...draft.corrections, ...reversed]);
+    batch = completeMemberMoneyBatch(draft, posted);
+    const stale = reversing ? reversalLiveProblems(reversing, posted) : [];
+    if (stale.length > 0) throw new MemberMoneyPlanError(stale);
+  } catch (error) {
+    if (!(error instanceof MemberMoneyPlanError)) throw error;
+    const winner = await replay(db, draft, false);
+    if (winner) return winner;
+    throw error;
+  }
   const obligationIds = await resolveObligations(db, batch);
   const eventId = randomUUID();
   // Reserve the event key first: ON CONFLICT DO NOTHING waits for a concurrent

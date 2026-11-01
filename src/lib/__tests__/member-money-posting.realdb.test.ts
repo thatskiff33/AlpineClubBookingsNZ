@@ -7,6 +7,7 @@
  * its own on the guarded race server.
  */
 import type { Prisma, PrismaClient } from "@prisma/client";
+import { GlobalLockNotHeldError } from "@/lib/global-lock-held";
 import { Client } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
@@ -48,6 +49,14 @@ async function verified() {
 
 const post = (plan: MemberMoneyPlan, ctx = context) =>
   appPrisma.$transaction((tx) => postMemberMoneyEvent(tx, ctx, plan));
+/** As a door that corrects or reverses revenue posts: holding the global key (INV-LOCK-001). */
+async function underGlobalLock<T>(run: (tx: Prisma.TransactionClient) => Promise<T>): Promise<T> {
+  return appPrisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+    return run(tx);
+  });
+}
+const postLocked = (plan: MemberMoneyPlan, ctx = context) => underGlobalLock((tx) => postMemberMoneyEvent(tx, ctx, plan));
 
 async function counts() {
   const { rows } = await app.query(`SELECT
@@ -122,15 +131,17 @@ const untouchable = new Proxy({}, {
     });
     const before = await counts();
     // A part of a component, and a component never posted, are refused before any write.
-    await expect(post(reduction(5000))).rejects.toMatchObject({ name: "MemberMoneyPlanError",
+    await expect(postLocked(reduction(5000))).rejects.toMatchObject({ name: "MemberMoneyPlanError",
       problems: [expect.stringMatching(/takes a whole component/)] });
-    await expect(post(reduction(11500, "nights:never-posted"))).rejects.toMatchObject({ name: "MemberMoneyPlanError",
+    await expect(postLocked(reduction(11500, "nights:never-posted"))).rejects.toMatchObject({ name: "MemberMoneyPlanError",
       problems: [expect.stringMatching(/no posted BOOKING_REVENUE leg/)] });
-    expect(await counts()).toEqual(before);
-    // The club's rate has since changed; the correction still repeats 10000 + 1500.
+    // A correction reads live state then writes: without the caller's lock(1) it is refused (INV-LOCK-001).
     const plan = reduction(11500);
     const at1250 = memberMoneyTestContext({ taxSettings: { taxRateBasisPoints: 1250 } });
-    const posted = await post(plan, at1250);
+    await expect(post(plan, at1250)).rejects.toBeInstanceOf(GlobalLockNotHeldError);
+    expect(await counts()).toEqual(before);
+    // The club's rate has since changed; the correction still repeats 10000 + 1500.
+    const posted = await postLocked(plan, at1250);
     expect((await legs(posted.journalId)).map(({ account, side, amount, gross, tax, code }) => [account, side, amount, gross, tax, code])).toEqual([
       ["MEMBER_RECEIVABLE", "CREDIT", 11500, null, null, null],
       ["BOOKING_REVENUE", "DEBIT", 10000, 11500, 1500, "GST_INCLUSIVE_1500BP"],
@@ -138,7 +149,12 @@ const untouchable = new Proxy({}, {
     ]);
     expect(await verified()).toEqual({ findings: [], grantCheck: "checked" });
     // A retry replays, although the component it corrected is no longer live.
-    expect(await post(plan, at1250)).toEqual({ ...posted, replayed: true });
+    expect(await postLocked(plan, at1250)).toEqual({ ...posted, replayed: true });
+    // An exact reversal of the charge would now drive the corrected component negative: refused.
+    const chargeJournal = await app.query(`SELECT "journalId" AS id FROM "MemberMoneyLine" WHERE "chargeIdentity" = $1 AND side = 'CREDIT'`, [component]);
+    await expect(underGlobalLock((tx) => reverseMemberMoneyJournal(tx, context, { reversesJournalId: chargeJournal.rows[0].id,
+      origin: "OFFICER", reason: "posted in error", source: { kind: "OFFICER_FACT", id: `undo-${sequence}`, version: "1" } })))
+      .rejects.toMatchObject({ name: "MemberMoneyPlanError", problems: [expect.stringMatching(new RegExp(`${component} has changed since`))] });
   });
 
   it("posts what needs no fresh split when the tax setting starts after the date, and refuses what does", async () => {
@@ -224,7 +240,9 @@ const untouchable = new Proxy({}, {
     const original = await post(bookingChargePlan({ eventKey: key("reversed"), debtor: MEMBER, grossCents: 11500, booking: BOOKING }));
     const plan = { reversesJournalId: original.journalId, origin: "OFFICER" as const, reason: "posted in error",
       source: { kind: "OFFICER_FACT" as const, id: `correction-${original.journalId}`, version: "1" } };
-    const reverse = (p: typeof plan) => appPrisma.$transaction((tx) => reverseMemberMoneyJournal(tx, context, p));
+    const reverse = (p: typeof plan) => underGlobalLock((tx) => reverseMemberMoneyJournal(tx, context, p));
+    // It reads that the charge's components are unchanged, then copies them: lock(1) is required.
+    await expect(appPrisma.$transaction((tx) => reverseMemberMoneyJournal(tx, context, plan))).rejects.toBeInstanceOf(GlobalLockNotHeldError);
     const reversal = await reverse(plan);
     const swapped = (await legs(original.journalId)).map((leg) => ({ ...leg, side: leg.side === "DEBIT" ? "CREDIT" : "DEBIT" }));
     expect(await legs(reversal.journalId)).toEqual(expect.arrayContaining(swapped));

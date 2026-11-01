@@ -16,12 +16,11 @@ import {
 } from "@/lib/member-money";
 import { DEBTOR_ACCOUNTS, TAXED_REVENUE_ACCOUNTS } from "@/lib/member-money/internal/accounts";
 import {
-  buildMemberMoneyBatch,
-  buildMemberMoneyReversal,
   completeMemberMoneyBatch,
-  type BuiltLine,
+  reversalLiveProblems,
   type PostedRevenueLeg,
-} from "@/lib/member-money/internal/plan";
+} from "@/lib/member-money/internal/components";
+import { buildMemberMoneyBatch, buildMemberMoneyReversal, type BuiltLine } from "@/lib/member-money/internal/plan";
 import type { MemberMoneyTaxSplit } from "@/lib/member-money/internal/tax";
 import { UnsupportedChargeCurrencyError } from "@/lib/stripe-charge-currency";
 import { FROZEN_TEST_CLOCK_BASE_ISO } from "./helpers/clock";
@@ -59,7 +58,7 @@ function correction(frozenTax?: MemberMoneyTaxSplit | "untaxed", grossCents = 11
 }
 const posted = (overrides: Partial<PostedRevenueLeg> = {}): PostedRevenueLeg => ({
   account: "BOOKING_REVENUE", chargeIdentity: "nights:1", side: "CREDIT", amountCents: 10000,
-  grossCents: 11500, netCents: 10000, taxCents: 1500, taxCode: "GST_INCLUSIVE_1500BP", ...overrides,
+  grossCents: 11500, netCents: 10000, taxCents: 1500, taxCode: "GST_INCLUSIVE_1500BP", bookingId: null, lodgeId: null, ...overrides,
 });
 function completionProblems(plan: MemberMoneyPlan, legs: PostedRevenueLeg[], ctx = context): readonly string[] {
   try {
@@ -270,12 +269,27 @@ describe("corrections repeat the split their component was posted with", () => {
     ["part of a component", correction(undefined, 5000), [posted()], /takes a whole component: nights:1 still carries 115\.00, not 50\.00/],
     ["a component already corrected", correction(), [posted(), posted({ side: "DEBIT" })], /still carries 0\.00/],
     ["a component posted under two treatments", correction(), [posted({ amountCents: 5000, grossCents: 5750, netCents: 5000, taxCents: 750 }),
-      posted({ amountCents: 5111, grossCents: 5750, netCents: 5111, taxCents: 639, taxCode: "GST_INCLUSIVE_1250BP" })], /more than one tax treatment/],
+      posted({ amountCents: 5111, grossCents: 5750, netCents: 5111, taxCents: 639, taxCode: "GST_INCLUSIVE_1250BP" })], /carries money under more than one tax treatment/],
     ["a frozen split other than the posted one", correction({ grossCents: 11500, netCents: 10223, taxCents: 1277, taxCode: "GST_INCLUSIVE_1250BP" }),
       [posted()], /not the split it was posted with/],
     ["untaxed given for a taxed component", correction("untaxed"), [posted()], /not the split it was posted with/],
   ])("refuses %s", (_case, plan, legs, problem) => {
     expect(completionProblems(plan, legs).join("\n")).toMatch(problem);
+  });
+
+  it("corrects a component re-charged at a new rate after a full correction, at the new rate", () => {
+    const recharged = [posted(), posted({ side: "DEBIT" }),
+      posted({ amountCents: 10222, grossCents: 11500, netCents: 10222, taxCents: 1278, taxCode: "GST_INCLUSIVE_1250BP" })];
+    expect(legsOf(completeMemberMoneyBatch(buildMemberMoneyBatch(context, correction()), recharged).lines).slice(1))
+      .toEqual([["BOOKING_REVENUE", "DEBIT", 10222, 10222, 1278], ["GST_PAYABLE", "DEBIT", 1278, null, null]]);
+  });
+
+  it("refuses a correction naming another booking than its component, or a component whose legs disagree", () => {
+    const onBooking = posted({ bookingId: "b1", lodgeId: "l1" });
+    expect(completionProblems(correction(), [onBooking]).join("\n")).toMatch(/names a different booking or lodge/);
+    expect(completionProblems(correction(), [posted({ amountCents: 5000, grossCents: 5750, netCents: 5000, taxCents: 750 }),
+      posted({ amountCents: 5000, grossCents: 5750, netCents: 5000, taxCents: 750, bookingId: "b2", lodgeId: "l1" })]).join("\n"))
+      .toMatch(/disagree on its booking or lodge/);
   });
 
   it("refuses correcting one component twice in a plan", () => {
@@ -295,6 +309,28 @@ describe("buildMemberMoneyReversal", () => {
     expect(reversal.journal).toEqual({ currency: "NZD", policyVersion: "p0", codingVersion: "c0", reversesJournalId: "j1" });
     expect(reversal.lines.map(({ side, originalLineId, amountCents }) => [side, originalLineId, amountCents]))
       .toEqual([["CREDIT", "line-0", 11500], ["DEBIT", "line-1", 10000], ["DEBIT", "line-2", 1500]]);
+  });
+});
+
+describe("an exact reversal needs the components it undoes unchanged", () => {
+  const journal = (side: "CREDIT" | "DEBIT") => ({ lines: [
+    { ...posted({ side }), debtorKind: null, memberId: null, organisationId: null, obligationKey: null, creditLotId: null,
+      refundIdentity: null, evidence: {}, id: "l-rev" },
+    { account: "GST_PAYABLE" as const, side, amountCents: 1500, chargeIdentity: "nights:1", grossCents: null, netCents: null,
+      taxCents: null, taxCode: null, bookingId: null, lodgeId: null, debtorKind: null, memberId: null, organisationId: null,
+      obligationKey: null, creditLotId: null, refundIdentity: null, evidence: {}, id: "l-gst" },
+  ] });
+
+  it("allows a charge whose component is untouched, and a correction whose component was not charged again", () => {
+    expect(reversalLiveProblems(journal("CREDIT"), [posted()])).toEqual([]);
+    expect(reversalLiveProblems(journal("DEBIT"), [posted(), posted({ side: "DEBIT" })])).toEqual([]);
+  });
+
+  it("refuses a charge corrected since, and a correction whose component was charged again", () => {
+    expect(reversalLiveProblems(journal("CREDIT"), [posted(), posted({ side: "DEBIT" })]).join("\n"))
+      .toMatch(/nights:1 has changed since this journal posted it \(it carries 0\.00, not 115\.00\)/);
+    expect(reversalLiveProblems(journal("DEBIT"), [posted(), posted({ side: "DEBIT" }), posted()]).join("\n"))
+      .toMatch(/has changed since/);
   });
 });
 
