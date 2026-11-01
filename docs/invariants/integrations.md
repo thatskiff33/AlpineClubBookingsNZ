@@ -485,9 +485,9 @@ re-run, never offered for retry, never re-minted beside (owner decision,
   `FAILED`/`PARTIAL`, so status alone reads it as live; a late success lands
   and alerts (`INV-INT-029`).
 - **Retries refuse it.** `getXeroOperationRetryMeta` refuses first; retry and
-  requeue answer 409; the drain cancels that queued row.
+  requeue answer 409; the drain closes that queued row `CANCELLED`.
 - **Enqueues and the outbox respect it.** A resolved refund note covers its
-  recorded amount, so later refunds still get notes unless voided or deleted
+  recorded amount, so later refunds still get notes, unless voided or deleted
   (#4250) or a refund request's (#4265); one sum
   (`sumRefundCreditNoteCoverageCents`) caps the enqueue, the send and the gap. No booking invoice is
   queued while the latest create is resolved; only single-booking force-sync
@@ -496,16 +496,15 @@ re-run, never offered for retry, never re-minted beside (owner decision,
 - **Resolve and retry.** The route refuses while the operation is RUNNING, a
   live copy is queued, or a queued retry is RUNNING or started before the mark
   and completed after it - checked after the mark is written, which is then
-  withdrawn. Gaps: clock skew, a `retryXeroSyncOperation` caller bypassing
-  the drain.
-- **View, not status (#4220).** The Failed default is a view choice only.
-- **Applied-credit operations are retry-only.** The route refuses them; a
-  pre-release mark on one is void on retry.
+  withdrawn. Gaps: clock skew between instances, and a caller of
+  `retryXeroSyncOperation` that bypasses the drain.
+- **Applied-credit operations are retry-only.** The route refuses them, and a
+  pre-release mark on one is void on the retry path.
 - **Done is not absent.** `getBlockingOperation` returns `retryable`, `blocked`
   or `resolved`; a resolved row never outranks a live one and is never dropped.
   `buildRetryAction` takes only `retryable`. Where no document is recorded, the
-  repair tool and booking page report `RESOLVED_IN_XERO_BY_OFFICER` (info, no
-  action).
+  repair tool reports `RESOLVED_IN_XERO_BY_OFFICER` (info, no action), as does
+  the booking page.
 
 Pinned by `xero-operation-retry.test.ts`, `xero-operation-queue.test.ts`,
 `xero-operation-routes.test.ts`, `xero-operations-panel-failed-default.test.tsx`,
