@@ -986,7 +986,8 @@ const FULL = { refundPercentage: 100, fixedFeeCents: 0 };
     const cardLine = await reviewLine(card.id, card.tasks[0]!, "AGREED_ADJUSTMENT");
     await setLine(cardLine.id, cardLine.amountCents - 1);
     expect(await drifted(card.id)).toHaveLength(1);
-    expect((await says(card.id)).disagreements).toEqual(["PRICE 1"]);
+    // #4627: the journal still carries what was posted, so it disagrees by the same cent.
+    expect((await says(card.id)).disagreements).toEqual(["PRICE 1", "JOURNAL 1"]);
     // The card route's frozen refund, a cent short: the line it made is unexplained.
     const ccTask = built["cc-half"]!.tasks[0]!;
     await db.paymentRecoveryOperation.updateMany({ where: { bookingId: built["cc-half"]!.id, idempotencyKey: { contains: ccTask } }, data: { amountCents: 2_499 } });
