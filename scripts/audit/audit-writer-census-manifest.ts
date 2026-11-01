@@ -727,10 +727,9 @@ export const AUDIT_CENSUS_TOTALS = {
   // 531 -> 532 (#4426): `xero.refund_credit_note.late_note_not_recorded`, the one row a refund
   // credit-note create writes when Xero answers after its job was resolved by hand recording a
   // note, an awaited `createAuditLog` with a literal `xero` category.
-  // 532 -> ??? (this main-sync, 2 Nov 2026): RE-MEASURED with `pnpm run audit:census` on the
-  // merged tree; this placeholder is intentionally wrong so the census script's own mismatch
-  // output names the true number.
-  writeSites: 999999,
+  // 532 -> 533 (this main-sync, 2 Nov 2026): RE-MEASURED with `pnpm run audit:census` on the
+  // merged tree.
+  writeSites: 533,
   /**
    * Of those, sites whose event object carries no `category` key.
    *
@@ -1328,12 +1327,10 @@ export const AUDIT_CENSUS_TOTALS = {
     // Subscription Categories admin-CRUD writers, all `admin` — officer-only
     // config, no member data, readable with support:view like every sibling
     // writer in this category.
-    // 113 -> ??? (#4457, disjoint from the category rework): `privacy.retention.settings_updated`.
+    // 113 -> 114 (#4457, disjoint from the category rework): `privacy.retention.settings_updated`.
     // A deliberate +1 to the support:view-only population: it records only retention
-    // settings, never a member. RE-MEASURED with `pnpm run audit:census` on the merged tree;
-    // this placeholder is intentionally wrong so the census script's own mismatch output
-    // names the true number.
-    admin: 999999, // 108/109 -> 110 (central-server lane, 20 Oct 2026): #62 and #58 are disjoint from upstream's. RE-MEASURED.
+    // settings, never a member. RE-MEASURED with `pnpm run audit:census` on the merged tree.
+    admin: 114, // 108/109 -> 110 (central-server lane, 20 Oct 2026): #62 and #58 are disjoint from upstream's. RE-MEASURED.
     // 16 -> 19 (#2581 child 2): `member.password-reset-sent` and
     // `member.setup-invite-sent` (decision 3 — the affected domain is the
     // CREDENTIAL, not the mailing), plus the `member.bulk-set-role` branch

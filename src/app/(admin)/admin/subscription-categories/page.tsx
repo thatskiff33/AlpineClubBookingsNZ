@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import { BackLink } from "@/components/admin/back-link";
 import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Button } from "@/components/ui/button";
 import { useConfirm } from "@/components/confirm-dialog";
 import {
@@ -506,12 +507,10 @@ export default function AdminSubscriptionCategoriesPage() {
               </div>
               {editingCategory && !editingCategory.isBuiltIn && (
                 <div className="flex items-center gap-2">
-                  <input
+                  <Checkbox
                     id="subscription-category-active"
-                    type="checkbox"
                     checked={editorDraft.isActive}
-                    onChange={(event) => setEditorDraft({ ...editorDraft, isActive: event.target.checked })}
-                    className="h-4 w-4"
+                    onCheckedChange={(checked) => setEditorDraft({ ...editorDraft, isActive: checked })}
                   />
                   <Label htmlFor="subscription-category-active">Active</Label>
                 </div>

@@ -584,8 +584,11 @@ land.
 manifest moving with it. The numbers this page was written against:
 
 ```
-PLACEHOLDER-RECOMPUTE: paste the real `pnpm run audit:census` output here after
-the merge compiles.
+row-producing sites:  533
+uncategorised:        0
+category values: admin 114, booking 109, xero 48, family 35, payment 67,
+                 lodge 68, account 19, security 25, privacy 22,
+                 communication 21, system 4
 ```
 
 `admin` was 96 when this page was written for #2730 (87 kept + 9 held) and is 98

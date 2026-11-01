@@ -513,7 +513,7 @@ rules first written here. #2765 extended it with the measured-audience half.
   Editing also breaks the audit trail: the file no longer records what ran.
   Extend the literal list only while unreleased and unapplied anywhere.
   A GENERAL "did a reclassification ship without a backfill" check is
-  **not available**: the audit-writer census pins only 130 of its PLACEHOLDER-RECOMPUTE write sites
+  **not available**: the audit-writer census pins only 130 of its 533 write sites
   per-site — the union of `APPLIED_AUDIT_CATEGORIES`,
   `REVIEWED_ADMIN_CATEGORIES_2730`, `MEMBER_RECORD_ADMIN_CATEGORIES_2755` and
   `LODGE_GATED_ADMIN_CATEGORIES_2765`, counted rather than added up, and asserted

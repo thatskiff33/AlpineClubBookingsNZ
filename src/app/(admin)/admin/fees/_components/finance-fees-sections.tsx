@@ -7,6 +7,7 @@ import { DollarSign, Pencil, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { FieldHint, describedByFieldHint, useFieldHint } from "@/components/ui/field-hint";
@@ -502,7 +503,7 @@ export function FinanceFeesSections({ financeCanEdit }: { financeCanEdit?: boole
                     decision 1). Stored values are untouched. */}
                 {prorationRule === "NONE"
                   ? <span className="pb-2 text-xs text-muted-foreground" aria-hidden="true">Prorate n/a</span>
-                  : <label className="flex items-center gap-1 pb-2 text-xs"><input type="checkbox" checked={row.prorate} onChange={(event) => updateComponentRow(index, { prorate: event.target.checked })} />Prorate</label>}
+                  : <div className="flex items-center gap-1 pb-2 text-xs"><Checkbox id={`component-prorate-${index}`} checked={row.prorate} onCheckedChange={(checked) => updateComponentRow(index, { prorate: checked === true })} /><Label htmlFor={`component-prorate-${index}`} className="font-normal">Prorate</Label></div>}
                 <div><Label htmlFor={`component-account-${index}`} className="text-xs">Account (optional)</Label><XeroAccountSelect accounts={accounts} value={row.xeroAccountCode} onChange={(code) => updateComponentRow(index, { xeroAccountCode: code })} emptyLabel={defaultAccountLabel} id={`component-account-${index}`} ariaLabel={`Account (optional) for component ${index + 1}`} allowManualCodes={accounts.length === 0 || Boolean(coaError)} /></div>
                 <div><Label htmlFor={`component-item-${index}`} className="text-xs">Item (optional)</Label><XeroItemSelect items={items} value={row.xeroItemCode} onChange={(code) => updateComponentRow(index, { xeroItemCode: code })} emptyLabel="Default: no item" id={`component-item-${index}`} ariaLabel={`Item (optional) for component ${index + 1}`} allowManualCodes={items.length === 0 || Boolean(itemsError)} /></div>
                 <Button type="button" size="icon" variant="ghost" aria-label={`Remove component ${index + 1}`} disabled={componentRows.length <= 1} onClick={() => removeComponentRow(index)}><Trash2 className="h-4 w-4" /></Button>
@@ -541,7 +542,7 @@ export function FinanceFeesSections({ financeCanEdit }: { financeCanEdit?: boole
             <div><Label htmlFor={`category-component-amount-${index}`} className="text-xs">Amount ({currencyCode})</Label><MoneyInput id={`category-component-amount-${index}`} value={categoryComponentRows.length === 1 ? categoryAmount : row.amount} onValueChange={(value) => updateCategoryComponentRow(index, { amount: value })} disabled={categoryComponentRows.length === 1} aria-describedby={describedByFieldHint(categoryComponentAmountHintId(index))} /><FieldHint id={categoryComponentAmountHintId(index)}>{categoryComponentRows.length === 1 ? "Taken from the annual fee amount above." : "Example: 90.00"}</FieldHint></div>
             {categoryProrationRule === "NONE"
               ? <span className="pb-2 text-xs text-muted-foreground" aria-hidden="true">Prorate n/a</span>
-              : <label className="flex items-center gap-1 pb-2 text-xs"><input type="checkbox" checked={row.prorate} onChange={(event) => updateCategoryComponentRow(index, { prorate: event.target.checked })} />Prorate</label>}
+              : <div className="flex items-center gap-1 pb-2 text-xs"><Checkbox id={`category-component-prorate-${index}`} checked={row.prorate} onCheckedChange={(checked) => updateCategoryComponentRow(index, { prorate: checked === true })} /><Label htmlFor={`category-component-prorate-${index}`} className="font-normal">Prorate</Label></div>}
             <div><Label htmlFor={`category-component-account-${index}`} className="text-xs">Account (optional)</Label><XeroAccountSelect accounts={accounts} value={row.xeroAccountCode} onChange={(code) => updateCategoryComponentRow(index, { xeroAccountCode: code })} emptyLabel={defaultAccountLabel} id={`category-component-account-${index}`} ariaLabel={`Account (optional) for component ${index + 1}`} allowManualCodes={accounts.length === 0 || Boolean(coaError)} /></div>
             <div><Label htmlFor={`category-component-item-${index}`} className="text-xs">Item (optional)</Label><XeroItemSelect items={items} value={row.xeroItemCode} onChange={(code) => updateCategoryComponentRow(index, { xeroItemCode: code })} emptyLabel="Default: no item" id={`category-component-item-${index}`} ariaLabel={`Item (optional) for component ${index + 1}`} allowManualCodes={items.length === 0 || Boolean(itemsError)} /></div>
             <Button type="button" size="icon" variant="ghost" aria-label={`Remove component ${index + 1}`} disabled={categoryComponentRows.length <= 1} onClick={() => removeCategoryComponentRow(index)}><Trash2 className="h-4 w-4" /></Button>

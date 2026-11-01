@@ -395,7 +395,7 @@ const FIGURES = {
    * 377 -> 378 (#4162): the stuck-states page's "Record the answer" on a voided
    * bank refund note. MEASURED by re-running this census.
    */
-  callSites: 999999, // PLACEHOLDER-RECOMPUTE: 378/373 -> 381 (central-server lane on thatskiff33/main, 20 Oct 2026): #62's two and #58's one are disjoint from upstream's. 381 -> 386 (subscription-category-decoupling rework): the new Subscription Categories admin page's ViewOnlyActionButton call sites. 386 -> ??? (#4457 adds privacy retention Edit/Save to #4555's Xero actions, disjoint from the category rework): MEASURED by re-running this census on the merged tree.
+  callSites: 391, // 378/373 -> 381 (central-server lane on thatskiff33/main, 20 Oct 2026): #62's two and #58's one are disjoint from upstream's. 381 -> 386 (subscription-category-decoupling rework): the new Subscription Categories admin page's ViewOnlyActionButton call sites. 386 -> 391 (main-sync, 2 Nov 2026, #4457's privacy retention Edit/Save plus other main growth, disjoint from the category rework): MEASURED by re-running this census on the merged tree.
   /**
    * Those that hand their explanation to a banner, by either rule.
    *
@@ -452,7 +452,7 @@ const FIGURES = {
    */
   // 315 -> 317 (#62): the Central lodge card's two, static opt-outs (below).
   // 317 -> 318 (#58): the Other lodges panel's Hide, a vouched opt-out.
-  optOuts: 999999, // PLACEHOLDER-RECOMPUTE: 323/318 -> 326 (central-server lane, 20 Oct 2026). 326 -> 331 (subscription-category-decoupling rework): the new Subscription Categories admin page's call sites, above. 331 -> ??? (#4457 adds two section-banner opt-outs, disjoint from the category rework): MEASURED by re-running this census on the merged tree.
+  optOuts: 336, // 323/318 -> 326 (central-server lane, 20 Oct 2026). 326 -> 331 (subscription-category-decoupling rework): the new Subscription Categories admin page's call sites, above. 331 -> 336 (main-sync, 2 Nov 2026, #4457's two section-banner opt-outs plus other main growth, disjoint from the category rework): MEASURED by re-running this census on the merged tree.
   /**
    * `describeReason={false}` — needs a banner in the SAME file.
    *
@@ -543,7 +543,7 @@ const FIGURES = {
    * 286 -> 287 (#4162): "Record the answer" sits beside the voided bank refund
    * notes panel's own banner. MEASURED by re-running this census.
    */
-  staticOptOuts: 999999, // PLACEHOLDER-RECOMPUTE: 287/283 -> 289 (central-server lane, 20 Oct 2026): the Central lodge card's two. 289 -> 294 (subscription-category-decoupling rework): the new Subscription Categories admin page's call sites, above. 294 -> 293 (#4467): the committee role form's Save Role moved to its own file and is render-site vouched by the committee page. 293 -> ??? (#4457 adds two local-banner opt-outs, disjoint from the category rework and #4467): MEASURED by re-running this census on the merged tree.
+  staticOptOuts: 298, // 287/283 -> 289 (central-server lane, 20 Oct 2026): the Central lodge card's two. 289 -> 294 (subscription-category-decoupling rework): the new Subscription Categories admin page's call sites, above. 294 -> 293 (#4467): the committee role form's Save Role moved to its own file and is render-site vouched by the committee page. 293 -> 298 (main-sync, 2 Nov 2026, #4457's two local-banner opt-outs plus other main growth, disjoint from the category rework and #4467): MEASURED by re-running this census on the merged tree.
   /**
    * `describeReason={!ancestorRendersViewOnlyBanner}` — needs a vouch.
    *
@@ -638,7 +638,7 @@ const FIGURES = {
    * 99 -> 100 (#4162): the stuck-states page's voided bank refund notes panel,
    * finance-gated inside a support page for the same reason.
    */
-  bannerComponents: 999999, // PLACEHOLDER-RECOMPUTE: 100/99 -> 101 (central-server lane, 20 Oct 2026): the Central lodge card. 101 -> 102 (subscription-category-decoupling rework): the new Subscription Categories admin page. 102 -> ??? (#4457 adds the retention banner alongside #4555's Xero banners, disjoint from the category rework): MEASURED by re-running this census on the merged tree.
+  bannerComponents: 105, // 100/99 -> 101 (central-server lane, 20 Oct 2026): the Central lodge card. 101 -> 102 (subscription-category-decoupling rework): the new Subscription Categories admin page. 102 -> 105 (main-sync, 2 Nov 2026, #4457's retention banner alongside #4555's Xero banners plus other main growth, disjoint from the category rework): MEASURED by re-running this census on the merged tree.
   /**
    * Admin files that render an `AdminViewOnlyNotice` and NO
    * `ViewOnlyActionButton` — the first of the three cases in which the older
