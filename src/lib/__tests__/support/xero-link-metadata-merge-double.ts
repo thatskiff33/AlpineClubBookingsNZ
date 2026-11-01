@@ -12,6 +12,8 @@
  * - `preFix4445MetadataMerge`: the funnel's merge before #4445, kept as the
  *   meaning both must reproduce.
  */
+import { asRecord } from "@/lib/xero-json";
+
 export const LINK_METADATA_MERGE_SQL_HEAD = 'UPDATE "XeroObjectLink" SET "metadata" = CASE';
 
 export const rawSqlText = (template: TemplateStringsArray) => template.join("?").replace(/\s+/g, " ").trim();
@@ -32,8 +34,7 @@ export function readLinkMetadataMerge(values: unknown[]): LinkMetadataMergeCall 
   return { removedKeys, overlay: JSON.parse(overlay), replacement: JSON.parse(replacement), linkId };
 }
 
-const isJsonRecord = (value: unknown): value is Record<string, unknown> =>
-  Boolean(value) && typeof value === "object" && !Array.isArray(value);
+const isJsonRecord = (value: unknown): value is Record<string, unknown> => asRecord(value) !== null;
 
 export function applyLinkMetadataMerge(stored: unknown, merge: LinkMetadataMergeCall): unknown {
   if (!isJsonRecord(stored)) return merge.replacement;

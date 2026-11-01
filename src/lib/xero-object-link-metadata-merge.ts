@@ -1,4 +1,5 @@
 import type { Prisma } from "@prisma/client";
+import { asRecord } from "@/lib/xero-json";
 
 /**
  * #4445: the link funnel's `mergeMetadata` write, made atomic.
@@ -30,8 +31,9 @@ export interface XeroObjectLinkMetadataMerge {
   replacement: Prisma.InputJsonValue | null;
 }
 
+// One record guard for the Xero modules (#1208): the readers judge these rows through it too.
 function isJsonRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+  return asRecord(value) !== null;
 }
 
 /**

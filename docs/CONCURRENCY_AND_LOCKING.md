@@ -6717,8 +6717,11 @@ provider, so it joins no advisory cohort (`INV-LOCK-001`) and
 their own row first (above); the merge then runs inside that lock.
 
 Each value the old spread wrote is still written, with one difference: a
-stored value is no longer re-run through `sanitizeForJson`, which redacted it
-when it was written through the funnel. During a blue-green overlap an
+stored value is no longer re-run through `sanitizeForJson`. A value written
+through the funnel was redacted then; one written directly, such as the bank
+refund void marker's free-text note (`writeBankRefundVoidMarker`), is now kept
+as written rather than masked on the next merge. Redact such a value at its
+own writer if it needs it. During a blue-green overlap an
 old-release writer still reads then writes, so the window closes when the old
 colour stops.
 

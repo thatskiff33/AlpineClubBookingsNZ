@@ -7,5 +7,7 @@
   link wrongly.
 
   The new details are now added to the stored ones in a single database step,
-  so both updates keep what they wrote. Nothing changes in what is stored or
-  shown, and there is nothing to do.
+  so both updates keep what they wrote. Nothing changes in what is shown, and
+  there is nothing to do. One detail stored outside this path, a treasurer's
+  note on a voided bank-refund credit note, is no longer masked when a later
+  update merges into the same link.
