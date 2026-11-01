@@ -70,6 +70,10 @@ async function releaseMemberMoneyJournalForTeardown(tx: Prisma.TransactionClient
         JOIN "BookingLedgerLine" b ON b.id = s."bookingLedgerLineId"
         WHERE b."bookingId" = ANY(${ids}::text[])
       UNION
+      -- #4628: an event sourced to the booking itself, a ZERO R01 among them, carries no line naming it.
+      SELECT j.id FROM "MemberMoneyJournal" j JOIN "MemberMoneyEvent" e ON e.id = j."eventId"
+        WHERE e."sourceKind" = 'BOOKING' AND e."sourceIdentity" = ANY(${ids}::text[])
+      UNION
       SELECT linked.id FROM named n CROSS JOIN LATERAL (
         SELECT j.id FROM "MemberMoneyJournal" j WHERE j."reversesJournalId" = n.id
         UNION SELECT l."journalId" FROM "MemberMoneyLine" l
