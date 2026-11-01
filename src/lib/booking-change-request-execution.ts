@@ -146,7 +146,10 @@ function bookingDriftedFromRequest(
   // #4533: a promo code applied or released since the officer entered the
   // request's promo change is drift too — approving would re-decide codes
   // against a booking nobody looked at.
-  if (promoCodesDriftedFromRequest(stored.original.promoCodes, bookingPromoCodeSnapshot(booking.promoRedemptions))) {
+  if (
+    stored.original.promoCodes &&
+    promoCodesDriftedFromRequest(stored.original.promoCodes, bookingPromoCodeSnapshot(booking.promoRedemptions))
+  ) {
     return true;
   }
   const live = new Map(booking.guests.map((guest) => [guest.id, guest]));

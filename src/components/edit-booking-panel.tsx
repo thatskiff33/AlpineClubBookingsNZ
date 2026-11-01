@@ -1786,8 +1786,9 @@ export function EditBookingPanel({
         />
       )}
 
-      {/* Price Summary */}
-      {hasChanges && (
+      {/* Price Summary — #4533: not on a finished stay, whose edit cannot be
+          quoted; the finished-stay card below says why instead. */}
+      {hasChanges && !finishedStayLocked && (
         <PriceSummaryCard
           quote={quote}
           quoteLoading={quoteLoading}
