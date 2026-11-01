@@ -41,11 +41,11 @@
  * When that hold loses, its intent is in the door's position: once the recovery
  * is closed terminally by a net-off or a fold (`reissueClosedUnminted`), nobody
  * writes under it again - the hold, the door's write and a stale runner's are
- * all fenced on a claimable recovery, and #4079 keeps a refused replay from
- * adopting a runner's intent - so the same proof, re-read after the hold's
- * transaction has ended, and the same cancel apply (`settleLostRecoveryClaimHold`).
- * Anything else - a recovery reset or reclaimed by another runner, still
- * PROCESSING, PENDING or FAILED - may yet record it, and is left.
+ * all fenced on a claimable recovery - so the same proof, re-read after the
+ * hold's transaction has ended, and the same cancel apply
+ * (`settleLostRecoveryClaimHold`). Anything else - a recovery reset or
+ * reclaimed by another runner, still PROCESSING, PENDING or FAILED - may yet
+ * record it, and is left.
  */
 import { PaymentRecoveryOperationStatus } from "@prisma/client";
 

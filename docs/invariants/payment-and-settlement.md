@@ -2798,9 +2798,9 @@ _Legacy: settles tasks raised before #4317._
   unpaid fence; cancellations queued; parked invoices CANCELLED. A capture or
   deadlock in between rolls the edit back (409); a capture after commit is
   refunded in full. The re-issue's recovery and the billed-offset note are
-  written in it. An orphaned re-issue intent is cancelled at Stripe,
-  best-effort, unless a row or runner owns it; one uncancellable is left and
-  logged.
+  written in it. An orphaned intent, the door's or the runner's (#4631), is
+  cancelled at Stripe, best-effort, unless a row or recovery names it; one
+  uncancellable is left and logged.
 - **A declined card stays live** (#4052).
 - **Asks awaiting a failed mint's retry** count, sized as the replay would. A
   retry claimed within two minutes refuses the edit; an older claim is closed.
@@ -2809,8 +2809,8 @@ _Legacy: settles tasks raised before #4317._
   (`planReissuedAskMint`).
 - **Only the member's price asks.** An officer's review charge is never set
   against. Nor is a financial review's settled refund share: the officer
-  decided that refund from the booking's evidence, so it is paid as decided,
-  and the ledger census reports the booking if the member pays the ask.
+  decided it, so it is paid as decided, and the ledger census reports the
+  booking if the member pays the ask.
 - **Xero** (`splitUnpaidAskOffsetForXero`). The smaller ask gets its own
   supplementary invoice for what the retired asks' invoices left after the
   offset. The rest of the offset, where evidence shows the primary invoice

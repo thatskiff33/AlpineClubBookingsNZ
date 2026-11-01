@@ -801,7 +801,11 @@ reduction edit, under the door's locks
        exact status, attempts and processingStartedAt read; a deadlock -> 409
        claimed under two minutes ago -> 409 "try again in a moment"
        claimed since the read -> 409, the edit rolls back
-       its retry later -> nothing to claim; a stalled runner writes nothing
+       its retry later -> nothing to claim; a stalled runner writes nothing,
+         and the intent it minted, once no row or recovery names it, is
+         cancelled at Stripe (`abandoned`, best-effort, after its claim hold's
+         transaction ended; logged as `reissued-ask.abandoned-intent-cleanup`;
+         #4631); a recovery reset or reclaimed meanwhile keeps it
   -> enqueue CANCEL_PAYMENT_INTENT for each retired intent (same transaction)
   -> WAITING_PAYMENT supplementary invoices on it, or on a closed recovery's
        edit -> read for what they bill, then CANCELLED
@@ -837,7 +841,8 @@ after commit, the minter
 later increase while a re-issue still waits -> folds it in: one ask for both,
   the re-issue's recovery closed under the same fence, the fold recorded on the
   increase's history (its replay asks again; the re-issue's invoice waits on
-  the increase's intent once minted)
+  the increase's intent once minted); a stalled runner's unwritten intent is
+  cancelled as a net-off's is (#4631)
 chase -> reads the mirror: a cancelled ask stops, a re-issued one is chased at its new amount
 ```
 
