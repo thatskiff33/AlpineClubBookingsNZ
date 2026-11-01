@@ -1613,7 +1613,7 @@ payment-link writes, it retires those links
   completes, so a parent whose completion failed retries with the link in
   place, and retiring the link then would let that retry pay again. So no link
   is retired while an operation that may run again holds it
-  (`findRerunnableOperation`, over `rerunnableOperationWhere`: live, or FAILED
+  (`findRerunnableOperation` in `xero-inbound/deleted-payment-holdback.ts`, over `rerunnableOperationWhere`: live, or FAILED
   or PARTIAL and still `replayable`, and not resolved by an officer in Xero; a
   REQUEUE row or one marked non-replayable never runs again and holds nothing).
   Two places are checked:
