@@ -171,8 +171,9 @@ are listed on the booking for you to relay.
      code carries no change fee, and its reduction comes back in full — as
      account credit unless you choose a refund under **If the change lowers the
      price**; credit raises an unapplied account-credit note in Xero. Where the
-     code is the request's only change, you can untick **Email the member about
-     this correction**; a guest or date change always emails them. If a code
+     code is the request's only change, you can untick **Apply and email member
+     about the correction**; a guest or date change always emails them, and a
+     booking whose emails are off shows the usual notice instead. If a code
      was added to or taken off the booking since the request was raised,
      nothing is applied and the request stays pending.
    - **The figures you approve are the figures charged.** **Approve and apply**

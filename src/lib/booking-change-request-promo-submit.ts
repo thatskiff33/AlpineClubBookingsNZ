@@ -24,7 +24,7 @@ import { sendAdminBookingChangeRequestAlert } from "@/lib/email";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 import { getClientIp } from "@/lib/rate-limit";
-import { formatDateOnly } from "@/lib/date-only";
+import { calendarDateOfDateOnlyInstant } from "@/lib/club-time";
 
 /**
  * #4533, Edit Booking's entry point: an officer on a FINISHED stay raises a
@@ -160,7 +160,7 @@ export async function finishedStayPromoCorrectionRequestResponse(
     {
       original: proposal.original,
       requested: { ...proposal.requested, requestedEffectiveDate: null },
-      lockedPeriod: { today: formatDateOnly(args.today), editableFrom: null, touchesLockedPeriod: true },
+      lockedPeriod: { today: calendarDateOfDateOnlyInstant(args.today), editableFrom: null, touchesLockedPeriod: true },
       payment: booking.payment,
     },
     promoChange,

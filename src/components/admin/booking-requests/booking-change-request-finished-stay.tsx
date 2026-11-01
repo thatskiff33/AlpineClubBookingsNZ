@@ -491,7 +491,7 @@ export function decisionToastMessage(args: {
         followUpFailed?: boolean;
         officerEnteredGuestCount?: number;
         promoCodesApplied?: string[];
-        notifyMember?: boolean;
+        memberEmailWithheld?: boolean;
       }
     | undefined;
   linkedModificationId: string;
@@ -501,7 +501,7 @@ export function decisionToastMessage(args: {
     // #4533: a promo correction says what it applied and whether the member hears.
     if (args.execution.promoCodesApplied?.length && !args.execution.followUpFailed) {
       return `Promo code ${args.execution.promoCodesApplied.join(", ")} applied to the booking and the request approved.${
-        args.execution.notifyMember === false
+        args.execution.memberEmailWithheld === true
           ? " The member was not emailed."
           : " The member is emailed the change."
       }`;

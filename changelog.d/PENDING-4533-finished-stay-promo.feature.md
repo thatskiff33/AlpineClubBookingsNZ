@@ -18,4 +18,6 @@
   reduction comes back in full, as account credit by default (with an unapplied
   account-credit note in Xero) or as a refund if the officer chooses. There is
   no change fee. For a promo-only correction the officer can choose not to email
-  the member. Approving twice changes nothing a second time.
+  the member. Approving twice changes nothing a second time. The request an
+  officer raises from Edit Booking is recorded in the audit log under Booking,
+  readable by the same people as a member's own change request.

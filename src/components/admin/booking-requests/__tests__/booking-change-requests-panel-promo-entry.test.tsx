@@ -80,7 +80,7 @@ beforeEach(() => {
     if (init?.method === "PATCH") {
       return jsonResponse({
         id: "req-1",
-        execution: { executed: true, followUpFailed: false, promoCodesApplied: ["FREENIGHT"], notifyMember: false },
+        execution: { executed: true, followUpFailed: false, promoCodesApplied: ["FREENIGHT"], memberEmailWithheld: true },
       });
     }
     if (url.includes("/api/admin/booking-change-requests")) {
@@ -114,7 +114,7 @@ describe("change-request panel — the officer enters a promo code (#4533)", () 
     });
     fireEvent.change(screen.getByLabelText(/Promo code to apply/), { target: { value: "FREENIGHT" } });
     // A promo-only correction: the officer may withhold the email.
-    const notify = screen.getByLabelText("Email the member about this correction");
+    const notify = screen.getByLabelText("Apply and email member about the correction");
     expect(notify).toBeChecked();
     fireEvent.click(notify);
 
@@ -157,7 +157,23 @@ describe("change-request panel — the officer enters a promo code (#4533)", () 
     ];
     render(<BookingChangeRequestsPanel />);
     await screen.findByRole("button", { name: "Approve and apply" });
-    expect(screen.queryByLabelText("Email the member about this correction")).toBeNull();
+    expect(screen.queryByLabelText("Apply and email member about the correction")).toBeNull();
+  });
+
+  it("drops the choice for a booking whose emails are off, and sends none (#2259)", async () => {
+    rows = [request({ booking: { ...request().booking, noEmails: true } })];
+    render(<BookingChangeRequestsPanel />);
+    fireEvent.change(await screen.findByLabelText(/Explanation for the member/i), {
+      target: { value: "Your free night is now applied." },
+    });
+    fireEvent.change(screen.getByLabelText(/Promo code to apply/), { target: { value: "FREENIGHT" } });
+    expect(screen.queryByLabelText("Apply and email member about the correction")).toBeNull();
+    expect(screen.getByTestId("booking-no-emails-notice")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Check the figures/i }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Approve and apply" })).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: "Approve and apply" }));
+    await waitFor(() => expect(patchBodies()).toHaveLength(1));
+    expect(patchBodies()[0]).not.toHaveProperty("notifyMember");
   });
 
   it("offers it on a promo correction raised from Edit Booking", async () => {
@@ -169,6 +185,6 @@ describe("change-request panel — the officer enters a promo code (#4533)", () 
       }),
     ];
     render(<BookingChangeRequestsPanel />);
-    expect(await screen.findByLabelText("Email the member about this correction")).toBeChecked();
+    expect(await screen.findByLabelText("Apply and email member about the correction")).toBeChecked();
   });
 });

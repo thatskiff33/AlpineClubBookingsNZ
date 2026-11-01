@@ -255,10 +255,8 @@ export function BookingChangeRequestsPanel({
                 ...(quotes.quoteFor(request.id)?.confirmOverCapacity
                   ? { confirmOverCapacity: true }
                   : {}),
-                ...(entry.officerGuests ? { officerGuests: entry.officerGuests } : {}),
-                ...(entry.officerPromo ? { officerPromo: entry.officerPromo } : {}),
-                // #4533: the email choice, sent only where it can be honoured.
-                ...(entry.promoOnly && !draft.notifyMember ? { notifyMember: false } : {}),
+                // #4030 / #4533: the officer's entry and email choice, as sent.
+                ...entry.approvalFields,
                 // #4030 review C4: the figures this approval was shown.
                 expectedFigures: expectedFiguresOf(quotes.quoteFor(request.id)),
               }

@@ -100,6 +100,8 @@ export interface BookingChangeRequestData {
       email: string;
     } | null;
     organisation: { name: string; email: string | null } | null;
+    /** #4533: the booking's "No emails" switch (admin list only), which drops the email choice. */
+    noEmails?: boolean;
     /** #4030: the member ids already on the booking (list route only), for the officer's finder. */
     guests?: Array<{ memberId: string | null }>;
     payment: {

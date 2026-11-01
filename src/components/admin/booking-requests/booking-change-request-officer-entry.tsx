@@ -7,6 +7,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ADMIN_VIEW_ONLY_ACTION_REASON } from "@/hooks/use-admin-area-edit-access";
+import { BookingNoEmailsNotice } from "@/components/booking-no-emails-notice";
 import {
   FinishedStaySettlementField,
   OfficerGuestEntry,
@@ -40,7 +41,17 @@ import type { ChangeRequestPromoChange } from "@/lib/booking-change-request-prom
 export function officerEntryOf(
   request: BookingChangeRequestData,
   draft: DecisionDraft,
-): { officerGuests: OfficerEnteredGuest[] | null; officerPromo: ChangeRequestPromoChange | null; promoOnly: boolean } {
+): {
+  officerGuests: OfficerEnteredGuest[] | null;
+  officerPromo: ChangeRequestPromoChange | null;
+  promoOnly: boolean;
+  /** What an applying approval adds to its body for this entry. */
+  approvalFields: {
+    officerGuests?: OfficerEnteredGuest[];
+    officerPromo?: ChangeRequestPromoChange;
+    notifyMember?: false;
+  };
+} {
   const officerGuests = request.acceptsOfficerGuests
     ? officerGuestsPayload(draft.officerGuests, requestStay(request.booking))
     : null;
@@ -48,7 +59,21 @@ export function officerEntryOf(
   const promoOnly = request.promoCorrection
     ? request.promoCorrection.onlyChange
     : Boolean(request.acceptsOfficerGuests && officerPromo && !officerGuests);
-  return { officerGuests, officerPromo, promoOnly };
+  // #2259: with the booking's "No emails" switch on there is no choice to
+  // send — the mailer withholds the email and records it on the withheld list,
+  // which `notifyMember: false` would skip. Otherwise the choice travels only
+  // where the executor honours it, a promo-only correction.
+  const notifyMember = request.booking.noEmails ? undefined : promoOnly && !draft.notifyMember ? false : undefined;
+  return {
+    officerGuests,
+    officerPromo,
+    promoOnly,
+    approvalFields: {
+      ...(officerGuests ? { officerGuests } : {}),
+      ...(officerPromo ? { officerPromo } : {}),
+      ...(notifyMember === false ? { notifyMember } : {}),
+    },
+  };
 }
 
 /**
@@ -102,6 +127,7 @@ export function FinishedStayEntryFields({
       {request.executesOnApproval && promoOnly ? (
         <FinishedStayNotifyChoice
           requestId={request.id}
+          noEmails={request.booking.noEmails === true}
           notifyMember={draft.notifyMember}
           canEdit={canEdit}
           onChange={(notifyMember) => onDraftChange({ notifyMember }, false)}
@@ -169,20 +195,24 @@ export function officerPromoPayload(code: string): ChangeRequestPromoChange | nu
 
 /**
  * #4533: the officer's notify-or-not choice, offered only on a promo-only
- * correction — a guest or date change always emails the member (#4030).
+ * correction — a guest or date change always emails the member (#4030). With
+ * the booking's "No emails" switch on, the choice is not offered (#2259): the
+ * mailer withholds the email either way, and the shared notice says so.
  */
 export function FinishedStayNotifyChoice({
   requestId,
+  noEmails,
   notifyMember,
   canEdit,
   onChange,
 }: {
   requestId: string;
+  noEmails: boolean;
   notifyMember: boolean;
   canEdit: boolean;
   onChange: (notifyMember: boolean) => void;
 }) {
-  return (
+  return !noEmails ? (
     <div className="flex items-start gap-2 text-sm">
       <Checkbox
         id={`notify-member-${requestId}`}
@@ -192,7 +222,9 @@ export function FinishedStayNotifyChoice({
         title={canEdit === false ? ADMIN_VIEW_ONLY_ACTION_REASON : undefined}
         onCheckedChange={onChange}
       />
-      <Label htmlFor={`notify-member-${requestId}`}>Email the member about this correction</Label>
+      <Label htmlFor={`notify-member-${requestId}`}>Apply and email member about the correction</Label>
     </div>
+  ) : (
+    <BookingNoEmailsNotice />
   );
 }

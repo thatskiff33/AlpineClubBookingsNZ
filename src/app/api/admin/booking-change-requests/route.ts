@@ -73,6 +73,8 @@ export async function GET(req: NextRequest) {
             },
             // #3369: the owner may be an Organisation; bookingOwner() reads both.
             organisation: { select: { name: true, email: true } },
+            // #4533 (#2259): the "No emails" switch drops the card's email choice.
+            noEmails: true,
             // #4030: the member ids already on the booking, and nothing else
             // about its guests, so the officer's member finder disables them.
             guests: { where: { memberId: { not: null } }, select: { memberId: true } },

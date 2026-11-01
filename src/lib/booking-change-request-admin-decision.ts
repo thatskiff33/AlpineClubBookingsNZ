@@ -645,7 +645,7 @@ async function runFinishedStayApproval(
       capacityOverridden: result.capacityOverridden,
       officerEnteredGuestCount: officerEntered?.length ?? 0,
       promoCodesApplied: promoChange?.codes ?? [],
-      notifyMember: result.notifyMember,
+      memberEmailWithheld: !result.notifyMember,
       followUpFailed: result.followUpFailed === true,
     },
   });
