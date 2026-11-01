@@ -33,10 +33,8 @@ import { backfillCurrentSeasonMembershipAssignments } from "../src/lib/membershi
 import { must } from "../src/lib/indexed-access";
 import { addDaysDateOnly } from "../src/lib/date-only";
 import { getDefaultLodgeId } from "../src/lib/lodges";
-import {
-  APPEND_ONLY_FINANCIAL_HISTORY_RELATIONS,
-  bookingsWithFinancialHistory,
-} from "../src/lib/booking-financial-history";
+import { APPEND_ONLY_FINANCIAL_HISTORY_RELATIONS } from "../src/lib/booking-financial-history";
+import { refuseBookingsWithFinancialHistory } from "./seed-financial-history-guard";
 import { createPrismaPgAdapter } from "../src/lib/prisma-adapter";
 import { prisma as applicationPrisma } from "../src/lib/prisma";
 import { redeemPromoCode } from "../src/lib/promo";
@@ -149,12 +147,7 @@ async function cleanup() {
   // is deleted, never half-way through; the relations are
   // booking-financial-history.ts's, so the seed keeps no list of its own.
   const bookingIds = (await prisma.booking.findMany({ select: { id: true } })).map((booking) => booking.id);
-  const withMoneyLines = await bookingsWithFinancialHistory(prisma, bookingIds, APPEND_ONLY_FINANCIAL_HISTORY_RELATIONS);
-  if (withMoneyLines.size > 0) {
-    throw new Error(
-      `Demo seed refused: ${withMoneyLines.size} booking(s) carry booking-ledger or journal lines, and that history is never deleted. Recreate the demo database (for example drop and re-create its schema, then migrate) and run the seed again.`,
-    );
-  }
+  await refuseBookingsWithFinancialHistory(prisma, bookingIds, "Demo seed", APPEND_ONLY_FINANCIAL_HISTORY_RELATIONS);
   console.log("Clearing previous demo / transactional data...");
   await prisma.bedAllocation.deleteMany();
   await prisma.guestChoreToken.deleteMany();
@@ -174,6 +167,8 @@ async function cleanup() {
   await prisma.promoRedemption.deleteMany();
   // RESTRICT to its group since #4514; it no longer goes with the organiser's booking.
   await prisma.groupBookingSettlement.deleteMany();
+  // RESTRICT onto both its booking and its payment (#4583); the seed raises one
+  // (the bank-refund void follow-up), so it goes before either parent.
   await prisma.payment.deleteMany();
   await prisma.paymentLink.deleteMany();
   await prisma.bookingEvent.deleteMany();
