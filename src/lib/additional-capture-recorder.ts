@@ -37,6 +37,7 @@ import { LIVE_KEPT_LATE_CAPTURE_INVOICE_WHERE } from "@/lib/late-capture-kept-xe
 import { prisma } from "@/lib/prisma";
 import { asRecord, responseNamesXeroInvoice } from "@/lib/xero-json";
 import { XERO_ORPHANED_STALE_RUNNING_ERROR_CODE } from "@/lib/xero-operation-error-codes";
+import { XERO_ACTIVE_OPERATION_STATUSES } from "@/lib/xero-active-operation-statuses";
 import type { PrimaryInvoiceFeeAtLink } from "@/lib/xero-primary-invoice-fee-at-link";
 import { CAPTURED_TRANSACTION_STATUS_LIST } from "@/lib/payment-transaction-status";
 import { LEDGER_ROWS_OLDEST_FIRST } from "@/lib/payment-ledger-order";
@@ -364,7 +365,7 @@ export function gapRowCanStillSend(
   now: Date,
 ): boolean {
   if (row.manuallyResolvedAt || now.getTime() - row.createdAt.getTime() > GAP_SEND_WAIT_MS) return false;
-  return ["PENDING", "RUNNING", "WAITING_PAYMENT"].includes(row.status) || (row.status === "FAILED" && row.replayable);
+  return (XERO_ACTIVE_OPERATION_STATUSES as readonly string[]).includes(row.status) || (row.status === "FAILED" && row.replayable);
 }
 
 /** The row fields {@link gapPaymentMayBeInXero} and {@link gapRowCanStillSend} read. */
