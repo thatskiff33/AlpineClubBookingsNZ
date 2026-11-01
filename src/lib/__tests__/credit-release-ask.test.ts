@@ -49,8 +49,12 @@ vi.mock("@/lib/ended-booking-ask-guard", () => ({
 vi.mock("@/lib/payment-recovery-alert", () => ({ alertPaymentRecoveryOfficers: mocks.alertOfficers }));
 vi.mock("@/lib/release-ask-officer-signal", () => ({ signalCreditReleaseToOfficers: mocks.signalOfficers }));
 // #4491: the merge decision has its own suite (`credit-release-merge`) and a real-PostgreSQL proof.
-vi.mock("@/lib/credit-release-merge", () => ({ readCreditReleaseMergeVerdict: mocks.mergeVerdict }));
+vi.mock("@/lib/credit-release-merge", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/credit-release-merge")),
+  readCreditReleaseMergeVerdict: mocks.mergeVerdict,
+}));
 
+import { CREDIT_RELEASE_MERGE_WAIT_WORDS } from "@/lib/credit-release-merge";
 import {
   CREDIT_RELEASE_WAITING_ON_EDIT_MESSAGE,
   processCreditReleaseAskOperation,
@@ -211,6 +215,8 @@ describe("processCreditReleaseAskOperation", () => {
         bookingId: "bk-1",
         reason: "waiting-on-edit-request",
         key: "waiting-on-edit-request:op-1",
+        // The officers' note says why it could not merge, in words, not only in its metadata.
+        detail: CREDIT_RELEASE_MERGE_WAIT_WORDS["edit-invoice-not-waiting"],
         metadata: expect.objectContaining({ notMergedBecause: "edit-invoice-not-waiting" }),
       }),
     );
@@ -245,7 +251,7 @@ describe("processCreditReleaseAskOperation", () => {
       mocks.prisma.payment.findUnique.mockResolvedValue(withEdit());
       store.paymentTransaction.findMany.mockResolvedValue([{ id: "ptx-edit", stripePaymentIntentId: "pi_edit", amountCents: 2500 }]);
       const { deps } = await run();
-      const liveAsk = { id: "pay-1", additionalAmountCents: 2500, additionalPaymentIntentId: "pi_edit" };
+      const liveAsk = { id: "pay-1", bookingId: "bk-1", xeroInvoiceId: "inv-1", additionalAmountCents: 2500, additionalPaymentIntentId: "pi_edit" };
       // Decided before the mint, and again on the claim's store under the Payment row lock.
       expect(mocks.mergeVerdict.mock.calls).toEqual([[mocks.prisma, liveAsk], [store, liveAsk]]);
       expect(deps.wait).not.toHaveBeenCalled();

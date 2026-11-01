@@ -32,7 +32,10 @@ import { isCreditReleaseAskReason } from "@/lib/additional-ask-cause";
 import { LEDGER_ROWS_OLDEST_FIRST } from "@/lib/payment-ledger-order";
 import { REISSUED_ASK_REASON } from "@/lib/payment-recovery-keys";
 import { isCapturedTransactionStatus } from "@/lib/payment-transaction-status";
+import { findActiveSupplementaryInvoiceLink } from "@/lib/late-capture-xero-receipt";
 import { readAskInvoicesForCarry, type AskInvoiceForCarry } from "@/lib/superseded-ask-invoice-carry";
+import { findPrimaryInvoiceGapInvoice, readPrimaryInvoiceFeeAtLink, type GapAnchorStore } from "@/lib/xero-primary-invoice-gap-anchors";
+import { SUPPLEMENTARY_INVOICE_CREATE_WHERE } from "@/lib/xero-supplementary-invoice-statuses";
 
 export type CreditReleaseMergeRow = {
   id: string;
@@ -60,7 +63,24 @@ export type CreditReleaseMergeWait =
   /** A supplementary invoice naming the request that the move would refuse (sent, failed, resolved, linked). */
   | "invoice-cannot-follow"
   /** Edit money on the booking's own invoice beside a supplementary invoice: the receipt would stand down for both. */
-  | "mixed-billing";
+  | "mixed-billing"
+  /**
+   * An edit that came before the booking's invoice was raised, yet is billed on an invoice of its
+   * own: a #3980 gap invoice anchored on it (an edit that raced the invoice's create) or any other
+   * supplementary invoice. The merged capture's receipt would put its money on the booking's invoice.
+   */
+  | "edit-billed-on-its-own-invoice";
+
+/** The officers' words for each reason (the audit note's summary, `INV-ADDPAY-051`). */
+export const CREDIT_RELEASE_MERGE_WAIT_WORDS: Record<CreditReleaseMergeWait, string> = {
+  "ledger-unreadable": "the booking's payment requests do not add up to the request that is open, so they were not combined",
+  "not-an-edit-request": "the open request is a re-issued one, whose invoices are not followed automatically",
+  "edit-billing-unknown": "the open request for a booking change does not record which Xero invoice bills it",
+  "edit-invoice-not-waiting": "the booking change's Xero invoice is not waiting on its payment request (not queued yet, or retired), so it could not follow a combined request",
+  "invoice-cannot-follow": "a Xero invoice for the open request has already been sent, failed, been resolved by hand or is linked, so it could not follow a combined request",
+  "mixed-billing": "part of the open request is billed on the booking's own invoice and part on a change's invoice, which one combined payment cannot record correctly",
+  "edit-billed-on-its-own-invoice": "the booking change is billed on an invoice of its own that the combined payment would not reach",
+};
 
 export type CreditReleaseMergeVerdict = { merge: true } | { merge: false; reason: CreditReleaseMergeWait };
 
@@ -85,12 +105,19 @@ export function decideCreditReleaseMerge({
   rowsOldestFirst,
   live,
   invoices,
+  editsWithOwnInvoice = new Set<string>(),
 }: {
   rowsOldestFirst: readonly CreditReleaseMergeRow[];
   live: { paymentIntentId: string; amountCents: number };
   invoices: readonly AskInvoiceForCarry[];
+  /** Edits with any live supplementary invoice of their own, the gap invoice's anchors included. */
+  editsWithOwnInvoice?: ReadonlySet<string>;
 }): CreditReleaseMergeVerdict {
   const chain = unpaidRequestRows(rowsOldestFirst);
+  // A request made only of released credit is superseded as it always was (#4253): all of it stands
+  // on the booking's invoice, and there is no edit invoice to follow. Its first row may have carried
+  // a superseded release captured late, which the trace below would not read.
+  if (chain.length > 0 && chain.every((row) => isCreditReleaseAskReason(row.reason))) return MERGE;
   const newest = chain.at(-1);
   if (!newest || newest.stripePaymentIntentId !== live.paymentIntentId || newest.amountCents !== live.amountCents) {
     return wait("ledger-unreadable");
@@ -109,7 +136,11 @@ export function decideCreditReleaseMerge({
     if (row.amountCents - row.carriedAskCents <= 0) continue;
     if (row.hadIssuedXeroInvoice === null) return wait("edit-billing-unknown");
     if (!row.hadIssuedXeroInvoice) {
-      // The edit came before the booking's invoice, which billed it: the receipt records it there.
+      // The edit came before the booking's invoice, which billed it: the receipt records it there -
+      // unless an invoice of its own bills it (a #3980 gap invoice, when it raced the create), which
+      // a merged capture would never reach. An edit with no stamp cannot be checked.
+      if (row.bookingModificationId === null) return wait("edit-billing-unknown");
+      if (editsWithOwnInvoice.has(row.bookingModificationId)) return wait("edit-billed-on-its-own-invoice");
       primaryBilled = true;
       continue;
     }
@@ -140,23 +171,56 @@ const MERGE_ROW_SELECT = {
 } as const;
 
 /**
+ * The edits, of these, that a supplementary invoice of their own bills or will bill: one not
+ * CANCELLED anchored on the edit, an active `SUPPLEMENTARY_INVOICE` link on it, or the booking
+ * primary invoice's #3980 gap invoice, whose anchors are the edits that raced its create.
+ */
+async function editsWithOwnInvoice(
+  store: GapAnchorStore,
+  booking: { bookingId: string; xeroInvoiceId: string | null },
+  modificationIds: readonly string[],
+): Promise<Set<string>> {
+  const found = new Set<string>();
+  if (modificationIds.length === 0) return found;
+  const anchored = await store.xeroSyncOperation.findMany({
+    where: { ...SUPPLEMENTARY_INVOICE_CREATE_WHERE, localModel: "BookingModification", localId: { in: [...modificationIds] }, status: { not: "CANCELLED" } },
+    select: { localId: true },
+  });
+  for (const row of anchored) if (row.localId) found.add(row.localId);
+  for (const id of modificationIds) {
+    if (await findActiveSupplementaryInvoiceLink([{ localModel: "BookingModification", localId: id }], store)) found.add(id);
+  }
+  const figures = booking.xeroInvoiceId ? await readPrimaryInvoiceFeeAtLink(booking.bookingId, booking.xeroInvoiceId, store) : null;
+  const gap = figures ? await findPrimaryInvoiceGapInvoice(booking.bookingId, figures, store) : null;
+  if (gap && ((gap.operation && gap.operation.status !== "CANCELLED") || gap.link?.active)) {
+    for (const id of gap.anchorIds) if (modificationIds.includes(id)) found.add(id);
+  }
+  return found;
+}
+
+/**
  * Read the facts and decide. Called before the release's Stripe mint (outside any
  * lock) and again on the claim's store under the Payment row lock, so a change in
  * between retries the row rather than superseding a request it would not merge.
  */
 export async function readCreditReleaseMergeVerdict(
-  store: Pick<Prisma.TransactionClient, "paymentTransaction" | "xeroSyncOperation" | "xeroObjectLink">,
-  payment: { id: string; additionalAmountCents: number; additionalPaymentIntentId: string },
+  store: GapAnchorStore & Pick<Prisma.TransactionClient, "paymentTransaction">,
+  payment: { id: string; bookingId: string; xeroInvoiceId: string | null; additionalAmountCents: number; additionalPaymentIntentId: string },
 ): Promise<CreditReleaseMergeVerdict> {
   const rowsOldestFirst = await store.paymentTransaction.findMany({
     where: { paymentId: payment.id, kind: PaymentTransactionKind.ADDITIONAL },
     orderBy: [...LEDGER_ROWS_OLDEST_FIRST],
     select: MERGE_ROW_SELECT,
   });
-  const intentIds = unpaidRequestRows(rowsOldestFirst).flatMap((row) => (row.stripePaymentIntentId ? [row.stripePaymentIntentId] : []));
+  const chain = unpaidRequestRows(rowsOldestFirst);
+  const intentIds = chain.flatMap((row) => (row.stripePaymentIntentId ? [row.stripePaymentIntentId] : []));
+  const primaryBilledEdits = chain.flatMap((row) =>
+    !isCreditReleaseAskReason(row.reason) && row.hadIssuedXeroInvoice === false && row.bookingModificationId ? [row.bookingModificationId] : [],
+  );
   return decideCreditReleaseMerge({
     rowsOldestFirst,
     live: { paymentIntentId: payment.additionalPaymentIntentId, amountCents: payment.additionalAmountCents },
     invoices: await readAskInvoicesForCarry(store, intentIds),
+    editsWithOwnInvoice: await editsWithOwnInvoice(store, payment, primaryBilledEdits),
   });
 }

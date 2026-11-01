@@ -266,13 +266,22 @@ let previousDatabaseUrl: string | undefined;
     }
 
     /** The edit: its history row, the card ask its door mints, and (unless told not to) its Xero leg. */
-    async function priceIncrease(options: { xeroLeg?: boolean } = {}): Promise<string> {
+    async function priceIncrease(options: { xeroLeg?: boolean; racedPrimaryInvoice?: boolean } = {}): Promise<string> {
       const [{ createModificationAdditionalPaymentIntent }, { sizeAdditionalAsk }] = await Promise.all([
         import("@/lib/booking-modification-settlement"),
         import("@/lib/additional-payment-ask"),
       ]);
       await prisma.bookingModification.create({
-        data: { id: MOD_E, bookingId: BOOKING_ID, memberId: MEMBER_ID, modificationType: "GUEST_ADD", previousData: {}, newData: {}, priceDiffCents: E_CENTS },
+        data: {
+          id: MOD_E,
+          bookingId: BOOKING_ID,
+          memberId: MEMBER_ID,
+          modificationType: "GUEST_ADD",
+          previousData: {},
+          // An edit that raced the booking invoice's create settles against that invoice (#3980's marker).
+          newData: options.racedPrimaryInvoice ? { primaryInvoiceSettlement: { settledAgainstPrimaryInvoice: true } } : {},
+          priceDiffCents: E_CENTS,
+        },
       });
       await prisma.booking.update({ where: { id: BOOKING_ID }, data: { finalPriceCents: { increment: E_CENTS }, totalPriceCents: { increment: E_CENTS } } });
       const mirror = await prisma.payment.findUniqueOrThrow({
@@ -291,7 +300,7 @@ let previousDatabaseUrl: string | undefined;
           additionalAsk: sizeAdditionalAsk({ priceDiffCents: E_CENTS, changeFeeCents: 0, payment: mirror }),
           retiredAdditionalAsks: [],
           hasSucceededPayment: true,
-          hasIssuedXeroInvoice: true,
+          hasIssuedXeroInvoice: !options.racedPrimaryInvoice,
           paymentCustomerId: "cus_race_4491",
           memberEmail: `${MEMBER_ID}@example.invalid`,
           memberName: "Merge Both",
@@ -303,7 +312,7 @@ let previousDatabaseUrl: string | undefined;
       });
       const intentId = minted.additionalPaymentIntentId;
       if (!intentId) throw new Error("race-4491: the edit's ask was not minted");
-      if (options.xeroLeg !== false) await editXeroLeg(intentId);
+      if (options.xeroLeg !== false && !options.racedPrimaryInvoice) await editXeroLeg(intentId);
       return intentId;
     }
 
@@ -319,6 +328,45 @@ let previousDatabaseUrl: string | undefined;
         requiresAdditionalStripePayment: true,
         additionalPaymentIntentId: intentId,
       });
+    }
+
+    /**
+     * #3980: the booking invoice's create saved its link having billed the booking as it was before
+     * the racing edit, so the gap check queues the edit's money on a gap invoice anchored on it. The
+     * create's row and the figures it stored are a seeded fact (as the primary invoice is); the gap
+     * check is the real writer.
+     */
+    async function gapInvoiceBillsTheEdit() {
+      const [{ buildXeroBookingInvoiceCorrelationKey }, { PRIMARY_INVOICE_FEE_AT_LINK_KEY }, { queuePrimaryInvoiceWorthGap }] = await Promise.all([
+        import("@/lib/xero-booking-invoice-key"),
+        import("@/lib/xero-primary-invoice-fee-at-link"),
+        import("@/lib/xero-primary-invoice-fee-gap"),
+      ]);
+      const figures = {
+        xeroInvoiceId: INVOICE_ID,
+        billedChangeFeeCents: 0,
+        billedTotalCents: PRICE_CENTS,
+        recordedChangeFeeCentsAtLink: 0,
+        primaryInvoiceCashCents: PRICE_CENTS - CREDIT_CENTS,
+        worth: { atBuildCents: PRICE_CENTS, builtTotalCents: PRICE_CENTS, atLinkCents: PRICE_CENTS + E_CENTS, markedModificationIdsAtBuild: [] },
+        paymentIntentIdsRecordedAtLink: [PRIMARY_INTENT],
+      };
+      const key = buildXeroBookingInvoiceCorrelationKey(BOOKING_ID);
+      const create = await prisma.xeroSyncOperation.create({
+        data: {
+          direction: "OUTBOUND", entityType: "INVOICE", operationType: "CREATE", localModel: "Payment", localId: PAYMENT_ID,
+          status: "SUCCEEDED", correlationKey: key, idempotencyKey: key, xeroObjectId: INVOICE_ID,
+          requestPayload: { [PRIMARY_INVOICE_FEE_AT_LINK_KEY]: figures },
+        },
+      });
+      const result = await queuePrimaryInvoiceWorthGap({ bookingId: BOOKING_ID, atLink: figures, figuresOperationId: create.id });
+      expect(result).toMatchObject({ gapCents: E_CENTS });
+      const gap = await prisma.xeroSyncOperation.findMany({
+        where: { localModel: "BookingModification", localId: MOD_E, queueType: "SUPPLEMENTARY_INVOICE" },
+        select: { requestPayload: true },
+      });
+      expect(gap).toHaveLength(1);
+      expect(gap[0]!.requestPayload).toMatchObject({ primaryInvoiceGap: true });
     }
 
     /** The allocation worker meets the spent note and converges: the booking's applied credit is released. */
@@ -447,18 +495,20 @@ let previousDatabaseUrl: string | undefined;
     async function leftToOfficers() {
       return prisma.auditLog.findMany({
         where: { action: "payment.credit_release_ask.left_to_officers", targetId: BOOKING_ID },
-        select: { metadata: true },
+        select: { metadata: true, summary: true },
       });
     }
 
-    async function expectWaiting(reason: string) {
+    async function expectWaiting(reason: string, attemptsSpentBefore = 0) {
       const row = await releaseOperation();
       expect(row.status).not.toBe("SUCCEEDED");
-      expect(row.attempts, "a wait hands its attempt back").toBe(0);
-      expect(row.lastError).toMatch(/waits until it is paid or withdrawn/);
+      expect(row.attempts, "a wait hands its attempt back").toBe(attemptsSpentBefore);
+      expect(row.lastError).toMatch(/cannot follow a combined request; the released-credit request waits until it is paid or withdrawn/);
       const notes = await leftToOfficers();
       expect(notes).toHaveLength(1);
       expect(notes[0]!.metadata).toMatchObject({ notMergedBecause: reason });
+      const { CREDIT_RELEASE_MERGE_WAIT_WORDS } = await import("@/lib/credit-release-merge");
+      expect(notes[0]!.summary).toContain(`Why: ${CREDIT_RELEASE_MERGE_WAIT_WORDS[reason as keyof typeof CREDIT_RELEASE_MERGE_WAIT_WORDS]}.`);
       const rows = await additionalRows();
       expect(rows.some((row) => row.reason === "credit_released_outside_app")).toBe(false);
     }
@@ -676,7 +726,8 @@ let previousDatabaseUrl: string | undefined;
       expect(await editInvoice()).toMatchObject({ status: "PENDING", waitsOn: edit, cents: E_CENTS, recordsPayment: true });
       const operation = await releaseOperation();
       expect(operation.status).not.toBe("SUCCEEDED");
-      expect(operation.lastError).toMatch(/changed while/);
+      // The sizing fence refused it (the mirror moved), before the merge's own re-check.
+      expect(operation.lastError).toMatch(/^The booking's payment changed while/);
 
       await runRelease();
       await expectReleaseAskedAlone();
@@ -694,10 +745,53 @@ let previousDatabaseUrl: string | undefined;
       const refused = stripe.created.at(-1)!;
       expect(refused).not.toBe(edit);
       expect(await prisma.paymentTransaction.findUnique({ where: { stripePaymentIntentId: refused } })).toBeNull();
-      expect((await releaseOperation()).lastError).toMatch(/changed while/);
+      expect((await releaseOperation()).lastError).toMatch(/^The booking's payment changed while/);
 
       await runRelease();
       await expectReleaseAskedAlone();
+    });
+
+    it("an edit that raced the booking's invoice and is billed on its #3980 gap invoice: the release waits, never putting the edit on the booking's invoice", async () => {
+      await seedCreditPaidBooking();
+      const edit = await priceIncrease({ racedPrimaryInvoice: true });
+      await gapInvoiceBillsTheEdit();
+      await convergeSpentCredit();
+      await enqueueRelease();
+
+      await runRelease();
+      await expectWaiting("edit-billed-on-its-own-invoice");
+      expect(stripe.created).toEqual([edit]);
+
+      await payWithCard(edit);
+      await runRelease();
+      await expectReleaseAskedAlone();
+    });
+
+    it("the gap invoice queued between the release's read and its claim, the mirror unchanged: the merge's re-check under the lock refuses, and the retry waits", async () => {
+      await seedCreditPaidBooking();
+      const edit = await priceIncrease({ racedPrimaryInvoice: true });
+      await convergeSpentCredit();
+      await enqueueRelease();
+      const mirrorBefore = await prisma.payment.findUniqueOrThrow({ where: { id: PAYMENT_ID } });
+      beforeTheReleaseMint(() => gapInvoiceBillsTheEdit());
+
+      await runRelease();
+
+      const refused = stripe.created.at(-1)!;
+      expect(stripe.intents.get(refused)?.amount, "read as a merge before the gap was queued").toBe(E_CENTS + CREDIT_CENTS);
+      const mirrorAfter = await prisma.payment.findUniqueOrThrow({ where: { id: PAYMENT_ID } });
+      expect([mirrorAfter.additionalAmountCents, mirrorAfter.additionalPaymentIntentId, mirrorAfter.additionalPaymentStatus]).toEqual([
+        mirrorBefore.additionalAmountCents, mirrorBefore.additionalPaymentIntentId, mirrorBefore.additionalPaymentStatus,
+      ]);
+      // Not the sizing fence: the merge decided again under the lock.
+      expect((await releaseOperation()).lastError).toMatch(/^The unpaid edit request on the booking changed while/);
+      expect(await prisma.paymentTransaction.findUnique({ where: { stripePaymentIntentId: refused } })).toBeNull();
+      expect(await prisma.paymentRecoveryOperation.count({ where: { paymentIntentId: edit, type: "CANCEL_PAYMENT_INTENT" } })).toBe(0);
+      expect(stripe.intents.get(edit)?.status).toBe("requires_payment_method");
+
+      await runRelease();
+      // The refused attempt was spent; the wait hands its own back.
+      await expectWaiting("edit-billed-on-its-own-invoice", 1);
     });
   },
 );

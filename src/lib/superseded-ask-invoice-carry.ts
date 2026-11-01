@@ -235,22 +235,50 @@ function waitingOnIntentsWhere(intentIds: readonly string[]): Prisma.XeroSyncOpe
   };
 }
 
-/** One supplementary invoice naming an ask, and whether the move below could take it. */
+/**
+ * #4491 (`INV-SSOT`): THE MOVE'S ONE TEST OF ONE CHANGE'S WAITING INVOICES,
+ * before anything about the carrier: the change has no active invoice link,
+ * no other invoice of it is going out, and every invoice moving has a billed
+ * figure it can read. The move asks it under its keys
+ * (`moveAnchorOntoCarrier`); a minter asks it, through
+ * `readAskInvoicesForCarry`, before it supersedes. One function, so the two
+ * cannot disagree about which invoice may move.
+ */
+export async function anchorInvoicesMoveRefusal(
+  store: Pick<Prisma.TransactionClient, "xeroSyncOperation" | "xeroObjectLink">,
+  anchorId: string,
+  moving: ReadonlyArray<{ id: string; requestPayload: Prisma.JsonValue | null }>,
+): Promise<Extract<SupersededAskInvoiceRefusal, "invoice-already-linked" | "another-invoice-queued" | "unreadable-invoice"> | null> {
+  const anchor = { localModel: "BookingModification" as const, localId: anchorId };
+  if (await findActiveSupplementaryInvoiceLink([anchor], store)) return "invoice-already-linked";
+  const otherOutstanding = await store.xeroSyncOperation.findFirst({
+    where: { ...outstandingSupplementaryInvoiceOperationsWhere(anchor), id: { notIn: moving.map((operation) => operation.id) } },
+    select: { id: true },
+  });
+  if (otherOutstanding) return "another-invoice-queued";
+  if (moving.some((operation) => supplementaryInvoiceBilledCents(operation.requestPayload) === null)) return "unreadable-invoice";
+  return null;
+}
+
+/** One supplementary invoice naming an ask, and whether the move below could take it, and if not why. */
 export type AskInvoiceForCarry = {
   anchorId: string | null;
   /** The intent its money was first asked on (`supplementaryInvoiceWaitedFirstOn`). */
   firstWaitedOn: string | null;
   carriable: boolean;
+  /** Why the move would refuse it: not waiting on one of the asks, or the change's refusal. */
+  refusal: "not-waiting" | NonNullable<Awaited<ReturnType<typeof anchorInvoicesMoveRefusal>>> | null;
 };
 
 /**
  * #4491 (`INV-ADDPAY-052`): THE INVOICES NAMING THESE ASKS, AS THE MOVE WOULD
  * FIND THEM, for a minter that must know BEFORE it supersedes them whether
- * each would follow it. Carriable is the move's own test, read without its
- * locks: waiting on one of the asks (`waitingOnIntentsWhere`), on a change
- * with no active invoice link and no other outstanding invoice, with a
- * readable billed figure. Any other live supplementary invoice naming them is
- * returned too, not carriable. The move re-decides everything under its keys.
+ * each would follow it. The same rows the move reads (`waitingOnIntentsWhere`,
+ * one change at a time) and the move's own test of them
+ * (`anchorInvoicesMoveRefusal`), read without its locks. Any other live
+ * supplementary invoice naming the asks is returned too, `not-waiting`. The
+ * carrier's own checks (that it is the newest row, that it would not bill
+ * more than it asks) are the move's alone, against the carrier it is given.
  */
 export async function readAskInvoicesForCarry(
   store: Pick<Prisma.TransactionClient, "xeroSyncOperation" | "xeroObjectLink">,
@@ -265,26 +293,25 @@ export async function readAskInvoicesForCarry(
     },
     select: { id: true, localId: true, requestPayload: true },
   });
-  const waitingIds = new Set(
-    (await store.xeroSyncOperation.findMany({ where: waitingOnIntentsWhere(intentIds), select: { id: true } })).map((row) => row.id),
-  );
-  const result: AskInvoiceForCarry[] = [];
-  for (const operation of naming) {
-    const base = { anchorId: operation.localId, firstWaitedOn: supplementaryInvoiceWaitedFirstOn(operation.requestPayload) };
-    if (!waitingIds.has(operation.id) || !operation.localId || supplementaryInvoiceBilledCents(operation.requestPayload) === null) {
-      result.push({ ...base, carriable: false });
-      continue;
-    }
-    const anchor = { localModel: "BookingModification" as const, localId: operation.localId };
-    const blocked =
-      (await findActiveSupplementaryInvoiceLink([anchor], store)) !== null ||
-      (await store.xeroSyncOperation.findFirst({
-        where: { ...outstandingSupplementaryInvoiceOperationsWhere(anchor), id: { notIn: [...waitingIds] } },
-        select: { id: true },
-      })) !== null;
-    result.push({ ...base, carriable: !blocked });
+  const waiting = await store.xeroSyncOperation.findMany({
+    where: waitingOnIntentsWhere(intentIds),
+    select: { id: true, localId: true, requestPayload: true },
+  });
+  const refusalByAnchor = new Map<string, AskInvoiceForCarry["refusal"]>();
+  for (const anchorId of [...new Set(waiting.flatMap((row) => (row.localId ? [row.localId] : [])))]) {
+    refusalByAnchor.set(anchorId, await anchorInvoicesMoveRefusal(store, anchorId, waiting.filter((row) => row.localId === anchorId)));
   }
-  return result;
+  return naming.map((operation) => {
+    const refusal = waiting.some((row) => row.id === operation.id) && operation.localId
+      ? (refusalByAnchor.get(operation.localId) ?? null)
+      : ("not-waiting" as const);
+    return {
+      anchorId: operation.localId,
+      firstWaitedOn: supplementaryInvoiceWaitedFirstOn(operation.requestPayload),
+      carriable: refusal === null,
+      refusal,
+    };
+  });
 }
 
 /**
@@ -426,22 +453,15 @@ async function moveAnchorOntoCarrier(input: {
     if (moving.length === 0) return { moved: 0, refusal: null };
     const movingIds = moving.map((operation) => operation.id);
 
-    const anchor = { localModel: "BookingModification" as const, localId: input.anchorId };
-    if (await findActiveSupplementaryInvoiceLink([anchor], tx)) {
-      return { moved: 0, refusal: "invoice-already-linked" as const };
-    }
-    const otherOutstanding = await tx.xeroSyncOperation.findFirst({
-      where: { ...outstandingSupplementaryInvoiceOperationsWhere(anchor), id: { notIn: movingIds } },
-      select: { id: true },
-    });
-    if (otherOutstanding) return { moved: 0, refusal: "another-invoice-queued" as const };
+    // The change's own refusals, the one test a minter also asks (#4491, `anchorInvoicesMoveRefusal`).
+    const anchorRefusal = await anchorInvoicesMoveRefusal(tx, input.anchorId, moving);
+    if (anchorRefusal) return { moved: 0, refusal: anchorRefusal };
 
     // NEVER BILL MORE THAN THE CARRIER ASKS FOR. What already names it plus
     // what moves must fit its amount, and what bills changes other than its
     // own (`captureChangeId`; with none, every change's) must fit the part it
     // carried (review M3: the sum, never one change at a time).
     const movingBilled = moving.map((operation) => supplementaryInvoiceBilledCents(operation.requestPayload));
-    if (movingBilled.some((cents) => cents === null)) return { moved: 0, refusal: "unreadable-invoice" as const };
     const onCarrier = await tx.xeroSyncOperation.findMany({
       where: { ...supplementaryInvoicesNamingIntentWhere(carrierIntentId), id: { notIn: movingIds } },
       select: { localId: true, requestPayload: true },

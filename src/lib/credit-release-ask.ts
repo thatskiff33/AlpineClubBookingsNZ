@@ -35,7 +35,7 @@ import {
 
 import { bookingLedgerResidualCents, outstandingAdditionalAskCents } from "@/lib/additional-payment-ask";
 import { sizeCreditReleaseAsk } from "@/lib/credit-release-ask-size";
-import { readCreditReleaseMergeVerdict } from "@/lib/credit-release-merge";
+import { CREDIT_RELEASE_MERGE_WAIT_WORDS, readCreditReleaseMergeVerdict } from "@/lib/credit-release-merge";
 import { createAuditLog } from "@/lib/audit";
 import { signalCreditReleaseToOfficers } from "@/lib/release-ask-officer-signal";
 import { bookingOwner } from "@/lib/booking-owner";
@@ -80,9 +80,9 @@ export interface CreditReleaseAskRunnerDeps {
   wait: (operation: PaymentRecoveryOperation, message: string) => Promise<unknown>;
 }
 
-/** What a release waiting behind an unpaid edit request records on its recovery row. */
+/** What a release that cannot merge into an unpaid edit request records on its recovery row (#4491). */
 export const CREDIT_RELEASE_WAITING_ON_EDIT_MESSAGE =
-  "An unpaid edit request is open on this booking; the released-credit request waits until it is paid or withdrawn";
+  "An unpaid edit request is open on this booking and its Xero invoice cannot follow a combined request; the released-credit request waits until it is paid or withdrawn";
 
 /** Why a row was closed without asking for anything: the audit row's wording and its code. */
 type NoAskReason =
@@ -219,7 +219,13 @@ export async function processCreditReleaseAskOperation(
   // 12 hours for nothing.
   const liveAsk =
     outstandingAdditionalAskCents(payment) > 0 && payment.additionalPaymentIntentId
-      ? { id: payment.id, additionalAmountCents: payment.additionalAmountCents, additionalPaymentIntentId: payment.additionalPaymentIntentId }
+      ? {
+          id: payment.id,
+          bookingId: operation.bookingId,
+          xeroInvoiceId: payment.xeroInvoiceId,
+          additionalAmountCents: payment.additionalAmountCents,
+          additionalPaymentIntentId: payment.additionalPaymentIntentId,
+        }
       : null;
   if (liveAsk) {
     const merge = await readCreditReleaseMergeVerdict(prisma, liveAsk);
@@ -228,6 +234,8 @@ export async function processCreditReleaseAskOperation(
         bookingId: operation.bookingId,
         reason: "waiting-on-edit-request",
         key: `waiting-on-edit-request:${operation.id}`,
+        // Why it could not merge, in the officers' own note (#4491).
+        detail: CREDIT_RELEASE_MERGE_WAIT_WORDS[merge.reason],
         metadata: {
           operationId: operation.id,
           releasedCents: operation.amountCents,

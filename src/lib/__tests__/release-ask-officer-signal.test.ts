@@ -45,6 +45,15 @@ describe("signalCreditReleaseToOfficers", () => {
     );
   });
 
+  it("#4491: adds why, in words, to the note's own sentence, and leaves a note with no detail as it was", async () => {
+    await signalCreditReleaseToOfficers({ bookingId: "bk-1", reason: "waiting-on-edit-request", key: "k-3", detail: "the change's invoice was sent" });
+    const summary = mocks.audit.mock.calls[0]![0].summary as string;
+    expect(summary).toMatch(/could not be combined with it/);
+    expect(summary.endsWith(". Why: the change's invoice was sent.")).toBe(true);
+    await signalCreditReleaseToOfficers({ bookingId: "bk-1", reason: "waiting-on-edit-request", key: "k-4" });
+    expect(mocks.audit.mock.calls[1]![0].summary).not.toMatch(/Why:/);
+  });
+
   it("writes nothing a second time for the same key", async () => {
     mocks.findFirst.mockResolvedValue({ id: "audit-1" });
     expect(await signalCreditReleaseToOfficers({ bookingId: "bk-1", reason: "waiting-on-edit-request", key: "k-1" })).toBe(false);
