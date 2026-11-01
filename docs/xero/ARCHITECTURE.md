@@ -1093,7 +1093,7 @@ or a dashboard charge on the club's account reaches `payment_intent.succeeded`
 with none of the app's metadata, so `handlePaymentIntentSucceeded`
 (`stripe-webhook-service.ts`) never routes it to a booking and **nothing is
 queued to the outbox**. Since #4532 it is not dropped: the first branch,
-`!isAppCreatedPaymentIntent(metadata)`, hands it to
+an intent `appPaymentIntentRoute(metadata)` does not route, hands it to
 `recordUnrecognisedStripePayment` (`unrecognised-stripe-payment.ts`), which
 writes one `UnrecognisedStripePayment` row (unique on the PaymentIntent id) and
 raises one unmuteable `admin-unrecognised-stripe-payment` alert, claimed once
