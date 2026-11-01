@@ -2660,7 +2660,9 @@ note as before and sends the email above.
 
 Limit: if the app stops between deciding not to record the late note and
 writing its audit entry, the app's log is the only record of it; if the email
-cannot reach anyone, the audit entry and the log remain.
+cannot reach anyone, the audit entry and the log remain. In the rare case of
+two copies of one job both getting the late note back, each writes an audit
+entry; the email still goes once.
 
 There is no undo on the panel. If you marked one by mistake, fix the Xero side
 by hand, or use **Targeted force sync** for that one booking's invoice: it

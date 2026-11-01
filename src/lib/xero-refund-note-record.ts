@@ -8,7 +8,7 @@
  * its row, and an officer may "Resolve by hand", recording the note they made
  * (#4421). The stalled run is still alive: when Xero answers, its note may be a
  * second note for the same refund. So the row's note is written by a
- * status-guarded `updateMany` that refuses only a row whose resolve RECORDED a
+ * guarded `updateMany` that refuses only a row whose resolve RECORDED a
  * note (`manuallyResolvedAt` set and `xeroObjectId` set), before the link, and
  * a lost claim rolls the whole record back: no pointer, no link, the officer's
  * note left on the row. The late note is then logged, audited once (`xero`)
@@ -115,7 +115,7 @@ export async function recordCreatedRefundNote(note: CreatedRefundNote): Promise<
     amountCents: note.amountCents,
   };
   // The first trace, before anything else can fail: the note exists in Xero and nothing here records it.
-  logger.warn(trace, "Refund credit note from Xero not recorded: its operation was resolved by hand, recording a note, while Xero answered (INV-INT-029)");
+  logger.warn(trace, "Refund credit note from Xero: the claim was lost to a resolve by hand recording a note; re-checking the operation (INV-INT-029, #4426)");
   // None of what follows throws into the create: its catch would fail the officer's row.
   let row: XeroSyncOperation | null;
   try {

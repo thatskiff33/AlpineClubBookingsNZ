@@ -3998,7 +3998,7 @@ FAILED/PARTIAL -> officer marks it resolved in Xero -> done: status unchanged,
   are refused (Mark non-replayable)
   the create's own call, stalled past a Mark failed and a resolve recording a
   note, then answers (#4426): its note is recorded only under a
-  status-guarded claim refusing a row whose resolve recorded a note -> lost:
+  guarded claim refusing a row whose resolve recorded a note -> lost:
   nothing written (the row keeps the officer's note, no link, no pointer), no
   settlement, no completion; the same note as the officer's -> nothing more;
   any other -> one `xero` audit row and one XERO_SUCCESS_AFTER_RESOLUTION

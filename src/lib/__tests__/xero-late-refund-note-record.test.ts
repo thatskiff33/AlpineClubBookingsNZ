@@ -185,6 +185,17 @@ describe("#4426: a refund-note create never records its note over a note a resol
     expect(mocks.audit).not.toHaveBeenCalled();
   });
 
+  // Delta review F1: the OR's other half. An unresolved row that already names a note (a #1354
+  // co-holder recorded one) is no resolve by hand: the claim is won and the late note records as
+  // before #4426. Dropping `manuallyResolvedAt: null` from the claim fails this.
+  it("MUTATION: an unresolved row that already names another note is no resolve by hand - the late note records and nothing is audited", async () => {
+    seedRow({ status: "RUNNING", xeroObjectType: "CREDIT_NOTE", xeroObjectId: "cn-other", xeroObjectNumber: "CN-O" });
+    await expect(recordCreatedRefundNote(LATE)).resolves.toBe("recorded");
+    expect(state.row).toMatchObject({ xeroObjectId: "cn-late-b", xeroObjectNumber: "CN-B" });
+    expect(mocks.audit).not.toHaveBeenCalled();
+    expect(mocks.send).not.toHaveBeenCalled();
+  });
+
   // Deliberately changed in review (money F2): a plain resolve recorded no officer's note, so the guard
   // has nothing to protect there; the late note lands as before #4426 and #4374's completion alert tells.
   it("MUTATION: a plain resolve that recorded no note does not hold the late note back - it lands and links as before #4426", async () => {
@@ -208,7 +219,7 @@ describe("#4426: a refund-note create never records its note over a note a resol
     expect(state.payment.xeroRefundCreditNoteId).toBeNull();
 
     const trace = { operationId: OPERATION_ID, paymentId: "pay-1", bookingId: "booking-1", creditNoteId: "cn-late-b", creditNoteNumber: "CN-B", amountCents: 20_000 };
-    expect(mocks.warn).toHaveBeenCalledWith(trace, expect.stringContaining("not recorded"));
+    expect(mocks.warn).toHaveBeenCalledWith(trace, expect.stringContaining("claim was lost to a resolve by hand"));
     expect(mocks.warn.mock.invocationCallOrder[0]).toBeLessThan(mocks.audit.mock.invocationCallOrder[0]!);
     expect(mocks.audit).toHaveBeenCalledTimes(1);
     expect(mocks.audit).toHaveBeenCalledWith(expect.objectContaining({
@@ -276,7 +287,7 @@ describe("#4426: a refund-note create never records its note over a note a resol
     const { prisma } = await import("@/lib/prisma");
     vi.mocked(prisma.xeroSyncOperation.findUnique).mockRejectedValueOnce(new Error("connection reset"));
     await expect(recordCreatedRefundNote({ ...LATE, creditNoteId: "cn-late-c" })).resolves.toBe("resolved-by-hand");
-    expect(mocks.warn).toHaveBeenCalledWith(expect.objectContaining({ creditNoteId: "cn-late-c" }), expect.stringContaining("not recorded"));
+    expect(mocks.warn).toHaveBeenCalledWith(expect.objectContaining({ creditNoteId: "cn-late-c" }), expect.stringContaining("claim was lost to a resolve by hand"));
     expect(mocks.error).toHaveBeenCalledWith(expect.objectContaining({ creditNoteId: "cn-late-c" }), expect.stringContaining("could not be re-read"));
   });
 

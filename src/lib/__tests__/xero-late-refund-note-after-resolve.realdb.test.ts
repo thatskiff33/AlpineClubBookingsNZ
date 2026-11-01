@@ -386,6 +386,9 @@ let prisma: (typeof import("@/lib/prisma"))["prisma"];
       try {
         await resetStale(operationId);
         const { claimResolvedInXeroMark } = await import("@/lib/xero-operation-resolve-guards");
+        // Pins the claim's predicate on a plainly resolved row. The route sends this canonical (asks-number)
+        // row through resolveRecordingRefundNote, so the flow that really reaches a plain resolve is a
+        // refund request's note (#4391, no pointer), covered in the unit suite (delta review F4).
         await expect(claimResolvedInXeroMark({ id: operationId, resolvedAt, reason: "Done in Xero", resolvedById: OFFICER_ID })).resolves.toBe(true);
       } finally {
         stalled.answer();

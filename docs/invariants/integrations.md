@@ -495,7 +495,8 @@ re-run, never offered for retry, never re-minted beside (owner decision,
   sibling was resolved.
 - **Resolve and retry.** The route refuses while the operation is RUNNING, a
   live copy is queued, or a queued retry is RUNNING or started before the mark
-  and completed after it - checked after the mark is written, then withdrawn. Gaps: clock skew between instances, and a caller of
+  and completed after it - checked after the mark is written, then withdrawn.
+  Gaps: clock skew between instances, and a caller of
   `retryXeroSyncOperation` that bypasses the drain.
 - **Applied-credit operations are retry-only.** The route refuses them, and a
   pre-release mark on one is void on the retry path.
@@ -570,10 +571,10 @@ its outcome of the same keyed Xero call there.
   but SUCCEEDED lands there unless written onto that claim (`retryClaim`).
 - **A success lands on any row no claim holds,** even one resolved in Xero
   (#4374). The write leaves the mark; if it recorded a Xero object, after
-  commit it warns and alerts officers once per operation: Xero may hold it
-  twice. Limit: an alert reaching nobody is retried only if another success
-  lands. Except a refund-note create's late note over a note a resolve
-  recorded (#4426): audited and alerted, not recorded.
+  commit it warns and alerts officers once per operation; Xero may hold it
+  twice. Limit: an alert reaching nobody retries only when another success
+  lands. Except a refund-note create's different late note over a note a
+  resolve recorded (#4426): audited and alerted, not recorded.
 - **A refused write changes nothing.** It answers null, writes no link and
   raises no alert. A missing row throws, or is logged for a guarded caller.
   A success refused for a later claim still records its links, warned.
