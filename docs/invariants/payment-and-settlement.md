@@ -1720,11 +1720,11 @@ release).
 - **A change's card capture that nothing else records is recorded against the
   Xero invoice that bills it, by one recorder** (#3953; owner, 21 Oct 2026).
 - **One recorder.** The primary's create stores the captures its cash covers;
-  every other gets an `ADDITIONAL_CAPTURE_RECEIPT` row, at the link save or the
-  late-success release. The gap invoice pays only from unclaimed cash, naming
-  what it took. A receipt stands down where the primary or a paying
-  supplementary invoice (naming it, covering it, or the change's own) records
-  it (`readCaptureRecorder`).
+  every other gets an `ADDITIONAL_CAPTURE_RECEIPT` row, at link save or
+  late-success release. The gap invoice pays only from unclaimed cash, never
+  the sweep's share (`INV-ADDPAY-046`), naming what it took. A receipt stands
+  down where the primary or a paying supplementary invoice (naming it,
+  covering it, or the change's own) records it (`readCaptureRecorder`).
 - **No stamp.** A review charge's change is read from its reason
   (`captureChangeId`). One with neither decides under the booking's key, which
   a paying invoice there naming no capture takes first, and refuses beside one.

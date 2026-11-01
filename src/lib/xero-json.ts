@@ -35,3 +35,16 @@ export function readNumber(value: unknown): number | null {
 export function asArray(value: unknown): unknown[] {
   return Array.isArray(value) ? value : [];
 }
+
+/**
+ * #3953 round 9: whether a Xero operation's stored response names an invoice
+ * Xero made (any `InvoiceID`-like key holding an id, nested up to six deep) -
+ * then the row is not unsent. #4494 reads it for a gap invoice too.
+ */
+export function responseNamesXeroInvoice(value: unknown, depth = 0): boolean {
+  if (depth > 6 || value === null || typeof value !== "object") return false;
+  if (Array.isArray(value)) return value.some((entry) => responseNamesXeroInvoice(entry, depth + 1));
+  return Object.entries(value as Record<string, unknown>).some(([key, entry]) =>
+    /^(xero)?invoice_?id$/i.test(key) ? typeof entry === "string" && entry.length > 0 : responseNamesXeroInvoice(entry, depth + 1),
+  );
+}

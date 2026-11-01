@@ -4121,8 +4121,25 @@ late change capture KEPT on a cancelled, invoiced booking (the #3639 task
     anchor lock: raised unpaid where a capture of it has a receipt linked,
     RUNNING or carrying a stored decision
   gap check: pays the gap invoice only from cash no receipt row claims and no
-    supplementary invoice records, and names the captures it took, with the
-    cents, on its payload (coveredPaymentIntentIds, coveredCaptureCents)
+    supplementary invoice records, never the credit-release sweep's share
+    (#4494), and names the captures it took, with the cents, on its payload
+    (coveredPaymentIntentIds, coveredCaptureCents)
+  gap invoice send (outbox), officer Retry or PARTIAL repair, where what it
+    takes of a capture plus the credit-release sweep's share (the larger of
+    the ledger's and its CREDIT_RELEASE_PAYMENT links') exceeds the gross
+    capture, or the sweep holds a capture it takes from (#4494) -> no
+    payment recorded, an officer alerted; the payload is stored unpaid before
+    any Xero call (the repair: under its claim, then closed with the reason),
+    naming no capture only where its payment provably never reached Xero,
+    else still naming its captures
+  credit-release sweep beside such a gap invoice (#4494): one whose payment
+    may be in Xero (SUCCEEDED, PARTIAL, resolved, a Xero id, response or
+    link, a stale-RUNNING reset, an invoice body its send stored) -> held, an
+    officer alerted; one that cannot have paid yet and can still send (it
+    can run again - PENDING, RUNNING, WAITING_PAYMENT, or FAILED or PARTIAL
+    and replayable, unresolved - queued within 7 days) -> waiting, no alert;
+    otherwise -> held, an officer alerted daily, naming the row: retry it or
+    wait if it can still run, else record the payment by hand
   receipt worker:
     a LIVE invoice create for the booking, or (under the booking's anchor
       lock) a LIVE receipt for it stamped ADDITIONAL_CAPTURE_RECEIPT_PLANNING
