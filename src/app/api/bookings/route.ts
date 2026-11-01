@@ -144,6 +144,7 @@ import {
 import { bookingManagementAuthorizationRole } from "@/lib/admin-permissions";
 import { refuseOnBehalfUnlessBookingOfficer } from "@/lib/on-behalf-booking";
 import { clubFormatValues } from "@/lib/club-format-server";
+import { resolveBookingMoneyPostingContext } from "@/lib/member-money/doors";
 import { lodgeGuestLimitMessage } from "@/lib/lodge-booking-readiness";
 
 const dateOnlyString = z.string().refine(isDateOnlyString, {
@@ -1638,6 +1639,10 @@ export async function POST(request: NextRequest) {
     await getMemberCreditBalance(effectiveMemberId, prisma);
   }
 
+  // #4628: an internet-banking create posts its charge to the journal; the
+  // context is read here, before the create's transaction (`INV-LOCK-004`).
+  const journal = paymentMethod === "internet_banking" ? await resolveBookingMoneyPostingContext() : undefined;
+
   try {
     const outcome = await createConfirmedBooking({
       format,
@@ -1645,6 +1650,7 @@ export async function POST(request: NextRequest) {
       // retroactive envelope on, so the service's defence-in-depth re-check
       // cannot land on a different day (`INV-LOCK-004`).
       todayAtClub,
+      journal,
       effectiveMemberId,
       isOnBehalf: isAuthorizedOnBehalf,
       sessionUserId: session.user.id,

@@ -11,6 +11,7 @@ import type { GroupDiscountConfig } from "@/lib/pricing";
 import type { BookingPaymentMethod } from "@/lib/booking-payment-methods";
 import type { InternetBankingPaymentSettingsValues } from "@/lib/internet-banking-settings";
 import type { CalendarDate } from "@/lib/club-time";
+import type { BookingJournalContext } from "@/lib/member-money/doors";
 import type { ClubFormat } from "@/lib/club-format";
 import type { GuestNightInput } from "@/lib/booking-guest-stay-ranges";
 import type { MemberGuestConsentGuestFields } from "@/lib/member-guest-add-policy";
@@ -210,6 +211,13 @@ export interface ConfirmedBookingInput extends BaseInput {
    * property that used to rest on both sides happening to call the same helper.
    */
   todayAtClub: CalendarDate;
+  /**
+   * #4628 (Ledger M3c): the member-money journal's posting context, resolved
+   * by the caller before any transaction, for the same reason as `todayAtClub`.
+   * Required on an internet-banking create, whose invoice binds the charge
+   * (the create refuses one without it); unread on every other.
+   */
+  journal?: BookingJournalContext;
   status: BookingStatus;
   shouldBePending: boolean;
   holdDays: number;
