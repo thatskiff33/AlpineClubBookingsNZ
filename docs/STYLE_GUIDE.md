@@ -286,9 +286,11 @@ needs (owner decision, #2049).
   leaving bare arrows.
 - Quote node labels containing spaces or punctuation (`A["Next.js app"]`) so the
   parser does not choke.
-- Verify a diagram parses before committing: `pnpm dlx @mermaid-js/mermaid-cli -i
-  file.md -o /tmp/out.svg` (or paste into the mermaid live editor). Note in the
-  PR how you validated.
+- Verify a diagram parses before committing. A person can run `pnpm dlx
+  @mermaid-js/mermaid-cli -i file.md -o /tmp/out.svg` or paste it into the
+  mermaid live editor; an agent may not use `pnpm dlx` (`AGENTS.md` -> Safety),
+  so it relies on the diagram rendering in the PR's preview and says so. Note in
+  the PR how you validated.
 - A diagram must match the code. When the code moves, update the diagram in the
   same PR — the same lockstep rule as screenshots.
 

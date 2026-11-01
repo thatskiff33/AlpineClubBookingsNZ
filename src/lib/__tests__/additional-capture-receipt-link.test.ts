@@ -4,6 +4,7 @@ import {
   bookingHasPaidUnnamedSupplementary,
   bookingHasUnattributedCaptures,
   captureChangeId,
+  keptInvoiceBillsChangeCapture,
 } from "@/lib/additional-capture-receipt-link";
 import { buildEditFinancialReviewChargeReason } from "@/lib/payment-recovery-keys";
 
@@ -11,7 +12,8 @@ import { buildEditFinancialReviewChargeReason } from "@/lib/payment-recovery-key
 // the per-anchor lock's callers make about captures no change can be read from.
 
 function store(input: {
-  captures?: Array<{ id: string }>;
+  captures?: Array<{ id: string; stripePaymentIntentId?: string | null }>;
+  kept?: Array<{ queueType: string }>;
   link?: { id: string } | null;
   receipts?: Array<{ status: string; requestPayload: unknown; manuallyResolvedAt?: Date | null }>;
   supplementaries?: Array<{ requestPayload: unknown }>;
@@ -32,7 +34,9 @@ function store(input: {
     bookingModification: { findMany: vi.fn(async () => input.modifications ?? []) },
     xeroSyncOperation: {
       findMany: vi.fn(async (args: { where: { queueType: string; localModel?: string } }) =>
-        args.where.queueType !== "SUPPLEMENTARY_INVOICE"
+        args.where.queueType === "KEPT_LATE_CAPTURE_INVOICE"
+          ? (input.kept ?? [])
+          : args.where.queueType !== "SUPPLEMENTARY_INVOICE"
           ? (input.receipts ?? [])
           : args.where.localModel
             ? (input.queuedOnChanges ?? [])
@@ -167,6 +171,41 @@ describe("anchorCaptureHasReceipt", () => {
       anchorCaptureHasReceipt(store({ captures, receipts: [{ status: "RUNNING", requestPayload: { plan: { invoiceId: "inv_1" } } }] }) as never, input, decidedOnly),
     ).resolves.toBe(true);
     await expect(anchorCaptureHasReceipt(store({ captures, link: { id: "link_1" } }) as never, input, decidedOnly)).resolves.toBe(true);
+  });
+
+  it("MUTATION #4324 (INV-PAY-144): counts a kept late capture's own invoice naming one of the captures, in both modes", async () => {
+    const input = { bookingId: "booking_1", bookingModificationId: "mod_1", paymentIntentId: "pi_kept" };
+    const captures = [{ id: "tx_1", stripePaymentIntentId: "pi_kept" }];
+    const kept = [{ queueType: "KEPT_LATE_CAPTURE_INVOICE" }];
+    await expect(anchorCaptureHasReceipt(store({ captures, kept }) as never, input)).resolves.toBe(true);
+    await expect(anchorCaptureHasReceipt(store({ captures, kept }) as never, input, { decidedOnly: true })).resolves.toBe(true);
+    await expect(anchorCaptureHasReceipt(store({ captures }) as never, input)).resolves.toBe(false);
+    const db = store({ captures, kept });
+    await anchorCaptureHasReceipt(db as never, input);
+    expect(db.xeroSyncOperation.findMany).toHaveBeenCalledWith({
+      where: {
+        queueType: "KEPT_LATE_CAPTURE_INVOICE",
+        status: { not: "CANCELLED" },
+        OR: [{ requestPayload: { path: ["paymentIntentId"], equals: "pi_kept" } }],
+      },
+      select: { queueType: true },
+    });
+  });
+
+  it("MUTATION #4324 item 11: a change is billed by a live kept-capture invoice naming one of its captures, read by its stamp or review reason", async () => {
+    const captures = [{ id: "tx_1", stripePaymentIntentId: "pi_kept" }];
+    const db = store({ captures, kept: [{ queueType: "KEPT_LATE_CAPTURE_INVOICE" }] });
+    await expect(keptInvoiceBillsChangeCapture(db as never, "mod_1")).resolves.toBe(true);
+    expect(db.paymentTransaction.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          kind: "ADDITIONAL",
+          OR: [{ bookingModificationId: "mod_1" }, { reason: buildEditFinancialReviewChargeReason("mod_1") }],
+        }),
+      }),
+    );
+    await expect(keptInvoiceBillsChangeCapture(store({ captures }) as never, "mod_1")).resolves.toBe(false);
+    await expect(keptInvoiceBillsChangeCapture(store({ kept: [{ queueType: "KEPT_LATE_CAPTURE_INVOICE" }] }) as never, "mod_1")).resolves.toBe(false);
   });
 
   it("#3403 review 2 (F6): with queuedCounts, a receipt that will still run counts - queued, or failed before deciding and not resolved by hand", async () => {

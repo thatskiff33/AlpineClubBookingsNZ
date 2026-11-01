@@ -16,7 +16,11 @@ const {
   mockReadBookingNoEmails,
   mockCreateAuditLog,
   mockLogger,
+  mockReadInvoiceBalance,
+  mockLoadBankTransferOffer,
 } = vi.hoisted(() => ({
+  mockReadInvoiceBalance: vi.fn(),
+  mockLoadBankTransferOffer: vi.fn(),
   mockPrisma: {
     booking: { findUnique: vi.fn() },
     payment: { updateMany: vi.fn(), findUnique: vi.fn() },
@@ -36,8 +40,18 @@ vi.mock("@/lib/booking-email-suppression", () => ({
 }));
 vi.mock("@/lib/audit", () => ({ createAuditLog: mockCreateAuditLog }));
 vi.mock("@/lib/logger", () => ({ default: mockLogger }));
+vi.mock("@/lib/xero-invoice-balance", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/xero-invoice-balance")),
+  readXeroInvoiceBalance: mockReadInvoiceBalance,
+}));
+vi.mock("@/lib/credit-release-bank-transfer", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/credit-release-bank-transfer")),
+  loadBankTransferOffer: mockLoadBankTransferOffer,
+}));
 
 import { resendAdditionalPaymentEmail } from "@/lib/additional-payment-resend-service";
+import { CREDIT_RELEASE_ASK_REASON } from "@/lib/credit-release-ask-keys";
+import { creditReleaseResendRefusal } from "@/lib/release-ask-officer-signal";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 const NOW = new Date("2026-10-10T22:00:00.000Z");
@@ -64,7 +78,8 @@ function booking(overrides: Record<string, unknown> = {}) {
             additionalReminderSentAt: null,
             additionalFinalReminderSentAt: null,
             createdAt: new Date("2026-09-01T00:00:00.000Z"),
-            transactions: [{ createdAt: RAISED_AT }],
+            xeroInvoiceId: "xero-inv-1",
+            transactions: [{ createdAt: RAISED_AT, reason: null, carriedAskCents: 0, withdrawnAt: null }],
             ...((overrides.payment as Record<string, unknown>) ?? {}),
           },
   };
@@ -98,6 +113,56 @@ describe("resendAdditionalPaymentEmail", () => {
       emailLogId: "log-1",
       messageId: "msg-1",
     });
+    mockReadInvoiceBalance.mockResolvedValue({ invoiceId: "xero-inv-1", status: "AUTHORISED", amountDueCents: 21_000, invoiceNumber: "INV-0001" });
+    mockLoadBankTransferOffer.mockResolvedValue(null);
+  });
+
+  describe("a request for credit used elsewhere (#4253, INV-ADDPAY-051)", () => {
+    const releaseRows = [{ createdAt: RAISED_AT, reason: CREDIT_RELEASE_ASK_REASON, carriedAskCents: 0, withdrawnAt: null, amountCents: 21_000 }];
+    beforeEach(() => {
+      mockPrisma.booking.findUnique.mockResolvedValue(booking({ payment: { transactions: releaseRows } }));
+    });
+
+    it("refuses, claiming nothing, when Xero shows less owing on the invoice than the request's credit", async () => {
+      mockReadInvoiceBalance.mockResolvedValue({ invoiceId: "xero-inv-1", status: "AUTHORISED", amountDueCents: 5_000, invoiceNumber: "INV-0001" });
+      const result = await resend();
+      expect(result).toMatchObject({ ok: false, status: 409 });
+      expect(mockPrisma.payment.updateMany).not.toHaveBeenCalled();
+      expect(mockSendAdditionalPaymentReminderEmail).not.toHaveBeenCalled();
+    });
+
+    it("words each refusal by its own reason, from the one source of those words", async () => {
+      const balance = (amountDueCents: number | null, status = "AUTHORISED") =>
+        ({ invoiceId: "xero-inv-1", status, amountDueCents, invoiceNumber: "INV-0001" });
+      mockReadInvoiceBalance.mockResolvedValue(balance(5_000));
+      expect(await resend()).toMatchObject({ status: 409, error: creditReleaseResendRefusal("invoice-part-paid") });
+      mockReadInvoiceBalance.mockResolvedValue(balance(21_000, "VOIDED"));
+      expect(await resend()).toMatchObject({ status: 409, error: creditReleaseResendRefusal("invoice-not-open") });
+      mockReadInvoiceBalance.mockRejectedValue({ response: { statusCode: 404 } });
+      expect(await resend()).toMatchObject({ status: 409, error: creditReleaseResendRefusal("request-unmatched") });
+      mockReadInvoiceBalance.mockResolvedValue(balance(null));
+      expect(await resend()).toMatchObject({ status: 409, error: creditReleaseResendRefusal("request-unmatched") });
+      // Three different sentences: a part payment is not a voided invoice is not a missing one.
+      expect(new Set(["invoice-part-paid", "invoice-not-open", "request-unmatched"].map((r) => creditReleaseResendRefusal(r as never))).size).toBe(3);
+      expect(creditReleaseResendRefusal("invoice-not-open")).not.toMatch(/owing less/);
+      expect(mockPrisma.payment.updateMany).not.toHaveBeenCalled();
+    });
+
+    it("refuses while Xero cannot be read", async () => {
+      mockReadInvoiceBalance.mockRejectedValue(new Error("Xero unavailable"));
+      expect(await resend()).toMatchObject({ ok: false, status: 503 });
+      expect(mockPrisma.payment.updateMany).not.toHaveBeenCalled();
+    });
+
+    it("hands the sender the bank-transfer offer it resolved before the claim", async () => {
+      const offer = { instructions: "Account 12", reference: "INV-0001" };
+      mockLoadBankTransferOffer.mockResolvedValue(offer);
+      expect(await resend()).toMatchObject({ ok: true });
+      expect(mockSendAdditionalPaymentReminderEmail).toHaveBeenCalledWith(
+        expect.objectContaining({ askCause: "credit-release", bankTransfer: offer }),
+        CLUB_FORMAT_TEST,
+      );
+    });
   });
 
   it("sends the same email the cron sends, stamps it, and audits the action", async () => {
@@ -114,7 +179,9 @@ describe("resendAdditionalPaymentEmail", () => {
       checkOut: new Date("2026-11-03T00:00:00.000Z"),
       requestedOn: RAISED_AT,
       lodgeId: "lodge-1",
-      askReason: null,
+      askCause: "edit",
+      // An ordinary change is never offered a bank transfer.
+      bankTransfer: null,
     }, CLUB_FORMAT_TEST);
     // Writes the SAME stamp the automatic day-three nudge writes, which is what
     // stops the two arriving one after the other.

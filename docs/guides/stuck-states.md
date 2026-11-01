@@ -41,6 +41,16 @@ by watching **data** — see [`ARCHITECTURE.md`](../ARCHITECTURE.md)
    owner, and a count. Click **Open** to go straight to the screen that resolves
    it. An empty queue shows "No stuck states found."
 
+### Bank transfer amount alerts not delivered
+
+This critical Finance item means a bank-transfer settlement figure alert failed
+three times. The existing Xero inbound job retries unsent markers older than ten
+minutes, using the same cooldown claim as invoice deliveries. After three failed
+sends it stops emailing; the item remains visible in Stuck States. Open Payments,
+check the amount against Xero, and read the booking's staff timeline for the
+settlement figure marker. No payment amount or booking status is changed by the
+retry (#4446).
+
 ### Close a card refund Stripe gave up on
 
 When the club refunds a card and Stripe fails, the app retries the refund
@@ -97,14 +107,23 @@ it again: it shows under **Refunds owed**, the officers are emailed once, and it
 is asked for again as a new request. Where it was the cancellation's own card
 refund, the member's booking page stops saying that amount was refunded and says where
 the new request stands: on its way, refunded again, waiting on the club, or
-paid back another way (#4166). Two kinds are not asked for again, and are
+paid back another way (#4166). Three kinds are not asked for again, and are
 listed here under **Card refunds Stripe gave up on** straight away, for you to
 pay the member another way and close:
 
 - a retry that Stripe also accepted and then failed;
 - a refund Stripe **created** before the release that added this, unless a
   refund the app is still working on counts it - the member may already have
-  been paid back by hand, so check Stripe and your bank first.
+  been paid back by hand, so check Stripe and your bank first;
+- a refund whose card refund you had already closed as **Paid another way**
+  (#4210) - the bank transfer you recorded may already have paid it, so check
+  that transfer first. After a part close the figure can include what that
+  close recorded as no longer owed: check its record before paying. If the
+  member is still owed anything, settle it with **Paid another way**, never
+  with a new refund in the Stripe dashboard. After a close that paid back
+  everything, nothing is left to close here: the row stays in the **Exhausted
+  recovery operations** count, and the health check's payment recovery result
+  stays red, so ask a developer to reconcile it.
 
 A refund whose retries had already run out when it failed stays here too, with
 the failure noted on it.

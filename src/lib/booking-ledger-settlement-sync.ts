@@ -30,6 +30,7 @@ import { findPostedSettlementLines } from "@/lib/booking-ledger-read";
 import { planSettlementLines } from "@/lib/booking-ledger-settlement-posting";
 import { buildBookingLedgerRows, writeBookingLedgerRows } from "@/lib/booking-ledger-write";
 import logger from "@/lib/logger";
+import { ORGANISER_SHARE_RECEIPT_REASON } from "@/lib/organiser-extra-state";
 
 export type SettlementSyncStore = Pick<Prisma.TransactionClient, "payment" | "bookingLedgerLine">;
 
@@ -63,7 +64,7 @@ export async function syncBookingLedgerSettlements({
       manuallyMarkedPaidAt: true,
       manuallyMarkedPaidByMemberId: true,
       booking: { select: { lodgeId: true } },
-      transactions: { select: { id: true, source: true, status: true, amountCents: true } },
+      transactions: { select: { id: true, source: true, status: true, amountCents: true, reason: true } },
       refunds: { select: { id: true, status: true, amountCents: true } },
     },
   });
@@ -77,7 +78,9 @@ export async function syncBookingLedgerSettlements({
       // `INV-PAY-001`: the provenance predicate is this column alone.
       manuallySettled: payment.manuallyMarkedPaidAt !== null,
       manualActorMemberId: payment.manuallyMarkedPaidByMemberId,
-      transactions: payment.transactions,
+      // The group settlement already posted this share; materialising its
+      // mirror for aggregate/refund allocation creates no second receipt.
+      transactions: payment.transactions.filter((row) => row.reason !== ORGANISER_SHARE_RECEIPT_REASON),
       refunds: payment.refunds,
       postedLines,
     });

@@ -1,0 +1,12 @@
+# Real-PostgreSQL suites the advisory `realdb-all` CI job does not run (#4458).
+# One repo-relative path per line; `#` starts a comment. Each entry is a suite
+# that is red for a known reason: name its issue in the comment. Empty means
+# every `*.realdb.test.ts` file runs. The census
+# (src/lib/__tests__/realdb-ci-coverage-census.test.ts) reads this file too.
+
+# Not red, but it cannot run in the one vitest process. It gates on
+# SEED_BOOKING_LEDGER_HISTORY=1 and seeds a database the booking ledger's
+# cut-over gate then reads, so `scripts/booking-ledger-seed-gate.sh` runs it (the
+# required `migration-drift` job's "Back-post a seeded booking history" step)
+# against a throwaway database of its own (#4458, PR #4476).
+src/lib/__tests__/booking-ledger-history-seed.realdb.test.ts

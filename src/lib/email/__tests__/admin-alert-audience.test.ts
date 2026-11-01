@@ -554,3 +554,20 @@ describe("getAdminEmails system-failure audience (#2548)", () => {
     ]);
   });
 });
+
+// #4446: a resolving mailer must distinguish delivery from per-recipient failures.
+it.each(["failed", "suppressed", "sent"])("reports %s through the settlement alert wrapper", async (status) => {
+  mocks.findMany.mockResolvedValue([enumRole("finance@club.test", "FINANCE_ADMIN")]);
+  mocks.recordEscalation.mockResolvedValue(undefined);
+  if (status === "failed") mocks.sendEmail.mockRejectedValue(new Error("transport unavailable"));
+  else mocks.sendEmail.mockResolvedValue({ status });
+  const { sendAdminBankTransferSettlementFigureAlert } = await import("../admin-alerts-settlement");
+  const { CLUB_FORMAT_TEST } = await import("@/lib/__tests__/support/club-format-fixture");
+  const outcome = await sendAdminBankTransferSettlementFigureAlert({
+    memberName: "Test Member", bookingId: "booking", checkIn: new Date("2026-07-10T00:00:00Z"),
+    checkOut: new Date("2026-07-12T00:00:00Z"), keptReason: null, owed: "overpaid",
+    hasSupplementaryInvoice: false, recordedCents: 10000, cashCents: 12000, owedCents: 10000,
+    xeroInvoiceNumber: "INV-TEST", xeroInvoiceUrl: null,
+  }, CLUB_FORMAT_TEST);
+  expect(outcome).toBe(status === "sent" ? "sent" : "undelivered");
+});

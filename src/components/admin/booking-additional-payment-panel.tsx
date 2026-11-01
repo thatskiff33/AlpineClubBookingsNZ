@@ -1,3 +1,4 @@
+import { officerPanelParts, type AdditionalAskCause } from "@/lib/additional-ask-cause";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ResendAdditionalPaymentButton } from "@/components/admin/resend-additional-payment-button";
 import { WithdrawAdditionalPaymentButton } from "@/components/admin/withdraw-additional-payment-button";
@@ -48,6 +49,8 @@ export interface BookingAdditionalPaymentPanelProps {
    * additionalPaymentEpisodeStartedAt).
    */
   requestedOn: Date | null;
+  /** Why the request exists; words the sentence at the top (default: a booking change). */
+  askCause?: AdditionalAskCause;
   /** Whether this admin may actually send the email (`bookings:edit`). */
   canResend: boolean;
   /**
@@ -71,6 +74,7 @@ export async function BookingAdditionalPaymentPanel({
   bookingStatus,
   payment,
   requestedOn,
+  askCause = "edit",
   canResend,
   canWithdraw,
   now = new Date(),
@@ -87,6 +91,7 @@ export async function BookingAdditionalPaymentPanel({
     [payment.additionalReminderSentAt, payment.additionalFinalReminderSentAt]
       .filter((stamp): stamp is Date => stamp != null)
       .sort((a, b) => b.getTime() - a.getTime())[0] ?? null;
+  const causeWords = officerPanelParts(askCause);
   const ageDays = requestedOn
     ? additionalPaymentAgeDays({ now, episodeStartedAt: requestedOn })
     : null;
@@ -103,16 +108,16 @@ export async function BookingAdditionalPaymentPanel({
       </CardHeader>
       <CardContent className="space-y-3 text-sm text-warning-11">
         <p>
-          A change to this booking increased the total by{" "}
-          <strong>{money.cents(payment.additionalAmountCents)}</strong>, and that
-          amount has not been collected.{" "}
+          {causeWords.lead}
+          <strong>{money.cents(payment.additionalAmountCents)}</strong>
+          {causeWords.trail}{" "}
           {failed
             ? "The last attempt to charge the member's card failed."
             : "It is still waiting for the member to pay."}
         </p>
         <dl className="grid gap-x-6 gap-y-1 sm:grid-cols-2">
           <div>
-            <dt className="text-xs uppercase tracking-wide opacity-80">
+            <dt className="text-xs uppercase tracking-wide">
               Amount due
             </dt>
             <dd className="font-medium tabular-nums">
@@ -120,7 +125,7 @@ export async function BookingAdditionalPaymentPanel({
             </dd>
           </div>
           <div>
-            <dt className="text-xs uppercase tracking-wide opacity-80">
+            <dt className="text-xs uppercase tracking-wide">
               Status
             </dt>
             <dd className="font-medium">
@@ -128,7 +133,7 @@ export async function BookingAdditionalPaymentPanel({
             </dd>
           </div>
           <div>
-            <dt className="text-xs uppercase tracking-wide opacity-80">
+            <dt className="text-xs uppercase tracking-wide">
               Requested
             </dt>
             <dd className="font-medium">
@@ -142,7 +147,7 @@ export async function BookingAdditionalPaymentPanel({
             </dd>
           </div>
           <div>
-            <dt className="text-xs uppercase tracking-wide opacity-80">
+            <dt className="text-xs uppercase tracking-wide">
               Member last emailed
             </dt>
             <dd className="font-medium">
@@ -158,7 +163,7 @@ export async function BookingAdditionalPaymentPanel({
         {canResend ? (
           <ResendAdditionalPaymentButton bookingId={bookingId} />
         ) : (
-          <p className="text-sm opacity-90">{ADMIN_VIEW_ONLY_ACTION_REASON}</p>
+          <p className="text-sm">{ADMIN_VIEW_ONLY_ACTION_REASON}</p>
         )}
         {canWithdraw ? (
           <WithdrawAdditionalPaymentButton

@@ -1328,6 +1328,138 @@ let webhookClient: PrismaClient;
       expect((await payment()).additionalPaymentIntentId).toBe(intent!.id);
     });
 
+    // #4442 review M4: the re-issue's two writers re-read the live ask they
+    // carry under the queue's locks. An ask minted since the reduction (C) is
+    // carried by the re-issue; a stale tab paying C after the re-issue was sized
+    // and before its write must refuse the write, so C is never asked twice.
+    const LIVE_SINCE_MOD_ID = "race-3954-live-since-reduction";
+    const LIVE_SINCE_CENTS = 2_000;
+
+    /** C: an ordinary ask minted after the reduction, through the real door; it folds nothing and carries nothing. */
+    async function askMintedSinceReduction(): Promise<string> {
+      const [{ createModificationAdditionalPaymentIntent }, { sizeAdditionalAsk }] = await Promise.all([
+        import("@/lib/booking-modification-settlement"),
+        import("@/lib/additional-payment-ask"),
+      ]);
+      await prisma.bookingModification.create({
+        data: { id: LIVE_SINCE_MOD_ID, bookingId: BOOKING_ID, memberId: MEMBER_ID, modificationType: "GUEST_ADD", previousData: {}, newData: {}, priceDiffCents: LIVE_SINCE_CENTS },
+      });
+      const minted = await createModificationAdditionalPaymentIntent({
+        format: CLUB_FORMAT_TEST,
+        bookingId: BOOKING_ID,
+        door: "guestAdd",
+        failureMessage: "race 4442 live ask",
+        result: {
+          pendingRefundAmountCents: 0,
+          organiserChildRefund: null,
+          paymentId: PAYMENT_ID,
+          additionalAsk: sizeAdditionalAsk({ priceDiffCents: LIVE_SINCE_CENTS, changeFeeCents: 0, payment: await payment() }),
+          retiredAdditionalAsks: [],
+          hasSucceededPayment: true,
+          hasIssuedXeroInvoice: false,
+          paymentCustomerId: null,
+          memberEmail: "race-3954@example.invalid",
+          memberName: "Ask Payer",
+          memberFirstName: "Ask",
+          memberId: MEMBER_ID,
+          bookingModificationId: LIVE_SINCE_MOD_ID,
+          priceLines: null,
+        } as never,
+      });
+      expect(minted.additionalPaymentIntentId, "C was minted").toBeDefined();
+      return minted.additionalPaymentIntentId!;
+    }
+
+    /** A stale tab pays C: Stripe captures it and the settle the webhook runs records it. */
+    async function staleTabPays(stripe: ReturnType<typeof fakeStripe>, intentId: string) {
+      stripe.intents.get(intentId)!.status = "succeeded";
+      const { markPaymentIntentTransactionSucceeded } = await import("@/lib/payment-transactions");
+      await markPaymentIntentTransactionSucceeded({ paymentIntentId: intentId, amountCents: LIVE_SINCE_CENTS, paymentMethodId: "pm_race_4442" });
+    }
+
+    /** The re-issue minted at last: its own $30 alone, nothing of the captured C carried, and C never cancelled. */
+    async function expectReissueAlone(c: string, recoveryId: string) {
+      const { REISSUED_ASK_REASON } = await import("@/lib/payment-recovery-keys");
+      const live = await liveAsks();
+      expect(live).toEqual([{ stripePaymentIntentId: expect.any(String), amountCents: 3_000, carriedAskCents: 3_000, reason: REISSUED_ASK_REASON }]);
+      expect(await prisma.paymentRecoveryOperation.findUniqueOrThrow({ where: { id: recoveryId }, select: { status: true, paymentIntentId: true } }))
+        .toEqual({ status: "SUCCEEDED", paymentIntentId: live[0]!.stripePaymentIntentId });
+      expect((await cancellations()).filter((row) => row.paymentIntentId === c)).toEqual([]);
+      expect(await prisma.paymentTransaction.findUniqueOrThrow({ where: { stripePaymentIntentId: c }, select: { status: true } }))
+        .toEqual({ status: "SUCCEEDED" });
+    }
+
+    it("#4442 M4: C paid between the re-issue door's sizing and its write - the door writes nothing, the recovery stays PENDING, and the replay carries none of C", async () => {
+      await grownBooking("card", 1_000);
+      const result = await removeLeavingGuest();
+      const stripe = fakeStripe();
+      const c = await askMintedSinceReduction();
+      const recovery = await reissueRecovery(result.bookingModificationId!);
+      const { REISSUED_ASK_REASON } = await import("@/lib/payment-recovery-keys");
+      stripeRaceHooks.create = (async (args: Parameters<typeof stripe.create>[0]) => {
+        // The door sized the re-issue on C's live $20 ($50 in all); C is paid before its write.
+        if (args.metadata?.reason === REISSUED_ASK_REASON && stripe.intents.get(c)!.status !== "succeeded") {
+          expect(args.amountCents).toBe(5_000);
+          await staleTabPays(stripe, c);
+        }
+        return stripe.create(args);
+      }) as never;
+
+      expect((await mintAtDoor(result)).additionalPaymentIntentId).toBeUndefined();
+
+      const refused = [...stripe.intents.values()].find((intent) => intent.amount === 5_000)!;
+      expect(await prisma.paymentTransaction.findUnique({ where: { stripePaymentIntentId: refused.id } })).toBeNull();
+      expect((await cancellations()).filter((row) => row.paymentIntentId === c)).toEqual([]);
+      expect(await prisma.paymentRecoveryOperation.findUniqueOrThrow({ where: { id: recovery.id }, select: { status: true, paymentIntentId: true } }))
+        .toEqual({ status: "PENDING", paymentIntentId: recovery.paymentIntentId });
+
+      await prisma.paymentRecoveryOperation.update({ where: { id: recovery.id }, data: { nextRetryAt: new Date("2026-06-30T00:00:00.000Z") } });
+      const { runPaymentRecoveryOperationNow } = await import("@/lib/payment-recovery");
+      expect(await runPaymentRecoveryOperationNow(recovery.id, CLUB_FORMAT_TEST)).toBe("succeeded");
+      await expectReissueAlone(c, recovery.id);
+    });
+
+    it("#4442 M4: C paid inside the runner's re-issue replay - its claim hold writes nothing, and the next replay carries none of C", async () => {
+      await grownBooking("card", 1_000);
+      const result = await removeLeavingGuest();
+      const stripe = fakeStripe();
+      // The door's own mint never reaches Stripe, so the runner owns the re-issue.
+      let doorFails = true;
+      stripeRaceHooks.create = (async (args: Parameters<typeof stripe.create>[0]) => {
+        if (doorFails) {
+          doorFails = false;
+          throw new Error("socket hang up");
+        }
+        return stripe.create(args);
+      }) as never;
+      expect((await mintAtDoor(result)).additionalPaymentIntentId).toBeUndefined();
+      const c = await askMintedSinceReduction();
+      const recovery = await reissueRecovery(result.bookingModificationId!);
+      const { REISSUED_ASK_REASON } = await import("@/lib/payment-recovery-keys");
+      stripeRaceHooks.create = (async (args: Parameters<typeof stripe.create>[0]) => {
+        if (args.metadata?.reason === REISSUED_ASK_REASON && stripe.intents.get(c)!.status !== "succeeded") {
+          expect(args.amountCents).toBe(5_000);
+          await staleTabPays(stripe, c);
+        }
+        return stripe.create(args);
+      }) as never;
+
+      const { runPaymentRecoveryOperationNow } = await import("@/lib/payment-recovery");
+      const runOnce = async () => {
+        await prisma.paymentRecoveryOperation.update({ where: { id: recovery.id }, data: { nextRetryAt: new Date("2026-06-30T00:00:00.000Z") } });
+        return runPaymentRecoveryOperationNow(recovery.id, CLUB_FORMAT_TEST);
+      };
+      expect(await runOnce()).toBe("failed");
+
+      const refused = [...stripe.intents.values()].find((intent) => intent.amount === 5_000)!;
+      expect(await prisma.paymentTransaction.findUnique({ where: { stripePaymentIntentId: refused.id } })).toBeNull();
+      expect((await cancellations()).filter((row) => row.paymentIntentId === c)).toEqual([]);
+      expect((await prisma.paymentRecoveryOperation.findUniqueOrThrow({ where: { id: recovery.id }, select: { status: true } })).status).not.toBe("SUCCEEDED");
+
+      expect(await runOnce()).toBe("succeeded");
+      await expectReissueAlone(c, recovery.id);
+    });
+
     it("ROUND 6 (F2+F3): an increase that folded a waiting re-issue in and failed to mint - its replay asks for both, and queues the re-issue's own invoice on its intent", async () => {
       // The primary invoice predates the first increase, whose own supplementary
       // invoice bills the ask - so the $30 re-issue has a $30 invoice of its own.

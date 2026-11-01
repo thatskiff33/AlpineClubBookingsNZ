@@ -79,6 +79,52 @@ so the gaps are not silently implied as covered):
   role *boundary* matrix is covered by `e2e/admin-roles.spec.ts`, but role
   *management* is not yet browser-tested (deferred from #1134).
 
+## Accessibility and mobile checks (#4466)
+
+Every journey imports `test` from
+[`e2e/helpers/accessibility.ts`](../e2e/helpers/accessibility.ts). ESLint refuses
+imports of the base Playwright `test` in specs and setup files. The shared
+fixture instruments the default page, manually created browser contexts and
+popups, including contexts kept by `beforeAll` hooks.
+
+Axe audits each visited HTTP(S) page before every locator action or explicit
+navigation, and again before close and at test teardown. Audits are tracked per
+page so concurrent actions cannot skip another page, and same-URL wizard steps
+are audited again after their content changes. These checkpoints let
+the journey's assertions settle streaming content first; no fixed sleeps or
+`networkidle` waits are added. Before each audit the fixture lets running
+finite CSS transitions and animations finish (capped at two seconds; infinite
+ones such as spinners are ignored), so a toast fading in or an overlay fading
+out is measured at its settled colours, and waits (with the same cap) for the
+`<title>` Next streams in after an in-app navigation. Results are collected until teardown so a failure
+does not interrupt the journey's cleanup. Serious and critical violations tagged
+`wcag2a`, `wcag2aa` or `wcag22aa` fail the test. The `axe-report` JSON attachment
+contains the full axe result for each failing page, or an audit execution error.
+This is automated page coverage, not proof of complete WCAG conformance.
+
+The sole exception list is
+[`accessibility-allowlist.ts`](../e2e/helpers/accessibility-allowlist.ts), initially
+empty. Review an actual report before adding an exact pathname/rule pair with a
+reason and follow-up issue URL (or explicit `TODO(issue)` placeholder). Never
+turn off a rule globally. Fix small, clear violations in the same change.
+
+The `mobile` project uses Pixel 7 and selects only `member-notices.spec.ts`,
+`booking.spec.ts` and `stripe-payment.spec.ts`. It runs after desktop Chromium
+and before `pre-setup`, once in shard 1 (or on an unsharded local run). The booking
+journey resets its pending window; Stripe uses separate mobile stay windows for
+each attempt. Stripe retains its test-mode credential prerequisite and loud skip
+when keys are absent. Neither project uses live provider credentials.
+
+For a small, database-free test of the fixture, run
+`pnpm run test:e2e:a11y-fixture`. It serves synthetic pages through Playwright
+routing and checks both clean pages and expected axe failures with attached
+reports. `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH` may select a preinstalled browser
+for this contract test. CI does not run it, so run it locally before pushing any
+change to `e2e/helpers/accessibility.ts`, its allowlist or the Playwright
+config: without it, broken instrumentation would leave the journeys green. Run real journeys against a prepared local stack via
+`E2E_PRESERVE_AUTH_STATE=1 pnpm run test:e2e:run --project=mobile --no-deps` (setup storage states must
+already exist). CI discovers mobile through the existing Playwright config.
+
 ## Running locally
 
 ```bash
@@ -121,6 +167,13 @@ pnpm run test:e2e:run --ui               # Playwright UI mode
 pnpm run test:e2e:run e2e/booking.spec.ts # one spec
 pnpm run test:e2e:down      # stop the stack and delete its volumes
 ```
+
+A rebuild reuses the previous build's `.next/cache` (a BuildKit cache mount),
+so the second `pnpm run test:e2e` builds faster than the first.
+
+Failures keep a trace and a screenshot. A video is kept for a failure locally;
+in CI only the retry is recorded (`on-first-retry`), because recording every
+test to keep a few cost encoding time on every passing one.
 
 First-time setup: `pnpm exec playwright install chromium` — the same command CI runs (see "How CI installs the browser" below).
 The HTML report lands in `playwright-report/`; traces and screenshots for
@@ -405,7 +458,7 @@ A run used to take ~29 minutes: each of the two E2E jobs built the app image
 
 | Job | What it does |
 | --- | --- |
-| `E2E app image` | builds the image once and uploads it (`docker save`, zstd) as a run artifact |
+| `E2E app image` | builds the image once and uploads it (`docker save`, zstd) as a run artifact. Turbopack's build cache (`.next/cache`, a BuildKit cache mount in the `Dockerfile`) is restored from the last push to `main` before the build and, on a push, saved after it (`scripts/ci/next-build-cache.sh`). The Docker layer cache is exported only after the upload, so the shards do not wait for it |
 | `E2E seeded database` | in parallel: migrates, runs the single-lodge seeds and dumps the result with its club day (`scripts/e2e-stack.sh snapshot`). It holds **no secrets**: the dump is downloadable from a public repository, so Stripe test credentials are seeded on each runner after the restore |
 | `Playwright E2E` | **required check.** Runs shard 1 itself (`E2E_SHARD=1/3`, with `pre-setup`), then requires `E2E shard (2/3)` and `(3/3)` to pass (`scripts/ci/require-test-shards.mjs --from 2`, the gate `verify` uses for the unit shards) |
 | `E2E shard (2/3)`, `(3/3)` | the other two thirds of the `chromium` spec files, each on its own stack |
@@ -418,7 +471,16 @@ interleaves on a database. Every shard runs `setup`. `pre-setup` runs only in
 shard 1, after that shard's `chromium` slice. Playwright's own `--shard` is not
 used: it keeps the `setup` → `chromium` → `pre-setup` dependency chain whole,
 which put all 203 tests in shard 1. `scripts/ci/e2e-spec-shard.mjs` deals the
-sorted spec files round-robin instead, applied as the project's `testMatch`.
+spec files itself instead, applied as the project's `testMatch`: longest first,
+each to the shard with the least time so far, using the measured seconds in
+`scripts/ci/e2e-spec-durations.mjs` (shard 1 starts charged for `pre-setup`). A
+spec with no measurement is dealt as the median, so a new spec needs no entry.
+When the shards drift apart, refresh the measurements from a green run:
+
+```bash
+gh run view <run-id> --repo thatskiff33/AlpineClubBookingsNZ --log > e2e.log
+node scripts/ci/record-e2e-spec-durations.mjs e2e.log "E2E run <run-id> on main, <date>"
+```
 **A spec must not depend on state another spec file leaves behind**: a shard
 never sees the other shards' files.
 

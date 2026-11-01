@@ -1,6 +1,8 @@
 import fs from "fs";
 import path from "path";
 import { describe, expect, it } from "vitest";
+import { blankLiterals } from "./support/strip-comments";
+import { balancedBrackets } from "./support/balanced-brackets";
 
 // #2130 guard (same shape as club-module-settings-select-guard.test.ts): every
 // read AND write of XeroItemCodeMapping and AgeTierSetting must name its
@@ -94,16 +96,8 @@ function walk(dir: string, files: string[] = []): string[] {
 }
 
 /** Extract the balanced-paren call-argument text starting at an opening "(". */
-function extractCallArgs(source: string, openParenIndex: number): string {
-  let depth = 0;
-  for (let i = openParenIndex; i < source.length; i++) {
-    if (source[i] === "(") depth++;
-    else if (source[i] === ")") {
-      depth--;
-      if (depth === 0) return source.slice(openParenIndex, i + 1);
-    }
-  }
-  return source.slice(openParenIndex);
+function extractCallArgs(source: string, openParenIndex: number, structure: string): string {
+  return balancedBrackets(source, openParenIndex, structure).text;
 }
 
 describe("doomed-column models are read and written with an explicit select", () => {
@@ -119,11 +113,15 @@ describe("doomed-column models are read and written with an explicit select", ()
     for (const root of SCAN_ROOTS) {
       for (const file of walk(root)) {
         const source = fs.readFileSync(file, "utf8");
+        if (!NARROW_SELECT_MODELS.some((model) => source.includes(model))) continue;
+        // Calls are found over masked text: one named in a comment or string
+        // is not a call and has no opening bracket to read.
+        const structure = blankLiterals(source);
         let match: RegExpExecArray | null;
         callPattern.lastIndex = 0;
-        while ((match = callPattern.exec(source))) {
+        while ((match = callPattern.exec(structure))) {
           const openParenIndex = match.index + match[0].length - 1;
-          const args = extractCallArgs(source, openParenIndex);
+          const args = extractCallArgs(source, openParenIndex, structure);
           const line = source.slice(0, match.index).split("\n").length;
           const location = `${path
             .relative(process.cwd(), file)

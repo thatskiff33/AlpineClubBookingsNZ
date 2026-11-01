@@ -566,10 +566,11 @@ let CLUB_FORMAT_TEST: (typeof import("@/lib/__tests__/support/club-format-fixtur
       await retryComesDue(row.id);
       expect(await runPaymentRecoveryOperationNow(row.id, CLUB_FORMAT_TEST)).toBe("succeeded");
 
-      // Stripe answered the replayed key with the cancel's refund: one refund, one event.
-      expect(asked).toHaveLength(2);
-      expect(new Set(asked).size).toBe(1);
-      expect(await prisma.paymentRefund.count({ where: { paymentId: PAYMENT_ID } })).toBe(1);
+      // #4510 (INV-PAY-147): Stripe lists the cancel's refund with this slice's
+      // key as its evidence, so the runner adopts it and asks Stripe nothing more:
+      // one refund, the cancel's, and one event.
+      expect(asked).toHaveLength(1);
+      expect(await prisma.paymentRefund.findMany({ where: { paymentId: PAYMENT_ID }, select: { stripeRefundId: true } })).toEqual([{ stripeRefundId: `re_race_4145_${asked[0]}` }]);
       expect(await refundedEvents()).toEqual([{ amountCents: REFUND_CENTS, reason: REASON, actorMemberId: null, occurredAt: RUNNER_AT }]);
     });
   },

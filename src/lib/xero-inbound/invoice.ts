@@ -1,3 +1,4 @@
+import { reconcileOrganiserExtraInvoiceCash } from "@/lib/organiser-extra-receipt";
 import { type Invoice } from "xero-node";
 import { prisma } from "@/lib/prisma";
 import { clubToday } from "@/lib/club-time";
@@ -17,7 +18,8 @@ import {
 import { type XeroObjectLinkInput, upsertXeroObjectLink } from "@/lib/xero-sync";
 import { type IncrementalInvoiceReconciliationResult, type IncrementalMembershipReconciliationResult } from "./types";
 import { buildXeroPaymentDisplayNumber } from "./amounts";
-import { dedupeResolvedXeroObjectLinks, dedupeXeroObjectLinks, getDerivedInboundPaymentRole, PRIMARY_INVOICE_CASH_ALLOCATIONS_KEY, recoverBookingScopedLinksFromOutboundOperations } from "./object-links";
+import { dedupeResolvedXeroObjectLinks, dedupeXeroObjectLinks, getDerivedInboundPaymentRole, isDeletedXeroPaymentStatus, PRIMARY_INVOICE_CASH_ALLOCATIONS_KEY, recoverBookingScopedLinksFromOutboundOperations } from "./object-links";
+import { invoicePaymentsForAbsence, retireDeletedPaymentLinksAbsentFromPayload } from "./deleted-payment-links";
 import { writeXeroInboundAuditLogs } from "./audit";
 import { resolveMemberIdsForContact } from "./contact";
 import { refreshLinkedSubscriptionsForInvoice, syncLinkedPaymentInvoiceMetadata } from "./payment";
@@ -85,6 +87,7 @@ export async function reconcileXeroInvoice(
     throw new Error(`Xero invoice ${invoiceId} was not found`);
   }
 
+  await reconcileOrganiserExtraInvoiceCash(invoice);
   const invoiceUrl = buildXeroInvoiceUrl(invoice.invoiceID);
   const [existingLinks, recoveredBookingScopedLinks] = await Promise.all([
     prisma.xeroObjectLink.findMany({
@@ -152,6 +155,8 @@ export async function reconcileXeroInvoice(
             xeroObjectId: payment.paymentID!,
             xeroObjectNumber: buildXeroPaymentDisplayNumber(payment),
             role,
+            // #4531: a payment Xero reports deleted is never re-adopted.
+            active: !isDeletedXeroPaymentStatus(payment.status),
             metadata: {
               invoiceId: invoice.invoiceID,
               amount: payment.amount ?? null,
@@ -168,6 +173,13 @@ export async function reconcileXeroInvoice(
   for (const link of paymentLinks) {
     await upsertXeroObjectLink(link);
   }
+  // #4531: a payment deleted in Xero is left out of the payload; its link is retired once Xero confirms it.
+  const deletedPaymentLinks = await retireDeletedPaymentLinksAbsentFromPayload({
+    session: { xero, tenantId },
+    document: { kind: "INVOICE", id: invoice.invoiceID },
+    payments: invoicePaymentsForAbsence(invoice),
+    localScope: relatedLinks,
+  });
 
   const linkedPaymentIds = relatedLinks
     .filter((link) => link.localModel === "Payment" && link.role === "PRIMARY_INVOICE")
@@ -279,6 +291,7 @@ export async function reconcileXeroInvoice(
     internetBankingPaymentSync,
     groupSettlementSync,
     paymentLinksUpdated: paymentLinks.length,
+    deletedPaymentLinks,
     updatedPayments,
     refreshedSubscriptions: refreshedSubscriptions.size,
     relatedLinksUpdated: relatedLinks.length,

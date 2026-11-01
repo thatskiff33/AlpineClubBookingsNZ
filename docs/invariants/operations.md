@@ -505,16 +505,15 @@ rules first written here. #2765 extended it with the measured-audience half.
   the #2751 backfill's literal action list and the writers pinned in
   `REVIEWED_ADMIN_CATEGORIES_2730` stop naming the same events in either
   direction, so adding a 23rd bed-allocation writer without covering its rows
-  fails CI by name. **The remedy for that failure is a NEW backfill migration, or
-  a filed issue — not an edit to the #2751 one**, because
-  `docs/BLUE_GREEN_MIGRATION_POLICY.md` binds committed migrations never to be
-  edited retroactively: Prisma records a checksum per applied migration, so
-  editing one breaks `prisma migrate deploy` on every fork that already ran it.
-  Extending the existing literal list is correct only while that migration is
-  still unreleased and unapplied anywhere. A GENERAL "did a reclassification ship
-  without a
-  backfill" check is **not available**, and pretending otherwise would be worse
-  than having none: the audit-writer census pins only 128 of its 516 write sites
+  fails CI by name. **The remedy is a NEW backfill migration or a filed issue,
+  not an edit to #2751**: [migration policy](../BLUE_GREEN_MIGRATION_POLICY.md)
+  forbids editing committed migrations once applied. Measured on Prisma 7.10.1,
+  `prisma migrate deploy` ignores checksum mismatches; `prisma migrate dev`
+  demands a destructive reset on every development database that applied it.
+  Editing also breaks the audit trail: the file no longer records what ran.
+  Extend the literal list only while unreleased and unapplied anywhere.
+  A GENERAL "did a reclassification ship without a backfill" check is
+  **not available**: the audit-writer census pins only 130 of its 528 write sites
   per-site — the union of `APPLIED_AUDIT_CATEGORIES`,
   `REVIEWED_ADMIN_CATEGORIES_2730`, `MEMBER_RECORD_ADMIN_CATEGORIES_2755` and
   `LODGE_GATED_ADMIN_CATEGORIES_2765`, counted rather than added up, and asserted
@@ -718,3 +717,28 @@ behaviourally.
   docblock — chiefly that stubbing the seam's own collaborators (a ledger read
   answering `[]`) leaves the seam "real" and inert, which is why the witness
   suite exists.
+
+## INV-OPS-016
+
+Every immutable member-money relation in `MEMBER_MONEY_RELATIONS` gives the
+application role INSERT and SELECT only. It holds no ownership, mutation,
+TRUNCATE, TRIGGER or REFERENCES privilege on those tables, including through
+PUBLIC, role membership, a writable view or a SECURITY DEFINER escape. The
+migration role owns the objects; audit retention gains no money-table rights.
+Row mutation and statement-level TRUNCATE triggers additionally refuse accidental
+operator changes. Deliberate operator repairs remain a separate controlled task.
+
+Default privileges give a new table broader rights, so the migration that
+creates the journal narrows its own tables for every non-owner grantee, naming
+no role; re-running `db:provision-roles --apply` is the repair if anything
+widens them. Merging a migration is not evidence of restricted effective grants:
+the blue/green deploy check refuses an append-only table the application could
+change beyond INSERT. `member-money:verify` checks batch integrity, mandatory
+event links, the exact definitions of the enforcement functions (with their
+settings), constraints, triggers and unique indexes (each validated, enabled or
+valid), no unpinned or disabled trigger, and effective application table
+privileges in a read-only snapshot. For a superuser or owner role the per-role
+grant check is not applicable; the check that no grantee but the owner, PUBLIC
+included, holds a right that changes a row always runs. It does not prove
+historical parity, writer-cohort coverage or accounting policy; those activate
+in later milestones.

@@ -368,7 +368,12 @@ let markerFinishedAt: Date | null = null;
       expect(asked).toEqual([
         {
           idempotencyKey: `${failedLaterKey("re_race_4104_first")}_${TXN_ID}_${REFUND_CENTS}`,
-          metadata: { bookingId: BOOKING_ID, reason: "card_refund_failed_later" },
+          // #4510 (INV-PAY-147): the keyed slice's own key, as its evidence.
+          metadata: {
+            bookingId: BOOKING_ID,
+            reason: "card_refund_failed_later",
+            refundSliceKey: `${failedLaterKey("re_race_4104_first")}_${TXN_ID}_${REFUND_CENTS}`,
+          },
         },
       ]);
       expect((await prisma.paymentRecoveryOperation.findUniqueOrThrow({ where: { id: row.id } })).status).toBe("SUCCEEDED");

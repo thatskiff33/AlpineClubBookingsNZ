@@ -7,12 +7,8 @@ import { parseJsonRequestBody } from "@/lib/api-json";
 import { requireAdmin } from "@/lib/session-guards";
 import { isFullAdmin } from "@/lib/access-roles";
 import { createAuditLog } from "@/lib/audit";
-import {
-  loadServerNzSettings,
-  updateServerNzSettings,
-  validateCentralServerBaseUrl,
-} from "@/lib/servernz-settings";
-import { clearServerNzApiKey } from "@/lib/servernz-config";
+import { validateCentralServerBaseUrl } from "@/lib/servernz-settings";
+import { saveServerNzConnectionSettings } from "@/lib/servernz-config";
 
 // POST /api/admin/alpine-server/settings — save the NON-secret ServerNZ
 // connection settings (base URL and per-shared-item enable flags). The API key
@@ -81,27 +77,14 @@ export async function POST(request: Request) {
     parsed.data.baseUrl = check.value;
   }
 
-  const before = await loadServerNzSettings();
-  const settings = await updateServerNzSettings({
-    baseUrl: parsed.data.baseUrl,
-    otherLodgesEnabled: parsed.data.otherLodgesEnabled,
-    updatedByMemberId: guard.session.user.id,
-  });
-
-  // Moving the destination invalidates the key held for the old one. The key was
-  // issued by a specific central server and means nothing to a different one, so
-  // this costs an admin nothing they would not have had to do anyway — and it is
-  // what makes the Full-Admin gate above robust rather than merely correct: even
-  // if a future edit widens that gate again, a redirected sync has no credential
-  // left to leak.
-  let apiKeyCleared = false;
-  if (changingBaseUrl && before.baseUrl !== settings.baseUrl) {
-    await clearServerNzApiKey({
-      kind: "admin",
-      memberId: guard.session.user.id,
-    });
-    apiKeyCleared = true;
-  }
+  // One fenced transaction: a moved address takes the old key with it (#4436).
+  const { settings, apiKeyCleared } = await saveServerNzConnectionSettings(
+    {
+      baseUrl: parsed.data.baseUrl,
+      otherLodgesEnabled: parsed.data.otherLodgesEnabled,
+    },
+    { kind: "admin", memberId: guard.session.user.id },
+  );
 
   await createAuditLog({
     action: "alpine_server.settings.update",

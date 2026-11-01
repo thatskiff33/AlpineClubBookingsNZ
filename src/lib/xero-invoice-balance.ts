@@ -2,6 +2,7 @@ import "server-only";
 
 import { getAuthenticatedXeroClient, callXeroApi } from "@/lib/xero-api-client";
 import { providerAmountToCents } from "@/lib/money-provider-amount";
+import { getXeroErrorStatusCode } from "@/lib/xero-error-shape";
 
 /**
  * WHAT XERO SAYS A BOOKING'S INVOICE STILL OWES (#4253, `INV-ADDPAY-045`).
@@ -36,7 +37,7 @@ export const readXeroInvoiceBalance: XeroInvoiceBalanceReader = async (invoiceId
     context: `readXeroInvoiceBalance(${invoiceId})`,
   });
   const invoice = response.body.invoices?.[0];
-  if (!invoice?.invoiceID) throw new Error(`Xero invoice ${invoiceId} was not found`);
+  if (!invoice?.invoiceID) throw new XeroInvoiceNotFoundError(`Xero invoice ${invoiceId} was not found`);
   return {
     invoiceId: invoice.invoiceID,
     status: String(invoice.status ?? "").toUpperCase(),
@@ -44,6 +45,21 @@ export const readXeroInvoiceBalance: XeroInvoiceBalanceReader = async (invoiceId
     invoiceNumber: invoice.invoiceNumber ?? null,
   };
 };
+
+/** Xero answered, and the answer had no such invoice. */
+export class XeroInvoiceNotFoundError extends Error {
+  override name = "XeroInvoiceNotFoundError";
+}
+
+/**
+ * A DEFINITE "no such invoice" from a read above: Xero answered 404 (the classification
+ * `xero-group-settlement-invoice-voids.ts` uses on the same call), or answered without the invoice.
+ * Anything else - Xero disconnected, rate-limited, timing out, a 5xx - is not an answer, and a
+ * caller treats it as transient.
+ */
+export function isXeroInvoiceNotFound(error: unknown): boolean {
+  return error instanceof XeroInvoiceNotFoundError || getXeroErrorStatusCode(error) === 404;
+}
 
 /** An invoice that is open for payment: authorised, with a known positive balance. */
 export function openBalanceCents(balance: XeroInvoiceBalance): number | null {

@@ -94,6 +94,16 @@ describe("BookingAdditionalPaymentPanel", () => {
     expect(html).toContain("Not yet");
   });
 
+  it("says why the request exists: a change, credit used elsewhere, or both (#4253)", async () => {
+    expect(await render()).toContain("A change to this booking increased the total by <strong>$210.00</strong>, and that amount has not been collected.");
+    const release = await render({ askCause: "credit-release" });
+    expect(release).toContain("used elsewhere in the club&#x27;s accounts, so <strong>$210.00</strong> is owed and has not been collected.");
+    expect(release).not.toContain("increased the total");
+    const mixed = await render({ askCause: "mixed" });
+    expect(mixed).toContain("A change to this booking increased the total, and account credit");
+    expect(mixed).toContain("together <strong>$210.00</strong> is owed");
+  });
+
   it("says plainly when the last charge attempt failed", async () => {
     const html = await render({
       payment: payment({ additionalPaymentStatus: "FAILED" }),

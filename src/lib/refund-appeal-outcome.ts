@@ -37,7 +37,7 @@ import { PaymentRecoveryOperationStatus, type PrismaClient } from "@prisma/clien
 
 import { netCollectedCardRefundSelect } from "@/lib/additional-ledger-gap";
 import {
-  CARD_REFUND_PAID_ANOTHER_WAY_TASK_WHERE,
+  cardRefundPaidAnotherWayClosesWhere,
   closeKeysOf,
   paidAnotherWayUnpaidCents,
   refundRequestHandBackOccurrenceKey,
@@ -182,7 +182,7 @@ export async function readApprovedAppealOutcomes(
   // #4120: a part close is final - what it did not pay back went nowhere, as a dismissed hand-back.
   const closes = closedRows.size
     ? await db.manualRefundTask.findMany({
-        where: { ...CARD_REFUND_PAID_ANOTHER_WAY_TASK_WHERE, occurrenceKey: { in: [...closedRows.keys()].flatMap(closeKeysOf) } },
+        where: cardRefundPaidAnotherWayClosesWhere(closedRows.keys()),
         select: { occurrenceKey: true, amountCents: true, raisedAmountCents: true },
       })
     : [];

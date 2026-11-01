@@ -6,8 +6,8 @@ This is the first half of Goal 1's first move ([GOALS.md](../GOALS.md#first-move
 a list of business areas, with raw counts of "bugs that came back" per area.
 **Nothing here is ranked.** The 15-area list is confirmed by the owner
 ([recorded on #4024](https://github.com/thatskiff33/AlpineClubBookingsNZ/pull/4024#issuecomment-6113045008),
-11 Oct 2026); the ranking, with each area's evidence pairs, follows in a
-separate task (ALP-7).
+11 Oct 2026); the ranking, with each area's evidence pairs, is
+[FRAGILITY_RANKING_2026-10.md](FRAGILITY_RANKING_2026-10.md).
 
 ## Owner decisions
 
@@ -21,13 +21,10 @@ there.
    example the lodge kiosk using the tablet's clock) currently fall into
    whichever area the code sits in. Left spread: confirming the 15 areas
    as is means no 16th area.
-
-## Open — not a gate for this PR; decided in ALP-7
-
-- **Lookback.** Counts cover the full history; the "since 8 Aug" column
-  counts only pairs whose later fix landed after the 8 Aug audit
-  (epics #2680, #2725). Still open: rank on full history, the post-audit
-  window, or both side by side. ALP-7 settles this before it ranks.
+3. **Lookback.** Counts cover the full history; the "since 8 Aug" column
+   counts only pairs whose later fix landed after the 8 Aug audit
+   (epics #2680, #2725). Answered in ALP-7's brief: rank on full history,
+   with the since-8-Aug count beside each area.
 
 ## The 15 areas
 

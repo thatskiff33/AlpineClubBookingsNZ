@@ -130,6 +130,7 @@ import {
 } from "@/lib/payment-link-split-guest";
 
 import { divergentClubZone } from "./helpers/club-time-zone";
+import { balancedBrackets } from "./support/balanced-brackets";
 import { blankLiterals } from "./support/strip-comments";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
@@ -462,22 +463,7 @@ function transactionCallbackSpans(
     at = masked.indexOf(NEEDLE, at + 1)
   ) {
     const open = at + NEEDLE.length - 1;
-    let depth = 0;
-    let end = -1;
-
-    for (let i = open; i < masked.length; i++) {
-      const c = masked[i];
-      if (c === "(") depth += 1;
-      else if (c === ")") {
-        depth -= 1;
-        if (depth === 0) {
-          end = i;
-          break;
-        }
-      }
-    }
-
-    if (end === -1) continue;
+    const { end } = balancedBrackets(masked, open, masked);
     spans.push({
       line: masked.slice(0, at).split("\n").length,
       body: masked.slice(open + 1, end),

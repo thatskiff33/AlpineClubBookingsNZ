@@ -20,6 +20,16 @@ export const SWEEP_FILE_LIMIT = 50;
 /** A code-history pair needs at least this many blamed lines; smaller overlaps were incidental in the spot-checks. */
 export const MIN_PAIR_LINES = 5;
 
+/**
+ * A second fix for one issue landing sooner than this after the first is one
+ * delivery split over several PRs, not a re-break (ALP-4's spot-check: 19 of
+ * 23 refixes landed within a day).
+ */
+export const MIN_REFIX_GAP_DAYS = 3;
+
+/** Repeat wording that on its own was nearly always incidental in ALP-4's spot-check ("still" — 61 of 105 mentions). */
+export const INCIDENTAL_WORDING = /^still$/i;
+
 /** Conventional-commit types whose commits never count as the earlier fix of a repeat. */
 const NON_FIX_TYPES = /^(refactor|chore|style|docs)\b/i;
 

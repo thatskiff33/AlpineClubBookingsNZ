@@ -801,10 +801,14 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
 
     // #2765's fifteen, plus #2749's three other-lodges sites classified under
     // the same rule on arrival (INV-PRIV-013), plus #2942's member-roster
+    // name-detail writer, classified the same way for the same reason; minus
+    // the two other-lodges writers #52 removed with their handlers; plus #62's
+    // Central lodge link writer, classified the same way; plus #58's Other
+    // lodges removal, beside the registry's update.
     // name-detail writer, classified the same way for the same reason, plus
     // #3819's school hut-leader kinds writer, likewise; minus the two
     // other-lodges writers #52 removed with their handlers.
-    expect(Object.keys(LODGE_GATED_ADMIN_CATEGORIES_2765)).toHaveLength(18);
+    expect(Object.keys(LODGE_GATED_ADMIN_CATEGORIES_2765)).toHaveLength(20); // 18/19 -> 20 (central-server lane, 20 Oct 2026): #62 and #58 join #3819's. RE-MEASURED.
     expect([
       ...new Set(Object.values(LODGE_GATED_ADMIN_CATEGORIES_2765)),
     ]).toEqual(["admin"]);
@@ -1003,8 +1007,10 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
     ]);
     // Eight files from #2765's fifteen sites, plus #2749's other-lodges item
     // route file (its list route lost its only writer in #52), plus #2942's
+    // roster-settings route file, plus #62's central-lodge route file and #58's
+    // other-lodges hide route file.
     // roster-settings route file, plus #3819's school hut-leaders route file.
-    expect(files.filter((file) => gateOf(file) === "lodge")).toHaveLength(11);
+    expect(files.filter((file) => gateOf(file) === "lodge")).toHaveLength(13); // 11/12 -> 13 (central-server lane, 20 Oct 2026): the central-lodge and other-lodges hide route files join #3819's. RE-MEASURED.
     expect(files.filter((file) => gateOf(file) === "other")).toEqual([]);
 
     /*
@@ -1424,6 +1430,15 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
     // LODGE_GATED_ADMIN_CATEGORIES_2765. RE-MEASURED with `pnpm run audit:census`.
     // 128 -> 126 pinned (#52, other-lodges central-server sync): the
     // other-lodges CREATE and DELETE writers leave the keep with their
+    // handlers; the unpinned population does not move. RE-MEASURED.
+    // 126 -> 127 pinned (#62): the Central lodge link writer joins the
+    // lodge-gated keep; the unpinned population does not move. RE-MEASURED.
+    // 127 -> 128 pinned (#58): the Other lodges removal joins the keep; the
+    // unpinned population does not move. RE-MEASURED.
+    // 371 -> 372 unpinned (#58): the download's hidden-lodges record, a library
+    // writer outside every keep. RE-MEASURED.
+    // 372 -> 373 unpinned (#77): the Fees-page refill of this club's own Other
+    // lodge, a library writer outside every keep. RE-MEASURED.
     // handlers; the unpinned population does not move. 371 -> 372 unpinned
     // (#3750): the executed change-request approval, unpinned `booking`.
     // RE-MEASURED with `pnpm run audit:census`.
@@ -1453,7 +1468,18 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
     // 380 -> 381 unpinned (#4338): its close of a concurrent attempt's failed row, unpinned `xero`.
     // 381 -> 386 unpinned (#4253): the released-credit request's five rows, all unpinned.
     // 386 -> 388 unpinned (#4270): the credit-note mirror's two `xero` rows, unpinned.
-    ).toEqual({ pinned: 128, unpinned: 388 });
+    // 388 -> 389 unpinned (#4253 release 2): the backlog run's batch row, unpinned.
+    // 389 -> 390 unpinned (#4253 release 2 fix round): the left-to-officers note, unpinned.
+    // 128/390 -> 130/392: the central-server lane (#4262) merged, its two
+    // pinned and two unpinned sites. RE-MEASURED with `pnpm run audit:census`
+    // on the merged tree (main b7466a631, 27 Oct 2026), never added.
+    // 392 -> 393 unpinned (#4359): the card-refund re-send hold, unpinned `payment`.
+    // RE-MEASURED with `pnpm run audit:census`.
+    // 393 -> 396 unpinned (#4432): the two sync-now rows and the webhook threshold, unpinned `xero`.
+    // RE-MEASURED with `pnpm run audit:census`.
+    // 396 -> 398 unpinned (#4457): the retention settings and member-anonymisation rows.
+    // RE-MEASURED with `pnpm run audit:census`.
+    ).toEqual({ pinned: 130, unpinned: 398 });
   });
 
   it("pins which classified writers a MEMBER can now see about themselves", () => {

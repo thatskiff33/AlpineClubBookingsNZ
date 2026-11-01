@@ -10,6 +10,7 @@ import {
   ClipboardList,
   Gauge,
   KeyRound,
+  Link2,
   Lock,
   Monitor,
   Users,
@@ -26,6 +27,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { BackLink } from "@/components/admin/back-link";
+import { LodgeSettingsLinkCard } from "./_components/lodge-settings-link-card";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import {
   LodgeCapacityGuidance,
@@ -589,26 +591,23 @@ export default function LodgeConfigurationHubPage() {
       {/* Member roster (#2942). NOT gated on the memberLodgeRoster module,
           which is why it is not in the `areas` list above: the disclosure level
           has to be settable BEFORE the roster is switched on. */}
-      <Card>
-        <CardHeader className="pb-2">
-          <CardTitle className="flex items-center gap-2 text-base">
-            <Users className="h-4 w-4" />
-            Member roster
-          </CardTitle>
-          <CardDescription>
-            {modules.memberLodgeRoster === true
-              ? "The member roster is on. Choose how much of a name other members see for this lodge."
-              : "The member roster is off. You can still choose how much of a name it would show for this lodge before you turn it on."}
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="flex items-center justify-end">
-          <Button asChild variant="outline" size="sm">
-            <Link href={`/admin/lodges/${encodeURIComponent(lodgeId)}/roster`}>
-              Configure
-            </Link>
-          </Button>
-        </CardContent>
-      </Card>
+      <LodgeSettingsLinkCard
+        icon={Users}
+        title="Member roster"
+        description={
+          modules.memberLodgeRoster === true
+            ? "The member roster is on. Choose how much of a name other members see for this lodge."
+            : "The member roster is off. You can still choose how much of a name it would show for this lodge before you turn it on."
+        }
+        href={`/admin/lodges/${encodeURIComponent(lodgeId)}/roster`}
+      />
+
+      <LodgeSettingsLinkCard
+        icon={Link2}
+        title="Central lodge"
+        description="Link this lodge to its entry on the Alpine Central Server, so the central lodge search can show non-members its free beds. Until a link is saved the search shows its free beds as unknown, even for a club with one lodge."
+        href={`/admin/lodges/${encodeURIComponent(lodgeId)}/central-lodge`}
+      />
 
       <div className="grid gap-4 md:grid-cols-2">
         {areas.map((area) => {

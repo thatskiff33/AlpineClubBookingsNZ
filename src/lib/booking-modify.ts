@@ -20,6 +20,7 @@ export {
   resolveTargetDates,
   type BatchModifyInput,
   type BookingModificationSettlementMethod,
+  type LoadedBookingForLifecycle,
   type LoadedBookingForModify,
   type LoadedPromoRedemption,
   type ResolvedTargetDates,

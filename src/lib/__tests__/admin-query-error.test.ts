@@ -72,6 +72,30 @@ describe("readAdminQueryErrorMessage", () => {
     expect(AMOUNT_FILTER_RANGE_MESSAGE).not.toBe(AMOUNT_FILTER_GRAMMAR_MESSAGE);
   });
 
+  // #4467 (review F4): this reader is now `readValidationDetails`, the one
+  // reader of a refusal's `details`. Same answer for the full flatten() and
+  // formErrors-only shapes as the hand-rolled reader it replaced; the member
+  // routes' bare fieldErrors shape is now read too, rather than falling back.
+  it.each([
+    [
+      "the full flatten() shape: the first field message wins",
+      { details: { formErrors: ["Form-level"], fieldErrors: { a: ["  ", "First"], b: ["Second"] } } },
+      "First",
+    ],
+    ["a formErrors-only shape", { details: { formErrors: ["  ", "Only form-level"] } }, "Only form-level"],
+    ["a full shape with empty fieldErrors", { details: { formErrors: ["Form-level"], fieldErrors: {} } }, "Form-level"],
+    ["the bare fieldErrors shape", { details: { amountMin: ["Too small"] } }, "Too small"],
+    ["details that are not zod's", { details: { code: 7 } }, FALLBACK],
+    ["a list of refused rows", { details: ["Row 2 refused"] }, FALLBACK],
+  ])("reads %s through the shared reader", async (_label, body, expected) => {
+    await expect(
+      readAdminQueryErrorMessage(
+        new Response(JSON.stringify(body), { status: 400 }),
+        FALLBACK,
+      ),
+    ).resolves.toBe(expected);
+  });
+
   it.each([
     ["a body that is not JSON", new Response("<html>500</html>", { status: 500 })],
     ["a body with no details", new Response(JSON.stringify({ error: "Forbidden" }), { status: 403 })],

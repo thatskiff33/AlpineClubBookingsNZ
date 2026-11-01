@@ -106,6 +106,8 @@ admin surface showed one. These rules now hold:
   check-in. The pre-arrival reminder also names the amount when one is owing.
   Nothing is ever auto-cancelled or auto-expired, and the chase stops the
   moment `checkOut <= today` - a finished stay belongs to the queue above [INV-LOCKOUT-043].
+  The one exception is a request for credit used elsewhere in the club's
+  accounts, which has its own repeating chase [INV-ADDPAY-048].
 
 ### INV-ADDPAY-025
 
@@ -1737,22 +1739,22 @@ _Legacy: settles tasks raised before #4317._
   (`INV-PAY-098`). Nothing owed closes the row with an audit.
 - **No second invoice.** The amount already stands on the booking's invoice, so
   the row is written `hadIssuedXeroInvoice: false`.
-- **It waits behind an unpaid edit request** (its supplementary invoice could not
-  be paid by this one; release 2 merges them) and retries.
+- **It waits behind an unpaid edit request**, never going terminal
+  [INV-ADDPAY-051]; carrying that edit into this request is #4491. An edit
+  made after the release merges the two [INV-ADDPAY-048].
 - **It closes, never guesses.** Cancelled, bumped, uncaptured and
   organiser-settled bookings close without an ask; an invoice not yet open in
   Xero throws and retries. A booking that ended is asked nothing
   (`INV-ADDPAY-044`).
-- **Its own words.** The first email goes out at the next reminder pass instead
-  of after the usual wait (`INV-ADDPAY-024`), worded as credit used elsewhere,
+- **Its own words and cadence** [INV-ADDPAY-048]: emailed at the next reminder
+  pass, worded as credit used elsewhere (or both, once merged with an edit),
   never as a change to the stay. A reduction never nets against this request.
-  A chain mixing an edit and a release is worded by its newest request (release 2).
 - **Blue/green.** Enqueueing is off until an operator sets the
   `CREDIT_RELEASE_ASK`/`WRITER` `XeroSyncCursor` row's `enabled` to `true`, after
   the previous colour has drained; the runner, recorder and closer are always on.
-  Only releases created after that moment are asked (the backlog is a later
-  run), and once enabled the previous colour must not be rolled back to.
-  Home: `credit-release-ask-sweep.ts`.
+  The writer asks only for releases created after that moment; earlier ones
+  are the backlog [INV-ADDPAY-050]. Once enabled the previous colour must not
+  be rolled back to. Home: `credit-release-ask-sweep.ts`.
 
 ### INV-ADDPAY-046
 
@@ -1769,7 +1771,8 @@ _Legacy: settles tasks raised before #4317._
   chain that cannot be traced records nothing and alerts the officers once a day.
   Retries are at least an hour apart and capped at five.
 - **Xero paying first closes the request.** An unpaid request that carries
-  nothing is closed when Xero shows its invoice paid: the card payment is
+  nothing, or carried only earlier credit-release requests [INV-ADDPAY-049], is
+  closed when Xero shows its invoice paid: the card payment is
   cancelled first (a succeeded or processing one is left), then one transaction
   under the global key fences the row and writes the money as bank cash.
 - **No new advisory key.** Home: `credit-release-xero-payment.ts`,
@@ -1807,3 +1810,95 @@ _Legacy: settles tasks raised before #4317._
 - **No lock.** Enqueued outside transactions; no new advisory key.
   Pinned by `xero-bt-card-refund-notes` (realdb), `card-refund-resend-answer`,
   `card-refund-own-note-share` and `xero-bt-recount-handbacks`.
+
+### INV-ADDPAY-048
+
+- **A request for credit used elsewhere is emailed at once, then reminded every
+  7 days, four reminders after it** (owner decision D3): days 7, 14, 21 and 28
+  (`CREDIT_RELEASE_REMINDER_INTERVAL_DAYS`, `CREDIT_RELEASE_REMINDER_COUNT`
+  counts reminders, never the request), so five emails at most.
+  The rule reads only the one reminder stamp: a reminder is due when none has
+  gone out since the request was raised, or the last is older than the start of
+  the week the request is in and at least half a week old, so a paused cron
+  sends one catch-up, never two back to back, and a manual re-send counts as
+  that week's. The guarded claim uses the same boundary
+  (`creditReleaseStampBoundary`). After the last the officers' own queues are
+  the only chaser, and it does not stop at check-out; requests older than
+  `CREDIT_RELEASE_CHASE_HORIZON_DAYS` are left to those queues once the stay
+  has ended.
+- **Why it is raised is read, never guessed.** `additionalAskCause` reads the
+  newest ADDITIONAL ledger rows (the newest row plus each older row it carried):
+  `edit`, `credit-release`, or `mixed`. The booking timeline, the officer panel,
+  the member card's fallback line, the pre-arrival note and the request email
+  (with a customised body's `{{askCauseSentence}}`) take their sentence from
+  `additional-ask-cause.ts`, and none says a change
+  raised the total where the request is only the released credit.
+- **An edit on an unpaid release merges into ONE request** for the member
+  (carried, `INV-PAY-098`), worded as both, on the edit chase until check-out
+  and on this weekly chase after it (its released credit is still owed). One card payment
+  is recorded against both invoices: the release's own money on the booking's
+  invoice by the sweep [INV-ADDPAY-046], the edit's own on its supplementary
+  invoice.
+- Home: `additional-payment-chase.ts`, `additional-ask-cause.ts`.
+
+### INV-ADDPAY-049
+
+- **The request email can offer a bank transfer as well as card.** The club
+  writes its account details in the `paymentRequest.bankTransfer.instructions`
+  booking message (the app stores no account details); the email adds them with
+  the booking's Xero invoice number as the payment reference. It is offered only
+  where a transfer of that invoice pays exactly what is asked: a request made
+  only of released credit, carried or not (`isPureCreditReleaseChain`), whose
+  amount equals the invoice's open balance when the email is built. Otherwise,
+  with no details, or on a request an edit was merged into, the email stays
+  card-only. The offer is resolved before the reminder's stamp is claimed
+  [INV-ADDPAY-051].
+- **Paid by transfer closes the request.** Xero matching the transfer to the
+  invoice shows it paid, and the closer ends the request, one that carried only
+  earlier released credit included [INV-ADDPAY-046]. A transfer that leaves the
+  invoice part-paid, or that Xero cannot match, closes and resizes nothing: the
+  reminders stop and the request stays with the officers [INV-ADDPAY-051].
+- Home: `credit-release-bank-transfer.ts`, `credit-release-reminder-gate.ts`.
+
+### INV-ADDPAY-050
+
+- **The backlog is a second switch, run in small audited batches.** Releases
+  written before the writer switch was turned on are asked for only while the
+  `CREDIT_RELEASE_ASK`/`BACKLOG` `XeroSyncCursor` row has `enabled` true and the
+  writer is on too (`enabled`, optional `perRun`, default 5, never over 25).
+  Each pass takes the oldest not yet looked at and writes one audit row naming
+  the batch; no row, or anything but `true`, stops it between batches.
+- **Each release is re-checked live before anyone is asked.** The runner
+  re-reads the ledger and what Xero shows due on the booking's invoice, and
+  closes with an audit where nothing is still owed, so a release already settled
+  in Xero by hand is never asked for. A release is looked at once (its recovery
+  row, inserted once), so repeating or resuming is harmless, and a pass counts
+  and names only the rows it inserted: two overlapping payment cycles never
+  write two batch rows for one release.
+- **An operator runs it.** Set bank details first [INV-ADDPAY-049], then turn it on
+  once the previous colour has drained. Home: `credit-release-ask-sweep.ts`.
+
+### INV-ADDPAY-051
+
+- **A released-credit request the app cannot safely chase fails closed to the
+  officers** (owner decision D6). Before a reminder's stamp is claimed - by the
+  cron and by an officer's re-send - `resolveCreditReleaseReminderGate` reads the
+  booking's invoice with the sizing's own reader, outside every transaction, for
+  any request that includes released credit. Xero showing less open than that
+  credit (a part transfer), the invoice not open (paid, voided, unapproved), or
+  a request it cannot match (no invoice, a definite 404, no amount due) withholds
+  the automatic reminder; the re-send is refused with that reason's own words.
+  Nothing is closed or resized on a part payment. Only a read with no answer
+  (Xero down, a 5xx) claims nothing and leaves the reminder due.
+- **A release behind an unpaid edit request waits as long as that takes.** Its
+  recovery row goes back to the longest retry interval with the claim's attempt
+  handed back (`waitPaymentRecoveryOperation`), decided before any Xero read, so
+  even an unreachable Xero never runs it out of attempts; it is asked for once
+  the edit is paid or withdrawn.
+- **Everything the email needs is resolved before the claim**, so no failure
+  between the stamp and the mailer can lose a reminder with no EmailLog row.
+- **The officers are told once.** The request (or the edit it waits on) stays on
+  the queues that already show unpaid money; one
+  `payment.credit_release_ask.left_to_officers` audit row on the booking, written
+  once per key, says why the app stopped (`release-ask-officer-signal.ts`).
+- Home: `credit-release-reminder-gate.ts`, `credit-release-ask.ts`.

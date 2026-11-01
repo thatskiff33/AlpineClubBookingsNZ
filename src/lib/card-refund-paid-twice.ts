@@ -9,7 +9,7 @@ import { formatBookingReference } from "@/lib/booking-reference";
 import { normaliseManualPaymentNote } from "@/lib/manual-subscription-payment";
 import {
   CARD_REFUND_PAID_ANOTHER_WAY_TASK_WHERE,
-  closeKeysOf,
+  cardRefundPaidAnotherWayClosesWhere,
   paymentRecoveryOperationIdOfPaidAnotherWay,
 } from "@/lib/manual-refund-task-settlement-rules";
 import { cardRefundSentAfterPaidAnotherWay } from "@/lib/open-card-refund-owed";
@@ -195,10 +195,7 @@ export async function resolveCardRefundPaidTwice(
     throw new CardRefundPaidTwiceError("Say how it was sorted out with the member - a note is required.", 400);
   }
   const record = await prisma.manualRefundTask.findFirst({
-    where: {
-      ...CARD_REFUND_PAID_ANOTHER_WAY_TASK_WHERE,
-      occurrenceKey: { in: closeKeysOf(input.operationId) },
-    },
+    where: cardRefundPaidAnotherWayClosesWhere([input.operationId]),
     select: { ...RECORD_SELECT, booking: { select: { memberId: true } } },
   });
   if (!record) throw new CardRefundPaidTwiceError("Card refund not found.", 404);

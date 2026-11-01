@@ -124,6 +124,9 @@ File: [`invariants/money.md`](invariants/money.md). Prefix `INV-MONEY`.
 | `INV-MONEY-020` | Look-through on: subscription-invoice selection strong-first, settled, earliest; off keeps first-match |
 | `INV-MONEY-021` | Xero invoice identity persists before email; adoption needs exact AUTHORISED match |
 | `INV-MONEY-022` | At most one joining-fee invoice per member; conflicts surface, never adopted |
+| `INV-MONEY-041` | Member journals commit complete balanced batches with exact reversals |
+| `INV-MONEY-042` | Sealed journals reject later legs; accounts and source identities persist |
+| `INV-MONEY-043` | Money lines, credit links and group settlements refuse booking deletion |
 
 ## Booking Dates And Capacity
 
@@ -346,6 +349,14 @@ Prefix `INV-PAY`.
 | `INV-PAY-137` | An IB organiser-paid joiner's refund goes to the organiser, on its mirror |
 | `INV-PAY-139` | A change capture nothing else records is recorded once, against its invoice |
 | `INV-PAY-140` | A superseded card change's waiting invoice follows the carrying request |
+| `INV-PAY-141` | A card refund's reversal keeps Paid another way bank cash |
+| `INV-PAY-142` | A refund failing after a Paid another way close is held |
+| `INV-PAY-143` | An unminted approved whole-lodge booking reprices as unpaid |
+| `INV-PAY-144` | A kept change capture is recorded by the document its evidence names |
+| `INV-PAY-145` | Charge-backed refund recovery checks Stripe and holds unexpected dashboard refunds |
+| `INV-PAY-146` | Edit card refunds freeze allocation before Stripe and preserve replay keys |
+| `INV-PAY-147` | Refund slice evidence prevents replay after Stripe forgets idempotency keys |
+| `INV-PAY-148` | Organiser bank-transfer edit invoices, unpaid-first netting and historical repair |
 | `INV-PAY-031` | Organiser-pays settlement applies only if payment matches the settleable children |
 | `INV-PAY-032` | Group children confirmed before payment have a reaper releasing beds and notifying |
 | `INV-PAY-033` | Reverted group children end terminally: a second reap window cancels once |
@@ -688,7 +699,7 @@ Prefix `INV-ADDPAY`.
 | --- | --- |
 | `INV-ADDPAY-001` | Who is owed an additional payment: booking status and amount together |
 | `INV-ADDPAY-023` | A retired obligation is uncollectable; a superseded intent is cancelled at mint |
-| `INV-ADDPAY-024` | At most two reminders per obligation, and the chase stops at check-out |
+| `INV-ADDPAY-024` | Two reminders per edit obligation; the chase stops at check-out |
 | `INV-ADDPAY-025` | Nothing before the cron cutover is chased; read failures send nothing |
 | `INV-ADDPAY-026` | Guarded stamps claim before each send, fenced to the current episode |
 | `INV-ADDPAY-027` | One clock: manual and automatic sends share stamps and cooldown |
@@ -733,6 +744,10 @@ Prefix `INV-ADDPAY`.
 | `INV-ADDPAY-045` | Credit released after a Xero offset is asked for once, by card |
 | `INV-ADDPAY-046` | A released-credit card payment is recorded on the booking's own invoice |
 | `INV-ADDPAY-047` | A bank-transfer card refund gets its own note, keyed on its refund |
+| `INV-ADDPAY-048` | Released-credit requests: four weekly reminders, worded by cause |
+| `INV-ADDPAY-049` | Released-credit request emails can offer bank transfer payment |
+| `INV-ADDPAY-050` | Earlier credit releases are asked for in audited, switchable batches |
+| `INV-ADDPAY-051` | An unchaseable released-credit request fails closed to the officers |
 
 ## Analytics And Privacy
 
@@ -914,6 +929,8 @@ File: [`invariants/integrations.md`](invariants/integrations.md). Prefix
 | `INV-INT-027` | Central-server syncing pauses on any API version difference, integer-compared |
 | `INV-INT-028` | A refund note resolved by hand records its Xero note, once |
 | `INV-INT-029` | Xero outcomes never replace better ones nor land on another claim |
+| `INV-INT-030` | Free-beds answer: module and toggle on, signed first, counts only |
+| `INV-INT-031` | A Xero payment link retires only on confirmed DELETED, never absence |
 
 ## Operations
 
@@ -945,6 +962,7 @@ the row-locking rules it is the sibling of.
 | `INV-OPS-003` | Public CI and local validation must use test/demo credentials or placeholders |
 | `INV-OPS-004` | Production data, backups, live providers and webhooks are not test inputs |
 | `INV-OPS-015` | A money seam is never mocked in a test asserting its money |
+| `INV-OPS-016` | Member journal grants and database guards forbid mutation |
 
 ## Product Configuration
 

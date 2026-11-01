@@ -151,7 +151,9 @@ export function OccupancyGrid({
     return (
       <div className="display-occupancy-grid display-blockout-statement">
         <BlockPanel row={wholeLodgeRow} note={note} variant="statement" />
-        <div className="display-week-strip" role="row">
+        {/* A list of days, not a lone `row` (#4466): a row role needs a table
+            around it and cells inside it, and this strip has neither. */}
+        <div className="display-week-strip" role="list">
           {state.occupancy.map((day, index) => {
             const blocked = blockSegments.some(
               (segment) =>
@@ -161,6 +163,7 @@ export function OccupancyGrid({
             return (
               <span
                 key={day.date}
+                role="listitem"
                 className="display-week-day"
                 data-today={index === 0 || undefined}
               >

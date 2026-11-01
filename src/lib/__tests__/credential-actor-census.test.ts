@@ -141,13 +141,16 @@ const CREDENTIAL_WRITE_SITES: Record<string, string> = {
     "setIntegrationCredential (forwarded) actor / (forwarded) writeExpectation",
   // #3454: a Xero client id or secret is written INSIDE the verify-reset's
   // transaction, so the token destruction it causes commits with it; every
-  // other credential takes the ordinary writer.
+  // other credential takes the ordinary writer, except ServerNZ, whose key
+  // goes through `setServerNzApiKey` under the connection fence (#4436).
   "src/app/api/admin/integrations/credentials/route.ts::POST#0":
     "setIntegrationCredentialInTransaction admin / any",
   "src/app/api/admin/integrations/credentials/route.ts::POST#1":
     "setIntegrationCredential admin / any",
-  "src/lib/club-post-mirror.ts::ensurePushRegistration#0":
-    "setIntegrationCredential system / any",
+  // #4470: the push secret is stored inside the answer fence's transaction for
+  // the connection the registration was sent on, so it is the in-transaction form.
+  "src/lib/servernz-push-registration.ts::ensurePushRegistration#0":
+    "setIntegrationCredentialInTransaction system / any",
   "src/lib/google-config.ts::clearGoogleVerified#0":
     "deleteIntegrationCredential (forwarded) actor / any",
   "src/lib/google-config.ts::recordGoogleVerified#0":
@@ -172,9 +175,14 @@ const CREDENTIAL_WRITE_SITES: Record<string, string> = {
   "src/lib/mirotalk-config-write.ts::setMirotalkSecret#0":
     "setIntegrationCredential (forwarded) params.actor / (forwarded) params.expect",
   "src/lib/servernz-config.ts::clearServerNzApiKey#0":
-    "deleteIntegrationCredential (forwarded) actor / any",
-  "src/lib/servernz-config.ts::setServerNzApiKey#0":
-    "setIntegrationCredential (forwarded) actor / any",
+    "deleteIntegrationCredentialInTransaction (forwarded) actor / any",
+  // #4470: the address move and the key replacement remove the old push
+  // secret too, each in its own fenced transaction; `any` for the reason the
+  // mirotalk address move gives above — the intended end state is "gone".
+  "src/lib/servernz-config.ts::clearServerNzPushSecret#0":
+    "deleteIntegrationCredentialInTransaction (forwarded) actor / any",
+  "src/lib/servernz-config.ts::setServerNzApiKey.saved#0":
+    "setIntegrationCredentialInTransaction (forwarded) actor / any",
   "src/lib/stripe-config.ts::clearStripeWebhookVerified#0":
     "deleteIntegrationCredential (forwarded) actor / any",
   "src/lib/stripe-config.ts::recordStripeWebhookVerified#0":
@@ -224,8 +232,10 @@ const ACTOR_FORWARDED_SITES: Record<string, string> = {
   "src/lib/mirotalk-config-write.ts::setMirotalkSecret#0":
     "the actor and the expectation are both this helper's own required parameters, supplied by the admin route that holds the acting member and the version the screen was shown",
   "src/lib/servernz-config.ts::clearServerNzApiKey#0":
-    "the actor is this helper's own required parameter, supplied by its caller",
-  "src/lib/servernz-config.ts::setServerNzApiKey#0":
+    "the actor is this helper's own required parameter, forwarded from saveServerNzConnectionSettings's own required admin actor, which the settings route builds from the acting member (#4436)",
+  "src/lib/servernz-config.ts::clearServerNzPushSecret#0":
+    "the actor is this helper's own required parameter, forwarded from saveServerNzConnectionSettings's own required admin actor (the settings route's acting member) or from setServerNzApiKey's (the credentials route's) (#4470)",
+  "src/lib/servernz-config.ts::setServerNzApiKey.saved#0":
     "the actor is this helper's own required parameter, supplied by its caller",
   "src/lib/stripe-config.ts::clearStripeWebhookVerified#0":
     "the actor is this helper's own required parameter: the admin credential route supplies the officer, and recordStripeWebhookVerified supplies its system actor when taking back a marker that raced a signing-secret swap",

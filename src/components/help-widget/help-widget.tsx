@@ -4,6 +4,7 @@ import {
   useCallback,
   useEffect,
   useId,
+  useLayoutEffect,
   useRef,
   useState,
   type FocusEvent,
@@ -30,8 +31,10 @@ import {
   clampHelpPanelSize,
   DEFAULT_HELP_PANEL_SIZE,
   HELP_PANEL_KEYBOARD_STEP_PX,
+  HELP_PANEL_MIN_WIDTH_PX,
   HELP_PANEL_SIZE_CLASSES,
   HELP_PANEL_SIZE_LABELS,
+  helpPanelMaxWidthPx,
   nextHelpPanelSize,
   readStoredHelpPanelSize,
   storeHelpPanelSize,
@@ -327,6 +330,24 @@ export function HelpWidget({
       ? { width: panelChoice.widthPx, height: panelChoice.heightPx }
       : undefined;
 
+  /**
+   * The width the resize handle reports (#4466). A focusable `separator` is a
+   * value-bearing widget, so ARIA requires `aria-valuenow`; the handle grows the
+   * panel's width (and height) and reports the width, measured from the panel as
+   * rendered so a preset size reports what is on screen. Clamped into the same
+   * min/max a drag is clamped to, so the value never leaves its stated range.
+   */
+  const [measuredPanelWidthPx, setMeasuredPanelWidthPx] = useState(0);
+  useLayoutEffect(() => {
+    const width = panelRef.current?.getBoundingClientRect().width;
+    if (width !== undefined) setMeasuredPanelWidthPx(Math.round(width));
+  }, [open, panelChoice, viewportWidth]);
+  const resizeMaxWidthPx = helpPanelMaxWidthPx(viewportWidth);
+  const resizeValueNow = Math.min(
+    Math.max(measuredPanelWidthPx, HELP_PANEL_MIN_WIDTH_PX),
+    resizeMaxWidthPx,
+  );
+
   const consentBannerVisible = useConsentBannerVisible(surface === "public");
 
   // Route change: reset to the chip (Ask) view, but keep the transcript.
@@ -515,6 +536,10 @@ export function HelpWidget({
             role="separator"
             aria-orientation="vertical"
             aria-label="Resize help panel. Use the arrow keys, or drag."
+            aria-valuemin={HELP_PANEL_MIN_WIDTH_PX}
+            aria-valuemax={resizeMaxWidthPx}
+            aria-valuenow={resizeValueNow}
+            aria-valuetext={`${resizeValueNow} pixels wide`}
             tabIndex={0}
             data-testid="help-widget-resize-handle"
             onPointerDown={handleResizePointerDown}
@@ -591,9 +616,15 @@ export function HelpWidget({
             ))}
           </div>
 
+          {/* Focusable so a keyboard user can scroll it (#4466, WCAG 2.1.1): the
+              Page guide is plain text, and a scroll container with nothing to tab
+              to inside it cannot otherwise be reached without a mouse. It stays a
+              plain container (no landmark role) inside the labelled dialog. */}
           <div
             onFocusCapture={handleBodyFocus}
-            className="flex-1 overflow-y-auto overscroll-contain px-4 py-4"
+            // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- a scroll container with no focusable content is the exception the rule's own docs name (axe scrollable-region-focusable)
+            tabIndex={0}
+            className="flex-1 overflow-y-auto overscroll-contain px-4 py-4 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
           >
             {tab === "diagnostics" && diagnostics ? (
               <DiagnosticsView

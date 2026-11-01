@@ -198,7 +198,8 @@ describe("#3371 - a later share reads the carried figure back off the row", () =
     // A second task of the SAME edit settles for another $40.
     const raised = raiseReviewChargeAsk({
       shareTotalCents: 10000,
-      request: { carriedAskCents: minted.carriedCents },
+      request: { amountCents: minted.amountCents, carriedAskCents: minted.carriedCents },
+      payment: askPayment(26000, "PENDING"),
     });
     expect(raised.amountCents).toBe(30000);
     expect(raised.carriedCents).toBe(20000);
@@ -208,9 +209,9 @@ describe("#3371 - a later share reads the carried figure back off the row", () =
     // The share sum only grows (a settled share is terminal) and the carried
     // part is fixed at the mint, so a stale run can only ever compute a SMALLER
     // figure - never a larger one that would raise a live intent wrongly.
-    const request = { carriedAskCents: 20000 };
-    const stale = raiseReviewChargeAsk({ shareTotalCents: 6000, request });
-    const fresh = raiseReviewChargeAsk({ shareTotalCents: 10000, request });
+    const request = { amountCents: 26000, carriedAskCents: 20000 };
+    const stale = raiseReviewChargeAsk({ shareTotalCents: 6000, request, payment: null });
+    const fresh = raiseReviewChargeAsk({ shareTotalCents: 10000, request, payment: null });
     expect(stale.amountCents).toBeLessThan(fresh.amountCents);
   });
 
@@ -227,7 +228,8 @@ describe("#3371 - a later share reads the carried figure back off the row", () =
     expect(wrong.amountCents).toBe(36000);
     const right = raiseReviewChargeAsk({
       shareTotalCents: 10000,
-      request: { carriedAskCents: 20000 },
+      request: { amountCents: 26000, carriedAskCents: 20000 },
+      payment: afterMint,
     });
     expect(right.amountCents).toBe(30000);
   });

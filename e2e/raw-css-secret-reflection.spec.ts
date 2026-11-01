@@ -1,4 +1,4 @@
-import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
+import { expect, test, type APIRequestContext, type Page } from "./helpers/accessibility";
 
 import { HUT_LEADER_PIN_LENGTH } from "@/lib/hut-leader-pin";
 import { storageStatePath } from "./helpers/auth";

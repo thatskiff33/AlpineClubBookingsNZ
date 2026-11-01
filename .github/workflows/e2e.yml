@@ -56,7 +56,7 @@ jobs:
     timeout-minutes: 40
     steps:
       - name: Check out repository
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           # Two commits: a pull request's merge commit and its base parent,
           # which `e2e-scope.mjs` diffs to decide whether the suite can move.
@@ -72,7 +72,7 @@ jobs:
 
       - name: Set up Docker Buildx
         if: steps.scope.outputs.needed != 'false'
-        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
 
       # A hosted runner's ~14 GB no longer fits this image comfortably
       # (#3424); the script explains what it removes and why nothing it does
@@ -81,11 +81,35 @@ jobs:
         if: steps.scope.outputs.needed != 'false'
         run: bash scripts/ci/reclaim-runner-disk.sh
 
+      # Turbopack's build cache, carried between runs (scripts/ci/next-build-cache.sh).
+      # A code change always re-runs `next build`, and the layer cache below
+      # cannot help with that; this cache can. Saved only on a push (the last
+      # step of this job), so pull requests read main's and never add entries
+      # that would evict the layer cache from the repository's cache quota.
+      # Every cache step may fail without failing the job: the image is correct
+      # without any of them, only slower to build.
+      - name: Restore the Next.js build cache
+        if: steps.scope.outputs.needed != 'false'
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: .artifacts/next-build-cache
+          key: e2e-next-build-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}-${{ github.sha }}
+          restore-keys: |
+            e2e-next-build-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}-
+            e2e-next-build-${{ runner.os }}-
+
+      - name: Seed the Next.js build cache into the builder
+        if: steps.scope.outputs.needed != 'false'
+        continue-on-error: true
+        run: bash scripts/ci/next-build-cache.sh seed .artifacts/next-build-cache
+
       # The same cache scopes the publish job uses, so a run reuses main's
-      # layers instead of rebuilding Next.js from nothing.
+      # layers instead of rebuilding Next.js from nothing. No `cache-to` here:
+      # exporting the layer cache took over two minutes (27 Oct 2026) that every
+      # shard waited for, so it happens after the upload, below.
       - name: Build app image
         if: steps.scope.outputs.needed != 'false'
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
         with:
           context: .
           file: ./Dockerfile
@@ -103,7 +127,6 @@ jobs:
           cache-from: |
             type=gha,scope=alpineclubbookingsnz-app
             type=gha,scope=alpineclubbookingsnz-e2e
-          cache-to: type=gha,mode=max,scope=alpineclubbookingsnz-e2e
 
       # `shell: bash` runs with pipefail, so a failed `docker save` fails here
       # rather than uploading a truncated archive.
@@ -117,7 +140,7 @@ jobs:
 
       - name: Upload the app image
         if: steps.scope.outputs.needed != 'false'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: e2e-app-image-${{ github.run_id }}
           path: .artifacts/e2e-image/app-image.tar.zst
@@ -125,6 +148,35 @@ jobs:
           compression-level: 0
           overwrite: true
           if-no-files-found: error
+
+      # The shards are already running on the uploaded image. This rebuild is
+      # all cache hits on the same builder; it only exports the layer cache.
+      - name: Export the layer cache
+        if: steps.scope.outputs.needed != 'false'
+        continue-on-error: true
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
+        with:
+          context: .
+          file: ./Dockerfile
+          push: false
+          outputs: type=cacheonly
+          build-args: |
+            NEXT_PUBLIC_SENTRY_DSN=
+            RELEASE_ID=${{ github.sha }}
+          cache-to: type=gha,mode=max,scope=alpineclubbookingsnz-e2e
+
+      - name: Export the Next.js build cache
+        if: steps.scope.outputs.needed != 'false' && github.event_name == 'push'
+        continue-on-error: true
+        run: bash scripts/ci/next-build-cache.sh export .artifacts/next-build-cache
+
+      - name: Save the Next.js build cache
+        if: steps.scope.outputs.needed != 'false' && github.event_name == 'push'
+        continue-on-error: true
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .artifacts/next-build-cache
+          key: e2e-next-build-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}-${{ github.sha }}
 
   # Deliberately NO secrets in this job: its dump is an artifact anyone can
   # download from a public repository. Credentials are seeded on each runner,
@@ -136,7 +188,7 @@ jobs:
     timeout-minutes: 30
     steps:
       - name: Check out repository
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           # Two commits: a pull request's merge commit and its base parent,
           # which `e2e-scope.mjs` diffs to decide whether the suite can move.
@@ -178,7 +230,7 @@ jobs:
 
       - name: Upload the seeded database
         if: steps.scope.outputs.needed != 'false'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: e2e-seeded-db-${{ github.run_id }}
           path: .artifacts/e2e-db/
@@ -215,7 +267,7 @@ jobs:
       E2E_SHARD: "1/3"
     steps:
       - name: Check out repository
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           # Two commits: a pull request's merge commit and its base parent,
           # which `e2e-scope.mjs` diffs to decide whether the suite can move.
@@ -283,7 +335,7 @@ jobs:
       E2E_SHARD: ${{ matrix.shard }}/3
     steps:
       - name: Check out repository
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           # Two commits: a pull request's merge commit and its base parent,
           # which `e2e-scope.mjs` diffs to decide whether the suite can move.
@@ -341,7 +393,7 @@ jobs:
       E2E_MULTI_LODGE: "1"
     steps:
       - name: Check out repository
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           # Two commits: a pull request's merge commit and its base parent,
           # which `e2e-scope.mjs` diffs to decide whether the suite can move.

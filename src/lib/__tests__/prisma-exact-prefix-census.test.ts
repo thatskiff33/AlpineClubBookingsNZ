@@ -1,7 +1,8 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { stripComments } from "@/lib/__tests__/support/strip-comments";
+import { expressionAt } from "@/lib/__tests__/support/balanced-brackets";
+import { blankLiterals, stripComments } from "@/lib/__tests__/support/strip-comments";
 
 /**
  * #4146 (`INV-SSOT-006`): every Prisma `startsWith` or `contains` whose operand carries an id
@@ -41,25 +42,8 @@ function sourceFiles(dir: string): string[] {
 }
 
 /** The value expression after a `startsWith:` at `from`, up to its first `,`, `}` or `)` at depth 0. */
-function valueAt(source: string, from: number): string {
-  let depth = 0;
-  let index = from;
-  let quote: string | null = null;
-  for (; index < source.length; index += 1) {
-    const char = source[index];
-    if (quote) {
-      if (char === "\\") index += 1;
-      else if (char === quote) quote = null;
-      continue;
-    }
-    if (char === '"' || char === "'" || char === "`") quote = char;
-    else if (char === "(" || char === "[" || char === "{") depth += 1;
-    else if (char === ")" || char === "]" || char === "}") {
-      if (depth === 0) break;
-      depth -= 1;
-    } else if (char === "," && depth === 0) break;
-  }
-  return source.slice(from, index).replace(/\s+/g, " ").trim();
+function valueAt(source: string, from: number, structure?: string): string {
+  return expressionAt(source, from, structure).text.replace(/\s+/g, " ").trim();
 }
 
 function bareValueAllowed(value: string): boolean {
@@ -70,12 +54,13 @@ function bareValueAllowed(value: string): boolean {
 function inspectSource(source: string): string[] {
   const values: string[] = [];
   const code = stripComments(source);
+  const structure = /startsWith|contains/.test(code) ? blankLiterals(code) : code;
   // Shorthand and computed keys cannot establish a literal operand.
   for (const match of code.matchAll(/(?:\{|,)\s*(?:startsWith|contains)\s*[,}]|\[\s*["'`](?:startsWith|contains)["'`]\s*\]/g)) {
     values.push(match[0].trim());
   }
   for (const match of code.matchAll(/(?:\b(?:startsWith|contains)|["'](?:startsWith|contains)["'])\s*:\s*/g)) {
-    const value = valueAt(code, (match.index ?? 0) + match[0].length);
+    const value = valueAt(code, (match.index ?? 0) + match[0].length, structure);
     if (!bareValueAllowed(value)) values.push(value);
   }
   return values;

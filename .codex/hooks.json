@@ -1,0 +1,29 @@
+{
+  "description": "Agent rules a machine can check (#4462): scripts/agent-hooks/rules.mjs. The implementor-only rules apply if Codex sends agent_type (the role is named implementor); not verified against a live run. The rules bind whether or not these hooks run.",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "^Bash$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$(git rev-parse --show-toplevel)/scripts/agent-hooks/dispatch.mjs\"",
+            "timeout": 10,
+            "statusMessage": "Checking agent rules"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$(git rev-parse --show-toplevel)/scripts/agent-hooks/dispatch.mjs\"",
+            "timeout": 15
+          }
+        ]
+      }
+    ]
+  }
+}

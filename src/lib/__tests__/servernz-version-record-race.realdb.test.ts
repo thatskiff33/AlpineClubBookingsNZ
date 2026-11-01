@@ -48,6 +48,7 @@ function credentialRow(iv: string) {
 let prisma: (typeof import("@/lib/prisma"))["prisma"];
 let recordServerVersionIfCurrent: (typeof import("@/lib/servernz-version-record"))["recordServerVersionIfCurrent"];
 let forgetServerConnectionAnswers: (typeof import("@/lib/servernz-settings"))["forgetServerConnectionAnswers"];
+let withServerNzConnectionTransaction: (typeof import("@/lib/servernz-config"))["withServerNzConnectionTransaction"];
 let credentialVersionOf: (typeof import("@/lib/integration-credential-actor"))["credentialVersionOf"];
 let holderClient: PrismaClient;
 let observerClient: PrismaClient;
@@ -103,6 +104,7 @@ let observerClient: PrismaClient;
       ({ prisma } = await import("@/lib/prisma"));
       ({ recordServerVersionIfCurrent } = await import("@/lib/servernz-version-record"));
       ({ forgetServerConnectionAnswers } = await import("@/lib/servernz-settings"));
+      ({ withServerNzConnectionTransaction } = await import("@/lib/servernz-config"));
       ({ credentialVersionOf } = await import("@/lib/integration-credential-actor"));
 
       const [{ PrismaClient: SeparatePrismaClient }, { createPrismaPgAdapter }] = await Promise.all([
@@ -238,7 +240,8 @@ let observerClient: PrismaClient;
         ]);
         const replacement = await storeKey("race-4366-iv-b");
         expect(replacement).not.toBe(sentOn);
-        forget = forgetServerConnectionAnswers();
+        // The forget inside its connection fence (#4436): it queues on the recorder's row.
+        forget = withServerNzConnectionTransaction((tx) => forgetServerConnectionAnswers(tx));
 
         const pollStart = process.hrtime.bigint();
         while ((await lockWaiters()) < 1) {

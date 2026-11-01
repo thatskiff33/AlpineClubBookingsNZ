@@ -60,7 +60,8 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { PRISMA_CLIENT_GLOBAL_OMIT } from "@/lib/prisma-global-omit";
-import { stripComments } from "@/lib/__tests__/support/strip-comments";
+import { blankLiterals, stripComments } from "@/lib/__tests__/support/strip-comments";
+import { balancedBrackets } from "./support/balanced-brackets";
 
 const INVARIANT_ID = "INV-PRIV-022";
 const LIFECYCLE_INVARIANT_ID = "INV-MOD-059";
@@ -197,6 +198,7 @@ const DIETARY_REACH: Readonly<Record<string, CensusEntry>> = {
  * patterns.
  */
 const DIETARY_MODULE_IMPORTERS: Readonly<Record<string, CensusEntry>> = {
+  "src/lib/privacy-retention-anonymise.ts": "the erasure patch only (no grant, no read)",
   "src/app/(authenticated)/profile/page.tsx": "self display grant",
   "src/app/api/profile/route.ts": "self write (profile and onboarding)",
   "src/app/api/member/onboarding/route.ts": "self display grant",
@@ -404,8 +406,12 @@ type Finding = { rule: string; file: string; detail: string };
 
 /** Every `new …PrismaClient(` call, including aliased and namespaced ones. */
 function prismaConstructorStarts(code: string): number[] {
+  if (!code.includes("PrismaClient")) return [];
+  // Read over masked text, so a constructor named in a string is not one and
+  // `constructorArguments` is never handed an offset that is not a bracket.
+  const structure = blankLiterals(code);
   const names = ["PrismaClient"];
-  for (const match of code.matchAll(/\bPrismaClient\s+as\s+([A-Za-z_$][\w$]*)/g)) {
+  for (const match of structure.matchAll(/\bPrismaClient\s+as\s+([A-Za-z_$][\w$]*)/g)) {
     names.push(match[1]!);
   }
   const alternation = names
@@ -415,7 +421,7 @@ function prismaConstructorStarts(code: string): number[] {
     String.raw`\bnew\s+(?:[A-Za-z_$][\w$]*\s*\.\s*)*(?:${alternation})\s*\(`,
     "g",
   );
-  return [...code.matchAll(pattern)].map((match) => match.index! + match[0].length);
+  return [...structure.matchAll(pattern)].map((match) => match.index! + match[0].length);
 }
 
 /** Pure scanner, so the mutation block below can seed it without the tree. */
@@ -629,16 +635,7 @@ const countOf = (text: string, pattern: RegExp) => [...text.matchAll(pattern)].l
 
 /** The text between a constructor's opening paren and its matching close. */
 function constructorArguments(code: string, start: number): string {
-  let depth = 1;
-  for (let i = start; i < code.length; i += 1) {
-    const char = code[i];
-    if (char === "(") depth += 1;
-    else if (char === ")") {
-      depth -= 1;
-      if (depth === 0) return code.slice(start, i);
-    }
-  }
-  return code.slice(start);
+  return balancedBrackets(code, start - 1).text.slice(1, -1);
 }
 
 /**

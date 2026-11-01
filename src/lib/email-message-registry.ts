@@ -4,13 +4,15 @@ import {
   type EmailAuditTemplateName,
 } from "@/lib/email-message-audit-defaults";
 import { buildXeroInvoiceUrl } from "@/lib/xero-links";
+import { creditReleaseCadenceSummary } from "@/lib/additional-payment-chase";
+import { paymentRequestCauseSentence } from "@/lib/additional-ask-cause";
+import { bankTransferNoteText, SAMPLE_BANK_TRANSFER_OFFER } from "@/lib/credit-release-bank-transfer";
 import { ibSettlementFigureParagraph } from "@/lib/ib-settlement-figure-note";
 import { duplicateCaptureKeptAction, duplicateCaptureKeptParagraph } from "@/lib/duplicate-capture-kept-note";
 import { supersededCaptureRefusedAction, supersededCaptureRefusedParagraph } from "@/lib/superseded-capture-refused-note";
 import {
   adminSplitSettlementCancelledLeadParagraph,
   adminSplitSettlementUnpaidLeadParagraph,
-  bookingPaymentDueNote,
   checkoutDayChoreNote,
   duplicateCaptureRefundOutcomeParagraph,
   internetBankingHoldKeptParagraph,
@@ -26,8 +28,10 @@ import {
   splitGuestPortionOwnBookingLine,
   wholeLodgeGuestNamesUrgencyNote,
 } from "@/lib/email-message-notes";
+import { bookingPaymentDueNote } from "@/lib/email-payment-due-note";
 import { FALLBACK_LODGE_CAPACITY } from "@/lib/lodge-capacity";
 import { BOOKING_URL_TEMPLATE_NAMES } from "@/lib/booking-email-template-contract";
+import { bookingModificationTypeLabel } from "@/lib/booking-money-lines";
 import {
   organiserJoinerAppealRefundSentence,
   refundRequestApprovedRefundSentence,
@@ -516,6 +520,10 @@ const REQUIRED_TEMPLATE_TOKENS: Partial<Record<EmailAuditTemplateName, string[]>
     "requestedOn",
     "checkIn",
     "checkOut",
+    // #4253 release 2: the only words that say WHY - credit used elsewhere, or that and a change
+    // merged into one request. A fixed sentence is wrong for one of the two, so an override saved
+    // from the release-1 default is flagged stale and a re-save must put the token in.
+    "askCauseSentence",
   ],
   // #3827 (D-3813-7): an approved appeal is refunded to the card OR promised
   // by bank transfer, and only {{refundSentence}} says which. An override
@@ -525,6 +533,9 @@ const REQUIRED_TEMPLATE_TOKENS: Partial<Record<EmailAuditTemplateName, string[]>
   "refund-request-approved": ["refundSentence"],
   // #3956: the sentence that says whose card the money goes to, and for whom.
   "group-organiser-joiner-refund": ["refundSentence"],
+  "group-organiser-extra-invoice": [
+    "joinerName", "changeSummary", "additionalAmount", "xeroInvoiceNumber",
+  ],
   "password-reset": ["token"],
   "admin-password-reset": ["token"],
   "member-setup-invite": ["token"],
@@ -1124,9 +1135,9 @@ const TEMPLATE_TRIGGER_METADATA: Partial<
   },
   "credit-released-payment-request": {
     triggerSummary:
-      "Account credit applied to a booking was used elsewhere in the club's accounts, so part of the booking is unpaid again and a card payment was requested",
-    frequency:
-      "Sent when the payment request is raised, then repeated on the booking's additional-payment reminder schedule until the money arrives or the stay ends, plus any manual re-send an admin triggers from the booking page",
+      "Account credit applied to a booking was used elsewhere in the club's accounts, so part of the booking is unpaid again and a card payment was requested (with the club's bank-transfer details too, once it has written them)",
+    // Built from the cadence's own constants (`INV-ADDPAY-048`), so the copy cannot drift from the rule.
+    frequency: creditReleaseCadenceSummary(),
   },
   "booking-policy-exception-approved": {
     triggerSummary:
@@ -1248,6 +1259,11 @@ const TEMPLATE_TRIGGER_METADATA: Partial<
       "An admin approved a refund appeal on a joiner's booking the organiser paid for by card, so the refund goes to the organiser's card (#3956)",
     frequency:
       "Once per approved appeal, beside the joiner's approval email; withheld when the admin chose not to notify, or the organiser is the joiner",
+  },
+  "group-organiser-extra-invoice": {
+    triggerSummary:
+      "A change increased the cost of a place in an organiser-paid Internet Banking group, and an extra invoice was raised to the organiser (#4299)",
+    frequency: "Once per extra invoice, to the organiser; scoped to the organiser's booking",
   },
   "group-join-settled": {
     triggerSummary:
@@ -1626,6 +1642,10 @@ export function sampleValue(token: string): string {
   // send builds it, so the preview reads as a member reads it instead of
   // printing the token's own name mid-paragraph. Empty on a live send when
   // nothing is owed. The amount reconciles with the sample below.
+  if (token === "bankTransferNote") return bankTransferNoteText(SAMPLE_BANK_TRANSFER_OFFER);
+  // #4253 release 2: previewed as the pure released-credit arm, the case the email is named for;
+  // the merged arm is the sender's other branch. The amount reconciles with the sample below.
+  if (token === "askCauseSentence") return paymentRequestCauseSentence("credit-release", "$123.45");
   if (token === "outstandingAdditionalNote") {
     return "There is still $123.45 to pay on this booking after a change to your stay. Please pay it from your booking page before you arrive.";
   }
@@ -1813,6 +1833,13 @@ const TEMPLATE_SAMPLE_VALUE_OVERRIDES: Partial<
   // {{refundSentence}} sample previews.
   "group-organiser-joiner-refund": {
     refundSentence: organiserJoinerAppealRefundSentence("$123.45", "Sam Joiner"),
+  },
+  "group-organiser-extra-invoice": {
+    joinerName: "Sam Joiner",
+    // The sender's own wording of a change (`bookingModificationTypeLabel`).
+    changeSummary: bookingModificationTypeLabel("DATE_CHANGE"),
+    additionalAmount: "$65.00",
+    xeroInvoiceNumber: "INV-0042",
   },
 };
 
@@ -2079,6 +2106,12 @@ const APPROVED_EMAIL_TEMPLATE_TOKENS = [
   // the pre-arrival reminder; empty when nothing is owed, so the body never
   // carries a dangling claim (the {{doorCodeNote}} convention).
   "outstandingAdditionalNote",
+  // #4253 release 2: the bank-transfer offer on a request for credit used elsewhere, composed
+  // whole by the sender and empty until the club writes its bank details (card-only until then).
+  "bankTransferNote",
+  // #4253 release 2: why a request for credit used elsewhere is owed, with the amount -
+  // `paymentRequestCauseSentence`, so a merged request says both causes in a customised body too.
+  "askCauseSentence",
   // #3672: the organiser's booking detail page, for the mid-stay joiner alert.
   "organiserBookingUrl",
   "organiserName",

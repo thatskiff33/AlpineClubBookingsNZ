@@ -287,13 +287,14 @@ export async function completeMemberContactOperation(
   completion: Parameters<typeof completeXeroSyncOperation>[1],
   db: typeof prisma = prisma,
 ): Promise<void> {
-  await db.$transaction(async (tx) => {
+  const completed = await db.$transaction(async (tx) => {
     const locked = await lockMemberForXeroContactLink(tx, memberId);
     if (locked.xeroContactId !== expectedXeroContactId) {
       throw new XeroContactLinkChangedError();
     }
-    await completeXeroSyncOperation(operation, completion, { store: tx });
+    return completeXeroSyncOperation(operation, completion, { store: tx });
   });
+  await completed?.deferredPostCommit?.();
 }
 
 /**

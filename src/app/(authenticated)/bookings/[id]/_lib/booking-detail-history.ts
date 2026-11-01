@@ -1,3 +1,4 @@
+import { additionalAskCause } from "@/lib/additional-ask-cause";
 import { bookingOwner } from "@/lib/booking-owner";
 import { prisma } from "@/lib/prisma";
 import { bookingMoneyReconciliationForViewer } from "@/lib/booking-money-reconciliation-audience";
@@ -218,6 +219,7 @@ export async function loadBookingDetailHistory({
           // the obligation itself rather than the payment row's last touch.
           latestAdditionalTransactionCreatedAt:
             booking.payment.transactions[0]?.createdAt ?? null,
+          askCause: additionalAskCause(booking.payment.transactions),
           createdAt: booking.payment.createdAt,
           updatedAt: booking.payment.updatedAt,
         }

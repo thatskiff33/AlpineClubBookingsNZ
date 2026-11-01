@@ -1,4 +1,5 @@
 import "server-only";
+import { Prisma } from "@prisma/client";
 import { RETENTION_CHOICES } from "@/lib/club-post-retention-choices";
 import { deletePostImage } from "@/lib/post-image-storage";
 import { prisma } from "@/lib/prisma";
@@ -136,9 +137,17 @@ export interface CleanupOutcome {
  * "clean up uploads nobody ever used" are independent policies, and gating
  * this behind a non-zero retention window — the shipped default is 0 —
  * made it unreachable on every install that never chose one. Safe without
- * the single-flight claim because every step is idempotent: the rows are
+ * the single-flight claim because every step is idempotent: each row is
  * deleted by id and `deletePostImage` never throws on a file already gone,
  * so two overlapping passes merely waste a query.
+ *
+ * ONE ROW AT A TIME, AND ONLY WHILE IT IS STILL UNATTACHED (#4588). A member
+ * can post with an upload older than the grace hour, and `createClubPost`
+ * claims it between the read above and the delete: the guarded delete then
+ * matches nothing, and the file a live post names stays. A file is deleted
+ * only for a row this pass actually deleted. Single-row statements also hold
+ * one image row at a time, so the sweep cannot deadlock against a claim that
+ * takes several (the claim locks by `publicId`, this read ran by `id`).
  */
 async function sweepOrphanImages(now: Date): Promise<void> {
   const abandonedBefore = new Date(now.getTime() - 60 * 60 * 1000);
@@ -146,12 +155,61 @@ async function sweepOrphanImages(now: Date): Promise<void> {
     where: { postId: null, createdAt: { lt: abandonedBefore } },
     select: { id: true, storageKey: true },
   });
-  if (orphans.length === 0) return;
-  await prisma.clubPostImage.deleteMany({
-    where: { id: { in: orphans.map((o) => o.id) } },
-  });
   for (const orphan of orphans) {
-    await deletePostImage(orphan.storageKey);
+    const { count } = await prisma.clubPostImage.deleteMany({
+      where: { id: orphan.id, postId: null },
+    });
+    if (count === 1) await deletePostImage(orphan.storageKey);
+  }
+}
+
+/** Expired posts deleted per transaction, so one pass never holds thousands of row locks. */
+const RETENTION_BATCH_SIZE = 200;
+
+/**
+ * Delete every post older than `cutoff`, in batches, and THEN their files
+ * (#4588).
+ *
+ * Each batch is one transaction: it locks the doomed `ClubPost` rows (id
+ * order), reads their images UNDER those locks, deletes the posts (their image
+ * rows go by cascade) and hands back the storage keys; the files go after the
+ * commit. Reading the images first and outside a transaction let a mirror
+ * update add image rows to a doomed post in between: the cascade took them and
+ * their files stayed on the mount with no row, where the row-driven orphan
+ * sweep can never find them. Every writer that adds image rows to a post holds
+ * that post's row lock (docs/CONCURRENCY_AND_LOCKING.md -> "Message-board
+ * posts and their images"), so under these locks the image set is final.
+ */
+async function deleteExpiredPosts(cutoff: Date): Promise<number> {
+  let deleted = 0;
+  for (;;) {
+    // Strictly older than the cutoff. A post exactly ON the boundary is KEPT:
+    // where the rule could be read two ways, this deletes less.
+    const batch = await prisma.clubPost.findMany({
+      where: { postedAt: { lt: cutoff } },
+      orderBy: { id: "asc" },
+      take: RETENTION_BATCH_SIZE,
+      select: { id: true },
+    });
+    if (batch.length === 0) return deleted;
+    const ids = batch.map((post) => post.id);
+    const { count, storageKeys } = await prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT 1 FROM "ClubPost" WHERE "id" IN (${Prisma.join(ids)}) ORDER BY "id" FOR UPDATE`;
+      // Re-read under the locks: a post deleted or re-dated meanwhile drops out.
+      const doomed = await tx.clubPost.findMany({
+        where: { id: { in: ids }, postedAt: { lt: cutoff } },
+        select: { id: true, images: { select: { storageKey: true } } },
+      });
+      const removed = await tx.clubPost.deleteMany({ where: { id: { in: doomed.map((post) => post.id) } } });
+      return { count: removed.count, storageKeys: doomed.flatMap((post) => post.images.map((image) => image.storageKey)) };
+      // Bounded like the other short row-lock writers: a batch can queue
+      // behind a mirror page or an admin removal holding one of its posts.
+    }, { maxWait: 10_000, timeout: 30_000 });
+    deleted += count;
+    // Rows first, files second: a crash in between leaves invisible files,
+    // never a live post naming a missing one. Never throws on a file already
+    // gone, so a retried pass cannot fail on its own previous success.
+    for (const key of storageKeys) await deletePostImage(key);
   }
 }
 
@@ -177,6 +235,8 @@ export async function runClubPostCleanup(
   }
 
   const staleBefore = new Date(now.getTime() - STALE_CLEANUP_CLAIM_MS);
+  // The exact stamp this pass writes, kept so the release clears only it (#4590).
+  const claimedAt = new Date(now.getTime());
 
   // The claim. `updateMany`'s matched-row count IS the claim: exactly one
   // caller can move the row from "free or stale" to "held", atomically.
@@ -185,36 +245,12 @@ export async function runClubPostCleanup(
       id: CLUB_POST_SETTINGS_ID,
       OR: [{ cleanupStartedAt: null }, { cleanupStartedAt: { lt: staleBefore } }],
     },
-    data: { cleanupStartedAt: now },
+    data: { cleanupStartedAt: claimedAt },
   });
   if (claim.count === 0) return { skipped: "busy", deleted: 0 };
 
   try {
-    // The FILES first, while the rows that name them still exist. Deleting the
-    // rows first would cascade the image rows away and leave their bytes on the
-    // mount with nothing left pointing at them — a retention setting whose whole
-    // purpose is that the content is gone would quietly keep every photograph.
-    //
-    // Collected before the delete, deleted after: a crash between the two
-    // leaves files whose rows are gone, which the orphan sweep below reclaims
-    // on the next pass. The reverse order would leave rows whose files are
-    // gone, which is a broken image on a live post.
-    const doomedImages = await prisma.clubPostImage.findMany({
-      where: { post: { postedAt: { lt: cutoff } } },
-      select: { storageKey: true },
-    });
-
-    // Strictly older than the cutoff. A post exactly ON the boundary is KEPT:
-    // where the rule could be read two ways, this deletes less.
-    const { count } = await prisma.clubPost.deleteMany({
-      where: { postedAt: { lt: cutoff } },
-    });
-
-    for (const image of doomedImages) {
-      // Never throws on a file that has already gone, so a retried pass cannot
-      // fail on its own previous success.
-      await deletePostImage(image.storageKey);
-    }
+    const count = await deleteExpiredPosts(cutoff);
 
     await sweepOrphanImages(now);
 
@@ -225,10 +261,13 @@ export async function runClubPostCleanup(
 
     return { deleted: count };
   } finally {
-    // Released whatever happened: a failed pass must not wedge the next one.
+    // Released whatever happened, so a failed pass cannot wedge the next one,
+    // and ONLY while the row still holds this pass's own stamp (#4590, as the
+    // mirror's since #4586): a pass that outlived the stale window and was
+    // taken over must not clear the new holder's claim.
     await prisma.clubPostSettings
-      .update({
-        where: { id: CLUB_POST_SETTINGS_ID },
+      .updateMany({
+        where: { id: CLUB_POST_SETTINGS_ID, cleanupStartedAt: claimedAt },
         data: { cleanupStartedAt: null },
       })
       .catch(() => {

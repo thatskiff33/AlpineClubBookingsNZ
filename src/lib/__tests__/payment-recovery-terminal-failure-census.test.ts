@@ -2,7 +2,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { stripComments } from "@/lib/__tests__/support/strip-comments";
+import { blankLiterals, stripComments } from "@/lib/__tests__/support/strip-comments";
+import { balancedBrackets } from "./support/balanced-brackets";
 
 /**
  * #3220: "THIS RECOVERY IS DEAD" IS ONE TRANSITION, IN ONE PLACE.
@@ -119,22 +120,8 @@ function occurrences(haystack: string, needle: string): number[] {
   }
 }
 
-/**
- * The balanced `(...)` of the call whose opening parenthesis is at `open`,
- * parentheses included. Quotes inside are literal `"` characters rather than
- * delimiters here, which is safe: nothing in this tree writes an unbalanced
- * parenthesis inside a Prisma argument string.
- */
-function callArguments(source: string, open: number): string {
-  let depth = 0;
-  for (let at = open; at < source.length; at += 1) {
-    if (source[at] === "(") depth += 1;
-    else if (source[at] === ")") {
-      depth -= 1;
-      if (depth === 0) return source.slice(open, at + 1);
-    }
-  }
-  throw new Error(`Unbalanced call arguments at offset ${open}`);
+function callArguments(source: string, open: number, structure: string): string {
+  return balancedBrackets(source, open, structure).text;
 }
 
 /** `[start, end)` of the chokepoint's body, by brace balance from its opener. */
@@ -152,15 +139,7 @@ function chokepointBody(source: string): { start: number; end: number } {
   ).toBeGreaterThan(-1);
 
   const start = source.indexOf("{", opens + CHOKEPOINT_BODY_OPENS.length - 1);
-  let depth = 0;
-  for (let at = start; at < source.length; at += 1) {
-    if (source[at] === "{") depth += 1;
-    else if (source[at] === "}") {
-      depth -= 1;
-      if (depth === 0) return { start, end: at + 1 };
-    }
-  }
-  throw new Error(`${CHOKEPOINT} has no balanced body in ${RECOVERY_MODULE}`);
+  return { start, end: balancedBrackets(source, start).end + 1 };
 }
 
 describe("INV-PAY-056: one terminal-failure transition, census", () => {
@@ -207,11 +186,14 @@ describe("INV-PAY-056: one terminal-failure transition, census", () => {
         offenders.push(`${relative} (anywhere in the module)`);
       }
 
+      // Call sites are found over masked text: a call named in a string is not
+      // one. The arguments are read from the original, which keeps the raw string.
+      const structure = source.includes(RECOVERY_DELEGATE) ? blankLiterals(source) : source;
       for (const method of WRITE_METHODS) {
         const call = `${RECOVERY_DELEGATE}.${method}(`;
-        for (const at of occurrences(source, call)) {
+        for (const at of occurrences(structure, call)) {
           const open = at + call.length - 1;
-          if (RAW_STATUS.test(callArguments(source, open))) {
+          if (RAW_STATUS.test(callArguments(source, open, structure))) {
             offenders.push(`${relative} (${RECOVERY_DELEGATE}.${method})`);
           }
         }

@@ -2,7 +2,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { stripComments } from "@/lib/__tests__/support/strip-comments";
+import { blankLiterals, stripComments } from "@/lib/__tests__/support/strip-comments";
+import { balancedBrackets } from "./support/balanced-brackets";
 
 /**
  * #3980 (`INV-PAY-136`, `INV-LOCK-003`'s spirit for a row-lock site): the
@@ -73,15 +74,13 @@ describe("the edit's claim on the unlinked primary invoice: call sites (#3980)",
     const writers: string[] = [];
     for (const file of sourceFiles()) {
       const source = read(file);
-      for (const match of source.matchAll(/\b\w+\.payment\.(update|updateMany|upsert|create|createMany)\(/g)) {
-        let depth = 1;
-        let index = match.index! + match[0].length;
-        while (depth > 0 && index < source.length) {
-          if (source[index] === "(") depth += 1;
-          else if (source[index] === ")") depth -= 1;
-          index += 1;
-        }
-        const call = source.slice(match.index!, index);
+      if (!source.includes(".payment.")) continue;
+      // Call sites are found over masked text: a `payment.update(` named in a
+      // string is not a call.
+      const structure = blankLiterals(source);
+      for (const match of structure.matchAll(/\b\w+\.payment\.(update|updateMany|upsert|create|createMany)\(/g)) {
+        const { end } = balancedBrackets(source, match.index! + match[0].length - 1, structure);
+        const call = source.slice(match.index!, end + 1);
         const data = call.slice(Math.max(0, call.indexOf("data")));
         const variable = /data: (\w+)\b/.exec(data)?.[1];
         const setsLink =
@@ -129,15 +128,10 @@ describe("the edit's claim on the unlinked primary invoice: call sites (#3980)",
     ]);
     for (const door of doors) {
       const source = read(door);
-      for (const match of source.matchAll(/\b(queueXeroBookingEditSettlement|queueGuestRemovalXeroSettlement)\(/g)) {
-        let depth = 1;
-        let index = match.index! + match[0].length;
-        while (depth > 0 && index < source.length) {
-          if (source[index] === "(") depth += 1;
-          else if (source[index] === ")") depth -= 1;
-          index += 1;
-        }
-        const call = source.slice(match.index!, index);
+      const structure = blankLiterals(source);
+      for (const match of structure.matchAll(/\b(queueXeroBookingEditSettlement|queueGuestRemovalXeroSettlement)\(/g)) {
+        const { end } = balancedBrackets(source, match.index! + match[0].length - 1, structure);
+        const call = source.slice(match.index!, end + 1);
         expect(call, door).toMatch(/additionalPaymentIntentId/);
         expect(call, door).not.toMatch(/additionalPaymentIntentId: null\b/);
       }
@@ -167,7 +161,8 @@ describe("the edit's claim on the unlinked primary invoice: call sites (#3980)",
 
   it("the guests route, which settles for itself, makes the same write and marks its row", () => {
     const route = read(GUESTS_ROUTE);
-    expect(route).toContain("await writeEditOnPayment(tx, { payment: booking.payment, changeFeeCents: 0 })");
+    // #4299 (N3): the same write, no fee, now also told the place settles on its organiser's combined invoice.
+    expect(route).toContain("await writeEditOnPayment(tx, { payment: booking.payment, changeFeeCents: 0, settledAgainstCombinedInvoice: paidByOrganiserInternetBanking(booking) })");
     expect(route).toContain("primaryInvoiceSettlementHistory({ settledAgainstPrimaryInvoice })");
   });
 

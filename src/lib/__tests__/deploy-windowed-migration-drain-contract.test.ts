@@ -59,6 +59,9 @@ info() { printf '%s\\n' "$*"; }
 step() { printf '%s\\n' "$*" >> events; }
 validate_prisma_schema_matches_migrations() { echo shadow >> events; }
 verify_prisma_migration_status() { :; }
+# #4453: the post-migrate role-grants check is proven by
+# deploy-database-roles-script-contract.test.ts; stubbed here like its neighbour.
+verify_least_privilege_role_grants() { :; }
 wait_for_health() { :; }
 verify_internal_health() { :; }
 find() { if [ "$ENUM_FAIL" = 1 ]; then command find "$@"; return 7; fi; command find "$@"; }

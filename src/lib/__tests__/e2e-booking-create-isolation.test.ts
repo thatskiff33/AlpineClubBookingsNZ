@@ -1141,14 +1141,51 @@ function analyzeBrowserTriggers(sourceFile: ts.SourceFile, file: string) {
   return { create, unresolved };
 }
 
+// `newContext(...args)` inside `(...args) => …`: a wrapper that hands its own
+// rest parameter, untouched, to the real factory adds no headers, and each
+// caller's options are judged at the caller's own call site. Reported apart
+// from `unresolved` and pinned by location, so a new forwarder is still
+// reviewed (#4466's axe instrumentation of browser.newContext).
+function forwardsOwnRestParameter(call: ts.CallExpression): boolean {
+  const [argument] = call.arguments;
+  if (
+    call.arguments.length !== 1 ||
+    !ts.isSpreadElement(argument) ||
+    !ts.isIdentifier(argument.expression)
+  ) {
+    return false;
+  }
+  const restName = argument.expression.text;
+  for (let current = call.parent; current; current = current.parent) {
+    if (ts.isFunctionLike(current)) {
+      return current.parameters.some(
+        (parameter) =>
+          parameter.dotDotDotToken !== undefined &&
+          ts.isIdentifier(parameter.name) &&
+          parameter.name.text === restName,
+      );
+    }
+  }
+  return false;
+}
+
 function analyzeBlanketContexts(sourceFile: ts.SourceFile, file: string) {
   const bindings = collectConstBindings(sourceFile);
   const present: string[] = [];
   const unresolved: string[] = [];
+  const forwarded: string[] = [];
   const visit = (node: ts.Node): void => {
     if (ts.isCallExpression(node)) {
       const surface = calledName(node);
       const location = `${file}:${enclosingFunctionName(node) ?? "<top-level>"}:${surface}`;
+      if (
+        (surface === "newContext" || surface === "newPage") &&
+        forwardsOwnRestParameter(node)
+      ) {
+        forwarded.push(location);
+        ts.forEachChild(node, visit);
+        return;
+      }
       const headers =
         surface === "newContext" || surface === "newPage"
           ? objectPropertyExpressions(
@@ -1180,7 +1217,7 @@ function analyzeBlanketContexts(sourceFile: ts.SourceFile, file: string) {
     ts.forEachChild(node, visit);
   };
   visit(sourceFile);
-  return { present, unresolved };
+  return { present, unresolved, forwarded };
 }
 
 function isPrivateIpv4(address: string): boolean {
@@ -1485,6 +1522,10 @@ describe("E2E booking-create retry isolation (#2599)", () => {
         "browser.newContext({ extraHTTPHeaders: buildAtRuntime(runtimeSeed) });",
         'browser.newContext({ extraHTTPHeaders: { authorization: "Bearer ***" } });',
         'page.setExtraHTTPHeaders({ authorization: "Bearer ***" });',
+        "const forward = async (...args) => newContext(...args);",
+        "const spreadOther = async (...args) => newContext(...runtimeArgs);",
+        "const plainParam = async (options) => newContext(options);",
+        'const addsHeaders = async (...args) => newContext({ ...args[0], extraHTTPHeaders: { "x-forwarded-for": "10.240.250.5" } });',
       ].join("\n"),
     );
 
@@ -1498,7 +1539,11 @@ describe("E2E booking-create retry isolation (#2599)", () => {
       ],
       unresolved: [
         "fixture:<top-level>:newContext:buildAtRuntime(runtimeSeed)",
+        "fixture:<top-level>:newContext:newContext(...runtimeArgs)",
+        "fixture:<top-level>:newContext:newContext(options)",
+        'fixture:<top-level>:newContext:newContext({ ...args[0], extraHTTPHeaders: { "x-forwarded-for": "10.240.250.5" } })',
       ],
+      forwarded: ["fixture:<top-level>:newContext"],
     });
   });
 
@@ -2118,16 +2163,21 @@ describe("E2E booking-create retry isolation (#2599)", () => {
   it("rejects blanket context booking-create headers, including aliases", () => {
     const blanketContexts: string[] = [];
     const unresolvedContexts: string[] = [];
+    const forwardedContexts: string[] = [];
     for (const file of e2eTypeScriptFiles()) {
       const sourceFile = parseSource(file);
       const result = analyzeBlanketContexts(sourceFile, repoRelative(file));
       blanketContexts.push(...result.present);
       unresolvedContexts.push(...result.unresolved);
+      forwardedContexts.push(...result.forwarded);
     }
 
     expect(blanketContexts).toEqual([
       "e2e/helpers/auth.ts:submitLoginForm:setExtraHTTPHeaders",
     ]);
     expect(unresolvedContexts).toEqual([]);
+    expect(forwardedContexts).toEqual([
+      "e2e/helpers/accessibility.ts:<top-level>:newContext",
+    ]);
   });
 });

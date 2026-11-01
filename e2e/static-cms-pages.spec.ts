@@ -3,7 +3,7 @@ import {
   test,
   type APIRequestContext,
   type APIResponse,
-} from "@playwright/test";
+} from "./helpers/accessibility";
 import { storageStatePath } from "./helpers/auth";
 import { unnoncedInlineScripts } from "./helpers/csp";
 import { E2E_ADMIN } from "../prisma/e2e-fixtures";

@@ -1,3 +1,4 @@
+import { leavingDateForDeactivation } from "@/lib/member-leaving-date";
 import {
   MembershipCancellationParticipantStatus,
   MembershipCancellationRequestStatus,
@@ -875,7 +876,7 @@ export async function reviewMembershipCancellationParticipant({
       // the unreachable surface because their stored address looked fine.
       const departingMember = await tx.member.findUnique({
         where: { id: participant.memberId },
-        select: { email: true },
+        select: { email: true, active: true, leavingDate: true },
       });
       if (departingMember) {
         await retireInheritedEmailCopies(tx, {
@@ -888,6 +889,7 @@ export async function reviewMembershipCancellationParticipant({
         where: { id: participant.memberId },
         data: {
           active: false,
+          leavingDate: leavingDateForDeactivation(departingMember ?? { active: true }, clubTodayForFanout),
           canLogin: false,
           cancelledAt: now,
           cancelledReason: participant.request.reason,

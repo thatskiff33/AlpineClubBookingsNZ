@@ -49,6 +49,7 @@ a `GAP`, replace it with a relative link to that file (e.g.
 | --- | --- | --- | --- | --- |
 | `access-roles` | support | `ARCHITECTURE.md` (access roles / definitions) | [guide](guides/access-roles.md) | 4 |
 | `age-tier-settings` | bookings | `ARCHITECTURE.md`, `AUTHORITATIVE_FEES.md` | [guide](guides/age-tier-settings.md) | 1 |
+| `ai-assistant` | support | [`guides/ai-help.md`](guides/ai-help.md) (usage panel and spend cap; the page is hidden while the module is off) | [guide](guides/ai-help.md) | — (AI help module #2211, off by default; postdates #2050) |
 | `ai-diagnostics` | overview (page); support (API) | [architecture](ai-diagnostics/architecture.md), [deployment](ai-diagnostics/deployment.md), [ux](ai-diagnostics/ux.md), [e2e-matrix](ai-diagnostics/e2e-matrix.md), [hub](ai-diagnostics/README.md) | [deployment/operator guide](ai-diagnostics/deployment.md) | — (AID module, off by default; outside #2050) |
 | `alpine-server` | finance | [`guides/integrations.md`](guides/integrations.md), `DEPLOYMENT.md` (cron endpoint), `SECURITY-ATTACK-SURFACE.md` (provider list), `STATE_MACHINES.md` (version pause, #49; the `version` read route is finance view) | [guide](guides/integrations.md) | — (Alpine Central Server module, off by default) |
 | `appearance` | content | — | [guide](guides/appearance.md) (incl. `appearance/identity`) | 4 |
@@ -64,6 +65,7 @@ a `GAP`, replace it with a relative link to that file (e.g.
 | `booking-requests` | bookings | `ARCHITECTURE.md` (public booking requests) | [guide](guides/booking-requests.md) | 1 |
 | `bookings` | bookings | `ARCHITECTURE.md` (booking/payment flow), `STATE_MACHINES.md` | [guide](guides/bookings.md) | 1 |
 | `bookings-setup` | bookings | — | [guide](guides/bookings-setup.md) | 1 |
+| `calendar` | lodge | [`guides/calendar.md`](guides/calendar.md) (the calendar module; off returns Not Found) | [guide](guides/calendar.md) | — (calendar module; postdates #2050) |
 | `chores` | lodge | — | [guide](guides/chores.md) | 3 |
 | `club-format` | support (route map); page and read open to **any admin** (#3596), change **Full Admin** — both enforced in the routes | [`invariants/product-configuration.md`](invariants/product-configuration.md) (`INV-CONFIG-006`), [`CONFIGURATION.md`](../CONFIGURATION.md) | [guide](guides/club-format.md) | — (#3563, programme #3205; postdates #2050) |
 | `club-time` | support (route map); **Full Admin** enforced in the routes | [`invariants/product-configuration.md`](invariants/product-configuration.md) (`INV-CONFIG-002`), [`CONFIGURATION.md`](../CONFIGURATION.md) | [guide](guides/club-time.md) | — (CT-1 #2989, epic #2988; postdates #2050) |
@@ -75,18 +77,19 @@ a `GAP`, replace it with a relative link to that file (e.g.
 | `message-board` | membership | `multi-lodge/lodge-scoping-contract.md` (club-wide scoping, D-C1) | [guide](guides/message-board.md) | — (commsPortal module, off by default) |
 | `notices` | membership | `src/lib/notices.ts` (audience resolution + visibility predicate) | [guide](guides/member-notices.md) | 5 |
 | `deletion-requests` | membership | `ARCHITECTURE.md` (member lifecycle delete) | [guide](guides/deletion-requests.md) | 2 |
-| `display` | content | `lobby-display/README.md`, `lobby-display/operating.md` | [guide](guides/display.md) (+ [feature hub](lobby-display/README.md), [operating](lobby-display/operating.md)) | 4 |
+| `display` | lodge | `lobby-display/README.md`, `lobby-display/operating.md` | [guide](guides/display.md) (+ [feature hub](lobby-display/README.md), [operating](lobby-display/operating.md)) | 4 |
 | `email-deliverability` | support | `ARCHITECTURE.md` (email), email registry | [guide](guides/email-deliverability.md) | 4 |
 | `email-messages` | support | `src/lib/email-message-registry.ts` | [guide](guides/email-messages.md) | 4 |
 | `family-groups` | membership | `ARCHITECTURE.md` (family groups / billing) | [guide](guides/family-groups.md) | 2 |
 | `family-suggestions` | membership | `ARCHITECTURE.md` (hidden family suggestions) | [guide](guides/family-suggestions.md) | 2 |
 | `fee-configuration` | finance | `AUTHORITATIVE_FEES.md` | [guide](guides/fees.md) (redirect → Fees) | 2 |
-| `fees` | finance (see note) | `AUTHORITATIVE_FEES.md` | [guide](guides/fees.md) | 2 |
+| `fees` | bookings (route map); page opens on **bookings or finance** (`canAccessConsolidatedFeesPage`) | `AUTHORITATIVE_FEES.md` | [guide](guides/fees.md) | 2 |
+| `google` | finance | [`guides/security.md`](guides/security.md) (Google sign-in credentials, verified in-app before the module can be enabled), [`guides/integrations.md`](guides/integrations.md) | [guide](guides/integrations.md) (`google/setup` wizard) | — (epic #2030; postdates #2050) |
 | `health` | support | — | [guide](guides/health.md) | 4 |
 | `hut-leaders` | lodge | `ARCHITECTURE.md` (hut-leader auto-assign cron), `invariants/booking-dates-and-capacity.md` (`INV-DATE-031`: night cover, school-night kinds #3819) | [guide](guides/hut-leaders.md) | 3 |
 | `image-manager` | content | — | [guide](guides/image-manager.md) | 4 |
 | `induction` | membership | — | [guide](guides/induction.md) | 2 |
-| `integrations` | support | `CONFIGURATION.md`, `DEPLOYMENT.md` | [guide](guides/integrations.md) | 4 |
+| `integrations` | finance | `CONFIGURATION.md`, `DEPLOYMENT.md` | [guide](guides/integrations.md) | 4 |
 | `internet-banking` | finance | `ARCHITECTURE.md` (Internet Banking), `xero/ARCHITECTURE.md` | [guide](guides/internet-banking.md) | 2 |
 | `issue-reports` | support | `ARCHITECTURE.md` (issue reports / stuck states) | [guide](guides/issue-reports.md) | 4 |
 | `lockers` | membership | — | [guide](guides/lockers.md) | 2 |
@@ -108,6 +111,7 @@ a `GAP`, replace it with a relative link to that file (e.g.
 | `notifications` | support | email registry, `ARCHITECTURE.md` (email) | [guide](guides/notifications.md) | 4 |
 | `page-content` | content | `PUBLIC_PAGE_CONTENT_TOKENS.md` | [guide](guides/page-content.md) | 4 |
 | `payments` | finance | `ARCHITECTURE.md` (Stripe), `finance-dashboard/README.md` | [guide](guides/payments.md) | 1 |
+| `privacy-retention` | support (settings); membership:view additionally for application/member previews | [retention schedule](PRIVACY_RETENTION.md) | [retention schedule and controls](PRIVACY_RETENTION.md) | — (#4457) |
 | `promo-codes` | bookings | `ARCHITECTURE.md` (promo codes / redemptions) | [guide](guides/promo-codes.md) | 1 |
 | `refund-requests` | finance | `CANCELLATIONS.md`, `ARCHITECTURE.md` (refund recovery) | [guide](guides/refund-requests.md) | 2 |
 | `reports` | finance | `finance-dashboard/README.md` | [guide](guides/reports.md) | 1 |
@@ -119,9 +123,11 @@ a `GAP`, replace it with a relative link to that file (e.g.
 | `site-banners` | content | `ARCHITECTURE.md` (SiteBanner) | [guide](guides/site-banners.md) | 4 |
 | `site-content` | content | `PUBLIC_PAGE_CONTENT_TOKENS.md` | [guide](guides/site-content.md) | 4 |
 | `site-style` | content | — | [guide](guides/site-style.md) | 4 |
+| `stripe` | finance | [`guides/integrations.md`](guides/integrations.md) (Stripe Setup), [`guides/payments.md`](guides/payments.md) | [guide](guides/integrations.md) (`stripe/setup` wizard) | — (guided setup epic #2078; postdates #2050) |
 | `stuck-states` | support | `ARCHITECTURE.md` (stuck-state dashboard) | [guide](guides/stuck-states.md) | 4 |
-| `subscription-lockout` | finance | `ARCHITECTURE.md` (subscription lockout) | [guide](guides/subscription-lockout.md) | 2 |
+| `subscription-lockout` | support | `ARCHITECTURE.md` (subscription lockout) | [guide](guides/subscription-lockout.md) | 2 |
 | `subscriptions` | finance | `ARCHITECTURE.md` (membership subscription billing) | [guide](guides/subscriptions.md) | 2 |
+| `testing` | overview (allowlisted) | TEST-ONLY: `testing/route-error` is the route-error probe for the #4467 boundary E2E. In a real production runtime it calls `notFound()` before any await and has no loading boundary above it, so the answer is a real 404 status; elsewhere it runs the admin guard itself before reading its cookie (`src/lib/route-error-probe.ts`) | — (not an operator surface) | — |
 | `video-meetings` | finance | [`guides/calendar.md`](guides/calendar.md) ("Video meetings (MiroTalk)"), `SECURITY-ATTACK-SURFACE.md` (MiroTalk meeting tokens) | [guide](guides/calendar.md) | — (MAD #2940, epic #2725; postdates #2050) |
 | `waitlist` | bookings | `ARCHITECTURE.md` (waitlist), `E2E_PLAYWRIGHT.md` | [guide](guides/waitlist.md) | 1 |
 | `work-parties` | lodge | — | [guide](guides/work-parties.md) | 3 |
@@ -129,14 +135,13 @@ a `GAP`, replace it with a relative link to that file (e.g.
 
 ## Summary
 
-- **69** admin route areas total.
+- **85** admin route areas, one row each. `src/app/(admin)/admin` holds two more directories that aren't areas: `__tests__`, and `_lib`, shared server helpers with no route (Next.js treats an `_`-prefixed folder as private). `src/lib/__tests__/coverage-matrix-areas.test.ts` checks this count, that every area directory has exactly one row, and that each row's permission area matches the route map.
 - **2** areas are already served by a **feature hub** (`display` → lobby-display,
   `lodges` → multi-lodge). #2050 should extend, not duplicate, those hubs.
-- **~16** areas have **no reference coverage at all** (`—` above): `appearance`,
-  `book`, `booking-messages`, `bookings-setup`, `chores`, `health`,
-  `image-manager`, `induction`, `lockers`, `member-fields`,
-  `mountain-conditions`, `site-style`, `work-parties`, and the thin
-  `*-setup`/config surfaces. These are the highest-value operator-guide targets.
+- **13** areas have **no reference coverage** beyond their operator guide
+  (`—` above): `appearance`, `book`, `booking-messages`, `bookings-setup`,
+  `chores`, `health`, `image-manager`, `induction`, `lockers`, `member-fields`,
+  `mountain-conditions`, `site-style` and `work-parties`.
 - **Every** area now has a task-focused operator guide (with screenshots). That
   was the #2050 deliverable, and it is complete: every admin row above links a
   guide (no `GAP` remains), batches 1–4 have all shipped, and batch 5's

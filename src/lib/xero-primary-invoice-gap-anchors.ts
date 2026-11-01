@@ -221,12 +221,67 @@ export async function findPrimaryInvoiceGapInvoice(
   stored: { atLink: PrimaryInvoiceFeeAtLink; operationId: string },
   store: GapAnchorStore = prisma,
 ) {
+  return (await readPrimaryInvoiceGapBilling(bookingId, stored, store)).gap;
+}
+
+/**
+ * #4324 Codex re-review: the same reading as
+ * {@link findPrimaryInvoiceGapInvoice}, keeping the racing edits it starts
+ * from - the marked edits the primary was built WITHOUT (`racingKnown` false
+ * where the create stored no snapshot, so it cannot tell).
+ */
+export async function readPrimaryInvoiceGapBilling(
+  bookingId: string,
+  stored: { atLink: PrimaryInvoiceFeeAtLink; operationId: string },
+  store: GapAnchorStore = prisma,
+) {
+  const markedAtBuild = stored.atLink.worth?.markedModificationIdsAtBuild;
   const racing = racingMarkedEdits(
     await readMarkedPrimaryInvoiceEdits(bookingId, store),
-    stored.atLink.worth?.markedModificationIdsAtBuild,
+    markedAtBuild,
     await primaryInvoiceReplayCutoff(bookingId, stored.operationId, store),
   );
   const anchorIds = (await primaryInvoiceGapAnchors(bookingId, racing, store)).map((anchor) => anchor.id);
   const found = await readGapInvoiceOnAnchors(anchorIds, store);
-  return found.operation || found.link ? { ...found, anchorIds } : null;
+  return {
+    racingKnown: Array.isArray(markedAtBuild),
+    racingIds: racing.map((edit) => edit.id),
+    gap: found.operation || found.link ? { ...found, anchorIds } : null,
+  };
+}
+
+/**
+ * #4324 Codex re-review (`INV-PAY-144`): DID THE PRIMARY INVOICE MISS THIS
+ * MARKED CHANGE? #3980's settlement marker says the edit expected the primary
+ * to bill it; one that raced the primary's create was billed by the gap
+ * invoice instead, if at all. Read from the create's snapshot where it stored
+ * one; where it did not, a gap invoice raised on anchors naming the change
+ * (not withdrawn unsent) is the evidence.
+ */
+export function primaryInvoiceMissedChange(
+  billing: Awaited<ReturnType<typeof readPrimaryInvoiceGapBilling>>,
+  changeId: string,
+): boolean {
+  if (billing.racingKnown) return billing.racingIds.includes(changeId);
+  const { gap } = billing;
+  return Boolean(gap?.anchorIds.includes(changeId) && (gap.link !== null || gap.operation?.status !== "CANCELLED"));
+}
+
+/**
+ * #4324 review N2 (`INV-PAY-144`, `INV-SSOT`): DOES THIS GAP INVOICE BILL THIS
+ * CHANGE? Read from {@link findPrimaryInvoiceGapInvoice}'s own answer, the one
+ * `readCaptureRecorder` targets a change's capture at: the change is one of its
+ * racing anchors (any of them, not only the first it is anchored on), and the
+ * invoice is in Xero (an active link) or may still get there (a row neither
+ * CANCELLED nor finished). One that reached Xero and was voided there (link
+ * deactivated, row SUCCEEDED or PARTIAL) bills nothing, and a receipt on it
+ * would only be refused.
+ */
+export function primaryInvoiceGapBillsChange(
+  gap: Awaited<ReturnType<typeof findPrimaryInvoiceGapInvoice>>,
+  changeId: string,
+): boolean {
+  if (!gap || !gap.anchorIds.includes(changeId)) return false;
+  if (gap.link?.active) return true;
+  return gap.operation !== null && !["CANCELLED", "SUCCEEDED", "PARTIAL"].includes(gap.operation.status);
 }

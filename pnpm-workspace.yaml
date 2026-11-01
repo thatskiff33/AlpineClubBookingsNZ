@@ -8,6 +8,23 @@
 # nobody flips it to `hoisted` thinking it is unset.
 nodeLinker: isolated
 
+# Match the npm cooldown in .github/dependabot.yml: 7 days in minutes.
+minimumReleaseAge: 10080
+# Each exclusion below names one exact version and has its own note; remove an
+# entry by its own note, never the whole list.
+# - nodemailer@10.2.1: grandfather only the version already locked on main when
+#   this policy landed (#4455). Published 22 Oct 2026, it otherwise blocks frozen
+#   installs on 28 Oct. Future versions still wait seven days; remove this entry
+#   after the next Nodemailer update.
+# - #4565: follow-redirects@1.16.2 is the fix for GHSA-mrwp-f3q8-3g9p (high). It
+#   was published 25 Oct 2026, so it was still inside the cooldown when that
+#   advisory turned the required audit red on 30 Oct. Its diff from 1.16.1 was
+#   read: `instanceof Array` becomes `Array.isArray`. Remove this entry once
+#   1.16.2 is past the cooldown (1 Nov 2026 21:32 UTC; #4567).
+minimumReleaseAgeExclude:
+  - nodemailer@10.2.1
+  - follow-redirects@1.16.2
+
 # The single home of the version range for these two direct dependencies
 # (pnpm's "catalog"). package.json names both as `catalog:`, and the nodemailer
 # overrides below point here too, so each range is written exactly once; bump
@@ -78,6 +95,3 @@ verifyDepsBeforeRun: error
 # (docs/agents/CODEX_WORKFLOW.md, "Require an isolated dependency tree"). This
 # is pnpm 11's default for a project; it is written down so nobody turns it on.
 enableGlobalVirtualStore: false
-
-patchedDependencies:
-  braces@3.0.3: patches/braces@3.0.3.patch

@@ -605,8 +605,9 @@ export function InductionTemplateManager() {
               </Button>
             </div>
             <div className="space-y-1">
-              <Label className="text-xs">Type</Label>
+              <Label htmlFor="induction-template-kind" className="text-xs">Type</Label>
               <select
+                id="induction-template-kind"
                 value={draft.kind}
                 onChange={(e) =>
                   setDraft((prev) =>
@@ -629,16 +630,18 @@ export function InductionTemplateManager() {
               <div key={sIdx} className="space-y-3 rounded-md border p-3">
                 <div className="flex flex-wrap items-end gap-2">
                   <div className="space-y-1">
-                    <Label className="text-xs">Section title</Label>
+                    <Label htmlFor={`induction-section-${sIdx}-title`} className="text-xs">Section title</Label>
                     <Input
+                      id={`induction-section-${sIdx}-title`}
                       value={section.title}
                       onChange={(e) => patchSection(sIdx, { title: e.target.value })}
                       className="w-64"
                     />
                   </div>
                   <div className="space-y-1">
-                    <Label className="text-xs">Priority</Label>
+                    <Label htmlFor={`induction-section-${sIdx}-priority`} className="text-xs">Priority</Label>
                     <select
+                      id={`induction-section-${sIdx}-priority`}
                       value={section.priority}
                       onChange={(e) =>
                         patchSection(sIdx, {

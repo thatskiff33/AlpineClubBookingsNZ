@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./helpers/accessibility";
 import { storageStatePath } from "./helpers/auth";
 import { E2E_ADMIN } from "./helpers/fixtures";
 

@@ -2,6 +2,9 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
+import { expressionAt } from "@/lib/__tests__/support/balanced-brackets";
+import { blankLiterals } from "@/lib/__tests__/support/strip-comments";
+
 /**
  * Contract for #2819 (and #2818 decision 6): on every code-backed public hero,
  * the only value that may reach an HTML sink is the stored CMS header field —
@@ -139,45 +142,22 @@ async function findPagesComposingAFallback(): Promise<string[]> {
  * reads the same as a one-liner — Prettier wraps these attributes whenever the
  * class list grows, and that must not read as a new sink.
  *
- * Brace/paren depth is counted naively, and a brace inside a STRING counts like any
- * other. That cuts a region SHORT rather than long: measured, `{ __html: "}" + x }`
- * stops at that character and reports the expression as `"`. A truncated region no
- * longer names what the sink was handed, so the ban on the composed sentence passes
- * VACUOUSLY on that shape — it is the ALLOWLIST that catches it, because `"` is not
- * `storedHeaderHtml`. That is why both checks run on every expression: the ban
- * states the rule, and the allowlist is what holds when the extractor is fooled.
- * The probe test below pins that shape along with the others.
+ * The expression is read by the shared bracket scanner, which skips a bracket inside
+ * a string, a template or a comment, so `{ __html: "}" + x }` reports the whole
+ * `"}" + x` rather than stopping at the quoted brace. Sinks are found over masked
+ * text, so a `__html:` named in a comment is not one. Both checks still run on
+ * every expression: the ban states the rule, and the allowlist is what holds if the
+ * extractor is ever fooled again. The probe test below pins the string-brace shape
+ * along with the others.
  */
 function sinkExpressions(source: string): string[] {
   const expressions: string[] = [];
+  if (!source.includes("__html")) return expressions;
+  const structure = blankLiterals(source);
 
-  for (const match of source.matchAll(/__html\s*:/g)) {
-    const start = match.index + match[0].length;
-    let depth = 0;
-    let index = start;
-
-    for (; index < source.length; index += 1) {
-      const char = source[index];
-      if (char === "{" || char === "(" || char === "[") {
-        depth += 1;
-      } else if (char === ")" || char === "]") {
-        depth -= 1;
-      } else if (char === "}") {
-        if (depth === 0) {
-          break;
-        }
-        depth -= 1;
-      }
-    }
-
-    expressions.push(
-      source
-        .slice(start, index)
-        .trim()
-        .replace(/\s+/g, " ")
-        .replace(/,$/, "")
-        .trim(),
-    );
+  for (const match of structure.matchAll(/__html\s*:/g)) {
+    const { text } = expressionAt(source, match.index + match[0].length, structure);
+    expressions.push(text.trim().replace(/\s+/g, " "));
   }
 
   return expressions;
@@ -312,6 +292,14 @@ describe("public hero header HTML sink contract (#2819)", () => {
       "<div dangerouslySetInnerHTML={{ __html: storedHeaderHtml ?? fallbackHeaderText }} />";
     expect(sinkExpressions(coalesced)[0]).toContain(COMPOSED_FALLBACK);
     expect(ALLOWED_SINK_EXPRESSIONS).not.toContain(sinkExpressions(coalesced)[0]);
+
+    // A brace inside a string does not end the region early, so the composed
+    // sentence stays visible to the ban when it follows one.
+    expect(
+      sinkExpressions(
+        '<div dangerouslySetInnerHTML={{ __html: "}" + fallbackHeaderText }} />',
+      ),
+    ).toEqual(['"}" + fallbackHeaderText']);
 
     // The current, correct shape is accepted — otherwise the contract would fail
     // for the wrong reason and stop being evidence of anything.

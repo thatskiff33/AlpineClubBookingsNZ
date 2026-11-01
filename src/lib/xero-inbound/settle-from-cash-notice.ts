@@ -18,6 +18,7 @@ import { claimAlertCooldownFailOpen } from "@/lib/alert-cooldown-fail-open";
 import type { IbSettlementKeptReason } from "@/lib/ib-settlement-figure-note";
 import logger from "@/lib/logger";
 import {
+  CASH_SETTLEMENT_ALERT_MAX_UNDELIVERED,
   IB_SETTLEMENT_FIGURE_CHECK_EVENT_KIND,
   IB_SETTLEMENT_FIGURE_CHECK_EVENT_REASON,
   asIbSettlementFigureCheckSnapshot,
@@ -197,23 +198,24 @@ export async function cashSettlementMarkerInTransaction(
 }
 
 /** How long one sender holds the right to send a marker's alert (as #3638's). */
-const CASH_SETTLEMENT_ALERT_IN_FLIGHT_MS = 10 * 60 * 1000;
+export const CASH_SETTLEMENT_ALERT_IN_FLIGHT_MS = 10 * 60 * 1000;
 
 /**
  * The alert, after the settle has committed. Sent ONCE per marker: skipped when
  * the marker records it sent, and recorded there only after the send succeeds,
- * so a crash or a failed send leaves it to the next delivery of the invoice.
+ * so a crash or a failed send leaves it to the inbound cron sweep (#4446).
+ * Failed sends are counted on the existing JSON marker; no new lock is taken.
  */
 export async function raiseCashSettlementAlert(input: {
-  payment: { id: string; bookingId: string; booking: { checkIn: Date; checkOut: Date } };
+  payment: { id?: string; bookingId: string; booking: { checkIn: Date; checkOut: Date } };
   memberName: string;
   marker: CashSettlementMarker;
   invoiceId: string;
   format: ClubFormat;
 }): Promise<void> {
   const { payment, marker } = input;
-  const { snapshot } = marker;
-  if (snapshot.alertSentAt) return;
+  if (marker.snapshot.alertSentAt) return;
+  let snapshot = marker.snapshot;
   logger.warn(
     {
       bookingId: payment.bookingId,
@@ -234,11 +236,20 @@ export async function raiseCashSettlementAlert(input: {
       "Failed to claim the bank-transfer settlement alert; sending anyway rather than staying silent about a recorded figure that needs checking",
   });
   if (!holdsClaim) return;
+  // A delivery and the sweep may both hold an old snapshot. Re-read AFTER the
+  // existing cooldown claim, so neither repeats a sent or exhausted marker.
+  const current = await prisma.bookingEvent.findUnique({
+    where: { id: marker.id },
+    select: { snapshot: true },
+  });
+  const fresh = asIbSettlementFigureCheckSnapshot(current?.snapshot);
+  if (!fresh || fresh.alertSentAt || (fresh.alertUndeliveredCount ?? 0) >= CASH_SETTLEMENT_ALERT_MAX_UNDELIVERED) return;
+  snapshot = fresh;
 
   const owed =
     snapshot.owedCents === null ? null : snapshot.cashCents > snapshot.owedCents ? "overpaid" : "underpaid";
   try {
-    await sendAdminBankTransferSettlementFigureAlert(
+    const outcome = await sendAdminBankTransferSettlementFigureAlert(
       {
         memberName: input.memberName,
         checkIn: payment.booking.checkIn,
@@ -256,11 +267,22 @@ export async function raiseCashSettlementAlert(input: {
       },
       input.format,
     );
+    if (outcome === "undelivered") throw new Error("Settlement figure alert reached no recipient");
   } catch (err) {
     logger.error(
       { err, bookingId: payment.bookingId, paymentId: payment.id, invoiceId: input.invoiceId },
-      "Failed to alert admins about a bank-transfer settlement figure; the marker keeps it pending for the next delivery (#3979)",
+      "Failed to alert admins about a bank-transfer settlement figure; the inbound cron retries until the cap (#4446)",
     );
+    await prisma.bookingEvent.updateMany({
+      // A sender that outlived its cooldown cannot erase a newer sent stamp.
+      where: { id: marker.id, snapshot: { equals: snapshot as unknown as Prisma.InputJsonValue } },
+      data: {
+        snapshot: {
+          ...snapshot,
+          alertUndeliveredCount: (snapshot.alertUndeliveredCount ?? 0) + 1,
+        } as unknown as Prisma.InputJsonValue,
+      },
+    });
     return;
   }
 
@@ -274,7 +296,7 @@ export async function raiseCashSettlementAlert(input: {
     .catch((err) =>
       logger.error(
         { err, markerId: marker.id, invoiceId: input.invoiceId },
-        "Sent the bank-transfer settlement alert but could not record it on the marker; the next delivery may send it once more (#3979)",
+        "Sent the bank-transfer settlement alert but could not record it on the marker; a later retry may send it once more (#4446)",
       ),
     );
 }

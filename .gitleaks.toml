@@ -69,6 +69,22 @@ description = "The fabricated temporary AUTH_SECRET used only by the #4164 teard
 regexes = ['''^race-4164-temporary-secret$''']
 
 [[allowlists]]
+description = "The two fabricated role passwords PR #4479's first commits wrote into `database-roles.test.ts` to check the provisioning SQL's password quoting. They are readable labels that were never a credential for any database, and the test now builds its passwords at runtime (`\"m\".repeat(20)`), so the tree no longer carries them. Forgive these exact literals in their historical commits only, without exempting any path or password shape."
+regexes = ['''^migrator-secret-0123456789$''', '''^retention-secret-0123456789$''']
+
+[[allowlists]]
+description = "The fabricated audit-archive password one PR #4479 commit wrote into `backup.test.ts` for the restore-validation guard's archive-name refusal. It is a readable label for a host that does not exist and was never a credential; the test now spells it with the `fixture` stopword, so the tree no longer carries it. Forgive this exact literal in its historical commit only, without exempting any path or password shape."
+regexes = ['''^archive-pw$''']
+
+[[allowlists]]
+description = "The fabricated push secret PR #4582's first commit wrote into `servernz-connection-race.realdb.test.ts` as the doubled central server's answer to a push registration in the standing-connection control (#4470). It is a readable label padded to the schema's 32-character minimum, issued by no server and never a credential; the test now builds its secrets at runtime (`\"s\".repeat(40)`), so the tree no longer carries it. Forgive this exact literal in its historical commits only, without exempting any path or secret shape."
+regexes = ['''^race-4470-standing-secret-padded-to-32-chars$''']
+
+[[allowlists]]
+description = "The fabricated image storage key `race-4590-orphan.webp` that one PR #4591 commit wrote into `club-post-mirror-concurrency.realdb.test.ts` for the orphan-sweep race case. It names a test file on a throwaway mount and was never a credential; `generic-api-key` read it because it sits after `key`. The test now builds the name at runtime, so the tree no longer carries it. Forgive this exact literal in its historical commit only, without exempting any path or shape."
+regexes = ['''^race-4590-orphan\.webp$''']
+
+[[allowlists]]
 description = "The three Stripe TEST-mode placeholders this repository writes down, as exact literals: the diagnostics knowledge-bundle fixtures, the Playwright environment's publishable placeholder, and the booking-payment wrapper's fixture key. Any OTHER Stripe test key still fails the gate — `sk_test_` is a real test-mode credential and only these three named strings are forgiven. Live keys (`sk_live_`, `pk_live_`, `rk_live_`) are never allowlisted by shape. 51 findings across history."
 regexes = [
   '''^sk_test_placeholder$''',
@@ -130,6 +146,39 @@ regexes = ['''^Zx7Qb2Lm9Rt4Vy6Kd8Np1Sw3Hj5Cf0Gu2$''']
 [[allowlists]]
 description = "A fixture database password in the measurement harness's own self-test, whose value is a hyphenated English phrase naming the UTF-16 test material it exists to exercise. It is a password to nothing."
 regexes = ['''^utf16-secret-material$''']
+
+[[allowlists]]
+description = "The md5 digests of PostgreSQL catalog definitions (`pg_get_constraintdef`, `pg_get_triggerdef`, `pg_get_indexdef`) of the member-money journal's constraints, triggers and unique indexes, which PR #4542 (#4513) briefly pinned in commit f9ab43ffb before replacing them, in the same PR, with the definitions' text. They are hashes of a public schema, not credentials: `generic-api-key` matched them only because the constraint and index names they sit under end in `_key`, `_pkey` or `_fkey`. The commit cannot be rewritten, so these exact literals are forgiven, one per distinct digest; any other 32-character hex value still fails the gate. NOT a shape, NOT path-scoped. 36 findings in that one commit, 28 distinct values."
+regexes = [
+  '''^008453491c8f0659e2607b7ef96edc58$''',
+  '''^0b0fe5d4caf0d28c69e98c6578cac37e$''',
+  '''^0e9befc60df7395f80ef18a99c7ca76f$''',
+  '''^208928121c2bcc91ddb7348d1e991c56$''',
+  '''^210c0567cb5318b9c3932cb5d8f13487$''',
+  '''^22ca9b18286287bd39952de4e64adda9$''',
+  '''^3955457f2077c3695b9e1bc0041ca930$''',
+  '''^3da4fb0017a954e360673d23702fc68c$''',
+  '''^45dc2a9511cea1ddeb209174614349d0$''',
+  '''^4c6419b3704337bbfe50f018842a9ad3$''',
+  '''^58b90166240d879161bae4ecfc821e53$''',
+  '''^5a1ebf4eb481c4469e0889d0fd0a386c$''',
+  '''^6388303ebdc4088f5a9a96f30bfaf07b$''',
+  '''^832f8b9ac7b3d637a6da5e4748c7b4ba$''',
+  '''^84a0ecc7411e7c2394eca4da49fb5bc6$''',
+  '''^946f417847528057c4518a2bcefb550c$''',
+  '''^983f00bcf3d8ee57ca31c5e73722239d$''',
+  '''^9bb262f2bfc231b3ae0955160857de09$''',
+  '''^a9c314c363277462f4bda2e8d6942109$''',
+  '''^acb7ce548312f8513628901ff3975b78$''',
+  '''^bd44dc7e36067341bd462d50939fee60$''',
+  '''^bfb14062993af86e2a6ac423c2fc5477$''',
+  '''^db609f1acc60a72b499d2f45e7278684$''',
+  '''^e0bc0470c9bdaafe0129dfb1996dff11$''',
+  '''^e382fee27cdb0c1ac55177728f59450a$''',
+  '''^e3cf1837238c3d0a0da94776b7786f79$''',
+  '''^ee98e76dac1f82613e6230a8d285d3e4$''',
+  '''^ff3b906cc7029defd0c5a26af6ef8872$''',
+]
 
 [[allowlists]]
 description = "The synthetic 64-hex action token the #2827 attribute-oracle tests share, written in source as four hand-typed 16-hex fragments joined with `+` — a shape no credential generator emits, so it is plainly a source constant. The suites (`family-invite-login-link`, `group-join-verify-pay-token-not-rendered`, `family-invite-return-address`, `family-invite-return-cookie-proxy`) assert this token NEVER appears in a rendered HTML attribute and use a short prefix of it as an `^=` CSS oracle probe, so it has to LOOK like a real action token — high entropy, no repeating run — for the absence to prove anything. `issueActionToken` mints these from randomness and persists only their hash; this fixed constant authorises nothing in any deployment. `generic-api-key` matches only the first 16-hex fragment, forgiven here as an exact literal and nothing else."

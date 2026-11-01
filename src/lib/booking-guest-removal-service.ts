@@ -1,3 +1,7 @@
+import { queueOrganiserExtraForChange } from "@/lib/organiser-extra-invoice-queue";
+import { isUnpaidConfirmedWholeLodge } from "@/lib/booking-payment-flow";
+import { postStoredBookingConfirmationLedgerLines } from "@/lib/booking-ledger-confirmation-sync";
+import { LEDGER_ROWS_OLDEST_FIRST } from "@/lib/payment-ledger-order";
 import {
   AdminReviewStatus,
   type AgeTier,
@@ -56,6 +60,7 @@ import {
   calculateModificationSettlementOptions,
   rateSnapshotUpdateForRepricedGuest,
   type BookingModificationSettlementMethod,
+  type LoadedBookingForLifecycle,
   type LoadedBookingForModify,
 } from "@/lib/booking-modify";
 import { creditGiveBackHistory } from "@/lib/booking-credit-give-back-marker";
@@ -124,6 +129,8 @@ export type RemoveBookingGuestResult = {
   accountCreditAmountCents: number;
   pendingRefundAmountCents: number;
   additionalAmountCents: number;
+  /** #4299 (`INV-PAY-148`): the increase invoiced to the group organiser instead of this member. */
+  billedToOrganiserCents: number;
   /**
    * #3371: the minter's own value, carrying what minting it would absorb. The
    * plain figure above is what the emails and the response body read; the two
@@ -393,7 +400,7 @@ export async function removeBookingGuestInTransaction({
           nights: { select: { stayDate: true, priceCents: true, priceSource: true } },
         },
       },
-      payment: true,
+      payment: { include: { transactions: { orderBy: [...LEDGER_ROWS_OLDEST_FIRST] } } },
       member: true,
       // #3369: the owner may be an Organisation; bookingOwner() reads both.
       organisation: { select: { name: true, email: true } },
@@ -834,7 +841,7 @@ export async function removeBookingGuestInTransaction({
   // paid/confirmed booking is flagged for the admin queue without a status
   // change (applyLifecycleTransitions enforces that).
   const lifecycle = await applyLifecycleTransitions(tx, {
-    booking: booking as unknown as LoadedBookingForModify,
+    booking: booking as unknown as LoadedBookingForLifecycle,
     bookingId,
     newCheckIn: booking.checkIn,
     newFinalPriceCents,
@@ -996,6 +1003,7 @@ export async function removeBookingGuestInTransaction({
 
   // #3582: the same before and after, per night, on the booking ledger — under
   // the `lock(1)` this function took first.
+  await queueOrganiserExtraForChange(tx, booking, bookingModification);
   await postModificationLedgerLines({
     store: tx,
     bookingId,
@@ -1004,6 +1012,11 @@ export async function removeBookingGuestInTransaction({
     sides: pricingSides,
     site: "guest-removal",
   });
+  // #4019: this new whole-lodge PAID path bypasses the ordinary settle.
+  // Post after guest/night writes and the edit, at the final price only.
+  if (lifecycle.zeroDollarAutoPaid && isUnpaidConfirmedWholeLodge(booking)) {
+    await postStoredBookingConfirmationLedgerLines(tx, bookingId);
+  }
 
   // D-3813-6 (`INV-PAY-117`): a reduction on a booking paid by internet
   // banking or by hand asks the treasurer to send it back.
@@ -1081,6 +1094,7 @@ export async function removeBookingGuestInTransaction({
     accountCreditAmountCents: paymentImpact.accountCreditAmountCents,
     pendingRefundAmountCents: paymentImpact.pendingRefundAmountCents,
     additionalAmountCents: paymentImpact.additionalAmountCents,
+    billedToOrganiserCents: paymentImpact.billedToOrganiserCents,
     additionalAsk: paymentImpact.additionalAsk,
     retiredAdditionalAsks: paymentImpact.retiredAdditionalAsks,
     unpaidAskCancelled: paymentImpact.unpaidAskCancelled,

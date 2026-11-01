@@ -411,7 +411,7 @@ export function AccessRoleManager({
                         }))
                       }
                     >
-                      <SelectTrigger className="w-[92px] shrink-0">
+                      <SelectTrigger className="w-[92px] shrink-0" aria-label={`${area.label} access level`}>
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>

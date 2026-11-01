@@ -142,6 +142,8 @@ describe("createMemberWholeLodgeRequest (#2263)", () => {
     expect(data.type).toBe(BookingRequestType.GENERAL);
     expect(data.exclusivityRequested).toBe(true);
     expect(data.requestedByMemberId).toBe(MEMBER.id);
+    // No credit election unless the member made one (#4019).
+    expect(data.applyAccountCredit).toBe(false);
 
     // The member is shown no price at request time, so none is computed.
     expect(data).not.toHaveProperty("indicativePriceCents");
@@ -155,6 +157,18 @@ describe("createMemberWholeLodgeRequest (#2263)", () => {
     expect(prisma.booking.create).not.toHaveBeenCalled();
     expect(acquireLodgeCapacityLock).not.toHaveBeenCalled();
     expect(checkCapacityForGuestRanges).not.toHaveBeenCalled();
+  });
+
+  it("records the member's credit election as a yes/no, never an amount (#4019)", async () => {
+    await createMemberWholeLodgeRequest({ ...INPUT, applyAccountCredit: true });
+
+    const data = vi.mocked(prisma.bookingRequest.create).mock.calls[0][0]
+      .data as Record<string, unknown>;
+    expect(data.applyAccountCredit).toBe(true);
+    // No amount is stored: the price is unknown until the officer prices the
+    // approval, which is where the credit is read and applied.
+    expect(data).not.toHaveProperty("creditElectionCents");
+    expect(data).not.toHaveProperty("applyCreditCents");
   });
 
   it("issues NO availability, occupancy, season or pricing query — the timing defence is structural", async () => {

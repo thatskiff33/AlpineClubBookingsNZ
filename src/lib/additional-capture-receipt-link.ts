@@ -6,6 +6,7 @@
  * import graph (`INV-SSOT`: the one spelling of the role and the read).
  */
 import type { Prisma } from "@prisma/client";
+import { LIVE_KEPT_LATE_CAPTURE_INVOICE_WHERE } from "@/lib/late-capture-kept-xero-rules";
 import { prisma } from "@/lib/prisma";
 import { asRecord } from "@/lib/xero-json";
 import { LEDGER_ROWS_OLDEST_FIRST } from "@/lib/payment-ledger-order";
@@ -14,12 +15,37 @@ import { buildEditFinancialReviewChargeReason } from "@/lib/payment-recovery-key
 import { exactPrefix } from "@/lib/prisma-exact-prefix";
 import { SUPPLEMENTARY_INVOICE_PAYMENT_ROLE } from "@/lib/xero-inbound/object-links";
 
-import { XERO_ACTIVE_OPERATION_STATUSES } from "@/lib/xero-active-operation-statuses";
-/** A receipt that will still run: live, or failed/partial and not resolved by hand. */
-const XERO_RERUNNABLE_RECEIPT_STATUSES = [...XERO_ACTIVE_OPERATION_STATUSES, "FAILED", "PARTIAL"] as const;
+import { XERO_RERUNNABLE_OPERATION_STATUSES } from "@/lib/xero-active-operation-statuses";
 
 /** The link the capture's Xero payment writes, on its `PaymentTransaction`. */
 export const ADDITIONAL_CAPTURE_PAYMENT_ROLE = "ADDITIONAL_CAPTURE_PAYMENT";
+
+type ReceiptLinkStore = Pick<Prisma.TransactionClient, "paymentTransaction" | "xeroObjectLink" | "xeroSyncOperation">;
+
+/**
+ * #3953: the Xero invoice a capture's receipt's payment link names, on the
+ * capture's `PaymentTransaction` (null while none is linked). The one read of
+ * that link: the refund paths and (#4324) the late-capture receipt verdict
+ * build on it.
+ */
+export async function readAdditionalCaptureReceiptLinkedInvoiceId(
+  paymentTransactionId: string,
+  store: Pick<Prisma.TransactionClient, "xeroObjectLink"> = prisma,
+): Promise<string | null> {
+  const link = await store.xeroObjectLink.findFirst({
+    where: {
+      localModel: "PaymentTransaction",
+      localId: paymentTransactionId,
+      xeroObjectType: "PAYMENT",
+      role: ADDITIONAL_CAPTURE_PAYMENT_ROLE,
+      active: true,
+    },
+    orderBy: { createdAt: "desc" },
+    select: { metadata: true },
+  });
+  const linked = asRecord(link?.metadata)?.invoiceId;
+  return typeof linked === "string" && linked.length > 0 ? linked : null;
+}
 
 /**
  * #3953: the Xero invoice a capture's receipt was recorded against, from its
@@ -30,26 +56,15 @@ export const ADDITIONAL_CAPTURE_PAYMENT_ROLE = "ADDITIONAL_CAPTURE_PAYMENT";
  */
 export async function findAdditionalCaptureReceiptInvoiceId(
   paymentIntentId: string,
-  store: Pick<Prisma.TransactionClient, "paymentTransaction" | "xeroObjectLink" | "xeroSyncOperation"> = prisma,
+  store: ReceiptLinkStore = prisma,
 ): Promise<string | null> {
   const transaction = await store.paymentTransaction.findUnique({
     where: { stripePaymentIntentId: paymentIntentId },
     select: { id: true },
   });
   if (!transaction) return null;
-  const link = await store.xeroObjectLink.findFirst({
-    where: {
-      localModel: "PaymentTransaction",
-      localId: transaction.id,
-      xeroObjectType: "PAYMENT",
-      role: ADDITIONAL_CAPTURE_PAYMENT_ROLE,
-      active: true,
-    },
-    orderBy: { createdAt: "desc" },
-    select: { metadata: true },
-  });
-  const linked = asRecord(link?.metadata)?.invoiceId;
-  if (typeof linked === "string" && linked.length > 0) return linked;
+  const linked = await readAdditionalCaptureReceiptLinkedInvoiceId(transaction.id, store);
+  if (linked) return linked;
   const pending = await store.xeroSyncOperation.findFirst({
     where: {
       localModel: "PaymentTransaction",
@@ -181,6 +196,11 @@ export async function bookingHasPaidUnnamedSupplementary(
  * enqueue keeps counting it: there a NEW invoice is raised unpaid and the
  * running receipt, on that read, records against it - one recorder either
  * way, and the window between its claim and its store is covered.
+ *
+ * #4324 (`INV-PAY-144`): a kept late capture's own invoice
+ * (`KEPT_LATE_CAPTURE_INVOICE`, any status but CANCELLED, its payload naming
+ * the capture) counts in both modes: the keep queued it as the capture's
+ * recorder, under this same anchor lock.
  */
 export async function anchorCaptureHasReceipt(
   store: Pick<Prisma.TransactionClient, "paymentTransaction" | "xeroObjectLink" | "xeroSyncOperation">,
@@ -206,11 +226,12 @@ export async function anchorCaptureHasReceipt(
   const captures = await store.paymentTransaction.findMany({
     where: { kind: "ADDITIONAL", OR: arms },
     orderBy: [...LEDGER_ROWS_OLDEST_FIRST],
-    select: { id: true },
+    select: { id: true, stripePaymentIntentId: true },
   });
   const ids = captures.map((capture) => capture.id);
   if (ids.length === 0) return false;
-  const [linked, receipts] = await Promise.all([
+  const intents = captures.flatMap((capture) => (capture.stripePaymentIntentId ? [capture.stripePaymentIntentId] : []));
+  const [linked, receipts, kept] = await Promise.all([
     store.xeroObjectLink.findFirst({
       where: { localModel: "PaymentTransaction", localId: { in: ids }, role: ADDITIONAL_CAPTURE_PAYMENT_ROLE, active: true },
       select: { id: true },
@@ -224,9 +245,11 @@ export async function anchorCaptureHasReceipt(
       },
       select: { status: true, requestPayload: true, manuallyResolvedAt: true },
     }),
+    keptInvoiceNamesCapture(store, intents),
   ]);
   return (
     linked !== null ||
+    kept ||
     receipts.some(
       (receipt) =>
         (!options?.decidedOnly && receipt.status === "RUNNING") ||
@@ -236,7 +259,51 @@ export async function anchorCaptureHasReceipt(
         // capture when it runs, so a paying invoice must not be put in front of it.
         (options?.queuedCounts === true &&
           receipt.manuallyResolvedAt === null &&
-          (XERO_RERUNNABLE_RECEIPT_STATUSES as readonly string[]).includes(receipt.status)),
+          // A receipt that will still run: live, or failed/partial and not resolved by hand.
+          (XERO_RERUNNABLE_OPERATION_STATUSES as readonly string[]).includes(receipt.status)),
     )
+  );
+}
+
+/** #4324: whether a live kept-capture invoice (`KEPT_LATE_CAPTURE_INVOICE`, any status but CANCELLED) names one of these captures. */
+async function keptInvoiceNamesCapture(
+  store: Pick<Prisma.TransactionClient, "xeroSyncOperation">,
+  intents: readonly string[],
+): Promise<boolean> {
+  if (intents.length === 0) return false;
+  const kept = await store.xeroSyncOperation.findMany({
+    where: {
+      ...LIVE_KEPT_LATE_CAPTURE_INVOICE_WHERE,
+      OR: intents.map((intent) => ({ requestPayload: { path: ["paymentIntentId"], equals: intent } })),
+    },
+    select: { queueType: true },
+  });
+  return kept.some((row) => row.queueType === LIVE_KEPT_LATE_CAPTURE_INVOICE_WHERE.queueType);
+}
+
+/**
+ * #4324 (`INV-PAY-144`): WHETHER A KEPT-CAPTURE INVOICE BILLS THIS CHANGE - a
+ * live one naming a capture of the change, which a treasurer's keep queued
+ * under the change's anchor lock where nothing else billed it. It records the
+ * change's money as income and its receipt both, so the supplementary enqueue
+ * raises no new invoice for the change, paid or unpaid: either would count
+ * that money twice (income on both, or a receivable left open for ever).
+ */
+export async function keptInvoiceBillsChangeCapture(
+  store: Pick<Prisma.TransactionClient, "paymentTransaction" | "xeroSyncOperation">,
+  bookingModificationId: string,
+): Promise<boolean> {
+  const captures = await store.paymentTransaction.findMany({
+    where: {
+      kind: "ADDITIONAL",
+      stripePaymentIntentId: { not: null },
+      OR: [{ bookingModificationId }, { reason: buildEditFinancialReviewChargeReason(bookingModificationId) }],
+    },
+    orderBy: [...LEDGER_ROWS_OLDEST_FIRST],
+    select: { stripePaymentIntentId: true },
+  });
+  return keptInvoiceNamesCapture(
+    store,
+    captures.flatMap((capture) => (capture.stripePaymentIntentId ? [capture.stripePaymentIntentId] : [])),
   );
 }

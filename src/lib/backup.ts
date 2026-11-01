@@ -20,21 +20,24 @@ import { execFileSync } from "child_process";
 import {
   existsSync,
   mkdirSync,
-  readdirSync,
   unlinkSync,
   statSync,
-  writeFileSync,
 } from "fs";
 import path from "path";
-import { gzipSync } from "zlib";
+import { streamPgDump } from "@/lib/backup-dump";
+import { BACKUP_DIR, pruneBackupSpool, S3_READBACK_SUFFIX } from "@/lib/backup-spool";
 import logger from "@/lib/logger";
 import {
   isAnyBackupDestinationEnabled,
   resolveBackupConfig,
 } from "@/lib/backup-config";
 import { pruneLocalBackups, storeLocalBackup } from "@/lib/backup-local";
+import { configuredAuditArchiveDatabaseUrl } from "@/lib/audit-retention";
+import {
+  isSameDatabaseTarget,
+  restoreDumpWithoutOwnershipOrPrivileges,
+} from "@/lib/backup-restore-validation";
 
-const BACKUP_DIR = "/tmp/tacbookings-backups";
 const S3_BACKUP_PREFIX = "tacbookings_s3backup";
 const MIN_BACKUP_SIZE_BYTES = 128;
 export const BACKUP_COMMAND_TIMEOUT_MS = 120_000;
@@ -119,16 +122,23 @@ export async function runDatabaseBackup(): Promise<BackupResult> {
 
   const sanitizedDatabaseUrl = sanitizePostgresUrlForPgDump(databaseUrl);
   const restoreValidationDatabaseUrl = config.restoreValidationUrl ?? undefined;
-  if (
-    restoreValidationDatabaseUrl &&
-    sanitizePostgresUrlForPgDump(restoreValidationDatabaseUrl) === sanitizedDatabaseUrl
-  ) {
-    return {
-      success: false,
-      error:
-        "The restore-validation URL must point at a disposable shadow database, not the live DATABASE_URL",
-    };
-  }
+  // The same database NAME as the live database or the audit archive refuses the
+  // VALIDATION, whoever connects and wherever (#4453): it starts with DROP SCHEMA.
+  // The backup itself is still taken and stored; the run then reports failure.
+  const archiveUrl = configuredAuditArchiveDatabaseUrl();
+  const validationRefusal = !restoreValidationDatabaseUrl
+    ? undefined
+    : archiveUrl && isSameDatabaseTarget(restoreValidationDatabaseUrl, archiveUrl)
+      ? "The restore-validation URL must point at a disposable shadow database, not the audit archive database"
+      : isSameDatabaseTarget(restoreValidationDatabaseUrl, databaseUrl)
+        ? "The restore-validation URL must point at a disposable shadow database, not the live DATABASE_URL"
+        : undefined;
+
+  // The spool keeps at most this run's completed dump, and only while no
+  // destination received it (#4487).
+  let ownFilename: string | undefined;
+  let spoolDump: string | undefined;
+  let delivered = false;
 
   try {
     // Ensure backup directory exists
@@ -140,7 +150,9 @@ export async function runDatabaseBackup(): Promise<BackupResult> {
     const filename = `tacbookings-${timestamp}.sql.gz`;
     const filepath = path.join(BACKUP_DIR, filename);
 
-    runPgDump(filepath, sanitizedDatabaseUrl);
+    await runPgDump(filepath, sanitizedDatabaseUrl);
+    // Only now is the name ours: a same-millisecond run may hold it (#4487).
+    ownFilename = filename;
 
     // Verify the file was created and has content
     if (!existsSync(filepath)) {
@@ -173,6 +185,8 @@ export async function runDatabaseBackup(): Promise<BackupResult> {
       };
     }
 
+    spoolDump = filename;
+
     // The local destination, written from the SAME verified dump the S3 upload
     // uses — after the empty/too-small checks above, so a corrupt dump is never
     // copied into the directory an operator would restore from.
@@ -183,6 +197,7 @@ export async function runDatabaseBackup(): Promise<BackupResult> {
       try {
         localPath = storeLocalBackup(filepath, config.localPath);
         storedLocally = true;
+        delivered = true;
         // Same retention window as S3, by owner instruction — one number for the
         // whole feature.
         localPruned = pruneLocalBackups(config.localPath, config.retentionDays);
@@ -226,6 +241,7 @@ export async function runDatabaseBackup(): Promise<BackupResult> {
         });
 
         uploadedToS3 = true;
+        delivered = true;
         s3ReadbackVerified = true;
         s3ReadbackSizeBytes = readback.sizeBytes;
         s3ReadbackPath = readback.filepath;
@@ -248,10 +264,26 @@ export async function runDatabaseBackup(): Promise<BackupResult> {
       }
     }
 
+    if (validationRefusal) {
+      logger.error({ job: "backup" }, validationRefusal);
+      cleanupS3Readback(s3ReadbackPath);
+      return {
+        success: false,
+        filename,
+        filepath,
+        uploadedToS3,
+        s3Key,
+        s3ReadbackVerified,
+        s3ReadbackSizeBytes,
+        sizeBytes: stats.size,
+        error: `${validationRefusal}. The backup was taken and stored; its restore validation was skipped.`,
+      };
+    }
+
     if (restoreValidationDatabaseUrl) {
       const sourcePath = s3ReadbackPath ?? filepath;
       try {
-        restoreValidation = validateBackupRestore(
+        restoreValidation = await validateBackupRestore(
           sourcePath,
           restoreValidationDatabaseUrl,
           s3ReadbackPath ? "s3-readback" : "local-file"
@@ -277,9 +309,6 @@ export async function runDatabaseBackup(): Promise<BackupResult> {
 
     cleanupS3Readback(s3ReadbackPath);
 
-    // Clean up old local backups
-    cleanupOldBackups(config.retentionDays);
-
     return {
       success: true,
       filename,
@@ -303,6 +332,9 @@ export async function runDatabaseBackup(): Promise<BackupResult> {
     const message = err instanceof Error ? err.message : String(err);
     logger.error({ err, job: "backup" }, "pg_dump failed");
     return { success: false, error: `pg_dump failed: ${message}` };
+  } finally {
+    // The spool persists across restarts, so every run, failed or not, prunes it.
+    pruneBackupSpool(ownFilename, delivered ? undefined : spoolDump);
   }
 }
 
@@ -322,8 +354,8 @@ export function buildBackupCronOutcome(result: BackupResult): BackupCronOutcome 
       }
     }
 
-    // "Not durable" means the dump exists ONLY in the container's ephemeral
-    // /tmp, which a restart discards. A club that has deliberately configured a
+    // "Not durable" means the dump exists ONLY in working storage, with no
+    // configured backup destination. A club that has deliberately configured a
     // local directory has a destination, so this no longer fails their nightly
     // run — but a local directory sits on the same host as the database, so it
     // is not off-site, and the operator guide says so rather than this pretending
@@ -517,11 +549,12 @@ export function buildPostgresEnvironment(password?: string): NodeJS.ProcessEnv {
 export function describeMissingCommand(err: unknown): string | null {
   const error = err as NodeJS.ErrnoException & { syscall?: string; path?: string };
   if (error?.code !== "ENOENT") return null;
-  // `spawnSync <cmd>` is the syscall on a failed LAUNCH; a missing file reports
+  // `spawn[Sync] <cmd>` is the syscall on a failed LAUNCH; a missing file reports
   // `open` or `copyfile` instead. That distinction is the whole guard.
-  if (!error.syscall?.startsWith("spawnSync")) return null;
+  const syscall = error.syscall ?? "";
+  if (!/^spawn(?:Sync)? /.test(syscall)) return null;
 
-  const command = error.path ?? error.syscall.replace("spawnSync ", "").trim();
+  const command = error.path ?? syscall.replace(/^spawn(?:Sync)? /, "").trim();
   const provider =
     command === "aws"
       ? "the AWS CLI"
@@ -534,16 +567,14 @@ export function describeMissingCommand(err: unknown): string | null {
   );
 }
 
-function runPgDump(filepath: string, sanitizedDatabaseUrl: string) {
+async function runPgDump(filepath: string, sanitizedDatabaseUrl: string) {
   const { argvUrl, password } = splitPostgresPassword(sanitizedDatabaseUrl);
-  const dump = execFileSync("pg_dump", [argvUrl], {
-    timeout: BACKUP_COMMAND_TIMEOUT_MS,
-    maxBuffer: BACKUP_COMMAND_MAX_BUFFER_BYTES,
+  await streamPgDump({
+    filepath,
+    argvUrl,
+    timeoutMs: BACKUP_COMMAND_TIMEOUT_MS,
     env: buildPostgresEnvironment(password),
-    stdio: ["ignore", "pipe", "pipe"],
   });
-
-  writeFileSync(filepath, gzipSync(dump));
 }
 
 function buildAwsEnvironment(
@@ -580,7 +611,7 @@ function uploadAndVerifyS3Readback({
   secretAccessKey: string | null;
 }) {
   const s3Uri = `s3://${s3Bucket}/${s3Key}`;
-  const readbackPath = path.join(BACKUP_DIR, `${filename}.s3-readback`);
+  const readbackPath = path.join(BACKUP_DIR, `${filename}${S3_READBACK_SUFFIX}`);
   const env = buildAwsEnvironment(accessKeyId, secretAccessKey);
 
   execFileSync("aws", ["s3", "cp", filepath, s3Uri, "--region", s3Region], {
@@ -611,11 +642,11 @@ function cleanupS3Readback(readbackPath?: string) {
   }
 }
 
-function validateBackupRestore(
+async function validateBackupRestore(
   sourcePath: string,
   restoreValidationDatabaseUrl: string,
   source: BackupRestoreValidation["source"]
-): BackupRestoreValidation {
+): Promise<BackupRestoreValidation> {
   const { argvUrl: sanitizedRestoreUrl, password: restorePassword } =
     splitPostgresPassword(
       sanitizePostgresUrlForPgDump(restoreValidationDatabaseUrl),
@@ -638,18 +669,14 @@ function validateBackupRestore(
     }
   );
 
-  const sql = execFileSync("gunzip", ["-c", sourcePath], {
-    timeout: BACKUP_COMMAND_TIMEOUT_MS,
-    maxBuffer: BACKUP_COMMAND_MAX_BUFFER_BYTES,
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-
-  execFileSync("psql", [sanitizedRestoreUrl, "-v", "ON_ERROR_STOP=1"], {
-    input: sql,
-    timeout: BACKUP_COMMAND_TIMEOUT_MS,
-    maxBuffer: BACKUP_COMMAND_MAX_BUFFER_BYTES,
+  // Owners and grants are left out of the validation restore only, so a
+  // non-superuser that owns just the shadow database can run it; streamed, so
+  // the dump is never held in memory (#4453). The backup file is unchanged.
+  await restoreDumpWithoutOwnershipOrPrivileges({
+    sourcePath,
+    argvUrl: sanitizedRestoreUrl,
     env: restoreEnv,
-    stdio: ["pipe", "pipe", "pipe"],
+    timeoutMs: BACKUP_COMMAND_TIMEOUT_MS,
   });
 
   const counts = execFileSync(
@@ -700,28 +727,4 @@ function validateBackupRestore(
     bookingCount,
     paymentCount,
   };
-}
-
-/**
- * Remove backup files older than the configured retention window.
- */
-function cleanupOldBackups(retentionDays: number) {
-  const cutoff = Date.now() - retentionDays * 24 * 60 * 60 * 1000;
-
-  if (!existsSync(BACKUP_DIR)) return;
-
-  try {
-    const files = readdirSync(BACKUP_DIR);
-    for (const file of files) {
-      if (!file.startsWith("tacbookings-") || !file.endsWith(".sql.gz")) continue;
-      const filepath = path.join(BACKUP_DIR, file);
-      const stats = statSync(filepath);
-      if (stats.mtimeMs < cutoff) {
-        unlinkSync(filepath);
-        logger.info({ file, job: "backup" }, "Cleaned up old backup");
-      }
-    }
-  } catch (err) {
-    logger.error({ err, job: "backup" }, "Backup cleanup error");
-  }
 }

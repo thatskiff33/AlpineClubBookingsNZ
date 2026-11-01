@@ -2,7 +2,8 @@ import fs from "fs";
 import path from "path";
 import { describe, expect, it } from "vitest";
 import { MODULE_KEYS } from "@/config/modules";
-import { stripComments } from "./support/strip-comments";
+import { blankLiterals, stripComments } from "./support/strip-comments";
+import { balancedBrackets } from "./support/balanced-brackets";
 
 // #153 / #150 / #175 guard: every read AND write of the ClubModuleSettings
 // singleton must use an explicit column `select`
@@ -113,16 +114,8 @@ function walk(dir: string, files: string[] = []): string[] {
 }
 
 /** Extract the balanced-paren call-argument text starting at an opening "(". */
-function extractCallArgs(source: string, openParenIndex: number): string {
-  let depth = 0;
-  for (let i = openParenIndex; i < source.length; i++) {
-    if (source[i] === "(") depth++;
-    else if (source[i] === ")") {
-      depth--;
-      if (depth === 0) return source.slice(openParenIndex, i + 1);
-    }
-  }
-  return source.slice(openParenIndex);
+function extractCallArgs(source: string, openParenIndex: number, structure: string): string {
+  return balancedBrackets(source, openParenIndex, structure).text;
 }
 
 interface ProjectingCall {
@@ -141,9 +134,12 @@ function projectingCalls(): ProjectingCall[] {
   const calls: ProjectingCall[] = [];
   for (const file of walk(SRC_DIR)) {
     const code = stripComments(fs.readFileSync(file, "utf8"));
+    if (!code.includes("clubModuleSettings")) continue;
+    // Calls are found over masked text: one named in a string is not a call.
+    const structure = blankLiterals(code);
     let match: RegExpExecArray | null;
     CALL_PATTERN.lastIndex = 0;
-    while ((match = CALL_PATTERN.exec(code))) {
+    while ((match = CALL_PATTERN.exec(structure))) {
       const openParenIndex = match.index + match[0].length - 1;
       const line = code.slice(0, match.index).split("\n").length;
       const rel = path.relative(process.cwd(), file).replace(/\\/g, "/");
@@ -151,7 +147,7 @@ function projectingCalls(): ProjectingCall[] {
         file: rel,
         location: `${rel}:${line}`,
         method: match[1],
-        args: extractCallArgs(code, openParenIndex),
+        args: extractCallArgs(code, openParenIndex, structure),
       });
     }
   }

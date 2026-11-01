@@ -374,6 +374,7 @@ export default function ConfigTransferPage() {
           <input
             type="file"
             accept=".zip,application/zip"
+            aria-label="Configuration bundle (.zip)"
             className="block text-sm"
             onChange={(e) => {
               setFile(e.target.files?.[0] ?? null);
@@ -572,7 +573,7 @@ export default function ConfigTransferPage() {
                       <li
                         key={`${item.entity}:${item.key}`}
                         className={`flex flex-wrap items-center gap-x-2 gap-y-1 ${
-                          changed ? "text-foreground" : "text-muted-foreground opacity-70"
+                          changed ? "text-foreground" : "text-muted-foreground"
                         }`}
                       >
                         <span
@@ -589,6 +590,7 @@ export default function ConfigTransferPage() {
                         {item.candidates?.length ? (
                           <span className="ml-2">
                             <select
+                              aria-label={`Match for ${item.entity} “${item.key}”`}
                               className="rounded border px-1 py-0.5 text-xs"
                               disabled={planning}
                               value={

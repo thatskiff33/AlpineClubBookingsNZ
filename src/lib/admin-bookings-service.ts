@@ -47,7 +47,7 @@ import {
   type GuestStayRange,
 } from "@/lib/booking-guest-stay-ranges";
 import { lodgeNullTolerantScope } from "@/lib/lodges";
-import { buildAdditionalOwedWhere } from "@/lib/unpaid-finished-stays";
+import { buildAdditionalOwedWhere, buildUnpaidFinishedStaysStatusWhere } from "@/lib/unpaid-finished-stays";
 import { prisma } from "@/lib/prisma";
 import {
   reconcileBookingMoney,
@@ -117,6 +117,9 @@ export const adminBookingsQuerySchema = z.object({
   // card deep-links here as additionalOwed=owed&checkOutTo=<today>; the SQL
   // fragment is shared with that card's count via unpaid-finished-stays.ts.
   additionalOwed: z.enum(["all", "owed"]).optional().default("all"),
+  // Unpaid finished stays (#1709, #4019): the dashboard card and sidebar badge
+  // deep-link here as unpaid=finished&checkOutTo=<today>; one fragment with them.
+  unpaid: z.enum(["all", "finished"]).optional().default("all"),
   changeState: z.enum(["all", "requiresReview", "pendingRequest", "hasModification", "creditGenerated"]).optional().default("all"),
   // Member-guest consent queues (#2307, owner decision MG2-M-3 as ticked):
   // "waiting" narrows to bookings holding an unanswered (PENDING) consent
@@ -671,6 +674,9 @@ function buildBookingWhere(
   const andFragments: Prisma.BookingWhereInput[] = [...searchFragments];
   if (query.additionalOwed === "owed") {
     andFragments.push(buildAdditionalOwedWhere());
+  }
+  if (query.unpaid === "finished") {
+    andFragments.push(buildUnpaidFinishedStaysStatusWhere());
   }
 
   // #2307 (MG2-M-3): the consent chips narrow in SQL, AND-composed like the

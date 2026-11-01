@@ -52,6 +52,17 @@ const PROJECT_SUPPORTED_VITEST_EXTENSIONS = new Set([
  * here is a deliberate act; the default for a new test is TypeScript.
  */
 const JAVASCRIPT_VITEST_TESTS = [
+  // #4466: suites for the bare-Node ESLint configuration and its .mjs rule.
+  "scripts/eslint/accessibility.test.mjs",
+  "scripts/eslint/fixture-import.test.mjs",
+  "scripts/eslint/ratchet.test.mjs",
+  // #4462: the frozen-clock lint rule, a bare-Node .mjs rule like the above.
+  "scripts/eslint/test-clock.test.mjs",
+  // #4467: the design-system control rules, a bare-Node .mjs rule like the above.
+  "scripts/eslint/design-system.test.mjs",
+  // #4462: the agent-rule hook dispatcher runs under bare `node` before every
+  // Bash call an agent makes, so it and its suite stay JavaScript.
+  "scripts/agent-hooks/agent-hooks.test.mjs",
   // #3254 split the dependency audit out of `verify` into its own job and its
   // own `.mjs` tool. Its suite tests that tool, so it stays JavaScript for the
   // same reason every other entry here does. It arrived on `main`, whose copy of
@@ -65,6 +76,7 @@ const JAVASCRIPT_VITEST_TESTS = [
   "scripts/ci/dependency-mitigation.test.mjs",
   // #4364: the `.mjs` allowBuilds/lockfile gate runs with a bare `node` before
   // the install, so its suite stays JavaScript like the others here.
+  "scripts/ci/check-action-pins.test.mjs",
   "scripts/ci/check-allow-builds.test.mjs",
   "scripts/ci/check-doc-index-integrity.test.mjs",
   "scripts/ci/check-pr-body.test.mjs",
@@ -73,6 +85,7 @@ const JAVASCRIPT_VITEST_TESTS = [
   "scripts/ci/check-pr-changelog-fragment.test.mjs",
   "scripts/ci/check-pr-concurrency-declaration.test.mjs",
   "scripts/ci/check-prerendered-script-nonces.test.mjs",
+  "scripts/ci/check-realdb-ran.test.mjs",
   "scripts/ci/check-semgrep-coverage.test.mjs",
   "scripts/ci/check-website-prerender-manifest.test.mjs",
   "scripts/ci/check-website-render-modes.test.mjs",
@@ -96,7 +109,13 @@ const JAVASCRIPT_VITEST_TESTS = [
   // their shared suite stays JavaScript under the same convention.
   "scripts/audit/fragility.test.mjs",
   "scripts/issue-thread.test.mjs",
+  // #4452: `lanes:stale` is a read-only `.mjs` tool run with bare node; its
+  // suite stays JavaScript like the other script suites here.
+  "scripts/lanes-stale.test.mjs",
   "scripts/release/compile-changelog.test.mjs",
+  // #4465: `release:cut` drives the `.mjs` compiler under bare node, so its
+  // suite stays JavaScript beside the compiler's.
+  "scripts/release/cut-release.test.mjs",
   // #3673: the `.mjs` worktree-removal tool's own suite; it stays JavaScript
   // for the same reason as the stale-containers and issue-thread suites.
   "scripts/remove-worktree.test.mjs",
@@ -455,9 +474,11 @@ describe("typecheck project coverage", () => {
   });
 
   it("gives the Playwright suite tsconfig.e2e.json and nothing else", () => {
-    const playwright = trackedTypeScript.filter(
-      (file) => file.startsWith("e2e/") || file === "playwright.config.ts",
-    );
+    // #4466: the axe fixture's contract suite (scripts/e2e-contracts) is
+    // Playwright too, and the Docker build context leaves it out with e2e/.
+    const isPlaywrightRoot = (file: string) =>
+      file.startsWith("e2e/") || file.startsWith("scripts/e2e-contracts/") || file === "playwright.config.ts";
+    const playwright = trackedTypeScript.filter(isPlaywrightRoot);
     expect(playwright.length).toBeGreaterThan(50);
     expect(playwright).toContain("playwright.config.ts");
     for (const file of playwright) {
@@ -469,9 +490,7 @@ describe("typecheck project coverage", () => {
     }
     // And only that: the e2e project reaches application code through imports,
     // never by listing it.
-    const strays = [...e2e.files].filter(
-      (file) => !file.startsWith("e2e/") && file !== "playwright.config.ts",
-    );
+    const strays = [...e2e.files].filter((file) => !isPlaywrightRoot(file));
     expect(strays, "tsconfig.e2e.json lists non-Playwright roots").toEqual([]);
     expect(e2e.options.types).toEqual(["node"]);
   });

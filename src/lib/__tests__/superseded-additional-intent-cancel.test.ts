@@ -21,7 +21,10 @@ vi.mock("@/lib/payment-recovery", () => ({
   runPaymentRecoveryOperationNow: mocks.runNow,
 }));
 
-import { queueSupersededAdditionalIntentCancellations } from "@/lib/booking-payment-cleanup";
+import {
+  cancelSupersededAdditionalIntentsNow,
+  queueSupersededAdditionalIntentCancellationRows,
+} from "@/lib/booking-payment-cleanup";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 import { matchesWhere, type WhereInput } from "./support/prisma-where";
 
@@ -56,7 +59,20 @@ beforeEach(() => {
   mocks.runNow.mockResolvedValue("succeeded");
 });
 
-describe("queueSupersededAdditionalIntentCancellations", () => {
+/**
+ * The supersede as every minter runs it since #4442: the durable rows (inside
+ * the minter's queue transaction there; on the client here), then the
+ * immediate cancels after.
+ */
+async function supersede(options: Parameters<typeof queueSupersededAdditionalIntentCancellationRows>[0] & {
+  format: typeof CLUB_FORMAT_TEST;
+}) {
+  const queued = await queueSupersededAdditionalIntentCancellationRows(options);
+  await cancelSupersededAdditionalIntentsNow({ ...options, queued });
+  return queued.map(({ paymentTransactionId, paymentIntentId }) => ({ paymentTransactionId, paymentIntentId }));
+}
+
+describe("the supersede: queueSupersededAdditionalIntentCancellationRows, then cancelSupersededAdditionalIntentsNow", () => {
   it("enqueues the durable row and then cancels immediately, in that order", async () => {
     mocks.findMany.mockResolvedValue([STALE_TRANSACTION]);
     const order: string[] = [];
@@ -69,7 +85,7 @@ describe("queueSupersededAdditionalIntentCancellations", () => {
       return "succeeded";
     });
 
-    const queued = await queueSupersededAdditionalIntentCancellations({
+    const queued = await supersede({
       format: CLUB_FORMAT_TEST,
       bookingId: "booking_1",
       paymentId: "payment_1",
@@ -136,7 +152,7 @@ describe("queueSupersededAdditionalIntentCancellations", () => {
       id: `operation_${paymentTransactionId}`,
     }));
 
-    const queued = await queueSupersededAdditionalIntentCancellations({
+    const queued = await supersede({
       format: CLUB_FORMAT_TEST,
       bookingId: "booking_1",
       paymentId: "payment_1",
@@ -164,7 +180,7 @@ describe("queueSupersededAdditionalIntentCancellations", () => {
     // The mint must still return the new client secret; the member's edit is
     // already saved and the recovery cron owns the retry.
     await expect(
-      queueSupersededAdditionalIntentCancellations({
+      supersede({
         format: CLUB_FORMAT_TEST,
         bookingId: "booking_1",
         paymentId: "payment_1",
@@ -185,7 +201,7 @@ describe("queueSupersededAdditionalIntentCancellations", () => {
       .mockResolvedValueOnce({ id: "operation_1" })
       .mockResolvedValueOnce({ id: "operation_2" });
 
-    await queueSupersededAdditionalIntentCancellations({
+    await supersede({
       format: CLUB_FORMAT_TEST,
       bookingId: "booking_1",
       paymentId: "payment_1",
@@ -202,7 +218,7 @@ describe("queueSupersededAdditionalIntentCancellations", () => {
     mocks.findMany.mockResolvedValue([
       { id: "tx_no_intent", stripePaymentIntentId: null, amountCents: 6500 },
     ]);
-    const queued = await queueSupersededAdditionalIntentCancellations({
+    const queued = await supersede({
       format: CLUB_FORMAT_TEST,
       bookingId: "booking_1",
       paymentId: "payment_1",

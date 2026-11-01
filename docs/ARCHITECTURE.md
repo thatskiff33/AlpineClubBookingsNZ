@@ -621,6 +621,11 @@ caught by a count contract in `field-hint.test.tsx`: `useFieldHint(`,
 `.fieldProps` and `.hintProps` must occur the same number of times across
 `src/`.
 
+On the shared form layer (#4467) a field's example is `FormDescription`,
+which renders `FieldHint` and wires it the same way: `FormControl` lists the
+field's error first, then any id passed to it, then the hint, and names the
+hint only while it is rendered.
+
 **A person-entered money amount uses `MoneyInput`.**
 `src/components/ui/money-input.tsx` is the controlled text field for dollars
 and cents: it preserves invalid text for the caller's visible validation, refuses
@@ -1174,15 +1179,15 @@ Booking Policies sections (#2142) and is now the **default across the admin
 tree** (#2160, extended by #2168 and #2324) — not a claim that nothing is left.
 Measured
 on the current tree by `view-only-banner-contract.test.ts`, which asserts these
-figures rather than trusting a hand count: **100 components render a banner, and
- 323 of the 378 `ViewOnlyActionButton` call sites opt out** of the per-button
+figures rather than trusting a hand count: **104 components render a banner, and
+ 331 of the 386 `ViewOnlyActionButton` call sites opt out** of the per-button
 reason. (Earlier revisions of this page published 76/232/264/211 — those were
 upstream-historical and had drifted; the numbers here are the ones the contract
-test currently pins, which is the only authority.) Those 323 split by WHICH rule
-covers them: **287** pass the literal
-`describeReason={false}` and are covered by a banner in the same file, and **36**
+test currently pins, which is the only authority.) Those 331 split by WHICH rule
+covers them: **293** pass the literal
+`describeReason={false}` and are covered by a banner in the same file, and **38**
 pass `describeReason={!ancestorRendersViewOnlyBanner}` and are covered by a
-verified vouching parent — 31 by a parent's own JSX render site (#2168), 5 by the
+verified vouching parent — 33 by a parent's own JSX render site (#2168), 5 by the
 guided-setup shell (#2324); see *Vouching for a child's coverage* and *Vouching
 through the wizard shell* below. The
 remaining **55 controls across 30 files deliberately keep the per-button
@@ -1637,6 +1642,7 @@ and the boxes can already be out of date. What keeps stale display from becoming
 a stale WRITE is the changed-fields-only patch above, not the gate. What the
 gate adds is that the dirty comparison is against the card's own snapshot, which
 is what is on screen, so a stale box never arms Save by itself.
+
 The rule binds sections that are NEW or MODIFIED. Known departures that this
 rule does not itself retrofit are the `/admin/modules` grid (deliberate bulk
 toggles), the older staged-but-ungated settings forms, the age-tier and
@@ -1834,6 +1840,23 @@ also be RECOVERABLE without leaving the page: it carries a **Try again** action
 that re-runs the current key's load in place. All three keyed booking-policy
 sections (default cancellation, booking periods, minimum night stay) carry this.
 
+**The shared form layer (#4467) validates fields; it is not an edit model.**
+Its pattern is in [`UX_FLOW_MAP.md`](UX_FLOW_MAP.md#forms-4467): a zod schema
+in `src/lib/forms/` shared with the write route, `useZodForm`, inline errors
+and a `FormErrorSummary` that takes focus. A settings section that adopts it
+keeps every rule above: `useSectionEditState` still owns Edit, Cancel to the
+snapshot and the dirty- and view-gated Save, and the section's permanently
+mounted banner and feedback regions still carry its request-level outcomes.
+The summary is the one region the layer adds, and it follows
+`FocusedActionError` rather than the permanently-mounted rule: a
+`role="alert"` mounted when a submit fails, already filled, and announced by
+taking focus as the submit completes, so it does not depend on a live region
+being registered first. Between submits its text never changes; entries only
+disappear as their fields are fixed, so nothing is announced while the person
+types. The first form on the layer is the committee page's role form, a
+submit-style form rather than a staged section; no staged section uses the
+layer yet.
+
 The `/admin/xero` and `/admin/members` routes are route shells with local
 `_components` and `_hooks` folders; the member `/book` wizard follows the same
 shape, keeping its wizard-step views in `src/app/(authenticated)/book/_components`
@@ -1895,6 +1918,31 @@ The source of truth is `prisma/schema.prisma`. Key domains are:
 - Organisations: `Organisation` and `OrganisationContact`, the records a
   school's identity lives in. Added and linked but read by nothing yet — see
   "Organisations, and the school that is currently a person" below.
+
+### Inert member money journal (#4513)
+
+The new journal preserves economic evidence without changing any current money
+reader or writer. `MemberMoneyEvent` has one `MemberMoneyJournal`; its positive
+integer-cent `MemberMoneyLine` legs balance in one currency at commit. Headers
+record the transaction and cluster that may insert their complete, counted legs,
+obligations and applications. A debtor is a member or an organisation, never both. Exact reversals append evidence; no row is rewritten.
+`MemberMoneyObligation` retains face terms, `MemberMoneyApplication` attributes
+identified money to an obligation, and `MemberMoneySourceLink` bridges source
+facts, including retained `BookingLedgerLine` ids. `MemberMoneySourcePosting`
+retains each bridge's exact leg coverage, including links attached later. Financial parent links
+use RESTRICT, and since M2 (#4514) the booking ledger's keys, credit rows' booking links and a
+group settlement's group key do too (`INV-MONEY-043`): a booking with money is never hard-deleted.
+
+Database CHECKs, deferred triggers and INSERT/SELECT-only application grants
+carry `INV-MONEY-041`, `INV-MONEY-042` and `INV-OPS-016`. No legacy source is made
+mandatory yet. `src/lib/member-money/index.ts` exposes the account registry, the
+operator verifier and, since M2 (#4514), two read-only references the deletion
+guards consult (`INV-MONEY-043`); implementation lives in `internal/`. No posting
+API is enabled. Later writer commands must implement the
+existing advisory tiers (`INV-LOCK-001`–`003`); M1 adds no advisory key, lifecycle
+participant, outbox or provider call. The verifier reads a repeatable-read,
+read-only snapshot. See [deployment grants](../DEPLOYMENT.md#member-money-journal-grants-m1)
+and [lodge scoping](multi-lodge/lodge-scoping-contract.md#member-money-journal-4513).
 
 ### Organisations, and the school that is currently a person
 
@@ -2370,7 +2418,8 @@ Pending self-service account deletion requests are also counted there and link
 admins to the deletion request queue. Unpaid finished stays (#1709/#1731) —
 `PAYMENT_PENDING` bookings whose check-out is on or before NZ today — badge an
 "Unpaid Finished Stays" entry deep-linking to the pre-filtered bookings list;
-its predicate and href live in `src/lib/unpaid-finished-stays.ts`, shared with
+its predicate lives in `src/lib/unpaid-finished-stays.ts` and its href in the
+import-free `src/lib/unpaid-finished-stays-hrefs.ts`, both shared with
 the admin dashboard attention card so the two surfaces never drift. The
 sibling queue "Unpaid Stay Additions" (#1723) — settled
 (`CONFIRMED`/`PAID`/`COMPLETED`, deliberately never `PAYMENT_PENDING` so the
@@ -3319,7 +3368,7 @@ flowchart TD
 | `internet-banking-hold-release` | Every 15 minutes | Release an Internet Banking booking whose payment hold deadline has passed unpaid: cancel the booking, free its beds, fail the pending payment and clear its unpaid invoice. A stay that has started (check-in on or before the club's today) is never cancelled: it is counted `skippedStarted` and finance is alerted once (`INV-PAY-016`). A hold that throws is retried next run and the run records a `warning` admin cron health shows. Second task of the payments cycle |
 | `xero-waiting-invoice-reaper` | Every 15 minutes | Settle a booking change's `WAITING_PAYMENT` Xero invoice that has waited past 14 days: keep it while the payment can still be made, release it if the payment was captured, retire it only once closed. Third task of the payments cycle |
 | `late-capture-held-alert` | Every 15 minutes | Re-announce a card payment captured after its booking was cancelled and held for a treasurer's approval, while it is still waiting, when nobody has received its alert yet (#3635). Fourth task of the payments cycle; the once-ever claim makes a delivered alert a no-op |
-| `credit-release-asks` | Every 15 minutes | Ask the member by card for credit that was released when a credit note was spent in Xero, record the card payment on the booking's own invoice, and close a request Xero shows paid (#4253, `INV-ADDPAY-045`, `INV-ADDPAY-046`). Raising a request is off until an operator sets the `CREDIT_RELEASE_ASK`/`WRITER` `XeroSyncCursor` row to `enabled: true`. Sixth task of the payments cycle (`src/lib/payments-cron-runner.ts`) |
+| `credit-release-asks` | Every 15 minutes | Ask the member by card for credit that was released when a credit note was spent in Xero, record the card payment on the booking's own invoice, and close a request Xero shows paid (#4253, `INV-ADDPAY-045`, `INV-ADDPAY-046`). Raising a request is off until an operator sets the `CREDIT_RELEASE_ASK`/`WRITER` `XeroSyncCursor` row to `enabled: true`; releases from before that are asked for in audited batches only while the `BACKLOG` row is enabled too (`INV-ADDPAY-050`). Sixth task of the payments cycle (`src/lib/payments-cron-runner.ts`) |
 | `duplicate-capture-kept-alert` | Every 15 minutes | Deliver an owed alert for a card payment kept on a paid or completed booking with no other payment the app counts as settling it and no record of which payment settled it, when a crash or a failed send left it undelivered (#4285, `INV-PAY-043`). Fifth task of the payments cycle; tries a marker an hour after it was owed, re-judged first in one read-only snapshot (waiting only while a card refund that may take from this capture is in flight; who else holds money read the way an admin is told, so a capture behind a dead cancel or a duplicate refund that failed later is named; a booking cancelled since, told with the cancellation's recorded refund, a card refund read as the booking page reads it (not sent while a refund Stripe failed later is owed again; an organiser-card child's as its debt to the organiser's card) and a shortfall part as its hand-back task stands; every alert showing what the card still holds after card refunds), and the once-a-day cooldown still holds, so a send whose cooldown was claimed just before a crash waits about 24 hours |
 | `waitlist-processor` | Every 30 minutes | Expire offers and advance waitlist |
 | `email-retry` | Every 30 minutes | Retry failed email sends |
@@ -3336,7 +3385,7 @@ flowchart TD
 | `xero-credit-sync-check` | Daily | Reconcile BookingApp's stamped applied credit against Xero's live invoice allocations and warn admins on drift with the exact amount (#2501); read-only, self-throttled |
 | `finance-daily-sync` | Daily when the finance dashboard module is enabled | Refresh finance report/invoice/balance snapshots from the operational Xero connection |
 | `data-pruning` | Daily | Prune expired tokens/logs and run audit retention |
-| `draft-cleanup` | Daily | Delete expired draft bookings |
+| `draft-cleanup` | Daily | Delete expired draft bookings; leave out and report any that financial history names (`INV-MONEY-043`) |
 | `member-guest-consent-expiry` | Daily at 04:30 NZT when the member-guests module is enabled | Expire lapsed member-guest consent requests, release the bed, and settle the reduction as account credit to the booking owner; rows the shared removal path refuses are counted separately for the admin exception list |
 | `pending-deadline-alerts` | Daily | Alert admins about pending bookings approaching deadline |
 | `credit-reconciliation` | Daily | Reconcile account-credit ledger state and alert on refunded Stripe payments missing Xero credit notes |

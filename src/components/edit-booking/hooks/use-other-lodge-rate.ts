@@ -29,7 +29,7 @@ export interface OtherLodgeRateState {
    */
   available: boolean;
   /** The partner-lodge registry, in name order. Empty when unavailable. */
-  lodges: Array<{ id: string; name: string }>;
+  lodges: Array<{ id: string; name: string; label: string }>;
   /** "Member of Other Lodge" — reveals the lodge picker when ticked. */
   enabled: boolean;
   /** The chosen lodge, or null while the officer has not picked one yet. */

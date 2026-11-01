@@ -48,3 +48,7 @@ describe("sensitive EmailLog HTML classification", () => {
     expect(shouldPersistEmailHtml("split-guest-portion-cancelled")).toBe(true);
   });
 });
+
+it("leaves settlement figure retries to the durable marker rather than EmailLog", () => {
+  expect(shouldPersistEmailHtml("admin-bank-transfer-settlement-figure")).toBe(false);
+});

@@ -1,3 +1,8 @@
+import { ORGANISER_COMBINED_INVOICE_PLACE_MESSAGE, ORGANISER_COMBINED_INVOICE_PLACE_REFUSAL, resolveOrganiserBilling } from "@/lib/organiser-billing";
+import { paidByOrganiserInternetBanking } from "@/lib/group-organiser-paid";
+import { organiserExtraWaivedBeforeRaised } from "@/lib/organiser-extra-state";
+import { executeOrganiserExtraAdjustment } from "@/lib/organiser-extra-adjustment";
+import { XERO_OUTBOX_ORGANISER_EXTRA_ADJUSTMENT_TYPE } from "@/lib/organiser-extra-adjustment-payload";
 import { PaymentSource, Prisma } from "@prisma/client";
 import logger from "@/lib/logger";
 import {
@@ -73,7 +78,7 @@ import { createXeroKeptLateCaptureInvoice } from "@/lib/xero-kept-late-capture-i
 import { recordAdditionalCaptureReceipt } from "@/lib/additional-capture-xero-receipt";
 import { outboxScanSpacesWaitingReceipts } from "@/lib/additional-capture-receipt-gate";
 import { primaryInvoiceGapPayload } from "@/lib/additional-capture-receipt-payload";
-import { anchorCaptureHasReceipt, bookingHasUnattributedCaptures } from "@/lib/additional-capture-receipt-link";
+import { anchorCaptureHasReceipt, bookingHasUnattributedCaptures, keptInvoiceBillsChangeCapture } from "@/lib/additional-capture-receipt-link";
 import { isXeroConnected } from "@/lib/xero-token-store";
 import { createXeroInvoiceForGroupSettlement } from "@/lib/xero-group-settlement-invoices";
 import {
@@ -481,11 +486,14 @@ export async function enqueueXeroBookingInvoiceOperation(
     where: { id: bookingId },
     select: {
       id: true,
+      organiserSettled: true,
+      parentBookingId: true,
       payment: {
         select: {
           id: true,
           xeroInvoiceId: true,
           manuallyMarkedPaidAt: true,
+          source: true,
         },
       },
     },
@@ -543,6 +551,24 @@ export async function enqueueXeroBookingInvoiceOperation(
       queueOperationId: null,
       message:
         "Booking was manually marked paid (cash / off-Xero) — no Xero invoice is expected.",
+    };
+  }
+
+  // #4299 B1 (`INV-PAY-148`): a place the group organiser paid by internet
+  // banking is settled on the organiser's combined invoice and has no invoice
+  // of its own by design. A primary invoice here would bill, and email, the
+  // joiner for the whole place, so no enqueuer may mint one - the same
+  // choke-point placement as the manual-settlement fence above. Its extras go
+  // to the organiser on supplementary invoices, never through here.
+  if (paidByOrganiserInternetBanking(booking)) {
+    logger.warn(
+      { bookingId, paymentId: booking.payment.id },
+      "Refusing to queue a Xero booking invoice for an organiser-paid internet-banking place (#4299)"
+    );
+    return {
+      queueOperationId: null,
+      refusal: ORGANISER_COMBINED_INVOICE_PLACE_REFUSAL,
+      message: ORGANISER_COMBINED_INVOICE_PLACE_MESSAGE,
     };
   }
 
@@ -1487,8 +1513,14 @@ interface XeroSupplementaryInvoiceEnqueueOptions {
   paymentIntentId?: string | null;
   waitForConfirmedAdditionalPayment?: boolean;
   recordPayment?: boolean;
-  /** #3953 (`INV-PAY-139`): a #3980 gap invoice, and the captures its own payment takes (none when unpaid). */
-  primaryInvoiceGap?: { coveredCaptures: ReadonlyArray<{ paymentIntentId: string; cents: number }> };
+  /**
+   * #3953 (`INV-PAY-139`): a #3980 gap invoice, and the captures its own payment takes (none when unpaid).
+   * #4324 (4384-R2): `billedChangeIds`, every racing edit its combined amount bills (its anchors).
+   */
+  primaryInvoiceGap?: {
+    coveredCaptures: ReadonlyArray<{ paymentIntentId: string; cents: number }>;
+    billedChangeIds?: readonly string[];
+  };
 }
 
 /**
@@ -1601,9 +1633,12 @@ async function enqueueSupplementaryInvoiceForAnchor(
     where: { id: bookingId },
     select: {
       id: true,
+      organiserSettled: true,
+      parentBookingId: true,
       payment: {
         select: {
           xeroInvoiceId: true,
+          source: true,
         },
       },
     },
@@ -1613,7 +1648,8 @@ async function enqueueSupplementaryInvoiceForAnchor(
     throw new Error(`Booking not found: ${bookingId}`);
   }
 
-  if (!booking.payment?.xeroInvoiceId) {
+  const organiserBilling = await resolveOrganiserBilling(store ?? prisma, booking);
+  if (!booking.payment?.xeroInvoiceId && !organiserBilling) {
     return {
       queueOperationId: null,
       outcome: "none" as XeroSupplementaryInvoiceEnqueueOutcome,
@@ -1658,7 +1694,13 @@ async function enqueueSupplementaryInvoiceForAnchor(
   const decide = async (tx: Prisma.TransactionClient) => {
     // #3953 round 7: where the booking has a change capture no change can be read from, its receipt decides under the BOOKING's key, so this takes that key first (booking, then anchor - the one order; nothing takes them the other way). Round 9: only for an invoice naming no capture, the one kind that might record such a capture.
     if (localId !== bookingId && (options?.recordPayment ?? true) && !options?.primaryInvoiceGap && !options?.paymentIntentId && (await bookingHasUnattributedCaptures(tx, bookingId))) await lockSupplementaryInvoiceAnchor(tx, bookingId);
-    await lockSupplementaryInvoiceAnchor(tx, localId);
+    // #4324 (4384-R2, `INV-PAY-144`): a gap invoice bills every anchor its amount covers, so it takes each one's key, sorted (the one order), before asking whether a kept capture's own invoice bills any of them.
+    const billedChangeIds = [...new Set([localId, ...(options?.primaryInvoiceGap?.billedChangeIds ?? [])])].sort();
+    for (const anchorId of billedChangeIds) await lockSupplementaryInvoiceAnchor(tx, anchorId);
+    // #4299 S1 (`INV-PAY-148`): a waiver retired this organiser extra whole before it was raised; nothing is owed, so no row raises it.
+    if (organiserBilling && localModel === "BookingModification" && (await organiserExtraWaivedBeforeRaised(tx, localId))) {
+      return { queueOperationId: null, outcome: "none" as XeroSupplementaryInvoiceEnqueueOutcome, refusedBy: "organiser-extra-waived" as const, message: "This organiser extra was waived whole before it was raised, so no invoice is queued." };
+    }
 
     const existingLink = await tx.xeroObjectLink.findFirst({
       where: {
@@ -1736,6 +1778,10 @@ async function enqueueSupplementaryInvoiceForAnchor(
       };
     }
 
+    // #4324 (`INV-PAY-144`): a change its kept late capture's own invoice bills gets no second invoice, paid or unpaid.
+    let keptBilledChangeId: string | undefined;
+    for (const id of localModel === "BookingModification" ? billedChangeIds : []) if (!keptBilledChangeId && (await keptInvoiceBillsChangeCapture(tx, id))) keptBilledChangeId = id;
+    if (keptBilledChangeId) return { queueOperationId: null, outcome: "none" as XeroSupplementaryInvoiceEnqueueOutcome, refusedBy: "kept-late-capture-invoice" as const, keptBilledChangeId, message: "A kept late card payment's own Xero invoice already bills this booking change." };
     // #3953 round 6: a capture its own receipt records (or is recording) is never recorded again here; a gap invoice decides its own cash.
     const recordPayment = (options?.recordPayment ?? true) && (Boolean(options?.primaryInvoiceGap) || !(await anchorCaptureHasReceipt(tx, { bookingId, bookingModificationId: localModel === "BookingModification" ? localId : null, paymentIntentId: options?.paymentIntentId ?? null })));
     const queuedOperation = await startXeroSyncOperation({
@@ -3131,6 +3177,8 @@ export async function processQueuedXeroOutboxOperations(options?: {
       } else if (payload?.queueType === XERO_OUTBOX_ADDITIONAL_CAPTURE_RECEIPT_TYPE) {
         // #3953: a change's card capture nothing waited on, recorded against the invoice billing it.
         await recordAdditionalCaptureReceipt({ syncOperation: claimed, createdByMemberId: queuedOperation.createdByMemberId ?? undefined });
+      } else if (payload?.queueType === XERO_OUTBOX_ORGANISER_EXTRA_ADJUSTMENT_TYPE) {
+        await executeOrganiserExtraAdjustment(payload, claimed);
       } else if (payload?.queueType === XERO_OUTBOX_SUPPLEMENTARY_INVOICE_TYPE) {
         await createXeroSupplementaryInvoice({
           bookingId: payload.bookingId,
@@ -3390,4 +3438,9 @@ export async function processQueuedXeroOutboxOperations(options?: {
   }
 
   return result;
+}
+
+/** #4299: the edit queues its organiser invoice in its own transaction. */
+export async function enqueueOrganiserExtraInvoiceInTransaction(params: { bookingId: string; bookingModificationId: string; priceDiffCents: number; changeFeeCents: number; createdByMemberId?: string }, store: Prisma.TransactionClient) {
+  return enqueueSupplementaryInvoiceForAnchor(params, { recordPayment: false, createdByMemberId: params.createdByMemberId }, store);
 }

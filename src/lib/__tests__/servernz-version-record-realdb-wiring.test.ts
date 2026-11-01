@@ -37,3 +37,19 @@ describe("the central-server version recorder's real-database proof stays wired 
     }
   });
 });
+
+
+it("runs the address/key sync interleavings in the shared race harness (#4436)", () => {
+  const harness = readFileSync(resolve(REPO_ROOT, "src/lib/__tests__/concurrency-lock-races.realdb.test.ts"), "utf8");
+  expect(harness).toContain('import "./servernz-connection-race.realdb.test";');
+});
+
+it("keeps the Other lodges download's in-flight replacement proof in that suite (#4262 review)", () => {
+  const suite = readFileSync(resolve(REPO_ROOT, "src/lib/__tests__/servernz-connection-race.realdb.test.ts"), "utf8");
+  for (const scenario of [
+    "hides, unlinks, renames and records NOTHING once the key is replaced while the pull is in flight",
+    "applies the same answer when the connection stands (the control)",
+  ]) {
+    expect(suite).toContain(`it("${scenario}"`);
+  }
+});

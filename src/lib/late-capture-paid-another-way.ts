@@ -2,8 +2,7 @@ import type { Prisma } from "@prisma/client";
 
 import { findLateCapturePaymentIntents, readPaidAnotherWayLateCaptureXeroReceipt } from "@/lib/late-capture-xero-receipt";
 import {
-  CARD_REFUND_PAID_ANOTHER_WAY_TASK_WHERE,
-  closeKeysOf,
+  cardRefundPaidAnotherWayClosesWhere,
   paidAnotherWayCloseXeroNote,
   paymentRecoveryOperationIdOfPaidAnotherWay,
   type PaidAnotherWayXeroNote,
@@ -86,10 +85,7 @@ export async function findLateCaptureRefundPaidAnotherWay(
   });
   if ((operations ?? []).length === 0) return null;
   return store.manualRefundTask.findFirst({
-    where: {
-      ...CARD_REFUND_PAID_ANOTHER_WAY_TASK_WHERE,
-      occurrenceKey: { in: operations.flatMap((operation) => closeKeysOf(operation.id)) },
-    },
+    where: cardRefundPaidAnotherWayClosesWhere(operations.map((operation) => operation.id)),
     select: {
       id: true,
       kind: true,
@@ -127,7 +123,7 @@ export async function readLateCaptureRefundsPaidAnotherWay(
   if (intentByOperation.size === 0) return found;
   const [closes, tasks] = await Promise.all([
     store.manualRefundTask.findMany({
-      where: { ...CARD_REFUND_PAID_ANOTHER_WAY_TASK_WHERE, occurrenceKey: { in: [...intentByOperation.keys()].flatMap(closeKeysOf) } },
+      where: cardRefundPaidAnotherWayClosesWhere(intentByOperation.keys()),
       select: { kind: true, occurrenceKey: true },
     }),
     store.manualRefundTask.findMany({

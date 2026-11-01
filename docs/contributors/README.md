@@ -124,6 +124,9 @@ method, scope and finish line for each.
 - [`../audits/FRAGILITY_AREAS_PROPOSAL.md`](../audits/FRAGILITY_AREAS_PROPOSAL.md)
   — the owner-confirmed business areas for the "bugs that came back" review, with
   raw repeat counts per area and how far to trust each signal.
+- [`../audits/FRAGILITY_RANKING_2026-10.md`](../audits/FRAGILITY_RANKING_2026-10.md)
+  — those areas ranked by hand-confirmed repeats, each with its chains of
+  fixes and the signal that found them; Phase 1 sweeps start at the top.
 - [`../reviews/2026-10-25-issue-4055-image-name-reproduction.md`](../reviews/2026-10-25-issue-4055-image-name-reproduction.md)
   — the #4055 reproduction attempt for the local-build image-name fallback: the
   offline Compose-versus-engine comparison, its verdict, and the harness to
@@ -206,6 +209,10 @@ Larger subsystems keep their own hub, and each links back here.
   `BookingLedgerLine` design from programme #3527 — the model, every money
   event's posting rule, the projection guard, the cut-over order, and the
   invariant gap analysis (#3532). A design, not yet an implementation.
+- **Member money ledger (design)** —
+  [`../design/member-money-ledger.md`](../design/member-money-ledger.md):
+  proposed double-entry accounts, two-way Xero ownership and sync, posting
+  rules, cut-over gates, parked-bug scenarios and ordered children (#4461).
 - **Finance dashboard** —
   [`../finance-dashboard/README.md`](../finance-dashboard/README.md): reporting
   contracts, architecture decisions, data contracts, and the test plan.

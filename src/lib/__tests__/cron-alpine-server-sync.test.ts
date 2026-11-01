@@ -41,7 +41,7 @@ vi.mock("@/lib/logger", () => ({
   default: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
 
-import { syncOtherClubsWithServer } from "@/lib/cron-alpine-server-sync";
+import { alpineServerSyncRunStatus, syncOtherClubsWithServer } from "@/lib/cron-alpine-server-sync";
 import {
   ServerNzNotConfiguredError,
   ServerNzVersionMismatchError,
@@ -216,5 +216,28 @@ describe("syncOtherClubsWithServer", () => {
     expect(result).toEqual({ status: "skipped", reason: "sync-already-running" });
     expect(mocks.upload).not.toHaveBeenCalled();
     expect(mocks.download).not.toHaveBeenCalled();
+  });
+});
+
+// #4262 review: a pass whose download stopped before recording is its own
+// status, recorded as SKIPPED (nothing recorded; the next pass repeats it).
+describe("a pass whose download stopped", () => {
+  it.each(["connection-changed", "superseded"] as const)("returns status stopped with reason %s", async (reason) => {
+    mocks.download.mockResolvedValue({
+      fetched: 1, created: 0, updated: 0, unchanged: 0, keptLocal: 0, dropped: 0, stopped: reason,
+    });
+    const result = await syncOtherClubsWithServer();
+    expect(result).toMatchObject({ status: "stopped", reason });
+    expect(alpineServerSyncRunStatus(result)).toBe("SKIPPED");
+  });
+
+  it("records a recorded pass as SUCCESS and a skip as SKIPPED", async () => {
+    mocks.download.mockResolvedValue({
+      fetched: 0, created: 0, updated: 0, unchanged: 0, keptLocal: 0, dropped: 0, stopped: null,
+    });
+    const result = await syncOtherClubsWithServer();
+    expect(result.status).toBe("synced");
+    expect(alpineServerSyncRunStatus(result)).toBe("SUCCESS");
+    expect(alpineServerSyncRunStatus({ status: "skipped", reason: "module-disabled" })).toBe("SKIPPED");
   });
 });

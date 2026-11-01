@@ -580,7 +580,7 @@ function MembershipTypeEditorDialog({
                         })
                       }
                     >
-                      <SelectTrigger>
+                      <SelectTrigger aria-label="Booking behavior">
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
@@ -596,7 +596,7 @@ function MembershipTypeEditorDialog({
                   )}
                 </div>
                 <div className="space-y-2">
-                  <Label>Subscription behavior</Label>
+                  <Label htmlFor="membership-type-subscription-behavior">Subscription behavior</Label>
                   <Select
                     value={draft.subscriptionBehavior}
                     disabled={!canEdit}
@@ -606,7 +606,7 @@ function MembershipTypeEditorDialog({
                       })
                     }
                   >
-                    <SelectTrigger>
+                    <SelectTrigger id="membership-type-subscription-behavior">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>

@@ -32,9 +32,9 @@ function ResetPasswordForm() {
           </CardDescription>
         </CardHeader>
         <CardFooter>
-          <Link href="/forgot-password" className="w-full">
-            <Button variant="outline" className="w-full">Request new link</Button>
-          </Link>
+          <Button asChild variant="outline" className="w-full">
+            <Link href="/forgot-password">Request new link</Link>
+          </Button>
         </CardFooter>
       </Card>
     );
@@ -51,9 +51,9 @@ function ResetPasswordForm() {
           </CardDescription>
         </CardHeader>
         <CardFooter>
-          <Link href="/login" className="w-full">
-            <Button className="w-full">Sign in</Button>
-          </Link>
+          <Button asChild className="w-full">
+            <Link href="/login">Sign in</Link>
+          </Button>
         </CardFooter>
       </Card>
     );

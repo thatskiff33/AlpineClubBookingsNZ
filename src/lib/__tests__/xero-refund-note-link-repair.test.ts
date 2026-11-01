@@ -185,6 +185,9 @@ const fakePrisma = vi.hoisted(() => {
           createdAt: row.createdAt,
         }));
       },
+      // #4324: the late-capture verdict's read of a capture's own receipt link (by role; none here).
+      findFirst: async (args: { where: Record<string, unknown> }) =>
+        state.links.find((row) => matchesLinkWhere(row, args.where)) ?? null,
       updateMany: async (args: {
         where: Record<string, unknown>;
         data: { active: boolean };

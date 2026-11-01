@@ -411,7 +411,7 @@ const SENDERS: readonly Sender[] = [
         checkIn: CHECK_IN,
         checkOut: CHECK_OUT,
         requestedOn: INSTANT,
-        askReason: "credit_released_outside_app",
+        askCause: "credit-release",
       }, CLUB_FORMAT_TEST),
     days: [
       { key: "checkIn", iso: CHECK_IN_ISO },

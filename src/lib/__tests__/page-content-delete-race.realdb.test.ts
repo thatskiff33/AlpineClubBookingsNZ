@@ -25,6 +25,8 @@ import { NextRequest } from "next/server";
 import type { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
+import { realElapsedMs } from "@/lib/__tests__/helpers/clock";
+
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/session-guards", () => ({
   requireAdmin: async () => ({
@@ -182,9 +184,9 @@ function deleteRequest() {
       const first = route.DELETE(deleteRequest());
       const second = route.DELETE(deleteRequest());
 
-      const deadline = Date.now() + LOCK_POLL_TIMEOUT_MS;
+      const started = process.hrtime.bigint();
       while ((await lockWaiters()) < 2) {
-        if (Date.now() > deadline) throw new Error("Both deletes never queued on the page row.");
+        if (realElapsedMs(started) > LOCK_POLL_TIMEOUT_MS) throw new Error("Both deletes never queued on the page row.");
         await new Promise((resolve) => setTimeout(resolve, 50));
       }
       release();

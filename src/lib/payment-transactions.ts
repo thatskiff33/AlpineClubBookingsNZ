@@ -7,6 +7,7 @@ import {
 import { prisma } from "@/lib/prisma";
 import { refundSliceStripeIdempotencyKey } from "@/lib/payment-recovery-keys";
 import { processRefund } from "@/lib/stripe";
+import { stripeErrorApiType } from "@/lib/stripe-errors";
 import { stripeReferenceId, type StripeReference } from "@/lib/stripe-references";
 import Stripe from "stripe";
 import { formatCents } from "@/lib/utils";
@@ -23,6 +24,7 @@ import { alertCardRefundCapOverflow, readCardRefundCapOverflow, type CardRefundC
 import logger from "@/lib/logger";
 import { IntentLedgerRowOnAnotherPaymentError, writePaymentIntentTransaction } from "@/lib/payment-intent-ledger-row-write";
 import { accountCreditDispositionCents } from "@/lib/stripe-cash-refund-evidence";
+import { readPaidAnotherWayCloseBankCashByPayment } from "@/lib/card-refund-paid-another-way-cash";
 import type { ClubFormat } from "@/lib/club-format";
 import { syncBookingLedgerSettlements } from "@/lib/booking-ledger-settlement-sync";
 import { compareLedgerRowsNewestFirst, LEDGER_ROWS_OLDEST_FIRST } from "@/lib/payment-ledger-order";
@@ -40,7 +42,7 @@ import {
   isRefusedRefundStatus,
   LEGACY_ADDITIONAL_BACKFILL_REASON,
   LEGACY_PRIMARY_BACKFILL_REASON,
-  latestTransactionOfKind,
+  latestTransactionOfKind, STRIPE_REFUND_EXCEEDS_CAPTURED_MESSAGE,
 } from "@/lib/payment-transaction-status";
 
 export { isCapturedTransactionStatus };
@@ -132,6 +134,13 @@ export async function loadPaymentWithTransactions(store: PaymentStore, paymentId
       },
     },
   });
+}
+
+/** Captured Stripe rows: what the executor refunds and the #4359 preflight checks. */
+export function capturedStripeTransactions<
+  T extends { source: PaymentSource; stripePaymentIntentId: string | null; status: Parameters<typeof isCapturedTransactionStatus>[0] },
+>(transactions: readonly T[]) {
+  return transactions.filter(isStripeTransaction).filter((transaction) => isCapturedTransactionStatus(transaction.status));
 }
 
 export function isStripeTransaction<
@@ -651,15 +660,26 @@ export async function lockPaymentForRefundedTotal(
 /**
  * #3640 (delta review, D2): the lowest a counted -> failed subtraction may take
  * one transaction's mirror to. The payment as a whole must still hold its
- * account-credit dispositions plus the card refunds still counted - the same
- * floor the refunded-total audit reports against (`expectedRefundedFloorCents`)
- * - less what its other transactions already carry.
+ * account-credit dispositions plus the card refunds still counted plus (#4280)
+ * the bank cash its "Paid another way" closes recorded - the same floor the
+ * refunded-total audit reports against (`expectedRefundedFloorCents`), capped
+ * at what it captured - less what its other transactions already carry.
  *
  * Why it is needed. A card refund recorded by the OLD max-based arithmetic on a
  * transaction that also held a credit never entered the mirror ($100 credit,
  * $50 card refund, mirror $100). If that refund later fails, subtracting it
  * would take the mirror to $50 and overstate the headroom by $50 - the over-
  * refund #3640 closes. The floor keeps it at $100.
+ *
+ * #4280: likewise a late card refund the cap kept out of the mirror. $200
+ * captured and closed as paid another way for $200 (mirror $200); the lost
+ * card refund recorded late adds nothing (capped); when it fails, subtracting
+ * it would take the mirror to $0 while the bank refund stands, and reopen $200
+ * of headroom. The close's cash is read payment-wide, like the rest - a close
+ * records no per-charge link the floor could trust - so the other charges'
+ * mirrors, which may already hold it, come off it rather than count it twice.
+ * Read on the caller's client, under the Payment row it holds: a close takes
+ * that row before it writes its record.
  */
 async function reversalFloorForTransaction(
   db: PaymentStore,
@@ -683,6 +703,7 @@ async function reversalFloorForTransaction(
       .reduce((sum, transaction) => sum + transaction.amountCents, 0),
     cardRefundCents: counted._sum.amountCents ?? 0,
     accountCreditCents: await accountCreditDispositionCents(db, payment.bookingId),
+    paidAnotherWayCents: (await readPaidAnotherWayCloseBankCashByPayment(db, { paymentId })).get(paymentId) ?? 0,
   });
   const otherTransactionsCents = payment.transactions
     .filter((transaction) => transaction.id !== paymentTransactionId)
@@ -750,8 +771,9 @@ export async function refundLedgerStartSeconds(db: PaymentStore): Promise<number
  *   no money went back after all. Exactly one writer sees the transition (a
  *   guarded write in `recordStripeRefundLedgerEntry`), and the subtraction never
  *   takes the payment below its account credit plus the card refunds still
- *   counted (`reversalFloorForTransaction`) - so a refund the OLD arithmetic
- *   never added cannot be taken out of money that was never its.
+ *   counted plus its "Paid another way" closes' bank cash
+ *   (`reversalFloorForTransaction`, #4280) - so a refund the OLD arithmetic,
+ *   or the cap, never added cannot be taken out of money that was never its.
  *
  * The card refunds on record remain a FLOOR, never the value (#4104: Stripe's
  * own `amount_refunded` no longer is - the sync reads every refund live, and a
@@ -1463,9 +1485,7 @@ export async function refundPaymentTransactions({
     throw new Error("Payment not found");
   }
 
-  const stripeTransactions = payment.transactions
-    .filter(isStripeTransaction)
-    .filter((transaction) => isCapturedTransactionStatus(transaction.status));
+  const stripeTransactions = capturedStripeTransactions(payment.transactions);
 
   let slices: Array<{
     transaction: (typeof stripeTransactions)[number];
@@ -1493,7 +1513,7 @@ export async function refundPaymentTransactions({
     const derived = buildRefundAllocationSlices(stripeTransactions, amountCents);
 
     if (amountCents > derived.totalRefundableCents) {
-      throw new Error("Refund amount exceeds captured Stripe payments");
+      throw new Error(STRIPE_REFUND_EXCEEDS_CAPTURED_MESSAGE);
     }
 
     slices = derived.slices;
@@ -1509,18 +1529,39 @@ export async function refundPaymentTransactions({
 
   for (const { transaction, amountCents: refundAmountForTransaction, stripeKeySuffix } of slices) {
     const slice: RefundAllocationSlice = { paymentTransactionId: transaction.id, amountCents: refundAmountForTransaction, ...(stripeKeySuffix ? { stripeKeySuffix } : {}) };
+    const idempotencyKey = idempotencyKeyPrefix
+      ? refundSliceStripeIdempotencyKey(idempotencyKeyPrefix, slice)
+      : undefined;
     let refund;
     try {
-      refund = await processRefund({
+      // Stripe metadata values allow 500 characters. Never truncate the evidence.
+      if (idempotencyKey && idempotencyKey.length > 500) {
+        throw new Error("Refund slice key exceeds Stripe metadata value limit");
+      }
+      const sendSlice = (stampRefundSliceKey: boolean) => processRefund({
         paymentIntentId: transaction.stripePaymentIntentId,
         amountCents: refundAmountForTransaction,
         reason:
           typeof reason === "string" ? reason : "requested_by_customer",
         metadata,
-        idempotencyKey: idempotencyKeyPrefix
-          ? refundSliceStripeIdempotencyKey(idempotencyKeyPrefix, slice)
-          : undefined,
+        idempotencyKey,
+        // INV-PAY-147: a keyed slice carries its own key as `refundSliceKey`.
+        stampRefundSliceKey,
       });
+      try {
+        refund = await sendSlice(idempotencyKey !== undefined);
+      } catch (err) {
+        if (!idempotencyKey || stripeErrorApiType(err) !== "idempotency_error") throw err;
+        // #4510 review (F1): code before the evidence sent this key with the
+        // body alone, and Stripe refuses another body under it for 24 hours.
+        // That exact body once more is answered with the original refund, and
+        // a key cannot make a second one. Its error too moves no money.
+        logger.warn(
+          { paymentId, paymentTransactionId: transaction.id, idempotencyKey },
+          "Stripe refused this key as reused with a different body; resending the pre-evidence body once (INV-PAY-147)",
+        );
+        refund = await sendSlice(false);
+      }
     } catch (err) {
       throw new PartialRefundError({
         completedRefundCents,

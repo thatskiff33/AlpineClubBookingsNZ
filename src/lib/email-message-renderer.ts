@@ -151,6 +151,8 @@ const REQUIRED_TOKEN_GUIDANCE: Record<string, string> = {
     "this email must show members how a promo code changed their price — keep {{promoSummary}}, or show the adjustment yourself with {{promoAdjustment}} or {{discount}} (a {{subtotal}} line on its own is not an explanation)",
   doorCodeNote:
     "this email must tell members how to get into the lodge — keep {{doorCodeNote}}, or write your own label around the bare {{doorCode}} value",
+  askCauseSentence:
+    "this email must tell the member why the amount is owed — keep {{askCauseSentence}}, which says whether it is account credit used elsewhere in the club's accounts or that and a change to their booking (a fixed sentence is wrong for one of the two)",
   refundSentence:
     "this email must tell the member how their refund reaches them — keep {{refundSentence}}, which says whether it goes back to their card or by bank transfer from the club (a fixed sentence around {{amount}} is wrong for one of the two)",
   // #4042, #4097: the one alert for three hand-backs - a cash booking cancelled, an

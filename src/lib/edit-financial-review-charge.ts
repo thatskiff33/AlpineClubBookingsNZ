@@ -95,7 +95,7 @@ export type { EditReviewChargeMember };
  *     PaymentIntent, one PENDING `ADDITIONAL` PaymentTransaction, one figure on
  *     the member's pay link. A second settlement RAISES that request's amount
  *     rather than minting a second one, which is why nothing is superseded and
- *     `queueSupersededAdditionalIntentCancellations` never runs between two shares
+ *     `queueSupersededAdditionalIntentCancellationRows` never runs between two shares
  *     of one edit.
  *   * THE SHARE stays anchored to the TASK: its `amountCents`, its
  *     `settlementDirection` and its audit entry are untouched by this, so the

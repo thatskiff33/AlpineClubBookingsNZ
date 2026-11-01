@@ -81,9 +81,9 @@ export function MemberBulkDialog({
         </DialogHeader>
         {action === "set-role" && (
           <div className="space-y-2">
-            <Label>New Access Role</Label>
+            <Label htmlFor="member-bulk-role">New Access Role</Label>
             <Select value={bulkRole} onValueChange={setBulkRole}>
-              <SelectTrigger>
+              <SelectTrigger id="member-bulk-role">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>

@@ -889,6 +889,7 @@ describe("#3954: after commit, the minter cancels what the reduction retired, th
 
   it("MUTATION (round 7, F7; round 8): an increase's ask a reduction withdrew during the door's cancels offers no secret, but its intent is still handed back", async () => {
     const result = await adjust(grownBooking(), 1_000);
+    minterDb.currentPayment = { additionalAmountCents: 5_000, additionalPaymentStatus: "PENDING", ...PAYMENT_CUSTOMER };
     queueFoldedInvoices.mockResolvedValueOnce(false);
     const { minted } = await mintAfter(result);
     expect(minted.additionalPaymentClientSecret).toBeUndefined();
@@ -898,6 +899,7 @@ describe("#3954: after commit, the minter cancels what the reduction retired, th
 
   it("MUTATION (round 6): an increase's own mint queues the invoices of the re-issues it folded in, waiting on its intent", async () => {
     const result = await adjust(grownBooking(), 1_000);
+    minterDb.currentPayment = { additionalAmountCents: 5_000, additionalPaymentStatus: "PENDING", ...PAYMENT_CUSTOMER };
     expect(result.additionalAsk.amountCents).toBe(6_000);
     await mintAfter(result);
 

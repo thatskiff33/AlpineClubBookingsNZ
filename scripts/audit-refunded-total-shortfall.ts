@@ -1,6 +1,7 @@
 /**
  * Read-only audit of payments whose stored refunded total is below their card
- * refunds plus account-credit settlements (#3640, `INV-PAY-103`). It reports
+ * refunds plus account-credit settlements plus the bank cash of "Paid another
+ * way" closes (#3640, #4280, `INV-PAY-103`). It reports
  * apart the part the old max-based arithmetic can account for (a card refund
  * that met a credit) and a shortfall with another cause.
  *
@@ -8,6 +9,10 @@
  * provider. The repair question goes to the owner with this report as the
  * evidence. The arithmetic and its caveats live in
  * `src/lib/refunded-total-shortfall-audit.ts`.
+ *
+ * Never while a migration runs: the audit holds one read-only RepeatableRead
+ * snapshot for up to 120 s (#4280), and may reach that bound on a very large
+ * database.
  *
  * SAFE USAGE - run against a NON-PRODUCTION copy:
  *
@@ -30,6 +35,8 @@ function printUsage() {
   pnpm run payments:audit-refunded-total --json  # also emit machine-readable JSON
 
 This audit is read-only. It never writes and never calls Xero/Stripe/SES.
+Do not run it while a migration runs: it reads in one snapshot held for up to
+120 seconds, and on a very large database it may reach that bound.
 
 Options:
   --json          Emit machine-readable JSON alongside the human report.

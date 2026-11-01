@@ -68,9 +68,9 @@ const DAY_BEHIND = "2026-06-30";
 const DAY_AHEAD = "2026-07-01";
 
 const HREF_BEHIND =
-  "/admin/bookings?status=PAYMENT_PENDING&checkOutTo=" + DAY_BEHIND;
+  "/admin/bookings?unpaid=finished&checkOutTo=" + DAY_BEHIND;
 const HREF_AHEAD =
-  "/admin/bookings?status=PAYMENT_PENDING&checkOutTo=" + DAY_AHEAD;
+  "/admin/bookings?unpaid=finished&checkOutTo=" + DAY_AHEAD;
 
 const allOn: FeatureFlags = Object.fromEntries(
   MODULE_KEYS.map((key) => [key, true]),

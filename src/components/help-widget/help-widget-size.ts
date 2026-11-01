@@ -71,15 +71,20 @@ export const HELP_PANEL_VIEWPORT_MARGIN_PX = 24;
 /** How far one arrow-key press resizes. Coarse enough to be useful, fine enough to aim. */
 export const HELP_PANEL_KEYBOARD_STEP_PX = 32;
 
+/** The widest a dragged panel may be in a viewport this wide. */
+export function helpPanelMaxWidthPx(viewportWidth: number): number {
+  return Math.max(
+    HELP_PANEL_MIN_WIDTH_PX,
+    viewportWidth - HELP_PANEL_VIEWPORT_MARGIN_PX * 2,
+  );
+}
+
 /** Clamp a dragged size to something usable in the viewport it is being shown in. */
 export function clampHelpPanelSize(
   size: { widthPx: number; heightPx: number },
   viewport: { width: number; height: number },
 ): HelpPanelCustomSize {
-  const maxWidth = Math.max(
-    HELP_PANEL_MIN_WIDTH_PX,
-    viewport.width - HELP_PANEL_VIEWPORT_MARGIN_PX * 2,
-  );
+  const maxWidth = helpPanelMaxWidthPx(viewport.width);
   const maxHeight = Math.max(
     HELP_PANEL_MIN_HEIGHT_PX,
     viewport.height - HELP_PANEL_VIEWPORT_MARGIN_PX * 2,

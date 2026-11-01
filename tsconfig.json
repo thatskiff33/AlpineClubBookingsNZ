@@ -35,6 +35,9 @@
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "noEmit": true,
+    // Backup helpers also run in plain Node's TypeScript loader (memory test).
+    // Explicit relative .ts imports work there without aliases or a bundler.
+    "allowImportingTsExtensions": true,
     "esModuleInterop": true,
     "module": "esnext",
     "moduleResolution": "bundler",
@@ -75,6 +78,9 @@
     // ownership is about which project lists a file as a root.
     "e2e/**",
     "playwright.config.ts",
+    // #4466: the axe fixture's Playwright contract imports e2e/helpers, which
+    // the Docker build context leaves out; tsconfig.e2e.json owns it.
+    "scripts/e2e-contracts/**",
     // #2693: the Vitest config and its setup files are the test project's
     // roots (they exist only to run under Vitest), not the app's. #3671 added
     // the global setup, which is one of them for the same reason.

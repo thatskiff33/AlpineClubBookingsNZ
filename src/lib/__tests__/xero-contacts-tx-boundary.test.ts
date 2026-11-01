@@ -562,3 +562,42 @@ describe("requireAuthoritativeMatch (#2939)", () => {
     expect(mocks.createContacts).not.toHaveBeenCalled();
   });
 });
+
+describe("#4374: contact completions send deferred alerts after commit", () => {
+  beforeEach(setUpFunnelDoubles);
+
+  it.each(["create", "update"])("flushes a %s completion's alert only after the enclosing commit", async (kind) => {
+    const { completeMemberContactOperation } = await import("@/lib/xero-contact-create-recovery");
+    const { completeMemberContactUpdateOperation } = await import("@/lib/xero-contacts");
+    const { xeroClaim } = await import("./helpers/xero-claim");
+    let committed = false;
+    const deferredPostCommit = vi.fn(async () => { expect(committed).toBe(true); });
+    mocks.completeXeroSyncOperation.mockResolvedValue({ deferredPostCommit });
+    mocks.txMemberFindUnique.mockResolvedValue({ ...MEMBER, xeroContactId: "contact-new", passwordHash: null });
+    mocks.transaction.mockImplementation(async (fn) => {
+      const result = await fn({ $executeRaw: mocks.txExecuteRaw, member: { findUnique: mocks.txMemberFindUnique } });
+      expect(deferredPostCommit).not.toHaveBeenCalled();
+      committed = true;
+      return result;
+    });
+    const complete = kind === "create" ? completeMemberContactOperation : completeMemberContactUpdateOperation;
+    await complete("member-1", "contact-new", xeroClaim("op-1"), {});
+    expect(deferredPostCommit).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["create", "update"])("does not flush a %s completion's alert when commit fails", async (kind) => {
+    const { completeMemberContactOperation } = await import("@/lib/xero-contact-create-recovery");
+    const { completeMemberContactUpdateOperation } = await import("@/lib/xero-contacts");
+    const { xeroClaim } = await import("./helpers/xero-claim");
+    const deferredPostCommit = vi.fn();
+    mocks.completeXeroSyncOperation.mockResolvedValue({ deferredPostCommit });
+    mocks.txMemberFindUnique.mockResolvedValue({ ...MEMBER, xeroContactId: "contact-new", passwordHash: null });
+    mocks.transaction.mockImplementation(async (fn) => {
+      await fn({ $executeRaw: mocks.txExecuteRaw, member: { findUnique: mocks.txMemberFindUnique } });
+      throw new Error("commit failed");
+    });
+    const complete = kind === "create" ? completeMemberContactOperation : completeMemberContactUpdateOperation;
+    await expect(complete("member-1", "contact-new", xeroClaim("op-1"), {})).rejects.toThrow("commit failed");
+    expect(deferredPostCommit).not.toHaveBeenCalled();
+  });
+});

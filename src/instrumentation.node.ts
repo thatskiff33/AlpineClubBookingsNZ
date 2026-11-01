@@ -374,7 +374,6 @@ export async function register() {
     let isXeroLinkCleanupCronRunning = false;
     let isXeroReportCronRunning = false;
     let isXeroReplayCronRunning = false;
-    let isXeroInboundCronRunning = false;
     let isXeroCreditSyncCronRunning = false;
     let isPaymentsCronRunning = false;
     let isWaitlistCronRunning = false;
@@ -742,11 +741,6 @@ export async function register() {
 
       // Xero inbound webhook reconciliation safety net (every 15 minutes)
       cron.default.schedule("*/15 * * * *", async () => {
-        if (isXeroInboundCronRunning) {
-          logger.info({ job: "xero-inbound-reconcile" }, "Already running, skipping");
-          return;
-        }
-        isXeroInboundCronRunning = true;
         logger.info(
           { job: "xero-inbound-reconcile" },
           "Running Xero inbound reconciliation cycle"
@@ -759,8 +753,8 @@ export async function register() {
 
         try {
           // #4270: the credit-note mirror's backstop runs right after the inbound cycle.
-          const { runXeroCronTaskList } = await import("./lib/xero-cron-runner");
-          const result = await runXeroCronTaskList(["inbound", "credit-note-mirror"], { taskLabel: "inbound" });
+          const { runXeroInboundCronCycle } = await import("./lib/xero-cron-runner");
+          const result = await runXeroInboundCronCycle();
           logger.info(
             { job: "xero-inbound-reconcile", result: result.inboundReconciliation, creditNoteMirror: result.creditNoteMirror },
             "Xero inbound reconciliation cycle complete"
@@ -769,8 +763,6 @@ export async function register() {
         } catch (err) {
           reportCronError({ tag: "xero-inbound-reconcile", err, message: "Error processing stored Xero inbound events" });
           Sentry.captureCheckIn({ checkInId, monitorSlug: "xero-inbound-reconcile", status: "error" });
-        } finally {
-          isXeroInboundCronRunning = false;
         }
       }, { timezone: cronTimeZone() });
 
@@ -955,6 +947,21 @@ export async function register() {
         const auditRetention = await runStep("audit-retention", () =>
           runAuditLogRetentionJob(),
         );
+        const { runPersonalDataPruneJob, runFormerMemberAnonymisationJob } = await import("./lib/privacy-retention-jobs");
+        const { runRecordedCronTask } = await import("./lib/cron-recorded-task");
+        const { PRIVACY_DATA_PRUNE_JOB_NAME, FORMER_MEMBER_ANONYMISATION_JOB_NAME } = await import("./lib/privacy-retention-shared");
+        for (const [jobName, work] of [
+          [PRIVACY_DATA_PRUNE_JOB_NAME, runPersonalDataPruneJob],
+          [FORMER_MEMBER_ANONYMISATION_JOB_NAME, runFormerMemberAnonymisationJob],
+        ] as const) {
+          await runStep(jobName, async () => {
+            const outcome = await runRecordedCronTask({
+              jobName, work,
+              statusFor: result => result.skipped ? "SKIPPED" : "SUCCESS",
+            });
+            if (!outcome.ok) throw outcome.error;
+          });
+        }
         await runStep("prune-email-verification-tokens", () =>
           prisma.emailVerificationToken.deleteMany({
             where: { expiresAt: { lt: new Date() } },
@@ -1056,7 +1063,7 @@ export async function register() {
       );
 
       try {
-        const { syncOtherClubsWithServer } = await import(
+        const { alpineServerSyncRunStatus, syncOtherClubsWithServer } = await import(
           "./lib/cron-alpine-server-sync"
         );
         const result = await syncOtherClubsWithServer();
@@ -1067,7 +1074,7 @@ export async function register() {
         await recordCronRun(
           "alpine-server-other-lodges-sync",
           startedAt,
-          result.status === "skipped" ? "SKIPPED" : "SUCCESS",
+          alpineServerSyncRunStatus(result),
           { ...result },
         );
         Sentry.captureCheckIn({
@@ -1167,12 +1174,16 @@ export async function register() {
 
           return {
             deletedDrafts: deleted.count,
+            withheldForFinancialHistory: dependents.withheldBookingIds, // D1, #4482
             promoRedemptions: dependents.promoRedemptions,
             changeRequests: dependents.changeRequests,
             modifications: dependents.modifications,
           };
         });
 
+        if (cleanup.withheldForFinancialHistory.length > 0) {
+          logger.warn({ job: "draft-cleanup", bookingIds: cleanup.withheldForFinancialHistory }, "Expired drafts kept: financial history names them");
+        }
         logger.info({ job: "draft-cleanup", ...cleanup }, "Draft cleanup complete");
         await recordCronRun("draft-cleanup", startedAt, "SUCCESS", cleanup);
         Sentry.captureCheckIn({ checkInId, monitorSlug: "draft-cleanup", status: "ok" });

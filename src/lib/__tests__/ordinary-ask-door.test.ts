@@ -25,6 +25,7 @@ vi.mock("@/lib/stripe", () => ({
 vi.mock("@/lib/payment-transactions", () => ({
   upsertPaymentIntentTransaction: mocks.upsertPaymentIntentTransaction,
   refundPaymentTransactions: vi.fn(),
+  lockPaymentForRefundedTotal: vi.fn(),
   PartialRefundError: class PartialRefundError extends Error {},
 }));
 vi.mock("@/lib/logger", () => ({
@@ -32,6 +33,11 @@ vi.mock("@/lib/logger", () => ({
 }));
 vi.mock("@/lib/prisma", () => ({
   prisma: {
+    $transaction: async (write: (store: unknown) => Promise<unknown>) => {
+      const { prisma } = await import("@/lib/prisma");
+      return write(prisma);
+    },
+    $executeRaw: vi.fn(),
     payment: { findUnique: mocks.paymentFindUnique },
     paymentTransaction: {
       // No other live ask for the supersede to retire.
@@ -145,7 +151,10 @@ describe("the ordinary increase's door (#4036)", () => {
       idempotencyKey: runnerPlan.idempotencyKey,
     });
     // The stored customer is the rule's first answer: no owner read, no lookup.
-    expect(mocks.paymentFindUnique).not.toHaveBeenCalled();
+    expect(mocks.paymentFindUnique).toHaveBeenCalledWith({
+      where: { id: "pay_4036" },
+      select: { additionalAmountCents: true, additionalPaymentStatus: true },
+    });
     expect(mocks.findOrCreateCustomer).not.toHaveBeenCalled();
     // The ledger row keeps the door's own reason.
     expect(mocks.upsertPaymentIntentTransaction).toHaveBeenCalledWith(

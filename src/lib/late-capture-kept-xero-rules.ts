@@ -1,4 +1,4 @@
-import type { PaymentStatus } from "@prisma/client";
+import type { PaymentStatus, Prisma } from "@prisma/client";
 import { isCapturedTransactionStatus } from "@/lib/payment-transaction-status";
 import { isLateCaptureRefundedBookingStatus } from "@/lib/additional-payment-chase";
 import { XERO_OUTBOX_KEPT_LATE_CAPTURE_INVOICE_TYPE } from "@/lib/xero-operation-outbox-payload";
@@ -87,34 +87,117 @@ export function bookingHasPrimaryXeroInvoice(input: {
 }
 
 /**
- * WHICH DOCUMENT RECORDS A KEPT CAPTURE. A change payment on a booking whose
- * original invoice exists keeps its own supplementary invoice (released by the
- * late-capture release). Everything else - the booking's own payment, and a
- * change payment on a booking Xero never invoiced (#3635 review F3) - gets the
- * kept-capture invoice, which needs no original.
+ * WHICH DOCUMENT RECORDS A KEPT CAPTURE, first cut. The booking's own payment,
+ * and a change payment on a booking Xero never invoiced (#3635 review F3), get
+ * the kept-capture invoice, which needs no original. A change payment on a
+ * booking whose original invoice exists is decided by what the change's own
+ * Xero records show (#4324, {@link keptChangeCaptureRoute}).
  */
 export function keptLateCaptureRecordRoute(input: {
   captureKind: "PRIMARY" | "ADDITIONAL";
   bookingHasPrimaryInvoice: boolean;
-}): "change-invoice" | "kept-invoice" {
+}): "by-change-evidence" | "kept-invoice" {
   return input.captureKind === "ADDITIONAL" && input.bookingHasPrimaryInvoice
-    ? "change-invoice"
+    ? "by-change-evidence"
     : "kept-invoice";
+}
+
+/**
+ * #4324: what the change a kept capture pays for shows in Xero, read under the
+ * per-anchor supplementary-invoice lock (`readKeptChangeCaptureEvidence`).
+ */
+export type KeptChangeCaptureEvidence = {
+  /**
+   * A supplementary invoice naming the capture's intent that the late-success
+   * release answers from: in any status but CANCELLED, or retired by the
+   * reaper (`STALE_WAITING_PAYMENT`, or its captured and covered stamps). Or
+   * (#3403) one moved off that intent onto a carrier and still waiting there,
+   * which the release returns to it first.
+   */
+  answeredByChangeInvoice: boolean;
+  /** The change the capture pays for (`captureChangeId`); null when none can be read. */
+  changeId: string | null;
+  /**
+   * The primary invoice bills the change: #3980's settlement marker, and the
+   * primary did not miss it (`primaryMissedChange`).
+   */
+  settledAgainstPrimary: boolean;
+  /**
+   * The change's own supplementary invoices, never the #3980 gap invoice:
+   * `none` never asked for; `live` the latest not CANCELLED bills THIS
+   * capture (`changeInvoiceBillsCapture`: raised unpaid, or recording this
+   * capture), or none is live and Xero has one linked; `withdrawn` otherwise -
+   * every one CANCELLED, or the live one records another capture (moved onto
+   * a carrier and released there, or waiting on a different intent).
+   */
+  changeInvoices: "none" | "live" | "withdrawn";
+  /**
+   * The #3980 gap invoice bills the change (`primaryInvoiceGapBillsChange`:
+   * the change is one of its anchors, and it is in Xero or may still get
+   * there, never voided), so the capture is a payment on it
+   * (`readCaptureRecorder`).
+   */
+  billedByGapInvoice: boolean;
+  /**
+   * The change raced the primary's create, so the primary never billed it
+   * (`primaryInvoiceMissedChange`); only a gap invoice still billing it does.
+   */
+  primaryMissedChange: boolean;
+};
+
+export type KeptChangeCaptureRoute = "change-invoice" | "receipt" | "kept-invoice" | "change-unknown";
+
+/**
+ * #4324 (owner decision 25 Oct 2026, Q1 "split on the evidence";
+ * `INV-PAY-144`): WHICH DOCUMENT RECORDS A KEPT CHANGE CAPTURE on a cancelled
+ * booking whose primary invoice exists. Pure; decided once, under the
+ * change's anchor lock (`queueKeptLateCaptureRecord`), and read by the repair
+ * tool's finding.
+ *
+ * - `change-invoice`: a change invoice already answers the capture; the
+ *   late-success release sends, revives or alerts on it.
+ * - `receipt`: a #3980 gap invoice still bills the change, the primary
+ *   invoice bills it (settled against it and not missed by it, or a change
+ *   that never had a supplementary invoice and did not race the primary), or
+ *   the change's own invoice is live for this capture. The capture's own
+ *   receipt records it against the invoice that bills it, capped at what Xero
+ *   shows due (`INV-PAY-139`).
+ * - `kept-invoice`: nothing bills it - the change's supplementary invoice was
+ *   withdrawn or retired, or records another capture, or it raced the primary
+ *   and its gap invoice was voided or withdrawn; the kept-capture invoice does
+ *   (`INV-PAY-110`).
+ * - `change-unknown`: no change can be read from the capture; nothing is
+ *   queued, and the repair tool names it for an officer.
+ */
+export function keptChangeCaptureRoute(evidence: KeptChangeCaptureEvidence): KeptChangeCaptureRoute {
+  if (evidence.answeredByChangeInvoice) return "change-invoice";
+  if (evidence.changeId === null) return "change-unknown";
+  if (evidence.billedByGapInvoice || evidence.settledAgainstPrimary) return "receipt";
+  if (evidence.changeInvoices === "live") return "receipt";
+  if (evidence.changeInvoices === "withdrawn") return "kept-invoice";
+  // Codex re-review: no own invoice - the primary bills it unless it raced the primary.
+  return evidence.primaryMissedChange ? "kept-invoice" : "receipt";
 }
 
 /**
  * HAS THIS KEPT CAPTURE'S INVOICE ALREADY BEEN ASKED FOR? A kept-capture
  * invoice row anchored on its approval task, in any state but CANCELLED. A
  * FAILED or PARTIAL one counts: it is retried, never replaced. The enqueue and
- * the repair tool both ask this, and nothing else spells it.
+ * the repair tool both ask this. Database readers spread this filter; the
+ * in-memory decision below reads the same queue and excluded status.
  */
+export const LIVE_KEPT_LATE_CAPTURE_INVOICE_WHERE = {
+  queueType: XERO_OUTBOX_KEPT_LATE_CAPTURE_INVOICE_TYPE,
+  status: { not: "CANCELLED" },
+} as const satisfies Pick<Prisma.XeroSyncOperationWhereInput, "queueType" | "status">;
+
 export function keptLateCaptureInvoiceAsked(
   taskOperations: ReadonlyArray<{ queueType: string | null; status: string }>,
 ): boolean {
   return taskOperations.some(
     (operation) =>
-      operation.queueType === XERO_OUTBOX_KEPT_LATE_CAPTURE_INVOICE_TYPE &&
-      operation.status !== "CANCELLED",
+      operation.queueType === LIVE_KEPT_LATE_CAPTURE_INVOICE_WHERE.queueType &&
+      operation.status !== LIVE_KEPT_LATE_CAPTURE_INVOICE_WHERE.status.not,
   );
 }
 

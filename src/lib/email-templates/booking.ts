@@ -24,14 +24,8 @@ import {
 } from "@/lib/booking-money-lines";
 import type { PromoCodeAdjustment } from "@/lib/booking-promo-redemptions";
 import { financialReviewNote } from "@/lib/booking-financial-review-copy";
-import {
-  bookingCancelledRefundMade,
-  bookingCancelledRefundSentence,
-  type BookingCancelledRefundMethod,
-  type BookingModifiedRefundDestination,
-  bookingModifiedRefundPending,
-  bookingModifiedRefundSentence,
-} from "@/lib/booking-modified-email-copy";
+import { bookingCancelledRefundMade, bookingCancelledRefundSentence, type BookingCancelledRefundMethod } from "@/lib/booking-modified-email-copy";
+import { type BookingModifiedRefundDestination, bookingModifiedRefundPending, bookingModifiedRefundSentence, organiserBilledSentence } from "@/lib/booking-modified-email-copy";
 import { appliedCreditGiveBackNote, unpaidAskCancelledNote } from "@/lib/booking-credit-give-back-copy";
 import { escapeHtml } from "./escape";
 import {
@@ -54,11 +48,11 @@ import {
 import { CLUB_LODGE_TRAVEL_NOTE } from "@/config/club-identity";
 import {
   bookingBumpedRebookAction,
-  bookingPaymentDueNote,
   creditRestoredSentenceTail,
   splitGuestPortionOwnBookingLine,
   type CreditRestoredBasis,
 } from "@/lib/email-message-notes";
+import { bookingPaymentDueNote, type BookingPaymentDueInstruction } from "@/lib/email-payment-due-note";
 import { emailCalendarDay, emailClubDateTime } from "@/lib/email-templates-club-time";
 import type { ClubFormat } from "@/lib/club-format";
 
@@ -135,12 +129,8 @@ export function bookingConfirmedTemplate(
     // the alert box says how to pay it. Same template (and therefore the same
     // operator override) as the paid confirmation, exactly as the split-parent
     // `provisionalGuests` variant is (#738).
-    paymentDue?: {
-      /** Internet-banking reference the member must quote (never a bearer token). */
-      reference: string;
-      /** True once the club's accounting system actually emails the invoice. */
-      invoiceEmailed: boolean;
-    };
+    // `payOnline` (no receivable yet) or the legacy reference shape; see the type.
+    paymentDue?: BookingPaymentDueInstruction;
     // #2397: the booking is settled but NOT in full — an admin recorded a cash
     // / off-Xero payment and said it did not cover an uncollected price
     // increase, so the club took less than the booking is worth and will go on
@@ -271,8 +261,12 @@ export function bookingConfirmedTemplate(
   const paymentDueNote = paymentDue
     ? bookingPaymentDueNote({
         amount: formatCents(unpaidNetting.toTransferCents, format),
-        reference: escapeHtml(paymentDue.reference),
-        invoiceEmailed: paymentDue.invoiceEmailed,
+        ...(paymentDue.payOnline === true
+          ? { payOnline: true as const }
+          : {
+              reference: escapeHtml(paymentDue.reference),
+              invoiceEmailed: paymentDue.invoiceEmailed,
+            }),
         accountCredit: unpaidCreditNoteInput(
           totalCents,
           unpaidNetting,
@@ -454,6 +448,7 @@ export function bookingModifiedTemplate(params: {
   /** #3809: applied credit this change gave back (0 if none). Required, as `financialReviewPending` is. */
   appliedCreditGivenBackCents: number;
   additionalAmountCents: number;
+  billedToOrganiserCents?: number; // #4299: invoiced to the group organiser instead (see `sendBookingModifiedEmail`)
   unpaidAskCancelled: boolean; // #3954: the drop cancelled the unpaid additional payment; required, like financialReviewPending
   additionalPaymentMethod?: "STRIPE" | "INTERNET_BANKING";
   paymentReference?: string | null;
@@ -609,6 +604,8 @@ export function bookingModifiedTemplate(params: {
         "warning"
       );
     }
+  } else if ((params.billedToOrganiserCents ?? 0) > 0) {
+    settlementNote = alertBox(organiserBilledSentence(formatCents(params.billedToOrganiserCents!, format)), "info");
   }
 
   // #3809: beside the settlement note (both apply to card plus credit).

@@ -32,6 +32,8 @@ function readInstrumentationRecordedJobNames(): string[] {
     // #4270: the credit-note mirror's sweep owns its recorded job-name constant likewise.
     "src/lib/xero-credit-note-mirror.ts",
     "src/lib/finance-sync-cron-config.ts",
+    // #4457: the retention jobs' recorded names, run from the data-pruning cron.
+    "src/lib/privacy-retention-shared.ts",
   ].map((filePath) =>
     fs.readFileSync(path.join(process.cwd(), filePath), "utf8")
   );

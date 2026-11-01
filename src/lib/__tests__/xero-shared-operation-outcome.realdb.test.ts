@@ -30,6 +30,11 @@
  * `catch` calls, `failXeroSyncOperation(operationId, error)`. The PARTIAL row is
  * seeded as `xero-partial-repair-claim.realdb.test.ts` seeds it.
  *
+ * #4374: W fails, an officer marks the row resolved in Xero through the real
+ * mark (`claimResolvedInXeroMark`), and L's success then lands with its link
+ * and keeps the mark; the officers are alerted once (the email send is a spy,
+ * the once-ever claim is real).
+ *
  *   RUN_CONCURRENCY_RACE_TESTS=1 \
  *   CONCURRENCY_RACE_DATABASE_URL=postgresql://user:pass@127.0.0.1:55442/concurrency_race_1881 \
  *   pnpm exec vitest run src/lib/__tests__/xero-shared-operation-outcome.realdb.test.ts
@@ -177,6 +182,56 @@ let sync: typeof import("@/lib/xero-sync");
 
     afterEach(() => {
       vi.restoreAllMocks();
+    });
+
+    it("#4374: W fails, an officer resolves the row in Xero, then L succeeds: the success lands with its link, keeps the mark and alerts once", async () => {
+      const email = await import("@/lib/email");
+      const send = vi.spyOn(email, "sendAdminXeroSyncErrorAlert").mockResolvedValue({
+        deliveryAllowed: true, recipients: 1, sent: 1, queuedForRetry: 0, notDelivered: 0,
+      });
+      const { claimResolvedInXeroMark } = await import("@/lib/xero-operation-resolve-guards");
+      const { xeroSuccessAfterResolutionAlertKey } = await import("@/lib/xero-success-after-resolution-alert");
+      const wCall = scripted({ error: "Xero 429" });
+      const lCall = scripted({ paymentId: "race-4356-xero-payment-late" });
+      const { w, l, operationId } = await startBothOnOneRow(wCall, lCall);
+      const key = xeroSuccessAfterResolutionAlertKey(operationId);
+      try {
+        wCall.gate.resolve();
+        await expect(w).rejects.toThrow("Xero 429");
+        const failed = await prisma.xeroSyncOperation.findUniqueOrThrow({ where: { id: operationId } });
+        expect(failed.status).toBe("FAILED");
+        // The officer's real mark: it lands only on a FAILED or PARTIAL row.
+        const resolvedAt = new Date(FROZEN_TEST_CLOCK_BASE_ISO);
+        await expect(
+          claimResolvedInXeroMark({ id: operationId, resolvedAt, reason: "Raised by hand", resolvedById: "race-4374-officer" }),
+        ).resolves.toBe(true);
+
+        lCall.gate.resolve();
+        await l;
+        const landed = await prisma.xeroSyncOperation.findUniqueOrThrow({ where: { id: operationId } });
+        expect(landed).toMatchObject({
+          status: "SUCCEEDED",
+          xeroObjectId: "race-4356-xero-payment-late",
+          manuallyResolvedAt: resolvedAt,
+          manuallyResolvedReason: "Raised by hand",
+        });
+        expect(await prisma.xeroObjectLink.count({ where: { localId: LOCAL_ID, xeroObjectId: "race-4356-xero-payment-late" } })).toBe(1);
+        expect(send).toHaveBeenCalledTimes(1);
+        expect(send).toHaveBeenCalledWith(expect.objectContaining({ errorType: "XERO_SUCCESS_AFTER_RESOLUTION" }));
+
+        // A repeat success on the same operation finds the once-ever claim held.
+        await sync.completeXeroSyncOperation(
+          { id: operationId, startedAt: failed.startedAt },
+          { xeroObjectType: "PAYMENT", xeroObjectId: "race-4356-xero-payment-late" },
+        );
+        expect(send).toHaveBeenCalledTimes(1);
+        expect(await prisma.alertCooldown.count({ where: { key } })).toBe(1);
+      } finally {
+        wCall.gate.resolve();
+        lCall.gate.resolve();
+        await Promise.allSettled([w, l]);
+        await prisma.alertCooldown.deleteMany({ where: { key } });
+      }
     });
 
     afterAll(async () => {

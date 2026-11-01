@@ -113,6 +113,33 @@ The browser spec covers programmatic paste and keyboard entry. HTML autofill set
 the `value` property rather than the attribute, which is the same seam typing
 uses, so it is reasoned rather than observed.
 
+## Personal-data retention and Sentry Replay
+
+Audience: Operator, Developer, Adopter.
+
+The [personal-data retention schedule](PRIVACY_RETENTION.md) covers every
+Prisma model that holds personal data, including indirect member links and
+settings' officer attribution. The three new cleanup jobs ship OFF; review the
+candidates and configured periods before enabling them in Admin → Privacy
+retention (`/admin/privacy-retention`).
+
+Sentry Replay is an explicit club opt-in and defaults OFF. Before enabling it,
+the club's privacy notice must **name Sentry Replay** and explain the recording
+and its purpose, including what information can leave the application for
+Sentry and the applicable retention. Review the Sentry project's retention and
+access settings as part of that disclosure. Ordinary error reporting and
+session replay are separate decisions; enabling error reporting does not
+constitute the club's Replay opt-in.
+
+Open tabs recheck the Replay setting every minute and when they regain focus
+or become visible. Saving retention settings refreshes the current tab
+immediately on the process handling that save. Other processes may retain the
+previous policy for up to 60 seconds; combined with minute polling, an open tab
+can take up to two minutes to observe a change while visible. The public policy
+endpoint is rate limited and caches only the non-personal opt-in in process.
+A failed policy read stops recording once the cached policy expires; background browser timer
+throttling can delay the periodic refresh until the tab becomes visible.
+
 ## Dietary/allergy information (special-category data)
 
 Audience: Developer, Agent, Operator.

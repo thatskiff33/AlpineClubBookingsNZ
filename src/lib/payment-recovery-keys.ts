@@ -188,14 +188,11 @@ export function buildLegacyModificationRefundStripeKeyPrefix(operationId: string
   return `payment_recovery_modification_refund_${operationId}`;
 }
 
-// #4083 (`INV-PAY-128`): THE STRIPE KEY OF ONE REFUND SLICE, and the generation
-// a refused slice moves to. Stripe answers a repeated key with its ORIGINAL
-// response for 24 hours, so a slice Stripe refused (`failed` or `canceled`)
-// replayed under its own key only reads the refusal back. The recovery runner
-// moves a slice it READ refused to the next generation (`refused1`,
-// `refused2`, ...), a key never sent before. A slice it did not read refused
-// keeps its key, so a refund made but not recorded is still answered with the
-// original and never made twice. One spelling for the sender and the runner.
+// #4083 (`INV-PAY-128`): one spelling of each slice's Stripe key. Stripe
+// replays the original response for 24 hours, so a refused slice moves to the
+// next generation (`refused1`, `refused2`, ...), a key never sent before.
+// An unanswered slice keeps its key; preflight adopts its refundSliceKey
+// evidence before replay even after expiry (`INV-PAY-147`).
 const REFUSED_REFUND_KEY_SUFFIX = /^refused([1-9][0-9]{0,5})$/;
 
 export function isRefusedRefundKeySuffix(value: unknown): value is string {
@@ -310,7 +307,7 @@ export const REISSUED_ASK_REASON = "modification_reissued_ask";
 // a shared key Stripe answers the second review's mint with the FIRST review's
 // intent - now the DESIRED behaviour: the owner's 30 Aug 2026 decision on #3170
 // is that both reviews contribute to ONE request for the total. Two requests lost
-// money: `queueSupersededAdditionalIntentCancellations` cancels every OTHER
+// money: `queueSupersededAdditionalIntentCancellationRows` cancels every OTHER
 // outstanding additional on the payment when one is minted, and
 // `reconcilePaymentAggregates` carries one `additionalAmountCents`, so $200 then
 // $30 collected $30 of $230, both tasks COMPLETED.

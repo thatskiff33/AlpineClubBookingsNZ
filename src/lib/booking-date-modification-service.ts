@@ -1,3 +1,8 @@
+import { queueOrganiserExtraForChange } from "@/lib/organiser-extra-invoice-queue";
+import { paidByOrganiserInternetBanking } from "@/lib/group-organiser-paid";
+import { postStoredBookingConfirmationLedgerLines } from "@/lib/booking-ledger-confirmation-sync";
+import { LEDGER_ROWS_OLDEST_FIRST } from "@/lib/payment-ledger-order";
+import { isUnpaidConfirmedWholeLodge } from "@/lib/booking-payment-flow";
 import { bookingAmountOwedCents, bookingWorthCents } from "@/lib/booking-payment-state";
 import {
   type AgeTier,
@@ -196,6 +201,7 @@ type DateModificationTransactionResult =
      * consumers want a number and the minter must not be handed one.
      */
     additionalAmountCents: number;
+    billedToOrganiserCents: number; // #4299: invoiced to the group organiser, not asked of this member
     booking: ModifiedBooking;
     priceDiffCents: number;
     changeFeeCents: number;
@@ -238,6 +244,8 @@ export type DateModificationResponse = {
   settlementMethod: BookingModificationSettlementMethod | null;
   policyRetainedAmountCents: number;
   additionalAmountCents: number;
+  /** #4299 (`INV-PAY-148`): the increase invoiced to the group organiser instead of this member. */
+  billedToOrganiserCents: number;
   additionalPaymentClientSecret: string | null;
   stripeRefundId: string | null;
   promoRemoved: boolean;
@@ -375,7 +383,7 @@ export async function modifyBookingDates({
             nights: { select: { stayDate: true, priceCents: true, priceSource: true } },
           },
         },
-        payment: true,
+        payment: { include: { transactions: { orderBy: [...LEDGER_ROWS_OLDEST_FIRST] } } },
         member: true,
         // #3369: the owner may be an Organisation; bookingOwner() reads both.
         organisation: { select: { name: true, email: true } },
@@ -884,8 +892,13 @@ export async function modifyBookingDates({
     // date change on a booking under review does not refund credit pre-approval
     // (F4, #1887); the clamp runs once the booking is released to PAYMENT_PENDING.
     let zeroDollarAutoPaid = false;
+    // #4019: see `isUnpaidConfirmedWholeLodge` - an approved member whole-lodge
+    // booking with no Payment row reprices like a PAYMENT_PENDING one.
+    const unpaidConfirmedWholeLodge = isUnpaidConfirmedWholeLodge(booking);
     const isRepriceablePrePayment =
-      newStatus === "PENDING" || newStatus === "PAYMENT_PENDING";
+      newStatus === "PENDING" ||
+      newStatus === "PAYMENT_PENDING" ||
+      (newStatus === "CONFIRMED" && unpaidConfirmedWholeLodge);
     const appliedBeforeClamp = isRepriceablePrePayment
       ? await deriveBookingAppliedCreditCents(bookingId, tx)
       : 0;
@@ -911,7 +924,11 @@ export async function modifyBookingDates({
         changeFeeCents: recordedChangeFeeCents,
         appliedCreditCents: clampedCredit.appliedCreditCents,
       });
-      if (effectivePriceCents === 0 && newStatus === "PAYMENT_PENDING") {
+      if (
+        effectivePriceCents === 0 &&
+        (newStatus === "PAYMENT_PENDING" ||
+          (newStatus === "CONFIRMED" && unpaidConfirmedWholeLodge))
+      ) {
         newStatus = "PAID";
         zeroDollarAutoPaid = true;
         // #2265 (#2319). Same as the batch-modify sibling in
@@ -1227,6 +1244,7 @@ export async function modifyBookingDates({
 
     // #3582: the same before and after, per night, on the booking ledger —
     // under the `lock(1)` this transaction took first.
+    await queueOrganiserExtraForChange(tx, booking, bookingModification);
     await postModificationLedgerLines({
       store: tx,
       bookingId,
@@ -1235,6 +1253,11 @@ export async function modifyBookingDates({
       sides: pricingSides,
       site: "date-change",
     });
+    // #4019: this new whole-lodge PAID path bypasses the ordinary settle.
+    // Post after guest/night writes and the edit, at the final price only.
+    if (zeroDollarAutoPaid && unpaidConfirmedWholeLodge) {
+      await postStoredBookingConfirmationLedgerLines(tx, bookingId);
+    }
 
     // D-3813-6 (`INV-PAY-117`): a reduction on a booking paid by internet
     // banking or by hand asks the treasurer to send it back.
@@ -1324,6 +1347,7 @@ export async function modifyBookingDates({
       settlementMethod: payments.settlementMethod,
       policyRetainedAmountCents: payments.policyRetainedAmountCents,
       additionalAmountCents,
+      billedToOrganiserCents: payments.billedToOrganiserCents,
       additionalAsk,
       retiredAdditionalAsks,
       unpaidAskCancelled,
@@ -1415,6 +1439,7 @@ export async function modifyBookingDates({
     settlementMethod: result.settlementMethod,
     policyRetainedAmountCents: result.policyRetainedAmountCents,
     additionalAmountCents: result.additionalAmountCents,
+    billedToOrganiserCents: result.billedToOrganiserCents,
     additionalPaymentClientSecret: additionalMint.additionalPaymentClientSecret ?? null,
     stripeRefundId: refund.stripeRefundId ?? null,
     promoRemoved: result.promoRemoved,
@@ -1518,6 +1543,7 @@ async function dispatchDatePostTransactionSideEffects({
     bookingModificationId: result.bookingModificationId,
     createdByMemberId: actorMemberId,
     hasIssuedXeroInvoice: result.hasIssuedXeroInvoice,
+    organiserBankPlace: paidByOrganiserInternetBanking(result.booking), // #4299 N-b
     originalPaymentStatus: result.paymentStatus,
     priceDiffCents: result.priceDiffCents,
     changeFeeCents: result.changeFeeCents,
@@ -1609,6 +1635,7 @@ async function dispatchDatePostTransactionSideEffects({
       accountCreditAmountCents: result.accountCreditAmountCents,
       appliedCreditGivenBackCents: result.appliedCreditGivenBackCents,
       additionalAmountCents: namedAdditionalCents,
+      billedToOrganiserCents: result.billedToOrganiserCents, // #4299
       unpaidAskCancelled: result.unpaidAskCancelled,
       additionalPaymentMethod:
         namedAdditionalCents > 0 &&
@@ -2223,6 +2250,7 @@ export async function adminShiftBookingDates({
     settlementMethod: null,
     policyRetainedAmountCents: 0,
     additionalAmountCents: 0,
+    billedToOrganiserCents: 0,
     additionalPaymentClientSecret: null,
     stripeRefundId: null,
     promoRemoved: false,

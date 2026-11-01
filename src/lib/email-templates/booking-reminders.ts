@@ -6,6 +6,8 @@
  * for size. The arrival instructions block is shared from `./booking`, where
  * the confirmation email also uses it.
  */
+import { paymentRequestCauseParts, preArrivalOutstandingNote, type AdditionalAskCause } from "@/lib/additional-ask-cause";
+import { bankTransferNoteHtml, type BankTransferOffer } from "@/lib/credit-release-bank-transfer";
 import { arrivalInstructionsSection } from "./booking";
 import { escapeHtml } from "./escape";
 import {
@@ -72,6 +74,8 @@ export function preArrivalReminderTemplate(params: {
   // stay is about to start and it has not been collected. Zero/absent for the
   // ordinary case, which renders exactly as before.
   outstandingAdditionalAmountCents?: number;
+  // #4253: why it is owed (a change, or credit used elsewhere); absent reads as a change.
+  outstandingAdditionalCause?: AdditionalAskCause;
   // #2621 (owner decision D-M5): the checkout-day chore sentence, composed by
   // the sender with `checkoutDayChoreNote` and EMPTY for a club that does not
   // run a chore roster — the chores module defaults OFF. Handed in rather than
@@ -102,7 +106,7 @@ export function preArrivalReminderTemplate(params: {
     ${paragraph("Hi " + escapeHtml(params.firstName) + ", your lodge stay is coming up.")}
     ${infoTable(rows)}
     ${params.checkoutChoreNote ? paragraph(escapeHtml(params.checkoutChoreNote)) : ""}
-    ${outstandingAdditionalPaymentNote(params.outstandingAdditionalAmountCents, format)}
+    ${outstandingAdditionalPaymentNote(params.outstandingAdditionalAmountCents, format, params.outstandingAdditionalCause)}
     ${arrivalInstructionsSection({
       travelNote: params.lodgeTravelNote,
       doorCode: params.doorCode,
@@ -117,12 +121,13 @@ export function preArrivalReminderTemplate(params: {
  * reminder so both say the same thing in the same words. Empty for a booking
  * with nothing outstanding, so the surrounding template is unchanged.
  */
-function outstandingAdditionalPaymentNote(amountCents: number | undefined, format: ClubFormat): string {
+function outstandingAdditionalPaymentNote(
+  amountCents: number | undefined,
+  format: ClubFormat,
+  cause: AdditionalAskCause = "edit",
+): string {
   if (!amountCents || amountCents <= 0) return "";
-  return alertBox(
-    `There is still ${formatCents(amountCents, format)} to pay on this booking after a change to your stay. Please pay it from your booking page before you arrive.`,
-    "warning",
-  );
+  return alertBox(preArrivalOutstandingNote(cause, formatCents(amountCents, format)), "warning");
 }
 
 /**
@@ -158,6 +163,12 @@ export function additionalPaymentReminderTemplate(params: {
   `);
 }
 
+/** The bank-transfer offer as a paragraph (`bankTransferNoteHtml`), or nothing. */
+function bankTransferParagraph(offer: BankTransferOffer | null | undefined): string {
+  if (!offer) return "";
+  return "\n    " + paragraph(bankTransferNoteHtml(offer));
+}
+
 /**
  * #4253: the request to pay for credit that was applied to a booking and then used
  * elsewhere in the club's accounts. It is NOT the "a change to your booking
@@ -172,12 +183,19 @@ export function creditReleasedPaymentRequestTemplate(params: {
   checkIn: Date;
   checkOut: Date;
   requestedOn: Date;
+  // #4253 release 2: `mixed` when an edit landed on the unpaid request and the two were merged.
+  cause?: "credit-release" | "mixed";
+  // D6: the club's bank-transfer details, when it has written them and the invoice has a number.
+  bankTransfer?: BankTransferOffer | null;
 },
   format: ClubFormat,
 ): string {
+  // The cause sentence the editable body's {{askCauseSentence}} carries, from the same helper.
+  const { lead, trail } = paymentRequestCauseParts(params.cause === "mixed" ? "mixed" : "credit-release");
+  const opening = lead + escapeHtml(formatCents(params.additionalAmountCents, format)) + trail;
   return layout(`
     ${heading("Payment Needed")}
-    ${paragraph("Hi " + escapeHtml(params.firstName) + ", the account credit applied to your booking was used elsewhere in the club's accounts, so " + escapeHtml(formatCents(params.additionalAmountCents, format)) + " of your booking has not been paid.")}
+    ${paragraph("Hi " + escapeHtml(params.firstName) + ", " + opening)}
     ${infoTable([
       { label: "Amount still to pay", value: formatCents(params.additionalAmountCents, format) },
       { label: "Requested on", value: emailClubDate(params.requestedOn) },
@@ -187,7 +205,7 @@ export function creditReleasedPaymentRequestTemplate(params: {
     ${alertBox(
       "Open your booking to pay by card. If you have already paid, or think this is wrong, contact the club.",
       "warning",
-    )}
+    )}${bankTransferParagraph(params.bankTransfer)}
     ${button("Pay Now", BASE_URL + "/bookings")}
   `);
 }

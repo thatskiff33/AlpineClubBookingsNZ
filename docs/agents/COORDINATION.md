@@ -131,6 +131,31 @@ its work, post a `LANE-SYNC:` on the issue with the head SHA you read. If the
 holder does not answer and the work is blocked, ask the owner to reassign it.
 Unknown occupancy is not a free slot.
 
+After 72 hours without a `LANE-SYNC:` checkpoint or a push to the reserved
+branch, the reservation is **released automatically** (owner decision, 28 Oct
+2026, #4452; it replaces the 27 Oct rule of asking the owner first). The
+coordinator that finds it confirms there was no push, using the branch's push
+activity or a manual check when no branch is named. It then posts a `RELEASE:`
+comment on the issue or PR citing #4452, after which any lane may claim the
+work. A holder that is still working keeps its claim by posting a `LANE-SYNC:`
+or pushing within the 72 hours. A release never touches the old lane's branch
+or worktree: its unpublished work is not taken over, and a new claim starts
+from `main`.
+
+Run `pnpm run lanes:stale` (optionally followed by `owner/repo`) to list open
+issues and PRs whose latest `CLAIM:` has been inactive for more than 72 hours.
+The [read-only checker](../../scripts/lanes-stale.mjs) prints the lane named in
+the claim, its last activity time and the release to post. A later
+`LANE-SYNC:` or branch push restarts the timer; `RELEASE` or `HANDOVER` ends that
+claim. It reads every comment page and uses GitHub push activity timestamps,
+including force pushes, rather than commit dates. PRs fall back to their head
+branch; issues need a branch named in the claim. Missing branches are flagged
+for a manual push check before releasing. GitHub read failures stop the report.
+It uses `gh` when available and public REST reads when `gh` is absent or logged
+out. Authenticated reads avoid the public API's lower rate limit. The checker
+never posts, labels or edits anything itself; the coordinator checks the thread
+and posts the `RELEASE:`.
+
 ## Handoffs and checkpoints
 
 A lane stopping before it finishes — end of session, usage limit, waiting on
@@ -144,7 +169,9 @@ assigns — starts from that checkpoint and the thread, not from a summary.
 ### When the pre-push checks cannot pass
 
 The pre-push checks (`AGENTS.md` → "Per-issue pipeline") are not skipped to
-save work. Never use `--no-verify`, a skipped check or a push of known-broken
+save work. A Stop hook sends a lane back to them once when its session's own
+directory differs from `origin/main` under `src/`; a lane editing another
+worktree by absolute path is not reminded. Never use `--no-verify`, a skipped check or a push of known-broken
 work to rescue it. Preserve it this way instead:
 
 1. Commit it locally on the lane's own branch, with a commit message naming

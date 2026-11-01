@@ -105,7 +105,11 @@ vi.mock("@/lib/prisma", () => ({
       })),
     },
     // #3954 round 7: the door re-reads its new intent (`isMintedAskStillLive`).
-    paymentTransaction: { findUnique: vi.fn().mockResolvedValue({ status: "PENDING", withdrawnAt: null }) },
+    paymentTransaction: {
+      findUnique: vi.fn().mockResolvedValue({ status: "PENDING", withdrawnAt: null }),
+      // #4442: the supersede now reads the live asks inside the mint's queue - none here.
+      findMany: vi.fn().mockResolvedValue([]),
+    },
     member: { count: mockMemberCount, findUnique: mockFindUnique, findMany: mockFindMany },
     familyGroupMember: { findMany: mockFindMany },
     auditLog: { create: vi.fn().mockResolvedValue({}) },
@@ -165,12 +169,27 @@ vi.mock("@/lib/stripe", () => ({
   createPaymentIntent: (...args: unknown[]) => mockCreatePaymentIntent(...args),
   findOrCreateCustomer: (...args: unknown[]) => mockFindOrCreateCustomer(...args),
 }));
+const frozenEditPlan = vi.hoisted(() => ({
+  plan: async (...args: unknown[]) => {
+    const { amountCents } = args[0] as { amountCents: number };
+    return { slices: [{ paymentTransactionId: "txn_refund", amountCents }], plannedAmountCents: amountCents, totalRefundableCents: amountCents };
+  },
+  // The door reads each answer against the slice it sent.
+  refund: async (...args: unknown[]): Promise<unknown> => {
+    const result = (await mockRefundPaymentTransactions(...args)) as { refunds?: Array<Record<string, unknown>> } | undefined;
+    const allocation = (args[0] as { allocation?: unknown[] }).allocation;
+    return { ...result, refunds: result?.refunds?.map((refund, index) => ({ status: "succeeded", slice: allocation?.[index], ...refund })) };
+  },
+}));
 vi.mock("@/lib/payment-transactions", () => ({
   PartialRefundError: class PartialRefundError extends Error {
     completedRefundCents = 0;
   },
-  refundPaymentTransactions: (...args: unknown[]) =>
-    mockRefundPaymentTransactions(...args),
+  // #3984: edit doors freeze a plan first and read each answer against its slice.
+  planStripeRefundAllocation: (...args: unknown[]) => frozenEditPlan.plan(...args),
+  refundPaymentTransactions: (...args: unknown[]) => frozenEditPlan.refund(...args),
+  // #4442: the mint's queue takes the Payment row; nothing to wait on here.
+  lockPaymentForRefundedTotal: vi.fn(),
   upsertPaymentIntentTransaction: (...args: unknown[]) =>
     mockUpsertPaymentIntentTransaction(...args),
 }));
@@ -544,6 +563,8 @@ function makeTx(booking: ReturnType<typeof makeBooking>) {
       // #3980: an edit that read no invoice link claims the payment row.
       updateMany: vi.fn(async () => ({ count: 1 })),
       upsert: vi.fn().mockResolvedValue({ id: "p1" }),
+      // #4442: the mint's queue re-reads the live ask it carries on this transaction - the fixture's own mirror.
+      findUnique: vi.fn(async () => booking.payment ?? null),
     },
     paymentTransaction: {
       findMany: vi.fn().mockResolvedValue([]),

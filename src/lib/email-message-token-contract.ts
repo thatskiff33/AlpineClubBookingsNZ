@@ -96,6 +96,9 @@ export const OPTIONAL_TEMPLATE_TOKENS: Record<string, readonly string[]> = {
   // A roster only exists for chores that exist, so the chore block itself is
   // never empty; the completion link is (a roster can be sent without one).
   "chore-roster": ["choreLinkNote"],
+  // #4253 release 2: the bank-transfer offer, composed whole by the sender and EMPTY until the
+  // club writes its bank details and the invoice has a number to quote - the ordinary case.
+  "credit-released-payment-request": ["bankTransferNote"],
   "membership-application-approved": ["committeeNote"],
   "membership-application-rejected": ["committeeNote"],
   "child-request-rejected": ["adminNoteLine"],

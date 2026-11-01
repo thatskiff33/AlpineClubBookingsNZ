@@ -21,8 +21,10 @@ import {
 } from "@/lib/stripe-charge-currency";
 import {
   ADDITIONAL_PAYMENT_ALREADY_MADE_BODY,
+  ADDITIONAL_PAYMENT_CHANGED_BODY,
   PAYMENT_PROCESSING_BODY,
 } from "@/lib/payment-recovery-contract";
+import { CarriedAskChangedError } from "@/lib/additional-ask-queue-transaction";
 
 /**
  * GET /api/bookings/[id]/additional-payment-secret
@@ -42,7 +44,8 @@ import {
  * #3635: EVERY 409 HERE CARRIES A `code`, and the card branches on it, never on
  * the bare status — `UNSUPPORTED_CHARGE_CURRENCY` (an error; the ask is still
  * owing), `PAYMENT_PROCESSING` (wait) and `ADDITIONAL_PAYMENT_ALREADY_MADE`
- * (paid). A bare 409 once read as "paid" for all three.
+ * (paid). A bare 409 once read as "paid" for all three. #4442 adds
+ * `ADDITIONAL_PAYMENT_CHANGED` (reload), which the card shows as its error.
  */
 export async function GET(
   _request: NextRequest,
@@ -134,18 +137,29 @@ export async function GET(
         currency and the amount.
       */
       const row = await findPaymentTransactionByIntentId({ paymentIntentId: pi.id });
-      const reissued = await reissueAdditionalIntentInClubCurrency({
-        format,
-        bookingId,
-        paymentId: payment.id,
-        staleIntentId: pi.id,
-        ask: restateAdditionalAsk({
-          amountCents: pi.amount,
-          carriedAskCents: row?.carriedAskCents ?? 0,
-        }),
-        reason: row?.reason ?? null,
-        customerId: payment.stripeCustomerId,
-      });
+      let reissued: Awaited<ReturnType<typeof reissueAdditionalIntentInClubCurrency>>;
+      try {
+        reissued = await reissueAdditionalIntentInClubCurrency({
+          format,
+          bookingId,
+          paymentId: payment.id,
+          staleIntentId: pi.id,
+          // #4442: the figure is the intent's; the live balance it carries is
+          // the mirror this request read, which the re-issue's queue re-reads.
+          ask: restateAdditionalAsk(
+            { amountCents: pi.amount, carriedAskCents: row?.carriedAskCents ?? 0 },
+            payment,
+          ),
+          reason: row?.reason ?? null,
+          customerId: payment.stripeCustomerId,
+        });
+      } catch (err) {
+        // #4442: the ask moved (paid, or replaced) while this re-issued it;
+        // nothing was written or offered. A reload reads the door afresh.
+        if (!(err instanceof CarriedAskChangedError)) throw err;
+        logger.warn({ err, bookingId, paymentIntentId: pi.id }, "Additional ask changed during its currency re-issue; asking the member to reload");
+        return NextResponse.json(ADDITIONAL_PAYMENT_CHANGED_BODY, { status: 409 });
+      }
       // #4316: the booking ended while this re-issued; nothing is payable.
       if (!reissued) {
         return NextResponse.json({ error: "No pending additional payment" }, { status: 404 });

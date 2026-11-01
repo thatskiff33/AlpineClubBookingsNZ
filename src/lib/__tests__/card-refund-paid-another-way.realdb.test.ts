@@ -382,14 +382,16 @@ const LOCK_POLL_TIMEOUT_MS = 5_000;
       );
       await markWritten;
 
-      const closing = close();
-      await waitForBlockedBy(holderPid);
-      release();
-      await mark;
-      const refused = await closing.then(
+      // Settled into a value at once: released, the close can refuse before `await mark` returns, and a rejection
+      // with no handler yet is reported unhandled.
+      const closing = close().then(
         () => null,
         (error: unknown) => error,
       );
+      await waitForBlockedBy(holderPid);
+      release();
+      await mark;
+      const refused = await closing;
       expect(refused).toBeInstanceOf(CardRefundPaidAnotherWayError);
       expect(refused).toMatchObject({ status: 409, message: expect.stringContaining("changed while you were closing it") });
 
@@ -443,6 +445,8 @@ const LOCK_POLL_TIMEOUT_MS = 5_000;
       await recordedInHolder;
 
       const closing = close();
+      // Handled at once: released, the close can refuse before `await webhook` returns. Asserted below.
+      closing.catch(() => undefined);
       await waitForBlockedBy(holderPid);
       release();
       await webhook;

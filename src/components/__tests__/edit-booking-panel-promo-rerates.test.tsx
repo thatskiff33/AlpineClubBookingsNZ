@@ -111,7 +111,7 @@ function makeBooking() {
     },
     requiresAdminReview: false,
     adminReviewStatus: null,
-    otherLodges: [{ id: "lodge-a", name: "Aorangi Lodge" }],
+    otherLodges: [{ id: "lodge-a", name: "Aorangi Lodge", label: "Aorangi Lodge" }],
     otherLodgeId: null,
     otherLodgeRateEligibleGuestIds: ["g-visitor"],
   };

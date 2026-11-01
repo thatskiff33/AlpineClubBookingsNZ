@@ -12,13 +12,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
   The witness `INV-OPS-015` requires (`money-seam-mock-census.test.ts` pins this
   file by name). #3340 lost $135 because no suite ever ran the ask SIZING and the
   supersede MACHINERY together: every suite that touched
-  `queueSupersededAdditionalIntentCancellations` mocked it. Here every link runs
+  `queueSupersededAdditionalIntentCancellationRows` mocked it. Here every link runs
   for real, over one in-memory ledger that actually holds the row being retired:
 
     sizeAdditionalAsk                          (the one home of the arithmetic)
       -> createModificationAdditionalPaymentIntent   (the minter)
         -> upsertPaymentIntentTransaction -> reconcilePaymentAggregates
-        -> queueSupersededAdditionalIntentCancellations
+        -> queueSupersededAdditionalIntentCancellationRows
           -> enqueuePaymentIntentCancellationRecovery
           -> runPaymentRecoveryOperationNow -> cancel -> reconcile
 
@@ -139,14 +139,13 @@ vi.mock("@/lib/prisma", () => {
     insertionSeq: ++ledger.seq,
   });
 
-  return {
-    prisma: {
+  const prisma = {
       // #4217: the ledger writers lock the Payment row first; a single-writer
       // fake has nothing to wait on.
       $executeRaw: async () => 0,
       payment: {
-        findUnique: async (args: { where: Row; include?: Row }) => {
-          onlyArgs(args, ["where", "include"]);
+        findUnique: async (args: { where: Row; include?: Row; select?: Row }) => {
+          onlyArgs(args, ["where", "include", "select"]);
           const { where, include } = args;
           if (include) {
             onlyArgs(include, ["transactions"]);
@@ -232,8 +231,8 @@ vi.mock("@/lib/prisma", () => {
           return row ? { ...row } : null;
         },
       },
-    },
   };
+  return { prisma: { ...prisma, $transaction: (write: (tx: typeof prisma) => unknown) => write(prisma) } };
 });
 
 vi.mock("@/lib/stripe", () => ({

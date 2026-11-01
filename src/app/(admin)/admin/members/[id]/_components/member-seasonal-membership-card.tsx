@@ -435,13 +435,13 @@ export function MemberSeasonalMembershipCard({
           </div>
 
           <div className="space-y-2">
-            <Label>Membership Type</Label>
+            <Label htmlFor="seasonal-membership-type">Membership Type</Label>
             <Select
               value={selectedMembershipTypeId}
               onValueChange={setSelectedMembershipTypeId}
               disabled={typesLoading}
             >
-              <SelectTrigger>
+              <SelectTrigger id="seasonal-membership-type">
                 <SelectValue placeholder="Select membership type" />
               </SelectTrigger>
               <SelectContent>

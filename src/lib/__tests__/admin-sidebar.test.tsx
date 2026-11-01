@@ -516,7 +516,7 @@ describe("AdminSidebar", () => {
       `admin-sidebar-club-time.test.tsx`.
     */
     expect(link.getAttribute("href")).toBe(
-      "/admin/bookings?status=PAYMENT_PENDING&checkOutTo=2026-07-01",
+      "/admin/bookings?unpaid=finished&checkOutTo=2026-07-01",
     );
     expect(screen.getByText("5")).not.toBeNull();
   });

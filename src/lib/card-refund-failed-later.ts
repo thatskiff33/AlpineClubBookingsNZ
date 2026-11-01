@@ -45,11 +45,17 @@
  * that keeps taking refunds and failing them), and a refund no open row owes
  * that Stripe CREATED before this install could notice such failures
  * (`CARD_REFUND_FAILED_LATER_CUTOFF_MIGRATION`) - the treasurer may already have
- * paid it back by hand. A slice of an open row is re-planned whenever its
- * refund was made: that row is still being worked, and no close can have been
- * recorded on it. Not owed at all, only alerted and recorded in the audit log
- * (#4104 review, CL3): a refund whose Stripe metadata names no booking of this
- * payment (made by hand in the Stripe dashboard, or a legacy group refund).
+ * paid it back by hand. #4210 (`INV-PAY-142`; owner, #4361 decision 4): HELD,
+ * the same way, when a row that may have made the refund - any whose runner
+ * metadata it carries, or whose slice it fills - was closed "Paid another
+ * way" (`closedPaidAnotherWay`): the bank transfer that close recorded may
+ * already have paid this money back, so an officer checks it and settles
+ * anything still owed with "Paid another way". A slice of an open row is
+ * re-planned whenever its refund was made: that row is still being worked,
+ * and no close can have been recorded on it. Not owed at all, only alerted and
+ * recorded in the audit log (#4104 review, CL3): a refund whose Stripe
+ * metadata names no booking of this payment (made by hand in the Stripe
+ * dashboard, or a legacy group refund).
  *
  * The officers are alerted once per decision, after the commit that made it
  * (`alertFailedLaterCardRefunds`).
@@ -63,6 +69,7 @@ import {
 
 import { createAuditLog } from "@/lib/audit";
 import logger from "@/lib/logger";
+import { cardRefundPaidAnotherWayClosesWhere } from "@/lib/manual-refund-task-settlement-rules";
 import { readMigrationFinishedAt } from "@/lib/migration-finished-at";
 import {
   CARD_REFUND_OPERATION_WHERE,
@@ -112,10 +119,12 @@ export type FailedLaterKind = "transition" | "replayed";
 export type FailedLaterCardRefundDebt = {
   /**
    * `raised-dead`: a retry that failed too; `raised-backlog`: made before the
-   * cutoff; `re-planned-dead`: moved on a row whose retries are already spent;
-   * `not-resent`: not the club's refund for this booking - nothing is owed here.
+   * cutoff; `raised-after-paid-another-way` (#4210): the row that made it was
+   * closed "Paid another way"; `re-planned-dead`: moved on a row whose retries
+   * are already spent; `not-resent`: not the club's refund for this booking -
+   * nothing is owed here.
    */
-  outcome: "raised" | "raised-dead" | "raised-backlog" | "re-planned" | "re-planned-dead" | "not-resent";
+  outcome: "raised" | "raised-dead" | "raised-backlog" | "raised-after-paid-another-way" | "re-planned" | "re-planned-dead" | "not-resent";
   operationId: string | null;
   bookingId: string;
   paymentIntentId: string | null;
@@ -139,6 +148,12 @@ export class FailedLaterRefundHeldError extends Error {
 /** Where the treasurer closes a row the app will not ask Stripe for again (#4104 review, D1). */
 const CLOSE_IT_WHERE = 'close it under "Card refunds Stripe gave up on" on the Stuck states page';
 
+/**
+ * #4210 (`INV-PAY-142`; #4361 decision 7): what an officer does with a refund
+ * held because a "Paid another way" close came first.
+ */
+const PAID_ANOTHER_WAY_CHECK = `The bank transfer that close recorded may already have paid this money back, so it is not asked for again automatically. Check whether the member is still owed anything: after a part close the figure can include what that close recorded as no longer owed, so check its record before paying. If they are owed, pay them another way and ${CLOSE_IT_WHERE}: settle it with "Paid another way", never with a new refund in the Stripe dashboard. If nothing is left owed, there is nothing to close there: ask a developer to reconcile it`;
+
 /** What the row says, for a person reading it; nothing parses it. */
 function failedLaterLastError(refundId: string, outcome: FailedLaterCardRefundDebt["outcome"]): string {
   if (outcome === "raised-dead") {
@@ -146,6 +161,9 @@ function failedLaterLastError(refundId: string, outcome: FailedLaterCardRefundDe
   }
   if (outcome === "raised-backlog") {
     return `Stripe reported refund ${refundId} failed; it was made before this release could notice that, so it is not asked for again automatically. Check whether the member was paid back, then ${CLOSE_IT_WHERE} (#4104).`;
+  }
+  if (outcome === "raised-after-paid-another-way") {
+    return `Stripe reported refund ${refundId} failed after the card refund that made it was closed "Paid another way". ${PAID_ANOTHER_WAY_CHECK} (#4210).`;
   }
   // #4104 review (D7): a row whose retries are already spent is never claimed again.
   if (outcome === "re-planned-dead") {
@@ -175,6 +193,21 @@ export async function cardRefundFailedLaterCutoffSeconds(db: Prisma.TransactionC
   return cutoff.finishedAtSeconds;
 }
 
+/**
+ * #4210 (`INV-PAY-142`): whether any of these card refund rows was closed "Paid
+ * another way" - a completed close record keyed on it, found the one way a
+ * close is found by the row it closed (`cardRefundPaidAnotherWayClosesWhere`).
+ * Read on the ledger writer's client, under the Payment row
+ * lock it holds, which a close takes before it writes its record: a close
+ * either committed before this read or waits for this transaction.
+ */
+async function closedPaidAnotherWay(tx: Prisma.TransactionClient, operationIds: ReadonlyArray<string | null>): Promise<boolean> {
+  const ids = [...new Set(operationIds.filter((id): id is string => id !== null))];
+  if (ids.length === 0) return false;
+  const closes = await tx.manualRefundTask.count({ where: cardRefundPaidAnotherWayClosesWhere(ids) });
+  return closes > 0;
+}
+
 /** Whether a refund carries exactly the Stripe metadata this row's runner sends (`carriesCardRefundOperationMetadata`). */
 function sentByRow(row: PaymentRecoveryOperation, refund: FailedLaterRefundInput): boolean {
   return carriesCardRefundOperationMetadata(row, refund.metadata);
@@ -191,25 +224,29 @@ type OpenOwner = { row: PaymentRecoveryOperation; sliceIndex: number | null };
  * it - or, where several carry it (a booking's failed-later retries), the one
  * whose slice it fills; else none.
  */
-function madeByRow(
-  rows: ReadonlyArray<PaymentRecoveryOperation>,
-  refund: FailedLaterRefundInput,
-  filled: { operation: { id: string } } | null,
-): string | null {
-  const senders = rows.filter((row) => sentByRow(row, refund));
-  if (senders.length === 1) return senders[0]?.id ?? null;
-  return filled && senders.some((row) => row.id === filled.operation.id) ? filled.operation.id : null;
+function madeByRow(senderIds: ReadonlyArray<string>, filled: { operation: { id: string } } | null): string | null {
+  if (senderIds.length === 1) return senderIds[0] ?? null;
+  return filled && senderIds.includes(filled.operation.id) ? filled.operation.id : null;
 }
 
 /**
+ * What the raise path knows of who made a refund no open row owes: the row it
+ * records (`madeBy`), the row whose slice it fills (`filledBy`) and (#4210
+ * review, F1) every row whose runner metadata it carries (`senderIds`) - two
+ * edits of one reason send the same, and neither may fill a slice for a refund
+ * made before it was raised, so `madeBy` alone can name none of them.
+ */
+type RaisedOwner = { madeBy: string | null; filledBy: string | null; senderIds: string[] };
+
+/**
  * The open row that counted this refund as made, or "owed" when one already
- * owes it, or else (`madeBy`) the row that made it, for the new row's record.
+ * owes it, or else who made it (`RaisedOwner`).
  */
 async function findOwner(
   tx: Prisma.TransactionClient,
   payment: { id: string; status: string; amountCents: number; refundedAmountCents: number },
   refund: FailedLaterRefundInput,
-): Promise<OpenOwner | "owed" | { madeBy: string | null }> {
+): Promise<OpenOwner | "owed" | RaisedOwner> {
   const refundId = refund.id;
   const rows = await tx.paymentRecoveryOperation.findMany({ where: { paymentId: payment.id, ...CARD_REFUND_OPERATION_WHERE } });
   // Already owed, by the one spelling of what a slice is sent for (`cardRefundSliceFailedRefundIds`): any row of
@@ -235,7 +272,10 @@ async function findOwner(
   // row's runner did not send: it sends its unmarked slice anyway. An open row
   // with no plan (a superseded intent's) re-derives what its charge still holds
   // by itself, and reads its own replay as refused (#4104 review, ML2).
-  if (!filled || !row || !sentByRow(row, refund)) return { madeBy: madeByRow(rows, refund, filled) };
+  if (!filled || !row || !sentByRow(row, refund)) {
+    const senderIds = rows.filter((each) => sentByRow(each, refund)).map((each) => each.id);
+    return { madeBy: madeByRow(senderIds, filled), filledBy: filled?.operation.id ?? null, senderIds };
+  }
   return { row, sliceIndex: parseRefundAllocationPlan(row.allocationPlan) ? filled.sliceIndex : null };
 }
 
@@ -361,8 +401,12 @@ export async function keepFailedLaterCardRefundOwed(
     logger.error({ stripeRefundId: refund.id, paymentTransactionId }, "A card refund that failed later names no card payment to refund again (#4104)");
     return {};
   }
-  const outcome: FailedLaterCardRefundDebt["outcome"] =
-    refund.metadata?.reason === CARD_REFUND_FAILED_LATER_REASON
+  // #4210 (`INV-PAY-142`): a refund a "Paid another way" close may already have paid back is held first -
+  // a close on any row that may have made it (review F1: every sender, not only the one `madeBy` names,
+  // which is always one of these two).
+  const outcome: FailedLaterCardRefundDebt["outcome"] = (await closedPaidAnotherWay(tx, [owner.filledBy, ...owner.senderIds]))
+    ? "raised-after-paid-another-way"
+    : refund.metadata?.reason === CARD_REFUND_FAILED_LATER_REASON
       ? "raised-dead"
       : cutoffSeconds !== null && typeof refund.created === "number" && refund.created < cutoffSeconds
         ? "raised-backlog"
@@ -443,6 +487,8 @@ function alertMessage(debt: FailedLaterCardRefundDebt, amount: string): string {
       return `Stripe accepted a retried card refund of ${amount} and later reported it failed too, so no money went back. It is still owed and will not be asked for again automatically: pay the member another way and ${CLOSE_IT_WHERE}.`;
     case "raised-backlog":
       return `Stripe reported a card refund of ${amount} failed. It was made before this release could notice such failures, so it is not asked for again automatically: check whether the member has already been paid back, and ${CLOSE_IT_WHERE}.`;
+    case "raised-after-paid-another-way":
+      return `Stripe reported a card refund of ${amount} failed after the card refund that made it was closed "Paid another way". ${PAID_ANOTHER_WAY_CHECK}.`;
     case "not-resent":
       // #4104 review (D2): which refund, and how to settle it - nothing here owes it.
       return `Stripe reported card refund ${debt.stripeRefundId} of ${amount} on this booking failed after accepting it. The app did not make it for this booking (a refund made in the Stripe dashboard, or a group refund), so it is not asked for again and is not listed under Refunds owed. Find it in the Stripe dashboard: if the member is still owed, refund them again there or pay them another way. Raise no refund note for it in Xero: the card refund credit note raised while Stripe counted it, if there is one, already records it, and a second note would credit the member twice. If they are no longer owed, the Xero reconciliation report lists that note as refund coverage above the refunded total, for you to correct in Xero.`;

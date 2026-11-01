@@ -1267,14 +1267,15 @@ explicit, audited admin act.
 A **finished stay's card obligation never lingers unseen** (#1709, #1723). Two
 **disjoint** admin queues surface every uncollected card obligation on a stay
 whose check-out is on or before NZ today, both driven by the shared
-predicate/href helpers in `src/lib/unpaid-finished-stays.ts` (the dashboard
+predicate helpers in `src/lib/unpaid-finished-stays.ts` and href helpers in
+`src/lib/unpaid-finished-stays-hrefs.ts` (the dashboard
 attention cards, the sidebar Needs Attention badges via `admin-pending-counts`,
 and the bookings-list deep links all consume the same helpers):
 
 - **Unpaid finished stays** (#1709/#1731): `deletedAt` null +
   `status = PAYMENT_PENDING` + `checkOut ≤ today` — the whole booking price is
   still owed (a retroactive card create qualifies from creation). Deep link:
-  `/admin/bookings?status=PAYMENT_PENDING&checkOutTo=<today>`.
+  `/admin/bookings?unpaid=finished&checkOutTo=<today>`.
 - **Unsettled finished-stay additions** (#1723 path 2, owner decision B):
   `deletedAt` null + `checkOut ≤ today` + `status ∈ {CONFIRMED, PAID,
   COMPLETED}` + payment `additionalAmountCents > 0` with

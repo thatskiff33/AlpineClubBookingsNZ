@@ -95,7 +95,7 @@ import {
   lodgeNullTolerantScope,
   lodgeOrderBy,
 } from "@/lib/lodges";
-import { otherLodgeOrderBy } from "@/lib/other-lodges";
+import { otherLodgeChoicesWhere, otherLodgeNameWithLocation, otherLodgeOrderBy, visibleOtherLodgeWhere, withOtherLodgeChoiceLabels } from "@/lib/other-lodges";
 // ONE definition of the open-status list, shared with the member DTO so the
 // Withdraw affordance is derived from the same list this file's WHERE clauses
 // name rather than restating it (#2263 review finding M3).
@@ -414,17 +414,17 @@ export async function getPublicBookingRequestLodges(
 
 /**
  * The external / partner lodges a requester may say they belong to (#2749).
- * id + name only — this backs a public form drop-down. Unlike the own-lodge
- * list this is always returned (even for one entry); the form shows a "No"
- * default and treats a blank selection as "not a member of another lodge".
+ * id, name and the label to show (#69: with the location when names repeat). It backs a public form
+ * drop-down. Always returned (even for one entry); a blank selection means "not a member of another lodge".
+ * Hidden lodges are not offered, bar the `keepId` a record already names (#58).
  */
 export async function getPublicOtherLodges(
-  db: Pick<typeof prisma, "otherLodge"> = prisma
-): Promise<Array<{ id: string; name: string }>> {
-  return db.otherLodge.findMany({
-    orderBy: otherLodgeOrderBy(),
-    select: { id: true, name: true },
-  });
+  db: Pick<typeof prisma, "otherLodge"> = prisma, keepId: string | null = null
+): Promise<Array<{ id: string; name: string; label: string }>> {
+  return withOtherLodgeChoiceLabels(await db.otherLodge.findMany({
+    where: otherLodgeChoicesWhere(keepId),
+    orderBy: otherLodgeOrderBy(), select: { id: true, name: true, location: true },
+  }));
 }
 
 /**
@@ -437,8 +437,8 @@ export async function assertRequestedOtherLodgeExists(
   db: Pick<typeof prisma, "otherLodge"> = prisma
 ): Promise<string | null> {
   if (!otherLodgeId) return null;
-  const otherLodge = await db.otherLodge.findUnique({
-    where: { id: otherLodgeId },
+  const otherLodge = await db.otherLodge.findFirst({
+    where: { id: otherLodgeId, ...visibleOtherLodgeWhere },
     select: { id: true },
   });
   if (!otherLodge) {
@@ -830,6 +830,14 @@ export async function createMemberWholeLodgeRequest(input: {
   /** Who the group is, in the member's words. */
   groupDescription: string;
   notes?: string | null;
+  /**
+   * The member's ask to put their account credit towards the booking if the
+   * request is approved. A yes/no election rather than an amount, because the
+   * price is not known until the officer prices the approval; the approval
+   * applies min(balance, price) under the member's ledger lock. Omitted means
+   * no.
+   */
+  applyAccountCredit?: boolean;
 }) {
   const member = await prisma.member.findUnique({
     where: { id: bookingOwner(input).memberId },
@@ -914,6 +922,10 @@ export async function createMemberWholeLodgeRequest(input: {
       status: BookingRequestStatus.VERIFIED,
       verifiedAt,
       requestedByMemberId: member.id,
+      // The member's credit election, honoured at approval (see
+      // approveMemberWholeLodgeRequest). Stored as a plain yes/no: nobody knows
+      // the price yet.
+      applyAccountCredit: input.applyAccountCredit === true,
       // Contact details are SNAPSHOT from the member row, never accepted from
       // the body — the request must always be reachable at the account's own
       // address.
@@ -949,6 +961,7 @@ export async function createMemberWholeLodgeRequest(input: {
       headcount: input.headcount,
       lodgeId: requestedLodgeId,
       exclusivityRequested: true,
+      applyAccountCredit: input.applyAccountCredit === true,
     },
   });
 
@@ -2957,7 +2970,7 @@ function readAdminTeachersForDisplay(raw: unknown) {
 export function serializeBookingRequestForAdmin(
   request: BookingRequest & {
     lodge?: { name: string } | null;
-    otherLodge?: { name: string } | null;
+    otherLodge?: { name: string; location?: string | null } | null;
   },
   /*
     #2887 review (F2): how many lodges the club actually has, so the ADR-002
@@ -3011,9 +3024,9 @@ export function serializeBookingRequestForAdmin(
         : (request.lodge?.name ?? null),
     // Other/partner lodge the requester said they belong to (#2749). Null
     // otherLodgeId means "No"; otherLodgeName is present only when the caller
-    // included the otherLodge relation.
+    // included the otherLodge relation, with its location when that was read (#69: names may repeat).
     otherLodgeId: request.otherLodgeId,
-    otherLodgeName: request.otherLodge?.name ?? null,
+    otherLodgeName: request.otherLodge ? otherLodgeNameWithLocation(request.otherLodge) : null,
     // Whole-lodge exclusivity (ADR-001). Emitted so the admin queue can badge
     // it — for SCHOOL rows too, closing a display gap that predates #2263 — and
     // so the member-origin approval branch can be selected at all.
@@ -3021,6 +3034,10 @@ export function serializeBookingRequestForAdmin(
     // Member attribution (#2263). Null for every public/school request. ADMIN
     // payload only: no member-facing serialiser reads this function.
     requestedByMemberId: request.requestedByMemberId,
+    // The member's credit election on a whole-lodge request, so the officer
+    // knows the approved total will be netted against the member's credit.
+    // Always false for public and school rows.
+    applyAccountCredit: request.applyAccountCredit,
     schoolName: request.schoolName,
     teachers: teacherDisplay.teachers,
     // #3413: a SCHOOL-only capacity/quote count. No name is implied by it.

@@ -156,9 +156,11 @@ export async function writeEditOnPayment(
     payment: { id: string; xeroInvoiceId: string | null } | null | undefined;
     changeFeeCents: number;
     refusalMessage?: string;
+    /** Organiser-paid children have a combined invoice, never a primary of their own. */
+    settledAgainstCombinedInvoice?: boolean;
   },
 ): Promise<boolean> {
-  const settled = settlesAgainstPrimaryInvoice(input.payment);
+  const settled = !input.settledAgainstCombinedInvoice && settlesAgainstPrimaryInvoice(input.payment);
   if (!input.payment) return settled;
   if (settled) {
     await claimPrimaryInvoiceStillUnlinked(tx, {

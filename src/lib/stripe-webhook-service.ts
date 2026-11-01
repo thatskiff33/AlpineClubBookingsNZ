@@ -8,9 +8,8 @@ import { markBookingPaymentSucceeded, markBookingSetupIntentSucceeded } from "@/
 import { classifySucceededSetupIntentCard } from "@/lib/setup-intent-card";
 import { isXeroConnected } from "@/lib/xero";
 import { kickQueuedXeroOutboxOperationsIfConnected } from "@/lib/xero-operation-outbox";
-import { queueWebhookCardRefundNotes } from "@/lib/card-refund-own-note";
 import { releaseXeroSupplementaryInvoiceForCapturedPaymentIntent } from "@/lib/xero-supplementary-invoice-late-capture";
-import { findAdditionalCaptureReceiptInvoiceId } from "@/lib/additional-capture-receipt-link";
+import { queueRecordedCardRefundNotes, RecordedCardRefundNoteEnqueueError } from "@/lib/recorded-card-refund-notes";
 import { isLateCaptureRefundedBookingStatus } from "@/lib/additional-payment-chase";
 import { reportWebhookError } from "@/lib/observability-bridge";
 import {
@@ -38,9 +37,7 @@ import {
   recoverLostLateCaptureRecord,
   type LateCaptureIdentity,
 } from "@/lib/late-capture-record-recovery";
-import { readUnrecordedLateCaptureRefund } from "@/lib/late-capture-unrecorded-refunds";
 import { lateCaptureOwnChargeSlice, refundLateCaptureFromOwnCharge } from "@/lib/late-capture-own-charge-refund";
-import { findLateCapturePaymentIntents } from "@/lib/late-capture-xero-receipt";
 import {
   buildLateCaptureRefundMetadata,
   buildLateCaptureRefundStripeKeyPrefix,
@@ -1138,12 +1135,6 @@ async function handleSetupIntentCanceled(
   );
 }
 
-/** A refund of a late capture on a cancelled booking (#3635 round-3 R1). */
-async function isLateCaptureRefund(paymentIntentId: string | null | undefined): Promise<boolean> {
-  if (!paymentIntentId) return false;
-  return (await findLateCapturePaymentIntents([paymentIntentId])).has(paymentIntentId);
-}
-
 /**
  * Handle charge refund events (from Stripe dashboard or API refunds).
  */
@@ -1190,36 +1181,18 @@ async function handleChargeRefunded(charge: Stripe.Charge) {
   // credited back when the receipt is recorded (`creditBackLateCaptureRefunds`).
   // #4312 review: a refund this sync recorded first counts even when the total did not move.
   const recordedNew = refundSync.refundDeltaCents > 0 || refundSync.newlyCountedRefundIds.length > 0;
-  if (recordedNew && (await isLateCaptureRefund(paymentIntentId))) {
-    await queueLateCaptureRefundCreditNote({
-      paymentId: refundSync.paymentId,
-      paymentIntentId: paymentIntentId!,
-    });
-  } else if (
-    recordedNew &&
-    // #4170: a late capture whose record is not written yet never gets the generic note.
-    (await readUnrecordedLateCaptureRefund({
-      paymentId: refundSync.paymentId,
-      paymentIntentId,
-      refundedCents: refundSync.refundDeltaCents,
-      refunds,
-    })) !== "none"
-  ) {
-    return;
-  } else if (recordedNew) {
-    // Queue only what this sync newly added to the refunded total (#3640); charge.amount_refunded is cumulative.
-    // #4312: on a bank transfer, a refund made outside the app is noted on its own record (`queueWebhookCardRefundNotes`).
+  if (recordedNew) {
+    let routed = false;
     try {
-      // #3953 (`INV-PAY-139`): a change's capture its own receipt recorded names the invoice it paid.
-      const creditsInvoiceId = await findAdditionalCaptureReceiptInvoiceId(paymentIntentId);
-      const queuedCreditNote = await queueWebhookCardRefundNotes({
+      const queuedCreditNote = await queueRecordedCardRefundNotes({
         payment: refundSync.payment,
+        paymentIntentId,
         deltaCents: refundSync.refundDeltaCents,
         refunds,
         newlyCountedRefundIds: refundSync.newlyCountedRefundIds,
-        ...(creditsInvoiceId ? { creditsInvoiceId } : {}),
       });
 
+      routed = true;
       if (queuedCreditNote.queueOperationId && (await isXeroConnected())) {
         await kickQueuedXeroOutboxOperationsIfConnected({ limit: 1 });
         logger.info(
@@ -1230,7 +1203,11 @@ async function handleChargeRefunded(charge: Stripe.Charge) {
           "Xero refund credit note queued for payment"
         );
       }
-    } catch (xeroErr) {
+    } catch (error) {
+      // Routing reads used to precede this catch: retry the webhook if they
+      // fail, while keeping ordinary enqueue/kick errors visible as before.
+      if (!routed && !(error instanceof RecordedCardRefundNoteEnqueueError)) throw error;
+      const xeroErr = error instanceof RecordedCardRefundNoteEnqueueError ? error.cause : error;
       logger.error({ err: xeroErr, paymentId: refundSync.paymentId }, "Failed to queue Xero credit note for payment");
       notifyXeroSyncError({
         errorType: "CREDIT_NOTE_CREATION",

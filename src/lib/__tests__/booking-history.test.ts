@@ -349,6 +349,35 @@ describe("buildBookingHistoryItems", () => {
       expect(item?.detail).toContain("has not been paid yet");
     });
 
+    it("words the request by its cause (#4253): a change, credit used elsewhere, or both", () => {
+      const detailFor = (askCause?: "edit" | "credit-release" | "mixed") =>
+        buildBookingHistoryItems({
+          audience: "member",
+          createdAt: new Date("2026-04-01T09:00:00Z"),
+          payment: {
+            status: "SUCCEEDED",
+            amountCents: 9000,
+            refundedAmountCents: 0,
+            additionalAmountCents: 21_000,
+            additionalPaymentStatus: "PENDING",
+            latestAdditionalTransactionCreatedAt: new Date("2026-04-05T11:00:00Z"),
+            askCause,
+            createdAt: new Date("2026-04-01T09:00:00Z"),
+            updatedAt: new Date("2026-04-08T14:00:00Z"),
+          },
+          modifications: [],
+          refundRequests: [],
+          auditLogs: [],
+        }, CLUB_FORMAT_TEST).find((entry) => entry.id === "payment-additional-pending")?.detail;
+
+      expect(detailFor()).toBe("A booking change increased the total. This extra amount has not been paid yet.");
+      expect(detailFor("edit")).toBe(detailFor());
+      expect(detailFor("credit-release")).toBe(
+        "Account credit applied to this booking was used elsewhere in the club's accounts. This amount has not been paid yet.",
+      );
+      expect(detailFor("mixed")).toMatch(/A booking change increased the total, and account credit/);
+    });
+
     it("falls back to the payment's own creation, not its last touch", () => {
       const item = build("PENDING", 21_000, null).find(
         (entry) => entry.id === "payment-additional-pending",

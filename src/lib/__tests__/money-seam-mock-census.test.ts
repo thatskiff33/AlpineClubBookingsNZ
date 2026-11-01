@@ -74,6 +74,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { blankLiteralsWithSpans } from "./support/strip-comments";
+import { balancedBrackets } from "./support/balanced-brackets";
 
 const INVARIANT_ID = "INV-OPS-015";
 const REPO_ROOT = process.cwd();
@@ -107,13 +108,31 @@ interface MoneySeam {
  */
 export const MONEY_SEAMS: readonly MoneySeam[] = [
   {
-    name: "queueSupersededAdditionalIntentCancellations",
+    name: "queueSupersededAdditionalIntentCancellationRows",
     module: "src/lib/booking-payment-cleanup",
     figures: ASK_FIGURES,
     mintedAsk: true,
     absentIsSilent: true,
     why:
-      "Retires every other live ADDITIONAL intent on the payment, so the ask a mint raises is only right if it carried their unpaid balance (#3340). ABSENT is counted: the minter calls it inside its provider try/catch, so vitest's missing-export throw is swallowed into a logged mint failure and the ask assertions still pass.",
+      "Retires every other live ADDITIONAL intent on the payment, so the ask a mint raises is only right if it carried their unpaid balance (#3340). Since #4442 every minter calls this durable half inside its queue transaction (the combined helper it replaced is gone). ABSENT is counted: the minter calls it inside its provider try/catch, so vitest's missing-export throw is swallowed into a logged mint failure and the ask assertions still pass.",
+  },
+  {
+    name: "withAdditionalAskQueueTransaction",
+    module: "src/lib/additional-ask-queue-transaction",
+    figures: ASK_FIGURES,
+    mintedAsk: true,
+    absentIsSilent: true,
+    why:
+      "#4442: the inline minters write the ask's row and its supersede's cancel rows only inside it, after re-reading the live balance the ask carries; replaced, a test asserts an ask that could carry money already paid. ABSENT is counted for the reason the supersede's is: the minter's try/catch swallows the missing-export throw.",
+  },
+  {
+    name: "assertAdditionalAskSizingCurrent",
+    module: "src/lib/additional-ask-queue-transaction",
+    figures: ASK_FIGURES,
+    mintedAsk: true,
+    absentIsSilent: true,
+    why:
+      "#4442: the re-read that refuses an ask whose carried balance moved since sizing, called by the re-issue's door and the recovery runner. Replaced, the carried figure asserted is the stale one. ABSENT is counted: both callers catch the throw and keep the debt.",
   },
   {
     name: "createModificationAdditionalPaymentIntent",
@@ -179,28 +198,7 @@ function readable(source: string): Readable {
 
 /** The index of the bracket closing the one at `open`, read over blanked code. */
 function closing(code: string, open: number): number {
-  let depth = 0;
-  for (let index = open; index < code.length; index += 1) {
-    const char = code[index];
-    if (char === "(" || char === "[" || char === "{") depth += 1;
-    else if (char === ")" || char === "]" || char === "}") {
-      depth -= 1;
-      if (depth === 0) return index;
-    }
-  }
-  return code.length - 1;
-}
-
-/** The first comma at depth zero inside `code[from, to)`, or -1. */
-function topLevelComma(code: string, from: number, to: number): number {
-  let depth = 0;
-  for (let index = from; index < to; index += 1) {
-    const char = code[index];
-    if (char === "(" || char === "[" || char === "{") depth += 1;
-    else if (char === ")" || char === "]" || char === "}") depth -= 1;
-    else if (char === "," && depth === 0) return index;
-  }
-  return -1;
+  return balancedBrackets(code, open, code).end;
 }
 
 function lineOf(source: string, index: number): number {
@@ -308,7 +306,8 @@ export function seamMocks(
 
   for (const call of code.matchAll(/\bvi\s*\.\s*(?:mock|doMock)\s*\(/g)) {
     const open = (call.index ?? 0) + call[0].length - 1;
-    const close = closing(code, open);
+    const region = balancedBrackets(code, open, code);
+    const close = region.end;
     const specifier = text
       .slice(open + 1, close)
       .match(/^\s*(?:import\s*\(\s*)?(["'`])([^"'`]+)\1/)?.[2];
@@ -318,14 +317,14 @@ export function seamMocks(
     if (seams.length === 0) continue;
 
     const line = lineOf(source, call.index ?? 0);
-    const comma = topLevelComma(code, open + 1, close);
-    const factoryCode = comma === -1 ? "" : code.slice(comma + 1, close);
-    const factoryText = comma === -1 ? "" : text.slice(comma + 1, close);
+    // Everything after the specifier: the factory or options argument, if any.
+    const factoryCode = region.parts.slice(1).join(", ");
+    const factoryText = balancedBrackets(text, open, code).parts.slice(1).join(", ");
 
     for (const seam of seams) {
       let kind: MockKind | null = null;
       const spreads = objectSpreads(factoryCode, factoryText);
-      if (comma === -1 || factoryCode.trim() === "") kind = "automock";
+      if (factoryCode.trim() === "") kind = "automock";
       else if (/^\s*\{/.test(factoryCode)) {
         // An options object. `{ spy: true }` keeps the implementation only until
         // `vi.mocked(seam).mockResolvedValue(...)` replaces it, so it counts too.
@@ -520,7 +519,9 @@ describe(`${INVARIANT_ID}: the detector, against seeded test files`, () => {
   // MONEY_SEAMS, so deleting any entry from the list fails here by name. The
   // two #3567 re-issue minters were the entries nothing else would miss.
   it.each([
-    ["queueSupersededAdditionalIntentCancellations", "@/lib/booking-payment-cleanup", "additionalAmountCents"],
+    ["queueSupersededAdditionalIntentCancellationRows", "@/lib/booking-payment-cleanup", "additionalAmountCents"],
+    ["withAdditionalAskQueueTransaction", "@/lib/additional-ask-queue-transaction", "additionalAmountCents"],
+    ["assertAdditionalAskSizingCurrent", "@/lib/additional-ask-queue-transaction", "additionalAmountCents"],
     ["createModificationAdditionalPaymentIntent", "@/lib/booking-modification-settlement", "additionalAmountCents"],
     ["reissueAdditionalIntentInClubCurrency", "@/lib/additional-intent-currency", "additionalAmountCents"],
     ["reissueRaisedAskIfCurrencyChanged", "@/lib/additional-intent-currency", "additionalAmountCents"],
@@ -537,10 +538,10 @@ describe(`${INVARIANT_ID}: the detector, against seeded test files`, () => {
   it("fails a file that mocks the supersede seam and asserts the ask, and passes once the mock is gone", () => {
     const seeded = `
       vi.mock("@/lib/booking-payment-cleanup", () => ({
-        queueSupersededAdditionalIntentCancellations: vi.fn().mockResolvedValue([]),
+        queueSupersededAdditionalIntentCancellationRows: vi.fn().mockResolvedValue([]),
       }));
       ${ASSERTS_ASK}`;
-    expect(offenceSeams(seeded)).toEqual(["queueSupersededAdditionalIntentCancellations"]);
+    expect(offenceSeams(seeded)).toEqual(["queueSupersededAdditionalIntentCancellationRows"]);
     expect(offenceSeams(ASSERTS_ASK)).toEqual([]);
   });
 
@@ -557,26 +558,26 @@ describe(`${INVARIANT_ID}: the detector, against seeded test files`, () => {
   it("still fails a spread factory that overrides the seam by name", () => {
     const seeded = `vi.mock("@/lib/booking-payment-cleanup", async (importOriginal) => ({
       ...(await importOriginal()),
-      queueSupersededAdditionalIntentCancellations: vi.fn(),
+      queueSupersededAdditionalIntentCancellationRows: vi.fn(),
     }));${ASSERTS_ASK}`;
-    expect(offenceSeams(seeded)).toEqual(["queueSupersededAdditionalIntentCancellations"]);
+    expect(offenceSeams(seeded)).toEqual(["queueSupersededAdditionalIntentCancellationRows"]);
   });
 
   it("catches every other spelling of the mock", () => {
     const spellings = {
-      relativePath: `vi.mock("../booking-payment-cleanup", () => ({ queueSupersededAdditionalIntentCancellations: vi.fn() }));`,
-      extension: `vi.mock("@/lib/booking-payment-cleanup.ts", () => ({ queueSupersededAdditionalIntentCancellations: vi.fn() }));`,
-      doMock: `vi.doMock("@/lib/booking-payment-cleanup", () => ({ queueSupersededAdditionalIntentCancellations: vi.fn() }));`,
-      importForm: `vi.mock(import("@/lib/booking-payment-cleanup"), () => ({ queueSupersededAdditionalIntentCancellations: vi.fn() }));`,
+      relativePath: `vi.mock("../booking-payment-cleanup", () => ({ queueSupersededAdditionalIntentCancellationRows: vi.fn() }));`,
+      extension: `vi.mock("@/lib/booking-payment-cleanup.ts", () => ({ queueSupersededAdditionalIntentCancellationRows: vi.fn() }));`,
+      doMock: `vi.doMock("@/lib/booking-payment-cleanup", () => ({ queueSupersededAdditionalIntentCancellationRows: vi.fn() }));`,
+      importForm: `vi.mock(import("@/lib/booking-payment-cleanup"), () => ({ queueSupersededAdditionalIntentCancellationRows: vi.fn() }));`,
       automock: `vi.mock("@/lib/booking-payment-cleanup");`,
       opaqueHelper: `vi.mock("@/lib/booking-payment-cleanup", () => cleanupDouble());`,
-      spy: `vi.spyOn(cleanup, "queueSupersededAdditionalIntentCancellations").mockResolvedValue([]);`,
-      getter: `vi.mock("@/lib/booking-payment-cleanup", () => ({ get queueSupersededAdditionalIntentCancellations() { return vi.fn(); } }));`,
+      spy: `vi.spyOn(cleanup, "queueSupersededAdditionalIntentCancellationRows").mockResolvedValue([]);`,
+      getter: `vi.mock("@/lib/booking-payment-cleanup", () => ({ get queueSupersededAdditionalIntentCancellationRows() { return vi.fn(); } }));`,
       spyMode: `vi.mock("@/lib/booking-payment-cleanup", { spy: true });
-        vi.mocked(queueSupersededAdditionalIntentCancellations).mockResolvedValue([]);`,
+        vi.mocked(queueSupersededAdditionalIntentCancellationRows).mockResolvedValue([]);`,
       spyModeNamespace: `vi.mock("@/lib/booking-payment-cleanup", { spy: true });
-        vi.mocked(cleanup.queueSupersededAdditionalIntentCancellations).mockResolvedValue([]);`,
-      hoistedBag: `const m = vi.hoisted(() => ({ queueSupersededAdditionalIntentCancellations: vi.fn() }));
+        vi.mocked(cleanup.queueSupersededAdditionalIntentCancellationRows).mockResolvedValue([]);`,
+      hoistedBag: `const m = vi.hoisted(() => ({ queueSupersededAdditionalIntentCancellationRows: vi.fn() }));
         vi.mock("@/lib/booking-payment-cleanup", () => ({ ...m }));`,
       overridesAfterOriginal: `vi.mock("@/lib/booking-payment-cleanup", async (importOriginal) => ({
           ...((await importOriginal()) as typeof import("@/lib/booking-payment-cleanup")),
@@ -585,7 +586,7 @@ describe(`${INVARIANT_ID}: the detector, against seeded test files`, () => {
     };
     for (const [spelling, mock] of Object.entries(spellings)) {
       expect(offenceSeams(`${mock}${ASSERTS_ASK}`), spelling).toEqual([
-        "queueSupersededAdditionalIntentCancellations",
+        "queueSupersededAdditionalIntentCancellationRows",
       ]);
     }
   });
@@ -617,7 +618,7 @@ describe(`${INVARIANT_ID}: the detector, against seeded test files`, () => {
   it("counts an ABSENT seam only where its caller swallows the missing-export throw", () => {
     const absentCleanup = `vi.mock("@/lib/booking-payment-cleanup", () => ({ queueSupersededPrimaryIntentCancellations: vi.fn() }));`;
     expect(offenceSeams(`${absentCleanup}${ASSERTS_ASK}`)).toEqual([
-      "queueSupersededAdditionalIntentCancellations",
+      "queueSupersededAdditionalIntentCancellationRows",
     ]);
     const absentReconcile = `vi.mock("@/lib/payment-transactions", () => ({ upsertPaymentIntentTransaction: vi.fn() }));`;
     expect(offenceSeams(`${absentReconcile}${ASSERTS_ASK}`)).toEqual([]);
@@ -633,21 +634,21 @@ describe(`${INVARIANT_ID}: the detector, against seeded test files`, () => {
 
   it("does not fire on a seam or a figure that is only discussed in a comment", () => {
     const discussed = `
-      // vi.mock("@/lib/booking-payment-cleanup", () => ({ queueSupersededAdditionalIntentCancellations: vi.fn() }));
+      // vi.mock("@/lib/booking-payment-cleanup", () => ({ queueSupersededAdditionalIntentCancellationRows: vi.fn() }));
       /* expect(result.additionalAmountCents).toBe(1); */
-      vi.mock("@/lib/booking-payment-cleanup", () => ({ queueSupersededAdditionalIntentCancellations: vi.fn() }));
+      vi.mock("@/lib/booking-payment-cleanup", () => ({ queueSupersededAdditionalIntentCancellationRows: vi.fn() }));
       it("x", () => { expect(result.priceDiffCents).toBe(7000); });
     `;
     expect(offenceSeams(discussed)).toEqual([]);
   });
 
   it("reaches the figure through the matcher chain, and past a regex holding a bracket", () => {
-    const seeded = `vi.mock("@/lib/booking-payment-cleanup", () => ({ queueSupersededAdditionalIntentCancellations: vi.fn() }));
+    const seeded = `vi.mock("@/lib/booking-payment-cleanup", () => ({ queueSupersededAdditionalIntentCancellationRows: vi.fn() }));
       expect(message).toMatch(/owed \\(/);
       expect(mockUpsert).toHaveBeenCalledWith(
         expect.objectContaining({ carriedAskCents: 7000 }),
       );`;
     expect(moneyAssertionLines(seeded, MONEY_SEAMS[0])).toEqual([3]);
-    expect(offenceSeams(seeded)).toEqual(["queueSupersededAdditionalIntentCancellations"]);
+    expect(offenceSeams(seeded)).toEqual(["queueSupersededAdditionalIntentCancellationRows"]);
   });
 });

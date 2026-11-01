@@ -119,7 +119,7 @@ export function NotificationDeliveryPolicySettings({
                     )
                   }
                 >
-                  <SelectTrigger className="w-full sm:w-56">
+                  <SelectTrigger className="w-full sm:w-56" aria-label={`Delivery for ${policy.label}`}>
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>

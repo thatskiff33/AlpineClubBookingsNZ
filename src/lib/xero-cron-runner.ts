@@ -1,3 +1,4 @@
+import { withCronRunClaim } from "@/lib/cron-run-claim";
 import { isEffectiveModuleEnabled } from "@/lib/admin-modules";
 import {
   recordCronJobRunSafe,
@@ -28,6 +29,7 @@ import { processQueuedXeroOutboxOperations } from "@/lib/xero-operation-outbox";
 import { processQueuedXeroOperationRetries } from "@/lib/xero-operation-queue";
 import { refreshAllMembershipStatuses } from "@/lib/xero-membership-sync";
 import { isXeroConnected } from "@/lib/xero-token-store";
+import { retryCashSettlementAlerts } from "@/lib/xero-inbound/cash-settlement-alert-retry";
 import { clubFormatValues } from "@/lib/club-format-server";
 
 const XERO_CRON_TASKS = [
@@ -96,6 +98,7 @@ export interface XeroCronRunnerDependencies {
     runCreditNoteMirrorSweep: typeof runCreditNoteMirrorSweep;
   }>;
   includeLinkCleanupForBackfill?: boolean;
+  assertRunOwned?: () => Promise<void>;
 }
 
 export class XeroCronRunnerError extends Error {
@@ -273,7 +276,7 @@ function messageForTask(task: string) {
   }
 }
 
-export async function runXeroCronTaskList(
+async function runXeroCronTaskListUnderClaim(
   taskList: XeroCronTask[],
   dependencies: XeroCronRunnerDependencies & { taskLabel?: string } = {}
 ): Promise<XeroCronRunnerPayload> {
@@ -312,6 +315,7 @@ export async function runXeroCronTaskList(
   payload.connected = connected;
 
   for (const task of taskList) {
+    await dependencies.assertRunOwned?.();
     try {
       if (task === "memberships") {
         payload.membershipRefresh = await runRecordedXeroTask({
@@ -357,11 +361,16 @@ export async function runXeroCronTaskList(
         payload.inboundReconciliation = await runRecordedXeroTask({
           task,
           recordCronRun,
-          work: async () =>
-            connected
-              ? await (taskDependencies.runXeroInboundReconciliationCycle ??
-                  runXeroInboundReconciliationCycle)()
-              : { skipped: true, reason: "Xero not connected" },
+          work: async () => {
+            // Local committed markers remain owed even if Xero disconnects.
+            const settlementAlertCandidates = await retryCashSettlementAlerts(format);
+            if (!connected) return settlementAlertCandidates > 0
+              ? { settlementAlertCandidates }
+              : { skipped: true, reason: "Xero not connected" };
+            const result = await (taskDependencies.runXeroInboundReconciliationCycle ??
+              runXeroInboundReconciliationCycle)();
+            return { ...result, settlementAlertCandidates };
+          },
         });
       } else if (task === "backfill") {
         payload.linkBackfill = await runRecordedXeroTask({
@@ -457,6 +466,30 @@ export async function runXeroCronTaskList(
   }
 
   return payload;
+}
+
+/** Scheduled, HTTP cron and officer whole-club runs share this one claim. */
+export async function runXeroCronTaskList(
+  taskList: XeroCronTask[],
+  dependencies: XeroCronRunnerDependencies & { taskLabel?: string } = {},
+): Promise<XeroCronRunnerPayload> {
+  if (!taskList.some((task) => task === "inbound" || task === "credit-note-mirror")) {
+    return runXeroCronTaskListUnderClaim(taskList, dependencies);
+  }
+  const outcome = await withCronRunClaim(XERO_CRON_JOB_NAMES.inbound, (assertRunOwned) =>
+    runXeroCronTaskListUnderClaim(taskList, { ...dependencies, assertRunOwned }),
+  );
+  return outcome.claimed ? outcome.result : {
+    ...emptyPayload(dependencies.taskLabel ?? taskList.join("+")),
+    message: "A sync is already running.",
+    skipped: true,
+    reason: "already-running",
+  } as XeroCronRunnerPayload;
+}
+
+/** One task list for the scheduled callback and whole-club officer action. */
+export function runXeroInboundCronCycle(dependencies: XeroCronRunnerDependencies = {}) {
+  return runXeroCronTaskList(["inbound", "credit-note-mirror"], { ...dependencies, taskLabel: "inbound" });
 }
 
 export async function runXeroCronTasks(

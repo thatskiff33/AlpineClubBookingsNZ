@@ -6,18 +6,25 @@ import {
   getAuditRequestContext,
 } from "@/lib/audit";
 import {
+  OTHER_LODGE_DATE_FIELDS,
   OTHER_LODGE_NOT_OWNED_CODE,
+  OTHER_LODGE_RATE_FIELDS,
   amenitiesInputSchema,
   otherLodgeAmenitiesDiffer,
   otherLodgeDataColumns,
   otherLodgeDataShape,
   otherLodgeNameSchema,
   otherLodgeSelect,
+  canRenameOtherLodge,
   ownsOtherLodge,
   replaceOtherLodgeAmenities,
   serializeOtherLodge,
   serializeOtherLodgeForAdmin,
+  visibleOtherLodgeWhere,
 } from "@/lib/other-lodges";
+import { isSafeHttpUrl, SAFE_HTTP_URL_MESSAGE } from "@/lib/http-url";
+import { FEES_FILL_PROBLEM_TEXT, syncOwnOtherLodgesFromFees } from "@/lib/other-lodge-fees-sync";
+import { seasonDatesProblem } from "@/lib/other-lodge-seasons";
 import { prisma } from "@/lib/prisma";
 import { loadServerNzSettings } from "@/lib/servernz-settings";
 import { requireAdmin } from "@/lib/session-guards";
@@ -27,21 +34,32 @@ const paramsSchema = z.object({ id: z.string().min(1) });
 // Strict: an unknown key is a 400, so every data column has to be named in the
 // shared `otherLodgeDataShape` (the one field list) to be accepted here. A key
 // left out leaves that column alone; `amenities`, when present, replaces the
-// lodge's whole set. `name` may be sent (the panel sends the whole form) but it
-// must equal the stored name: the central server matches lodges BY NAME, so a
-// rename here would not rename the lodge there — it would create a second one
-// and strand the first (#52).
+// lodge's whole set. `name` may be sent (the panel sends the whole form); a
+// DIFFERENT name renames the lodge (#64), but only once the row carries the
+// central server's id: the upload then sends that id, and the server renames
+// its lodge. Before the id is known a new name would reach the server as a
+// second lodge and strand the first (#52), so it is refused.
 const patchSchema = z
   .object({
     name: otherLodgeNameSchema.optional(),
     ...otherLodgeDataShape,
+    // Stricter than the pull's: the address must be one the central server
+    // accepts (#55). A request that leaves it out leaves the stored one alone.
+    siteUrl: otherLodgeDataShape.siteUrl.refine(
+      (v) => v == null || isSafeHttpUrl(v),
+      SAFE_HTTP_URL_MESSAGE,
+    ),
     amenities: amenitiesInputSchema.optional(),
+    // This club's own lodge only (#77): fill its rates and season dates from
+    // the Fees page. While on, rates and dates sent here are ignored.
+    ratesFromFees: z.boolean().optional(),
   })
   .strict();
 
 // The delete handler that lived here was removed by #52 along with create: a
 // site changes only the lodge(s) the central server says it owns, and it never
-// removes an entry from the shared registry. A DELETE now answers 405.
+// removes an entry from the shared registry. A DELETE now answers 405. Nothing
+// removes a row: `./hide` (#58) hides one the server does NOT list.
 
 export async function PATCH(
   request: Request,
@@ -73,8 +91,9 @@ export async function PATCH(
     );
   }
 
-  const existing = await prisma.otherLodge.findUnique({
-    where: { id: parsedParams.data.id },
+  // A hidden lodge (#58) is kept only for the bookings that name it: not edited.
+  const existing = await prisma.otherLodge.findFirst({
+    where: { id: parsedParams.data.id, ...visibleOtherLodgeWhere },
     select: otherLodgeSelect,
   });
   if (!existing) {
@@ -86,7 +105,7 @@ export async function PATCH(
   // list (never received) refuses everything, because "we have not been told"
   // is not "we own it". The `code` lets the panel show this text rather than
   // the generic permissions message, since the administrator's role is fine.
-  const { otherLodgesOwnedNames: owned } = await loadServerNzSettings();
+  const { otherLodgesOwnedLodges: owned } = await loadServerNzSettings();
   if (owned === null) {
     return NextResponse.json(
       {
@@ -97,7 +116,7 @@ export async function PATCH(
       { status: 403 },
     );
   }
-  if (!ownsOtherLodge(owned, existing.name)) {
+  if (!ownsOtherLodge(owned, existing)) {
     return NextResponse.json(
       {
         error:
@@ -107,65 +126,80 @@ export async function PATCH(
       { status: 403 },
     );
   }
-  if (parsed.data.name !== undefined && parsed.data.name.trim() !== existing.name) {
+  // While the switch is on (#77) the Fees page owns the rates and dates, so the
+  // ones the form sends (shown read-only) are dropped, not saved over them.
+  const { ratesFromFees, ...input } = parsed.data;
+  const fromFees = ratesFromFees ?? existing.ratesFromFees;
+  if (fromFees) {
+    for (const field of [...OTHER_LODGE_RATE_FIELDS, ...OTHER_LODGE_DATE_FIELDS]) delete input[field];
+  }
+  // The seasons as this save would leave them (#75): the dates it sends over
+  // the stored ones. The central server applies the same rule to the upload.
+  const stored = serializeOtherLodge(existing);
+  const seasons = Object.fromEntries(
+    OTHER_LODGE_DATE_FIELDS.map((f) => [f, input[f] !== undefined ? input[f] : stored[f]]),
+  );
+  const seasonProblem = seasonDatesProblem(seasons);
+  if (seasonProblem) return NextResponse.json({ error: seasonProblem }, { status: 400 });
+
+  const newName = input.name?.trim();
+  const renameTo = newName !== undefined && newName !== existing.name ? newName : null;
+  if (renameTo !== null && !canRenameOtherLodge(owned, existing)) {
     return NextResponse.json(
       {
         error:
-          "The lodge name cannot be changed here: the central server matches lodges by name, so a new name would create a second lodge there.",
+          "This lodge can be renamed after the next Download from the Alpine Central Server. Run Download, then try again.",
       },
       { status: 400 },
     );
   }
 
-  const data: Prisma.OtherLodgeUpdateInput = {
-    ...otherLodgeDataColumns(parsed.data),
+  const data: Prisma.OtherLodgeUpdateManyMutationInput = {
+    ...otherLodgeDataColumns(input),
+    ...(renameTo !== null ? { name: renameTo } : {}),
+    ...(ratesFromFees !== undefined && ratesFromFees !== existing.ratesFromFees ? { ratesFromFees } : {}),
   };
   const changedFields = Object.keys(data);
 
-  const amenities = parsed.data.amenities;
+  const amenities = input.amenities;
   const amenitiesChanged =
     amenities !== undefined &&
     otherLodgeAmenitiesDiffer(existing.amenities, amenities);
   if (amenitiesChanged) changedFields.push("amenities");
 
-  if (changedFields.length === 0) {
+  if (changedFields.length === 0 && !fromFees) {
     // The panel shows what it is handed, so the row goes back in the LIST shape
     // (with its `owned` flag), not the bare serializer the audit row uses.
     return NextResponse.json({ otherLodge: serializeOtherLodgeForAdmin(existing, owned) });
   }
+  if (changedFields.length === 0) return respondFilledFromFees(existing.id, owned, session.user.id);
 
-  let updated;
-  if (amenitiesChanged && amenities) {
-    // Moved explicitly: an amenity-only edit changes no column on the lodge
-    // row, so `@updatedAt` would not fire — and the central-server upload
-    // watermark is keyed on this column, so the edit would never be sent.
-    data.updatedAt = new Date();
-    // One transaction so the lodge row and its amenities change together, and
-    // the LODGE ROW IS WRITTEN FIRST: that update holds the row's lock for the
-    // rest of the transaction, so a concurrent replacement of the same lodge's
-    // amenities (the nightly download, an admin's Download button) queues
-    // behind this one instead of interleaving its deletes and upserts with
-    // ours and leaving a stale row behind. The response is re-read after the
-    // amenities land, so it shows the set that was saved.
-    updated = await prisma.$transaction(async (tx) => {
-      await tx.otherLodge.update({
+  // An amenity-only edit changes no column on the lodge row, so `@updatedAt`
+  // would not fire — and the central-server upload watermark is keyed on this
+  // column, so the edit would never be sent. Moved explicitly.
+  if (amenitiesChanged) data.updatedAt = new Date();
+
+  // A plain edit, a rename included, is one write (#69: the owned list is kept
+  // by central id, so a rename touches nothing else). With amenities, one
+  // transaction: the lodge row FIRST (its lock makes a concurrent amenity
+  // replacement of the same lodge — the nightly download, an admin's Download
+  // button — queue behind this one rather than interleave), then the
+  // amenities. The response is re-read after it lands. A name another lodge
+  // already has is allowed: two lodges may share a name.
+  const updated = amenitiesChanged
+    ? await prisma.$transaction(async (tx) => {
+        await tx.otherLodge.update({ where: { id: existing.id }, data, select: { id: true } });
+        if (amenities) await replaceOtherLodgeAmenities(tx, existing.id, amenities);
+        return tx.otherLodge.findUniqueOrThrow({
+          where: { id: existing.id },
+          select: otherLodgeSelect,
+        });
+      })
+    : await prisma.otherLodge.update({
         where: { id: existing.id },
         data,
-        select: { id: true },
-      });
-      await replaceOtherLodgeAmenities(tx, existing.id, amenities);
-      return tx.otherLodge.findUniqueOrThrow({
-        where: { id: existing.id },
         select: otherLodgeSelect,
       });
-    });
-  } else {
-    updated = await prisma.otherLodge.update({
-      where: { id: existing.id },
-      data,
-      select: otherLodgeSelect,
-    });
-  }
 
   await prisma.auditLog.create(
     buildStructuredAuditLogCreateArgs({
@@ -178,6 +212,8 @@ export async function PATCH(
       summary: "Other lodge updated",
       metadata: {
         changedFields,
+        // A local setting, so not in the serialized lodge (#77): recorded here.
+        ratesFromFees: { previous: existing.ratesFromFees, next: updated.ratesFromFees },
         previousOtherLodge: serializeOtherLodge(existing),
         newOtherLodge: serializeOtherLodge(updated),
       },
@@ -185,5 +221,18 @@ export async function PATCH(
     }),
   );
 
+  if (fromFees) return respondFilledFromFees(updated.id, owned, session.user.id);
   return NextResponse.json({ otherLodge: serializeOtherLodgeForAdmin(updated, owned) });
+}
+
+/**
+ * Fill the lodge from the Fees page (#77; audited there), then answer with the
+ * row as it is now, and why it could not be filled, when it could not.
+ */
+async function respondFilledFromFees(id: string, owned: Parameters<typeof serializeOtherLodgeForAdmin>[1], actor: string) {
+  const results = await syncOwnOtherLodgesFromFees("lodge saved", actor);
+  const problem = results.find((r) => r.otherLodgeId === id)?.problem;
+  const row = await prisma.otherLodge.findUniqueOrThrow({ where: { id }, select: otherLodgeSelect });
+  const otherLodge = serializeOtherLodgeForAdmin(row, owned);
+  return NextResponse.json({ otherLodge: problem ? { ...otherLodge, feesProblem: FEES_FILL_PROBLEM_TEXT[problem] } : otherLodge });
 }

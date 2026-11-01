@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireCronSecret } from "@/lib/cron-auth";
-import { syncOtherClubsWithServer } from "@/lib/cron-alpine-server-sync";
+import { alpineServerSyncRunStatus, syncOtherClubsWithServer } from "@/lib/cron-alpine-server-sync";
 import { recordCronJobRunSafe } from "@/lib/cron-job-run";
 import logger from "@/lib/logger";
 
@@ -22,7 +22,7 @@ export async function POST(request: NextRequest) {
     await recordCronJobRunSafe({
       jobName: JOB_NAME,
       startedAt,
-      status: result.status === "skipped" ? "SKIPPED" : "SUCCESS",
+      status: alpineServerSyncRunStatus(result),
       resultSummary: result,
     });
     return NextResponse.json({ success: true, ...result });

@@ -392,7 +392,7 @@ describe("cancelBooking credit refunds", () => {
           );
           const mockTx = {
             bookingEvent: { create: mocks.txBookingEventCreate },
-            bookingModification: { findFirst: mocks.txBookingModificationFindFirst },
+            bookingModification: { findFirst: mocks.txBookingModificationFindFirst, findMany: vi.fn(async () => []) },
             $executeRaw: mocks.txExecuteRaw,
             member: { findMany: fenceMemberFindMany() },
             // #2623 T5: the seam reads the lodge's hosting mode before the fence, so
@@ -4670,7 +4670,7 @@ describe("cancelBooking detaches the held booking-request pointer (issue #1254)"
             bookingEvent: { create: mocks.txBookingEventCreate },
             // #3835: the reviews settled before the cancel, frozen on its event.
             manualRefundTask: { findMany: vi.fn().mockResolvedValue([]) },
-            bookingModification: { findFirst: mocks.txBookingModificationFindFirst },
+            bookingModification: { findFirst: mocks.txBookingModificationFindFirst, findMany: vi.fn(async () => []) },
             $executeRaw: mocks.txExecuteRaw,
             member: { findMany: fenceMemberFindMany() },
             // #2623 T5: the seam reads the lodge's hosting mode before the fence, so
@@ -4837,7 +4837,7 @@ describe("cancelBooking no-payment claim-first (issue #1311)", () => {
             bookingEvent: { create: mocks.txBookingEventCreate },
             // #3835: the reviews settled before the cancel, frozen on its event.
             manualRefundTask: { findMany: vi.fn().mockResolvedValue([]) },
-            bookingModification: { findFirst: mocks.txBookingModificationFindFirst },
+            bookingModification: { findFirst: mocks.txBookingModificationFindFirst, findMany: vi.fn(async () => []) },
             $executeRaw: mocks.txExecuteRaw,
             member: { findMany: fenceMemberFindMany() },
             // #2623 T5: the seam reads the lodge's hosting mode before the fence, so
@@ -5135,7 +5135,7 @@ describe("cancelBooking requireRequestHold guard (issue #1406)", () => {
               // #3827 (`INV-PAY-117`): no open edit refund hand-back on file.
               aggregate: vi.fn(async () => ({ _sum: { amountCents: null } })),
             },
-            bookingModification: { findFirst: mocks.txBookingModificationFindFirst },
+            bookingModification: { findFirst: mocks.txBookingModificationFindFirst, findMany: vi.fn(async () => []) },
             $executeRaw: mocks.txExecuteRaw,
             member: { findMany: fenceMemberFindMany() },
             // #2623 T5: the seam reads the lodge's hosting mode before the fence, so

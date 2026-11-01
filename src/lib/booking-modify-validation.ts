@@ -12,6 +12,7 @@ import {
   type BookingGuestNightPriceSource,
   type Member,
   type Payment,
+  type PaymentTransaction,
   type Prisma,
   type PromoCode,
   type PromoRedemption,
@@ -241,6 +242,19 @@ export type LoadedBookingForModify = Booking & {
   member: Member;
   // #3826: one redemption per promo code; read through booking-promo-redemptions.ts.
   promoRedemptions: LoadedPromoRedemption[];
+};
+
+/**
+ * #4019 review: the booking an edit door hands `applyLifecycleTransitions` -
+ * its payment loaded WITH its transactions (oldest first,
+ * `LEDGER_ROWS_OLDEST_FIRST`), because the clamp's `isUnpaidConfirmedWholeLodge`
+ * reads them to tell an abandoned card attempt from a capture, and requires
+ * them by type. Every door reaches this type through an `as unknown as` cast,
+ * which no compiler checks, so `lifecycle-door-payment-transactions-census`
+ * pins each door's include.
+ */
+export type LoadedBookingForLifecycle = Omit<LoadedBookingForModify, "payment"> & {
+  payment: (Payment & { transactions: PaymentTransaction[] }) | null;
 };
 
 type BookingGuestNameEditPayment = Pick<

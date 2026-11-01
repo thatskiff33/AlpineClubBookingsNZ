@@ -154,6 +154,21 @@ says the amount for their share is being refunded to the card the organiser paid
 with; `{{joinerName}}` and `{{amount}}` are there for an override too. It is not
 sent when the admin chose not to email, or when the organiser is the joiner.
 
+**Group Organiser Extra Invoice** (#4299) goes to the organiser of a group they
+paid for by internet banking when a change makes a joiner's place cost more:
+the extra, with any late-change fee, is billed to the organiser on its own Xero
+invoice. `{{joinerName}}` names the place, `{{changeSummary}}` the kind of
+change ("Dates Changed", "Guests Added" and so on), `{{additionalAmount}}` what
+is still owed on the invoice and `{{xeroInvoiceNumber}}` the reference to quote.
+It is sent once per invoice, scoped to the organiser's own booking, so that
+booking's **No emails** switch withholds it; an admin's choice not to email the
+member about the joiner's change does not. If the change was cut back or
+cancelled before the invoice reached Xero, it names only what is still owed,
+and is not sent when nothing is. The joiner's own **Booking Modified** message
+reads "The extra $X for this change has been invoiced to the group organiser,
+because the group organiser paid for this booking. There is nothing for you to
+pay." instead of asking them for a payment.
+
 `{{amountDue}}` on the **Booking Request Approved** and **Split Guest Payment
 Link** messages is what the pay link asks the member to pay: the booking's price
 plus any change fee recorded on it, less account credit already applied - the
@@ -424,8 +439,19 @@ Two consequences worth knowing before you edit one:
   to a booking was used in the club's accounts outside the app, the member is asked
   to pay that amount by card with **Payment Needed For Your Lodge Booking**, not the
   "a change to your booking" reminder, because nothing about their stay changed. It
-  needs `{{additionalAmount}}`, `{{requestedOn}}`, `{{checkIn}}` and `{{checkOut}}`
-  and says the credit was used elsewhere in the club's accounts (#4253).
+  needs `{{additionalAmount}}`, `{{requestedOn}}`, `{{checkIn}}`, `{{checkOut}}` and
+  `{{askCauseSentence}}`, which says why the amount is owed: the credit was used
+  elsewhere in the club's accounts, or that and a change to the booking when the two
+  were merged into one request (#4253). A customised body saved before
+  `{{askCauseSentence}}` existed is flagged stale; put it back in when you re-save. Put
+  `{{bankTransferNote}}` on a line of its own above the Pay Now line: it prints the
+  whole bank-transfer paragraph (with the booking's invoice number as the payment
+  reference) when the club has written its bank details, and nothing otherwise, so
+  the email offers card payment only until then. Write the account details in the
+  **Bank transfer details for a payment request** booking message.
+  The member is emailed at once, then reminded every 7 days, four reminders after
+  the first email (five emails at most); if a change to the booking is made while
+  the request is unpaid, the two become one request and the email says both.
 - **The pre-arrival reminder's chore sentence only appears for clubs that run a
   roster.** `{{checkoutChoreNote}}` on **Pre-arrival Information** produces the
   whole sentence — that guests are on the chore roster on the morning they check
@@ -458,7 +484,8 @@ Two consequences worth knowing before you edit one:
   $180.00 will read `Total Paid: $300.00` with nothing to explain the difference.
 - **A confirmation that still owes money points at the invoice, not at its own
   total.** When a booking is confirmed with payment still owing (a member
-  whole-lodge approval), `{{paymentDueNote}}` — carried inside
+  whole-lodge approval with the Internet Banking or Xero module off, so the
+  club raised a pay-on-account invoice), `{{paymentDueNote}}` — carried inside
   `{{paymentOutcome}}` — ends with *"If the invoice asks for a different amount
   — for example because the club has put account credit you hold towards it —
   please transfer the amount the invoice shows."* The `Total Due:` figure is the
@@ -482,6 +509,16 @@ Two consequences worth knowing before you edit one:
   label typed in front of it ("Payment: `{{paymentDueNote}}`") would leave a bare
   `Payment:` on every confirmation that is already paid, and the editor now warns
   you about exactly that.
+- **With both modules on, the same note sends the member to their booking page
+  instead.** A whole-lodge approval with the Internet Banking and Xero modules
+  both on raises no invoice: the member chooses on their booking page between
+  paying by card and switching to internet banking. `{{paymentDueNote}}` then
+  says the amount owing and *"Please pay it from your booking page, where you
+  can pay by card or choose to pay by internet banking"*, names no reference
+  (there is none yet, so `{{paymentReference}}` is empty) and mentions no
+  invoice. If the member asked for their account credit on the request, the
+  note states the three-line sum from the next point and asks for the
+  remainder.
 - **…unless the club's own records already show credit against that booking, in
   which case it does the sum for the member.** If account credit has been put
   towards the booking, `{{paymentOutcome}}` renders three lines that add up —

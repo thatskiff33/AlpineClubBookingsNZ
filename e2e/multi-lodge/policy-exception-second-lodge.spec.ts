@@ -1,4 +1,4 @@
-import { type APIRequestContext, type BrowserContext, expect, test } from "@playwright/test";
+import { type APIRequestContext, type BrowserContext, expect, test } from "../helpers/accessibility";
 
 import { loginPersona } from "../helpers/auth";
 import { E2E_ADMIN, SECOND_LODGE, WAITLISTER } from "../helpers/fixtures";

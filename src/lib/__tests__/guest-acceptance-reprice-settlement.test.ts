@@ -11,6 +11,8 @@
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+const mockPlanStripeRefundAllocation = vi.hoisted(() => vi.fn());
+
 const h = vi.hoisted(() => ({
   priceStoredBookingPromotions: vi.fn(),
   persistRepricedPromotions: vi.fn(),
@@ -41,6 +43,7 @@ vi.mock("@/lib/payment-recovery", async (importOriginal) => ({
 }));
 vi.mock("@/lib/payment-transactions", async (importOriginal) => ({
   ...((await importOriginal()) as typeof import("@/lib/payment-transactions")),
+  planStripeRefundAllocation: mockPlanStripeRefundAllocation,
   refundPaymentTransactions: h.refundPaymentTransactions,
 }));
 vi.mock("@/lib/logger", () => ({
@@ -113,7 +116,7 @@ import { reissueUnpaidAdditionalAsk } from "@/lib/additional-payment-ask";
 import { requireCalendarDate } from "@/lib/club-time";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 import { ORGANISER_REFUND_DEBT_STATES, primeOrganiserRefundDebt } from "./support/organiser-refund-debt-reread";
-import { expectQueuedOnce, OWN_CARD_REFUND_STATES, primeOwnCardRefund } from "./support/own-card-refund-outcome";
+import { expectQueuedOnce, ownCardRefundPlan, OWN_CARD_REFUND_STATES, primeOwnCardRefund } from "./support/own-card-refund-outcome";
 
 const TODAY = requireCalendarDate("2026-07-01");
 const N1 = new Date("2026-08-01T00:00:00.000Z");
@@ -198,6 +201,7 @@ async function accept(loaded: ReturnType<typeof booking>) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockPlanStripeRefundAllocation.mockImplementation(ownCardRefundPlan);
   h.loadCancellationPolicy.mockRejectedValue(new Error("D-3813-5: no cancellation-policy tier applies"));
   h.applyLifecycleTransitions.mockImplementation(async (_tx: unknown, args: { booking: { status: string } }) => ({
     hasNonMembers: false,
@@ -436,13 +440,13 @@ describe("after commit: the card refund, the Xero correction, the email and the 
     if (!reprice.repriced) throw new Error("expected a re-price");
     h.executeBookingModificationRefund.mockImplementation(h.realExecuteBookingModificationRefund);
     h.enqueueBookingModificationRefundRecovery.mockResolvedValue({ id: "op-refund" });
-    primeOwnCardRefund(h.refundPaymentTransactions, answer);
+    primeOwnCardRefund(h.refundPaymentTransactions, answer, mockPlanStripeRefundAllocation);
     h.sendBookingModifiedEmail.mockResolvedValue(undefined);
 
     await settleGuestAcceptanceRepriceAfterCommit({ bookingId: "booking-1", actorMemberId: "cara", reprice, format: CLUB_FORMAT_TEST });
 
     expect(h.refundPaymentTransactions).toHaveBeenCalledWith(expect.objectContaining({ paymentId: "pay-1", amountCents: 6000 }));
-    expectQueuedOnce(h.enqueueBookingModificationRefundRecovery, queued, 6000);
+    expectQueuedOnce(h.enqueueBookingModificationRefundRecovery, queued, 6000, answer);
     expect(h.sendBookingModifiedEmail).toHaveBeenCalledWith(
       expect.objectContaining({ refundAmountCents: 6000, refundDestination: destination, refundByBankTransfer: null }),
       CLUB_FORMAT_TEST,

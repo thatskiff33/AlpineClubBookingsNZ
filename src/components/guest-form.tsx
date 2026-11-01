@@ -328,8 +328,9 @@ export function GuestForm({
           </div>
 
           <div className="space-y-1">
-            <Label>Age Category</Label>
+            <Label htmlFor={`guest-${index}-age-tier`}>Age Category</Label>
             <select
+              id={`guest-${index}-age-tier`}
               value={guest.ageTier}
               onChange={(e: React.ChangeEvent<HTMLSelectElement>) => updateGuest(index, "ageTier", e.target.value)}
               className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors disabled:cursor-not-allowed disabled:opacity-50"

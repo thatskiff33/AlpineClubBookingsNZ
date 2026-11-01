@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "../helpers/accessibility";
 import { setSiteSetupComplete } from "../helpers/setup-state";
 
 /**

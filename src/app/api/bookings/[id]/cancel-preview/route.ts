@@ -4,6 +4,7 @@ import { bookingOwner } from "@/lib/booking-owner";
 import { auth } from "@/lib/auth";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
+import { effectiveOrganiserPaidChangeFeeCents, readOrganiserExtraState } from "@/lib/organiser-extra-state";
 import { loadCancellationPolicy } from "@/lib/cancellation";
 import { calculateCancellationPreview } from "@/lib/policies/booking-route-decisions";
 import { clubTime } from "@/lib/club-time/server";
@@ -178,6 +179,7 @@ export async function GET(
         ? { ...booking.payment, amountCents: partPayment.paidCents, refundedAmountCents: 0 }
         : {
             ...booking.payment,
+            ...(organiserByBank ? { changeFeeCents: effectiveOrganiserPaidChangeFeeCents(booking.payment.changeFeeCents, await readOrganiserExtraState(prisma, booking.id)) } : {}), // #4299 N4
             ...(organiserCard
               ? { refundedAmountCents: organiserCard.settlement ? organiserCard.committedRefundCents : booking.payment.amountCents }
               : {}),
@@ -215,10 +217,7 @@ export async function GET(
           creditRefundPercentage: 0,
           keptAmountCents: preview.keptAmountCents + preview.refundAmountCents,
           groupCancellationRefundCents: groupDebt.amountCents,
-          groupCancellationRefundNote: groupCancellationRefundNote(
-            groupDebt,
-            await clubFormatValues(),
-          ),
+          groupCancellationRefundNote: groupCancellationRefundNote(groupDebt, await clubFormatValues()),
         }
       : {};
 

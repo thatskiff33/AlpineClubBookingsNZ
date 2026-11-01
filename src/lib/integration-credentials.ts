@@ -335,9 +335,10 @@ export interface SetIntegrationCredentialParams {
 export async function withCredentialTransaction<T>(
   providers: readonly string[],
   work: (tx: Prisma.TransactionClient) => Promise<T>,
+  options?: { timeout?: number; maxWait?: number },
 ): Promise<T> {
   try {
-    return await prisma.$transaction(work);
+    return await prisma.$transaction(work, options);
   } finally {
     for (const provider of providers) invalidateProviderCredentialCache(provider);
   }

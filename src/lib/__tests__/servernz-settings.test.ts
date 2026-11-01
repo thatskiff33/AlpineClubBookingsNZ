@@ -5,26 +5,38 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   findUnique: vi.fn(),
   upsert: vi.fn(),
+  executeRaw: vi.fn(),
 }));
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     serverNzSettings: { findUnique: mocks.findUnique, upsert: mocks.upsert },
+    $executeRaw: mocks.executeRaw,
   },
 }));
 
 import { Prisma } from "@prisma/client";
+import { prisma } from "@/lib/prisma";
+import { normalizeBaseUrl } from "@/lib/servernz-base-url";
 import {
   SERVERNZ_SETTINGS_ID,
   clearOtherLodgesOwnedNames,
   clearServerVersionCheck,
   forgetServerConnectionAnswers,
   loadServerNzSettings,
-  normalizeBaseUrl,
+  loadOwnedOtherLodges,
+  readOwnedOtherLodges,
   recordOtherLodgesDownload,
+  recordOtherLodgesUpload,
   recordServerVersionCheck,
   validateCentralServerBaseUrl,
+  type ServerNzAnswerTx,
+  type ServerNzConnectionTx,
 } from "@/lib/servernz-settings";
+
+// The mocked global client standing in for the answer fence's transaction:
+// only `withCurrentServerNzConnection` mints the type in production (#4470).
+const answerTx = prisma as unknown as ServerNzAnswerTx;
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -40,9 +52,9 @@ describe("loadServerNzSettings", () => {
       otherLodgesLastUploadAt: null,
       otherLodgesLastDownloadAt: null,
       otherLodgesCursor: null,
-      otherLodgesOwnedNames: null,
-      otherLodgesOwnedNamesAt: null,
-      otherLodgesOwnedNamesUnreadable: false,
+      otherLodgesOwnedLodges: null,
+      otherLodgesOwnedLodgesUnreadable: false,
+      otherLodgesKeyedAt: null,
       serverVersion: null,
       serverVersionCheckedAt: null,
     });
@@ -55,6 +67,11 @@ describe("loadServerNzSettings", () => {
     expect(settings.otherLodgesEnabled).toBe(false);
     expect(settings.baseUrl).toBeNull();
   });
+});
+
+it("propagates a fenced settings read failure instead of reporting defaults (#4436)", async () => {
+  const db = { serverNzSettings: { findUnique: vi.fn().mockRejectedValue(new Error("database unavailable")) } };
+  await expect(loadServerNzSettings(db as never)).rejects.toThrow("database unavailable");
 });
 
 describe("normalizeBaseUrl", () => {
@@ -129,18 +146,36 @@ describe("validateCentralServerBaseUrl", () => {
   });
 });
 
+describe("the answer recorders take only the answer fence's client (#4470)", () => {
+  it("refuses the global client, a plain transaction and the connection fence's client at compile time", () => {
+    // Type-level: each line below fails typecheck if the brand stops refusing
+    // it, because the directive above it is then unused.
+    // @ts-expect-error the global client never compared the connection
+    const global: Parameters<typeof recordOtherLodgesDownload>[2]["db"] = prisma;
+    // @ts-expect-error nor did a transaction that never took the answer fence
+    const plain: ServerNzAnswerTx = {} as Prisma.TransactionClient;
+    // @ts-expect-error the connection-change fence is a different fence
+    const connection: ServerNzAnswerTx = {} as ServerNzConnectionTx;
+    // @ts-expect-error the upload watermark is an answer too
+    const upload: Parameters<typeof recordOtherLodgesUpload>[1] = prisma;
+    // @ts-expect-error and so is the server's version
+    const version: Parameters<typeof recordServerVersionCheck>[2] = prisma;
+    expect([global, plain, connection, upload, version]).toHaveLength(5);
+  });
+});
+
 describe("recordOtherLodgesDownload", () => {
   it("never overwrites a stored cursor with a null one", async () => {
     // A server that omits the cursor must not silently reset the club to a full
     // re-fetch of the entire registry.
-    await recordOtherLodgesDownload(null);
+    await recordOtherLodgesDownload(null, undefined, { db: answerTx });
     const [args] = mocks.upsert.mock.calls[0];
     expect(args.where).toEqual({ id: SERVERNZ_SETTINGS_ID });
     expect(args.update).not.toHaveProperty("otherLodgesCursor");
   });
 
   it("persists a cursor the server did return", async () => {
-    await recordOtherLodgesDownload("c-900");
+    await recordOtherLodgesDownload("c-900", undefined, { db: answerTx });
     const [args] = mocks.upsert.mock.calls[0];
     expect(args.update.otherLodgesCursor).toBe("c-900");
   });
@@ -177,63 +212,96 @@ describe("the server's reported API version (#49)", () => {
     expect(args.update).toEqual({ serverVersion: null, serverVersionCheckedAt: null });
   });
 
-  it("forgets the owned list AND the version in ONE write when the connection ends", async () => {
-    await forgetServerConnectionAnswers();
+  it("forgets the owned list, transfer cursors AND the version in ONE write when the connection ends", async () => {
+    // The writer's own write, on the mocked client. Only the connection fence
+    // mints this type in production (#4436); `servernz-config.test.ts` covers it.
+    const unfencedClientForUnitTest = prisma as unknown as ServerNzConnectionTx;
+    await forgetServerConnectionAnswers(unfencedClientForUnitTest);
     expect(mocks.upsert).toHaveBeenCalledTimes(1);
     const [args] = mocks.upsert.mock.calls[0];
     expect(args.where).toEqual({ id: SERVERNZ_SETTINGS_ID });
     expect(args.update).toEqual({
       otherLodgesOwnedNames: Prisma.DbNull,
       otherLodgesOwnedNamesAt: null,
+      otherLodgesOwnedLodges: Prisma.DbNull,
+      otherLodgesLastUploadAt: null,
+      otherLodgesLastDownloadAt: null,
+      otherLodgesCursor: null,
+      commsCursorSince: null,
+      commsCursorSinceId: null,
+      commsLastSyncAt: null,
+      commsPoisonChangeId: null,
+      commsPoisonCount: 0,
+      // A new connection keys the registry again with a whole download (#64).
+      otherLodgesKeyedAt: null,
       serverVersion: null,
       serverVersionCheckedAt: null,
     });
   });
 });
 
-describe("the owned lodge list (#52)", () => {
-  it("reads a stored list back, and its timestamp", async () => {
+describe("the owned lodge list, by central id (#52, #62, #69)", () => {
+  const AORANGI = [{ id: "ol_a", name: "Aorangi Ski Club" }];
+
+  it("reads a stored list back", async () => {
     mocks.findUnique.mockResolvedValue({
       id: SERVERNZ_SETTINGS_ID,
       baseUrl: "https://central.test",
       otherLodgesEnabled: true,
-      otherLodgesLastUploadAt: null,
-      otherLodgesLastDownloadAt: null,
-      otherLodgesCursor: null,
-      otherLodgesOwnedNames: ["Aorangi Ski Club"],
-      otherLodgesOwnedNamesAt: new Date("2026-06-20T10:00:00.000Z"),
+      otherLodgesOwnedLodges: AORANGI,
     });
     const settings = await loadServerNzSettings();
-    expect(settings.otherLodgesOwnedNames).toEqual(["Aorangi Ski Club"]);
-    expect(settings.otherLodgesOwnedNamesAt).toBe("2026-06-20T10:00:00.000Z");
+    expect(settings.otherLodgesOwnedLodges).toEqual(AORANGI);
+    expect(settings.otherLodgesOwnedLodgesUnreadable).toBe(false);
   });
 
   it("reads an empty stored list as empty, not as unknown", async () => {
-    mocks.findUnique.mockResolvedValue({ otherLodgesOwnedNames: [], otherLodgesEnabled: false });
-    expect((await loadServerNzSettings()).otherLodgesOwnedNames).toEqual([]);
+    mocks.findUnique.mockResolvedValue({ otherLodgesOwnedLodges: [], otherLodgesEnabled: false });
+    expect((await loadServerNzSettings()).otherLodgesOwnedLodges).toEqual([]);
+  });
+
+  it("ignores the name-only list stored by API 2.4 and earlier (#69)", async () => {
+    mocks.findUnique.mockResolvedValue({
+      otherLodgesOwnedNames: ["Aorangi Ski Club"],
+      otherLodgesEnabled: false,
+    });
+    const settings = await loadServerNzSettings();
+    expect(settings.otherLodgesOwnedLodges).toBeNull();
+    expect(settings.otherLodgesOwnedLodgesUnreadable).toBe(false);
   });
 
   it.each([
     ["a string", "Aorangi Ski Club"],
-    ["an object", { name: "Aorangi Ski Club" }],
-    ["a list with a non-string", ["Aorangi Ski Club", 7]],
-    ["a list with an over-long name", ["x".repeat(121)]],
+    ["a list of names", ["Aorangi Ski Club"]],
+    ["an empty id", [{ id: "", name: "x" }]],
+    ["the same id twice", [{ id: "a", name: "x" }, { id: "a", name: "y" }]],
+    ["an over-long name", [{ id: "a", name: "x".repeat(121) }]],
   ])("reads a stored value that is %s as UNKNOWN, the fail-closed state", async (_label, stored) => {
-    // Junk in the column must not become a lodge name (editable, uploaded) and
-    // must not read as "owns nothing" either: both would be the column lying.
-    mocks.findUnique.mockResolvedValue({ otherLodgesOwnedNames: stored, otherLodgesEnabled: false });
+    // Junk in the column must not become a lodge (editable, uploaded) and must
+    // not read as "owns nothing" either: both would be the column lying.
+    mocks.findUnique.mockResolvedValue({ otherLodgesOwnedLodges: stored, otherLodgesEnabled: false });
     const settings = await loadServerNzSettings();
-    expect(settings.otherLodgesOwnedNames).toBeNull();
+    expect(settings.otherLodgesOwnedLodges).toBeNull();
     // ...and FLAGGED, so the writers with a permissive fallback on null (the
     // upload, the committee sync) can fail closed instead.
-    expect(settings.otherLodgesOwnedNamesUnreadable).toBe(true);
+    expect(settings.otherLodgesOwnedLodgesUnreadable).toBe(true);
+    expect(readOwnedOtherLodges(stored)).toEqual({ lodges: null, unreadable: true });
   });
 
-  it("does not flag a never-told (NULL) or a well-formed stored list as unreadable", async () => {
-    mocks.findUnique.mockResolvedValue({ otherLodgesOwnedNames: null, otherLodgesEnabled: false });
-    expect((await loadServerNzSettings()).otherLodgesOwnedNamesUnreadable).toBe(false);
-    mocks.findUnique.mockResolvedValue({ otherLodgesOwnedNames: ["A"], otherLodgesEnabled: false });
-    expect((await loadServerNzSettings()).otherLodgesOwnedNamesUnreadable).toBe(false);
+  it("does not flag a never-told (NULL) list as unreadable", () => {
+    expect(readOwnedOtherLodges(null)).toEqual({ lodges: null, unreadable: false });
+    expect(readOwnedOtherLodges(undefined)).toEqual({ lodges: null, unreadable: false });
+  });
+
+  it("reads the list through the caller's client for a writer inside a transaction", async () => {
+    const findUnique = vi.fn().mockResolvedValue({ otherLodgesOwnedLodges: AORANGI });
+    const owned = await loadOwnedOtherLodges({ serverNzSettings: { findUnique } } as never);
+    expect(owned).toEqual({ lodges: AORANGI, unreadable: false });
+    expect(findUnique.mock.calls[0][0]).toEqual({
+      where: { id: SERVERNZ_SETTINGS_ID },
+      select: { otherLodgesOwnedLodges: true },
+    });
+    expect(mocks.findUnique).not.toHaveBeenCalled();
   });
 
   it("forgets the list with a database NULL, never a JSON null, and clears its timestamp", async () => {
@@ -241,44 +309,48 @@ describe("the owned lodge list (#52)", () => {
     const [args] = mocks.upsert.mock.calls[0];
     expect(args.where).toEqual({ id: SERVERNZ_SETTINGS_ID });
     // DbNull reads back as "never told"; a JSON null would read as unreadable.
+    expect(args.update.otherLodgesOwnedLodges).toBe(Prisma.DbNull);
     expect(args.update.otherLodgesOwnedNames).toBe(Prisma.DbNull);
     expect(args.update.otherLodgesOwnedNamesAt).toBeNull();
     // Nothing else on the row is touched.
     expect(Object.keys(args.update).sort()).toEqual([
+      "otherLodgesOwnedLodges",
       "otherLodgesOwnedNames",
       "otherLodgesOwnedNamesAt",
     ]);
   });
 
-  it("stores the list and its timestamp when the download carried one", async () => {
-    await recordOtherLodgesDownload("c-900", ["Aorangi Ski Club"]);
+  it("stores the list the download carried with its timestamp, and leaves the old name-only list alone", async () => {
+    await recordOtherLodgesDownload("c-900", AORANGI, { db: answerTx });
     const [args] = mocks.upsert.mock.calls[0];
-    expect(args.update.otherLodgesOwnedNames).toEqual(["Aorangi Ski Club"]);
+    expect(args.update.otherLodgesOwnedLodges).toEqual(AORANGI);
     expect(args.update.otherLodgesOwnedNamesAt).toBeInstanceOf(Date);
-    expect(args.create.otherLodgesOwnedNames).toEqual(["Aorangi Ski Club"]);
+    // The draining colour of a blue/green deploy still reads it (#69).
+    expect(args.update).not.toHaveProperty("otherLodgesOwnedNames");
+    expect(args.create.otherLodgesOwnedLodges).toEqual(AORANGI);
   });
 
   it("stores an empty list, the server's answer that the club owns nothing", async () => {
-    await recordOtherLodgesDownload("c-900", []);
-    const [args] = mocks.upsert.mock.calls[0];
-    expect(args.update.otherLodgesOwnedNames).toEqual([]);
+    await recordOtherLodgesDownload("c-900", [], { db: answerTx });
+    expect(mocks.upsert.mock.calls[0][0].update.otherLodgesOwnedLodges).toEqual([]);
   });
 
   it("leaves the stored list and its timestamp untouched when the download carried none", async () => {
-    // An older server that does not send the list must not clear what a newer
-    // one recorded.
-    await recordOtherLodgesDownload("c-900");
+    // A list refused for its bounds, or not sent, must not clear what is stored.
+    await recordOtherLodgesDownload("c-900", undefined, { db: answerTx });
     const [args] = mocks.upsert.mock.calls[0];
-    expect(args.update).not.toHaveProperty("otherLodgesOwnedNames");
-    expect(args.update).not.toHaveProperty("otherLodgesOwnedNamesAt");
-    expect(args.create).not.toHaveProperty("otherLodgesOwnedNames");
+    for (const key of ["otherLodgesOwnedLodges", "otherLodgesOwnedNames", "otherLodgesOwnedNamesAt"]) {
+      expect(args.update).not.toHaveProperty(key);
+      expect(args.create).not.toHaveProperty(key);
+    }
   });
 });
 
 describe("the version column has one writer (#4366)", () => {
   it("is called only by the fenced recorder, which passes its transaction", () => {
-    // `recordServerVersionCheck` takes no default client, but any client still
-    // satisfies its type; this census is what keeps an unfenced caller out.
+    // `recordServerVersionCheck` takes no default client, and since #4470 only
+    // the answer fence's client satisfies its type; this census still pins
+    // its one caller, so a second writer of the column is a reviewed change.
     const srcRoot = resolve(__dirname, "../..");
     const callers = (readdirSync(srcRoot, { recursive: true }) as string[])
       .filter((file) => /\.tsx?$/.test(file) && !/__tests__|\.test\.tsx?$/.test(file))
@@ -286,5 +358,44 @@ describe("the version column has one writer (#4366)", () => {
       .map((file) => file.split("\\").join("/"))
       .sort();
     expect(callers).toEqual(["lib/servernz-settings.ts", "lib/servernz-version-record.ts"]);
+  });
+});
+describe("recordOtherLodgesDownload: the keyed marker (#64)", () => {
+  it("sets otherLodgesKeyedAt only when told the whole registry merged", async () => {
+    await recordOtherLodgesDownload("c-1", undefined, { keyed: true, db: answerTx });
+    expect(mocks.upsert.mock.calls[0][0].update.otherLodgesKeyedAt).toBeInstanceOf(Date);
+    await recordOtherLodgesDownload("c-2", undefined, { db: answerTx });
+    expect(mocks.upsert.mock.calls[1][0].update).not.toHaveProperty("otherLodgesKeyedAt");
+  });
+
+  it("writes through the caller's transaction client when given one", async () => {
+    const upsert = vi.fn().mockResolvedValue({});
+    await recordOtherLodgesDownload("c-3", undefined, {
+      db: { serverNzSettings: { upsert } } as never,
+    });
+    expect(upsert).toHaveBeenCalledTimes(1);
+    expect(mocks.upsert).not.toHaveBeenCalled();
+  });
+
+  it("reads the marker back", async () => {
+    mocks.findUnique.mockResolvedValue({
+      id: SERVERNZ_SETTINGS_ID,
+      otherLodgesKeyedAt: new Date("2026-10-14T00:00:00.000Z"),
+    });
+    expect((await loadServerNzSettings()).otherLodgesKeyedAt).toBe("2026-10-14T00:00:00.000Z");
+  });
+});
+
+describe("recordOtherLodgesUpload", () => {
+  it("records the accepted watermark through the caller's transaction", async () => {
+    const upsert = vi.fn().mockResolvedValue({});
+    const at = new Date("2026-06-01T00:00:00.000Z");
+    await recordOtherLodgesUpload(at, { serverNzSettings: { upsert } } as never);
+    expect(upsert).toHaveBeenCalledWith({
+      where: { id: SERVERNZ_SETTINGS_ID },
+      create: { id: SERVERNZ_SETTINGS_ID, otherLodgesLastUploadAt: at },
+      update: { otherLodgesLastUploadAt: at },
+    });
+    expect(mocks.upsert).not.toHaveBeenCalled();
   });
 });

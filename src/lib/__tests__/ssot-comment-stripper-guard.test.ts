@@ -57,14 +57,14 @@ const POPULATION_PUBLISHERS = [
 ] as const;
 
 /** The published sentence, in the one wording both publishers use. */
-// Both publishers say "<n> test files, five test helpers and one CI script
+// Both publishers say "<n> test files, six test helpers and one CI script
 // import". The middle clause is what #2975's helper forced: the KIND of importer
 // changed, not just the count, and a regex that only reached the number would
 // have gone on matching a sentence that had become false.
 // #3276 added a second helper (the shared night-writer scanner), so the clause
 // counts helpers too — still exact; #3278 adds the third shared scanner.
 const PUBLISHED_POPULATION =
-  /(\d+)\s+test files,\s+five\s+test\s+helpers and\s+one CI script import\b/;
+  /(\d+)\s+test files,\s+six\s+test\s+helpers and\s+one CI script import\b/;
 
 /*
   HOW AN IMPORTER IS COUNTED, because every previous count of this got it wrong
@@ -567,6 +567,8 @@ describe("INV-SSOT-004: the published importer count is measured, not inherited"
       // on being false while every number in it stayed right.
       "scripts/ci/check-website-render-modes.mjs",
       "src/lib/__tests__/helpers/admin-route-explicit-permissions.ts",
+      // #4477: bracket matching reuses the canonical literal masker.
+      "src/lib/__tests__/support/balanced-brackets.ts",
       // #3276: the ONE AST scanner for BookingGuestNight writers, shared by the
       // stage-1 (INV-MONEY-028) and stage-2 (INV-MONEY-029) censuses so a new
       // night writer cannot be added without the second census asking how it
@@ -596,7 +598,7 @@ describe("INV-SSOT-004: the published importer count is measured, not inherited"
 
       expect(
         published,
-        `${publisher} no longer contains the sentence "<n> test files, five test helpers and one CI script import…". It is one of the two places ${INVARIANT_ID} publishes this population; if the wording changed, change ${PUBLISHED_POPULATION} with it rather than letting this comparison quietly stop happening.`,
+        `${publisher} no longer contains the sentence "<n> test files, six test helpers and one CI script import…". It is one of the two places ${INVARIANT_ID} publishes this population; if the wording changed, change ${PUBLISHED_POPULATION} with it rather than letting this comparison quietly stop happening.`,
       ).not.toBeNull();
 
       expect(

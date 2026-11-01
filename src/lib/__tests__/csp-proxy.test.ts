@@ -2164,6 +2164,27 @@ describe("out-of-territory responses are never offered to a shared cache (#2578)
         moduleFlagOverrides.off.delete("lobbyDisplay");
       }
     });
+
+    it("sends the page-shaped gate 404's document with the proxy's security headers (#4466)", async () => {
+      // #4466 gave a page-shaped GET on a switched-off module a titled document in
+      // place of the empty 404. It must leave through the same header path as every
+      // other gate response: a CSP, nosniff, a frame rule and the private-only cache
+      // directive, so no shared cache can store it.
+      moduleFlagOverrides.off.add("lobbyDisplay");
+
+      try {
+        const response = await proxy(new NextRequest("https://example.org/display"));
+
+        expect(response.status).toBe(404);
+        expect(response.headers.get("content-type")).toMatch(/^text\/html/);
+        expect(response.headers.get("Content-Security-Policy")).toBeTruthy();
+        expect(response.headers.get("X-Content-Type-Options")).toBe("nosniff");
+        expect(response.headers.get("X-Frame-Options")).toBeTruthy();
+        expect(response.headers.get("Cache-Control")).toBe(PRIVATE_ONLY);
+      } finally {
+        moduleFlagOverrides.off.delete("lobbyDisplay");
+      }
+    });
   });
 });
 

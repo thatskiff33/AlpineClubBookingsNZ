@@ -1,4 +1,4 @@
-import { expect, test, type BrowserContext } from "@playwright/test";
+import { expect, test, type BrowserContext } from "../helpers/accessibility";
 import { loginPersona } from "../helpers/auth";
 import { E2E_ADMIN, ROSTER_GUEST_LODGE_A, SECOND_LODGE } from "../helpers/fixtures";
 import { overrideModules, setModuleSettings } from "../helpers/modules";

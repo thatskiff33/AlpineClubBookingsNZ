@@ -134,17 +134,37 @@ another's contact details current. Instead of every club retyping every other
 club's booking officer by hand, each club maintains its own entry and the hub
 distributes it.
 
+Changing the server address clears the previous server's API key and answers
+in the same save. A sync running at that moment either uses the previous
+connection together or waits for the change; it cannot send the old key to
+the new address. Enter a key issued by the new server before syncing again.
+The same save clears every sync position and the previous server's push
+secret (replacing the API key clears the push secret too), so the next sync
+registers this site with the new server for pushes. Pushes and free-beds
+questions signed with the old secret stop being accepted within 45 seconds
+(the time another running copy of the site may still hold it in memory). A
+download, upload, message-board sync or push registration still running
+against the old connection writes nothing more from it; lodges and posts it
+had already brought over stay. **Save key** stays off while the address box
+holds an address you have not saved: save the address first. A key saved
+from a page that still shows the old address is refused with "The central
+server address was changed after this page was loaded": reload the page,
+check the address, and enter the key again.
+
 **Read this before you turn it on.** This is the one integration that sends data
 *out* of your club. When you enable a shared item, everything recorded on **your
 own lodge's** entry in the **Other lodges** panel is uploaded to the central
 server and redistributed to every other connected club, where it appears on
 those clubs' pages. That is the lodge's name, location and bed count; its
 **booking officer's name, email and phone**; and the lodge details added
-alongside them — website, how to book, cancellation period, the winter and
-summer season start dates, the nine yes/no facilities (requires a lodge
-custodian, free wifi, quiet room, drying room, shared kitchen, wheelchair
-accessible, breakfast / lunch / dinner included) and the list of amenities with
-their descriptions. The booking-officer email is the committee **role's** shared
+alongside them — the non-member booking page URL, double and single beds, the
+minutes' walk in, room or dormitory, cancellation period, the winter and summer
+season start and end dates, the eleven yes/no facilities (requires a lodge custodian,
+free wifi, quiet room, drying room, shared kitchen, wheelchair accessible,
+breakfast / lunch / dinner included, ski workshop area, games room), the eight
+**non-member rates** (winter and summer, per person per night, for the Infant,
+Child, Youth and Adult age groups, each club's own age tiers), which also appear on the central server's public lodge
+search, and the list of amenities with their descriptions. The booking-officer email is the committee **role's** shared
 address (for example `bookings@yourclub.nz`), never a member's personal one,
 and a member's phone number is shared **only** if your club already publishes it
 on your own committee page. Once the central server is on a release that
@@ -162,9 +182,8 @@ what to check before you enable the item.
 operator maps one or more lodge names to the connection your site uses. The
 server sends that list with every download, this site records it, and from then
 on only those lodges are uploaded and only those can be edited in the Other
-lodges panel. Until the first download from a server that sends the list, the
-panel is read-only and the upload keeps its older behaviour of sending every
-changed entry (so a club on an older central server loses nothing). A server
+lodges panel. Until the first download records the list, the panel is
+read-only and nothing is uploaded. A server
 that does not send the list leaves the recorded one as it was, and so does a
 server that sends a list this site cannot accept (too many names, or a name
 longer than a lodge name may be): the lodges still download and the sync
@@ -175,15 +194,47 @@ treating every entry as yours. The list is forgotten when you disconnect,
 replace the API key or change the server address, because it belonged to that
 connection.
 
+**The central server can ask how many beds are free at your own lodge.** Its
+public lodge search lets non-members choose dates and a party size, see which
+lodges have room, and come to your site to book. For a lodge your club owns it
+asks this site directly, at search time, and is told the **free beds on each
+night** it asks about (up to 30 nights), and the fewest of them, exactly as the
+member calendar counts them (a night the whole lodge is booked or held reads
+as full). Its bed planner shows them night by night. Nothing else is sent: no
+guest, member, booking or hold, only the counts the member calendar shows. The
+server proves each question is genuine with the same signing secret it uses
+for the message board, so this only works once this site has registered for
+the message board's pushes: the **Message board** module is on (see
+[Modules](modules.md#settings-reference)) and the site's own address is
+`https://`, then the next sync registers it. Until then the search shows "beds
+available unknown". It also answers nothing while **Other
+lodges** sharing is off. The server names the lodge by its **permanent central
+id**, and your site answers for the local lodge linked to it under **Admin →
+Lodges → Configure → Central lodge** (see [Lodges](lodges.md#configure-a-lodge)).
+**Every club saves that link, even a club with one lodge**: a lodge with no saved
+link answers nothing, so the search shows its free beds as unknown. A club with
+one active lodge that owns one central lodge finds it already chosen when it
+clicks **Edit** there, and **Save** links it. Since server API 2.2 each download also records
+the owned lodges' ids beside their names, and they are forgotten with the list.
+
 The same list decides which entries your **Booking Officer** committee role is
 written into: when a member takes or leaves that role, the officer's name,
 role email and (if published) phone are written into the lodge entries the
-central server names as yours — and, until it has named any, into entries whose
-name exactly matches one of your own lodges.
+central server names as yours, matched only by their ids. Until a **Download**
+has recorded that list, the sync writes nothing and logs why it skipped.
+Disconnecting, replacing the API key or changing the server address clears the
+list, so the sync again writes nothing until the next **Download** records it.
+Another club's lodge of the same name is never treated as yours.
 
-Two downloads can run at once (the nightly job and the **Download** button); if
-the one that finishes last carried an older list, the panel may briefly show the
-older answer until the next download records the current one. Likewise, an edit
+Only one sync with the central server runs at a time, across every copy of
+the site: the nightly job, the **Upload** button and the **Download** button
+share one claim. Pressing a button while another sync is running sends nothing
+and says "Another sync with the Alpine Central Server is running … Try again in
+a minute"; nothing is lost, and the running sync carries on. If a sync was cut
+off part-way (a restart), the buttons may say so for up to 15 minutes, until
+the claim is released as stale.
+
+An edit
 saved in the Other lodges popup is checked against the list recorded at that
 moment, so a download that changes the list while the popup is open can turn a
 Save into a refusal; reloading the page shows the current state.
@@ -192,7 +243,70 @@ Downloading works the other way round: the central server's copy of every
 club's entry replaces yours, field by field and amenity list as a whole, unless
 your own copy was edited more recently — then yours is kept and sent up on the
 next upload. A field the server does not send is left exactly as you had it.
-Season start dates travel as calendar dates and are never shifted by time zone.
+Season start and end dates travel as calendar dates and are never shifted by time zone. The central server (API 2.6) skips an upload whose winter and summer seasons would share a day; this site refuses such dates at **Save** first.
+
+**Lodges are matched by the central server's permanent lodge id**, not by
+name, so a lodge renamed there is renamed here in place: its bookings and
+booking requests stay attached to it. Your own lodge keeps the name you give it
+here; a download never renames it, and an upload sends your new name with the
+id so the server renames its lodge (server API 2.3). The first download after
+this site is upgraded asks for the whole registry once and matches every lodge
+by name, which fills in the ids; after that downloads are incremental again.
+A name that two lodges on the central server share matches **neither** of
+them, even when one is yours: a lodge here with that name could be either, and
+matching the wrong one would move the bookings that name it onto a different
+lodge. Both arrive as new lodges, and the old one is marked **Not found on the
+Alpine Central Server**, for you to check its bookings and **Hide** it.
+
+- **A new name another lodge here already has** is simply taken: two lodges may
+  share a name (server API 2.5). A lodge the central server sends without its
+  id, whose name several lodges here share, is not added, because there is no
+  telling which it is; the **Download** message names it.
+- **A lodge the central server does not list.** Until a full download has
+  finished, every download asks for the whole registry (so one that fails
+  part-way is simply repeated). After it, a lodge that never got an id is one
+  the server did not list, usually a duplicate left behind by a rename before
+  this change, or a lodge deleted there. The Other lodges panel marks it **Not
+  found on the Alpine Central Server**, with how many bookings and booking
+  requests still refer to it, so you can decide what to do. Its **Hide**
+  button (lodge edit rights; audited, after a confirmation) hides it the same
+  way a deleted lodge is hidden (below). A lodge the server still lists cannot
+  be hidden here.
+- **A lodge deleted on the central server** (server API 2.4) is **hidden**
+  here on the next download, never removed: it leaves the Other lodges list,
+  the booking-request form and the visiting-club rate picker, and stays on
+  every booking and booking request that already names it, so they read as
+  they did. The **Download** message names it. Any of your lodges linked to it
+  under **Central lodge** is unlinked, and the download writes one audit record
+  naming what it hid. A server that sends no deletions hides nothing here.
+  Hiding is not undone.
+- **Two lodges may share a name** (server API 2.5). The central id is what
+  tells them apart: which lodge is yours is decided by its id, so renaming it
+  here keeps it yours, and a lodge of another club with the same name is never
+  merged into it. Where a lodge is chosen from a list (the booking-request
+  form, the visiting-club rate picker and **Central lodge**), two lodges of the
+  same name show their location too, for example "Ruapehu Lodge (Whakapapa)".
+  Your lodge is uploaded only once a **Download** has linked it to the central
+  server, so it always goes up under its id. A hidden lodge keeps
+  its name for the bookings that name it, and never stops a live lodge of the
+  same name from arriving or being renamed to it. On a site
+  upgrading straight to this release, a lodge the server deleted before this
+  site was matched to its ids shows as **Not found on the Alpine Central
+  Server** rather than being hidden automatically; **Hide** it by hand.
+- **A new central server address or API key** makes the next download fetch
+  the whole registry again. A lodge whose id that server does not list is
+  matched by name and takes the id it does list. An id still not listed after
+  that download is forgotten, so your own lodge is neither uploaded nor
+  editable until a later download links it again, and another club's is
+  marked **Not found**. A download that was running while
+  the address or key changed records nothing. The upload watermark and download
+  cursor are cleared too, along with the shared-feed sync position and failed
+  change tracking, so the first upload after relinking sends all your
+  owned lodges. An upload already in flight cannot advance the new connection's
+  watermark.
+- **Your lodge's name is yours.** If the central server's administrator renames
+  your own lodge, this site keeps the name you gave it, and your next upload
+  of that lodge sets it back on the server.
 
 1. Enable the **Alpine Central Server** module on [Modules](modules.md). With the
    module off the setup page is not reachable and the nightly sync does not run,
@@ -219,8 +333,8 @@ whether they are.** The central server publishes one version number for
 everything it shares — the Other Clubs registry, the message board and the
 push registration — and this site is built for one particular number. The
 setup page shows both, beside the address and the key, under **Server
-software version** ("This site is built for server version 2.1 · Server:
-2.1"): it asks the server once each time you open the page, and again after
+software version** ("This site is built for server version 2.3 · Server:
+2.3"): it asks the server once each time you open the page, and again after
 you save a key or an address. With no API key stored nothing is asked and the
 server's number reads **0**, which is not a mismatch.
 

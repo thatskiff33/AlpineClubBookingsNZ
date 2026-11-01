@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 const mocks = vi.hoisted(() => ({
+  signalOfficers: vi.fn(),
   prisma: {
     memberCredit: { findUnique: vi.fn() },
     payment: { findUnique: vi.fn() },
@@ -13,7 +14,6 @@ const mocks = vi.hoisted(() => ({
   createIntent: vi.fn(),
   upsert: vi.fn(),
   refuseAdopted: vi.fn(),
-  queueSuperseded: vi.fn(),
   cancelSuperseded: vi.fn(),
   alertOfficers: vi.fn(),
   retireOutstanding: vi.fn(),
@@ -36,9 +36,10 @@ vi.mock("@/lib/payment-transactions", () => ({
   lockPaymentForRefundedTotal: mocks.lockPayment,
 }));
 vi.mock("@/lib/credit-release-ask-close", () => ({ recordReleasePaidInXeroCash: mocks.paidCash }));
+// INV-OPS-015 (#4442 review M2): the supersede's durable half runs for real, on
+// the claim hold's store below; only the Stripe-calling half is stubbed.
 vi.mock("@/lib/booking-payment-cleanup", async () => ({
   ...((await vi.importActual("@/lib/booking-payment-cleanup")) as typeof import("@/lib/booking-payment-cleanup")),
-  queueSupersededAdditionalIntentCancellationRows: mocks.queueSuperseded,
   cancelSupersededAdditionalIntentsNow: mocks.cancelSuperseded,
 }));
 vi.mock("@/lib/ended-booking-ask-guard", () => ({
@@ -46,8 +47,13 @@ vi.mock("@/lib/ended-booking-ask-guard", () => ({
   replayRetiresAskOnEndedBooking: mocks.retireAfterWrite,
 }));
 vi.mock("@/lib/payment-recovery-alert", () => ({ alertPaymentRecoveryOfficers: mocks.alertOfficers }));
+vi.mock("@/lib/release-ask-officer-signal", () => ({ signalCreditReleaseToOfficers: mocks.signalOfficers }));
 
-import { processCreditReleaseAskOperation, type CreditReleaseAskRunnerDeps } from "@/lib/credit-release-ask";
+import {
+  CREDIT_RELEASE_WAITING_ON_EDIT_MESSAGE,
+  processCreditReleaseAskOperation,
+  type CreditReleaseAskRunnerDeps,
+} from "@/lib/credit-release-ask";
 import {
   buildCreditReleaseAskRecoveryIdempotencyKey,
   buildCreditReleaseAskStripeIdempotencyKey,
@@ -107,10 +113,16 @@ function payment(over: Record<string, unknown> = {}, booking: Record<string, unk
 const open = { invoiceId: "inv-1", status: "AUTHORISED", amountDueCents: 4000, invoiceNumber: "INV-1" };
 const paid = { invoiceId: "inv-1", status: "PAID", amountDueCents: 0, invoiceNumber: "INV-1" };
 
-const store = { paymentRecoveryOperation: { update: vi.fn() }, payment: { findUnique: vi.fn() } };
+const store = {
+  paymentRecoveryOperation: { update: vi.fn(), upsert: vi.fn() },
+  payment: { findUnique: vi.fn() },
+  // The live asks the real supersede reads under the claim: none, unless a test names one.
+  paymentTransaction: { findMany: vi.fn() },
+};
 const runnerDeps = () => ({
   holdClaim: vi.fn(async (_op: unknown, write: (s: unknown) => Promise<unknown>) => ({ value: await write(store), heldAt: new Date() })),
   complete: vi.fn().mockResolvedValue(undefined),
+  wait: vi.fn().mockResolvedValue(undefined),
 });
 
 const asDeps = (d: ReturnType<typeof runnerDeps>) => d as unknown as CreditReleaseAskRunnerDeps;
@@ -121,7 +133,8 @@ beforeEach(() => {
   mocks.prisma.payment.findUnique.mockResolvedValue(payment());
   mocks.prisma.paymentTransaction.findUnique.mockResolvedValue({ reason: CREDIT_RELEASE_ASK_REASON });
   mocks.createIntent.mockResolvedValue({ id: "pi_new" });
-  mocks.queueSuperseded.mockResolvedValue([]);
+  store.paymentTransaction.findMany.mockResolvedValue([]);
+  store.paymentRecoveryOperation.upsert.mockImplementation(async ({ create }: { create: { paymentIntentId: string } }) => ({ id: `op-cancel-${create.paymentIntentId}` }));
   mocks.retireAfterWrite.mockResolvedValue(false);
   mocks.paidCash.mockResolvedValue(0);
   // Under the lock the payment is as it was read, unless a test moves it.
@@ -167,20 +180,56 @@ describe("processCreditReleaseAskOperation", () => {
     mocks.prisma.payment.findUnique.mockResolvedValue(
       payment({ additionalAmountCents: 2500, additionalPaymentStatus: "PENDING", additionalPaymentIntentId: "pi_rel", amountCents: 32_000 }),
     );
+    store.paymentTransaction.findMany.mockResolvedValue([{ id: "ptx-rel", stripePaymentIntentId: "pi_rel", amountCents: 2500 }]);
     await run();
     // $80.00 is short, $25.00 of it already asked, so the unasked part is $55.00 and the release's $40.00 is all of its own.
     expect(mocks.upsert).toHaveBeenCalledWith(expect.objectContaining({ amountCents: 6500, carriedAskCents: 2500 }));
+    // ...and the ask it carried is retired in the same claimed transaction, by the real supersede.
+    expect(store.paymentRecoveryOperation.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({ create: expect.objectContaining({ type: "CANCEL_PAYMENT_INTENT", paymentIntentId: "pi_rel", amountCents: 2500 }) }),
+    );
+    expect(mocks.cancelSuperseded).toHaveBeenCalledWith(
+      expect.objectContaining({ queued: [{ paymentTransactionId: "ptx-rel", paymentIntentId: "pi_rel", operationId: "op-cancel-pi_rel" }] }),
+    );
   });
 
-  it("waits, throwing, while an unpaid edit request is open: its own invoice could not be paid by this one", async () => {
+  it("waits while an unpaid edit request is open, spending no attempt, and tells the officers once", async () => {
     mocks.prisma.payment.findUnique.mockResolvedValue(
       payment({ additionalAmountCents: 2500, additionalPaymentStatus: "PENDING", additionalPaymentIntentId: "pi_edit", amountCents: 32_000 }),
     );
     mocks.prisma.paymentTransaction.findUnique.mockResolvedValue({ reason: "edit_price_increase" });
-    await expect(processCreditReleaseAskOperation(operation, CLUB_FORMAT_TEST, asDeps(runnerDeps()), vi.fn().mockResolvedValue(open))).rejects.toThrow(
-      /unpaid edit request/,
-    );
+    const deps = runnerDeps();
+    await processCreditReleaseAskOperation(operation, CLUB_FORMAT_TEST, asDeps(deps), vi.fn().mockResolvedValue(open));
+    // Never a throw: a throw spends an attempt, and five of them made the release terminal and never asked.
+    expect(deps.wait).toHaveBeenCalledWith(operation, CREDIT_RELEASE_WAITING_ON_EDIT_MESSAGE);
+    expect(deps.complete).not.toHaveBeenCalled();
     expect(mocks.createIntent).not.toHaveBeenCalled();
+    expect(mocks.signalOfficers).toHaveBeenCalledWith(
+      expect.objectContaining({ bookingId: "bk-1", reason: "waiting-on-edit-request", key: "waiting-on-edit-request:op-1" }),
+    );
+  });
+
+  it("keeps waiting, attempt handed back, while Xero is down: the wait is decided before any Xero read", async () => {
+    mocks.prisma.payment.findUnique.mockResolvedValue(
+      payment({ additionalAmountCents: 2500, additionalPaymentStatus: "PENDING", additionalPaymentIntentId: "pi_edit", amountCents: 32_000 }),
+    );
+    mocks.prisma.paymentTransaction.findUnique.mockResolvedValue({ reason: "edit_price_increase" });
+    const deps = runnerDeps();
+    const read = vi.fn().mockRejectedValue(new Error("Xero unavailable"));
+    // Never a throw (which would spend an attempt and, five times over, make the row terminal).
+    await expect(processCreditReleaseAskOperation(operation, CLUB_FORMAT_TEST, asDeps(deps), read)).resolves.toBe("waited");
+    expect(read).not.toHaveBeenCalled();
+    expect(deps.wait).toHaveBeenCalledWith(operation, CREDIT_RELEASE_WAITING_ON_EDIT_MESSAGE);
+  });
+
+  it("asks once the edit request is paid: the release's own live request is not something to wait for", async () => {
+    mocks.prisma.payment.findUnique.mockResolvedValue(
+      payment({ additionalAmountCents: 2500, additionalPaymentStatus: "PENDING", additionalPaymentIntentId: "pi_rel_old", amountCents: 32_000 }),
+    );
+    mocks.prisma.paymentTransaction.findUnique.mockResolvedValue({ reason: CREDIT_RELEASE_ASK_REASON });
+    const deps = runnerDeps();
+    await processCreditReleaseAskOperation(operation, CLUB_FORMAT_TEST, asDeps(deps), vi.fn().mockResolvedValue(open));
+    expect(deps.wait).not.toHaveBeenCalled();
   });
 
   it("asks for the smaller figure when part of the release was paid meanwhile, under a key that names the amount", async () => {

@@ -59,6 +59,9 @@ const txClient = {
   manualRefundTask: { findMany: vi.fn(async () => [] as unknown[]) },
   // Review round 3: the latest CANCELLED event, whose snapshot marks a member's own cancel (none by default).
   bookingEvent: { findFirst: vi.fn(async (): Promise<unknown> => null) },
+  // #4299: no extra-invoice cash rows on a child payment, and no invoice debts reserved by the plan, by default.
+  paymentTransaction: { count: vi.fn(async () => 0) },
+  xeroSyncOperation: { findFirst: vi.fn(async (): Promise<unknown> => null) },
   groupBookingSettlement: {
     updateMany: mocks.settlementUpdateMany,
     findUnique: mocks.settlementAtFenceFindUnique,
@@ -102,6 +105,7 @@ vi.mock("@/lib/prisma", () => ({
       update: mocks.settlementUpdate,
       findUnique: mocks.settlementFindUnique,
     },
+    bookingModification: { findMany: vi.fn(async () => []) },
     paymentRecoveryOperation: { findUnique: mocks.recoveryOperationFindUnique },
     // #3827 (composed by #3829): no open by-hand refund task on any child.
     manualRefundTask: { aggregate: vi.fn(async () => ({ _sum: { amountCents: null } })) },

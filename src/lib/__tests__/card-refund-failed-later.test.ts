@@ -22,7 +22,11 @@ import {
   type FailedLaterRefundInput,
 } from "@/lib/card-refund-failed-later";
 import { MAX_PAYMENT_RECOVERY_ATTEMPTS } from "@/lib/payment-recovery-constants";
-import { bookingModificationRefundReasonForKeyPrefix, SUPERSEDED_PAYMENT_REFUND_METADATA_REASON } from "@/lib/payment-recovery-keys";
+import {
+  bookingModificationRefundReasonForKeyPrefix,
+  cardRefundOperationRefundMetadata,
+  SUPERSEDED_PAYMENT_REFUND_METADATA_REASON,
+} from "@/lib/payment-recovery-keys";
 
 const RAISED_AT = new Date("2026-06-20T00:00:00.000Z");
 const REFUNDED_AT = new Date("2026-06-20T00:00:05.000Z");
@@ -71,6 +75,9 @@ function fakeTx({
   transactionIntent = "pi_txn" as string | null,
   cutoff = null as Date | null,
   recordedStatus = "failed",
+  closes = 0,
+  /** #4210 review: the rows a completed close is keyed on; when given, the count answers by the keys asked. */
+  closedRowIds = null as string[] | null,
 } = {}) {
   return {
     $queryRaw: vi.fn(async (strings: TemplateStringsArray) =>
@@ -85,6 +92,14 @@ function fakeTx({
       ]),
     },
     paymentTransaction: { findUnique: vi.fn(async () => ({ stripePaymentIntentId: transactionIntent })) },
+    // #4210: the completed "Paid another way" close records keyed on the rows asked about.
+    manualRefundTask: {
+      count: vi.fn<(args: unknown) => Promise<number>>(async (args) => {
+        if (!closedRowIds) return closes;
+        const asked = (args as { where: { occurrenceKey: { in: string[] } } }).where.occurrenceKey.in;
+        return closedRowIds.filter((id) => asked.includes(`card-refund-paid-another-way:${id}`)).length;
+      }),
+    },
     auditLog: { create: vi.fn<(args: unknown) => Promise<object>>(async () => ({})) },
     paymentRecoveryOperation: {
       findMany: vi.fn(async () => rows),
@@ -283,9 +298,9 @@ describe("an open row that counted it as made owes it again (money 1)", () => {
   // The metadata this row's runner sends (`cardRefundOperationRefundMetadata`).
   const RUNNERS = { ...REFUND, metadata: { bookingId: "booking-1", reason: "booking_modification_refund_recovery" } };
 
-  it("MUTATION: an UNMARKED slice the owed figure fills with it, as the payment stood before the failure", async () => {
+  it.each<Record<string, string>>([{}, { refundSliceKey: "payment_recovery_modification_refund_op-open_txn-1_4000" }])("MUTATION: an UNMARKED slice the owed figure fills with it, including keyed evidence %j", async (evidence) => {
     const tx = fakeTx({ rows: [row()] });
-    expect(await keep(tx, RUNNERS)).toMatchObject({ debt: { outcome: "re-planned", operationId: "op-open" } });
+    expect(await keep(tx, { ...RUNNERS, metadata: { ...RUNNERS.metadata, ...evidence } })).toMatchObject({ debt: { outcome: "re-planned", operationId: "op-open" } });
     expect(tx.paymentRecoveryOperation.createMany).not.toHaveBeenCalled();
     expect(replan(tx)?.data.allocationPlan).toEqual([
       { paymentTransactionId: "txn-1", amountCents: 4_000, stripeKeySuffix: "refused1", failedRefundIds: ["re_1"] },
@@ -400,6 +415,8 @@ describe("the officers' alert", () => {
     ["re-planned-dead", /retries are already spent: pay the member another way and close it under "Card refunds Stripe gave up on" on the Stuck states page/],
     ["raised-dead", /will not be asked for again automatically: pay the member another way and close it under "Card refunds Stripe gave up on"/],
     ["raised-backlog", /before this release .* check whether the member has already been paid back, and close it under "Card refunds Stripe gave up on"/],
+    // #4210 (#4361 decision 7): settle it with Paid another way, never a new dashboard refund.
+    ["raised-after-paid-another-way", /\$40\.00 failed after the card refund that made it was closed "Paid another way"\. .*not asked for again automatically\. Check whether the member is still owed anything: after a part close the figure can include what that close recorded as no longer owed, so check its record before paying\. .*settle it with "Paid another way", never with a new refund in the Stripe dashboard\. If nothing is left owed, there is nothing to close there: ask a developer to reconcile it\.$/],
     // #4104 review (D2): which refund, and what to do about it.
     ["not-resent", /card refund re_1 of \$40\.00 .*did not make it for this booking .* not asked for again .*refund them again there or pay them another way\. Raise no refund note for it in Xero: the card refund credit note raised while Stripe counted it, if there is one, already records it/],
   ] as const)("says what a %s decision means, once", async (outcome, words) => {
@@ -496,5 +513,105 @@ describe("#4166: a re-planned failed-later row keeps its recorded maker", () => 
     expect(replan(tx)?.data.allocationPlan).toEqual([
       { paymentTransactionId: "txn-1", amountCents: 4_000, stripeKeySuffix: "refused1", failedRefundIds: ["re_1"], madeByOperationId: maker },
     ]);
+  });
+});
+
+// #4210 (`INV-PAY-142`; owner, #4361 decision 4): a refund whose row a "Paid
+// another way" close settled is never re-sent automatically: it is raised held
+// (attempts spent) for an officer, and alerted. The real-database proof is
+// `card-refund-failed-later-after-paid-another-way.realdb.test.ts`.
+describe("#4210: held for an officer when the row that made it was closed Paid another way", () => {
+  const CLOSED_AT = new Date("2026-06-20T00:00:10.000Z");
+  const closedRow = (over: Partial<Row> = {}) =>
+    row({ id: "op-cancel", status: "SUCCEEDED", attempts: 5, nextRetryAt: null, idempotencyKey: "booking_cancel_refund_recovery_booking-1", succeededAt: CLOSED_AT, ...over });
+  const closeQuery = (tx: ReturnType<typeof fakeTx>) => tx.manualRefundTask.count.mock.calls[0]?.[0] as { where: Record<string, unknown> } | undefined;
+
+  it("MUTATION: the cancel row that sent it, closed: raised with its attempts spent, never claimed", async () => {
+    const tx = fakeTx({ rows: [closedRow()], closes: 1 });
+    expect(await keep(tx)).toEqual({
+      debt: { outcome: "raised-after-paid-another-way", operationId: "op-new", bookingId: "booking-1", paymentIntentId: "pi_1", amountCents: 4_000, stripeRefundId: "re_1" },
+    });
+    expect(inserted(tx)).toMatchObject({ status: "PENDING", idempotencyKey: "card_refund_failed_later_re_1", amountCents: 4_000, attempts: MAX_PAYMENT_RECOVERY_ATTEMPTS });
+    expect(String(inserted(tx)?.lastError)).toMatch(/closed "Paid another way".*settle it with "Paid another way", never with a new refund in the Stripe dashboard\. .*ask a developer to reconcile it \(#4210\)/);
+    // Stripe sent nothing for it: the held row carries no "Stripe may have refunded" warning.
+    expect(lastErrorSuggestsStripeMayHaveRefunded(String(inserted(tx)?.lastError))).toBe(false);
+  });
+
+  it("MUTATION: asks for a COMPLETED close record keyed on that row, by every key a close of it can carry", async () => {
+    const tx = fakeTx({ rows: [closedRow()], closes: 1 });
+    await keep(tx);
+    expect(closeQuery(tx)).toEqual({
+      where: {
+        kind: "CANCELLED_BOOKING_HAND_BACK",
+        status: "COMPLETED",
+        occurrenceKey: {
+          in: ["card-refund-paid-another-way:op-cancel", "card-refund-paid-another-way:op-cancel:note-after-receipt", "card-refund-paid-another-way:op-cancel:no-xero-note"],
+        },
+      },
+    });
+  });
+
+  it("with no close on it, unchanged: re-sent automatically", async () => {
+    const tx = fakeTx({ rows: [closedRow()], closes: 0 });
+    expect(await keep(tx)).toMatchObject({ debt: { outcome: "raised" } });
+    expect(inserted(tx)).toMatchObject({ attempts: 0 });
+  });
+
+  it("MUTATION: a refund no row's runner sent is weighed by the row whose slice it fills", async () => {
+    const tx = fakeTx({ rows: [closedRow()], closes: 1 });
+    const appeal = { ...REFUND, metadata: { bookingId: "booking-1", reason: "refund_appeal_approved", refundRequestId: "rr-1" } };
+    expect(await keep(tx, appeal)).toMatchObject({ debt: { outcome: "raised-after-paid-another-way" } });
+    expect(closeQuery(tx)?.where.occurrenceKey).toEqual({ in: expect.arrayContaining(["card-refund-paid-another-way:op-cancel"]) });
+  });
+
+  it("a retry that fails too, or one made before the cutoff, is held the same way, said as the close's", async () => {
+    const retry = { ...REFUND, metadata: { bookingId: "booking-1", reason: bookingModificationRefundReasonForKeyPrefix("card_refund_failed_later_re_0") } };
+    const tx = fakeTx({ rows: [closedRow({ idempotencyKey: "card_refund_failed_later_re_0", stripeKeyPrefix: "card_refund_failed_later_re_0" })], closes: 1 });
+    expect(await keep(tx, retry, { cutoffSeconds: Number.POSITIVE_INFINITY })).toMatchObject({ debt: { outcome: "raised-after-paid-another-way" } });
+    expect(inserted(tx)).toMatchObject({ attempts: MAX_PAYMENT_RECOVERY_ATTEMPTS });
+  });
+
+  it("an open row that counted it is re-planned as before: no close can be on it, and none is read", async () => {
+    const tx = fakeTx({ rows: [row({ allocationPlan: [{ paymentTransactionId: "txn-1", amountCents: 4_000, madeRefundId: "re_1" }] })], closes: 1 });
+    expect(await keep(tx)).toMatchObject({ debt: { outcome: "re-planned" } });
+    expect(tx.manualRefundTask.count).not.toHaveBeenCalled();
+  });
+
+  it("a refund that names no booking is not resent, as before, and reads no close", async () => {
+    const tx = fakeTx({ rows: [closedRow()], closes: 1 });
+    expect(await keep(tx, { ...REFUND, metadata: {} })).toMatchObject({ debt: { outcome: "not-resent" } });
+    expect(tx.manualRefundTask.count).not.toHaveBeenCalled();
+  });
+
+  // #4210 review (F1): two edits of one reason send the same metadata, and an edit door raises its row only
+  // after its inline attempt throws - so neither row can fill a slice with a refund made before it.
+  it("MUTATION (F1): two rows send what it carries and it fills neither: the closed one still holds it", async () => {
+    const AFTER = new Date("2026-06-20T00:00:20.000Z");
+    const edit = (id: string, key: string, over: Partial<Row> = {}) => row({ id, idempotencyKey: key, createdAt: AFTER, ...over });
+    const r1 = edit("op-r1", "payment_recovery_modification_refund_mod-1", { status: "SUCCEEDED", attempts: 5, nextRetryAt: null, succeededAt: new Date("2026-06-20T00:00:30.000Z") });
+    const r2 = edit("op-r2", "payment_recovery_modification_refund_mod-2", { status: "SUCCEEDED", attempts: 1, nextRetryAt: null, succeededAt: new Date("2026-06-20T00:00:40.000Z") });
+    const metadata = cardRefundOperationRefundMetadata(r1);
+    expect(cardRefundOperationRefundMetadata(r2)).toEqual(metadata);
+    const tx = fakeTx({ rows: [r1, r2], closedRowIds: ["op-r1"] });
+    expect(await keep(tx, { ...REFUND, metadata })).toMatchObject({ debt: { outcome: "raised-after-paid-another-way" } });
+    expect(inserted(tx)).toMatchObject({ attempts: MAX_PAYMENT_RECOVERY_ATTEMPTS, allocationPlan: [expect.objectContaining({ madeByOperationId: null })] });
+    // With no close on either, unchanged: live.
+    const open = fakeTx({ rows: [r1, r2], closedRowIds: [] });
+    expect(await keep(open, { ...REFUND, metadata })).toMatchObject({ debt: { outcome: "raised" } });
+  });
+
+  it("MUTATION (C2): recorded after the close, it fills no slice: held through the row that sent it", async () => {
+    const tx = fakeTx({ rows: [closedRow()], closedRowIds: ["op-cancel"] });
+    const LATER = new Date("2026-06-20T00:01:00.000Z");
+    tx.paymentRefund.findMany = vi.fn(async () => [
+      { stripeRefundId: "re_1", paymentTransactionId: "txn-1", amountCents: 4_000, status: "failed", createdAt: LATER, stripeCreatedAt: LATER },
+    ]);
+    expect(await keep(tx)).toMatchObject({ debt: { outcome: "raised-after-paid-another-way" } });
+    expect(inserted(tx)).toMatchObject({ attempts: MAX_PAYMENT_RECOVERY_ATTEMPTS });
+  });
+
+  it("a second observer of the same refund writes nothing, so nothing is alerted twice", async () => {
+    const tx = fakeTx({ rows: [closedRow()], closes: 1, inserted: 0 });
+    expect(await keep(tx)).toEqual({});
   });
 });

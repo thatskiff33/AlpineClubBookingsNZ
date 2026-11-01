@@ -10,7 +10,7 @@ const mocks = vi.hoisted(() => {
   return {
     tx,
     prisma: {
-      paymentTransaction: { findFirst: vi.fn() },
+      paymentTransaction: { findFirst: vi.fn(), findMany: vi.fn() },
       payment: { findMany: vi.fn() },
       $transaction: vi.fn(),
     },
@@ -43,7 +43,7 @@ import {
   invoice paid, the card payment cancelled first, and the money written as bank cash.
 */
 const NOW = new Date("2026-07-01T00:00:00.000Z");
-const ask = { id: "ask-1", paymentId: "pay-1", amountCents: 4000, stripePaymentIntentId: "pi_1" };
+const ask = { id: "ask-1", paymentId: "pay-1", amountCents: 4000, carriedAskCents: 0, stripePaymentIntentId: "pi_1" };
 
 const payment = {
   id: "pay-1",
@@ -76,7 +76,7 @@ beforeEach(() => {
 });
 
 describe("closeCreditReleaseAsksPaidInXero", () => {
-  it("only looks at uncollected asks on bookings that can still be paid, holding an unpaid credit-release request that carries nothing", async () => {
+  it("only looks at uncollected asks on bookings that can still be paid, holding an unpaid credit-release request", async () => {
     await closeCreditReleaseAsksPaidInXero({ deps: deps(), now: NOW });
     const where = mocks.prisma.payment.findMany.mock.calls[0]![0].where;
     expect(where).toMatchObject({
@@ -90,7 +90,6 @@ describe("closeCreditReleaseAsksPaidInXero", () => {
       kind: PaymentTransactionKind.ADDITIONAL,
       reason: CREDIT_RELEASE_ASK_REASON,
       withdrawnAt: null,
-      carriedAskCents: 0,
     });
     // The row closed is the one the payment's summary points at, and only an unpaid one.
     const rowWhere = mocks.prisma.paymentTransaction.findFirst.mock.calls[0]![0].where;
@@ -120,6 +119,48 @@ describe("closeCreditReleaseAsksPaidInXero", () => {
       expect.objectContaining({ action: "payment.credit_release_ask.closed_paid_in_xero" }),
       mocks.tx,
     );
+  });
+
+  describe("a request that carried earlier ones (#4253 release 2, INV-ADDPAY-049)", () => {
+    const carrying = { ...ask, amountCents: 9000, carriedAskCents: 5000 };
+    const row = (id: string, reason: string | null, carriedAskCents = 0) => ({ id, reason, carriedAskCents, withdrawnAt: null });
+
+    it("closes one that carried only an earlier released-credit request, writing its whole amount as cash", async () => {
+      mocks.prisma.paymentTransaction.findFirst.mockResolvedValue(carrying);
+      mocks.prisma.paymentTransaction.findMany.mockResolvedValue([
+        row("ask-1", CREDIT_RELEASE_ASK_REASON, 5000),
+        row("ask-0", CREDIT_RELEASE_ASK_REASON),
+      ]);
+      expect(await closeCreditReleaseAsksPaidInXero({ deps: deps(), now: NOW })).toEqual({ closed: 1, left: 0 });
+      // The fence pins the row's own carried figure.
+      expect(mocks.tx.paymentTransaction.updateMany.mock.calls[0]![0].where).toMatchObject({ id: "ask-1", carriedAskCents: 5000 });
+      expect(mocks.recordBank).toHaveBeenCalledWith(expect.objectContaining({ amountCents: 9000 }));
+    });
+
+    it("leaves one that carried an edit: part of it is owed on another invoice", async () => {
+      mocks.prisma.paymentTransaction.findFirst.mockResolvedValue(carrying);
+      mocks.prisma.paymentTransaction.findMany.mockResolvedValue([
+        row("ask-1", CREDIT_RELEASE_ASK_REASON, 5000),
+        row("ask-0", "booking_modification"),
+      ]);
+      const d = deps();
+      expect(await closeCreditReleaseAsksPaidInXero({ deps: d, now: NOW })).toEqual({ closed: 0, left: 1 });
+      expect(d.readInvoiceBalance).not.toHaveBeenCalled();
+      expect(d.cancelIntent).not.toHaveBeenCalled();
+    });
+
+    it("leaves one whose carried rows are not all in hand, or that is not the newest row", async () => {
+      mocks.prisma.paymentTransaction.findFirst.mockResolvedValue(carrying);
+      mocks.prisma.paymentTransaction.findMany.mockResolvedValue([row("ask-1", CREDIT_RELEASE_ASK_REASON, 5000)]);
+      expect(await closeCreditReleaseAsksPaidInXero({ deps: deps(), now: NOW })).toEqual({ closed: 0, left: 1 });
+      mocks.prisma.paymentTransaction.findMany.mockResolvedValue([
+        row("cash-1", null),
+        row("ask-1", CREDIT_RELEASE_ASK_REASON, 5000),
+        row("ask-0", CREDIT_RELEASE_ASK_REASON),
+      ]);
+      expect(await closeCreditReleaseAsksPaidInXero({ deps: deps(), now: NOW })).toEqual({ closed: 0, left: 1 });
+      expect(mocks.recordBank).not.toHaveBeenCalled();
+    });
   });
 
   it("leaves a request alone while Xero still shows the invoice open, and never cancels its card payment", async () => {

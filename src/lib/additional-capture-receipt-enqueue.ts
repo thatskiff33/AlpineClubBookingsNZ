@@ -20,11 +20,17 @@
  * this capture in any status but CANCELLED is found and returned, never a
  * second queued beside it.
  *
- * Not for a cancelled booking (its cancellation clears the invoice; a kept
- * capture there is a separate issue) or a booking paid by internet banking
- * (that settlement is the treasurer's, never a Stripe receipt).
+ * Not for a booking paid by internet banking (that settlement is the
+ * treasurer's, never a Stripe receipt), nor for a cancelled booking - save
+ * one case (#4324, `INV-PAY-144`): a late capture a treasurer KEPT whose
+ * change the primary invoice bills, queued by the keep's one decision
+ * (`queueKeptLateCaptureRecord`, `keptLateCapture`) on its own transaction,
+ * which holds the approval task's row; under the anchor lock the task is read
+ * again and must still be DISMISSED. Every other caller on a cancelled
+ * booking - the release from a replayed webhook, say - finds the kept
+ * capture's row (`already-queued`) or is refused, so the keep decides it once.
  */
-import { PaymentSource } from "@prisma/client";
+import { PaymentSource, type Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { CAPTURED_TRANSACTION_STATUS_LIST, isCapturedTransactionStatus } from "@/lib/payment-transaction-status";
 import { LEDGER_ROWS_OLDEST_FIRST } from "@/lib/payment-ledger-order";
@@ -34,6 +40,7 @@ import { XERO_OUTBOX_ADDITIONAL_CAPTURE_RECEIPT_TYPE } from "@/lib/additional-ca
 import { additionalCaptureReceiptKey } from "@/lib/additional-capture-xero-receipt";
 import { readCaptureRecorder } from "@/lib/additional-capture-recorder";
 import { captureChangeId } from "@/lib/additional-capture-receipt-link";
+import { keptCaptureAnchorId, lateCaptureStillKept } from "@/lib/kept-late-capture-change-receipt";
 import type { PrimaryInvoiceFeeAtLink } from "@/lib/xero-primary-invoice-fee-at-link";
 
 export type AdditionalCaptureReceiptEnqueueResult =
@@ -46,10 +53,13 @@ export type AdditionalCaptureReceiptEnqueueResult =
         | "not-a-change-card-capture"
         | "no-primary-invoice"
         | "booking-cancelled"
+        | "capture-not-kept"
+        | "no-unpaid-change-invoice"
         | "not-a-card-booking"
         | "recorded-by-primary-invoice"
         | "recorded-by-supplementary-invoice"
-        | "recorded-by-credit-release-sweep";
+        | "recorded-by-credit-release-sweep"
+        | "recorded-by-kept-late-capture-invoice";
     };
 
 /** The outbox row shape, shared with the repair tool's read of it. */
@@ -63,9 +73,21 @@ export const ADDITIONAL_CAPTURE_RECEIPT_OPERATION = {
 
 export async function enqueueAdditionalCaptureReceiptOperation(
   paymentIntentId: string,
-  options?: { createdByMemberId?: string | null },
+  options?: {
+    createdByMemberId?: string | null;
+    /**
+     * #4324: the caller's transaction - the keep's decision, holding the
+     * approval task's row - in place of one of this call's own.
+     */
+    store?: Prisma.TransactionClient;
+    /** #4324: a kept late capture on a cancelled booking (`queueKeptLateCaptureRecord` only). */
+    keptLateCapture?: boolean;
+    /** Follow a change-invoice release only while its unpaid invoice still bills this capture. */
+    requireUnpaidChangeInvoice?: true;
+  },
 ): Promise<AdditionalCaptureReceiptEnqueueResult> {
-  const transaction = await prisma.paymentTransaction.findUnique({
+  const db = options?.store ?? prisma;
+  const transaction = await db.paymentTransaction.findUnique({
     where: { stripePaymentIntentId: paymentIntentId },
     select: {
       id: true,
@@ -90,20 +112,36 @@ export async function enqueueAdditionalCaptureReceiptOperation(
   const { payment } = transaction;
   const primaryInvoiceId = payment.xeroInvoiceId;
   if (!primaryInvoiceId) return { outcome: "not-eligible", reason: "no-primary-invoice" };
-  if (payment.booking.status === "CANCELLED") return { outcome: "not-eligible", reason: "booking-cancelled" };
+  const key = additionalCaptureReceiptKey(paymentIntentId);
+  const cancelled = payment.booking.status === "CANCELLED";
+  if (cancelled && !options?.keptLateCapture) {
+    // #4324: a replayed release after the keep queued the receipt answers it.
+    const queued = await db.xeroSyncOperation.findFirst({
+      where: { correlationKey: key, status: { not: "CANCELLED" } },
+      select: { id: true },
+    });
+    return queued
+      ? { outcome: "already-queued", queueOperationId: queued.id }
+      : { outcome: "not-eligible", reason: "booking-cancelled" };
+  }
   if (payment.source !== PaymentSource.STRIPE) return { outcome: "not-eligible", reason: "not-a-card-booking" };
 
-  const key = additionalCaptureReceiptKey(paymentIntentId);
   // Round 7: the change its stamp or its review charge's reason names.
   const changeId = captureChangeId(transaction);
-  return prisma.$transaction(async (tx) => {
-    await lockSupplementaryInvoiceAnchor(tx, changeId ?? payment.bookingId);
+  const decide = async (tx: Prisma.TransactionClient): Promise<AdditionalCaptureReceiptEnqueueResult> => {
+    await lockSupplementaryInvoiceAnchor(tx, keptCaptureAnchorId(transaction, payment.bookingId));
     const existing = await tx.xeroSyncOperation.findFirst({
       where: { correlationKey: key, status: { not: "CANCELLED" } },
       orderBy: { createdAt: "desc" },
       select: { id: true },
     });
     if (existing) return { outcome: "already-queued" as const, queueOperationId: existing.id };
+    if (cancelled) {
+      // #4324: still kept, read under the lock the receipt's worker reads it under.
+      if (!(await lateCaptureStillKept(tx, paymentIntentId))) {
+        return { outcome: "not-eligible" as const, reason: "capture-not-kept" as const };
+      }
+    }
     const recorder = await readCaptureRecorder(
       {
         bookingId: payment.bookingId,
@@ -113,14 +151,14 @@ export async function enqueueAdditionalCaptureReceiptOperation(
       },
       tx,
     );
-    if (recorder.kind === "primary-invoice") {
-      return { outcome: "not-eligible" as const, reason: "recorded-by-primary-invoice" as const };
+    if (recorder.kind !== "receipt") {
+      return { outcome: "not-eligible" as const, reason: `recorded-by-${recorder.kind}` as const };
     }
-    if (recorder.kind === "supplementary-invoice") {
-      return { outcome: "not-eligible" as const, reason: "recorded-by-supplementary-invoice" as const };
-    }
-    if (recorder.kind === "credit-release-sweep") {
-      return { outcome: "not-eligible" as const, reason: "recorded-by-credit-release-sweep" as const };
+    // A release losing another caller's refusal can say already-released.
+    // Under this same anchor, require the recorder's live unpaid change target;
+    // falling back to the primary would pay an invoice that never billed it.
+    if (options?.requireUnpaidChangeInvoice && recorder.target?.kind !== "CHANGE_INVOICE") {
+      return { outcome: "not-eligible", reason: "no-unpaid-change-invoice" };
     }
     const operation = await startXeroSyncOperation({
       ...ADDITIONAL_CAPTURE_RECEIPT_OPERATION,
@@ -139,7 +177,8 @@ export async function enqueueAdditionalCaptureReceiptOperation(
       store: tx,
     });
     return { outcome: "queued" as const, queueOperationId: operation.id };
-  });
+  };
+  return options?.store ? decide(options.store) : prisma.$transaction(decide);
 }
 
 /**

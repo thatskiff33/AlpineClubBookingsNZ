@@ -2,6 +2,8 @@ import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 import { CREDENTIAL_SYSTEM_ACTORS } from "@/lib/integration-credential-actor";
+import { blankLiterals } from "./support/strip-comments";
+import { balancedBrackets } from "./support/balanced-brackets";
 
 /*
   #2720 — the credential blast-radius list has ONE home, and it is current.
@@ -81,7 +83,9 @@ function readRepoFile(relativePath: string): string {
 
 /** The body of a `const NAME: … = { … };` object literal, by brace matching. */
 function objectLiteralBody(source: string, name: string): string {
-  const declaration = source.indexOf(`const ${name}`);
+  // Found over masked text, so a mention in a comment is not the declaration.
+  const structure = blankLiterals(source);
+  const declaration = structure.indexOf(`const ${name}`);
   if (declaration === -1) {
     throw new Error(
       `${CREDENTIALS_ROUTE} no longer declares ${name}. That object is the ` +
@@ -89,16 +93,8 @@ function objectLiteralBody(source: string, name: string): string {
         "was renamed, rename it here too rather than deleting the check.",
     );
   }
-  const open = source.indexOf("{", declaration);
-  let depth = 0;
-  for (let index = open; index < source.length; index += 1) {
-    if (source[index] === "{") depth += 1;
-    else if (source[index] === "}") {
-      depth -= 1;
-      if (depth === 0) return source.slice(open + 1, index);
-    }
-  }
-  throw new Error(`${name} in ${CREDENTIALS_ROUTE} has no closing brace`);
+  const open = structure.indexOf("{", declaration);
+  return balancedBrackets(source, open, structure).text.slice(1, -1);
 }
 
 /** `localName -> module specifier`, for every named import in `source`. */

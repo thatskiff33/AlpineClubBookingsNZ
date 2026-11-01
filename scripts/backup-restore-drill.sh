@@ -210,6 +210,16 @@ prepare_source() {
 # magic bytes so both the local gzipped plain dump and an operator-supplied
 # artifact restore through the same code path.
 # --------------------------------------------------------------------------- #
+strip_dump_ownership_and_privileges() {
+  # Reuse the backup validator's streaming filter, including its COPY/routine
+  # handling. Node 24 (the pinned runtime) reads this dependency-free TS module.
+  node --input-type=module -e '
+    import { pipeline } from "node:stream/promises";
+    import { createOwnershipAndPrivilegeStripStream } from "./src/lib/backup-restore-validation.ts";
+    await pipeline(process.stdin, createOwnershipAndPrivilegeStripStream(), process.stdout);
+  '
+}
+
 restore_dump() {
   local path="$1" db="$2"
 
@@ -225,13 +235,15 @@ restore_dump() {
   if [[ "$magic2" == "1f8b" ]]; then
     log "Restoring gzipped plain-SQL dump into ${db}"
     gunzip -c "$path" \
+      | strip_dump_ownership_and_privileges \
       | docker exec -i -u postgres "$CONTAINER" psql -v ON_ERROR_STOP=1 -qX -d "$db" >/dev/null
   elif head -c 5 "$path" | grep -q '^PGDMP'; then
     log "Restoring custom-format dump into ${db} (pg_restore)"
-    docker exec -i -u postgres "$CONTAINER" pg_restore --no-owner -d "$db" >/dev/null < "$path"
+    docker exec -i -u postgres "$CONTAINER" pg_restore --no-owner --no-acl --exit-on-error -d "$db" >/dev/null < "$path"
   else
     log "Restoring plain-SQL dump into ${db}"
-    docker exec -i -u postgres "$CONTAINER" psql -v ON_ERROR_STOP=1 -qX -d "$db" >/dev/null < "$path"
+    strip_dump_ownership_and_privileges < "$path" \
+      | docker exec -i -u postgres "$CONTAINER" psql -v ON_ERROR_STOP=1 -qX -d "$db" >/dev/null
   fi
 }
 

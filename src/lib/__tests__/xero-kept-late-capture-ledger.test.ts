@@ -24,12 +24,22 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  *    on its way), else the payment's invoice, dated its `documentDate`, and
  *    settled from the Stripe account - the caps `xero-booking-invoice.test.ts`
  *    pins;
- *  - the change payment's supplementary invoice (case e2): released as the
- *    gross ask paid from Stripe, which `xero-supplementary-invoices.test.ts` pins;
+ *  - the change payment's supplementary invoice (case e2): a WAITING one naming
+ *    the capture, or one the reaper retired `STALE_WAITING_PAYMENT` (re-queued
+ *    from that row), is released as the gross ask paid from Stripe, which
+ *    `xero-supplementary-invoices.test.ts` pins. #4324: with none waiting the
+ *    model releases NOTHING, as the real release then answers `none-queued`
+ *    on a cancelled booking - it used to invent a paid invoice, which hid
+ *    that a kept change capture went unrecorded;
  *  - (#3924 round 6) the "Paid another way" close's own writes - the money on
  *    the payment, its record, and the one Xero row it queues - whose order and
  *    locks `card-refund-paid-another-way.test.ts` pins. What it queues is the
  *    REAL enqueue, and the receipt's worker and the cash evidence are real.
+ *
+ * #4324 (`INV-PAY-144`): a kept change capture whose primary invoice bills the
+ * change is recorded by the REAL receipt enqueue and worker
+ * (`recordAdditionalCaptureReceipt`) against a fake Xero whose AmountDue is
+ * read from the ledger (cases e3, e4).
  */
 
 type Doc =
@@ -66,7 +76,11 @@ const h = vi.hoisted(() => {
       if ("not" in e) return e.not === null ? actual !== null && actual !== undefined : actual !== e.not;
       if ("path" in e) {
         const payload = (actual ?? {}) as Record<string, unknown>;
-        return payload[(e.path as string[])[0]] === e.equals;
+        const at = payload[(e.path as string[])[0]];
+        if ("array_contains" in e) {
+          return Array.isArray(at) && (e.array_contains as unknown[]).every((item) => at.includes(item));
+        }
+        return at === e.equals;
       }
     }
     return actual === expected;
@@ -130,6 +144,7 @@ const h = vi.hoisted(() => {
     xeroObjectLink: delegate("xeroObjectLink"),
     xeroSyncOperation: delegate("xeroSyncOperation"),
     paymentRecoveryOperation: delegate("paymentRecoveryOperation"),
+    bookingModification: delegate("bookingModification"),
     $executeRaw: async () => 0,
   };
   db.$transaction = async (fn: (tx: unknown) => Promise<unknown>) => fn(db);
@@ -156,6 +171,7 @@ vi.mock("@/lib/logger", () => ({
   default: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
 vi.mock("@/lib/audit", () => ({ logAudit: vi.fn() }));
+vi.mock("@/lib/email", () => ({ sendAdminXeroSyncErrorAlert: vi.fn() }));
 vi.mock("@/lib/xero-token-store", () => ({ isXeroConnected: async () => false }));
 vi.mock("@/lib/xero-sync", () => ({
   buildXeroIdempotencyKey: (...parts: unknown[]) => parts.join(":"),
@@ -289,25 +305,35 @@ vi.mock("@/lib/stripe", () => ({
     return { created: 1781053200, latest_charge: { created: 1781053200 } };
   },
 }));
-vi.mock("@/lib/xero-supplementary-invoice-late-capture", () => ({
+vi.mock("@/lib/xero-supplementary-invoice-late-capture", async (importOriginal) => ({
+  // The REAL retired codes the keep's evidence reads (#4324).
+  RETIRED_CODES_ANSWERING_CAPTURE: (
+    (await importOriginal()) as typeof import("@/lib/xero-supplementary-invoice-late-capture")
+  ).RETIRED_CODES_ANSWERING_CAPTURE,
+  // The approval task decides (`decideLateCapture`'s task arm), as every late capture here has one.
+  lateCaptureRefundState: async ({ paymentIntentId }: { paymentIntentId: string }) => {
+    const task = h.table("manualRefundTask").find((r) => r.lateCaptureApprovalIntentId === paymentIntentId);
+    return task?.status === "DISMISSED" ? "kept" : task?.status === "OPEN" ? "awaiting-decision" : "refunded";
+  },
   // MODEL of the change's supplementary invoice (case e2): see the docblock.
   releaseXeroSupplementaryInvoiceForCapturedPaymentIntent: async (paymentIntentId: string) => {
     const capture = h.table("paymentTransaction").find((r) => r.stripePaymentIntentId === paymentIntentId)!;
+    // A waiting one is released; one the reaper retired (`STALE_WAITING_PAYMENT`) is re-queued from that row.
+    const waiting = h
+      .table("xeroSyncOperation")
+      .find(
+        (r) =>
+          r.queueType === "SUPPLEMENTARY_INVOICE" &&
+          (r.status === "WAITING_PAYMENT" || (r.status === "CANCELLED" && r.lastErrorCode === "STALE_WAITING_PAYMENT")) &&
+          (r.requestPayload as { paymentIntentId?: string }).paymentIntentId === paymentIntentId,
+      );
+    if (!waiting) return { released: 0, queueOperationIds: [], outcome: "none-queued" };
     const invoiceId = h.id("inv");
-    h.table("xeroSyncOperation").push({
-      id: h.id("op"),
-      direction: "OUTBOUND",
-      entityType: "INVOICE",
-      operationType: "CREATE",
-      queueType: "SUPPLEMENTARY_INVOICE",
-      status: "SUCCEEDED",
-      xeroObjectId: invoiceId,
-      manuallyResolvedAt: null,
-      requestPayload: { paymentIntentId },
-    });
+    waiting.status = "SUCCEEDED";
+    waiting.xeroObjectId = invoiceId;
     h.state.ledger.push({ kind: "invoice", id: invoiceId, cents: capture.amountCents as number, date: "today" });
     h.state.ledger.push({ kind: "payment", invoiceId, cents: capture.amountCents as number, date: "today" });
-    return { released: 1, queueOperationIds: ["op"], outcome: "released" };
+    return { released: 1, queueOperationIds: [waiting.id], outcome: "released" };
   },
 }));
 
@@ -339,6 +365,8 @@ import { planCardRefundFromLedger } from "@/lib/payment-transactions";
 import { lateCaptureOwnChargeSlice } from "@/lib/late-capture-own-charge-refund";
 import { recordAndNoteRepairedLateCaptureRefunds } from "@/lib/late-capture-repair-refund-record";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
+import { recordAdditionalCaptureReceipt } from "@/lib/additional-capture-xero-receipt";
+import { createXeroPaymentForInvoice } from "@/lib/xero-invoice-payments";
 import type { ClubTimeZone } from "@/lib/club-time";
 import { xeroClaim } from "@/lib/__tests__/helpers/xero-claim";
 
@@ -352,32 +380,90 @@ const BOOKING = "booking_1";
 
 const MEMBER = { firstName: "Ana", lastName: "Member", email: "ana@example.test" };
 
+const CHANGE = "mod_change";
+
 function seed(options: {
   kind?: "PRIMARY" | "ADDITIONAL";
   primaryInvoice?: { cents: number } | null;
+  /**
+   * #4324: a PAID cancel's primary invoice - billed, part or fully paid, and
+   * never cleared (`booking-cancel.ts` clears only a never-captured one).
+   */
+  paidPrimary?: { billedCents: number; paidCents: number };
   cents?: number;
   taskRaisedAt?: Date;
+  /** #4324: the booking change the capture pays for, and what Xero shows of it. */
+  change?: {
+    settledAgainstPrimary?: boolean;
+    invoice?: "waiting" | "withdrawn" | "retired";
+    /** #4324: the reaper's stamp on a `retired` invoice naming this capture. */
+    retiredCode?: string;
+  };
 }) {
   const cents = options.cents ?? 24000;
-  h.table("booking").push({ id: BOOKING, member: MEMBER, organisation: null, memberId: "m1" });
+  const bookingRow = { id: BOOKING, status: "CANCELLED", member: MEMBER, organisation: null, memberId: "m1" };
+  h.table("booking").push(bookingRow);
   const primary = options.primaryInvoice ?? null;
-  h.table("payment").push({
+  const paidPrimary = options.paidPrimary ?? null;
+  const paymentRow = {
     id: PAYMENT,
     bookingId: BOOKING,
     source: "STRIPE",
+    status: paidPrimary ? "SUCCEEDED" : "PENDING",
+    amountCents: paidPrimary?.paidCents ?? 0,
+    creditAppliedCents: 0,
     refundedAmountCents: 0,
-    xeroInvoiceId: primary ? "inv_primary" : null,
+    xeroInvoiceId: primary || paidPrimary ? "inv_primary" : null,
     xeroRefundCreditNoteId: null,
     updatedAt: CAPTURED_AT,
     booking: { member: MEMBER, organisation: null },
-  });
+  };
+  h.table("payment").push(paymentRow);
   if (primary) {
     // The booking's own invoice and the cancellation's clearing note, already
     // in Xero before the late capture: the code must leave them alone.
     h.state.ledger.push({ kind: "invoice", id: "inv_primary", cents: primary.cents, date: "2026-05-01", existing: true });
     h.state.ledger.push({ kind: "clearing-note", invoiceId: "inv_primary", cents: primary.cents, existing: true });
   }
-  h.table("paymentTransaction").push({
+  if (paidPrimary) {
+    h.state.ledger.push({ kind: "invoice", id: "inv_primary", cents: paidPrimary.billedCents, date: "2026-05-01", existing: true });
+    h.state.ledger.push({ kind: "payment", invoiceId: "inv_primary", cents: paidPrimary.paidCents, date: "2026-05-01" });
+  }
+  const change = options.change ?? null;
+  if (change) {
+    h.table("bookingModification").push({
+      id: CHANGE,
+      bookingId: BOOKING,
+      newData: change.settledAgainstPrimary ? { primaryInvoiceSettlement: { settledAgainstPrimaryInvoice: true } } : {},
+    });
+    if (change.invoice) {
+      h.table("xeroSyncOperation").push({
+        id: h.id("op"),
+        direction: "OUTBOUND",
+        entityType: "INVOICE",
+        operationType: "CREATE",
+        queueType: "SUPPLEMENTARY_INVOICE",
+        localModel: "BookingModification",
+        localId: CHANGE,
+        status: change.invoice === "waiting" ? "WAITING_PAYMENT" : "CANCELLED",
+        lastErrorCode:
+          change.invoice === "waiting"
+            ? null
+            : change.invoice === "retired"
+              ? (change.retiredCode ?? "STALE_WAITING_PAYMENT")
+              : "WITHDRAWN_BY_OFFICER",
+        manuallyResolvedAt: null,
+        requestPayload: {
+          queueType: "SUPPLEMENTARY_INVOICE",
+          bookingId: BOOKING,
+          bookingModificationId: CHANGE,
+          // A withdrawn ask names an intent since superseded; a waiting or retired one names this capture.
+          paymentIntentId: change.invoice === "withdrawn" ? "pi_superseded" : INTENT,
+        },
+      });
+    }
+  }
+  const captureRow: Row = {
     id: "txn_late",
     paymentId: PAYMENT,
     kind: options.kind ?? "PRIMARY",
@@ -386,7 +472,12 @@ function seed(options: {
     status: "SUCCEEDED",
     amountCents: cents,
     refundedAmountCents: 0,
-  });
+    bookingModificationId: change ? CHANGE : null,
+    reason: null,
+  };
+  // The ledger row's relation, as the receipt's selects read it.
+  Object.defineProperty(captureRow, "payment", { get: () => ({ ...paymentRow, booking: bookingRow }), enumerable: false });
+  h.table("paymentTransaction").push(captureRow);
   h.table("manualRefundTask").push({
     id: TASK,
     bookingId: BOOKING,
@@ -455,13 +546,46 @@ async function approve() {
   await queueLateCaptureRefundCreditNote({ paymentId: PAYMENT, paymentIntentId: INTENT });
 }
 
-/** The outbox: every PENDING kept-capture row, then the refund notes (model). */
+/** #4324: what Xero shows due on an invoice, from the documents sent. */
+function amountDueCents(invoiceId: string) {
+  let due = 0;
+  for (const doc of h.state.ledger) {
+    if (doc.kind === "invoice" && doc.id === invoiceId) due += doc.cents;
+    if ((doc.kind === "payment" || doc.kind === "clearing-note") && doc.invoiceId === invoiceId) due -= doc.cents;
+  }
+  return due;
+}
+
+/** #4324: the receipt worker's provider seam - a fake Xero reading the ledger, and the mocked payment writer. */
+const receiptProviders = {
+  getAuthenticatedXeroClient: async () => ({
+    tenantId: "tenant",
+    xero: {
+      accountingApi: {
+        getInvoice: async (_t: string, invoiceId: string) => ({
+          body: { invoices: [{ invoiceID: invoiceId, status: "AUTHORISED", amountDue: amountDueCents(invoiceId) / 100, payments: [] }] },
+        }),
+      },
+    },
+  }),
+  callXeroApi: (fn: () => unknown) => fn(),
+  createXeroPaymentForInvoice,
+  readStripeCaptureDocumentDate: async () => CAPTURE_DAY,
+} as never;
+
+/** The outbox: every PENDING kept-capture row and (#4324) receipt row, then the refund notes (model). */
 async function runOutbox() {
   for (const row of h.table("xeroSyncOperation").filter(
     (r) => r.queueType === "KEPT_LATE_CAPTURE_INVOICE" && r.status === "PENDING",
   )) {
     row.status = "RUNNING";
     await createXeroKeptLateCaptureInvoice({ syncOperation: xeroClaim(row.id) }).catch(() => undefined);
+  }
+  for (const row of h.table("xeroSyncOperation").filter(
+    (r) => r.queueType === "ADDITIONAL_CAPTURE_RECEIPT" && r.status === "PENDING",
+  )) {
+    row.status = "RUNNING";
+    await recordAdditionalCaptureReceipt({ syncOperation: xeroClaim(row.id) }, receiptProviders).catch(() => undefined);
   }
   for (const note of h.table("xeroSyncOperation").filter(
     (r) => r.queueType === "REFUND_CREDIT_NOTE" && r.status === "PENDING",
@@ -641,13 +765,43 @@ describe("a kept late capture is counted once in Xero", () => {
   });
 
   it("(e2) a change payment on an invoiced booking keeps its own supplementary invoice, and a dashboard refund nets it", async () => {
-    seed({ kind: "ADDITIONAL", cents: 2500, primaryInvoice: { cents: 30000 } });
+    seed({ kind: "ADDITIONAL", cents: 2500, primaryInvoice: { cents: 30000 }, change: { invoice: "waiting" } });
     await dashboardRefund(500);
     await keep();
     await runOutbox();
     expect(books()).toEqual({ income: 2000, stripe: 2000, receivable: 0 });
     expect(books().stripe).toBe(realStripe());
   });
+
+  /**
+   * #4324 (`INV-PAY-144`): a change invoice the reaper RETIRED still answers
+   * the capture it names (`RETIRED_CODES_ANSWERING_CAPTURE`), though every row
+   * the change has is CANCELLED - so the keep leaves it to the late-success
+   * release and never raises the kept-capture invoice or a receipt beside it.
+   */
+  const keptRows = (queueType: string) => h.table("xeroSyncOperation").filter((r) => r.queueType === queueType);
+  it("MUTATION (e2) a change invoice retired STALE_WAITING_PAYMENT is re-queued by the release and records the capture once", async () => {
+    seed({ kind: "ADDITIONAL", cents: 2500, primaryInvoice: { cents: 30000 }, change: { invoice: "retired" } });
+    await keep();
+    await runOutbox();
+    expect(books()).toEqual({ income: 2500, stripe: 2500, receivable: 0 });
+    expect(keptRows("KEPT_LATE_CAPTURE_INVOICE")).toHaveLength(0);
+    expect(keptRows("ADDITIONAL_CAPTURE_RECEIPT")).toHaveLength(0);
+    expect(keptRows("SUPPLEMENTARY_INVOICE")).toEqual([expect.objectContaining({ status: "SUCCEEDED" })]);
+  });
+
+  for (const retiredCode of ["STALE_WAITING_PAYMENT_CAPTURED", "STALE_WAITING_PAYMENT_COVERED"]) {
+    it(`MUTATION (e2) a change invoice retired ${retiredCode} is left to the release: no kept invoice and no receipt beside it`, async () => {
+      seed({ kind: "ADDITIONAL", cents: 2500, primaryInvoice: { cents: 30000 }, change: { invoice: "retired", retiredCode } });
+      await keep();
+      await runOutbox();
+      expect(keptRows("KEPT_LATE_CAPTURE_INVOICE")).toHaveLength(0);
+      expect(keptRows("ADDITIONAL_CAPTURE_RECEIPT")).toHaveLength(0);
+      expect(keptRows("SUPPLEMENTARY_INVOICE")).toEqual([
+        expect.objectContaining({ status: "CANCELLED", lastErrorCode: retiredCode }),
+      ]);
+    });
+  }
 
   for (const primaryInvoice of [null, { cents: 30000 }]) {
     const label = primaryInvoice ? "(f, b) cleared invoice" : "(f, a) no invoice";
@@ -753,6 +907,154 @@ describe("a kept late capture is counted once in Xero", () => {
 /**
  * #3635 round-3 (reviews `3635x-round3-accounting.md`, `3635x-round3-concurrency.md`).
  */
+/**
+ * #4324 (owner decision 25 Oct 2026, Q1 "split on the evidence";
+ * `INV-PAY-144`): a kept CHANGE capture on a paid-cancelled booking whose
+ * primary invoice exists. The paid cancel leaves the primary standing, so
+ * where it bills the change it still shows the change owing; the capture is
+ * then a payment on it (e3), never a second invoice. Where nothing bills the
+ * change it is the kept-capture invoice (e4).
+ */
+describe("#4324: a kept change capture on an invoiced, paid-cancelled booking is counted once", () => {
+  /** e3: $380 billed (the edit settled against the primary, #3980), $300 paid, $80 kept. */
+  const e3 = () =>
+    seed({ kind: "ADDITIONAL", cents: 8000, paidPrimary: { billedCents: 38000, paidCents: 30000 }, change: { settledAgainstPrimary: true } });
+  /** e4: $300 billed and paid; the change's own $80 invoice was withdrawn, so nothing bills it. */
+  const e4 = () =>
+    seed({ kind: "ADDITIONAL", cents: 8000, paidPrimary: { billedCents: 30000, paidCents: 30000 }, change: { invoice: "withdrawn" } });
+  const sent = () => h.state.ledger.filter((d) => !("existing" in d && d.existing) && !(d.kind === "payment" && d.date === "2026-05-01"));
+  const rows = (queueType: string) => h.table("xeroSyncOperation").filter((r) => r.queueType === queueType);
+
+  it("MUTATION (e3): pays the primary that bills the change - it is paid in full, and no kept invoice is raised", async () => {
+    e3();
+    await keep();
+    await runOutbox();
+    expect(books()).toEqual({ income: 38000, stripe: 38000, receivable: 0 });
+    expect(sent()).toEqual([expect.objectContaining({ kind: "payment", invoiceId: "inv_primary", cents: 8000, date: CAPTURE_DAY })]);
+    expect(rows("KEPT_LATE_CAPTURE_INVOICE")).toHaveLength(0);
+    expect(rows("ADDITIONAL_CAPTURE_RECEIPT")).toEqual([expect.objectContaining({ status: "SUCCEEDED" })]);
+    expect(await readLateCaptureXeroReceipt(INTENT)).toEqual({ kind: "recorded", invoiceId: "inv_primary" });
+  });
+
+  it("(e3) a change that never had a supplementary invoice is billed by the primary too", async () => {
+    seed({ kind: "ADDITIONAL", cents: 8000, paidPrimary: { billedCents: 38000, paidCents: 30000 }, change: {} });
+    await keep();
+    await runOutbox();
+    expect(books()).toEqual({ income: 38000, stripe: 38000, receivable: 0 });
+  });
+
+  it("(e3) a dashboard refund before the keep: the receipt, then its note - the Stripe account matches", async () => {
+    e3();
+    await dashboardRefund(8000);
+    await keep();
+    await runOutbox();
+    await runOutbox();
+    expect(books()).toEqual({ income: 30000, stripe: 30000, receivable: 0 });
+    expect(books().stripe).toBe(30000 + realStripe());
+    expect(refundNotes()).toEqual([expect.objectContaining({ cents: 8000, paymentIntentId: INTENT })]);
+  });
+
+  it("(e3) a dashboard refund after the receipt is in Xero is noted against it", async () => {
+    e3();
+    await keep();
+    await runOutbox();
+    await dashboardRefund(3000);
+    await runOutbox();
+    expect(books()).toEqual({ income: 35000, stripe: 35000, receivable: 0 });
+    expect(books().stripe).toBe(30000 + realStripe());
+  });
+
+  it("MUTATION (e3) kept, reopened and refunded BEFORE the send: the receipt is withdrawn, nothing records the capture, no Stripe-account refund is posted", async () => {
+    e3();
+    await keep();
+    reopen();
+    await approve();
+    await runOutbox();
+    expect(rows("ADDITIONAL_CAPTURE_RECEIPT")).toEqual([
+      expect.objectContaining({ status: "CANCELLED", lastErrorCode: "KEPT_LATE_CAPTURE_WITHDRAWN" }),
+    ]);
+    // Stripe holds the $300 the member paid; the primary still bills the
+    // refunded change, as the paid cancel left it before the late capture.
+    expect(books()).toEqual({ income: 38000, stripe: 30000, receivable: 8000 });
+    expect(refundNotes()).toHaveLength(0);
+    expect(await selfHealAfterGrace()).toBe(0);
+  });
+
+  it("(e3) kept, sent, then reopened and refunded AFTER the send: credited back by the refund note", async () => {
+    e3();
+    await keep();
+    await runOutbox();
+    reopen();
+    await approve();
+    await runOutbox();
+    expect(books()).toEqual({ income: 30000, stripe: 30000, receivable: 0 });
+    expect(books().stripe).toBe(30000 + realStripe());
+  });
+
+  it("MUTATION (e3) a re-keep after a reopen finds the receipt, and the capture is recorded once", async () => {
+    e3();
+    await keep();
+    reopen();
+    await keep();
+    await runOutbox();
+    expect(rows("ADDITIONAL_CAPTURE_RECEIPT")).toHaveLength(1);
+    expect(books()).toEqual({ income: 38000, stripe: 38000, receivable: 0 });
+  });
+
+  it("MUTATION (e4): nothing bills the change, so the kept-capture invoice records it", async () => {
+    e4();
+    await keep();
+    await runOutbox();
+    expect(books()).toEqual({ income: 38000, stripe: 38000, receivable: 0 });
+    expect(rows("ADDITIONAL_CAPTURE_RECEIPT")).toHaveLength(0);
+    expect(sent()).toEqual([
+      expect.objectContaining({ kind: "invoice", cents: 8000, date: CAPTURE_DAY }),
+      expect.objectContaining({ kind: "payment", cents: 8000, date: CAPTURE_DAY }),
+    ]);
+  });
+
+  it("(e4) a dashboard refund nets it, and reopen then approve before the send records nothing", async () => {
+    e4();
+    await dashboardRefund(2000);
+    await keep();
+    await runOutbox();
+    expect(books()).toEqual({ income: 36000, stripe: 36000, receivable: 0 });
+
+    h.state.ledger = [];
+    h.state.tables = {};
+    e4();
+    await keep();
+    reopen();
+    await approve();
+    await runOutbox();
+    expect(books()).toEqual({ income: 30000, stripe: 30000, receivable: 0 });
+  });
+
+  it("MUTATION (Q3): the repair tool records a historical keep once, however often it is applied", async () => {
+    e3();
+    task().status = "DISMISSED"; // kept before #4324: nothing was queued
+    const action = () => ({
+      key: `queue:kept-late-capture-record:${TASK}`,
+      bookingId: BOOKING,
+      type: "QUEUE_KEPT_LATE_CAPTURE_RECORD" as const,
+      description: "",
+      safeToAutoApply: true,
+      payload: { manualRefundTaskId: TASK, bookingId: BOOKING, paymentIntentId: INTENT },
+      status: "planned" as const,
+      resultMessage: null,
+    });
+    const deps = { prisma: h.db, planKeptLateCaptureXeroRecord };
+    for (let run = 0; run < 2; run += 1) {
+      const planned = action();
+      await applyActionsForPass([{ bookingId: BOOKING, actions: [planned] } as never], deps as never, false, CLUB_FORMAT_TEST, new Set());
+      expect(planned.status).toBe("queued");
+    }
+    await runOutbox();
+    expect(rows("ADDITIONAL_CAPTURE_RECEIPT")).toHaveLength(1);
+    expect(books()).toEqual({ income: 38000, stripe: 38000, receivable: 0 });
+  });
+});
+
 describe("round 3: the nightly self-heal, one note per capture, and the days the documents carry", () => {
   it("R1 (g, b): kept, reopened and refunded before the send, then the self-heal a day later - still nothing posted", async () => {
     seed({ primaryInvoice: { cents: 30000 } });

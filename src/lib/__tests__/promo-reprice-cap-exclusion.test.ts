@@ -1,6 +1,8 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { balancedBrackets } from "./support/balanced-brackets";
+import { blankLiterals } from "./support/strip-comments";
 
 // #2299 F1 — LIVE MONEY BUG.
 //
@@ -548,23 +550,7 @@ function readSource(relativePath: string) {
  * searching the whole file would pass even with the promo exclusion deleted.
  */
 function promoValidationCalls(source: string): Array<{ at: number; text: string }> {
-  const marker = "validateAndCalculatePromoDiscount(";
-  const calls: Array<{ at: number; text: string }> = [];
-  let from = source.indexOf(marker);
-  while (from !== -1) {
-    let depth = 0;
-    let index = from + marker.length - 1;
-    for (; index < source.length; index += 1) {
-      if (source[index] === "(") depth += 1;
-      else if (source[index] === ")") {
-        depth -= 1;
-        if (depth === 0) break;
-      }
-    }
-    calls.push({ at: from, text: source.slice(from, index + 1) });
-    from = source.indexOf(marker, index + 1);
-  }
-  return calls;
+  return callsOf(source, "validateAndCalculatePromoDiscount");
 }
 
 function promoValidationCallArguments(source: string): string[] {
@@ -573,24 +559,18 @@ function promoValidationCallArguments(source: string): string[] {
 
 /**
  * The text of every call to `name(` in a source, brackets balanced — used for
- * the shared re-price's own calls below (#3827).
+ * the shared re-price's own calls below (#3827). Calls are found over masked
+ * text, so a name in a comment or string is not a call.
  */
 function callsOf(source: string, name: string): Array<{ at: number; text: string }> {
   const marker = `${name}(`;
+  const structure = blankLiterals(source);
   const calls: Array<{ at: number; text: string }> = [];
-  let from = source.indexOf(marker);
+  let from = structure.indexOf(marker);
   while (from !== -1) {
-    let depth = 0;
-    let index = from + marker.length - 1;
-    for (; index < source.length; index += 1) {
-      if (source[index] === "(") depth += 1;
-      else if (source[index] === ")") {
-        depth -= 1;
-        if (depth === 0) break;
-      }
-    }
-    calls.push({ at: from, text: source.slice(from, index + 1) });
-    from = source.indexOf(marker, index + 1);
+    const { end } = balancedBrackets(source, from + marker.length - 1, structure);
+    calls.push({ at: from, text: source.slice(from, end + 1) });
+    from = structure.indexOf(marker, end + 1);
   }
   return calls;
 }

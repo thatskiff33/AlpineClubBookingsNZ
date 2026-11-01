@@ -53,9 +53,10 @@ import { describe, expect, it } from "vitest";
 // leaving a trailing comment alone rather than risk eating a `//` inside a
 // string literal. The shared scanner tracks string and template literals, so
 // that trade is no longer necessary and trailing comments are stripped too.
-import { stripComments } from "./support/strip-comments";
+import { blankLiterals, stripComments } from "./support/strip-comments";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
+import { balancedBrackets } from "./support/balanced-brackets";
 
 /**
  * The three readers of the booking policy set. All three take
@@ -101,27 +102,22 @@ function readRepoFile(relativePath: string): string {
   return readFileSync(path.resolve(process.cwd(), relativePath), "utf8");
 }
 
-/** Index of the `)` closing the `(` at `openIndex`, or -1. */
-function matchParen(source: string, openIndex: number): number {
-  let depth = 0;
-  for (let i = openIndex; i < source.length; i++) {
-    if (source[i] === "(") depth++;
-    else if (source[i] === ")") {
-      depth--;
-      if (depth === 0) return i;
-    }
-  }
-  return -1;
+/**
+ * Index of the `)` closing the `(` at `openIndex`. Throws when the parenthesis
+ * is unbalanced, so a callback this scan cannot read fails it instead of being
+ * dropped. `structure` is the masked text the index was found in.
+ */
+function matchParen(source: string, openIndex: number, structure: string): number {
+  return balancedBrackets(source, openIndex, structure).end;
 }
 
 /** `[start, end]` character spans of every transaction callback in one file. */
-function transactionSpans(code: string): Array<[number, number]> {
+function transactionSpans(code: string, structure: string): Array<[number, number]> {
   const spans: Array<[number, number]> = [];
   for (const opener of TX_OPENERS) {
     let index = -1;
-    while ((index = code.indexOf(opener, index + 1)) !== -1) {
-      const close = matchParen(code, index + opener.length - 1);
-      if (close > -1) spans.push([index, close]);
+    while ((index = structure.indexOf(opener, index + 1)) !== -1) {
+      spans.push([index, matchParen(code, index + opener.length - 1, structure)]);
     }
   }
   return spans;
@@ -141,17 +137,17 @@ const FUNCTION_DECLARATION = /^(?:export\s+)?(?:async\s+)?function\s+(\w+)\s*\(/
 function enclosingFunction(
   code: string,
   offset: number,
+  structure: string,
 ): { name: string; params: string } | null {
   FUNCTION_DECLARATION.lastIndex = 0;
   let best: { name: string; parenOpen: number } | null = null;
   let match: RegExpExecArray | null;
-  while ((match = FUNCTION_DECLARATION.exec(code))) {
+  while ((match = FUNCTION_DECLARATION.exec(structure))) {
     if (match.index > offset) break;
     best = { name: match[1], parenOpen: match.index + match[0].length - 1 };
   }
   if (!best) return null;
-  const close = matchParen(code, best.parenOpen);
-  if (close === -1) return null;
+  const close = matchParen(code, best.parenOpen, structure);
   return { name: best.name, params: code.slice(best.parenOpen, close + 1) };
 }
 
@@ -167,22 +163,8 @@ function declaresClientParameter(params: string): boolean {
 }
 
 /** Top-level (depth-0) argument count for a call whose `(` is at `openIndex`. */
-function argumentList(code: string, openIndex: number): string[] {
-  const close = matchParen(code, openIndex);
-  const inner = code.slice(openIndex + 1, close);
-  const args: string[] = [];
-  let depth = 0;
-  let current = "";
-  for (const ch of inner) {
-    if ("([{".includes(ch)) depth++;
-    else if (")]}".includes(ch)) depth--;
-    if (ch === "," && depth === 0) {
-      args.push(current);
-      current = "";
-    } else current += ch;
-  }
-  if (current.trim()) args.push(current);
-  return args.map((a) => a.trim()).filter((a) => a.length > 0);
+function argumentList(code: string, openIndex: number, structure: string): string[] {
+  return balancedBrackets(code, openIndex, structure).parts;
 }
 
 /** Every non-test source file under `src/`, as repo-relative POSIX paths. */
@@ -223,11 +205,14 @@ const CALL_SITES: CallSite[] = (() => {
     const raw = readRepoFile(file);
     if (!READERS.some((reader) => raw.includes(`${reader}(`))) continue;
     const code = stripComments(raw);
-    const spans = transactionSpans(code);
+    // Calls, openers and declarations are found over masked text: a name in a
+    // string is not a call and has no bracket for the reader to find.
+    const structure = blankLiterals(code);
+    const spans = transactionSpans(code, structure);
     const lines = code.split("\n");
     for (const reader of READERS) {
       let index = -1;
-      while ((index = code.indexOf(`${reader}(`, index + 1)) !== -1) {
+      while ((index = structure.indexOf(`${reader}(`, index + 1)) !== -1) {
         const line = code.slice(0, index).split("\n").length;
         // The declaration itself, and re-export/import mentions, are not calls.
         if (/^\s*(?:export\s+)?(?:async\s+)?function\s/.test(lines[line - 1])) {
@@ -237,9 +222,9 @@ const CALL_SITES: CallSite[] = (() => {
           file,
           line,
           reader,
-          args: argumentList(code, index + reader.length),
+          args: argumentList(code, index + reader.length, structure),
           insideTransaction: spans.some(([s, e]) => index > s && index < e),
-          enclosing: enclosingFunction(code, index),
+          enclosing: enclosingFunction(code, index, structure),
         });
       }
     }

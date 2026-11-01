@@ -14,6 +14,7 @@ import { reconcileXeroContact } from "./contact";
 import { reconcileXeroPayment } from "./payment";
 import { reconcileXeroInvoice, runIncrementalInvoiceReconciliation } from "./invoice";
 import { reconcileXeroCreditNote } from "./credit-note";
+import { recheckPendingDeletedPaymentLinks } from "./deleted-payment-links";
 import { failIfRecountLeftUnsettled } from "./recount-left-unsettled";
 import type { ClubFormat } from "@/lib/club-format";
 import { clubFormatValues } from "@/lib/club-format-server";
@@ -316,6 +317,7 @@ export async function runXeroInboundReconciliationCycle(options?: {
   includeContactReconciliation?: boolean;
   includeMembershipReconciliation?: boolean;
   includeInvoiceReconciliation?: boolean;
+  includeDeletedPaymentRecheck?: boolean;
 }): Promise<RunXeroInboundReconciliationCycleResult> {
   const batchSize = Math.min(
     Math.max(options?.batchSize ?? DEFAULT_XERO_INBOUND_BATCH_SIZE, 1),
@@ -365,11 +367,24 @@ export async function runXeroInboundReconciliationCycle(options?: {
           membershipReconciliation,
         });
 
+  // #4531: links whose deleted-payment check was deferred or unanswered. Never
+  // fails the cycle: the links stay active and marked for the next run.
+  let deletedPaymentRecheck: RunXeroInboundReconciliationCycleResult["deletedPaymentRecheck"] = null;
+  if (options?.includeDeletedPaymentRecheck !== false) {
+    try {
+      deletedPaymentRecheck = await recheckPendingDeletedPaymentLinks();
+    } catch (error) {
+      logger.error({ err: error }, "Re-checking links pending a deleted-payment check failed; the next cycle tries again");
+      deletedPaymentRecheck = { error: error instanceof Error ? error.message : String(error) };
+    }
+  }
+
   return {
     inbound: totals,
     contactReconciliation,
     membershipReconciliation,
     invoiceReconciliation,
+    deletedPaymentRecheck,
   };
 }
 

@@ -82,7 +82,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
-import { pathToFileURL } from "node:url";
+import { isMainModule } from "../lib/is-main-module.mjs";
 
 /** The index every invariant file and every id must be reachable from. */
 export const INVARIANT_INDEX = "docs/DOMAIN_INVARIANTS.md";
@@ -1934,6 +1934,123 @@ export function auditWordBudgets(files) {
 }
 
 /**
+ * The agent guides, each held to a word ceiling in {@link WORD_BUDGET_REGISTER}
+ * (#4462). Every top-level `docs/agents/*.md` page is read, so a new guide has
+ * to be given a row before it can merge.
+ */
+export const AGENT_DOC_PATTERN = /^docs\/agents\/[^/]+\.md$/;
+export const AGENT_DOC_BUDGET_HEADING = "Agent docs";
+
+/**
+ * How far a ceiling may sit above its page when a change SETS it: a row this
+ * change adds or alters against the base must be at or within this many words
+ * above its page, so a ceiling is never written as room to grow into. A row
+ * the change leaves alone fails only when its page goes over it. A floor on
+ * unchanged rows would let two green pull requests that each shrink one page
+ * redden `main` between them, so drift there is reported, not failed.
+ */
+export const AGENT_DOC_BUDGET_SLACK = 50;
+
+const AGENT_DOC_CELL_PATTERN = /^`(docs\/agents\/[^/`]+\.md)`$/;
+
+/**
+ * Parse the {@link AGENT_DOC_BUDGET_HEADING} table:
+ * `{ ceilings: Map<path, { at, ceiling }>, problems }`.
+ */
+export function parseAgentDocBudgets(files) {
+  const ceilings = new Map();
+  const problems = [];
+  const text = files.get(WORD_BUDGET_REGISTER);
+  if (text === undefined) return { ceilings, problems };
+  let section = null;
+  for (const { number, text: line } of scannableLines(text)) {
+    const heading = line.match(INDEX_SECTION_HEADING_PATTERN);
+    if (heading) {
+      section = heading[1];
+      continue;
+    }
+    if (section !== AGENT_DOC_BUDGET_HEADING) continue;
+    const cells = splitTableCells(line);
+    if (!cells || cells[0] === "File" || /^:?-+:?$/.test(cells[0])) continue;
+    const at = `${WORD_BUDGET_REGISTER}:${number}`;
+    const file = cells[0].match(AGENT_DOC_CELL_PATTERN)?.[1];
+    if (!file || cells.length !== 2 || !WHOLE_NUMBER_PATTERN.test(cells[1])) {
+      problems.push(
+        `${at} is in the "${AGENT_DOC_BUDGET_HEADING}" table but is not a well-formed row. ` +
+          "The exact form is | `docs/agents/<Name>.md` | <ceiling> |, with a whole-number " +
+          "ceiling. A row that parses as nothing is a limit that is silently not enforced.",
+      );
+      continue;
+    }
+    if (ceilings.has(file)) {
+      problems.push(`${at} records ${file} a second time. One page has one ceiling.`);
+      continue;
+    }
+    ceilings.set(file, { at, ceiling: Number(cells[1]) });
+  }
+  return { ceilings, problems };
+}
+
+/**
+ * The agent guides whose ceiling sits more than {@link AGENT_DOC_BUDGET_SLACK}
+ * words above their page: `[{ rel, words, ceiling, at }]`, for the information
+ * lines the CLI prints and the `--words` inventory.
+ */
+export function agentDocBudgetDrift(files) {
+  const { ceilings } = parseAgentDocBudgets(files);
+  const drift = [];
+  for (const [rel, { at, ceiling }] of ceilings) {
+    const text = files.get(rel);
+    if (text === undefined) continue;
+    const words = countWords(text);
+    if (ceiling - words > AGENT_DOC_BUDGET_SLACK) drift.push({ rel, words, ceiling, at });
+  }
+  return drift;
+}
+
+/**
+ * Every agent guide within its ceiling, every row well formed and live, and
+ * every ceiling this change sets close to its page. `baselineFiles` is the
+ * base the checker already resolves for invariant ids; without one, no row
+ * counts as set by this change.
+ */
+export function auditAgentDocWordBudgets(files, baselineFiles = null) {
+  const { ceilings, problems } = parseAgentDocBudgets(files);
+  const baseCeilings = baselineFiles ? parseAgentDocBudgets(baselineFiles).ceilings : null;
+  const pages = [...files.keys()].filter((rel) => AGENT_DOC_PATTERN.test(rel)).sort();
+  for (const rel of pages) {
+    const words = countWords(files.get(rel));
+    const record = ceilings.get(rel);
+    const setHere = baseCeilings !== null && baseCeilings.get(rel)?.ceiling !== record?.ceiling;
+    if (!record) {
+      problems.push(
+        `${rel} is ${words} words and has no row in the "${AGENT_DOC_BUDGET_HEADING}" table of ` +
+          `${WORD_BUDGET_REGISTER}. Add one with a ceiling at or just above ${words}.`,
+      );
+    } else if (words > record.ceiling) {
+      problems.push(
+        `${rel} is ${words} words; its ceiling is ${record.ceiling} (${record.at}). Agent guidance ` +
+          "is read under context pressure, so it may not grow by default: compact it, move detail " +
+          "to the doc that owns it, or turn a mechanical rule into a hook (#4462). Raising the " +
+          "ceiling is a deliberate change a reviewer sees.",
+      );
+    } else if (setHere && record.ceiling - words > AGENT_DOC_BUDGET_SLACK) {
+      problems.push(
+        `${record.at} sets the ceiling for ${rel} to ${record.ceiling}, more than ` +
+          `${AGENT_DOC_BUDGET_SLACK} words above its ${words} words. A ceiling this change writes ` +
+          `goes at or just above the page, so it is not room to grow into.`,
+      );
+    }
+  }
+  for (const [rel, { at }] of ceilings) {
+    if (!files.has(rel)) {
+      problems.push(`${at} records ${rel}, which is not a tracked file. Delete the row.`);
+    }
+  }
+  return problems;
+}
+
+/**
  * Inside a catalogue table of the index — a table whose header's first cell is
  * `ID` — every body row's first cell is a backticked id. A row with an empty
  * first cell renders as a continuation of the description above it and is
@@ -2795,6 +2912,7 @@ export function auditDocs(
     ...auditIndexRows(files),
     ...auditIndexCatalogueRows(files),
     ...auditWordBudgets(files),
+    ...auditAgentDocWordBudgets(files, baselineFiles),
     ...auditRoutingTable(files),
     ...auditLineNumberCitations(files),
     ...auditDocReachability(files),
@@ -3212,7 +3330,6 @@ export function loadInvariantFilesAtRef(repoRoot, ref) {
   return files;
 }
 
-const invokedPath = process.argv[1] ? pathToFileURL(process.argv[1]).href : null;
 /**
  * `--words`: print the word-count inventory instead of auditing.
  *
@@ -3263,10 +3380,22 @@ export function formatWordInventory(files) {
     }
   }
   lines.push("", `index rows over the ${INDEX_ROW_WORD_CAP}-word cap: ${overCap.length}`, ...overCap);
+  const { ceilings } = parseAgentDocBudgets(files);
+  const agentDocs = [...files.keys()].filter((rel) => AGENT_DOC_PATTERN.test(rel)).sort();
+  lines.push("", `agent docs (words / ceiling): ${agentDocs.length}`);
+  for (const rel of agentDocs) {
+    const ceiling = ceilings.get(rel)?.ceiling ?? "none";
+    const words = countWords(files.get(rel));
+    const drifted = typeof ceiling === "number" && ceiling - words > AGENT_DOC_BUDGET_SLACK;
+    lines.push(
+      `${String(words).padStart(5)} / ${String(ceiling).padStart(5)}  ${rel}` +
+        (drifted ? "  (shrank; the ceiling can be lowered)" : ""),
+    );
+  }
   return lines.join("\n");
 }
 
-if (invokedPath === import.meta.url) {
+if (isMainModule(import.meta.url)) {
   const repoRoot = path.resolve(path.join(import.meta.dirname, "..", ".."));
   try {
     const files = loadTrackedFiles(repoRoot);
@@ -3305,7 +3434,8 @@ if (invokedPath === import.meta.url) {
           `every index row is within ${INDEX_ROW_WORD_CAP} words and every entry within its ` +
           `word budget (${INVARIANT_ENTRY_WORD_BUDGET} by default, ${wordRegister.exceptions.size} approved ` +
           `exception(s), ${wordRegister.ratchet.size} ratchet record(s)), ` +
-          `every docs/ page is reachable, ${routedRows} routing row(s) resolve, all ` +
+          `every docs/agents page within its word ceiling (${parseAgentDocBudgets(files).ceilings.size} ` +
+          `ceiling(s)), every docs/ page is reachable, ${routedRows} routing row(s) resolve, all ` +
           `${STABLE_INDEX_HEADINGS.length} pre-split index headings are intact, no line ` +
           "number is cited into the invariants, no file is BOM'd or double-encoded, no " +
           "file carries a raw control character or an invisible format character, every " +
@@ -3314,6 +3444,12 @@ if (invokedPath === import.meta.url) {
           `Scanned ${files.size} of ${trackedCount} tracked file(s) — the gap is Git's ` +
           "binary classification, and the clause above is what accounts for it.",
       );
+      for (const { rel, words, ceiling, at } of agentDocBudgetDrift(files)) {
+        console.log(
+          `Note: ${rel} is ${words} words, more than ${AGENT_DOC_BUDGET_SLACK} under its ceiling of ` +
+            `${ceiling} (${at}). Lowering the ceiling is welcome but not required.`,
+        );
+      }
     }
   } catch (error) {
     console.error(`Documentation index integrity check failed: ${error.message}`);

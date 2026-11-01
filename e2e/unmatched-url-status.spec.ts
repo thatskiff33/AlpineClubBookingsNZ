@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./helpers/accessibility";
 
 // The status LINE for URLs nothing serves (#2405). The unit suite
 // (src/app/__tests__/unmatched-url-status.test.ts) pins that the route code

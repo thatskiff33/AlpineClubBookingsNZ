@@ -320,9 +320,9 @@ export default async function BookingDetailPage({
       <div className="flex items-center justify-between">
         <h1 className="text-3xl font-bold">Booking Details</h1>
         <div className="flex items-center gap-2">
-          <Link href={backHref}>
-            <Button variant="outline">Back to Bookings</Button>
-          </Link>
+          <Button asChild variant="outline">
+            <Link href={backHref}>Back to Bookings</Link>
+          </Button>
         </div>
       </div>
 

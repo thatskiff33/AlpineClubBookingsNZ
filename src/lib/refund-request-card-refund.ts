@@ -35,6 +35,7 @@ import {
   alertRefusedCardRefund,
   firstRefusals,
   type InlineRefundRead,
+  refundSliceCents,
   refusedRefundCents,
 } from "@/lib/refused-card-refund-retry";
 
@@ -108,7 +109,7 @@ export async function queueUnmadeRefundRequestCardRefund({
       bookingId,
       paymentId,
       refundRequestId,
-      amountCents: read.plan.reduce((sum, slice) => sum + slice.amountCents, 0),
+      amountCents: refundSliceCents(read.plan),
       allocationPlan: read.plan,
       notesEachRefund,
     }));

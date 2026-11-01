@@ -6,7 +6,8 @@ import {
   type AdminAccessRequirement,
   type AdminPermissionArea,
 } from "@/lib/admin-permissions";
-import { stripComments } from "@/lib/__tests__/support/strip-comments";
+import { balancedBrackets, expressionAt } from "@/lib/__tests__/support/balanced-brackets";
+import { blankLiterals, stripComments } from "@/lib/__tests__/support/strip-comments";
 
 import {
   adminApiRouteFiles,
@@ -201,38 +202,19 @@ function scopeOf(code: string): ModuleScope {
 
 /** The balanced `(...)` argument text of the first `requireAdmin(` in `body`. */
 function requireAdminArgument(body: string): string | null {
-  const marker = /\brequireAdmin\s*\(/.exec(body);
+  // Found over masked text: a `requireAdmin(` named in a string is not the call.
+  const structure = blankLiterals(body);
+  const marker = /\brequireAdmin\s*\(/.exec(structure);
   if (!marker) return null;
-  let depth = 0;
-  let index = marker.index + marker[0].length - 1;
-  const start = index + 1;
-  for (; index < body.length; index += 1) {
-    const character = body[index];
-    if (character === "(") depth += 1;
-    else if (character === ")") {
-      depth -= 1;
-      if (depth === 0) return body.slice(start, index);
-    }
-  }
-  return null;
+  return balancedBrackets(body, marker.index + marker[0].length - 1, structure).text.slice(1, -1);
 }
 
 /** The text of the `permission:` property inside an options-object literal. */
 function permissionExpression(objectText: string): string | null {
-  const marker = /(?:^|[{,\s])permission\s*:/.exec(objectText);
+  const structure = blankLiterals(objectText);
+  const marker = /(?:^|[{,\s])permission\s*:/.exec(structure);
   if (!marker) return null;
-  let depth = 0;
-  const start = marker.index + marker[0].length;
-  let index = start;
-  for (; index < objectText.length; index += 1) {
-    const character = objectText[index];
-    if (character === "{" || character === "[" || character === "(") depth += 1;
-    else if (character === "}" || character === "]" || character === ")") {
-      if (depth === 0) break;
-      depth -= 1;
-    } else if (character === "," && depth === 0) break;
-  }
-  return objectText.slice(start, index).trim();
+  return expressionAt(objectText, marker.index + marker[0].length, structure).text.trim();
 }
 
 function unquote(value: string): string | null {

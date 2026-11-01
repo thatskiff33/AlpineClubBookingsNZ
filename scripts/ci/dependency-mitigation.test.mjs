@@ -249,6 +249,44 @@ describe("outcomes other than a vulnerability are never touched", () => {
     expect(result.mitigationRefused).toBeUndefined();
     expect(formatReport(result).lines.join("\n")).not.toContain("dependency-mitigations.d/README.md");
   });
+
+  // #3851: the retired state. The directory holds only its README, and
+  // `patches/` only its .gitkeep: a clean audit is CLEAN with no mention of a
+  // mitigation, and a vulnerability is still VULNERABILITY FOUND, unrefused.
+  it("treats a directory holding only its README as no records: CLEAN passes, a high advisory still fails (#3851)", async () => {
+    const root = scratchRoot();
+    rmSync(recordPath(root));
+    rmSync(path.join(root, PATCH));
+    writeFileSync(path.join(root, MITIGATIONS_DIR, "README.md"), "# Dependency mitigation records\n");
+    writeFileSync(path.join(root, "patches", ".gitkeep"), "");
+    expect(loadMitigationRecords({ root })).toEqual({ records: [], problems: [] });
+
+    const clean = pretty({
+      ...measuredReport(),
+      advisories: {},
+      metadata: { ...measuredReport().metadata, vulnerabilities: { info: 0, low: 0, moderate: 0, high: 0, critical: 0 } },
+    });
+    const out = [];
+    vi.spyOn(console, "log").mockImplementation((line) => out.push(String(line)));
+    vi.spyOn(console, "error").mockImplementation((line) => out.push(String(line)));
+    const previous = process.exitCode;
+    try {
+      process.exitCode = undefined;
+      await main({ run: () => Promise.resolve({ exitCode: 0, stdout: clean, stderr: "" }), sleep: () => Promise.resolve(), now: BEFORE_EXPIRY, root });
+      expect(process.exitCode).toBe(0);
+      expect(out[0]).toMatch(/^Dependency audit: CLEAN/);
+      expect(out.join("\n")).not.toMatch(/MITIGATED|Mitigation record|::warning/);
+
+      process.exitCode = undefined;
+      out.length = 0;
+      await main({ run: () => Promise.resolve({ exitCode: 1, stdout: pretty(measuredReport()), stderr: "" }), sleep: () => Promise.resolve(), now: BEFORE_EXPIRY, root });
+      expect(process.exitCode).toBe(1);
+      expect(out[0]).toContain("VULNERABILITY FOUND");
+      expect(out.join("\n")).not.toMatch(/MITIGATED|Mitigation record NOT applied|::warning/);
+    } finally {
+      process.exitCode = previous;
+    }
+  });
 });
 
 describe("the approval expires, and is short-lived", () => {

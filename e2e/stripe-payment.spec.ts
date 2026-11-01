@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./helpers/accessibility";
 import { storageStatePath } from "./helpers/auth";
 import { bookingCreateIsolation } from "./helpers/booking-create-client-ip";
 import {
@@ -48,12 +48,16 @@ test.skip(!configured, STRIPE_SKIP_REASON);
 // attempt its own window; attempt 0 is unchanged. The create itself also uses
 // the shared booking-create census: a Stripe retry gets a new limiter bucket,
 // so it cannot turn a later waitlist or whole-lodge setup into request 21.
+// Mobile owns bases 30/31: attempts use 30/46/62 and 31/47/63,
+// clear of desktop windows and within the seeded seasons (at least 66 windows).
 test.describe.configure({ retries: 2 });
 
 test("test-mode card payment succeeds and confirms the booking", async ({
   page,
 }, testInfo) => {
-  const window = stayWindowForAttempt(1, testInfo.retry);
+  const window = testInfo.project.name === "mobile"
+    ? stayWindowForAttempt(30, testInfo.retry)
+    : stayWindowForAttempt(1, testInfo.retry);
   const occupiedBefore = await fetchOccupiedBeds(page, window.nights);
   await bookSelfToReviewStep(page, personas.booker, window);
   await confirmBookingToPaymentStep(
@@ -109,7 +113,9 @@ test("test-mode card payment succeeds and confirms the booking", async ({
 test("declined test-mode card leaves the booking payable", async ({
   page,
 }, testInfo) => {
-  const window = stayWindowForAttempt(2, testInfo.retry);
+  const window = testInfo.project.name === "mobile"
+    ? stayWindowForAttempt(31, testInfo.retry)
+    : stayWindowForAttempt(2, testInfo.retry);
   await bookSelfToReviewStep(page, personas.booker, window);
   await confirmBookingToPaymentStep(
     page,

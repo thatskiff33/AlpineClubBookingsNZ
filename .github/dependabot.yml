@@ -79,6 +79,7 @@ updates:
       default-days: 7
 
   - package-ecosystem: docker
+    # Dockerfile and both Compose files live here; update tag + index digest.
     directory: /
     schedule:
       interval: weekly

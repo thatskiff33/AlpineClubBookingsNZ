@@ -209,7 +209,7 @@ vi.mock("@/lib/edit-financial-review-charge-raise-claim", () => ({
 }));
 /*
   THE ONE PLACE A CHARGE IS MINTED RUNS FOR REAL (#3341, `INV-OPS-015`), and so
-  does `queueSupersededAdditionalIntentCancellations` behind it. Both used to be
+  does `queueSupersededAdditionalIntentCancellationRows` behind it. Both used to be
   a single stub here, and the review charge's whole #3371 rule - that the ask
   CARRIES the unpaid balance of the one it retires - was asserted against the
   figure the completion HANDED that stub, never against what was minted or
@@ -318,15 +318,21 @@ const tx = {
   },
   paymentTransaction: {
     findFirst: (...a: unknown[]) => mocks.paymentTransactionFindFirst(...a),
+    // #4442: the mint's supersede reads the live asks inside its queue transaction.
+    findMany: (...a: unknown[]) => mocks.supersedeRead(...a),
   },
   // #3835: the card refunds already promised out of the payment - none here.
   paymentRecoveryOperation: { aggregate: async () => ({ _sum: { amountCents: null } }) },
+  // #4442: the mint's queue re-reads the live ask it carries, from the same fixture the sizing read.
+  payment: { findUnique: (...a: unknown[]) => mocks.paymentFindUnique(...a) },
   xeroObjectLink: {
     findFirst: (...a: unknown[]) => mocks.xeroObjectLinkFindFirst(...a),
   },
   // #3947 review: the queued supplementary invoice a later share joins.
   xeroSyncOperation: {
     findFirst: (...a: unknown[]) => mocks.xeroSyncOperationFindFirst(...a),
+    // #4299: no organiser extra refund note waits on these hand-backs.
+    findMany: async () => [],
   },
   // #3219 D2: closing a review whose price boxes are OFFERED is refused while
   // they are blank, so every edit-review closure now asks whether this strand
@@ -1212,6 +1218,10 @@ describe("two shares of one booking edit (#3170 combined request)", () => {
       booking: { status: "PAID" },
       stripeCustomerId: "cus_1",
       stripePaymentIntentId: "pi_primary",
+      // #4442: the mirror of the request being re-issued, which the re-issue's queue re-reads.
+      additionalPaymentIntentId: "pi_additional_1",
+      additionalAmountCents: 20000,
+      additionalPaymentStatus: PaymentStatus.PENDING,
       transactions: [
         ledgerRow({ kind: PaymentTransactionKind.PRIMARY, stripePaymentIntentId: "pi_primary", amountCents: 15000, status: PaymentStatus.SUCCEEDED }, 0),
         ledgerRow({ kind: PaymentTransactionKind.ADDITIONAL, stripePaymentIntentId: "pi_additional_1", amountCents: 20000, status: PaymentStatus.PENDING }, 1),
@@ -1261,6 +1271,8 @@ describe("two shares of one booking edit (#3170 combined request)", () => {
       paymentTransactionId: "ptx-additional-1",
       paymentIntentId: "pi_additional_1",
       amountCents: 20000,
+      // #4442: queued in the mint's own transaction, beside its row.
+      store: expect.anything(),
     });
     // The payment now points its outstanding ask at the NEW intent, for the sum:
     // what the member's pay door and the next share's sizing read back.
@@ -2146,6 +2158,8 @@ describe("#3371: a review charge carries the unpaid ask its mint retires", () =>
       paymentTransactionId: "ptx-other-change",
       paymentIntentId: "pi_other_change",
       amountCents: 20000,
+      // #4442: queued in the mint's own transaction, beside its row.
+      store: expect.anything(),
     });
     expect(
       mocks.upsertPaymentIntentTransaction.mock.invocationCallOrder[0],

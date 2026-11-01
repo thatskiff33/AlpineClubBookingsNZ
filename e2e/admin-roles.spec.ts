@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./helpers/accessibility";
 import { loginPersona } from "./helpers/auth";
 import { relDateOnly, ROLE_PERSONAS } from "./helpers/fixtures";
 

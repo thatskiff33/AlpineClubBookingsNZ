@@ -1,3 +1,4 @@
+vi.mock("@/lib/xero-webhook-health", () => ({ getXeroWebhookHealth: vi.fn().mockResolvedValue({ connected: false, silent: false, hours: 24, lastReceivedAt: null }) }));
 import { readFileSync } from "node:fs";
 import path from "node:path";
 

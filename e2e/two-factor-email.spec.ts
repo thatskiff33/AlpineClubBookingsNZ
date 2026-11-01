@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./helpers/accessibility";
 import { submitLoginForm } from "./helpers/auth";
 import { clearMailbox, waitForTwoFactorCode } from "./helpers/mailpit";
 import { personas } from "./helpers/personas";

@@ -116,6 +116,12 @@ date-only.
    each night at that night's season rate). The officer's manual total override
    still wins over both, and the toggle only appears when a flat rate covers the
    stay. See [Booking requests](booking-requests.md) for the approval flow.
+7. **Other clubs see your Non-Member rates.** While your lodge's **Rates and
+   season dates from the Fees page** switch is on (the default), saving or
+   removing a season here also updates your lodge's non-member rates and
+   season dates in the Other lodges list, and they are shared with other clubs
+   through the Alpine Central Server at the next upload. See
+   [Lodges](lodges.md#edit-your-own-lodges-details).
 
 ### Set joining fees
 

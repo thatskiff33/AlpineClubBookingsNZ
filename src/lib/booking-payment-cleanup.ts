@@ -108,38 +108,20 @@ export async function queueSupersededPrimaryIntentCancellations(
 }
 
 /**
- * Before issuing a new ADDITIONAL PaymentIntent for a booking
- * modification, cancel any existing PENDING/PROCESSING - or declined (#4422) -
- * ADDITIONAL transactions on the same payment whose PaymentIntent id differs from
- * the new one. Without this, an abandoned previous additional intent
- * (member closed the browser before confirming) lingers as PENDING
- * locally until Stripe's 24h auto-cancel and the webhook delivery hit,
- * which leaves a stale PaymentTransaction if delivery fails or is
- * delayed. The cancellation runs through the durable recovery queue.
- *
- * #3340 - IT NOW CANCELS SYNCHRONOUSLY AS WELL, and the order matters. The
- * durable row is enqueued FIRST and is still the guarantee; the immediate
- * attempt that follows only closes the window in which the old client secret is
- * confirmable. Before this, "queued" meant "up to five minutes" - measured at 4
- * minutes 5 seconds in the live case, long enough for a member to be charged $65
- * against the superseded intent while the page read $300.
- *
- * The caller awaits this BEFORE it returns the new client secret, so an intent a
- * browser may still be holding is dead by the time the replacement exists.
- * Best-effort throughout: a Stripe outage leaves exactly the pre-#3340
- * behaviour, a queued operation the recovery cron completes.
+ * THE SUPERSEDE, in two halves (#3340; split by #3954, the combined helper
+ * removed by #4442). Before a new ADDITIONAL PaymentIntent is offered, every
+ * other live one on the payment - open, or declined (#4422) - is cancelled:
+ * `queueSupersededAdditionalIntentCancellationRows` writes each one's durable
+ * cancel inside the minter's queue transaction, beside the new ask's row and
+ * after its carried balance is re-read (`withAdditionalAskQueueTransaction`),
+ * and `cancelSupersededAdditionalIntentsNow` runs those cancels at Stripe after
+ * commit, before the new secret is returned. The durable row is the guarantee;
+ * the immediate cancel closes the window in which the old client secret is
+ * still confirmable - measured at 4 minutes 5 seconds in the live case, long
+ * enough for a member to be charged $65 against the superseded intent while the
+ * page read $300. A Stripe outage leaves the queued operation for the recovery
+ * cron.
  */
-export async function queueSupersededAdditionalIntentCancellations(options: {
-  bookingId: string;
-  paymentId: string;
-  newPaymentIntentId: string;
-  /** The club's format (#3565), resolved once by the caller and handed to each immediate run. */
-  format: ClubFormat;
-}): Promise<{ paymentTransactionId: string; paymentIntentId: string }[]> {
-  const queued = await queueSupersededAdditionalIntentCancellationRows(options);
-  await cancelSupersededAdditionalIntentsNow({ ...options, queued });
-  return queued.map(({ paymentTransactionId, paymentIntentId }) => ({ paymentTransactionId, paymentIntentId }));
-}
 
 /** One superseded intent's durable cancellation, queued and not yet run. */
 export type QueuedSupersededIntentCancellation = {
@@ -175,7 +157,7 @@ const SUPERSEDABLE_ADDITIONAL_ASK_STATUS_WHERE = [
 ] as const satisfies readonly Prisma.PaymentTransactionWhereInput[];
 
 /**
- * The DURABLE half of `queueSupersededAdditionalIntentCancellations`: find the
+ * The DURABLE half of the supersede: find the
  * other outstanding ADDITIONAL intents and queue each one's cancellation - no
  * provider call. On `store` so a minter that must decide "write my row and
  * supersede the rest" atomically against a price reduction can do both in one

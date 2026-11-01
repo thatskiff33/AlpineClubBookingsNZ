@@ -21,11 +21,12 @@ import path from "path";
 import { describe, expect, it } from "vitest";
 
 // Comments are stripped so only EXECUTABLE text is matched.
-import { stripComments } from "./support/strip-comments";
+import { blankLiterals, stripComments } from "./support/strip-comments";
 import {
   BOOKING_MESSAGE_DEFINITIONS,
   renderClientBookingMessage,
 } from "@/lib/booking-message-definitions";
+import { balancedBrackets } from "./support/balanced-brackets";
 
 /**
  * Files that read booking-message bodies and put them on a screen, with the
@@ -79,6 +80,14 @@ const RENDER_SURFACES: Array<{
     readsMessageMap: true,
   },
   {
+    file: "src/lib/credit-release-bank-transfer.ts",
+    what: "the bank-transfer details on a request for credit used elsewhere (#4253): a server-side email part",
+    // Club-level text: the request is about the booking's invoice, not a lodge, so the club
+    // default stands in for the lodge token.
+    lodgePass: null,
+    readsMessageMap: true,
+  },
+  {
     file: "src/app/api/admin/booking-messages/preview/route.ts",
     what: "the admin preview",
     // Sample data by design: there is no booking to read a lodge from.
@@ -101,26 +110,15 @@ const MESSAGE_MAP_READ = /bookingMessages\s*\[/g;
 function clientRenderCalls(code: string): string[] {
   const calls: string[] = [];
   const needle = "renderClientBookingMessage(";
+  // Found over masked text: a call named in a string is not one.
+  const structure = blankLiterals(code);
   let from = 0;
   for (;;) {
-    const start = code.indexOf(needle, from);
+    const start = structure.indexOf(needle, from);
     if (start === -1) return calls;
-    const open = start + needle.length - 1;
-    let depth = 0;
-    for (let i = open; i < code.length; i++) {
-      if (code[i] === "(") depth++;
-      else if (code[i] === ")") {
-        depth--;
-        if (depth === 0) {
-          calls.push(code.slice(open, i + 1));
-          from = i + 1;
-          break;
-        }
-      }
-      if (i === code.length - 1) {
-        throw new Error("Unbalanced renderClientBookingMessage call");
-      }
-    }
+    const region = balancedBrackets(code, start + needle.length - 1, structure);
+    calls.push(region.text);
+    from = region.end + 1;
   }
 }
 

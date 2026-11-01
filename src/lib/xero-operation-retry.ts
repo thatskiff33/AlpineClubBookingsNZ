@@ -1,3 +1,5 @@
+import { readOrganiserExtraAdjustmentPayload } from "@/lib/organiser-extra-adjustment-payload";
+import { ORGANISER_COMBINED_INVOICE_PLACE_MESSAGE, ORGANISER_COMBINED_INVOICE_PLACE_REFUSAL } from "@/lib/organiser-billing";
 import type { XeroContactUpdateData } from "@/lib/xero-contacts";
 import { supplementaryReplayMayRecordPayment } from "@/lib/additional-capture-receipt-gate";
 import {
@@ -920,6 +922,9 @@ async function repairRefundCreditNoteFollowUpActions(
   },
   claim: XeroOperationClaim, // #4256: the row is this retry's claim; it completes onto it only
 ) {
+  const result = (claimLost: boolean) => ({
+    message: claimLost ? PARTIAL_REPAIR_CLAIM_LOST_MESSAGE : "Repaired Xero refund credit note follow-up actions.",
+  });
   // #3827 (D-3813-8): a refund request's own note is an allowed extra, never
   // the payment's one refund note, so it never takes the payment's pointer.
   // #3880 F1: a per-refund note is repaired, never made the payment's canonical one.
@@ -966,10 +971,10 @@ async function repairRefundCreditNoteFollowUpActions(
       retryClaim: true,
     });
     if (outcome.refundPaymentErr) throw outcome.refundPaymentErr;
-    return;
+    return result(outcome.completionClaimLost);
   }
 
-  await completeXeroSyncOperation(
+  const completed = await completeXeroSyncOperation(
     claim,
     refundCreditNoteCompletion({
       paymentId: operation.localId!,
@@ -983,6 +988,7 @@ async function repairRefundCreditNoteFollowUpActions(
     }),
     { retryClaim: true },
   );
+  return result(completed === null);
 }
 
 function parseModificationCreditNoteRepairInput(
@@ -1031,6 +1037,12 @@ export function getXeroOperationRetryMeta(operation: RetryableOperation): XeroOp
       supported: false,
       reason: "Only outbound operations are retryable in this pass.",
     };
+  }
+
+  if (readOrganiserExtraAdjustmentPayload(operation.requestPayload)) {
+    return ["FAILED", "PARTIAL"].includes(operation.status)
+      ? { supported: true, reason: null }
+      : { supported: false, reason: "Only a failed organiser invoice adjustment can be retried." };
   }
 
   if (
@@ -1368,6 +1380,12 @@ export async function retryXeroSyncOperation(
   }
   if (await isRetryOfVoidedRefundRequestNote(operation, prisma)) throw new XeroOperationRetryError(VOIDED_REQUEST_NOTE_RETRY_REASON, 409);
 
+  const organiserExtra = readOrganiserExtraAdjustmentPayload(operation.requestPayload);
+  if (organiserExtra) {
+    await requeueOutboxRowForRetry(operation, { ...organiserExtra }, ["FAILED", "PARTIAL"], "organiser invoice adjustment");
+    return { message: "Queued organiser invoice adjustment retry." };
+  }
+
   const appliedCreditType = appliedCreditRequeueType(operation);
   if (appliedCreditType) {
     // These handlers make multi-step provider calls and have their own durable
@@ -1556,12 +1574,9 @@ export async function retryXeroSyncOperation(
       refundCreditNoteRepair
     ) {
       // #4256: claimed like the invoice repair; the shared leg completes the row.
-      await runWithClaimedOriginal(
-        operation.id,
-        (claim) => repairRefundCreditNoteFollowUpActions(operation, xero, refundCreditNoteRepair, claim),
-        { from: "PARTIAL" },
-      );
-      return { message: "Repaired Xero refund credit note follow-up actions." };
+      return runWithClaimedOriginal(operation.id, (claim) =>
+        repairRefundCreditNoteFollowUpActions(operation, xero, refundCreditNoteRepair, claim),
+      { from: "PARTIAL" });
     }
 
     let modificationCreditNoteRepair: ReturnType<typeof parseModificationCreditNoteRepairInput>;
@@ -1692,9 +1707,15 @@ export async function retryXeroSyncOperation(
         }),
       );
       if (invoiceId === null) {
-        // The handler abandoned the mint (manual mark-paid provenance re-check)
-        // and already closed the operation CANCELLED with the reason. Report
-        // honestly — this retry created nothing and never will.
+        // The handler abandoned the mint and already closed the operation
+        // CANCELLED with the reason. Report honestly — this retry created
+        // nothing and never will. #4299 B1: the reason it recorded says which
+        // fence: a place the group organiser paid by internet banking, or the
+        // manual mark-paid provenance re-check.
+        const closed = await prisma.xeroSyncOperation.findUnique({ where: { id: operation.id }, select: { responsePayload: true } });
+        if (asRecord(closed?.responsePayload)?.refusal === ORGANISER_COMBINED_INVOICE_PLACE_REFUSAL) {
+          return { message: `No invoice was created: ${ORGANISER_COMBINED_INVOICE_PLACE_MESSAGE} The operation was closed.` };
+        }
         return {
           message:
             "No invoice was created: this booking's payment was manually marked paid (cash / off-Xero), so no Xero invoice is expected. The operation was closed.",
@@ -1832,10 +1853,9 @@ export async function retryXeroSyncOperation(
       const refundCreditNoteRepair = parseRefundCreditNoteRepairInput(operation);
       if (refundCreditNoteRepair) {
         // #4256: claimed like the PARTIAL repair; a throw abandons it to FAILED. #4356: marked (`INV-INT-029`).
-        await runWithClaimedOriginal(operation.id, (claim) =>
+        return runWithClaimedOriginal(operation.id, (claim) =>
           repairRefundCreditNoteFollowUpActions(operation, xero, refundCreditNoteRepair, claim),
         { marker: XERO_REFUND_NOTE_REPAIR_RUNNING_CODE });
-        return { message: "Repaired Xero refund credit note follow-up actions." };
       }
 
       const retryInput = parsePaymentCreditNoteRetryInput(operation);

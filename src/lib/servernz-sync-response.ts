@@ -6,7 +6,29 @@ import {
   ServerNzNotConfiguredError,
   ServerNzVersionMismatchError,
 } from "@/lib/servernz-api";
-import { SERVER_VERSION_MISMATCH_CODE } from "@/lib/servernz-api-version";
+import {
+  OTHER_LODGES_SYNC_RUNNING_CODE,
+  SERVER_VERSION_MISMATCH_CODE,
+} from "@/lib/servernz-api-version";
+
+/**
+ * The answer to an Upload or Download press while another pass — the nightly
+ * job, or another administrator's press — holds the sync claim (#66). Nothing
+ * was attempted, so nothing is audited: the press is refused before any
+ * request is built, and the administrator is told to try again. A container
+ * killed mid-pass leaves the claim until it is reaped as stale (15 minutes),
+ * which the message says.
+ */
+export function respondSyncRunning(): NextResponse {
+  return NextResponse.json(
+    {
+      error:
+        "Another sync with the Alpine Central Server is running (the nightly sync, or a press in another window). Try again in a minute; if it was cut off by a restart, it clears within 15 minutes.",
+      code: OTHER_LODGES_SYNC_RUNNING_CODE,
+    },
+    { status: 409 },
+  );
+}
 
 /**
  * Map a ServerNZ sync failure to an audited HTTP response. Shared by the upload
@@ -15,7 +37,9 @@ import { SERVER_VERSION_MISMATCH_CODE } from "@/lib/servernz-api-version";
  * ONE audit write site for every refused or failed press of the button. A
  * version pause (#49) is refused LOCALLY, before any request is built, and is
  * still recorded here as a failure: an admin pressed a button and nothing
- * happened. Its details name only the two versions (INV-INT-005).
+ * happened. Its details name only the two versions (INV-INT-005). The one
+ * press NOT recorded is the one another pass is already running for
+ * (`respondSyncRunning`, #66): that pass is the sync, and nothing failed.
  */
 export async function respondToSyncError(
   error: unknown,

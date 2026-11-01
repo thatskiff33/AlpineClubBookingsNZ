@@ -863,10 +863,10 @@ export async function prepareGuestPlan(
     eligibleGuestIds: otherLodgeEligibleGuestIds,
     linkedGuestIds: new Set(guestMemberLinks.map((link) => link.guestId)),
   });
-  // Only when this edit named a lodge: an inert election's stored id was already
-  // validated when it was set, so re-reading it on every unrelated modification
-  // would be a query for nothing.
-  if (otherLodgeElection.requested) {
+  // Only when this edit CHANGES the lodge: the stored id was validated when it
+  // was set, and may since have been hidden (#58) — a booking keeps a hidden
+  // lodge, so re-checking it would refuse every unrelated modification.
+  if (otherLodgeElection.otherLodgeIdChanged) {
     await assertOtherLodgeExists(tx, otherLodgeElection.otherLodgeId);
   }
   /**

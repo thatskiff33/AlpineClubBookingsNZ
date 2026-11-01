@@ -17,6 +17,10 @@
  *    (`coveredPaymentIntentIds`, {@link attributeGapCash}).
  *  - A CHANGE'S OWN SUPPLEMENTARY INVOICE - one on the change, or one naming
  *    the capture's intent - is that capture's document.
+ *  - #4324 (`INV-PAY-144`): A KEPT LATE CAPTURE'S OWN INVOICE
+ *    (`KEPT_LATE_CAPTURE_INVOICE`, in any status but CANCELLED) records the
+ *    capture it was queued for, where the treasurer's keep found nothing
+ *    billing its change.
  *
  * {@link readCaptureRecorder} is the one reading of that: the receipt's
  * enqueue asks it under the per-anchor supplementary-invoice lock, its worker
@@ -24,6 +28,7 @@
  */
 import type { Prisma } from "@prisma/client";
 import { readCreditReleaseCaptureShare } from "@/lib/credit-release-capture-share";
+import { LIVE_KEPT_LATE_CAPTURE_INVOICE_WHERE } from "@/lib/late-capture-kept-xero-rules";
 import { prisma } from "@/lib/prisma";
 import { asRecord } from "@/lib/xero-json";
 import { CAPTURED_TRANSACTION_STATUS_LIST } from "@/lib/payment-transaction-status";
@@ -70,6 +75,8 @@ export type CaptureRecorder =
   | { kind: "credit-release-sweep" }
   /** A supplementary invoice records it: one naming the intent, covering all of it, or the change's own paid one. */
   | { kind: "supplementary-invoice"; operationId: string | null }
+  /** #4324: the kept-capture invoice a treasurer's keep queued for it records it. */
+  | { kind: "kept-late-capture-invoice"; operationId: string }
   /**
    * Nothing else records all of it, so the capture's own receipt records the
    * rest: against `target` where there is one, otherwise the primary.
@@ -113,6 +120,20 @@ function recordsPayment(requestPayload: Prisma.JsonValue | null): boolean {
 function changeInvoiceRecordsCapture(requestPayload: Prisma.JsonValue | null, paymentIntentId: string): boolean {
   const named = asRecord(requestPayload)?.paymentIntentId;
   return recordsPayment(requestPayload) && (typeof named !== "string" || named === paymentIntentId);
+}
+
+/**
+ * #4324 review (money F3, `INV-SSOT`): whether a change's own supplementary
+ * invoice is THIS capture's document by the reading below - raised unpaid, so
+ * the capture's receipt records against it, or recording this capture
+ * ({@link changeInvoiceRecordsCapture}). One recording another capture (moved
+ * onto a carrier and released there, or waiting on a different intent) is not:
+ * the recorder falls through to the primary, which never billed the change.
+ * The keep's evidence reads the change's invoices by this
+ * (`readKeptChangeCaptureEvidence`).
+ */
+export function changeInvoiceBillsCapture(requestPayload: Prisma.JsonValue | null, paymentIntentId: string): boolean {
+  return !recordsPayment(requestPayload) || changeInvoiceRecordsCapture(requestPayload, paymentIntentId);
 }
 
 /**
@@ -167,6 +188,15 @@ async function readBaseCaptureRecorder(
     select: { ...SUPPLEMENTARY_SELECT, localModel: true, localId: true },
   });
   if (naming && recordsPayment(naming.requestPayload)) return { kind: "supplementary-invoice", operationId: naming.id };
+  // #4324: the kept-capture invoice queued for it - its payload names the intent.
+  const kept = await store.xeroSyncOperation.findFirst({
+    where: {
+      ...LIVE_KEPT_LATE_CAPTURE_INVOICE_WHERE,
+      requestPayload: { path: ["paymentIntentId"], equals: input.paymentIntentId },
+    },
+    select: { id: true },
+  });
+  if (kept) return { kind: "kept-late-capture-invoice", operationId: kept.id };
 
   const figures = await readPrimaryInvoiceFeeAtLink(input.bookingId, input.primaryInvoiceId, store);
   if (figures?.atLink.paymentIntentIdsRecordedAtLink?.includes(input.paymentIntentId)) {

@@ -55,6 +55,10 @@ const mocks = vi.hoisted(() => {
 
 vi.mock("@/lib/servernz-config", () => ({
   SERVERNZ_PROVIDER: "servernz",
+  withServerNzConnectionTransaction: async (work: (tx: unknown) => Promise<unknown>) => {
+    await mocks.lockServerNzSettings();
+    return work(mocks.tx);
+  },
   getOperationalServerNzCredential: mocks.getOperationalServerNzCredential,
   readServerNzCredentialVersion: mocks.readServerNzCredentialVersion,
 }));
@@ -65,6 +69,7 @@ vi.mock("@/lib/integration-credentials", () => ({
 
 vi.mock("@/lib/servernz-settings", () => ({
   SERVERNZ_SETTINGS_ID: "default",
+  SERVERNZ_TRANSACTION_OPTIONS: { timeout: 150_000, maxWait: 10_000 },
   loadServerNzSettings: mocks.loadServerNzSettings,
   lockServerNzSettings: mocks.lockServerNzSettings,
   recordServerVersionCheck: mocks.recordServerVersionCheck,
@@ -174,7 +179,7 @@ const SERVER_BOUND: Array<[string, () => Promise<unknown>]> = [
 
 describe("the gate refuses every server-bound call on a stored mismatch", () => {
   it.each(SERVER_BOUND)("%s throws ServerNzVersionMismatchError and sends NOTHING", async (_name, call) => {
-    settings("2.2");
+    settings("2.7");
     await expect(call()).rejects.toBeInstanceOf(ServerNzVersionMismatchError);
     expect(fetchMock).not.toHaveBeenCalled();
   });
@@ -196,8 +201,8 @@ describe("the gate refuses every server-bound call on a stored mismatch", () => 
     expect(error.message).toContain("1.10");
   });
 
-  it("refuses a stored 1.10 against this 2.1 site through the real comparison, not a string or float read", async () => {
-    // Float-equal to 1.1 and string-unequal to 2.1 either way; what this pins
+  it("refuses a stored 1.10 against this 2.6 site through the real comparison, not a string or float read", async () => {
+    // Float-equal to 1.1 and string-unequal to 2.6 either way; what this pins
     // is that the GATE goes through compareServerVersions (the version module's
     // own suite pins the 1.10-vs-1.1 case) and reports the stored spelling.
     settings("1.10");
@@ -210,10 +215,10 @@ describe("the gate refuses every server-bound call on a stored mismatch", () => 
 
 describe("the one opt-out is the version call", () => {
   it("fetchServerVersion goes through under a stored mismatch, with this site's version in the header", async () => {
-    settings("2.2");
-    fetchMock.mockResolvedValue(respond(200, { version: "2.2", match: false }));
+    settings("2.7");
+    fetchMock.mockResolvedValue(respond(200, { version: "2.7", match: false }));
 
-    await expect(fetchServerVersion()).resolves.toBe("2.2");
+    await expect(fetchServerVersion()).resolves.toBe("2.7");
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [url, init] = fetchMock.mock.calls[0];
@@ -240,16 +245,16 @@ describe("the server's own 409 refusal (review item 1)", () => {
   const MISMATCH_409 = {
     error: "This server is on a different API version, so nothing is transferred until your site is upgraded.",
     code: "API_VERSION_MISMATCH",
-    serverVersion: "2.2",
-    clientVersion: "2.1",
+    serverVersion: "2.7",
+    clientVersion: "2.6",
   };
 
   it.each(SERVER_BOUND)("%s turns a 409 API_VERSION_MISMATCH into the version error and records the server's number", async (_name, call) => {
     fetchMock.mockResolvedValue(respond(409, MISMATCH_409));
     const error = await call().catch((e: unknown) => e);
     expect(error).toBeInstanceOf(ServerNzVersionMismatchError);
-    expect((error as ServerNzVersionMismatchError).serverVersion).toBe("2.2");
-    expectRecorded("2.2");
+    expect((error as ServerNzVersionMismatchError).serverVersion).toBe("2.7");
+    expectRecorded("2.7");
   });
 
   it("leaves a plain 409 (no code) as the ServerNzApiError it always was, recording nothing", async () => {
@@ -263,7 +268,7 @@ describe("the server's own 409 refusal (review item 1)", () => {
   it("is decided by the CODE, not by a serverVersion field happening to be present", async () => {
     // A 409 for some other reason that also names a version (a future server
     // echoing versions on every refusal) must not be read as the pause.
-    fetchMock.mockResolvedValue(respond(409, { error: "Conflict", code: "SOME_OTHER_CONFLICT", serverVersion: "2.2" }));
+    fetchMock.mockResolvedValue(respond(409, { error: "Conflict", code: "SOME_OTHER_CONFLICT", serverVersion: "2.7" }));
     const error = await uploadOtherLodges([]).catch((e: unknown) => e);
     expect(error).toBeInstanceOf(ServerNzApiError);
     expect(mocks.recordServerVersionCheck).not.toHaveBeenCalled();
@@ -278,7 +283,7 @@ describe("the server's own 409 refusal (review item 1)", () => {
   });
 
   it("stores a malformed serverVersion as the unknown marker, still a pause (item 3)", async () => {
-    fetchMock.mockResolvedValue(respond(409, { ...MISMATCH_409, serverVersion: "2.1.1" }));
+    fetchMock.mockResolvedValue(respond(409, { ...MISMATCH_409, serverVersion: "2.6.1" }));
     const error = await withdrawClubPost("srv-1").catch((e: unknown) => e);
     expect(error).toBeInstanceOf(ServerNzVersionMismatchError);
     expect((error as ServerNzVersionMismatchError).serverVersion).toBe(SERVER_VERSION_UNKNOWN);
@@ -309,7 +314,7 @@ describe("the server's own 409 refusal (review item 1)", () => {
     const error = await call;
     expect(error).toBeInstanceOf(ServerNzVersionMismatchError);
     // The caller still pauses on what the server said; only the record is refused.
-    expect((error as ServerNzVersionMismatchError).serverVersion).toBe("2.2");
+    expect((error as ServerNzVersionMismatchError).serverVersion).toBe("2.7");
     expect(mocks.recordServerVersionCheck).not.toHaveBeenCalled();
     // The key it was sent with may be a stale cached copy: the next request re-resolves.
     expect(mocks.invalidateProviderCredentialCache).toHaveBeenCalledWith("servernz");
@@ -332,7 +337,7 @@ describe("refreshStoredServerVersion: one path writes the column", () => {
   });
 
   it("throws when a RECEIVED answer cannot be recorded, never reading it as could-not-check (item 2)", async () => {
-    fetchMock.mockResolvedValue(respond(200, { version: "2.2", match: false }));
+    fetchMock.mockResolvedValue(respond(200, { version: "2.7", match: false }));
     mocks.recordServerVersionCheck.mockRejectedValue(new Error("database unavailable"));
     await expect(refreshStoredServerVersion()).rejects.toThrow(/database unavailable/);
     expect(mocks.logger.warn).not.toHaveBeenCalled();
@@ -350,7 +355,7 @@ describe("refreshStoredServerVersion: one path writes the column", () => {
     await untilSent();
     mocks.stored.apiKey = undefined;
     mocks.stored.credentialVersion = null;
-    release(respond(200, { version: "2.2", match: false }));
+    release(respond(200, { version: "2.7", match: false }));
     await expect(check).resolves.toBeNull();
     expect(mocks.recordServerVersionCheck).not.toHaveBeenCalled();
   });
@@ -403,7 +408,7 @@ describe("refreshStoredServerVersion: one path writes the column", () => {
     expectRecorded("3.0");
     expect(mocks.order[0]).toBe("lock");
     expect(prisma.$transaction).toHaveBeenCalledWith(expect.any(Function), { timeout: 150_000, maxWait: 10_000 });
-    expect(mocks.order.slice(1).sort()).toEqual(["read address", "read credential version"]);
+    expect(mocks.order).toEqual(["lock", "lock", "read address", "read credential version"]);
     // ...and the gate then enforces it: nothing else reaches the server.
     settings("3.0");
     fetchMock.mockClear();
@@ -419,10 +424,10 @@ describe("refreshStoredServerVersion: one path writes the column", () => {
   });
 
   it("logs only the two numbers on a mismatch (INV-INT-005)", async () => {
-    fetchMock.mockResolvedValue(respond(200, { version: "2.2", match: false }));
+    fetchMock.mockResolvedValue(respond(200, { version: "2.7", match: false }));
     await refreshStoredServerVersion();
     const [fields] = mocks.logger.info.mock.calls[0];
-    expect(fields).toEqual({ expected: SERVERNZ_EXPECTED_SERVER_VERSION, serverVersion: "2.2" });
+    expect(fields).toEqual({ expected: SERVERNZ_EXPECTED_SERVER_VERSION, serverVersion: "2.7" });
   });
 });
 
@@ -433,12 +438,23 @@ describe("a never-asked row self-heals with ONE inline check (default 1)", () =>
       .mockResolvedValueOnce(respond(200, { version: SERVERNZ_EXPECTED_SERVER_VERSION, match: true }))
       .mockResolvedValueOnce(respond(200, { url: "https://club.test/hook", secretVersion: 1, secret: "s".repeat(40) }));
 
-    await registerPushTarget("https://club.test/hook");
+    const registered = await registerPushTarget("https://club.test/hook");
 
+    // #4470: the identity it was sent on comes back, for the fenced secret write.
+    expect(registered.sentOn).toEqual({ baseUrl: "https://central.test", credentialVersion: expect.any(String) });
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(String(fetchMock.mock.calls[0][0])).toBe("https://central.test/api/v1/version");
     expect(String(fetchMock.mock.calls[1][0])).toBe("https://central.test/api/v1/push-target");
     expectRecorded(SERVERNZ_EXPECTED_SERVER_VERSION);
+  });
+
+  it("hands a feed page back with the identity it was sent on, for the mirror's fenced writes (#4470)", async () => {
+    settings(null);
+    fetchMock
+      .mockResolvedValueOnce(respond(200, { version: SERVERNZ_EXPECTED_SERVER_VERSION, match: true }))
+      .mockResolvedValueOnce(respond(200, { changes: [], cursor: null, hasMore: false }));
+    const page = await pullSharedPostSync({});
+    expect(page.sentOn).toEqual({ baseUrl: "https://central.test", credentialVersion: expect.any(String) });
   });
 
   it("refuses the real request when the inline answer differs, having sent only the version call", async () => {
@@ -542,5 +558,19 @@ describe("every request names this site's version", () => {
     fetchMock.mockResolvedValue(respond(200));
     await fetchSharedPostImage(`https://central.test/api/images/posts/${"b".repeat(32)}.webp`);
     expect(fetchMock.mock.calls[2][1].headers["X-Client-Api-Version"]).toBe(SERVERNZ_EXPECTED_SERVER_VERSION);
+  });
+});
+
+
+describe("request connection fence (#4436)", () => {
+  it("reads both halves through the transaction client before any HTTP", async () => {
+    fetchMock.mockImplementation(async () => {
+      expect(mocks.loadServerNzSettings).toHaveBeenCalledWith(mocks.tx);
+      expect(mocks.getOperationalServerNzCredential).toHaveBeenCalledWith(mocks.tx);
+      expect(mocks.order[0]).toBe("lock");
+      return respond(200, { lodges: [], cursor: null, count: 0 });
+    });
+    await pullOtherLodges();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });

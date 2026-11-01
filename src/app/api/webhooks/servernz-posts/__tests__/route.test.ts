@@ -33,7 +33,6 @@ vi.mock("@/lib/logger", () => ({
 
 vi.mock("@/lib/club-post-mirror", () => ({
   runMirrorSync: mocks.runMirrorSync,
-  SERVERNZ_PUSH_SECRET_KEY: "push_secret",
 }));
 
 vi.mock("@/lib/integration-credentials", () => ({
@@ -100,11 +99,23 @@ describe("POST /api/webhooks/servernz-posts", () => {
     const res = await POST(signedRequest());
     expect(res.status).toBe(200);
     expect(mocks.runMirrorSync).toHaveBeenCalled();
+    // The one stored key, from servernz-config (#4470), not a copy.
+    expect(mocks.getIntegrationCredentialValue).toHaveBeenCalledWith("servernz", "push_secret");
   });
 
   it("rejects a signature made with the wrong secret", async () => {
     const res = await POST(signedRequest({ secret: "w".repeat(64) }));
     expect(res.status).toBe(401);
+    expect(mocks.runMirrorSync).not.toHaveBeenCalled();
+  });
+
+  it("refuses a captured free-beds question replayed here, before the signature is judged", async () => {
+    // The availability webhook signs `availability\n<lodge>\n<from>\n<to>` with the
+    // same secret; within the window it would verify, so the body shape is
+    // refused first and the sync never runs.
+    const res = await POST(signedRequest({ body: "availability\nol_a\n2026-07-10\n2026-07-13" }));
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: "Invalid body" });
     expect(mocks.runMirrorSync).not.toHaveBeenCalled();
   });
 

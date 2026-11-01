@@ -7,17 +7,22 @@ import { assertSafeRaceDbUrl } from "./support/race-db-url";
 const workflow = readFileSync(resolve(process.cwd(), ".github/workflows/ci.yml"), "utf8");
 const job = jobBlock(workflow, "migration-drift");
 const endpointStepName = "Resolve dedicated race database endpoint";
-const endpointStep = stepBlock(job, endpointStepName);
 const endpoint = "postgresql://postgres:postgres@127.0.0.1:${{ job.services.concurrency-race-postgres.ports[5432] }}/concurrency_race_1881";
 
 // INV-SSOT-001: resolve once, validate before any writer, then inherit the URL.
-describe("dedicated CI race database endpoint (#4238)", () => {
+// Every job that stands up the dedicated race service gets the same guard (#4458
+// added `realdb-all`, the second).
+describe.each(["migration-drift", "realdb-all"])("dedicated CI race database endpoint in %s (#4238)", (jobId) => {
+  const raceJob = jobBlock(workflow, jobId);
+  const endpointStep = stepBlock(raceJob, endpointStepName);
+
   it("lets Docker choose a free high loopback port and validates before publishing", () => {
-    const service = job.slice(job.indexOf("      concurrency-race-postgres:"), job.indexOf("\n    env:"));
+    expect(raceJob, `ci.yml has no ${jobId} job`).not.toBe("");
+    const service = raceJob.slice(raceJob.indexOf("      concurrency-race-postgres:"), raceJob.indexOf("\n    env:"));
     expect(service).toContain("127.0.0.1:55442-65535:5432");
     expect(service).toContain("POSTGRES_DB: concurrency_race_1881");
-    expect(job).not.toContain("55442:5432");
-    expect(job.split(endpoint)).toHaveLength(2);
+    expect(raceJob).not.toContain("55442:5432");
+    expect(raceJob.split(endpoint)).toHaveLength(2);
     expect(endpointStep).toContain(`CONCURRENCY_RACE_DATABASE_URL: ${endpoint}`);
     expect(endpointStep).toContain('import { assertSafeRaceDbUrl } from "./src/lib/__tests__/support/race-db-url"');
     const validate = endpointStep.indexOf('assertSafeRaceDbUrl(process.env.CONCURRENCY_RACE_DATABASE_URL ?? "", "CI endpoint")');
@@ -26,6 +31,15 @@ describe("dedicated CI race database endpoint (#4238)", () => {
     expect(publish).toBeGreaterThan(validate);
   });
 
+  it("migrates only after the endpoint is resolved, from the resolved URL", () => {
+    const migrationName = jobId === "migration-drift" ? "Migrate dedicated advisory-lock race database" : "Migrate dedicated race database";
+    const migration = stepBlock(raceJob, migrationName);
+    expect(migration).toContain("DATABASE_URL: ${{ env.CONCURRENCY_RACE_DATABASE_URL }}");
+    expect(raceJob.indexOf(endpointStepName)).toBeLessThan(raceJob.indexOf(migrationName));
+  });
+});
+
+describe("dedicated CI race database endpoint (#4238)", () => {
   it("keeps every real proof blocking and on the one resolved service", () => {
     expect(job).toContain("name: Migration drift check");
     expect(job).not.toMatch(/continue-on-error:|if:.*always\(/);

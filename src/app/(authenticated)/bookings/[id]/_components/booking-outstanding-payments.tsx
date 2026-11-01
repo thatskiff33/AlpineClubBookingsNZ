@@ -84,7 +84,7 @@ export function BookingOutstandingPayments({ bookingId, initial, format, zone }:
       {view.audience === "owner" && view.cardDueCents > 0 &&
         isAdditionalPaymentDoorOpenForBooking({ bookingStatus: view.bookingStatus, bookingDeletedAt: null }) && (
           <div id="additional-payment" className="scroll-mt-20">
-            <AdditionalPaymentCard key={view.cardRevision} bookingId={bookingId} additionalAmountCents={view.cardDueCents} onDisplayChange={onCardDisplay} />
+            <AdditionalPaymentCard key={view.cardRevision} bookingId={bookingId} additionalAmountCents={view.cardDueCents} askCause={view.askCause} onDisplayChange={onCardDisplay} />
           </div>
         )}
     </div>

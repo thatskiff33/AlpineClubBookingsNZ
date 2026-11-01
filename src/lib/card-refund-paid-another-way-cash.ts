@@ -267,6 +267,48 @@ export async function readPaidAnotherWayCash(db: CashStore, paymentId: string): 
 }
 
 /**
+ * #4280 (`INV-PAY-103`; owner, 22 and 26 Oct 2026): THE BANK CASH "PAID
+ * ANOTHER WAY" CLOSES RECORDED, PER PAYMENT - what a card refund's reversal
+ * may never take the refunded total below, beside the card refunds still
+ * counted and the account credit (`expectedRefundedFloorCents`).
+ *
+ * The one reader of that cash. It reads the closes' own records
+ * (`CARD_REFUND_PAID_ANOTHER_WAY_TASK_WHERE`), at the `amountCents` each paid
+ * back - for a part close, what was paid, never what was given up - whether
+ * its note was raised, waits for a receipt or has no invoice: that only says
+ * how Xero hears of it (`readPaidAnotherWayCash`), not whether the money went.
+ * A close is final: nothing undoes it (#4162 leaves a card refund's record to
+ * the card pipeline), and one close per refund operation (its claim).
+ *
+ * NOT read here, so neither raises the floor:
+ * - a card or capacity refund shortfall paid back: outside this bounded
+ *   repair (owner, 26 Oct 2026), though #4162 never undoes one;
+ * - an ordinary bank hand-back: #4162 can undo its refund while its task still
+ *   reads completed, so its record is no proof the money stands.
+ * The cost of the first, on a payment with several charges, is #4488.
+ *
+ * `scope` is one payment - read on the caller's transaction client, under the
+ * Payment row its writer holds - or every payment, for the audit's one
+ * snapshot. A payment with no close is absent from the map.
+ */
+export async function readPaidAnotherWayCloseBankCashByPayment(
+  db: Pick<Prisma.TransactionClient, "manualRefundTask">,
+  scope: { paymentId: string } | "all",
+): Promise<Map<string, number>> {
+  const groups = await db.manualRefundTask.groupBy({
+    by: ["paymentId"],
+    where: { ...CARD_REFUND_PAID_ANOTHER_WAY_TASK_WHERE, paymentId: scope === "all" ? { not: null } : scope.paymentId },
+    _sum: { amountCents: true },
+  });
+  const cash = new Map<string, number>();
+  for (const group of groups) {
+    const cents = Math.max(0, group._sum.amountCents ?? 0);
+    if (group.paymentId !== null && cents > 0) cash.set(group.paymentId, cents);
+  }
+  return cash;
+}
+
+/**
  * #3924 round 8 (money review, `INV-SSOT`): THE ONE WAY TO FIND A CLOSE'S OWN
  * NOTE ROWS - the refund-note creates on its payment whose payload names its
  * record (`paidAnotherWayTaskId`), in any status. Every row the note pipeline

@@ -1,0 +1,1 @@
+- Retry failed bank-transfer settlement figure alerts from the existing Xero inbound cron, without waiting for another invoice delivery. Stop after three failed sends and keep exhausted alerts visible in Stuck States.

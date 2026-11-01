@@ -14,7 +14,10 @@ import { auth } from "@/lib/auth";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { parseJsonRequestBody } from "@/lib/api-json";
 import { CreatePaymentIntentSchema } from "@/types/payments";
-import { canCreateImmediatePaymentIntent } from "@/lib/booking-payment-flow";
+import {
+  canCreateImmediatePaymentIntent,
+  isSwitchableToInternetBanking,
+} from "@/lib/booking-payment-flow";
 import {
   acquireLodgeCapacityLock,
   checkCapacityForGuestRanges,
@@ -37,11 +40,10 @@ import {
 import { recordInternetBankingPaymentTransaction } from "@/lib/payment-transactions";
 import { retireCardIntentBeforeElection } from "@/lib/card-intent-retirement";
 import {
-  enqueueXeroAppliedCreditAllocationOperation,
-  enqueueXeroBookingInvoiceOperation,
-  kickQueuedXeroOutboxOperationsIfConnected,
-} from "@/lib/xero-operation-outbox";
-import { isXeroConnected } from "@/lib/xero";
+  alreadySwitchedBody,
+  isLiveSwitchState,
+  queueSwitchInvoiceAfterCommit,
+} from "@/lib/internet-banking-switch-replay";
 import logger from "@/lib/logger";
 import { hasAdminAccess } from "@/lib/access-roles";
 import { lockMemberCreditLedger } from "@/lib/member-credit";
@@ -72,6 +74,9 @@ class CreditCoversWholeBookingError extends Error {
  * PAID, exactly like a booking created with Internet Banking. Internet Banking is
  * an optional module, so this 400s when it is off.
  */
+// #4365: one refusal for a booking that can no longer switch, early or under the locks.
+const NOT_SWITCHABLE_BODY = { error: "This booking can no longer switch to Internet Banking." };
+
 export async function POST(request: NextRequest) {
   const session = await auth();
   if (!session?.user?.id) {
@@ -130,13 +135,17 @@ export async function POST(request: NextRequest) {
 
   const reference = buildInternetBankingPaymentReference(booking.id);
 
-  // Already on Internet Banking → idempotent success.
+  // Already on Internet Banking → idempotent success, re-queueing the invoice
+  // a live booking may still lack (`queueSwitchInvoiceAfterCommit`).
   if (booking.payment?.source === PaymentSource.INTERNET_BANKING) {
-    return NextResponse.json({
-      reference,
-      holdBedSlots: booking.payment.internetBankingHoldSlots,
-      holdUntil: booking.payment.internetBankingHoldUntil,
-    });
+    if (!isLiveSwitchState(booking)) {
+      return NextResponse.json(
+        NOT_SWITCHABLE_BODY,
+        { status: 409 },
+      );
+    }
+    await queueSwitchInvoiceAfterCommit(booking.id, session.user.id);
+    return NextResponse.json(alreadySwitchedBody(booking.payment, reference));
   }
 
   const internetBankingSettings = await loadInternetBankingPaymentSettings();
@@ -162,9 +171,14 @@ export async function POST(request: NextRequest) {
   }
 
   // Only an immediately-payable (charge-now) booking can switch; a saved-card
-  // hold or organiser-settled / draft booking cannot.
+  // hold or organiser-settled / draft booking cannot. The status rule is the
+  // page's own (`isSwitchableToInternetBanking`): PAYMENT_PENDING, or an
+  // approved member whole-lodge booking — CONFIRMED and held, but owing its
+  // whole price with no receivable yet (#4019).
+  const wholeLodgeConfirmed =
+    booking.status === "CONFIRMED" && booking.wholeLodgeHold === true;
   if (
-    booking.status !== "PAYMENT_PENDING" ||
+    !isSwitchableToInternetBanking(booking) ||
     !canCreateImmediatePaymentIntent({
       status: booking.status,
       hasNonMembers: booking.hasNonMembers,
@@ -235,8 +249,17 @@ export async function POST(request: NextRequest) {
   // mirror) and set the IB payment to the effective amount the member now owes.
   // The invoice is reduced to this effective amount by the applied-credit
   // allocation op enqueued below (Option A: member pays effective).
-  const holdBedSlots = internetBankingSettings.holdBedSlots;
-  const holdUntil = buildInternetBankingHoldUntil(internetBankingSettings);
+  // A whole-lodge booking is already CONFIRMED and capacity-holding through
+  // its exclusive hold, with no bed-hold clock by design (the approval stamps
+  // no deadline onto the one booking that must not be bumped). So it takes no
+  // Internet Banking bed hold and no holdUntil: the hold-expiry cron selects on
+  // `internetBankingHoldSlots: true`, and this keeps it out of that sweep.
+  const holdBedSlots = wholeLodgeConfirmed
+    ? false
+    : internetBankingSettings.holdBedSlots;
+  const holdUntil = wholeLodgeConfirmed
+    ? null
+    : buildInternetBankingHoldUntil(internetBankingSettings);
   const paymentResult = await prisma.$transaction(async (tx) => {
     // #1881 two-tier protocol. Switching to Internet Banking with holdBedSlots
     // flips the booking to CONFIRMED (a capacity-holding status) — a net-new
@@ -261,7 +284,21 @@ export async function POST(request: NextRequest) {
         payment: { select: { changeFeeCents: true } },
       },
     });
-    if (!locked || locked.status !== BookingStatus.PAYMENT_PENDING) {
+    // Lifecycle gates still win over replay: a cancelled/deleted booking must
+    // never be resurrected or return an old successful switch response.
+    if (!locked || !isLiveSwitchState(locked)) {
+      return { type: "notSwitchable" as const };
+    }
+    const lockedPayment = await tx.payment.findUnique({
+      where: { bookingId: booking.id },
+    });
+    // INV-LOCK-001/002: a switch can leave CONFIRMED or PAYMENT_PENDING
+    // unchanged. Source, not a status change, is the idempotence claim. Read it
+    // under the existing locks BEFORE credit, hold, invoice or receipt writes.
+    if (lockedPayment?.source === PaymentSource.INTERNET_BANKING) {
+      return { type: "alreadyInternetBanking" as const, payment: lockedPayment };
+    }
+    if (locked.status !== booking.status || !isSwitchableToInternetBanking(locked)) {
       return { type: "notSwitchable" as const };
     }
 
@@ -269,10 +306,6 @@ export async function POST(request: NextRequest) {
     // one cancelled above: an intent minted while this request waited (a pay
     // page opened in another tab) is still live and still chargeable, and
     // dropping it would re-open the double collection the refusal closed.
-    const lockedPayment = await tx.payment.findUnique({
-      where: { bookingId: booking.id },
-      select: { stripePaymentIntentId: true },
-    });
     if (
       lockedPayment?.stripePaymentIntentId &&
       lockedPayment.stripePaymentIntentId !== cancelledCardIntentId
@@ -486,40 +519,22 @@ export async function POST(request: NextRequest) {
     // we waited on the locks (#1881), or the status-guarded CONFIRMED claim
     // lost. Nothing was written; report a conflict.
     return NextResponse.json(
-      { error: "This booking can no longer switch to Internet Banking." },
+      NOT_SWITCHABLE_BODY,
       { status: 409 },
     );
+  }
+
+  if (paymentResult.type === "alreadyInternetBanking") {
+    // Live under the locks (the gate above), so the replay re-queues too.
+    await queueSwitchInvoiceAfterCommit(booking.id, session.user.id);
+    return NextResponse.json(alreadySwitchedBody(paymentResult.payment, reference));
   }
 
   // #2576 §9: drain the re-evaluation the claim above recorded, now that the
   // confirmation has committed. Best-effort; the cron sweep is the authority.
   await settleHostingCoverageAfterCommit({ bookingId: booking.id });
 
-  try {
-    const queued = await enqueueXeroBookingInvoiceOperation(booking.id, {
-      createdByMemberId: session.user.id,
-      invoiceEmailDelivery: null,
-    });
-    // #1620 — enqueue the applied-credit allocation AFTER the invoice op (older
-    // createdAt → processed first) so the invoice exists when the allocation
-    // runs; if not yet raised the allocation handler throws and the outbox
-    // retries. Skips itself when there is no unallocated applied credit.
-    const queuedAllocation = await enqueueXeroAppliedCreditAllocationOperation(
-      booking.id,
-      { createdByMemberId: session.user.id },
-    );
-    if (
-      (queued.queueOperationId || queuedAllocation.queueOperationId) &&
-      (await isXeroConnected())
-    ) {
-      await kickQueuedXeroOutboxOperationsIfConnected({ limit: 2 });
-    }
-  } catch (err) {
-    logger.error(
-      { err, bookingId },
-      "Failed to queue Xero invoice after switching to Internet Banking"
-    );
-  }
+  await queueSwitchInvoiceAfterCommit(booking.id, session.user.id);
 
   return NextResponse.json({
     reference,

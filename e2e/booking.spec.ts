@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./helpers/accessibility";
 import { storageStatePath } from "./helpers/auth";
 import { bookingCreateIsolation } from "./helpers/booking-create-client-ip";
 import {

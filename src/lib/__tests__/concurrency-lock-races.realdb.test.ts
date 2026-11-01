@@ -36,6 +36,11 @@ import "./support/race-harness-outbox-guard";
 // creates/drops its own unique schema. Importing registers the trigger proofs in
 // the explicit CI race command without changing the workflow or making ordinary
 // `pnpm test` depend on a database.
+// #4432: scheduled/manual inbound exclusion and dead-holder recovery.
+import "./xero-inbound-run-claim.realdb.test";
+import "./xero-sync-now.realdb.test";
+// #4531: a payment deleted in Xero retires its link; the replay and the backfill write nothing more.
+import "./xero-deleted-payment-links.realdb.test";
 import "./minimum-stay-policy-trigger.realdb.test";
 // #2532 reuses the same guarded harness to prove the AI Diagnostics monthly
 // budget (AID-2, #2371) can never be overspent by concurrent reservers. Its
@@ -263,6 +268,7 @@ import "./booking-outstanding-observation.realdb.test";
 // cleans its own `race-3864-` fixtures, and its Stripe and session doubles pass
 // through for every other suite.
 import "./election-double-pay-race.realdb.test";
+import "./whole-lodge-payment-review.realdb.test";
 // #3835 reuses it to prove a review completed after the REAL cancel of a
 // captured payment gives back only what the cancellation's refund left owed,
 // by card and by credit plus card at three tiers, on both captured routes and
@@ -338,6 +344,19 @@ import "./cancel-card-refund-event.realdb.test";
 // failed-later writer and "paid another way" close. Skipped unless
 // RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own `race-4166-` fixtures.
 import "./cancel-card-refund-failed-later.realdb.test";
+// #4280 reuses it to prove a card refund's reversal keeps the bank cash a "Paid
+// another way" close recorded: full and part closes, a late pending or
+// succeeded refund then failed or cancelled, each note state, several charges,
+// credit beside it, shortfalls and undone hand-backs never counted, the close
+// and the refund racing in both orders, and a rolled-back failure. Skipped
+// unless RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own `race-4280-` fixtures.
+import "./card-refund-reversal-bank-cash-floor.realdb.test";
+// #4210 reuses it to prove a card refund that fails later after its row was
+// closed "Paid another way" is held for an officer and alerted, never re-sent:
+// full and part closes, duplicate deliveries, no close and a close on another
+// row unchanged, and the close and the failure racing in both orders. Skipped
+// unless RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own `race-4210-` fixtures.
+import "./card-refund-failed-later-after-paid-another-way.realdb.test";
 // #4147 reuses it to prove the booking-ledger census reads a capacity race's
 // cancel by its own refund rows: through the REAL capacity race, back-post and
 // recovery runner, a refund still being sent is IN_FLIGHT_REFUND (the back-post
@@ -369,6 +388,13 @@ import "./additional-capture-receipt.realdb.test";
 // booking's lock, taken before the anchor's) - still has one recorder. Skipped
 // unless RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own `race-3953u-` fixtures.
 import "./additional-capture-receipt-unattributed.realdb.test";
+// #4324 reuses it to prove a late change capture a treasurer kept on a
+// cancelled, invoiced booking has one recorder: the keep against the repair
+// tool's supplementary invoice and its own kept-capture action, a webhook
+// replay after the keep, and an approval while the receipt's worker runs.
+// Skipped unless RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own
+// `race-4324-` fixtures.
+import "./kept-change-capture-record.realdb.test";
 // #3854 reuses it to prove a group organiser's settlement posts its children's
 // money to the booking ledger through the real card settle, the Internet Banking
 // invoice's inbound reconcile, the organiser cancel's refund plan and #3653's
@@ -601,6 +627,29 @@ import "./own-live-refund-note-coverage.realdb.test";
 // row and then refuses rather than writing over the forget. Skipped unless
 // RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans the singleton settings row.
 import "./servernz-version-record-race.realdb.test";
+
+// #4436: address/key replacement and request capture share the settings fence.
+import "./servernz-connection-race.realdb.test";
+// #4586 reuses it to prove the message-board mirror's release leaves a claim a
+// second pass took over, and that a mirror tombstone and an admin removal of
+// one post, each held after its first lock, finish without deadlock in both
+// orders (post row before image rows). Skipped unless
+// RUN_CONCURRENCY_RACE_TESTS=1; it owns `race-4586-` posts and the singleton
+// settings row. #4588 adds the board lifecycle races there: a pass taken over
+// writes nothing more, a removed mirror keeps its blank words, a claim queued
+// ahead of the orphan sweep keeps its upload, and retention lists a picture a
+// mirror update adds mid-pass. It owns `race-4588-` rows and puts the board's
+// settings row back. #4590 adds a share the server accepted recorded through
+// the mirror's copy and never re-sent, a retention pass taken over leaving the
+// new claim, and a post refused when the sweep deleted its upload first
+// (`race-4590-` rows). Its review adds the inline share and the cron retry
+// sending once (#4592), and an accepted share recorded nowhere never re-sent.
+import "./club-post-mirror-concurrency.realdb.test";
+// #4262: the other-lodge name-index pair's windowed declaration measured, not
+// asserted: the previous release's name-keyed upsert refused once it applies,
+// and each reverse script's duplicate-name refusal and order. Skipped unless
+// RUN_CONCURRENCY_RACE_TESTS=1; it owns and drops its own scratch schema.
+import "./other-lodge-name-index-window.realdb.test";
 // #4421 reuses it to prove "Resolve by hand" on a refund-note create that
 // names no note records the officer's note, and that note then records no
 // other refund: the real resolve route and the real hand-made answer, in
@@ -625,6 +674,7 @@ import {
 } from "vitest";
 
 import { realElapsedMs } from "@/lib/__tests__/helpers/clock";
+import { releaseBookingFinancialHistoryForTeardown } from "@/lib/__tests__/support/booking-financial-history-teardown";
 
 let prisma: typeof import("@/lib/prisma")["prisma"];
 let markGroupSettlementIntentFailed: typeof import("@/lib/group-settlement")["markGroupSettlementIntentFailed"];
@@ -1128,7 +1178,9 @@ describe("concurrency race DB safety guard (#1881)", () => {
       await prisma.$executeRawUnsafe(
         `CREATE TABLE IF NOT EXISTS "${PROBE_TABLE}" (id text PRIMARY KEY, status text NOT NULL)`
       );
-      // Idempotent recovery from an interrupted earlier opt-in run.
+      // Idempotent recovery from an interrupted earlier opt-in run. #4514: a
+      // group's settlement no longer goes with it (INV-MONEY-043).
+      await releaseBookingFinancialHistoryForTeardown(prisma, [APP_BOOKING_ID, MOVE_BOOKING_ID, MOVE_BLOCKER_BOOKING_ID]);
       await prisma.groupBooking.deleteMany({ where: { id: APP_GROUP_ID } });
       await prisma.booking.deleteMany({
         where: { id: { in: [MOVE_BOOKING_ID, MOVE_BLOCKER_BOOKING_ID] } },
@@ -1279,6 +1331,10 @@ describe("concurrency race DB safety guard (#1881)", () => {
 
       if (typeof prisma !== "undefined") {
         await attemptCleanup(() => clearBaselineFixtures());
+        // #4514: a group's settlement no longer goes with it (INV-MONEY-043).
+        await attemptCleanup(() =>
+          releaseBookingFinancialHistoryForTeardown(prisma, [APP_BOOKING_ID, MOVE_BOOKING_ID, MOVE_BLOCKER_BOOKING_ID])
+        );
         await attemptCleanup(() =>
           prisma.groupBooking.deleteMany({ where: { id: APP_GROUP_ID } })
         );

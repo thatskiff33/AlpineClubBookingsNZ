@@ -606,6 +606,7 @@ model Member {
   requiresInduction                   Boolean            @default(false) // Admin-set flag: member must complete a lodge induction
   hutLeaderEligible                   Boolean            @default(false)
   hutLeaderEligibleAt                 DateTime?
+  leavingDate                         DateTime? @db.Date // Explicit departure day; NULL legacy dates are never inferred
   cancelledAt                         DateTime?
   cancelledReason                     String?
   cancelledViaRequestId               String?
@@ -2034,6 +2035,7 @@ model Booking {
   @@index([lodgeId])
   @@index([otherLodgeId])
   @@index([organisationId])
+  memberMoneyLines MemberMoneyLine[]
 }
 
 // Durable booking-lifecycle event store (issue #740). One row per transition
@@ -2420,7 +2422,10 @@ model GroupBookingSettlement {
   createdAt             DateTime      @default(now())
   updatedAt             DateTime      @updatedAt
 
-  groupBooking GroupBooking @relation(fields: [groupBookingId], references: [id], onDelete: Cascade)
+  /// D1 (#4482, M2 #4514): an organiser's settlement is financial history. Its
+  /// group cascades with the organiser's booking; the settlement refuses, so a
+  /// settled group stops that delete (`INV-MONEY-043`).
+  groupBooking GroupBooking @relation(fields: [groupBookingId], references: [id], onDelete: Restrict, onUpdate: Restrict)
 
   @@index([status, createdAt])
 }
@@ -2453,6 +2458,15 @@ model BookingRequest {
   // admin capacity action). Booking-generic; "school" is just the wording.
   // Additive/expand-only; default false.
   exclusivityRequested Boolean            @default(false)
+
+  // Member whole-lodge requests only (#4019): the member's ask to
+  // put their account credit towards the booking if the request is approved.
+  // The price is not known when the request is made, so this is a yes/no
+  // election rather than an amount; approval applies min(balance, price) under
+  // the member's ledger lock, the same ledger write the ordinary create path
+  // makes for a member who ticked "Apply credit" on the review step. Always
+  // false for public and school rows. Additive/expand-only; default false.
+  applyAccountCredit Boolean              @default(false)
 
   // Member attribution for the authenticated whole-lodge request front-door
   // (#2263). Null for every public/school request (which have no account behind
@@ -5231,6 +5245,16 @@ model Lodge {
   // lobby display), default OFF (#37/#124). Combined with the per-member opt-in
   // and an adults-only rule, enforced in the serving serialisers.
   showGuestPhonesOnScreens Boolean @default(false)
+  // Which lodge in the Alpine Central Server's registry THIS lodge is (#62):
+  // the central lodge's permanent id, chosen by an administrator from the
+  // lodges the server says this club owns (`ServerNzSettings
+  // .otherLodgesOwnedLodges`). By id, never by name, because a lodge can be
+  // renamed centrally. Null = not linked; a club with exactly one active lodge
+  // that owns exactly one central lodge is linked by default IN CODE
+  // (`@/lib/central-lodge-link`), never by writing this column. Unique: one
+  // central lodge is one local lodge. Install-specific, so deliberately not in
+  // the config transfer.
+  centralLodgeId String? @unique @db.VarChar(64)
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
@@ -5272,6 +5296,7 @@ model Lodge {
   // QR token with it, because neither means anything without the building.
   maintenanceReports      MaintenanceReport[]
   maintenanceReportToken  LodgeMaintenanceReportToken?
+  memberMoneyLines MemberMoneyLine[]
 }
 
 // Registry of EXTERNAL / partner lodges the club recognises (e.g. for the
@@ -5285,7 +5310,22 @@ model Lodge {
 // it (there is no active/inactive state — that was dropped as unneeded).
 model OtherLodge {
   id                  String   @id @default(cuid())
-  name                String   @unique
+  // Not unique (#69): two lodges may share a name, and the central id is what
+  // makes them distinct. Drop-downs show the location beside it to tell two
+  // apart.
+  name                String
+  // The Alpine Central Server's PERMANENT id for this lodge (#64): the key the
+  // download merges by, so a lodge renamed there is renamed here in place, and
+  // the id an owned lodge is uploaded under (server API 2.3). Null until a
+  // download has matched the row by name once; a row still null after a whole
+  // registry download is one the central server no longer has.
+  centralId           String?  @unique @db.VarChar(64)
+  // Hidden here (#58): set when the central server reports the lodge deleted,
+  // or when an administrator hides a lodge the server does not list. The row
+  // and its data stay, so every booking and booking request that names it
+  // keeps it; it is left out of the Other lodges list and every drop-down.
+  // Never cleared.
+  hiddenAt            DateTime?
   location            String?  @db.VarChar(300)
   bookingOfficerName  String?  @db.VarChar(200)
   bookingOfficerEmail String?  @db.VarChar(320)
@@ -5315,13 +5355,37 @@ model OtherLodge {
   dinnerIncluded         Boolean   @default(false)
   cancellationPeriod     String?   @db.VarChar(200)
   winterSeasonStart      DateTime? @db.Date
+  // A season's LAST day (#75, server API 2.6). Seasons recur: only day and
+  // month count. Unset, the season runs up to the other season's start.
+  winterSeasonEnd        DateTime? @db.Date
   summerSeasonStart      DateTime? @db.Date
+  summerSeasonEnd        DateTime? @db.Date
+  // This club's own lodge only (#77): when true, its non-member rates and
+  // season dates are filled from the Fees page (the Non-Member type's rates and
+  // their seasons) and are read-only in the editor. A LOCAL setting: never
+  // sent to or taken from the central server. Ignored for another club's lodge.
+  ratesFromFees          Boolean   @default(true)
+  // Server API 2.2 (#61): non-member rates per person per night, NZD incl.
+  // GST, a winter and a summer rate for each age group (#77). INTEGER
+  // CENTS (INV-MONEY-001), 0..9999999 (a CHECK in the migration), null = not
+  // set; the central server carries dollars and `@/lib/servernz-rate` is the
+  // one conversion. Display only: nothing is charged from them.
+  winterRateUnder5Cents  Int?
+  winterRate5To11Cents   Int?
+  winterRate12To17Cents  Int?
+  winterRateAdultCents   Int?
+  summerRateUnder5Cents  Int?
+  summerRate5To11Cents   Int?
+  summerRate12To17Cents  Int?
+  summerRateAdultCents   Int?
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
 
   amenities           Amenity[]
   bookingRequests     BookingRequest[]
   bookings            Booking[]
+
+  @@index([name])
 }
 
 // Whether an other lodge sleeps guests in private rooms or in dormitories,
@@ -5374,6 +5438,10 @@ model ServerNzSettings {
   // across the central server's HTTP calls.
   otherLodgesSyncStartedAt DateTime?
 
+  // NO LONGER READ (#69, server API 2.5, which no longer sends the names):
+  // ownership is decided by `otherLodgesOwnedLodges` below, by central id. Kept,
+  // and left as last written, for the draining colour of the upgrade that
+  // stopped reading it; a later release drops it. As it was:
   // The lodge NAMES the central server says this club owns (#52), as it sends
   // them on every pull (`ownLodgeNames`): a JSON array of strings, keyed by name
   // because that is how the registry is keyed. THREE states, and the shape
@@ -5387,6 +5455,18 @@ model ServerNzSettings {
   // last received, so an operator can see how stale it is.
   otherLodgesOwnedNames   Json?
   otherLodgesOwnedNamesAt DateTime?
+  // The same owned lodges with their PERMANENT central ids, `[{ id, name }]`
+  // (server API 2.2 `ownLodges`, #62). Same three states as the names and
+  // written in the same download: NULL = never told (or an older server that
+  // does not send it), [] = owns none. Read by the "Central lodge" setting and
+  // the availability endpoint, which link by id because a name can change.
+  otherLodgesOwnedLodges  Json?
+  // When a WHOLE-registry download last merged to the end (#64): until then
+  // every download asks for the whole registry, so every Other lodges row is
+  // matched by name once and keyed by its central id, and a row still unkeyed
+  // after it is one the server does not list. NULL = not yet (a site just
+  // upgraded, or a connection forgotten); a failed download leaves it NULL.
+  otherLodgesKeyedAt      DateTime?
 
   // Shared item: the cross-club message board (epic #2992). The cursor is the
   // pair the server's /api/v1/feed/sync hands back — an updatedAt instant plus
@@ -7340,9 +7420,13 @@ model MemberCredit {
   requestedBy               Member?                       @relation("RequestedAdminCredits", fields: [requestedById], references: [id], onDelete: SetNull)
   approvedBy                Member?                       @relation("ApprovedAdminCredits", fields: [approvedById], references: [id], onDelete: SetNull)
   approvalRequest           AdminCreditAdjustmentRequest? @relation("ApprovedAdminCreditAdjustment", fields: [approvalRequestId], references: [id], onDelete: SetNull)
-  sourceBooking             Booking?                      @relation("CreditSource", fields: [sourceBookingId], references: [id], onDelete: SetNull)
-  sourceBookingModification BookingModification?          @relation("CreditSourceModification", fields: [sourceBookingModificationId], references: [id], onDelete: SetNull)
-  appliedToBooking          Booking?                      @relation("CreditApplied", fields: [appliedToBookingId], references: [id], onDelete: SetNull)
+  /// D1 (#4482, M2 #4514): a credit row's booking links are financial
+  /// relationships. `Restrict`, not `SetNull`: deleting a booking (or one of its
+  /// modifications) a credit row names is refused, so the link is never blanked
+  /// (`INV-MONEY-035`, `INV-MONEY-043`).
+  sourceBooking             Booking?                      @relation("CreditSource", fields: [sourceBookingId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  sourceBookingModification BookingModification?          @relation("CreditSourceModification", fields: [sourceBookingModificationId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  appliedToBooking          Booking?                      @relation("CreditApplied", fields: [appliedToBookingId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   // #1620: slices of THIS credit lot (a positive funding row) that have been
   // allocated to booking invoices as Xero credit notes. Empty for negative
   // BOOKING_APPLIED rows and for lots never used to reduce an IB invoice.
@@ -8652,19 +8736,24 @@ model BookingLedgerLine {
 
   lodgeId String @default(dbgenerated("default_lodge_id()"))
 
-  booking    Booking            @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  /// D1 (#4482, M2 #4514): a line outlives its booking. Every key a line holds
+  /// is `Restrict` both ways, so no referential action can delete or rewrite a
+  /// posted line: a booking with lines is soft-deleted, never hard-deleted, and
+  /// no parent's key can move under it (`INV-MONEY-043`).
+  booking    Booking            @relation(fields: [bookingId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   /// `Restrict`, not `SetNull`: deleting a line is already forbidden, and a
   /// cascade that blanked another line's pointer would be that forbidden
   /// mutation arriving through the database instead of through code.
-  reverses   BookingLedgerLine? @relation("BookingLedgerReversal", fields: [reversesLineId], references: [id], onDelete: Restrict)
+  reverses   BookingLedgerLine? @relation("BookingLedgerReversal", fields: [reversesLineId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   reversedBy BookingLedgerLine? @relation("BookingLedgerReversal")
-  lodge      Lodge              @relation(fields: [lodgeId], references: [id], onDelete: Restrict)
+  lodge      Lodge              @relation(fields: [lodgeId], references: [id], onDelete: Restrict, onUpdate: Restrict)
 
   @@index([bookingId, postedAt])
   @@index([anchorKind, anchorId])
   @@index([bookingGuestId])
   @@index([postedByMemberId])
   @@index([lodgeId])
+  memberMoneySourceLink MemberMoneySourceLink?
 }
 
 /// A line prices the stay, moves money, or records a person's decision.
@@ -8729,4 +8818,246 @@ enum SettlementMethod {
   INTERNET_BANKING
   ACCOUNT_CREDIT
   CASH
+}
+
+// Club-wide privacy retention. Missing row resolves to the same safe defaults.
+model PrivacyRetentionSettings {
+  id                                String   @id @default("default")
+  emailLogRetentionYears             Int      @default(2)
+  rejectedApplicationRetentionYears  Int      @default(1)
+  formerMemberRetentionYears         Int      @default(7)
+  pruneLogsAndApplicationsEnabled    Boolean  @default(false)
+  anonymiseMembersEnabled            Boolean  @default(false)
+  sentryReplayEnabled                Boolean  @default(false)
+  pruneStartedAt                    DateTime?
+  anonymiseStartedAt                DateTime?
+  updatedByMemberId                  String?
+  updatedAt                         DateTime @updatedAt
+}
+
+// #4432: club-level inbound webhook health, independent of ITR verification.
+model XeroInboundSettings {
+  createdAt             DateTime  @default(now())
+  id                    String    @id @default("default")
+  silentWebhookHours    Int       @default(24)
+  lastWebhookReceivedAt DateTime?
+}
+
+enum MemberMoneyAccount {
+  MEMBER_RECEIVABLE
+  STRIPE_CLEARING
+  BANK
+  CASH
+  MEMBER_CREDIT
+  REFUND_PAYABLE
+  BOOKING_REVENUE
+  SUBSCRIPTION_REVENUE
+  JOINING_FEE_REVENUE
+  FEE_REVENUE
+  GST_PAYABLE
+  STRIPE_FEES
+  GOODWILL
+  EXTERNAL_CONTROL
+  OPENING_CONTROL
+}
+
+enum MemberMoneySide {
+  DEBIT
+  CREDIT
+}
+
+enum MemberMoneyEventKind {
+  CHARGE
+  RECEIPT
+  REFUND_OBLIGATION
+  REFUND
+  CREDIT_GRANT
+  CREDIT_APPLICATION
+  CREDIT_RESTORE
+  FEE
+  TRANSFER
+  ADJUSTMENT
+  OPENING
+  REVERSAL
+  ZERO
+}
+
+enum MemberMoneyOrigin {
+  APP
+  OFFICER
+  STRIPE
+  XERO
+  LEGACY
+}
+
+enum MemberMoneySourceKind {
+  BOOKING_LEDGER
+  BOOKING
+  PAYMENT
+  REFUND
+  CREDIT
+  SUBSCRIPTION
+  PROVIDER_FACT
+  OFFICER_FACT
+  OPENING
+}
+
+enum MemberMoneyObligationKind {
+  CHARGE
+  REFUND
+}
+
+/// Who owes: a member or an organisation, as a booking's owner is exactly one.
+enum MemberMoneyDebtorKind {
+  MEMBER
+  ORGANISATION
+}
+
+/// Inert M1 foundation. No production writer or reader is enabled.
+model MemberMoneyEvent {
+  id String @id @default(cuid())
+  eventKey String @unique
+  kind MemberMoneyEventKind
+  origin MemberMoneyOrigin
+  /// The mandatory source link matches kind, identity and version together.
+  sourceKind MemberMoneySourceKind
+  sourceIdentity String
+  sourceVersion String
+  payloadHash String
+  actorMemberId String?
+  reason String
+  effectiveAt DateTime
+  /// Club civil date of effectiveAt, derived through the club-time kernel (INV-DATE).
+  effectiveDate DateTime @db.Date
+  recordedAt DateTime @default(now())
+  journal MemberMoneyJournal?
+}
+
+model MemberMoneyJournal {
+  id String @id @default(cuid())
+  eventId String @unique
+  currency String @db.VarChar(3)
+  policyVersion String
+  codingVersion String
+  expectedLineCount Int
+  expectedObligationCount Int
+  expectedApplicationCount Int
+  /// Database trigger stamps/checks this; descendants may only post in this tx.
+  creatingTransaction BigInt @default(dbgenerated("txid_current()"))
+  /// Stamped with the transaction id: the cluster, so a restore cannot reopen a batch.
+  creatingSystemIdentifier BigInt @default(dbgenerated("member_money_system_identifier()"))
+  reversesJournalId String? @unique
+  event MemberMoneyEvent @relation(fields: [eventId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  reverses MemberMoneyJournal? @relation("MemberMoneyReversal", fields: [reversesJournalId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  reversedBy MemberMoneyJournal? @relation("MemberMoneyReversal")
+  lines MemberMoneyLine[]
+  sources MemberMoneySourceLink[]
+  obligations MemberMoneyObligation[]
+  applications MemberMoneyApplication[]
+}
+
+model MemberMoneySourceLink {
+  id String @id @default(cuid())
+  journalId String
+  sourceKind MemberMoneySourceKind
+  sourceId String
+  sourceVersion String
+  bookingLedgerLineId String? @unique
+  journal MemberMoneyJournal @relation(fields: [journalId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  bookingLedgerLine BookingLedgerLine? @relation(fields: [bookingLedgerLineId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  lines MemberMoneyLine[]
+  @@unique([sourceKind, sourceId, sourceVersion])
+  @@unique([id, journalId])
+  @@index([journalId])
+  postings MemberMoneySourcePosting[]
+}
+
+model MemberMoneyLine {
+  id String @id @default(cuid())
+  journalId String
+  sourceLinkId String
+  account MemberMoneyAccount
+  side MemberMoneySide
+  amountCents Int
+  /// Debtor identity: exactly the id its kind names, or none. Not foreign keys.
+  debtorKind MemberMoneyDebtorKind?
+  memberId String?
+  organisationId String?
+  obligationId String?
+  bookingId String?
+  lodgeId String?
+  creditLotId String?
+  chargeIdentity String?
+  refundIdentity String?
+  originalLineId String? @unique
+  /// Frozen charge split when present; all three or none. Never recomputed.
+  grossCents Int?
+  netCents Int?
+  taxCents Int?
+  taxCode String?
+  evidence Json
+  journal MemberMoneyJournal @relation(fields: [journalId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  source MemberMoneySourceLink @relation(fields: [sourceLinkId, journalId], references: [id, journalId], onDelete: Restrict, onUpdate: Restrict)
+  obligation MemberMoneyObligation? @relation(fields: [obligationId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  booking Booking? @relation(fields: [bookingId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  lodge Lodge? @relation(fields: [lodgeId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  original MemberMoneyLine? @relation("MemberMoneyOriginalLine", fields: [originalLineId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  reversedBy MemberMoneyLine? @relation("MemberMoneyOriginalLine")
+  applications MemberMoneyApplication[]
+  @@index([journalId])
+  @@index([memberId, account])
+  @@index([organisationId, account])
+  @@index([bookingId])
+  @@index([lodgeId])
+  @@index([obligationId])
+  sourcePostings MemberMoneySourcePosting[]
+  @@unique([id, journalId])
+}
+
+model MemberMoneyObligation {
+  id String @id @default(cuid())
+  journalId String
+  obligationKey String @unique
+  kind MemberMoneyObligationKind
+  debtorKind MemberMoneyDebtorKind
+  memberId String?
+  organisationId String?
+  faceCents Int
+  evidence Json
+  journal MemberMoneyJournal @relation(fields: [journalId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  lines MemberMoneyLine[]
+  applications MemberMoneyApplication[]
+  @@index([journalId])
+  /// Member hard delete counts the obligations naming a debtor (#4514).
+  @@index([memberId])
+}
+
+model MemberMoneyApplication {
+  id String @id @default(cuid())
+  applicationKey String @unique
+  journalId String
+  sourceLineId String
+  obligationId String
+  amountCents Int
+  reversesApplicationId String? @unique
+  journal MemberMoneyJournal @relation(fields: [journalId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  sourceLine MemberMoneyLine @relation(fields: [sourceLineId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  obligation MemberMoneyObligation @relation(fields: [obligationId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  reverses MemberMoneyApplication? @relation("MemberMoneyApplicationReversal", fields: [reversesApplicationId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  reversedBy MemberMoneyApplication? @relation("MemberMoneyApplicationReversal")
+  @@index([journalId])
+  @@index([sourceLineId])
+  @@index([obligationId])
+}
+
+/// Immutable exact leg coverage, including compatibility links created later.
+model MemberMoneySourcePosting {
+  id String @id @default(cuid())
+  sourceLinkId String
+  lineId String
+  journalId String
+  source MemberMoneySourceLink @relation(fields: [sourceLinkId, journalId], references: [id, journalId], onDelete: Restrict, onUpdate: Restrict)
+  line MemberMoneyLine @relation(fields: [lineId, journalId], references: [id, journalId], onDelete: Restrict, onUpdate: Restrict)
+  @@unique([sourceLinkId, lineId])
+  @@index([lineId, journalId])
 }

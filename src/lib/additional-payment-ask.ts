@@ -17,7 +17,7 @@
  *
  * 2. **How big is the ask a price increase raises?** `sizeAdditionalAsk`.
  *    Minting an ADDITIONAL PaymentIntent retires every other outstanding ask on
- *    the payment (`queueSupersededAdditionalIntentCancellations`), so an ask
+ *    the payment (`queueSupersededAdditionalIntentCancellationRows`), so an ask
  *    sized on this edit's delta alone DELETES the unpaid balance of the ask it
  *    replaces. That is how a $130 booking with $130 paid, then +$70 unpaid, then
  *    +$70 again, ended up asking for $70 and never for the other $70: the first
@@ -99,6 +99,11 @@ export function outstandingAdditionalAskCents(
     : 0;
 }
 
+/** The balance an ask was sized on, the one rule the queue re-reads (#4442); `undefined` = never sized. */
+export function askSizedOnBalanceCents(sizedOn: AdditionalAskPayment | null | undefined): number | null {
+  return sizedOn === undefined ? null : outstandingAdditionalAskCents(sizedOn);
+}
+
 /**
  * AN ASK, AND WHAT IT ABSORBED - one value, and the only thing the shared minter
  * will accept (#3371).
@@ -162,6 +167,9 @@ class AdditionalAskValue {
    */
   readonly #carriedCents: number;
 
+  /** #4442: the live ask's unpaid balance (`outstandingAdditionalAskCents`) of the `Payment` it was sized on, else null. Private as `#carriedCents` is. */
+  readonly #paymentBalanceCents: number | null;
+
   /**
    * #3954: this ask RE-ISSUES, smaller, an unpaid ask a price reduction retired
    * (`reissueUnpaidAdditionalAsk`). The member's card was already asked for it,
@@ -170,8 +178,9 @@ class AdditionalAskValue {
    */
   readonly #reissuesUnpaidAsk: boolean;
 
-  constructor(params: { ownCents: number; carriedCents: number; reissuesUnpaidAsk?: boolean }) {
+  constructor(params: { ownCents: number; carriedCents: number; reissuesUnpaidAsk?: boolean; sizedOn?: AdditionalAskPayment | null }) {
     this.amountCents = params.ownCents + params.carriedCents;
+    this.#paymentBalanceCents = askSizedOnBalanceCents(params.sizedOn);
     this.#carriedCents = params.carriedCents;
     this.#reissuesUnpaidAsk = params.reissuesUnpaidAsk ?? false;
   }
@@ -179,6 +188,8 @@ class AdditionalAskValue {
   get carriedCents(): number {
     return this.#carriedCents;
   }
+
+  get paymentBalanceCents(): number | null { return this.#paymentBalanceCents; }
 
   /** Private for the reason `#carriedCents` is: a spread cannot carry it. */
   get reissuesUnpaidAsk(): boolean {
@@ -193,11 +204,7 @@ class AdditionalAskValue {
 export type AdditionalAsk = AdditionalAskValue;
 
 /** The only place an `AdditionalAsk` comes into existence. */
-function buildAdditionalAsk(params: {
-  ownCents: number;
-  carriedCents: number;
-  reissuesUnpaidAsk?: boolean;
-}): AdditionalAsk {
+function buildAdditionalAsk(params: ConstructorParameters<typeof AdditionalAskValue>[0]): AdditionalAsk {
   return new AdditionalAskValue(params);
 }
 
@@ -247,11 +254,13 @@ export function sizeAdditionalAsk({
   return buildAdditionalAsk({
     ownCents: priceDiffCents + changeFeeCents,
     carriedCents: outstandingAdditionalAskCents(payment) + Math.max(0, waitingReissuedAskCents),
+    sizedOn: payment ?? null,
   });
 }
 
 /** The stored ADDITIONAL row a review charge's later share reads back. */
 export interface CarriedAskRecord {
+  amountCents: number;
   carriedAskCents: number;
 }
 
@@ -280,6 +289,7 @@ export function sizeReviewChargeAsk({
   return buildAdditionalAsk({
     ownCents: shareTotalCents,
     carriedCents: outstandingAdditionalAskCents(payment),
+    sizedOn: payment ?? null,
   });
 }
 
@@ -309,17 +319,13 @@ export function sizeReviewChargeAsk({
  * `edit-financial-review-charge-raise-claim.ts`), and monotonicity is what makes taking
  * over an abandoned claim safe.
  */
-export function raiseReviewChargeAsk({
-  shareTotalCents,
-  request,
-}: {
+export function raiseReviewChargeAsk({ shareTotalCents, request, payment }: {
   shareTotalCents: number;
   request: CarriedAskRecord;
+  /** #4442: the `Payment` read with the request, whose live ask a re-issue of the raise carries. */
+  payment: AdditionalAskPayment | null;
 }): AdditionalAsk {
-  return buildAdditionalAsk({
-    ownCents: shareTotalCents,
-    carriedCents: request.carriedAskCents,
-  });
+  return buildAdditionalAsk({ ownCents: shareTotalCents, carriedCents: request.carriedAskCents, sizedOn: payment });
 }
 
 /**
@@ -327,13 +333,11 @@ export function raiseReviewChargeAsk({
  * the club's currency changed since it was minted (#3567). The figure and its
  * carried part come back off the row: nothing new is asked for or absorbed.
  */
-export function restateAdditionalAsk(request: {
-  amountCents: number;
-  carriedAskCents: number;
-}): AdditionalAsk {
+export function restateAdditionalAsk(request: CarriedAskRecord, payment: AdditionalAskPayment | null): AdditionalAsk {
   return buildAdditionalAsk({
     ownCents: request.amountCents - request.carriedAskCents,
     carriedCents: request.carriedAskCents,
+    sizedOn: payment,
   });
 }
 
@@ -446,17 +450,13 @@ export function reductionLeftAfterUnpaidAskCents({
  * and it is marked a re-issue so the minter mints it on a credit-paid booking
  * too (`reissuesUnpaidAsk`).
  */
-export function reissueUnpaidAdditionalAsk({
-  askLeftCents,
-}: {
+export function reissueUnpaidAdditionalAsk({ askLeftCents, payment }: {
   askLeftCents: number;
+  /** #4442: the `Payment` a mint sized it on, whose live ask it then carries too. */
+  payment?: AdditionalAskPayment | null;
 }): AdditionalAsk {
   if (askLeftCents <= 0) return NO_ADDITIONAL_ASK;
-  return buildAdditionalAsk({
-    ownCents: 0,
-    carriedCents: askLeftCents,
-    reissuesUnpaidAsk: true,
-  });
+  return buildAdditionalAsk({ ownCents: 0, carriedCents: askLeftCents, reissuesUnpaidAsk: true, sizedOn: payment });
 }
 
 /**

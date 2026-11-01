@@ -19,7 +19,7 @@
  */
 
 /** The server API version this release speaks. Bump it when the server does. */
-export const SERVERNZ_EXPECTED_SERVER_VERSION = "2.1";
+export const SERVERNZ_EXPECTED_SERVER_VERSION = "2.6";
 
 /**
  * What is stored when the server answered the version call with 404 (it
@@ -39,6 +39,36 @@ export const NO_KEY_SERVER_VERSION = "0";
  * reader finding any of them finds the same word.
  */
 export const SERVER_VERSION_MISMATCH_CODE = "server-version-mismatch";
+
+/**
+ * The one word for "another Other lodges sync holds the claim" (#66): the
+ * nightly job's skip reason and the code on the Upload/Download buttons' 409,
+ * which the setup page reads to show it as a notice rather than an error. Here,
+ * beside the version code, because the setup page (a client module) reads it
+ * and the claim module is server-only.
+ */
+export const OTHER_LODGES_SYNC_RUNNING_CODE = "sync-already-running";
+
+/**
+ * The credentials route's 409 for an Alpine Central Server API key whose Save
+ * named an address that is no longer the stored one (#4470): another Save moved
+ * the address after the setup page loaded, and nothing was written. Here, like
+ * the claim code above, because the setup page reads it to tell the
+ * administrator to reload.
+ */
+export const SERVERNZ_ADDRESS_CHANGED_CODE = "address-changed";
+
+/** What that refusal tells the administrator: one wording, route and page alike. */
+export const SERVERNZ_ADDRESS_CHANGED_MESSAGE =
+  "The central server address was changed after this page was loaded, so the API key was not saved: it may have been issued for the old address. Reload the page, check the address, and enter the key again.";
+
+/**
+ * Why an Other lodges download did not record its cursor (#4262 review):
+ * `DownloadSummary.stopped`. Here, beside the other sync codes, for the same
+ * reason: the setup page (a client module) words each one, and the sync
+ * module is server-only.
+ */
+export type DownloadStopReason = "connection-changed" | "superseded";
 
 /**
  * How long a recorded answer is trusted before the setup page's version route

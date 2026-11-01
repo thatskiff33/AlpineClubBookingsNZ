@@ -16,5 +16,6 @@ coverage
 .claude
 e2e
 playwright.config.ts
+scripts/e2e-contracts
 playwright-report
 test-results

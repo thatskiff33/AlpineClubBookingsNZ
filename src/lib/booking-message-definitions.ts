@@ -8,6 +8,10 @@ export const BOOKING_MESSAGE_KEYS = [
   // "your Xero invoice has been emailed" is untrue.
   "booking.detail.internetBanking.pendingNoXero",
   "booking.detail.switchToInternetBanking",
+  // #4019: the same button on an approved whole-lodge booking, which is
+  // already confirmed and held, so the sentence above would promise a
+  // confirmation that has already happened.
+  "booking.detail.switchToInternetBankingWholeLodge",
   // #3033 (epic #2797): the club's EXPLANATION of why a stay change is waiting on
   // a person, beneath the banner that states the facts. Configurable because the
   // owner named this wording as the cost of decision D1 — it "has to be honest
@@ -18,6 +22,9 @@ export const BOOKING_MESSAGE_KEYS = [
   // `booking-financial-review-copy.ts` (`INV-SSOT`).
   "booking.detail.financialReviewPending",
   "paymentLink.internetBanking.description",
+  // #4253 release 2: the club's bank-transfer details, added to a request to pay for credit
+  // that was used elsewhere. Empty until the club writes them, which keeps that email card-only.
+  "paymentRequest.bankTransfer.instructions",
   "cancellation.refundAppeal.description",
   "groupBooking.settle.description",
   "groupBooking.internetBanking.description",
@@ -136,6 +143,16 @@ export const BOOKING_MESSAGE_DEFINITIONS: readonly BookingMessageDefinition[] = 
     tokens: ALL_TOKENS,
   },
   {
+    key: "booking.detail.switchToInternetBankingWholeLodge",
+    section: "Booking Detail",
+    label: "Switch to Internet Banking (approved whole-lodge booking)",
+    description:
+      "Shown beside the same button on an approved whole-lodge booking, which is already confirmed and held, so the ordinary sentence's promise to confirm the booking after the payment would be untrue.",
+    defaultBody:
+      "Prefer to pay by internet banking? We will email a Xero invoice. Your whole-lodge booking stays confirmed while the payment is outstanding.",
+    tokens: ALL_TOKENS,
+  },
+  {
     key: "booking.detail.financialReviewPending",
     section: "Booking Detail",
     label: "Adjustment being reviewed",
@@ -152,6 +169,15 @@ export const BOOKING_MESSAGE_DEFINITIONS: readonly BookingMessageDefinition[] = 
     description: "Shown on public payment links when Internet Banking is available.",
     defaultBody:
       "Use reference {{paymentReference}} when making a direct transfer. The booking will be confirmed after the Xero invoice payment is reconciled.",
+    tokens: ALL_TOKENS,
+  },
+  {
+    key: "paymentRequest.bankTransfer.instructions",
+    section: "Payment Link",
+    label: "Bank transfer details for a payment request",
+    description:
+      "Added to the email that asks a member to pay for account credit that was used elsewhere in the club's accounts, so they can pay by bank transfer as well as by card. Write the account name and number here; the email already quotes the Xero invoice number as the payment reference. While this is empty the email offers card payment only, so fill it in before payment requests are switched on.",
+    defaultBody: "",
     tokens: ALL_TOKENS,
   },
   {

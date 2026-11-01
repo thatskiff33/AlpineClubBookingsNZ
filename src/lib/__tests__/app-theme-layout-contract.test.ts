@@ -20,7 +20,8 @@ import {
   WEBSITE_ROLE_ALIASES,
 } from "@/lib/theme/app-tokens";
 import { G5A_CARD_SEPARATION } from "@/lib/theme/guarantees";
-import { stripCssComments } from "./support/strip-comments";
+import { balancedBrackets } from "./support/balanced-brackets";
+import { blankLiterals, stripCssComments } from "./support/strip-comments";
 
 function readRepoFile(path: string) {
   return readFileSync(join(process.cwd(), path), "utf8");
@@ -43,31 +44,16 @@ const STRING_LITERAL = /(["'`])((?:\\.|(?!\1)[^\\])*)\1/g;
 /**
  * The source text of every `cn(…)` call, paren-balanced.
  *
- * A naive depth count, so a literal paren inside a string can over-extend a
- * region. That errs toward a LARGER context, i.e. toward a false positive that
- * a human then triages — never toward silently missing a pairing.
+ * Calls are found over masked text, so a `cn(` named in a comment or string is
+ * not a call, and a bracket inside a string cannot end a region early. The
+ * returned text is the original, because the caller reads its string literals.
  */
 function cnCallRegions(source: string): string[] {
-  const regions: string[] = [];
-
-  for (const match of source.matchAll(/\bcn\(/g)) {
-    const start = match.index + match[0].length - 1;
-    let depth = 0;
-    let index = start;
-    for (; index < source.length; index += 1) {
-      if (source[index] === "(") {
-        depth += 1;
-      } else if (source[index] === ")") {
-        depth -= 1;
-        if (depth === 0) {
-          break;
-        }
-      }
-    }
-    regions.push(source.slice(start, index + 1));
-  }
-
-  return regions;
+  if (!source.includes("cn(")) return [];
+  const structure = blankLiterals(source);
+  return [...structure.matchAll(/\bcn\(/g)].map(
+    (match) => balancedBrackets(source, match.index + match[0].length - 1, structure).text,
+  );
 }
 
 /**

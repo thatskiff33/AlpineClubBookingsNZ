@@ -1,4 +1,4 @@
-import { expect, test, type Page, type Response } from "@playwright/test";
+import { expect, test, type Page, type Response } from "./helpers/accessibility";
 import { PrismaClient, type AccessRole } from "@prisma/client";
 import bcrypt from "bcryptjs";
 import { createPrismaPgAdapter } from "../src/lib/prisma-adapter";

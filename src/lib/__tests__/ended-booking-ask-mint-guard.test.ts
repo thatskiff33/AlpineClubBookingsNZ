@@ -61,8 +61,11 @@ vi.mock("@/lib/logger", () => ({
 }));
 vi.mock("@/lib/prisma", () => {
   const client = {
+    $executeRaw: vi.fn(),
     booking: { findUnique: mocks.bookingRead },
-    payment: { findUnique: mocks.paymentRead, update: mocks.paymentUpdate },
+    payment: { findUnique: (args: { select?: { additionalAmountCents?: boolean } }) => args.select?.additionalAmountCents
+      ? Promise.resolve({ additionalAmountCents: 0, additionalPaymentStatus: null })
+      : mocks.paymentRead(args), update: mocks.paymentUpdate },
     paymentTransaction: {
       findMany: mocks.supersedeRead,
       findFirst: mocks.transactionFindFirst,
@@ -206,9 +209,9 @@ describe("a booking that ended BEFORE the mint is asked nothing (#4316)", () => 
 
     // #3403: the superseded asks' waiting invoices are moved onto this intent
     // after its cancels and before its secret is offered.
-    expect(order).toEqual(["bookingRead", "createPaymentIntent", "upsertPaymentIntentTransaction", "followSuperseded", "bookingRead"]);
+    expect(order).toEqual(["bookingRead", "createPaymentIntent", "transaction", "lockPayment", "upsertPaymentIntentTransaction", "followSuperseded", "bookingRead"]);
     expect(mocks.followSuperseded).toHaveBeenCalledWith({ paymentId: "payment_1", carrierPaymentIntentId: "pi_new" });
-    expect(mocks.transaction).not.toHaveBeenCalled();
+    expect(mocks.transaction).toHaveBeenCalledTimes(1);
     expect(result).toEqual({
       additionalPaymentClientSecret: "pi_new_secret",
       additionalPaymentIntentId: "pi_new",
@@ -225,6 +228,8 @@ describe("a booking that ended AFTER the provider call is caught after the row w
 
     expect(order).toEqual([
       "createPaymentIntent",
+      "transaction",
+      "lockPayment",
       "upsertPaymentIntentTransaction",
       // #3403: the move runs first and refuses an ended booking itself.
       "followSuperseded",
@@ -297,7 +302,8 @@ describe("a booking that ended AFTER the provider call is caught after the row w
 
   it("a failed retirement is logged and still offers no secret - and its cancellation was already queued durably", async () => {
     bookingStatuses("PAID", "BUMPED");
-    mocks.transaction.mockRejectedValue(new Error("deadlock detected"));
+    mocks.transaction.mockImplementationOnce(async (write: (tx: typeof prisma) => unknown) => write(prisma))
+      .mockRejectedValueOnce(new Error("deadlock detected"));
 
     const result = await mint();
 
@@ -320,7 +326,7 @@ describe("a booking that ended AFTER the provider call is caught after the row w
 
     const result = await mint();
 
-    expect(mocks.transaction).not.toHaveBeenCalled();
+    expect(mocks.transaction).toHaveBeenCalledTimes(1);
     expect(result.additionalPaymentClientSecret).toBe("pi_new_secret");
   });
 });

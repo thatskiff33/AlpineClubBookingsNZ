@@ -1,3 +1,4 @@
+import { ASK_CAUSE_ROWS } from "@/lib/additional-ask-cause";
 import { prisma } from "@/lib/prisma";
 import {
   netCollectedBookingSelect,
@@ -47,9 +48,11 @@ export async function loadBookingDetail(id: string) {
         include: {
           transactions: {
             where: { kind: "ADDITIONAL" },
-            select: { createdAt: true },
+            // The newest row dates the request; the few before it say why it
+            // exists (`additionalAskCause`, #4253).
+            select: { createdAt: true, reason: true, carriedAskCents: true, withdrawnAt: true },
             orderBy: [...LEDGER_ROWS_NEWEST_FIRST],
-            take: 1,
+            take: ASK_CAUSE_ROWS,
           },
           // #3811: the capture evidence Net Collected's cash rule reads, so the
           // "Non-refundable amount retained" line is that rule's figure.

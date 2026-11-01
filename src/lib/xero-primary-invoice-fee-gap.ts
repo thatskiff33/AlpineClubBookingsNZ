@@ -526,10 +526,13 @@ export async function queuePrimaryInvoiceWorthGap(input: {
     kind: "OVERBILLED" | "UNDERBILLED",
     message: string,
     racing?: ReturnType<typeof racingReductionSettlement>,
+    keptInvoiceBillsAnchorId?: string,
   ) => {
     const figures = racing
       ? { ...context, reductionModificationIds: racing.modificationIds, reductionsSettledBy: racing.settledBy }
-      : context;
+      : keptInvoiceBillsAnchorId
+        ? { ...context, keptLateCaptureInvoiceBillsModificationId: keptInvoiceBillsAnchorId }
+        : context;
     logger.error({ ...figures, gapCents }, message);
     const review = await raisePrimaryInvoiceReviewTask({
       kind,
@@ -538,6 +541,7 @@ export async function queuePrimaryInvoiceWorthGap(input: {
       gapCents,
       figures,
       settledBy: racing?.settledBy,
+      keptInvoiceBillsChange: keptInvoiceBillsAnchorId !== undefined,
       createdByMemberId: input.createdByMemberId,
     });
     return { ...NO_GAP, gapCents, reviewOperationId: review.operationId };
@@ -631,7 +635,12 @@ export async function queuePrimaryInvoiceWorthGap(input: {
       changeFeeCents: feeGapCents,
       bookingModificationId: anchorIds[0],
     },
-    { createdByMemberId: input.createdByMemberId, recordPayment, primaryInvoiceGap: { coveredCaptures: recordPayment ? covered : [] } },
+    {
+      createdByMemberId: input.createdByMemberId,
+      recordPayment,
+      // #4324 (4384-R2): every racing edit the combined amount bills, each locked and asked whether a kept capture's own invoice bills it.
+      primaryInvoiceGap: { coveredCaptures: recordPayment ? covered : [], billedChangeIds: anchorIds },
+    },
   );
   const outcome = {
     ...context,
@@ -645,6 +654,17 @@ export async function queuePrimaryInvoiceWorthGap(input: {
   // (or a concurrent run's of this same gap, which the enqueue's anchor lock
   // makes the one operation). Anything else bills nothing.
   if (queued.outcome !== "covers-total" || !queued.queueOperationId) {
+    // #4324 (`INV-PAY-144`): the anchor is billed by a kept late capture's own
+    // invoice, which a gap invoice would bill again; the treasurer bills the
+    // rest by hand (orchestrator decision, option 2: no accounting-rule change).
+    if (queued.refusedBy === "kept-late-capture-invoice") {
+      return raiseReview(
+        "UNDERBILLED",
+        "The booking's primary Xero invoice bills less than the booking was worth when its link was saved, and the edit that would carry the remainder is already billed by a kept late card payment's own Xero invoice; a Xero Operations task asks the treasurer to bill what is still due (#3980, #4324)",
+        undefined,
+        queued.keptBilledChangeId ?? anchorIds[0],
+      );
+    }
     logger.error(
       outcome,
       "The booking's primary Xero invoice bills less than the booking was worth at its link, and the supplementary invoice for the remainder was not queued (#3955 X4, #3980)",

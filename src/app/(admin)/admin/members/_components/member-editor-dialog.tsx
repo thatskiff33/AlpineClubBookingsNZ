@@ -1116,7 +1116,7 @@ export function MemberEditorDialog({
                 </div>
               ) : (
                 <div className="space-y-2">
-                  <Label>Age Tier</Label>
+                  <Label htmlFor="ageTier">Age Tier</Label>
                   <Select
                     value={
                       form.ageTier === "NOT_APPLICABLE"
@@ -1132,7 +1132,7 @@ export function MemberEditorDialog({
                       }))
                     }
                   >
-                    <SelectTrigger>
+                    <SelectTrigger id="ageTier">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>

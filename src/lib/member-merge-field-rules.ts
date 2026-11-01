@@ -19,6 +19,9 @@ import {
  * preference is a per-account UI choice, not shared personal data, so a losing
  * member's preference is dropped on merge and the master keeps its own (null =
  * role default). Do not add it here.
+ * `leavingDate` (#4457) is also deliberately excluded: it dates the losing
+ * account's absence, while the surviving master must be active. Filling a blank
+ * master date from that account would start retention for the wrong lifecycle.
  */
 const FILL_IF_BLANK_FIELDS = [
   "title",

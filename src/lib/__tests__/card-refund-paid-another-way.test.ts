@@ -73,6 +73,11 @@ vi.mock("@/lib/xero-operation-outbox", () => ({
     return mocks.enqueueXeroRefundCreditNoteOperation(...args);
   },
   kickQueuedXeroOutboxOperationsIfConnected: mocks.kick,
+  // #4324 (review C4): a change capture's anchor.
+  lockSupplementaryInvoiceAnchor: (_tx: unknown, anchorId: string) => {
+    calls.push(`lock-anchor:${anchorId}`);
+    return Promise.resolve();
+  },
 }));
 vi.mock("@/lib/late-capture-xero-receipt", () => ({
   // Round 11: a paid-another-way path never reads the card-refund verdict.
@@ -739,6 +744,24 @@ describe("closing a dead card refund as paid another way", () => {
       });
     }
 
+    it("MUTATION review C4, CONC-1: a change capture's plan is read under its change's anchor, taken after the task row and held to the kept-capture invoice", async () => {
+      lateCharge();
+      mocks.findTransaction.mockResolvedValue({
+        paymentId: "p-1",
+        amountCents: 15_000,
+        refundedAmountCents: 0,
+        kind: "ADDITIONAL",
+        bookingModificationId: "mod-1",
+        reason: null,
+      });
+      await close();
+      const anchor = calls.indexOf("lock-anchor:mod-1");
+      expect(anchor).toBeGreaterThan(calls.indexOf("lock-approval-task"));
+      // CONC-1: before the plan reads what records the capture, so a change invoice committed first is read.
+      expect(anchor).toBeLessThan(calls.indexOf("read-receipt"));
+      expect(anchor).toBeLessThan(calls.indexOf("xero-receipt"));
+    });
+
     it("MUTATION: no receipt in Xero: the approval task is locked BEFORE the receipt is read, the receipt is queued, and the note waits for it", async () => {
       lateCharge();
       const result = await close();
@@ -750,11 +773,16 @@ describe("closing a dead card refund as paid another way", () => {
         "read-payment",
         "read-approval-task",
         "lock-approval-task",
+        // #4324 (review CONC-1): the capture's anchor is read for (a change capture only) before the receipt.
+        "read-approval-task",
         "read-receipt",
         "claim",
         "allocate",
         "record",
         "ledger-line",
+        // #4324 (review C4): the task row again, then (a change capture only) its anchor.
+        "lock-approval-task",
+        "read-approval-task",
         "xero-receipt",
         "audit",
       ]);

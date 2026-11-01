@@ -3,6 +3,7 @@ import { join, relative } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { blankLiterals } from "./support/strip-comments";
+import { balancedBrackets, expressionAt } from "./support/balanced-brackets";
 
 // #2314: `XeroObjectLink.xeroObjectUrl` and `XeroSyncOperation.xeroObjectUrl`
 // are stored ORGANISATION-AGNOSTIC. A short code baked into a row is wrong the
@@ -108,16 +109,7 @@ function collectSourceFiles(dir: string, out: string[]): string[] {
 
 /** The balanced `(...)` argument text starting at the `(` at `openIndex`. */
 function readCallArguments(masked: string, openIndex: number): string {
-  let depth = 0;
-  for (let i = openIndex; i < masked.length; i += 1) {
-    const ch = masked[i];
-    if (ch === "(" || ch === "[" || ch === "{") depth += 1;
-    else if (ch === ")" || ch === "]" || ch === "}") {
-      depth -= 1;
-      if (depth === 0) return masked.slice(openIndex + 1, i);
-    }
-  }
-  return masked.slice(openIndex + 1);
+  return balancedBrackets(masked, openIndex, masked).text.slice(1, -1);
 }
 
 interface PropertyValue {
@@ -143,24 +135,9 @@ function readPropertyValues(payload: string, key: string): PropertyValue[] {
 
     if (after === ":") {
       const valueStart = from + afterText.indexOf(":") + 1;
-      let depth = 0;
-      let end = payload.length;
-      for (let i = valueStart; i < payload.length; i += 1) {
-        const ch = payload[i];
-        if (ch === "(" || ch === "[" || ch === "{") depth += 1;
-        else if (ch === ")" || ch === "]") depth -= 1;
-        else if (ch === "}") {
-          if (depth === 0) {
-            end = i;
-            break;
-          }
-          depth -= 1;
-        } else if (ch === "," && depth === 0) {
-          end = i;
-          break;
-        }
-      }
-      found.push({ value: payload.slice(valueStart, end).trim() });
+      // `payload` is already masked, so it is its own structure.
+      const { text, end } = expressionAt(payload, valueStart, payload);
+      found.push({ value: text.trim() });
       from = end;
     } else if (after === "," || after === "}" || after === "") {
       found.push({ value: null });

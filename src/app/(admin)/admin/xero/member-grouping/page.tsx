@@ -440,9 +440,9 @@ export default function XeroMemberGroupingPage() {
           {canEdit ? (
             <div className="grid grid-cols-1 gap-3 rounded-md border p-3 md:grid-cols-5">
               <div>
-                <Label className="text-xs">Membership type</Label>
+                <Label htmlFor="xero-grouping-membership-type" className="text-xs">Membership type</Label>
                 <Select value={draftTypeId} onValueChange={setDraftTypeId}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectTrigger id="xero-grouping-membership-type"><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value={ANY}>Any type</SelectItem>
                     {config.membershipTypes.map((t) => (
@@ -478,9 +478,9 @@ export default function XeroMemberGroupingPage() {
                 </div>
               </div>
               <div>
-                <Label className="text-xs">Rule kind</Label>
+                <Label htmlFor="xero-grouping-rule-kind" className="text-xs">Rule kind</Label>
                 <Select value={draftMode} onValueChange={(v) => setDraftMode(v as RuleKind)}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectTrigger id="xero-grouping-rule-kind"><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="MANAGED">Managed (add)</SelectItem>
                     <SelectItem value="ACCEPTED">Accepted (tolerate)</SelectItem>
@@ -488,9 +488,9 @@ export default function XeroMemberGroupingPage() {
                 </Select>
               </div>
               <div>
-                <Label className="text-xs">Xero group</Label>
+                <Label htmlFor="xero-grouping-group" className="text-xs">Xero group</Label>
                 <Select value={draftGroupId} onValueChange={setDraftGroupId}>
-                  <SelectTrigger><SelectValue placeholder="Select group" /></SelectTrigger>
+                  <SelectTrigger id="xero-grouping-group"><SelectValue placeholder="Select group" /></SelectTrigger>
                   <SelectContent>
                     {config.groups.map((g) => (
                       <SelectItem key={g.id} value={g.id}>{g.name}</SelectItem>

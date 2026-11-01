@@ -635,7 +635,14 @@ describe("DELETE guest removal - a credit-paid ($0) booking whose price RISES (#
     const tx = {
       ...buildTx([ADULT, CHILD], { payment: zeroDollarPayment(xeroInvoiceId) }),
       // #3980: a removal that read no invoice link claims the payment row.
-      payment: { update: vi.fn().mockResolvedValue({}), updateMany: vi.fn().mockResolvedValue({ count: 1 }) },
+      payment: {
+        update: vi.fn().mockResolvedValue({}),
+        updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+        // #4442: the mint's queue re-reads the live ask it carries on this transaction - the fixture's own mirror.
+        findUnique: vi.fn(async () => zeroDollarPayment(xeroInvoiceId)),
+      },
+      // #4442: the supersede's read runs in the mint's queue transaction; this booking has no other ask.
+      paymentTransaction: { findMany: mocks.paymentTransactionFindMany },
     };
     mocks.transaction.mockImplementation((cb: (tx: unknown) => unknown) => cb(tx));
 

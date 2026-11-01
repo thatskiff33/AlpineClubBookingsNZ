@@ -420,6 +420,21 @@ describe("AdminBookingCalendar past-day greying (#2088 D-G2)", () => {
     expect(dataPast(container, "2026-06-20")).toBeNull();
   });
 
+  it("says a past day in words and never fades its bed count (#4594)", async () => {
+    stubCalendar({ bookings: [], availability: { "2026-06-14": 3, "2026-06-20": 7 } });
+    const { container } = render(<AdminBookingCalendar />);
+
+    const pastBeds = await screen.findByText("3 beds");
+    const futureBeds = screen.getByText("7 beds");
+    for (const beds of [pastBeds, futureBeds]) {
+      expect(beds.className).not.toMatch(/(?<![:\w-])opacity-/);
+    }
+    const past = container.querySelector<HTMLElement>('[data-day="2026-06-14"]')!;
+    const today = container.querySelector<HTMLElement>('[data-day="2026-06-15"]')!;
+    expect(within(past).getByText("(past)").className).toContain("sr-only");
+    expect(within(today).queryByText("(past)")).toBeNull();
+  });
+
   it("greys an entire finished previous month across the boundary", async () => {
     const { container } = render(<AdminBookingCalendar />);
 

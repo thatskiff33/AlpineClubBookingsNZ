@@ -8,8 +8,10 @@ import {
 } from "@/lib/servernz-config";
 import {
   SERVERNZ_SETTINGS_ID,
+  SERVERNZ_TRANSACTION_OPTIONS,
   lockServerNzSettings,
   recordServerVersionCheck,
+  type ServerNzAnswerTx,
 } from "@/lib/servernz-settings";
 
 /**
@@ -27,35 +29,37 @@ export interface ServerNzConnectionIdentity {
 }
 
 /**
- * THE ONE WRITE OF THE VERSION COLUMN (#49, #4366): record `version` only if
- * the connection that produced it is STILL the stored one, and say whether it
- * did. Compare and record happen in one short transaction under the settings
- * row lock (`lockServerNzSettings`), re-reading the address and the credential
- * version after the lock is held:
+ * THE CONNECTION FENCE for writing a central-server ANSWER (#4366, #4436;
+ * the Other lodges download since the #4262 review; the push secret a
+ * registration stores since #4470): run `work` in one short
+ * transaction that first takes the settings row lock (`lockServerNzSettings`)
+ * and re-reads the stored address and API-key credential version under it,
+ * and runs `work` only while both are still the ones `identity` captured
+ * before the request. Otherwise nothing is written and `{ current: false }`
+ * comes back.
  *
- *   - a new address (`updateServerNzSettings`) and the forget that follows any
- *     key change or removal (`forgetServerConnectionAnswers`) both write the
- *     row, so they queue behind a recorder holding the lock. The address write
- *     does not clear answers; the settings route's subsequent key removal and
- *     separate forget clear any answer recorded for the old connection;
- *   - a recorder that queues behind them re-reads what they committed, sees a
- *     different address or credential version, and records nothing.
+ * Connection replacements (#4436) take the same lock before reading or
+ * writing the address/key and reset the old answers in that transaction. A
+ * fenced write therefore either commits before the replacement takes the
+ * lock, or waits for the replacement and refuses the old identity: an answer
+ * from a connection replaced while its request was in flight never lands.
+ * Order: settings row, then the credential read, then whatever `work` writes.
  *
- * A refused answer also drops this process's cached ServerNZ credential: the
- * key it was sent with may be a cached copy a write elsewhere has replaced, and
- * the next request should resolve - and check - the stored one rather than
- * repeat the stale key for the rest of the cache window.
+ * A refused write also drops this process's cached ServerNZ credential: the
+ * key the request was sent with may be a cached copy a write elsewhere has
+ * replaced, and the next request should resolve - and check - the stored one
+ * rather than repeat the stale key for the rest of the cache window.
  *
  * No HTTP happens here: the caller has already received the answer, and the
  * transaction holds no provider call (`INV-INT-027`). A database failure
- * propagates, so a RECEIVED answer is never mistaken for a failed check.
+ * propagates, so a RECEIVED answer is never mistaken for a refused one.
  */
-export async function recordServerVersionIfCurrent(
+async function withCurrentServerNzConnection<T>(
   identity: ServerNzConnectionIdentity,
-  version: string,
-): Promise<boolean> {
-  const recorded = await prisma.$transaction(
-    async (tx) => {
+  work: (tx: ServerNzAnswerTx) => Promise<T>,
+): Promise<{ current: true; value: T } | { current: false }> {
+  const outcome = await prisma.$transaction(
+    async (tx): Promise<{ current: true; value: T } | { current: false }> => {
       await lockServerNzSettings(tx);
       const settings = await tx.serverNzSettings.findUnique({
         where: { id: SERVERNZ_SETTINGS_ID },
@@ -66,14 +70,57 @@ export async function recordServerVersionIfCurrent(
         settings?.baseUrl !== identity.baseUrl ||
         credentialVersion !== identity.credentialVersion
       ) {
-        return false;
+        return { current: false };
       }
-      await recordServerVersionCheck(version, new Date(), tx);
-      return true;
+      // THE ONE place a `ServerNzAnswerTx` is minted (#4470): the cast follows
+      // the lock and the identity check, so the answer recorders that require
+      // the type run only for a connection that is still the stored one.
+      return { current: true, value: await work(tx as ServerNzAnswerTx) };
     },
-    // Allow a bounded wait behind a lodge merge holding the shared settings row.
-    { timeout: 150_000, maxWait: 10_000 },
+    // Allow a bounded wait behind another fenced write holding the settings row.
+    SERVERNZ_TRANSACTION_OPTIONS,
   );
-  if (!recorded) invalidateProviderCredentialCache(SERVERNZ_PROVIDER);
-  return recorded;
+  if (!outcome.current) invalidateProviderCredentialCache(SERVERNZ_PROVIDER);
+  return outcome;
+}
+
+/** A fenced write was refused: the connection its answer came from was replaced. */
+export class ServerNzConnectionChangedError extends Error {
+  constructor() {
+    super("The Alpine Central Server connection changed while its answer was being written; nothing more from it was written.");
+    this.name = "ServerNzConnectionChangedError";
+  }
+}
+
+/**
+ * Run one transaction of writes for an answer from `identity`. The same fence
+ * as `withCurrentServerNzConnection`, for a caller that writes many times: a
+ * refusal THROWS `ServerNzConnectionChangedError`, having written nothing, so
+ * the caller stops at its first stale write.
+ */
+export type ServerNzAnswerWrite = <T>(
+  work: (tx: ServerNzAnswerTx) => Promise<T>,
+) => Promise<T>;
+
+export function serverNzAnswerWriter(identity: ServerNzConnectionIdentity): ServerNzAnswerWrite {
+  return async (work) => {
+    const outcome = await withCurrentServerNzConnection(identity, work);
+    if (!outcome.current) throw new ServerNzConnectionChangedError();
+    return outcome.value;
+  };
+}
+
+/**
+ * THE ONE WRITE OF THE VERSION COLUMN (#49, #4366): record `version` only if
+ * the connection that produced it is STILL the stored one, and say whether it
+ * did, through the connection fence above.
+ */
+export async function recordServerVersionIfCurrent(
+  identity: ServerNzConnectionIdentity,
+  version: string,
+): Promise<boolean> {
+  const outcome = await withCurrentServerNzConnection(identity, (tx) =>
+    recordServerVersionCheck(version, new Date(), tx),
+  );
+  return outcome.current;
 }

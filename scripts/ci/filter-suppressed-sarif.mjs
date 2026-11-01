@@ -1,5 +1,5 @@
 import fs from "node:fs";
-import { pathToFileURL } from "node:url";
+import { isMainModule } from "../lib/is-main-module.mjs";
 
 /**
  * Drops results that the scanner itself already suppressed from a SARIF file,
@@ -138,8 +138,7 @@ export function filterSarifFile(inputPath, outputPath) {
   return dropped;
 }
 
-const invokedPath = process.argv[1] ? pathToFileURL(process.argv[1]).href : null;
-if (invokedPath === import.meta.url) {
+if (isMainModule(import.meta.url)) {
   const [inputPath, outputPath] = process.argv.slice(2);
 
   if (!inputPath || !outputPath) {

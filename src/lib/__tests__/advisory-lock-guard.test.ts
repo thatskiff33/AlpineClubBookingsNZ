@@ -2,6 +2,7 @@ import fs from "fs";
 import path from "path";
 import { describe, expect, it } from "vitest";
 
+import { balancedBrackets } from "./support/balanced-brackets";
 import {
   blankLiterals,
   blankLiteralsWithSpans,
@@ -127,6 +128,28 @@ const TWO_TIER_LOCK_INVARIANTS = ["INV-LOCK-001", "INV-LOCK-002", "INV-LOCK-003"
  * the order is half of what makes the site correct.
  */
 const GLOBAL_LOCK_SITE_REGISTRY: readonly RegisteredGlobalLockSite[] = [
+  {
+    site: "anonymiseFormerMember#1", tier: "GLOBAL", invariant: "INV-LOCK-002",
+    reason: "Retention tests open booking money before erasing identity, excluding capture/cancel/refund; global then member lifecycle and credit, then the Xero Member row fence. Preserves all money and booking references.",
+  },
+  {
+    site: "syncOrganiserExtraInvoiceCash#1", tier: "GLOBAL",
+    reason: "#4299: record supplementary organiser bank-transfer cash against the child's payment and materialise its original combined-invoice share once. Serialises with edits/cancels; takes Payment row after global and re-reads the money. No provider calls in the transaction.",
+    invariant: "INV-LOCK-002",
+  },
+  {
+    site: "reserveOrganiserExtraRacedCash#1", tier: "GLOBAL",
+    reason: "#4299: cash that arrived while extra waivers were queued reserves every plan's policy-tiered organiser hand-back and refund note atomically. Each plan's reservation is a delta over the rows re-read under this key, so two waivers of one invoice (or of one plan) never reserve the same raced cash; the scope and occurrence keys back it. Provider calls run outside.",
+    invariant: "INV-LOCK-001",
+  },
+  {
+    // The one spelling of the carrying-ask queue's order, taken by the inline
+    // mint, the re-issue's completion and the recovery runner's claim hold.
+    site: "lockAdditionalAskQueue#1",
+    tier: "GLOBAL",
+    reason: "#4442: a new additional ask re-reads the live ask's balance it carries before its row and its supersede's cancel rows commit; global before the Payment row and any recovery-row claim, so a capture of that ask is either seen and refused or owned by the cancel row.",
+    invariant: "INV-LOCK-002",
+  },
   // ── App Router handlers ───────────────────────────────────────────────────
   {
     site: "POST /api/admin/bookings/[id]/confirm-pending-guests#1",
@@ -279,7 +302,7 @@ const GLOBAL_LOCK_SITE_REGISTRY: readonly RegisteredGlobalLockSite[] = [
     site: "POST /api/payments/switch-to-internet-banking#1",
     tier: "GLOBAL",
     reason:
-      "Switching to Internet Banking with holdBedSlots flips the booking to CONFIRMED — a net-new capacity claim and a money side effect — and re-reads under the locks, because the pre-transaction snapshot was read with no lock at all.",
+      "Switching to Internet Banking with holdBedSlots flips the booking to CONFIRMED — a net-new capacity claim and a money side effect — and re-reads under the locks, because the pre-transaction snapshot was read with no lock at all. #4019: re-read the payment source before any switch write; an already-IB payment returns its persisted holds (none once released) without a second PRIMARY or credit spend, even when the booking status did not change, and re-queues the idempotent invoice only after the commit, holding no lock.",
     invariant: "INV-LOCK-002",
   },
   {
@@ -416,7 +439,7 @@ const GLOBAL_LOCK_SITE_REGISTRY: readonly RegisteredGlobalLockSite[] = [
     site: "modifyBookingBatch#1",
     tier: "GLOBAL",
     reason:
-      "A batch modification moves money and re-claims capacity. With the per-lodge key alone a concurrent cancel could interleave and both paths compute a refund against the same captured payment, or the modify's status commit could clobber a just-cancelled booking.",
+      "A batch modification moves money and re-claims capacity. With the per-lodge key alone a concurrent cancel could interleave and both paths compute a refund against the same captured payment, or the modify's status commit could clobber a just-cancelled booking.. #4019: its new whole-lodge zero-cash PAID transition posts the final stored charge through the shared confirmation poster under these same keys (INV-PAY-047), after guest/night writes",
     invariant: "INV-LOCK-002",
   },
   {
@@ -479,7 +502,7 @@ const GLOBAL_LOCK_SITE_REGISTRY: readonly RegisteredGlobalLockSite[] = [
     site: "modifyBookingDates#1",
     tier: "GLOBAL",
     reason:
-      "A date change refunds or charges and claims capacity for the new range, so it takes the global tier first for mutual exclusion with cancel, settlement and hold-release.",
+      "A date change refunds or charges and claims capacity for the new range, so it takes the global tier first for mutual exclusion with cancel, settlement and hold-release.. #4019: its new whole-lodge zero-cash PAID transition posts the final stored charge through the shared confirmation poster under these same keys (INV-PAY-047), after guest/night writes",
     invariant: "INV-LOCK-002",
   },
   {
@@ -528,7 +551,7 @@ const GLOBAL_LOCK_SITE_REGISTRY: readonly RegisteredGlobalLockSite[] = [
     site: "removeBookingGuestInTransaction#1",
     tier: "GLOBAL",
     reason:
-      "A single-guest removal computes a reduction refund and re-checks capacity, so it excludes cancel, settlement and hold-release before taking the booking's lodge key; the caller opens the transaction, so this is its first lock.",
+      "A single-guest removal computes a reduction refund and re-checks capacity, so it excludes cancel, settlement and hold-release before taking the booking's lodge key; the caller opens the transaction, so this is its first lock.. #4019: its new whole-lodge zero-cash PAID transition posts the final stored charge through the shared confirmation poster under these same keys (INV-PAY-047), after guest/night writes",
     invariant: "INV-LOCK-002",
   },
   {
@@ -734,6 +757,12 @@ const GLOBAL_LOCK_SITE_REGISTRY: readonly RegisteredGlobalLockSite[] = [
   {
     site: "settleGroupBookingOnOrganiserCancel#3",
     tier: "GLOBAL",
+    reason: "#4299: freeze organiser bank-transfer child refunds and their extra-invoice waiver/refund debts atomically with the group plan. Inbound cash imports and edit writers take this key; all provider calls run after commit.",
+    invariant: "INV-LOCK-001",
+  },
+  {
+    site: "settleGroupBookingOnOrganiserCancel#4",
+    tier: "GLOBAL",
     reason:
       "Each child's cancel and its refund credit-note enqueue commit inside one transaction on the settlement cohort's key, and reconcile that child's allocations through the lock-held seam. #4042: on an Internet Banking settlement the same claim books the joiner's share on the organiser's hand-back task (create, grow while OPEN, or a supplementary task once closed), which this key makes single.",
     invariant: "INV-LOCK-002",
@@ -877,7 +906,7 @@ const GLOBAL_LOCK_SITE_REGISTRY: readonly RegisteredGlobalLockSite[] = [
     site: "approveMemberWholeLodgeRequest#1",
     tier: "GLOBAL",
     reason:
-      "Whole-lodge conversion composes a booking lifecycle transition with allocation pruning, so it joins the global cohort before the booking's lodge capacity key; the held reconcile reuses that prefix.",
+      "Whole-lodge conversion composes a booking lifecycle transition with allocation pruning, so it joins the global cohort before the booking's lodge capacity key; the held reconcile reuses that prefix.. #4019: its new whole-lodge zero-cash PAID transition posts the final stored charge through the shared confirmation poster under these same keys (INV-PAY-047), after guest/night writes",
     invariant: "INV-LOCK-002",
   },
 
@@ -1330,6 +1359,22 @@ const SCOPED_ADVISORY_LOCK_INVENTORY: Record<string, number> = {
   // an invoice naming no capture, and an officer's inline Retry of a change's
   // invoice re-asks under the change's key alone, in its own short
   // transaction, before its Xero call. No new raw site, no new key.
+  // #4324 (`INV-PAY-144`): the keep's decision for a kept change capture
+  // (`planKeptLateCaptureXeroRecord`) takes it on the change (else the
+  // booking) AFTER the approval task's row - the dismissal's claim, or the
+  // repair tool's own `lockKeptLateCaptureTask` - and as its last lock; the
+  // approval's settlement takes it the same way (`lockKeptCaptureAnchor`),
+  // after the approval's claim and before its first outbox write; a
+  // paid-another-way close takes it after lock(1), the Payment row and the
+  // task row, inside its plan, so a change capture's record is read and its
+  // kept-capture invoice queued under it; and the receipt's worker, where its
+  // unlocked read finds the capture no longer kept, decides again in a short
+  // transaction under it before any Xero call - in every case its plan store
+  // reads the task again under it and closes the row there if no longer kept.
+  // 4384-R2: a #3980 gap invoice's enqueue takes it on every change its
+  // amount bills, sorted, never the booking's, before asking whether a kept
+  // capture's own invoice bills any of them. Same site, no new key.
+  // Task row -> anchor, never the reverse. No new raw site, no new key.
   // #3403 (`INV-PAY-140`): the superseded-invoice move
   // (`superseded-ask-invoice-carry.ts`) calls the same helper on each change
   // whose waiting invoice it re-points at the request carrying its balance,
@@ -1340,6 +1385,11 @@ const SCOPED_ADVISORY_LOCK_INVENTORY: Record<string, number> = {
   // callers (the supersede's cancel step, the minters after their cancels, an
   // edit's Xero leg, the reaper, the release) hold nothing there. Still no new
   // raw site, no new key.
+  // #4299 S1 (`INV-PAY-148`): the enqueue refuses, under this key, a change
+  // whose organiser extra a waiver retired whole before it was raised, and
+  // the organiser create re-asks in a short transaction holding this key
+  // alone, from the outbox worker or an officer's retry holding nothing,
+  // before its Xero call. Same helper, no new raw site, no new key.
 };
 
 // Every entry here is now a LOCK-ONLY statement (#2289): it selects a constant,
@@ -1417,6 +1467,8 @@ const ROW_LOCK_SITE_INVENTORY: Record<string, number> = {
   // worker's send-time decision lock the #3639 approval task's row
   // (`SELECT 1 … FOR UPDATE`), the row the dismissal, reopen and approval
   // claims write. No advisory key; the dismissal's claim already holds the row.
+  // #4324: the keep's decision (`planKeptLateCaptureXeroRecord`, dismissal and
+  // repair) takes it first and the change's supplementary-invoice anchor after.
   // See docs/CONCURRENCY_AND_LOCKING.md -> "Kept late-capture task row".
   "src/lib/xero-kept-late-capture-invoice.ts": 1,
   // Member-photo upload (POST) and remove (DELETE) each lock the member row
@@ -1425,15 +1477,71 @@ const ROW_LOCK_SITE_INVENTORY: Record<string, number> = {
   // advisory lock; disjoint from booking/money writers. See
   // docs/CONCURRENCY_AND_LOCKING.md → "Member photo writer".
   "src/app/api/members/[id]/photo/route.ts": 2,
-  // Alpine Central Server version recorder (#4366): `lockServerNzSettings`
+  // Central lodge link writer (#62, #4262 review): the PUT takes the settings
+  // row (`lockServerNzSettings`, counted under servernz-settings.ts) and
+  // re-checks the owned list under it, then locks its own `Lodge` row
+  // (`SELECT 1 … FOR UPDATE`, the one statement counted here), re-reads the
+  // link it replaces, writes the new one and its `LODGE_CENTRAL_LINK_UPDATED`
+  // audit row on the same client. Settings -> Lodge is the Other lodges
+  // download's own order, so no inversion. No advisory key; disjoint from
+  // booking/money writers. See docs/CONCURRENCY_AND_LOCKING.md ->
+  // "Central lodge link writer".
+  "src/app/api/admin/lodges/[id]/central-lodge/route.ts": 1,
+  // Alpine Central Server connection/recorder (#4366, #4436): `lockServerNzSettings`
   // locks the singleton settings row (`SELECT 1 … FOR UPDATE`) so
   // `recordServerVersionIfCurrent` re-reads the connection (address and API-key
   // credential version) under it before it records the server's answer; a
-  // connection change writes the same row, so the two serialise. #4277 adds a
-  // second caller of the same one statement (the download record step). No
-  // advisory key; disjoint from booking/money writers. See
-  // docs/CONCURRENCY_AND_LOCKING.md -> "Alpine Central Server version recorder".
+  // connection change and request capture now take the same fence before
+  // touching credentials (settings -> credential -> audit). No advisory key;
+  // disjoint from booking/money writers. See docs/CONCURRENCY_AND_LOCKING.md ->
+  // "Alpine Central Server connection and version recorder".
+  // Other lodges download writes (triyder/AlpineClubBookingsNZ#64, #69; #4262
+  // review): the same one statement, reached through the same fence
+  // (`withCurrentServerNzConnection` / `serverNzAnswerWriter`), takes the
+  // settings row before EVERY write the download makes from an answer (hides
+  // and unlinks, each merge write, the record step) and re-reads the address
+  // and credential version under it, so an answer from a connection replaced
+  // in flight writes nothing. Order: settings -> credential read -> OtherLodge/
+  // Amenity/Lodge rows -> audit. No advisory key; disjoint from booking/money
+  // writers. See docs/CONCURRENCY_AND_LOCKING.md -> "Owned-lodge list writer,
+  // and every Other lodges download write".
+  // #4470, two more participants of the same one statement, no new lock: the
+  // key save compares the address its page showed under the connection fence
+  // (settings -> credential -> audit, as before), and a push registration
+  // stores its secret through the answer fence (settings -> credential read ->
+  // push-secret write -> audit). The address move removes that secret in its
+  // own fenced transaction. The answer recorders take a `ServerNzAnswerTx`
+  // that only the answer fence mints.
   "src/lib/servernz-settings.ts": 1,
+  // Message-board mirror (#4586): inside the page's answer fence (settings row
+  // first, counted under servernz-settings.ts), `lockMirroredPost` locks the
+  // `ClubPost` row a server post id names (`SELECT 1 … FOR UPDATE`, the one
+  // statement counted here) and re-reads it, so create-or-update and a
+  // tombstone are decided under the lock. Order: settings -> ClubPost ->
+  // ClubPostImage, the post-before-images order the admin removal (its
+  // status-guarded claim) and retention (its cascade) also follow. No advisory
+  // key; disjoint from booking/money writers. See
+  // docs/CONCURRENCY_AND_LOCKING.md -> "Message-board posts and their images".
+  "src/lib/club-post-mirror.ts": 1,
+  // Message-board retention (#4588): each batch of expired posts is locked
+  // (`SELECT 1 … WHERE "id" IN (…) ORDER BY "id" FOR UPDATE`, the one statement
+  // counted here) before their images are read and the posts deleted, so no
+  // writer adds an image row the batch did not list. Order: ClubPost rows (id
+  // order) -> ClubPostImage rows by cascade. The share stamp below also takes
+  // its two posts in id order. Member merge (an `updateMany` of
+  // `authorMemberId`) and member deletion (`SetNull`) update many posts in
+  // scan order; a deadlock with a batch is detected and one side aborted, as
+  // with the single `deleteMany` before #4588. No advisory key. See
+  // docs/CONCURRENCY_AND_LOCKING.md -> "Message-board posts and their images".
+  "src/lib/club-post-retention.ts": 1,
+  // Message-board share stamp (#4588): under the settings row
+  // (`lockServerNzSettings`, counted under servernz-settings.ts), when the
+  // mirror already copied our own post back, it locks our post and that copy
+  // (`SELECT 1 … WHERE "id" IN (…, …) ORDER BY "id" FOR UPDATE`, the one
+  // statement counted here), deletes the copy and stamps our post. Order:
+  // settings -> ClubPost rows (id order) -> ClubPostImage by cascade, the
+  // mirror's and retention's order. No advisory key.
+  "src/lib/club-post-sharing.ts": 1,
   // Adult-member-hosting queue participants (#2597): the shared helper mints
   // one reviewed `FOR UPDATE` protocol for member merge over master, loser and
   // every planned ancillary owner, plus the shared standing-subject barrier
@@ -1722,22 +1830,13 @@ const ADVISORY_LOCK_CALL = /pg_(?:try_)?advisory_xact_lock\(/g;
  * would score `SELECT pg_advisory_xact_lock(\n  1\n)` as a scoped key.
  */
 function firstLockArgument(text: string, openParenIndex: number): string | null {
-  let depth = 0;
-  const limit = Math.min(text.length, openParenIndex + 2000);
-  for (let i = openParenIndex; i < limit; i += 1) {
-    const character = text[i];
-    if (character === "(") {
-      depth += 1;
-      continue;
-    }
-    if (character === ")") {
-      depth -= 1;
-      if (depth === 0) return text.slice(openParenIndex + 1, i);
-      continue;
-    }
-    if (character === "," && depth === 1) return text.slice(openParenIndex + 1, i);
+  try {
+    // `text` is already masked (`maskedSource`), and a raw statement it restored
+    // must be read as code, so it is its own structure.
+    return balancedBrackets(text, openParenIndex, text).parts[0] ?? "";
+  } catch {
+    return null;
   }
-  return null;
 }
 
 /**
@@ -2051,6 +2150,19 @@ describe("advisory lock guard (#182 / H1 regression class)", () => {
         "writers, and acquisition order in docs/CONCURRENCY_AND_LOCKING.md, " +
         "then update this inventory with PR compatibility evidence.",
     ).toEqual(SCOPED_ADVISORY_LOCK_INVENTORY);
+  });
+
+  it("keeps whole-cycle session advisory claims in their explicit inventory", () => {
+    const found: Record<string, number> = {};
+    for (const { rel, text } of sources) {
+      const count = countCodeOccurrences(text, /pg_(?:try_)?advisory_lock\(/g);
+      if (count > 0) found[rel] = count;
+    }
+    // #4432: one dedicated autocommit connection, outside every domain
+    // transaction; scheduled inbound, HTTP cron and the whole-club button
+    // exclude one another. Connection death recovers the claim, without a
+    // lease expiry admitting another live cycle. INV-LOCK-001/002/003.
+    expect(found).toEqual({ "src/lib/cron-run-claim.ts": 1 });
   });
 
   it("keeps every SELECT row-lock protocol inside the reviewed inventory", () => {

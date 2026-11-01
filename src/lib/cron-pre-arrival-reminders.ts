@@ -1,6 +1,8 @@
-import { BookingStatus } from "@prisma/client";
+import { BookingStatus, type Prisma } from "@prisma/client";
 import { bookingOwner } from "@/lib/booking-owner";
 import { isAdditionalPaymentOwed } from "@/lib/additional-payment-chase";
+import { ASK_CAUSE_ROWS, additionalAskCause } from "@/lib/additional-ask-cause";
+import { LEDGER_ROWS_NEWEST_FIRST } from "@/lib/payment-ledger-order";
 import { addDaysDateOnly, formatDateOnly } from "@/lib/date-only";
 import { clubToday, dateOnlyInstantOf } from "@/lib/club-time";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
@@ -69,6 +71,13 @@ export async function sendPreArrivalReminders(): Promise<PreArrivalReminderResul
         select: {
           additionalAmountCents: true,
           additionalPaymentStatus: true,
+          // #4253: the request's cause words the note (a change, or credit used elsewhere).
+          transactions: {
+            where: { kind: "ADDITIONAL" },
+            orderBy: [...LEDGER_ROWS_NEWEST_FIRST] as Prisma.PaymentTransactionOrderByWithRelationInput[],
+            take: ASK_CAUSE_ROWS,
+            select: { reason: true, carriedAskCents: true, withdrawnAt: true },
+          },
         },
       },
     },
@@ -121,6 +130,7 @@ export async function sendPreArrivalReminders(): Promise<PreArrivalReminderResul
         })
           ? booking.payment?.additionalAmountCents ?? 0
           : 0,
+        outstandingAdditionalCause: additionalAskCause(booking.payment?.transactions ?? []),
       }, format);
       /*
         THE CLAIM ABOVE IS THE ONLY THING THAT WILL EVER SELECT THIS BOOKING

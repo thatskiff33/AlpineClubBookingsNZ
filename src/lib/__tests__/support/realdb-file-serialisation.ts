@@ -29,11 +29,11 @@
 import { Client } from "pg";
 import { aroundAll, expect } from "vitest";
 
+import { REALDB_FILE } from "../../../../scripts/ci/realdb-files.mjs";
 import { assertSafeRaceDbUrl } from "./race-db-url";
 
 export const REALDB_FILE_LOCK_KEY = [4367, 1] as const;
 
-const REALDB_FILE_PATTERN = /\.realdb\.test\.tsx?$/;
 const POLL_MS = 250;
 // The wait is unbounded, so each query is not: a race database that stops
 // answering without dropping the connection fails the file instead of hanging
@@ -44,7 +44,7 @@ const LOCK_QUERY_TIMEOUT_MS = 30_000;
 export const REALDB_FILE_WAIT_TIMEOUT = 0;
 
 export function isRealdbTestFile(testPath: string | undefined): boolean {
-  return testPath !== undefined && REALDB_FILE_PATTERN.test(testPath);
+  return testPath !== undefined && REALDB_FILE.test(testPath);
 }
 
 /** The slice of `pg.Client` the lock uses; a fake stands in for it in tests. */

@@ -655,6 +655,7 @@ export default function ApprovalMappingPanel({
           </p>
         </div>
         <select
+          aria-label="Joining fee invoice"
           className="w-full rounded-md border border-warning-6 bg-card px-3 py-2 text-sm text-foreground"
           value={effectiveFee.action}
           onChange={(event) => {

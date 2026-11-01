@@ -89,6 +89,8 @@
 	}
 
 	reverse_proxy app:3000 {
+		# See deploy/caddy/tacbookings-active.caddy: the visitor's IP, not the peer.
+		header_up X-Forwarded-For {client_ip}
 		# Caddy must release a pooled connection BEFORE the app closes it
 		# (#3293). Mirrors deploy/caddy/tacbookings-active.caddy.
 		transport http {

@@ -144,9 +144,9 @@ import { reviewRefundGoesToGroupOrganiser } from "@/lib/group-settlement-mirror-
  * direction and the booking's own facts, never of a preference:
  *
  *  - `stripe-refund` - the booking was paid by card, so the money goes back the
- *    way it came. `executeBookingModificationRefund` owns the provider call, its
- *    Stripe idempotency key (a TASK-scoped prefix plus the transaction id and
- *    the amount, per refunded transaction) and its recovery enqueue. It writes the ledger allocation ITSELF, through
+ *    way it came. `executeEditReviewCardRefund` sends the plan persisted during
+ *    completion under its TASK-scoped Stripe prefix plus transaction and amount.
+ *    Its recovery replays that same plan. It writes the ledger allocation through
  *    `refundPaymentTransactions`, which is why this route writes none in the
  *    transaction - doing both would consume the refundable headroom twice.
  *  - `local-allocation` - a payment the club settles by hand (internet banking,

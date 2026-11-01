@@ -1211,6 +1211,76 @@ describe("review finding source/schema contracts", () => {
     expect(suite).toContain("pg_catalog.pg_sleep(30)");
   });
 
+  it("proves the least-privilege database roles against a real PostgreSQL in a required job (#4453)", () => {
+    // The roles' guarantees — no UPDATE or DELETE of a ledger line or audit row
+    // by any route, migrations still run, pg_dump still works — are claims about
+    // PostgreSQL's privilege checks. The advisory realdb-all job alone cannot
+    // block a merge (#4453 review, O-F7), so the proof has its own step in the
+    // required migration-drift job, after the race database exists.
+    const workflow = readRepoFile(".github/workflows/ci.yml");
+    const proofStep = workflow.indexOf(
+      "name: Prove the least-privilege database roles against dedicated PostgreSQL"
+    );
+    expect(proofStep).toBeGreaterThan(-1);
+    const migrateStep = workflow.indexOf(
+      "name: Migrate dedicated advisory-lock race database"
+    );
+    expect(migrateStep).toBeGreaterThan(-1);
+    expect(proofStep).toBeGreaterThan(migrateStep);
+    const driftJob = workflow.indexOf("\n  migration-drift:\n");
+    const nextJob = workflow.indexOf("\n  data-migration-verification:\n");
+    expect(proofStep).toBeGreaterThan(driftJob);
+    expect(proofStep).toBeLessThan(nextJob);
+    const step = workflow.slice(proofStep, workflow.indexOf("\n      - name:", proofStep + 1));
+    expect(step).toContain('RUN_CONCURRENCY_RACE_TESTS: "1"');
+    expect(step).toContain(
+      "pnpm exec vitest run src/lib/__tests__/database-roles.realdb.test.ts"
+    );
+    expect(step).not.toContain("continue-on-error");
+    expect(step).not.toMatch(/\n\s+if:/);
+
+    const suite = readRepoFile("src/lib/__tests__/database-roles.realdb.test.ts");
+    expect(suite).toContain('process.env.RUN_CONCURRENCY_RACE_TESTS === "1"');
+    expect(suite).toContain("assertSafeRaceDbUrl");
+    // The proof runs the SHIPPED statements and CLI, not a fixture.
+    expect(suite).toContain("buildDatabaseRolesSql");
+    expect(suite).toContain("scripts/provision-database-roles.ts");
+  });
+
+  it("proves the member-money journal's enforcement against a real PostgreSQL in a required job (#4513)", () => {
+    // The verifier's pins are the catalog's deparsed text and the journal's
+    // refusals are PostgreSQL's own; the advisory realdb-all job alone cannot
+    // block a merge, so the proof has its own step in the required
+    // migration-drift job, after the race database exists.
+    const workflow = readRepoFile(".github/workflows/ci.yml");
+    const proofStep = workflow.indexOf(
+      "name: Prove the member-money journal's enforcement against dedicated PostgreSQL"
+    );
+    expect(proofStep).toBeGreaterThan(-1);
+    const migrateStep = workflow.indexOf(
+      "name: Migrate dedicated advisory-lock race database"
+    );
+    expect(proofStep).toBeGreaterThan(migrateStep);
+    const driftJob = workflow.indexOf("\n  migration-drift:\n");
+    const nextJob = workflow.indexOf("\n  data-migration-verification:\n");
+    expect(proofStep).toBeGreaterThan(driftJob);
+    expect(proofStep).toBeLessThan(nextJob);
+    const step = workflow.slice(proofStep, workflow.indexOf("\n      - name:", proofStep + 1));
+    expect(step).toContain('RUN_CONCURRENCY_RACE_TESTS: "1"');
+    expect(step).toContain(
+      "pnpm exec vitest run src/lib/__tests__/member-money-journal.realdb.test.ts"
+    );
+    expect(step).not.toContain("continue-on-error");
+    expect(step).not.toMatch(/\n\s+if:/);
+
+    const suite = readRepoFile("src/lib/__tests__/member-money-journal.realdb.test.ts");
+    expect(suite).toContain('process.env.RUN_CONCURRENCY_RACE_TESTS === "1"');
+    expect(suite).toContain("assertSafeRaceDbUrl");
+    // The proof applies the SHIPPED migration and verifier, not a fixture.
+    expect(suite).toContain("prisma/migrations/20261127010000_member_money_journal/migration.sql");
+    expect(suite).toContain("verifyMemberMoneyJournal");
+  });
+
   it("executes the email-override annotation strip against a real PostgreSQL in CI (#2269, #2418)", () => {
     // The audit half of that migration was pinned by string-matching the SQL
     // only: mutating `) AS found ON TRUE` to `... WHERE FALSE` wrote zero audit

@@ -101,6 +101,7 @@ export function sizeReissuedAskReplay({
 }): AdditionalAsk {
   return reissueUnpaidAdditionalAsk({
     askLeftCents: frozenAmountCents + outstandingAdditionalAskCents(payment),
+    payment,
   });
 }
 

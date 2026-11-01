@@ -37,6 +37,9 @@ import path from "node:path";
 import { Prisma } from "@prisma/client";
 import { describe, expect, it } from "vitest";
 
+import { balancedBrackets } from "./support/balanced-brackets";
+import { blankLiterals } from "./support/strip-comments";
+
 const REPO_ROOT = process.cwd();
 const SCAN_DIRS = ["src", "scripts", "e2e", "prisma"].map((dir) => path.join(REPO_ROOT, dir));
 const SOURCE_EXTENSIONS = /\.(ts|tsx|mts|mjs|js|sh|sql)$/;
@@ -96,20 +99,12 @@ function rawSqlNamesTable(source: string): boolean {
 
 /** The argument text of every `xeroToken.<method>(…)` call, balanced. */
 function xeroTokenDelegateCalls(source: string): string[] {
-  const calls: string[] = [];
-  const pattern = /\bxeroToken\s*\.\s*\w+\s*\(/g;
-  for (let match = pattern.exec(source); match; match = pattern.exec(source)) {
-    let depth = 1;
-    let i = match.index + match[0].length;
-    const start = i;
-    while (i < source.length && depth > 0) {
-      if (source[i] === "(") depth += 1;
-      else if (source[i] === ")") depth -= 1;
-      i += 1;
-    }
-    calls.push(source.slice(start, i - 1));
-  }
-  return calls;
+  if (!source.includes("xeroToken")) return [];
+  // Found over masked text: a delegate call named in a comment or string is not one.
+  const structure = blankLiterals(source);
+  return [...structure.matchAll(/\bxeroToken\s*\.\s*\w+\s*\(/g)].map((match) =>
+    balancedBrackets(source, match.index + match[0].length - 1, structure).text.slice(1, -1),
+  );
 }
 
 function delegateCallNamesCiphertext(args: string): boolean {

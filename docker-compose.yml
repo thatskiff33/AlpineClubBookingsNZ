@@ -48,19 +48,29 @@ x-app-environment: &app-environment
   # ceiling, so a nightly pg_dump, the deploy-time shadow DB, a pg_isready
   # probe, or an operator psql tipped it over.
   #
-  # NOTE the app role `tac` is a Postgres SUPERUSER (POSTGRES_USER), so
-  # superuser_reserved_connections does NOT hold slots back from the app's own
-  # pools — once the pools fill the ceiling even an admin psql is refused (which
-  # is why the "reserved" slots gave no emergency headroom at 30). Accepted here:
-  # the pools are hard-capped (27) well under 40, so the margin covers admin in
-  # practice; a dedicated NOSUPERUSER app role would restore a truly protected
-  # slot if a future change ever makes the margin tight.
+  # NOTE by default the app connects as `tac`, the Postgres SUPERUSER
+  # (POSTGRES_USER), so superuser_reserved_connections does NOT hold slots back
+  # from the app's own pools — once the pools fill the ceiling even an admin psql
+  # is refused (which is why the "reserved" slots gave no emergency headroom at
+  # 30). The pools are hard-capped (27) well under 40, so the margin covers admin
+  # in practice.
+  #
+  # LEAST-PRIVILEGE ROLES (#4453). APP_DB_USER / APP_DB_PASSWORD switch every
+  # app service (both web slots and the cron leader) to a NOSUPERUSER application
+  # role, and MIGRATION_DB_USER / MIGRATION_DB_PASSWORD switch the `migrate`
+  # service to the role that owns the schema; `pnpm run db:provision-roles`
+  # creates both. Unset, both fall back to `tac` / DB_PASSWORD, which is exactly
+  # the single-superuser stack this file shipped before, so an existing
+  # deployment changes nothing until its operator opts in. With the split, the 3
+  # superuser_reserved_connections slots really are kept for the operator.
+  # Each password is interpolated into a URL unencoded: keep it free of
+  # @ / : ? # % and whitespace (the deploy script refuses one that is not).
   # So the 40 ceiling is raw headroom, not a reservation: budget EVERY consumer,
   # not just the Prisma pools —
   #   sum(pools) + pg_dump + shadow DB + probes + admin psql <= max_connections.
   # A constrained-VPS fork may lower max_connections AND the postgres mem_limit
   # together. See DEPLOYMENT.md "Connection pool sizing".
-  DATABASE_URL: postgresql://tac:${DB_PASSWORD:?DB_PASSWORD is required}@postgres:5432/tacbookings?connection_limit=10&pool_timeout=10
+  DATABASE_URL: postgresql://${APP_DB_USER:-tac}:${APP_DB_PASSWORD:-${DB_PASSWORD:?DB_PASSWORD is required}}@postgres:5432/tacbookings?connection_limit=10&pool_timeout=10
   NEXTAUTH_URL: ${NEXTAUTH_URL:-http://localhost:3000}
   NEXTAUTH_SECRET: ${NEXTAUTH_SECRET}
   AUTH_SECRET: ${AUTH_SECRET:-${NEXTAUTH_SECRET}}
@@ -306,6 +316,9 @@ x-app-service: &app-service
   # first init (see Dockerfile), so the app user can write to it.
   volumes:
     - image_uploads:/app/public/images
+    # Override /tmp's memory-backed storage for dump staging and S3 readback.
+    # The image initializes app-user ownership; backup retention prunes this spool.
+    - backup_spool:/tmp/tacbookings-backups
     # Local database backups (see BACKUP_LOCAL_DIR above). The default is a NAMED
     # VOLUME, so a club that never enables local backups gets no stray directory
     # on the host and no ownership to fix — Docker treats a value with no slash
@@ -331,6 +344,7 @@ x-app-service: &app-service
     # directory is web-served without a session check, and these images are
     # members-only.
     - ${POST_IMAGE_HOST_DIR:-post_image_data}:${POST_IMAGE_DIR:-/images}
+  cap_drop: [ALL]
   security_opt:
     - no-new-privileges:true
   mem_limit: 1g
@@ -361,7 +375,7 @@ x-app-service: &app-service
 
 services:
   postgres:
-    image: postgres:16-alpine
+    image: postgres:16-alpine@sha256:0cefaabd882e42bcb2a2f3dc56d3ce4770560ba62fd7f197f1a2e008fd5731ab
     restart: unless-stopped
     logging:
       driver: json-file
@@ -385,18 +399,29 @@ services:
       - "-c"
       # Sized so the deploy-window pool worst case (blue+green web + cron +
       # migrate = 27) clears with headroom for the NON-pool consumers (pg_dump,
-      # shadow DB, probes, admin psql). The app role is a superuser, so the 3
-      # superuser-reserved slots do NOT protect admin access — see the
-      # connection-budget note on x-app-environment and DEPLOYMENT.md.
-      - "max_connections=40"
+      # shadow DB, probes, admin psql). While the app connects as the superuser
+      # `tac` (the default), the 3 superuser-reserved slots do NOT protect admin
+      # access — see the connection-budget note on x-app-environment and
+      # DEPLOYMENT.md.
+      #
+      # POSTGRES_MAX_CONNECTIONS: the ceiling is a setting because the budget
+      # above was not what a live host measured before #4269's fix: a warm-up
+      # during a routine handover was sampled at 39 client connections, one
+      # app container holding 18 against a connection_limit of 10, so three app
+      # containers plus the deploy's probes hit 40 and every page render failed with
+      # "too many clients". A host that sees that raises it in .env and raises
+      # POSTGRES_MEM_LIMIT in step (see DEPLOYMENT.md -> "Connection pool
+      # sizing"); the defaults are unchanged.
+      - "max_connections=${POSTGRES_MAX_CONNECTIONS:-40}"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     ports:
       - "127.0.0.1:5432:5432"
     # 768m (up from 512m) covers the extra backends allowed by max_connections=40
     # plus their per-connection work_mem. ~256m more per host; negligible on any
-    # host with >1GiB free.
-    mem_limit: 768m
+    # host with >1GiB free. A setting so a host that raises
+    # POSTGRES_MAX_CONNECTIONS can raise this with it.
+    mem_limit: ${POSTGRES_MEM_LIMIT:-768m}
     cpus: 0.5
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U tac -d tacbookings"]
@@ -412,7 +437,16 @@ services:
       # Cron-leader keeps the original 5-conn pool: its workload is scheduled
       # background jobs, not the concurrent web burst the slots above size for.
       # Holding it at 5 keeps the total within max_connections=40 (#1884, F17).
-      DATABASE_URL: postgresql://tac:${DB_PASSWORD:?DB_PASSWORD is required}@postgres:5432/tacbookings?connection_limit=5&pool_timeout=10
+      DATABASE_URL: postgresql://${APP_DB_USER:-tac}:${APP_DB_PASSWORD:-${DB_PASSWORD:?DB_PASSWORD is required}}@postgres:5432/tacbookings?connection_limit=5&pool_timeout=10
+      # Optional PRIMARY-database connection for the nightly audit retention job
+      # (#4453), as the audit-retention role `pnpm run db:provision-roles`
+      # creates: under the least-privilege roles the app role may only
+      # INSERT/SELECT AuditLog, so the anonymise and delete steps need this.
+      # Empty = this service's own DATABASE_URL, as before. On THIS service only,
+      # deliberately not in x-app-environment: only the cron leader runs the job,
+      # and a web slot has no use for a credential that may delete audit rows.
+      # Its pool is used for minutes a night, so keep connection_limit=2.
+      AUDIT_RETENTION_DATABASE_URL: ${AUDIT_RETENTION_DATABASE_URL:-}
 
   app_blue:
     <<: *app-service
@@ -429,7 +463,7 @@ services:
       CRON_ENABLED: "false"
 
   caddy:
-    image: caddy:2-alpine
+    image: caddy:2-alpine@sha256:eb4d35b7452d1ab6171fbdbe8d9275b2301dad6dad92115d91e19fb9b24d510f
     restart: unless-stopped
     mem_limit: 128m
     cpus: 0.2
@@ -446,6 +480,16 @@ services:
       # for a host `docker run`, or a compose service name).
       MEET_HOST: ${MEET_HOST:-meet.localhost}
       MIROTALK_UPSTREAM: ${MIROTALK_UPSTREAM:-host.docker.internal:3010}
+      # How Caddy obtains certificates: acme (Caddy is the public edge; the
+      # default) or local (behind a TLS-terminating proxy, Caddy issues its own
+      # from its internal CA). Selects deploy/caddy/tls-<mode>.caddy; see
+      # CONFIGURATION.md.
+      CADDY_TLS_MODE: ${CADDY_TLS_MODE:-acme}
+      # The proxy's address or CIDR, which Caddy trusts for the visitor's IP in
+      # local mode (deploy/caddy/tls-local.caddy). No usable default: unset, it
+      # is a placeholder Caddy rejects, and the deploy refuses local mode at
+      # step 3 without it. Unused in acme mode.
+      CADDY_TRUSTED_PROXIES: ${CADDY_TRUSTED_PROXIES:-set-CADDY_TRUSTED_PROXIES-for-local-mode}
     # Lets the Caddy container reach a MiroTalk started with its own `docker run`
     # via host.docker.internal (Linux needs this mapping).
     extra_hosts:
@@ -552,11 +596,16 @@ services:
       # other lock_timeout: merge bounds a wait inside one admin transaction, while
       # a migration's ACCESS EXCLUSIVE wait queues every later reader of the table.
       #
+      # The ROLE (#4453): MIGRATION_DB_USER / MIGRATION_DB_PASSWORD name the
+      # migration role that owns the schema; unset, `tac` as before. Only the
+      # credentials are parameterised, so the pool bound and the lock timeout
+      # above hold whichever role connects.
+      #
       # Override with MIGRATION_LOCK_TIMEOUT_MS in .env. 0 is REFUSED by
       # scripts/run-production-blue-green-deploy.sh, because 0 is "wait forever"
       # and would silently remove the guard rather than relax it. Recovering from
       # a deploy stopped here: docs/PRODUCTION_UPGRADE_RUNBOOK.md 2.1a.
-      DATABASE_URL: postgresql://tac:${DB_PASSWORD:?DB_PASSWORD is required}@postgres:5432/tacbookings?connection_limit=2&pool_timeout=10&options=-c%20lock_timeout%3D${MIGRATION_LOCK_TIMEOUT_MS:-5000}
+      DATABASE_URL: postgresql://${MIGRATION_DB_USER:-tac}:${MIGRATION_DB_PASSWORD:-${DB_PASSWORD:?DB_PASSWORD is required}}@postgres:5432/tacbookings?connection_limit=2&pool_timeout=10&options=-c%20lock_timeout%3D${MIGRATION_LOCK_TIMEOUT_MS:-5000}
     command: ./node_modules/.bin/prisma migrate deploy
 
 volumes:
@@ -565,6 +614,8 @@ volumes:
   # names no host directory. Deliberately NOT pruned by any tooling here: it
   # holds the club's own backups.
   backup_data:
+  # Disk-backed working files, separate from the operator's local destination.
+  backup_spool:
   caddy_data:
   caddy_config:
   image_uploads:

@@ -188,6 +188,62 @@ describe("applyLifecycleTransitions — F20 applied-credit clamp (#1887)", () =>
     );
   });
 
+  it("clamps an approved member whole-lodge booking - CONFIRMED, held, no Payment row - and settles it PAID at $0 (#4019, #4264 F1)", async () => {
+    // The approval applied $800 of credit to a $1,000 booking and minted no
+    // receivable; the party is then re-rated and the price drops to $600. The
+    // excess $200 must come back and the booking must settle, exactly as a
+    // PAYMENT_PENDING card booking would - otherwise both pay doors refuse it
+    // ("fully credit-covered") and it never reaches PAID.
+    mockDerive.mockResolvedValue(80000);
+    mockClamp.mockResolvedValue({
+      appliedCreditCents: 60000,
+      refundedExcessCents: 20000,
+    });
+
+    const result = await applyLifecycleTransitions(makeTx(), {
+      booking: {
+        ...baseBooking({ hasPayment: false }),
+        status: "CONFIRMED",
+        wholeLodgeHold: true,
+      },
+      bookingId: "bk-1",
+      newCheckIn: new Date("2026-08-01"),
+      newFinalPriceCents: 60000,
+      feeRecordedByThisEditCents: 0,
+      format: CLUB_FORMAT_TEST,
+      guestsForPricing: [{ isMember: true }],
+      skipBookingLifecycleRules: false,
+    });
+
+    expect(mockClamp).toHaveBeenCalled();
+    expect(result.newStatus).toBe("PAID");
+    expect(result.zeroDollarAutoPaid).toBe(true);
+    expect(result.appliedCreditCents).toBe(60000);
+    expect(result.refundedExcessCreditCents).toBe(20000);
+  });
+
+  it("leaves a CONFIRMED booking WITH a Payment row alone: it carries a receivable or a capture, not the whole-lodge gap", async () => {
+    mockDerive.mockResolvedValue(80000);
+
+    const result = await applyLifecycleTransitions(makeTx(), {
+      booking: {
+        ...baseBooking({ hasPayment: true, creditAppliedCents: 80000 }),
+        status: "CONFIRMED",
+        wholeLodgeHold: true,
+      },
+      bookingId: "bk-1",
+      newCheckIn: new Date("2026-08-01"),
+      newFinalPriceCents: 60000,
+      feeRecordedByThisEditCents: 0,
+      format: CLUB_FORMAT_TEST,
+      guestsForPricing: [{ isMember: true }],
+      skipBookingLifecycleRules: false,
+    });
+
+    expect(mockClamp).not.toHaveBeenCalled();
+    expect(result.newStatus).toBe("CONFIRMED");
+    expect(result.zeroDollarAutoPaid).toBe(false);
+  });
   it("#3750 (#3955 F1): keeps credit up to the WORTH and never settles at $0 while a recorded fee is owed", async () => {
     // Priced 40000 with 30000 credit applied; a correction removes 20000 and
     // records a 10000 fee. The bare price (20000) is below the credit, but the

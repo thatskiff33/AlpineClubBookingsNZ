@@ -32,7 +32,8 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { stripComments } from "./support/strip-comments";
+import { blankLiterals, stripComments } from "./support/strip-comments";
+import { balancedBrackets } from "./support/balanced-brackets";
 
 const SRC_DIR = join(import.meta.dirname, "..", "..");
 
@@ -57,27 +58,17 @@ function executableCode(source: string): string {
   return stripComments(source);
 }
 
-/**
- * The `{...}` object that opens at or after `from`, brace-balanced. Returns
- * `null` when there is no `{` left. Strings/regexes are not tokenised, which is
- * safe here: the census reads real member-write call sites, none of which carry
- * a `{` or `}` inside a string literal between the call and its `data` object.
- */
+/** The object opening at or after `from`, or null when no object follows. */
 function balancedObject(
   code: string,
   from: number,
+  structure = blankLiterals(code),
 ): { start: number; end: number; text: string } | null {
-  const start = code.indexOf("{", from);
+  // The brace is looked for in masked text, so one inside a string is not it.
+  const start = structure.indexOf("{", from);
   if (start === -1) return null;
-  let depth = 0;
-  for (let i = start; i < code.length; i++) {
-    if (code[i] === "{") depth++;
-    else if (code[i] === "}") {
-      depth--;
-      if (depth === 0) return { start, end: i, text: code.slice(start, i + 1) };
-    }
-  }
-  return null;
+  const { text, end } = balancedBrackets(code, start, structure);
+  return { start, text, end };
 }
 
 /**
@@ -91,20 +82,22 @@ function balancedObject(
  * block (which routinely lists `ageTier: true`) for the write.
  */
 function dataExpressionText(code: string, callArgText: string): string {
-  const m = /\bdata\s*:\s*/.exec(callArgText);
+  const argStructure = blankLiterals(callArgText);
+  const m = /\bdata\s*:\s*/.exec(argStructure);
   if (!m) return "";
   const after = m.index + m[0].length;
-  if (callArgText[after] === "{") {
-    return balancedObject(callArgText, after)?.text ?? "";
+  if (argStructure[after] === "{") {
+    return balancedObject(callArgText, after, argStructure)?.text ?? "";
   }
-  const id = /^([A-Za-z_$][\w$]*)/.exec(callArgText.slice(after));
+  const id = /^([A-Za-z_$][\w$]*)/.exec(argStructure.slice(after));
   if (!id) return "";
   const defRe = new RegExp(
     `\\b(?:const|let|var)\\s+${id[1]}\\s*(?::[^=]*)?=\\s*`,
   );
-  const def = defRe.exec(code);
+  const codeStructure = blankLiterals(code);
+  const def = defRe.exec(codeStructure);
   if (!def) return "";
-  return balancedObject(code, def.index + def[0].length)?.text ?? "";
+  return balancedObject(code, def.index + def[0].length, codeStructure)?.text ?? "";
 }
 
 /**
@@ -139,9 +132,12 @@ function dataExpressionText(code: string, callArgText: string): string {
  */
 function writesAgeTier(code: string): boolean {
   const re = /\.member\.(update|updateMany)\(/g;
+  // Masking costs a pass over the file, so only a file naming the write is masked.
+  if (!/\.member\.(?:update|updateMany)\(/.test(code)) return false;
+  const structure = blankLiterals(code);
   let m: RegExpExecArray | null;
-  while ((m = re.exec(code)) !== null) {
-    const arg = balancedObject(code, m.index);
+  while ((m = re.exec(structure)) !== null) {
+    const arg = balancedObject(code, m.index, structure);
     if (!arg) continue;
     if (/\bageTier\b/.test(dataExpressionText(code, arg.text))) return true;
   }

@@ -230,7 +230,7 @@ export function defaultAppRoleFallbacks(seeds: ThemeSeeds): {
  *
  * Light-only: the website scope has no dark mode (mirrors
  * `serializeWebsiteStepTokens`). `--destructive`/`--destructive-foreground` are
- * intentionally absent — they are fixed oklch values, not brand-derived, and
+ * intentionally absent — they are fixed (`--destructive` is `var(--danger)`), not brand-derived, and
  * stay declared statically in the `.website-theme` globals.css block.
  */
 export const WEBSITE_ROLE_ALIASES: Record<string, AliasEntry> = {

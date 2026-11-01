@@ -2,7 +2,8 @@ import { readFileSync } from "fs";
 import { join } from "path";
 import { describe, expect, it } from "vitest";
 
-import { stripComments } from "./support/strip-comments";
+import { balancedBrackets } from "./support/balanced-brackets";
+import { blankLiterals, stripComments } from "./support/strip-comments";
 
 /**
  * #2265 (epic #2245, E1) scope item 2 — make the draft and confirmed create
@@ -53,40 +54,18 @@ function topLevelArgumentKeys(rawSource: string, fnName: string): string[] {
   const source = stripComments(rawSource);
 
   const opener = `${fnName}({`;
-  const start = source.indexOf(opener);
+  const structure = blankLiterals(source);
+  const start = structure.indexOf(opener);
   if (start < 0) {
     throw new Error(`Could not find a ${opener} call in ${ROUTE_PATH}`);
   }
 
-  let depth = 1;
-  let closed = false;
-  let body = "";
-  for (let index = start + opener.length; index < source.length; index += 1) {
-    const char = source[index];
-    if (char === "{" || char === "[" || char === "(") {
-      depth += 1;
-      continue;
-    }
-    if (char === "}" || char === "]" || char === ")") {
-      depth -= 1;
-      if (depth === 0) {
-        closed = true;
-        break;
-      }
-      continue;
-    }
-    // Only depth 1 is the argument object's own body; nested content is
-    // discarded outright, so a nested key can never be counted.
-    if (depth === 1) body += char;
-  }
-  if (!closed) {
-    throw new Error(`Unbalanced argument object for ${fnName}`);
-  }
-
-  // Nested content is already gone, so every remaining comma separates two
-  // top-level entries. Each entry is either `name` (shorthand) or `name: ...`.
+  // The object's own top-level entries: nested content stays inside its entry,
+  // so a nested key can never be counted. Each entry is either `name`
+  // (shorthand) or `name: ...`.
+  const { parts } = balancedBrackets(source, start + opener.length - 1, structure);
   const keys = new Set<string>();
-  for (const entry of body.split(",")) {
+  for (const entry of parts) {
     const match = /^\s*([A-Za-z_$][\w$]*)\s*(?::|$)/.exec(entry);
     if (match) keys.add(match[1]);
   }

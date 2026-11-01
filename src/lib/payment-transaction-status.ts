@@ -248,16 +248,18 @@ export function captureRefundState(row: {
 /**
  * The least a payment's refunded total can truthfully be (#3640): what it
  * captured, or - if less - its card refunds still counted plus the account
- * credit its booking issued. One home for two readers that must agree: the
- * card-refund writer's floor on a failed refund's subtraction, and the
- * refunded-total audit's expected figure.
+ * credit its booking issued plus (#4280) the bank cash its "Paid another way"
+ * closes recorded (`readPaidAnotherWayCloseBankCashByPayment`). One home for
+ * two readers that must agree: the card-refund writer's floor on a failed
+ * refund's subtraction, and the refunded-total audit's expected figure.
  */
 export function expectedRefundedFloorCents(input: {
   amountCents: number;
   cardRefundCents: number;
   accountCreditCents: number;
+  paidAnotherWayCents: number;
 }): number {
-  return Math.min(input.amountCents, input.cardRefundCents + input.accountCreditCents);
+  return Math.min(input.amountCents, input.cardRefundCents + input.accountCreditCents + input.paidAnotherWayCents);
 }
 
 /**
@@ -275,3 +277,6 @@ export function predatesRefundLedger(
   if (typeof createdSeconds !== "number") return undated === "pre-ledger";
   return ledgerStartSeconds !== null && createdSeconds < ledgerStartSeconds;
 }
+
+/** The card-refund shortfall refusal, shared by the inline planner and the edit door (#3984). */
+export const STRIPE_REFUND_EXCEEDS_CAPTURED_MESSAGE = "Refund amount exceeds captured Stripe payments";

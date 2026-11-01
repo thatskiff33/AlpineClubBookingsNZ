@@ -226,6 +226,17 @@ Most rows in [`BLUE_GREEN_MIGRATION_SAFETY.tsv`](BLUE_GREEN_MIGRATION_SAFETY.tsv
 
 The measurement behind the 5 s default, both of its bounds, and the recovery an operator runs are in [`CONCURRENCY_AND_LOCKING.md`](CONCURRENCY_AND_LOCKING.md#the-migration-lock-timeout-3377) and [`PRODUCTION_UPGRADE_RUNBOOK.md` §2.1a](PRODUCTION_UPGRADE_RUNBOOK.md#21a-step-1320-stopped-on-a-lock-timeout).
 
+## Which role a migration runs as (#4453)
+
+A deployment that uses the [least-privilege roles](../DEPLOYMENT.md#least-privilege-database-roles) runs `prisma migrate deploy` as the **migration role**. That role owns every object in schema `public` but is not a superuser. The old colour keeps serving as the **application role** throughout. Four rules follow, and each one is how "every migration stays readable by the deployed old code" holds when the roles differ:
+
+- **A new table or sequence reaches the old colour's role without a grant in the migration.** The migration role's default privileges give the application role SELECT, INSERT, UPDATE and DELETE on each new table, and USAGE and SELECT on each new sequence, the moment the migration creates it. Do not add a `GRANT` to a migration, and do not `REVOKE` from the application role in one either. A migration that narrowed a right the live colour depends on would break it mid-deploy, and the roles' declared shape lives in `src/lib/database-roles.ts`, not in the migration history. **One carve-out:** a migration may narrow rights on tables it creates in that same file, without naming any role, because no running colour can depend on a right over a table that did not exist. `20261127010000_member_money_journal` is the example: it revokes UPDATE, DELETE, TRUNCATE, TRIGGER and REFERENCES on its seven new append-only tables from every grantee but their owner, so a least-privilege deploy passes the post-migrate grants check without a re-run of provisioning. It never touches a table an earlier migration created.
+- **An append-only relation, and the retention role's columns, are declared in code, not in a migration.** A release that changes `APPEND_ONLY_RELATIONS` or `AUDIT_ANONYMISED_REQUEST_COLUMNS` tells operators to re-run `pnpm run db:provision-roles --apply` *after* the deploy, in its [`UPGRADING.md`](UPGRADING.md) entry. Until then a new append-only relation carries the default privileges, and the nightly retention job cannot clear a new column. A new append-only table that its own migration narrows (the carve-out above) needs no such step; re-running provisioning stays the repair if anything widens it later. A change to the anonymised columns also needs a migration that extends the `AuditLog` request-data trigger (`20261125020000_audit_request_data_update_only_clears`). A migration that drops and re-creates `BookingLedgerLine` or `AuditLog` (a table rewrite by copy) needs the same note, because the new table starts with the default privileges too.
+- **A view is written through with its owner's rights.** A new view gets the default table grants, so the application could write through it until provisioning narrows views to SELECT. The deploy script's post-migrate check stops a deploy that leaves a view writable by the application role, and asks for a re-run of `--apply`.
+- **Nothing a migration does may need a superuser.** An untrusted extension, `ALTER SYSTEM`, `ALTER ROLE` or a cross-database statement fails under the migration role. So does a `SECURITY DEFINER` routine, which provisioning refuses unless `SECURITY_DEFINER_ROUTINE_ALLOWLIST` names it. Such a statement is a separate operator step, and the release's `UPGRADING.md` entry names it. Trusted extensions (`pgcrypto`, `btree_gist`) work, because the migration role has CREATE on the database. `CREATE TEMP TABLE` works, because provisioning grants the migration role `TEMPORARY` directly; AI Diagnostics provisioning revokes it from PUBLIC. `src/lib/__tests__/database-roles.realdb.test.ts` applies every committed migration as that role to an empty database.
+
+A deployment that has not switched still migrates as the superuser, so all four rules hold for it trivially.
+
 ## Marker migrations are never squashed
 
 Three migrations exist only so their finish time on an install can be read
@@ -349,4 +360,17 @@ Note that branch protection still has `enforce_admins` off, so an admin merge ca
 
 ## Historical Migrations
 
-The April 2026 migration history contains single-step destructive changes that predate this policy. Those files are not edited retroactively because Prisma records migration checksums after deployment. If any environment still has one of those migrations pending, do not run it through the normal blue/green path; treat it as a bootstrap or maintenance migration with an explicit operator plan.
+Committed migrations are never edited once applied. Measured on Prisma 7.10.1,
+an applied migration's checksum mismatch goes unnoticed by production deploys:
+`prisma migrate deploy` exits 0 with "No pending migrations to apply", and
+`prisma migrate status` reports "Database schema is up to date!". Every
+development database that applied it is affected: `prisma migrate dev` says it
+"was modified after it was applied" and offers a destructive schema reset,
+losing all data. Editing also breaks the audit trail because the file no longer
+records what actually ran. Correct an applied migration with a new migration.
+
+The April 2026 migration history contains single-step destructive changes that
+predate this policy. Those files remain unchanged under the same rule. If any
+environment still has one of those migrations pending, do not run it through
+the normal blue/green path; treat it as a bootstrap or maintenance migration
+with an explicit operator plan.

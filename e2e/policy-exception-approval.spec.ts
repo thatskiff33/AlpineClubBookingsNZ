@@ -1,4 +1,4 @@
-import { type APIRequestContext, type BrowserContext, expect, test } from "@playwright/test";
+import { type APIRequestContext, type BrowserContext, expect, test } from "./helpers/accessibility";
 
 import { storageStatePath } from "./helpers/auth";
 import { E2E_ADMIN, WAITLIST_FULL_WINDOW } from "./helpers/fixtures";

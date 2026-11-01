@@ -135,6 +135,8 @@ the row, not open work. Open findings now live in labelled GitHub issues
 | `/api/webhooks/stripe` | Stripe signature. No session auth by design. | Stripe. | Stripe event payload, payment intent/setup intent state through service. | Stripe webhook verification and downstream payment handling. | Resolves the signing secret from the encrypted `IntegrationCredential` store via the shared resolver (`getOperationalStripeWebhookSecret`), **fail-closed**: no/unreadable secret or a resolver error ⇒ reject (HTTP 500), never accept — #2082, the legacy `STRIPE_WEBHOOK_SECRET` env var is no longer read. Requires `stripe-signature`; bounded raw body read before signature verification. | Logger for signature/body-limit errors; service-level records. | Do not add session auth. Event idempotency is handled by `ProcessedWebhookEvent`; keep Stripe event coverage under payment-integrity review. The setup wizard's webhook **Verify** reads a marker freshness-scoped against the stored signing secret (#2082); [when it is written](#the-background-writers-in-full-2723). |
 | `/api/webhooks/xero` | Xero HMAC signature. No session auth by design. | Xero. | Xero inbound event records, webhook logs, reconciliation queue. | Xero reconciliation cycle after response. | Resolves the webhook signing key from the encrypted `IntegrationCredential` store via the shared resolver (`getOperationalXeroWebhookKey`), **fail-closed**: no key ⇒ reject (never accept unsigned) — #2079, the legacy `XERO_WEBHOOK_KEY` env var is no longer read. Requires `x-xero-signature`, bounded body read, HMAC with `timingSafeEqual`, object payload, array `events`, and max-event cap; invalid or unverifiable signatures return 401. A valid-signature **empty-events** POST is Xero's intent-to-receive (ITR) validation ping (#2081): the route records a `WebhookValidationReceipt` marker stamped with the receipt time and a non-reversible SHA-256 fingerprint of the resolved webhook key (never the key itself), then returns 200. | `recordWebhookLog()`, Xero inbound event records, `WebhookValidationReceipt` (ITR marker), logger. | Do not add session auth. Replay/idempotency relies on Xero inbound correlation keys and async reconciliation. The setup wizard's webhook **Verify** reads the ITR marker via `/api/admin/xero/webhook/verify-status` (any admin can read; only Full Admin can write the key) and is **freshness-scoped**: green only for a marker newer than a server-issued verify-start AND matching the current key's fingerprint, so a stale marker or one under a replaced key can never satisfy a new verify. Exposure contract (#2079): the key/fingerprint never leaves the server — only booleans/timestamps do. |
 | `/api/webhooks/ses-sns` | AWS SNS signature verification. No session auth by design. | AWS SNS for SES feedback. | Processed webhook ids, email suppression/failure records, webhook logs. | SNS certificate verification, SES feedback ingestion. | Bounded JSON envelope validation, SNS signature verification, and `SES_SNS_TOPIC_ARN` allowlisting unless a non-production unsafe override is set. | `recordWebhookLog()`, logger; duplicate event ids are idempotent. | `SES_SNS_TOPIC_ARN` must stay configured for deployed environments; unsafe missing-topic override is local-only. |
+| `/api/webhooks/servernz-posts` | HMAC over `timestamp.body` with the Alpine Central Server push secret from the encrypted `IntegrationCredential` store, five-minute window, constant-time compare. No session auth by design. | The Alpine Central Server. | Nothing from the body: a verified push only schedules the authenticated message-board pull. | The pull inside `runMirrorSync`, after the response. | Module off answers 200 `ignored` (so the server stops retrying); no stored secret answers 401, and a server address move or API-key replacement removes the stored secret in its own transaction, so pushes signed with it stop verifying (within the 45-second credential cache of any other running process) and the next sync registers again (#4470); a registration whose connection was replaced in flight stores nothing; bounded 16 KiB body; a body that is not a JSON object is refused 400 BEFORE the signature, so a captured free-beds question cannot ring the doorbell. | Logger. | `INV-INT-030`. |
+| `/api/webhooks/servernz-availability` | HMAC over `timestamp.text` with the same push secret, where the text is route-specific (`availability`, lodge, from, to), five-minute window, constant-time compare, judged BEFORE the query is parsed. No session auth by design. | The Alpine Central Server's public lodge search. | Free beds per night and their minimum for one linked lodge; never a guest, member or booking. | None: a read. | Rate-limited first; `alpineCentralServer` module off, `otherLodgesEnabled` off, an unknown, unowned, unlinked or inactive lodge are all the same 404; the stay is capped at 30 nights and 365 days ahead. No stored secret answers 401: a server address move or API-key replacement removes it (#4470), so the old server can no longer ask once the 45-second credential cache of any other running process expires, and the new server can ask once this site has registered with it again. | Logger. | `INV-INT-030`; counts only, by design. |
 | GitHub Actions, Dockerfile, Compose, deployment scripts | CI/deployment boundary, not app-session auth. | Maintainer, GitHub Actions, deploy operator. | Repository, package lock, Docker images, GHCR packages, environment variables, migrations. | npm, Docker, GHCR, Semgrep, gitleaks, Trivy, CodeQL if enabled by repo settings. | CI gates: audit, lint, tests, production build in CI only, Semgrep, gitleaks, Docker image security. Compose uses read-only app container, tmpfs cache, no-new-privileges, resource limits. | GitHub logs and deploy logs. | #619 should review workflow permissions, package publishing, secret scopes, image provenance, and deploy env contracts. |
 
 ## External Integration Review (#616)
@@ -251,6 +253,7 @@ These family rules are enforced by automated tests (issue #1132):
 - `src/app/api/auth/verify-email/route.ts`
 - `src/app/api/chores/[token]/route.ts`
 - `src/app/api/committee/route.ts`
+- `src/app/api/privacy/replay/route.ts` — public GET returns only the Replay opt-in, with the shared API rate limiter before any policy read. Concurrent reads share an in-process 15-second cache; settings failures return OFF, and local saves invalidate the cache. Open tabs re-check every 30 seconds, so switching Replay off reaches every instance and tab within about 45 seconds. Responses remain `no-store`.
 - `src/app/api/contact/route.ts`
 - `src/app/api/display/**/route.ts`
 - `src/app/api/health/route.ts`
@@ -355,7 +358,7 @@ Admin route subfamilies are:
 | Email/SNS data | Contact, application, admin communications, email templates, SES/SNS webhook. | Rate limits for public senders, template escaping, SNS signature verification, email suppression records. | #616 for SES/SNS topic allowlist and outbound email abuse. |
 | Audit, webhook, cron, and provider logs | `AuditLog`, `WebhookLog`, `CronJobRun`, Xero operation/inbound records. | Structured logging with redaction helpers for known sensitive URL tokens; webhook logs redact error text. | #615/#616 for callback URL and token redaction review; compromised log reader threat below. |
 | CI/deploy secrets | GitHub Actions secrets/vars, `.env`, Compose, GHCR tokens, Sentry token. | CI permission scoping, gitleaks, deployment docs warn not to commit secrets. | #619 for workflow permissions, provenance, and secret-scope review. |
-| Encrypted integration credentials (#2079, #2082, #2087, #2095, #2211, #2371) | `IntegrationCredential` — six provider namespaces, enumerated once under "Credentials at rest" below and not re-listed anywhere else (#2720): `xero`, `stripe`, `google`, `backup`, `anthropic`, `anthropic-diagnostics`. | AES-256-GCM under an HKDF-SHA256 key derived from `AUTH_SECRET`/`NEXTAUTH_SECRET`, per-write random IV, AAD context-binding to `(provider,key,labelVersion)`; write-only Full-Admin API; secret values never returned/logged/exported; excluded from config-transfer. The Stripe publishable key is the ONE value delivered to the browser (it is not secret) — at runtime via `GET /api/stripe/publishable-key`, never a secret. Google's client id/secret are resolved server-side into the request-scoped NextAuth config and never leave the server; the resolver **fails open** (a DB/decrypt failure omits the Google provider, never breaking password/magic-link/2FA sign-in — #2087). | See "Credentials at rest" and "Backup S3 blast radius" below. |
+| Encrypted integration credentials (#2079, #2082, #2087, #2095, #2211, #2371) | `IntegrationCredential` — seven provider namespaces, enumerated once under "Credentials at rest" below and not re-listed anywhere else (#2720): `xero`, `stripe`, `google`, `backup`, `anthropic`, `anthropic-diagnostics`, `servernz`. | AES-256-GCM under an HKDF-SHA256 key derived from `AUTH_SECRET`/`NEXTAUTH_SECRET`, per-write random IV, AAD context-binding to `(provider,key,labelVersion)`; write-only Full-Admin API; secret values never returned/logged/exported; excluded from config-transfer. The Stripe publishable key is the ONE value delivered to the browser (it is not secret) — at runtime via `GET /api/stripe/publishable-key`, never a secret. Google's client id/secret are resolved server-side into the request-scoped NextAuth config and never leave the server; the resolver **fails open** (a DB/decrypt failure omits the Google provider, never breaking password/magic-link/2FA sign-in — #2087). | See "Credentials at rest" and "Backup S3 blast radius" below. |
 | Backup S3 destination + credentials (#2095) | `IntegrationCredential` provider `backup`; consumed by `src/lib/backup.ts` (pg_dump → gzip → `aws s3 cp`) and the `/admin/backups` surface. | S3 access key/secret and the restore-validation DSN are write-only Full-Admin secrets (never returned/logged); the destination (bucket/region) is ALSO Full-Admin-only to write even though it is not secret (see below); the S3 secrets ride the child process env (`AWS_*`), never argv, and the Postgres password rides `PGPASSWORD`, never argv; bucket/region are strictly format-validated before any CLI call. | See "Backup S3 blast radius" below. |
 
 ## Credentials at rest (#2079)
@@ -388,18 +391,34 @@ providers, and fell four behind as the rest landed. Anything that turns on
 - `servernz` — the Alpine Central Server API key, issued by the central server
   to this club. Stranding it stops the nightly Other Clubs sync (upload and
   download) until an admin re-enters it under Admin → Integrations → Alpine
-  Central Server; the non-secret connection settings (base URL, opt-in flag,
-  sync cursor, and the owned-lodge list) live in `ServerNzSettings` and survive
-  rotation untouched. What the key authorises leaving the club is every column
+  Central Server. The same namespace holds `push_secret`, the secret the
+  central server issued when this install registered for pushes; it verifies
+  the posts and free-beds webhooks. The non-secret connection settings (base
+  URL, opt-in flag, sync cursors, and the owned-lodge list) live in
+  `ServerNzSettings`. Replacing the key keeps the address and flag but resets
+  the connection's answers (owned list, version, every sync cursor) and
+  removes `push_secret` in the same transaction; moving the address does the
+  same and removes the key too (#4436, #4470). What the key authorises leaving the club is every column
   of the club's OWN `OtherLodge` rows plus their amenity lists (#50, #52):
   since the fourteen detail columns were added, that includes a site URL, a
   booking path, a cancellation period, two season dates and nine yes/no
   facilities alongside the booking officer's contact details, and nothing about
-  members. Which rows are the club's own is the server's answer
-  (`ownLodgeNames` on every pull), stored on the settings row and applied by
-  the one `ownsOtherLodge` rule to the upload, the admin edit route and the
-  panel; until that answer has been received the upload sends every changed row
-  as before, and the admin edit route refuses everything. In the other
+  members. Since #64 (server API 2.3) each such row also carries its central
+  lodge `id`, and a changed name RENAMES that lodge on the central server and so
+  at every other club — limited, by the server, to lodges this club owns.
+  Since #58 (API 2.4) a pull's `deletedLodges` can HIDE any local Other lodges
+  row by its central id, the club's own included, and clears any club lodge's
+  Central lodge link to it. Hiding is never undone but removes nothing: the
+  row stays on the bookings and requests that name it. The list is bounded
+  (100,000) and each entry validated, and a download that hides anything
+  writes one audit row naming the lodges. Which rows are the club's own is the server's answer
+  (`ownLodges` on every pull, by central id since #69: two lodges may share a
+  name), stored on the settings row and applied by the one `ownsOtherLodge`
+  rule to the upload, the admin edit route, the committee officer sync and the
+  panel. A row not yet keyed by a central id is never owned (two lodges may
+  share a name). Until that answer has been received the upload sends
+  nothing, the admin edit route refuses everything, and the committee sync
+  writes nothing and logs that ownership is unknown (#4489). In the other
   direction the pull is held to the same `otherLodgeDataShape` the local admin
   is validated with (`src/lib/other-lodges.ts`), so the remote cannot place an
   over-long value, a non-`http(s)` site URL or an unbounded amenity list into
@@ -564,10 +583,12 @@ incident can rely on the following:
 **What the census can and cannot see.** It enumerates every DIRECT CALL of the
 three store mutators, found by walking the tree — not every function that
 ultimately causes a credential to change. A wrapper hides its own callers:
-`clearServerNzApiKey` appears, the admin route that calls it does not. That is
-sound rather than a gap, because a wrapper takes the actor as a REQUIRED
-parameter and so cannot supply one itself — the type is what covers its callers,
-and the census covers the wrapper. It is worth stating plainly because "every
+`setServerNzApiKey` appears, the credentials route that calls it does not;
+`clearServerNzApiKey` appears, `saveServerNzConnectionSettings` and the
+settings route above it do not. That is sound rather than a gap, because a
+wrapper takes the actor as a REQUIRED parameter and so cannot supply one
+itself — the type is what covers its callers, and the census covers the
+wrapper. It is worth stating plainly because "every
 writer" would be a stronger claim than the instrument makes.
 
 - **A database backup + the auth secret decrypts everything.** Anyone who holds
@@ -1172,7 +1193,8 @@ Verified controls already present and intentionally preserved:
   The conditions it requires are stated once, in
   [`dependency-mitigations.d/README.md`](../dependency-mitigations.d/README.md)
   -> "When the wrapper says MITIGATED"; it covers only the copy the audit can
-  see, and the bundled copies it cannot reach are printed on every run.
+  see, and a record's known bundled copies it cannot reach are printed on
+  every run. No record is live since the braces record was retired (#3851).
 - The secret scan reads merge commits. `git log -p` emits no patch for a merge
   commit, and roughly a third of this repository's 7,510 commits are merges, so
   a scan without `--diff-merges=first-parent` never looked at them — and a
@@ -2041,8 +2063,12 @@ lobby TV display (fork #54) and the global 404 (#2356).
     on", 404 meant "off". `getFeatureFlagBlockResponse()` now takes the request
     method and mirrors the bare 400 for `/api` paths. Scoped to `/api`: a page
     is served by a different Next module with different verb handling, so the
-    gate keeps its bodyless 404 there rather than claiming a parity nobody
-    measured.
+    gate keeps a 404 there rather than claiming a parity nobody measured.
+    Since #4466 a page-shaped `GET`/`HEAD` gets that 404 with a fixed,
+    script-free "Page not found" document (`lang`, `<title>`, no club or module
+    name; `src/lib/module-disabled-page.ts`), because an empty body rendered as
+    a blank, untitled page; every other verb and every asset-shaped path keeps
+    the empty 404.
   - The parity is asserted verb-by-verb in
     `src/app/__tests__/unmatched-url-status.test.ts`, comparing status, raw
     response text (not parsed JSON — parsing hides key order and whitespace) and
@@ -2477,8 +2503,8 @@ on this URL in either state and the composition rule above gives its headers
 precedence. They are still not byte-identical on the wire, and the difference is
 stated rather than glossed: a middleware short-circuit is sent chunked while the
 terminal route handler sends `Content-Length: 0`. That is no
-new module-state oracle, because with the module off `/lodge` ITSELF answers an
-empty 404 while with it on the same address answers a 200 page — a strictly
+new module-state oracle, because with the module off `/lodge` ITSELF answers a
+404 while with it on the same address answers a 200 page — a strictly
 louder signal on the identical flag, and one the module gate cannot avoid. It
 does mean a static file placed under a gated prefix would become gated; nothing
 in `public/` sits under one today.

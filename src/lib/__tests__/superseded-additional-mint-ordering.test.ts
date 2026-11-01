@@ -40,6 +40,7 @@ const mocks = vi.hoisted(() => ({
   refundPaymentTransactions: vi.fn(),
   enqueueRefundRecovery: vi.fn(),
   processRecovery: vi.fn(),
+  sizingRead: vi.fn(),
 }));
 
 vi.mock("@/lib/stripe", () => ({
@@ -49,6 +50,7 @@ vi.mock("@/lib/stripe", () => ({
 vi.mock("@/lib/payment-transactions", () => ({
   upsertPaymentIntentTransaction: mocks.upsertPaymentIntentTransaction,
   refundPaymentTransactions: mocks.refundPaymentTransactions,
+  lockPaymentForRefundedTotal: vi.fn(),
   PartialRefundError: class PartialRefundError extends Error {},
 }));
 vi.mock("@/lib/logger", () => ({
@@ -56,6 +58,12 @@ vi.mock("@/lib/logger", () => ({
 }));
 vi.mock("@/lib/prisma", () => ({
   prisma: {
+    $transaction: async (write: (store: unknown) => Promise<unknown>) => {
+      const { prisma } = await import("@/lib/prisma");
+      return write(prisma);
+    },
+    $executeRaw: vi.fn(),
+    payment: { findUnique: mocks.sizingRead },
     paymentTransaction: {
       findMany: mocks.supersedeRead,
       // #3954 round 7: the door re-reads its new intent's row before queueing
@@ -70,6 +78,11 @@ vi.mock("@/lib/payment-recovery", () => ({
   enqueueAdditionalPaymentIntentRecovery: mocks.enqueueRecovery,
   enqueueBookingModificationRefundRecovery: mocks.enqueueRefundRecovery,
   processPaymentRecoveryOperations: mocks.processRecovery,
+}));
+
+// Invoice movement has its own contract suites; this suite observes the queue boundary.
+vi.mock("@/lib/superseded-ask-invoice-carry", () => ({
+  followSupersededAskInvoicesSafely: async () => null,
 }));
 
 import { resolveClubFormat } from "@/lib/club-format";
@@ -107,6 +120,7 @@ let order: string[] = [];
 beforeEach(() => {
   order = [];
   for (const mock of Object.values(mocks)) mock.mockReset();
+  mocks.sizingRead.mockResolvedValue({ additionalAmountCents: 7000, additionalPaymentStatus: "PENDING" });
   mocks.createPaymentIntent.mockImplementation(async () => {
     order.push("createPaymentIntent");
     return { id: "pi_new", client_secret: "pi_new_secret" };
@@ -173,6 +187,7 @@ describe("createModificationAdditionalPaymentIntent ordering (#3340)", () => {
       hadIssuedXeroInvoice: false,
       // Round 8: and the edit itself, which a reduction that retires it names.
       bookingModificationId: CONTEXT.bookingModificationId,
+      store: expect.anything(),
     });
     // …and the supersede excludes the NEW intent, so the row written a moment
     // earlier cannot select itself, then retires the old ask it carried.
@@ -191,33 +206,29 @@ describe("createModificationAdditionalPaymentIntent ordering (#3340)", () => {
       paymentTransactionId: "txn_old",
       paymentIntentId: "pi_old",
       amountCents: 7000,
+      store: expect.anything(),
     });
     expect(mocks.cancelNow).toHaveBeenCalledWith("op_old", CLUB_FORMAT_TEST);
   });
 
-  it("still returns the secret when the supersede queue fails after the row exists", async () => {
-    mocks.supersedeRead.mockImplementation(async () => {
-      order.push("supersedeRead");
-      throw new Error("the queue is down");
-    });
-
+  it("withholds B's secret and keeps the retry when A captured since sizing", async () => {
+    mocks.sizingRead.mockResolvedValue({ additionalAmountCents: 7000, additionalPaymentStatus: "SUCCEEDED" });
     const result = await createModificationAdditionalPaymentIntent({
-      format: CLUB_FORMAT_TEST,
-      bookingId: "booking_1",
-      result: CONTEXT,
-      door: "guestAdd",
-      failureMessage: "boom",
+      format: CLUB_FORMAT_TEST, bookingId: "booking_1", result: CONTEXT, door: "guestAdd", failureMessage: "boom",
     });
+    expect(result.additionalPaymentClientSecret).toBeUndefined();
+    expect(mocks.upsertPaymentIntentTransaction).not.toHaveBeenCalled();
+    expect(mocks.enqueueCancel).not.toHaveBeenCalled();
+    expect(mocks.enqueueRecovery).toHaveBeenCalled();
+  });
 
-    expect(result.additionalPaymentIntentId).toBe("pi_new");
-    // The ledger already points at the live intent, which is the state that
-    // matters: the retired one is chased by the durable recovery row.
-    expect(order).toEqual([
-      "createPaymentIntent",
-      "upsertPaymentIntentTransaction",
-      "supersedeRead",
-    ]);
-    expect(mocks.enqueueRecovery).not.toHaveBeenCalled();
+  it("withholds the secret and keeps the retry when queueing fails", async () => {
+    mocks.supersedeRead.mockRejectedValue(new Error("the queue is down"));
+    const result = await createModificationAdditionalPaymentIntent({
+      format: CLUB_FORMAT_TEST, bookingId: "booking_1", result: CONTEXT, door: "guestAdd", failureMessage: "boom",
+    });
+    expect(result.additionalPaymentClientSecret).toBeUndefined();
+    expect(mocks.enqueueRecovery).toHaveBeenCalled();
   });
 });
 

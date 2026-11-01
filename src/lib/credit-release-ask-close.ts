@@ -2,6 +2,7 @@ import "server-only";
 
 import { PaymentSource, PaymentStatus, PaymentTransactionKind } from "@prisma/client";
 
+import { ASK_CAUSE_ROWS, isPureCreditReleaseChain } from "@/lib/additional-ask-cause";
 import { bookingLedgerResidualCents } from "@/lib/additional-payment-ask";
 import { ADDITIONAL_PAYABLE_BOOKING_STATUSES, isAdditionalPaymentDoorOpenForBooking } from "@/lib/additional-payment-chase";
 
@@ -12,6 +13,7 @@ import {
   CREDIT_RELEASE_ASK_REASON,
 } from "@/lib/credit-release-ask-keys";
 import { lockPaymentForRefundedTotal, recordInternetBankingPaymentTransaction } from "@/lib/payment-transactions";
+import { LEDGER_ROWS_NEWEST_FIRST } from "@/lib/payment-ledger-order";
 import { prisma } from "@/lib/prisma";
 import { cancelPaymentIntentIfCancellableWithResult } from "@/lib/stripe";
 import { isSettledInXero, readXeroInvoiceBalance, type XeroInvoiceBalanceReader } from "@/lib/xero-invoice-balance";
@@ -38,9 +40,14 @@ import { isSettledInXero, readXeroInvoiceBalance, type XeroInvoiceBalanceReader 
  * LEFT ALONE - the card payment won, and the payment recorder will hold and alert
  * (the invoice is no longer open) rather than record it twice.
  *
- * ONLY A REQUEST THAT CARRIES NOTHING. One that absorbed another ask's balance
- * (`carriedAskCents` > 0) is part something else's money, which a paid invoice says
- * nothing about, so it stays open for a person.
+ * ONLY A REQUEST MADE OF RELEASED CREDIT. One that carries nothing, or one that carried
+ * only earlier credit-release requests (#4253 release 2, `INV-ADDPAY-049`): every cent of either
+ * stands on the booking's own invoice, so that invoice reading PAID says the whole request is
+ * paid. One that absorbed an edit's balance is part money on another invoice, which a paid
+ * booking invoice says nothing about, so it stays open for a person. The chain is read before
+ * any provider call; under the locks the fence pins the row's own carried figure, which no writer
+ * changes, and the payment still naming this request as its live ask, so nothing can have been
+ * folded into it since.
  */
 const UNPAID_STATUSES = [PaymentStatus.PENDING, PaymentStatus.PROCESSING, PaymentStatus.FAILED];
 
@@ -79,7 +86,6 @@ export async function closeCreditReleaseAsksPaidInXero(
           source: PaymentSource.STRIPE,
           reason: CREDIT_RELEASE_ASK_REASON,
           withdrawnAt: null,
-          carriedAskCents: 0,
           status: { in: UNPAID_STATUSES },
         },
       },
@@ -104,13 +110,12 @@ export async function closeCreditReleaseAsksPaidInXero(
         source: PaymentSource.STRIPE,
         reason: CREDIT_RELEASE_ASK_REASON,
         withdrawnAt: null,
-        carriedAskCents: 0,
         status: { in: UNPAID_STATUSES },
       },
-      select: { id: true, paymentId: true, amountCents: true, stripePaymentIntentId: true },
+      select: { id: true, paymentId: true, amountCents: true, carriedAskCents: true, stripePaymentIntentId: true },
     });
     // Only the LIVE request (the one the payment's summary points at) is closed.
-    if (!ask || !payment.xeroInvoiceId) {
+    if (!ask || !payment.xeroInvoiceId || !(await carriesOnlyReleasedCredit(ask))) {
       result.left += 1;
       continue;
     }
@@ -170,7 +175,7 @@ export async function closeCreditReleaseAsksPaidInXero(
           where: {
             id: ask.id,
             withdrawnAt: null,
-            carriedAskCents: 0,
+            carriedAskCents: ask.carriedAskCents,
             status: { in: UNPAID_STATUSES },
           },
           data: { status: PaymentStatus.FAILED, withdrawnAt: options.now ?? new Date() },
@@ -210,6 +215,22 @@ export async function closeCreditReleaseAsksPaidInXero(
     else result.left += 1;
   }
   return result;
+}
+
+/**
+ * Did this request absorb nothing but earlier credit-release requests? Carrying nothing answers
+ * yes without a read. Otherwise the payment's newest ADDITIONAL rows must start with this one and
+ * carry back only through credit-release rows, every one in hand (`isPureCreditReleaseChain`).
+ */
+async function carriesOnlyReleasedCredit(ask: { id: string; paymentId: string; carriedAskCents: number }): Promise<boolean> {
+  if (ask.carriedAskCents === 0) return true;
+  const rows = await prisma.paymentTransaction.findMany({
+    where: { paymentId: ask.paymentId, kind: PaymentTransactionKind.ADDITIONAL },
+    orderBy: [...LEDGER_ROWS_NEWEST_FIRST],
+    take: ASK_CAUSE_ROWS,
+    select: { id: true, reason: true, carriedAskCents: true, withdrawnAt: true },
+  });
+  return rows[0]?.id === ask.id && isPureCreditReleaseChain(rows);
 }
 
 /**

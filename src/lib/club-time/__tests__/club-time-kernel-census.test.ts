@@ -15,7 +15,8 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { stripComments } from "@/lib/__tests__/support/strip-comments";
+import { blankLiterals, stripComments } from "@/lib/__tests__/support/strip-comments";
+import { balancedBrackets } from "../../__tests__/support/balanced-brackets";
 
 const ROOT = process.cwd();
 const KERNEL = path.join(ROOT, "src", "lib", "club-time");
@@ -526,37 +527,12 @@ const DATE_FORMATTER_EXEMPTIONS = new Map<string, { hits: number; reason: string
 const DATE_OPTION_KEYS =
   /\b(?:dateStyle|timeStyle|weekday|era|year|month|day|dayPeriod|hour|minute|second|fractionalSecondDigits|timeZone|timeZoneName|hour12|hourCycle)\s*:/;
 
-/** The balanced argument text of the call whose `(` is at `open`. */
-function callArguments(source: string, open: number): string {
-  let depth = 0;
-  for (let index = open; index < source.length; index += 1) {
-    const char = source[index];
-    if (char === "(") depth += 1;
-    else if (char === ")") {
-      depth -= 1;
-      if (depth === 0) return source.slice(open + 1, index);
-    }
-  }
-  return source.slice(open + 1);
+function callArguments(source: string, open: number, structure: string): string {
+  return balancedBrackets(source, open, structure).text.slice(1, -1);
 }
 
-/** The top-level, comma-separated arguments of a call's argument text. */
 function topLevelArguments(text: string): string[] {
-  const args: string[] = [];
-  let depth = 0;
-  let start = 0;
-  for (let index = 0; index < text.length; index += 1) {
-    const char = text[index];
-    if (char === "(" || char === "{" || char === "[") depth += 1;
-    else if (char === ")" || char === "}" || char === "]") depth -= 1;
-    else if (char === "," && depth === 0) {
-      args.push(text.slice(start, index).trim());
-      start = index + 1;
-    }
-  }
-  const last = text.slice(start).trim();
-  if (last.length > 0) args.push(last);
-  return args;
+  return balancedBrackets(`(${text})`, 0).parts;
 }
 
 /**
@@ -584,9 +560,15 @@ export function findDateFormatterConstructions(source: string): string[] {
   for (const match of source.matchAll(/\btoLocale(?:Date|Time)String\b/g)) {
     hits.push(match[0]);
   }
+  // The pattern reads the bracket spelling `x["toLocaleString"](` too, so it
+  // runs over the text. Its `(` must still be code: a `toLocaleString(` named
+  // inside a string has no call to read.
+  let structure: string | undefined;
   for (const match of source.matchAll(/\btoLocaleString\b\s*(?:["'`]\s*\]\s*)?\(/g)) {
     const open = (match.index ?? 0) + match[0].length - 1;
-    if (toLocaleStringCanCarryDateOptions(callArguments(source, open))) {
+    structure ??= blankLiterals(source);
+    if (structure[open] !== "(") continue;
+    if (toLocaleStringCanCarryDateOptions(callArguments(source, open, structure))) {
       hits.push("toLocaleString(date)");
     }
   }

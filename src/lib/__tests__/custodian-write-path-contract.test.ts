@@ -1,6 +1,8 @@
 import { readFileSync, readdirSync } from "fs";
 import path from "path";
 import { describe, expect, it } from "vitest";
+import { balancedBrackets } from "./support/balanced-brackets";
+import { blankLiterals } from "./support/strip-comments";
 
 /**
  * Custodian occupancy — write-path contract (#2286).
@@ -237,32 +239,12 @@ function containsEvidence(source: string, evidence: string): boolean {
 }
 
 /**
- * The balanced `open`..`close` region starting at `openIndex`.
- *
- * The same helper `bed-allocation-lock-topology-contract.test.ts` uses, and for
- * the same reason: a fixed-width window is not a call. The detector below used
- * a 400-character lazy window, and four of the nine declared sites are longer
- * than that — including `bedAllocation.upsert`, which is THE manual-placement
- * funnel this whole contract is about. Those four were invisible to the scan
- * that claims to enumerate the tree (#2688 review F3). Balancing the call's own
- * parentheses reaches all nine, whatever their size.
+ * The bracketed region opening at `openIndex`, as original text. It throws on an
+ * unbalanced region or an offset that is not an opening bracket, so pass an
+ * index found over masked text (`structure`).
  */
-function balancedFrom(
-  text: string,
-  openIndex: number,
-  open: string,
-  close: string,
-): string {
-  let depth = 0;
-  for (let i = openIndex; i < text.length; i += 1) {
-    const char = text[i];
-    if (char === open) depth += 1;
-    else if (char === close) {
-      depth -= 1;
-      if (depth === 0) return text.slice(openIndex, i + 1);
-    }
-  }
-  return text.slice(openIndex);
+function balancedFrom(text: string, openIndex: number, structure?: string): string {
+  return balancedBrackets(text, openIndex, structure).text;
 }
 
 /**
@@ -279,15 +261,17 @@ function countPlacementStatements(
   source: string,
   into: Map<string, number>,
 ): void {
+  if (!source.includes("bedAllocation.")) return;
   const call = /bedAllocation\.(create|createMany|upsert|updateMany)\s*\(/g;
+  // Found over masked text: a statement named in a comment or string is not one.
+  const structure = blankLiterals(source);
   let match: RegExpExecArray | null;
-  while ((match = call.exec(source)) !== null) {
+  while ((match = call.exec(structure)) !== null) {
     const statement = match[1];
     const args = balancedFrom(
       source,
-      source.indexOf("(", match.index),
-      "(",
-      ")",
+      match.index + match[0].length - 1,
+      structure,
     );
     const placesABed = statement !== "updateMany" ? true : /bedId:/.test(args);
     if (!placesABed) continue;
@@ -320,15 +304,17 @@ function placementStatementCounts(): Map<string, number> {
  * tracking angle brackets, so `Promise<{ … }>` cannot be mistaken for the body.
  */
 function functionBody(source: string, signature: string): string {
-  const at = source.indexOf(signature);
+  // Read over masked text, so a mention in a comment or string is not the function.
+  const structure = blankLiterals(source);
+  const at = structure.indexOf(signature);
   expect(at, `${signature} is not in this file`).toBeGreaterThanOrEqual(0);
-  const parensAt = source.indexOf("(", at);
-  const params = balancedFrom(source, parensAt, "(", ")");
+  const parensAt = structure.indexOf("(", at);
+  const params = balancedFrom(source, parensAt, structure);
 
   let angle = 0;
   let bodyAt = -1;
   for (let i = parensAt + params.length; i < source.length; i += 1) {
-    const char = source[i];
+    const char = structure[i];
     if (char === "<") angle += 1;
     else if (char === ">") angle = Math.max(0, angle - 1);
     else if (char === "{" && angle === 0) {
@@ -337,7 +323,7 @@ function functionBody(source: string, signature: string): string {
     }
   }
   expect(bodyAt, `${signature} has no body`).toBeGreaterThan(parensAt);
-  return balancedFrom(source, bodyAt, "{", "}");
+  return balancedFrom(source, bodyAt, structure);
 }
 
 /** Every token in `tokens`, in this order, within `text`. */
@@ -657,14 +643,15 @@ describe("custodian write-path contract (#2286)", () => {
 
     for (const feed of SHARED_CUSTODIAN_FEEDS) {
       const source = readRepoFile(feed.file);
-      const custodianAt = source.indexOf(
+      const structure = blankLiterals(source);
+      const custodianAt = structure.indexOf(
         "custodianOccupiedBedNightsForPlanner(",
       );
       expect(
         custodianAt,
         `${feed.file} no longer expands custodian holds for the planner`,
       ).toBeGreaterThanOrEqual(0);
-      const holdAt = source.indexOf(
+      const holdAt = structure.indexOf(
         "wholeLodgeHoldOccupiedBedNightsForPlanner(",
       );
       expect(
@@ -674,11 +661,10 @@ describe("custodian write-path contract (#2286)", () => {
 
       const custodianCall = balancedFrom(
         source,
-        source.indexOf("(", custodianAt),
-        "(",
-        ")",
+        structure.indexOf("(", custodianAt),
+        structure,
       );
-      const holdCall = balancedFrom(source, source.indexOf("(", holdAt), "(", ")");
+      const holdCall = balancedFrom(source, structure.indexOf("(", holdAt), structure);
 
       for (const [label, call] of [
         ["custodian expansion", custodianCall],

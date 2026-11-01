@@ -1,4 +1,4 @@
-import { type BrowserContext, expect, test } from "@playwright/test";
+import { type BrowserContext, expect, test } from "../helpers/accessibility";
 import { loginPersona } from "../helpers/auth";
 import {
   ROLE_PERSONAS,

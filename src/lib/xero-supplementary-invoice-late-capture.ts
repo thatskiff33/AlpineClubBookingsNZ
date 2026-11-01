@@ -57,6 +57,14 @@ const CAPTURED_NOT_ISSUED_ERROR_CODE = "STALE_WAITING_PAYMENT_CAPTURED";
  */
 const COVERED_ERROR_CODE = "STALE_WAITING_PAYMENT_COVERED";
 
+/** #4324: retired rows the release revives, has alerted on, or found covered.
+ * Other CANCELLED rows were withdrawn and bill nothing. */
+export const RETIRED_CODES_ANSWERING_CAPTURE = [
+  STALE_WAITING_PAYMENT_ERROR_CODE,
+  CAPTURED_NOT_ISSUED_ERROR_CODE,
+  COVERED_ERROR_CODE,
+] as const;
+
 /**
  * What a captured additional payment did to its Xero supplementary invoice.
  * Every outcome is named, so "released nothing" is never silent.

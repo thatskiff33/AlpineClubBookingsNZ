@@ -49,8 +49,33 @@ sequencing):
 | `BedAllocationSettings`                                            | per-lodge row                                                      | converted from singleton                                                                                                                                                                                                                                                                                                                                |
 | `BookingDefaults`                                                  | per-lodge row                                                      | converted from singleton                                                                                                                                                                                                                                                                                                                                |
 | `BookingRequestSettings`                                           | per-lodge row                                                      | converted from singleton                                                                                                                                                                                                                                                                                                                                |
-| `ServerNzSettings`                                                 | club-wide singleton (`id = "default"`)                             | NOT converted to a per-lodge row, deliberately: one club holds ONE connection to the central server (one base URL, one API key, one sync cursor), and the registry it exchanges is a list of other CLUBS rather than of this club's buildings. A per-lodge row would imply a lodge could sync independently, which the central server has no concept of |
+| `ServerNzSettings`                                                 | club-wide singleton (`id = "default"`)                             | NOT converted to a per-lodge row, deliberately: one club holds ONE connection to the central server (one base URL, one API key, one sync cursor), and the registry it exchanges is a list of other CLUBS rather than of this club's buildings. A per-lodge row would imply a lodge could sync independently, which the central server has no concept of; the one per-lodge fact it does hold, which of ITS lodges a club lodge is (`Lodge.centralLodgeId`, triyder/AlpineClubBookingsNZ#62), lives on `Lodge` |
 | Lodge identity fields (`lodgeName`, `doorCode`, `lodgeTravelNote`) | resolve from `Lodge` (default lodge when no `lodgeId` is in scope) | dropped from the `EmailMessageSetting` singleton (migration `20260709130000`)                                                                                                                                                                                                                                                                           |
+
+## Privacy retention
+
+`PrivacyRetentionSettings` is a club-wide singleton (`id = "default"`). Email
+logs, applications and member identity are club-wide; retention previews and
+jobs cover all lodges while preserving booking and financial lodge references.
+
+## Member money journal (#4513)
+
+`MemberMoneyEvent`, `MemberMoneyJournal`, `MemberMoneyObligation`,
+`MemberMoneyApplication`, `MemberMoneySourceLink` and `MemberMoneySourcePosting` are club-wide economic
+records: one receipt may cover several lodges. `MemberMoneyLine` carries optional
+`bookingId` and `lodgeId` dimensions with RESTRICT foreign keys and no update
+cascade. A booking dimension requires its actual lodge (checked on insert).
+Non-booking money can have a lodge dimension or be club-wide. No default lodge
+is silently assigned. `MemberMoneyEvent.actorMemberId` is an actor snapshot, as
+on the booking ledger. A leg's or obligation's debtor (one member or one
+organisation) is not: it says whose balance the row moves. A member merge
+leaves posted journal rows untouched and moves the merged-away member's open
+balances to the survivor by an explicit journal transfer with an audit trail
+([decision D4](../design/member-money-ledger.md#d4-member-merge-transfer-open-balances-explicitly);
+posted from M3 on, for charges (M3), refunds owed (M4) and member credit (M5);
+M1 posts nothing). The booking ledger's `BookingLedgerLine.lodgeId` and
+`bookingId` keys are RESTRICT both ways as well (#4514, `INV-MONEY-043`): a lodge
+or booking a line names can neither be deleted nor re-keyed.
 
 ## Club-Wide Defaults With Per-Lodge Overrides
 
@@ -620,8 +645,10 @@ new ADR:
   club's, so it has no `lodgeId` and nothing here is lodge-scoped: `Booking`
   and `BookingRequest` point AT an `OtherLodge` (restrict FK) and carry their own
   lodge. The same reasoning as `ServerNzSettings` above applies to the sync: the
-  central server has no concept of this club's buildings, so a lodge dimension
-  on these rows would have nowhere to travel. An amenity is a fact about the
+  central server exchanges clubs' lodges with no dimension for THIS club's
+  buildings, so a lodge dimension on these rows would have nowhere to travel;
+  the one link between the two, `Lodge.centralLodgeId` (which of the central
+  server's lodges a club lodge is, for the free-beds answer), sits on `Lodge`. An amenity is a fact about the
   other club's lodge and follows its parent; it is replaced as a whole set, not
   edited per row, so it carries no scoping of its own.
 

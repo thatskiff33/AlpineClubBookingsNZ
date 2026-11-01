@@ -13,6 +13,25 @@ It complements the two documents next to it and does not repeat them:
   synced and roll it onto a running database and deployment without losing data
   or breaking the live app color mid-deploy.
 
+## Review privacy retention before enabling cleanup (#4457)
+
+The three new automatic jobs ship OFF. After upgrading, review the
+[personal-data retention schedule](PRIVACY_RETENTION.md) and visit
+**Admin → Privacy retention** (`/admin/privacy-retention`) to inspect counts,
+member candidates and the configured periods before enabling any job. Defaults
+are 2 years for email logs, 1 year after reviewedAt for rejected applications,
+and 7 years after explicit leavingDate for former-member profile anonymisation.
+The periods are club settings. Disabling a job stops future cleanup; it cannot
+restore already deleted logs or applications, or anonymised profile values.
+
+Inactive members without leavingDate are listed separately and are never
+automatically erased. Establish a departure date from evidence rather than
+assuming an old login or inactive flag means the person left. Stable member
+IDs and financial references survive anonymisation for reconciliation.
+Existing audit, token, report and communications retention remains governed by
+its own lifecycle. Sentry Replay defaults OFF; before opting in, update the
+privacy notice to name Sentry Replay as described in [security notes](SECURITY.md#personal-data-retention-and-sentry-replay).
+
 ## Principles
 
 1. **Upgrade tag-to-tag, one release at a time.** Deploy released tags
@@ -118,6 +137,157 @@ as a red flag and check the release notes before deploying.
 ---
 
 ## Unreleased
+
+### Booking-ledger history outlives its booking (#4514)
+
+**What changes.** Migration `20261127050000_retain_ledger_history_on_booking_delete`
+makes every key a booking-ledger line holds, a member-credit row's three booking
+links and a group settlement's group key refuse deletion (`ON DELETE RESTRICT ON
+UPDATE RESTRICT`). The database now refuses, whatever role asks, to delete a
+booking that any of those rows, or a payment or refund record, names. Nothing a
+member or officer does changes: the app only ever hard-deletes draft bookings,
+which never carry money, and soft-deletes cancelled ones. A draft that somehow
+did is refused (409), or left out of the nightly cleanup and logged.
+
+**Deploy.** The migration drops and re-adds seven foreign keys, which the deploy
+guard treats as breaking: set `ALLOW_BREAKING_BLUE_GREEN_MIGRATIONS=1` and a
+`BLUE_GREEN_MIGRATION_OVERRIDE_REASON` such as "#4514 foreign keys change to
+RESTRICT; old colour compatible". No maintenance window is needed: the old
+colour keeps working. The keys' swap locks `Booking`, `Lodge`,
+`BookingModification`, `GroupBooking`, `MemberCredit`, `BookingLedgerLine`,
+`GroupBookingSettlement` and the empty `MemberMoneyObligation` for its one short
+transaction (about 120 ms on 200,000 ledger lines), so deploy at a quiet time
+([ledger row](BLUE_GREEN_MIGRATION_SAFETY.tsv)). Each lock waits at most one
+second: if a busy table makes the deploy stop with `55P03` (lock timeout) or
+`40P01` (deadlock detected), nothing was applied and the old colour is still
+serving; follow [the runbook's §2.1a](PRODUCTION_UPGRADE_RUNBOOK.md#21a-step-1320-stopped-on-a-lock-timeout)
+and deploy again at a quieter moment. No provisioning step is needed for either
+role set-up.
+
+**Local demo databases.** `pnpm run db:seed:demo` now refuses to run on a
+database where a booking carries booking-ledger or journal lines, rather than
+deleting them. Recreate the demo database and seed again.
+
+### Member money journal foundation (#4513)
+
+**What changes.** Migration `20261127010000_member_money_journal` adds seven
+new, empty, append-only journal tables. Nothing reads or writes them yet: no
+money reader or writer changes in this release, and old code stays compatible.
+
+**Single-role clubs** (no `APP_DB_USER` in `.env`) need do nothing beyond the
+normal deploy.
+
+**Clubs on the [least-privilege roles](../DEPLOYMENT.md#least-privilege-database-roles)**
+(`APP_DB_USER` set) need no provisioning step either: the migration narrows its
+own tables, so the application role gets only INSERT and SELECT on them and the
+audit-retention role gets nothing. The deploy's post-migrate grants check now
+also refuses an append-only relation the application could change beyond
+INSERT. If it ever names a journal table, re-run `pnpm run db:provision-roles
+--apply` and deploy again. Afterwards, `pnpm run member-money:verify` with the
+application connection should report no findings
+([details](../DEPLOYMENT.md#member-money-journal-grants-m1)).
+
+### Nightly backups stream to a disk-backed spool volume (#4487)
+
+**What changes.** The nightly backup no longer holds the whole `pg_dump` output in
+memory. It compresses the dump straight into `/tmp/tacbookings-backups`, which is now
+a new disk-backed named volume, `backup_spool`, instead of part of `/tmp`'s
+memory-backed tmpfs. A dump that fails or times out removes its partial file and
+reports failure before anything is copied or uploaded.
+
+**What you do.** Nothing beyond the normal deploy. The new volume is created and
+mounted when the app and cron containers are recreated, which the normal deploy
+does. The image seeds the directory's ownership, so the app can write to it. Leave
+room on the host disk for two compressed dumps plus one S3 readback copy, and one
+more dump for each further failed run within an hour. The spool
+keeps a run's dump only while no destination received it; each run also removes
+anything over an hour old, including any `.partial` file a killed dump left.
+
+**Not a destination.** The spool is working space on the same host as the database.
+It does not count as a backup destination, so a club with no S3 bucket and no
+local backup directory still sees `backup-not-durable`.
+
+### Optional: stop connecting the app as the database superuser (#4453)
+
+**What changes for everyone.** Two small migrations, plus one behaviour change in backups.
+
+- **`20261125010000_restrict_booking_ledger_key_updates`** adds a trigger to
+  `Booking` and to `Lodge` that refuses any change to a row's key, so a key change
+  can never rewrite the ledger lines that name it. Nothing in the system ever
+  changes those keys. The foreign keys are unchanged. It deploys in the normal
+  window with no override: creating each trigger briefly holds back writes to
+  that table, and reads carry on.
+- **`20261125020000_audit_request_data_update_only_clears`** adds a trigger to
+  `AuditLog`: an update may clear an entry's IP address or browser details, but never
+  set them. Only the nightly anonymisation updates them, and it clears them.
+- **Backup restore-validation** now leaves the dump's owner and grant statements out
+  of its trial restore. So a validation database can be owned by an ordinary role
+  instead of a superuser.
+  - The app also refuses to validate against a URL that names the same database as
+    the live one or the audit archive, on any host and under any role. It still
+    takes and stores the backup, skips only the validation restore, and reports the
+    run as failed. **If your shadow
+    database shares the live database's name** (on another server, say), rename it.
+  - If your validation URL names a superuser, replace it with a dedicated role that
+    owns only the shadow database
+    ([`DEPLOYMENT.md`](../DEPLOYMENT.md#least-privilege-database-roles), "Restore
+    validation").
+- **AI Diagnostics:** `pnpm run diagnostics:provision-role` now refuses a password
+  containing a backslash.
+- **Compose:** the stack renders one new, empty variable, `AUDIT_RETENTION_DATABASE_URL`,
+  on the cron leader. It behaves exactly as before while it is empty.
+
+**What changes if you opt in.** You can split the Compose stack's single superuser
+connection into separate roles:
+- a migration role owns the schema;
+- an application role may change ordinary tables, but may only **INSERT and
+  SELECT** the booking ledger and the audit log;
+- a narrow audit-retention role runs the nightly audit clean-up.
+
+The superuser is kept for people. With the split, the application cannot change a
+ledger line or an audit entry by any route, even if its credential leaks. Deleting
+a booking cannot remove its ledger lines either: since #4514 the database refuses
+it for every role ([Booking-ledger history outlives its booking](#booking-ledger-history-outlives-its-booking-4514)).
+
+The new settings are `APP_DB_USER`, `APP_DB_PASSWORD`, `MIGRATION_DB_USER`,
+`MIGRATION_DB_PASSWORD` and `AUDIT_RETENTION_DATABASE_URL`. Each one left empty
+keeps today's behaviour.
+
+**The roles are created by an operator script, not by a migration:**
+`pnpm run db:provision-roles`, a dry run unless you add `--apply`. The first
+`--apply` takes an exclusive lock on each table in turn while it hands the tables to
+the migration role, so run it in a quiet window. If it cannot get a lock within
+5 seconds, it stops with nothing changed.
+
+**To adopt it**, follow [`DEPLOYMENT.md` → "Least-privilege database roles"](../DEPLOYMENT.md#least-privilege-database-roles).
+Rehearse it on staging first. In short:
+1. Choose three hex passwords.
+2. Run the script with `--apply` as the operator.
+3. Set the five variables in `.env`.
+4. Deploy.
+
+Set all five together. The deploy script refuses `APP_DB_USER` without
+`MIGRATION_DB_USER` and `AUDIT_RETENTION_DATABASE_URL`, because the nightly audit
+retention job needs its own role once the application role is split.
+
+To roll back, unset the variables and deploy. Re-run `--apply` before switching
+back on.
+
+**After you adopt it:**
+
+- Restoring a backup over the live database from **Admin → Backups** is refused.
+  Restore as the operator with `psql` instead. Backups themselves keep working.
+- Run `pnpm run diagnostics:provision-role` with
+  `AI_DIAGNOSTICS_PROVISION_DATABASE_URL` set to the operator connection.
+- Re-run `pnpm run db:provision-roles --apply` whenever a later release's notes ask
+  you to. That happens when a release changes the append-only list
+  (`APPEND_ONLY_RELATIONS`) or the anonymised audit columns
+  (`AUDIT_ANONYMISED_REQUEST_COLUMNS`). Also re-run it after anyone creates a table
+  as the superuser. The deploy script stops after the migrate and says so if that
+  happened.
+- Every `--apply` resets all three passwords, so deploy straight after one.
+- A future migration that needs a superuser fails under the migration role; its
+  release notes will say so. Every migration in the repository today runs without one.
 
 ### The Xero connection moves to its own table; some installs reconnect Xero once (#3806)
 

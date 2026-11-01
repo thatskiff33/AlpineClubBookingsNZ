@@ -47,6 +47,10 @@ describe("INV-PAY-140: the superseded-invoice carry proof stays wired into CI (#
       "a carrier with no invoice of its own whose receipt is still queued: the move writes A's invoice unpaid, so B's receipt records B instead of standing down",
       "#4422: a declined ask's stale-tab capture racing its cancel, the carrier already paid and released",
       "the %s claims A first: one superseded refund, both invoices stay on B, nothing recorded for A",
+      "#4442: A captures after B is sized; B is withheld and recovery asks only for B's own change",
+      "#4442: A captured while B's queue waits on the global key is read under the lock; B is withheld",
+      "#4442: A captured inside the recovery runner's replay of B; the claim hold refuses it and the next replay asks only for B",
+      "#4442 C-F2: a frozen replay re-reads the live balance it was minted over - A paid inside its mint refuses the write",
     ]) {
       expect(suite).toContain(proof);
     }

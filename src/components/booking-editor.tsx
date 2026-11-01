@@ -162,7 +162,7 @@ export interface BookingEditorData {
   // name order. ADMIN-ONLY and absent — not empty-valued — for every other
   // viewer, so a member's payload never carries the club list. Its presence is
   // what offers the "Member of Other Lodge" control at all.
-  otherLodges?: Array<{ id: string; name: string }>;
+  otherLodges?: Array<{ id: string; name: string; label: string }>;
   /**
    * #2978: the guests an officer may tick as an other-lodge member - resolved
    * server-side by `resolveOtherLodgeRateEligibleGuestIds`, which is also what

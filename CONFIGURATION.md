@@ -1245,7 +1245,9 @@ test/demo mode or disabled:
 | ----------------------- | ---------------------------------------------------------------- |
 | `APP_ENVIRONMENT_ROLE`  | **Required.** Whether this installation is the club's live site or a copy: exactly `production` or `non-production`. Nothing is inferred; see "Environment Role" below and [`docs/guides/environment-role.md`](docs/guides/environment-role.md). |
 | `DATABASE_URL`          | PostgreSQL connection string used by Prisma.                     |
-| `DB_PASSWORD`           | PostgreSQL password used by Docker Compose.                      |
+| `DB_PASSWORD`           | PostgreSQL password used by Docker Compose. It is the operator (superuser) `tac`'s password, and every service's password unless the least-privilege roles below are set. |
+| `POSTGRES_MAX_CONNECTIONS` | Postgres `max_connections` for the compose `postgres` service (default `40`). Raise it, for example to `80`, when a deploy's warm-up gate blocks with "too many database connections opened": a live host was measured holding 39 client connections across three app containers during a routine handover, before #4269 gave each container one pool. Applied when the `postgres` container is next created. The deploy refuses, at step 3, a value that is not a whole number above the pools the resolved Compose model can open together (27 shipped) or that is above `1000`. See DEPLOYMENT.md "Connection pool sizing". |
+| `POSTGRES_MEM_LIMIT` | Memory limit of the compose `postgres` container (default `768m`). Raise it in step with `POSTGRES_MAX_CONNECTIONS`: each backend costs its `work_mem` and connection overhead, so a ceiling of `80` wants the limit taken towards `1g`. Applied when the container is next created. |
 | `AUTH_SECRET`           | Auth.js session secret. Also the root of 2FA-secret and in-app provider-credential encryption (#2079) — use a strong value (>= 32 chars); rotating it is a planned maintenance event (see `DEPLOYMENT.md`). |
 | `NEXTAUTH_SECRET`       | Legacy Auth.js secret fallback; keep aligned with `AUTH_SECRET`. |
 | `NEXTAUTH_URL`          | Exact app origin, for example `http://localhost:3000`.           |
@@ -1291,8 +1293,10 @@ the seed does not overwrite existing seasonal assignments.
 for disposable local demo databases and must never be run on a deployment host.
 It requires `ALLOW_DEMO_SEED=1`, refuses `NODE_ENV=production`, refuses
 non-local `DATABASE_URL` hosts, and refuses to run when the `Member` table
-contains any email outside `demo.alpineclub.test`. The demo seed then deletes
-demo plus transactional rows before rebuilding a broad sample dataset. The demo
+contains any email outside `demo.alpineclub.test`. It also refuses, before
+deleting anything, a database where a booking carries booking-ledger or journal
+lines: that history is never deleted (#4514), so recreate such a database instead. The demo seed then
+deletes demo plus transactional rows before rebuilding a broad sample dataset. The demo
 seed uses fake emails under `demo.alpineclub.test` and fake provider
 identifiers only. Set `DEMO_SEED_PASSWORD` to override the default local demo
 password.
@@ -2593,7 +2597,7 @@ read `MemberAccessRole` rows.
 | Variable                                 | Description                                                                                                                                                  |
 | ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `USE_AWS_SES`                            | Boolean toggle (`true`/`false`) to use AWS SES SMTP credentials.                                                                                             |
-| `USE_SMTP_RELAY`                         | Boolean toggle (`true`/`false`) to use an external SMTP relay. Exactly one provider flag may be `true` (legacy default is AWS SES when all three are omitted). |
+| `USE_SMTP_RELAY`                         | Boolean toggle (`true`/`false`) to use an external SMTP relay. Exactly one provider flag may be `true` (legacy default is AWS SES when all three are omitted). `docker-compose.yml` defaults `USE_AWS_SES` to `true`, so a Compose deployment on a relay sets `USE_AWS_SES=false` as well. |
 | `USE_LOCAL_CAPTURE`                      | Boolean toggle (`true`/`false`) declaring that the SMTP relay below is a **capture mailbox** that forwards mail nowhere (mailpit, MailHog, a developer's sink). It reads the same four `EMAIL_SERVER_*` settings as `USE_SMTP_RELAY`; only the declaration differs, and nothing is ever inferred from the host name. Its purpose is that a confirmed **non-production** installation may transmit into a capture instead of suppressing every send (ENV-SAFETY 2, #3035 — `INV-CONFIG-004`), which is how the browser suite reads its own mail back. **Leave it `false` on the club's live site:** an installation declaring `APP_ENVIRONMENT_ROLE=production` *and* `USE_LOCAL_CAPTURE=true` is refused, because a live site in capture mode would accept every message and deliver none. It also does NOT cover invoice emails, which the accounting provider sends from its own servers to the member's real address. **On a developer's laptop this is what makes local email work at all:** with `.env.example`'s shipped values (`APP_ENVIRONMENT_ROLE=non-production`, all three provider flags false) every send is held back and the "Email sent (dev mode)" log line never appears — run a capture mailbox, point `EMAIL_SERVER_*` at it, and set this `true`. |
 | `SMTP_HOST`                              | SMTP host for AWS SES SMTP mode (defaults to `email-smtp.ap-southeast-2.amazonaws.com` when unset).                                                          |
 | `SMTP_PORT`                              | SMTP port for AWS SES SMTP mode (defaults to `587` when unset).                                                                                              |
@@ -2655,6 +2659,7 @@ rate-limited, or temporarily unavailable.
 | `BACKUP_LOCAL_DIR`                    | Path **inside the container** that mount lands on (default `/backups`). What the app writes to, and the value `/admin/backups` pre-fills. A path saved on that page overrides it. |
 | `AUDIT_ARCHIVE_DATABASE_URL`          | Preferred optional archive database for audit retention.                    |
 | `AUDIT_LOG_ARCHIVE_DATABASE_URL`      | Backward-compatible archive database alias.                                 |
+| `AUDIT_RETENTION_DATABASE_URL`        | Optional connection to the **primary** database as the audit-retention role (#4453). The nightly audit retention job anonymises and prunes `AuditLog` through it. Empty uses `DATABASE_URL`, as before. Required once `APP_DB_USER` is set (the deploy script refuses the switch without it), because the application role may only INSERT and SELECT audit rows. Compose gives it to the cron-leader `app` service only. Use `connection_limit=2`. See "Least-privilege database roles" below. |
 | `SHADOW_DATABASE_URL`                 | Optional Prisma shadow database URL for migration validation.               |
 | `AI_DIAGNOSTICS_DATABASE_URL`         | Dedicated **non-superuser, SELECT-only** database role for AI Diagnostics tool reads (ADR-007). Required before the AI Diagnostics module can be used; never the app's `DATABASE_URL`. Provision with `pnpm run diagnostics:provision-role`. See [`docs/ai-diagnostics/deployment.md`](docs/ai-diagnostics/deployment.md). |
 
@@ -2683,6 +2688,33 @@ rate-limited, or temporarily unavailable.
 > destination (bucket/region) and credentials can only be changed by a Full
 > Admin.
 
+### Least-privilege database roles
+
+Optional (#4453). These variables split the Compose stack's single superuser connection into
+separate roles: a migration role that owns the schema, and an application role that may
+only INSERT and SELECT the booking ledger and the audit log. Create the roles first with
+`pnpm run db:provision-roles --apply`. The procedure, and what changes for backups and
+restores, is in [`DEPLOYMENT.md` → "Least-privilege database roles"](DEPLOYMENT.md#least-privilege-database-roles).
+Each one left empty keeps today's behaviour.
+
+| Variable | Read by | Description |
+| --- | --- | --- |
+| `APP_DB_USER` / `APP_DB_PASSWORD` | `docker-compose.yml` | The role and password both web slots and the cron leader connect as. Empty: `tac` / `DB_PASSWORD`. |
+| `MIGRATION_DB_USER` / `MIGRATION_DB_PASSWORD` | `docker-compose.yml` | The role and password the `migrate` service runs `prisma migrate deploy` as. Empty: `tac` / `DB_PASSWORD`. Only the credentials change; the pool size and the migration lock timeout stay. |
+| `AUDIT_RETENTION_DB_USER` / `AUDIT_RETENTION_DB_PASSWORD` | `db:provision-roles` | The audit-retention role's name (default `tac_audit_retention`) and password. The app reads the role only through `AUDIT_RETENTION_DATABASE_URL`. |
+| `DB_ROLES_PROVISION_DATABASE_URL` | `db:provision-roles` | The operator (superuser) connection the script provisions with. Defaults to `DATABASE_URL`. |
+
+`db:provision-roles` also reads `APP_DB_USER` and `MIGRATION_DB_USER` (defaults `tac_app` and
+`tac_migrator`) and the three passwords. It refuses any password shorter than 20 characters
+or containing `@ / : ? # %` or whitespace, because Compose puts each password into a URL
+unencoded, and a backslash, which could end a SQL literal early. The deploy script refuses a
+`DB_PASSWORD`, `APP_DB_PASSWORD` or `MIGRATION_DB_PASSWORD` containing the same URL-unsafe
+characters (one set, pinned by `database-roles-password-charset.test.ts`). It also refuses
+`APP_DB_USER` unless `MIGRATION_DB_USER` and `AUDIT_RETENTION_DATABASE_URL` are set too. Without
+`--apply` the script is a dry run: it prints the SQL, with every password replaced by a
+placeholder, and connects to nothing. Every `--apply` resets all three passwords, so deploy
+straight after one.
+
 ## Legacy Finance Bridge
 
 | Variable                        | Description                                                                                                                                                                                |
@@ -2694,6 +2726,8 @@ rate-limited, or temporarily unavailable.
 | Variable                               | Description                                                           |
 | -------------------------------------- | --------------------------------------------------------------------- |
 | `DOMAIN`                               | Public domain used by Caddy.                                          |
+| `CADDY_TLS_MODE`                       | How Caddy obtains certificates: `acme` (default; Caddy is the public edge and uses Let's Encrypt) or `local` (Caddy sits behind a proxy that terminates TLS, such as Nginx Proxy Manager, so it issues certificates from its own internal CA and the proxy must accept a non-public certificate). Selects `deploy/caddy/tls-<mode>.caddy` in the Caddyfile's global options. |
+| `CADDY_TRUSTED_PROXIES`                | **Required** when `CADDY_TLS_MODE=local`, with no usable default (unset, Compose hands Caddy a placeholder it rejects): the IP address or CIDR of the proxy in front, space-separated if more than one, for example `10.0.0.2/32`. Caddy believes the client address in `X-Forwarded-For` only from these peers, reading the header from the right (`trusted_proxies_strict`), so the app sees the visitor's IP rather than the proxy's; the per-IP rate limits and audit-log IPs depend on it. The deploy refuses local mode without it, and refuses `private_ranges` (the setting exists to name the proxy, not every private address), any `/0` range, and anything that is not an IP address or CIDR. The proxy must append the connecting address to `X-Forwarded-For` or overwrite the header. Unused in `acme` mode. |
 | `KEEP_ALIVE_TIMEOUT`                   | How long the Next.js server holds an idle keep-alive connection open, in milliseconds. Default `65000`, set on every app service in `docker-compose.yml`. **It must stay above the proxy's idle-connection timeout** — Caddy's is `30s`, set as `transport http { keepalive }` in `deploy/caddy/tacbookings-active.caddy` and `Caddyfile.staging`. Left unset it falls back to Node's ~5s, which is *below* Caddy's 2-minute default pool, so the proxy reuses connections the app has already closed and every `POST`/`PUT` that lands on the boundary fails with a bare `502` (#3293). See `DEPLOYMENT.md` → "Keep-alive windows must stay ordered". |
 | `COMPOSE_PROJECT_NAME`                 | Docker Compose project name; defaults vary by script.                 |
 | `APP_IMAGE`                            | Prebuilt app image override for blue/green deployment.                |

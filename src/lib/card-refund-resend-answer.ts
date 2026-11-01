@@ -113,7 +113,7 @@ export function unmarkedResendSlicesFor(
 ): Array<{ operation: ResendRow; sliceIndex: number }> {
   return operations.flatMap((operation) => {
     if (operation.status === "SUCCEEDED" || !carriesCardRefundOperationMetadata(operation, refund.metadata)) return [];
-    // Raised dead (`raised-dead`, `raised-backlog`): never claimed, so it never sent anything Stripe could answer.
+    // Raised dead (`raised-dead`, `raised-backlog`, `raised-after-paid-another-way`): never claimed, so it never sent anything Stripe could answer.
     if (operation.status === "PENDING" && isPaymentRecoveryOperationExhausted(operation)) return [];
     if (!operationWindowTakes(operation, refund)) return [];
     return (parseRefundAllocationPlan(operation.allocationPlan) ?? []).flatMap((slice, sliceIndex) =>

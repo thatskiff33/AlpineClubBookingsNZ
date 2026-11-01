@@ -1,6 +1,8 @@
 import fs from "fs";
 import path from "path";
 import { describe, expect, it } from "vitest";
+import { balancedBrackets } from "./support/balanced-brackets";
+import { blankLiterals, stripComments } from "./support/strip-comments";
 
 // #1923 source contract: the held-request conversion fences claim on an integer
 // `version` column instead of the millisecond-precision `updatedAt`. Two writes
@@ -53,33 +55,13 @@ function isTestFile(relPath: string): boolean {
   );
 }
 
-/** Strip `//` line comments so balanced/unbalanced parens in prose cannot
- * confuse the paren matcher below. Block comments are not used inside these
- * calls, so a line-comment strip is sufficient. */
-function stripLineComments(source: string): string {
-  return source
-    .split("\n")
-    .map((line) => {
-      const idx = line.indexOf("//");
-      return idx === -1 ? line : line.slice(0, idx);
-    })
-    .join("\n");
-}
-
-/** Given `source` and the index of the `(` that opens a call, return the call
- * text up to and including its matching `)`. The Prisma calls contain no string
- * literals with parentheses, so naive depth counting is exact here. */
-function extractCall(source: string, openParenIdx: number): string {
-  let depth = 0;
-  for (let i = openParenIdx; i < source.length; i += 1) {
-    const ch = source[i];
-    if (ch === "(") depth += 1;
-    else if (ch === ")") {
-      depth -= 1;
-      if (depth === 0) return source.slice(openParenIdx, i + 1);
-    }
-  }
-  return source.slice(openParenIdx);
+/** Given `source`, the masked `structure` of it and the index of the `(` that
+ * opens a call, return the call text up to and including its matching `)`.
+ * `balancedBrackets` skips brackets in strings and comments and throws on an
+ * unbalanced call, so a call it cannot read fails this census rather than
+ * being counted short. */
+function extractCall(source: string, openParenIdx: number, structure: string): string {
+  return balancedBrackets(source, openParenIdx, structure).text;
 }
 
 interface CallSite {
@@ -88,13 +70,21 @@ interface CallSite {
   body: string;
 }
 
+let nonTestSources: Array<{ rel: string; text: string }> | null = null;
+
+/** Every non-test source with its comments removed, stripped once per run. */
 function loadNonTestSources(): Array<{ rel: string; text: string }> {
-  return walk(SRC_DIR)
+  nonTestSources ??= walk(SRC_DIR)
     .map((file) => ({
       rel: path.relative(process.cwd(), file).split(path.sep).join("/"),
-      text: stripLineComments(fs.readFileSync(file, "utf8")),
+      file,
     }))
-    .filter(({ rel }) => !isTestFile(rel));
+    .filter(({ rel }) => !isTestFile(rel))
+    .map(({ rel, file }) => ({
+      rel,
+      text: stripComments(fs.readFileSync(file, "utf8")),
+    }));
+  return nonTestSources;
 }
 
 function collectCallSites(): CallSite[] {
@@ -103,13 +93,17 @@ function collectCallSites(): CallSite[] {
 
   const pattern = /\.bookingRequest\.(update|updateMany)\(/g;
   for (const { rel, text } of sources) {
+    if (!text.includes(".bookingRequest.")) continue;
+    // Call sites are found over masked text: one named in a string is not a call.
+    const structure = blankLiterals(text);
     let match: RegExpExecArray | null;
-    while ((match = pattern.exec(text)) !== null) {
+    pattern.lastIndex = 0;
+    while ((match = pattern.exec(structure)) !== null) {
       const openParen = match.index + match[0].length - 1;
       sites.push({
         rel,
         kind: match[1] as "update" | "updateMany",
-        body: extractCall(text, openParen),
+        body: extractCall(text, openParen, structure),
       });
     }
   }
@@ -194,7 +188,7 @@ describe("BookingRequest version-fence source contract (#1923)", () => {
         path.join(process.cwd(), rel.split("/").join(path.sep)),
         "utf8"
       );
-      const source = stripLineComments(raw);
+      const source = stripComments(raw);
       // The conversion claim fences on the observed integer version, not the
       // millisecond-collidable updatedAt.
       expect(source, `${rel} must fence the conversion claim on version`).toContain(

@@ -8,7 +8,8 @@
  *    lowered the price after the create read the booking. No credit note is
  *    raised automatically (not taken by the owner); the treasurer decides.
  *  - UNDERBILLED: it bills LESS, and no edit that settled against the primary
- *    invoice is there to anchor a supplementary invoice on, so nothing can be
+ *    invoice is there to anchor a supplementary invoice on (or, #4324, the one
+ *    there is billed by a kept late capture's own invoice), so nothing can be
  *    billed without a person.
  *
  * THE TASK IS A `XeroSyncOperation` ROW, written FAILED and not replayable, so
@@ -52,11 +53,16 @@ export function primaryInvoiceReviewMessage(
     bookingId: string;
     gapCents: number;
     settledBy?: ReductionSettlement;
+    /** #4324 (`INV-PAY-144`): the change that would carry a shortfall is billed by a kept late capture's own invoice. */
+    keptInvoiceBillsChange?: boolean;
   },
   format: ClubFormat,
 ): string {
   const reference = `Booking ${input.bookingId.slice(0, 8)}`;
   const amount = formatCents(Math.abs(input.gapCents), format);
+  if (input.kind === "UNDERBILLED" && input.keptInvoiceBillsChange) {
+    return `The primary Xero invoice for ${reference} bills ${amount} less than the booking is worth: the booking was changed while the invoice was being raised, and the change that would carry the difference is already billed by the Xero invoice for a late card payment the club kept. Check both invoices and bill in Xero whatever part of ${amount} that invoice does not already bill, then choose Resolve (fixed in Xero).`;
+  }
   return input.kind === "OVERBILLED"
     ? `The primary Xero invoice for ${reference} bills ${amount} more than the booking is worth: the booking was changed while the invoice was being raised. ${settledSentence(input.settledBy, format)}Check the invoice and raise a credit note for ${amount} in Xero if one is due, then choose Resolve (fixed in Xero).`
     : `The primary Xero invoice for ${reference} bills ${amount} less than the booking is worth: the booking was changed while the invoice was being raised, and no change could carry the difference. Check the invoice and bill ${amount} in Xero if it is due, then choose Resolve (fixed in Xero).`;
@@ -111,6 +117,8 @@ export async function raisePrimaryInvoiceReviewTask(input: {
   figures: Record<string, unknown>;
   /** An overcharge's: how the reductions behind it settled (review M5). */
   settledBy?: ReductionSettlement;
+  /** A shortfall's: its anchor is billed by a kept late capture's own invoice (#4324). */
+  keptInvoiceBillsChange?: boolean;
   createdByMemberId?: string;
 }): Promise<{ operationId: string; alreadyRaised: boolean }> {
   const correlationKey = primaryInvoiceReviewCorrelationKey(input);

@@ -351,6 +351,7 @@ const EXPECTED_ROUTE_AREAS: Record<string, AdminPermissionArea> = {
   // (`lodge:view` / `lodge:edit`) is the one this map already infers and no new
   // prefix is invented for one setting.
   "/api/admin/lodges/[id]/roster-settings": "lodge",
+  "/api/admin/lodges/[id]/central-lodge": "lodge",
   "/api/admin/maintenance-reports": "lodge",
   "/api/admin/maintenance-reports/[id]": "lodge",
   "/api/admin/maintenance-reports/questions": "lodge",
@@ -358,6 +359,7 @@ const EXPECTED_ROUTE_AREAS: Record<string, AdminPermissionArea> = {
   "/api/admin/maintenance-reports/tokens": "lodge",
   "/api/admin/other-lodges": "lodge",
   "/api/admin/other-lodges/[id]": "lodge",
+  "/api/admin/other-lodges/[id]/hide": "lodge",
   "/api/admin/member-applications": "membership",
   "/api/admin/member-applications/[id]": "membership",
   "/api/admin/member-applications/[id]/approval-preview": "membership",
@@ -443,6 +445,7 @@ const EXPECTED_ROUTE_AREAS: Record<string, AdminPermissionArea> = {
   // settle dialog before completing - a finance read, gated as the queue is.
   "/api/admin/payments/manual-refund-tasks/[id]/still-owed": "finance",
   "/api/admin/pending-counts": "overview",
+  "/api/admin/privacy-retention": "support",
   "/api/admin/promo-codes": "bookings",
   "/api/admin/promo-codes/[id]": "bookings",
   "/api/admin/promo-codes/[id]/redemptions": "bookings",
@@ -522,7 +525,9 @@ const EXPECTED_ROUTE_AREAS: Record<string, AdminPermissionArea> = {
   "/api/admin/xero/status": "finance",
   "/api/admin/xero/sync-contacts": "finance",
   "/api/admin/xero/sync-memberships": "finance",
+  "/api/admin/xero/sync-now": "finance",
   "/api/admin/xero/usage": "finance",
+  "/api/admin/xero/webhook-health": "finance",
   // #2081: webhook intent-to-receive verify status / amber-badge source. Read is
   // any-admin (status visibility); the webhook-key WRITE stays Full-Admin-only
   // via the C1 credentials API. Lives under the finance area like its siblings.

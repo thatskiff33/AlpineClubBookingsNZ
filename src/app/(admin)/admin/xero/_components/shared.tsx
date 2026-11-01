@@ -114,7 +114,7 @@ export function FilterSelect({
     <div className="w-full md:w-48">
       <Label className="mb-1 block text-xs text-muted-foreground">{label}</Label>
       <Select value={value} onValueChange={onValueChange}>
-        <SelectTrigger>
+        <SelectTrigger aria-label={label}>
           <SelectValue />
         </SelectTrigger>
         <SelectContent>

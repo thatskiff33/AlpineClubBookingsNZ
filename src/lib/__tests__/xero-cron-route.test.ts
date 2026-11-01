@@ -1,3 +1,6 @@
+vi.mock("@/lib/cron-run-claim", () => ({
+  withCronRunClaim: vi.fn(async (_name: string, work: (assertOwned: () => Promise<void>) => Promise<unknown>) => ({ claimed: true, result: await work(async () => {}) })),
+}));
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 
@@ -37,6 +40,11 @@ vi.mock("@/lib/xero-operation-queue", () => ({
 
 vi.mock("@/lib/xero-inbound-reconciliation", () => ({
   runXeroInboundReconciliationCycle: mocks.runXeroInboundReconciliationCycle,
+}));
+
+// #4446: the inbound task also sweeps undelivered settlement alerts.
+vi.mock("@/lib/xero-inbound/cash-settlement-alert-retry", () => ({
+  retryCashSettlementAlerts: vi.fn(async () => 0),
 }));
 
 vi.mock("@/lib/xero-hardening", () => ({
@@ -290,6 +298,8 @@ describe("POST /api/cron/xero", () => {
       skipped: 0,
     });
     expect(body.inboundReconciliation).toEqual({
+      // #4446: the inbound task reports its settlement-alert sweep.
+      settlementAlertCandidates: 0,
       inbound: {
         batches: 1,
         found: 2,
@@ -460,6 +470,8 @@ describe("POST /api/cron/xero", () => {
     expect(response.status).toBe(200);
     expect(body.message).toBe("Xero inbound reconciliation cycle completed");
     expect(body.inboundReconciliation).toEqual({
+      // #4446: the inbound task reports its settlement-alert sweep.
+      settlementAlertCandidates: 0,
       inbound: {
         batches: 1,
         found: 3,

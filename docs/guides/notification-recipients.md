@@ -19,8 +19,8 @@ with their role name under their email address.
 **Alerts follow the areas a role can edit.** Each alert belongs to one admin
 area, and an admin is only offered — and only ever sent — the alerts for the
 areas their access role can **edit**. A Booking Officer therefore starts with
-the booking alerts switched on and sees the finance and membership ones greyed
-out as *Not available*; a Treasurer gets the money alerts; a Full Admin can edit
+the booking alerts switched on and sees the finance and membership ones with
+their box greyed out and marked *Locked*; a Treasurer gets the money alerts; a Full Admin can edit
 every area, so they get everything, exactly as before.
 
 **There is no per-person override.** An alert outside an admin's areas cannot be
@@ -166,7 +166,7 @@ Which means, out of the box:
 | The checkboxes won't tick | You haven't clicked **Edit**, or your role is support view-only | Click **Edit**; if still locked, request Support & System edit access |
 | An admin isn't listed | They are inactive, cannot sign in, or hold no admin access role | Give them an admin access role, and reactivate or re-enable their login in [Members](members.md) |
 | A committee member gets nothing | Every alert is unticked for them, or their role cannot edit any area that owns an alert | Tick the alerts they should own and Save; if the boxes are greyed out, widen their role in [Access Roles](access-roles.md) |
-| An alert is greyed out as *Not available* | It belongs to an area their access role cannot edit. It cannot be ticked here for one person | Give the role edit access to that area in [Access Roles](access-roles.md), or assign the alert to someone who already has it |
+| An alert is marked *Locked* and its box is greyed out | It belongs to an area their access role cannot edit. It cannot be ticked here for one person | Give the role edit access to that area in [Access Roles](access-roles.md), or assign the alert to someone who already has it |
 | Nobody receives a particular alert | It is muted club-wide upstream | Check [Delivery Rules](notification-rules.md) for that template |
 | Save failed with a permission error | The write route rejected a support-view session | Ask a full admin to make the change |
 | One admin's card would not save but the rest did | That admin's save was refused on its own — usually a stale page whose role has since changed | Reload the page and redo just that card |

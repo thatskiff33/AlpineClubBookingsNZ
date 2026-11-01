@@ -1,7 +1,8 @@
 import fs, { readFileSync } from "fs";
 import path from "path";
 import { describe, expect, it } from "vitest";
-import { stripComments } from "./support/strip-comments";
+import { balancedBrackets } from "./support/balanced-brackets";
+import { blankLiterals, stripComments } from "./support/strip-comments";
 
 function source(relativePath: string): string {
   return readFileSync(path.resolve(process.cwd(), relativePath), "utf8");
@@ -30,26 +31,12 @@ function isTestFile(relPath: string): boolean {
 }
 
 /**
- * The balanced `open`..`close` region starting at `openIndex`, so a nested
- * object or call inside a payload cannot end the match early. A substring
- * window would read the NEXT call's `data:` block as part of this one.
+ * The bracketed region opening at `openIndex`, as original text. It throws on an
+ * unbalanced region or an offset that is not an opening bracket, so an index
+ * found over masked text (`structure`) is the one to pass.
  */
-function balancedFrom(
-  text: string,
-  openIndex: number,
-  open: string,
-  close: string,
-): string {
-  let depth = 0;
-  for (let i = openIndex; i < text.length; i += 1) {
-    const char = text[i];
-    if (char === open) depth += 1;
-    else if (char === close) {
-      depth -= 1;
-      if (depth === 0) return text.slice(openIndex, i + 1);
-    }
-  }
-  return text.slice(openIndex);
+function balancedFrom(text: string, openIndex: number, structure?: string): string {
+  return balancedBrackets(text, openIndex, structure).text;
 }
 
 /**
@@ -68,15 +55,18 @@ function balancedFrom(
  * the body.
  */
 function functionBody(source: string, signature: string): string {
-  const at = source.indexOf(signature);
+  // The signature, its parentheses and the return type are read over masked
+  // text, so a mention in a comment or string is not the function.
+  const structure = blankLiterals(source);
+  const at = structure.indexOf(signature);
   expect(at, `${signature} is not in this file`).toBeGreaterThanOrEqual(0);
-  const parensAt = source.indexOf("(", at);
-  const params = balancedFrom(source, parensAt, "(", ")");
+  const parensAt = structure.indexOf("(", at);
+  const params = balancedFrom(source, parensAt, structure);
 
   let angle = 0;
   let bodyAt = -1;
   for (let i = parensAt + params.length; i < source.length; i += 1) {
-    const char = source[i];
+    const char = structure[i];
     if (char === "<") angle += 1;
     else if (char === ">") angle = Math.max(0, angle - 1);
     else if (char === "{" && angle === 0) {
@@ -85,7 +75,7 @@ function functionBody(source: string, signature: string): string {
     }
   }
   expect(bodyAt, `${signature} has no body`).toBeGreaterThan(parensAt);
-  return balancedFrom(source, bodyAt, "{", "}");
+  return balancedFrom(source, bodyAt, structure);
 }
 
 function between(text: string, start: string, end: string): string {
@@ -404,15 +394,19 @@ describe("bed allocation lock topology", () => {
       const rel = path.relative(process.cwd(), full);
       if (isTestFile(rel) || rel === path.join("src", "lib", "member-credit.ts")) continue;
       const text = stripComments(readFileSync(full, "utf8"));
-      let at = text.indexOf(CALL);
+      if (!text.includes(CALL)) continue;
+      // Calls and enclosing transactions are found over masked text: a mention
+      // inside a string is not a call and has no bracket to read.
+      const structure = blankLiterals(text);
+      let at = structure.indexOf(CALL);
       while (at >= 0) {
         // The transaction the call runs in: the nearest enclosing
         // `$transaction(` callback, or the settle's tx-taking function.
-        const txAt = text.lastIndexOf("$transaction(", at);
-        let region = txAt >= 0 ? balancedFrom(text, text.indexOf("(", txAt), "(", ")") : "";
+        const txAt = structure.lastIndexOf("$transaction(", at);
+        let region = txAt >= 0 ? balancedFrom(text, structure.indexOf("(", txAt), structure) : "";
         let offset = txAt;
         if (txAt < 0 || txAt + region.length < at) {
-          const fnAt = text.lastIndexOf("async function settleBookingPaymentInTransaction(", at);
+          const fnAt = structure.lastIndexOf("async function settleBookingPaymentInTransaction(", at);
           expect(fnAt, `${rel}: no enclosing transaction for a restore`).toBeGreaterThanOrEqual(0);
           region = functionBody(text.slice(fnAt), "async function settleBookingPaymentInTransaction(");
           offset = text.indexOf(region, fnAt);
@@ -444,7 +438,7 @@ describe("bed allocation lock topology", () => {
         }
         expect(after, `${rel}: lock(1) taken after a restore`).not.toContain("pg_advisory_xact_lock(1)");
         expect(after, `${rel}: a lodge key taken after a restore`).not.toContain("acquireLodgeCapacityLock(");
-        at = text.indexOf(CALL, at + CALL.length);
+        at = structure.indexOf(CALL, at + CALL.length);
       }
     }
     // The reviewed population: a new caller is a new member-key site.
@@ -635,19 +629,25 @@ describe("bed allocation lock topology", () => {
       if (isTestFile(rel)) continue;
       const text = fs.readFileSync(file, "utf8");
 
+      // Call sites and payload keys are found over masked text, so a
+      // `.booking.update(` named in a comment or string is not a call.
+      const structure = text.includes(".booking.") ? blankLiterals(text) : text;
       const writeCall = /\.booking\.(update|updateMany|upsert)\(/g;
       let call: RegExpExecArray | null;
-      while ((call = writeCall.exec(text)) !== null) {
-        const args = balancedFrom(text, text.indexOf("(", call.index), "(", ")");
+      while ((call = writeCall.exec(structure)) !== null) {
+        const open = call.index + call[0].length - 1;
+        const argsEnd = balancedBrackets(text, open, structure).end;
+        const args = text.slice(open, argsEnd + 1);
+        const argsStructure = structure.slice(open, argsEnd + 1);
         const payloadKey = /(?:^|[\s,{])(data|create|update)\s*:/g;
         let payloadMatch: RegExpExecArray | null;
-        while ((payloadMatch = payloadKey.exec(args)) !== null) {
-          const braceStart = args.indexOf(
+        while ((payloadMatch = payloadKey.exec(argsStructure)) !== null) {
+          const braceStart = argsStructure.indexOf(
             "{",
             payloadMatch.index + payloadMatch[0].length - 1,
           );
           if (braceStart === -1) continue;
-          const payload = balancedFrom(args, braceStart, "{", "}");
+          const payload = balancedFrom(args, braceStart, argsStructure);
           if (/(?:^|[\s,{])lodgeId\s*:/.test(payload)) {
             offenders.push(
               `${rel}: .booking.${call[1]}() ${payloadMatch[1]} block writes lodgeId`,

@@ -565,9 +565,9 @@ export default function SubscriptionsPage() {
         primary={
           <>
             <div>
-              <Label className="text-xs">Season Year</Label>
+              <Label htmlFor="subscriptions-filter-season" className="text-xs">Season Year</Label>
               <Select value={String(seasonYear)} onValueChange={(v) => { setSeasonYear(Number(v)); setPage(1); setSyncMessage(null); }}>
-                <SelectTrigger className="w-48"><SelectValue /></SelectTrigger>
+                <SelectTrigger id="subscriptions-filter-season" className="w-48"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   {yearOptions.map((y) => (
                     <SelectItem key={y} value={String(y)}>{seasonSelectLabel(y, clubTime.format)}</SelectItem>
@@ -576,9 +576,9 @@ export default function SubscriptionsPage() {
               </Select>
             </div>
             <div>
-              <Label className="text-xs">Status</Label>
+              <Label htmlFor="subscriptions-filter-status" className="text-xs">Status</Label>
               <Select value={status} onValueChange={(v) => { setStatus(v); setPage(1); }}>
-                <SelectTrigger className="w-40"><SelectValue /></SelectTrigger>
+                <SelectTrigger id="subscriptions-filter-status" className="w-40"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">All</SelectItem>
                   <SelectItem value="PAID">Paid</SelectItem>
@@ -590,9 +590,9 @@ export default function SubscriptionsPage() {
               </Select>
             </div>
             <div>
-              <Label className="text-xs">Age Group</Label>
+              <Label htmlFor="subscriptions-filter-age-group" className="text-xs">Age Group</Label>
               <Select value={ageTier} onValueChange={(v) => { setAgeTier(v as AgeTier | "all"); setPage(1); }}>
-                <SelectTrigger className="w-44"><SelectValue /></SelectTrigger>
+                <SelectTrigger id="subscriptions-filter-age-group" className="w-44"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">All Age Groups</SelectItem>
                   {ageTierOptions.map((option) => (
@@ -605,9 +605,9 @@ export default function SubscriptionsPage() {
             </div>
             {xeroContactGroupsList.length > 0 && (
               <div>
-                <Label className="text-xs">Xero Contact Group</Label>
+                <Label htmlFor="subscriptions-filter-xero-group" className="text-xs">Xero Contact Group</Label>
                 <Select value={xeroContactGroup} onValueChange={(v) => { setXeroContactGroup(v); setPage(1); }}>
-                  <SelectTrigger className="w-56"><SelectValue /></SelectTrigger>
+                  <SelectTrigger id="subscriptions-filter-xero-group" className="w-56"><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="all">All Xero Contact Groups</SelectItem>
                     {xeroContactGroupsList.map((group) => (

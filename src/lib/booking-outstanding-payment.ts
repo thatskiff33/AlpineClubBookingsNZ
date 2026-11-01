@@ -1,4 +1,5 @@
 import { isAdditionalAmountUncollected, isAdditionalPaymentDoorOpenForBooking } from "@/lib/additional-payment-chase";
+import type { AdditionalAskCause } from "@/lib/additional-ask-cause";
 import type { InvoicePayableObservation } from "@/lib/xero-invoice-payable-observation";
 
 export type BookingOutstandingPaymentView =
@@ -11,6 +12,8 @@ export type BookingOutstandingPaymentView =
       cardDueCents: number;
       /** Opaque identity of the current card ask; remounts a replaced pay door. */
       cardRevision: string;
+      /** Why the current card ask exists (#4253); absent reads as a booking change. */
+      askCause?: AdditionalAskCause;
       observations: InvoicePayableObservation[];
       incomplete: boolean;
       nextCursor: string | null;

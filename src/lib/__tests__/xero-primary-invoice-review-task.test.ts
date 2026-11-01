@@ -104,5 +104,11 @@ describe("the primary invoice's Xero Operations task (#3980)", () => {
     expect(primaryInvoiceReviewMessage({ kind: "UNDERBILLED", bookingId: "abcdefgh-1", gapCents: 8_000 }, CLUB_FORMAT_TEST)).toContain(
       "bills $80.00 less than the booking is worth",
     );
+    // #4324 (`INV-PAY-144`): the change that would carry it is billed by a kept late capture's own invoice.
+    expect(
+      primaryInvoiceReviewMessage({ kind: "UNDERBILLED", bookingId: "abcdefgh-1", gapCents: 8_000, keptInvoiceBillsChange: true }, CLUB_FORMAT_TEST),
+    ).toBe(
+      "The primary Xero invoice for Booking abcdefgh bills $80.00 less than the booking is worth: the booking was changed while the invoice was being raised, and the change that would carry the difference is already billed by the Xero invoice for a late card payment the club kept. Check both invoices and bill in Xero whatever part of $80.00 that invoice does not already bill, then choose Resolve (fixed in Xero).",
+    );
   });
 });

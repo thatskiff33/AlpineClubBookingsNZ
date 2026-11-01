@@ -1,5 +1,8 @@
 schema = 1
 
+[environment]
+packages = ["postgresql"]
+
 [setup]
 run = '''
 node_version=$(cat .nvmrc) &&
@@ -22,3 +25,6 @@ run = "pnpm run lint"
 
 [jobs.knip]
 run = "env AUTH_SECRET=ci-auth-secret NEXTAUTH_SECRET=ci-auth-secret NEXTAUTH_URL=http://localhost:3000 AUTH_TRUST_HOST=false CRON_SECRET=ci-cron-secret DATABASE_URL=postgresql://postgres:postgres@localhost:5432/tacbookings STRIPE_SECRET_KEY=sk_test_fake NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=pk_test_fake XERO_ENABLE_DAILY_MEMBERSHIP_REFRESH=false XERO_ENABLE_LIVE_MEMBER_GROUP_LOOKUPS=false XERO_ENABLE_AUTOLOAD_XERO_CONTACT_GROUPS=false pnpm exec knip"
+
+[jobs.kept-change-realdb]
+run = "bash scripts/ci/kept-change-realdb.sh"

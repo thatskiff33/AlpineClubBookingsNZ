@@ -76,7 +76,7 @@ function newBooking(params: {
  * One price-increasing edit against a captured card payment, written the way the
  * production path writes it: the ask comes from `sizeAdditionalAsk`, and
  * minting it RETIRES whatever ask was there before (which is the whole defect —
- * `queueSupersededAdditionalIntentCancellations` cancels the old intent, so the
+ * `queueSupersededAdditionalIntentCancellationRows` cancels the old intent, so the
  * new figure is the only one anybody will ever collect).
  */
 function applyPriceIncrease(
@@ -454,7 +454,7 @@ describe("INV-PAY-047: every live booking's money balances", () => {
 
   ENFORCES `INV-PAY-047`, `INV-PAY-098` and `INV-ADDPAY-023`. Minting an
   ADDITIONAL PaymentIntent RETIRES every other outstanding ask on the payment
-  (`queueSupersededAdditionalIntentCancellations`), so every door that mints one
+  (`queueSupersededAdditionalIntentCancellationRows`), so every door that mints one
   is a door that can delete money. The arithmetic guard above cannot see them:
   it replays the sizing functions, so a door that never calls one is invisible.
 
@@ -554,7 +554,7 @@ const ASK_CONSTRUCTORS: readonly string[] = [
 ];
 const ASK_HOME = "src/lib/additional-payment-ask.ts";
 const MINTER = "createModificationAdditionalPaymentIntent";
-const RETIRER = "queueSupersededAdditionalIntentCancellations";
+const RETIRER = "queueSupersededAdditionalIntentCancellationRows";
 
 function read(relativePath: string): string {
   return readFileSync(join(process.cwd(), relativePath), "utf8");
@@ -626,7 +626,8 @@ describe("every ask-minting door routes through the sizing rule (INV-PAY-047)", 
         "Folding a superseded Stripe balance into a supplementary invoice invoices " +
         "the same money twice.",
     ).toMatch(
-      /\} else if \(hasIssuedXeroInvoice && priceDiffCents > 0\) \{\s*additionalAmountCents = priceDiffCents;/,
+      // #4299: less the part billed to the organiser, which is still this edit's delta.
+      /\} else if \(hasIssuedXeroInvoice && priceDiffCents > 0\) \{\s*additionalAmountCents = priceDiffCents(?: - billedToOrganiserCents)?;/,
     );
   });
 
@@ -801,8 +802,8 @@ describe("a mint cannot forget what it absorbed (INV-PAY-098)", () => {
     for (const file of retirers) {
       const source = read(file);
       expect(
-        // #3954 round 4: or its durable half, on a store, inside a claim hold.
-        source.includes(`${RETIRER}({`) || source.includes("queueSupersededAdditionalIntentCancellationRows({"),
+        // #4442: the durable half is the only spelling; every minter writes it on its queue's store.
+        source.includes(`${RETIRER}({`),
         `INV-PAY-098: ${file} no longer retires superseded asks. Update this ` +
           "list in the same change.",
       ).toBe(true);

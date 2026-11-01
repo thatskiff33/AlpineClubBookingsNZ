@@ -41,6 +41,8 @@ that make it "hot"). Every sweep below then starts with the hottest areas.
 The list, confirmed by the owner
 ([recorded on #4024](https://github.com/thatskiff33/AlpineClubBookingsNZ/pull/4024#issuecomment-6113045008)),
 is [audits/FRAGILITY_AREAS_PROPOSAL.md](audits/FRAGILITY_AREAS_PROPOSAL.md).
+The ranking, with each area's evidence, is
+[audits/FRAGILITY_RANKING_2026-10.md](audits/FRAGILITY_RANKING_2026-10.md).
 
 ### The seven sweeps
 

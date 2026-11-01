@@ -115,7 +115,7 @@ export function ExistingGuestRow({
   return (
     <div
       className={`flex items-center justify-between py-2 ${
-        isRemoved ? "opacity-40 line-through" : ""
+        isRemoved ? "line-through" : ""
       }`}
     >
       {/*
@@ -180,6 +180,8 @@ export function ExistingGuestRow({
         ) : (
           <p className="font-medium">
             {guest.firstName} {guest.lastName}
+            {/* #4594: said in words, never faded; inline-block escapes the strike. */}
+            {isRemoved ? <span className="ml-2 inline-block rounded bg-muted px-1.5 text-xs text-foreground">Removed</span> : null}
           </p>
         )}
         <p className="text-sm text-muted-foreground">

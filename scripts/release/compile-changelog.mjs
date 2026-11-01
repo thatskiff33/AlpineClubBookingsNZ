@@ -12,6 +12,8 @@
  *   node scripts/release/compile-changelog.mjs 0.14.0                # date = today (NZ)
  *   node scripts/release/compile-changelog.mjs 0.14.0 2026-08-04     # explicit date
  *   node scripts/release/compile-changelog.mjs 0.14.0 --dry-run      # print, change nothing
+ *   node scripts/release/compile-changelog.mjs 0.14.0 --append       # fold late fragments into
+ *                                                                    # the untagged 0.14.0 section
  *
  * What it does, in order:
  *   1. Reads every `changelog.d/*.md` fragment except the reserved
@@ -37,9 +39,9 @@
 import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
-import { pathToFileURL } from "node:url";
 import { execFileSync } from "node:child_process";
 import { ALLOWANCE_DIR, isReservedAllowanceName, isSafeAllowanceName } from "../lib/allowance-dir.mjs";
+import { isMainModule } from "../lib/is-main-module.mjs";
 
 const REPO_ROOT = path.resolve(path.join(import.meta.dirname, "..", ".."));
 
@@ -51,10 +53,18 @@ export const FRAGMENTS_DIRNAME = "changelog.d";
  * Compared case-insensitively so `readme.md` is never compiled into a release.
  */
 const RESERVED_FRAGMENT_NAMES = new Set(["readme.md", ".gitkeep"]);
-const MERGED_ALLOWANCE_REF = "origin/main";
+
+/** The merged branch every release is cut from, as `<remote>/<branch>`. */
+export const MAIN_REF = "origin/main";
+const MERGED_ALLOWANCE_REF = MAIN_REF;
+
+/** Whether a `changelog.d/` filename is a compilable fragment (not README.md or .gitkeep). */
+export function isFragmentName(name) {
+  return name.toLowerCase().endsWith(".md") && !RESERVED_FRAGMENT_NAMES.has(name.toLowerCase());
+}
 
 const VERSION_PATTERN = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?$/;
-const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+export const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
 const UNRELEASED_HEADING = /^## Unreleased[ \t]*$/;
 const ANY_HEADING = /^## /;
@@ -97,6 +107,51 @@ const DEFAULT_POINTER_NOTE = [
   POINTER_NOTE_END,
 ];
 
+/** The heading a compiled release section carries: `## <version> - <date>`. */
+export function releaseHeading(version, date) {
+  return `## ${version} - ${date}`;
+}
+
+/**
+ * `{ start, end }` of the first `## ` section whose heading line passes
+ * `isHeading`: `start` is the heading, `end` the next `## ` heading or EOF.
+ */
+function locateSection(lines, isHeading) {
+  const start = lines.findIndex(isHeading);
+  if (start < 0) return null;
+  const nextOffset = lines.slice(start + 1).findIndex((line) => ANY_HEADING.test(line));
+  return { start, end: nextOffset >= 0 ? start + 1 + nextOffset : lines.length };
+}
+
+const isVersionHeading = (version) => (line) => line.startsWith(`## ${version} `);
+
+/**
+ * The `## <version> - <date>` section in `changelog` as `{ heading, body }`
+ * (body without blank edges), or `null` when there is none. The one reader of
+ * a compiled section: the compiler refuses or appends to it, and
+ * `cut-release.mjs` publishes it as the GitHub release notes.
+ */
+export function releaseSection(changelog, version) {
+  const lines = changelog.replace(/\r\n/g, "\n").split("\n");
+  const found = locateSection(lines, isVersionHeading(version));
+  if (!found) return null;
+  return {
+    heading: lines[found.start],
+    body: stripBlankEdges(lines.slice(found.start + 1, found.end)).join("\n"),
+  };
+}
+
+/**
+ * `classifyUnreleasedSection` applied to `changelog`'s `## Unreleased`
+ * section, or `null` when it has none. `cut-release.mjs` uses it to refuse a
+ * release while direct entries still wait there.
+ */
+export function classifyUnreleased(changelog) {
+  const lines = changelog.replace(/\r\n/g, "\n").split("\n");
+  const found = locateSection(lines, (line) => UNRELEASED_HEADING.test(line));
+  return found ? classifyUnreleasedSection(lines.slice(found.start + 1, found.end)) : null;
+}
+
 /**
  * Deterministic fragment order: ascending, comparing runs of digits
  * numerically so `999-x.md` sorts before `2448-x.md` rather than after it
@@ -132,12 +187,7 @@ export function readFragments(dir) {
   }
   return fs
     .readdirSync(dir, { withFileTypes: true })
-    .filter(
-      (entry) =>
-        entry.isFile() &&
-        entry.name.toLowerCase().endsWith(".md") &&
-        !RESERVED_FRAGMENT_NAMES.has(entry.name.toLowerCase()),
-    )
+    .filter((entry) => entry.isFile() && isFragmentName(entry.name))
     .map((entry) => entry.name)
     .sort(compareFragmentNames)
     .map((name) => {
@@ -306,9 +356,9 @@ export function classifyUnreleasedSection(sectionLines) {
  * and whether the pointer note had to be restored. `fragments` is an ordered
  * list of `{ name, body }`; `changelog` is the current file text.
  */
-export function composeChangelog({ changelog, version, date, fragments }) {
+export function composeChangelog({ changelog, version, date, fragments, append = false }) {
   const lines = changelog.split("\n");
-  const unreleasedIndex = lines.findIndex((line) => UNRELEASED_HEADING.test(line));
+  const unreleased = locateSection(lines, (line) => UNRELEASED_HEADING.test(line));
 
   let head;
   let note = [];
@@ -317,12 +367,8 @@ export function composeChangelog({ changelog, version, date, fragments }) {
   let restoredPointerNote = false;
   let tail;
 
-  if (unreleasedIndex >= 0) {
-    const nextHeadingOffset = lines
-      .slice(unreleasedIndex + 1)
-      .findIndex((line) => ANY_HEADING.test(line));
-    const sectionEnd =
-      nextHeadingOffset >= 0 ? unreleasedIndex + 1 + nextHeadingOffset : lines.length;
+  if (unreleased) {
+    const { start: unreleasedIndex, end: sectionEnd } = unreleased;
     const section = lines.slice(unreleasedIndex + 1, sectionEnd);
     const classified = classifyUnreleasedSection(section);
     ({ legacy, unrecognised } = classified);
@@ -354,11 +400,31 @@ export function composeChangelog({ changelog, version, date, fragments }) {
   if (unrecognised.length > 0) {
     out.push("", ...unrecognised);
   }
-  out.push("", `## ${version} - ${date}`, "", ...entryLines);
-  if (stripBlankEdges(tail).length > 0) {
-    out.push("", ...stripBlankEdges(tail), "");
+  if (append) {
+    // Late fragments join the end of the existing, not yet tagged, section;
+    // its heading and date stay as they were.
+    const history = stripBlankEdges(tail);
+    const found = locateSection(history, isVersionHeading(version));
+    if (!found) throw new Error(`CHANGELOG.md has no "## ${version}" section to append to.`);
+    // Only the newest section can still be untagged; appending to any older
+    // one would rewrite a released version's notes.
+    if (found.start !== 0) {
+      throw new Error(
+        `"${history[found.start]}" is not the newest release section in CHANGELOG.md (that is "${history[0]}"); ` +
+          "--append only adds to the newest, untagged one.",
+      );
+    }
+    const body = stripBlankEdges(history.slice(found.start + 1, found.end));
+    const rest = history.slice(found.end);
+    out.push("", ...history.slice(0, found.start), history[found.start], "", ...body, ...entryLines);
+    out.push(...(rest.length > 0 ? ["", ...rest, ""] : [""]));
   } else {
-    out.push("");
+    out.push("", releaseHeading(version, date), "", ...entryLines);
+    if (stripBlankEdges(tail).length > 0) {
+      out.push("", ...stripBlankEdges(tail), "");
+    } else {
+      out.push("");
+    }
   }
 
   return {
@@ -369,10 +435,16 @@ export function composeChangelog({ changelog, version, date, fragments }) {
   };
 }
 
-/** Today's date in the club's timezone, as `YYYY-MM-DD`. */
-export function todayInNewZealand(now = new Date()) {
+/**
+ * Today's date for whoever cuts the release, as `YYYY-MM-DD` (#4571). A release
+ * date is not a club civil date, and the club's zone lives in the database,
+ * which release tooling never reads (`INV-CONFIG-002`), so nothing here names a
+ * zone: `RELEASE_TIME_ZONE` when set, otherwise this machine's own zone.
+ * `--date` / the date argument still sets it outright.
+ */
+export function releaseDateToday(now = new Date(), timeZone = process.env.RELEASE_TIME_ZONE || undefined) {
   return new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Pacific/Auckland",
+    timeZone,
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
@@ -386,8 +458,9 @@ export function todayInNewZealand(now = new Date()) {
 export function compileChangelog({
   repoRoot = REPO_ROOT,
   version,
-  date = todayInNewZealand(),
+  date = releaseDateToday(),
   dryRun = false,
+  append = false,
   log = console.log,
   removeFile = fs.rmSync,
   beforeApplySnapshot = () => {},
@@ -404,12 +477,20 @@ export function compileChangelog({
   const originalChangelog = fs.readFileSync(changelogPath);
   const changelog = originalChangelog.toString("utf8").replace(/\r\n/g, "\n");
 
-  if (changelog.split("\n").some((line) => line.startsWith(`## ${version} `))) {
+  // Appending is the one way into an existing section: it folds late
+  // fragments into a release prepared but not yet tagged (`release:cut
+  // prepare --amend`). Without it, an existing section means "already done".
+  const existing = releaseSection(changelog, version);
+  if (!append && existing !== null) {
     throw new Error(`CHANGELOG.md already has a "## ${version}" section — nothing to compile.`);
   }
+  if (append && existing === null) {
+    throw new Error(`CHANGELOG.md has no "## ${version}" section to append to.`);
+  }
+  const target = append ? existing.heading : releaseHeading(version, date);
 
   const fragments = readFragments(fragmentsDir);
-  const composed = composeChangelog({ changelog, version, date, fragments });
+  const composed = composeChangelog({ changelog, version, date, fragments, append });
 
   // Loud, before anything else in the output: content under `## Unreleased`
   // that is neither the pointer note nor a `- ` entry is NOT released and NOT
@@ -442,7 +523,7 @@ export function compileChangelog({
   const names = fragments.map((fragment) => fragment.name);
   if (dryRun) {
     log(`  Source is local ${MERGED_ALLOWANCE_REF}; refresh it before release prep.`);
-    log(`[dry run] Would add "## ${version} - ${date}" to CHANGELOG.md with:`);
+    log(`[dry run] Would ${append ? "append to" : "add"} "${target}" ${append ? "in" : "to"} CHANGELOG.md with:`);
     if (composed.restoredPointerNote) {
       log('  - a restored changelog.d pointer note under "## Unreleased" (it is missing)');
     }
@@ -548,7 +629,7 @@ export function compileChangelog({
   }
 
   log(`  Source was local ${MERGED_ALLOWANCE_REF}; it must be refreshed before release prep.`);
-  log(`Added "## ${version} - ${date}" to CHANGELOG.md.`);
+  log(`${append ? "Appended to" : "Added"} "${target}" ${append ? "in" : "to"} CHANGELOG.md.`);
   if (composed.restoredPointerNote) {
     log('  Restored the changelog.d pointer note under "## Unreleased" (it was missing).');
   }
@@ -567,19 +648,22 @@ export function compileChangelog({
 /** Parse argv into `{ version, date, dryRun }`. Exported for tests. */
 export function parseArgs(argv) {
   const dryRun = argv.includes("--dry-run");
+  const append = argv.includes("--append");
   const positional = argv.filter((arg) => !arg.startsWith("--"));
   const [version, date] = positional;
-  return { version, date, dryRun };
+  return { version, date, dryRun, append };
 }
 
-const invokedPath = process.argv[1] ? pathToFileURL(process.argv[1]).href : null;
-if (invokedPath === import.meta.url) {
+// Run directly only when this file IS the script node was given, compared by
+// real path: unresolved, a run through a symlinked checkout or launcher matched
+// nothing and exited 0 having compiled nothing (#4569, #4598).
+if (isMainModule(import.meta.url)) {
   try {
-    const { version, date, dryRun } = parseArgs(process.argv.slice(2));
-    compileChangelog({ version, date: date ?? todayInNewZealand(), dryRun });
+    const { version, date, dryRun, append } = parseArgs(process.argv.slice(2));
+    compileChangelog({ version, date: date ?? releaseDateToday(), dryRun, append });
   } catch (error) {
     console.error(`compile-changelog failed: ${error.message}`);
-    console.error("Usage: node scripts/release/compile-changelog.mjs <version> [YYYY-MM-DD] [--dry-run]");
+    console.error("Usage: node scripts/release/compile-changelog.mjs <version> [YYYY-MM-DD] [--dry-run] [--append]");
     process.exitCode = 1;
   }
 }

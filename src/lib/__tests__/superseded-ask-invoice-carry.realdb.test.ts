@@ -41,6 +41,11 @@
  *    and released, the webhook first and the runner first - handed to the
  *    superseded refund once, both invoices still on B summing to its capture,
  *    nothing recorded for A and no double-payment alert.
+ *  - #4442: A paid from a stale tab after B was sized and before B's queue
+ *    committed - from inside B's mint, while B's queue waits on the global key,
+ *    and inside the recovery runner's replay - withholds B, and the replay
+ *    asks for B's own change alone: A's balance is never asked for twice;
+ *    and a frozen replay (no figure to re-derive) stays refused on its next retry.
  *
  * M1, F2 and F3 prove the take-back for a declined ask no live cancel row owns.
  * Since #4422 a supersede cancels a declined ask, so they reach that state the
@@ -466,6 +471,53 @@ function deferred() {
       return { pid, holder };
     }
 
+    /** Hold the global key, `lock(1)`, on a third connection until `release` resolves. */
+    async function holdGlobalKey(release: Promise<void>) {
+      const held = deferred();
+      let pid = 0;
+      let error: unknown;
+      const holder = holderClient
+        .$transaction(
+          async (tx) => {
+            const rows = await tx.$queryRaw<Array<{ pid: number }>>`SELECT pg_backend_pid()::int AS pid`;
+            pid = rows[0]?.pid ?? 0;
+            await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+            held.resolve();
+            await release;
+          },
+          { maxWait: 5_000, timeout: 30_000 },
+        )
+        .catch((err: unknown) => {
+          error = err;
+          held.resolve();
+        });
+      await held.promise;
+      if (error) throw new Error(`The holder could not take the global key: ${String(error)}`);
+      return { pid, holder };
+    }
+
+    /** The edit's recovery row for B after its mint was withheld, run now as the worker would after its backoff. */
+    async function runAskRecovery() {
+      const { runPaymentRecoveryOperationNow } = await import("@/lib/payment-recovery");
+      const retry = await prisma.paymentRecoveryOperation.findFirstOrThrow({ where: {
+        bookingId: BOOKING_ID, type: "CREATE_ADDITIONAL_PAYMENT_INTENT", status: { in: ["PENDING", "FAILED"] },
+      } });
+      await prisma.paymentRecoveryOperation.update({ where: { id: retry.id }, data: { nextRetryAt: new Date(0) } });
+      return runPaymentRecoveryOperationNow(retry.id, CLUB_FORMAT_TEST);
+    }
+
+    /** B, re-planned by its recovery after A was paid: B's own change, nothing carried, paid once. */
+    async function expectReplayAsksOnlyForB(refused: string) {
+      const b = stripe.created.at(-1)!;
+      expect(b).not.toBe(refused);
+      expect(stripe.intents.get(b)?.amount).toBe(B_CENTS);
+      expect(await prisma.paymentTransaction.findUniqueOrThrow({ where: { stripePaymentIntentId: b } }))
+        .toMatchObject({ amountCents: B_CENTS, carriedAskCents: 0 });
+      await payWithCard(b);
+      expect(await captured(b)).toBe(B_CENTS);
+      expect(await paidTwiceAlerts()).toBe(0);
+    }
+
     /** A price reduction's retire of the unpaid chain, in a transaction of its own, as the edit runs it. */
     async function reductionRetiresTheChain() {
       const [{ readUnpaidPriceAsk, retireUnpaidAskChain }, { unpaidAskBillingEvidence }] = await Promise.all([
@@ -561,6 +613,134 @@ function deferred() {
       if (!prisma) return;
       await deleteFixtures();
       await Promise.all([holderClient?.$disconnect(), observerClient?.$disconnect()]);
+    });
+
+    it("#4442: A captures after B is sized; B is withheld and recovery asks only for B's own change", async () => {
+      await seedPaidBooking();
+      const a = await priceIncrease(MOD_A, A_CENTS);
+      const create = stripeRaceHooks.create!;
+      // Real webhook on real rows, after the sizing read and before B's queue
+      // transaction. No cancel row exists yet, so A settles normally.
+      stripeRaceHooks.create = async (args) => {
+        stripeRaceHooks.create = create;
+        await payWithCard(a);
+        return create(args);
+      };
+      await expect(priceIncrease(MOD_B, B_CENTS)).rejects.toThrow("ask was not minted");
+      const refusedIntent = stripe.created.at(-1)!;
+      expect(stripe.intents.get(refusedIntent)?.amount).toBe(A_CENTS + B_CENTS);
+      expect(await captured(a)).toBe(A_CENTS);
+      expect(await prisma.paymentTransaction.findUnique({ where: { stripePaymentIntentId: refusedIntent } })).toBeNull();
+      expect(await prisma.paymentRecoveryOperation.count({ where: {
+        paymentIntentId: a, type: "CANCEL_PAYMENT_INTENT",
+      } })).toBe(0);
+      expect(await invoiceFor(MOD_A)).toMatchObject({ status: "PENDING", waitsOn: a });
+
+      expect(await runAskRecovery()).toBe("succeeded");
+      await expectReplayAsksOnlyForB(refusedIntent);
+    });
+
+    it("#4442: A captured while B's queue waits on the global key is read under the lock; B is withheld", async () => {
+      await seedPaidBooking();
+      const a = await priceIncrease(MOD_A, A_CENTS);
+      const release = deferred();
+      const { pid, holder } = await holdGlobalKey(release.promise);
+      let mint: Promise<unknown> = Promise.resolve();
+      try {
+        // B is sized and minted at Stripe, then its queue transaction waits on the global key.
+        mint = priceIncrease(MOD_B, B_CENTS).then(() => null, (err: unknown) => err);
+        await waitForQueue(pid, 1, "B's queue behind the global key");
+        expect(stripe.created, "B was minted before it queued").toHaveLength(2);
+        // The capture takes the Payment row, not the global key, so it commits meanwhile.
+        await Promise.race([
+          payWithCard(a),
+          new Promise((_, reject) => setTimeout(() => reject(new Error("A's capture waited on the global key")), LOCK_POLL_TIMEOUT_MS)),
+        ]);
+      } finally {
+        release.resolve();
+        await holder;
+      }
+      expect(String(await mint)).toContain("ask was not minted");
+      const refusedIntent = stripe.created.at(-1)!;
+      expect(stripe.intents.get(refusedIntent)?.amount).toBe(A_CENTS + B_CENTS);
+      expect(await captured(a)).toBe(A_CENTS);
+      expect(await prisma.paymentTransaction.findUnique({ where: { stripePaymentIntentId: refusedIntent } })).toBeNull();
+      expect(await prisma.paymentRecoveryOperation.count({ where: { paymentIntentId: a, type: "CANCEL_PAYMENT_INTENT" } })).toBe(0);
+
+      expect(await runAskRecovery()).toBe("succeeded");
+      await expectReplayAsksOnlyForB(refusedIntent);
+    });
+
+    it("#4442: A captured inside the recovery runner's replay of B; the claim hold refuses it and the next replay asks only for B", async () => {
+      await seedPaidBooking();
+      const a = await priceIncrease(MOD_A, A_CENTS);
+      const create = stripeRaceHooks.create!;
+      // B's inline mint fails at Stripe, so its recovery row carries the ask.
+      stripeRaceHooks.create = async () => {
+        stripeRaceHooks.create = create;
+        throw new Error("fake Stripe: connection reset");
+      };
+      await expect(priceIncrease(MOD_B, B_CENTS)).rejects.toThrow("ask was not minted");
+      expect(stripe.created).toHaveLength(1);
+      // The replay sizes B on A's live balance, then A is paid before its claim hold writes.
+      stripeRaceHooks.create = async (args) => {
+        stripeRaceHooks.create = create;
+        await payWithCard(a);
+        return create(args);
+      };
+      expect(await runAskRecovery()).toBe("failed");
+      const refusedIntent = stripe.created.at(-1)!;
+      expect(stripe.intents.get(refusedIntent)?.amount).toBe(A_CENTS + B_CENTS);
+      expect(await captured(a)).toBe(A_CENTS);
+      expect(await prisma.paymentTransaction.findUnique({ where: { stripePaymentIntentId: refusedIntent } })).toBeNull();
+      expect(await prisma.paymentRecoveryOperation.count({ where: { paymentIntentId: a, type: "CANCEL_PAYMENT_INTENT" } })).toBe(0);
+
+      expect(await runAskRecovery()).toBe("succeeded");
+      await expectReplayAsksOnlyForB(refusedIntent);
+    });
+
+    it("#4442 C-F2: a frozen replay re-reads the live balance it was minted over - A paid inside its mint refuses the write", async () => {
+      await seedPaidBooking();
+      const a = await priceIncrease(MOD_A, A_CENTS);
+      // An edit whose own net reads zero: its recovery cannot re-derive the ask,
+      // so it replays the figure frozen when its mint failed, A's balance in it.
+      await prisma.bookingModification.create({
+        data: { id: MOD_B, bookingId: BOOKING_ID, memberId: MEMBER_ID, modificationType: "GUEST_ADD", previousData: {}, newData: {}, priceDiffCents: 0 },
+      });
+      const [{ enqueueAdditionalPaymentIntentRecovery }, { buildAdditionalIntentRecoveryIdempotencyKey }] = await Promise.all([
+        import("@/lib/payment-recovery"),
+        import("@/lib/payment-recovery-keys"),
+      ]);
+      await enqueueAdditionalPaymentIntentRecovery({
+        bookingId: BOOKING_ID,
+        paymentId: PAYMENT_ID,
+        idempotencyKey: buildAdditionalIntentRecoveryIdempotencyKey(MOD_B),
+        amountCents: A_CENTS + B_CENTS,
+        stripeIdempotencyKey: `mod_guest_${BOOKING_ID}_${MOD_B}`,
+        hadIssuedXeroInvoice: true,
+      });
+      const create = stripeRaceHooks.create!;
+      stripeRaceHooks.create = async (args) => {
+        stripeRaceHooks.create = create;
+        await payWithCard(a);
+        return create(args);
+      };
+
+      expect(await runAskRecovery()).toBe("failed");
+
+      const refused = stripe.created.at(-1)!;
+      expect(stripe.intents.get(refused)?.amount).toBe(A_CENTS + B_CENTS);
+      expect(await prisma.paymentTransaction.findUnique({ where: { stripePaymentIntentId: refused } })).toBeNull();
+      expect(await captured(a)).toBe(A_CENTS);
+      expect(await prisma.paymentRecoveryOperation.count({ where: { paymentIntentId: a, type: "CANCEL_PAYMENT_INTENT" } })).toBe(0);
+
+      // A second attempt must not accept the old A+B amount just because its
+      // new balance snapshot is now zero. No provenance can separate A from B.
+      const minted = stripe.created.length;
+      expect(await runAskRecovery()).toBe("failed");
+      expect(stripe.created).toHaveLength(minted);
+      expect(await prisma.paymentTransaction.findUnique({ where: { stripePaymentIntentId: refused } })).toBeNull();
+      expect(await captured(a)).toBe(A_CENTS);
     });
 
     it("A -> B -> B captured: both invoices go out, each for its own amount, and their payments sum to the capture", async () => {

@@ -30,7 +30,8 @@ import { describe, expect, it } from "vitest";
 // taken by other specs"), and a census that counted those would claim occupancy
 // that does not exist — and would have "passed" this file's own motivating bug
 // for the wrong reason.
-import { stripComments } from "./support/strip-comments";
+import { blankLiterals, stripComments } from "./support/strip-comments";
+import { balancedBrackets } from "./support/balanced-brackets";
 
 const SPEC_UNDER_CONTRACT = "e2e/locked-out-pickup-and-pay.spec.ts";
 const STAY_DATES_HELPER = "e2e/helpers/stay-dates.ts";
@@ -66,19 +67,8 @@ function specFiles(): string[] {
 }
 
 /** The first argument of the call whose `(` sits at `openParen`. */
-function firstArgument(source: string, openParen: number): string {
-  let depth = 0;
-  for (let i = openParen; i < source.length; i++) {
-    const c = source[i];
-    if (c === "(" || c === "[" || c === "{") depth++;
-    else if (c === ")" || c === "]" || c === "}") {
-      depth--;
-      if (depth === 0) return source.slice(openParen + 1, i).trim();
-    } else if (c === "," && depth === 1) {
-      return source.slice(openParen + 1, i).trim();
-    }
-  }
-  throw new Error("unterminated call argument list");
+function firstArgument(source: string, openParen: number, structure: string): string {
+  return balancedBrackets(source, openParen, structure).parts[0] ?? "";
 }
 
 /** `const NAME = 10;` declarations in one file, for index constants. */
@@ -158,14 +148,16 @@ function reachableIndexes(
 function indexesUsedBy(file: string, stride: number): number[] {
   const source = stripComments(readRepoFile(file));
   const constants = integerConstants(source);
+  // Calls are found over masked text: one named in a string is not a call.
+  const structure = blankLiterals(source);
   const indexes: number[] = [];
   for (const callee of ["stayWindowForAttempt", "stayWindow"] as const) {
     // Negative lookbehind keeps `pastStayWindowForAttempt(` (the retroactive
     // helper, a different date space entirely) out of the census.
     const pattern = new RegExp(`(?<![\\w$])${callee}\\(`, "g");
-    for (const match of source.matchAll(pattern)) {
+    for (const match of structure.matchAll(pattern)) {
       const openParen = match.index + match[0].length - 1;
-      const argument = firstArgument(source, openParen);
+      const argument = firstArgument(source, openParen, structure);
       indexes.push(
         ...reachableIndexes(callee, argument, constants, stride, file),
       );

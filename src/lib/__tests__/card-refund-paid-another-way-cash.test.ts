@@ -11,7 +11,8 @@ vi.mock("@/lib/xero-resolved-in-xero-fences", () => ({ sumRefundCreditNoteCovera
 // #4315 item 2: what a re-confirmed follow-up's hand-made note covers, read through its link.
 vi.mock("@/lib/xero-sync", () => ({ sumCoveredRefundCreditNoteCents: vi.fn(async (_p: string, _db: unknown, ids?: string[]) => (ids?.length ? 2_000 : 0)) }));
 
-import { readPaidAnotherWayCash, readPaidAnotherWayCloseShare } from "@/lib/card-refund-paid-another-way-cash";
+import { readPaidAnotherWayCash, readPaidAnotherWayCloseBankCashByPayment, readPaidAnotherWayCloseShare } from "@/lib/card-refund-paid-another-way-cash";
+import { CARD_REFUND_PAID_ANOTHER_WAY_TASK_WHERE } from "@/lib/manual-refund-task-settlement-rules";
 
 const RACE_KEY = "cancel-card-shortfall:booking-1:capacity-race:pi_race:check";
 
@@ -99,5 +100,45 @@ describe("a re-confirmed bank refund (a completed void follow-up) as the note pi
 
   it("CONTROL: with no note of its own it is no record here", async () => {
     await expect(readPaidAnotherWayCash(followUpDb({}), "payment-1")).resolves.toEqual({ notedCents: 0, unnotedCents: 0, awaitingReceiptCents: 0 });
+  });
+});
+
+describe("the bank cash Paid another way closes recorded, per payment (#4280, INV-PAY-103)", () => {
+  function groupedDb(groups: Array<{ paymentId: string | null; _sum: { amountCents: number | null } }>) {
+    return { manualRefundTask: { groupBy: vi.fn(async () => groups) } };
+  }
+
+  it("reads the closes' own records only, at what each paid, for one payment or all", async () => {
+    const store = groupedDb([{ paymentId: "payment-1", _sum: { amountCents: 12_000 } }]);
+    await expect(readPaidAnotherWayCloseBankCashByPayment(store as never, { paymentId: "payment-1" })).resolves.toEqual(new Map([["payment-1", 12_000]]));
+    expect(store.manualRefundTask.groupBy).toHaveBeenCalledWith({
+      by: ["paymentId"],
+      where: { ...CARD_REFUND_PAID_ANOTHER_WAY_TASK_WHERE, paymentId: "payment-1" },
+      _sum: { amountCents: true },
+    });
+
+    const all = groupedDb([]);
+    await readPaidAnotherWayCloseBankCashByPayment(all as never, "all");
+    expect(all.manualRefundTask.groupBy).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { ...CARD_REFUND_PAID_ANOTHER_WAY_TASK_WHERE, paymentId: { not: null } } }),
+    );
+  });
+
+  it("is the paid-another-way prefix alone: never a cancel's card refund shortfall or an ordinary bank hand-back (owner, 26 Oct 2026)", () => {
+    expect(CARD_REFUND_PAID_ANOTHER_WAY_TASK_WHERE).toEqual({
+      kind: "CANCELLED_BOOKING_HAND_BACK",
+      status: "COMPLETED",
+      occurrenceKey: { startsWith: "card-refund-paid-another-way:" },
+    });
+  });
+
+  it("drops a payment with nothing paid, and never reads below nothing", async () => {
+    const store = groupedDb([
+      { paymentId: "payment-1", _sum: { amountCents: null } },
+      { paymentId: null, _sum: { amountCents: 5_000 } },
+      { paymentId: "payment-2", _sum: { amountCents: -1 } },
+      { paymentId: "payment-3", _sum: { amountCents: 7_000 } },
+    ]);
+    await expect(readPaidAnotherWayCloseBankCashByPayment(store as never, "all")).resolves.toEqual(new Map([["payment-3", 7_000]]));
   });
 });

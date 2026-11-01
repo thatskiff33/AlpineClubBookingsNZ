@@ -44,7 +44,8 @@ import { describe, expect, it } from "vitest";
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 
-import { stripComments } from "./support/strip-comments";
+import { blankLiterals, stripComments } from "./support/strip-comments";
+import { balancedBrackets } from "./support/balanced-brackets";
 import {
   ADULT_MEMBER_HOST_SCOPES,
   type AdultMemberHostScope,
@@ -156,30 +157,6 @@ function sourceFilesNaming(identifier: string): string[] {
   );
 }
 
-/**
- * The balanced `(...)`/`{...}` run that starts at `openIndex`, as text plus the
- * index of its closing bracket.
- *
- * Bracket counting rather than a regex because the thing being matched — a Prisma
- * call's argument object — nests arbitrarily, and `/\(([\s\S]*?)\)/` stops at the
- * first `)` inside it. Comments are already gone (`readRepoCode`); string literals
- * in this repository's Prisma calls do not carry unbalanced brackets, and a file
- * that made this miscount would show up as a scope that fails the sweep rather
- * than as one that silently passes it.
- */
-function balancedRun(source: string, openIndex: number): { text: string; end: number } {
-  let depth = 0;
-  for (let index = openIndex; index < source.length; index += 1) {
-    const character = source[index];
-    if (character === "(" || character === "{" || character === "[") depth += 1;
-    else if (character === ")" || character === "}" || character === "]") {
-      depth -= 1;
-      if (depth === 0) return { text: source.slice(openIndex, index + 1), end: index };
-    }
-  }
-  return { text: source.slice(openIndex), end: source.length - 1 };
-}
-
 /** A `booking.update`/`updateMany` whose `data:` sets a terminal booking status. */
 interface TerminalStatusFlip {
   file: string;
@@ -216,15 +193,21 @@ function terminalStatusFlips(): TerminalStatusFlip[] {
   for (const file of everySourceFile()) {
     const source = readRepoCode(file);
     if (!source.includes("booking.update")) continue;
+    // Call sites are found over masked text: a `booking.update(` named in a
+    // string is not a call and has no opening bracket for the reader to find.
+    const structure = blankLiterals(source);
     const calls = /\bbooking\.(?:update|updateMany)\s*\(/g;
     let match: RegExpExecArray | null;
-    while ((match = calls.exec(source)) !== null) {
-      const { text: call } = balancedRun(source, match.index + match[0].length - 1);
+    while ((match = calls.exec(structure)) !== null) {
+      const open = match.index + match[0].length - 1;
+      const { text: call, end } = balancedBrackets(source, open, structure);
+      const callStructure = structure.slice(open, end + 1);
       let status: string | null = null;
-      for (const dataMatch of call.matchAll(/\bdata:\s*\{/g)) {
-        const data = balancedRun(
+      for (const dataMatch of callStructure.matchAll(/\bdata:\s*\{/g)) {
+        const data = balancedBrackets(
           call,
           (dataMatch.index ?? 0) + dataMatch[0].length - 1,
+          callStructure,
         ).text;
         const terminal = data.match(
           /status:\s*(?:BookingStatus\.)?["']?(CANCELLED|EXPIRED|BUMPED)["']?\s*[,}]/,

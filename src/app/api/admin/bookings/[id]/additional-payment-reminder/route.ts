@@ -6,7 +6,8 @@ import { requireAdmin } from "@/lib/session-guards";
 
 /**
  * POST /api/admin/bookings/[id]/additional-payment-reminder — re-send the email
- * asking the member to pay an extra amount a booking change added (#2350).
+ * asking the member to pay the extra amount still owing on the booking (#2350): a
+ * booking change's, credit used elsewhere in the club's accounts (#4253), or both.
  *
  * Authorisation mirrors the sibling admin booking actions (no-emails,
  * capacity-hold, exclusive-hold): `bookings:edit`, and any other caller gets a

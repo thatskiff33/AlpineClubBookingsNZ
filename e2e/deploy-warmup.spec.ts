@@ -1,4 +1,4 @@
-import { expect, test, type APIRequestContext } from "@playwright/test";
+import { expect, test, type APIRequestContext } from "./helpers/accessibility";
 import { storageStatePath } from "./helpers/auth";
 import { E2E_ADMIN } from "../prisma/e2e-fixtures";
 

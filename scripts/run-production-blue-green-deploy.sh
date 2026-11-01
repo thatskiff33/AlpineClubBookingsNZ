@@ -1,6 +1,176 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
+# ---------------------------------------------------------------------------
+# Readers shared by the wrapper and the engine (#4275)
+# ---------------------------------------------------------------------------
+#
+# Every other helper is defined inside `run_production_wrapper` or
+# `run_internal_blue_green_deploy`, so it exists only in the process that runs
+# that function — and the two run in different processes (the wrapper re-enters
+# this file with `--internal-blue-green-deploy`). These are the readers both
+# halves need, so they are defined once, at file level, rather than twice in two
+# grammars that drift apart: the wrapper's first image-repository reader kept
+# quotes, missed `export KEY=` and took the FIRST duplicate, while Compose
+# unquotes, honours `export` and takes the LAST.
+
+trim_whitespace() {
+  local value="$1"
+  value="${value#"${value%%[![:space:]]*}"}"
+  value="${value%"${value##*[![:space:]]}"}"
+  printf '%s' "$value"
+}
+
+# A deployment-supplied value made safe to echo at an operator's terminal.
+#
+# The application deliberately reduces this same string to printable ASCII before
+# it reaches a log line or a page (`sanitizeEnvironmentRoleRawValue` in
+# src/lib/environment-role-declaration.ts), for the plain reason that a value
+# holding a newline or an escape sequence must not be able to write a second line
+# into — or repaint — the terminal of the person reading the refusal. A shell that
+# echoed the raw value would be the hole that module closes, reopened one layer
+# out. Control characters become `?` rather than being deleted, so the operator
+# can SEE that something is in there; the cap matches the app's 64 characters
+# including the `...` marker, so the whole result is printable ASCII.
+printable_deploy_value() {
+  local sanitized
+
+  sanitized="$(printf '%s' "$1" | tr -c ' -~' '?')"
+  if [ "${#sanitized}" -gt 64 ]; then
+    printf '%s...' "${sanitized:0:61}"
+  else
+    printf '%s' "$sanitized"
+  fi
+}
+
+# Every shape Docker Compose's `.env` parser accepts as an assignment of any of
+# the given keys, as one extended regular expression (#4026).
+#
+#   env_assignment_pattern KEY [KEY...]
+#
+# THE ONE SPELLING OF THIS GRAMMAR. Every reader in this script that must agree
+# with Compose about whether a line assigns a key builds its pattern here, in
+# the wrapper and the engine alike. Sourcing this script starts the production
+# wrapper, so nothing outside can CALL it. A
+# downstream fork's own deploy guard instead lifts the definition out of this
+# file, the way the contract tests do (`shellFunctionSource` in
+# src/lib/__tests__/helpers/deploy-script.ts), rather than keeping a hand-made
+# copy pinned equal by a test of its own.
+#
+# THE SHAPE WAS THE FINDING, twice. The first version of the #3034 check counted
+# with `awk -F=` and `$1 == key`, which needs the key to be the WHOLE first
+# `=`-field — so three shapes Compose honours slipped past it, measured against
+# real `docker compose v5.3.1`: an INDENTED line, an `export `-prefixed line, and
+# spaces around the `=`. Then #4026 measured `docker compose config` on Compose
+# v5.6.0 and found its parser also takes a YAML-style COLON as the separator:
+# `KEY: value`, `KEY:value`, `KEY : value` and `export KEY: value`. Any of those
+# appearing a SECOND time further down a .env whose first line is correct passed
+# the duplicate check and handed every container the second value. Appending to a
+# .env by hand, or from a rehearsal script, produces exactly those shapes.
+#
+# What it matches, mirroring Compose's dotenv parser: optional leading
+# whitespace; an optional `export` followed by whitespace; the key exactly; then
+# optional whitespace and an `=` or a `:`. A comment line cannot match, because a
+# `#` before the key fails the anchor, and a longer name sharing the prefix
+# (`KEY_EXTRA=`) cannot either, because only whitespace may sit between the key
+# and its separator.
+#
+# CAPTURE GROUPS ARE FIXED so a `sed -E` caller can append its own value group:
+# group 1 is the `export` prefix, group 2 is the key that matched, and a caller's
+# first group after the pattern is `\3`. The keys are literal environment-variable
+# names from this script ([A-Za-z_][A-Za-z0-9_]*); none of them holds a regex or
+# `sed` delimiter character, and a name that did would be refused below rather
+# than silently matching something else.
+env_assignment_pattern() {
+  local alternation=""
+  local key
+
+  for key in "$@"; do
+    case "$key" in
+      '' | [!A-Za-z_]* | *[!A-Za-z0-9_]*)
+        echo "env_assignment_pattern: not a plain variable name: $(printable_deploy_value "$key")" >&2
+        return 1
+        ;;
+    esac
+    alternation="${alternation:+$alternation|}$key"
+  done
+  if [ -z "$alternation" ]; then
+    echo "env_assignment_pattern: needs at least one key" >&2
+    return 1
+  fi
+
+  printf '^[[:space:]]*(export[[:space:]]+)?(%s)[[:space:]]*[=:]' "$alternation"
+}
+
+# One layer of matching surrounding quotes, removed (#4275: shared by the `.env`
+# reader above and the rendered-Compose readers below, which meet the same
+# quoting from two directions). Compose's dotenv parser unquotes `KEY="value"`,
+# and `docker compose config` writes a string that YAML would otherwise read as
+# a boolean, a number or nothing back WITH quotes (`USE_AWS_SES: "true"`,
+# `EMAIL_SERVER_HOST: ""`). Compared character by character rather than by a
+# `case` pattern, because a pattern holding both quote characters inside a
+# single-quoted shell word is unreadable and easy to get subtly wrong.
+strip_matching_quotes() {
+  local value="$1"
+  local first
+  local last
+
+  if [ "${#value}" -ge 2 ]; then
+    first="${value%"${value#?}"}"
+    last="${value#"${value%?}"}"
+    if [ "$first" = "$last" ] && { [ "$first" = '"' ] || [ "$first" = "'" ]; }; then
+      value="${value#?}"
+      value="${value%?}"
+    fi
+  fi
+
+  printf '%s' "$value"
+}
+
+# The value Compose would resolve for this key from an env file (#3034; shared
+# since #4027 by every reader that must agree with the containers).
+#
+#   compose_env_file_value KEY [FILE]
+#
+# FILE defaults to `.env` in the working directory, which is the engine's
+# project `.env`. The wrapper passes the SOURCE repository's `.env` (#4275), so
+# the image-repository settings it reads there follow the same grammar as every
+# value Compose hands a container, rather than a second reader's.
+#
+# LAST-WINS, matching Compose dotenv parsing rather than the first-match reader
+# used for every other `require_*_env_key`. A duplicate is refused before this matters, but if
+# that refusal is ever relaxed this reader agrees with the containers instead of
+# disagreeing with them, which is the safer default of the two.
+#
+# It then undoes what Compose undoes: an `export ` prefix, whitespace around the
+# `=` or `:`, an inline comment (the same `[[:space:]]+#` rule `get_env_file_value`
+# applies for every other key), and ONE layer of matching surrounding quotes.
+# Those last three are why `APP_ENVIRONMENT_ROLE = production`,
+# `export APP_ENVIRONMENT_ROLE=production` and `APP_ENVIRONMENT_ROLE="production"`
+# no longer abort a deploy Compose would have resolved to `production` — and in
+# particular why the first two are no longer reported as a MISSING entry for a key
+# plainly present in the file, which is what gets an operator editing the wrong
+# line under deploy pressure.
+#
+# One place it stays narrower than Compose: a `#` INSIDE a quoted value is treated
+# as an inline comment and truncated. That can only shorten a value, so it can only
+# turn an accepted value into a refused one — never the reverse — and the refusal
+# names the sanitized value it read.
+compose_env_file_value() {
+  local key="$1"
+  local file="${2:-.env}"
+  local pattern
+  local value
+
+  pattern="$(env_assignment_pattern "$key")" || return 1
+  value="$(
+    sed -nE "s/${pattern}[[:space:]]*(.*)$/\3/p" "$file" |
+      tail -n 1
+  )"
+  value="$(printf '%s' "$value" | sed -E 's/[[:space:]]+#.*$//')"
+  strip_matching_quotes "$(trim_whitespace "$value")"
+}
+
 run_production_wrapper() {
 WRAPPER_MODE="${1:-deploy}"
 DEFAULT_SOURCE_REPO="$HOME/AlpineClubBookingsNZ"
@@ -14,8 +184,13 @@ DEPLOY_WORKSPACE_ROOT="${DEPLOY_WORKSPACE_ROOT:-$HOME/tacbookings-deployments}"
 COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-$(basename "$SOURCE_REPO" | tr '[:upper:]' '[:lower:]')}"
 SYNC_SOURCE_REPO_AFTER_DEPLOY="${SYNC_SOURCE_REPO_AFTER_DEPLOY:-1}"
 PRUNE_STALE_DEPLOY_WORKSPACES="${PRUNE_STALE_DEPLOY_WORKSPACES:-1}"
-GHCR_APP_IMAGE_REPOSITORY="${GHCR_APP_IMAGE_REPOSITORY:-ghcr.io/thatskiff33/alpineclubbookingsnz-app}"
-GHCR_MIGRATE_IMAGE_REPOSITORY="${GHCR_MIGRATE_IMAGE_REPOSITORY:-ghcr.io/thatskiff33/alpineclubbookingsnz-migrate}"
+# Resolved in `resolve_image_refs`: the shell environment, then the source
+# repository's .env, then the upstream defaults. Left empty here so an operator
+# who set neither can be told which source the deploy ended up using.
+GHCR_APP_IMAGE_REPOSITORY="${GHCR_APP_IMAGE_REPOSITORY:-}"
+GHCR_MIGRATE_IMAGE_REPOSITORY="${GHCR_MIGRATE_IMAGE_REPOSITORY:-}"
+UPSTREAM_GHCR_APP_IMAGE_REPOSITORY="ghcr.io/thatskiff33/alpineclubbookingsnz-app"
+UPSTREAM_GHCR_MIGRATE_IMAGE_REPOSITORY="ghcr.io/thatskiff33/alpineclubbookingsnz-migrate"
 APP_IMAGE="${APP_IMAGE:-}"
 MIGRATE_IMAGE="${MIGRATE_IMAGE:-}"
 ALLOW_UNPUBLISHED_DEPLOY_COMMIT="${ALLOW_UNPUBLISHED_DEPLOY_COMMIT:-0}"
@@ -108,6 +283,12 @@ write_active_upstream_file() {
     # the app had already closed and a reuse landing on that boundary was reset.
     # A reset POST/PUT cannot be replayed by Caddy's transport, so it reached the
     # browser as a bare 502 and every admin form showed its generic save error.
+    # The app reads the LAST X-Forwarded-For value as the visitor (getClientIp,
+    # src/lib/rate-limit.ts). Set it to Caddy's resolved client IP rather than
+    # appending Caddy's peer: behind a TLS-terminating proxy (CADDY_TLS_MODE=local,
+    # deploy/caddy/tls-local.caddy) the peer is the proxy, and every visitor would
+    # share one rate-limit bucket. With Caddy at the edge the two are the same.
+    echo "  header_up X-Forwarded-For {client_ip}"
     echo "  transport http {"
     echo "    keepalive 30s"
     echo "  }"
@@ -216,8 +397,42 @@ EOF
   warn "Push this commit as soon as the reason no longer holds, or the next release's preconditions are computed against a commit nobody else has."
 }
 
+# Where each image repository came from: the shell environment, the source
+# repository's .env, or the upstream default. A fork publishes its images under
+# its own owner, so a fork operator sets these once — and `.env` is where every
+# other deployment value already lives, so it is honoured here too. The deploy
+# says which source won, because a default silently pointing at the upstream
+# registry is exactly how a fork's deploy fails at step 9 with "not found".
+resolve_image_repository() {
+  local key="$1"
+  local env_value="$2"
+  local upstream_default="$3"
+  local file_value
+
+  # The value goes to stdout for the caller's substitution; the provenance
+  # note goes to stderr so it reaches the operator rather than the variable.
+  if [ -n "$env_value" ]; then
+    printf '%s\n' "$env_value"
+    info "$key: from the shell environment" >&2
+    return 0
+  fi
+  # Compose's own grammar (`compose_env_file_value`, file level): quotes
+  # removed, `export KEY=` honoured, the LAST duplicate wins. Step 2 of either
+  # wrapper mode has already refused a source repository without a .env.
+  file_value="$(compose_env_file_value "$key" "$SOURCE_REPO/.env")"
+  if [ -n "$file_value" ]; then
+    printf '%s\n' "$file_value"
+    info "$key: from $SOURCE_REPO/.env" >&2
+    return 0
+  fi
+  printf '%s\n' "$upstream_default"
+  info "$key: not set in the environment or .env; using the upstream default" >&2
+}
+
 resolve_image_refs() {
   if [ -z "$APP_IMAGE" ] && [ -z "$MIGRATE_IMAGE" ]; then
+    GHCR_APP_IMAGE_REPOSITORY="$(resolve_image_repository GHCR_APP_IMAGE_REPOSITORY "$GHCR_APP_IMAGE_REPOSITORY" "$UPSTREAM_GHCR_APP_IMAGE_REPOSITORY")"
+    GHCR_MIGRATE_IMAGE_REPOSITORY="$(resolve_image_repository GHCR_MIGRATE_IMAGE_REPOSITORY "$GHCR_MIGRATE_IMAGE_REPOSITORY" "$UPSTREAM_GHCR_MIGRATE_IMAGE_REPOSITORY")"
     APP_IMAGE="${GHCR_APP_IMAGE_REPOSITORY}:${RESOLVED_REF}"
     MIGRATE_IMAGE="${GHCR_MIGRATE_IMAGE_REPOSITORY}:${RESOLVED_REF}"
   elif [ -z "$APP_IMAGE" ] || [ -z "$MIGRATE_IMAGE" ]; then
@@ -774,6 +989,8 @@ DEPLOY_RUNTIME_STATUS_PATH="/api/deploy/runtime-status"
 # to drift; see get_service_runtime_payload for the review that measured exactly
 # that.
 EXPECTED_ENVIRONMENT_ROLE_DECLARATION="production"
+# Set by `require_environment_role_env_key` once it has validated the .env.
+VALIDATED_ENVIRONMENT_ROLE=""
 
 SHADOW_DATABASE_NAME="tacbookings_shadow_validate_$$"
 SHADOW_DATABASE_CREATED=0
@@ -1006,73 +1223,7 @@ drop_shadow_database() {
 }
 
 trap fail ERR
-trap drop_shadow_database EXIT
-
-trim_whitespace() {
-  local value="$1"
-  value="${value#"${value%%[![:space:]]*}"}"
-  value="${value%"${value##*[![:space:]]}"}"
-  printf '%s' "$value"
-}
-
-# Every shape Docker Compose's `.env` parser accepts as an assignment of any of
-# the given keys, as one extended regular expression (#4026).
-#
-#   env_assignment_pattern KEY [KEY...]
-#
-# THE ONE SPELLING OF THIS GRAMMAR. Every reader in this script that must agree
-# with Compose about whether a line assigns a key builds its pattern here. It is
-# a top-level function of the inner deploy, not of the file, and sourcing this
-# script starts the production wrapper, so nothing outside can CALL it. A
-# downstream fork's own deploy guard instead lifts the definition out of this
-# file, the way the contract tests do (`shellFunctionSource` in
-# src/lib/__tests__/helpers/deploy-script.ts), rather than keeping a hand-made
-# copy pinned equal by a test of its own.
-#
-# THE SHAPE WAS THE FINDING, twice. The first version of the #3034 check counted
-# with `awk -F=` and `$1 == key`, which needs the key to be the WHOLE first
-# `=`-field — so three shapes Compose honours slipped past it, measured against
-# real `docker compose v5.3.1`: an INDENTED line, an `export `-prefixed line, and
-# spaces around the `=`. Then #4026 measured `docker compose config` on Compose
-# v5.6.0 and found its parser also takes a YAML-style COLON as the separator:
-# `KEY: value`, `KEY:value`, `KEY : value` and `export KEY: value`. Any of those
-# appearing a SECOND time further down a .env whose first line is correct passed
-# the duplicate check and handed every container the second value. Appending to a
-# .env by hand, or from a rehearsal script, produces exactly those shapes.
-#
-# What it matches, mirroring Compose's dotenv parser: optional leading
-# whitespace; an optional `export` followed by whitespace; the key exactly; then
-# optional whitespace and an `=` or a `:`. A comment line cannot match, because a
-# `#` before the key fails the anchor, and a longer name sharing the prefix
-# (`KEY_EXTRA=`) cannot either, because only whitespace may sit between the key
-# and its separator.
-#
-# CAPTURE GROUPS ARE FIXED so a `sed -E` caller can append its own value group:
-# group 1 is the `export` prefix, group 2 is the key that matched, and a caller's
-# first group after the pattern is `\3`. The keys are literal environment-variable
-# names from this script ([A-Za-z_][A-Za-z0-9_]*); none of them holds a regex or
-# `sed` delimiter character, and a name that did would be refused below rather
-# than silently matching something else.
-env_assignment_pattern() {
-  local alternation=""
-  local key
-
-  for key in "$@"; do
-    case "$key" in
-      '' | [!A-Za-z_]* | *[!A-Za-z0-9_]*)
-        echo "env_assignment_pattern: not a plain variable name: $(printable_deploy_value "$key")" >&2
-        return 1
-        ;;
-    esac
-    alternation="${alternation:+$alternation|}$key"
-  done
-  if [ -z "$alternation" ]; then
-    echo "env_assignment_pattern: needs at least one key" >&2
-    return 1
-  fi
-
-  printf '^[[:space:]]*(export[[:space:]]+)?(%s)[[:space:]]*[=:]' "$alternation"
-}
+trap 'drop_shadow_database; rm -f "${CADDY_VALIDATION_ENV_FILE:-}"' EXIT
 
 # The #3034 check's pattern for one key: the shared grammar above, for exactly
 # that key. Deliberately scoped to the role check rather than by changing
@@ -1096,86 +1247,10 @@ count_environment_role_env_assignments() {
   grep -cE "$pattern" .env || true
 }
 
-# The value Compose would resolve for this key from .env (#3034; shared since
-# #4027 by every reader that must agree with the containers).
-#
-# LAST-WINS, matching Compose dotenv parsing rather than the first-match reader
-# used for every other `require_*_env_key`. A duplicate is refused before this matters, but if
-# that refusal is ever relaxed this reader agrees with the containers instead of
-# disagreeing with them, which is the safer default of the two.
-#
-# It then undoes what Compose undoes: an `export ` prefix, whitespace around the
-# `=` or `:`, an inline comment (the same `[[:space:]]+#` rule `get_env_file_value`
-# applies for every other key), and ONE layer of matching surrounding quotes.
-# Those last three are why `APP_ENVIRONMENT_ROLE = production`,
-# `export APP_ENVIRONMENT_ROLE=production` and `APP_ENVIRONMENT_ROLE="production"`
-# no longer abort a deploy Compose would have resolved to `production` — and in
-# particular why the first two are no longer reported as a MISSING entry for a key
-# plainly present in the file, which is what gets an operator editing the wrong
-# line under deploy pressure.
-#
-# One place it stays narrower than Compose: a `#` INSIDE a quoted value is treated
-# as an inline comment and truncated. That can only shorten a value, so it can only
-# turn an accepted value into a refused one — never the reverse — and the refusal
-# names the sanitized value it read.
-compose_env_file_value() {
-  local key="$1"
-  local pattern
-  local value
-  local first
-  local last
-
-  pattern="$(env_assignment_pattern "$key")" || return 1
-  value="$(
-    sed -nE "s/${pattern}[[:space:]]*(.*)$/\3/p" .env |
-      tail -n 1
-  )"
-  value="$(printf '%s' "$value" | sed -E 's/[[:space:]]+#.*$//')"
-  value="$(trim_whitespace "$value")"
-
-  # One layer of matching surrounding quotes, compared character by character
-  # rather than by a `case` pattern, because a pattern holding both quote
-  # characters inside a single-quoted shell word is unreadable and easy to get
-  # subtly wrong.
-  if [ "${#value}" -ge 2 ]; then
-    first="${value%"${value#?}"}"
-    last="${value#"${value%?}"}"
-    if [ "$first" = "$last" ] && { [ "$first" = '"' ] || [ "$first" = "'" ]; }; then
-      value="${value#?}"
-      value="${value%?}"
-    fi
-  fi
-
-  printf '%s' "$value"
-}
-
 # The #3034 role check's reader: the shared one above, kept under the name the
 # role check and its contract test use.
 environment_role_env_value() {
   compose_env_file_value "$1"
-}
-
-
-# A deployment-supplied value made safe to echo at an operator's terminal.
-#
-# The application deliberately reduces this same string to printable ASCII before
-# it reaches a log line or a page (`sanitizeEnvironmentRoleRawValue` in
-# src/lib/environment-role-declaration.ts), for the plain reason that a value
-# holding a newline or an escape sequence must not be able to write a second line
-# into — or repaint — the terminal of the person reading the refusal. A shell that
-# echoed the raw value would be the hole that module closes, reopened one layer
-# out. Control characters become `?` rather than being deleted, so the operator
-# can SEE that something is in there; the cap matches the app's 64 characters
-# including the `...` marker, so the whole result is printable ASCII.
-printable_deploy_value() {
-  local sanitized
-
-  sanitized="$(printf '%s' "$1" | tr -c ' -~' '?')"
-  if [ "${#sanitized}" -gt 64 ]; then
-    printf '%s...' "${sanitized:0:61}"
-  else
-    printf '%s' "$sanitized"
-  fi
 }
 
 get_env_file_value() {
@@ -1234,8 +1309,26 @@ compose_service_environment_value() {
   local service="$2"
   local key="$3"
 
-  printf '%s\n' "$rendered" | awk -v service="$service" -v key="$key" '
-    BEGIN { prefix = "      " key ":" }
+  compose_service_environment_entries "$rendered" "$service" | awk -v key="$key" '
+    BEGIN { prefix = key ":" }
+    !found && index($0, prefix) == 1 {
+      value = substr($0, length(prefix) + 1)
+      sub(/^[[:space:]]+/, "", value)
+      found = 1
+    }
+    END { if (found) print value }
+  '
+}
+
+# Every `environment:` entry of one service, as `KEY: value` lines exactly as
+# the render spells them (a value may still carry YAML's quotes). The structural
+# walk `compose_service_environment_value` reads one key from, and what
+# `validate_caddy_contract` hands its validation container whole (#4275).
+compose_service_environment_entries() {
+  local rendered="$1"
+  local service="$2"
+
+  printf '%s\n' "$rendered" | awk -v service="$service" '
     /^[^[:space:]]/ {
       in_services = ($0 == "services:"); in_service = 0; in_env = 0; next
     }
@@ -1245,13 +1338,90 @@ compose_service_environment_value() {
     in_service && /^    [^[:space:]]/ {
       in_env = ($0 == "    environment:"); next
     }
-    in_env && !found && index($0, prefix) == 1 {
-      value = substr($0, length(prefix) + 1)
-      sub(/^[[:space:]]+/, "", value)
-      found = 1
-    }
-    END { if (found) print value }
+    in_env && /^      [^[:space:]]/ { print substr($0, 7) }
   '
+}
+
+# One scalar as `docker compose config` writes it, decoded to the value the
+# container receives (#4276 review): whitespace and one layer of quotes off;
+# inside double quotes the YAML escapes `\"` and `\\`, inside single quotes
+# `''`; then the render's `$$` (Compose's escape for a literal `$`) back to `$`.
+# Other YAML escapes (`\n`, `\t`, `\uXXXX`) are left as written: none of the
+# settings this script reads is expected to hold a control character, and a
+# value left encoded is refused or compared as written, never silently widened.
+compose_render_scalar() {
+  local raw
+  local value
+
+  raw="$(trim_whitespace "$1")"
+  value="$(strip_matching_quotes "$raw")"
+  if [ "$value" != "$raw" ]; then
+    case "$raw" in
+      \"*) value="$(printf '%s' "$value" | sed -E 's/\\(["\\])/\1/g')" ;;
+      *) value="${value//\'\'/\'}" ;;
+    esac
+  fi
+  printf '%s' "${value//\$\$/\$}"
+}
+
+# One value as the service's container would receive it: read from the render
+# step 3 took (`render_resolved_compose_config`), decoded as above.
+# Compose has already applied the shell's precedence over `.env`, `.env`'s own
+# grammar and every `${VAR:-default}`, so this is the value the app parses —
+# not the file's line, which can be overridden, defaulted or quoted (#4275).
+resolved_service_env_value() {
+  local service="$1"
+  local key="$2"
+
+  compose_render_scalar "$(
+    compose_service_environment_value "$RESOLVED_COMPOSE_CONFIG" "$service" "$key"
+  )"
+}
+
+# Every item of one service's rendered `command:` list, one per line, as the
+# render spells it. Postgres takes its `-c NAME=value` settings from here.
+compose_service_command_items() {
+  local rendered="$1"
+  local service="$2"
+
+  printf '%s\n' "$rendered" | awk -v service="$service" '
+    /^[^[:space:]]/ {
+      in_services = ($0 == "services:"); in_service = 0; in_command = 0; next
+    }
+    in_services && /^  [^[:space:]]/ {
+      in_service = ($0 == "  " service ":"); in_command = 0; next
+    }
+    in_command && /^     *- / { item = $0; sub(/^ *- /, "", item); print item; next }
+    in_service && /^    [^[:space:]]/ {
+      in_command = ($0 == "    command:"); next
+    }
+  '
+}
+
+# The Compose model every step-3 check reads, rendered ONCE (#3377, #4275).
+#
+# `docker compose config` resolves the overlay list, the project `.env`, the
+# shell environment and `${VAR:-default}` interpolation exactly as every later
+# `docker compose` call in this deploy will, so a value read from it is the one
+# the container receives. The `--profile` makes the migrate service present, as
+# at step 13. The render holds secrets (DB_PASSWORD inside every DATABASE_URL);
+# it stays in this unexported variable and is never echoed.
+RESOLVED_COMPOSE_CONFIG=""
+render_resolved_compose_config() {
+  local stderr_file
+
+  stderr_file="$(mktemp)"
+  if ! RESOLVED_COMPOSE_CONFIG="$(docker compose --profile "$MIGRATE_SERVICE" config 2>"$stderr_file")"; then
+    cat "$stderr_file" >&2
+    rm -f "$stderr_file"
+    RESOLVED_COMPOSE_CONFIG=""
+    echo "Could not render the Docker Compose configuration, so the values the containers" >&2
+    echo "would receive (the migrate container's lock timeout, the email transport, Caddy's" >&2
+    echo "TLS mode, Postgres's max_connections) are unknown. Refusing to deploy rather than" >&2
+    echo "assume them (#3377, #4275)." >&2
+    return 1
+  fi
+  rm -f "$stderr_file"
 }
 
 # The lock_timeout a connection made with this URL would run under, or nothing.
@@ -1363,11 +1533,11 @@ migration_lock_timeout_ceiling_ms() {
 # aspirational, and all three failures above stop existing rather than being
 # patched one at a time.
 #
-# It still runs at step 3, before anything is pulled. The render needs `docker
-# compose` (step 2) and a `.env` carrying DB_PASSWORD, which the
-# `validate_env_contract` call immediately above it has just required; the
-# `--profile` is what makes the migrate service present at all, exactly as at
-# step 13. Everything else it needs, it renders for itself.
+# It still runs at step 3, before anything is pulled. The render
+# (`render_resolved_compose_config`, shared since #4275 with the email, Caddy and
+# Postgres checks) needs `docker compose` (step 2) and a `.env` carrying
+# DB_PASSWORD, which `validate_env_contract` has just required; its `--profile`
+# is what makes the migrate service present at all, exactly as at step 13.
 #
 # Two failures it exists to catch, and both are silent without it:
 #   - no lock_timeout on the connection migrations run on. Every migration then
@@ -1376,22 +1546,19 @@ migration_lock_timeout_ceiling_ms() {
 #     "unset", so the most natural way to write "turn this off" is also the most
 #     dangerous, and it looks like a configured value in every log.
 validate_migration_lock_timeout_contract() {
-  local rendered
-  local stderr_file
+  local rendered="$RESOLVED_COMPOSE_CONFIG"
   local url
   local value
   local ceiling_ms
   local max_ms
 
-  stderr_file="$(mktemp)"
-  if ! rendered="$(docker compose --profile "$MIGRATE_SERVICE" config 2>"$stderr_file")"; then
-    cat "$stderr_file" >&2
-    rm -f "$stderr_file"
-    echo "Could not render the Docker Compose configuration, so the lock timeout the migrate" >&2
+  # Rendered once at step 3 by `render_resolved_compose_config`, which refuses
+  # the deploy itself when Compose cannot render.
+  if [ -z "$rendered" ]; then
+    echo "No resolved Compose configuration was rendered, so the lock timeout the migrate" >&2
     echo "container would run under is unknown. Refusing to deploy rather than assume one (#3377)." >&2
     return 1
   fi
-  rm -f "$stderr_file"
 
   url="$(compose_service_environment_value "$rendered" "$MIGRATE_SERVICE" DATABASE_URL)"
   if [ -z "$url" ]; then
@@ -1444,6 +1611,11 @@ require_one_of_env_keys() {
   return 1
 }
 
+# The one placeholder rule, for a value read from .env or from the render.
+value_looks_like_placeholder() {
+  printf '%s' "$1" | grep -Eqi '(^<.*>$|placeholder|changeme|example\.com)'
+}
+
 require_non_placeholder_env_key() {
   local key="$1"
   local value
@@ -1451,10 +1623,96 @@ require_non_placeholder_env_key() {
   require_env_key "$key"
   value="$(trim_whitespace "$(get_env_file_value "$key")")"
 
-  if printf '%s' "$value" | grep -Eqi '(^<.*>$|placeholder|changeme|example\.com)'; then
+  if value_looks_like_placeholder "$value"; then
     echo ".env entry appears to be a placeholder and must be replaced: $key" >&2
     return 1
   fi
+}
+
+# A key the app treats as OPTIONAL — absent or blank means "feature off" — but
+# which must not be left holding a placeholder if it is set at all. Until this
+# helper the preflight demanded LEGACY_DASHBOARD_EXPORT_TOKEN unconditionally,
+# while .env.example and CONFIGURATION.md both say to leave it empty to disable
+# the bridge, so a club that never ran the legacy export could not deploy.
+require_optional_non_placeholder_env_key() {
+  local key="$1"
+  local value
+
+  value="$(trim_whitespace "$(get_env_file_value "$key")")"
+  if [ -z "$value" ]; then
+    return 0
+  fi
+  if value_looks_like_placeholder "$value"; then
+    echo ".env entry appears to be a placeholder and must be replaced or left empty: $key" >&2
+    return 1
+  fi
+}
+
+# CADDY_TLS_MODE selects `deploy/caddy/tls-<mode>.caddy` from the Caddyfile's
+# global options (DEPLOYMENT.md, "Behind a TLS-terminating proxy"). Read as the
+# caddy service would receive it — docker-compose.yml defaults it to acme, and a
+# shell export beats .env — because that is what the Caddyfile's import sees.
+# Only the two snippet files exist, so anything else would stop Caddy at step 17,
+# after the migration; it is refused here instead.
+require_resolved_caddy_tls_mode() {
+  local value
+
+  value="$(resolved_service_env_value "$CADDY_SERVICE" CADDY_TLS_MODE)"
+  case "$value" in
+    acme|local) return 0 ;;
+    *)
+      echo "CADDY_TLS_MODE must be 'acme' (Caddy is the public edge) or 'local' (behind a TLS-terminating proxy); Docker Compose would hand the '${CADDY_SERVICE}' service '$(printable_deploy_value "$value")'. Set it in .env." >&2
+      return 1
+      ;;
+  esac
+}
+
+# In local mode Caddy believes the client address a trusted proxy forwards, so
+# the proxies it trusts are an explicit setting (#4275): CADDY_TRUSTED_PROXIES,
+# the address or CIDR of the proxy in front, as the caddy service would receive
+# it. Unused in acme mode, which never imports tls-local.caddy.
+#
+# It has no usable default. docker-compose.yml hands Caddy the sentinel below
+# when .env does not set it, which Caddy rejects as an address, so a Caddy
+# recreated by hand without the setting stops instead of trusting nothing;
+# this check refuses the sentinel and an empty value first, with the reason.
+# Each entry must be a plain IP address or CIDR, never a whole address family
+# (any `/0`), and never `private_ranges`: the setting exists to name the proxy.
+CADDY_TRUSTED_PROXIES_UNSET="set-CADDY_TRUSTED_PROXIES-for-local-mode"
+require_resolved_caddy_trusted_proxies() {
+  local mode
+  local value
+  local entry
+  local -a entries=()
+
+  mode="$(resolved_service_env_value "$CADDY_SERVICE" CADDY_TLS_MODE)"
+  [ "$mode" = "local" ] || return 0
+  value="$(resolved_service_env_value "$CADDY_SERVICE" CADDY_TRUSTED_PROXIES)"
+  if [ -z "$value" ] || [ "$value" = "$CADDY_TRUSTED_PROXIES_UNSET" ]; then
+    echo "CADDY_TLS_MODE=local needs CADDY_TRUSTED_PROXIES: the address or CIDR of the proxy in front of Caddy (for example 10.0.0.2/32), set in .env. It has no default: the setting exists to name the one proxy Caddy should believe. See DEPLOYMENT.md, \"Client IPs behind the proxy\"." >&2
+    return 1
+  fi
+  read -r -a entries <<< "$value"
+  for entry in "${entries[@]}"; do
+    if [ "$entry" = "private_ranges" ]; then
+      echo "CADDY_TRUSTED_PROXIES must name the proxy in front of Caddy, not private_ranges, which trusts every private address: the setting exists to make that trust explicit. Set the proxy's address or CIDR in .env." >&2
+      return 1
+    fi
+    case "$entry" in
+      *[!0-9A-Fa-f:./]*)
+        echo "CADDY_TRUSTED_PROXIES entries must be IP addresses or CIDRs separated by spaces; '$(printable_deploy_value "$entry")' is not. Set it in .env." >&2
+        return 1
+        ;;
+    esac
+    case "$entry" in
+      */*)
+        if [ -z "$(printf '%s' "${entry##*/}" | tr -d '0')" ]; then
+          echo "CADDY_TRUSTED_PROXIES must name the proxy in front of Caddy, not every address ($(printable_deploy_value "$entry")). Set it in .env." >&2
+          return 1
+        fi
+        ;;
+    esac
+  done
 }
 
 # NOTE: require_boolean_env_key / require_positive_integer_env_key /
@@ -1678,6 +1936,10 @@ require_environment_role_env_key() {
     return 1
   fi
 
+  # The canonical, validated answer, for the step-3 checks that depend on it
+  # (the email transport's capture refusal) — so none re-reads or re-folds it.
+  VALIDATED_ENVIRONMENT_ROLE="$normalised"
+
   # Belt and braces now that the two agree: drop the variable from this shell so
   # the .env is the ONLY source Compose can read it from. Nothing else in this
   # script reads it, and the value is re-verified from each container's own
@@ -1780,14 +2042,234 @@ require_domain_matches_url() {
 }
 
 require_safe_database_password() {
+  local key
   local value
 
-  value="$(trim_whitespace "$(get_env_file_value DB_PASSWORD)")"
-  if printf '%s' "$value" | grep -Eq '[@/:?#[:space:]]'; then
-    echo "DB_PASSWORD contains URL-unsafe characters for the DATABASE_URL values in docker-compose.yml" >&2
-    echo "Use a password without @ / : ? # or whitespace, or update the compose URLs to URL-encode it." >&2
+  # APP_DB_PASSWORD and MIGRATION_DB_PASSWORD are the optional least-privilege
+  # role passwords (#4453); docker-compose.yml interpolates them into the same
+  # DATABASE_URL values, unencoded, when they are set. `%` is refused too: an
+  # unencoded `%` is percent-decoded into a different password. The character
+  # set is the one `CONNECTION_STRING_UNSAFE_PASSWORD` in
+  # src/lib/database-roles.ts refuses; database-roles-password-charset.test.ts
+  # pins the two equal.
+  for key in DB_PASSWORD APP_DB_PASSWORD MIGRATION_DB_PASSWORD; do
+    value="$(trim_whitespace "$(get_env_file_value "$key")")"
+    if printf '%s' "$value" | grep -Eq '[@/:?#%[:space:]]'; then
+      echo "$key contains URL-unsafe characters for the DATABASE_URL values in docker-compose.yml" >&2
+      echo "Use a password without @ / : ? # % or whitespace (a hex secret: openssl rand -hex 24)." >&2
+      return 1
+    fi
+  done
+}
+
+# The same shell-versus-.env check for a value that carries a password, such as a
+# connection string (#4453 review N1). It says only THAT the two differ: the
+# generic helper above prints both values, which here would put the password in
+# the deploy log.
+require_exported_secret_matches_env_file() {
+  local key="$1"
+  local exported
+  local in_env_file
+
+  if [ -z "${!key+x}" ]; then
+    return 0
+  fi
+  exported="${!key}"
+  in_env_file="$(compose_env_file_value "$key")" || return 1
+
+  if [ "$exported" != "$in_env_file" ]; then
+    echo "$key disagrees between this shell and .env, and Docker Compose would" >&2
+    echo "hand the containers the SHELL value. Refusing rather than deploying the" >&2
+    echo "one you did not write in .env. (Neither value is shown: it holds a password.)" >&2
+    echo "Run 'unset $key' in this shell (and remove it from whatever exported" >&2
+    echo "it), set the value you want in .env, then re-run." >&2
     return 1
   fi
+
+  unset "$key"
+}
+
+# The least-privilege database roles (#4453) are switched on together or not at
+# all. With APP_DB_USER alone, the next migration would create its tables as the
+# superuser, invisible to the application role (and to the nightly pg_dump it
+# runs), and the audit retention job would fail every night with "permission
+# denied". MIGRATION_DB_USER alone is harmless and allowed.
+require_least_privilege_roles_complete() {
+  local key
+  local app_user
+  local migration_user
+  local retention_url
+
+  for key in APP_DB_USER MIGRATION_DB_USER; do
+    require_exported_value_matches_env_file "$key"
+  done
+  # Step 2 of the DEPLOYMENT.md roles procedure has the operator export the two
+  # role passwords; one left exported and since changed in .env would reach the
+  # containers instead of the .env value (#4453 review). Checked only when set.
+  for key in APP_DB_PASSWORD MIGRATION_DB_PASSWORD AUDIT_RETENTION_DATABASE_URL; do
+    require_exported_secret_matches_env_file "$key"
+  done
+
+  app_user="$(trim_whitespace "$(get_env_file_value APP_DB_USER)")"
+  [ -n "$app_user" ] || return 0
+  migration_user="$(trim_whitespace "$(get_env_file_value MIGRATION_DB_USER)")"
+  retention_url="$(trim_whitespace "$(get_env_file_value AUDIT_RETENTION_DATABASE_URL)")"
+  if [ -z "$migration_user" ] || [ -z "$retention_url" ]; then
+    echo "APP_DB_USER is set, so MIGRATION_DB_USER and AUDIT_RETENTION_DATABASE_URL must be set too (#4453)." >&2
+    echo "Set all three (DEPLOYMENT.md \"Least-privilege database roles\"), or unset APP_DB_USER to keep the single superuser." >&2
+    return 1
+  fi
+}
+
+# The email transport, checked against what each app service would RECEIVE
+# (#4275) — the rule `resolveEmailDeliveryConfigFromEnv` (src/lib/email-delivery.ts)
+# applies at boot. Until #4275 the preflight demanded the AWS SES keys
+# unconditionally, so a club relaying through its own SMTP provider could not
+# deploy; and a first cut read the .env file, which is not what the app sees:
+# docker-compose.yml defaults USE_AWS_SES to true, so `USE_SMTP_RELAY=true` alone
+# passed that check and then the app refused two enabled providers, and a shell
+# export could override what was checked. Reading the render takes Compose's
+# defaults, its precedence and its unquoting as given.
+#
+# Exactly one flag true; all three empty is the app's legacy AWS SES default; a
+# flag set with none true is refused. Relay and capture read the same four
+# EMAIL_SERVER_* settings; capture is refused unless the role gate above
+# validated a non-production installation, which this script never deploys, so
+# a capture mailbox stops the deploy at step 3 instead of at the health check.
+#
+# ENGINE-SECTION ONLY. Everything between the file-level readers and
+# `run_internal_blue_green_deploy` is nested inside `run_production_wrapper`,
+# which the `--internal-blue-green-deploy` re-entry never calls, so the
+# wrapper's `env_flag_is_true` does not exist in this process. The flag test is
+# therefore defined here: only `true` and `false`, case-insensitively, as the
+# app's `parseBooleanFlag` reads them — `yes` is an error there, so it is here.
+email_flag_is_true() {
+  case "$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')" in
+    true) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+require_email_flag_is_boolean() {
+  local service="$1" name="$2" value="$3"
+  case "$(printf '%s' "$value" | tr '[:upper:]' '[:lower:]')" in
+    ""|true|false) return 0 ;;
+    *)
+      echo "${name} must be true or false; Docker Compose would hand the '${service}' service '$(printable_deploy_value "$value")'" >&2
+      return 1
+      ;;
+  esac
+}
+
+# A setting the selected provider needs: present and not a placeholder, as the
+# service would receive it.
+require_resolved_service_value() {
+  local service="$1" key="$2" value
+
+  value="$(resolved_service_env_value "$service" "$key")"
+  if [ -z "$value" ]; then
+    echo "${key} is empty in what Docker Compose would hand the '${service}' service; set it in .env" >&2
+    return 1
+  fi
+  if value_looks_like_placeholder "$value"; then
+    echo "${key} appears to be a placeholder in what Docker Compose would hand the '${service}' service, and must be replaced in .env" >&2
+    return 1
+  fi
+}
+
+require_resolved_email_transport_for_service() {
+  local service="$1"
+  local use_ses use_relay use_capture enabled_count=0 key
+
+  # Trimmed after decoding, as the app's parseBooleanFlag trims: a quoted
+  # `" true "` reaches the container with its spaces.
+  use_ses="$(trim_whitespace "$(resolved_service_env_value "$service" USE_AWS_SES)")"
+  use_relay="$(trim_whitespace "$(resolved_service_env_value "$service" USE_SMTP_RELAY)")"
+  use_capture="$(trim_whitespace "$(resolved_service_env_value "$service" USE_LOCAL_CAPTURE)")"
+  require_email_flag_is_boolean "$service" USE_AWS_SES "$use_ses" || return 1
+  require_email_flag_is_boolean "$service" USE_SMTP_RELAY "$use_relay" || return 1
+  require_email_flag_is_boolean "$service" USE_LOCAL_CAPTURE "$use_capture" || return 1
+  if email_flag_is_true "$use_ses"; then enabled_count=$((enabled_count + 1)); fi
+  if email_flag_is_true "$use_relay"; then enabled_count=$((enabled_count + 1)); fi
+  if email_flag_is_true "$use_capture"; then enabled_count=$((enabled_count + 1)); fi
+
+  if [ "$enabled_count" -gt 1 ]; then
+    echo "Only one of USE_AWS_SES, USE_SMTP_RELAY and USE_LOCAL_CAPTURE may be true; Docker Compose would hand the '${service}' service USE_AWS_SES=$(printable_deploy_value "$use_ses"), USE_SMTP_RELAY=$(printable_deploy_value "$use_relay"), USE_LOCAL_CAPTURE=$(printable_deploy_value "$use_capture")" >&2
+    echo "docker-compose.yml defaults USE_AWS_SES to true, so a club on an SMTP relay sets USE_AWS_SES=false in .env as well as USE_SMTP_RELAY=true." >&2
+    return 1
+  fi
+  if [ "$enabled_count" -eq 0 ] && [ -n "${use_ses}${use_relay}${use_capture}" ]; then
+    echo "Exactly one email provider flag must be true (USE_AWS_SES, USE_SMTP_RELAY or USE_LOCAL_CAPTURE); Docker Compose would hand the '${service}' service none that is true" >&2
+    return 1
+  fi
+
+  if email_flag_is_true "$use_relay" || email_flag_is_true "$use_capture"; then
+    if email_flag_is_true "$use_capture" && [ "$VALIDATED_ENVIRONMENT_ROLE" != "non-production" ]; then
+      echo "USE_LOCAL_CAPTURE=true is refused on the club's live site (APP_ENVIRONMENT_ROLE=$(printable_deploy_value "${VALIDATED_ENVIRONMENT_ROLE:-unvalidated}")): a capture mailbox would accept every message and deliver none" >&2
+      return 1
+    fi
+    for key in EMAIL_SERVER_HOST EMAIL_SERVER_PORT EMAIL_SERVER_USER EMAIL_SERVER_PASSWORD; do
+      require_resolved_service_value "$service" "$key" || return 1
+    done
+    return 0
+  fi
+
+  # USE_AWS_SES=true, or all three empty (the app's legacy default).
+  for key in SMTP_HOST SMTP_PORT AWS_SES_ACCESS_KEY_ID AWS_SES_SECRET_ACCESS_KEY SES_SNS_TOPIC_ARN; do
+    require_resolved_service_value "$service" "$key" || return 1
+  done
+}
+
+# Every service that runs the app opens a transport: the cron leader and both
+# colours. An overlay can give one of them a different value, so each is read.
+validate_resolved_email_transport() {
+  local service
+
+  for service in "$CRON_SERVICE" "$BLUE_SERVICE" "$GREEN_SERVICE"; do
+    require_resolved_email_transport_for_service "$service" || return 1
+  done
+}
+
+# Postgres's `max_connections`, as the postgres service's command would carry it
+# (#4275). POSTGRES_MAX_CONNECTIONS is interpolated into a `-c` argument, so
+# Compose accepts any string — `abc` included — and PostgreSQL refuses it only
+# when the container is recreated at step 11, after images are pulled. A value
+# that is a number but not above the pools the resolved model can open together
+# breaks the documented budget (DEPLOYMENT.md, "Connection pool sizing": sum of
+# pools plus non-pool consumers <= max_connections), so the floor is that sum
+# plus one, derived from the render rather than restated. The ceiling is a typo
+# guard: an extra digit on 80 asks a container sized for tens of backends for
+# hundreds more. No `max_connections` in the command at all is PostgreSQL's own
+# default and is left alone.
+POSTGRES_MAX_CONNECTIONS_MAX=1000
+validate_resolved_postgres_max_connections() {
+  local item value="" found=0 service url limit pools=0 reason
+
+  while IFS= read -r item; do
+    item="$(compose_render_scalar "$item")"
+    case "$item" in
+      max_connections=*) value="${item#max_connections=}"; found=1 ;;
+    esac
+  done <<< "$(compose_service_command_items "$RESOLVED_COMPOSE_CONFIG" "$POSTGRES_SERVICE")"
+  if [ "$found" = "0" ]; then
+    return 0
+  fi
+
+  for service in "$BLUE_SERVICE" "$GREEN_SERVICE" "$CRON_SERVICE" "$MIGRATE_SERVICE"; do
+    url="$(compose_service_environment_value "$RESOLVED_COMPOSE_CONFIG" "$service" DATABASE_URL)"
+    limit="$(printf '%s' "$url" | sed -nE 's/.*[?&]connection_limit=([0-9]+).*/\1/p')"
+    # Base 10 explicitly: `connection_limit=08` is eight, not an octal error.
+    pools=$((pools + 10#${limit:-0}))
+  done
+
+  reason="the resolved pools can open ${pools} connections together (DEPLOYMENT.md, Connection pool sizing), and PostgreSQL refuses anything it cannot parse only once the postgres container is recreated; set POSTGRES_MAX_CONNECTIONS in .env"
+  if ! printf '%s' "$value" | grep -Eq '^[0-9]+$'; then
+    echo "POSTGRES_MAX_CONNECTIONS must be a whole number between $((pools + 1)) and ${POSTGRES_MAX_CONNECTIONS_MAX}: ${reason}. Got: $(printable_deploy_value "$value")" >&2
+    return 1
+  fi
+  require_integer_setting_in_range POSTGRES_MAX_CONNECTIONS "$value" \
+    "$((pools + 1))" "$POSTGRES_MAX_CONNECTIONS_MAX" "$reason" \
+    || return 1
 }
 
 validate_host_contract() {
@@ -1813,6 +2295,7 @@ validate_env_contract() {
 
   require_non_placeholder_env_key DB_PASSWORD
   require_safe_database_password
+  require_least_privilege_roles_complete
   require_non_placeholder_env_key DOMAIN
   require_http_url_env_key NEXTAUTH_URL
   require_one_of_env_keys "AUTH_SECRET or NEXTAUTH_SECRET" AUTH_SECRET NEXTAUTH_SECRET
@@ -1829,13 +2312,11 @@ validate_env_contract() {
   note_shell_stopped_ack_is_validator_only
   # Stripe credentials moved to encrypted, DB-backed storage (#2082) — no longer
   # required (or read) from .env. Legacy vars are warned about below.
-  require_non_placeholder_env_key SMTP_HOST
-  require_non_placeholder_env_key SMTP_PORT
-  require_non_placeholder_env_key AWS_SES_ACCESS_KEY_ID
-  require_non_placeholder_env_key AWS_SES_SECRET_ACCESS_KEY
-  require_non_placeholder_env_key SES_SNS_TOPIC_ARN
+  # The email transport's provider keys and CADDY_TLS_MODE are checked after
+  # this, against the resolved Compose model (`validate_resolved_*`, #4275).
   require_non_placeholder_env_key EMAIL_FROM
-  require_non_placeholder_env_key LEGACY_DASHBOARD_EXPORT_TOKEN
+  # Optional: blank disables the legacy export bridge (CONFIGURATION.md).
+  require_optional_non_placeholder_env_key LEGACY_DASHBOARD_EXPORT_TOKEN
   # Backup configuration moved to the encrypted, DB-backed store in-app (#2095):
   # BACKUP_ENABLED / BACKUP_RETENTION_DAYS / BACKUP_S3_* / BACKUP_RESTORE_VALIDATION_URL
   # are no longer read from .env, so they are not validated here — only warned
@@ -1919,21 +2400,51 @@ validate_repo_contract() {
   }
 }
 
+# Caddy validates the Caddyfile with the caddy service's WHOLE resolved
+# environment (#4275), not DOMAIN alone: the Caddyfile imports
+# `tls-{$CADDY_TLS_MODE:acme}.caddy` and reads CADDY_TRUSTED_PROXIES, MEET_HOST
+# and the rest, so validating without them checked the acme configuration on a
+# local-mode installation and left a broken local one to fail at step 17, after
+# the migration. Read from the step-3 render, so a shell export and every
+# Compose default apply here exactly as they will to the running container.
+CADDY_VALIDATION_ENV_FILE=""
 validate_caddy_contract() {
   local domain
+  local entry
+  local status=0
 
-  domain="$(trim_whitespace "$(get_env_file_value DOMAIN)")"
+  domain="$(resolved_service_env_value "$CADDY_SERVICE" DOMAIN)"
+  if [ -z "$domain" ]; then
+    echo "DOMAIN is empty in what Docker Compose would hand the '${CADDY_SERVICE}' service; set DOMAIN in .env" >&2
+    return 1
+  fi
   if ! grep -Fq "$domain" Caddyfile && ! grep -Fq '{$DOMAIN}' Caddyfile; then
     echo "DOMAIN=$domain does not appear in Caddyfile and Caddyfile does not use the {\$DOMAIN} placeholder" >&2
     return 1
   fi
 
-  docker run --rm \
-    -e "DOMAIN=$domain" \
+  # Through a file, not `-e` arguments a process listing would show: created
+  # mode 600 (umask in the substitution's subshell), removed on every return
+  # here and by the EXIT trap if the deploy is interrupted mid-validation.
+  CADDY_VALIDATION_ENV_FILE="$(umask 077 && mktemp)"
+  while IFS= read -r entry; do
+    [ -n "$entry" ] || continue
+    printf '%s=%s\n' "${entry%%:*}" "$(compose_render_scalar "${entry#*:}")" >> "$CADDY_VALIDATION_ENV_FILE"
+  done <<< "$(compose_service_environment_entries "$RESOLVED_COMPOSE_CONFIG" "$CADDY_SERVICE")"
+
+  if docker run --rm \
+    --env-file "$CADDY_VALIDATION_ENV_FILE" \
     -v "$PROJECT_DIR/Caddyfile:/etc/caddy/Caddyfile:ro" \
     -v "$PROJECT_DIR/deploy/caddy:/etc/caddy/deploy:ro" \
     caddy:2-alpine \
-    caddy validate --config /etc/caddy/Caddyfile >/dev/null
+    caddy validate --config /etc/caddy/Caddyfile >/dev/null; then
+    status=0
+  else
+    status=$?
+  fi
+  rm -f "$CADDY_VALIDATION_ENV_FILE"
+  CADDY_VALIDATION_ENV_FILE=""
+  return "$status"
 }
 
 wait_for_health() {
@@ -2368,6 +2879,69 @@ validate_prisma_schema_matches_migrations() {
   fi
 
   drop_shadow_database
+}
+
+# After the migrate, with the least-privilege roles on (#4453): every relation in
+# schema public must be owned by the migration role and readable by the
+# application role. Anything else (a table a superuser created by hand, a
+# rollback.sql run as the operator, a migration that ran before the switch) is
+# invisible to the app and to its nightly pg_dump, so refuse before the new
+# colour starts. An extension's own relations (pg_buffercache, PostGIS) are left
+# out, as provisioning leaves them with their owner. The SQL is ONE definition:
+# `DEPLOY_GRANTS_CHECK_SQL` in src/lib/database-roles.ts, which
+# deploy-database-roles-script-contract.test.ts pins this copy equal to. A view the app could write through is refused too: a new view
+# gets the default table grants, and DML through a view runs with its owner's
+# rights, so it must be narrowed to SELECT first. So is an append-only relation
+# (`APPEND_ONLY_RELATIONS`: BookingLedgerLine, AuditLog, the member-money
+# journal) the app could change beyond INSERT: UPDATE, DELETE, TRUNCATE, TRIGGER,
+# REFERENCES or a column UPDATE. The fix is a re-run of `db:provision-roles --apply`. The SQL
+# between the markers is run as shipped by database-roles.realdb.test.ts.
+verify_least_privilege_role_grants() {
+  local app_user
+  local migration_user
+  local check_sql
+  local offending
+
+  app_user="$(trim_whitespace "$(get_env_file_value APP_DB_USER)")"
+  [ -n "$app_user" ] || return 0
+  migration_user="$(trim_whitespace "$(get_env_file_value MIGRATION_DB_USER)")"
+
+  # BEGIN least-privilege-grants-check
+  check_sql="$(cat <<'SQL'
+SELECT coalesce(string_agg(c.relname, ', ' ORDER BY c.relname), '')
+FROM pg_catalog.pg_class c
+JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+WHERE n.nspname = 'public'
+  AND c.relkind IN ('r', 'p', 'v', 'm')
+  AND NOT EXISTS (
+    SELECT 1 FROM pg_catalog.pg_depend d
+    WHERE d.classid = 'pg_catalog.pg_class'::regclass AND d.objid = c.oid AND d.deptype = 'e'
+  )
+  AND (pg_catalog.pg_get_userbyid(c.relowner) <> :'migration_role'
+       OR NOT pg_catalog.has_table_privilege(:'app_role', c.oid, 'SELECT')
+       OR (c.relkind IN ('v', 'm')
+           AND pg_catalog.has_table_privilege(:'app_role', c.oid, 'INSERT, UPDATE, DELETE'))
+       OR (c.relname IN ('BookingLedgerLine', 'AuditLog', 'MemberMoneyEvent', 'MemberMoneyJournal', 'MemberMoneyLine', 'MemberMoneyObligation', 'MemberMoneyApplication', 'MemberMoneySourceLink', 'MemberMoneySourcePosting')
+           AND (pg_catalog.has_table_privilege(:'app_role', c.oid, 'UPDATE, DELETE, TRUNCATE, TRIGGER, REFERENCES')
+                OR pg_catalog.has_any_column_privilege(:'app_role', c.oid, 'UPDATE'))));
+SQL
+)"
+  # END least-privilege-grants-check
+
+  if ! offending="$(
+    printf '%s\n' "$check_sql" |
+      docker compose exec -T "$POSTGRES_SERVICE" psql -U tac -d tacbookings \
+        -v ON_ERROR_STOP=1 -v migration_role="$migration_user" -v app_role="$app_user" -Atq -f -
+  )"; then
+    echo "Could not check the least-privilege role grants after the migrate (does each role exist?)." >&2
+    return 1
+  fi
+  if [ -n "$offending" ]; then
+    echo "After the migrate, these relations fail the least-privilege grants check: $offending" >&2
+    echo "Each one is not owned by $migration_user, not readable by $app_user, a view $app_user could write through, or an append-only relation (BookingLedgerLine, AuditLog, the member-money journal) $app_user could change beyond INSERT." >&2
+    echo "Re-run 'pnpm run db:provision-roles --apply' as the operator (DEPLOYMENT.md \"Least-privilege database roles\"), then deploy again." >&2
+    return 1
+  fi
 }
 
 verify_prisma_migration_status() {
@@ -3585,6 +4159,12 @@ write_active_upstream_file() {
     # the app had already closed and a reuse landing on that boundary was reset.
     # A reset POST/PUT cannot be replayed by Caddy's transport, so it reached the
     # browser as a bare 502 and every admin form showed its generic save error.
+    # The app reads the LAST X-Forwarded-For value as the visitor (getClientIp,
+    # src/lib/rate-limit.ts). Set it to Caddy's resolved client IP rather than
+    # appending Caddy's peer: behind a TLS-terminating proxy (CADDY_TLS_MODE=local,
+    # deploy/caddy/tls-local.caddy) the peer is the proxy, and every visitor would
+    # share one rate-limit bucket. With Caddy at the edge the two are the same.
+    echo "  header_up X-Forwarded-For {client_ip}"
     echo "  transport http {"
     echo "    keepalive 30s"
     echo "  }"
@@ -3683,10 +4263,18 @@ info "Host has the required deployment commands."
 step "3/20" "Validating deployment environment contract"
 validate_env_contract
 validate_image_reference_contract
+# What the containers would actually receive, rendered once (#4275).
+render_resolved_compose_config
 # Checked HERE, at the cheapest possible point, and not at step 13 where it is
 # used: a mistyped or removed lock-timeout bound should stop the deploy before
 # it pulls an image, never after a migration has already started waiting (#3377).
 validate_migration_lock_timeout_contract
+# The same reasoning for the settings #4275 made configurable: each is read as
+# its service would receive it, and refused here rather than at step 11 or 17.
+validate_resolved_email_transport
+require_resolved_caddy_tls_mode
+require_resolved_caddy_trusted_proxies
+validate_resolved_postgres_max_connections
 # Same reasoning (#3965): an unreadable bound must stop the deploy here, not
 # make the in-container read retry at step 14 compare against a non-number.
 require_integer_setting_in_range DEPLOY_INTERNAL_READ_TIMEOUT_SECONDS "$DEPLOY_INTERNAL_READ_TIMEOUT_SECONDS" \
@@ -3750,6 +4338,7 @@ info "Lock timeout in force for this migrate: ${MIGRATION_LOCK_TIMEOUT_MS_EFFECT
 docker compose --profile "$MIGRATE_SERVICE" run --rm "$MIGRATE_SERVICE"
 verify_prisma_migration_status
 info "Prisma migration status reports the database is up to date."
+verify_least_privilege_role_grants
 
 step "14/20" "Starting target web service"
 docker compose up -d --force-recreate "$TARGET_SERVICE"

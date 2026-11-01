@@ -10,19 +10,25 @@ const mocks = vi.hoisted(() => ({
   enqueue: vi.fn(),
   record: vi.fn(),
   close: vi.fn(),
+  audit: vi.fn(),
 }));
 
 vi.mock("@/lib/prisma", () => ({ prisma: mocks.prisma }));
-vi.mock("@/lib/payment-recovery", () => ({ enqueueAdditionalPaymentIntentRecovery: mocks.enqueue }));
+vi.mock("@/lib/audit", () => ({ createAuditLog: mocks.audit }));
+vi.mock("@/lib/payment-recovery", () => ({ createAdditionalPaymentIntentRecoveryOnce: mocks.enqueue }));
 vi.mock("@/lib/credit-release-xero-payment", () => ({ recordCreditReleasePayments: mocks.record }));
 vi.mock("@/lib/credit-release-ask-close", () => ({ closeCreditReleaseAsksPaidInXero: mocks.close }));
 vi.mock("@/lib/logger", () => ({ default: { info: vi.fn(), warn: vi.fn(), error: vi.fn() } }));
 
 import {
+  CREDIT_RELEASE_BACKLOG_DEFAULT_PER_RUN,
+  CREDIT_RELEASE_BACKLOG_MAX_PER_RUN,
   CREDIT_RELEASE_SETTLE_WINDOW_MS,
   creditReleaseAskWriterSince,
+  creditReleaseBacklogPerRun,
   enqueueCreditReleaseAsks,
   runCreditReleaseAskSweep,
+  runCreditReleaseBacklog,
 } from "@/lib/credit-release-ask-sweep";
 import {
   buildCreditReleaseAskRecoveryIdempotencyKey,
@@ -42,7 +48,8 @@ beforeEach(() => {
   mocks.prisma.memberCredit.findMany.mockResolvedValue([]);
   mocks.prisma.paymentRecoveryOperation.findMany.mockResolvedValue([]);
   mocks.prisma.payment.findFirst.mockResolvedValue({ id: "pay-1" });
-  mocks.enqueue.mockResolvedValue(undefined);
+  // Created by this call: the ordinary case.
+  mocks.enqueue.mockResolvedValue(true);
   mocks.record.mockResolvedValue({ recorded: 0, held: 0, failed: 0, waiting: 0 });
   mocks.close.mockResolvedValue({ closed: 0, left: 0 });
 });
@@ -125,16 +132,140 @@ describe("runCreditReleaseAskSweep", () => {
     expect(mocks.close).toHaveBeenCalledTimes(1);
   });
 
-  it("enqueues once the switch is on", async () => {
-    mocks.prisma.xeroSyncCursor.findUnique.mockResolvedValue({ metadata: { enabled: true }, createdAt: SINCE });
+  it("enqueues once the switch is on, and leaves the backlog alone while its own switch is off", async () => {
+    mocks.prisma.xeroSyncCursor.findUnique.mockImplementation(async ({ where }) =>
+      where.resourceType_scope.scope === "WRITER" ? { metadata: { enabled: true }, createdAt: SINCE } : null,
+    );
     mocks.prisma.memberCredit.findMany.mockResolvedValue([{ id: "rel-1", amountCents: 4000, appliedToBookingId: "bk-1" }]);
     const result = await runCreditReleaseAskSweep();
     expect(result.enqueued).toBe(1);
+    expect(result.backlogEnqueued).toBe(0);
+    expect(mocks.audit).not.toHaveBeenCalled();
   });
 
   it("a failing step never stops the next, and the sweep still reports the failure", async () => {
     mocks.record.mockRejectedValue(new Error("xero down"));
     await expect(runCreditReleaseAskSweep()).rejects.toThrow(/1 credit-release sweep step/);
+    expect(mocks.close).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("the backlog (#4253 release 2, D4)", () => {
+  const FLOOR = new Date("2026-06-30T00:00:00.000Z");
+  const switches = (backlog: unknown, writer: unknown = { metadata: { enabled: true }, createdAt: FLOOR }) =>
+    mocks.prisma.xeroSyncCursor.findUnique.mockImplementation(async ({ where }) =>
+      where.resourceType_scope.scope === "WRITER" ? writer : backlog,
+    );
+
+  describe("creditReleaseBacklogPerRun", () => {
+    it.each([
+      ["no row", null, null],
+      ["off", { metadata: { enabled: false } }, null],
+      ["enabled the string true", { metadata: { enabled: "true" } }, null],
+      ["no metadata", { metadata: null }, null],
+      ["on, no size", { metadata: { enabled: true } }, CREDIT_RELEASE_BACKLOG_DEFAULT_PER_RUN],
+      ["on, a size", { metadata: { enabled: true, perRun: 3 } }, 3],
+      ["on, too big a size", { metadata: { enabled: true, perRun: 500 } }, CREDIT_RELEASE_BACKLOG_MAX_PER_RUN],
+      ["on, a nonsense size", { metadata: { enabled: true, perRun: 0 } }, CREDIT_RELEASE_BACKLOG_DEFAULT_PER_RUN],
+      ["on, a fractional size", { metadata: { enabled: true, perRun: 2.5 } }, CREDIT_RELEASE_BACKLOG_DEFAULT_PER_RUN],
+    ])("%s", async (_name, row, expected) => {
+      mocks.prisma.xeroSyncCursor.findUnique.mockResolvedValue(row);
+      expect(await creditReleaseBacklogPerRun()).toEqual(expected);
+    });
+  });
+
+  it("does nothing while the backlog switch is off", async () => {
+    switches(null);
+    expect(await runCreditReleaseBacklog()).toBe(0);
+    expect(mocks.prisma.memberCredit.findMany).not.toHaveBeenCalled();
+  });
+
+  it("does nothing while the writer is off, however the backlog switch reads", async () => {
+    switches({ metadata: { enabled: true } }, null);
+    expect(await runCreditReleaseBacklog()).toBe(0);
+    expect(mocks.prisma.memberCredit.findMany).not.toHaveBeenCalled();
+  });
+
+  it("takes only releases written before the writer's floor, in a small batch, and audits the batch", async () => {
+    switches({ metadata: { enabled: true, perRun: 2 } });
+    mocks.prisma.memberCredit.findMany.mockResolvedValue([
+      { id: "rel-1", amountCents: 4000, appliedToBookingId: "bk-1" },
+      { id: "rel-2", amountCents: 3000, appliedToBookingId: "bk-2" },
+      { id: "rel-3", amountCents: 2000, appliedToBookingId: "bk-3" },
+    ]);
+    expect(await runCreditReleaseBacklog()).toBe(2);
+    const where = mocks.prisma.memberCredit.findMany.mock.calls[0][0].where;
+    expect(where.createdAt.gte).toBeUndefined();
+    expect(where.createdAt.lt.getTime()).toBeLessThanOrEqual(FLOOR.getTime());
+    expect(mocks.enqueue).toHaveBeenCalledTimes(2);
+    expect(mocks.audit).toHaveBeenCalledTimes(1);
+    expect(mocks.audit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "payment.credit_release_ask.backlog_batch_taken",
+        metadata: expect.objectContaining({ releaseIds: ["rel-1", "rel-2"], perRun: 2 }),
+      }),
+    );
+  });
+
+  it("still names the releases already queued when the enqueue fails part-way", async () => {
+    switches({ metadata: { enabled: true } });
+    mocks.prisma.memberCredit.findMany.mockResolvedValue([
+      { id: "rel-1", amountCents: 4000, appliedToBookingId: "bk-1" },
+      { id: "rel-2", amountCents: 3000, appliedToBookingId: "bk-2" },
+    ]);
+    mocks.enqueue.mockResolvedValueOnce(true).mockRejectedValueOnce(new Error("db down"));
+    await expect(runCreditReleaseBacklog()).rejects.toThrow("db down");
+    expect(mocks.audit).toHaveBeenCalledWith(
+      expect.objectContaining({ metadata: expect.objectContaining({ releaseIds: ["rel-1"] }) }),
+    );
+  });
+
+  it("counts and names only the requests THIS run created, when another payments cycle raised one first", async () => {
+    switches({ metadata: { enabled: true, perRun: 2 } });
+    mocks.prisma.memberCredit.findMany.mockResolvedValue([
+      { id: "rel-1", amountCents: 4000, appliedToBookingId: "bk-1" },
+      { id: "rel-2", amountCents: 3000, appliedToBookingId: "bk-2" },
+      { id: "rel-3", amountCents: 2000, appliedToBookingId: "bk-3" },
+    ]);
+    // The overlapping cycle won rel-1's row; this run creates rel-2 and rel-3.
+    mocks.enqueue.mockResolvedValueOnce(false).mockResolvedValue(true);
+    expect(await runCreditReleaseBacklog()).toBe(2);
+    expect(mocks.audit).toHaveBeenCalledTimes(1);
+    expect(mocks.audit).toHaveBeenCalledWith(
+      expect.objectContaining({ metadata: expect.objectContaining({ releaseIds: ["rel-2", "rel-3"] }) }),
+    );
+  });
+
+  it("writes no batch row when the overlapping cycle raised every request first", async () => {
+    switches({ metadata: { enabled: true } });
+    mocks.prisma.memberCredit.findMany.mockResolvedValue([{ id: "rel-1", amountCents: 4000, appliedToBookingId: "bk-1" }]);
+    mocks.enqueue.mockResolvedValue(false);
+    expect(await runCreditReleaseBacklog()).toBe(0);
+    expect(mocks.audit).not.toHaveBeenCalled();
+  });
+
+  it("writes no audit row for a batch that took nothing", async () => {
+    switches({ metadata: { enabled: true } });
+    expect(await runCreditReleaseBacklog()).toBe(0);
+    expect(mocks.audit).not.toHaveBeenCalled();
+  });
+
+  it("never asks twice for a release the writer or an earlier batch already took", async () => {
+    switches({ metadata: { enabled: true } });
+    mocks.prisma.memberCredit.findMany.mockResolvedValue([{ id: "rel-1", amountCents: 4000, appliedToBookingId: "bk-1" }]);
+    mocks.prisma.paymentRecoveryOperation.findMany.mockResolvedValue([
+      { idempotencyKey: buildCreditReleaseAskRecoveryIdempotencyKey("rel-1") },
+    ]);
+    expect(await runCreditReleaseBacklog()).toBe(0);
+    expect(mocks.enqueue).not.toHaveBeenCalled();
+  });
+
+  it("is a step of the sweep, error-isolated like the others", async () => {
+    switches({ metadata: { enabled: true } });
+    mocks.prisma.memberCredit.findMany.mockResolvedValue([{ id: "rel-1", amountCents: 4000, appliedToBookingId: "bk-1" }]);
+    mocks.audit.mockRejectedValue(new Error("audit down"));
+    await expect(runCreditReleaseAskSweep()).rejects.toThrow(/credit-release sweep step/);
+    expect(mocks.record).toHaveBeenCalledTimes(1);
     expect(mocks.close).toHaveBeenCalledTimes(1);
   });
 });

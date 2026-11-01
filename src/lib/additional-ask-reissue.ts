@@ -17,6 +17,7 @@
  */
 import { PaymentRecoveryOperationStatus, PaymentTransactionKind, type Prisma } from "@prisma/client";
 
+import { ADDITIONAL_ASK_QUEUE_TRANSACTION_OPTIONS, lockAdditionalAskQueue } from "@/lib/additional-ask-queue-transaction";
 import { closeWaitingAskRecoveries } from "@/lib/additional-ask-recovery-close";
 import {
   inFlightAskRecoveries,
@@ -135,7 +136,7 @@ export async function settleReductionAgainstUnpaidAsk(
     unpaidAskOffsetCents: reduction.offsetCents,
     unpaidAskCancelled: reduction.offsetCents > 0 && reduction.askLeftCents === 0,
   };
-  if (reduction.offsetCents <= 0 || !booking.payment) {
+  if (reduction.organiserExtras || reduction.offsetCents <= 0 || !booking.payment) {
     return {
       ...settled,
       retiredAdditionalAsks: [],
@@ -421,8 +422,8 @@ export async function writeReissuedAskUnderRecovery<T>(
   now: Date = new Date(),
 ): Promise<T | null> {
   return prisma.$transaction(async (tx) => {
-    // #4217 (`INV-LOCK-002`): the Payment row before the recovery row.
-    await lockPaymentForRefundedTotal(tx, recovery.paymentId);
+    // #4217, #4442 (`INV-LOCK-002`): the global key, then the Payment row, before the recovery row.
+    await lockAdditionalAskQueue(tx, recovery.paymentId);
     const completed = await tx.paymentRecoveryOperation.updateMany({
       where: {
         id: recovery.id,
@@ -441,5 +442,5 @@ export async function writeReissuedAskUnderRecovery<T>(
     });
     if (completed.count !== 1) return null;
     return write(tx);
-  });
+  }, ADDITIONAL_ASK_QUEUE_TRANSACTION_OPTIONS);
 }

@@ -54,9 +54,9 @@ CI also runs independent static and container checks:
   `Dependency audit` job, on pull requests and on pushes to `main`. It runs
   `pnpm audit --audit-level=high --json` and reports which of three things
   happened — see "When the advisory service is down" below — plus a fourth
-  passing verdict, MITIGATED (never CLEAN), for one reviewed unfixed advisory
-  under an expiring owner-approved record (#3843; see "Mitigated advisories"
-  below). It runs from a bare
+  passing verdict, MITIGATED (never CLEAN), for a reviewed unfixed advisory
+  under an expiring owner-approved record (introduced in #3843; none is live
+  since #3851 — see "Mitigated advisories" below). It runs from a bare
   checkout with no install: measured on npm 11.16.0 / Node 24 the audit built
   its tree from `package-lock.json` and returned the same verdict with or without
   `node_modules`, and `pnpm audit` likewise reads `pnpm-lock.yaml` alone (#3673).
@@ -1291,6 +1291,45 @@ CREATED on 30 June was covered — it was not. Re-run any sweep whose check-in
 dates mattered; the created/updated/modified findings in an archived report can
 be taken at face value.
 
+**Bill historical increases to an organiser (#4299 B1).** A place paid through
+its organiser's combined internet-banking invoice has no primary invoice of its
+own. For these places the tool reports every recorded positive net change
+(price difference plus late-change fee), including places later reduced or
+cancelled. The JSON finding shows the combined invoice, organiser, amount to
+bill, later reductions, cancellation/refund/credit events, and the payment's
+recorded refunded total. The refunded total covers the whole booking; the dated
+events beside it identify later activity where recorded. Old financial-review
+tasks stay refused and are never turned into charges by this repair.
+
+Review that JSON before billing: **the whole recorded increase is billed even
+when a later reduction or cancellation means the organiser may be over-billed**
+(the owner's B1 decision). This repair does not net those historical cases.
+Copy each selected `queue:organiser-historical:…` action key from the dry run:
+
+```bash
+pnpm run xero:booking-repair --booking <bookingId> --dry-run
+pnpm run xero:booking-repair --booking <bookingId> --apply --apply-action '<exact-action-key>'
+```
+
+A plain `--apply` does not back-bill these changes. Repeat `--apply-action` for
+at most 50 reviewed changes per run. Each key includes a digest of the figures,
+payer, combined invoice and displayed history; stale keys match nothing, and
+apply reads the local evidence again before queueing. Re-run the dry run after
+any change. An edit with any earlier invoice link (including an inactive one)
+or invoice operation is skipped. Repair or retry a failed operation through
+**Admin → Xero → Operations**, rather than requesting another invoice. Missing
+combined invoices are reported for manual review, with no billing action. These
+findings sit beside the place's ordinary repair findings, which still apply.
+The place's missing primary invoice is not one of them: it reports
+`ORGANISER_SETTLED_ON_COMBINED_INVOICE` (info, no action), so a plain `--apply`
+never invoices the joiner, and the invoice queue and its handler refuse such a place.
+
+Each selected edit uses the ordinary supplementary-invoice queue and its
+per-change lock: one invoice on the joiner's change, addressed to the organiser,
+with no payment recorded and no card wait. The existing outbox worker sends it
+and the organiser notice; reconciliation records the organiser's transfer.
+Dry run makes only local reads and raises no invoice, email or contact.
+
 **A supplementary invoice is only offered when the main invoice went out
 FIRST (#3199).** When a booking edit adds money the club normally raises a small
 extra Xero invoice for the difference, and whether that is right depends on
@@ -1433,7 +1472,8 @@ books are correct.
 
 A late capture a treasurer-approval task owns is never offered for refund
 (#3639). One the treasurer **kept** (the task was closed without refunding) is
-recorded in Xero by the app (#3635, `INV-PAY-110`): for the booking's own
+recorded in Xero by the app (#3635, `INV-PAY-110`; a change payment on a
+booking Xero invoiced is the next paragraph's): for the booking's own
 payment, and for a change payment on a booking Xero never invoiced,
 `KEPT_LATE_CAPTURE_WITHOUT_XERO_INVOICE` fires when no
 `KEPT_LATE_CAPTURE_INVOICE` row is queued or sent for its approval task. Its
@@ -1489,6 +1529,60 @@ where a paid invoice on the booking names no card payment, or a change's
 invoice from before that record existed has a Stripe payment recorded in
 Xero: check in Xero whether that
 invoice already records it, then record by hand or resolve.
+
+**Kept card payment for a booking change not recorded in Xero** (#4324,
+`INV-PAY-144`). Before #4324, a late card payment for a booking change that a
+treasurer kept on a cancelled booking whose Xero invoice exists was recorded
+only where a supplementary invoice waited on it; otherwise Stripe held the money
+and Xero showed nothing. Since #4324 the keep records it, and the repair tool
+finds the ones kept before: `KEPT_LATE_CAPTURE_NOT_RECORDED_IN_XERO`. Its
+details say which document will record it (`recordedBy`): a payment on the
+booking's Xero invoice that bills the change, for no more than Xero shows still
+due (`ADDITIONAL_CAPTURE_RECEIPT`), or a kept-payment invoice where nothing in
+Xero bills the change (`KEPT_LATE_CAPTURE_INVOICE`), and how much: the
+payment (`capturedCents`), the part another Xero document already records
+(`alreadyRecordedCents`), and what the apply records (`recordsCents`, which a
+receipt caps at what Xero shows due when it is sent). The owner decided these are
+recorded automatically (25 Oct 2026), accepting that one a treasurer already
+entered by hand in Xero would then be recorded twice. So:
+
+1. **List them first.** Run the dry run, `pnpm run xero:booking-repair
+   --dry-run` (or with `--from`/`--to` for a window), and read every
+   `KEPT_LATE_CAPTURE_NOT_RECORDED_IN_XERO` finding with its booking, payment
+   intent, amounts and `recordedBy`. Ask the treasurer whether any of them
+   was already recorded by hand in Xero. Leaving such a booking out of an
+   apply only postpones it: the finding stays auto-apply, the tool cannot mark
+   it handled, and any later blanket `--apply`, run for any reason, records
+   it. The real ways out are to (a) delete the hand-entered payment in Xero
+   before applying, so the app's record is the only one, or (b) apply, then
+   check Xero and reverse whichever entry is the duplicate.
+2. **Then apply.** `pnpm run xero:booking-repair --apply` runs each finding's
+   `QUEUE_KEPT_LATE_CAPTURE_RECORD`. Each one runs the keep's own decision
+   again under the approval task's row lock and the change's lock, finds the
+   payment's receipt or kept-payment invoice first, and queues nothing a second
+   time, so applying twice records each payment once. The receipt reads the
+   invoice in Xero before it records anything, and refuses, telling the
+   treasurer, where nothing is left due.
+
+A payment whose ledger row names no booking change (even where an unpaid
+invoice names the payment), or one on a booking paid by internet banking, is
+reported `manual_review` and never applied: record it
+by hand in Xero. The tool cannot acknowledge a finding, so these come back on
+every run after you have recorded them; that is expected, not a sign the hand
+entry failed. A payment another writer already records (the credit-release
+sweep, say) raises no finding. One on a booking whose payment row lacks its
+Xero invoice id while the invoice link exists is reported `manual_review`,
+saying the tool cannot tell yet whether Xero records it, until that id is
+synced (`SYNC_PAYMENT_PRIMARY_INVOICE_FIELD`) - unless its receipt, a
+kept-payment invoice or the credit-release sweep already records it, when it
+raises nothing; a later pass then lists it as above. One whose change invoice already answers it is the late
+payment release's, and raises no finding here; a receipt that failed is offered
+for retry, and one the worker refused is reported for an officer, as above.
+Where the kept-payment invoice records a change's payment (one asked for, or
+one this pass raises), the tool raises no supplementary invoice for that
+change: the kept-payment invoice already bills it. Where no kept-payment
+invoice will be raised (another writer records the payment), the change's
+missing supplementary invoice is still reported.
 
 A late capture the treasurer **approved** refunding, whose card refund Stripe
 gave up on and which was then closed as **Paid another way** before Xero had
@@ -2242,6 +2336,23 @@ statement to the same numbers. Nothing an operator relies on depends on that:
 the run above reads typed through Prisma, and `--sql` is a convenience for
 somebody who would rather query a replica by hand.
 
+### A card refund held after a Stripe check (#4359)
+
+An ordinary charge-backed recovery stops automatic retries when Stripe already
+holds a counted dashboard refund on its charge made since the debt arose
+(`INV-PAY-145`). The officer alert and the payment audit entry explain that the
+member may already have been paid. The row is exhausted in the existing recovery
+queue, with no new refund sent; it is not automatically closed or matched to the
+dashboard refund. Its owed figure keeps the existing attribution rule.
+
+Check the booking, the recorded refunds and Stripe before moving more money.
+If money remains owed, settle it with **Paid another way** in
+[Stuck States](guides/stuck-states.md), rather than another Stripe dashboard
+refund. If nothing remains owed, ask a developer to reconcile the held row.
+A preflight read or recording failure uses normal backoff and sends nothing;
+an intent with more than 100 refunds requires investigation because the single
+page cannot establish complete evidence. No production repair runs automatically.
+
 ### Audit refunded totals left short by the old refund arithmetic (#3640)
 
 Before #3640 a card refund made after an account-credit settlement was lost from
@@ -2250,8 +2361,10 @@ that way offers refundable headroom that is not there, so a later cancel or
 refund could pay the same money out twice.
 `scripts/audit-refunded-total-shortfall.ts` lists each captured payment whose
 stored refunded total is below its counted card refunds plus its account-credit
-settlements, with the shortfall. It is READ-ONLY and repairs nothing: whether and
-how to repair is the owner's decision, taken on this report.
+settlements plus (#4280, `INV-PAY-141`) the bank cash its "Paid another way"
+closes recorded, with the shortfall; each line shows that cash as `paid another
+way`. It is READ-ONLY and repairs nothing: whether and how to repair is the
+owner's decision, taken on this report.
 
 ```bash
 DATABASE_URL=<non-prod copy> pnpm run payments:audit-refunded-total
@@ -2264,9 +2377,81 @@ row), and only a shortfall is reported. The report keeps two sections apart:
 the part the old arithmetic can explain (at most the smaller of a payment's card
 refunds and its credit, and only with a card refund), and a shortfall with
 another cause - typically a credit that was never folded into the total, such as
-internet-banking cash that became credit on an already-cancelled booking. Only
-the first is the #3640 repair question. The arithmetic and its caveats are in
+internet-banking cash that became credit on an already-cancelled booking, or
+(#4280) a late card refund that failed after a "Paid another way" close and took
+the close's bank cash out of the total. Attribution to #3640 is measured against
+the floor without the closes' cash, so a payment whose shortfall only that cash
+explains shows 0 attributable to #3640. Only the first section is the #3640
+repair question. The arithmetic and its caveats are in
 `src/lib/refunded-total-shortfall-audit.ts`.
+
+Rolling the application back past #4280 restores the old subtraction: a late
+card refund failing after a close could again take the total below the close's
+cash. This audit still lists any such payment.
+
+Do not run it while a migration runs. It reads every captured payment in ONE
+read-only `RepeatableRead` snapshot, held for up to 120 seconds, and on a very
+large database it may reach that timeout and fail; run it again in a quiet
+window rather than raising the bound.
+
+### Retire links to payments deleted in Xero (#4531)
+
+Before #4531 a payment deleted in Xero kept its link here active, because Xero
+leaves a deleted payment out of its invoice and the inbound sync never saw it
+again. The sync now retires such a link when it next reads the invoice or credit
+note (`INV-INT-031`), and re-checks on a schedule any it could not confirm at
+the time. A payment deleted before that, on an invoice nobody has touched
+since, stays active until this backfill retires it. So does a booking change's
+card payment, whose link the inbound sync never reaches.
+
+```bash
+pnpm run xero:deleted-payment-link-backfill                   # dry run: lists, changes no link
+pnpm run xero:deleted-payment-link-backfill --apply           # retire every confirmed one
+pnpm run xero:deleted-payment-link-backfill --apply --payment <xero payment id>
+pnpm run xero:deleted-payment-link-backfill --json            # machine-readable report too
+```
+
+- **Dry run (the default).** It pages Xero's list of DELETED payments, oldest
+  change first (100 a call, at most 50 calls), checks each row's status itself,
+  and prints every ACTIVE local payment link that points at one: the link, its
+  local record, its role and the invoice or credit note it names. It changes
+  no link; its Xero calls are still recorded on the usage panel, like any
+  other.
+- **`--payment <id>`.** Instead of listing, it asks Xero about each named
+  payment directly (one call each) and keeps only those Xero reports DELETED.
+- **`--apply`.** It retires only the links of a payment Xero confirms DELETED:
+  inactive, with its recorded status `DELETED` and its other fields kept. A
+  listed payment is asked about once more first, so `--apply` costs one extra
+  call per candidate payment it checks, retired or not; a `--payment` id's
+  direct answer is already that confirmation. A payment Xero reports live, or
+  does not answer for, is left active and named. So is one with a Xero
+  operation that may run again and reads the link: a replayable failed card
+  receipt or PARTIAL booking invoice on its record, or an open receipt or
+  supplementary invoice on the same booking. Retiring it then would let that
+  retry pay again. It is marked, and the scheduled re-check retires it once
+  that operation is done, so retry or resolve the operation first. Keep the
+  dry-run output with the change record.
+- **A link the scheduled re-check gave up on.** After five checks Xero did not
+  answer, the re-check stops asking about a link on its own and logs an error;
+  its metadata records `deletionCheckGaveUpAt`. This backfill asks about it
+  again.
+- **Xero calls.** Every call is read-only and a single attempt. A run stops
+  once the day's recorded usage reaches 85% of the usage panel's budget, on a
+  Xero rate limit or outage, or while Xero's own daily limit is in force, and
+  then says it stopped early. A later run lists again from the beginning,
+  re-spending those list calls; it acts only on links still active. An
+  organisation with more than 5,000 deleted payments is never listed in full:
+  name the payments with `--payment` instead.
+
+It changes nothing in Xero and nothing else locally: no booking, payment or
+ledger row. Readers that judge recorded payments skip a `DELETED` status
+(`isRecordedBookingInvoicePayment`), so they stop counting the retired payment
+as money held. Before, they reached the right answer only because a
+replacement payment usually existed. It also removes the double count from the
+"recorded in Xero" totals. A booking change's card payment it retires gets no
+audit row (the audit writer resolves no subject for it), so keep this run's
+output. Design and call budget: [`xero/ARCHITECTURE.md` -> "A payment deleted
+in Xero (#4531)"](xero/ARCHITECTURE.md#a-payment-deleted-in-xero-4531).
 
 ### Count voided bank-transfer refund notes before the follow-up writes (#4162)
 
@@ -2427,6 +2612,16 @@ running operations** first. And an applied-credit allocation
 or deallocation cannot be resolved at all, because a hand fix in Xero does not
 bring the club's own credit ledger back in line; retry it instead. One marked
 resolved before this release can still be retried.
+
+A Xero call already under way can still succeed after you resolve (#4374,
+`INV-INT-029`): two attempts can share one operation, and one may answer late.
+The operation then shows as succeeded and, if the app recorded a document in
+Xero, the finance contacts get one **Xero Sync Error** email for it
+(`XERO_SUCCESS_AFTER_RESOLUTION`) naming that document. If you also made the
+document by hand, Xero may now hold it twice. The app may instead have found
+and used yours, by its reference, leaving only one: check Xero before voiding
+a duplicate. If that email cannot reach anyone, it is not sent again; the
+operation's succeeded status on the panel is then the only sign.
 
 There is no undo on the panel. If you marked one by mistake, fix the Xero side
 by hand, or use **Targeted force sync** for that one booking's invoice: it
@@ -2626,6 +2821,14 @@ In `--from-dump` mode the source-fidelity comparisons are reported as `SKIP`
 assertions still run against the restored database. Delete the downloaded dump
 when you are done.
 
+The drill leaves the supplied dump unchanged and omits ownership and privilege
+statements during restore, so deployment roles need not exist in the throwaway
+cluster. Plain and gzipped SQL use the backup validator's streaming filter;
+custom archives use `pg_restore --no-owner --no-acl --exit-on-error`. This proves
+schema and data restoration, not deployment role permissions. A disaster-recovery
+restore must provision the deployment roles and retain the original owners and
+grants.
+
 ### What the assertions prove
 
 - **Restore fidelity** (local mode only): row counts for `Member`, `Booking`,
@@ -2655,11 +2858,37 @@ A failing drill is a **backup-pipeline incident**, not a routine test flake:
 
 ## Public Reference Release Checklist
 
-Before cutting a public reference release:
+Every production deploy ships a tagged release (#4465), cut with
+[`scripts/release/cut-release.mjs`](../scripts/release/cut-release.mjs). `main`
+only moves through pull requests, so the release is cut in two phases with the
+release-prep pull request between them — the order v0.13.2 was cut in. Both
+phases print their whole plan and change nothing without `--execute`.
 
-1. Create a release-prep branch from fresh `origin/main`.
-2. Update the version in `package.json` (`pnpm-lock.yaml` does not record it), then
-   compile the changelog:
+1. From a clean checkout of `origin/main`, prepare the release-prep commit:
+
+   ```bash
+   git switch --detach origin/main
+   pnpm run release:cut prepare             # dry run: version, fragments, steps
+   pnpm run release:cut prepare --execute   # make the local commit
+   ```
+
+   It fetches `origin/main`, refuses a dirty tree (an untracked `changelog.d/`
+   draft would be released), a checkout that is not exactly `origin/main`, a
+   `release/v<version>` branch that already exists here or on `origin`, a
+   local tag for the version that `origin` does not have, and a release that
+   is prepared but not yet tagged (`package.json` ahead of `origin`'s latest
+   tag, with that version's section in `CHANGELOG.md`) — publish that one, or
+   fold late fragments into it, rather than planning a lower version. The version is the
+   latest `vX.Y.Z` tag **on `origin`** (never this clone's tags) plus a minor
+   bump when any fragment
+   is named `*.feature.md`, or a patch bump otherwise
+   (`changelog.d/README.md`, "Patch or minor"); `--bump patch|minor|major`
+   overrides it and `--date YYYY-MM-DD` overrides the release date. With
+   `--execute` it creates `release/v<version>`, sets `package.json`'s
+   `"version"` (`pnpm-lock.yaml` does not record it), compiles the changelog
+   (step 2) and commits. It never pushes. If it stops part way it prints how to
+   inspect the branch or abandon it.
+2. The compile step runs `scripts/release/compile-changelog.mjs` — on its own:
 
    ```bash
    node scripts/release/compile-changelog.mjs 0.14.0 --dry-run   # show the plan
@@ -2671,9 +2900,10 @@ Before cutting a public reference release:
    `## Unreleased`), deletes the fragments it consumed and the committed,
    clean `size-allowances.d/*.md` fragments made inert by their merge to main,
    and leaves the `## Unreleased` heading and its sentinel-marked pointer note
-   in place. Commit the compiled `CHANGELOG.md` and both sets of fragment
-   deletions together, then read the new section end to end and edit it for
-   order and duplication before pushing —
+   in place. The compiled `CHANGELOG.md` and both sets of fragment deletions
+   are committed together (`release:cut` does it; by hand, do the same), then
+   read the new section end to end and edit it for order and duplication
+   before pushing —
    `changelog.d/README.md` documents the convention. If the run prints
    `WARNING: unrecognised content left under "## Unreleased"`, resolve that
    first: the text it echoes was neither released nor deleted. A release-prep
@@ -2695,9 +2925,61 @@ Before cutting a public reference release:
 5. Run local release validation without live provider credentials, then rely on
    GitHub Actions for Docker image build, static analysis, secret scanning,
    dependency review, and GHCR publication.
-6. After merge, create the annotated release tag on the merged commit and
-   publish the GitHub release with validation evidence, migration notes, image
-   names, commit SHA, and non-blocking maintainability follow-ups.
+6. Push `release/v<version>` and open the release-prep pull request from the
+   template (`pnpm run pr:check <body-file>` first). It merges like any other.
+7. After it merges, tag the merged commit and publish the GitHub release:
+
+   ```bash
+   git fetch origin main
+   pnpm run release:cut publish             # dry run: commit, body, steps
+   pnpm run release:cut publish --execute
+   ```
+
+   It reads the version from `package.json` on the merged commit (default
+   `origin/main`; `--commit <sha>` names another) and publishes to the
+   repository `origin`'s push URL names (its URL when no push URL is set),
+   passing it to every `gh` call; push and fetch URLs that name different
+   repositories are refused. It refuses when:
+
+   - the commit is not on `origin/main`'s **first-parent** chain — only a
+     commit CI pushed to `main` has GHCR images, so only its tag can be
+     deployed (a release-prep branch commit inside a merge never was);
+   - `origin` already has the version's tag on another commit, or the version
+     is not newer than `origin`'s latest tag — nothing new was prepared;
+   - `CHANGELOG.md` has no section for the version, or still has entries
+     written directly under `## Unreleased`;
+   - the commit still holds `changelog.d/` fragments. Required checks are not
+     strict, so a pull request can merge while the release-prep one is open
+     and leave its fragment in the merge commit. Two supported ways out:
+     **fold** them — from a fresh `origin/main`,
+     `pnpm run release:cut prepare --amend --execute` appends them to the
+     untagged `## <version>` section on `release/v<version>-late`; merge that
+     pull request and publish its merge commit. A late `*.feature.md` cannot
+     be folded into a patch release: carry it, or revert the release-prep
+     merge and prepare again as minor. Or **carry** them:
+     `pnpm run release:cut publish --carry-late-fragments --execute` publishes
+     anyway and lists them as carried into the next release.
+
+   The dry run also checks `gh auth status` and that `gh` can reach the
+   repository, and says which release body it will use: the section itself,
+   or — over 120,000 characters, below GitHub's 125,000 limit — a short body
+   with the entry count and a link to the section in `CHANGELOG.md` at the
+   tag. With `--execute` it writes the body to a file, creates the annotated
+   `v<version>` tag, and only then pushes the tag and runs
+   `gh release create`. A failure prints the re-run, always with
+   `--commit <sha>` of the commit being tagged, and the re-run resumes: a
+   local (annotated) tag on the commit resumes at the push, still re-running
+   the content checks; a pushed tag resumes at `gh release create`; an
+   existing release is reported as done. Once `main` has moved on, a pushed
+   tag whose release is missing is resumed on its own commit even without
+   `--commit`, and a local-only tag on another commit is named with the
+   `--commit` that resumes it. A failed push keeps the local tag; a failed
+   publish never deletes the pushed tag. `compile-changelog.mjs --append`
+   only adds to the newest section, so a fold can never rewrite a released
+   version's notes.
+   Add validation evidence, migration notes, image names and non-blocking
+   maintainability follow-ups to the published release by hand.
+8. Deploy the tag (`DEPLOYMENT.md`, "Cut the release first").
 
 ## GitHub Actions Availability
 

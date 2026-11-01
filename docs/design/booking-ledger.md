@@ -4,6 +4,8 @@
 Nothing in this document changes runtime behaviour. Its outputs are the model,
 the posting rules, the projection guard, the cut-over order, the invariant gap
 analysis in §9, and the child issues in §10, each of which ships on its own.
+The proposed successor, extending this design to all member money, is the
+[member money ledger design](member-money-ledger.md) (#4461).
 
 **Audience:** developer / agent. An operator reads §1 and §2 and stops.
 
@@ -140,6 +142,30 @@ from application code; `booking-ledger-append-only-census.test.ts` scans the
 tree for either (the `stored-night-price-repair-census` pattern), the §6 census
 reports PostgreSQL's update and delete counts for the table as information, and
 the write door exposes only `create` and `createMany`.
+
+The database can enforce this as well (#4453). A deployment that uses the
+[least-privilege roles](../../DEPLOYMENT.md#least-privilege-database-roles)
+connects the application as a role holding only INSERT and SELECT on this table:
+an UPDATE, DELETE, TRUNCATE, `INSERT … ON CONFLICT DO UPDATE` or
+`SELECT … FOR UPDATE` against a line is refused with SQLSTATE `42501`, whatever
+the code path (`database-roles.realdb.test.ts`). The other routes are closed too:
+- views over the table are SELECT-only for the application;
+- `SECURITY DEFINER` routines are refused;
+- a booking's or lodge's key cannot be changed at all: a `BEFORE UPDATE OF "id"`
+  trigger on each parent raises `restrict_violation`
+  (`20261125010000_restrict_booking_ledger_key_updates`), and since #4514 the
+  foreign keys are `ON UPDATE RESTRICT` as well, so nothing rewrites `bookingId`
+  or `lodgeId`.
+
+Migrations run as the role that owns the table, which the grant does not
+cover. Referential actions run with the owner's rights too, so a cascade would
+be a route around the grant; **none reaches a line**. Owner decision D1 on
+[#4482](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/4482), delivered by
+[#4514](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/4514)
+(`20261127050000_retain_ledger_history_on_booking_delete`, `INV-MONEY-043`), made
+every key a line holds `ON DELETE RESTRICT ON UPDATE RESTRICT`. Deleting a booking
+that has lines is refused for every role, so a booking with money is
+soft-deleted or left as it is, never hard-deleted.
 
 ### 4.1 Derived quantities, and the one place they are derived
 
@@ -341,7 +367,7 @@ proves the ledger was in step rather than assuming it. The completion takes
 
 | Event today | Lines posted | Anchor | Writer |
 | --- | --- | --- | --- |
-| Booking confirmed / paid for the first time (`booking-create.ts`, the pay routes, waitlist confirm, quote conversion) | one `GUEST_NIGHT` (+) per `BookingGuestNight` row, quantity 1, `unitCents = priceCents`, rate tier and age tier from the guest's snapshot (`INV-MOD-010`); one `PROMOTION` (−) for `promoAdjustmentCents` when non-zero. As built (C1, `booking-ledger-confirmation-posting.ts`), nothing else: no `GROUP_DISCOUNT` (`discountCents` is a projection of the promotion, `INV-MONEY-031`, so a line would count it twice) and no `CHANGE_FEE` — a change fee charged before the booking was confirmed on the ledger has no line, which #3583 back-posts, and counts until then as coverage `UNPOSTED_CHANGE_FEE` (review of #3611, V4) | `CONFIRMATION` / booking id | the settle body (`INV-PAY-038`: mark-paid, card and IB all enter it); for a group organiser's settled child, which never enters it, the group settle, through the same planner and per-booking fence (#3854) |
+| Booking confirmed / paid for the first time (`booking-create.ts`, the pay routes, waitlist confirm, quote conversion) | one `GUEST_NIGHT` (+) per `BookingGuestNight` row, quantity 1, `unitCents = priceCents`, rate tier and age tier from the guest's snapshot (`INV-MOD-010`); one `PROMOTION` (−) for `promoAdjustmentCents` when non-zero. As built (C1, `booking-ledger-confirmation-posting.ts`), nothing else: no `GROUP_DISCOUNT` (`discountCents` is a projection of the promotion, `INV-MONEY-031`, so a line would count it twice) and no `CHANGE_FEE` — a change fee charged before the booking was confirmed on the ledger has no line, which #3583 back-posts, and counts until then as coverage `UNPOSTED_CHANGE_FEE` (review of #3611, V4) | `CONFIRMATION` / booking id | the settle body (`INV-PAY-038`: mark-paid, card and IB all enter it) and #4019's whole-lodge credit/$0 approval and zero-cash edit settlements, through the shared `booking-ledger-confirmation-sync.ts` poster after PAID; for a group organiser's settled child, which never enters it, the group settle, through the same planner and per-booking fence (#3854) |
 | Whole-lodge / officer flat price (`INV-MONEY-004`) | the same `GUEST_NIGHT` lines from the night rows the rebase wrote; a flat price that does not divide is a `GUEST_NIGHT` per strand at the rebased strand figure (`INV-MOD-038`) | `CONFIRMATION` | same |
 | Booking edited and priced (four doors + batch, `INV-MOD-044`) | per guest-night, all or nothing (the rule above); a `PROMOTION` reversal + re-post when the promo delta is non-zero; a `CHANGE_FEE` (+) when the edit charged one | `MODIFICATION` / modification id | the four edit services and the batch path, in the transaction that already writes `priceLines` (`INV-MOD-058`) |
 | Admin date shift (`adminShiftBookingDates`, #3741) | the same per-night rule: each old-date night's live line reversed, each new-date night posted at the same figure, netting to the row's zero; both sides read as written rows, since a shift sells nothing | `MODIFICATION` / the `ADMIN_DATE_SHIFT` row | `adminShiftBookingDates`, under the `lock(1)` it takes first |
@@ -397,8 +423,8 @@ was restored instead, anchored on the `CANCELLATION` because it returns
 credit the member already spent, where every other `CREDIT_ISSUED` converts
 money the booking held. The anchor says nothing about `refundedAmountCents`:
 whether a credit row moved it depends on its writer, and C4 must not classify
-by anchor. (Deleting a booking nulls its credit rows' link — the one change
-the database makes — and its lines cascade with it.)
+by anchor. (The database refuses to delete a booking that a credit row or a
+line names, so neither a link nor a line goes with it: `INV-MONEY-043`, #4514.)
 
 | Event today | Lines posted | Anchor | Writer |
 | --- | --- | --- | --- |

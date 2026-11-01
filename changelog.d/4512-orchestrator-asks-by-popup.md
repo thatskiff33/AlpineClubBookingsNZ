@@ -1,0 +1,1 @@
+- **The Sekreton orchestrator asks the owner by pop-up as soon as something needs them (#4429).** A status reply no longer ends with a "waiting on you" list while the owner is in the session.

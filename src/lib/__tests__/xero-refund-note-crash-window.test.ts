@@ -437,7 +437,7 @@ import {
   findUnsettledRefundNoteRows,
 } from "@/lib/xero-refund-note-unsettled";
 import { REFUND_UNSETTLED_NO_ACCOUNT_REASON } from "@/lib/xero-invoice-payments";
-import { retryXeroSyncOperation } from "@/lib/xero-operation-retry";
+import { PARTIAL_REPAIR_CLAIM_LOST_MESSAGE, retryXeroSyncOperation } from "@/lib/xero-operation-retry";
 import { XeroRefundCreditNoteInFlightError } from "@/lib/xero-applied-credit-operation-serialization";
 import { addUnsettledRefundCreditNoteFindings } from "@/lib/xero-booking-repair-findings";
 import type { BookingXeroRepairAction, MutableFinding } from "@/lib/xero-booking-repair-types";
@@ -584,7 +584,9 @@ describe("a refund note interrupted between the two persists (#3548)", () => {
     await firstAttemptDies("at-settlement");
     xeroForgetsKeys();
 
-    await retry();
+    await expect(retry()).resolves.toEqual({
+      message: "Repaired Xero refund credit note follow-up actions.",
+    });
 
     expect(state.xero.notes.size).toBe(1);
     expect(state.xero.createPaymentsCalls).toEqual([
@@ -842,7 +844,9 @@ describe("a refund note interrupted between the two persists (#3548)", () => {
       Object.assign(row(), { status: "FAILED", lastErrorMessage: "marked failed by an operator" });
     };
 
-    await retry();
+    await expect(retry()).resolves.toEqual({
+      message: PARTIAL_REPAIR_CLAIM_LOST_MESSAGE,
+    });
 
     expect(state.xero.notes.get("cn_1")!.payments).toHaveLength(1);
     expect(row()).toMatchObject({ status: "FAILED", lastErrorMessage: "marked failed by an operator" });

@@ -20,7 +20,3 @@ export declare function problemsWithSeededBuild(result: {
   exitCode: number | null;
   output: string;
 }): string[];
-export declare function isDirectInvocation(
-  argvPath: string | undefined,
-  moduleUrl: string,
-): boolean;

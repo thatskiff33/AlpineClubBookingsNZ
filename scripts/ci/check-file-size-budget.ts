@@ -39,8 +39,6 @@
  * Reads `git` and the working tree only: no network, no build, no database, no
  * provider.
  */
-import path from "node:path";
-import { pathToFileURL } from "node:url";
 
 import {
   CHECK_COMMAND,
@@ -60,6 +58,7 @@ import {
   readSizeAllowances,
   type SizeAllowance,
 } from "../lib/file-size-allowances";
+import { isMainModule } from "../lib/is-main-module.mjs";
 
 /** The ref a change is judged against unless told otherwise. */
 export const DEFAULT_BASE_REF = "origin/main";
@@ -317,9 +316,6 @@ export function run(root: string, argv: readonly string[]): number {
   return 1;
 }
 
-if (
-  process.argv[1] &&
-  import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href
-) {
+if (isMainModule(import.meta.url)) {
   process.exitCode = run(process.cwd(), process.argv.slice(2));
 }

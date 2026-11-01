@@ -197,6 +197,53 @@ describe("readLateCaptureXeroReceipt", () => {
   });
 });
 
+describe("#4324: a kept change capture's own receipt (review M-F4, `INV-SSOT`)", () => {
+  const receiptRow = (status: string, extra: Record<string, unknown> = {}) => ({
+    localId: "ptx_change",
+    status,
+    manuallyResolvedAt: null,
+    requestPayload: { queueType: "ADDITIONAL_CAPTURE_RECEIPT", paymentIntentId: "pi_late" },
+    ...extra,
+  });
+  beforeEach(() => {
+    mocks.operationFindMany.mockImplementation(async (args: { where: { queueType?: string } }) =>
+      args.where.queueType === "ADDITIONAL_CAPTURE_RECEIPT" ? [receiptRow("SUCCEEDED")] : [],
+    );
+  });
+
+  it("MUTATION: reads its payment link on the capture's ledger row, whatever the link's metadata names", async () => {
+    mocks.linkFindFirst.mockImplementation(async (args: { where: { role?: string; localId?: string } }) =>
+      args.where.role === "ADDITIONAL_CAPTURE_PAYMENT" && args.where.localId === "ptx_change"
+        ? { metadata: { invoiceId: "inv_primary" } }
+        : null,
+    );
+    await expect(readLateCaptureXeroReceipt("pi_late")).resolves.toEqual({ kind: "recorded", invoiceId: "inv_primary" });
+  });
+
+  it("classifies its rows where no link exists: decided and FAILED may be in Xero; resolved by hand is the officer's", async () => {
+    mocks.operationFindMany.mockImplementation(async (args: { where: { queueType?: string } }) =>
+      args.where.queueType === "ADDITIONAL_CAPTURE_RECEIPT" ? [receiptRow("FAILED", { requestPayload: { plan: { invoiceId: "inv_primary" } } })] : [],
+    );
+    await expect(readLateCaptureXeroReceipt("pi_late")).resolves.toEqual({
+      kind: "recorded",
+      invoiceId: null,
+      invoiceFailed: true,
+      invoiceMayBeInXero: true,
+    });
+    mocks.operationFindMany.mockImplementation(async (args: { where: { queueType?: string } }) =>
+      args.where.queueType === "ADDITIONAL_CAPTURE_RECEIPT" ? [receiptRow("FAILED", { manuallyResolvedAt: new Date("2026-06-20") })] : [],
+    );
+    await expect(readLateCaptureXeroReceipt("pi_late")).resolves.toEqual({ kind: "resolved-by-hand" });
+  });
+
+  it("is nothing while its only row is undecided or withdrawn", async () => {
+    mocks.operationFindMany.mockImplementation(async (args: { where: { queueType?: string } }) =>
+      args.where.queueType === "ADDITIONAL_CAPTURE_RECEIPT" ? [receiptRow("PENDING"), receiptRow("CANCELLED", { requestPayload: { plan: {} } })] : [],
+    );
+    await expect(readLateCaptureXeroReceipt("pi_late")).resolves.toEqual({ kind: "none" });
+  });
+});
+
 describe("findLateCapturePaymentIntents (round-3 R1)", () => {
   it("finds an intent an approval task owns and one the webhook refunded automatically, and nothing else", async () => {
     mocks.taskFindMany.mockResolvedValue([

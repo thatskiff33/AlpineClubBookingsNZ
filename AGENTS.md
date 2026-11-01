@@ -80,8 +80,10 @@ Add a row for a doc an agent must reach; cite ids, never line numbers
   live deployment without a written test window.
 - This repository is public: nothing private goes into an issue, PR, comment,
   commit or fragment ([`ISSUE_WORKFLOW.md`](docs/agents/ISSUE_WORKFLOW.md#writing-in-the-open)).
-- Merge only under "Completion and Merge", with a merge commit; never squash,
-  rebase-merge or force-push.
+- Merge only under "Completion and Merge", with a merge commit. Even without
+  [hooks](scripts/agent-hooks/rules.mjs): never rewrite a pushed branch by any
+  route (force-push too); no `npx`, `pnpm dlx`, `prisma format` (#1567) or
+  `gh issue view`.
 
 ## Change discipline
 
@@ -101,7 +103,6 @@ Add a row for a doc an agent must reach; cite ids, never line numbers
   settlement stay distinct. Webhooks and cron are idempotent. Provider calls
   stay outside long transactions unless the locking guide documents the
   bounded exception.
-- Hand-edit `prisma/schema.prisma`; never run `pnpm exec prisma format` (#1567).
 - Tests never use the real calendar: today is frozen at
   `2026-07-01T00:00:00.000Z`; elapsed time uses `realElapsedMs`, never
   `Date.now()` ([`TESTING.md`](docs/TESTING.md#the-frozen-test-clock)).
@@ -173,7 +174,7 @@ Sekreton's exception).
   the orchestrator) owns its claim, worktree, branch, GitHub writes, PR, CI
   and merge gate.
 - **Reservations hold until released** by the holder or reassigned by the
-  owner; silence, age, an empty remote or a stopped session never frees one.
+  owner, or 72 idle hours pass (#4452); silence never frees one sooner.
   Never take over, push to, reset or rebase another lane's branch or worktree
   — post a `LANE-SYNC` or ask the owner. Unknown occupancy is not a free slot.
 - **Implementors** (subagents): one issue in its worktree; commit locally;
@@ -197,7 +198,7 @@ Sekreton's exception).
   `pnpm run issue <n>`, never memory or the title, and say the issue wins
   where they disagree (#2400; [`SUBAGENT_GUIDE.md`](docs/agents/SUBAGENT_GUIDE.md)).
 - **Worktrees:** each lane has a physical, isolated `node_modules`, never a
-  junction or symlink; the lane installs, never `pnpm dlx`/`npx`
+  junction or symlink; the lane installs
   ([`CODEX_WORKFLOW.md`](docs/agents/CODEX_WORKFLOW.md)).
 - **Parallel lanes** only where code surfaces don't clash, one writer per
   shared financial invariant, within the baseline in
@@ -302,10 +303,9 @@ implement → review → fix → verify-fix → validate → PR → CI-green →
   options put to the owner on that issue, and is never merge approval,
   production access or a secret. A direct `thatskiff33` comment outranks it; in
   real doubt, ask. Fabricating or embellishing one is the gravest breach here.
-- **Read the thread, not the body:** `pnpm run issue <n>`, never
-  `gh issue view`; decisions often sit in later comments (#2777). An
-  unanswered reviewer question is an open finding; the owner outranks a
-  reviewer.
+- **Read the thread, not the body:** `pnpm run issue <n>`; decisions often
+  sit in later comments (#2777). An unanswered reviewer question is an open
+  finding; the owner outranks a reviewer.
 - **A decision is not recorded until the body says so:** rewrite the body in
   the same sitting and remove `needs-decision`
   ([`ISSUE_WORKFLOW.md`](docs/agents/ISSUE_WORKFLOW.md#recording-a-decision-the-body-must-carry-the-answer)).

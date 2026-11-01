@@ -14,8 +14,9 @@ import {
 import { paymentEligibleForPaidCancelPath, paymentHasCaptureEvidence } from "@/lib/booking-cancel";
 import { ORGANISER_CHILD_CHARGE_REFUSAL } from "@/lib/group-organiser-paid";
 import { GROUP_CANCEL_IN_PROGRESS_PRICE_MESSAGE, organiserBankChildPriceChangeRefusal } from "@/lib/group-cancel-in-progress";
+import { ORGANISER_COMBINED_INVOICE_MISSING_MESSAGE, organiserCombinedInvoiceRefusal } from "@/lib/organiser-billing";
 import type { BookingModificationSettlementOptions } from "@/lib/booking-modify-settlement";
-import { noReductionAgainstUnpaidAsk } from "@/lib/additional-ask-reduction";
+import { noReductionAgainstUnpaidAsk, readReductionAgainstUnpaidAsk } from "@/lib/additional-ask-reduction";
 import type { LoadedBookingForModify } from "@/lib/booking-modify-validation";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
@@ -80,7 +81,11 @@ function txWithSettlement(settlement: Record<string, unknown> | null, groupStatu
     // #3980: an edit that read no invoice link claims the payment row.
     payment: { update: vi.fn().mockResolvedValue({}), updateMany: vi.fn().mockResolvedValue({ count: 1 }) },
     // #3949 review round 5: the organiser's group, read by the mid-cancel price-change refusal.
-    groupBooking: { findUnique: vi.fn(async () => ({ status: groupStatus })) },
+    groupBooking: { findUnique: vi.fn(async () => ({ status: groupStatus,
+      organiserBookingId: "organiser_booking", organiserMemberId: "organiser",
+      organiserMember: { id: "organiser" },
+      settlement: { id: "bank-settlement", source: "INTERNET_BANKING", xeroInvoiceId: "combined-invoice" },
+    })) },
     groupBookingSettlement: { findFirst: vi.fn().mockResolvedValue(settlement) },
     // #3809: no applied credit, so a reduction gives none back.
     memberCredit: { aggregate: vi.fn().mockResolvedValue({ _sum: { amountCents: null } }) },
@@ -183,6 +188,29 @@ describe("an organiser child's reduction at the edit door (#3653)", () => {
     } as unknown as LoadedBookingForModify;
   }
 
+  it.each([
+    { cut: 3_000, cash: 2_000, offset: 3_000, basis: 0, refund: 0 },
+    { cut: 5_000, cash: 2_000, offset: 4_000, basis: 1_000, refund: 500 },
+    { cut: 40_000, cash: 2_000, offset: 4_000, basis: 31_000, refund: 15_500 },
+    { cut: 40_000, cash: 0, offset: 6_000, basis: 30_000, refund: 15_000 },
+  ])("N4 edit quote nets unpaid extra first: cut $cut / paid extra $cash", async ({ cut, cash, offset, basis, refund }) => {
+    const booking = ibChild();
+    booking.payment = { ...booking.payment!, amountCents: 30_000 + cash, changeFeeCents: 1_000 };
+    const db = {
+      ...POLICY_DB,
+      bookingModification: { findMany: vi.fn(async () => [{ id: "increase", priceDiffCents: 5_000, changeFeeCents: 1_000 }]) },
+      xeroObjectLink: { findMany: vi.fn(async () => [{ localId: "increase", xeroObjectId: "extra", metadata: { organiserBilling: true } }]) },
+      paymentTransaction: { findMany: vi.fn(async () => [{ xeroInvoiceId: "extra", amountCents: cash }]) },
+      xeroSyncOperation: { findMany: vi.fn(async () => []) },
+      cancellationPolicy: { findMany: vi.fn(async () => [{ lodgeId: "lodge_1", daysBeforeStay: 0, refundPercentage: 50, creditRefundPercentage: 50, fixedFeeCents: 0, creditFixedFeeCents: 0 }]) },
+    };
+    const reduction = await readReductionAgainstUnpaidAsk(db as never, booking, -cut);
+    expect(reduction.offsetCents).toBe(offset);
+    const options = await calculateModificationSettlementOptions({ booking, netChargeCents: -cut, reduction, db: db as unknown as typeof POLICY_DB, todayAtClub: SETTLEMENT_DAY.todayAtClub });
+    if (basis === 0) expect(options).toBeNull();
+    else expect(options).toMatchObject({ basisAmountCents: basis, cardRefundAmountCents: refund, organiserRefundByBankTransfer: true, accountCreditAmountCents: 0 });
+  });
+
   it("quotes the organiser's card only for a child the organiser paid for BY CARD", async () => {
     const todayAtClub = requireCalendarDate("2026-07-01");
     const card = await calculateModificationSettlementOptions({ reduction: noReductionAgainstUnpaidAsk(-1500),
@@ -221,7 +249,8 @@ describe("an organiser child's reduction at the edit door (#3653)", () => {
     // No Stripe refund and no organiser card reservation: the door raises the
     // organiser's bank-transfer hand-back for `refundAmountCents`
     // (`raiseEditRefundHandBackIfOwed`, payee the organiser).
-    expect(result).toMatchObject({ refundAmountCents: 1500, accountCreditAmountCents: 0, pendingRefundAmountCents: 0, hasSucceededPayment: false, organiserChildRefund: null });
+    expect(result).toMatchObject({ refundAmountCents: 1500, accountCreditAmountCents: 0, pendingRefundAmountCents: 0, hasSucceededPayment: false, organiserChildRefund: null,
+      settledAgainstPrimaryInvoice: false, hasIssuedXeroInvoice: true });
 
     // Electing credit is refused, as on the card twin.
     await expect(
@@ -287,6 +316,20 @@ describe("an organiser child's reduction at the edit door (#3653)", () => {
       changeFeeCents: 0,
     });
     expect(ib.additionalAsk.amountCents).toBe(0);
+    // #4299 (F1): billed to the organiser, so nothing is asked of the joiner.
+    expect(ib.additionalAmountCents).toBe(0);
+    expect(ib.billedToOrganiserCents).toBe(1000);
+    expect(ib.settledAgainstPrimaryInvoice).toBe(false);
+  });
+
+  it("refuses an organiser bank edit with no combined invoice before mutating its payment", async () => {
+    const tx = txWithSettlement(null);
+    vi.mocked(tx.groupBooking.findUnique).mockResolvedValue(null);
+    await expect(applyPaymentAdjustments(tx, { reduction: noReductionAgainstUnpaidAsk(1000),
+      ...SETTLEMENT_DAY, booking: ibChild(), priceDiffCents: 1000, changeFeeCents: 0,
+    })).rejects.toMatchObject({ status: 409, message: expect.stringContaining("combined invoice is not on record") });
+    expect(tx.payment.update).not.toHaveBeenCalled();
+    expect(tx.payment.updateMany).not.toHaveBeenCalled();
   });
 
   it("the quote shows the refusal the save would meet for an increase, and only for an organiser card child (fix round 2, F3)", () => {
@@ -302,7 +345,25 @@ describe("an organiser child's reduction at the edit door (#3653)", () => {
     ).toBeNull();
     // The quote route answers with the SAME predicate the save refuses on.
     const quote = readFileSync(resolve(REPO_ROOT, "src/app/api/bookings/[id]/modify-quote/route.ts"), "utf8");
-    expect(quote).toContain("chargeRefusal: organiserChildChargeRefusal({ booking, netChargeCents }),");
+    expect(quote).toContain("chargeRefusal: organiserChildChargeRefusal({ booking, netChargeCents }) ?? await organiserCombinedInvoiceRefusal(prisma, booking, netChargeCents),");
+    // #4299 N4: and, for a bank place, that the organiser is billed for it (the panel's `organiser-billed-notice` and "Remaining to pay").
+    expect(quote).toContain("billedToOrganiser: paidByOrganiserInternetBanking(booking),");
+  });
+
+  it("#4299 N-a: the quote and the save refuse only an INCREASE on a bank place whose combined invoice is missing", async () => {
+    const missing = { groupBooking: { findUnique: vi.fn(async () => null) } } as never;
+    expect(await organiserCombinedInvoiceRefusal(missing, ibChild(), 1000)).toBe(ORGANISER_COMBINED_INVOICE_MISSING_MESSAGE);
+    expect(await organiserCombinedInvoiceRefusal(missing, ibChild(), 0)).toBeNull();
+    expect(await organiserCombinedInvoiceRefusal(missing, ibChild(), -1500)).toBeNull();
+    expect(await organiserCombinedInvoiceRefusal(missing, child(), 1000)).toBeNull();
+    // The save: a reduction and a no-price change still save, with no organiser billing.
+    for (const net of [-1500, 0]) {
+      const tx = txWithSettlement(null);
+      vi.mocked(tx.groupBooking.findUnique).mockResolvedValue(null);
+      const result = await applyPaymentAdjustments(tx, { reduction: noReductionAgainstUnpaidAsk(net), ...SETTLEMENT_DAY, booking: ibChild(), priceDiffCents: net, changeFeeCents: 0,
+        ...(net < 0 ? { settlementOptions: { ...ORGANISER_OPTIONS, organiserRefundByBankTransfer: true } } : {}) });
+      expect(result, String(net)).toMatchObject({ billedToOrganiserCents: 0, additionalAmountCents: 0 });
+    }
   });
 
   it("#3949 review round 6: the quote shows the mid-group-cancel refusal the save would meet, from the save's own answer", async () => {

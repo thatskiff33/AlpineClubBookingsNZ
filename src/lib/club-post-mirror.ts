@@ -1,27 +1,29 @@
 import "server-only";
+import type { Prisma } from "@prisma/client";
 
-import { sanitiseClubPostHtml } from "@/lib/club-post-html";
+import { bodyShape, prepareMirrorBody } from "@/lib/club-post-mirror-images";
 import logger from "@/lib/logger";
-import { deletePostImage, writePostImage } from "@/lib/post-image-storage";
+import { deletePostImage } from "@/lib/post-image-storage";
 import { prisma } from "@/lib/prisma";
 import {
   ServerNzVersionMismatchError,
-  fetchSharedPostImage,
   pullSharedPostSync,
-  registerPushTarget,
   type SyncPost,
 } from "@/lib/servernz-api";
 import { SERVER_VERSION_MISMATCH_CODE } from "@/lib/servernz-api-version";
 import { getServerNzSetupState } from "@/lib/servernz-config";
+import { ensurePushRegistration } from "@/lib/servernz-push-registration";
 import {
   advancedDownloadCursor,
   overlappedRequestCursor,
 } from "@/lib/servernz-cursor-overlap";
+import type { ServerNzAnswerTx } from "@/lib/servernz-settings";
 import { checkServerVersion } from "@/lib/servernz-version-check";
 import {
-  getIntegrationCredentialValue,
-  setIntegrationCredential,
-} from "@/lib/integration-credentials";
+  ServerNzConnectionChangedError,
+  serverNzAnswerWriter,
+  type ServerNzAnswerWrite,
+} from "@/lib/servernz-version-record";
 
 /**
  * Mirroring shared posts from the central server (epic #2992).
@@ -30,7 +32,10 @@ import {
  * follows from that. Content is upserted, never edited here; a tombstone
  * deletes the mirror row outright rather than soft-hiding it, because there is
  * nothing local worth keeping — the authoritative copy lives with the club
- * that wrote it. Our OWN posts coming back around the loop are recognised by
+ * that wrote it. The one exception (#4588): a "hidden" tombstone for a mirror
+ * this club's admin already removed leaves a scrubbed marker, because a hide
+ * can be reversed and the marker is what keeps the removal standing; see
+ * {@link applyRemoval}. Our OWN posts coming back around the loop are recognised by
  * `serverPostId` and skipped: this install is authoritative for those.
  *
  * DRIVEN TWO WAYS, ONE WRITER. The push webhook and the polling cron both end
@@ -47,18 +52,12 @@ import {
  * writes nothing — evidence this sync owes on its own, and its tests carry it.
  */
 
-/** Provider key the push-verification secret is stored under, beside the API key. */
-export const SERVERNZ_PUSH_SECRET_KEY = "push_secret";
-const SERVERNZ_PROVIDER = "servernz";
 
 /** A claim older than this belongs to a process that died mid-pass. */
 export const STALE_SYNC_CLAIM_MS = 10 * 60 * 1000;
 
 /** Pages per pass, so one pass cannot run unbounded against a huge backlog. */
 const MAX_PAGES_PER_PASS = 10;
-
-/** Images fetched per mirrored post. Matches the local per-post cap. */
-const MAX_MIRROR_IMAGES = 6;
 
 /** How the inert-overlap log line names this pull — see `overlappedRequestCursor`. */
 const OVERLAP_SYNC_LABEL = "shared-post mirror";
@@ -81,165 +80,65 @@ export interface MirrorSyncResult {
   unchanged: number;
   removed: number;
   pages: number;
+  /**
+   * `connection-changed` (#4470): the server address or API key was replaced
+   * while this pass ran, so it stopped at its first write for a page from the
+   * replaced connection. That page wrote nothing: no post, failure count,
+   * cursor or last-sync time; pages applied before the change stand.
+   *
+   * `claim-taken-over` (#4588): this pass ran past the stale window and a
+   * second pass took the claim, so it stopped at its first write after that,
+   * which wrote nothing. Changes applied before the takeover stand.
+   */
+  stopped?: "connection-changed" | "claim-taken-over";
+}
+
+/** A fenced write refused because another pass now holds the claim (#4588). */
+class MirrorClaimTakenOverError extends Error {
+  constructor() {
+    super("The shared-post mirror claim was taken over by another pass");
+    this.name = "MirrorClaimTakenOverError";
+  }
+}
+
+/**
+ * A page's fenced writer that also checks this pass STILL HOLDS its claim
+ * (#4588): under the settings-row lock the fence has just taken, it re-reads
+ * `commsSyncStartedAt` and refuses, writing nothing, unless it is still the
+ * stamp this pass wrote. A pass that outlived the stale window and was taken
+ * over cannot re-apply an older version, or re-create a post the newer pass
+ * deleted, beside the pass that now holds the claim.
+ */
+function claimHeldWriter(write: ServerNzAnswerWrite, claimedAt: Date): ServerNzAnswerWrite {
+  return (work) => write(async (tx) => {
+    const row = await tx.serverNzSettings.findUnique({ where: { id: "default" }, select: { commsSyncStartedAt: true } });
+    if (row?.commsSyncStartedAt?.getTime() !== claimedAt.getTime()) throw new MirrorClaimTakenOverError();
+    return work(tx);
+  });
 }
 
 /** What {@link upsertMirror} did with one visible change. */
 type MirrorUpsertOutcome = "created" | "updated" | "unchanged" | "skipped";
 
 /**
- * A mirrored body with its local image ids blanked, so two renderings of the
- * same server post — whose images were stored under different local ids on
- * different passes — compare equal when, and only when, the words and the
- * pictures are the same. The pictures themselves are compared by SHA-256.
+ * Upsert one mirrored post, images included (pictures and body:
+ * `club-post-mirror-images.ts`).
  */
-function bodyShape(bodyHtml: string | null): string | null {
-  return (
-    bodyHtml?.replace(
-      /\/api\/club-posts\/images\/[0-9a-f]{32}/g,
-      "/api/club-posts/images/#",
-    ) ?? null
-  );
-}
-
-/**
- * Rewrite a mirrored body's image URLs onto the LOCAL copies just stored.
- *
- * The body arrives naming the central server's own image routes. After this,
- * every surviving image points at this install's session-checked serving
- * route; anything unmapped is left as-is for the sanitiser to drop, because a
- * missing picture beats one that leaks each reader to a remote host.
- */
-function rewriteMirrorImageSources(
-  html: string,
-  mapping: Map<string, string>,
-): string {
-  return html.replace(
-    /\/api\/images\/posts\/([0-9a-f]{32})(?:\.webp)?/g,
-    (whole, serverId: string) => {
-      const localId = mapping.get(serverId);
-      return localId ? `/api/club-posts/images/${localId}` : whole;
-    },
-  );
-}
-
-/** The server-side image id inside one of its image URLs, or null. */
-function serverImageId(url: string): string | null {
-  const match = url.match(/\/api\/images\/posts\/([0-9a-f]{32})(?:\.webp)?/);
-  // The capture group has no `?` quantifier, so a match always carries it.
-  return match?.[1] ?? null;
-}
-
-/**
- * Upsert one mirrored post, images included.
- *
- * Images are DOWNLOADED AND STORED LOCALLY rather than hotlinked, for three
- * reasons that all matter: the central server's image URLs are capability URLs
- * that should not be broadcast into every member's browser history; a reader
- * of this club's board should not have their IP disclosed to the central
- * server on every render; and the board must keep working when the central
- * server is down — which is the whole reason mirrors exist.
- */
-async function upsertMirror(post: SyncPost): Promise<MirrorUpsertOutcome> {
-  const existing = await prisma.clubPost.findUnique({
-    where: { serverPostId: post.id },
-    select: {
-      id: true,
-      originClubCode: true,
-      originClubName: true,
-      content: true,
-      bodyHtml: true,
-      // In position order, because sameness below is judged image-by-image
-      // against the server's list, which is positional.
-      images: {
-        select: { publicId: true, storageKey: true, sha256: true },
-        orderBy: { position: "asc" },
-      },
-    },
-  });
-
+async function upsertMirror(
+  post: SyncPost,
+  write: ServerNzAnswerWrite,
+): Promise<MirrorUpsertOutcome> {
   // Our own post coming back around the loop. This install is authoritative
   // for it; the server's copy is derived, so nothing here may overwrite it.
-  if (existing && existing.originClubCode === null) return "skipped";
-
-  // Download this post's images and build the URL mapping. Bounded, and a
-  // failed image never fails the post — the words still arrive.
-  const mapping = new Map<string, string>();
-  const storedImages: {
-    publicId: string;
-    storageKey: string;
-    mimeType: string;
-    sha256: string;
-    width: number | null;
-    height: number | null;
-    bytes: number;
-    position: number;
-  }[] = [];
-
-  for (const [index, image] of post.images.slice(0, MAX_MIRROR_IMAGES).entries()) {
-    const remoteId = serverImageId(image.url);
-    if (!remoteId) continue;
-    const bytes = await fetchSharedPostImage(image.url);
-    if (!bytes) {
-      logger.warn(
-        { serverPostId: post.id, image: remoteId },
-        "Mirrored post image could not be fetched; mirroring without it",
-      );
-      continue;
-    }
-    try {
-      // Through the SAME pipeline as a member upload — sniffed, re-encoded,
-      // EXIF-stripped — because a mirrored image is still remote input, however
-      // trusted the server is.
-      const stored = await writePostImage(bytes);
-      mapping.set(remoteId, stored.publicId);
-      storedImages.push({ ...stored, position: index });
-    } catch (error) {
-      logger.warn(
-        { serverPostId: post.id, image: remoteId, err: error },
-        "Mirrored post image could not be stored; mirroring without it",
-      );
-    }
-  }
-
-  // Sanitised AGAIN on this side of the wire, after the rewrite so surviving
-  // images point locally. The server sanitises too, but this install renders
-  // the result to its own members and does not outsource that decision.
-  let bodyHtml = post.bodyHtml
-    ? sanitiseClubPostHtml(rewriteMirrorImageSources(post.bodyHtml, mapping)) ||
-      null
-    : null;
-
-  // A post can arrive with pictures but no rich body -- the server's own seed
-  // data, or a client that attached images to a plain post. The board renders
-  // pictures only through the body, so such a post gets a minimal one;
-  // without it the images are downloaded, stored, counted and never seen.
-  // Sanitised like any other body, so the write-side invariant holds.
-  if (!bodyHtml && storedImages.length > 0) {
-    bodyHtml =
-      sanitiseClubPostHtml(
-        storedImages
-          .map(
-            (image) =>
-              '<img src="/api/club-posts/images/' + image.publicId + '" alt="" />',
-          )
-          .join(""),
-      ) || null;
-  }
-
-  // The SANITISED length is what the column stores, and sanitisation GROWS a
-  // body (every anchor gains target/rel attributes), so a wire body inside
-  // the 20,000 cap can come out over it — and an over-long value fails the
-  // insert AFTER rows are written and BEFORE the cursor advances (#3091
-  // review 2a; the serverPostId schema comment records the identical trap).
-  // Formatting is decoration; the words are the post. Degrade to plain text
-  // rather than wedge the sync.
-  if (bodyHtml && bodyHtml.length > 20_000) {
-    logger.warn(
-      { serverPostId: post.id, length: bodyHtml.length },
-      "Mirrored post body exceeds the column cap after sanitising; mirroring as plain text",
-    );
-    bodyHtml = null;
-  }
+  // Read here only to skip the downloads: the decision is re-read under the
+  // post's row lock, inside the fenced write below (#4586).
+  // A mirror this club's admin REMOVED is skipped too (#4588): its words are
+  // gone and stay gone, so nothing is downloaded for it either.
+  const seen = await prisma.clubPost.findUnique({
+    where: { serverPostId: post.id },
+    select: { originClubCode: true, removedAt: true },
+  });
+  if (seen && (seen.originClubCode === null || seen.removedAt)) return "skipped";
 
   const content = post.content.slice(0, 4000);
   const postedAt = new Date(post.createdAt);
@@ -255,162 +154,172 @@ async function upsertMirror(post: SyncPost): Promise<MirrorUpsertOutcome> {
     return "skipped";
   }
 
-  if (existing) {
-    // THE REPEAT THE CURSOR OVERLAP RE-DELIVERS (#3449). A post already
-    // mirrored exactly as it arrives — same words, same origin name, same
-    // pictures byte for byte — is written nowhere: no row touched, no files
-    // swapped, and it is not counted as a change. Without this, the overlap
-    // would churn every post in its window on every pass and every pass would
-    // report activity on a board where nothing happened. The freshly written
-    // duplicate files are the one cost, and they are removed here rather than
-    // left for the orphan sweep.
-    const sameImages =
-      storedImages.length === existing.images.length &&
-      storedImages.every(
-        (image, index) => image.sha256 === existing.images[index]?.sha256,
-      );
-    if (
-      sameImages &&
-      existing.content === content &&
-      existing.originClubName === post.club.name &&
-      bodyShape(existing.bodyHtml) === bodyShape(bodyHtml)
-    ) {
-      for (const duplicate of storedImages) {
-        await deletePostImage(duplicate.storageKey);
+  // After the timestamp check, so a skipped post stores no file.
+  const { storedImages, bodyHtml } = await prepareMirrorBody(post);
+
+  // Every row write below is fenced on the connection this page came from
+  // (#4470). A write that fails for any reason, a refusal included, rolled
+  // back and committed no row naming the image files just stored, and no
+  // sweep reclaims a file without a row, so they are removed here.
+  const fresh = storedImages.map((image) => image.storageKey);
+  let unused = fresh;
+  let outcome: MirrorUpsertOutcome;
+  try {
+    outcome = await write(async (tx) => {
+      // CREATE OR UPDATE IS DECIDED HERE, under the fence and the post's row
+      // lock (#4586), from a re-read: the row cannot change between the read
+      // and the write. The post is locked before any image row is touched.
+      const existing = await lockMirroredPost(tx, post.id, {
+        id: true, originClubCode: true, originClubName: true, content: true, bodyHtml: true, removedAt: true,
+        // In position order: sameness is judged image-by-image against the
+        // server's list, which is positional.
+        images: { select: { storageKey: true, sha256: true }, orderBy: { position: "asc" } },
+      });
+      // Our own post, or a mirror this club's admin removed (#4588): a removal
+      // blanked the words and deleted the pictures, and a re-delivery (an edit
+      // at the origin, or the cursor overlap) must not write them back.
+      if (existing && (existing.originClubCode === null || existing.removedAt)) return "skipped";
+      if (existing) {
+        // THE REPEAT THE CURSOR OVERLAP RE-DELIVERS (#3449). A post already
+        // mirrored exactly as it arrives (same words, origin name and
+        // pictures byte for byte) is written nowhere and not counted as a
+        // change, so the overlap never churns the board; only the duplicate
+        // files just stored are removed.
+        const sameImages =
+          storedImages.length === existing.images.length &&
+          storedImages.every((image, index) => image.sha256 === existing.images[index]?.sha256);
+        if (
+          sameImages &&
+          existing.content === content &&
+          existing.originClubName === post.club.name &&
+          bodyShape(existing.bodyHtml) === bodyShape(bodyHtml)
+        ) {
+          return "unchanged";
+        }
+        // Images replaced wholesale: the server's list is authoritative for a
+        // mirror. Rows first, then files, so a failure leaves orphaned files
+        // (invisible, swept later) rather than broken images.
+        await tx.clubPostImage.deleteMany({ where: { postId: existing.id } });
+        await tx.clubPost.update({
+          where: { id: existing.id },
+          data: { content, bodyHtml, originClubName: post.club.name, images: { create: storedImages } },
+        });
+        unused = existing.images.map((image) => image.storageKey);
+        return "updated";
       }
-      return "unchanged";
-    }
-    // Replace images wholesale: the server's list is authoritative for a
-    // mirror, and diffing it against local rows buys nothing but edge cases.
-    // Rows first, then files — the failure order that leaves orphaned files
-    // (invisible, swept later) rather than broken images (visible forever).
-    await prisma.$transaction([
-      prisma.clubPostImage.deleteMany({ where: { postId: existing.id } }),
-      prisma.clubPost.update({
-        where: { id: existing.id },
+      await tx.clubPost.create({
         data: {
+          serverPostId: post.id,
+          originClubCode: post.club.code,
+          originClubName: post.club.name,
+          // No local member wrote this, so there is nobody to link. The
+          // display name is club-attested by the origin club.
+          authorMemberId: null,
+          authorName: post.authorName,
           content,
           bodyHtml,
-          originClubName: post.club.name,
+          postedAt,
           images: { create: storedImages },
         },
-      }),
-    ]);
-    for (const old of existing.images) {
-      await deletePostImage(old.storageKey);
-    }
-    return "updated";
-  }
-
-  await prisma.clubPost.create({
-    data: {
-      serverPostId: post.id,
-      originClubCode: post.club.code,
-      originClubName: post.club.name,
-      // No local member wrote this, so there is nobody to link. The display
-      // name is club-attested by the origin club, exactly as the server holds
-      // it.
-      authorMemberId: null,
-      authorName: post.authorName,
-      content,
-      bodyHtml,
-      postedAt,
-      images: { create: storedImages },
-    },
-  });
-  return "created";
-}
-
-/** Apply one tombstone. */
-async function applyRemoval(serverPostId: string): Promise<boolean> {
-  const existing = await prisma.clubPost.findUnique({
-    where: { serverPostId },
-    select: {
-      id: true,
-      originClubCode: true,
-      hiddenAt: true,
-      images: { select: { storageKey: true } },
-    },
-  });
-  if (!existing) return false;
-
-  if (existing.originClubCode === null) {
-    // OUR OWN post, taken down on the network side — a central-server admin
-    // removed it, or enough reports hid it. The network copy is gone either
-    // way, so this install's row stops claiming to be shared; and the local
-    // copy is HIDDEN, not deleted, because the words belong to this club's own
-    // member and takedown convergence is a moderation action, not an erasure.
-    // A club admin can unhide it, at which point it is a local-only post.
-    await prisma.clubPost.update({
-      where: { id: existing.id },
-      data: {
-        sharedAt: null,
-        serverPostId: null,
-        shareRequestedAt: null,
-        hiddenAt: existing.hiddenAt ?? new Date(),
-      },
+      });
+      unused = [];
+      return "created";
     });
-    return true;
+  } catch (error) {
+    for (const key of fresh) await deletePostImage(key);
+    throw error;
   }
-
-  // A mirror is a cache: the authoritative copy lives with the club that wrote
-  // it, so there is nothing worth keeping and the row is deleted outright.
-  // Rows first, files second, as everywhere else.
-  await prisma.clubPost.delete({ where: { id: existing.id } });
-  for (const image of existing.images) {
-    await deletePostImage(image.storageKey);
-  }
-  return true;
+  for (const key of unused) await deletePostImage(key);
+  return outcome;
 }
 
 /**
- * Make sure the central server knows where to push for this install.
- *
- * Idempotent and cheap to call from the sync pass: it does nothing when a
- * secret is already stored. The callback URL is derived from NEXTAUTH_URL —
- * the address this install already knows itself by — so there is no second
- * base-URL setting to drift.
+ * Lock the row mirroring `serverPostId`, then re-read it (#4586). Every
+ * message-board writer takes the `ClubPost` row before its `ClubPostImage`
+ * rows; see docs/CONCURRENCY_AND_LOCKING.md -> "Message-board posts and their
+ * images". `serverPostId` is a mutable key (a share stamps it), so a lock that
+ * matched nothing is not found, never a row read unlocked; the unique column
+ * refuses a create racing that stamp.
  */
-export async function ensurePushRegistration(): Promise<void> {
-  const existing = await getIntegrationCredentialValue(
-    SERVERNZ_PROVIDER,
-    SERVERNZ_PUSH_SECRET_KEY,
-  );
-  if (existing) return;
+async function lockMirroredPost<S extends Prisma.ClubPostSelect>(tx: ServerNzAnswerTx, serverPostId: string, select: S) {
+  const locked = await tx.$executeRaw`SELECT 1 FROM "ClubPost" WHERE "serverPostId" = ${serverPostId} FOR UPDATE`;
+  return locked === 0 ? null : tx.clubPost.findUnique({ where: { serverPostId }, select });
+}
 
-  const base = process.env.NEXTAUTH_URL?.trim();
-  // Push needs a URL the central server can reach over https; a localhost dev
-  // install simply stays poll-only, which loses nothing but latency.
-  if (!base || !base.startsWith("https://")) return;
-
-  const callback = new URL("/api/webhooks/servernz-posts", base).toString();
-  try {
-    const result = await registerPushTarget(callback);
-    await setIntegrationCredential({
-      provider: SERVERNZ_PROVIDER,
-      key: SERVERNZ_PUSH_SECRET_KEY,
-      value: result.secret,
-      actor: { kind: "system", actor: "servernz-push-registration" },
-      // Declared last-writer-wins, and deliberately NOT create-only (#2723).
-      // `registerPushTarget` is a PUT: the central server keeps the most
-      // recent registration and issues it a new secret version. So if two
-      // containers both register, the secret worth storing is the LAST one
-      // issued — refusing to overwrite would leave this install holding a
-      // superseded secret and rejecting every push the server signs.
-      expect: { expect: "any" },
+/** Apply one tombstone under the fence and the post's row lock (#4470, #4586, #4588). */
+async function applyRemoval(
+  serverPostId: string,
+  reason: "hidden" | "removed",
+  write: ServerNzAnswerWrite,
+): Promise<boolean> {
+  const outcome = await write(async (tx): Promise<{ files: string[]; removed: boolean } | null> => {
+    const existing = await lockMirroredPost(tx, serverPostId, {
+      id: true, originClubCode: true, hiddenAt: true, removedAt: true, images: { select: { storageKey: true } },
     });
-    logger.info(
-      { callback, secretVersion: result.secretVersion },
-      "Registered this install for shared-post pushes",
-    );
-  } catch (error) {
-    // A version pause is the pass's answer, not registration's: let the pass
-    // report it (#49 review item 1).
-    if (error instanceof ServerNzVersionMismatchError) throw error;
-    // Poll-only is a working state, so registration failing must not fail the
-    // sync pass that attempted it.
-    logger.warn({ err: error }, "Could not register the shared-post push target");
-  }
+    if (!existing) return null;
+    const files = existing.images.map((image) => image.storageKey);
+    if (existing.originClubCode !== null && existing.removedAt && reason === "hidden") {
+      // A HIDE of a mirror this club's admin already removed (#4588). A hide
+      // can be reversed at the server, and deleting the row would let that
+      // restore re-create the post here, undoing the removal; so a MARKER
+      // stays, scrubbed of everything but what recognises the id. Kept:
+      // `serverPostId` (the recognition), `originClubCode` (non-null is what
+      // marks a mirror; null would make it read as our own post), `removedAt`
+      // (the decision), `postedAt` (so retention, where on, expires the marker
+      // too) and `hiddenAt` (a timestamp). Blanked: the author, the origin
+      // club's name, the words and the body; deleted: its reports (their
+      // reporter names and details can quote the removed words) and any image
+      // rows. A "removed" tombstone is final and deletes the row below.
+      await tx.clubPostReport.deleteMany({ where: { postId: existing.id } });
+      await tx.clubPostImage.deleteMany({ where: { postId: existing.id } });
+      await tx.clubPost.update({
+        where: { id: existing.id },
+        data: { authorName: "", originClubName: null, content: "", bodyHtml: null, reportCount: 0 },
+      });
+      return { files, removed: false };
+    }
+    if (existing.originClubCode === null) {
+      // OUR OWN post, taken down on the network side (a central-server admin
+      // removed it, or reports hid it). The row stops claiming to be shared,
+      // and the local copy is HIDDEN, not deleted: the words belong to this
+      // club's own member, and takedown convergence is moderation, not
+      // erasure. A club admin can unhide it as a local-only post.
+      await tx.clubPost.update({
+        where: { id: existing.id },
+        data: { sharedAt: null, serverPostId: null, shareRequestedAt: null, hiddenAt: existing.hiddenAt ?? new Date() },
+      });
+      return { files: [], removed: true };
+    }
+    // A mirror is a cache: the authoritative copy lives with the club that
+    // wrote it, so the row is deleted outright, its images and reports by
+    // cascade. That includes one this club's admin removed, on a "removed"
+    // tombstone: the takedown is final, so no marker is needed.
+    await tx.clubPost.delete({ where: { id: existing.id } });
+    return { files, removed: true };
+  });
+  if (outcome === null) return false;
+  // Rows first, files second, as everywhere else.
+  for (const key of outcome.files) await deletePostImage(key);
+  return outcome.removed;
+}
+
+/** The mirror's stored position: its cursor pair and its failure count (#4470). */
+type MirrorPosition = {
+  commsCursorSince: string | null;
+  commsCursorSinceId: string | null;
+  commsPoisonChangeId: string | null;
+  commsPoisonCount: number;
+};
+const POSITION_SELECT = {
+  commsCursorSince: true, commsCursorSinceId: true, commsPoisonChangeId: true, commsPoisonCount: true,
+} as const;
+function positionOf(row: Partial<MirrorPosition> | null | undefined): MirrorPosition {
+  return {
+    commsCursorSince: row?.commsCursorSince ?? null,
+    commsCursorSinceId: row?.commsCursorSinceId ?? null,
+    commsPoisonChangeId: row?.commsPoisonChangeId ?? null,
+    commsPoisonCount: row?.commsPoisonCount ?? 0,
+  };
 }
 
 const PAUSED: MirrorSyncResult = {
@@ -498,6 +407,8 @@ export async function runMirrorSync(
     update: {},
   });
   const staleBefore = new Date(now.getTime() - STALE_SYNC_CLAIM_MS);
+  // The exact stamp this pass writes, kept so the release clears only it (#4586).
+  const claimedAt = new Date(now.getTime());
   const claim = await prisma.serverNzSettings.updateMany({
     where: {
       id: "default",
@@ -506,7 +417,7 @@ export async function runMirrorSync(
         { commsSyncStartedAt: { lt: staleBefore } },
       ],
     },
-    data: { commsSyncStartedAt: now },
+    data: { commsSyncStartedAt: claimedAt },
   });
   if (claim.count === 0) {
     return { skipped: "busy", upserted: 0, unchanged: 0, removed: 0, pages: 0 };
@@ -532,6 +443,24 @@ export async function runMirrorSync(
     });
     let poisonId = cursor?.commsPoisonChangeId ?? null;
     let poisonCount = cursor?.commsPoisonCount ?? 0;
+    // THE POSITION THIS PASS HOLDS (#4470): the stored cursor pair and failure
+    // count as it read or last wrote them. Every position write re-reads them
+    // under the page's fence and refuses, writing nothing, if any moved: a key
+    // replaced at the same address resets them and leaves a page that passes
+    // the fence (sent on the new key), so without this the pass would write
+    // its old position, or step over a post on a stale failure count, onto
+    // the new connection. A moved position stops the pass like a replaced one.
+    let held = positionOf(cursor);
+    const writePosition = async (pageWrite: ServerNzAnswerWrite, data: Partial<MirrorPosition>) => {
+      await pageWrite(async (tx) => {
+        const stored = positionOf(await tx.serverNzSettings.findUnique({ where: { id: "default" }, select: POSITION_SELECT }));
+        if ((Object.keys(held) as (keyof MirrorPosition)[]).some((key) => stored[key] !== held[key])) {
+          throw new ServerNzConnectionChangedError();
+        }
+        await tx.serverNzSettings.update({ where: { id: "default" }, data });
+      });
+      held = { ...held, ...data };
+    };
     // TWO POSITIONS, kept apart on purpose (#3449). `durable` is what the row
     // holds and only ever moves forward. `request` is where the NEXT page asks
     // from: the overlapped position first, then whatever the server returned,
@@ -543,19 +472,32 @@ export async function runMirrorSync(
     };
     let request = overlappedMirrorCursor(durable.since, durable.sinceId);
 
+    // EVERY WRITE FROM A PAGE IS FENCED on the connection that page was sent
+    // on (#4470), the Other lodges download's protocol: posts, removals, the
+    // failure count, the cursor and the last-sync time each commit in one
+    // short `serverNzAnswerWriter` transaction that re-reads the stored
+    // address and key version under the settings-row lock. A page from a
+    // connection replaced while it was in flight writes nothing, so it cannot
+    // put the old server's position back over the replacement's reset (which
+    // would skip the new server's older posts for good, the cursor never
+    // moving backwards); the pass stops at that write. Posts applied from
+    // earlier pages stand: a move does not remove mirrored posts.
+    let write: ServerNzAnswerWrite | null = null;
     for (let page = 0; page < MAX_PAGES_PER_PASS; page++) {
       const envelope = await pullSharedPostSync(request);
+      const pageWrite = claimHeldWriter(serverNzAnswerWriter(envelope.sentOn), claimedAt);
+      write = pageWrite;
       result.pages += 1;
 
       for (const change of envelope.changes) {
         const changeKey = change.state === "visible" ? change.post.id : change.id;
         try {
           if (change.state === "visible") {
-            const outcome = await upsertMirror(change.post);
+            const outcome = await upsertMirror(change.post, pageWrite);
             if (outcome === "unchanged") result.unchanged += 1;
             else if (outcome !== "skipped") result.upserted += 1;
           } else {
-            if (await applyRemoval(change.id)) result.removed += 1;
+            if (await applyRemoval(change.id, change.reason, pageWrite)) result.removed += 1;
           }
         } catch (error) {
           // PER-CHANGE ISOLATION (#3091 review 2). A throw here used to
@@ -572,28 +514,27 @@ export async function runMirrorSync(
           // A version pause is not a poison change (#49): it is the server's
           // answer about the whole connection, so it neither counts against
           // this change nor steps over it - the pass reports paused below.
+          // Nor is a replaced connection (#4470) or a claim taken over
+          // (#4588): the pass stops below.
           if (error instanceof ServerNzVersionMismatchError) throw error;
+          if (error instanceof ServerNzConnectionChangedError) throw error;
+          if (error instanceof MirrorClaimTakenOverError) throw error;
           if (poisonId === changeKey && poisonCount >= 2) {
+            // Said only once the count it rests on is still the stored one.
+            await writePosition(pageWrite, { commsPoisonChangeId: null, commsPoisonCount: 0 });
             logger.error(
               { changeKey, failures: poisonCount + 1, err: error },
               "Skipping a poison mirror-sync change after repeated failures; the rest of the feed continues",
             );
             poisonId = null;
             poisonCount = 0;
-            await prisma.serverNzSettings.update({
-              where: { id: "default" },
-              data: { commsPoisonChangeId: null, commsPoisonCount: 0 },
-            });
             continue;
           }
           poisonCount = poisonId === changeKey ? poisonCount + 1 : 1;
           poisonId = changeKey;
-          await prisma.serverNzSettings.update({
-            where: { id: "default" },
-            data: {
-              commsPoisonChangeId: changeKey.slice(0, 64),
-              commsPoisonCount: poisonCount,
-            },
+          await writePosition(pageWrite, {
+            commsPoisonChangeId: changeKey.slice(0, 64),
+            commsPoisonCount: poisonCount,
           });
           throw error;
         }
@@ -602,10 +543,7 @@ export async function runMirrorSync(
           // cause after all. Forget it before it can be blamed again.
           poisonId = null;
           poisonCount = 0;
-          await prisma.serverNzSettings.update({
-            where: { id: "default" },
-            data: { commsPoisonChangeId: null, commsPoisonCount: 0 },
-          });
+          await writePosition(pageWrite, { commsPoisonChangeId: null, commsPoisonCount: 0 });
         }
       }
 
@@ -619,23 +557,24 @@ export async function runMirrorSync(
       // would rewind the durable position a minute per quiet pass. The pair is
       // kept whole: the server's `sinceId` belongs with the server's `since`,
       // so a refused step keeps BOTH stored halves.
+      //
+      // AND ONLY OVER THE POSITION THIS PASS HOLDS (#4470): `writePosition`.
       if (envelope.cursor) {
         const since = advancedDownloadCursor(durable.since, envelope.cursor.since);
         if (since === envelope.cursor.since) durable = envelope.cursor;
-        await prisma.serverNzSettings.update({
-          where: { id: "default" },
-          data: { commsCursorSince: durable.since, commsCursorSinceId: durable.sinceId },
-        });
+        await writePosition(pageWrite, { commsCursorSince: durable.since, commsCursorSinceId: durable.sinceId });
         request = envelope.cursor;
       }
 
       if (!envelope.hasMore) break;
     }
 
-    await prisma.serverNzSettings.update({
+    // The last page's connection: a pass whose connection was replaced after
+    // its last write does not stamp the new connection as synced.
+    await write?.((tx) => tx.serverNzSettings.update({
       where: { id: "default" },
       data: { commsLastSyncAt: now },
-    });
+    }));
     return result;
   } catch (error) {
     // The server refused mid-pass for version (its 409, recorded by the API
@@ -649,11 +588,30 @@ export async function runMirrorSync(
       );
       return { ...PAUSED, ...result, skipped: SERVER_VERSION_MISMATCH_CODE };
     }
+    // The connection was replaced mid-pass (#4470): stopped at the first write
+    // for it, which wrote nothing. Released below; the next pass starts from
+    // the replacement's (reset) position on the connection now stored.
+    if (error instanceof ServerNzConnectionChangedError) {
+      logger.warn(
+        { ...result },
+        "The Alpine Central Server connection changed while the shared-post mirror ran; nothing from it was written after the change",
+      );
+      return { ...result, stopped: "connection-changed" };
+    }
+    // Taken over (#4588): stopped at the first write after it, which wrote
+    // nothing. The release below matches nothing; the claim is the new pass's.
+    if (error instanceof MirrorClaimTakenOverError) {
+      logger.warn({ ...result }, "A shared-post mirror pass outlived its claim and was taken over; it wrote nothing after the takeover");
+      return { ...result, stopped: "claim-taken-over" };
+    }
     throw error;
   } finally {
-    // Released whatever happened: a failed pass must not wedge the next one.
+    // Released whatever happened, so a failed pass cannot wedge the next one,
+    // and ONLY while the row still holds this pass's own stamp (#4586): a pass
+    // whose claim went stale and was taken over must not clear the new
+    // holder's, or a third pass could start beside it.
     await prisma.serverNzSettings
-      .update({ where: { id: "default" }, data: { commsSyncStartedAt: null } })
+      .updateMany({ where: { id: "default", commsSyncStartedAt: claimedAt }, data: { commsSyncStartedAt: null } })
       .catch(() => undefined);
   }
 }

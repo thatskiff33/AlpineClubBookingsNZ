@@ -22,6 +22,9 @@ import { join, relative } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
+import { balancedBrackets } from "./support/balanced-brackets";
+import { blankLiterals } from "./support/strip-comments";
+
 const ROOT = join(__dirname, "..", "..", "..");
 
 function sourceFiles(dir: string): string[] {
@@ -39,13 +42,8 @@ function enclosingFunction(text: string, index: number): string {
 }
 
 /** The balanced `( … )` that opens at `start`. */
-function argumentsAt(text: string, start: number): string {
-  let depth = 0;
-  for (let index = start; index < text.length; index += 1) {
-    if (text[index] === "(") depth += 1;
-    else if (text[index] === ")" && (depth -= 1) === 0) return text.slice(start, index + 1);
-  }
-  return text.slice(start);
+function argumentsAt(text: string, start: number, structure: string): string {
+  return balancedBrackets(text, start, structure).text;
 }
 
 describe("only a review's give-back marks an applied-credit row with its source booking (#3791, #3583)", () => {
@@ -53,8 +51,12 @@ describe("only a review's give-back marks an applied-credit row with its source 
     const marked: string[] = [];
     for (const file of sourceFiles(join(ROOT, "src"))) {
       const text = readFileSync(file, "utf8");
-      for (const match of text.matchAll(/(?<!function )(memberCredit\.(?:create|createMany|upsert|update|updateMany)|giveBackAppliedCredit)\s*\(/g)) {
-        const args = argumentsAt(text, (match.index ?? 0) + match[0].length - 1);
+      if (!text.includes("memberCredit.") && !text.includes("giveBackAppliedCredit")) continue;
+      // Call sites are found over masked text: one named in a comment or string
+      // is not a call and has no opening bracket to read.
+      const structure = blankLiterals(text);
+      for (const match of structure.matchAll(/(?<!function )(memberCredit\.(?:create|createMany|upsert|update|updateMany)|giveBackAppliedCredit)\s*\(/g)) {
+        const args = argumentsAt(text, (match.index ?? 0) + match[0].length - 1, structure);
         const write = match[1] ?? "";
         if (args.includes("sourceBookingId") && (write === "giveBackAppliedCredit" || args.includes("BOOKING_APPLIED"))) {
           marked.push(`${relative(ROOT, file)} ${enclosingFunction(text, match.index ?? 0)} ${write}`);

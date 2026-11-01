@@ -13,6 +13,7 @@ import {
   recordedPrimaryInvoiceSettlement,
   SETTLED_AGAINST_PRIMARY_INVOICE_PATH,
   settlesAgainstPrimaryInvoice,
+  writeEditOnPayment,
 } from "@/lib/booking-primary-invoice-claim";
 import type { CalendarDate } from "@/lib/club-time";
 import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
@@ -28,7 +29,9 @@ const payment = {
   update: vi.fn(async () => ({})),
   updateMany: vi.fn(async () => ({ count: 1 })),
 };
+const groupBookingFindUnique = vi.fn();
 const tx = {
+  groupBooking: { findUnique: groupBookingFindUnique },
   payment,
   manualRefundTask: { aggregate: vi.fn(async () => ({ _sum: { amountCents: null } })) },
   paymentRecoveryOperation: { findMany: vi.fn(async () => []) },
@@ -187,4 +190,50 @@ describe("applyPaymentAdjustments makes the claim for the edit doors (#3980)", (
     });
     expect(payment.update).not.toHaveBeenCalled();
   });
+});
+
+
+it("an organiser combined invoice never claims or marks the joiner primary, but records its fee", async () => {
+  expect(await writeEditOnPayment(tx, { payment: { id: "child-payment", xeroInvoiceId: null }, changeFeeCents: 1000, settledAgainstCombinedInvoice: true })).toBe(false);
+  expect(payment.updateMany).not.toHaveBeenCalled();
+  expect(payment.update).toHaveBeenCalledWith({ where: { id: "child-payment" }, data: { changeFeeCents: { increment: 1000 } } });
+});
+
+
+it("bills organiser extra price plus fee and never marks the child's missing primary as settled", async () => {
+  const booking = paidBooking(null);
+  booking.organiserSettled = true;
+  booking.parentBookingId = "parent";
+  booking.payment!.source = PaymentSource.INTERNET_BANKING;
+  groupBookingFindUnique.mockResolvedValue({ status: "OPEN", organiserBookingId: "parent", organiserMemberId: "organiser", organiserMember: {},
+    settlement: { id: "settlement", source: "INTERNET_BANKING", xeroInvoiceId: "combined" } });
+  const result = await adjust(booking, 5000, 1000);
+  // #4299 (F1): billed to the organiser, so nothing is asked of the joiner.
+  expect(result).toMatchObject({ additionalAmountCents: 0, billedToOrganiserCents: 6000, xeroAdditionalAmountCents: 6000, hasIssuedXeroInvoice: true,
+    hasSucceededPayment: false, settledAgainstPrimaryInvoice: false });
+  expect(payment.updateMany).not.toHaveBeenCalled();
+  expect(payment.update).toHaveBeenCalledWith({ where: { id: "payment_1" }, data: { changeFeeCents: { increment: 1000 } } });
+});
+
+it("refuses an organiser-paid edit before payment writes if its combined invoice is missing", async () => {
+  const booking = paidBooking(null);
+  booking.organiserSettled = true;
+  booking.parentBookingId = "parent";
+  booking.payment!.source = PaymentSource.INTERNET_BANKING;
+  groupBookingFindUnique.mockResolvedValue({ status: "OPEN", settlement: { source: "INTERNET_BANKING", xeroInvoiceId: null } });
+  await expect(adjust(booking, 5000, 1000)).rejects.toThrow("combined invoice is not on record");
+  expect(payment.update).not.toHaveBeenCalled();
+  expect(payment.updateMany).not.toHaveBeenCalled();
+});
+
+
+it("organiser refunds never queue a generic note against the joiner's absent primary invoice", async () => {
+  const booking = paidBooking(null);
+  booking.organiserSettled = true;
+  booking.parentBookingId = "parent";
+  booking.payment!.source = PaymentSource.INTERNET_BANKING;
+  groupBookingFindUnique.mockResolvedValue({ status: "OPEN", organiserBookingId: "parent", organiserMemberId: "organiser", organiserMember: {},
+    settlement: { id: "settlement", source: "INTERNET_BANKING", xeroInvoiceId: "combined" } });
+  const result = await adjust(booking, -1000, 0, { appliedCreditReturnedByCaller: true });
+  expect(result).toMatchObject({ xeroRefundAmountCents: 0, pendingRefundAmountCents: 0, refundAmountCents: 1000 });
 });

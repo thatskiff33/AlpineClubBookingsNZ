@@ -7,7 +7,7 @@
  * cancels a declined ask too, and a stale tab's capture racing that cancel is
  * refunded. A capture no live cancel row owns is kept like any other: a declined
  * ask superseded before #4422, one whose row a manual mark-paid reversal
- * deleted, or one paid before the superseding minter committed its row (#4442).
+ * deleted.
  * Its change's invoice must then record THAT capture:
  * left on the carrier, the capture's release would find nothing parked on it,
  * and if the carrier were never paid the invoice would be retired.
@@ -50,24 +50,16 @@ import {
   SUPPLEMENTARY_INVOICE_MOVED_UNPAID_KEY,
   SUPPLEMENTARY_INVOICE_PARKED_FROM_KEY,
   SUPPLEMENTARY_INVOICE_TAKEN_BACK_FROM_KEY,
+  supplementaryInvoicesMovedOffIntentWhere,
 } from "@/lib/supplementary-invoice-parked-from";
 import { asRecord, readString } from "@/lib/xero-json";
 import { lockSupplementaryInvoiceAnchor } from "@/lib/xero-operation-outbox";
 import { SUPPLEMENTARY_INVOICE_CREATE_WHERE } from "@/lib/xero-supplementary-invoice-statuses";
 
-function movedOffIntentWhere(paymentIntentId: string): Prisma.XeroSyncOperationWhereInput {
-  return {
-    ...SUPPLEMENTARY_INVOICE_CREATE_WHERE,
-    status: "WAITING_PAYMENT",
-    localModel: "BookingModification",
-    requestPayload: { path: [SUPPLEMENTARY_INVOICE_PARKED_FROM_KEY], equals: paymentIntentId },
-  };
-}
-
 /** Return this captured intent's moved, still-waiting invoices to it. Answers how many moved back. */
 export async function returnMovedInvoicesToCapturedIntent(paymentIntentId: string): Promise<number> {
   const moved = await prisma.xeroSyncOperation.findMany({
-    where: movedOffIntentWhere(paymentIntentId),
+    where: supplementaryInvoicesMovedOffIntentWhere(paymentIntentId),
     select: { localId: true },
   });
   const anchors = [...new Set(moved.flatMap((row) => (row.localId ? [row.localId] : [])))].sort();
@@ -76,7 +68,7 @@ export async function returnMovedInvoicesToCapturedIntent(paymentIntentId: strin
     returned += await prisma.$transaction(async (tx) => {
       await lockSupplementaryInvoiceAnchor(tx, anchorId);
       const rows = await tx.xeroSyncOperation.findMany({
-        where: { ...movedOffIntentWhere(paymentIntentId), localId: anchorId },
+        where: { ...supplementaryInvoicesMovedOffIntentWhere(paymentIntentId), localId: anchorId },
         select: { id: true, requestPayload: true, correlationKey: true },
       });
       let count = 0;

@@ -1,10 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const mockPlanStripeRefundAllocation = vi.hoisted(() => vi.fn());
 import { NextRequest } from "next/server";
 import { z } from "zod";
 import { requireCalendarDate } from "@/lib/club-time";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 import { ORGANISER_REFUND_DEBT_STATES, primeOrganiserRefundDebt } from "./support/organiser-refund-debt-reread";
-import { expectQueuedOnce, OWN_CARD_REFUND_STATES, primeOwnCardRefund } from "./support/own-card-refund-outcome";
+import { expectQueuedOnce, ownCardRefundPlan, OWN_CARD_REFUND_STATES, primeOwnCardRefund } from "./support/own-card-refund-outcome";
 
 // #3123 (`INV-LOCK-004`) — the CLUB's day, resolved by the caller BEFORE it opens
 // its transaction and threaded in. Pinned to the frozen clock's club day, so
@@ -42,7 +44,7 @@ const mockUpsertPaymentIntentTransaction = vi.fn();
 const mockPaymentTransactionUpdateMany = vi.fn();
 const mockEnqueuePaymentIntentCancellationRecovery = vi.fn();
 /**
- * #3341: the ledger read `queueSupersededAdditionalIntentCancellations` makes
+ * #3341: the ledger read `queueSupersededAdditionalIntentCancellationRows` makes
  * for the live ADDITIONAL asks a mint retires. PR #543 added this double as a
  * bare `[]`, which made the supersede a no-op in every case here; `[]` is honest
  * only while the fixture carries no live ask, and the carry case below answers
@@ -267,12 +269,15 @@ vi.mock("@/lib/payment-transactions", () => ({
   PartialRefundError: class PartialRefundError extends Error {
     completedRefundCents = 0;
   },
+  planStripeRefundAllocation: mockPlanStripeRefundAllocation,
   refundPaymentTransactions: (...args: unknown[]) =>
     mockRefundPaymentTransactions(...args),
   applyLocalRefundAllocation: (...args: unknown[]) =>
     mockApplyLocalRefundAllocation(...args),
   upsertPaymentIntentTransaction: (...args: unknown[]) =>
     mockUpsertPaymentIntentTransaction(...args),
+  // #4442: the mint's queue takes the Payment row; nothing to wait on here.
+  lockPaymentForRefundedTotal: vi.fn(),
 }));
 vi.mock("@/lib/payment-recovery", () => ({
   enqueuePaymentIntentCancellationRecovery: (...args: unknown[]) =>
@@ -608,6 +613,8 @@ function makeTx(booking: ReturnType<typeof makeBooking>) {
       update: vi.fn().mockResolvedValue(undefined),
       // #3980: an edit that read no invoice link claims the payment row.
       updateMany: vi.fn(async () => ({ count: 1 })),
+      // #4442: the mint's queue re-reads the live ask it carries on this transaction - the fixture's own mirror.
+      findUnique: vi.fn(async () => booking.payment ?? null),
       upsert: vi.fn().mockResolvedValue({
         id: booking.payment?.id ?? "pay_zero",
         amountCents: 0,
@@ -625,7 +632,11 @@ function makeTx(booking: ReturnType<typeof makeBooking>) {
       aggregate: vi.fn().mockResolvedValue({ _sum: { amountCents: 0 } }),
     },
     paymentTransaction: {
-      findMany: vi.fn().mockResolvedValue([]),
+      // #4442: the supersede's read of the live asks now runs in the mint's
+      // queue transaction; it is answered by the suite's ledger as before.
+      findMany: vi.fn((args: { where?: { stripePaymentIntentId?: { not?: unknown } } }) =>
+        args?.where?.stripePaymentIntentId?.not !== undefined ? mockSupersedeRead(args) : Promise.resolve([]),
+      ),
       updateMany: vi.fn().mockResolvedValue({ count: 1 }),
     },
     season: {
@@ -738,6 +749,7 @@ const TX_MODE_PRE_TRANSACTION = {
 describe("PUT /api/bookings/[id]/modify", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+  mockPlanStripeRefundAllocation.mockImplementation(ownCardRefundPlan);
     mockCalculateBookingPrice.mockReset();
     mockCalculateBookingPrice.mockReturnValue({
       totalPriceCents: 5000,
@@ -1935,6 +1947,8 @@ describe("PUT /api/bookings/[id]/modify", () => {
       paymentTransactionId: "txn_old",
       paymentIntentId: "pi_old",
       amountCents: 7000,
+      // #4442: queued in the mint's own transaction, beside its row.
+      store: expect.anything(),
     });
   });
 
@@ -3623,6 +3637,7 @@ describe("PUT /api/bookings/[id]/modify", () => {
       // The recovery row carries the route's exact Stripe key prefix (#1152)
       // so retries replay identical keys.
       stripeKeyPrefix: "mod_batch_refund_bk1_mod_1",
+      allocationPlan: [{ paymentTransactionId: "txn_refund", amountCents: 5000 }],
     });
     // Nonzero price changes supersede pending primary intents stranded at
     // any other amount (#1161).
@@ -3745,7 +3760,7 @@ describe("PUT /api/bookings/[id]/modify", () => {
       totalPriceCents: 5000,
       guests: [{ priceCents: 5000, perNightCents: [2500, 2500] }],
     });
-    primeOwnCardRefund(mockRefundPaymentTransactions, answer);
+    primeOwnCardRefund(mockRefundPaymentTransactions, answer, mockPlanStripeRefundAllocation);
 
     const { PUT } = await import("@/app/api/bookings/[id]/modify/route");
     const response = await PUT(
@@ -3758,7 +3773,7 @@ describe("PUT /api/bookings/[id]/modify", () => {
 
     expect(response.status).toBe(200);
     expect(mockRefundPaymentTransactions).toHaveBeenCalledWith(expect.objectContaining({ paymentId: "pay_1", amountCents: 5000 }));
-    expectQueuedOnce(mockEnqueueBookingModificationRefundRecovery, queued, 5000);
+    expectQueuedOnce(mockEnqueueBookingModificationRefundRecovery, queued, 5000, answer);
     await new Promise((resolve) => setTimeout(resolve, 0));
     const { sendBookingModifiedEmail } = await import("@/lib/email");
     expect(sendBookingModifiedEmail).toHaveBeenCalledWith(
@@ -4710,7 +4725,8 @@ describe("PUT /api/bookings/[id]/modify", () => {
       // no query and the election reaches the fence on this harness.
       const tx = Object.assign(makeTx(twoGuestBooking({ memberGuest: false })), {
         otherLodge: {
-          findUnique: vi.fn().mockResolvedValue({ id: "lodge-other" }),
+          // `findFirst` (#58): a newly chosen lodge must also be visible.
+          findFirst: vi.fn().mockResolvedValue({ id: "lodge-other" }),
         },
       });
       tx.manualRefundTask.findFirst.mockResolvedValue(openReview);

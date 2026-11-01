@@ -108,11 +108,13 @@ describe("attributeGapCash (A)", () => {
 
 describe("readCaptureRecorder (B, C)", () => {
   /** What each of the recorder's three supplementary-invoice reads finds, answered by the query's shape. */
-  let found: { naming: unknown; covering: unknown; own: unknown };
+  let found: { naming: unknown; covering: unknown; own: unknown; kept?: unknown };
   const store = {
     xeroSyncOperation: {
-      findFirst: vi.fn(async ({ where }: { where: { localModel?: string; requestPayload?: { path: string[] } } }) =>
-        where.localModel ? found.own : where.requestPayload?.path[0] === "paymentIntentId" ? found.naming : found.covering,
+      findFirst: vi.fn(async ({ where }: { where: { queueType?: string; localModel?: string; requestPayload?: { path: string[] } } }) =>
+        where.queueType === "KEPT_LATE_CAPTURE_INVOICE"
+          ? (found.kept ?? null)
+          : where.localModel ? found.own : where.requestPayload?.path[0] === "paymentIntentId" ? found.naming : found.covering,
       ),
     },
     xeroObjectLink: { findFirst: vi.fn() },
@@ -229,6 +231,20 @@ describe("readCaptureRecorder (B, C)", () => {
     expect(store.xeroObjectLink.findFirst).toHaveBeenCalledWith(
       expect.objectContaining({ where: expect.objectContaining({ localModel: "BookingModification", localId: "mod_change", role: "SUPPLEMENTARY_INVOICE" }) }),
     );
+  });
+
+  it("MUTATION #4324 (INV-PAY-144): is the kept late capture's own invoice queued for it, before anything the primary or a gap took", async () => {
+    found = { naming: null, covering: gapCovering(3_000), own: null, kept: { id: "op_kept" } };
+    await expect(read()).resolves.toEqual({ kind: "kept-late-capture-invoice", operationId: "op_kept" });
+    expect(store.xeroSyncOperation.findFirst).toHaveBeenCalledWith({
+      where: {
+        queueType: "KEPT_LATE_CAPTURE_INVOICE",
+        status: { not: "CANCELLED" },
+        requestPayload: { path: ["paymentIntentId"], equals: "pi_change" },
+      },
+      select: { id: true },
+    });
+    expect(mocks.readPrimaryInvoiceFeeAtLink).not.toHaveBeenCalled();
   });
 
   it("is the gap invoice where its payment took all of the capture", async () => {

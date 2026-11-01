@@ -1,3 +1,8 @@
+import { queueOrganiserExtraForChange } from "@/lib/organiser-extra-invoice-queue";
+import { paidByOrganiserInternetBanking } from "@/lib/group-organiser-paid";
+import { isUnpaidConfirmedWholeLodge } from "@/lib/booking-payment-flow";
+import { postStoredBookingConfirmationLedgerLines } from "@/lib/booking-ledger-confirmation-sync";
+import { LEDGER_ROWS_OLDEST_FIRST } from "@/lib/payment-ledger-order";
 import {
   type Booking,
   type BookingGuest,
@@ -31,6 +36,7 @@ import {
   resolveTargetDates,
   type BatchModifyInput,
   type BookingModificationSettlementMethod,
+  type LoadedBookingForLifecycle,
   type LoadedBookingForModify,
   type ResolvedGuestNameUpdate,
   type PricingResult,
@@ -204,6 +210,7 @@ type BatchModificationTransactionResult =
      * consumers want a number and the minter must not be handed one.
      */
     additionalAmountCents: number;
+    billedToOrganiserCents: number; // #4299: invoiced to the group organiser, not asked of this member
     booking: ModifiedBooking;
     /** #3232: the deferred hosting reconciliation, when the caller asked for it. */
     pendingHostingReconcile?: () => Promise<void>;
@@ -315,6 +322,8 @@ export type BatchModificationResponse = {
   /** #3809: applied credit the reduction gave back, as account credit. */
   appliedCreditGivenBackCents: number;
   additionalAmountCents: number;
+  /** #4299 (`INV-PAY-148`): the increase invoiced to the group organiser instead of this member. */
+  billedToOrganiserCents: number;
   settlementMethod: BookingModificationSettlementMethod | null;
   /**
    * Whether this edit's settlement needs a card-or-credit choice at all (#3232).
@@ -1040,7 +1049,7 @@ export async function modifyBookingBatch({
           include: { nights: { select: { stayDate: true, priceCents: true, priceSource: true } } },
           orderBy: [{ createdAt: "asc" }, { id: "asc" }],
         },
-        payment: true,
+        payment: { include: { transactions: { orderBy: [...LEDGER_ROWS_OLDEST_FIRST] } } },
         member: true,
         // #3369: the owner may be an Organisation; bookingOwner() reads both.
         organisation: { select: { name: true, email: true } },
@@ -1056,7 +1065,7 @@ export async function modifyBookingBatch({
           },
         },
       },
-    })) as LoadedBookingForModify | null;
+    })) as LoadedBookingForLifecycle | null;
 
     assertBookingModifiable(booking, {
       role: actor.role,
@@ -2021,6 +2030,7 @@ export async function modifyBookingBatch({
     // #3582: the same before and after, per night, on the booking ledger —
     // under the `lock(1)` this transaction took first. A price-preserving edit
     // posts nothing.
+    await queueOrganiserExtraForChange(tx, booking, bookingModification);
     await postModificationLedgerLines({
       store: tx,
       bookingId,
@@ -2029,6 +2039,11 @@ export async function modifyBookingBatch({
       sides: pricingSides,
       site: "batch-modify",
     });
+    // #4019: this new whole-lodge PAID path bypasses the ordinary settle.
+    // Post after guest/night writes and the edit, at the final price only.
+    if (lifecycle.zeroDollarAutoPaid && isUnpaidConfirmedWholeLodge(booking)) {
+      await postStoredBookingConfirmationLedgerLines(tx, bookingId);
+    }
 
     // D-3813-6 (`INV-PAY-117`): a reduction on a booking paid by internet
     // banking or by hand asks the treasurer to send it back.
@@ -2161,6 +2176,7 @@ export async function modifyBookingBatch({
       refundAmountCents: payments.refundAmountCents,
       accountCreditAmountCents: payments.accountCreditAmountCents,
       additionalAmountCents: payments.additionalAmountCents,
+      billedToOrganiserCents: payments.billedToOrganiserCents,
       // #3371: the minter's own parameter, carried rather than re-derived. The
       // plain figure above is the emails' and the Xero leg's; they are not
       // interchangeable.
@@ -2409,6 +2425,7 @@ export async function modifyBookingBatch({
       accountCreditAmountCents: result.accountCreditAmountCents,
       appliedCreditGivenBackCents: result.appliedCreditGivenBackCents,
       additionalAmountCents: result.additionalAmountCents,
+      billedToOrganiserCents: result.billedToOrganiserCents,
       settlementMethod: result.settlementMethod,
       requiresSettlementMethod: result.requiresSettlementMethod,
       additionalPaymentClientSecret: additionalMint.additionalPaymentClientSecret ?? null,
@@ -2454,6 +2471,7 @@ export async function modifyBookingBatch({
       accountCreditAmountCents: result.accountCreditAmountCents,
       appliedCreditGivenBackCents: result.appliedCreditGivenBackCents,
       additionalAmountCents: result.additionalAmountCents,
+      billedToOrganiserCents: result.billedToOrganiserCents,
       settlementMethod: result.settlementMethod,
       requiresSettlementMethod: result.requiresSettlementMethod,
       additionalPaymentClientSecret: null,
@@ -2593,6 +2611,7 @@ async function dispatchBatchPostTransactionSideEffects({
     bookingModificationId: result.bookingModificationId,
     createdByMemberId: actorMemberId,
     hasIssuedXeroInvoice: result.hasIssuedXeroInvoice,
+    organiserBankPlace: paidByOrganiserInternetBanking(result.booking), // #4299 N-b
     originalPaymentStatus: result.paymentStatus,
     priceDiffCents: result.priceDiffCents,
     changeFeeCents: result.changeFeeCents,
@@ -2704,6 +2723,7 @@ async function dispatchBatchPostTransactionSideEffects({
     accountCreditAmountCents: result.accountCreditAmountCents,
     appliedCreditGivenBackCents: result.appliedCreditGivenBackCents,
     additionalAmountCents: namedAdditionalCents,
+    billedToOrganiserCents: result.billedToOrganiserCents, // #4299
     unpaidAskCancelled: result.unpaidAskCancelled,
     additionalPaymentMethod:
       namedAdditionalCents > 0 &&

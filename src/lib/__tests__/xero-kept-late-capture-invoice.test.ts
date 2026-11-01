@@ -9,6 +9,8 @@ const mocks = vi.hoisted(() => ({
   taskFindUnique: vi.fn(),
   taskFindMany: vi.fn(),
   transactionFindFirst: vi.fn(),
+  transactionFindUnique: vi.fn(),
+  lockAnchor: vi.fn(),
   linkFindFirst: vi.fn(),
   linkCount: vi.fn(),
   linkFindMany: vi.fn(),
@@ -42,6 +44,7 @@ const db = vi.hoisted(() => {
     },
     paymentTransaction: {
       findFirst: (...a: unknown[]) => mocks.transactionFindFirst(...a),
+      findUnique: (...a: unknown[]) => mocks.transactionFindUnique(...a),
     },
     xeroObjectLink: {
       findFirst: (...a: unknown[]) => mocks.linkFindFirst(...a),
@@ -56,6 +59,9 @@ const db = vi.hoisted(() => {
 });
 
 vi.mock("@/lib/prisma", () => ({ prisma: db }));
+vi.mock("@/lib/xero-operation-outbox", () => ({
+  lockSupplementaryInvoiceAnchor: (...a: unknown[]) => mocks.lockAnchor(...a),
+}));
 vi.mock("@/lib/xero-sync", () => ({
   buildXeroIdempotencyKey: (...parts: unknown[]) => parts.join(":"),
   sanitizeForJson: (value: unknown) => value,
@@ -394,6 +400,64 @@ describe("settleKeptLateCaptureRecordOnApproval", () => {
       queueType: "SUPPLEMENTARY_INVOICE",
       status: "PENDING",
       requestPayload: { path: ["paymentIntentId"], equals: "pi_kept" },
+    });
+  });
+
+  describe("#4324: the capture's own receipt (`INV-PAY-144`)", () => {
+    const receipt = (status: string, requestPayload: Record<string, unknown> = {}) => ({
+      id: `op_receipt_${status}`,
+      status,
+      requestPayload: { queueType: "ADDITIONAL_CAPTURE_RECEIPT", paymentIntentId: "pi_kept", ...requestPayload },
+    });
+    beforeEach(() => {
+      mocks.transactionFindUnique.mockResolvedValue({
+        bookingModificationId: "mod_change",
+        reason: null,
+      });
+      mocks.taskFindUnique.mockResolvedValue({ bookingId: "booking-1234567890" });
+    });
+
+    it("MUTATION: withdraws one that has decided nothing yet, under the change's anchor lock taken after the task row", async () => {
+      mocks.operationFindMany.mockResolvedValue([receipt("PENDING"), receipt("FAILED")]);
+      await settle();
+      expect(mocks.lockAnchor).toHaveBeenCalledWith(db, "mod_change");
+      expect(mocks.operationFindMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            queueType: "ADDITIONAL_CAPTURE_RECEIPT",
+            status: { in: ["PENDING", "FAILED"] },
+            manuallyResolvedAt: null,
+            requestPayload: { path: ["paymentIntentId"], equals: "pi_kept" },
+          }),
+        }),
+      );
+      const withdrawn = calls().filter((args) => typeof args.where.id === "string");
+      expect(withdrawn.map((args) => args.where)).toEqual([
+        { id: "op_receipt_PENDING", status: "PENDING", manuallyResolvedAt: null },
+        { id: "op_receipt_FAILED", status: "FAILED", manuallyResolvedAt: null },
+      ]);
+      expect(withdrawn.every((args) => args.data.status === "CANCELLED" && args.data.lastErrorCode === "KEPT_LATE_CAPTURE_WITHDRAWN")).toBe(true);
+      expect(mocks.lockAnchor.mock.invocationCallOrder[0]).toBeLessThan(mocks.operationFindMany.mock.invocationCallOrder[0]!);
+    });
+
+    it("MUTATION review C2: takes the capture's anchor before its first outbox write - task row -> anchor -> row writes", async () => {
+      mocks.operationFindMany.mockResolvedValue([receipt("PENDING")]);
+      await settle();
+      const firstWrite = mocks.operationUpdateMany.mock.invocationCallOrder[0]!;
+      expect(mocks.lockAnchor.mock.invocationCallOrder[0]).toBeLessThan(firstWrite);
+      expect(mocks.lockAnchor).toHaveBeenNthCalledWith(1, db, "mod_change");
+    });
+
+    it("MUTATION: leaves one that stored its decision - it may already be in Xero, and the refund note answers it", async () => {
+      mocks.operationFindMany.mockResolvedValue([receipt("FAILED", { plan: { invoiceId: "inv_primary", amountCents: 8000 } })]);
+      await settle();
+      expect(calls().some((args) => typeof args.where.id === "string")).toBe(false);
+    });
+
+    it("locks the booking where no change can be read from the capture", async () => {
+      mocks.transactionFindUnique.mockResolvedValue({ bookingModificationId: null, reason: null });
+      await settle();
+      expect(mocks.lockAnchor).toHaveBeenCalledWith(db, "booking-1234567890");
     });
   });
 

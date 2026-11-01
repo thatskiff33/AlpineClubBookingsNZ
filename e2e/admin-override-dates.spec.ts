@@ -1,4 +1,4 @@
-import { type BrowserContext, expect, test, type Page } from "@playwright/test";
+import { type BrowserContext, expect, test, type Page } from "./helpers/accessibility";
 import { bookSelfToReviewStep, confirmBookingToPaymentStep } from "./helpers/booking";
 import { bookingCreateIsolation } from "./helpers/booking-create-client-ip";
 import { personas } from "./helpers/personas";

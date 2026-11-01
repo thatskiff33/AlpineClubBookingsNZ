@@ -48,14 +48,14 @@ jobs:
       contents: read
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       # The pnpm version comes from `packageManager` in package.json (#3673).
       - name: Set up pnpm
         uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
 
       - name: Set up Node.js
-        uses: actions/setup-node@v7.1.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
 
@@ -128,7 +128,7 @@ jobs:
       contents: read
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       # pnpm itself, for `pnpm audit`; its version comes from `packageManager`
       # in package.json (#3673).
@@ -137,7 +137,7 @@ jobs:
 
       # No `cache: pnpm`: nothing here installs, so there is no store to hit.
       - name: Set up Node.js
-        uses: actions/setup-node@v7.1.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
 
@@ -182,7 +182,7 @@ jobs:
       SEMGREP_IMAGE: semgrep/semgrep:1.161.0
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       # #2686: the repository's own rules in `.semgrep/rules/` carry must-fail
       # and must-pass fixtures in `.semgrep/tests/`, and this runs them. It costs
@@ -231,7 +231,7 @@ jobs:
       # field from — so it must stay unfiltered.
       - name: Upload Semgrep SARIF artifact
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: semgrep-sarif-${{ github.run_id }}
           path: ${{ runner.temp }}/semgrep-output/semgrep-results.sarif
@@ -241,7 +241,7 @@ jobs:
       # nothing installs and there is no pnpm store to hit.
       - name: Set up Node.js
         if: always()
-        uses: actions/setup-node@v7.1.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
 
@@ -310,7 +310,7 @@ jobs:
       # gate on findings so the alerts still publish.
       - name: Upload Semgrep SARIF to code scanning
         if: always()
-        uses: github/codeql-action/upload-sarif@v4.39.0
+        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
         with:
           sarif_file: ${{ runner.temp }}/semgrep-output/semgrep-results.published.sarif
           category: semgrep
@@ -367,7 +367,7 @@ jobs:
     # gitleaks discovers from the scan root, so neither caller names them.
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           # Two of the three scopes read history: the range scan needs the base
           # commit, and the history scan needs all of it.
@@ -518,7 +518,7 @@ jobs:
       # The disk-scanning and git-history suites need the entire source tree
       # and history on whichever shard Vitest assigns them to (#2909).
       - name: Check out repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
 
@@ -527,7 +527,7 @@ jobs:
         uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
 
       - name: Set up Node.js
-        uses: actions/setup-node@v7.1.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
           cache: pnpm
@@ -567,14 +567,14 @@ jobs:
       XERO_ENABLE_AUTOLOAD_XERO_CONTACT_GROUPS: "false"
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       # The pnpm version comes from `packageManager` in package.json (#3673).
       - name: Set up pnpm
         uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
 
       - name: Set up Node.js
-        uses: actions/setup-node@v7.1.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
           cache: pnpm
@@ -613,17 +613,20 @@ jobs:
       XERO_ENABLE_AUTOLOAD_XERO_CONTACT_GROUPS: "false"
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       # The pnpm version comes from `packageManager` in package.json (#3673).
       - name: Set up pnpm
         uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
 
       - name: Set up Node.js
-        uses: actions/setup-node@v7.1.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
           cache: pnpm
+
+      - name: Check action SHA pins
+        run: node scripts/ci/check-action-pins.mjs
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -649,14 +652,14 @@ jobs:
       XERO_ENABLE_AUTOLOAD_XERO_CONTACT_GROUPS: "false"
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       # The pnpm version comes from `packageManager` in package.json (#3673).
       - name: Set up pnpm
         uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
 
       - name: Set up Node.js
-        uses: actions/setup-node@v7.1.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
           cache: pnpm
@@ -766,7 +769,7 @@ jobs:
       XERO_ENABLE_AUTOLOAD_XERO_CONTACT_GROUPS: "false"
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
 
@@ -775,7 +778,7 @@ jobs:
         uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
 
       - name: Set up Node.js
-        uses: actions/setup-node@v7.1.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
           cache: pnpm
@@ -1061,7 +1064,7 @@ jobs:
       SHADOW_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/drift_shadow
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           # #3002: the ledger coverage check now also compares against a BASE REF
           # to find the migrations this change adds, and it refuses a shallow
@@ -1119,7 +1122,7 @@ jobs:
         uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
 
       - name: Set up Node.js
-        uses: actions/setup-node@v7.1.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
           cache: pnpm
@@ -1210,6 +1213,38 @@ jobs:
         env:
           RUN_CONCURRENCY_RACE_TESTS: "1"
         run: pnpm exec vitest run src/lib/__tests__/ai-diagnostics-select-only-role.realdb.test.ts
+
+      # #4453: PROVE the least-privilege database roles. The application role must
+      # not UPDATE or DELETE a ledger line or an audit row by any route, every
+      # migration must run as the migration role, and pg_dump and the restore
+      # paths must still work — all claims about PostgreSQL's own privilege checks,
+      # so only a real server can establish them. The suite provisions the roles
+      # with the SHIPPED statements and CLI in scratch databases of its own (roles
+      # are cluster-global, so each run carries a random prefix and drops them),
+      # and needs pg_dump and psql from the runner. A required step, like the
+      # diagnostics proof above, so a broken grant blocks the merge; the advisory
+      # realdb-all job runs the same file too. It describe.skip's itself without
+      # the env vars, so this step MUST stay wired —
+      # `review-findings-contracts.test.ts` fails if it goes missing.
+      - name: Prove the least-privilege database roles against dedicated PostgreSQL
+        env:
+          RUN_CONCURRENCY_RACE_TESTS: "1"
+        run: pnpm exec vitest run src/lib/__tests__/database-roles.realdb.test.ts
+
+      # #4513: PROVE the member-money journal's database enforcement. The
+      # verifier pins each constraint, trigger and unique index as the catalog's
+      # own deparsed text, which only a real PostgreSQL produces, and the
+      # journal's refusals (sealed batches, balance, immutability, grants) are
+      # PostgreSQL's behaviour, not code a mock can run. The suite applies the
+      # shipped migration in a scratch database of its own on the race service
+      # and drops it afterwards. A required step, like the roles proof above;
+      # the advisory realdb-all job runs the same file too. It describe.skip's
+      # itself without the env vars, so this step MUST stay wired —
+      # `review-findings-contracts.test.ts` fails if it goes missing.
+      - name: Prove the member-money journal's enforcement against dedicated PostgreSQL
+        env:
+          RUN_CONCURRENCY_RACE_TESTS: "1"
+        run: pnpm exec vitest run src/lib/__tests__/member-money-journal.realdb.test.ts
 
       # E8 (#1934): real-Postgres behavior of the member-grouping cutover
       # migration (legacy-rule deactivation, shape-dedupe, backfill, mode seed,
@@ -1330,7 +1365,7 @@ jobs:
       DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:55443/data_migration_verification
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           # Two commits: a pull request's merge commit and its base parent,
           # which `change-scope.mjs` diffs to decide what the change can move.
@@ -1356,7 +1391,7 @@ jobs:
         uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
 
       - name: Set up Node.js
-        uses: actions/setup-node@v7.1.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
           cache: pnpm
@@ -1389,6 +1424,127 @@ jobs:
           DATA_MIGRATION_VERIFICATION_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:55443/data_migration_verification
         run: pnpm exec vitest run src/lib/__tests__/school-pending-adult-resolution.realdb.test.ts
 
+  # #4458: every `*.realdb.test.ts` file, in one place. Real-PostgreSQL suites
+  # skip themselves without `RUN_CONCURRENCY_RACE_TESTS=1`, and the sharded
+  # `test-shard` job sets neither that nor a database, so until this job only the
+  # few files named in `migration-drift` and `data-migration-verification` ever
+  # ran against PostgreSQL; a new realdb file was green in CI while proving
+  # nothing. The files take turns on the one race database (#4367: an advisory
+  # lock in `vitest.setup.ts`), so the run is as long as the files one after
+  # another.
+  #
+  # ADVISORY, deliberately NOT a required check (owner ruling, 1 Sep 2026: a
+  # required-check edit waits for the owner). So no required job may name it in
+  # `needs:`; `realdb-ci-coverage-census.test.ts` fails if one does. Becoming
+  # required is a separate owner step (CONTRIBUTING.md, "Branch protection").
+  #
+  # The file list is `scripts/ci/realdb-files.mjs`: every realdb file minus
+  # `scripts/ci/realdb-quarantine.txt`. The census reads the same two sources,
+  # so a new realdb file is either run here or named in the quarantine.
+  # The per-file steps in `migration-drift` and `data-migration-verification`
+  # stay: they are required, this job is not. The last step fails the job when a
+  # listed file skipped itself or never ran (`scripts/ci/check-realdb-ran.mjs`),
+  # so a suite whose gate is unset cannot read as green. The one suite that
+  # cannot share this process (booking-ledger-history-seed, run by
+  # `scripts/booking-ledger-seed-gate.sh`) is in the quarantine file.
+  realdb-all:
+    name: Real-PostgreSQL suites (all, advisory)
+    runs-on: ubuntu-latest
+    # PR CI measured this job at 9m02s (#4476): 20 minutes leaves room for a
+    # slower runner and growing suites, where 45 would let a hung run hold a
+    # runner for most of an hour.
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    services:
+      concurrency-race-postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: concurrency_race_1881
+        ports:
+          # Docker selects an available high port; never reserve one fixed host port.
+          - 127.0.0.1:55442-65535:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d concurrency_race_1881"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      RUN_CONCURRENCY_RACE_TESTS: "1"
+      # Parses through the app's env validation; the race endpoint step below
+      # replaces it with the real race URL for every later step.
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/tacbookings
+    steps:
+      # Full history: some suites in a whole-directory run read the repository's
+      # own git history (#2909), and a shallow clone fails them with an error
+      # that names nothing about the checkout.
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+
+      # The pnpm version comes from `packageManager` in package.json (#3673).
+      - name: Set up pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate Prisma client
+        run: pnpm run db:generate
+
+      # #1881 / #4238: the same loopback-only, high-port, dedicated-name guard
+      # `migration-drift` applies before any writer touches the database.
+      - name: Resolve dedicated race database endpoint
+        env:
+          CONCURRENCY_RACE_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:${{ job.services.concurrency-race-postgres.ports[5432] }}/concurrency_race_1881
+        run: |
+          pnpm exec tsx -e 'import { assertSafeRaceDbUrl } from "./src/lib/__tests__/support/race-db-url"; assertSafeRaceDbUrl(process.env.CONCURRENCY_RACE_DATABASE_URL ?? "", "CI endpoint");'
+          printf 'CONCURRENCY_RACE_DATABASE_URL=%s\n' "$CONCURRENCY_RACE_DATABASE_URL" >> "$GITHUB_ENV"
+          # Three suites (data-migration-verification, the school backfill's
+          # fail-closed proof, pending-adult resolution) skip without this URL.
+          # Each creates and drops scratch databases of its own on the server it
+          # names, so the race service serves them; the data-migration job's
+          # separate service is not needed. It is the validated race URL.
+          printf 'DATA_MIGRATION_VERIFICATION_DATABASE_URL=%s\n' "$CONCURRENCY_RACE_DATABASE_URL" >> "$GITHUB_ENV"
+
+      - name: Migrate dedicated race database
+        env:
+          DATABASE_URL: ${{ env.CONCURRENCY_RACE_DATABASE_URL }}
+        run: pnpm exec prisma migrate deploy
+
+      # One `vitest run` over every file, so the log shows each one executed.
+      # The list is a script, not a shell glob: a glob would not reach a file in
+      # a new directory, and the census could not measure it. The script's
+      # output is captured with a failing command, never `mapfile < <(...)`
+      # (which hides its exit status), and an empty list stops the step: with no
+      # paths `vitest run` would run the whole unit suite instead.
+      - name: Run every real-PostgreSQL suite
+        run: |
+          set -euo pipefail
+          files_text=$(node scripts/ci/realdb-files.mjs)
+          if [ -z "$files_text" ]; then
+            echo "scripts/ci/realdb-files.mjs listed no files" >&2
+            exit 1
+          fi
+          mapfile -t files <<< "$files_text"
+          echo "Running ${#files[@]} real-PostgreSQL files"
+          pnpm exec vitest run --reporter=default --reporter=json --outputFile.json="$RUNNER_TEMP/realdb-report.json" "${files[@]}"
+
+      # A suite that skips itself, or a path Vitest matched to nothing, reads as
+      # green above. This fails the job unless every listed file ran tests, none
+      # of them skipped.
+      - name: Require every listed suite to have really run
+        run: node scripts/ci/check-realdb-ran.mjs "$RUNNER_TEMP/realdb-report.json"
+
   # #2686: the CRITICAL half of this job is a REQUIRED status check, so the job
   # carries an explicit `name:` — the required context is
   # `Image security gate (Trivy CRITICAL)`, not the job id.
@@ -1417,7 +1573,7 @@ jobs:
       IMAGE_REF: tacbookings-ci:${{ github.sha }}
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           # Two commits: a pull request's merge commit and its base parent,
           # which `change-scope.mjs` diffs to decide what the change can move.
@@ -1486,7 +1642,7 @@ jobs:
       # apart from the advisory step below without opening the workflow.
       - name: Trivy CRITICAL gate (REQUIRED — a finding here blocks the merge)
         if: steps.scope.outputs.needed != 'false'
-        uses: aquasecurity/trivy-action@v0.36.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: ${{ env.IMAGE_REF }}
           format: table
@@ -1500,7 +1656,7 @@ jobs:
       - name: Trivy HIGH report (ADVISORY — never blocks the merge)
         if: steps.scope.outputs.needed != 'false'
         continue-on-error: true
-        uses: aquasecurity/trivy-action@v0.36.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: ${{ env.IMAGE_REF }}
           format: table
@@ -1531,6 +1687,8 @@ jobs:
     permissions:
       contents: read
       packages: write
+      id-token: write
+      attestations: write
     env:
       APP_IMAGE: ${{ vars.GHCR_APP_IMAGE_REPOSITORY || format('ghcr.io/{0}/alpineclubbookingsnz-app', github.repository_owner) }}:${{ github.sha }}
       MIGRATE_IMAGE: ${{ vars.GHCR_MIGRATE_IMAGE_REPOSITORY || format('ghcr.io/{0}/alpineclubbookingsnz-migrate', github.repository_owner) }}:${{ github.sha }}
@@ -1538,7 +1696,7 @@ jobs:
       NEXT_PUBLIC_SENTRY_DSN: ${{ vars.NEXT_PUBLIC_SENTRY_DSN }}
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       # AID-3 (#2372): stamp the shipped knowledge bundle with a verified,
       # reproducible commit SHA + observed-at (the in-builder generator has no
@@ -1547,16 +1705,19 @@ jobs:
         run: |
           echo "GIT_COMMIT_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
           echo "KNOWLEDGE_BUNDLE_OBSERVED_AT=$(git show -s --format=%cI HEAD)" >> "$GITHUB_ENV"
+          # Attestation subjects are the same image repositories, without tags.
+          echo "APP_IMAGE_NAME=${APP_IMAGE%:*}" >> "$GITHUB_ENV"
+          echo "MIGRATE_IMAGE_NAME=${MIGRATE_IMAGE%:*}" >> "$GITHUB_ENV"
 
       - name: Log in to GHCR
-        uses: docker/login-action@v4.6.0
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
 
       # RELEASE_ID (#2352 D1) is passed HERE because this is the image production
       # runs, and it was the one missing the argument: docker-image-security passed
@@ -1575,11 +1736,14 @@ jobs:
         run: bash scripts/ci/reclaim-runner-disk.sh
 
       - name: Build and push app image
-        uses: docker/build-push-action@v7
+        id: build-app
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
         with:
           context: .
           file: ./Dockerfile
           push: true
+          sbom: true
+          provenance: mode=max
           tags: ${{ env.APP_IMAGE }}
           build-args: |
             NEXT_PUBLIC_SENTRY_DSN=${{ env.NEXT_PUBLIC_SENTRY_DSN }}
@@ -1588,6 +1752,13 @@ jobs:
             RELEASE_ID=${{ env.GIT_COMMIT_SHA }}
           cache-from: type=gha,scope=alpineclubbookingsnz-app
           cache-to: type=gha,mode=max,scope=alpineclubbookingsnz-app
+
+      - name: Attest app image provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ${{ env.APP_IMAGE_NAME }}
+          subject-digest: ${{ steps.build-app.outputs.digest }}
+          push-to-registry: true
 
       # The assertion moved onto the artefact that ships. docker-image-security
       # still asserts on its own scan image, which is the earlier signal; this is
@@ -1613,12 +1784,15 @@ jobs:
         run: bash scripts/ci/reclaim-runner-disk.sh
 
       - name: Build and push migrate image
-        uses: docker/build-push-action@v7
+        id: build-migrate
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
         with:
           context: .
           file: ./Dockerfile
           target: builder
           push: true
+          sbom: true
+          provenance: mode=max
           tags: ${{ env.MIGRATE_IMAGE }}
           build-args: |
             NEXT_PUBLIC_SENTRY_DSN=${{ env.NEXT_PUBLIC_SENTRY_DSN }}
@@ -1626,3 +1800,10 @@ jobs:
             KNOWLEDGE_BUNDLE_OBSERVED_AT=${{ env.KNOWLEDGE_BUNDLE_OBSERVED_AT }}
           cache-from: type=gha,scope=alpineclubbookingsnz-migrate
           cache-to: type=gha,mode=max,scope=alpineclubbookingsnz-migrate
+
+      - name: Attest migrate image provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ${{ env.MIGRATE_IMAGE_NAME }}
+          subject-digest: ${{ steps.build-migrate.outputs.digest }}
+          push-to-registry: true

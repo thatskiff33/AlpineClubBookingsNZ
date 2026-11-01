@@ -183,6 +183,7 @@ function buildDeps(overrides?: Partial<StuckStateDashboardDependencies>) {
     countActiveLodges: vi.fn().mockResolvedValue(1),
     // #4162: the voided bank refund notes a person answers.
     countBankRefundVoidsToAnswer: vi.fn().mockResolvedValue(0),
+    countExhaustedCashSettlementAlerts: vi.fn().mockResolvedValue(0),
   };
 
   return {
@@ -1013,4 +1014,12 @@ describe("voided bank refund notes to answer (#4162)", () => {
     const support = await getStuckStateDashboard({ deps, now: new Date("2026-06-22T00:00:00.000Z") });
     expect(support.items.find((item) => item.id === "xero-bank-refund-voids-to-answer")?.href).toBe("/admin/xero");
   });
+});
+
+it("keeps exhausted settlement figure alerts visible for finance", async () => {
+  const deps = buildDeps({ countExhaustedCashSettlementAlerts: vi.fn().mockResolvedValue(1) });
+  const result = await getStuckStateDashboard({ deps });
+  expect(result.items).toContainEqual(expect.objectContaining({
+    id: "payment-settlement-alert-undelivered", count: 1, severity: "critical", href: "/admin/payments",
+  }));
 });

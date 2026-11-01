@@ -206,6 +206,7 @@ import {
   groupJoinPaySelfTemplate,
   groupJoinReleasedTemplate,
   groupJoinSettledTemplate,
+  groupOrganiserExtraInvoiceTemplate,
   groupOrganiserJoinerRefundTemplate,
   groupSettlementExpiredTemplate,
   groupSettlementReceiptTemplate,
@@ -785,6 +786,12 @@ const GENERATED_CASES: EmailRenderCase[] = [
     additionalPaymentReminderTemplate({ firstName: "firstName-1", additionalAmountCents: 102, checkIn: new Date("2026-03-04T00:00:00.000Z"), checkOut: new Date("2026-03-05T00:00:00.000Z"), requestedOn: new Date("2026-03-06T00:00:00.000Z") }, CLUB_FORMAT_TEST) },
   { id: "creditReleasedPaymentRequestTemplate:minimal", fn: "creditReleasedPaymentRequestTemplate", render: () =>
     creditReleasedPaymentRequestTemplate({ firstName: "firstName-1", additionalAmountCents: 102, checkIn: new Date("2026-03-04T00:00:00.000Z"), checkOut: new Date("2026-03-05T00:00:00.000Z"), requestedOn: new Date("2026-03-06T00:00:00.000Z") }, CLUB_FORMAT_TEST) },
+  { id: "creditReleasedPaymentRequestTemplate:full", fn: "creditReleasedPaymentRequestTemplate", render: () =>
+    creditReleasedPaymentRequestTemplate({ firstName: "firstName-1", additionalAmountCents: 102, checkIn: new Date("2026-03-04T00:00:00.000Z"), checkOut: new Date("2026-03-05T00:00:00.000Z"), requestedOn: new Date("2026-03-06T00:00:00.000Z"), cause: "mixed", bankTransfer: { instructions: "Account: 00-0000-0000000-00\nName: <Club & Co>", reference: "INV-0042" } }, CLUB_FORMAT_TEST) },
+  { id: "creditReleasedPaymentRequestTemplate:bank-transfer", fn: "creditReleasedPaymentRequestTemplate", render: () =>
+    creditReleasedPaymentRequestTemplate({ firstName: "firstName-1", additionalAmountCents: 102, checkIn: new Date("2026-03-04T00:00:00.000Z"), checkOut: new Date("2026-03-05T00:00:00.000Z"), requestedOn: new Date("2026-03-06T00:00:00.000Z"), bankTransfer: { instructions: "Account: 00-0000-0000000-00", reference: "INV-0042" } }, CLUB_FORMAT_TEST) },
+  { id: "preArrivalReminderTemplate:credit-release", fn: "preArrivalReminderTemplate", render: () =>
+    preArrivalReminderTemplate({ firstName: "firstName-1", checkIn: new Date("2026-03-03T00:00:00.000Z"), checkOut: new Date("2026-03-04T00:00:00.000Z"), guestCount: 104, lodgeTravelNote: "lodgeTravelNote-5", outstandingAdditionalAmountCents: 108, outstandingAdditionalCause: "credit-release" }, CLUB_FORMAT_TEST) },
   { id: "adminNewBookingTemplate:minimal", fn: "adminNewBookingTemplate", render: () =>
     adminNewBookingTemplate({ memberName: "memberName-1", checkIn: new Date("2026-03-03T00:00:00.000Z"), checkOut: new Date("2026-03-04T00:00:00.000Z"), guestCount: 104, totalCents: 105, status: "status-6" }, CLUB_FORMAT_TEST) },
   { id: "adminNewBookingTemplate:full", fn: "adminNewBookingTemplate", render: () =>
@@ -1105,6 +1112,8 @@ const GENERATED_CASES: EmailRenderCase[] = [
     groupJoinSettledTemplate({ firstName: "firstName-1", organiserName: "organiserName-2", checkIn: new Date("2026-03-04T00:00:00.000Z"), checkOut: new Date("2026-03-05T00:00:00.000Z"), guestCount: 105 }) },
   { id: "groupOrganiserJoinerRefundTemplate:minimal", fn: "groupOrganiserJoinerRefundTemplate", render: () =>
     groupOrganiserJoinerRefundTemplate({ firstName: "firstName-1", joinerName: "joinerName-2 <&>", amountCents: 103, checkIn: new Date("2026-03-04T00:00:00.000Z"), checkOut: new Date("2026-03-05T00:00:00.000Z") }, CLUB_FORMAT_TEST) },
+  { id: "groupOrganiserExtraInvoiceTemplate:minimal", fn: "groupOrganiserExtraInvoiceTemplate", render: () =>
+    groupOrganiserExtraInvoiceTemplate({ firstName: "firstName-1", joinerName: "joinerName-2 <&>", changeSummary: "changeSummary-3 <&>", amountCents: 6500, xeroInvoiceNumber: "xeroInvoiceNumber-5" }, CLUB_FORMAT_TEST) },
   { id: "groupSettlementExpiredTemplate:minimal", fn: "groupSettlementExpiredTemplate", render: () =>
     groupSettlementExpiredTemplate({ firstName: "firstName-1", checkIn: new Date("2026-03-03T00:00:00.000Z"), checkOut: new Date("2026-03-04T00:00:00.000Z"), joinerCount: 104, totalCents: 105 }, CLUB_FORMAT_TEST) },
   { id: "groupJoinReleasedTemplate:minimal", fn: "groupJoinReleasedTemplate", render: () =>

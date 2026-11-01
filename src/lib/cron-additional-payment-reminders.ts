@@ -5,27 +5,32 @@ import {
   ADDITIONAL_PAYMENT_REMINDER_DAYS,
   ADDITIONAL_PAYMENT_RESEND_COOLDOWN_MINUTES,
   additionalPaymentEpisodeStartedAt,
+  creditReleaseStampBoundary,
   isAdditionalPaymentOwed,
   resolveAdditionalPaymentChase,
+  resolveCreditReleaseChase,
   type AdditionalPaymentReminderKind,
 } from "@/lib/additional-payment-chase";
+import { ASK_CAUSE_ROWS, additionalAskCause } from "@/lib/additional-ask-cause";
+import type { BankTransferOffer } from "@/lib/credit-release-bank-transfer";
+import { prepareCreditReleaseReminder } from "@/lib/credit-release-reminder-gate";
+import { canReceiveChaseEmail } from "@/lib/reminder-recipient-reachability";
 import { bookingOwner } from "@/lib/booking-owner";
 import { readBookingNoEmails } from "@/lib/booking-email-suppression";
 import { clubToday, dateOnlyInstantOf } from "@/lib/club-time";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { sendAdditionalPaymentReminderEmail } from "@/lib/email";
-import { getActiveEmailSuppression } from "@/lib/email-suppression";
 import {
   describeDeliveryDecision,
   resolveDeliveryPolicy,
 } from "@/lib/environment-delivery-policy";
 import type { GeneralCronJobName } from "@/lib/general-cron-runner";
 import logger from "@/lib/logger";
-import { isPlaceholderContactEmail } from "@/lib/placeholder-contact-email";
 import { prisma } from "@/lib/prisma";
 import {
   buildAdditionalOwedPaymentWhere,
   buildAdditionalOwedWhere,
+  buildFinishedCreditReleaseChaseWhere,
 } from "@/lib/unpaid-finished-stays";
 import { clubFormatValues } from "@/lib/club-format-server";
 import { LEDGER_ROWS_NEWEST_FIRST } from "@/lib/payment-ledger-order";
@@ -79,6 +84,8 @@ export interface AdditionalPaymentReminderResult {
   skippedBookingIds: string[];
   suppressedBookingIds: string[];
   failedBookingIds: string[];
+  /** Released-credit requests whose reminder was withheld for an officer (`INV-ADDPAY-051`). */
+  leftToOfficersBookingIds: string[];
 }
 
 export async function sendAdditionalPaymentReminders(): Promise<AdditionalPaymentReminderResult> {
@@ -100,6 +107,7 @@ export async function sendAdditionalPaymentReminders(): Promise<AdditionalPaymen
     skippedBookingIds: [],
     suppressedBookingIds: [],
     failedBookingIds: [],
+    leftToOfficersBookingIds: [],
   };
 
   // This pass IS the cutover (or we could not read it). Either way, emailing
@@ -153,10 +161,15 @@ export async function sendAdditionalPaymentReminders(): Promise<AdditionalPaymen
   const bookings = await prisma.booking.findMany({
     where: {
       deletedAt: null,
-      // The stay is still ahead of (or in) the current NZ day. A finished stay
-      // is the dashboard queue's business, not this job's.
-      checkOut: { gt: today },
       ...buildAdditionalOwedWhere(),
+      OR: [
+        // The stay is still ahead of (or in) the current NZ day. A finished stay
+        // is the dashboard queue's business, not this job's...
+        { checkOut: { gt: today } },
+        // ...except for a request for credit used elsewhere (`INV-ADDPAY-048`);
+        // `resolveChaseFor` re-decides in memory.
+        buildFinishedCreditReleaseChaseWhere(today, now),
+      ],
     },
     include: CHASE_BOOKING_INCLUDE,
     orderBy: [{ checkIn: "asc" }, { createdAt: "asc" }],
@@ -228,8 +241,13 @@ export async function sendAdditionalPaymentReminders(): Promise<AdditionalPaymen
     */
     let booking = found;
     let claim: ClaimedAdditionalPaymentReminder | null = null;
+    // Resolved BEFORE the claim (`INV-ADDPAY-051`): whether Xero still shows the released credit
+    // owed, and the bank-transfer offer. Nothing after the claim may fail before the mailer runs,
+    // or the stamp would be spent on an email that never had an EmailLog row to replay.
+    let bankTransfer: BankTransferOffer | null = null;
+    let gateOutcome: "withheld" | "unreadable" | "failed" | null = null;
 
-    for (let attempt = 0; attempt < 2 && !claim; attempt += 1) {
+    for (let attempt = 0; attempt < 2 && !claim && !gateOutcome; attempt += 1) {
       if (attempt > 0) {
         const fresh = await reloadChaseBooking(found.id);
         if (!fresh?.payment) break;
@@ -247,9 +265,30 @@ export async function sendAdditionalPaymentReminders(): Promise<AdditionalPaymen
       const due = resolveChaseFor({ booking, now, today, chaseStartsAt });
       if (!due) break;
 
+      const prepared = await prepareCreditReleaseReminder({
+        bookingId: booking.id,
+        paymentId: due.paymentId,
+        liveIntentId: booking.payment?.additionalPaymentIntentId ?? null,
+        rows: booking.payment?.transactions ?? [],
+        askCents: due.additionalAmountCents,
+        xeroInvoiceId: booking.payment?.xeroInvoiceId ?? null,
+      });
+      if (prepared.outcome !== "send") {
+        gateOutcome = prepared.outcome;
+        break;
+      }
+      bankTransfer = prepared.bankTransfer;
       claim = await claimAdditionalPaymentReminder({ ...due, now });
     }
 
+    if (gateOutcome === "withheld") {
+      result.leftToOfficersBookingIds.push(found.id);
+      continue;
+    }
+    if (gateOutcome === "failed") {
+      result.failedBookingIds.push(found.id);
+      continue;
+    }
     if (!claim) {
       result.skippedBookingIds.push(found.id);
       continue;
@@ -268,7 +307,8 @@ export async function sendAdditionalPaymentReminders(): Promise<AdditionalPaymen
         checkOut: booking.checkOut,
         requestedOn: episodeStartedAt,
         lodgeId: booking.lodgeId,
-        askReason: booking.payment?.transactions[0]?.reason ?? null,
+        askCause: additionalAskCause(booking.payment?.transactions ?? []),
+        bankTransfer,
       }, format);
 
       if (outcome.status !== "sent") {
@@ -390,48 +430,6 @@ async function resolveAdditionalPaymentChaseStartedAt(): Promise<Date | null> {
 }
 
 /**
- * Can this member actually be reached, before anything is claimed?
- *
- * A walk-in placeholder `.invalid` address and an active bounce/complaint
- * suppression both mean the mailer will withhold. Finding that out AFTER the
- * claim would mean handing the stamp back on every pass and manufacturing a
- * bounce row each time; finding it out first costs one indexed read and leaves
- * the reminder cleanly due for whenever the address is fixed or the suppression
- * cleared. A suppression read that fails is treated as "cannot reach", the same
- * fail-closed direction as the "No emails" switch above.
- */
-async function canReceiveChaseEmail(
-  email: string,
-  bookingId: string,
-): Promise<boolean> {
-  if (isPlaceholderContactEmail(email)) {
-    logger.info(
-      { bookingId, job: "additionalPaymentReminders" },
-      "Skipped an additional-payment reminder to a walk-in placeholder address",
-    );
-    return false;
-  }
-
-  try {
-    const suppression = await getActiveEmailSuppression(email);
-    if (suppression) {
-      logger.warn(
-        { bookingId, job: "additionalPaymentReminders" },
-        "Skipped an additional-payment reminder to a suppressed address",
-      );
-      return false;
-    }
-    return true;
-  } catch (err) {
-    logger.error(
-      { err, bookingId, job: "additionalPaymentReminders" },
-      "Could not check the member's email suppression state; skipping the additional-payment reminder",
-    );
-    return false;
-  }
-}
-
-/**
  * Everything one pass needs about a booking, read the same way whether it came
  * from the sweep or from a re-read after a lost claim.
  */
@@ -447,13 +445,17 @@ const CHASE_BOOKING_INCLUDE = {
       additionalReminderSentAt: true,
       additionalFinalReminderSentAt: true,
       createdAt: true,
+      // #4253 release 2: the booking's invoice, read in Xero before a released-credit reminder
+      // (`INV-ADDPAY-051`), and the live request the officers' note is keyed on.
+      xeroInvoiceId: true,
+      additionalPaymentIntentId: true,
       transactions: {
         where: { kind: "ADDITIONAL" },
-        select: { createdAt: true, reason: true },
+        select: { createdAt: true, reason: true, carriedAskCents: true, withdrawnAt: true, amountCents: true },
         // A mutable copy, typed as Prisma takes it: `as const` below would
         // otherwise make the spread a readonly tuple.
         orderBy: [...LEDGER_ROWS_NEWEST_FIRST] as Prisma.PaymentTransactionOrderByWithRelationInput[],
-        take: 1,
+        take: ASK_CAUSE_ROWS,
       },
     },
   },
@@ -472,6 +474,12 @@ interface DueAdditionalPaymentReminder {
   paymentId: string;
   kind: AdditionalPaymentReminderKind;
   episodeStartedAt: Date;
+  /**
+   * A stamp must be older than this for the claim to take the reminder. The
+   * episode's start for the edit chase; the start of the current slot for the
+   * repeating credit-release chase (`INV-ADDPAY-048`).
+   */
+  stampBoundary: Date;
   /** The amount as read; the claim pins it so the email cannot quote a stale one. */
   additionalAmountCents: number;
   /** Stamp values before the claim, so a withheld send can hand them back. */
@@ -497,23 +505,44 @@ function resolveChaseFor(params: {
       payment.transactions[0]?.createdAt ?? null,
   });
 
-  const kind = resolveAdditionalPaymentChase({
-    now: params.now,
-    today: params.today,
-    checkIn: params.booking.checkIn,
-    checkOut: params.booking.checkOut,
-    episodeStartedAt,
-    reminderSentAt: payment.additionalReminderSentAt,
-    finalReminderSentAt: payment.additionalFinalReminderSentAt,
-    askReason: payment.transactions[0]?.reason ?? null,
-    chaseStartsAt: params.chaseStartsAt,
-  });
+  // A request that is only for credit used elsewhere keeps its own repeating
+  // chase. One that also carries a change the member made keeps the edit chase,
+  // whose first wait and last-chance email suit it, until the stay ends; after
+  // that its released-credit share is still owed, so it moves to the repeating
+  // chase too, still worded as both (`INV-ADDPAY-048`). Just a change stops at
+  // check-out, as it always has.
+  const cause = additionalAskCause(payment.transactions);
+  const repeating =
+    cause === "credit-release" ||
+    (cause === "mixed" && params.booking.checkOut.getTime() <= params.today.getTime());
+  const kind = repeating
+    ? resolveCreditReleaseChase({
+        now: params.now,
+        episodeStartedAt,
+        reminderSentAt: payment.additionalReminderSentAt,
+        finalReminderSentAt: payment.additionalFinalReminderSentAt,
+        chaseStartsAt: params.chaseStartsAt,
+      })
+    : resolveAdditionalPaymentChase({
+        now: params.now,
+        today: params.today,
+        checkIn: params.booking.checkIn,
+        checkOut: params.booking.checkOut,
+        episodeStartedAt,
+        reminderSentAt: payment.additionalReminderSentAt,
+        finalReminderSentAt: payment.additionalFinalReminderSentAt,
+        askReason: payment.transactions[0]?.reason ?? null,
+        chaseStartsAt: params.chaseStartsAt,
+      });
   if (!kind) return null;
 
   return {
     paymentId: payment.id,
     kind,
     episodeStartedAt,
+    stampBoundary: repeating
+      ? creditReleaseStampBoundary({ now: params.now, episodeStartedAt })
+      : episodeStartedAt,
     additionalAmountCents: payment.additionalAmountCents,
     previousReminderSentAt: payment.additionalReminderSentAt,
     previousFinalReminderSentAt: payment.additionalFinalReminderSentAt,
@@ -592,7 +621,7 @@ async function claimAdditionalPaymentReminder(
   ) => ({
     OR: [
       { [field]: null },
-      { [field]: { lt: params.episodeStartedAt } },
+      { [field]: { lt: params.stampBoundary } },
     ],
   });
 
@@ -642,6 +671,7 @@ async function claimAdditionalPaymentReminder(
         paymentId: params.paymentId,
         kind: params.kind,
         episodeStartedAt: params.episodeStartedAt,
+        stampBoundary: params.stampBoundary,
         additionalAmountCents: params.additionalAmountCents,
         previousReminderSentAt: params.previousReminderSentAt,
         previousFinalReminderSentAt: params.previousFinalReminderSentAt,

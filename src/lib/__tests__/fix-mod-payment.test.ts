@@ -11,6 +11,8 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+
+const mockPlanStripeRefundAllocation = vi.hoisted(() => vi.fn());
 import { NextRequest } from "next/server";
 
 // --- Mocks ---
@@ -255,6 +257,7 @@ vi.mock("@/lib/payment-transactions", async (importActual) => ({
   },
   upsertPaymentIntentTransaction: (...args: unknown[]) =>
     mockUpsertPaymentIntentTransaction(...args),
+  planStripeRefundAllocation: mockPlanStripeRefundAllocation,
   refundPaymentTransactions: (...args: unknown[]) =>
     mockRefundPaymentTransactions(...args),
   findPaymentTransactionByIntentId: (...args: unknown[]) =>
@@ -328,10 +331,11 @@ import {
 } from "@/lib/__tests__/support/hosting-participant-fence-double";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 import { ORGANISER_REFUND_DEBT_STATES, primeOrganiserRefundDebt } from "./support/organiser-refund-debt-reread";
-import { expectQueuedOnce, OWN_CARD_REFUND_STATES, primeOwnCardRefund } from "./support/own-card-refund-outcome";
+import { expectQueuedOnce, ownCardRefundPlan, OWN_CARD_REFUND_STATES, primeOwnCardRefund } from "./support/own-card-refund-outcome";
 import { UNSUPPORTED_CHARGE_CURRENCY_MEMBER_BODY } from "@/lib/stripe-charge-currency";
 import {
   ADDITIONAL_PAYMENT_ALREADY_MADE_CODE,
+  ADDITIONAL_PAYMENT_CHANGED_BODY,
   PAYMENT_PROCESSING_BODY,
   PAYMENT_PROCESSING_CODE,
 } from "@/lib/payment-recovery-contract";
@@ -611,7 +615,14 @@ function makeTx(booking: ReturnType<typeof makeBooking>) {
     bookingModification: { create: vi.fn().mockResolvedValue({ id: "mod1" }) },
     bookingRequest: { findFirst: vi.fn().mockResolvedValue(null) },
     // #3980: an edit that read no invoice link claims the payment row.
-    payment: { update: vi.fn().mockResolvedValue({}), updateMany: vi.fn().mockResolvedValue({ count: 1 }) },
+    payment: {
+      update: vi.fn().mockResolvedValue({}),
+      updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+      // #4442: the mint's queue re-reads the live ask it carries on this transaction - the fixture's own mirror.
+      findUnique: vi.fn(async () => booking.payment ?? null),
+    },
+    // #4442: the supersede's read runs in the mint's queue transaction, answered by the suite's ledger.
+    paymentTransaction: { findMany: (...args: unknown[]) => mockPaymentTransactionFindMany(...args) },
     season: {
       findMany: vi.fn().mockResolvedValue([{
         id: "s1",
@@ -698,6 +709,7 @@ describe("PUT /api/bookings/[id]/modify-dates — price increase", () => {
 
   beforeEach(async () => {
     vi.clearAllMocks();
+  mockPlanStripeRefundAllocation.mockImplementation(ownCardRefundPlan);
     mockMemberCount.mockResolvedValue(1);
     mockMemberFindUnique.mockResolvedValue({
       id: "m1",
@@ -1286,7 +1298,7 @@ describe("PUT /api/bookings/[id]/modify-dates — price increase", () => {
     mockPaymentUpdate.mockResolvedValue({});
     mockMemberFindUnique.mockResolvedValue({ active: true, email: "alice@test.com", firstName: "Alice" });
     mockEnqueueBookingModificationRefundRecovery.mockResolvedValue({ id: "op_refund" });
-    primeOwnCardRefund(mockRefundPaymentTransactions, answer);
+    primeOwnCardRefund(mockRefundPaymentTransactions, answer, mockPlanStripeRefundAllocation);
 
     const res = await PUT(
       new NextRequest("http://localhost/api/bookings/bk1/modify-dates", {
@@ -1298,7 +1310,7 @@ describe("PUT /api/bookings/[id]/modify-dates — price increase", () => {
 
     expect(res.status).toBe(200);
     expect(mockRefundPaymentTransactions).toHaveBeenCalledWith(expect.objectContaining({ paymentId: "p1", amountCents: 3000 }));
-    expectQueuedOnce(mockEnqueueBookingModificationRefundRecovery, queued, 3000);
+    expectQueuedOnce(mockEnqueueBookingModificationRefundRecovery, queued, 3000, answer);
     const { sendBookingModifiedEmail } = await import("@/lib/email");
     expect(sendBookingModifiedEmail).toHaveBeenCalledWith(
       expect.objectContaining({ refundAmountCents: 3000, refundDestination: destination, refundByBankTransfer: null }),
@@ -1976,6 +1988,8 @@ describe("POST /api/bookings/[id]/guests — price increase", () => {
       paymentTransactionId: "txn_earlier_extra",
       paymentIntentId: "pi_earlier_extra",
       amountCents: 4000,
+      // #4442: queued in the mint's own transaction, beside its row.
+      store: expect.anything(),
     });
   });
 
@@ -2539,6 +2553,10 @@ describe("GET /api/bookings/[id]/additional-payment-secret", () => {
   beforeEach(async () => {
     vi.clearAllMocks();
     mockMemberCount.mockResolvedValue(1);
+    // #4442: a currency re-issue's queue runs on the same client the route read
+    // the payment from, so its re-read sees that payment's mirror.
+    const { prisma } = await import("@/lib/prisma");
+    mockTransaction.mockImplementation((fn: (store: unknown) => unknown) => fn(prisma));
     const mod = await import(
       "@/app/api/bookings/[id]/additional-payment-secret/route"
     );
@@ -2917,6 +2935,8 @@ describe("GET /api/bookings/[id]/additional-payment-secret", () => {
       status: "PENDING",
       reason: "edit_financial_review_charge",
       stripeCustomerId: "cus_1",
+      // #4442: written in the re-issue's queue transaction.
+      store: expect.anything(),
     });
     // ...the old-currency ask is retired through the durable cancel...
     expect(mockEnqueuePaymentIntentCancellationRecovery).toHaveBeenCalledWith({
@@ -2925,6 +2945,7 @@ describe("GET /api/bookings/[id]/additional-payment-secret", () => {
       paymentTransactionId: "ptx_1",
       paymentIntentId: "pi_additional",
       amountCents: 3000,
+      store: expect.anything(),
     });
     // ...and the payment's outstanding ask now names the new intent.
     expect(mockPaymentUpdate).toHaveBeenCalledWith(
@@ -2936,6 +2957,62 @@ describe("GET /api/bookings/[id]/additional-payment-secret", () => {
         }),
       }),
     );
+  });
+
+  /** An old-currency ask the route will re-issue; `mirror` is the Payment's own record of it. */
+  function staleCurrencyAsk(mirror: Record<string, unknown>) {
+    mockedAuth.mockResolvedValue(makeSession() as any);
+    withReissueLedger(additionalPaymentRow({ stripeCustomerId: "cus_1", ...mirror }));
+    mockPaymentTransactionFindMany.mockResolvedValue([
+      { id: "ptx_1", stripePaymentIntentId: "pi_additional", amountCents: 3000 },
+    ]);
+    mockedGetPaymentIntent.mockResolvedValue({
+      id: "pi_additional",
+      amount: 3000,
+      status: "requires_payment_method",
+      client_secret: "pi_additional_secret_aud", currency: "aud",
+    } as any);
+    mockFindPaymentTransactionByIntentId.mockResolvedValue({
+      id: "ptx_1", paymentId: "p1", kind: "ADDITIONAL", amountCents: 3000, carriedAskCents: 0,
+      reason: "edit_financial_review_charge", status: "PENDING", createdAt: new Date(),
+    });
+    mockedCreatePaymentIntent.mockResolvedValue({
+      id: "pi_reissued", amount: 3000, client_secret: "pi_reissued_secret_nzd", currency: "nzd",
+    } as any);
+  }
+
+  it("#4442 review M1: re-issues when the Payment mirror and the intent's amount disagree, sizing the carried balance off the mirror", async () => {
+    // The intent asks $30.00; the mirror the route read says $25.00 is owed. The
+    // re-issue keeps the intent's figure, and its queue's re-read compares the
+    // mirror with the mirror - so the member is not stranded on a 500.
+    staleCurrencyAsk({ additionalAmountCents: 2500 });
+    const res = await GET(new NextRequest("http://localhost/api/bookings/bk1/additional-payment-secret"), {
+      params: Promise.resolve({ id: "bk1" }),
+    });
+    expect(res.status).toBe(200);
+    expect((await res.json()).paymentIntentId).toBe("pi_reissued");
+    expect(mockUpsertPaymentIntentTransaction).toHaveBeenCalledWith(
+      expect.objectContaining({ paymentIntentId: "pi_reissued", amountCents: 3000, kind: "ADDITIONAL" }),
+    );
+  });
+
+  it("#4442 review M1: answers 409 reload, writing nothing, when the ask was paid while it was being re-issued", async () => {
+    staleCurrencyAsk({});
+    // The route reads the ask unpaid; by the time the re-issue's queue re-reads
+    // it under its locks, a stale tab has paid it.
+    const routeRead = mockPaymentFindUnique.getMockImplementation()!;
+    mockPaymentFindUnique.mockImplementation(async (args: { select?: Record<string, unknown> }) =>
+      args?.select?.additionalAmountCents
+        ? { additionalAmountCents: 3000, additionalPaymentStatus: "SUCCEEDED" }
+        : routeRead(args),
+    );
+    const res = await GET(new NextRequest("http://localhost/api/bookings/bk1/additional-payment-secret"), {
+      params: Promise.resolve({ id: "bk1" }),
+    });
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual(ADDITIONAL_PAYMENT_CHANGED_BODY);
+    expect(mockUpsertPaymentIntentTransaction).not.toHaveBeenCalled();
+    expect(mockEnqueuePaymentIntentCancellationRecovery).not.toHaveBeenCalled();
   });
 
   it("does not re-issue an intent already in the club's currency (#3567)", async () => {

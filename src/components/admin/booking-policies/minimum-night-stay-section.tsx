@@ -781,7 +781,7 @@ export function MinimumNightStaySection() {
               ) : (
                 <div className="space-y-3">
                   {minStayPolicies.map((policy) => (
-                    <Card key={policy.id} className={!policy.active ? "opacity-60" : ""}>
+                    <Card key={policy.id} className={!policy.active ? "border-dashed" : ""}>
                       <CardContent className="pt-4">
                         <div className="flex items-start justify-between mb-2">
                           <div>

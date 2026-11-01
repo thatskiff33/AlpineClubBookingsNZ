@@ -197,7 +197,7 @@ export function ContactPageClient({
                       onValueChange={setRecipient}
                       disabled={loadingMembers}
                     >
-                      <SelectTrigger className="mt-1 border-brand-ridge/20 bg-card">
+                      <SelectTrigger id="recipient" className="mt-1 border-brand-ridge/20 bg-card">
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent className="website-theme border-brand-ridge/20 bg-brand-snow">

@@ -1,35 +1,42 @@
+import { buildUnpaidConfirmedWholeLodgeWhere } from "@/lib/booking-payment-flow";
 import type { Prisma } from "@prisma/client";
-import { ADDITIONAL_OWED_BOOKING_STATUSES } from "@/lib/additional-payment-chase";
+import { ADDITIONAL_OWED_BOOKING_STATUSES, CREDIT_RELEASE_CHASE_HORIZON_DAYS } from "@/lib/additional-payment-chase";
+import { CREDIT_RELEASE_ASK_REASON } from "@/lib/credit-release-ask-keys";
 
 /**
- * Unpaid finished stays (#1709): bookings still PAYMENT_PENDING whose
+ * Unpaid finished stays (#1709): bookings still owing their price whose
  * check-out is on or before NZ today — the stay is over but payment is still
  * owing. Retroactive card creates (#1704) match from the moment of creation;
  * organic bookings that cross check-out unpaid surface here too.
  *
- * Single source of truth for the predicate and deep link shared by the admin
- * dashboard attention card and the sidebar Needs Attention badge (#1731);
- * keep every surface on these helpers so the queues can never drift.
+ * Single source of truth for the predicate shared by the admin dashboard
+ * attention card and the sidebar Needs Attention badge (#1731); keep every
+ * surface on these helpers so the queues can never drift.
  *
- * This module stays free of runtime Prisma/server imports so the client-side
- * admin sidebar can consume the href builder directly.
+ * Server-side: since #4019 the status fragment composes the whole-lodge "not
+ * yet paid" rule from `booking-payment-flow.ts`, whose graph reaches the Prisma
+ * runtime. The deep links the client-side admin sidebar needs live in the
+ * import-free `unpaid-finished-stays-hrefs.ts`, so no client module imports
+ * this one.
  */
+/** The collection queue uses the modification paths' unpaid classification. */
+export function buildUnpaidFinishedStaysStatusWhere(): Prisma.BookingWhereInput {
+  return {
+    OR: [
+      { status: "PAYMENT_PENDING" },
+      buildUnpaidConfirmedWholeLodgeWhere(),
+    ],
+  };
+}
+
 export function buildUnpaidFinishedStaysWhere(
   today: Date,
 ): Prisma.BookingWhereInput {
   return {
     deletedAt: null,
-    status: "PAYMENT_PENDING",
     checkOut: { lte: today },
+    ...buildUnpaidFinishedStaysStatusWhere(),
   };
-}
-
-/**
- * Deep link to the bookings list pre-filtered to the same queue via the
- * Check Out range filter. `todayKey` is the NZ date-only key (YYYY-MM-DD).
- */
-export function buildUnpaidFinishedStaysHref(todayKey: string): string {
-  return `/admin/bookings?status=PAYMENT_PENDING&checkOutTo=${todayKey}`;
 }
 
 /*
@@ -84,6 +91,35 @@ export function buildAdditionalOwedWhere(): Prisma.BookingWhereInput {
         OR: [
           { additionalPaymentStatus: null },
           { additionalPaymentStatus: { not: "SUCCEEDED" } },
+        ],
+      },
+    },
+  };
+}
+
+/**
+ * A finished stay whose unpaid request includes credit used elsewhere in the club's
+ * accounts (alone, or merged with an edit) and whose newest request is young enough
+ * to still have reminders to send (`INV-ADDPAY-048`): the one kind of request the
+ * reminder cron keeps chasing after check-out. Narrowing only; the cron re-decides
+ * in memory with the cause read from the ledger rows.
+ */
+export function buildFinishedCreditReleaseChaseWhere(today: Date, now: Date): Prisma.BookingWhereInput {
+  return {
+    checkOut: { lte: today },
+    payment: {
+      is: {
+        AND: [
+          { transactions: { some: { kind: "ADDITIONAL", reason: CREDIT_RELEASE_ASK_REASON, withdrawnAt: null } } },
+          // The horizon runs from the NEWEST request, which a merged one's edit row is.
+          {
+            transactions: {
+              some: {
+                kind: "ADDITIONAL",
+                createdAt: { gte: new Date(now.getTime() - CREDIT_RELEASE_CHASE_HORIZON_DAYS * 86_400_000) },
+              },
+            },
+          },
         ],
       },
     },
@@ -162,16 +198,6 @@ export function buildUnsettledAdditionalFinishedStaysWhere(
 }
 
 /**
- * Deep link to the bookings list pre-filtered to the same queue via the
- * `additionalOwed` filter plus the Check Out range filter.
- */
-export function buildUnsettledAdditionalFinishedStaysHref(
-  todayKey: string,
-): string {
-  return `/admin/bookings?additionalOwed=owed&checkOutTo=${todayKey}`;
-}
-
-/**
  * Unsettled additions on a stay that has NOT finished yet (#2350): the same
  * uncollected upward modification delta, but on a booking whose check-out is
  * still ahead. Counting only finished stays meant the club found out about the
@@ -191,16 +217,4 @@ export function buildUnsettledAdditionalUpcomingStaysWhere(
     checkOut: { gt: today },
     ...buildAdditionalOwedWhere(),
   };
-}
-
-/**
- * Deep link covering BOTH halves of the unsettled-additions queue — every
- * booking with an uncollected addition, whenever it stays. Used by the sidebar
- * badge and the dashboard card, whose split label ("N upcoming, M finished")
- * names the two halves while the one link shows all of them; the bookings list
- * has no "upcoming only" filter to deep-link to, and inventing one to express a
- * split the list already sorts by check-out would be the worse trade.
- */
-export function buildUnsettledAdditionalStaysHref(): string {
-  return "/admin/bookings?additionalOwed=owed";
 }

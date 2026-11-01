@@ -1,3 +1,4 @@
+import { addUtcYears } from "@/lib/retention-calendar";
 import { type AuditLog, Prisma, PrismaClient } from "@prisma/client";
 import { createPrismaPgAdapter } from "@/lib/prisma-adapter";
 import { PRISMA_CLIENT_GLOBAL_OMIT } from "@/lib/prisma-global-omit";
@@ -9,7 +10,11 @@ import {
   sanitizeAuditMetadata,
 } from "@/lib/audit";
 import { isAuditCategory } from "@/lib/audit-categories";
-import { isAuditRetentionClass, UNCLASSIFIED_RETENTION } from "@/lib/audit-retention-classes";
+import {
+  AUDIT_ANONYMISED_REQUEST_COLUMNS,
+  isAuditRetentionClass,
+  UNCLASSIFIED_RETENTION,
+} from "@/lib/audit-retention-classes";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 
@@ -290,6 +295,12 @@ export type AuditLogRetentionJobResult = {
 
 type AuditLogRetentionJobOptions = {
   db?: AuditRetentionDbClient;
+  /**
+   * The main-database connection the job maintains `AuditLog` through, when
+   * `db` is not given. Defaults to `AUDIT_RETENTION_DATABASE_URL`; `null` (or
+   * an unset variable) means the application's own client, as before #4453.
+   */
+  retentionDatabaseUrl?: string | null;
   archiveDb?: AuditArchiveDbClient;
   archiveDatabaseUrl?: string | null;
   now?: Date;
@@ -307,17 +318,6 @@ function addUtcMonths(date: Date, months: number): Date {
   return next;
 }
 
-// Clamped (#3939): 29 Feb in a year without one is 28 Feb, not 1 Mar. Every
-// caller subtracts years to get a deletion cutoff, so rolling over to 1 Mar
-// would delete up to a day early; the clamp errs towards keeping.
-function addUtcYears(date: Date, years: number): Date {
-  const next = new Date(date);
-  const month = next.getUTCMonth();
-  next.setUTCFullYear(next.getUTCFullYear() + years);
-  if (next.getUTCMonth() !== month) next.setUTCDate(0);
-  return next;
-}
-
 function addUtcDays(date: Date, days: number): Date {
   const next = new Date(date);
   next.setUTCDate(next.getUTCDate() + days);
@@ -330,18 +330,46 @@ function resolveArchiveDatabaseUrl(
   if (Object.prototype.hasOwnProperty.call(options, "archiveDatabaseUrl")) {
     return options.archiveDatabaseUrl?.trim() || undefined;
   }
+  return configuredAuditArchiveDatabaseUrl();
+}
+
+/** The audit archive connection the environment configures, if any (#4453: also read by the backup guard). */
+export function configuredAuditArchiveDatabaseUrl(): string | undefined {
   return (
     readEnv("AUDIT_ARCHIVE_DATABASE_URL") ??
     readEnv("AUDIT_LOG_ARCHIVE_DATABASE_URL")
   );
 }
 
-function createArchiveClient(databaseUrl: string): AuditArchiveDbClient {
+/**
+ * #4453: the optional main-database connection for audit maintenance. Under the
+ * least-privilege roles the application role may only INSERT and SELECT
+ * `AuditLog`, so the anonymisation UPDATE and the archive and prune DELETEs run
+ * as a separate audit-retention role (`src/lib/database-roles.ts`) when this is
+ * set. Unset, the job uses the application client exactly as before, so a
+ * deployment that has not split its roles changes nothing.
+ *
+ * Not the archive URL: that names a DIFFERENT database, and pointing it at the
+ * primary is refused by the runbook.
+ */
+function resolveRetentionDatabaseUrl(
+  options: AuditLogRetentionJobOptions
+): string | undefined {
+  if (Object.prototype.hasOwnProperty.call(options, "retentionDatabaseUrl")) {
+    return options.retentionDatabaseUrl?.trim() || undefined;
+  }
+  return readEnv("AUDIT_RETENTION_DATABASE_URL");
+}
+
+/**
+ * The one way this job builds a Prisma client of its own, for the archive
+ * database and for the audit-retention connection alike (`INV-SSOT`). Every
+ * application client carries the same omission so the census holds with no
+ * exemption (`INV-PRIV-022`), even one that only runs raw AuditLog statements.
+ */
+function createStandaloneClient(databaseUrl: string) {
   return new PrismaClient({
     adapter: createPrismaPgAdapter(databaseUrl),
-    // The archive client only runs raw AuditLog statements, but every
-    // application client carries the same omission so the census holds with
-    // no exemption (`INV-PRIV-022`).
     omit: PRISMA_CLIENT_GLOBAL_OMIT,
   });
 }
@@ -419,16 +447,19 @@ export async function anonymizeExpiredAuditRequestData(
   now = new Date()
 ): Promise<{ cutoff: Date; anonymized: number }> {
   const { requestData: cutoff } = getAuditLogRetentionCutoffs(now);
+  // Built from the one column list the audit-retention role's UPDATE grant is
+  // also built from (#4453), so the two cannot drift apart.
   const { count } = await db.auditLog.updateMany({
     where: {
       createdAt: { lt: cutoff },
       incidentPreserved: false,
-      OR: [{ ipAddress: { not: null } }, { userAgent: { not: null } }],
+      OR: AUDIT_ANONYMISED_REQUEST_COLUMNS.map(
+        (column): Prisma.AuditLogWhereInput => ({ [column]: { not: null } })
+      ),
     },
-    data: {
-      ipAddress: null,
-      userAgent: null,
-    },
+    data: Object.fromEntries(
+      AUDIT_ANONYMISED_REQUEST_COLUMNS.map((column) => [column, null])
+    ) as Prisma.AuditLogUpdateManyMutationInput,
   });
 
   return { cutoff, anonymized: count };
@@ -741,11 +772,17 @@ export async function pruneAuditArchive(
 export async function runAuditLogRetentionJob(
   options: AuditLogRetentionJobOptions = {}
 ): Promise<AuditLogRetentionJobResult> {
-  const db = options.db ?? prisma;
+  const retentionDatabaseUrl = options.db
+    ? undefined
+    : resolveRetentionDatabaseUrl(options);
+  const createdRetentionDb = retentionDatabaseUrl
+    ? createStandaloneClient(retentionDatabaseUrl)
+    : undefined;
+  const db = options.db ?? createdRetentionDb ?? prisma;
   const now = options.now ?? new Date();
   const archiveDatabaseUrl = resolveArchiveDatabaseUrl(options);
   const createdArchiveDb =
-    options.archiveDb ?? (archiveDatabaseUrl ? createArchiveClient(archiveDatabaseUrl) : undefined);
+    options.archiveDb ?? (archiveDatabaseUrl ? createStandaloneClient(archiveDatabaseUrl) : undefined);
 
   try {
     const requestData = await anonymizeExpiredAuditRequestData(db, now);
@@ -841,5 +878,6 @@ export async function runAuditLogRetentionJob(
     if (!options.archiveDb && createdArchiveDb?.$disconnect) {
       await createdArchiveDb.$disconnect();
     }
+    await createdRetentionDb?.$disconnect();
   }
 }

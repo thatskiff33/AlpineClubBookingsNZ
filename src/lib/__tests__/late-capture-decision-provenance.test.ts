@@ -135,6 +135,8 @@ const PROVENANCE_SCANNED_FILES = [
   "src/components/admin/__tests__/manual-refund-task-queue-auto-refunded.test.tsx",
   "changelog.d/2773-late-capture-both-paths-and-hand-back-fence.md",
   "changelog.d/2760-auto-refund-record-and-alert.md",
+  // ALP-7: the fragility ranking lists PR #2783 (#2773/#2774) in its repeat chains.
+  "docs/audits/FRAGILITY_RANKING_2026-10.md",
 ] as const;
 
 /**

@@ -1,5 +1,5 @@
 import { XERO_ACTIVE_OPERATION_STATUSES } from "./xero-active-operation-statuses";
-import { PaymentSource, Prisma } from "@prisma/client";
+import { PaymentSource, Prisma, type XeroSyncOperation } from "@prisma/client";
 import { createHash } from "crypto";
 import { prisma } from "./prisma";
 import { asRecord, readString } from "./xero-json";
@@ -24,6 +24,7 @@ import { xeroSyncErrorFields } from "@/lib/xero-sync-error-text";
 import { REFUND_REQUEST_CREDIT_NOTE_ROLE } from "@/lib/refund-request-credit-note";
 import { isClosedByCreditSpentOutsideApp } from "@/lib/xero-operation-resolution";
 import { outcomeWriteGuard, refusedOutcomeWrite, type XeroOperationClaim } from "@/lib/xero-operation-outcome-guard";
+import { successAfterResolutionAlert } from "@/lib/xero-success-after-resolution-alert";
 
 export interface XeroSyncOperationInput {
   direction: string;
@@ -930,7 +931,7 @@ export async function completeXeroSyncOperation(
   // #4356 (`INV-INT-029`): no PARTIAL, FAILED or CANCELLED completion lands on a recorded success or a repair's claim; null then.
   // #4256: `retryClaim` writes only onto that retry claim, clearing its marker code; `alert: false` raises no repeated-failure alert.
   options?: { store?: Prisma.TransactionClient; retryClaim?: true; alert?: false },
-) {
+): Promise<(XeroSyncOperation & { deferredPostCommit?: () => Promise<void> }) | null> {
   const operationId = claim.id;
   // #2314: organisation-agnostic in the column, organisation applied on read —
   // see the note on the object-link funnel above.
@@ -978,6 +979,12 @@ export async function completeXeroSyncOperation(
   const operation = options?.store
     ? await completeWithClient(options.store)
     : await prisma.$transaction(completeWithClient);
+
+  // #4374 (`INV-INT-029`): a success landing on a row resolved in Xero warns and alerts once, after commit. On an
+  // injected store that is its owner's commit: the owner runs the `deferredPostCommit` returned here after it.
+  const resolvedRowAlert = successAfterResolutionAlert(operation);
+  if (resolvedRowAlert && operation && options?.store) return { ...operation, deferredPostCommit: resolvedRowAlert };
+  await resolvedRowAlert?.();
 
   if (operation?.status === "PARTIAL" && options?.alert !== false) {
     try {

@@ -4,6 +4,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { stripCommentsAndStrings } from "./support/strip-comments";
+import { balancedBrackets } from "./support/balanced-brackets";
 
 /**
  * The provider, job and export temporal boundary, enforced mechanically
@@ -211,18 +212,9 @@ function taintedLocals(code: string, fields: readonly string[]): Set<string> {
   return tainted;
 }
 
-/** The text between a call's `(` and its matching `)`. */
+/** `code` is already masked (`stripCommentsAndStrings`), so it is its own structure. */
 function balancedArgument(code: string, openParenIndex: number): string {
-  let depth = 0;
-  for (let index = openParenIndex; index < code.length; index += 1) {
-    const char = code[index];
-    if (char === "(") depth += 1;
-    else if (char === ")") {
-      depth -= 1;
-      if (depth === 0) return code.slice(openParenIndex + 1, index);
-    }
-  }
-  return code.slice(openParenIndex + 1);
+  return balancedBrackets(code, openParenIndex, code).text.slice(1, -1);
 }
 
 function lineOf(code: string, index: number): number {

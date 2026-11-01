@@ -642,7 +642,7 @@ export function MemberGuestFindPanel({
                     onMouseEnter={() => setActiveIndex(index)}
                     className={`flex w-full items-center gap-3 px-3 py-2 text-left text-sm ${
                       index === activeIndex ? "bg-accent text-accent-foreground" : ""
-                    } ${disabled ? "opacity-70" : ""}`}
+                    }`}
                   >
                     <span className="font-medium">
                       {candidate.firstName} {candidate.lastName}

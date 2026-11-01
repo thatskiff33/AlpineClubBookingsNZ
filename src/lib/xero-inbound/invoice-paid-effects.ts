@@ -11,6 +11,8 @@ import {
   sendBookingConfirmedEmail,
 } from "@/lib/email";
 import { providerAmountToCents } from "@/lib/money-provider-amount";
+import { isDeletedXeroPaymentStatus } from "@/lib/xero-inbound/object-links";
+import { sumListedXeroPaymentCents } from "@/lib/xero-inbound/amounts";
 import { findSettlingInternetBankingTransactionId, recordSettlingTransaction } from "@/lib/payment-settler";
 import {
   findSecondInstrumentSettlement,
@@ -114,9 +116,7 @@ export function classifyXeroInvoiceCashEvidence(
     return amountPaidCents > 0 ? "cash" : "none";
   }
   if (Array.isArray(invoice.payments)) {
-    const cashPayments = invoice.payments.filter(
-      (payment) => String(payment.status ?? "").toUpperCase() !== "DELETED"
-    );
+    const cashPayments = invoice.payments.filter((payment) => !isDeletedXeroPaymentStatus(payment.status));
     return cashPayments.length > 0 ? "cash" : "none";
   }
   return "indeterminate";
@@ -161,17 +161,9 @@ export function quantifyXeroInvoiceCashCents(
       complete = false;
     }
     if (Array.isArray(invoice.payments)) {
-      for (const payment of invoice.payments) {
-        if (String(payment.status ?? "").toUpperCase() === "DELETED") {
-          continue;
-        }
-        const paymentCents = providerAmountToCents(payment.amount);
-        if (paymentCents !== null) {
-          knownCents += paymentCents;
-        } else {
-          complete = false;
-        }
-      }
+      const listed = sumListedXeroPaymentCents(invoice.payments);
+      knownCents += listed.cents;
+      complete &&= listed.complete;
     }
   }
 

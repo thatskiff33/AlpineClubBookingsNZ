@@ -1,3 +1,4 @@
+import { queueOrganiserExtraForChange } from "@/lib/organiser-extra-invoice-queue";
 import { NextRequest, NextResponse } from "next/server";
 import { bookingPromoCodeLabel, bookingPromoRedemptions } from "@/lib/booking-promo-redemptions";
 import { repriceBookingPromotions } from "@/lib/booking-promotions";
@@ -51,7 +52,7 @@ import {
 } from "@/lib/night-adjustment-write";
 import type { PromoCoverageNotice } from "@/lib/promo-cap-coverage";
 import { ApiError as SharedApiError } from "@/lib/api-error";
-import { ORGANISER_CHILD_CHARGE_REFUSAL, paidByOrganiserCard } from "@/lib/group-organiser-paid";
+import { ORGANISER_CHILD_CHARGE_REFUSAL, paidByOrganiserCard, paidByOrganiserInternetBanking } from "@/lib/group-organiser-paid";
 import { refuseOrganiserBankChildPriceChangeInGroupCancel } from "@/lib/group-cancel-in-progress";
 import { logAudit } from "@/lib/audit";
 import { sendBookingModifiedEmail } from "@/lib/email";
@@ -74,6 +75,7 @@ import {
 } from "@/lib/additional-payment-ask";
 import { foldWaitingReissuedAsks } from "@/lib/additional-ask-reissue";
 import { NO_FOLDED_REISSUED_ASKS, NO_UNPAID_ASK_SETTLEMENT, unpaidAskOffsetHistory, type FoldedReissuedAsks } from "@/lib/unpaid-ask-offset-marker";
+import { resolveOrganiserBillingForNet } from "@/lib/organiser-billing";
 import { primaryInvoiceSettlementHistory, writeEditOnPayment } from "@/lib/booking-primary-invoice-claim";
 import { additionalAmountToName, createModificationAdditionalPaymentIntent } from "@/lib/booking-modification-settlement";
 import logger from "@/lib/logger";
@@ -967,7 +969,10 @@ export async function POST(
        * `applyPaymentAdjustments`; this door used to hold its own copy of it.
        */
       const hasSucceededPayment = canAskCardForIncrease(booking);
-      const hasIssuedXeroInvoice = hasIssuedPrimaryXeroInvoice(booking);
+      const organiserBilling = await resolveOrganiserBillingForNet(tx, booking, priceDiffCents); // #4299 N-a: refuses only an increase
+      const hasIssuedXeroInvoice = organiserBilling !== null || hasIssuedPrimaryXeroInvoice(booking);
+      // #4299 (`INV-PAY-148`): an organiser-paid bank place's add is invoiced to the organiser, never asked of the joiner.
+      const billedToOrganiserCents = organiserBilling && priceDiffCents > 0 ? priceDiffCents : 0;
 
       /**
        * #3340: THE FIFTH ASK-SIZING DOOR, and the one the first round missed.
@@ -977,7 +982,7 @@ export async function POST(
        * one home directly rather than restating a bare delta (`INV-SSOT-001`).
        * It is fully wired into the same machinery -
        * `createModificationAdditionalPaymentIntent` below mints through
-       * `queueSupersededAdditionalIntentCancellations`, which RETIRES every other
+       * `queueSupersededAdditionalIntentCancellationRows`, which RETIRES every other
        * outstanding ADDITIONAL intent on this payment - so a delta-sized ask here
        * deletes the unpaid balance of the ask it replaces. A $130 booking paid,
        * edited +$70 unpaid, then a guest added at +$70 asked for $70 and left $70
@@ -1016,12 +1021,12 @@ export async function POST(
         });
         additionalAmountCents = additionalAsk.amountCents;
       } else if (hasIssuedXeroInvoice && priceDiffCents > 0) {
-        additionalAmountCents = priceDiffCents;
+        additionalAmountCents = priceDiffCents - billedToOrganiserCents;
       }
 
       // #3980 (`INV-PAY-136`): this door settles for itself, so it makes the edits'
       // one payment write itself (no fee: an add charges none); 409 if the link moved.
-      const settledAgainstPrimaryInvoice = await writeEditOnPayment(tx, { payment: booking.payment, changeFeeCents: 0 });
+      const settledAgainstPrimaryInvoice = await writeEditOnPayment(tx, { payment: booking.payment, changeFeeCents: 0, settledAgainstCombinedInvoice: paidByOrganiserInternetBanking(booking) });
 
       // This route only adds guests, so the no-adult rule can only change
       // from flagged → cleared (by adding an adult). When that happens, wipe
@@ -1177,6 +1182,7 @@ export async function POST(
 
       // #3582: the same before and after, per night, on the booking ledger —
       // under the `lock(1)` this transaction took first.
+      await queueOrganiserExtraForChange(tx, booking, bookingModification);
       await postModificationLedgerLines({
         store: tx,
         bookingId,
@@ -1191,6 +1197,7 @@ export async function POST(
         addedGuests: createdGuests,
         priceDiffCents,
         additionalAmountCents,
+        billedToOrganiserCents,
         additionalAsk,
         // An add never lowers the price (#3954 retires asks only on a reduction).
         retiredAdditionalAsks: [],
@@ -1403,6 +1410,7 @@ export async function POST(
         refundByBankTransfer: null,
         appliedCreditGivenBackCents: 0,
         additionalAmountCents: namedAdditionalCents,
+        billedToOrganiserCents: result.billedToOrganiserCents, // #4299
         // A guest add only raises a price.
         unpaidAskCancelled: false,
         additionalPaymentMethod:
@@ -1430,6 +1438,7 @@ export async function POST(
       addedGuests: result.addedGuests,
       priceDiffCents: result.priceDiffCents,
       additionalAmountCents: result.additionalAmountCents,
+      billedToOrganiserCents: result.billedToOrganiserCents, // #4299: the organiser was invoiced, not this member
       additionalPaymentClientSecret: additionalMint.additionalPaymentClientSecret ?? null,
       promoRemoved: result.promoRemoved,
       // #2390: who the promotion still covers, and who it does not. Null unless

@@ -518,8 +518,11 @@ describe("provisioning SQL quoting refuses hostile input rather than escaping it
 
   it("doubles single quotes in a literal", () => {
     expect(quoteLiteral("it's")).toBe("'it''s'");
-    // Safe under standard_conforming_strings, which is PostgreSQL's default.
-    expect(quoteLiteral("back\\slash")).toBe("'back\\slash'");
+  });
+
+  it("refuses a backslash, which would end the literal early with standard_conforming_strings off (#4453)", () => {
+    expect(() => quoteLiteral("back\\slash")).toThrow(/backslash/);
+    expect(() => quoteLiteral("ends-with\\")).toThrow(/backslash/);
   });
 
   it("refuses a literal containing control characters", () => {

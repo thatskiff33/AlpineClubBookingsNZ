@@ -301,6 +301,9 @@ export const CARD_REFUND_PAID_ANOTHER_WAY_TASK_WHERE = {
   occurrenceKey: { startsWith: CARD_REFUND_PAID_ANOTHER_WAY_KEY_PREFIX },
 } as const;
 
+/** #4210 review (C3, `INV-SSOT`): the one where clause for the records above keyed on any of these rows (`closeKeysOf`). */
+export const cardRefundPaidAnotherWayClosesWhere = (operationIds: Iterable<string>) => ({ ...CARD_REFUND_PAID_ANOTHER_WAY_TASK_WHERE, occurrenceKey: { in: [...operationIds].flatMap(closeKeysOf) } });
+
 /**
  * #3827 (`INV-PAY-117`): IS THIS TASK AN EDIT REFUND HAND-BACK? It is a
  * `CANCELLED_BOOKING_HAND_BACK` — reused rather than a new label for the reason

@@ -1,5 +1,6 @@
 "use client";
 
+import { memberCardFallbackParts, memberCardLeadParts, type AdditionalAskCause } from "@/lib/additional-ask-cause";
 import { useState, useEffect, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -33,6 +34,8 @@ interface AdditionalPaymentCardProps {
    * browser kept the FIRST edit's client secret - and confirmed it.
    */
   additionalAmountCents: number;
+  /** Why the request exists; words the line shown when the form cannot load (default: a booking change). */
+  askCause?: AdditionalAskCause;
   onDisplayChange?: (display: AdditionalPaymentCardDisplay) => void;
 }
 
@@ -43,6 +46,7 @@ interface AdditionalPaymentCardProps {
 export function AdditionalPaymentCard({
   bookingId,
   additionalAmountCents,
+  askCause = "edit",
   onDisplayChange,
 }: AdditionalPaymentCardProps) {
   const format = useClubFormat();
@@ -183,10 +187,9 @@ export function AdditionalPaymentCard({
               // response arrives - a placeholder from a second source is exactly
               // the disagreement this change exists to remove.
               <p className="text-sm text-warning-11 mb-4">
-                A recent booking modification means{" "}
-                <strong>{formatCents(askAmountCents, format)}</strong> is still owing on
-                this booking. Please complete payment to finalise the
-                modification.
+                {memberCardLeadParts(askCause).lead}
+                <strong>{formatCents(askAmountCents, format)}</strong>
+                {memberCardLeadParts(askCause).trail}
               </p>
             ) : (
               error && (
@@ -202,9 +205,9 @@ export function AdditionalPaymentCard({
                   the form below renders only when a secret arrived.
                 */
                 <p className="text-sm text-warning-11 mb-4">
-                  A recent booking modification means{" "}
-                  <strong>{formatCents(additionalAmountCents, format)}</strong> is still
-                  owing on this booking according to our records. We could not
+                  {memberCardFallbackParts(askCause).lead}
+                  <strong>{formatCents(additionalAmountCents, format)}</strong>
+                  {memberCardFallbackParts(askCause).trail} We could not
                   load the payment form just now — please try again shortly, or
                   contact the club if it keeps happening.
                 </p>

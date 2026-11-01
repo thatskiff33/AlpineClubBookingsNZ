@@ -1,11 +1,16 @@
-import { createHmac, timingSafeEqual } from "node:crypto";
 import { after, NextRequest, NextResponse } from "next/server";
 
-import { runMirrorSync, SERVERNZ_PUSH_SECRET_KEY } from "@/lib/club-post-mirror";
+import { runMirrorSync } from "@/lib/club-post-mirror";
+import { SERVERNZ_CREDENTIAL_KEYS, SERVERNZ_PROVIDER } from "@/lib/servernz-config";
 import { getIntegrationCredentialValue } from "@/lib/integration-credentials";
 import logger from "@/lib/logger";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import { SERVER_VERSION_MISMATCH_CODE } from "@/lib/servernz-api-version";
+import {
+  SERVERNZ_SIGNATURE_HEADER,
+  SERVERNZ_TIMESTAMP_HEADER,
+  verifyServerNzSignature,
+} from "@/lib/servernz-signature";
 import {
   isWebhookBodyInvalidContentLengthError,
   isWebhookBodyTooLargeError,
@@ -25,20 +30,14 @@ import {
  * Unauthenticated by nature (the central server holds no session here), so the
  * request proves itself: an HMAC over `${timestamp}.${body}` with the secret
  * issued at registration, compared in constant time, with the timestamp bounded
- * to close the replay window.
+ * to close the replay window — `verifyServerNzSignature`, shared with the
+ * availability route (#62).
  */
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const MAX_BODY_BYTES = 16 * 1024;
-
-/**
- * Clock skew allowed between the central server and this install. Five
- * minutes, the conventional webhook tolerance: enough for real clock drift,
- * small enough that a captured request is useless the same afternoon.
- */
-const TIMESTAMP_TOLERANCE_MS = 5 * 60 * 1000;
 
 export async function POST(request: NextRequest) {
   // 200 for "not participating" rather than 404: the central server retries
@@ -51,8 +50,8 @@ export async function POST(request: NextRequest) {
   }
 
   const secret = await getIntegrationCredentialValue(
-    "servernz",
-    SERVERNZ_PUSH_SECRET_KEY,
+    SERVERNZ_PROVIDER,
+    SERVERNZ_CREDENTIAL_KEYS.pushSecret,
   );
   if (!secret) {
     // No secret means this install never registered, so nothing can verify.
@@ -76,26 +75,23 @@ export async function POST(request: NextRequest) {
     throw error;
   }
 
-  const timestamp = request.headers.get("x-acs-timestamp") ?? "";
-  const signature = request.headers.get("x-acs-signature") ?? "";
-
-  const sentAt = Number(timestamp);
-  if (!Number.isFinite(sentAt)) {
-    return NextResponse.json({ error: "Invalid timestamp" }, { status: 401 });
-  }
-  if (Math.abs(Date.now() - sentAt) > TIMESTAMP_TOLERANCE_MS) {
-    // Replay protection. The signature covers the timestamp, so an attacker
-    // cannot refresh a captured request without the secret.
-    return NextResponse.json({ error: "Timestamp out of range" }, { status: 401 });
+  // A push body is a JSON object. The free-beds question signs a newline-
+  // separated text with the same secret, so a captured, still-fresh question
+  // would verify here and ring the doorbell once; refusing anything that is
+  // not an object BEFORE the signature closes that replay in both directions.
+  if (!body.trimStart().startsWith("{")) {
+    return NextResponse.json({ error: "Invalid body" }, { status: 400 });
   }
 
-  const expected = createHmac("sha256", secret)
-    .update(`${timestamp}.${body}`)
-    .digest("hex");
-  const a = Buffer.from(expected, "utf8");
-  const b = Buffer.from(signature, "utf8");
-  if (a.length !== b.length || !timingSafeEqual(a, b)) {
-    return NextResponse.json({ error: "Invalid signature" }, { status: 401 });
+  const verified = verifyServerNzSignature({
+    secret,
+    timestamp: request.headers.get(SERVERNZ_TIMESTAMP_HEADER) ?? "",
+    signature: request.headers.get(SERVERNZ_SIGNATURE_HEADER) ?? "",
+    // The raw body: JSON, so it can never equal another route's signed text.
+    signedText: body,
+  });
+  if (!verified.ok) {
+    return NextResponse.json({ error: verified.error }, { status: 401 });
   }
 
   // Verified. The body's content is deliberately NOT parsed for instructions —

@@ -20,6 +20,7 @@ import path from "path";
 import { describe, expect, it } from "vitest";
 
 // Comments are stripped so only EXECUTABLE text is matched.
+import { balancedBrackets } from "@/lib/__tests__/support/balanced-brackets";
 import { stripComments } from "@/lib/__tests__/support/strip-comments";
 import {
   BOOKING_MESSAGE_DEFINITIONS,
@@ -46,16 +47,7 @@ function bookingMessageDataLiteral(source: string): string {
   const code = stripComments(source);
   const start = code.indexOf("const bookingMessageData = {");
   expect(start).toBeGreaterThan(-1);
-  const open = code.indexOf("{", start);
-  let depth = 0;
-  for (let i = open; i < code.length; i++) {
-    if (code[i] === "{") depth++;
-    else if (code[i] === "}") {
-      depth--;
-      if (depth === 0) return code.slice(open, i + 1);
-    }
-  }
-  throw new Error("Unbalanced braces in bookingMessageData");
+  return balancedBrackets(code, code.indexOf("{", start)).text;
 }
 
 /** Top-level property names of an object literal's source text. */

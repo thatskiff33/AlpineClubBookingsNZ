@@ -35,13 +35,13 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       # Fast, dependency-free sanity check that mirrors what contributors run
       # locally via `pnpm run docs:linkcheck`. Catches most breaks even if the
       # lychee action has an outage.
       - name: Set up Node.js
-        uses: actions/setup-node@v7.1.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
 
@@ -51,7 +51,7 @@ jobs:
       # Authoritative offline link check (config in lychee.toml). Also validates
       # in-file fragments/anchors, which the Node checker does not.
       - name: Run lychee (offline)
-        uses: lycheeverse/lychee-action@v2
+        uses: lycheeverse/lychee-action@e7477775783ea5526144ba13e8db5eec57747ce8 # v2
         with:
           # Pin the lychee binary for reproducibility (repo pinning convention).
           # --include-fragments validates in-file anchors; it MUST be a CLI flag,

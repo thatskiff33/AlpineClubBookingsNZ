@@ -371,8 +371,10 @@ describe("the deploy refuses an undeclared production release", () => {
     expect(reader).toContain("tail -n 1");
     // An inline comment, the same rule get_env_file_value applies elsewhere.
     expect(reader).toContain("[[:space:]]+#.*$");
-    // One layer of matching surrounding quotes.
-    expect(reader).toContain(`[ "$first" = "$last" ]`);
+    // One layer of matching surrounding quotes, by the helper the rendered
+    // Compose readers share (#4275).
+    expect(reader).toContain('strip_matching_quotes "$(trim_whitespace "$value")"');
+    expect(functionBody("strip_matching_quotes")).toContain(`[ "$first" = "$last" ]`);
 
     // And the validator uses it instead of the shared first-match reader, which
     // is what makes the three shapes above stop aborting.
@@ -455,6 +457,7 @@ describe("every .env assignment shape Compose accepts is counted and read", () =
     "trim_whitespace",
     "printable_deploy_value",
     "env_assignment_pattern",
+    "strip_matching_quotes",
     "environment_role_env_pattern",
     "count_environment_role_env_assignments",
     "compose_env_file_value",

@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
+import { isMainModule } from "../lib/is-main-module.mjs";
 
 /**
  * Fails when a workflow job runs this repository's unit suite without checking
@@ -180,7 +180,8 @@ function splitKey(content) {
 const BLOCK_SCALAR_HEADER = /^[|>][-+]?\d*$/;
 
 function parseMapping(state, indent) {
-  const map = {};
+  // YAML keys are data: even `__proto__` must remain an enumerable own key.
+  const map = Object.create(null);
   for (;;) {
     const next = peekSignificant(state);
     if (!next || next.indent < indent) break;
@@ -693,8 +694,7 @@ export function checkWorkingTree(repoRoot) {
   return { workflowCount: workflows.length, ...auditWorkflows({ workflows, readSourceFile }) };
 }
 
-const invokedPath = process.argv[1] ? pathToFileURL(process.argv[1]).href : null;
-if (invokedPath === import.meta.url) {
+if (isMainModule(import.meta.url)) {
   try {
     const { problems, workflowCount, jobsInspected, fullSuiteJobs } =
       checkWorkingTree(process.cwd());

@@ -1,3 +1,5 @@
+import { loadEffectiveModuleFlags } from "@/lib/module-settings";
+import { memberWholeLodgeChoosesPaymentMethod } from "@/lib/booking-payment-flow";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { BookingRequestStatus } from "@prisma/client";
@@ -53,10 +55,11 @@ export async function GET(req: NextRequest) {
       // Lodge name for the queue display; null lodgeId means the club's
       // default lodge (pre-multi-lodge rows and single-lodge submissions).
       // otherLodge name (#2749) drives the "Member of another Lodge" line and
-      // the Full-member rate pre-fill in the pricing panel.
+      // the Full-member rate pre-fill in the pricing panel; its location tells
+      // two lodges of one name apart (#69).
       include: {
         lodge: { select: { name: true } },
-        otherLodge: { select: { name: true } },
+        otherLodge: { select: { name: true, location: true } },
       },
     }),
     prisma.bookingRequest.count({ where }),
@@ -239,5 +242,8 @@ export async function GET(req: NextRequest) {
     };
   });
 
-  return NextResponse.json({ data, page, pageSize, total });
+  return NextResponse.json({
+    data, page, pageSize, total,
+    memberWholeLodgeChoosesPaymentMethod: memberWholeLodgeChoosesPaymentMethod(await loadEffectiveModuleFlags()),
+  });
 }

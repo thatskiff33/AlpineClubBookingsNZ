@@ -362,12 +362,16 @@ describe("the move (`followSupersededAskInvoicesToCarrier`)", () => {
     expect(payloadOf("op_mod_x")).toMatchObject({ paymentIntentId: "pi_new", parkedFromPaymentIntentId: "pi_stale" });
   });
 
-  it("a review charge carrying A: its own change is read from its reason", async () => {
-    aSupersededByB({ b: { bookingModificationId: null, reason: buildEditFinancialReviewChargeReason("mod_b") } });
+  it.each([
+    ["ledger stamp before its reason", "mod_b", "mod_other"],
+    ["review charge reason without a stamp", null, "mod_b"],
+  ] as const)("the carrier locks its own change from its %s", async (_label, bookingModificationId, reasonChangeId) => {
+    aSupersededByB({ b: { bookingModificationId, reason: buildEditFinancialReviewChargeReason(reasonChangeId) } });
 
     const result = await followSupersededAskInvoicesToCarrier({ paymentId: "pay_1" });
 
     expect(result.moved).toBe(1);
+    expect(mocks.lockAnchor.mock.calls.map((call) => call[1])).toEqual(["mod_a", "mod_b"]);
   });
 
   it("the bank-transfer route is a no-op: no card ask, so not even the outbox is read", async () => {

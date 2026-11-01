@@ -244,6 +244,35 @@ describe("AdditionalPaymentCard amount source", () => {
     expect(screen.queryByTestId("elements")).toBeNull();
   });
 
+  it("words the paragraph above the form by why the request exists too (#4253)", async () => {
+    fetchMock.mockResolvedValue(
+      secretResponse({ clientSecret: "pi_new_secret", amountCents: 36500, paymentIntentId: "pi_new" }),
+    );
+
+    render(
+      <AdditionalPaymentCard bookingId="booking_1" additionalAmountCents={36500} askCause="credit-release" />,
+    );
+
+    await waitFor(() =>
+      expect(screen.getByText(/used elsewhere in the club's accounts/)).toBeVisible(),
+    );
+    expect(screen.queryByText(/booking modification/)).toBeNull();
+  });
+
+  it("words the line shown when the form cannot load by why the request exists (#4253)", async () => {
+    fetchMock.mockResolvedValue({ ok: false, status: 404, json: async () => ({ error: "No pending additional payment" }) });
+
+    render(
+      <AdditionalPaymentCard bookingId="booking_1" additionalAmountCents={36500} askCause="credit-release" />,
+    );
+
+    await waitFor(() =>
+      expect(screen.getByText(/used elsewhere in the club's accounts/)).toBeVisible(),
+    );
+    expect(screen.queryByText(/recent booking modification/)).toBeNull();
+    expect(screen.getByText(/\$365\.00/)).toBeVisible();
+  });
+
   /*
     #3641 / #3635: THE CARD TELLS THE ROUTE'S 409s APART BY `code`.
 

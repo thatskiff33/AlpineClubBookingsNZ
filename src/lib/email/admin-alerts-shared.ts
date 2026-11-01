@@ -25,7 +25,7 @@ import {
 } from "@/lib/email-admin-alert-escalation";
 import { sendEmail } from "./core";
 import { type EmailAttachment, shouldPersistEmailHtml } from "./internal";
-import { type AdminAlertSendResult } from "./admin-alert-send-result";
+import { type AdminAlertSendOutcome, type AdminAlertSendResult } from "./admin-alert-send-result";
 
 /**
  * Candidate rows for any admin-audience email (#2548). The audience is decided
@@ -345,7 +345,7 @@ async function resolveClubSupportMailbox(): Promise<string> {
  * preference is read, and the recipient set cannot be empty (see above). Everything
  * else is deliberately identical — the same audience-by-permission rule, the same
  * per-recipient error isolation, and the same undeliverable escalation when not one
- * recipient received it.
+ * recipient received it. Returns sent/undelivered for callers that own retries.
  *
  * IT DOES NOT CONSULT THE CLUB-WIDE DELIVERY POLICY EITHER, and that is not an
  * oversight. Every template sent through here is in
@@ -369,7 +369,7 @@ export async function sendUnmuteableAdminAlert({
   templateData?: EmailTemplateData;
   /** The area whose editors own the work this alert reports. */
   requirement: AdminAccessRequirement;
-}) {
+}): Promise<AdminAlertSendOutcome> {
   const { emails, source } = await resolveUnmuteableAdminAlertRecipients(
     requirement,
   );
@@ -420,6 +420,7 @@ export async function sendUnmuteableAdminAlert({
       ),
     );
   }
+  return outcomes.some((outcome) => outcome.status === "sent") ? "sent" : "undelivered";
 }
 
 export async function shouldSendDirectAdminSystemEmail(templateName: string) {

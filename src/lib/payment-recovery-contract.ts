@@ -97,6 +97,21 @@ export const ADDITIONAL_PAYMENT_ALREADY_MADE_BODY = Object.freeze({
   error: ADDITIONAL_PAYMENT_ALREADY_MADE_MESSAGE,
 });
 
+/**
+ * #4442: the additional ask changed (paid from another tab, or replaced by a
+ * later change) while the pay page was re-issuing it in the club's currency.
+ * Nothing was written or offered; a reload reads the pay door afresh.
+ */
+export const ADDITIONAL_PAYMENT_CHANGED_CODE = "ADDITIONAL_PAYMENT_CHANGED" as const;
+
+export const ADDITIONAL_PAYMENT_CHANGED_MESSAGE =
+  "This payment changed while it was being prepared. Reload the page to see what is still owed.";
+
+export const ADDITIONAL_PAYMENT_CHANGED_BODY = Object.freeze({
+  code: ADDITIONAL_PAYMENT_CHANGED_CODE,
+  error: ADDITIONAL_PAYMENT_CHANGED_MESSAGE,
+});
+
 export function isAdditionalPaymentAlreadyMade(
   value: unknown,
 ): value is typeof ADDITIONAL_PAYMENT_ALREADY_MADE_BODY {

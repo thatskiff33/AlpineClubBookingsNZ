@@ -73,7 +73,7 @@ import {
   OPTIONAL_TEMPLATE_TOKENS,
   findDanglingDefaultLines,
 } from "@/lib/email-message-token-contract";
-import { bookingPaymentDueNote } from "@/lib/email-message-notes";
+import { bookingPaymentDueNote } from "@/lib/email-payment-due-note";
 import { bookingConfirmedTemplate } from "@/lib/email-templates/booking";
 import {
   resolveUnpaidCreditNetting,
@@ -375,37 +375,91 @@ describe("#2444 the shared composer", () => {
     );
   });
 
-  it("rests on a send path that applies no account credit at all", () => {
-    // The sentence is worded around what this path really does. It mints a
-    // brand-new booking and writes NO MemberCredit row, so the
-    // enqueueXeroAppliedCreditAllocationOperation call it makes always
-    // short-circuits ("No unallocated applied credit; nothing to allocate.")
-    // and the Xero invoice stands at the full price.
+  it("rests on a send path whose credit application is the member's own election, never the legacy receivable's", () => {
+    // THE TRIPWIRE FIRED (#4019), and this is the re-read it
+    // asked for. The whole-lodge approval now applies the credit a member asked
+    // for on the request — through `applyCreditToBooking`, the ordinary create
+    // path's writer — so the netted copy IS live for real members, on the
+    // `payOnline` shape only. What the legacy receivable (either module off)
+    // still relies on is that it NEVER applies credit: the approval's credit
+    // branch is reachable only where the member chooses the payment method,
+    // and that is also the only branch that passes `payOnline`. So:
     //
-    // WHAT THIS PIN NOW MEANS (#2483). It used to say "if that ever changes,
-    // the copy can — and should — be revisited", i.e. the state was one the
-    // code had no answer for. It has an answer now: the credit shape below
-    // states the netting, from these very rows. So this is no longer a
-    // correctness precondition — it is why every member on today's live path
-    // reads the conditional sentence and not the netted one, and a tripwire
-    // saying the netted copy has gone live for real members.
+    //  - the member-choice email nets locally and points at the booking page,
+    //    where the card route charges `finalPrice - appliedCredit` from the same
+    //    ledger read, and the Internet Banking switch mints the receivable at
+    //    that netted amount and allocates the credit against the invoice; and
+    //  - the legacy email keeps the #2444 conditional sentence and the admin
+    //    manual-invoice alert keeps the gross figure, because no credit exists
+    //    on that branch.
     //
-    // If it does go red, the member's email is not the only artefact to check:
-    // the PENDING receivable this conversion writes and the admin
-    // manual-invoice alert it sends must state the same netted figure the
-    // member is asked for. #2483 wired the alert to the same resolver; the
-    // receivable is written at the booking's price inside the transaction and
-    // equals the netted figure only while no credit is applied, which is what
-    // this assertion proves.
-    // (#2328's own suite pins the single-send-site half of this premise.)
+    // The source pins below hold both halves: the writer is present, and it
+    // sits inside the member-choice branch, before the legacy mint.
     const source = readFileSync(
       path.join(process.cwd(), "src", "lib", "school-booking-request.ts"),
       "utf8",
     );
 
+    expect(source).toContain("applyCreditToBooking(");
+    const creditWriter = source.indexOf("applyCreditToBooking(\n");
+    const memberChoiceBranch = source.indexOf("if (memberChoosesPaymentMethod) {");
+    // lastIndexOf: the school approval earlier in the same module mints its own
+    // INTERNET_BANKING receivable; the whole-lodge legacy mint is the last.
+    const legacyMint = source.lastIndexOf("source: PaymentSource.INTERNET_BANKING,");
+    expect(memberChoiceBranch).toBeGreaterThan(-1);
+    expect(creditWriter).toBeGreaterThan(memberChoiceBranch);
+    expect(creditWriter).toBeLessThan(legacyMint);
+    // The legacy branch still writes no credit of its own: the only ledger
+    // writer in the module is the one above.
+    expect(source.match(/applyCreditToBooking\(/g)).toHaveLength(1);
     expect(source).not.toContain("BOOKING_APPLIED");
-    expect(source).not.toContain("applyCreditToBooking");
-    expect(source).not.toContain("memberCredit");
+  });
+
+  it("points a member who chooses the payment method at the booking page, netted when credit was applied", () => {
+    const plain = bookingPaymentDueNote({
+      amount: "$300.00",
+      payOnline: true,
+    });
+    expect(plain).toContain("payment of $300.00 is still owing");
+    expect(plain).toContain("from your booking page");
+    expect(plain).toContain("pay by card");
+    expect(plain).toContain("internet banking");
+    expect(plain).not.toContain("reference");
+    expect(plain).not.toContain("invoice");
+
+    const netted = bookingPaymentDueNote({
+      amount: "$180.00",
+      payOnline: true,
+      accountCredit: {
+        outcome: "netted",
+        bookingTotal: "$300.00",
+        creditApplied: "$120.00",
+      },
+    });
+    expect(netted).toContain("payment of $180.00 is still owing");
+    expect(netted).toContain("$300.00 less the $120.00 of account credit");
+    expect(netted).toContain("from your booking page");
+    expect(netted).not.toContain("invoice");
+
+    const covered = bookingPaymentDueNote({
+      amount: "$0.00",
+      payOnline: true,
+      accountCredit: {
+        outcome: "covered",
+        bookingTotal: "$300.00",
+        creditApplied: "$300.00",
+      },
+    });
+    expect(covered).toContain("nothing further to pay");
+    expect(covered).not.toContain("invoice");
+
+    const unreconciled = bookingPaymentDueNote({
+      amount: "$0.00",
+      payOnline: true,
+      accountCredit: { outcome: "unreconciled" },
+    });
+    expect(unreconciled).toContain("wait to hear from the club");
+    expect(unreconciled).not.toContain("$");
   });
 });
 

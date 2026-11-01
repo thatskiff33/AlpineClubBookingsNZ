@@ -1,12 +1,22 @@
 import "server-only";
 import { z } from "zod";
 import {
+  centralLodgeIdSchema,
   amenitiesInputSchema,
-  otherLodgeDataShape,
+  otherLodgeCommonDataShape,
   otherLodgeNameSchema,
   type OtherLodgeAmenity,
+  type OtherLodgeRateField,
+  type OwnedCentralLodge,
   type SerializedOtherLodgeData,
 } from "@/lib/other-lodges";
+import {
+  serverRateWireShape,
+  withRatesFromServer,
+  type ServerRates,
+} from "@/lib/servernz-rate";
+import type { ServerNzSettingsValues } from "@/lib/servernz-settings";
+import type { ServerNzConnectionIdentity } from "@/lib/servernz-version-record";
 
 /**
  * The Alpine Central Server's WIRE SHAPES, as `servernz-api.ts` validates them
@@ -21,13 +31,22 @@ import {
  * A lodge entry pushed up to the server: every data column (dates as
  * `YYYY-MM-DD`) and the lodge's WHOLE amenity list, which replaces the server's
  * set for that lodge. The server's item schema is `.strict()`, so this must
- * carry exactly the keys it knows — `serializeOtherLodgeData` is the one list.
- * `distribute` and provenance are never sent by clients.
+ * carry exactly the keys it knows — `serializeOtherLodgeData` is the one list,
+ * except the rates: those leave as the server's dollar keys (`ServerRates`,
+ * from `ratesToServer`), never as this site's `…Cents` columns (#61).
+ * `distribute` and provenance are never sent by clients. `id` (API 2.3, #64)
+ * is the lodge's central id, once known: the server matches the item by it, so
+ * a changed `name` renames the lodge there rather than creating a second one.
+ * `siteUrl` may be left out (#55): the server leaves a field it is not sent
+ * alone, and an address it would refuse is not sent.
  */
-export type OtherLodgeUploadItem = SerializedOtherLodgeData & {
-  name: string;
-  amenities: OtherLodgeAmenity[];
-};
+export type OtherLodgeUploadItem = Omit<SerializedOtherLodgeData, OtherLodgeRateField | "siteUrl"> &
+  ServerRates & {
+    siteUrl?: SerializedOtherLodgeData["siteUrl"];
+    id?: string;
+    name: string;
+    amenities: OtherLodgeAmenity[];
+  };
 
 export const uploadResultSchema = z.object({
   created: z.number(),
@@ -39,6 +58,11 @@ export const uploadResultSchema = z.object({
   results: z
     .array(
       z.object({
+        // The lodge's central id (API 2.5, #69), whenever the item reached
+        // one: how a lodge this site uploaded without an id learns it. Taken
+        // as `unknown` and checked where it is used, so one malformed id
+        // costs that link, not the whole upload's answer.
+        id: z.unknown().optional(),
         name: z.string(),
         status: z.enum(["created", "updated", "unchanged", "skipped"]),
         reason: z.string().optional(),
@@ -51,12 +75,15 @@ export type OtherLodgesUploadResult = z.infer<typeof uploadResultSchema>;
 /**
  * A lodge as the central server sends it, held to the SAME bounds the club's own
  * officer is held to in `PATCH /api/admin/other-lodges/[id]` — literally the same
- * `otherLodgeDataShape` (name 120, location 300, officer name 200, email 320,
+ * `otherLodgeCommonDataShape` (name 120, location 300, officer name 200, email 320,
  * phone 50, bed capacity, double and single beds and minutes' walk each
  * 0..100000, room type `ROOM` or `DORMITORY`, booking page URL 500 and
  * `http(s)` only, cancellation period 200, season starts a real `YYYY-MM-DD`
  * calendar date, at most 50 amenities of name 120 / description 1000 with names
- * unique ignoring case).
+ * unique ignoring case). The rates (#61) are the one difference in FORM, not in
+ * bound: the admin route takes them as integer cents, the server sends dollars,
+ * so they are checked against the same 0..99999.99 here and converted to cents
+ * by `@/lib/servernz-rate` before the row leaves this schema.
  *
  * Matching those bounds is the point. `getPublicOtherLodges()` serves `id + name`
  * on the UNAUTHENTICATED booking-request settings endpoint, which renders on the
@@ -81,17 +108,31 @@ export type OtherLodgesUploadResult = z.infer<typeof uploadResultSchema>;
  * mid-merge, leave the cursor unmoved and re-fail on the same row every pull.
  * Refused here it costs one row, counted in `dropped`, like every other bound.
  */
-export const distributedLodgeSchema = z.object({
-  id: z.string().max(64),
-  name: otherLodgeNameSchema,
-  ...otherLodgeDataShape,
-  /** When present, the lodge's WHOLE amenity set; absent leaves ours alone. */
-  amenities: amenitiesInputSchema.optional(),
-  updatedAt: z.string().max(64),
-});
+export const distributedLodgeSchema = z
+  .object({
+    id: z.string().max(64),
+    name: otherLodgeNameSchema,
+    ...otherLodgeCommonDataShape,
+    // The rates arrive as dollars under the server's names (#61) and leave this
+    // schema as cents under this site's column names: the conversion happens
+    // HERE, at the wire, so nothing downstream ever holds dollars.
+    ...serverRateWireShape,
+    /** When present, the lodge's WHOLE amenity set; absent leaves ours alone. */
+    amenities: amenitiesInputSchema.optional(),
+    updatedAt: z.string().max(64),
+  })
+  .transform(withRatesFromServer);
 
 /** Upper bound on one pull, so a hostile or broken server cannot stream forever. */
 const MAX_LODGES_PER_PULL = 5_000;
+
+/**
+ * Upper bound on one pull's deletions (#58): the same bound as the live lodges.
+ * A whole-registry pull carries every deletion ever made, but the download only
+ * acts on the ids it holds locally, and the list is bound to one `IN (...)`
+ * (Postgres allows at most 65,535 bound parameters), so it stays small.
+ */
+const MAX_DELETED_LODGES_PER_PULL = MAX_LODGES_PER_PULL;
 
 // No exported alias for a single distributed lodge: nothing names one on its
 // own, and callers reach them through `OtherLodgesPullResult["lodges"]`.
@@ -103,20 +144,40 @@ const MAX_LODGES_PER_PULL = 5_000;
 // cursor advanced, so every subsequent run would re-fetch and re-fail,
 // permanently.
 //
-// `ownLodgeNames` (#52) is the names of the lodges the AUTHENTICATED club owns,
-// which the server sends on EVERY pull, incremental or not, because it is the
-// club's whole current list rather than a delta. OPTIONAL: an older server does
-// not send it, and absent must survive as `undefined` so the sync leaves the
-// stored list alone rather than reading "not sent" as "owns nothing". It is
-// taken as `unknown` here and validated on its own by the pull: a list that
-// breaks its bounds (count, or a name over the lodge-name bound) must not fail
-// the WHOLE pull — the lodges still merge and the cursor still advances — it is
-// treated as not sent, and reported so the sync can say so.
+// `ownLodges` (#52, #62) is the lodges the AUTHENTICATED club owns, each as
+// its permanent id and name, which the server sends on EVERY pull, incremental
+// or not, because it is the club's whole current list rather than a delta.
+// OPTIONAL: absent must survive as `undefined` so the sync leaves the stored
+// list alone rather than reading "not sent" as "owns nothing". It is taken as
+// `unknown` here and validated on its own by the pull: a list that breaks its
+// bounds must not fail the WHOLE pull — the lodges still merge and the cursor
+// still advances — it is treated as not sent, and reported so the sync can say
+// so. (API 2.5 dropped the name-only `ownLodgeNames`, #69: names may repeat.)
+/**
+ * Just the NAME of a pulled row, read the way `distributedLodgeSchema` reads
+ * it (#4262 review): a row dropped for breaking some other bound still says a
+ * lodge of that name exists, which the download's by-name keying must count.
+ * Its `id` is read too, unvalidated here (`usableCentralId` decides), so a
+ * dropped row the same answer reports DELETED is not counted.
+ */
+export const pulledRowNameSchema = z.object({ name: otherLodgeNameSchema, id: z.unknown().optional() });
+
 export const pullEnvelopeSchema = z.object({
   lodges: z.array(z.unknown()).max(MAX_LODGES_PER_PULL),
   cursor: z.string().max(64).nullable(),
   count: z.number(),
-  ownLodgeNames: z.unknown().optional(),
+  ownLodges: z.unknown().optional(),
+  // Lodges deleted on the server since `since` (API 2.4, #58), or every one on
+  // a whole-registry pull, so its bound is its own and far above the registry's:
+  // an over-long list fails the pull (and the cursor stays) rather than being
+  // cut short; each entry is validated on its own below.
+  deletedLodges: z.array(z.unknown()).max(MAX_DELETED_LODGES_PER_PULL).optional(),
+});
+
+/** One deletion as the server sends it (API 2.4): the lodge's central id. */
+export const deletedLodgeSchema = z.object({
+  id: centralLodgeIdSchema,
+  deletedAt: z.string().max(64),
 });
 
 export interface OtherLodgesPullResult {
@@ -126,13 +187,39 @@ export interface OtherLodgesPullResult {
   /** Rows the server sent that failed the bounds above and were discarded. */
   dropped: number;
   /**
-   * The lodges the server says this club owns, or `undefined` when the server
-   * did not send the list (an older release). Never defaulted to `[]`: absent
-   * and "owns nothing" are different answers.
+   * The names of the dropped rows whose name alone still reads
+   * (`pulledRowNameSchema`), so a lodge dropped by its bounds still counts as
+   * a lodge of that name (#4262 review); a row whose id this answer reports
+   * deleted is left out, as the download leaves deleted lodges out of the merge.
    */
-  ownLodgeNames: string[] | undefined;
-  /** True when the server sent an owned list that failed its bounds and was discarded. */
-  ownLodgeNamesRefused: boolean;
+  droppedNames: string[];
+  /**
+   * The lodges the server says this club owns, with their central ids (#62),
+   * or `undefined` when the server did not send a valid list. Never defaulted
+   * to `[]`: absent and "owns nothing" are different answers.
+   */
+  ownLodges: OwnedCentralLodge[] | undefined;
+  /** True when the server sent `ownLodges` and it failed its bounds. */
+  ownLodgesRefused: boolean;
+  /**
+   * The central ids of lodges deleted on the server (#58, API 2.4), or
+   * `undefined` when the server did not send the list (an older release),
+   * which hides nothing here. An entry that failed its bounds is left out.
+   */
+  deletedLodgeIds: string[] | undefined;
+  /**
+   * The connection this answer came from, captured before the request (#4262
+   * review). Every write the download makes from the answer is fenced on it
+   * (`serverNzAnswerWriter`), so an answer from a connection replaced while the
+   * request was in flight changes nothing.
+   */
+  sentOn: ServerNzConnectionIdentity;
+  /**
+   * The settings row read in the same fenced read as `sentOn`: the stored
+   * cursor, keyed marker and owned list this answer is merged against, so
+   * they cannot belong to a connection replaced before the request.
+   */
+  snapshot: ServerNzSettingsValues;
 }
 
 /** The column's VarChar(16): the bound on any version string taken off the wire. */

@@ -4,7 +4,8 @@ import { PaymentStatus, PaymentTransactionKind } from "@prisma/client";
 import type Stripe from "stripe";
 
 import type { AdditionalAsk } from "@/lib/additional-payment-ask";
-import { queueSupersededAdditionalIntentCancellations } from "@/lib/booking-payment-cleanup";
+import { cancelSupersededAdditionalIntentsNow, queueSupersededAdditionalIntentCancellationRows } from "@/lib/booking-payment-cleanup";
+import { withAdditionalAskQueueTransaction } from "@/lib/additional-ask-queue-transaction";
 import type { ClubFormat } from "@/lib/club-format";
 import logger from "@/lib/logger";
 import { ADDITIONAL_ASK_INTENT_TYPE } from "@/lib/ordinary-ask-request";
@@ -51,7 +52,7 @@ export function intentCurrencyDiffers(
  *    which excludes the new one by id, then reconcile the payment so its
  *    additional pointer names the new intent.
  *
- * Stripe calls happen outside any transaction; nothing here takes a lock.
+ * Stripe calls happen outside the global-then-Payment-row queue transaction.
  *
  * #4316 (`INV-ADDPAY-044`): it is a mint like the door's, so it runs the door's
  * two checks. A booking ended (CANCELLED or BUMPED) before the mint gets no new
@@ -108,24 +109,23 @@ export async function reissueAdditionalIntentInClubCurrency({
       "Could not read a stale additional ask's provenance for its currency re-issue (#3954); the re-issue records none",
     );
   }
-  await upsertPaymentIntentTransaction({
-    paymentId,
-    kind: PaymentTransactionKind.ADDITIONAL,
-    paymentIntentId: pi.id,
-    amountCents: ask.amountCents,
-    carriedAskCents: ask.carriedCents,
-    status: PaymentStatus.PENDING,
-    reason: reason ?? undefined,
-    stripeCustomerId: customerId,
-    ...(stale?.hadIssuedXeroInvoice != null ? { hadIssuedXeroInvoice: stale.hadIssuedXeroInvoice } : {}),
-    ...(stale?.bookingModificationId ? { bookingModificationId: stale.bookingModificationId } : {}),
+  const queued = await withAdditionalAskQueueTransaction(paymentId, ask, async (store) => {
+    await upsertPaymentIntentTransaction({
+      paymentId,
+      store,
+      kind: PaymentTransactionKind.ADDITIONAL,
+      paymentIntentId: pi.id,
+      amountCents: ask.amountCents,
+      carriedAskCents: ask.carriedCents,
+      status: PaymentStatus.PENDING,
+      reason: reason ?? undefined,
+      stripeCustomerId: customerId,
+      ...(stale?.hadIssuedXeroInvoice != null ? { hadIssuedXeroInvoice: stale.hadIssuedXeroInvoice } : {}),
+      ...(stale?.bookingModificationId ? { bookingModificationId: stale.bookingModificationId } : {}),
+    });
+    return queueSupersededAdditionalIntentCancellationRows({ bookingId, paymentId, newPaymentIntentId: pi.id, store });
   });
-  await queueSupersededAdditionalIntentCancellations({
-    format,
-    bookingId,
-    paymentId,
-    newPaymentIntentId: pi.id,
-  });
+  await cancelSupersededAdditionalIntentsNow({ format, bookingId, paymentId, newPaymentIntentId: pi.id, queued });
   await reconcilePaymentAggregates({ paymentId });
   if (await retireAskOnEndedBooking({ format, bookingId, paymentId, paymentIntentId: pi.id })) return null;
   return pi;

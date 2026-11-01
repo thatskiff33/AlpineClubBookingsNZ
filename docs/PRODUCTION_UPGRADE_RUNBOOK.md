@@ -339,6 +339,13 @@ docker compose exec -T postgres psql -U tac -d tacbookings -c "
 make sure it has finished or been stopped, and deploy again. Nothing needs
 undoing. Everything below is for the left-hand column.
 
+**The same, under another code: `40P01 deadlock detected`.** A migration that
+locks several tables up front (`20261127050000_retain_ledger_history_on_booking_delete`
+takes eight, parents first, each bounded by its own one-second `lock_timeout`)
+can meet a writer holding them in the other order. PostgreSQL then aborts one
+side; when it is the migration, the error is `P3018` with `40P01` and the state
+and recovery below are exactly those of a lock timeout.
+
 **What state the club is in.** Safe, and no worse than before the deploy. The
 old colour is still serving on the old schema, no traffic has moved, and the
 migration applied nothing — `_prisma_migrations` records the attempt with
@@ -563,6 +570,35 @@ lists every one; these are in that class:
   the `OtherLodgeRoomType` type, losing what a 2.1 server sent. It is not
   idempotent, and rolling forward afterwards means re-applying `migration.sql`
   by hand, because `_prisma_migrations` still records it as applied.
+- `20261126040000_other_lodge_hidden_at` and
+  `20261126050000_other_lodge_names_not_unique` (#4262, Alpine Central Server
+  API 2.4 and 2.5) — one window, never applied apart. Together they replace
+  the unique index on `OtherLodge.name`, first with one over visible lodges and
+  then with a plain index, because two lodges may share a name. The previous
+  release's other-lodges download creates a lodge with an upsert keyed on the
+  name, which PostgreSQL refuses once the full unique index is gone, and the
+  central-server version pause does not stop a download already under way. That
+  release also decides which lodges are the club's own by name, so once two
+  lodges share one, its lodge edit page and the committee booking-officer sync
+  could write into another club's lodge. Stop the old web colour **and every
+  old worker and cron runner** (the nightly Alpine Central Server sync
+  included) before migrating. In the shell that runs the deploy, set
+  `ALLOW_BREAKING_BLUE_GREEN_MIGRATIONS=1`, a
+  `BLUE_GREEN_MIGRATION_OVERRIDE_REASON` naming both migrations, and
+  `BLUE_GREEN_OLD_APP_AND_WORKERS_STOPPED=1` only once everything old has
+  stopped; the window checks below then run as for every windowed migration.
+  `OtherLodge` is a small admin registry, so its `ACCESS EXCLUSIVE` locks are
+  brief. **Rollback:** run `20261126050000`'s `rollback.sql` first, then
+  `20261126040000`'s, and only then start the previous release. Each refuses,
+  before it changes anything, while lodges share a name that its restored index
+  cannot hold (`other_lodge_names_rollback_blocked`: two visible lodges;
+  `other_lodge_hidden_rollback_blocked`: any two lodges, hidden or not). That is
+  the recovery limit: the previous release keeps one lodge per name. Step 1 of
+  each script lists the lodges; rename all but one of each set by id, then run
+  the script again. Run in the wrong order, the second script stops on a
+  missing index and changes nothing. Every hidden lodge shows again in the
+  previous release. Rolling forward afterwards means re-applying both
+  `migration.sql` files by hand, oldest first.
 
 **If several are pending, they share ONE window.** `prisma migrate deploy` applies
 them in the same command — you do not stop and start the application repeatedly. Work
@@ -653,12 +689,16 @@ occupancy calculation that cannot see held unnamed adults.
 **Reverse every pending windowed migration in application order, newest
 first.** Stop all new app/worker processes first. The full order is:
 
-1. `20261112010000_other_lodge_beds_and_facilities` (other lodges, API 2.1),
-   when present. It is the newest, and it touches only `OtherLodge`.
-2. `20261101020000_add_pending_school_adult_capacity` (#3413), when present,
+1. `20261126050000_other_lodge_names_not_unique` and then
+   `20261126040000_other_lodge_hidden_at` (other lodges, #4262), when present.
+   They are the newest, and they touch only `OtherLodge`; each refuses while
+   lodges share a name, as their entry above says.
+2. `20261112010000_other_lodge_beds_and_facilities` (other lodges, API 2.1),
+   when present. It touches only `OtherLodge`.
+3. `20261101020000_add_pending_school_adult_capacity` (#3413), when present,
    and only after its two zero-count queries above both return zero.
-3. `20260929010000_add_member_parent_partner_exclusion` (#3271), when present.
-4. #3369's pair, then #2739, #2596, `20260803030000` and `20260803010000`, as
+4. `20260929010000_add_member_parent_partner_exclusion` (#3271), when present.
+5. #3369's pair, then #2739, #2596, `20260803030000` and `20260803010000`, as
    below.
 
 If #3271 is present, run its `rollback.sql` before any

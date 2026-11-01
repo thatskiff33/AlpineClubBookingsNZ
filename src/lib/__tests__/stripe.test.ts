@@ -11,6 +11,7 @@ vi.mock("@/lib/stripe-config", () => ({
 const mockPaymentIntentsCreate = vi.fn();
 const mockSetupIntentsCreate = vi.fn();
 const mockRefundsCreate = vi.fn();
+const mockRefundsList = vi.fn();
 const mockPaymentIntentsRetrieve = vi.fn();
 const mockPaymentIntentsCancel = vi.fn();
 // #3954 round 8: the metadata lookup's list, an async iterable per call.
@@ -42,6 +43,7 @@ vi.mock("stripe", () => {
       },
       refunds: {
         create: mockRefundsCreate,
+        list: mockRefundsList,
       },
       customers: {
         create: mockCustomersCreate,
@@ -61,6 +63,7 @@ const {
   chargePaymentMethod,
   findOrCreateCustomer,
   processRefund,
+  listRefundsForPaymentIntent,
   getPaymentIntent,
   cancelPaymentIntentIfCancellable,
   getSetupIntent,
@@ -324,6 +327,28 @@ describe("Stripe library", () => {
       });
       expect(result.id).toBe("re_test_123");
     });
+
+    it("#4510 (INV-PAY-147): stamps the request's own key as refundSliceKey only when asked", async () => {
+      mockRefundsCreate.mockResolvedValue({ id: "re_test_123", amount: 5000 });
+      const metadata = { bookingId: "booking_1", reason: "cancellation" };
+      const request = { paymentIntentId: "pi_test_123", amountCents: 5000, metadata, idempotencyKey: "prefix_txn_1_5000" };
+      const params = { payment_intent: "pi_test_123", amount: 5000, reason: "requested_by_customer" };
+
+      await processRefund({ ...request, stampRefundSliceKey: true });
+      await processRefund({ ...request, stampRefundSliceKey: false });
+      await processRefund(request);
+
+      expect(mockRefundsCreate.mock.calls).toEqual([
+        [{ ...params, metadata: { ...metadata, refundSliceKey: "prefix_txn_1_5000" } }, { idempotencyKey: "prefix_txn_1_5000" }],
+        [{ ...params, metadata }, { idempotencyKey: "prefix_txn_1_5000" }],
+        [{ ...params, metadata }, { idempotencyKey: "prefix_txn_1_5000" }],
+      ]);
+      expect(metadata).toEqual({ bookingId: "booking_1", reason: "cancellation" });
+      // A stamp with no key would name no request: refused before Stripe is asked.
+      mockRefundsCreate.mockClear();
+      await expect(processRefund({ ...request, idempotencyKey: undefined, stampRefundSliceKey: true })).rejects.toThrow(/INV-PAY-147/);
+      expect(mockRefundsCreate).not.toHaveBeenCalled();
+    });
   });
 
   describe("getPaymentIntent", () => {
@@ -560,5 +585,24 @@ describe("listRecentPaymentIntentsMatching", () => {
     mockPaymentIntentsList.mockReturnValueOnce(listOf([{ id: "pi_1", amount: 6_000 }, { id: "pi_2", amount: 10 }]));
     const found = await listRecentPaymentIntentsMatching({ matches: matches as never, createdSince, maxScanned: 3 });
     expect(found).toEqual({ intents: [expect.objectContaining({ id: "pi_1" })], complete: true });
+  });
+});
+
+
+describe("bounded refund preflight listing", () => {
+  it("makes one request with no network retries and a timeout", async () => {
+    mockRefundsList.mockResolvedValue({ data: [{ id: "re_test" }], has_more: false });
+    await expect(listRefundsForPaymentIntent("pi_test", { timeoutMs: 10_000, singlePage: true }))
+      .resolves.toEqual([{ id: "re_test" }]);
+    expect(mockRefundsList).toHaveBeenCalledExactlyOnceWith(
+      { payment_intent: "pi_test", limit: 100 }, { timeout: 10_000, maxNetworkRetries: 0 },
+    );
+  });
+
+  it("refuses an incomplete page instead of silently allowing a re-send", async () => {
+    mockRefundsList.mockResolvedValue({ data: [], has_more: true });
+    await expect(listRefundsForPaymentIntent("pi_test", { timeoutMs: 10_000, singlePage: true }))
+      .rejects.toThrow("INV-PAY-145");
+    expect(mockRefundsList).toHaveBeenCalledTimes(1);
   });
 });

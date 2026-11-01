@@ -143,6 +143,8 @@ import {
 import { clubTime } from "@/lib/club-time/server";
 import { readReductionAgainstUnpaidAsk, reductionLeftAfterAskCents } from "@/lib/additional-ask-reduction";
 import { organiserBankChildPriceChangeRefusal } from "@/lib/group-cancel-in-progress";
+import { organiserCombinedInvoiceRefusal } from "@/lib/organiser-billing"; // #4299 N-a: what the save refuses
+import { paidByOrganiserInternetBanking } from "@/lib/group-organiser-paid";
 import { dateOnlyInstantOf } from "@/lib/club-time";
 import {
   calculateModificationSettlementOptions, organiserChildChargeRefusal,
@@ -769,7 +771,7 @@ export async function POST(
       eligibleGuestIds: otherLodgeEligibleGuestIds,
       linkedGuestIds: new Set(linkByGuestId.keys()),
     });
-    await assertOtherLodgeExists(prisma, otherLodgeElection.otherLodgeId);
+    if (otherLodgeElection.otherLodgeIdChanged) await assertOtherLodgeExists(prisma, otherLodgeElection.otherLodgeId); // #58: a booking keeps a hidden lodge
   } catch (error) {
     if (error instanceof ApiError) {
       return NextResponse.json({ error: error.message }, { status: error.status });
@@ -2333,7 +2335,7 @@ export async function POST(
     priceDiffCents,
     changeFeeCents,
     netChargeCents,
-    settlementOptions, chargeRefusal: organiserChildChargeRefusal({ booking, netChargeCents }), priceChangeRefusal: await organiserBankChildPriceChangeRefusal(prisma, booking, { priceDiffCents, changeFeeCents }), // #3653, #3949: what the save refuses
+    settlementOptions, chargeRefusal: organiserChildChargeRefusal({ booking, netChargeCents }) ?? await organiserCombinedInvoiceRefusal(prisma, booking, netChargeCents), priceChangeRefusal: await organiserBankChildPriceChangeRefusal(prisma, booking, { priceDiffCents, changeFeeCents }), billedToOrganiser: paidByOrganiserInternetBanking(booking), // #3653, #3949: what the save refuses; #4299 N4: the organiser is billed for this place
     // #3954: the part of a reduction that cancels or shrinks the unpaid card
     // ask, and what is left of that ask afterwards (0: nothing left to pay).
     unpaidAskOffsetCents: reduction.offsetCents,

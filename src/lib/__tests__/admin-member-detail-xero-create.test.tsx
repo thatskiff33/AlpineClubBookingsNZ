@@ -419,7 +419,7 @@ describe("Admin member detail Xero create", () => {
     fireEvent.click(screen.getByRole("button", { name: "Search" }));
     fireEvent.click(await screen.findByRole("button", { name: "Link" }));
 
-    await screen.findByRole("button", { name: "View in Xero" });
+    await screen.findByRole("link", { name: "View in Xero" });
     await waitFor(() =>
       expect(document.getElementById("member-xero-recovery-error")).not.toHaveTextContent(
         /Do not create another contact/i,

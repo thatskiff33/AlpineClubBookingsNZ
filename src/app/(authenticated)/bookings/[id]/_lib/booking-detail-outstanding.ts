@@ -4,6 +4,7 @@ import type { requireActiveSessionUser } from "@/lib/session-guards";
 import { MEMBER_PRIVILEGE_CHECK_SELECT } from "@/lib/access-role-definitions";
 import { sessionAccessRoleClaim } from "@/lib/access-roles";
 import { getAdminPermissionMatrix } from "@/lib/admin-permissions";
+import { additionalAskCause } from "@/lib/additional-ask-cause";
 import { bookingOwner } from "@/lib/booking-owner";
 import { isAdditionalPaymentDoorOpenForBooking } from "@/lib/additional-payment-chase";
 import { bookingOutstandingCardCents, type BookingOutstandingPaymentView } from "@/lib/booking-outstanding-payment";
@@ -64,6 +65,7 @@ function viewFor(state: OutstandingState): BookingOutstandingPaymentView {
   if (!state.collectable || !state.identities) return { kind: "hidden" };
   return { kind: "ready", audience: state.viewer.isBookingOwner ? "owner" : "officer", bookingStatus: state.booking.status, revision: state.revision,
     cardDueCents: bookingOutstandingCardCents(state.booking),
+    askCause: additionalAskCause(state.booking.payment?.transactions ?? []),
     cardRevision: stableDigest({ intent: state.booking.payment?.additionalPaymentIntentId, amount: state.booking.payment?.additionalAmountCents, status: state.booking.payment?.additionalPaymentStatus }), observations: [],
     incomplete: state.identities.incomplete, nextCursor: null };
 }

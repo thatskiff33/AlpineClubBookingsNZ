@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./helpers/accessibility";
 
 import { formatBookingReference } from "../src/lib/booking-reference";
 import { storageStatePath } from "./helpers/auth";

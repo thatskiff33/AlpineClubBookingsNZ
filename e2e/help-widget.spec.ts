@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page } from "./helpers/accessibility";
 import { loginPersona, storageStatePath } from "./helpers/auth";
 import { completeMemberDetailsGateIfShown, selectCalendarDay } from "./helpers/booking";
 import { personas } from "./helpers/personas";

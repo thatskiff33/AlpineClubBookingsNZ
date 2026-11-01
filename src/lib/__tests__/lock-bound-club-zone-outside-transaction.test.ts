@@ -3,6 +3,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 
 import { blankLiterals } from "./support/strip-comments";
+import { balancedBrackets } from "./support/balanced-brackets";
 
 /**
  * The club's day reaches a lock-bound writer as a VALUE, never as a read taken
@@ -497,6 +498,9 @@ const TRANSACTION_OPENERS = [
   // hold each write their caller's rows inside their fenced transaction.
   "writeReissuedAskUnderRecovery(",
   "holdAdditionalIntentRecoveryClaim(",
+  // #4442: the inline minters' queue writes their caller's rows inside the
+  // transaction that re-reads the carried balance under the global key.
+  "withAdditionalAskQueueTransaction(",
   // #4125, #4145: a card refund row's close runs its caller's close callback in
   // the transaction that also writes the REFUNDED event - the generic helper,
   // the capacity race's and the member cancel runner's.
@@ -556,22 +560,7 @@ function spansForOpener(
     at = masked.indexOf(NEEDLE, at + 1)
   ) {
     const open = at + NEEDLE.length - 1;
-    let depth = 0;
-    let end = -1;
-
-    for (let i = open; i < masked.length; i++) {
-      const c = masked[i];
-      if (c === "(") depth += 1;
-      else if (c === ")") {
-        depth -= 1;
-        if (depth === 0) {
-          end = i;
-          break;
-        }
-      }
-    }
-
-    if (end === -1) continue;
+    const { end } = balancedBrackets(masked, open, masked);
     spans.push({
       line: masked.slice(0, at).split("\n").length,
       body: masked.slice(open + 1, end),
@@ -666,22 +655,16 @@ function callerTransactionSpans(
 const FUNCTION_DECLARATION =
   /(?:^|\n)\s*(?:export\s+)?(?:async\s+)?function\s+(\w+)\s*(?:<[^>]*>)?\s*\(|(?:^|\n)\s*(?:export\s+)?const\s+(\w+)\s*(?::[^=\n]*)?=\s*(?:async\s+)?(?:<[^>]*>)?\s*\(/g;
 
-/** The index of the bracket closing the one at `from`, or -1. */
+/**
+ * The index of the bracket closing the one at `from`. `source` is masked text
+ * and is its own structure. Throws when the bracket is unbalanced or `from` is
+ * not an opening bracket, so a scan this file cannot read fails loudly.
+ */
 function closingBracket(
   source: string,
   from: number,
-  open: string,
-  close: string,
 ): number {
-  let depth = 0;
-  for (let i = from; i < source.length; i++) {
-    if (source[i] === open) depth += 1;
-    else if (source[i] === close) {
-      depth -= 1;
-      if (depth === 0) return i;
-    }
-  }
-  return -1;
+  return balancedBrackets(source, from, source).end;
 }
 
 /**
@@ -704,13 +687,10 @@ function functionSpan(
     // object brace before the body's, and matching that one instead reports a
     // span that ends before the function does — which is how the first draft of
     // this helper judged its own allowed home to be out of bounds.
-    const parenClose = closingBracket(source, at + opener.length - 1, "(", ")");
-    if (parenClose === -1) continue;
+    const parenClose = closingBracket(source, at + opener.length - 1);
     const brace = source.indexOf("{", parenClose);
     if (brace === -1) continue;
-    const end = closingBracket(source, brace, "{", "}");
-    if (end === -1) continue;
-    return { start: brace, end };
+    return { start: brace, end: closingBracket(source, brace) };
   }
   return null;
 }
@@ -736,8 +716,7 @@ function transactionWrapperNames(source: string): string[] {
   for (const match of masked.matchAll(FUNCTION_DECLARATION)) {
     const name = match[1] ?? match[2];
     const paramsOpen = (match.index ?? 0) + match[0].length - 1;
-    const paramsEnd = closingBracket(masked, paramsOpen, "(", ")");
-    if (paramsEnd === -1) continue;
+    const paramsEnd = closingBracket(masked, paramsOpen);
 
     // A callback parameter — the thing that makes this a wrapper rather than a
     // function that merely happens to use a transaction internally.
@@ -745,8 +724,8 @@ function transactionWrapperNames(source: string): string[] {
 
     const bodyOpen = masked.indexOf("{", paramsEnd);
     if (bodyOpen === -1) continue;
-    const bodyEnd = closingBracket(masked, bodyOpen, "{", "}");
-    const body = masked.slice(bodyOpen, bodyEnd === -1 ? masked.length : bodyEnd);
+    const bodyEnd = closingBracket(masked, bodyOpen);
+    const body = masked.slice(bodyOpen, bodyEnd);
     if (body.includes("$transaction(")) names.push(name);
   }
 

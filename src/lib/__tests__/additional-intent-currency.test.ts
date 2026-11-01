@@ -41,6 +41,7 @@ vi.mock("@/lib/payment-transactions", () => ({
 }));
 vi.mock("@/lib/prisma", () => {
   const prisma = {
+    $executeRaw: vi.fn(),
     booking: { findUnique: (...a: unknown[]) => mocks.bookingRead(...a) },
     payment: {
       findUnique: (...a: unknown[]) => mocks.paymentRead(...a),
@@ -89,7 +90,7 @@ beforeEach(() => {
   mocks.cancelNow.mockResolvedValue("succeeded");
   mocks.reconcilePaymentAggregates.mockResolvedValue(null);
   mocks.bookingRead.mockResolvedValue({ status: "PAID" });
-  mocks.paymentRead.mockResolvedValue({ id: "p1", additionalPaymentIntentId: "pi_chf", additionalPaymentStatus: "PENDING" });
+  mocks.paymentRead.mockResolvedValue({ id: "p1", additionalPaymentIntentId: "pi_chf", additionalAmountCents: 4500, additionalPaymentStatus: "PENDING" });
   mocks.askRowRead.mockResolvedValue({ id: "tx_chf", paymentId: "p1", amountCents: 4500, status: "PENDING" });
 });
 
@@ -110,7 +111,7 @@ describe("intentCurrencyDiffers", () => {
 });
 
 describe("reissueAdditionalIntentInClubCurrency", () => {
-  const ask = restateAdditionalAsk({ amountCents: 4500, carriedAskCents: 1500 });
+  const ask = restateAdditionalAsk({ amountCents: 4500, carriedAskCents: 1500 }, { additionalAmountCents: 4500, additionalPaymentStatus: "PENDING" });
   const reissue = () =>
     reissueAdditionalIntentInClubCurrency({
       format: CLUB_FORMAT_TEST_OTHER,
@@ -184,6 +185,7 @@ describe("reissueAdditionalIntentInClubCurrency", () => {
 
     expect(mocks.upsertPaymentIntentTransaction).toHaveBeenCalledWith({
       paymentId: "p1",
+      store: expect.anything(),
       kind: PaymentTransactionKind.ADDITIONAL,
       paymentIntentId: "pi_chf",
       amountCents: 4500,
@@ -280,6 +282,7 @@ describe("reissueAdditionalIntentInClubCurrency", () => {
       paymentTransactionId: "tx_nzd",
       paymentIntentId: "pi_nzd",
       amountCents: 4500,
+      store: expect.anything(),
     });
     expect(mocks.cancelNow).toHaveBeenCalledWith("op-cancel-1", CLUB_FORMAT_TEST_OTHER);
   });
@@ -302,7 +305,7 @@ describe("reissueAdditionalIntentInClubCurrency", () => {
 });
 
 describe("reissueRaisedAskIfCurrencyChanged", () => {
-  const ask = restateAdditionalAsk({ amountCents: 4500, carriedAskCents: 0 });
+  const ask = restateAdditionalAsk({ amountCents: 4500, carriedAskCents: 0 }, { additionalAmountCents: 4500, additionalPaymentStatus: "PENDING" });
   const params = {
     format: CLUB_FORMAT_TEST_OTHER,
     bookingId: "bk1",
@@ -385,7 +388,7 @@ describe("reissueRaisedAskIfCurrencyChanged never supersedes a paid, paying or c
     bookingId: "bk1",
     paymentId: "p1",
     staleIntentId: "pi_live",
-    ask: restateAdditionalAsk({ amountCents: 4500, carriedAskCents: 0 }),
+    ask: restateAdditionalAsk({ amountCents: 4500, carriedAskCents: 0 }, { additionalAmountCents: 4500, additionalPaymentStatus: "PENDING" }),
     reason: "edit_financial_review_charge",
   };
   it.each(["succeeded", "processing", "canceled"])(

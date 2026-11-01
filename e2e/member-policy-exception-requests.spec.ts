@@ -4,7 +4,7 @@ import {
   type Page,
   expect,
   test,
-} from "@playwright/test";
+} from "./helpers/accessibility";
 
 import { loginPersona, storageStatePath } from "./helpers/auth";
 import { E2E_ADMIN, WAITLISTER } from "./helpers/fixtures";

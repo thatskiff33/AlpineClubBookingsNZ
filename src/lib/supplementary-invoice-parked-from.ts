@@ -3,7 +3,10 @@
  * ASKED FOR. A leaf, so a price reduction can read it without importing the
  * move (`superseded-ask-invoice-carry.ts`) or the outbox.
  */
+import type { Prisma } from "@prisma/client";
+
 import { asRecord, readString } from "@/lib/xero-json";
+import { SUPPLEMENTARY_INVOICE_CREATE_WHERE } from "@/lib/xero-supplementary-invoice-statuses";
 
 /** The payload key naming the intent a supplementary invoice first waited on, before a supersession moved it. */
 export const SUPPLEMENTARY_INVOICE_PARKED_FROM_KEY = "parkedFromPaymentIntentId";
@@ -37,4 +40,20 @@ export const SUPPLEMENTARY_INVOICE_TAKEN_BACK_FROM_KEY = "takenBackFromPaymentIn
 export function supplementaryInvoiceWaitedFirstOn(requestPayload: unknown): string | null {
   const payload = asRecord(requestPayload);
   return readString(payload?.[SUPPLEMENTARY_INVOICE_PARKED_FROM_KEY]) ?? readString(payload?.paymentIntentId);
+}
+
+/**
+ * #3403 review (M1): a change's invoice moved off this intent onto the request
+ * carrying its balance and still `WAITING_PAYMENT` there - the invoice a
+ * capture of this intent the club keeps takes back before its release reads
+ * (`returnMovedInvoicesToCapturedIntent`). #4324 (`INV-PAY-144`): the keep's
+ * evidence reads the same rows as a change invoice answering that capture.
+ */
+export function supplementaryInvoicesMovedOffIntentWhere(paymentIntentId: string): Prisma.XeroSyncOperationWhereInput {
+  return {
+    ...SUPPLEMENTARY_INVOICE_CREATE_WHERE,
+    status: "WAITING_PAYMENT",
+    localModel: "BookingModification",
+    requestPayload: { path: [SUPPLEMENTARY_INVOICE_PARKED_FROM_KEY], equals: paymentIntentId },
+  };
 }

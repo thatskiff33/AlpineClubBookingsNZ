@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 
 // `INV-SSOT-004`: the one comment/string stripper in the tree.
 import { stripCommentsAndStrings } from "@/lib/__tests__/support/strip-comments";
+import { balancedBrackets } from "./support/balanced-brackets";
 
 /**
  * #3599 (programme #3527, `INV-MONEY-035`): EVERY CREDIT ROW A BOOKING OWNS
@@ -105,17 +106,12 @@ function sourceFiles(): string[] {
   return found;
 }
 
-/** The index just past the bracket that closes the one opened at `open`. */
-function closeOf(code: string, open: number, [l, r]: readonly [string, string]): number {
-  let depth = 0;
-  for (let i = open; i < code.length; i += 1) {
-    if (code[i] === l) depth += 1;
-    else if (code[i] === r) {
-      depth -= 1;
-      if (depth === 0) return i + 1;
-    }
-  }
-  return code.length;
+/**
+ * The index just past the bracket that closes the one opened at `open`. `code`
+ * is already masked (`stripCommentsAndStrings`), so it is its own structure.
+ */
+function closeOf(code: string, open: number): number {
+  return balancedBrackets(code, open, code).end + 1;
 }
 
 type Finding = { file: string; problem: string };
@@ -147,7 +143,7 @@ function auditCreditWriters(file: string, source: string): Finding[] {
   const creates = [...code.matchAll(CREATE)];
   creates.forEach((match, n) => {
     const open = match.index + match[0].length - 1;
-    const end = closeOf(code, open, ["(", ")"]);
+    const end = closeOf(code, open);
     const payload = code.slice(open, end);
     if (ADMIN_ADJUSTMENT_ONLY.test(payload) && !payload.includes("?")) return;
     const next = creates[n + 1]?.index ?? code.length;
@@ -164,12 +160,12 @@ function auditCreditWriters(file: string, source: string): Finding[] {
       continue;
     }
     const open = match.index + match[0].length - 1;
-    const call = code.slice(open, closeOf(code, open, ["(", ")"]));
+    const call = code.slice(open, closeOf(code, open));
     const data = /\bdata\s*:\s*/.exec(call);
     if (!data) continue;
     const start = data.index + data[0].length;
     if (call[start] === "{") {
-      const payload = call.slice(start, closeOf(call, start, ["{", "}"]));
+      const payload = call.slice(start, closeOf(call, start));
       if (MONEY_FIELDS.test(payload) || payload.includes("...")) {
         findings.push({ file, problem: `memberCredit.${verb} rewrites, or may rewrite, a row's money or booking link` });
       }

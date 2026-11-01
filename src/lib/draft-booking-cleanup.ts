@@ -1,5 +1,6 @@
 import type { Prisma } from "@prisma/client";
 
+import { bookingsWithFinancialHistory } from "@/lib/booking-financial-history";
 import { bookingPromoRedemptions } from "@/lib/booking-promo-redemptions";
 import { releasePromoRedemptions } from "@/lib/promo";
 
@@ -10,7 +11,14 @@ export type DraftBookingForCleanup = {
 };
 
 export type DraftBookingDependentCleanupSummary = {
+  /** The drafts cleared for deletion: the caller deletes exactly these. */
   bookingIds: string[];
+  /**
+   * Drafts left untouched because financial history names them (D1, #4482;
+   * `INV-MONEY-043`). The database would refuse their delete; none is expected,
+   * since a draft never carries money, so a non-empty list is an anomaly to report.
+   */
+  withheldBookingIds: string[];
   promoRedemptions: number;
   changeRequests: number;
   modifications: number;
@@ -19,12 +27,18 @@ export type DraftBookingDependentCleanupSummary = {
 
 export async function deleteDraftBookingDependents(
   tx: Prisma.TransactionClient,
-  drafts: DraftBookingForCleanup[],
+  candidates: DraftBookingForCleanup[],
 ): Promise<DraftBookingDependentCleanupSummary> {
+  // Before any write: a draft with financial history is never hard-deleted, so
+  // none of its dependents is touched either.
+  const withheld = await bookingsWithFinancialHistory(tx, candidates.map((draft) => draft.id));
+  const withheldBookingIds = candidates.filter((draft) => withheld.has(draft.id)).map((draft) => draft.id);
+  const drafts = candidates.filter((draft) => !withheld.has(draft.id));
   const bookingIds = drafts.map((draft) => draft.id);
   if (bookingIds.length === 0) {
     return {
       bookingIds,
+      withheldBookingIds,
       promoRedemptions: 0,
       changeRequests: 0,
       modifications: 0,
@@ -56,6 +70,7 @@ export async function deleteDraftBookingDependents(
 
   return {
     bookingIds,
+    withheldBookingIds,
     promoRedemptions,
     changeRequests: changeRequestResult.count,
     modifications: modificationResult.count,

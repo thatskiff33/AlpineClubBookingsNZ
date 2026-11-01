@@ -48,6 +48,9 @@ vi.mock("@/lib/prisma", () => ({
     memberSubscription: { count: vi.fn().mockResolvedValue(0) },
     seasonalMembershipAssignment: { findUnique: vi.fn().mockResolvedValue(null) },
     membershipSubscriptionCharge: { count: vi.fn().mockResolvedValue(0) },
+    // #4514: member hard-delete eligibility reads the journal's debtors.
+    memberMoneyLine: { count: vi.fn().mockResolvedValue(0) },
+    memberMoneyObligation: { count: vi.fn().mockResolvedValue(0) },
     membershipSubscriptionBillingSettings: { findUnique: vi.fn().mockResolvedValue(null) },
     auditLog: { create: vi.fn().mockResolvedValue({}), findMany: vi.fn() },
     promoCodeAssignment: { count: vi.fn().mockResolvedValue(0), findMany: vi.fn().mockResolvedValue([]) },
@@ -753,6 +756,11 @@ describe("Phase 3b: Member Detail Edit — PUT /api/admin/members/[id]", () => {
 
     const res = await updateMember(makePutRequest("m1", { active: false }), { params: Promise.resolve({ id: "m1" }) });
     expect(res.status).toBe(200);
+    expect(prisma.member.update).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ active: false, leavingDate: expect.any(Date) }),
+    }));
+    const departure = vi.mocked(prisma.member.update).mock.calls[0]?.[0].data.leavingDate;
+    expect(departure).toEqual(hostingMocks.enqueue.mock.calls[0]?.[2]);
     // No cascade deactivation — family group model replaces parent/dependent
     expect(prisma.member.updateMany).not.toHaveBeenCalled();
     expect(hostingMocks.enqueue).toHaveBeenCalledWith(
@@ -769,7 +777,7 @@ describe("Phase 3b: Member Detail Edit — PUT /api/admin/members/[id]", () => {
         actorMemberId: "admin1",
         subjectMemberId: "m1",
         metadata: expect.objectContaining({
-          changedFields: ["active"],
+          changedFields: ["leavingDate", "active"],
           accessChanges: [
             {
               field: "active",
@@ -780,6 +788,54 @@ describe("Phase 3b: Member Detail Edit — PUT /api/admin/members/[id]", () => {
         }),
       }),
     });
+  });
+
+  it("clears the retention clock on reactivation", async () => {
+    const inactive = { ...baseMember, active: false, leavingDate: new Date("2020-01-15"), cancelledAt: null, archivedAt: null };
+    vi.mocked(prisma.member.findUnique).mockResolvedValue(inactive as never);
+    vi.mocked(prisma.member.update).mockResolvedValue({ ...inactive, active: true, leavingDate: null } as never);
+    const res = await updateMember(makePutRequest("m1", { active: true }), { params: Promise.resolve({ id: "m1" }) });
+    expect(res.status).toBe(200);
+    expect(prisma.member.update).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ active: true, leavingDate: null }),
+    }));
+  });
+
+  it("leaves an unknown legacy departure untouched on a no-op inactive save", async () => {
+    const inactive = { ...baseMember, active: false, leavingDate: null };
+    vi.mocked(prisma.member.findUnique).mockResolvedValue(inactive as never);
+    vi.mocked(prisma.member.update).mockResolvedValue(inactive as never);
+    const res = await updateMember(makePutRequest("m1", { active: false, comments: "Reviewed" }), { params: Promise.resolve({ id: "m1" }) });
+    expect(res.status).toBe(200);
+    const data = vi.mocked(prisma.member.update).mock.calls[0]?.[0].data;
+    expect(data).not.toHaveProperty("active");
+    expect(data).not.toHaveProperty("leavingDate");
+  });
+
+  it("lets an officer supply the known departure date for an inactive member", async () => {
+    const inactive = { ...baseMember, active: false, leavingDate: null };
+    vi.mocked(prisma.member.findUnique).mockResolvedValue(inactive as never);
+    vi.mocked(prisma.member.update).mockResolvedValue(inactive as never);
+    const res = await updateMember(makePutRequest("m1", { leavingDate: "2018-02-28" }), { params: Promise.resolve({ id: "m1" }) });
+    expect(res.status).toBe(200);
+    expect(prisma.member.update).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ leavingDate: new Date("2018-02-28") }),
+    }));
+    expect(prisma.auditLog.create).toHaveBeenCalledWith({ data: expect.objectContaining({
+      metadata: expect.objectContaining({ changedFields: ["leavingDate"] }),
+    }) });
+  });
+
+  it.each([
+    { active: false, leavingDate: "2026-02-30" },
+    { active: false, leavingDate: "2026-07-03" },
+    { active: true, leavingDate: "2018-02-28" },
+  ])("rejects invalid leaving dates: %j", async ({ active, leavingDate }) => {
+    vi.mocked(prisma.member.findUnique).mockResolvedValue({ ...baseMember, active } as never);
+    vi.mocked(prisma.member.update).mockResolvedValue({ ...baseMember, active } as never);
+    const res = await updateMember(makePutRequest("m1", { leavingDate }), { params: Promise.resolve({ id: "m1" }) });
+    expect(res.status).toBe(422);
+    expect(prisma.member.update).not.toHaveBeenCalled();
   });
 
   it("clears dateOfBirth when empty string is passed", async () => {

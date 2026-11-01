@@ -14,6 +14,166 @@ an unreachable dummy is correct and a live seeded database is not — so
 `prisma.config.ts` resolves. See [`../CONTRIBUTING.md`](../CONTRIBUTING.md) for
 the full local gate.
 
+## Accessibility lint ratchets (#4466)
+
+The full `eslint-plugin-jsx-a11y` recommended configuration applies to JSX/TSX.
+The local `accessibility/minimum-text-size` rule rejects static sizes below 12px
+in Tailwind classes, inline `fontSize` properties, CSS declarations and CSS
+`@apply` classes. Absolute CSS units (including `pt`) are converted to pixels;
+`rem`/`em` literals assume 16px. Runtime sizes and computed
+expressions still need browser/design review. CSS uses the tolerant parser for
+Tailwind syntax; it is not a general CSS validity gate.
+
+The local `accessibility/no-nested-interactive` rule (#4553) rejects a link or
+button inside another one: a `next/link` `Link`, the ui `Button`, `<a>` or
+`<button>` nested in any of them: two tab stops for one action, and invalid
+HTML. axe's `nested-interactive` reports only a link inside a button, never a
+button inside a link, so this rule is the check for that direction. Write `<Button asChild><Link>…</Link></Button>`; an `asChild` Button renders no
+element of its own (only a bare `asChild` or `asChild={true}` counts). Link
+and Button are matched by import, so a wrapper
+component that renders one is outside the rule.
+
+[`eslint-suppressions.json`](../eslint-suppressions.json) records existing debt
+using ESLint's built-in per-file/per-rule counts. Normal `pnpm run lint` applies
+it automatically: new files and increased counts fail, and unused suppressions
+also fail. It is a count ratchet: replacing a violation in the same file with
+another of the same rule does not increase the count. Do not regenerate or grow
+the baseline to pass lint. After fixing debt, run
+`pnpm exec eslint src --prune-suppressions` and commit the reductions. Check
+commands do not modify it.
+
+Focused rule and ratchet contracts run with
+`pnpm run test:named scripts/eslint/accessibility.test.mjs scripts/eslint/ratchet.test.mjs scripts/eslint/fixture-import.test.mjs scripts/eslint/design-system.test.mjs`.
+The shared axe fixture and mobile project are described in
+[`E2E_PLAYWRIGHT.md`](E2E_PLAYWRIGHT.md#accessibility-and-mobile-checks-4466).
+
+### Design-system control ratchet (#4467)
+
+Five local rules in `scripts/eslint/design-system.mjs` report what bypasses the
+primitives in `src/components/ui/`, each naming the one to use:
+`design-system/no-raw-button`, `no-raw-input`, `no-raw-select` and
+`no-raw-table` for the intrinsic JSX element, and `no-native-confirm` for the
+browser's confirm box: called through `window`, `globalThis`, `self`, `top` or
+`parent`, destructured from one of them, or called bare when the name resolves
+to the global. A `confirm` from `useConfirm()` is the sanctioned one.
+Today's usages are recorded in `eslint-suppressions.json` with the debt above,
+per file and per rule, so swapping a raw `<select>` for a raw `<button>` still
+fails. Migrate, then prune; never add a count.
+
+**Never an eslint-disable comment: migrate to the primitive.**
+`design-system.test.mjs` fails on any disable or rule-config comment naming a
+`design-system/` rule, and on a disable naming no rule where they apply.
+
+A suppression is keyed by path, so `ratchet.test.mjs` fails on an entry whose
+file no longer exists: a new file at that path would inherit the allowance. A
+deleted file's entries go in the same PR. A moved or renamed file's entries
+move to the new path in the same PR, at the same count; the count never rises.
+
+The exceptions are named:
+
+- **By path** (`eslint.config.mjs`): `src/components/ui/` itself; test files
+  (`__tests__/`, `*.test.*`, `src/test/`), which are not app UI and mock
+  primitives with raw stand-ins; and the files in `PRIMITIVE_IMPLEMENTATIONS`,
+  each excused one rule with a written reason: the admin table shell and sort
+  header (#1805).
+- **By element** (the rule): `<input type="hidden">`, and an
+  `<input type="file">` hidden by a literal `hidden` attribute or an
+  unprefixed `hidden` or `sr-only` class, the picker a `Button` opens. Neither
+  holds when a JSX spread comes after an attribute it relies on, or when a
+  class could show the input again (`block`, `md:flex`, `focus:not-sr-only`).
+  A visible file input uses `<Input type="file">`.
+
+Not covered: `React.createElement`, an element named through a variable
+(`const Tag = "button"; <Tag />`), a `confirm` reached through an alias, and
+`<textarea>`.
+
+### Testing a form on the shared form layer (#4467)
+
+The pattern is in [`UX_FLOW_MAP.md`](UX_FLOW_MAP.md#forms-4467). A form on it
+is tested in jsdom, like
+`src/app/(admin)/admin/committee/__tests__/committee-role-form.test.tsx`:
+
+- **Assert the wiring by resolving it.** Read the control's
+  `aria-describedby`, look each id up with `document.getElementById`, and
+  check the text and the order: error first, example last. Testing Library's
+  `toHaveAccessibleDescription` does the same in one step where the order does
+  not matter.
+- **Assert the summary holds focus, not that it got it.** Use
+  `expectToHoldFocus` from `src/lib/__tests__/helpers/focus.ts`.
+  react-hook-form's own focus-the-first-error runs again on a timer, so a
+  bare `waitFor` passes even while it steals focus a tick later.
+- **Wrap a submit in `act`.** The submit is asynchronous: the resolver, then
+  the handler, then the state update that raises `submitCount` and moves
+  focus.
+- **Assert the payload and the route, as well as the errors.** A migrated
+  form must send what it sent before.
+
+`src/components/ui/__tests__/form.test.tsx` pins the primitives themselves.
+`src/lib/__tests__/shared-form-schema-census.test.ts` reads source from disk,
+so `test:related` cannot select it; run it with `test:named` when you add or
+move a schema in `src/lib/forms/`, its route or its form.
+
+## Stateful Xero and Stripe fakes
+
+Tests can keep provider state across a whole money journey instead of returning
+unrelated responses from each mock. Import
+[`XeroFake`](../src/test/providers/xero-fake.ts) or
+[`StripeFake`](../src/test/providers/stripe-fake.ts), and create a fresh instance
+per test. These helpers have no credentials, network calls, database or Vitest
+dependency. Unit and realdb tests can use them directly; Playwright's Node-side
+fixtures can use them behind a test transport adapter. They do not install HTTP
+routes or replace either provider SDK automatically.
+
+```ts
+const xero = new XeroFake();
+const contact = xero.createContact("contact", "member-a");
+const invoice = xero.createInvoice("charge", contact.contactID, 8000);
+xero.payInvoice("receipt", invoice.invoiceID, 5000);
+expect(xero.snapshot().invoices[0].amountDueCents).toBe(3000);
+```
+
+All amounts are integer cents. Methods accepting an operation key take it first:
+retrying the same request returns its original response, while changed parameters
+reject. Keys live for the instance's lifetime; expiry is not modeled. Snapshots
+are detached copies, so retaining a reading before a later void models delayed
+delivery. `invoiceWire` in the
+[`round-trip harness`](../src/test/providers/round-trip-harness.ts) converts
+invoice reads to the native Xero JSON boundary used by the production observer.
+
+Xero models contacts, authorised invoices, receipts, credit notes, allocations,
+allocation removal, payment deletion and voids. A paid invoice refuses a new
+allocation; remove existing allocations/payments before voiding a document.
+`payCreditNote` records a hand-back separately from an allocation. Stripe models
+manual authorisation, one full or partial capture, cancellation, pending and
+successful refunds, later failure, and dashboard refunds. Pending refunds reserve
+capture capacity; failed refunds release it. `snapshot().events` retains immutable
+Stripe event payloads for delivery/replay tests, including the subscribed
+`charge.refunded` (with a charge/refund-list projection) and `refund.failed` events.
+Tests still need transport/SDK adapters to drive production webhook handlers.
+Taxes, fees, FX, API pagination,
+authentication, rate limits and transport failures are outside these models.
+
+The fixture contract suite pins selected behavior to
+[`provider-contracts.json`](../src/test/providers/fixtures/provider-contracts.json).
+**These fixtures are synthetic examples, not sandbox recordings.** Their public
+API references and repository error-example source are recorded in the JSON;
+sandbox conformance remains unverified. Do not regenerate expectations from the
+fake. Future sandbox captures need sanitized, independently reviewed fixtures.
+
+Run the four new suites with:
+
+```sh
+pnpm exec vitest run src/test/providers/provider-fakes.test.ts src/test/providers/provider-contracts.test.ts src/test/providers/ledger-scenarios.test.ts src/test/providers/round-trip.test.ts --maxWorkers=1
+```
+
+The fast-check properties use fixed seeds (4460 and 4461) and the shared frozen
+clock. They compare independently imported state with outbound journal totals
+after every prefix, require no new postings on round trips, and check external
+refund corrections and redelivery. The journal and adapters are test models for
+#4461, not production ledger implementations. Scenario witnesses cover #3911,
+#4336, #4434 and #4380; passing them does not close those application bugs or
+prove production sync correctness.
+
 ## CI shards and the required check
 
 Pull-request and `main` CI run the complete unit suite in four independent
@@ -571,6 +731,10 @@ generalised.
    await shouldNotHaveWaited();
    expect(realElapsedMs(before)).toBeLessThan(20);
    ```
+
+   `pnpm run lint` reports a `Date.now()` stopwatch or deadline in a Vitest
+   file (`test-clock/no-date-now-elapsed`, #4462): `Date.now()` measured against
+   an earlier `Date.now()` reading held inline or in a plain variable.
 
    `process.hrtime.bigint()` is monotonic, so neither the freeze nor the canary's
    libfaketime shim touches it. `performance.now()` also stays real, but it is
@@ -1247,6 +1411,27 @@ So:
    raises a conflict and a human classifies both — which is exactly the review a
    bare integer skipped.
 
+Censuses reading balanced call arguments or object bodies share
+[`balancedBrackets`](../src/lib/__tests__/support/balanced-brackets.ts).
+It returns original text, the inclusive closing offset and top-level comma-separated
+parts, using the shared literal masker so comments and quoted brackets cannot
+end a region early. An invalid opener or unclosed region fails the scan. Its
+sibling `expressionAt` reads a value that has no opener, up to its first top-level
+comma or the bracket closing the object that holds it.
+
+Two rules follow from the scan throwing rather than skipping:
+
+- **Find call sites over masked text.** Run the call-site regex over
+  `blankLiterals(source)` and hand the same text in as `structure`, so a call named
+  in a comment or string is not a call site. A hit inside a comment or string has
+  no opening bracket, and the reader throws on it. Read the arguments from the
+  original `source`, which keeps its string contents.
+- **Pass already-masked code as `structure`.** When the code has been through
+  `blankLiterals`, `blankLiteralsWithSpans` or `stripCommentsAndStrings`, pass it
+  as both `source` and `structure`. Masking twice is unsafe: a blanked regex has
+  lost its closing slash. `structure` must be the same length as `source`, and the
+  scan fails if it is not.
+
 ### Running the fast censuses on a composed tree
 
 `pnpm run ci:fast-censuses` runs the tree-wide censuses that compositions have
@@ -1528,6 +1713,24 @@ blocking, because several suites' barriers count ungranted advisory rows in
 on. Expect a batch of realdb files to
 take as long as running them one after another. Inside one file the old rules
 still apply: a suite owns its own fixtures and queued work.
+
+CI runs every one of these files in the advisory `realdb-all` job (#4458), in
+one `vitest run` on one Postgres service, with `RUN_CONCURRENCY_RACE_TESTS=1`.
+The file list is `scripts/ci/realdb-files.mjs`: every `*.realdb.test.*` file
+under `src/` minus `scripts/ci/realdb-quarantine.txt`, which names a suite that
+is red for a known reason, or cannot share the process, with its issue or PR.
+Add a realdb file and it joins the job with no edit. `realdb-ci-coverage-census.test.ts` fails when a file is
+neither run nor quarantined, when the job stops setting
+`RUN_CONCURRENCY_RACE_TESTS=1`, or when any other job names `realdb-all`. The
+job points `DATA_MIGRATION_VERIFICATION_DATABASE_URL` at the same race service
+(those three suites create scratch databases of their own), and its last step,
+`scripts/ci/check-realdb-ran.mjs`, reads Vitest's JSON report and fails when a
+listed file is missing from it, passed no test, or skipped any: a suite whose
+gate is unset skips green otherwise. The seed suite
+(`booking-ledger-history-seed`) is quarantined because
+`scripts/booking-ledger-seed-gate.sh` runs it against a database of its own. The
+per-file steps in `migration-drift` and `data-migration-verification` stay: they
+are required checks and this job is not.
 
 ## Mocking a money seam: never in a test that asserts its money
 

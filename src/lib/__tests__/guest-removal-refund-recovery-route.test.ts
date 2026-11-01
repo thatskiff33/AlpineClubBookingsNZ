@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+const mockPlanStripeRefundAllocation = vi.hoisted(() => vi.fn());
+
 import { NO_ADDITIONAL_ASK } from "@/lib/additional-payment-ask";
 import { NextRequest } from "next/server";
 
@@ -50,6 +52,7 @@ vi.mock("@/lib/payment-transactions", () => ({
   PartialRefundError: class PartialRefundError extends Error {
     completedRefundCents = 0;
   },
+  planStripeRefundAllocation: mockPlanStripeRefundAllocation,
   refundPaymentTransactions: mocks.refundPaymentTransactions,
 }));
 vi.mock("@/lib/payment-recovery", () => ({
@@ -70,7 +73,7 @@ vi.mock("@/lib/logger", () => ({
 
 import { DELETE } from "@/app/api/bookings/[id]/guests/[guestId]/route";
 import { ORGANISER_REFUND_DEBT_STATES, primeOrganiserRefundDebt } from "./support/organiser-refund-debt-reread";
-import { expectQueuedOnce, OWN_CARD_REFUND_STATES, primeOwnCardRefund } from "./support/own-card-refund-outcome";
+import { expectQueuedOnce, ownCardRefundPlan, OWN_CARD_REFUND_STATES, primeOwnCardRefund } from "./support/own-card-refund-outcome";
 
 const params = Promise.resolve({ id: "b1", guestId: "g1" });
 
@@ -125,6 +128,7 @@ function makeResult(overrides: Record<string, unknown> = {}) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockPlanStripeRefundAllocation.mockImplementation(ownCardRefundPlan);
   mocks.auth.mockResolvedValue({ user: { id: "m1", role: "MEMBER", accessRoles: [{ role: "USER" }] } });
   mocks.requireActiveSessionUser.mockResolvedValue(null);
   mocks.transaction.mockImplementation((cb: (tx: unknown) => unknown) => cb({}));
@@ -155,6 +159,7 @@ describe("DELETE /api/bookings/[id]/guests/[guestId] refund recovery", () => {
       amountCents: 2000,
       // The route's exact Stripe key prefix rides on the recovery row (#1152).
       stripeKeyPrefix: "guest_remove_refund_b1_mod_1",
+      allocationPlan: [{ paymentTransactionId: "txn_refund", amountCents: 2000 }],
     });
   });
 
@@ -280,13 +285,13 @@ describe("DELETE guest removal on an organiser-paid child: the email's refund de
 describe("DELETE guest removal on the member's own card: the email's refund destination (#4070)", () => {
   it.each(OWN_CARD_REFUND_STATES)("$label -> $destination", async ({ answer, queued, destination }) => {
     mocks.removeBookingGuestInTransaction.mockResolvedValue(makeResult());
-    primeOwnCardRefund(mocks.refundPaymentTransactions, answer);
+    primeOwnCardRefund(mocks.refundPaymentTransactions, answer, mockPlanStripeRefundAllocation);
 
     const res = await DELETE(makeRequest(), { params });
 
     expect(res.status).toBe(200);
     expect(mocks.refundPaymentTransactions).toHaveBeenCalledWith(expect.objectContaining({ paymentId: "pay_1", amountCents: 2000 }));
-    expectQueuedOnce(mocks.enqueueBookingModificationRefundRecovery, queued, 2000);
+    expectQueuedOnce(mocks.enqueueBookingModificationRefundRecovery, queued, 2000, answer);
     expect(mocks.sendBookingModifiedEmail).toHaveBeenCalledWith(
       expect.objectContaining({ refundAmountCents: 2000, refundDestination: destination, refundByBankTransfer: null }),
       expect.anything(),

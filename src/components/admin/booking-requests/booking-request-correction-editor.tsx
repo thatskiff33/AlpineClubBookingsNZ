@@ -503,9 +503,9 @@ export function BookingRequestCorrectionEditor(props: {
               </div>
             ))}
             <div className="space-y-1">
-              <Label className="text-xs text-muted-foreground">Catering</Label>
+              <Label htmlFor="booking-request-correction-catering" className="text-xs text-muted-foreground">Catering</Label>
               <Select value={catering} onValueChange={setCatering}>
-                <SelectTrigger className="w-44">
+                <SelectTrigger id="booking-request-correction-catering" className="w-44">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>

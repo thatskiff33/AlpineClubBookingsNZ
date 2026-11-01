@@ -247,6 +247,7 @@ export const REGISTRY_KEY_RENDERERS: Record<string, string> = {
   "admin-group-joiner-started-stay": "adminGroupJoinerStartedStayTemplate",
   "group-join-released": "groupJoinReleasedTemplate",
   "group-join-settled": "groupJoinSettledTemplate",
+  "group-organiser-extra-invoice": "groupOrganiserExtraInvoiceTemplate",
   "group-organiser-joiner-refund": "groupOrganiserJoinerRefundTemplate",
   "group-settlement-expired": "groupSettlementExpiredTemplate",
   "group-settlement-receipt": "groupSettlementReceiptTemplate",

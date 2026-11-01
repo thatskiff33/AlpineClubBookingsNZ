@@ -13,6 +13,10 @@ export type ApiRouteSecurityMetadata = {
 };
 
 export const explicitPublicApiRoutes = {
+  "src/app/api/privacy/replay/route.ts": {
+    boundary: "public",
+    reason: "Anonymous browsers need the non-personal Replay opt-in before recording; rate limited and briefly cached.",
+  },
   "src/app/api/[[...unmatched]]/route.ts": {
     boundary: "public",
     reason:
@@ -251,6 +255,11 @@ export const explicitPublicApiRoutes = {
     reason:
       "Mock-Xero token-exchange endpoint for the E2E harness (#2080). Production-inert via the same XERO_MOCK_API_ORIGIN + runtime-role double gate; mints fake tokens consumed only by the gated mock OAuth branch.",
   },
+  "src/app/api/webhooks/servernz-availability/route.ts": {
+    boundary: "webhook",
+    reason:
+      "Alpine Central Server signed availability question (#62): verifyServerNzSignature (HMAC with the registration-issued push secret, constant-time compare, 5-minute window) over `availability` + the parsed lodge id and dates. Read-only; answers free-bed counts only, per night (up to 30) and their minimum (#79), for one owned, linked, active lodge and stay, and an identical 404 for every other lodge.",
+  },
   "src/app/api/webhooks/servernz-posts/route.ts": {
     boundary: "webhook",
     reason:
@@ -311,6 +320,17 @@ export type MixedMethodApiRouteMetadata = {
  * boundary and lets the boundary test enforce per-method guards (issue #812).
  */
 export const mixedMethodApiRoutes = {
+  "src/app/api/privacy/replay/route.ts": {
+    methods: {
+      GET: { boundary: "public", reason: "Publishes only the club Replay opt-in so anonymous browsers can honour it before recording." },
+    },
+  },
+  "src/app/api/admin/privacy-retention/route.ts": {
+    methods: {
+      GET: { boundary: "admin", reason: "Support view; member/application preview groups additionally require membership view." },
+      PUT: { boundary: "admin", reason: "Support edit; changing member/application retention additionally requires membership edit." },
+    },
+  },
   // #2263 — recorded here for the RATIONALE, not because the file mixes
   // boundaries. Both member whole-lodge routes are single-method and wholly
   // member-boundary; the reason string is the documented home for a route whose

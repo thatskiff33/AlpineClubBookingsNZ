@@ -37,7 +37,8 @@ export type BackupRunStatus = "RUNNING" | "SUCCESS" | "FAILURE" | "SKIPPED";
  * the number of pg_dump/psql/aws stages a run executes — so a slow-but-healthy
  * run is never reaped out from under itself. Today a durable + restore-validated
  * run is a handful of ~120s stages, comfortably under 30 min; if the per-command
- * timeout or the stage count grows materially, raise this window in step.
+ * timeout or the stage count grows materially, raise this window in step, and
+ * SPOOL_FOREIGN_FILE_GRACE_MS (src/lib/backup-spool.ts) with it.
  */
 export const BACKUP_STALE_AFTER_MS = 30 * 60 * 1000;
 

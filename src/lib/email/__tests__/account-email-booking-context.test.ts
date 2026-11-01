@@ -2,6 +2,9 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
+import { balancedBrackets } from "@/lib/__tests__/support/balanced-brackets";
+import { blankLiterals } from "@/lib/__tests__/support/strip-comments";
+
 /**
  * #2258 — the ACCOUNT-LOCKOUT guarantee, pinned statically.
  *
@@ -28,19 +31,13 @@ const ACCOUNT_SENDER_SOURCE = readFileSync(
 function sendEmailCallBodies(source: string): string[] {
   const bodies: string[] = [];
   const marker = "sendEmail({";
-  let index = source.indexOf(marker);
+  // Found over masked text: a call named in a comment or string is not a sender.
+  const structure = blankLiterals(source);
+  let index = structure.indexOf(marker);
   while (index !== -1) {
-    let depth = 0;
-    let cursor = index + marker.length - 1;
-    for (; cursor < source.length; cursor += 1) {
-      if (source[cursor] === "{") depth += 1;
-      else if (source[cursor] === "}") {
-        depth -= 1;
-        if (depth === 0) break;
-      }
-    }
-    bodies.push(source.slice(index, cursor + 1));
-    index = source.indexOf(marker, cursor);
+    const { end } = balancedBrackets(source, index + marker.length - 1, structure);
+    bodies.push(source.slice(index, end + 1));
+    index = structure.indexOf(marker, end);
   }
   return bodies;
 }

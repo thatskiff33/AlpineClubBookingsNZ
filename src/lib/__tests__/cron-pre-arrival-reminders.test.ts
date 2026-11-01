@@ -122,6 +122,7 @@ describe("sendPreArrivalReminders", () => {
       expectedArrivalTime: "16:30",
       // #2350: nothing owed on this booking, so the note is not composed.
       outstandingAdditionalAmountCents: 0,
+      outstandingAdditionalCause: "edit",
     }, CLUB_FORMAT_TEST);
     expect(result.sentBookingIds).toEqual(["booking-1"]);
     expect(result.windowStart).toBe("2026-06-11");

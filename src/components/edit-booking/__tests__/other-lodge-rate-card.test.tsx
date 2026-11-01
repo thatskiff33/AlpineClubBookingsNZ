@@ -71,8 +71,8 @@ function makeBooking(overrides: Partial<BookingData> = {}): BookingData {
       checkInEditable: true,
     },
     otherLodges: [
-      { id: "lodge-a", name: "Aorangi Lodge" },
-      { id: "lodge-b", name: "Bruce Lodge" },
+      { id: "lodge-a", name: "Aorangi Lodge", label: "Aorangi Lodge" },
+      { id: "lodge-b", name: "Bruce Lodge", label: "Bruce Lodge" },
     ],
     otherLodgeId: null,
     // #2978: eligibility now arrives from the server rather than being derived

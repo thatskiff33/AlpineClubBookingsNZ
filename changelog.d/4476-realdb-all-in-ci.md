@@ -1,0 +1,1 @@
+- **CI now runs every real-PostgreSQL test suite (#4458).** Tests that need a real database used to skip themselves in the main CI jobs, so a new one could pass while checking nothing. A new advisory job runs all of them on every pull request, fails if a listed suite skipped or ran no tests, and a separate check fails if a new suite is left out.

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { buildUnpaidConfirmedWholeLodgeWhere } from "@/lib/booking-payment-flow";
 import {
   addDaysDateOnly,
   formatDateOnly,
@@ -6,11 +7,14 @@ import {
 } from "@/lib/date-only";
 import {
   buildAdditionalOwedWhere,
-  buildUnpaidFinishedStaysHref,
+  buildUnpaidFinishedStaysStatusWhere,
   buildUnpaidFinishedStaysWhere,
-  buildUnsettledAdditionalFinishedStaysHref,
   buildUnsettledAdditionalFinishedStaysWhere,
 } from "@/lib/unpaid-finished-stays";
+import {
+  buildUnpaidFinishedStaysHref,
+  buildUnsettledAdditionalFinishedStaysHref,
+} from "@/lib/unpaid-finished-stays-hrefs";
 
 /**
  * The day these helpers are ASKED about. Every one of them is a pure function
@@ -25,12 +29,23 @@ const GIVEN_DAY = parseDateOnly("2026-07-01");
 // queue definition changed — update every consuming surface (and its docs)
 // together.
 describe("unpaid finished stays helpers", () => {
-  it("matches non-deleted PAYMENT_PENDING bookings with check-out on or before the given day", () => {
+  it("matches non-deleted bookings still owing their price with check-out on or before the given day", () => {
     expect(buildUnpaidFinishedStaysWhere(GIVEN_DAY)).toEqual({
       deletedAt: null,
-      status: "PAYMENT_PENDING",
       checkOut: { lte: GIVEN_DAY },
+      OR: [
+        { status: "PAYMENT_PENDING" },
+        // #4019: the shared classification includes proven uncaptured card
+        // entry, but excludes receipts, invoices and unknown evidence.
+        buildUnpaidConfirmedWholeLodgeWhere(),
+      ],
     });
+  });
+
+  it("is the fragment the bookings-list unpaid=finished filter composes with the URL's check-out bound", () => {
+    expect(buildUnpaidFinishedStaysWhere(GIVEN_DAY)).toMatchObject(
+      buildUnpaidFinishedStaysStatusWhere(),
+    );
   });
 
   it("keeps the cutoff inclusive of the given day only", () => {
@@ -48,7 +63,7 @@ describe("unpaid finished stays helpers", () => {
     const dayKey = formatDateOnly(GIVEN_DAY);
 
     expect(buildUnpaidFinishedStaysHref(dayKey)).toBe(
-      `/admin/bookings?status=PAYMENT_PENDING&checkOutTo=${dayKey}`,
+      `/admin/bookings?unpaid=finished&checkOutTo=${dayKey}`,
     );
   });
 });
@@ -92,9 +107,15 @@ describe("unsettled finished-stay additions helpers", () => {
     const additionsStatuses = (
       buildAdditionalOwedWhere().status as { in: string[] }
     ).in;
-    const primaryStatus = buildUnpaidFinishedStaysWhere(GIVEN_DAY).status;
+    // PAYMENT_PENDING is the primary queue's; the whole-lodge branch is CONFIRMED,
+    // which the additions queue also names, but the shared whole-lodge rule
+    // admits only absent payment or uncaptured PRIMARY attempts, never additions.
+    const primaryStatuses = (
+      buildUnpaidFinishedStaysWhere(GIVEN_DAY).OR as Array<{ status: string }>
+    ).map((o) => o.status);
 
-    expect(additionsStatuses).not.toContain(primaryStatus);
+    expect(additionsStatuses).not.toContain("PAYMENT_PENDING");
+    expect(primaryStatuses).toContain("PAYMENT_PENDING");
   });
 
   it("builds the bookings-list deep link both surfaces share", () => {

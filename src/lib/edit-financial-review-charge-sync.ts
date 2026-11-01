@@ -328,9 +328,10 @@ async function syncEditReviewChargeRequestUnderClaim(
   // officer (`settleCancelledEditReviewCharge`): `booking-cancelled`, or
   // `already-paid` when a paid request covers them. A failure there throws, and
   // the caller makes the debt durable on the recovery row.
+  // #4442: and the live ask it mirrors, which a currency re-issue of a raise carries.
   const cancelledSince = await prisma.payment.findUnique({
     where: { id: paymentId },
-    select: { booking: { select: { status: true } } },
+    select: { additionalAmountCents: true, additionalPaymentStatus: true, booking: { select: { status: true } } },
   });
   if (cancelledSince && refusesReviewChargeForCancellation(cancelledSince.booking)) {
     const settled = await settleCancelledEditReviewCharge({
@@ -412,7 +413,7 @@ async function syncEditReviewChargeRequestUnderClaim(
     // #3371: shares PLUS whatever the mint absorbed, read back off the ROW -
     // never from the payment, which by now mirrors this request. Monotone,
     // which is what keeps the refusal to lower below correct.
-    const raised = raiseReviewChargeAsk({ shareTotalCents: totalCents, request: existing });
+    const raised = raiseReviewChargeAsk({ shareTotalCents: totalCents, request: existing, payment: cancelledSince });
     if (raised.amountCents <= existing.amountCents) {
       // Either an exact replay (equal), which must change nothing at all, or a
       // stale, smaller total, which must never lower a live ask. Either way the
@@ -444,7 +445,7 @@ async function syncEditReviewChargeRequestUnderClaim(
       };
     }
     // Same currency (#3567): the SAME intent asks for more. Nothing is minted, so nothing
-    // is superseded — `queueSupersededAdditionalIntentCancellations` never fires between shares.
+    // is superseded — `queueSupersededAdditionalIntentCancellationRows` never fires between shares.
     // A refusal THROWS from here with nothing written: the row still matches the
     // unchanged intent, the claim is released by the caller, and
     // `executeEditReviewCharge` (or the replay) makes the debt durable.

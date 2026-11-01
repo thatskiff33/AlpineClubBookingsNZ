@@ -1,0 +1,38 @@
+{
+  "provenance": {
+    "kind": "synthetic-contract-examples",
+    "sandboxCaptured": false,
+    "description": "Manually specified API-shaped examples, not generated from the fakes and not recordings from a live account. IDs are local aliases. Only selected fields are pinned.",
+    "references": [
+      "https://developer.xero.com/documentation/api/accounting/creditnotes",
+      "https://developer.xero.com/documentation/api/accounting/payments",
+      "https://docs.stripe.com/api/payment_intents/capture",
+      "https://docs.stripe.com/api/refunds/object",
+      "https://docs.stripe.com/refunds",
+      "https://docs.stripe.com/api/events/types",
+      "https://docs.stripe.com/error-codes"
+    ],
+    "allocationErrorSource": "src/lib/__tests__/xero-failure-explanation.test.ts (paid-invoice validation example)"
+  },
+  "xero": {
+    "partPaid": { "InvoiceID": "invoice-1", "InvoiceNumber": "invoice-1", "Type": "ACCREC", "CurrencyCode": "NZD", "Status": "AUTHORISED", "Total": 80, "AmountDue": 30 },
+    "allocated": { "InvoiceID": "invoice-1", "InvoiceNumber": "invoice-1", "Type": "ACCREC", "CurrencyCode": "NZD", "Status": "PAID", "Total": 80, "AmountDue": 0 },
+    "paidAllocationError": {
+      "statusCode": 400,
+      "body": { "ErrorNumber": 10, "Type": "ValidationException", "Message": "A validation exception occurred", "Elements": [{ "ValidationErrors": [{ "Message": "The invoice you are trying to allocate to has already been paid off" }] }] }
+    },
+    "voidedCredit": { "creditNoteID": "credit-1", "contactID": "contact-1", "totalCents": 3000, "status": "VOIDED", "remainingCreditCents": 0 },
+    "deletedPayment": { "paymentID": "payment-1", "invoiceID": "invoice-1", "amountCents": 5000, "status": "DELETED" }
+  },
+  "stripe": {
+    "authorised": { "id": "intent-1", "amount": 8000, "amount_received": 0, "status": "requires_capture" },
+    "captured": { "id": "intent-1", "amount": 8000, "amount_received": 5000, "status": "succeeded" },
+    "pending": { "id": "refund-1", "payment_intent": "intent-1", "amount": 2000, "status": "pending" },
+    "succeeded": { "id": "refund-1", "payment_intent": "intent-1", "amount": 2000, "status": "succeeded" },
+    "failedLater": { "id": "refund-1", "payment_intent": "intent-1", "amount": 2000, "status": "failed" },
+    "dashboard": { "id": "refund-2", "payment_intent": "intent-1", "amount": 5000, "status": "succeeded" },
+    "overRefundError": { "type": "StripeInvalidRequestError", "code": "charge_already_refunded" },
+    "refundedCharge": { "id": "charge-intent-1", "payment_intent": "intent-1", "amount": 5000, "amount_refunded": 5000, "refunded": true },
+    "eventTypes": ["payment_intent.succeeded", "refund.created", "charge.refunded", "refund.updated", "refund.updated", "refund.failed", "refund.created", "charge.refunded"]
+  }
+}

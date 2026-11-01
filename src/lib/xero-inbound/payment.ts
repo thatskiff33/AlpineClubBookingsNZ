@@ -3,7 +3,7 @@ import { callXeroApi, getAuthenticatedXeroClient } from "@/lib/xero-api-client";
 import { checkMembershipStatus } from "@/lib/xero-membership-sync";
 import { type XeroObjectLinkInput, upsertXeroObjectLink } from "@/lib/xero-sync";
 import { buildXeroPaymentDisplayNumber } from "./amounts";
-import { dedupeXeroObjectLinks, findActiveXeroObjectLinks, getDerivedInboundPaymentRole } from "./object-links";
+import { dedupeXeroObjectLinks, findActiveXeroObjectLinks, getDerivedInboundPaymentRole, isDeletedXeroPaymentStatus } from "./object-links";
 import { writeXeroInboundAuditLogs } from "./audit";
 
 export async function syncLinkedPaymentInvoiceMetadata(
@@ -152,6 +152,8 @@ export async function reconcileXeroPayment(paymentId: string) {
             xeroObjectId: payment.paymentID!,
             xeroObjectNumber: buildXeroPaymentDisplayNumber(payment),
             role,
+            // #4531: a payment Xero reports deleted is never re-adopted.
+            active: !isDeletedXeroPaymentStatus(payment.status),
             metadata: {
               invoiceId,
               creditNoteId,

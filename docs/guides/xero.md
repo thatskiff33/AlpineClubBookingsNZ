@@ -353,7 +353,7 @@ says what it would have done.
 | A membership subscription invoice operation is **Failed** with "Membership subscription charge not found: [REDACTED]" | A fault before this release (#3971): the job lost the charge it was meant to invoice, so the member was never invoiced | Press **Retry in background** on the row. It goes back to the queue and the next Xero run invoices and emails the member; check the charge in [Subscriptions](subscriptions.md) afterwards. If one charge has several failed rows, only the newest offers the button; the older ones are superseded and need nothing, and show as repaired once it succeeds |
 | An operation is stuck **Running** with no Retry button | Its run stopped without finishing it — a worker was interrupted, or (before this release) a requeue failed early | After 15 minutes the row shows **Mark failed**. Use it, fix the cause named in the error, then **Retry in background** |
 | A **REQUEUE** row says "not marked replayable" | A requeue is never replayed itself. Its error names the original operation and says where that operation now stands | Find the original operation it names. If it is back to **Failed**, fix the cause and requeue it again |
-| A **REVIEW** operation, `PRIMARY_INVOICE_OVERBILLED` or `PRIMARY_INVOICE_UNDERBILLED`, says a booking's primary invoice bills more or less than the booking is worth | The booking was changed in the seconds its first Xero invoice was being raised (#3980, `INV-PAY-136`). A shortfall is normally billed automatically on a supplementary invoice; this task appears when the invoice bills too much, or when no change could carry the shortfall. The message says by how much and, for an overcharge, how the change was settled (refund paid out, account credit, an unpaid request reduced) | Check the invoice in Xero. For an overcharge, raise a credit note for the amount if one is due, keeping in mind any refund already paid out; for a shortfall, bill it. Then **Resolve (fixed in Xero)**. **Retry** is not available: there is nothing for the app to resend |
+| A **REVIEW** operation, `PRIMARY_INVOICE_OVERBILLED` or `PRIMARY_INVOICE_UNDERBILLED`, says a booking's primary invoice bills more or less than the booking is worth | The booking was changed in the seconds its first Xero invoice was being raised (#3980, `INV-PAY-136`). A shortfall is normally billed automatically on a supplementary invoice; this task appears when the invoice bills too much, or when no change could carry the shortfall — including a change already billed by the invoice for a late card payment the club kept (#4324), when the message asks you to bill only what that invoice does not. The message says by how much and, for an overcharge, how the change was settled (refund paid out, account credit, an unpaid request reduced) | Check the invoice in Xero. For an overcharge, raise a credit note for the amount if one is due, keeping in mind any refund already paid out; for a shortfall, bill it. Then **Resolve (fixed in Xero)**. **Retry** is not available: there is nothing for the app to resend |
 | A booking is under **Failed** operations but not under **Missing invoices** | Its invoice reached Xero before a later step of the same operation failed; the list reads the club's invoice records, not the operation's status | Nothing to raise — do not **Trigger All Missing** for it. Open the booking to see which step is outstanding, then **Retry in background** or **Resolve (fixed in Xero)** on the operation |
 | A booking-invoice operation here is **Failed**, part-finished, or stuck **Running**, and you want to know which booking it belongs to | These rows are stored against the payment, not the booking, so the booking is not obvious from this screen | The booking says it itself: a full admin opening that booking sees a warning naming what Xero does and does not have, with a link back to this screen. **Retry in background** or **Resolve (fixed in Xero)** on the operation clears the warning, without touching the booking, the payment or the invoice |
 | A member's grouping looks wrong | The mode/rules changed but existing members were not re-grouped automatically | Run the **dry-run diff**, then **bulk re-sync** per the [runbook](../XERO_MEMBER_GROUPING_RUNBOOK.md) |
@@ -384,3 +384,34 @@ says what it would have done.
   [operational Xero](../ARCHITECTURE.md#operational-xero) and the
   [Xero member grouping](../../CONFIGURATION.md#xero-member-grouping) reference,
   and the [Xero member grouping invariants](../invariants/integrations.md#xero-member-grouping-e8-1934).
+
+## Pick up a change made in Xero now
+
+After recording a payment, changing a credit-note allocation or voiding a note
+in Xero, use **Sync from Xero now** on the member's Xero contact panel or the
+booking detail page. These read Xero and reuse the scheduled inbound repairs
+and credit-note mirror. The result reports changed financial records (including
+subscription status) and contact fields, or **Already in step**. Refreshing links and caches alone is not counted
+as a financial change. A failed sync may have updated some records; retrying is
+safe. Finance view-only users see disabled controls; Finance edit is required.
+All scopes share an officer rate limit of three requests per minute and record
+an audit entry under Xero.
+
+**Sync everything from Xero now**, on **Admin → Finance → Xero Sync**, runs the
+same bounded inbound cycle and credit-note sweep as the scheduler. Existing
+cursors, batch limits and sweep throttling still apply. It shares a database
+run claim with scheduled and HTTP cron runs; **A sync is already running** means
+no second cycle started. A stopped worker's database connection releases the
+claim automatically. Scoped buttons do not move the club's contact or membership
+delta cursors, so use those when you need a particular record refreshed now.
+
+The same page shows **Last webhook received**. Signed, valid deliveries count,
+including empty verification pings; rejected requests do not. When connected,
+a warning appears strictly after the saved quiet period, with a **Needs
+Attention** entry and a Stuck States item. The default is 24 hours. Use
+**Edit → Save/Cancel** to choose 1–720 hours. A connection that has never received
+a webhook gets the full threshold from its connection time. No quiet-period
+warning appears while disconnected or while the Xero module is disabled.
+
+Webhook receipt history and the quiet-period policy remain local to each
+installation during configuration transfer, like the Xero connection itself.

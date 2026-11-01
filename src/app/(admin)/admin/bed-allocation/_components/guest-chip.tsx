@@ -155,7 +155,7 @@ export function GuestChip({
           {/* The trigger carried no title before #2701; it gains one only for
               the club-wide lock, so a view-only admin's tooltips are unchanged
               and stay on the buttons that already explain that restriction. */}
-          <SelectTrigger className="w-44" title={lockReason}>
+          <SelectTrigger className="w-44" title={lockReason} aria-label={`Bed for ${group.guestName}`}>
             <SelectValue placeholder="Select bed">
               {selectedBed ? selectedBed.label : undefined}
             </SelectValue>

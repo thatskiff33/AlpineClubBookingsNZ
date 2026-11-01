@@ -126,6 +126,7 @@ describe("general cron runner", () => {
           skippedBookingIds: [],
           suppressedBookingIds: [],
           failedBookingIds: [],
+          leftToOfficersBookingIds: [],
         })),
         confirmPendingBookings: vi.fn(async () => ({
           confirmedBookingIds: ["booking-1"],
@@ -372,6 +373,7 @@ describe("general cron runner", () => {
       skippedBookingIds: [],
       suppressedBookingIds: [],
       failedBookingIds: [],
+      leftToOfficersBookingIds: [],
     }));
 
     await expect(

@@ -27,9 +27,14 @@ vi.mock("@/lib/prisma", () => ({
     booking: {
       create: vi.fn(),
       findUnique: vi.fn(),
+      findUniqueOrThrow: vi.fn(),
       findMany: vi.fn().mockResolvedValue([]),
       update: vi.fn(),
       updateMany: vi.fn(),
+    },
+    bookingLedgerLine: {
+      findFirst: vi.fn().mockResolvedValue(null),
+      createMany: vi.fn().mockImplementation(async ({ data }: { data: unknown[] }) => ({ count: data.length })),
     },
     // MG4 (#2309): the pipeline computes the family boundary for its linked
     // members against the converted booking's owner. That owner is a non-login
@@ -161,6 +166,19 @@ vi.mock("@/lib/admin-modules", () => ({
   isEffectiveModuleEnabled: vi.fn().mockResolvedValue(true),
 }));
 
+// #4019: the member whole-lodge approval applies the credit a
+// member asked for through the ordinary create path's writer. Stubbed so the
+// tests assert the WIRING (owner, clamped amount, booking, lock order) without
+// a real ledger; the manual-invoice alert's ledger read keeps answering zero,
+// as the unmocked read did against this prisma double.
+vi.mock("@/lib/member-credit", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/member-credit")),
+  applyCreditToBooking: vi.fn().mockResolvedValue(undefined),
+  getMemberCreditBalance: vi.fn().mockResolvedValue(0),
+  lockMemberCreditLedger: vi.fn().mockResolvedValue(undefined),
+  deriveBookingAppliedCreditCents: vi.fn().mockResolvedValue(0),
+}));
+
 // MG4 (#2309): the two post-commit dispatchers, imported lazily by the school
 // pipeline. Stubbed so the test below asserts the WIRING — that a teacher an
 // officer linked to a real member account is actually told — without pulling
@@ -232,6 +250,11 @@ import {
 import { getDefaultLodgeCapacity, getLodgeCapacity } from "@/lib/lodge-capacity";
 import { isEffectiveModuleEnabled } from "@/lib/admin-modules";
 import {
+  applyCreditToBooking,
+  getMemberCreditBalance,
+  lockMemberCreditLedger,
+} from "@/lib/member-credit";
+import {
   enqueueXeroAppliedCreditAllocationOperation,
   enqueueXeroBookingInvoiceOperation,
   kickQueuedXeroOutboxOperationsIfConnected,
@@ -275,6 +298,9 @@ const mockedAcquireLodgeLock = vi.mocked(acquireLodgeCapacityLock);
 const mockedSeasonFindMany = vi.mocked(prisma.season.findMany);
 const mockedGroupDiscount = vi.mocked(prisma.groupDiscountSetting.findUnique);
 const mockedModuleEnabled = vi.mocked(isEffectiveModuleEnabled);
+const mockedCreditBalance = vi.mocked(getMemberCreditBalance);
+const mockedApplyCredit = vi.mocked(applyCreditToBooking);
+const mockedLockLedger = vi.mocked(lockMemberCreditLedger);
 const mockedEnqueueInvoice = vi.mocked(enqueueXeroBookingInvoiceOperation);
 const mockedSendVerification = vi.mocked(sendBookingRequestVerificationEmail);
 const mockedSendPin = vi.mocked(sendHutLeaderAssignmentEmail);
@@ -2512,6 +2538,19 @@ function memberWholeLodgeRequest(overrides: Partial<Record<string, unknown>> = {
   };
 }
 
+/**
+ * #4019: the approval leaves the payment method to the member
+ * only when BOTH the Internet Banking and Xero modules are on (the default
+ * stub below answers true for every key). This puts a test on the LEGACY
+ * pay-on-account path — the Internet Banking module off, Xero as given — which
+ * is the shape every pre-fork assertion about the receivable, the invoice and
+ * the manual alert was written against.
+ */
+function legacyReceivableModules({ xero = true }: { xero?: boolean } = {}) {
+  mockedModuleEnabled.mockImplementation((async (key: string) =>
+    key === "internetBankingPayments" ? false : key === "xeroIntegration" ? xero : true) as never);
+}
+
 describe("approveMemberWholeLodgeRequest (#2263)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -2798,7 +2837,8 @@ describe("approveMemberWholeLodgeRequest (#2263)", () => {
     expect(data).not.toHaveProperty("nonMemberHoldUntil");
   });
 
-  it("creates a PENDING internet-banking payment and NO payment link or token email", async () => {
+  it("creates a PENDING internet-banking payment and NO payment link or token email on the legacy path", async () => {
+    legacyReceivableModules();
     await approveMemberWholeLodgeRequest({
       requestId: "req-member",
       adminMemberId: "admin-1",
@@ -3166,13 +3206,15 @@ describe("approveMemberWholeLodgeRequest (#2263)", () => {
   // -------------------------------------------------------------------------
   // The receivable is actually invoiced (#2263 review finding H4)
   // -------------------------------------------------------------------------
-  // The approval mints a PENDING INTERNET_BANKING Payment. Before this, nothing
-  // was ever raised against it: no Xero invoice, no admin nudge. A confirmed
-  // booking with an uninvoiced receivable is money the club silently never
-  // collects, and the member had been emailed "Payment has been processed".
+  // The LEGACY approval (Internet Banking module off) mints a PENDING
+  // INTERNET_BANKING Payment. Before this, nothing was ever raised against it:
+  // no Xero invoice, no admin nudge. A confirmed booking with an uninvoiced
+  // receivable is money the club silently never collects, and the member had
+  // been emailed "Payment has been processed". With both modules on the
+  // approval mints no receivable at all — see the "member chooses" block below.
 
-  it("enqueues the Xero booking invoice AND the #1620 applied-credit allocation when the module is on", async () => {
-    mockedModuleEnabled.mockResolvedValue(true as never);
+  it("enqueues the Xero booking invoice AND the #1620 applied-credit allocation when the Xero module is on (legacy receivable)", async () => {
+    legacyReceivableModules({ xero: true });
 
     const result = await approveMemberWholeLodgeRequest({
       requestId: "req-member",
@@ -3203,7 +3245,7 @@ describe("approveMemberWholeLodgeRequest (#2263)", () => {
   });
 
   it("everything about the invoice happens AFTER the commit, never inside the transaction", async () => {
-    mockedModuleEnabled.mockResolvedValue(true as never);
+    legacyReceivableModules({ xero: true });
 
     await approveMemberWholeLodgeRequest({
       requestId: "req-member",
@@ -3284,8 +3326,8 @@ describe("approveMemberWholeLodgeRequest (#2263)", () => {
   // The member-facing copy is true (#2263 review finding H4b)
   // -------------------------------------------------------------------------
 
-  it("tells the member the amount is OWING with the internet-banking reference, never that it was paid", async () => {
-    mockedModuleEnabled.mockResolvedValue(true as never);
+  it("tells the member the amount is OWING with the internet-banking reference, never that it was paid (legacy receivable)", async () => {
+    legacyReceivableModules({ xero: true });
 
     await approveMemberWholeLodgeRequest({
       requestId: "req-member",
@@ -3471,6 +3513,227 @@ describe("approveMemberWholeLodgeRequest (#2263)", () => {
       guestCount: 4,
     });
     expect(prisma.booking.create).not.toHaveBeenCalled();
+  });
+
+  // -------------------------------------------------------------------------
+  // #4019: the member chooses the payment method
+  // -------------------------------------------------------------------------
+  // With the Internet Banking AND Xero modules on (the beforeEach default), the
+  // approval leaves the method to the member: no receivable, no invoice, no
+  // manual alert, and a confirmation that points at the booking page. Credit
+  // the member asked for on the request is applied here, under the ledger lock.
+  describe("member chooses the payment method (both modules on)", () => {
+    beforeEach(() => {
+      vi.mocked(prisma.booking.findUniqueOrThrow).mockImplementation((async () => {
+        const data = vi.mocked(prisma.booking.create).mock.calls.at(-1)![0].data as Record<string, unknown>;
+        const guests = (data.guests as { create: Array<Record<string, unknown>> }).create;
+        return { ...data, id: "booking-member", payment: null, guests: guests.map((guest, index) => ({
+          ...guest, id: `approved-guest-${index}`, nights: (guest.nights as { create: unknown[] }).create,
+        })) };
+      }) as never);
+      mockedCreditBalance.mockResolvedValue(0 as never);
+      mockedApplyCredit.mockResolvedValue(undefined as never);
+    });
+
+    it("mints NO receivable, raises NO invoice and NO manual alert, and reports invoiceMode 'member'", async () => {
+      const result = await approveMemberWholeLodgeRequest({
+        requestId: "req-member",
+        adminMemberId: "admin-1",
+      });
+
+      expect(prisma.payment.create).not.toHaveBeenCalled();
+      expect(mockedEnqueueInvoice).not.toHaveBeenCalled();
+      expect(mockedEnqueueCreditAllocation).not.toHaveBeenCalled();
+      expect(mockedSendWholeLodgeManualInvoice).not.toHaveBeenCalled();
+      expect(prisma.paymentLink.create).not.toHaveBeenCalled();
+      expect(result).toMatchObject({ type: "approved", invoiceMode: "member" });
+      // Still CONFIRMED and held: the hold, not a receivable, is what keeps the
+      // lodge; the member's card capture or Internet Banking switch settles it.
+      const data = vi.mocked(prisma.booking.create).mock.calls[0][0].data as Record<
+        string,
+        unknown
+      >;
+      expect(data.status).toBe(BookingStatus.CONFIRMED);
+      expect(data.wholeLodgeHold).toBe(true);
+    });
+
+    it("points the member at the booking page, naming no reference and no invoice", async () => {
+      await approveMemberWholeLodgeRequest({
+        requestId: "req-member",
+        adminMemberId: "admin-1",
+      });
+
+      const args = vi.mocked(sendBookingConfirmedEmail).mock.calls[0];
+      const options = args[8] as {
+        paymentDue?: { payOnline?: boolean; reference?: string };
+      };
+      expect(options.paymentDue).toEqual({ payOnline: true });
+      expect(args[6]).toBe(30000);
+    });
+
+    it("applies no credit when the member did not ask for it", async () => {
+      await approveMemberWholeLodgeRequest({
+        requestId: "req-member",
+        adminMemberId: "admin-1",
+      });
+
+      expect(mockedCreditBalance).not.toHaveBeenCalled();
+      expect(mockedApplyCredit).not.toHaveBeenCalled();
+    });
+
+    it("applies min(balance, price) of the member's credit when they asked, under the ledger lock, after the lodge lock", async () => {
+      mockedFindUnique.mockResolvedValue(
+        memberWholeLodgeRequest({ applyAccountCredit: true }) as never,
+      );
+      mockedCreditBalance.mockResolvedValue(12000 as never);
+
+      const result = await approveMemberWholeLodgeRequest({
+        requestId: "req-member",
+        adminMemberId: "admin-1",
+      });
+
+      // The ordinary create path's writer, with the owner's id, the clamped
+      // amount and the new booking's id — never the price itself.
+      expect(mockedApplyCredit).toHaveBeenCalledWith(
+        "member-9",
+        12000,
+        "booking-wl",
+        prisma,
+        expect.anything(),
+      );
+      // INV-LOCK-002: the member ledger key is the last tier, taken after the
+      // lodge capacity key.
+      expect(mockedLockLedger.mock.invocationCallOrder[0]).toBeGreaterThan(
+        vi.mocked(acquireLodgeCapacityLock).mock.invocationCallOrder[0],
+      );
+      // Still owing the remainder: CONFIRMED, no receivable, member chooses.
+      expect(prisma.payment.create).not.toHaveBeenCalled();
+      expect(result).toMatchObject({ type: "approved", invoiceMode: "member" });
+    });
+
+    it("never applies more than the price, and settles the booking PAID at $0 when credit covers it", async () => {
+      mockedFindUnique.mockResolvedValue(
+        memberWholeLodgeRequest({ applyAccountCredit: true }) as never,
+      );
+      mockedCreditBalance.mockResolvedValue(45000 as never);
+
+      const result = await approveMemberWholeLodgeRequest({
+        requestId: "req-member",
+        adminMemberId: "admin-1",
+      });
+
+      expect(mockedApplyCredit).toHaveBeenCalledWith(
+        "member-9",
+        30000,
+        "booking-wl",
+        prisma,
+        expect.anything(),
+      );
+      // The ordinary create path's fully-credit-covered shape: a SUCCEEDED $0
+      // Payment row and PAID, which is capacity-holding, so the hold stands.
+      const payment = vi.mocked(prisma.payment.create).mock.calls[0][0]
+        .data as Record<string, unknown>;
+      expect(payment).toMatchObject({
+        amountCents: 0,
+        creditAppliedCents: 30000,
+        status: PaymentStatus.SUCCEEDED,
+      });
+      expect(payment.source).toBeUndefined();
+      expect(vi.mocked(prisma.booking.update)).toHaveBeenCalledWith({
+        where: { id: "booking-wl" },
+        data: { status: BookingStatus.PAID },
+      });
+      expect(result).toMatchObject({ type: "approved", invoiceMode: "paid" });
+      // Nothing is owing, so the confirmation is the ordinary PAID one — no
+      // payment-due shape at all (the sender reads the applied credit itself).
+      const options = vi.mocked(sendBookingConfirmedEmail).mock.calls[0][8] as {
+        paymentDue?: unknown;
+      };
+      expect(options.paymentDue).toBeUndefined();
+    });
+
+    it("settles a $0-priced approval PAID on the spot, with no credit involved", async () => {
+      // An officer may price a stay at nothing (a club course, say). With no
+      // receivable to mint and no card amount to charge, the member-choice path
+      // settles it exactly as a fully-credit-covered booking: SUCCEEDED $0, PAID.
+      await approveMemberWholeLodgeRequest({
+        requestId: "req-member",
+        adminMemberId: "admin-1",
+        override: { priceOverrideCents: 0 },
+      });
+
+      expect(mockedCreditBalance).not.toHaveBeenCalled();
+      expect(mockedApplyCredit).not.toHaveBeenCalled();
+      const payment = vi.mocked(prisma.payment.create).mock.calls[0][0]
+        .data as Record<string, unknown>;
+      expect(payment).toMatchObject({
+        amountCents: 0,
+        creditAppliedCents: 0,
+        status: PaymentStatus.SUCCEEDED,
+      });
+      expect(vi.mocked(prisma.booking.update)).toHaveBeenCalledWith({
+        where: { id: "booking-wl" },
+        data: { status: BookingStatus.PAID },
+      });
+      // #4264 review F2: PAID still raises the revenue invoice, as every other
+      // route to PAID does, so Xero has something to allocate against.
+      expect(mockedEnqueueInvoice).toHaveBeenCalledWith("booking-wl", {
+        createdByMemberId: "admin-1",
+        invoiceEmailDelivery: null,
+      });
+    });
+
+    it("applies nothing, and still approves, when the member asked but holds no credit", async () => {
+      mockedFindUnique.mockResolvedValue(
+        memberWholeLodgeRequest({ applyAccountCredit: true }) as never,
+      );
+      mockedCreditBalance.mockResolvedValue(0 as never);
+
+      const result = await approveMemberWholeLodgeRequest({
+        requestId: "req-member",
+        adminMemberId: "admin-1",
+      });
+
+      expect(mockedApplyCredit).not.toHaveBeenCalled();
+      expect(prisma.payment.create).not.toHaveBeenCalled();
+      expect(result).toMatchObject({ type: "approved", invoiceMode: "member" });
+    });
+
+    it("never applies credit on the legacy receivable path, even when the member asked", async () => {
+      legacyReceivableModules({ xero: true });
+      mockedFindUnique.mockResolvedValue(
+        memberWholeLodgeRequest({ applyAccountCredit: true }) as never,
+      );
+      mockedCreditBalance.mockResolvedValue(12000 as never);
+
+      await approveMemberWholeLodgeRequest({
+        requestId: "req-member",
+        adminMemberId: "admin-1",
+      });
+
+      expect(mockedApplyCredit).not.toHaveBeenCalled();
+      const payment = vi.mocked(prisma.payment.create).mock.calls[0][0]
+        .data as Record<string, unknown>;
+      expect(payment.source).toBe(PaymentSource.INTERNET_BANKING);
+      expect(payment.amountCents).toBe(30000);
+    });
+
+    it("keeps the legacy receivable when only the Internet Banking module is on", async () => {
+      // Xero off, Internet Banking on: there is no switch route to raise an
+      // invoice, so the member cannot be left to choose.
+      mockedModuleEnabled.mockImplementation((async (key: string) =>
+        key !== "xeroIntegration") as never);
+
+      const result = await approveMemberWholeLodgeRequest({
+        requestId: "req-member",
+        adminMemberId: "admin-1",
+      });
+
+      const payment = vi.mocked(prisma.payment.create).mock.calls[0][0]
+        .data as Record<string, unknown>;
+      expect(payment.source).toBe(PaymentSource.INTERNET_BANKING);
+      expect(result).toMatchObject({ type: "approved", invoiceMode: "manual" });
+    });
   });
 
   // #2338: the officer's per-approval flat whole-lodge pricing choice. The

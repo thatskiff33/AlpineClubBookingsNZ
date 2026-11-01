@@ -12,17 +12,16 @@ import { PartialRefundError } from "@/lib/payment-transactions";
 import { sliceAfterRecordedRefusals } from "@/lib/refused-card-refund-retry";
 import { buildXeroInvoiceUrl } from "@/lib/xero-links";
 import { classifyEditReviewChargeCapture } from "./xero-booking-repair-payments";
-import type {
-  BookingXeroRepairAction, BookingXeroRepairBookingSummary, BookingXeroRepairPassReport, XeroBookingRepairActionStatus,
-} from "./xero-booking-repair-types";
+import type { BookingXeroRepairAction, BookingXeroRepairBookingSummary, BookingXeroRepairPassReport, XeroBookingRepairActionStatus } from "./xero-booking-repair-types";
 import { LATE_CAPTURE_REPAIR_REFUND_METADATA_REASON } from "@/lib/payment-recovery-keys";
 import type { RepairDependencies } from "./xero-booking-repair-deps";
 import { describeRefusedRepairedLateCaptureRefund, describeRepairedLateCaptureRefund, madeRepairRefunds } from "@/lib/late-capture-repair-result-message";
 import { createCountMap } from "./xero-booking-repair-utils";
-import { applyAdditionalCaptureReceiptAction } from "./xero-booking-repair-additional-capture";
+import { applyAdditionalCaptureReceiptAction, applyKeptChangeCaptureRecordAction } from "./xero-booking-repair-additional-capture";
 import { formatCents } from "@/lib/utils";
 import type { ClubFormat } from "@/lib/club-format";
 import { readModificationNoteWording } from "@/lib/xero-refund-method";
+import { applyHistoricalOrganiserInvoiceRepair } from "./xero-booking-repair-organiser-billing";
 import { LEDGER_ROWS_NEWEST_FIRST } from "@/lib/payment-ledger-order";
 
 export function buildPassReport(pass: number, bookings: BookingXeroRepairBookingSummary[]): BookingXeroRepairPassReport {
@@ -432,6 +431,7 @@ async function applyQueuedAction(
       return;
     }
     case "QUEUE_ADDITIONAL_CAPTURE_RECEIPT": return applyAdditionalCaptureReceiptAction(action, deps); // #3953
+    case "QUEUE_KEPT_LATE_CAPTURE_RECORD": return applyKeptChangeCaptureRecordAction(action, deps); // #4324
     case "QUEUE_PAID_ANOTHER_WAY_REFUND_NOTE": {
       // #3924 round 8: the one note step, under the approval task's row lock;
       // it reads the receipt and the close again there and queues at most once.
@@ -450,6 +450,7 @@ async function applyQueuedAction(
       action.resultMessage = result.message;
       return;
     }
+    case "QUEUE_HISTORICAL_ORGANISER_INVOICE": return applyHistoricalOrganiserInvoiceRepair(action, deps);
     case "QUEUE_SUPPLEMENTARY_INVOICE": {
       /**
        * #3187: the payment half of the ask travels WITH it.
