@@ -411,6 +411,10 @@ describe("#3366: no existing query changes its result", () => {
  * directory it is CI-caught by design.
  */
 const DECLARED_FILES: Record<string, string> = {
+  // #4627 (Ledger M3b): the journal posts an organisation-owned booking's
+  // charges to the organisation as debtor, through `bookingOwnerProviderMetadata`.
+  "src/lib/member-money/internal/booking-posting.ts":
+    "the booking's owner, member or organisation, read under its row lock as the receivable's debtor",
   // #4162 review (money 3): a hand-made refund credit note must be for the
   // booking's Xero contact - an organisation's own when it owns the booking.
   "src/lib/bank-refund-void-answer.ts":

@@ -475,7 +475,7 @@ const OWNERSHIP_COMPARISON_SITES: readonly string[] = [
   "src/app/api/bookings/[id]/confirm-modification-payment/route.ts:70",
   "src/app/api/bookings/[id]/confirm-payment/route.ts:89",
   "src/app/api/bookings/[id]/exception-requests/route.ts:137",
-  "src/app/api/bookings/[id]/guests/route.ts:343",
+  "src/app/api/bookings/[id]/guests/route.ts:346",
   "src/app/api/bookings/[id]/modify-quote/route.ts:369",
   "src/app/api/bookings/[id]/notes/route.ts:48",
   "src/app/api/bookings/[id]/refund-request/route.ts:271",
@@ -486,15 +486,15 @@ const OWNERSHIP_COMPARISON_SITES: readonly string[] = [
   "src/app/api/payments/create-setup-intent/route.ts:59",
   "src/app/api/payments/switch-to-internet-banking/route.ts:123",
   "src/lib/adult-member-hosting-review.ts:3256",
-  "src/lib/booking-batch-modification-service.ts:1087",
-  "src/lib/booking-cancel.ts:2526",
-  "src/lib/booking-cancel.ts:559",
-  "src/lib/booking-date-modification-service.ts:413",
+  "src/lib/booking-batch-modification-service.ts:1091",
+  "src/lib/booking-cancel.ts:2534",
+  "src/lib/booking-cancel.ts:566",
+  "src/lib/booking-date-modification-service.ts:416",
   "src/lib/booking-delete.ts:120",
   "src/lib/booking-delete.ts:69",
   "src/lib/booking-email-authority.ts:115",
-  "src/lib/booking-guest-removal-service.ts:444",
-  "src/lib/booking-guest-removal-service.ts:671",
+  "src/lib/booking-guest-removal-service.ts:448",
+  "src/lib/booking-guest-removal-service.ts:675",
   "src/lib/booking-linked-date-move-service.ts:245",
   "src/lib/booking-member-night-conflicts.ts:369",
   "src/lib/booking-modify-validation.ts:602",
@@ -522,7 +522,7 @@ const OPTIONAL_OWNER_READ_SITES: readonly string[] = [
   // records that store the owner's member id (null for a school), and one
   // admin health snapshot that renders the address with its own `?? ""`.
   "src/lib/diagnostics/tools/packs/booking-evidence.ts:1432",
-  "src/lib/member-guest-consent-service.ts:1344",
+  "src/lib/member-guest-consent-service.ts:1355",
   "src/lib/payment-recovery.ts:2713",
   "src/lib/payment-recovery.ts:2765",
   "src/lib/xero-admin-health.ts:396",
@@ -793,7 +793,7 @@ const UNROOTED_ORGANISATION_SELECTIONS: readonly string[] = [
   // `organisation`.
   "src/lib/booking-owner-name.ts:12",
   "src/lib/cron-additional-payment-reminders.ts:439",
-  "src/lib/cron-confirm-pending.ts:189",
+  "src/lib/cron-confirm-pending.ts:190",
   "src/lib/diagnostics/tools/packs/booking-evidence.ts:885",
   // #3740: `resolveManualRefundTask`'s select, moved out of that module to keep
   // it in budget. Verified by hand: written through
@@ -809,7 +809,7 @@ const UNROOTED_ORGANISATION_SELECTIONS: readonly string[] = [
   // build. The walk cannot root it only because the literal names no delegate.
   "src/lib/member-lodge-roster.ts:112",
   "src/lib/payment-link.ts:81",
-  "src/lib/payment-reconciliation.ts:99",
+  "src/lib/payment-reconciliation.ts:100",
   "src/lib/stuck-state-dashboard.ts:628",
   "src/lib/xero-booking-repair-types.ts:242",
   "src/lib/xero-inbound/settlement-conflicts.ts:155",

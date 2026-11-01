@@ -1,4 +1,5 @@
 import type { Prisma } from "@prisma/client";
+import { bookingOwnerProviderMetadata } from "../../booking-owner";
 import { calendarDateOfDateOnlyInstant } from "../../club-time";
 import {
   bookingChargeEventIdentity,
@@ -39,16 +40,16 @@ type Db = Prisma.TransactionClient;
 
 /**
  * The booking's owner, read under its row lock: the receivable's debtor
- * (`bookingOwner`'s rule: exactly one). Lock raw, read typed (#2289): the lock
+ * (`bookingOwnerProviderMetadata`, exactly one). Lock raw, read typed (#2289): the lock
  * selects a constant, the owner comes back through the Prisma model.
  */
 async function lockedBookingDebtor(tx: Db, bookingId: string): Promise<MemberMoneyDebtor> {
   await tx.$executeRaw`SELECT 1 FROM "Booking" WHERE "id" = ${bookingId} FOR NO KEY UPDATE`;
-  const owner = await tx.booking.findUnique({ where: { id: bookingId }, select: { memberId: true, organisationId: true } });
-  if (!owner) throw new MemberMoneyPlanError([`booking ${bookingId} does not exist`]);
-  if (owner.organisationId !== null && owner.memberId === null) return { kind: "ORGANISATION", organisationId: owner.organisationId };
-  if (owner.memberId !== null && owner.organisationId === null) return { kind: "MEMBER", memberId: owner.memberId };
-  throw new MemberMoneyPlanError([`booking ${bookingId} has no single owner to owe its charges`]);
+  const booking = await tx.booking.findUnique({ where: { id: bookingId }, select: { memberId: true, organisationId: true } });
+  if (!booking) throw new MemberMoneyPlanError([`booking ${bookingId} does not exist`]);
+  // `INV-SSOT-005`: who owns a booking is `booking-owner.ts`'s answer, never re-derived here.
+  const owner = bookingOwnerProviderMetadata(booking);
+  return "memberId" in owner ? { kind: "MEMBER", memberId: owner.memberId } : { kind: "ORGANISATION", organisationId: owner.organisationId };
 }
 
 async function eventPosted(tx: Db, eventKey: MemberMoneyEventKey): Promise<boolean> {
