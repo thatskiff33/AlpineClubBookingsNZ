@@ -457,7 +457,7 @@ describe("#3368: the three families stage 4 (#3369) has to answer for", () => {
 
 /** Measured, not counted by hand. Re-measure by running this test. */
 const OWNERSHIP_COMPARISON_SITES: readonly string[] = [
-  "src/app/(authenticated)/bookings/[id]/_lib/booking-detail-editor-data.ts:234",
+  "src/app/(authenticated)/bookings/[id]/_lib/booking-detail-editor-data.ts:235",
   "src/app/(authenticated)/bookings/[id]/_lib/booking-detail-viewer.ts:38",
   "src/app/(authenticated)/bookings/[id]/page.tsx:205",
   "src/app/(authenticated)/bookings/page.tsx:183",
@@ -468,8 +468,8 @@ const OWNERSHIP_COMPARISON_SITES: readonly string[] = [
   "src/app/api/bookings/[id]/arrival-time/route.ts:367",
   "src/app/api/bookings/[id]/cancel-preview/route.ts:77",
   "src/app/api/bookings/[id]/change-requests/quote/route.ts:76",
-  "src/app/api/bookings/[id]/change-requests/route.ts:175",
-  "src/app/api/bookings/[id]/change-requests/route.ts:485",
+  "src/app/api/bookings/[id]/change-requests/route.ts:179",
+  "src/app/api/bookings/[id]/change-requests/route.ts:504",
   "src/app/api/bookings/[id]/confirm-draft/route.ts:175",
   "src/app/api/bookings/[id]/confirm-draft/route.ts:96",
   "src/app/api/bookings/[id]/confirm-modification-payment/route.ts:70",
@@ -486,7 +486,7 @@ const OWNERSHIP_COMPARISON_SITES: readonly string[] = [
   "src/app/api/payments/create-setup-intent/route.ts:59",
   "src/app/api/payments/switch-to-internet-banking/route.ts:123",
   "src/lib/adult-member-hosting-review.ts:3256",
-  "src/lib/booking-batch-modification-service.ts:1087",
+  "src/lib/booking-batch-modification-service.ts:1089",
   "src/lib/booking-cancel.ts:2526",
   "src/lib/booking-cancel.ts:559",
   "src/lib/booking-date-modification-service.ts:413",
@@ -497,7 +497,7 @@ const OWNERSHIP_COMPARISON_SITES: readonly string[] = [
   "src/lib/booking-guest-removal-service.ts:671",
   "src/lib/booking-linked-date-move-service.ts:245",
   "src/lib/booking-member-night-conflicts.ts:369",
-  "src/lib/booking-modify-validation.ts:602",
+  "src/lib/booking-modify-validation.ts:611",
   "src/lib/diagnostics/tools/packs/booking-evidence.ts:1427",
   "src/lib/group-booking.ts:274",
   "src/lib/kiosk-access.ts:230",
@@ -785,7 +785,7 @@ const UNROOTED_ORGANISATION_SELECTIONS: readonly string[] = [
   // out of the route file to keep it in budget. Verified by hand: it is passed
   // as `include` to `bookingChangeRequest.findUnique`, and `organisation` sits
   // under its `booking` relation, which declares it.
-  "src/lib/booking-change-request-admin-decision.ts:88",
+  "src/lib/booking-change-request-admin-decision.ts:93",
   // #4042, #3949: the owner-name select, moved out of the organiser hand-back to
   // be shared with the joiner cancel's organiser name. Verified by hand: written
   // through `Prisma.validator<Prisma.BookingSelect>()` and spread into

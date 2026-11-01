@@ -243,6 +243,30 @@ export function isFinishedStay(
 }
 
 /**
+ * #4533 (`INV-SSOT-001`): whether an officer's finished-stay correction may
+ * touch this booking at all — its stay has finished ({@link isFinishedStay})
+ * and its status is one the correction edits (the active lifecycle with the
+ * finished stay admitted, {@link activeLifecycleEditRefusal}). ONE answer for
+ * Edit Booking's offer of a promo correction, the request route that raises
+ * one, and the executor that applies a request, so none of the three can
+ * offer, accept or apply what another refuses. The edit policy's own
+ * `finishedStayCorrection` mode asks both questions again under the locks.
+ */
+export type FinishedStayEligibility =
+  | { eligible: true }
+  | { eligible: false; reason: "not-finished" }
+  | { eligible: false; reason: "status"; message: string };
+
+export function finishedStayEligibility(
+  booking: { checkOut: Date; status: string },
+  today: Date,
+): FinishedStayEligibility {
+  if (!isFinishedStay(booking, today)) return { eligible: false, reason: "not-finished" };
+  const message = activeLifecycleEditRefusal(booking.status, "ADMIN", { includeFinishedStay: true });
+  return message ? { eligible: false, reason: "status", message } : { eligible: true };
+}
+
+/**
  * #2029: a stay has "started" once its NZ check-in date is today or earlier.
  * The single source of truth shared by the self-service started-stay cancel
  * block (`booking-cancel.ts`) and the booking-detail UI, so the cancel route and

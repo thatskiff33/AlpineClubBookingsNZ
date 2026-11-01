@@ -13,6 +13,11 @@ import {
   type GuestNightsAsDays,
 } from "@/lib/booking-change-request-guests";
 import type { ChangeRequestDelta } from "@/lib/booking-change-request-input";
+import {
+  promoChangeBatchFields,
+  promoChangeCodes,
+  storedPromoChangeSchema,
+} from "@/lib/booking-change-request-promo";
 import { guestName } from "@/lib/bed-allocation-display-names";
 import { collapseNightRuns } from "@/lib/bed-allocation-board-window";
 import { guestNightListSchema } from "@/lib/booking-guest-stay-range-input";
@@ -63,6 +68,9 @@ export const storedLockedPeriodRequestSchema = z.object({
         lastName: z.string().nullish(),
       }),
     ),
+    // #4533: the booking's codes a promo change was entered against, so
+    // approval sees a code applied or released since as drift.
+    promoCodes: z.array(z.string()).nullish(),
   }),
   requested: z.object({
     checkIn: optionalDate,
@@ -92,6 +100,12 @@ export const storedLockedPeriodRequestSchema = z.object({
         }),
       )
       .default([]),
+    /**
+     * #4533: the promo change an officer entered on the member's behalf, for a
+     * finished stay (`booking-change-request-promo.ts`). Absent on every member
+     * request and on rows written before it existed.
+     */
+    promoChange: storedPromoChangeSchema.nullish(),
   }),
   /**
    * #4157: written by an approval's guarded claim, whether it applies the
@@ -263,7 +277,14 @@ export function lockedPeriodRequestToBatchInput(
   },
 ): Pick<
   BatchModifyInput,
-  "checkIn" | "checkOut" | "addGuests" | "removeGuestIds" | "guestStayRanges"
+  | "checkIn"
+  | "checkOut"
+  | "addGuests"
+  | "removeGuestIds"
+  | "guestStayRanges"
+  | "promoCode"
+  | "promoGuestIds"
+  | "promoCodes"
 > | null {
   const currentCheckIn = calendarDateOfDateOnlyInstant(booking.checkIn);
   const currentCheckOut = calendarDateOfDateOnlyInstant(booking.checkOut);
@@ -321,12 +342,15 @@ export function lockedPeriodRequestToBatchInput(
     const nights = effective.get(range.guestId) === range ? kept.get(range.guestId) : undefined;
     return nights ? { ...range, nights } : range;
   });
+  // #4533: an officer's promo change, in the batch edit's own fields.
+  const promoChange = requested.promoChange ?? null;
   if (
     !checkIn &&
     !checkOut &&
     addGuests.length === 0 &&
     removeGuestIds.length === 0 &&
-    !namesRangeChange
+    !namesRangeChange &&
+    !promoChange
   ) {
     return null;
   }
@@ -336,7 +360,26 @@ export function lockedPeriodRequestToBatchInput(
     ...(addGuests.length > 0 ? { addGuests } : {}),
     ...(removeGuestIds.length > 0 ? { removeGuestIds } : {}),
     ...(guestStayRanges.length > 0 ? { guestStayRanges } : {}),
+    ...(promoChange ? promoChangeBatchFields(promoChange) : {}),
   };
+}
+
+/**
+ * #4533: whether a stored request's ONLY change is its promo change — the one
+ * shape whose change email the approving officer may withhold. Judged through
+ * the one mapping, with the promo change taken out.
+ */
+export function storedRequestNamesOnlyPromoChange(
+  stored: StoredLockedPeriodRequest,
+  booking: { checkIn: Date; checkOut: Date; guests?: ReadonlyArray<LiveRequestGuestRow> },
+): boolean {
+  if (!stored.requested.promoChange) return false;
+  return (
+    lockedPeriodRequestToBatchInput(
+      { ...stored, requested: { ...stored.requested, promoChange: null } },
+      booking,
+    ) === null
+  );
 }
 
 /**
@@ -419,6 +462,31 @@ export function storedRequestNamesNoChange(
 ): boolean {
   const stored = storedLockedPeriodRequestSchema.safeParse(requestedChanges);
   return stored.success && lockedPeriodRequestToBatchInput(stored.data, booking) === null;
+}
+
+/**
+ * #4533: what the officer's card needs to know about a stored request's promo
+ * change, read through the executor's own schema and mapping: whether the
+ * request could take an officer's promo entry (it is readable and carries
+ * none), and the promo change it carries, with whether that is its one change
+ * (the only shape whose email the officer may withhold).
+ */
+export function storedRequestPromoFacts(
+  requestedChanges: unknown,
+  booking: { checkIn: Date; checkOut: Date },
+): { takesPromoEntry: boolean; promoCorrection: { codes: string[]; onlyChange: boolean } | null } {
+  const stored = storedLockedPeriodRequestSchema.safeParse(requestedChanges);
+  if (!stored.success) return { takesPromoEntry: false, promoCorrection: null };
+  const promoChange = stored.data.requested.promoChange;
+  return {
+    takesPromoEntry: !promoChange,
+    promoCorrection: promoChange
+      ? {
+          codes: promoChangeCodes(promoChange),
+          onlyChange: storedRequestNamesOnlyPromoChange(stored.data, booking),
+        }
+      : null,
+  };
 }
 
 /** One guest's nights as a request asks for them, for the officer's card (#4088). */

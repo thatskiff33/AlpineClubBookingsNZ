@@ -95,6 +95,9 @@ export function assertFinishedStayCorrectionCall(call: {
  */
 export type FinishedStayChangeFeeRule =
   | "ADD_ONLY_NO_FEE"
+  // #4533: the correction only applies a promo code. It removes nothing, so no
+  // part of the same-day rule reaches it, and its reduction comes back in full.
+  | "PROMO_ONLY_NO_FEE"
   | "SAME_DAY_NOTICE"
   | "SWAP_SAME_DAY_NOTICE";
 
@@ -141,16 +144,21 @@ function nightKeys(
  * ({@link finishedStayRemovalFeeCents} over {@link finishedStayRemovedPortion}),
  * never netted against guests or nights added in its place (owner, 6 Oct 2026:
  * "charged fairly"). The label only records which shape it was.
+ *
+ * #4533: a correction that adds and removes nobody, keeps every night and only
+ * changes the booking's promo codes is `PROMO_ONLY_NO_FEE` — it removes
+ * nothing, so it owes nothing under the same-day rule.
  */
 export function classifyFinishedStayChangeFeeRule(plan: {
   readonly addedGuestCount: number;
   readonly removedGuestCount: number;
   readonly remainingGuests: ReadonlyArray<FinishedStayRemainingGuest>;
+  /** #4533: the correction changes the booking's promo codes. */
+  readonly changesPromoCodes?: boolean;
 }): FinishedStayChangeFeeRule {
   if (plan.removedGuestCount > 0) {
     return plan.addedGuestCount > 0 ? "SWAP_SAME_DAY_NOTICE" : "SAME_DAY_NOTICE";
   }
-  if (plan.addedGuestCount === 0) return "SAME_DAY_NOTICE";
   const everyKeptGuestUnchanged = plan.remainingGuests.every(({ stored, proposed }) => {
     const before = nightKeys(
       stored.stayStart,
@@ -159,7 +167,27 @@ export function classifyFinishedStayChangeFeeRule(plan: {
     );
     return sameNightKeys(before, nightKeys(proposed.stayStart, proposed.stayEnd, proposed.nights));
   });
-  return everyKeptGuestUnchanged ? "ADD_ONLY_NO_FEE" : "SAME_DAY_NOTICE";
+  if (!everyKeptGuestUnchanged) return "SAME_DAY_NOTICE";
+  if (plan.addedGuestCount > 0) return "ADD_ONLY_NO_FEE";
+  // #4533: nobody added or removed and every night kept — only a promo code.
+  return plan.changesPromoCodes ? "PROMO_ONLY_NO_FEE" : "SAME_DAY_NOTICE";
+}
+
+/**
+ * #4533: whether a correction's reduction comes back IN FULL rather than at the
+ * same-day tier. Always where the same-day retention was already charged as
+ * the fee on what it removes (#3750, F2), and wherever it applies a promo
+ * code: a missed discount is the club's error to put right, so nothing of it is
+ * kept, as nothing is on a future stay's promo edit. An add-only correction
+ * cannot lower the price without one.
+ */
+export function finishedStayReductionReturnedInFull(rule: FinishedStayChangeFeeRule, changesPromoCodes: boolean): boolean {
+  return changesPromoCodes || (rule !== "ADD_ONLY_NO_FEE" && rule !== "PROMO_ONLY_NO_FEE");
+}
+
+/** #4533: whether the same-day retention is charged on what a correction removes. */
+export function finishedStayRemovalIsCharged(rule: FinishedStayChangeFeeRule): boolean {
+  return rule === "SAME_DAY_NOTICE" || rule === "SWAP_SAME_DAY_NOTICE";
 }
 
 /**
@@ -414,10 +442,23 @@ export function finishedStayRemovalFeeCents(args: {
  * way the booking was paid (P2 on #3955). A booking paid wholly with account
  * credit gets credit back; anything paid in money goes back the way it came
  * (card refund, or the internet-banking hand-back).
+ *
+ * #4533: a correction that applies a promo code defaults to account credit
+ * instead — the issue's "account credit by default for a finished stay" —
+ * and the officer may still choose a refund to the original method; except on
+ * an organiser-paid joiner's booking, below.
  */
 export function defaultCorrectionSettlementMethod(
   payment: { readonly amountCents: number; readonly creditAppliedCents: number } | null,
+  correction: { readonly changesPromoCodes: boolean; readonly paidByOrganiser?: boolean } = {
+    changesPromoCodes: false,
+  },
 ): "card" | "credit" {
+  // #4533 review: a joiner's booking the organiser paid returns its money to
+  // the organiser and can hold none as the joiner's credit
+  // (`calculateFullReductionSettlementOptions`, `INV-PAY-114`), so it keeps the
+  // way-it-was-paid default, which settles to the organiser.
+  if (correction.changesPromoCodes && !correction.paidByOrganiser) return "credit";
   return payment && payment.amountCents <= 0 && payment.creditAppliedCents > 0 ? "credit" : "card";
 }
 
