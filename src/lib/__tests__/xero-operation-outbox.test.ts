@@ -3763,6 +3763,17 @@ describe("processQueuedXeroOutboxOperations dispatch domain (#1272)", () => {
       return fixture.handler.mock.calls;
     };
 
+    // #4655: a hook the worker hands a handler (the organiser adjustment's `onRetake`) is a
+    // fresh closure per dispatch and carries no payload value, so it is matched as a function.
+    const hooksAsAnyFunction = (value: unknown): unknown => {
+      if (typeof value === "function") return expect.any(Function);
+      if (Array.isArray(value)) return value.map(hooksAsAnyFunction);
+      if (value && typeof value === "object" && Object.getPrototypeOf(value) === Object.prototype) {
+        return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, hooksAsAnyFunction(entry)]));
+      }
+      return value;
+    };
+
     for (const queueType of XERO_OUTBOX_QUEUE_TYPES) {
       const queued = fixtures[queueType].op.requestPayload;
       const stored = sanitizeForJson(queued);
@@ -3776,12 +3787,61 @@ describe("processQueuedXeroOutboxOperations dispatch domain (#1272)", () => {
       expect(
         fromStored,
         `INV-INT-026 (#3971): ${queueType}'s worker resolves a different target once its payload is stored through the persisting redactor. A load-bearing id is being blanked; take it from the row's localId or rename the key, never weaken the redactor.`
-      ).toEqual(fromQueued);
+      ).toEqual(hooksAsAnyFunction(fromQueued));
       expect(
         JSON.stringify(fromStored),
         `INV-INT-026 (#3971): ${queueType}'s handler received a redacted value`
       ).not.toContain("[REDACTED]");
     }
+  });
+
+  describe("#4655 (#4672 review S1/S2): an organiser adjustment whose late note re-took its row", () => {
+    const op = () => fixtures.ORGANISER_EXTRA_ADJUSTMENT.op;
+    const RETAKEN = xeroClaim("op_organiser_adjustment_1", new Date("2026-07-01T00:20:00.000Z"));
+    type Hooks = { onRetake: (claim: typeof RETAKEN) => void };
+
+    it("MUTATION: a run that stood down (its note on a queued row, or traced) counts as skipped and writes no outcome", async () => {
+      mocks.findManyOperations.mockResolvedValue([op()]);
+      mocks.executeOrganiserExtraAdjustment.mockResolvedValueOnce("stood-down");
+      await expect(processQueuedXeroOutboxOperations({ limit: 1 })).resolves.toEqual({ found: 1, processed: 1, succeeded: 0, failed: 0, skipped: 1 });
+      expect(mocks.failXeroSyncOperation).not.toHaveBeenCalled();
+    });
+
+    it("MUTATION: a failure after the re-take is written under the new claim, never the stalled one", async () => {
+      mocks.findManyOperations.mockResolvedValue([op()]);
+      const failure = new Error("allocation refused");
+      mocks.executeOrganiserExtraAdjustment.mockImplementationOnce(async (_payload: unknown, _claim: unknown, hooks: Hooks) => {
+        hooks.onRetake(RETAKEN);
+        throw failure;
+      });
+      await expect(processQueuedXeroOutboxOperations({ limit: 1 })).resolves.toEqual(expect.objectContaining({ failed: 1 }));
+      expect(mocks.failXeroSyncOperation).toHaveBeenCalledExactlyOnceWith(RETAKEN, failure, undefined, { keepCancelled: true });
+    });
+
+    it("MUTATION: a cooldown refusal after the re-take gives the row back under the new claim", async () => {
+      mocks.findManyOperations.mockResolvedValue([op()]);
+      mocks.executeOrganiserExtraAdjustment.mockImplementationOnce(async (_payload: unknown, _claim: unknown, hooks: Hooks) => {
+        hooks.onRetake(RETAKEN);
+        throw Object.assign(new Error("Xero cooldown"), { name: "XeroTransientOutageError", preHttp: true });
+      });
+      await processQueuedXeroOutboxOperations({ limit: 1 });
+      expect(mocks.updateManyOperation).toHaveBeenCalledWith(expect.objectContaining({
+        where: expect.objectContaining({ AND: [{ OR: [{ status: "RUNNING", startedAt: RETAKEN.startedAt }, { status: "FAILED" }] }] }),
+        data: expect.objectContaining({ status: "PENDING" }),
+      }));
+    });
+
+    it("MUTATION: a busy wait after the re-take hands back only the new claim", async () => {
+      mocks.findManyOperations.mockResolvedValue([op()]);
+      mocks.executeOrganiserExtraAdjustment.mockImplementationOnce(async (_payload: unknown, _claim: unknown, hooks: Hooks) => {
+        hooks.onRetake(RETAKEN);
+        throw new XeroAppliedCreditOperationBusyError("waits", "PENDING");
+      });
+      await processQueuedXeroOutboxOperations({ limit: 1 });
+      expect(mocks.updateManyOperation).toHaveBeenCalledWith(expect.objectContaining({
+        where: expect.objectContaining({ status: "RUNNING", startedAt: RETAKEN.startedAt }),
+      }));
+    });
   });
 
   it("invoices the row's localId for a subscription row stored before #3971 with a blanked chargeId", async () => {
