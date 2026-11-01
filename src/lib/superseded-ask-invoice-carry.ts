@@ -235,6 +235,58 @@ function waitingOnIntentsWhere(intentIds: readonly string[]): Prisma.XeroSyncOpe
   };
 }
 
+/** One supplementary invoice naming an ask, and whether the move below could take it. */
+export type AskInvoiceForCarry = {
+  anchorId: string | null;
+  /** The intent its money was first asked on (`supplementaryInvoiceWaitedFirstOn`). */
+  firstWaitedOn: string | null;
+  carriable: boolean;
+};
+
+/**
+ * #4491 (`INV-ADDPAY-052`): THE INVOICES NAMING THESE ASKS, AS THE MOVE WOULD
+ * FIND THEM, for a minter that must know BEFORE it supersedes them whether
+ * each would follow it. Carriable is the move's own test, read without its
+ * locks: waiting on one of the asks (`waitingOnIntentsWhere`), on a change
+ * with no active invoice link and no other outstanding invoice, with a
+ * readable billed figure. Any other live supplementary invoice naming them is
+ * returned too, not carriable. The move re-decides everything under its keys.
+ */
+export async function readAskInvoicesForCarry(
+  store: Pick<Prisma.TransactionClient, "xeroSyncOperation" | "xeroObjectLink">,
+  intentIds: readonly string[],
+): Promise<AskInvoiceForCarry[]> {
+  if (intentIds.length === 0) return [];
+  const naming = await store.xeroSyncOperation.findMany({
+    where: {
+      ...SUPPLEMENTARY_INVOICE_CREATE_WHERE,
+      status: { not: "CANCELLED" },
+      OR: intentIds.map((intentId) => ({ requestPayload: { path: ["paymentIntentId"], equals: intentId } })),
+    },
+    select: { id: true, localId: true, requestPayload: true },
+  });
+  const waitingIds = new Set(
+    (await store.xeroSyncOperation.findMany({ where: waitingOnIntentsWhere(intentIds), select: { id: true } })).map((row) => row.id),
+  );
+  const result: AskInvoiceForCarry[] = [];
+  for (const operation of naming) {
+    const base = { anchorId: operation.localId, firstWaitedOn: supplementaryInvoiceWaitedFirstOn(operation.requestPayload) };
+    if (!waitingIds.has(operation.id) || !operation.localId || supplementaryInvoiceBilledCents(operation.requestPayload) === null) {
+      result.push({ ...base, carriable: false });
+      continue;
+    }
+    const anchor = { localModel: "BookingModification" as const, localId: operation.localId };
+    const blocked =
+      (await findActiveSupplementaryInvoiceLink([anchor], store)) !== null ||
+      (await store.xeroSyncOperation.findFirst({
+        where: { ...outstandingSupplementaryInvoiceOperationsWhere(anchor), id: { notIn: [...waitingIds] } },
+        select: { id: true },
+      })) !== null;
+    result.push({ ...base, carriable: !blocked });
+  }
+  return result;
+}
+
 /**
  * Move the waiting supplementary invoices of a payment's superseded card asks
  * onto the request that carries their balance. Throws only on a database
