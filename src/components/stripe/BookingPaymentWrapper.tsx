@@ -26,6 +26,7 @@ import {
   SUPERSEDED_CARD_PAYMENT_REFUNDING_MESSAGE,
   SWITCHED_TO_INTERNET_BANKING_MESSAGE,
 } from "@/lib/payment-recovery-contract";
+import { BELOW_STRIPE_MINIMUM_MEMBER_MESSAGE, isBelowStripeMinimum } from "@/lib/stripe-charge-currency";
 
 /**
  * Report a payment-initialization failure to ops WITHOUT ever surfacing the raw
@@ -191,6 +192,13 @@ export default function BookingPaymentWrapper({
           if (response.status === 409 && isCreditElectionNotApplied(data)) {
             setRecoveryHeading("Account credit not applied yet");
             setInitRecoveryError(data.error);
+            return;
+          }
+          // #99: below the card minimum. Refused before Stripe; a retry would be
+          // refused again. The fixed message from the shared module, never data.error.
+          if (response.status === 409 && isBelowStripeMinimum(data)) {
+            setRecoveryHeading("Amount too small to pay by card");
+            setInitRecoveryError(BELOW_STRIPE_MINIMUM_MEMBER_MESSAGE);
             return;
           }
           // The raw provider detail (data.error) may leak partial key material;

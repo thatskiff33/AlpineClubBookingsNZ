@@ -21,6 +21,7 @@ import {
   SWITCHED_TO_INTERNET_BANKING_BODY,
   SWITCHED_TO_INTERNET_BANKING_MESSAGE,
 } from "@/lib/payment-recovery-contract";
+import { BELOW_STRIPE_MINIMUM_MEMBER_BODY, BELOW_STRIPE_MINIMUM_MEMBER_MESSAGE } from "@/lib/stripe-charge-currency";
 import { expectRecoveryAlertToHoldFocus } from "@/lib/__tests__/helpers/focus";
 
 const invalidCapacityRefundFacts = [
@@ -416,6 +417,34 @@ describe("BookingPaymentWrapper", () => {
       expect(alert).toHaveTextContent("Paying by Internet Banking"),
     );
     expect(alert).toHaveTextContent(SWITCHED_TO_INTERNET_BANKING_MESSAGE);
+    expect(alert).not.toHaveTextContent(/pay later/i);
+    expect(screen.queryByText("payment-form")).toBeNull();
+    expect(Sentry.captureException).not.toHaveBeenCalled();
+  });
+
+  it("says the amount is too small to pay by card, with no card form and no error report (#99)", async () => {
+    fetchMock.mockResolvedValueOnce({
+      ok: false,
+      status: 409,
+      json: async () => ({ ...BELOW_STRIPE_MINIMUM_MEMBER_BODY, error: "internal detail that must not render", creditElection: null }),
+    });
+
+    render(
+      <BookingPaymentWrapper
+        bookingId="booking-1"
+        amountCents={32}
+        paymentMode="payment"
+        returnUrl="http://localhost/bookings/booking-1"
+        onPaymentComplete={vi.fn()}
+      />,
+    );
+
+    const alert = screen.getByRole("alert", { hidden: true });
+    await waitFor(() =>
+      expect(alert).toHaveTextContent("Amount too small to pay by card"),
+    );
+    expect(alert).toHaveTextContent(BELOW_STRIPE_MINIMUM_MEMBER_MESSAGE);
+    expect(alert).not.toHaveTextContent("internal detail");
     expect(alert).not.toHaveTextContent(/pay later/i);
     expect(screen.queryByText("payment-form")).toBeNull();
     expect(Sentry.captureException).not.toHaveBeenCalled();

@@ -165,3 +165,21 @@ export const UNSUPPORTED_CHARGE_CURRENCY_MEMBER_BODY = Object.freeze({
   code: UNSUPPORTED_CHARGE_CURRENCY_CODE,
   error: UNSUPPORTED_CHARGE_CURRENCY_MEMBER_MESSAGE,
 });
+
+/** What a member is told when the amount due is below {@link STRIPE_MINIMUM_AMOUNT_CENTS} (#99). */
+export const BELOW_STRIPE_MINIMUM_MEMBER_MESSAGE =
+  "This amount is too small to pay by card. Nothing was charged. Please contact the club to settle it another way.";
+
+export const BELOW_STRIPE_MINIMUM_CODE = "BELOW_STRIPE_MINIMUM" as const;
+
+/** The below-minimum refusal as a coded body, so a client tells it apart from other 409s. */
+export const BELOW_STRIPE_MINIMUM_MEMBER_BODY = Object.freeze({
+  code: BELOW_STRIPE_MINIMUM_CODE,
+  error: BELOW_STRIPE_MINIMUM_MEMBER_MESSAGE,
+});
+
+export function isBelowStripeMinimum(value: unknown): value is { code: typeof BELOW_STRIPE_MINIMUM_CODE; error: string } {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as Record<string, unknown>;
+  return candidate.code === BELOW_STRIPE_MINIMUM_CODE && typeof candidate.error === "string";
+}
