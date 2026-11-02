@@ -3395,10 +3395,13 @@ _Split from `INV-PAY-055` (#3267, epic #3270)._
   runs INSIDE the caller's claim transaction — global `pg_advisory_xact_lock(1)`
   then the lodge capacity lock, after the status-guarded PENDING -> CONFIRMED
   claim — and creates the row (PENDING, the card about to be charged, the
-  path's `reason`), then stamps its `reference` with
-  `pending_charge_<bookingId>_<rowId>_v2` (#4646; before it, without `_v2`). A
-  row is an attempt row only when its `reference` is either key built from ITS
-  OWN id (`savedCardChargeKeyShape`). Because every path writes its
+  path's `reason`), then stamps its `reference` with the key
+  `mintedSavedCardChargeKey` builds: `pending_charge_<bookingId>_<rowId>`,
+  until #4682 switches it to the `_v2` key (that key plus `_v2`, #4646). A row
+  is an attempt row only when its `reference` is either key built from ITS OWN
+  id (`savedCardChargeKeyShape`): read first, write later, because the release
+  before #4646 reads only the original key and would mint a second charge
+  beside a `_v2` row it met. Because every path writes its
   row under the same two locks, two paths can never both hold an open attempt
   for one payment: the second to take the locks reads the first's row. That is
   the guard the shared key used to provide by accident, and it now covers
@@ -3407,10 +3410,10 @@ _Split from `INV-PAY-055` (#3267, epic #3270)._
   would re-open the race the ledger closes.
 
 - **Metadata converges on one builder, a function of the key.**
-  `buildSavedCardChargeMetadata` returns `{ bookingId, memberId,
-  savedCardAttemptId }` for every path, the row's id only under a `_v2` key: a
-  row minted before #4646 is re-sent under its stored key with its first body,
-  so Stripe sees no parameter mismatch. Which path minted an attempt is on the
+  `buildSavedCardChargeMetadata` returns `{ bookingId, memberId }` for every
+  path, plus `savedCardAttemptId` only under a `_v2` key; a row is re-sent
+  under its stored key with its first body, so Stripe sees no parameter
+  mismatch. Which path minted an attempt is on the
   row's `reason` (`SAVED_CARD_CHARGE_REASON`, a closed union). The one charge
   call is `chargeSavedCardAttempt`; nothing else calls `chargePaymentMethod`
   for a saved card.
@@ -3639,14 +3642,15 @@ _Split from `INV-PAY-055` (#3267, epic #3270)._
   `request.idempotency_key`, which the row stores on `reference`, or, when the
   event carries no saved-card key, the `savedCardAttemptId` in the intent's
   metadata (#4646): `Event.request` is null on an asynchronous capture and on
-  every redelivery of it. By metadata the row's payment must be that booking's
-  and its key the `_v2` shape whose sends carry the id; nothing adopts by
-  booking and amount. The row write is claimed on "still no intent" under the
-  Payment lock, so a lost adoption writes nothing. Without adoption a lost
-  response's capture was invisible even to `INV-PAY-043`, and the re-send after
-  24 hours was a second charge. **The limit:** an attempt minted before #4646
-  sent no id, so its asynchronous capture still ends at `attempt_key_expired`,
-  alerted once as unmatched (`INV-INT-033`).
+  every redelivery of it. Either way the row's key is its own, in either shape,
+  and its payment that booking's; by metadata its key must also be the `_v2`
+  shape whose sends carry the id. Nothing adopts by booking and amount. The row
+  write is claimed on "still no intent" under the Payment lock, so a lost
+  adoption writes nothing. Without adoption a lost response's capture was
+  invisible even to `INV-PAY-043`, and the re-send after 24 hours was a second
+  charge. **The limit until #4682:** new attempts still mint the original key
+  (`INV-PAY-081`), which sends no id, so their asynchronous capture ends at
+  `attempt_key_expired`, alerted once as unmatched (`INV-INT-033`).
 
 ## INV-PAY-090
 
