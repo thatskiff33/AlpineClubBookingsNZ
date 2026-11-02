@@ -50,7 +50,9 @@ actions; a view-only support role sees the figures but cannot act.
      choosing **Archive**. Never recover or copy an old retained email body; the
      retirement clears it by design.
    - **Admin Alert Delivery** — admin alerts that had to escalate within the
-     lookback window.
+     lookback window because no recipient received them at send time. A later
+     retry may since have delivered one; the row records the send, not the
+     outcome.
 
 ## Settings reference
 

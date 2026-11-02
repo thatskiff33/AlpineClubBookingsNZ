@@ -29,11 +29,11 @@ import {
 import { isLocalChargeRefusal } from "./stripe-charge-currency";
 import type { PaymentStore } from "./payment-transactions";
 import {
-  buildSavedCardChargeMetadata,
   UNRESOLVED_ATTEMPT_STATUSES,
   type SavedCardChargeAttempt,
   type SavedCardToCharge,
 } from "./saved-card-charge-attempt";
+import { buildSavedCardChargeMetadata } from "./saved-card-charge-key";
 import type { ClubFormat } from "@/lib/club-format";
 
 /**
@@ -257,7 +257,8 @@ async function cancelSupersededAttemptIntents(
  *   which Stripe answers with the stored result if the first POST executed, or
  *   executes exactly once if it never arrived.
  *
- * Metadata is built here from the ids, so every path sends the same body.
+ * Metadata is built here from the ids and the attempt's key, so every path
+ * sends the same body and a re-sent key sends its first body (#4646).
  *
  * On a throw: a DEFINITE failure marks the row FAILED FIRST and then rethrows
  * the ORIGINAL error, so each caller's existing release/alert handling —
@@ -307,7 +308,7 @@ export async function chargeSavedCardAttempt(params: {
       amountCents,
       customerId: card.stripeCustomerId,
       paymentMethodId: card.stripePaymentMethodId,
-      metadata: buildSavedCardChargeMetadata(bookingId, memberId),
+      metadata: buildSavedCardChargeMetadata(bookingId, memberId, attempt),
       idempotencyKey: attempt.idempotencyKey,
     });
   } catch (err) {
