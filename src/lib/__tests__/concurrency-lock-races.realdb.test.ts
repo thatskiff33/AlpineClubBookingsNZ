@@ -688,6 +688,12 @@ import "./xero-late-refund-note-after-resolve.realdb.test";
 // row. Skipped unless RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own
 // `race-4655-` fixtures.
 import "./organiser-late-note-after-reset.realdb.test";
+// #4673 reuses it to prove a stalled run's late failure never undoes an officer's
+// in-place Retry after a stale reset: the row stays PENDING and the queued run
+// completes it, a queued run's own failure is kept, and with no Retry the failure
+// lands on its own claim's reset row. Skipped unless RUN_CONCURRENCY_RACE_TESTS=1;
+// it owns and cleans its own `race-4673-` fixtures.
+import "./xero-late-failure-after-retry.realdb.test";
 // #4609 reuses it to prove the per-account password throttle's claim: two
 // failures racing on one account both count, a burst at the end of a wait admits
 // exactly one guess, two first-ever claims both count, and a row deleted between
