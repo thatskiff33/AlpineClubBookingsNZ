@@ -3904,20 +3904,37 @@ template and booking change. Only the retry worker sends it, after its normal
 same email row; failure to persist that row leaves the invoice operation
 retryable. This avoids a synchronous send racing email recovery.
 
-A message whose retry belongs to something else keeps no body
+A message whose retry belongs entirely to something else keeps no body
 (`NON_RETRYABLE_EMAIL_LOG_TEMPLATES`), so its `FAILED` row is never replayed.
-The settlement-figure alert's marker retries it (#4446). The unrecognised and
-unmatched Stripe payment alerts (#4647, `INV-INT-032`, `INV-INT-033`) give
-their once-ever claim back when nobody received them and fail the webhook, so
-Stripe's redelivery sends them again; a cron replay as well would send them
-twice. The webhook fails even when that give-back fails: the delivery gives
-back its own claim, by its exact stamp, again. A sent alert whose `alertedAt`
-write fails keeps its claim and a sent marker, so the event completes and no
-redelivery sends it again (#4670).
 
-Stated limit, shared with the settlement-figure alert: these alerts count as
-sent once any recipient receives them, so a copy one recipient lost while
-another got it is neither retried nor queued for review (#4669).
+Three unmuteable admin alerts are retried by their owner when nobody received
+them (`isCallerRetriedAlertTemplate`): the settlement-figure alert by its marker
+(#4446), and the unrecognised and unmatched Stripe payment alerts (#4647,
+`INV-INT-032`, `INV-INT-033`) by Stripe's redelivery, after the delivery gives
+its once-ever claim back and fails the webhook. They keep their bodies, so the
+retry is split by who received the alert (#4669):
+
+```text
+some recipient got it -> owner sees sent -> each lost copy's FAILED row replayed by the cron
+nobody got it -> attempt's FAILED rows lose their body (one transaction) -> owner retries
+nobody got it, cron already claimed a copy -> release rolls back -> cron replays every copy, owner keeps its claim
+```
+
+The release runs before the sender returns, so before the owner can retry,
+and normally long before the cron's 15-minute backoff lets it select the rows.
+A send that hangs past that is the race: the release and the cron's guarded
+claim each take the row lock, so exactly one wins each row, and a copy the
+cron won rolls the whole release back. Dropping the body rather than writing
+the retry ceiling keeps these rows out of the email-failure review queue: their
+owner is already re-sending them. A release that fails outright leaves the
+owner to retry, the one way a copy can go out twice, chosen over losing it.
+Pinned by `caller-retried-alert-replay.test.ts` and, against a real database,
+`caller-retried-alert-release.realdb.test.ts`.
+
+The Stripe webhook fails even when the claim give-back fails: the delivery
+gives back its own claim, by its exact stamp, again. A sent alert whose
+`alertedAt` write fails keeps its claim and a sent marker, so the event
+completes and no redelivery sends it again (#4670).
 
 To verify: retry backoff, suppression handling, durable recipient identity,
 direct/inherited mailbox drift, revoked-authority fail-closed behavior,
@@ -4281,8 +4298,10 @@ send succeeds -> alertSentAt set; send fails three times -> Stuck States, no mor
 ```
 
 The counter is optional in the existing JSON snapshot (old markers read as zero).
-This template does not retain EmailLog HTML: the marker owns retries, so the email
-retry cron cannot send extra copies outside its cap.
+The marker retries a send nobody received; its rows lose their body first, so
+the email retry cron cannot send extra copies outside its cap. A copy one
+recipient lost while another got it counts as sent here and is replayed by the
+email retry cron instead (#4669, Email Retry Lifecycle).
 Failure counts use a conditional snapshot write so a late failed sender cannot
 erase another sender's sent stamp. No schema migration, money transition or
 additional lock is involved. As before,

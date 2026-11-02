@@ -3955,14 +3955,17 @@ _Split from `INV-PAY-057` (#3220)._
 - **Never silent.** A kept figure, or cash disagreeing with
   `bookingAmountOwedCents` beyond what supplementary invoices bill, writes an
   admin-only marker in the settle's transaction (`SETTLEMENT_MARKERS`) and sends
-  an unmuteable alert after commit, recorded once sent. The cancel arms alert
+  an unmuteable alert after commit, recorded once sent. The marker retries a
+  send nobody received; the email retry cron, one recipient's lost copy
+  (#4446, #4669). The cancel arms alert
   themselves: their credit's face is the receipt, and a mixed invoice is
   measured against its total less the member's own applied credit and any
   applied correction or no-cash note, which moved no cash (#4095).
 - `pnpm run payments:audit-ib-settled-cash` lists receipts differing from the
   recorded cash, and refunded totals beyond the rows.
 - Pinned by `settle-from-cash.test.ts`, `xero-inbound-reconciliation.test.ts`,
-  `ib-settled-cash-audit.test.ts` and `ib-settle-from-cash.realdb.test.ts`.
+  `ib-settled-cash-audit.test.ts`, `caller-retried-alert-replay.test.ts` and
+  `ib-settle-from-cash.realdb.test.ts`.
 
 ## INV-PAY-126
 
