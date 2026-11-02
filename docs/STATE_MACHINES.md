@@ -816,15 +816,26 @@ reduction edit, under the door's locks
          cancelled at Stripe (`abandoned`, best-effort, after its claim hold's
          transaction ended; logged as `reissued-ask.abandoned-intent-cleanup`;
          #4631), as it is when a stale reclaim's runner closed the recovery
-         SUCCEEDED with another intent or none (#4652); a recovery reset,
-         PENDING, FAILED or still claimed (even by a runner that already wrote
-         another intent), or an intent it adopted by matching (#4036), keeps it
+         SUCCEEDED with another intent or none (#4652), or failed it for good
+         (#4693); a recovery reset, PENDING, FAILED with a retry left or still
+         claimed (even by a runner that already wrote another intent), or an
+         intent it adopted by matching (#4036), keeps it
        a claim hold that THREW (sizing moved under its locks, or a write
          failed) -> rolled back, nothing written; the same proof, then the
          error reaches the retry: a row still its own keeps the intent,
-         logged `left-open` (an adopted one `adopted`) (#4676); a later
-         net-off or fold of the unclaimed row, or a terminal failure, also
-         leaves it, as nothing re-reads that row (#4693)
+         logged `left-open` (an adopted one `adopted`) (#4676)
+       the row ENDS later -> its close-time sweep (#4693): a later attempt's
+         close (not the row's first), the edit that netted it off or folded
+         it in (after commit, from its history; rows a runner had claimed),
+         or the failure that ends it for good lists the recent intents
+         carrying the row's own marker - a release's `creditReleaseId`, a
+         re-issue's `reissuedAskKey`, or the `askRecoveryId` the runner
+         stamps on its own ordinary intent after minting - and cancels each
+         the row does not name by the same proof and owner check; a bounded
+         scan that stops early (`complete: false`) settles only what it read
+         and logs `sweep-incomplete`. Never swept: an unmarked intent (the
+         door's own, never handed to the runner, or one minted before
+         #4693), an adopted one, and a review charge's (it can be re-armed)
        a stalled runner's close -> fenced on its own claim (PROCESSING,
          attempts, claim time), so it never closes a row a reclaiming runner
          holds; that runner's ask is written (#4675)
@@ -2382,15 +2393,20 @@ inbound fence records its conflict the same way, under the
                                (`abandoned`, best-effort, after the hold's transaction; logged
                                as `reissued-ask.abandoned-intent-cleanup`) only once the
                                reclaiming runner closed the row SUCCEEDED without it and no row
-                               or recovery names it; a row still claimable or claimed, or failed
-                               for good, keeps it: a retry may mint under the same key and get
-                               it back, otherwise it stays open, never offered (#4652, INV-PAY-120)
+                               or recovery names it, or the row failed for good (#4693); a row
+                               still claimable or claimed keeps it: a retry may mint under the
+                               same key and get it back (#4652, INV-PAY-120)
   claim hold threw mid-mint (sizing or the merge moved under its locks, or a write failed): nothing
                                written; the intent takes the lost hold's proof before the error
                                reaches the retry, so a row still this attempt's keeps it (logged
-                               `left-open`) and one since closed SUCCEEDED without it lets it go;
-                               a throw on the final attempt fails the row for good and leaves it,
-                               as nothing re-reads that row (#4676, #4693, INV-PAY-120)
+                               `left-open`) and one since closed SUCCEEDED without it lets it go
+                               (#4676, INV-PAY-120)
+  row ends after a hold left its intent: the retry that closes the row with another intent, or
+                               the failure that ends it for good, sweeps it - lists the recent
+                               intents carrying this release's `creditReleaseId` and cancels each
+                               the row does not name, once, by the same proof and owner check,
+                               outside every transaction; a bounded scan that stops early settles
+                               only what it read (#4693, INV-PAY-120)
   stale close lost (the attempt read nothing owed, then its row was reaped and reclaimed by a runner
                                that minted): its close is fenced on its own claim and matches nothing,
                                so it writes no audit row and alerts nobody; the reclaiming runner's

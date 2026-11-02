@@ -2791,7 +2791,7 @@ _Legacy: settles tasks raised before #4317._
   (#3954, owner decisions of 8-10 Oct 2026), card-paid and credit-paid alike, at
   every reduction door: cancelled when covered, else re-issued smaller; only
   the rest is refunded, credited or given back by `INV-MOD-011`'s tier, and the
-  offset is untiered. Each door reads the ask once
+  offset is untiered. Read once per door
   (`readReductionAgainstUnpaidAsk`).
 - **Retired in the edit's transaction** (`retireUnpaidAskChain`): waiting
   recoveries closed first, then unpaid rows FAILED and `withdrawnAt` behind an
@@ -2800,24 +2800,25 @@ _Legacy: settles tasks raised before #4317._
   refunded in full. It writes the re-issue's recovery and billed-offset note.
   An orphaned Stripe intent (#4052) is cancelled, best-effort, unless a
   row, recovery or live claim may own it; a lost or throwing hold's (#4631,
-  #4652, #4676) once its recovery closed without it. The runner's close is
-  claim-fenced (`completePaymentRecoveryOperation`, #4675). One uncancellable is logged.
+  #4676) once its recovery closed or failed for good without it, found by
+  the row's marker (#4693). Runner closes are claim-fenced (#4675). One
+  uncancellable is logged.
 - **A declined card stays live** (#4052).
 - **Asks awaiting a failed mint's retry** count, sized as the replay would. A
   retry claimed within two minutes refuses the edit; an older claim is closed.
   A later increase folds a waiting re-issue in, recording it so its replay
-  asks for it again. Both minters send one Stripe request
+  asks for it again. Both minters send one request
   (`planReissuedAskMint`).
 - **Only the member's price asks.** An officer's review charge is never set
   against. Nor is a financial review's settled refund share: paid as the
-  officer decided, the ledger census reporting the booking if the member
-  pays the ask.
+  officer decided, reported by the ledger census if the member pays the
+  ask.
 - **Xero** (`splitUnpaidAskOffsetForXero`). The smaller ask gets its own
   supplementary invoice for what the retired asks' invoices left after the
   offset. The rest of the offset, where evidence shows the primary invoice
   billed it (`unpaidAskBillingEvidence`), takes a scoped invoice-correction
-  note, raised after the edit's own note; otherwise the repair pass reports it
-  for a person.
+  note, raised after the edit's own note; otherwise the repair pass reports
+  it.
 
 ## INV-PAY-121
 

@@ -3552,9 +3552,11 @@ release and minted only by that recovery's runner, and no refused replay adopts
 its reason (`isIntentForOrdinaryAskPlan`), so once closed nothing records its
 intent and its owner-check gap is empty. Accepted window, a stated limit: a
 recovery still claimed, even by a runner that already wrote another intent,
-handed back to retry, or failed for good, keeps the stale attempt's intent - a credit-release retry
+or handed back to retry, keeps the stale attempt's intent - a credit-release retry
 re-sizes and may mint under the same key, and Stripe answers with that intent.
-It stays open, never offered, logged under the cleanup event. Reads and one
+It stays open, never offered, logged under the cleanup event, until the row
+ends and its close-time sweep settles it; a row failed for good is now a proof
+too (#4693). Reads and one
 provider call only, after the hold's transaction: no lock, key, participant or
 order changes. Proven on real Postgres through the credit-release writers.
 #4675: the runner's SUCCEEDED close (`completePaymentRecoveryOperation`) was
@@ -3585,9 +3587,8 @@ reopens a closed row). An adopted intent is still never cancelled, and is
 logged `adopted`, never `left-open`: another edit's ask may hold it. Stated
 limit: the re-read usually finds the row still this attempt's, which proves
 nothing, so the intent stays open, never offered, logged `left-open` under the
-cleanup event; a retry may record it, or mint another and leave it. A later
-net-off or fold of the unclaimed row, before its retry, or a terminal failure
-also leaves it: nothing re-reads that row again (#4693). Rejected
+cleanup event; a retry may record it, or mint another and leave it - which the
+row's close-time sweep (#4693, below) settles once the row ends. Rejected
 proof: "the next mint's amount-suffixed key differs". Sizing moves both ways
 (an increase, a reduction, Xero's amount due), and a later retry back at this
 figure replays the key inside Stripe's 24-hour window, Stripe answering with
@@ -3596,6 +3597,24 @@ proves the intent terminal. Reads and one provider call, after the hold's
 transaction: no lock, key, participant or order changes. Proven on real
 Postgres: the retry back at the figure records the kept intent
 (`credit-release-merge-into-edit.realdb.test.ts`).
+#4693: once the row ENDS - a later attempt closes it with another intent, a
+reduction nets it off, an increase folds it in, or it fails for good - its
+close-time sweep (`sweepAbandonedAskIntents`) lists the recent intents carrying
+the row's own marker (`creditReleaseId`, `reissuedAskKey`, or the
+`askRecoveryId` the runner stamps on its own ordinary intent by a metadata
+update after the mint, never in the create its replay must repeat) and settles
+each the row does not name by the same proof (`closedWithoutIntent`, which now
+also takes a row failed for good: no claim, door or reduction reaches it again)
+and owner check. Classification (`INV-LOCK-001`..`003`): the sweep, the stamp
+and the history read are reads and provider calls only, run after the runner's
+attempt has returned, after the edit's commit (`createModificationAdditionalPaymentIntent`),
+or after the terminal failure's status write - never inside a transaction; it
+takes no lock, key or tier, and changes no participant or order. A cancel racing
+a writer is the same owner-check window #4652 already states. Reconciled with
+#4652 (PR #4674), #4675 (PR #4689) and #4676 (PR #4694). Proven on real
+Postgres for the credit release and the runner's re-issue
+(`credit-release-merge-into-edit.realdb.test.ts`,
+`additional-ask-reduction.realdb.test.ts`).
 Round 6: the retire closes waiting recoveries before it stamps the rows - the
 runner's own order (its claim hold writes the recovery, then its row; since
 #4217 both take the `Payment` row before either) - and a

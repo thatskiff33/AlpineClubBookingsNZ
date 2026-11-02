@@ -21,9 +21,9 @@
  *
  * The sweep lists the recent intents that carry the row's own marker - which no
  * other row's intent carries - and settles each one the row does not name by
- * the lost hold's proof (`closedWithoutIntent`, `recoveryEndedBy`) and its owner check and cancel
- * (`cancelAbandonedReissuedAskIntent`): nothing new decides what may be
- * cancelled. The markers:
+ * the lost hold's proof (`closedWithoutIntent`, `recoveryEndedBy`) and its
+ * owner check and cancel (`cancelAbandonedReissuedAskIntent`): nothing new
+ * decides what may be cancelled. The markers:
  *
  * - a credit-release ask's `creditReleaseId` (`processCreditReleaseAskOperation`);
  * - a re-issue's `reissuedAskKey`, its key bare or naming the intent's own amount

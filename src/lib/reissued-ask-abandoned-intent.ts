@@ -27,8 +27,10 @@
  * Such an intent is cancelled at Stripe here, best-effort, with Stripe's
  * `abandoned` reason, after the door's transactions have committed - and only
  * on proof that nothing else owns it: no payment row and no recovery names it.
- * A failed read proves nothing and cancels nothing. Anything else (FAILED,
- * still PENDING) is left. The outcome is logged under one event name
+ * A failed read proves nothing and cancels nothing. #4693: a recovery that
+ * failed for good is the same proof - nothing claims, writes or nets it off
+ * again. Anything else (FAILED with a retry left, still PENDING) is left. The
+ * outcome is logged under one event name
  * (`ABANDONED_REISSUE_INTENT_LOG_EVENT`) so an operator can find an intent this
  * left; nothing is written locally - no transaction row is invented for it, and
  * an intent Stripe no longer lets us cancel (already cancelled, or captured) is
@@ -53,7 +55,7 @@
  * the close that precedes a lost hold is a net-off, a fold or the reclaiming
  * runner's own. Anything else - a recovery reset, or reclaimed by a
  * runner still PROCESSING (even one that wrote another intent), PENDING or
- * FAILED - may yet record it, and is left. So is an intent the runner ADOPTED
+ * FAILED with a retry left - may yet record it, and is left. So is an intent the runner ADOPTED
  * by matching (#4036) rather than minted under its own key: it is not the
  * runner's own, and another edit's stalled door or recovery may still record it
  * under that edit's key, which the owner check cannot see.
@@ -66,6 +68,11 @@
  *
  * #4676: either runner's hold that THROWS, rather than loses, takes the same
  * proof before it rethrows; a row it leaves claimed keeps the intent.
+ *
+ * #4693: whatever such a settle leaves is picked up when the row ends, by the
+ * close-time sweep (`abandoned-ask-intent-sweep.ts`), which settles each intent
+ * the row's marker names through `closedWithoutIntent` and the owner check and
+ * cancel here (`cancelAbandonedReissuedAskIntent`).
  */
 import { PaymentRecoveryOperationStatus } from "@prisma/client";
 
