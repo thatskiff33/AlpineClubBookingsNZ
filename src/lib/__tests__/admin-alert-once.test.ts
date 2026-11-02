@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   claimAlertCooldown: vi.fn<(args: { key: string; windowMs: number; now: Date }) => Promise<boolean>>(),
-  releaseAlertCooldown: vi.fn(async (_args: { key: string; claimedAt: Date }) => {}),
+  releaseAlertCooldown: vi.fn<(args: { key: string; claimedAt: Date }) => Promise<void>>(async () => {}),
   deferAlertCooldown: vi.fn(async () => {}),
 }));
 
