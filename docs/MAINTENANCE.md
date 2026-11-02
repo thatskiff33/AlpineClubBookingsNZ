@@ -2700,6 +2700,22 @@ Limit: if the app stops between deciding not to record the note and writing
 its audit entry, the app's log is the only record of it; if the email cannot
 reach anyone, it is not sent again, and the audit entry and the log remain.
 
+The job can also stall after it has recorded its note, while it allocates the
+waiver or records the refund payment (#4680). After **Reset stale running**,
+the stalled job no longer allocates or pays out when it comes back: it checks
+first that the job is still its own, and stops if not. It records nothing on
+the job and leaves it as it stands, and the audit log gets one Xero entry. If
+you did nothing else, the job stays failed with its note: **Retry** finishes
+from that note. If you pressed **Retry**, the retry finishes from it. If you
+resolved the job by hand, the finance contacts also get one **Xero Sync
+Error** email naming the note: it is in Xero, but the app did not allocate it
+or pay against it. Check it in Xero before voiding it, in case the adjustment
+was also made by hand.
+
+Limit: a Xero call already under way when you reset can still finish. If it
+does, the job shows as succeeded, and if you had resolved it, the **Xero Sync
+Error** email says a success landed after the resolve.
+
 There is no undo on the panel. If you marked one by mistake, fix the Xero side
 by hand, or use **Targeted force sync** for that one booking's invoice: it
 raises the invoice anyway, and its audit entry records that it overrode the

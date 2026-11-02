@@ -4009,7 +4009,9 @@ Waivers start `PENDING`; refund notes start `WAITING_PAYMENT` and become
 worker claims `RUNNING` before provider work and completes under that claim.
 A run that stalls past Reset stale running still records its credit note,
 re-taking a FAILED row under a fresh claim or leaving a re-queued one to its
-queued run, and is otherwise traced, never lost (#4655, below).
+queued run, and is otherwise traced, never lost (#4655, below). A run that
+loses its claim after recording its note makes no further allocation or
+payout (#4680, below).
 A full release of an invoice with no payment or credit voids it; any other
 release allocates a credit note. A still-queued extra invoice a release covers
 whole goes from `PENDING`, `WAITING_PAYMENT` or `FAILED` to `SKIPPED` and is
@@ -4162,6 +4164,17 @@ RUNNING -> Reset stale running -> FAILED, then the organiser adjustment's
   RUNNING claim, another note recorded, closed): nothing written, the run
   returns without failing the row; the same note -> nothing more; any other ->
   one `xero` audit row and one XERO_SUCCESS_AFTER_RESOLUTION alert naming it
+RUNNING (the organiser adjustment's note recorded on its own claim) -> Reset
+  stale running -> FAILED while the run waits on Xero, then perhaps Resolve or
+  Retry or a later claim (#4680, `INV-INT-034`): before each resize,
+  allocation, settlement, refund payment, or completion with nothing
+  allocated, the run reads the row RUNNING under its own claim
+  (`holdsXeroOperationClaim`); lost -> no Xero call, no outcome written, the
+  run counted skipped and the row left as it stands (FAILED, resolved or not;
+  PENDING for its queued run; RUNNING for the later claim), one `xero` audit
+  row, and on a row resolved by hand one XERO_SUCCESS_AFTER_RESOLUTION alert
+  naming the note. A call already in flight when the claim is lost completes
+  as any success does (`INV-INT-029`)
 credit-note allocation refused by Xero as more than the note has left (#4218)
   -> FAILED with code CREDIT_NOTE_SPENT_OUTSIDE_APP when a read of the note
   afterwards CONFIRMS it was spent outside the app. Xero's refusal is the

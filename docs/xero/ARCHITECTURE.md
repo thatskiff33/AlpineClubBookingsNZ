@@ -4440,6 +4440,23 @@ payment after an officer took the adjustment over. Limits: a retry running when
 the note returns may record that same note through Xero's idempotency key, so
 the alert asks for a comparison before voiding; a process dying before the
 audit row leaves the warning only.
+A run that recorded its note on its own claim can still stall in a later Xero
+call past the stale threshold, be reset, and have its row resolved or queued
+again by an officer, or taken by a later claim (#4680, `INV-INT-034`). So
+immediately before each money-moving call after the record - the waiver's
+resize and allocation, the refund note's settlement and, inside it
+(`beforePayment`), its refund payment, and a completion with nothing left to
+allocate - the run reads its row status-guarded on its claim
+(`holdsXeroOperationClaim`: RUNNING under the claim's `startedAt`). A run that
+lost it calls nothing, writes no outcome (the outbox counts it skipped) and
+is traced (`traceOrganiserRunStoodDown`): a warning, one `xero` audit row
+(`xero.organiser_adjustment_note.run_stood_down`), and, only on a row resolved
+by hand, #4374's alert once per note; elsewhere the row still records the note
+and its Retry, queued run or later claim finishes from it. The window narrows
+to the one call in flight; it cannot close. A call that completes in Xero
+after the claim is lost is a real success, so its completion lands as
+`INV-INT-029` lands any success on a row no claim holds, alerted on a resolved
+row, rather than being dropped.
 Inbound extra receipts retain the original paid share and add actual cash once;
 a reversal of cash already partly refunded records nothing and raises one
 non-replayable review row in Xero Operations instead of failing the event. Once
