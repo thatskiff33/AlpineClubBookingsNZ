@@ -365,6 +365,8 @@ vi.mock("@/lib/payment-transactions", async (importOriginal) => ({
   planStripeRefundAllocation: mockPlanStripeRefundAllocation,
   // #4359: the preflight's no-plan fallback and the executor share this pure filter.
   capturedStripeTransactions: ((await importOriginal()) as typeof import("@/lib/payment-transactions")).capturedStripeTransactions,
+  // #4699 review: the superseded refund is sized through this pure headroom fold.
+  refundHeadroomIncrementCents: ((await importOriginal()) as typeof import("@/lib/payment-transactions")).refundHeadroomIncrementCents,
   // #4217: the runner's claim hold locks the Payment row before the recovery row.
   lockPaymentForRefundedTotal: (...args: unknown[]) => mockLockPaymentForRefundedTotal(...args),
   markPaymentIntentTransactionFailed: (...args: unknown[]) => mock4316.markFailed(...args),
