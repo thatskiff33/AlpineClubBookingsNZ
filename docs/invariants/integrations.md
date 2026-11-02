@@ -548,6 +548,34 @@ Pinned by `xero-resolve-refund-note.test.ts`,
 `xero-late-refund-note-after-resolve.realdb.test.ts`,
 `xero-refund-note-record-gaps.realdb.test.ts`.
 
+### INV-INT-035
+
+While Xero holds a payment refund note the app could not record, no other
+refund note on that payment is sized or raised until an officer resolves it
+by hand (#4688).
+
+- **The mark is on the row.** A record that loses its wait (`INV-INT-028`,
+  #4656) stamps its own create row `REFUND_NOTE_UNRECORDED`, row-only and
+  status-guarded: its RUNNING claim, or the FAILED row Mark failed left; never
+  a resolved row or one naming a note. The note itself is written nowhere.
+- **One predicate fences.** `unrecordedRefundNoteOperationWhere`
+  (`xero-refund-note-in-flight.ts`): stamped, unresolved, naming no note,
+  whatever its status or age. Every refund-note create waits on it before
+  sizing (busy error, back to PENDING); Retry, Requeue and Retry all refuse
+  the payment's refund-note creates; the nightly self-heal queues none.
+- **Only a resolve lifts it.** The resolve's claim sets `manuallyResolvedAt`;
+  a withdrawn resolve restores the fence. Mark failed and Reset stale running
+  keep the code.
+- **Limits.** Until the stamp lands the row holds others back only as a live
+  claim (#3880). A stamp that fails is logged, and the alert says nothing
+  holds later notes back.
+
+Pinned by `xero-refund-note-in-flight.test.ts`,
+`xero-late-refund-note-record.test.ts`, `xero-refund-note-crash-window.test.ts`,
+`xero-operation-queue.test.ts`, `xero-operation-routes.test.ts`,
+`cron-credit-reconciliation.test.ts` and, against real PostgreSQL,
+`xero-unrecorded-refund-note-fence.realdb.test.ts`.
+
 ## One outcome per Xero operation row (#4356)
 
 ### INV-INT-029
