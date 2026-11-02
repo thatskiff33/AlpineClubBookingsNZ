@@ -205,7 +205,7 @@ export function logDeliveredTransport(params: {
 
 // Token-bearing emails should never persist their rendered HTML in logs or retry
 // tables because that would retain live reset/verification links at rest.
-const SENSITIVE_EMAIL_LOG_TEMPLATES = new Set([
+export const SENSITIVE_EMAIL_LOG_TEMPLATES: ReadonlySet<string> = new Set([
   "password-reset",
   "admin-password-reset",
   "member-setup-invite",
@@ -235,7 +235,7 @@ const SENSITIVE_EMAIL_LOG_TEMPLATES = new Set([
 
 // Failure-alert emails should also skip HTML retention so a broken admin
 // mailbox or SMTP path cannot recurse into retrying the retry-failure alert.
-const NON_RETRYABLE_EMAIL_LOG_TEMPLATES = new Set([
+export const NON_RETRYABLE_EMAIL_LOG_TEMPLATES: ReadonlySet<string> = new Set([
   ...SENSITIVE_EMAIL_LOG_TEMPLATES,
   // The hosting incident/outbox is the retry authority for this message. Keeping
   // a second EmailLog retry authority could replay a successful incident send.
@@ -243,23 +243,23 @@ const NON_RETRYABLE_EMAIL_LOG_TEMPLATES = new Set([
   "admin-email-failure",
 ]);
 
-export function shouldPersistEmailHtml(templateName: string): boolean {
-  return !NON_RETRYABLE_EMAIL_LOG_TEMPLATES.has(templateName);
-}
-
 /**
  * Unmuteable admin alerts whose OWNER sends them again when no recipient
  * received them (#4669): the settlement marker (#4446), and Stripe's redelivery
  * for the two Stripe payment alerts (#4647, `INV-INT-032`, `INV-INT-033`).
  *
- * They keep their bodies, so the email retry cron replays the one copy a
- * recipient lost while another got it - the owner sees "sent" and never
- * retries that case. When nobody got it, `sendUnmuteableAdminAlert` releases
- * that attempt's bodies before it returns (`caller-retried-alert.ts`), so the
- * owner's retry is the only one. One set read by both halves, so retention and
- * release cannot drift apart.
+ * They always keep their bodies (`shouldPersistEmailHtml` reads this set first),
+ * so the email retry cron replays the one copy a recipient lost while another
+ * got it - the owner sees "sent" and never retries that case. When nobody got
+ * it, `sendUnmuteableAdminAlert` releases that attempt's bodies before it
+ * returns (`caller-retried-alert.ts`), so the owner's retry is the only one.
+ * Retention and release both read this one set, so they cannot drift apart.
+ *
+ * Never add a template from the two sets above: a token-bearing body would be
+ * kept at rest, and a non-retryable one would gain a second retry owner.
+ * `email-sensitive-log.test.ts` holds the sets disjoint.
  */
-const CALLER_RETRIED_ALERT_TEMPLATES: ReadonlySet<string> = new Set([
+export const CALLER_RETRIED_ALERT_TEMPLATES: ReadonlySet<string> = new Set([
   "admin-bank-transfer-settlement-figure",
   "admin-unrecognised-stripe-payment",
   "admin-unmatched-app-stripe-payment",
@@ -267,4 +267,15 @@ const CALLER_RETRIED_ALERT_TEMPLATES: ReadonlySet<string> = new Set([
 
 export function isCallerRetriedAlertTemplate(templateName: string): boolean {
   return CALLER_RETRIED_ALERT_TEMPLATES.has(templateName);
+}
+
+/**
+ * Whether `sendEmail` keeps this template's rendered body for the email retry
+ * cron. A caller-retried alert always does: without one, a copy one recipient
+ * lost could never be replayed, and an environment fault would write its row
+ * straight to the retry ceiling and the review queue (#4669).
+ */
+export function shouldPersistEmailHtml(templateName: string): boolean {
+  if (isCallerRetriedAlertTemplate(templateName)) return true;
+  return !NON_RETRYABLE_EMAIL_LOG_TEMPLATES.has(templateName);
 }

@@ -22,6 +22,11 @@ import { matchesWhere } from "./support/prisma-where";
  * `retryFailedEmails`. The doubles are the store (in-memory tables filtered by
  * the shared `matchesWhere`, with a transaction that rolls back on a throw),
  * the transport (fails per recipient, counts what went out), and settings.
+ *
+ * What it cannot model: a cron run that READ a row before the release and
+ * claims it after. This store runs each statement whole, with no row locks, so
+ * that interleaving needs PostgreSQL; `caller-retried-alert-release.realdb.test.ts`
+ * forces both orders there.
  */
 type Row = Record<string, unknown> & { id: string };
 
@@ -40,6 +45,8 @@ const state = vi.hoisted(() => ({
   hang: null as null | { to: string; until: Promise<void> },
   /** The next transaction throws before it runs, as a database fault would. */
   transactionFails: false,
+  /** False makes `sendEmail` keep no body, as for a recipient it redacts in logs. */
+  persistBodies: true,
 }));
 
 function emailLogDelegate(store: Map<string, Row>) {
@@ -196,27 +203,31 @@ vi.mock("@/lib/email/admin-alert-xero-links", () => ({
   stampXeroOrganisation: async (url: string | null) => url,
 }));
 
-/** The transport: fails for `failFor`, holds a `hang` recipient, counts every message that goes out. */
-vi.mock("@/lib/email/internal", async (importOriginal) => ({
-  ...((await importOriginal()) as typeof import("@/lib/email/internal")),
-  getEmailTransporter: async () => ({
-    transporter: {
-      sendMail: async (message: { to: string }) => {
-        if (state.hang?.to === message.to) {
-          const { until } = state.hang;
-          state.hang = null;
-          await until;
-          throw new Error("SMTP timed out");
-        }
-        if (state.failFor.has(message.to)) throw new Error("SMTP throttled");
-        state.delivered.push(message.to);
-        return { messageId: `msg_${state.delivered.length}` };
+/** The transport: fails for `failFor`, holds a `hang` recipient, counts every message that goes out; `persistBodies` gates retention. */
+vi.mock("@/lib/email/internal", async (importOriginal) => {
+  const actual = (await importOriginal()) as typeof import("@/lib/email/internal");
+  return {
+    ...actual,
+    shouldPersistEmailHtml: (templateName: string) => state.persistBodies && actual.shouldPersistEmailHtml(templateName),
+    getEmailTransporter: async () => ({
+      transporter: {
+        sendMail: async (message: { to: string }) => {
+          if (state.hang?.to === message.to) {
+            const { until } = state.hang;
+            state.hang = null;
+            await until;
+            throw new Error("SMTP timed out");
+          }
+          if (state.failFor.has(message.to)) throw new Error("SMTP throttled");
+          state.delivered.push(message.to);
+          return { messageId: `msg_${state.delivered.length}` };
+        },
       },
-    },
-    modeLabel: "test",
-  }),
-  logDeliveredTransport: () => {},
-}));
+      modeLabel: "test",
+    }),
+    logDeliveredTransport: () => {},
+  };
+});
 
 vi.mock("@/lib/email-message-settings", async (importOriginal) => {
   const settings = {
@@ -269,6 +280,7 @@ vi.mock("@/lib/logger", () => ({ default: { info: vi.fn(), warn: vi.fn(), error:
 
 import { retryFailedEmails } from "@/lib/cron-email-retry";
 import { sendUnmuteableAdminAlert } from "@/lib/email/admin-alerts-shared";
+import { releaseUnreceivedAlertCopies } from "@/lib/email/caller-retried-alert";
 import { IB_SETTLEMENT_FIGURE_CHECK_EVENT_KIND } from "@/lib/manual-settlement-reversal-event";
 import {
   recordUnmatchedAppStripePayment,
@@ -385,6 +397,7 @@ describe("a caller-retried admin alert has one retry owner per lost copy (#4669)
     state.failFor = new Set();
     state.hang = null;
     state.transactionFails = false;
+    state.persistBodies = true;
     vi.stubEnv("NODE_ENV", "production");
     vi.stubEnv("NEXTAUTH_URL", "https://bookings.example.test");
     declareEnvironmentRole("production");
@@ -532,5 +545,67 @@ describe("a caller-retried admin alert has one retry owner per lost copy (#4669)
     expect(deliveredTo()).toEqual([]);
     await owner.retry();
     expect(deliveredTo()).toEqual([DEPUTY, TREASURER].sort());
+  });
+  it("reads an environment fault written at the retry ceiling with no body as no cron claim, so the owner still retries", async () => {
+    const owner = OWNERS[1];
+    // A copy kept with no body (a recipient redacted in logs, say), held back as
+    // a fault: the gate writes it straight to the retry ceiling.
+    state.persistBodies = false;
+    undeclareEnvironmentRole();
+    await owner.deliver();
+
+    const rows = alertRows(owner.template);
+    expect(rows).toHaveLength(2);
+    for (const row of rows) {
+      expect(row).toEqual(expect.objectContaining({ status: "FAILED", htmlBody: null, attempts: 3 }));
+      expect(row.deliveryBlockReason).not.toBeNull();
+    }
+    // Not "the cron holds a copy": the sender said undelivered and the owner kept no claim.
+    expect(owner.kept()).toBe(false);
+
+    state.persistBodies = true;
+    declareEnvironmentRole("production");
+    at(16);
+    await retryFailedEmails();
+    expect(deliveredTo()).toEqual([]);
+    await owner.retry();
+    expect(deliveredTo()).toEqual([DEPUTY, TREASURER].sort());
+    expect(owner.kept()).toBe(true);
+  });
+
+  it("the sender reports a total failure at the ceiling as undelivered, not queued for retry", async () => {
+    state.persistBodies = false;
+    undeclareEnvironmentRole();
+    const outcome = await sendUnmuteableAdminAlert({
+      subject: "A Stripe payment the app did not create",
+      html: "<p>unrecognised</p>",
+      templateName: "admin-unrecognised-stripe-payment",
+      requirement: { area: "finance", level: "edit" },
+    });
+    expect(outcome).toBe("undelivered");
+  });
+
+  it("counts the cron's claim of an environment-withheld copy while its send is in flight, whose block reason the claim leaves set", async () => {
+    const seed = (id: string, extra: Record<string, unknown>) =>
+      state.emailLogs.set(id, {
+        id,
+        to: TREASURER,
+        templateName: "admin-unrecognised-stripe-payment",
+        status: "FAILED",
+        attempts: 1,
+        htmlBody: `<p>alert ${id}</p>`,
+        bookingRetryHtmlBody: null,
+        deliveryBlockReason: "ENVIRONMENT_DECLARATION_MISSING",
+        errorMessage: "queued until the role is declared",
+        ...extra,
+      });
+    seed("email_claimed", { status: "QUEUED", attempts: 2 });
+    seed("email_sibling", { to: DEPUTY, deliveryBlockReason: null });
+
+    await expect(
+      releaseUnreceivedAlertCopies(["email_claimed", "email_sibling"], "admin-unrecognised-stripe-payment"),
+    ).resolves.toBe("cron-holds-a-copy");
+    expect(state.emailLogs.get("email_sibling")?.htmlBody).toBe("<p>alert email_sibling</p>");
+    expect(state.emailLogs.get("email_claimed")?.htmlBody).toBe("<p>alert email_claimed</p>");
   });
 });
