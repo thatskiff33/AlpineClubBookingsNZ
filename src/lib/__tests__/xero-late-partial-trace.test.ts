@@ -30,9 +30,10 @@ vi.mock("@/lib/xero-success-after-resolution-alert", async (importOriginal) => (
 
 import { afterLostClaimPartial, LATE_PARTIAL_NOT_RECORDED_ACTION, partialFaultSummary, traceLostClaimPartial } from "@/lib/xero-late-partial-trace";
 import { xeroClaim } from "./helpers/xero-claim";
+import { STRAY_INVOICE_AFTER_CLOSE_CODE, STRAY_INVOICE_AFTER_CLOSE_OPERATION_REASON } from "@/lib/subscription-charge-already-paid";
 
 const EARLIER = new Date("2026-06-30T23:00:00.000Z");
-const partial = { claim: xeroClaim("op_late", EARLIER), xeroObjectType: "INVOICE", xeroObjectId: "inv_late", xeroObjectNumber: "INV-9", fault: null };
+const partial = { claim: xeroClaim("op_late", EARLIER), xeroObjectType: "INVOICE", xeroObjectId: "inv_late", xeroObjectNumber: "INV-9", fault: null, linksRecorded: false };
 
 function row(fields: Partial<XeroSyncOperation> = {}): XeroSyncOperation {
   return {
@@ -196,11 +197,14 @@ describe("a part-success that lost its claim is traced, never recorded (#4686)",
       mocks.findUnique.mockResolvedValue(row({ status: "SUCCEEDED", xeroObjectId: "inv_late", startedAt: new Date("2026-07-01T00:40:00.000Z") }));
       await traceLostClaimPartial({ ...partial, fault: "invoice email: Xero 500: the email failed" });
       expect(mocks.audit).toHaveBeenCalledTimes(1);
-      expect(mocks.audit.mock.calls[0]![0].details).toContain("records the same item, but not the unfinished step");
+      // PR #4708 round 3: hedged - the other run may already have done the step (a subscription run emails).
+      expect(mocks.audit.mock.calls[0]![0].details).toContain("may not have redone the unfinished step: check in Xero whether it is done before doing it by hand");
       expect(mocks.alert).toHaveBeenCalledTimes(1);
       const message = mocks.alert.mock.calls[0]![2] as string;
       expect(message).toContain("It did not finish this: invoice email: Xero 500: the email failed.");
-      expect(message).toContain("records this same item (succeeded)");
+      expect(message).toContain("records this same item (succeeded) through another run, which may not have redone the step");
+      expect(message).toContain("check in Xero whether it is done before doing it by hand");
+      expect(message).not.toMatch(/did not redo|finish by hand/);
       expect(mocks.info).not.toHaveBeenCalled();
     });
 
@@ -239,10 +243,40 @@ describe("a part-success that lost its claim is traced, never recorded (#4686)",
       expect(summary).toBe("payment: [REDACTED]");
     });
 
-    it("names a subscription invoice raised after its charge closed", () => {
-      expect(partialFaultSummary({ responsePayload: { conflict: "STRAY_INVOICE_AFTER_CLOSE", invoice: {} } })).toBe(
-        "stray invoice to void (its charge closed while it was raised): STRAY_INVOICE_AFTER_CLOSE",
-      );
+    // PR #4708 round 3: keyed on the stray-invoice code itself, named by its operation reason, never the raw code.
+    it("MUTATION: names a subscription invoice raised after its charge closed by its own reason, and no other conflict", () => {
+      const summary = partialFaultSummary({ responsePayload: { conflict: STRAY_INVOICE_AFTER_CLOSE_CODE, invoice: {} } });
+      expect(summary).toBe(`stray invoice: ${STRAY_INVOICE_AFTER_CLOSE_OPERATION_REASON}`);
+      expect(summary).not.toContain(STRAY_INVOICE_AFTER_CLOSE_CODE);
+      expect(partialFaultSummary({ responsePayload: { conflict: "SOMETHING_ELSE" } })).toBeNull();
+    });
+  });
+
+  describe("PR #4708 round 3", () => {
+    it("MUTATION: a faulted part-success stops at a PARTIAL row recording its object, whose own outcome shows the step", async () => {
+      mocks.findUnique.mockResolvedValue(row({ status: "PARTIAL", xeroObjectId: "inv_late", startedAt: new Date("2026-07-01T00:40:00.000Z") }));
+      await traceLostClaimPartial({ ...partial, fault: "stray invoice: void it" });
+      expect(mocks.audit).not.toHaveBeenCalled();
+      expect(mocks.alert).not.toHaveBeenCalled();
+      expect(mocks.info).toHaveBeenCalledTimes(1);
+    });
+
+    it("MUTATION: refused for another run's RUNNING row, it says its links were recorded and another run holds the operation", async () => {
+      mocks.findUnique.mockResolvedValue(row({ status: "RUNNING", startedAt: new Date("2026-07-01T00:40:00.000Z") }));
+      await traceLostClaimPartial({ ...partial, fault: "invoice email: Xero 500", linksRecorded: true });
+      const details = mocks.audit.mock.calls[0]![0].details as string;
+      expect(details).toContain("Its links were recorded; another run holds the operation");
+      expect(details).not.toContain("did not record it");
+      const [, , message, warning] = mocks.alert.mock.calls[0]!;
+      expect(message).toContain("Its links were recorded, but its outcome was not written over the operation: another run holds it.");
+      expect(message).not.toContain("The app did not write it over the operation");
+      expect(warning).toContain("its links were recorded");
+    });
+
+    it("the hand-off marks a later-claim refusal as linked", async () => {
+      mocks.findUnique.mockResolvedValue(row({ status: "RUNNING" }));
+      await afterLostClaimPartial(partial.claim, { ...partial, responsePayload: { emailError: "smtp down" } }, false, true);
+      expect(mocks.audit.mock.calls[0]![0].details).toContain("Its links were recorded");
     });
   });
 });

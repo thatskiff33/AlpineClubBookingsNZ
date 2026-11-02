@@ -181,8 +181,9 @@ export async function refusedOutcomeWrite(
   if (caller.retryClaim) return null;
   if (lateSuccess && holdsRecordedXeroSuccess(status) && heldByAnotherClaim(row, claim)) {
     await lateSuccess.recordLinks();
-    // PR #4708 round 2: a part-success with an unfinished step is traced too (`afterLostClaimPartial`).
-    lateSuccess.lostClaim(true);
+    // PR #4708 round 2: a part-success with an unfinished step is traced too (`afterLostClaimPartial`);
+    // round 3: a part-success only - a full success left nothing unfinished.
+    if (status === "PARTIAL") lateSuccess.lostClaim(true);
     logger.warn(
       { operationId, status, xeroObjectId: lateSuccess.xeroObjectId, claimStartedAt: claim.startedAt, heldClaimStartedAt: row.startedAt },
       "Xero operation outcome not recorded on a later claim's RUNNING row; its Xero links were recorded (INV-INT-029)",
@@ -190,7 +191,8 @@ export async function refusedOutcomeWrite(
     return null;
   }
   // #4686: not this claim's row any more, and not its own better outcome (#1354): the object is recorded nowhere.
-  if (lateSuccess && holdsRecordedXeroSuccess(status) && !holdsOwnRecordedXeroSuccess(row, claim)) {
+  // PR #4708 round 3: gated on PARTIAL, as above (a SUCCEEDED is refused only on a later claim's RUNNING row).
+  if (lateSuccess && status === "PARTIAL" && !holdsOwnRecordedXeroSuccess(row, claim)) {
     lateSuccess.lostClaim(false);
     logger.warn(
       { operationId, status, xeroObjectId: lateSuccess.xeroObjectId, heldStatus: row.status, claimStartedAt: claim.startedAt, heldClaimStartedAt: row.startedAt },

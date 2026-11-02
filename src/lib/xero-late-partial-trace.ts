@@ -29,6 +29,7 @@ import type { XeroSyncOperation } from "@prisma/client";
 import { createAuditLog } from "@/lib/audit";
 import logger from "@/lib/logger";
 import { redactSensitiveText } from "@/lib/redact-sensitive-json";
+import { isStrayInvoiceAfterCloseOutcome, STRAY_INVOICE_AFTER_CLOSE_OPERATION_REASON } from "@/lib/subscription-charge-already-paid";
 import type { XeroRerunnableOperationStatus } from "@/lib/xero-active-operation-statuses";
 import { asRecord } from "@/lib/xero-json";
 import { traceLateXeroObject } from "@/lib/xero-late-note-trace";
@@ -46,6 +47,8 @@ export interface LostClaimPartial {
   xeroObjectNumber: string | null;
   /** PR #4708 review: what did not finish, redacted (`partialFaultSummary`), or null when the completion says nothing. */
   fault: string | null;
+  /** PR #4708 round 3: refused because another run holds the row RUNNING, its links recorded (review F1). */
+  linksRecorded: boolean;
 }
 
 /**
@@ -60,8 +63,6 @@ const PARTIAL_FAULT_KEYS = [
   ["invoiceEmailError", "invoice email"],
   ["emailError", "email"],
   ["invoiceEmailFailureCause", "invoice email cause"],
-  // PR #4708 round 2: a subscription invoice raised after its charge closed (`STRAY_INVOICE_AFTER_CLOSE_CODE`).
-  ["conflict", "stray invoice to void (its charge closed while it was raised)"],
 ] as const;
 
 /** The longest fault summary kept; a provider error body can be long. */
@@ -80,6 +81,8 @@ export function partialFaultSummary(completion: { responsePayload?: unknown; las
   const parts = PARTIAL_FAULT_KEYS.flatMap(([key, label]) =>
     payload[key] ? [`${label}: ${redactSensitiveText(faultText(payload[key]))}`] : [],
   );
+  // PR #4708 round 3: a subscription invoice raised after its charge closed, named by its own reason (`INV-SSOT`).
+  if (isStrayInvoiceAfterCloseOutcome(payload)) parts.push(`stray invoice: ${STRAY_INVOICE_AFTER_CLOSE_OPERATION_REASON}`);
   if (completion.lastErrorMessage) parts.push(redactSensitiveText(completion.lastErrorMessage));
   if (parts.length === 0) return null;
   const summary = parts.join("; ");
@@ -127,6 +130,7 @@ export async function afterLostClaimPartial(
     xeroObjectId: completion.xeroObjectId,
     xeroObjectNumber: completion.xeroObjectNumber ?? null,
     fault: partialFaultSummary(completion),
+    linksRecorded: laterClaimHolds,
   };
   if (laterClaimHolds && partial.fault === null) return;
   if (insideCallerTransaction) {
@@ -152,9 +156,10 @@ export async function traceLostClaimPartial(partial: LostClaimPartial): Promise<
     trace,
     notRecorded: "Part-success from Xero not recorded",
     issue: "#4686",
-    sameObject: "The late part-success is the object the operation records and names no unfinished step: nothing to record or alert (#4686)",
-    // PR #4708 round 2: an unfinished step is recorded nowhere, even when the row records the same object.
-    stopOnSameObject: partial.fault === null,
+    sameObject: "The late part-success is the object the operation records, with no unfinished step or one its PARTIAL outcome already shows: nothing to record or alert (#4686)",
+    // PR #4708 round 2: an unfinished step is recorded nowhere, even on a SUCCEEDED row recording the
+    // same object; round 3: but a PARTIAL row on that object already surfaces its own unfinished step.
+    stopOnSameObject: (row) => partial.fault === null || row.status === "PARTIAL",
     audit: async (row) => {
       const resolved = row ? isResolvedInXero(row) : false;
       await createAuditLog({
@@ -165,7 +170,7 @@ export async function traceLostClaimPartial(partial: LostClaimPartial): Promise<
         severity: "important",
         outcome: "blocked",
         summary: "Part-success from a stalled Xero job not recorded",
-        details: `A stalled Xero job came back after it lost its claim${row ? ` (the operation is now ${readableStatus(row.status)}${resolved ? ", resolved by hand" : ""})` : ""}, having only partly succeeded: it made ${partial.xeroObjectType ?? "an object"} ${partial.xeroObjectNumber ?? partial.xeroObjectId} in Xero${partial.fault ? `, and did not finish this: ${partial.fault}` : ""}. ${row?.xeroObjectId === partial.xeroObjectId ? "The operation records the same item, but not the unfinished step; finish it by hand." : "The app did not record it on the operation; check it in Xero."}`,
+        details: `A stalled Xero job came back after it lost its claim${row ? ` (the operation is now ${readableStatus(row.status)}${resolved ? ", resolved by hand" : ""})` : ""}, having only partly succeeded: it made ${partial.xeroObjectType ?? "an object"} ${partial.xeroObjectNumber ?? partial.xeroObjectId} in Xero${partial.fault ? `, and did not finish this: ${partial.fault}` : ""}. ${auditOutcome(partial, row)}`,
         metadata: {
           ...trace,
           rowFound: row !== null,
@@ -180,13 +185,27 @@ export async function traceLostClaimPartial(partial: LostClaimPartial): Promise<
       xeroObjectId: partial.xeroObjectId,
       xeroObjectNumber: partial.xeroObjectNumber,
     }),
-    alertMessage: (row, late) => lostClaimPartialMessage(row, late, partial.fault),
-    alertWarning: LOST_CLAIM_PARTIAL_WARNING,
+    alertMessage: (row, late) => lostClaimPartialMessage(row, late, partial),
+    alertWarning: partial.linksRecorded ? LINKED_PARTIAL_WARNING : LOST_CLAIM_PARTIAL_WARNING,
   });
 }
 
 const LOST_CLAIM_PARTIAL_WARNING =
   "Xero part-success arrived after its attempt lost its operation and was not recorded on it; Xero may now hold the item twice (INV-INT-029, #4686)";
+
+/** PR #4708 round 3: the warning when another run holds the operation and the links were recorded. */
+const LINKED_PARTIAL_WARNING =
+  "Xero part-success with an unfinished step arrived while another run holds its operation; its links were recorded, not its outcome (INV-INT-029, #4686)";
+
+/** The hedge every unfinished step carries: another run may already have done it (PR #4708 round 3). */
+const CHECK_BEFORE_REDOING = "check in Xero whether it is done before doing it by hand";
+
+/** The audit details' last sentence: what the app did with the object, and what to check. */
+function auditOutcome(partial: LostClaimPartial, row: XeroSyncOperation | null): string {
+  if (partial.linksRecorded) return `Its links were recorded; another run holds the operation and may or may not finish the step, so ${CHECK_BEFORE_REDOING}.`;
+  if (row?.xeroObjectId === partial.xeroObjectId) return `The operation records the same item through another run, which may not have redone the unfinished step: ${CHECK_BEFORE_REDOING}.`;
+  return "The app did not record it on the operation; check it in Xero.";
+}
 
 /**
  * An operation status as an officer reads it, never the raw enum. PR #4708
@@ -213,14 +232,17 @@ function readableStatus(status: string): string {
 /** The row's state as an officer reads it, and what follows from it. */
 function rowState(row: XeroSyncOperation, late: UnrecordedXeroObject): string {
   if (isResolvedInXero(row)) return `The operation stays marked "${resolutionLabel(row.manuallyResolvedReason)}".`;
-  if (row.xeroObjectId === late.xeroObjectId) return `The operation records this same item (${readableStatus(row.status)}), but not the step this attempt left unfinished, which its own run did not redo.`;
+  if (row.xeroObjectId === late.xeroObjectId) return `The operation records this same item (${readableStatus(row.status)}) through another run, which may not have redone the step this attempt left unfinished.`;
   if (row.status === "PENDING") return "The operation is queued to run again (a Retry) and stays queued: its run makes the same Xero call and may answer with this one, or make another, and may not redo the part that did not finish.";
   if (row.status === "RUNNING") return "Another run of the operation holds it now (running): it may record this item, and may not redo the part that did not finish.";
   return `The operation keeps what it records now (${readableStatus(row.status)}).`;
 }
 
 /** The alert's body: the attempt lost its row, came back part-done, and what to check. */
-function lostClaimPartialMessage(row: XeroSyncOperation, late: UnrecordedXeroObject, fault: string | null): string {
-  const unfinished = fault ? `It did not finish this: ${fault}.` : "Part of its work, such as a payment, an email or an allocation, was not done.";
-  return `This Xero operation was reset and then queued again by a Retry, withdrawn or ended by another attempt; then ${stalledAttemptCameBack(late)} It only partly succeeded. ${unfinished} The app did not write it over the operation, so the operation's own outcome stands. ${rowState(row, late)} Check Xero: if it holds two for one item, keep the one the operation records (once its run finishes, if it is queued), and finish by hand what the late one left undone.`;
+function lostClaimPartialMessage(row: XeroSyncOperation, late: UnrecordedXeroObject, partial: LostClaimPartial): string {
+  const unfinished = partial.fault ? `It did not finish this: ${partial.fault}.` : "Part of its work, such as a payment, an email or an allocation, was not done.";
+  const kept = partial.linksRecorded
+    ? "Its links were recorded, but its outcome was not written over the operation: another run holds it."
+    : "The app did not write it over the operation, so the operation's own outcome stands.";
+  return `This Xero operation was reset and then queued again by a Retry, withdrawn or ended by another attempt; then ${stalledAttemptCameBack(late)} It only partly succeeded. ${unfinished} ${kept} ${rowState(row, late)} Check Xero: if it holds two for one item, keep the one the operation records (once its run finishes, if it is queued). For what the late attempt left unfinished, ${CHECK_BEFORE_REDOING}.`;
 }

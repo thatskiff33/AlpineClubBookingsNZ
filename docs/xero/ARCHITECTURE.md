@@ -1053,10 +1053,15 @@ note.
    invoice to void, each redacted on its own), since the queued run may not
    redo it. The trace's re-read, audit, alert skeleton is the late credit
    notes' own (`traceLateXeroObject`, `INV-SSOT`). A part-success naming an
-   unfinished step is traced even when the row already records its object
-   (the queued run closed on it first) or a later claim holds the row RUNNING
-   (its links still recorded, review F1): neither run redoes that step
-   (PR #4708 round 2). A queued group invoice
+   unfinished step is traced even when a SUCCEEDED row already records its
+   object (the queued run closed on it first) or a later claim holds the row
+   RUNNING (its links still recorded, review F1, and the alert says so): that
+   run may not have redone the step - a bound group invoice is not emailed
+   again, while a subscription run emails one not yet sent - so the alert and
+   audit row tell officers to check in Xero whether it is done before doing it
+   by hand. A PARTIAL row on the same object ends the trace: its own outcome
+   shows the step. Only a PARTIAL is handed over; a full success left nothing
+   unfinished (PR #4708 rounds 2-3). A queued group invoice
    whose settlement already points at an invoice raises nothing and closes its
    claimed row SUCCEEDED on that invoice (#4710), never left RUNNING. Mark non-replayable writes only onto a FAILED or
    PARTIAL row, so a retry that claimed it after the officer's read gets the

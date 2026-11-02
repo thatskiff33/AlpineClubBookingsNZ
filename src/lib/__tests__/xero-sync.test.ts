@@ -2376,6 +2376,18 @@ describe("outcome writes never replace a recorded success (#4356, INV-INT-029)",
 
     // PR #4708 round 2: a later claim's RUNNING row records the links (review F1) and still hands the
     // object over, saying so; the hand-off traces it only when it names an unfinished step.
+    // PR #4708 round 3: a full success left nothing unfinished, so it is never handed to the part-success trace.
+    it("MUTATION: a late SUCCEEDED refused on a later claim's RUNNING row records its links and is not handed over", async () => {
+      const trace = await traced();
+      const { row, store } = oneRow("RUNNING");
+      onModuleClient(store);
+      await expect(
+        completeXeroSyncOperation(xeroClaim("op_shared", EARLIER), { ...lateObject, responsePayload: { emailError: "smtp down" }, lastErrorMessage: "late" }),
+      ).resolves.toBeNull();
+      expect(row).toMatchObject({ status: "RUNNING", startedAt: TEST_XERO_CLAIMED_AT, xeroObjectId: null });
+      expect(trace).not.toHaveBeenCalled();
+    });
+
     it("MUTATION: a late PARTIAL refused on a later claim's RUNNING row records its links and is handed over as such", async () => {
       const trace = await traced();
       const { row, store } = oneRow("RUNNING");

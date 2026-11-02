@@ -110,10 +110,12 @@ export interface LateXeroObjectTrace {
   /** The info line when the re-read row records this very object. */
   sameObject: string;
   /**
-   * PR #4708 round 2: false traces the object even when the row records it -
-   * a part-success's unfinished step is recorded nowhere. Omitted, true.
+   * PR #4708 rounds 2-3: whether a row recording this very object ends the
+   * trace, given that row. Omitted, it always does. A part-success with an
+   * unfinished step goes on past a SUCCEEDED row (its run may not have done the
+   * step) but stops at a PARTIAL one, whose own outcome already shows it.
    */
-  stopOnSameObject?: boolean;
+  stopOnSameObject?: (row: XeroSyncOperation) => boolean;
   /** The caller's own audit row, given the re-read row (null when it is gone). */
   audit: (row: XeroSyncOperation | null) => Promise<void>;
   /** The object as the alert names it; read only when an alert is due. */
@@ -139,7 +141,7 @@ export async function traceLateXeroObject(input: LateXeroObjectTrace): Promise<L
     logger.error({ ...trace, err: error }, `${notRecorded}, and its operation could not be re-read: no audit row or alert; this log is its only record (${issue})`);
     return { kind: "traced" };
   }
-  if (input.stopOnSameObject !== false && row?.xeroObjectId === input.xeroObjectId) {
+  if (row && row.xeroObjectId === input.xeroObjectId && (input.stopOnSameObject?.(row) ?? true)) {
     logger.info(trace, input.sameObject);
     return { kind: "same-note", row };
   }
