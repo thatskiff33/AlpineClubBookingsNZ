@@ -6,6 +6,7 @@ import { HOSTING_COVERAGE_RETRY_CODE } from "@/lib/adult-member-hosting-queue-pa
 import { auth } from "@/lib/auth";
 import { createAuditLog } from "@/lib/audit";
 import { prisma } from "@/lib/prisma";
+import { isTransactionContention } from "@/lib/prisma-errors";
 import { BookingStatus } from "@prisma/client";
 import { confirmWaitlistOffer } from "@/lib/waitlist";
 import {
@@ -61,28 +62,20 @@ const OFFER_RELEASE_TIMEOUT_MS = 10_000;
 const OFFER_RELEASE_ATTEMPTS = 2;
 const OFFER_RELEASE_RETRY_DELAY_MS = 250;
 
-/**
- * Prisma's transaction contention codes: P2028 (transaction API error, which
- * covers an exhausted `maxWait`/`timeout`) and P2034 (write conflict/deadlock,
- * retryable by definition). Mapped to 503 for the same reason
- * `admin/site-style/route.ts` and `admin-bed-allocation-routes.ts` map them
- * there — nothing was committed and the actionable advice is "later", not
- * "differently" (`docs/CONCURRENCY_AND_LOCKING.md`).
- */
-const TRANSACTION_CONTENTION_CODES = new Set(["P2028", "P2034"]);
-
 function transactionErrorCode(error: unknown): string | null {
   const code = (error as { code?: unknown } | null)?.code;
   return typeof code === "string" ? code : null;
 }
 
-function isTransactionContentionError(error: unknown): boolean {
-  const code = transactionErrorCode(error);
-  return code !== null && TRANSACTION_CONTENTION_CODES.has(code);
-}
-
+/**
+ * Prisma's transaction contention (P2028, P2034: `isTransactionContention`) is
+ * a 503 for the same reason `admin/site-style/route.ts` and
+ * `admin-bed-allocation-routes.ts` answer it so - nothing was committed and the
+ * actionable advice is "later", not "differently"
+ * (`docs/CONCURRENCY_AND_LOCKING.md`).
+ */
 function contendedStatus(error: unknown): 503 | 500 {
-  return isTransactionContentionError(error) ? 503 : 500;
+  return isTransactionContention(error) ? 503 : 500;
 }
 
 export async function POST(
@@ -377,7 +370,7 @@ export async function POST(
           cause = releaseErr;
           if (
             attempt >= OFFER_RELEASE_ATTEMPTS ||
-            !isTransactionContentionError(releaseErr)
+            !isTransactionContention(releaseErr)
           ) {
             break;
           }

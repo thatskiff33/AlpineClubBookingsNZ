@@ -4,7 +4,7 @@ import { CreditType, PaymentSource, PaymentStatus } from "@prisma/client";
 import { bookingOwner } from "@/lib/booking-owner";
 import { syncBookingLedgerCredits } from "@/lib/booking-ledger-credit-sync";
 import { prisma } from "@/lib/prisma";
-import { lockPaymentForRefundedTotal } from "@/lib/payment-transactions";
+import { lockPaymentForRefundedTotal, PAYMENT_ROW_WAIT_TRANSACTION_OPTIONS } from "@/lib/payment-transactions";
 import logger from "@/lib/logger";
 import { type AccountCreditAllocationRepairResult, type AccountCreditAllocationTarget, type RefundedPaymentBusinessStateRepairResult } from "./types";
 import { buildBookingAppliedCreditDescription, type CreditNoteAllocationCents, getAmountCentsFromAllocationMetadata, getCreditNoteAmountCents, getCreditNoteIdFromAllocationMetadata, getJsonRecord, getNextRefundedPaymentStatus, getRefundContributionCentsFromCreditNoteMetadata, sumAppliedCentsByCreditNote } from "./amounts";
@@ -530,14 +530,14 @@ export async function repairRefundedPaymentBusinessState(input: {
     // see a void's link write - re-reading that row there (a plain read; no provider call, no other lock). It no longer
     // counting writes nothing ("recount"); an unchanged verdict also checks the row as read, so a recount that waited on this
     // lock sees the write it waited for. Every outcome is then some serial order of the claim and the void. The budget is
-    // `additional-payment-withdraw.ts`'s, not Prisma's 2s/5s: the nightly bank-void follow-up holds this row for up to 30s.
+    // the Payment row's (`PAYMENT_ROW_WAIT_TRANSACTION_OPTIONS`), not Prisma's 2s/5s: the nightly bank-void follow-up holds it for up to 30s.
     return prisma.$transaction(async (tx) => {
       await lockPaymentForRefundedTotal(tx, payment.id);
       const now = input.creditNoteId === null ? undefined : (await readRefundNoteRowsByPayment(input.creditNoteId, [payment.id], tx)).get(payment.id);
       if (includesCurrentCreditNoteContribution(payment.id) && !(now && includesCurrentCreditNoteContribution(payment.id, now))) return "recount" as const;
       if (Object.keys(updates).length === 0) return (await tx.payment.findFirst({ where: asRead, select: { id: true } })) ? ("unchanged" as const) : ("lost" as const);
       return (await tx.payment.updateMany({ where: asRead, data: updates })).count === 1 ? ("updated" as const) : ("lost" as const);
-    }, { maxWait: 10_000, timeout: 30_000 });
+    }, PAYMENT_ROW_WAIT_TRANSACTION_OPTIONS);
   };
 
   const lostPaymentIds: string[] = [];
