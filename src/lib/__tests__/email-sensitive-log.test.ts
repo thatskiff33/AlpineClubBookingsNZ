@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { EMAIL_TEMPLATE_DEFINITIONS } from "@/lib/email-message-registry";
-import { shouldPersistEmailHtml } from "@/lib/email/internal";
+import { isCallerRetriedAlertTemplate, shouldPersistEmailHtml } from "@/lib/email/internal";
 
 const REQUIRED_TOKEN_TEMPLATE_NAMES = EMAIL_TEMPLATE_DEFINITIONS.filter(
   (definition) => definition.requiredTokens.includes("token"),
@@ -49,11 +49,21 @@ describe("sensitive EmailLog HTML classification", () => {
   });
 });
 
-it("leaves settlement figure retries to the durable marker rather than EmailLog", () => {
-  expect(shouldPersistEmailHtml("admin-bank-transfer-settlement-figure")).toBe(false);
+// #4669: these alerts keep their bodies so the email retry cron can replay one
+// recipient's lost copy; when nobody received one, the sender releases the
+// attempt's rows instead (`caller-retried-alert.ts`), so the owner's retry is the
+// only one.
+it.each([
+  "admin-bank-transfer-settlement-figure",
+  "admin-unrecognised-stripe-payment",
+  "admin-unmatched-app-stripe-payment",
+])("retains %s, a caller-retried alert, so one lost copy can be replayed (#4669)", (templateName) => {
+  expect(isCallerRetriedAlertTemplate(templateName)).toBe(true);
+  expect(shouldPersistEmailHtml(templateName)).toBe(true);
 });
 
-it("leaves the unrecognised and unmatched Stripe payment alerts to Stripe's redelivery rather than EmailLog (#4647)", () => {
-  expect(shouldPersistEmailHtml("admin-unrecognised-stripe-payment")).toBe(false);
-  expect(shouldPersistEmailHtml("admin-unmatched-app-stripe-payment")).toBe(false);
+it("names no token-bearing or retry-alert template as caller-retried", () => {
+  expect(isCallerRetriedAlertTemplate("password-reset")).toBe(false);
+  expect(isCallerRetriedAlertTemplate("admin-email-failure")).toBe(false);
+  expect(isCallerRetriedAlertTemplate("admin-late-capture-auto-refund")).toBe(false);
 });

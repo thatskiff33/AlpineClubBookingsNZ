@@ -245,6 +245,7 @@ export async function sendEmail({
   bookingContext,
   idempotencyKey,
   deferDelivery,
+  onAttemptLogged,
 }: {
   to: string;
   subject: string;
@@ -263,6 +264,8 @@ export async function sendEmail({
   // message that passes `"none"` escapes the per-booking "No emails" switch, so
   // thread the real id wherever one exists.
   bookingContext: EmailBookingContext;
+  // This attempt's EmailLog id once written, which a throw cannot return (#4669).
+  onAttemptLogged?: (emailLogId: string) => void;
 } & (
   // Stable business-event identity makes logging mandatory before delivery;
   // the EmailLog primary key serializes concurrent re-drives. Deferred mail
@@ -355,6 +358,7 @@ export async function sendEmail({
     return { status: "already_recorded", emailLogId: recorded.emailLogId };
   }
   const emailLogId = recorded.emailLogId;
+  if (emailLogId) onAttemptLogged?.(emailLogId);
 
   // ---------------------------------------------------------------------
   // Per-booking "No emails" switch (#2258, owner decision D10).

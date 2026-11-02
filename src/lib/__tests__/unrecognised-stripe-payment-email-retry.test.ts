@@ -38,6 +38,8 @@ function matchesField(value: unknown, filter: unknown): boolean {
   }
   const ops = filter as Record<string, unknown>;
   return Object.entries(ops).every(([op, operand]) => {
+    if (op === "in") return (operand as unknown[]).includes(value);
+    if (op === "gt") return (value as number) > (operand as number);
     if (op === "lt") return value instanceof Date ? value < (operand as Date) : (value as number) < (operand as number);
     if (op === "gte") return value instanceof Date ? value >= (operand as Date) : (value as number) >= (operand as number);
     if (op === "not") return operand === null ? value != null : !matchesField(value, operand);
@@ -52,8 +54,8 @@ function matchesWhere(row: Record<string, unknown>, where: Record<string, unknow
   });
 }
 
-vi.mock("@/lib/prisma", () => ({
-  prisma: {
+vi.mock("@/lib/prisma", () => {
+  const prisma = {
     unrecognisedStripePayment: {
       findUnique: async ({ where }: { where: { stripePaymentIntentId?: string; id?: string } }) => {
         if (where.stripePaymentIntentId) return state.stripeRows.get(where.stripePaymentIntentId) ?? null;
@@ -117,6 +119,7 @@ vi.mock("@/lib/prisma", () => ({
           bookingDetailLinkIncluded: null,
           bookingBodyOverrideApplied: null,
           bookingRecipientMemberId: null,
+          deliveryBlockReason: null,
           attempts: 1,
           createdAt: new Date(),
           ...data,
@@ -140,6 +143,8 @@ vi.mock("@/lib/prisma", () => ({
       },
       findMany: async ({ where, take }: { where: Record<string, unknown>; take?: number }) =>
         [...state.emailLogs.values()].filter((row) => matchesWhere(row, where)).slice(0, take),
+      count: async ({ where }: { where: Record<string, unknown> }) =>
+        [...state.emailLogs.values()].filter((row) => matchesWhere(row, where)).length,
     },
     member: {
       // One Finance editor; `hasAdminAreaAccess` below admits them.
@@ -147,8 +152,20 @@ vi.mock("@/lib/prisma", () => ({
     },
     environmentSafetySettings: { findUnique: async () => null },
     emailTemplateOverride: { findUnique: async () => null },
-  },
-}));
+    // #4669: the release of an attempt nobody received, all or nothing.
+    $transaction: async (work: (tx: unknown) => Promise<unknown>) => {
+      const before = new Map([...state.emailLogs].map(([id, row]) => [id, structuredClone(row)]));
+      try {
+        return await work(prisma);
+      } catch (err) {
+        state.emailLogs.clear();
+        for (const [id, row] of before) state.emailLogs.set(id, row);
+        throw err;
+      }
+    },
+  };
+  return { prisma };
+});
 
 vi.mock("@/lib/admin-permissions", async (importOriginal) => ({
   ...((await importOriginal()) as typeof import("@/lib/admin-permissions")),
@@ -299,6 +316,7 @@ describe("the unrecognised Stripe payment alert has one retry owner (#4647)", ()
     const intent = paymentIntent("pi_4647", metadata);
 
     // 1. The transport is down: nobody receives it, the claim is given back and the webhook fails.
+    // #4669: the row kept its body until the send failed, then was released.
     state.transportDown = true;
     await expect(record(intent, event("evt_4647"))).rejects.toBeInstanceOf(UnrecognisedStripePaymentAlertNotSentError);
     expect(state.delivered).toHaveLength(0);

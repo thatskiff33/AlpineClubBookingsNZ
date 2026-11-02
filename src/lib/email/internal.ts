@@ -240,17 +240,31 @@ const NON_RETRYABLE_EMAIL_LOG_TEMPLATES = new Set([
   // The hosting incident/outbox is the retry authority for this message. Keeping
   // a second EmailLog retry authority could replay a successful incident send.
   "hosting-coverage-lost",
-  // #4446: the settlement marker owns bounded retries and durable escalation.
-  "admin-bank-transfer-settlement-figure",
-  // #4647 (`INV-INT-032`, `INV-INT-033`): a send no recipient received gives
-  // the once-ever claim back and fails the webhook, so Stripe's redelivery owns
-  // the retry. A replayable FAILED row would be a second owner, and the alert
-  // would go out twice.
-  "admin-unrecognised-stripe-payment",
-  "admin-unmatched-app-stripe-payment",
   "admin-email-failure",
 ]);
 
 export function shouldPersistEmailHtml(templateName: string): boolean {
   return !NON_RETRYABLE_EMAIL_LOG_TEMPLATES.has(templateName);
+}
+
+/**
+ * Unmuteable admin alerts whose OWNER sends them again when no recipient
+ * received them (#4669): the settlement marker (#4446), and Stripe's redelivery
+ * for the two Stripe payment alerts (#4647, `INV-INT-032`, `INV-INT-033`).
+ *
+ * They keep their bodies, so the email retry cron replays the one copy a
+ * recipient lost while another got it - the owner sees "sent" and never
+ * retries that case. When nobody got it, `sendUnmuteableAdminAlert` releases
+ * that attempt's bodies before it returns (`caller-retried-alert.ts`), so the
+ * owner's retry is the only one. One set read by both halves, so retention and
+ * release cannot drift apart.
+ */
+const CALLER_RETRIED_ALERT_TEMPLATES: ReadonlySet<string> = new Set([
+  "admin-bank-transfer-settlement-figure",
+  "admin-unrecognised-stripe-payment",
+  "admin-unmatched-app-stripe-payment",
+]);
+
+export function isCallerRetriedAlertTemplate(templateName: string): boolean {
+  return CALLER_RETRIED_ALERT_TEMPLATES.has(templateName);
 }
