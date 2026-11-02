@@ -173,7 +173,7 @@ mark write that row status-guarded too, so whichever commits first wins. A
 lost record runs no allocation or payout and writes no failure; its audit row
 and alert run after, outside any transaction. #4680: after the record, each
 money-moving call (resize, allocation, settlement, refund payment, or a
-completion with nothing allocated) is preceded by a plain status-guarded read
+completion with nothing allocated or paid) is preceded by a plain status-guarded read
 of the row on the run's claim (`holdsXeroOperationClaim`: id, RUNNING,
 `startedAt`), outside any transaction, taking no advisory key and registering
 no lock site (`INV-LOCK-001`..`003` unchanged); a lost claim makes no call and

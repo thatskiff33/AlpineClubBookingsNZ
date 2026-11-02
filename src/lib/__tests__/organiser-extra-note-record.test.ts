@@ -393,13 +393,15 @@ describe("#4680: a run whose claim a reset took after it recorded its note stand
   });
 
   it.each([
-    { step: "resize" as const, says: "resizing the note to what is still due" },
-    { step: "refund-payment" as const, says: "recording a refund payment against the note" },
-    { step: "completion" as const, says: "recording the adjustment as done" },
-  ])("the alert names the call not made: $step", async ({ step, says }) => {
+    { step: "resize" as const, purpose: "waive" as const, says: "resizing the note to what is still due" },
+    { step: "refund-payment" as const, purpose: "refund" as const, says: "recording a refund payment against the note" },
+    { step: "completion" as const, purpose: "waive" as const, says: "recording the adjustment as done (the note was already allocated in full)" },
+    { step: "completion" as const, purpose: "refund" as const, says: "recording the adjustment as done (Xero already showed the note settled" },
+  ])("the alert and audit row name the call not made: $purpose $step", async ({ step, purpose, says }) => {
     seedRow(RESOLVED);
-    await traceOrganiserRunStoodDown({ ...LATE, purpose: step === "refund-payment" ? "refund" : "waive" }, step);
+    await traceOrganiserRunStoodDown({ ...LATE, purpose }, step);
     expect(sentMessage()).toContain(says);
+    expect(mocks.audit).toHaveBeenCalledWith(expect.objectContaining({ details: expect.stringContaining(says) }));
   });
 
   it.each([

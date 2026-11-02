@@ -28,6 +28,10 @@
  *   once;
  * - Retry queued, then wake: the run stands down; the queued run finishes from
  *   the note - one allocation;
+ * - #4703 review 2: reset, the refund note paid by hand in Xero, Resolve, then
+ *   wake: the settlement finds it settled and pays nothing, and the run, having
+ *   lost its claim, completes nothing over the resolved row (no false
+ *   "may hold twice" alert), standing down audited and alerted once;
  * - and, as a control, a refund note whose run is never reset pays once.
  *
  * Ordinary Vitest runs skip the whole file. It reuses the guarded, disposable
@@ -122,7 +126,13 @@ function fakeXero(paidInFull: boolean) {
       await new Promise((resolve) => setTimeout(resolve, 10));
     }
   }
-  return { accountingApi, notes, allocations, payments, holdNoteReads, readReached };
+  /** #4703 review 2: an officer pays the refund note by hand in Xero. */
+  const payByHand = (id: string) => {
+    const note = notes.get(id)!;
+    note.payments = [{ paymentID: `${P}-officer-payment`, amount: note.total, status: "AUTHORISED" }];
+    note.status = "PAID";
+  };
+  return { accountingApi, notes, allocations, payments, holdNoteReads, readReached, payByHand };
 }
 
 (RUN ? describe : describe.skip)(
@@ -329,6 +339,24 @@ function fakeXero(paidInFull: boolean) {
       expect(await prisma.xeroSyncOperation.findUniqueOrThrow({ where: { id: operationId } })).toMatchObject({ status: "SUCCEEDED", xeroObjectId: NOTE });
       expect(xero.allocations).toEqual([NOTE]);
       expect(send).not.toHaveBeenCalled();
+    });
+
+    it("MUTATION (#4703 review 2): record, stall, reset, the note paid by hand, Resolve, then wake: nothing paid, nothing completed over the officer's row", async () => {
+      await useXero(true);
+      const { operationId, run, release } = await recordedAndStalled("refund");
+      await resetStale(operationId);
+      xero.payByHand(NOTE);
+      const resolvedAt = new Date("2026-07-01T00:30:00.000Z");
+      await resolveByHand(operationId, resolvedAt);
+      release();
+      await expect(run).resolves.toMatchObject({ succeeded: 0, skipped: 1, failed: 0 });
+      expect(xero.payments).toEqual([]);
+      expect(await prisma.xeroSyncOperation.findUniqueOrThrow({ where: { id: operationId } })).toMatchObject({ status: "FAILED", manuallyResolvedAt: resolvedAt });
+      expect(await adjustmentLinks()).toEqual([]);
+      expect(await stoodDownAudits()).toEqual([expect.objectContaining({ metadata: expect.objectContaining({ step: "completion", resolvedByHand: true, amountCents: 500 }) })]);
+      expect(send).toHaveBeenCalledTimes(1);
+      expect((send.mock.calls[0]![0] as { errorMessage: string }).errorMessage).toContain("Xero already showed the note settled");
+      expect(await prisma.alertCooldown.count({ where: { key: `xero-success-after-resolution:${operationId}` } })).toBe(0);
     });
 
     it("control: a refund note whose run keeps its claim is paid once and completed", async () => {

@@ -4168,7 +4168,7 @@ RUNNING (the organiser adjustment's note recorded on its own claim) -> Reset
   stale running -> FAILED while the run waits on Xero, then perhaps Resolve or
   Retry or a later claim (#4680, `INV-INT-034`): before each resize,
   allocation, settlement, refund payment, or completion with nothing
-  allocated, the run reads the row RUNNING under its own claim
+  allocated or paid by the run, the run reads the row RUNNING under its own claim
   (`holdsXeroOperationClaim`); lost -> no Xero call, no outcome written, the
   run counted skipped and the row left as it stands (FAILED, resolved or not;
   PENDING for its queued run; RUNNING for the later claim), one `xero` audit

@@ -646,11 +646,11 @@ was reset is recorded on the job or surfaced once, never lost (#4655).
   took over.
 - **Money moves only under the run's claim (#4680).** Each resize,
   allocation, settlement, refund payment, or completion with nothing
-  allocated, reads the row RUNNING under it first (`holdsXeroOperationClaim`);
-  lost, the run calls nothing and writes no outcome; audited, alerted once if
-  resolved.
+  allocated or paid, reads the row RUNNING under it first
+  (`holdsXeroOperationClaim`); lost, the run calls nothing, writes no outcome;
+  audited, alerted once if resolved.
 - **Limits.** A retry may record the same note via Xero's idempotency key
-  (the alert says to compare first). A process dying before the audit row
+  (the alert says compare first). A process dying before the audit row
   leaves the warning only. A call in flight as the claim is lost still
   completes, alerted (#4374).
 

@@ -454,6 +454,50 @@ describe("organiser extra adjustment provider execution", () => {
       traced("refund-payment", "refund");
     });
 
+    // #4703 review 1: the trace names the note's own amount, never what this run found due.
+    it.each([
+      { step: "resize", dueNow: 30, allocated: [] },
+      { step: "allocation", dueNow: 40, allocated: [] },
+      { step: "completion", dueNow: 0, allocated: [{ invoice: { invoiceID: "extra" }, amount: 40, date: "2026-07-01" }] },
+    ])("MUTATION: a retry continuing from a recorded $40 note that stands down at its $step names the note's $40, not the $dueNow due now", async ({ step, dueNow, allocated }) => {
+      mocks.operation = { xeroObjectId: "waiver", xeroObjectNumber: "CN-1", correlationKey: "scope" };
+      mocks.note = { creditNoteID: "waiver", creditNoteNumber: "CN-1", total: 40, allocations: allocated };
+      // The organiser paid since the note was raised: this run's due is less than the note.
+      mocks.invoice = { ...mocks.invoice, amountPaid: 60 - dueNow - (allocated.length ? 40 : 0), amountCredited: allocated.length ? 40 : 0, amountDue: dueNow };
+      lostAt(1);
+      await expect(run(payload())).resolves.toBeUndefined();
+      expect(mocks.createCreditNotes).not.toHaveBeenCalled();
+      expect(mocks.stoodDown).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ creditNoteId: "waiver", creditNoteNumber: "CN-1", amountCents: 4_000 }), step);
+      expect(mocks.complete).not.toHaveBeenCalled();
+    });
+
+    // #4703 review 2: a settlement that returns before its payment asked nothing after its note read.
+    const settledByHand = () => mocks.settle.mockImplementationOnce(async () => ({
+      creditNoteNumber: "CN-1", outcome: { refundPaymentErr: null, refundPaymentResponseBody: { paymentID: "officer-payment" }, refundPaymentSkipReason: null, payments: [] },
+    }));
+    it("MUTATION: a refund note Xero already shows settled (an officer paid it by hand) completes only while the run holds its claim", async () => {
+      settled();
+      settledByHand();
+      lostAt(2);
+      await expect(execute(refund(), claim)).resolves.toBe("stood-down");
+      expect(mocks.complete).not.toHaveBeenCalled();
+      traced("completion", "refund");
+      expect(mocks.stoodDown).toHaveBeenCalledWith(expect.objectContaining({ amountCents: 500 }), "completion");
+    });
+    it("a refund note settled without the app's payment, the claim held, completes after the second check", async () => {
+      settled();
+      settledByHand();
+      await expect(execute(refund(), claim)).resolves.toBe("completed");
+      expect(mocks.held).toHaveBeenCalledTimes(2);
+      expect(mocks.held.mock.invocationCallOrder[1]).toBeLessThan(mocks.complete.mock.invocationCallOrder[0]!);
+    });
+    it("a refund note the settlement paid is not checked again before completing: its payment asked last", async () => {
+      settled();
+      await expect(execute(refund(), claim)).resolves.toBe("completed");
+      expect(mocks.held).toHaveBeenCalledTimes(2);
+      expect(mocks.complete).toHaveBeenCalledOnce();
+    });
+
     it("a re-taken run checks its new claim, never the stalled one", async () => {
       retaken();
       await execute(payload(), claim);

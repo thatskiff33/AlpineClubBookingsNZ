@@ -4446,7 +4446,8 @@ again by an officer, or taken by a later claim (#4680, `INV-INT-034`). So
 immediately before each money-moving call after the record - the waiver's
 resize and allocation, the refund note's settlement and, inside it
 (`beforePayment`), its refund payment, and a completion with nothing left to
-allocate - the run reads its row status-guarded on its claim
+allocate or a settlement that returned before its payment (Xero already shows
+the note settled, perhaps by an officer's hand; #4703 review) - the run reads its row status-guarded on its claim
 (`holdsXeroOperationClaim`: RUNNING under the claim's `startedAt`). A run that
 lost it calls nothing, writes no outcome (the outbox counts it skipped) and
 is traced (`traceOrganiserRunStoodDown`): a warning, one `xero` audit row
