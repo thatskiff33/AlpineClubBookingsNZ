@@ -1791,17 +1791,17 @@ export async function sendSupersededPaymentRefundedEmail(params: {
   refundedAmountCents: number;
   amountOwingCents: number;
   lodgeId?: string | null;
+  idempotencyKey: string;
 },
   format: ClubFormat,
 ) {
   await sendEmail({
     to: params.email,
     subject: `Payment Refunded - ${EMAIL_DEFAULT_LODGE_NAME}`,
+    // #4690: recorded once per recovery row (`idempotencyKey`) for the email retry worker to send.
+    idempotencyKey: params.idempotencyKey, deferDelivery: true,
     html: await renderEmailHtml(() => supersededPaymentRefundedTemplate(params, format)),
-    bookingContext: bookingOwnerEmailContext(
-      params.bookingId,
-      params.recipientMemberId,
-    ),
+    bookingContext: bookingOwnerEmailContext(params.bookingId, params.recipientMemberId),
     templateName: "superseded-payment-refunded",
     templateData: {
       firstName: params.firstName,

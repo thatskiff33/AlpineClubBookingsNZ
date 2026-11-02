@@ -3632,6 +3632,27 @@ proves the intent terminal. Reads and one provider call, after the hold's
 transaction: no lock, key, participant or order changes. Proven on real
 Postgres: the retry back at the figure records the kept intent
 (`credit-release-merge-into-edit.realdb.test.ts`).
+#4690: the one epilogue #4675 left hanging off a won close - the
+superseded-payment refund's notice - lost it whenever its attempt was reaped
+after the refund: the next claim read nothing outstanding and closed silently.
+The notice now runs before the close and carries its own once-only keys, all
+named for the recovery row, so any attempt that made or finds the refund may
+call it: the member email's durable `EmailLog` row (primary key, for the retry
+worker to send), and `AlertCooldown` once-ever claims for the records and the
+admin alert (a conditional `updateMany` or a unique-guarded insert), with a
+sent marker; an alert claim older than the stale reaper's threshold and never
+marked sent is a dead attempt's, given back under its exact stamp and sent,
+and a younger one is a sibling's still sending, so the row waits with its
+attempt handed back (`waitPaymentRecoveryOperation`). The claim, give-back and
+takeover are the one shared sequence (`sendAdminAlertOnceEverWithTakeover`)
+the unrecognised Stripe payment alert also uses.
+The next claim proves the refund the row's own by a bounded Stripe read
+(exact runner metadata) and a ledger read, outside any transaction. None of
+these is a lifecycle, settlement-money, capacity or credit writer, so no
+advisory lock is taken (`INV-LOCK-001`), no key is minted (`INV-LOCK-002`) and
+no site is registered (`INV-LOCK-003`); the close keeps its claim fence. A
+report not settled throws before the close, so the row is retried. Proven on
+real Postgres (`superseded-refund-notice-once.realdb.test.ts`).
 Round 6: the retire closes waiting recoveries before it stamps the rows - the
 runner's own order (its claim hold writes the recovery, then its row; since
 #4217 both take the `Payment` row before either) - and a

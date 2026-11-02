@@ -91,11 +91,12 @@ admin surface showed one. These rules now hold:
   live, so such a charge can be explained, not investigated from scratch.
 
   When a capture lands on a retired intent anyway, the refund that follows is
-  no longer silent: it writes a `booking.payment.superseded_payment_refunded`
-  audit row and a REFUNDED `BookingEvent` (discriminated so the cancellation
-  narrative can never read it as a settlement clause), emails the member naming
-  what came back and what is still owing, and alerts admins. Before #3340 Stripe's
-  own receipt was the entire notice ([INV-PAY-047]).
+  announced once per recovery row (#4690):
+  a `booking.payment.superseded_payment_refunded` audit row, a REFUNDED
+  `BookingEvent` (discriminated so the cancellation narrative never reads it as
+  a settlement clause), an email naming what came back and what is still
+  owing, and an admin alert. Before #3340 Stripe's receipt was the entire
+  notice ([INV-PAY-047]).
 
 ### INV-ADDPAY-024
 

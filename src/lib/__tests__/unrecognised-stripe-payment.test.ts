@@ -42,6 +42,8 @@ const state = vi.hoisted(() => ({
    * reports the stamp it tried to write.
    */
   claimCalls: [] as ("as-usual" | "throws-after-commit" | "throws-before-write")[],
+  /** #4700 review: runs after a claim is released - a sibling delivery claiming the key first. */
+  afterRelease: null as null | ((key: string) => void),
 }));
 
 const mocks = vi.hoisted(() => ({
@@ -104,6 +106,7 @@ vi.mock("@/lib/prisma", () => ({
         const held = state.heldKeys.get(where.key);
         if (held && held.getTime() === where.lastAlertedAt.getTime()) {
           state.heldKeys.delete(where.key);
+          state.afterRelease?.(where.key);
           return { count: 1 };
         }
         return { count: 0 };
@@ -211,6 +214,7 @@ describe("recordUnrecognisedStripePayment (#4532)", () => {
     state.releaseFailures = 0;
     state.stampFailures = 0;
     state.claimCalls = [];
+    state.afterRelease = null;
     mocks.findCheckoutSession.mockResolvedValue(null);
   });
 
@@ -394,6 +398,37 @@ describe("recordUnrecognisedStripePayment (#4532)", () => {
     expect(state.heldKeys.has(key)).toBe(true);
   });
 
+  it("#4700 review: a sibling delivery that re-claims after this one's takeover is left to send it - this delivery sends nothing and fails, so Stripe redelivers", async () => {
+    const key = unrecognisedStripePaymentAlertKey("pi_donation");
+    state.rows.set("pi_donation", {
+      id: "row_1",
+      stripePaymentIntentId: "pi_donation",
+      stripeChargeId: "ch_donation",
+      stripeCheckoutSessionId: null,
+      stripePaymentLinkId: null,
+      amountCents: 5000,
+      currency: "nzd",
+      stripeCreatedAt: new Date("2026-06-30T21:00:00.000Z"),
+      description: null,
+      stripeEventId: "evt_donation",
+      alertedAt: null,
+      createdAt: new Date(),
+      reason: "NOT_APP_CREATED",
+      bookingId: null,
+    });
+    state.heldKeys.set(key, new Date(Date.now() - 16 * 60 * 1000));
+    state.afterRelease = (released) => {
+      state.afterRelease = null;
+      state.heldKeys.set(released, new Date());
+    };
+
+    await expect(recordUnrecognisedStripePayment(paymentIntent(), event(), CLUB_FORMAT_TEST)).rejects.toBeInstanceOf(
+      UnrecognisedStripePaymentAlertNotSentError,
+    );
+    expect(mocks.sendAlert).not.toHaveBeenCalled();
+    expect(state.heldKeys.has(key)).toBe(true);
+  });
+
   it("throws when the sender reports the mail undelivered, so Stripe redelivers", async () => {
     mocks.sendAlert.mockResolvedValueOnce("undelivered");
 
@@ -461,6 +496,7 @@ describe("the alert claim's in-flight window against the webhook lease (#4647)",
     state.releaseFailures = 0;
     state.stampFailures = 0;
     state.claimCalls = [];
+    state.afterRelease = null;
     mocks.findCheckoutSession.mockResolvedValue(null);
   });
 
@@ -521,6 +557,7 @@ describe("the alert across a failed write around the send (#4670)", () => {
     state.releaseFailures = 0;
     state.stampFailures = 0;
     state.claimCalls = [];
+    state.afterRelease = null;
     mocks.findCheckoutSession.mockResolvedValue(null);
   });
 
@@ -589,6 +626,7 @@ describe("the alert when its claim call throws (#4679)", () => {
     state.releaseFailures = 0;
     state.stampFailures = 0;
     state.claimCalls = [];
+    state.afterRelease = null;
     mocks.findCheckoutSession.mockResolvedValue(null);
   });
 

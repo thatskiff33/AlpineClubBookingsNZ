@@ -723,6 +723,12 @@ import "./xero-object-link-metadata-merge.realdb.test";
 // #4657 reuses it to prove the erased-member contact status check keeps a
 // concurrent writer's link metadata; it owns and cleans its own `race-4657-` links.
 import "./xero-erased-contact-status-metadata.realdb.test";
+// #4690 reuses it to prove a superseded payment's refund is announced once,
+// whichever recovery attempt sends it: a stalled attempt that lost its close to
+// the reaper, the reclaiming runner, or the next claim that finds the refund
+// made. Skipped unless RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own
+// `race-4690-` fixtures.
+import "./superseded-refund-notice-once.realdb.test";
 // #2374 (AID-5) deliberately is NOT imported here, unlike the two suites above.
 // `ai-diagnostics-select-only-role.realdb.test.ts` provisions and drops a cluster
 // ROLE and revokes `TEMPORARY ... FROM PUBLIC` on the shared throwaway database

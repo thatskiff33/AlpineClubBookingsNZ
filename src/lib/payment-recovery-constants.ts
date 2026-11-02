@@ -9,6 +9,14 @@ import type { PaymentRecoveryOperationStatus, Prisma } from "@prisma/client";
 export const MAX_PAYMENT_RECOVERY_ATTEMPTS = 5;
 
 /**
+ * #4690 (`INV-SSOT`): how long a PROCESSING attempt may run before the stale
+ * reaper counts it dead and hands its row back (`resetStaleProcessingOperations`).
+ * A superseded-payment refund's alert claim older than this, with no sent
+ * marker, is a dead attempt's by the same rule (`superseded-additional-refund.ts`).
+ */
+export const PAYMENT_RECOVERY_STALE_PROCESSING_MS = 30 * 60 * 1000;
+
+/**
  * #4126 (`INV-SSOT`): a pre-persisted door's row no worker has touched - still
  * PENDING, never attempted. The runner's claim (PENDING -> PROCESSING, attempts
  * + 1) ends it, and from then the runner owns the row. The door's
