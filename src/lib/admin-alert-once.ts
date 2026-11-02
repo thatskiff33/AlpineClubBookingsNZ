@@ -24,15 +24,53 @@ import { prisma } from "@/lib/prisma";
  *   run tries again;
  * - the send threw before reaching anyone: the claim is given back, so the
  *   next run retries;
- * - the claim call threw: nothing is sent, and nothing given back; a write
- *   that committed before the throw stays held (#4679), so a caller that
- *   must not lose the alert reads `sendAdminAlertOnceEverClaim`'s stamp.
+ * - the claim call threw: nothing is sent, and the stamp it tried to write is
+ *   given back (#4696) if the database answers one of two immediate tries: the
+ *   write may have committed before the throw (#4679). A no-op when nothing
+ *   landed; the next run claims afresh and sends. The claim stays held, and
+ *   the alert is lost, when both tries fail on the same outage (logged "Failed
+ *   to give back the uncertain ... claim"), or when the write commits only
+ *   after the give-back ran (the client dropped while the server was still
+ *   inserting; only the failed claim is logged).
  * Never throws; returns whether the claim was kept. `context` is logged with
  * every failure, `label` names the alert in those lines.
  */
 export async function sendAdminAlertOnceEver(args: OnceEverAlertArgs): Promise<boolean> {
-  return (await sendAdminAlertOnceEverClaim(args)).kept;
+  const claim = await sendAdminAlertOnceEverClaim(args);
+  if (claim.claimUncertain && claim.claimedAt) {
+    await giveBackOwnOnceEverClaim({ ...args, claim: { claimedAt: claim.claimedAt, claimUncertain: true } });
+  }
+  return claim.kept;
 }
+
+/*
+ * #4696 CENSUS, checked against the real callers by
+ * `admin-alert-once-census.test.ts`: every `sendAdminAlertOnceEver` caller in
+ * `src/lib`, grouped by whether anything sends its alert again once an
+ * uncertain claim is given back. Each caller's own docblock says how it runs.
+ * A give-back cannot make a sibling send twice: it deletes only a row under
+ * this call's own stamp, this call sent nothing, and a sibling that read that
+ * row held sent nothing. Limits: two claims for one key in the same millisecond
+ * share a stamp (at worst a duplicate); and the two cases above where the claim
+ * stays held, for good here, since these callers have no takeover
+ * (`admin-alert-once-takeover.ts` has, and gives back its own claims).
+ *
+ * Retried by its next run (cron, or a webhook or request then cron):
+ * - internet-banking-payment-cron.ts
+ * - xero-waiting-invoice-reaper.ts
+ * - group-settlement-invoice-alerts.ts
+ * - group-late-joiner.ts
+ * - late-capture-refund-hold.ts
+ * - late-capture-unrecorded-refunds.ts
+ * - cancelled-booking-late-capture.ts
+ * Retried only by a later event on the same subject, on no schedule:
+ * - card-refund-cap-overflow.ts
+ * - superseded-ask-invoice-return.ts
+ * - xero-success-after-resolution-alert.ts
+ * Cannot retry (nothing calls again; the logged error is the trace):
+ * - pre-persisted-refund-close.ts
+ * - capacity-race-refund-shortfall.ts
+ */
 
 type OnceEverAlertArgs = {
   key: string;
@@ -50,14 +88,15 @@ type OnceEverAlertArgs = {
  * and `releaseAlertCooldown` with it gives back that claim and no other.
  *
  * #4679: `claimUncertain` means the claim call itself threw, so nothing was
- * sent and nothing given back, yet the write may have committed (the
- * connection dropped before the reply). `claimedAt` is then the stamp it tried
- * to write: a claim held under it is this call's own, and giving it back
- * changes nothing when the write never landed.
+ * sent, yet the write may have committed (the connection dropped before the
+ * reply). `claimedAt` is then the stamp it tried to write: a claim held under
+ * it is this call's own, and giving it back changes nothing when the write
+ * never landed. This variant gives nothing back: its caller does
+ * (`giveBackOwnOnceEverClaim`), as the boolean wrapper does for its own (#4696).
  */
 export type OnceEverAlertClaim = { kept: boolean; claimedAt: Date | null; claimUncertain: boolean };
 
-/** `sendAdminAlertOnceEver`, reporting the claim's stamp as well (#4670). Same rule; never throws. */
+/** `sendAdminAlertOnceEver`, reporting the claim's stamp as well (#4670). Same rule, but an uncertain claim is the caller's to give back; never throws. */
 export async function sendAdminAlertOnceEverClaim({
   key,
   label,
@@ -100,6 +139,34 @@ export async function sendAdminAlertOnceEverClaim({
     logger.error({ ...context, err }, `Failed to release the ${label} claim`)
   );
   return { kept: false, claimedAt, claimUncertain: false };
+}
+
+/**
+ * Give back a once-ever claim this call took and could not use, under the exact
+ * stamp it wrote, so a newer claim is never touched (#4670). An uncertain claim
+ * (its write threw, #4679) gets two tries; a failed send's one more, after the
+ * claim helper's own. Never throws.
+ */
+export async function giveBackOwnOnceEverClaim({
+  key,
+  label,
+  context,
+  claim,
+}: {
+  key: string;
+  label: string;
+  context: Record<string, unknown>;
+  claim: Pick<OnceEverAlertClaim, "claimUncertain"> & { claimedAt: Date };
+}): Promise<void> {
+  const failed = claim.claimUncertain ? "Failed to give back the uncertain" : "Failed again to release the";
+  for (let attempt = 1; attempt <= (claim.claimUncertain ? 2 : 1); attempt += 1) {
+    try {
+      await releaseAlertCooldown({ key, claimedAt: claim.claimedAt });
+      return;
+    } catch (err) {
+      logger.error({ ...context, err, attempt }, `${failed} ${label} claim`);
+    }
+  }
 }
 
 /**

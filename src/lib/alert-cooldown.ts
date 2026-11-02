@@ -62,7 +62,8 @@ export const ALERT_NOBODY_ELIGIBLE_RETRY_MS = 86_400_000;
 
 /**
  * Give back a claim this caller took at `claimedAt` and could not use — the
- * send threw before reaching anyone — so the next run can claim and send
+ * send threw before reaching anyone, or the claim call threw after its write
+ * may have committed (#4679, #4696) — so the next run can claim and send
  * again (#3672). A send that reached nobody is deferred instead
  * (`deferAlertCooldown`), never given back (#3635 F1).
  * Deletes only a row still stamped with this caller's own claim, so a newer
