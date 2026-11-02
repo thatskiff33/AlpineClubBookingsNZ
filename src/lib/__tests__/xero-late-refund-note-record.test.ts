@@ -365,8 +365,8 @@ describe("#4656: the record checks the note fresh under its locks, and a wait th
     const sent = mocks.send.mock.calls[0]![0] as { errorType: string; errorMessage: string };
     expect(sent.errorType).toBe("XERO_SUCCESS_AFTER_RESOLUTION");
     expect(sent.errorMessage).toContain("Xero made credit note CN-B for $200.00 (Xero id cn-late-b, booking booking-1) for this refund");
-    expect(sent.errorMessage).toContain("left the operation running");
-    expect(sent.errorMessage).toContain("resolve it by hand with this note's number");
+    expect(sent.errorMessage).toContain("did not mark the operation failed");
+    expect(sent.errorMessage).toContain("then resolve it by hand with this note's number");
     expect(sent.errorMessage).not.toContain("stalled");
 
     // The same note traced again sends nothing more (the once-ever key is the note's).

@@ -1970,7 +1970,8 @@ on `manuallyResolvedAt`.
     (#4288), which waits on the same row for the same reason. If the wait
     still runs out (`isRecordWaitLost`: P2028, P2034 or SQLSTATE 40P01, 55P03),
     nothing was written, and the create returns without settling, completing
-    or failing the row: it stays RUNNING under this run's claim, the note is
+    or failing the row: it stays RUNNING under this run's claim (or FAILED, if
+    Mark failed reached it first), the note is
     logged first, audited once (the same
     `xero.refund_credit_note.late_note_not_recorded` action, `reason:
     "record-wait-lost"`) and alerted once through #4374's alert

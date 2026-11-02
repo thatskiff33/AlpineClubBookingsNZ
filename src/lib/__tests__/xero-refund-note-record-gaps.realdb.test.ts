@@ -321,7 +321,7 @@ let prisma: (typeof import("@/lib/prisma"))["prisma"];
       expect(send).toHaveBeenCalledTimes(1);
       expect(send).toHaveBeenCalledWith(expect.objectContaining({
         errorType: "XERO_SUCCESS_AFTER_RESOLUTION",
-        errorMessage: expect.stringMatching(/Xero made credit note CN-4656 for \$200\.00 \(Xero id race-4656-note, booking race-4656-booking\) for this refund.*left the operation running/),
+        errorMessage: expect.stringMatching(/Xero made credit note CN-4656 for \$200\.00 \(Xero id race-4656-note, booking race-4656-booking\) for this refund.*did not mark the operation failed/),
       }));
       const { xeroSuccessAfterResolutionAlertKey } = await import("@/lib/xero-success-after-resolution-alert");
       expect(await prisma.alertCooldown.count({ where: { key: xeroSuccessAfterResolutionAlertKey(operationId, NOTE) } })).toBe(1);

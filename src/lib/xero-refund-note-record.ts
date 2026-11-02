@@ -35,8 +35,8 @@
  * (`PAYMENT_ROW_WAIT_TRANSACTION_OPTIONS`), not Prisma's 5s: a holder of that
  * row can keep it 30s. If the wait still runs out (`isRecordWaitLost`), the
  * note Xero made is recorded nowhere: it is traced and alerted as a late note
- * is, and the row is NOT failed - it stays RUNNING for an officer, who is told
- * the note's number.
+ * is, and the row is NOT failed - it stays as it was (RUNNING under this run's
+ * claim, unless Mark failed reached it first) for an officer told its number.
  *
  * Lock order: the Payment row, always (`lockPaymentForRefundedTotal`; #4656:
  * a note that takes no pointer too, so two records of one payment queue), then
@@ -147,7 +147,8 @@ export async function recordCreatedRefundNote(note: CreatedRefundNote): Promise<
       return "resolved-by-hand";
     }
     if (!isRecordWaitLost(error)) throw error;
-    // Nor here: the row is this run's, still RUNNING, and a FAILED row would read as "nothing made".
+    // Nor here, and the row is left as it is (this run's RUNNING claim, or a row Mark failed meanwhile):
+    // failing it would read as "nothing made" while Xero holds the note.
     await traceUnrecordedLateNote(note, recordWaitLost(note, error));
     return "record-wait-lost";
   }
@@ -183,10 +184,10 @@ function recordWaitLost(note: CreatedRefundNote, error: unknown): LateNoteTrace 
       auditUnrecordedNote(note, { ...trace, errorCode: typeof errorCode === "string" ? errorCode : null }, row, {
         reason: "record-wait-lost",
         summary: "Refund credit note made in Xero not recorded: the app's record timed out",
-        details: `Xero made refund credit note ${note.creditNoteNumber ?? note.creditNoteId}, but the app's record of it timed out waiting on the payment, so it is not recorded or linked and the operation was left running. Resolve the operation with this note; do not raise another.`,
+        details: `Xero made refund credit note ${note.creditNoteNumber ?? note.creditNoteId}, but the app's record of it timed out waiting on the payment, so it is not recorded or linked, and the operation was not marked failed. Resolve the operation with this note; do not raise another.`,
       }),
     alertMessage: (_row, late) =>
-      `Xero made ${describeUnrecordedObject(late)} for this refund, but the app could not record it: its record timed out waiting on the payment, which another job was holding. The app did not record it, link it to the payment or record a refund payment against it in Xero, and left the operation running. Do not raise another note: once the operation shows as stuck running, mark it failed and resolve it by hand with this note's number where it asks for one. A retry sends Xero the same request, which normally answers with this same note; check Xero first.`,
+      `Xero made ${describeUnrecordedObject(late)} for this refund, but the app could not record it: its record timed out waiting on the payment, which another job was holding. The app did not record it, link it to the payment or record a refund payment against it in Xero, and did not mark the operation failed. Do not raise another note: mark the operation failed once it shows as stuck running, then resolve it by hand with this note's number where it asks for one. A retry sends Xero the same request, which normally answers with this same note; check Xero first.`,
   };
 }
 
