@@ -101,18 +101,27 @@ export async function traceUnrecordedLateNote(note: UnrecordedLateNote, report: 
     return { kind: "traced" };
   }
   try {
-    const late: UnrecordedXeroObject = {
-      xeroObjectType: "CREDIT_NOTE",
-      xeroObjectId: note.creditNoteId,
-      xeroObjectNumber: note.creditNoteNumber,
-      amount: await formattedAmount(note),
-      bookingId: note.bookingId,
-    };
+    const late = await lateNoteObject(note);
     await unrecordedLateSuccessAlert(row, late, report.alertMessage?.(row, late), report.alertWarning)();
   } catch (error) {
     logger.error({ ...trace, err: error }, `${notRecorded}, and its alert failed (${report.issue})`);
   }
   return { kind: "traced" };
+}
+
+/**
+ * The credit note as #4374's late-object alert names it, its amount in the
+ * club's money format. #4680 (`INV-SSOT`): also the stood-down organiser run's
+ * alert (`traceOrganiserRunStoodDown`).
+ */
+export async function lateNoteObject(note: UnrecordedLateNote): Promise<UnrecordedXeroObject> {
+  return {
+    xeroObjectType: "CREDIT_NOTE",
+    xeroObjectId: note.creditNoteId,
+    xeroObjectNumber: note.creditNoteNumber,
+    amount: await formattedAmount(note),
+    bookingId: note.bookingId,
+  };
 }
 
 /** The note's amount in the club's money format, or null when the format cannot be read (the alert still goes). */

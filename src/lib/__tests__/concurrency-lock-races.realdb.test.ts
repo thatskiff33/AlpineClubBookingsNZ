@@ -702,6 +702,12 @@ import "./xero-unrecorded-refund-note-fence.realdb.test";
 // row. Skipped unless RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own
 // `race-4655-` fixtures.
 import "./organiser-late-note-after-reset.realdb.test";
+// #4680 reuses it to prove an organiser adjustment run whose claim a reset took
+// after it recorded its credit note never allocates or pays out after an
+// officer's Resolve: it stands down before the money-moving call, audited and
+// alerted once, and a Retry finishes from the recorded note. Skipped unless
+// RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own `race-4680-` fixtures.
+import "./organiser-run-claim-check.realdb.test";
 // #4673 reuses it to prove a stalled run's late failure never undoes an officer's
 // in-place Retry after a stale reset: the row stays PENDING and the queued run
 // completes it, a queued run's own failure is kept, and with no Retry the failure

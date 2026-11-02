@@ -171,7 +171,15 @@ FAILED or PARTIAL, so they lose to the RUNNING row, and the stale reset still
 fails it if the process dies. The reset, requeue, outbox claim and resolve
 mark write that row status-guarded too, so whichever commits first wins. A
 lost record runs no allocation or payout and writes no failure; its audit row
-and alert run after, outside any transaction. This composes with the existing cancel/capture/refund cohort and
+and alert run after, outside any transaction. #4680: after the record, each
+money-moving call (resize, allocation, settlement, refund payment, or a
+completion with nothing allocated or paid) is preceded by a plain status-guarded read
+of the row on the run's claim (`holdsXeroOperationClaim`: id, RUNNING,
+`startedAt`), outside any transaction, taking no advisory key and registering
+no lock site (`INV-LOCK-001`..`003` unchanged); a lost claim makes no call and
+writes nothing to the row, only the audit row and the once-ever alert claim.
+The read narrows, not closes, the window: a reset can commit while the call
+it preceded is in flight. This composes with the existing cancel/capture/refund cohort and
 with the supplementary-anchor protocol rather than holding a lock across Xero.
 
 ### One refund credit note in flight per payment, by claim order (#3880)

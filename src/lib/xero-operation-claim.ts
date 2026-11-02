@@ -1,6 +1,6 @@
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
-import type { XeroOperationClaim } from "@/lib/xero-operation-outcome-guard";
+import { ownRunningClaim, type XeroOperationClaim } from "@/lib/xero-operation-outcome-guard";
 
 /**
  * The data every take of a Xero operation to RUNNING writes: the outbox claim
@@ -52,4 +52,20 @@ export async function claimXeroSyncOperationToRunning(
   });
 
   return result.count === 1 ? { id: operationId, startedAt } : null;
+}
+
+/**
+ * #4680 (`INV-INT-034`): whether a run still holds its claim - its row is
+ * RUNNING under the `startedAt` this claim stamped. A status-guarded read, asked
+ * immediately before a money-moving Xero call: a row a stale reset failed, an
+ * officer resolved or queued again, or a later claim took answers false, and
+ * the run makes no call. It narrows the window to that one call; it cannot
+ * close it. A claim with no `startedAt` holds no row.
+ */
+export async function holdsXeroOperationClaim(claim: XeroOperationClaim): Promise<boolean> {
+  // A `findFirst` reads an undefined id as no filter at all: never let one through.
+  if (!claim.id) throw new Error("A Xero operation claim check needs the operation's id.");
+  if (!claim.startedAt) return false;
+  const held = await prisma.xeroSyncOperation.findFirst({ where: { id: claim.id, ...ownRunningClaim(claim) }, select: { id: true } });
+  return held !== null;
 }

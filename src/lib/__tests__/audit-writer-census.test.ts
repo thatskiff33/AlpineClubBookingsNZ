@@ -1484,7 +1484,9 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
     // RE-MEASURED with `pnpm run audit:census`.
     // 400 -> 401 unpinned (#4655): the late organiser adjustment note's row, unpinned `xero`.
     // RE-MEASURED with `pnpm run audit:census`.
-    ).toEqual({ pinned: 130, unpinned: 401 });
+    // 401 -> 402 unpinned (#4680): the organiser adjustment run's stand-down row, unpinned `xero`.
+    // RE-MEASURED with `pnpm run audit:census`.
+    ).toEqual({ pinned: 130, unpinned: 402 });
   });
 
   it("pins which classified writers a MEMBER can now see about themselves", () => {

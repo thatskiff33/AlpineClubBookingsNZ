@@ -10,7 +10,8 @@ import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { settleRefundNoteFromXero } from "@/lib/xero-refund-note-settlement";
 import { syncOrganiserExtraInvoiceCash } from "@/lib/organiser-extra-receipt";
 import { reserveOrganiserExtraRacedCash } from "@/lib/organiser-extra-raced-cash";
-import { recordCreatedOrganiserNote } from "@/lib/organiser-extra-note-record";
+import { recordCreatedOrganiserNote, traceOrganiserRunStoodDown, type OrganiserStandDownStep } from "@/lib/organiser-extra-note-record";
+import { holdsXeroOperationClaim } from "@/lib/xero-operation-claim";
 import { XeroAppliedCreditOperationBusyError } from "@/lib/xero-applied-credit-operation-serialization";
 import type { XeroOperationClaim } from "@/lib/xero-operation-outcome-guard";
 import type { OrganiserExtraAdjustmentPayload } from "@/lib/organiser-extra-adjustment-payload";
@@ -21,7 +22,8 @@ const REFUND_LINE = "Refund paid back to the group organiser by bank transfer";
 /**
  * `completed`: the row's outcome was written under the run's claim.
  * `stood-down`: #4655, the created note was recorded on a row queued again, or
- * on no row (traced); this run wrote no outcome.
+ * on no row (traced); or #4680, the run no longer held its claim before a
+ * money-moving call after the record (traced). This run wrote no outcome.
  */
 export type OrganiserExtraAdjustmentRun = "completed" | "stood-down";
 
@@ -149,6 +151,24 @@ export async function executeOrganiserExtraAdjustment(
     }
   }
   const creditNoteId = noteId;
+  /**
+   * #4680 (`INV-INT-034`): asked immediately before each money-moving Xero call
+   * after the record. A run whose claim a stale reset took (then perhaps an
+   * officer's Resolve or Retry, or a later claim) makes no such call: it
+   * stands down, traced, and writes no outcome. The window narrows to the one
+   * call in flight; it cannot close. `noteCents` is the note's own amount, for
+   * the trace (#4703 review): a waiver's total as read from Xero, since a run
+   * continuing from an earlier run's note sized `amountCents` from what is due
+   * now; a refund note's is its payload's, as raised and never resized.
+   */
+  const holdsClaim = async (step: OrganiserStandDownStep, noteCents: number) => {
+    if (await holdsXeroOperationClaim(claim)) return true;
+    await traceOrganiserRunStoodDown(
+      { claim, bookingId: payload.bookingId, purpose: payload.purpose, creditNoteId, creditNoteNumber: noteNumber, amountCents: noteCents },
+      step,
+    );
+    return false;
+  };
   if (payload.purpose === "waive") {
     const noteResponse = await callXeroApi(() => xero.accountingApi.getCreditNote(tenantId, creditNoteId), {
       operation: "getCreditNote", resourceType: "CREDIT_NOTE", workflow: "organiserExtraAdjustment", context: `read waiver ${creditNoteId}`,
@@ -176,20 +196,25 @@ export async function executeOrganiserExtraAdjustment(
     // Re-read on every attempt and shrink an unallocated note before applying it.
     if (payload.modificationId) await reserveOrganiserExtraRacedCash(payload.bookingId, { modificationId: payload.modificationId, invoiceId: extraInvoiceId, cashCents });
     const revisedTotalCents = Math.min(totalCents, dueCents + alreadyAllocated);
+    let resized = false;
     if (revisedTotalCents < totalCents) {
       if (alreadyAllocated > 0 || (note.payments?.length ?? 0) > 0 || (note.allocations?.length ?? 0) > 0) {
         throw new Error("Organiser waiver was settled elsewhere before it could be resized");
       }
-      const resized = revisedTotalCents === 0
+      if (!(await holdsClaim("resize", totalCents))) return "stood-down";
+      const revision = revisedTotalCents === 0
         ? { status: CreditNote.StatusEnum.VOIDED }
         : { lineItems: [{ ...note.lineItems?.[0], description: WAIVER_LINE, quantity: 1, unitAmount: revisedTotalCents / 100 }] };
       await callXeroApi(
-        () => xero.accountingApi.updateCreditNote(tenantId, creditNoteId, { creditNotes: [{ creditNoteID: creditNoteId, ...resized }] }, undefined, `${key}:resize:${cashCents}:${revisedTotalCents}`),
+        () => xero.accountingApi.updateCreditNote(tenantId, creditNoteId, { creditNotes: [{ creditNoteID: creditNoteId, ...revision }] }, undefined, `${key}:resize:${cashCents}:${revisedTotalCents}`),
         { operation: "updateCreditNote", resourceType: "CREDIT_NOTE", workflow: "organiserExtraAdjustment", context: `resize organiser waiver ${creditNoteId}` },
       );
       totalCents = revisedTotalCents;
+      resized = true;
     }
     const remainingCents = totalCents - alreadyAllocated;
+    // With nothing to allocate and no resize made, the completion is this run's next write: it waits on the claim too.
+    if ((remainingCents > 0 || !resized) && !(await holdsClaim(remainingCents > 0 ? "allocation" : "completion", totalCents))) return "stood-down";
     if (remainingCents > 0) {
       await callXeroApi(
         () => xero.accountingApi.createCreditNoteAllocation(tenantId, creditNoteId, { allocations: [{ invoice: { invoiceID: extraInvoiceId }, amount: remainingCents / 100, date }] }, undefined, `${key}:allocation:${remainingCents}`),
@@ -202,10 +227,19 @@ export async function executeOrganiserExtraAdjustment(
       extraLinks: [{ localModel: "Booking", localId: payload.bookingId, xeroObjectType: "CREDIT_NOTE", xeroObjectId: creditNoteId, role: "ORGANISER_EXTRA_WAIVER", metadata: { invoiceId: extraInvoiceId, amountCents: totalCents } }],
     });
   } else {
+    if (!(await holdsClaim("refund-payment", amountCents))) return "stood-down";
+    let reachedPayment = false;
     const settlement = await settleRefundNoteFromXero({
       paymentId: payment.id, creditNoteId, creationKeys: [key], refundMethod: "internet-banking", refundMethodRecorded: true, fallbackPaymentDate: async () => date,
+      beforePayment: () => { reachedPayment = true; return holdsClaim("refund-payment", amountCents); },
     });
+    if (settlement.stoodDown) return "stood-down";
     if (settlement.outcome.refundPaymentErr) throw settlement.outcome.refundPaymentErr;
+    // #4703 review: a settlement that returned before its payment (Xero already
+    // shows the note settled, perhaps by an officer's hand, or the app has none
+    // to record) made no call after its note read, the run's likeliest stall:
+    // its completion is this run's next write, so it waits on the claim too.
+    if (!reachedPayment && !(await holdsClaim("completion", amountCents))) return "stood-down";
     await completeXeroSyncOperation(claim, {
       xeroObjectId: creditNoteId, xeroObjectType: "CREDIT_NOTE", xeroObjectNumber: settlement.creditNoteNumber ?? noteNumber,
       responsePayload: { invoiceId: extraInvoiceId, amountCents, refundPayment: settlement.outcome.refundPaymentResponseBody, refundPaymentSkipped: settlement.outcome.refundPaymentSkipReason },
