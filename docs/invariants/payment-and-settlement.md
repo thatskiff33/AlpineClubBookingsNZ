@@ -2151,8 +2151,9 @@ total at apply).
   once. A started stay is not emailed; the treasurer is alerted once per
   group, linking each joiner's booking. The claim (`sendAdminAlertOnceEver`)
   is kept once an admin has it or a copy is queued for the email retry cron,
-  held a day when no admin can receive it, and given back only when the send
-  throws first. The
+  held a day when no admin can receive it, and given back when the send
+  throws first, or when the claim write itself throws, under the exact stamp
+  it tried to write (#4696). The
   reaper retries it from the events of stays not yet ended.
 - Pinned by `group-late-joiner.test.ts`, `group-late-joiner-heal.test.ts`,
   `group-late-joiner-alert-outage.test.ts`, `alert-cooldown.test.ts`,
