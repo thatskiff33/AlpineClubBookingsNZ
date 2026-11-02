@@ -22,7 +22,7 @@
  * - except a re-issue's row still naming its door's key, whatever its attempts:
  *   the door mints under that key before any attempt, and its write is fenced
  *   on PENDING, so a row that ended without it never takes it
- *   (`isUnmintedReissueRow`, review of PR #4698);
+ *   (`rowNamesReissuedAskDoorKey`, review of PR #4698);
  * - the failure that ends the row for good (`failPaymentRecoveryOperation`).
  *
  * The sweep lists the recent intents that carry the row's own marker - which no
@@ -67,6 +67,7 @@ import {
   isEditFinancialReviewAdditionalIntentRecoveryKey,
   stripeIdempotencyKeyForAskAmount,
 } from "@/lib/payment-recovery-keys";
+import { rowNamesReissuedAskDoorKey } from "@/lib/reissued-ask-door-key";
 import { prisma } from "@/lib/prisma";
 import type { PaymentRecoveryProcessOutcome } from "@/lib/payment-recovery";
 import { ABANDONED_INTENT_STRIPE_TIMEOUT_MS } from "@/lib/payment-recovery-constants";
@@ -166,15 +167,6 @@ export async function sweepAbandonedAskIntents(operationId: string, trigger: Aba
   }
 }
 
-/**
- * A re-issue's row its door wrote, still naming the door's key (`queueReissuedAskRecovery`):
- * the door mints under that key before any attempt claims the row, so an intent may be
- * left whatever the row's attempts.
- */
-export function isUnmintedReissueRow(row: Pick<PaymentRecoveryOperation, "idempotencyKey" | "paymentIntentId">): boolean {
-  const editId = bookingModificationIdForAdditionalIntentRecoveryKey(row.idempotencyKey);
-  return editId !== null && row.paymentIntentId === buildReissuedAskStripeIdempotencyKey(editId);
-}
 
 /**
  * The runner's half: after an attempt that ended the row (`done`), sweep - unless
@@ -185,7 +177,7 @@ export async function sweepAfterRunnerClose(
   operation: Pick<PaymentRecoveryOperation, "id" | "attempts" | "idempotencyKey" | "paymentIntentId">,
   outcome: PaymentRecoveryProcessOutcome,
 ): Promise<void> {
-  if (outcome !== "done" || (operation.attempts < 2 && !isUnmintedReissueRow(operation))) return;
+  if (outcome !== "done" || (operation.attempts < 2 && !rowNamesReissuedAskDoorKey(operation))) return;
   await sweepAbandonedAskIntents(operation.id, "runner-close");
 }
 
@@ -216,7 +208,7 @@ export async function sweepAskRecoveriesClosedByEdit({
         idempotencyKey: { in: editIds.map(buildAdditionalIntentRecoveryIdempotencyKey) },
         status: PaymentRecoveryOperationStatus.SUCCEEDED,
         // A runner claimed it - or it is a re-issue still naming its door's key, which the door
-        // may have minted under before any claim (`isUnmintedReissueRow`).
+        // may have minted under before any claim (`rowNamesReissuedAskDoorKey`).
         OR: [{ attempts: { gte: 1 } }, { paymentIntentId: { in: editIds.map(buildReissuedAskStripeIdempotencyKey) } }],
       },
       select: { id: true, status: true, lastError: true },

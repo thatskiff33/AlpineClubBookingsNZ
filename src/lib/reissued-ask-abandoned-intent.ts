@@ -89,7 +89,6 @@ import { cancelPaymentIntentIfCancellableWithResult, getPaymentIntent } from "@/
 /** The `event` every outcome of this cleanup is logged under (#4052). */
 export const ABANDONED_REISSUE_INTENT_LOG_EVENT = "reissued-ask.abandoned-intent-cleanup";
 
-
 /**
  * After the door's write lost its fence: re-read the recovery (null when the
  * read fails), cancel the door's intent when that proves nobody owns it, and
@@ -292,7 +291,7 @@ export async function cancelAbandonedReissuedAskIntent(call: {
 }
 
 function logAlreadyCancelled(context: Record<string, unknown>): void {
-  logger.info({ ...context, outcome: "already-cancelled", intentStatus: "canceled" }, "An abandoned ask's intent was already cancelled - by another settle or sweep of it; nothing to do (#4693)");
+  logger.info({ ...context, outcome: "already-cancelled", intentStatus: "canceled" }, "An abandoned ask's intent was already cancelled - by another settle or sweep of it, or by this cancel itself when its reply timed out; nothing to do (#4693)");
 }
 
 /** Whether the intent now reads cancelled; a read that fails proves nothing (false). */

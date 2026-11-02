@@ -36,10 +36,10 @@
  */
 import {
   bookingModificationIdForAdditionalIntentRecoveryKey,
-  buildReissuedAskStripeIdempotencyKey,
   isEditFinancialReviewAdditionalIntentRecoveryKey,
   stripeIdempotencyKeyForAskAmount,
 } from "@/lib/payment-recovery-keys";
+import { rowNamesReissuedAskDoorKey } from "@/lib/reissued-ask-door-key";
 import {
   isCreditReleaseAskRecoveryKey,
 } from "@/lib/credit-release-ask-keys";
@@ -259,7 +259,7 @@ export function couldRecoveryRowOwnIntent(
     // #4253: a credit-release request sends a reason of its own (`INV-ADDPAY-045`).
     isCreditReleaseAskRecoveryKey(row.idempotencyKey) ||
     isEditFinancialReviewAdditionalIntentRecoveryKey(row.idempotencyKey) ||
-    (bookingModificationId && row.paymentIntentId === buildReissuedAskStripeIdempotencyKey(bookingModificationId))
+    rowNamesReissuedAskDoorKey(row)
   ) {
     return false;
   }
