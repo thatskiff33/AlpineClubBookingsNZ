@@ -67,7 +67,7 @@ const mocks = vi.hoisted(() => ({
   xeroObjectLinkFindMany: vi.fn(),
   xeroSyncOperationUpdate: vi.fn(),
   // #4688: no unrecorded refund note fences the payment in these runs.
-  xeroSyncOperationFindFirst: vi.fn(async () => null),
+  xeroSyncOperationFindMany: vi.fn(async () => []),
   chargeFindUnique: vi.fn(),
   chargeUpdate: vi.fn(),
   transaction: vi.fn(),
@@ -134,7 +134,7 @@ vi.mock("@/lib/prisma", () => ({
       findUnique: mocks.creditNoteAllocationFindUnique,
       findMany: mocks.creditNoteAllocationFindMany,
     },
-    xeroSyncOperation: { update: mocks.xeroSyncOperationUpdate, findFirst: mocks.xeroSyncOperationFindFirst },
+    xeroSyncOperation: { update: mocks.xeroSyncOperationUpdate, findMany: mocks.xeroSyncOperationFindMany },
     membershipSubscriptionCharge: {
       findUnique: mocks.chargeFindUnique,
       update: mocks.chargeUpdate,
@@ -360,6 +360,7 @@ describe("#2834 the other half of the premise: a `@db.Date` receiver is read by 
 
 beforeEach(() => {
   vi.resetAllMocks();
+  mocks.xeroSyncOperationFindMany.mockResolvedValue([]);
 
   mocks.getAuthenticatedXeroClient.mockResolvedValue({
     xero: { accountingApi: mocks.accountingApi },
