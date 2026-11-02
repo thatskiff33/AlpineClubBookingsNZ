@@ -1008,7 +1008,8 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
         }
 
         if (credited) {
-          await tx.memberCredit.create({
+          const mintedCredit = await tx.memberCredit.create({
+            select: { id: true }, // #4685: its Xero note's stamp writes this credit by id
             data: {
               memberId: creditMemberId,
               amountCents: actionableCents,
@@ -1044,7 +1045,7 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
           await enqueueXeroAccountCreditNoteOperation(
             settlementPayment.id,
             actionableCents,
-            { store: tx },
+            { store: tx, memberCreditId: mintedCredit.id },
           );
         }
 
@@ -1303,8 +1304,8 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
             },
             select: { id: true },
           }) : null;
-          if (lateCapacityCreditMemberId && !existingCredit && mintableCents > 0) {
-            await tx.memberCredit.create({
+          const mintedCredit = lateCapacityCreditMemberId && !existingCredit && mintableCents > 0 ? await tx.memberCredit.create({
+              select: { id: true },
               data: {
                 memberId: lateCapacityCreditMemberId,
                 amountCents: mintableCents,
@@ -1312,9 +1313,8 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
                 description: creditDescription,
                 sourceBookingId: fresh.bookingId,
               },
-            });
-            await syncBookingLedgerCredits({ bookingId: fresh.bookingId, store: tx });
-          }
+            }) : null;
+          if (mintedCredit) await syncBookingLedgerCredits({ bookingId: fresh.bookingId, store: tx });
 
           // Enqueue the offsetting Xero account-credit note inside this same
           // transaction so the outbox intent commits atomically with the local
@@ -1322,9 +1322,9 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
           // local credit with no Xero mirror and no self-healing path (the
           // booking is now CANCELLED, so a re-run early-returns without
           // re-enqueueing). The enqueue is a local insert, no-ops when the
-          // amount is <= 0, and dedups, so it is safe to run in-tx.
+          // amount is <= 0, and dedups, so it is safe to run in-tx. #4685: it names the credit its note stamps.
           await enqueueXeroAccountCreditNoteOperation(fresh.id, mintableCents, {
-            store: tx,
+            store: tx, memberCreditId: (mintedCredit ?? existingCredit)?.id,
           });
 
           return {

@@ -34,7 +34,7 @@ import {
   resolveObjectFromCandidates,
 } from "./xero-booking-repair-object-resolution";
 import {
-  getCancellationCreditAmountCents,
+  cancellationCreditNoteTarget, getCancellationCreditAmountCents,
   getCashCancellationRefundCandidateCents,
   getExpectedSupplementaryInvoiceAsk,
   getKnownModificationRefundTotalCents,
@@ -2301,7 +2301,7 @@ export function classifyBookingContext(
             safeToAutoApply: true,
             payload: {
               paymentId: payment.id,
-              refundAmountCents: cancellationCreditAmountCents,
+              refundAmountCents: cancellationCreditAmountCents, ...cancellationCreditNoteTarget(booking), // #4685
             },
           });
           addFinding(findings, {

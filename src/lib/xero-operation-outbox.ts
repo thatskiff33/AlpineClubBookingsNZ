@@ -1168,7 +1168,7 @@ export async function enqueueXeroRefundCreditNoteOperation(
 export async function enqueueXeroAccountCreditNoteOperation(
   paymentId: string,
   refundAmountCents: number,
-  options?: { createdByMemberId?: string; store?: Prisma.TransactionClient }
+  options?: { createdByMemberId?: string; store?: Prisma.TransactionClient; memberCreditId?: string }
 ) {
   if (refundAmountCents <= 0) {
     return {
@@ -1255,7 +1255,8 @@ export async function enqueueXeroAccountCreditNoteOperation(
     correlationKey,
     requestPayload: {
       queueType: XERO_OUTBOX_ACCOUNT_CREDIT_NOTE_TYPE,
-      refundAmountCents,
+      refundAmountCents, // #4685: and the credit it is for, which its stamp writes by id
+      ...(options?.memberCreditId ? { memberCreditId: options.memberCreditId } : {}),
     },
     createdByMemberId: options?.createdByMemberId ?? null,
     store: db,
@@ -3149,10 +3150,7 @@ export async function processQueuedXeroOutboxOperations(options?: {
           queuedOperation.localId,
           payload.refundAmountCents,
           format,
-          {
-            createdByMemberId: queuedOperation.createdByMemberId ?? undefined,
-            syncOperation: claimed,
-          }
+          { createdByMemberId: queuedOperation.createdByMemberId ?? undefined, syncOperation: claimed, memberCreditId: payload.memberCreditId }
         );
       } else if (
         payload?.queueType === XERO_OUTBOX_MODIFICATION_ACCOUNT_CREDIT_NOTE_TYPE

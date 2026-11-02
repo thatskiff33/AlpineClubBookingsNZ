@@ -42,8 +42,9 @@ const MINT_SLICE_MAPPING_KEY_ORDER: readonly MintSliceMappingKey[] = [
  * which is exactly where it went before #2717:
  *  - `CANCELLATION_REFUND` — including the #1547 restore of credit whose
  *    funding note a prior cancel consumed. That row is permanently noteless
- *    (`backfillCancellationCreditXeroNote` matches three literal descriptions
- *    and "Credit restored from cancelled booking …" is not one of them), so
+ *    (`stampCancellationCreditXeroNote` stamps the credit a note names, else
+ *    three literal descriptions, and "Credit restored from cancelled booking …"
+ *    is neither), so
  *    keying off "has it got a note yet?" would book it as goodwill for ever;
  *  - `BOOKING_MODIFICATION_REFUND` — a downward reprice, likewise not goodwill;
  *  - `BOOKING_APPLIED` — a positive row here is the #1887 clamp's offset, which

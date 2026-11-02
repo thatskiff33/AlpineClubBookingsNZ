@@ -126,18 +126,17 @@ export async function getMemberCreditBalance(
   return result._sum.amountCents ?? 0;
 }
 
-/**
- * Create a credit entry for a cancellation refund held as credit.
- */
+/** Create a credit entry for a cancellation refund held as credit; returns its id, which its Xero note stamps (#4685). */
 export async function createCancellationCredit(
   memberId: string,
   amountCents: number,
   bookingId: string,
   xeroCreditNoteId?: string,
   tx?: Prisma.TransactionClient
-): Promise<void> {
+): Promise<string> {
   const db = tx || prisma;
-  await db.memberCredit.create({
+  const { id } = await db.memberCredit.create({
+    select: { id: true },
     data: {
       memberId,
       amountCents,
@@ -159,6 +158,7 @@ export async function createCancellationCredit(
     amountCents,
     reason: "Cancellation refund held as account credit.",
   });
+  return id;
 }
 
 /**
