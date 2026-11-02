@@ -40,6 +40,10 @@ describe("sendAdminAlertOnceEverClaim's claim report", () => {
     const claim = await sendAdminAlertOnceEverClaim(args);
 
     expect(claim).toEqual({ kept: false, claimedAt: stampPassedToClaim(), claimUncertain: true });
+    // The very Date passed to the claim, not a second clock read: the frozen
+    // test clock makes two reads equal, while the stamp-guarded give-back in
+    // production matches only the exact stamp written.
+    expect(claim.claimedAt).toBe(stampPassedToClaim());
     expect(send).not.toHaveBeenCalled();
     expect(mocks.releaseAlertCooldown).not.toHaveBeenCalled();
   });

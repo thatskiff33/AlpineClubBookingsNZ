@@ -235,13 +235,20 @@ async function ensureAlert(
    * #4679: the same when the claim call threw (`claimUncertain`). Its write may
    * have committed, and that claim, too, is this delivery's own: give back the
    * stamp it tried to write, a no-op if nothing landed, and fail. At worst
-   * Stripe redelivers once more than needed.
+   * Stripe redelivers once more than needed. The helper made no release of its
+   * own here, so this one gets two tries - as a failed send's claim does, the
+   * helper's then this one.
    */
   const giveBackOwnClaimAndFail = async ({ claimedAt, claimUncertain }: { claimedAt: Date; claimUncertain: boolean }): Promise<never> => {
     const failed = claimUncertain ? "Failed to give back the uncertain" : "Failed again to release the";
-    await releaseAlertCooldown({ key, claimedAt }).catch((err) =>
-      logger.error({ ...context, err }, `${failed} ${mail.label} claim`),
-    );
+    for (let attempt = 1; attempt <= (claimUncertain ? 2 : 1); attempt += 1) {
+      try {
+        await releaseAlertCooldown({ key, claimedAt });
+        break;
+      } catch (err) {
+        logger.error({ ...context, err, attempt }, `${failed} ${mail.label} claim`);
+      }
+    }
     throw new UnrecognisedStripePaymentAlertNotSentError(row.stripePaymentIntentId);
   };
 

@@ -620,9 +620,22 @@ describe("the alert when its claim call throws (#4679)", () => {
     expect(mocks.sendAlert).not.toHaveBeenCalled();
   });
 
-  it("still fails the webhook when giving the uncertain claim back fails too", async () => {
+  it("tries the uncertain give-back twice: a first failed release is retried, and the redelivery sends once", async () => {
     state.claimCalls = ["throws-after-commit"];
     state.releaseFailures = 1;
+
+    await expect(recordUnrecognisedStripePayment(paymentIntent(), event(), CLUB_FORMAT_TEST)).rejects.toBeInstanceOf(
+      UnrecognisedStripePaymentAlertNotSentError,
+    );
+    expect(state.heldKeys.has(key)).toBe(false);
+
+    await recordUnrecognisedStripePayment(paymentIntent(), event(), CLUB_FORMAT_TEST);
+    expect(mocks.sendAlert).toHaveBeenCalledTimes(1);
+  });
+
+  it("still fails the webhook when both tries at giving the uncertain claim back fail", async () => {
+    state.claimCalls = ["throws-after-commit"];
+    state.releaseFailures = 2;
 
     await expect(recordUnrecognisedStripePayment(paymentIntent(), event(), CLUB_FORMAT_TEST)).rejects.toBeInstanceOf(
       UnrecognisedStripePaymentAlertNotSentError,
