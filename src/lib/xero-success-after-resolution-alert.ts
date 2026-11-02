@@ -18,9 +18,10 @@
  * says the credit ledger and Xero may now disagree instead.
  *
  * The send is once-ever and best-effort. If it throws before reaching anyone,
- * or nobody can receive it, `sendAdminAlertOnceEver` gives the claim back or
- * defers it, but nothing calls again unless another success lands on the row:
- * the warning in the log is then the only trace (a stated limit, `INV-INT-029`).
+ * its claim write throws (#4696), or nobody can receive it,
+ * `sendAdminAlertOnceEver` gives the claim back or defers it, but nothing calls
+ * again unless another success lands on the row: the warning in the log is
+ * then the only trace (a stated limit, `INV-INT-029`).
  */
 import type { XeroSyncOperation } from "@prisma/client";
 import { sendAdminAlertOnceEver } from "@/lib/admin-alert-once";

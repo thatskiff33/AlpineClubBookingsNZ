@@ -1844,8 +1844,9 @@ on `manuallyResolvedAt`.
     `xero-success-after-resolution-alert.test.ts` pins the callers, and fails
     on an options argument it cannot read as text.
   - **Limit: no retry of its own.** If the send throws before reaching
-    anyone, or nobody can receive it, `sendAdminAlertOnceEver` gives the claim
-    back or defers it, but nothing calls again unless another success lands
+    anyone, its claim write throws, or nobody can receive it,
+    `sendAdminAlertOnceEver` gives the claim back (#4696) or defers it, but
+    nothing calls again unless another success lands
     on the row. The logged warning is then the only trace.
 - **A refund note resolved by hand names its note (#4421, owner decision
   26 Oct 2026, `INV-INT-028`).** On a FAILED payment refund-note create that

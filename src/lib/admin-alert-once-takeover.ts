@@ -1,7 +1,11 @@
-import { readHeldOnceEverAlertTimes, sendAdminAlertOnceEverClaim, type OnceEverAlertClaim } from "@/lib/admin-alert-once";
+import {
+  giveBackOwnOnceEverClaim,
+  readHeldOnceEverAlertTimes,
+  sendAdminAlertOnceEverClaim,
+  type OnceEverAlertClaim,
+} from "@/lib/admin-alert-once";
 import { releaseAlertCooldown } from "@/lib/alert-cooldown";
 import type { AdminAlertSendResult } from "@/lib/email/admin-alert-send-result";
-import logger from "@/lib/logger";
 
 /**
  * #4690 (`INV-SSOT`): THE ONE SEQUENCE for a once-ever admin alert whose caller
@@ -53,32 +57,4 @@ export async function sendAdminAlertOnceEverWithTakeover(args: {
   await releaseAlertCooldown({ key, claimedAt: heldAt });
   const second = await read(await attempt());
   return second === "held" ? "taken-over" : second;
-}
-
-/**
- * Give back a once-ever claim this call took and could not use, under the exact
- * stamp it wrote, so a newer claim is never touched (#4670). An uncertain claim
- * (its write threw, #4679) gets two tries; a failed send's one more, after the
- * claim helper's own. Never throws.
- */
-export async function giveBackOwnOnceEverClaim({
-  key,
-  label,
-  context,
-  claim,
-}: {
-  key: string;
-  label: string;
-  context: Record<string, unknown>;
-  claim: Pick<OnceEverAlertClaim, "claimUncertain"> & { claimedAt: Date };
-}): Promise<void> {
-  const failed = claim.claimUncertain ? "Failed to give back the uncertain" : "Failed again to release the";
-  for (let attempt = 1; attempt <= (claim.claimUncertain ? 2 : 1); attempt += 1) {
-    try {
-      await releaseAlertCooldown({ key, claimedAt: claim.claimedAt });
-      return;
-    } catch (err) {
-      logger.error({ ...context, err, attempt }, `${failed} ${label} claim`);
-    }
-  }
 }
