@@ -1039,13 +1039,13 @@ const TEMPLATE_TRIGGER_METADATA: Partial<
     triggerSummary:
       "A card payment the app started for a booking succeeded in Stripe, but no payment the app holds on that booking matches it, so the booking was not marked paid and nothing was sent to Xero",
     frequency:
-      "Once ever per Stripe payment - claim-guarded; a send that fails is retried by Stripe's redelivery of the payment's notification",
+      "Once ever per Stripe payment - claim-guarded; a send nobody received is retried by Stripe's redelivery of the payment's notification, and a copy one recipient missed while another got it is re-sent by the email retry job",
   },
   "admin-unrecognised-stripe-payment": {
     triggerSummary:
       "A payment succeeded on the club's Stripe account that the app did not create - a Stripe Payment Link, a Checkout page or a dashboard charge - so there is no booking for it and nothing was sent to Xero",
     frequency:
-      "Once ever per Stripe payment - claim-guarded; a send that fails is retried by Stripe's redelivery of the payment's notification",
+      "Once ever per Stripe payment - claim-guarded; a send nobody received is retried by Stripe's redelivery of the payment's notification, and a copy one recipient missed while another got it is re-sent by the email retry job",
   },
   "admin-late-capture-hand-back-conflict": {
     triggerSummary:

@@ -1,3 +1,4 @@
+import type { EmailLog, Prisma } from "@prisma/client";
 import { prisma } from "./prisma";
 import { EMAIL_FROM, formatEmailFromAddress } from "./email-sender";
 import { htmlToPlainText } from "./email-text";
@@ -6,6 +7,7 @@ import {
   getEmailTransporter,
   type SentMessageInfo,
 } from "@/lib/email/internal";
+import { RETAINS_REPLAYABLE_EMAIL_BODY } from "@/lib/email/retry-selection";
 import {
   describeDeliveryDecision,
   resolveDeliveryPolicy,
@@ -25,6 +27,24 @@ import { renderEmailHtml } from "@/lib/email-theme";
 
 const MAX_ATTEMPTS = 3;
 const RETRY_FAILURE_ALERT_TEMPLATE = "admin-email-failure";
+
+/**
+ * The guard on this job's pre-send claim (F33, #1885): the row is still
+ * `FAILED` with exactly the attempts and bodies the run read. A row another run
+ * claimed, or whose body `releaseUnreceivedAlertCopies` dropped (#4669), matches
+ * nothing. Exported so the real-database proof of that race issues this claim.
+ */
+export function emailRetryClaimWhere(
+  row: Pick<EmailLog, "id" | "attempts" | "htmlBody" | "bookingRetryHtmlBody">,
+): Prisma.EmailLogWhereInput {
+  return {
+    id: row.id,
+    status: "FAILED",
+    attempts: row.attempts,
+    htmlBody: row.htmlBody,
+    bookingRetryHtmlBody: row.bookingRetryHtmlBody,
+  };
+}
 
 async function retireUnverifiableBookingEmail(params: {
   emailLogId: string;
@@ -201,10 +221,7 @@ export async function retryFailedEmails(): Promise<{
       // before any send. Do not widen this to a status list.
       status: "FAILED",
       attempts: { lt: MAX_ATTEMPTS },
-      OR: [
-        { htmlBody: { not: null } },
-        { bookingRetryHtmlBody: { not: null } },
-      ],
+      ...RETAINS_REPLAYABLE_EMAIL_BODY,
       lastAttemptAt: { not: { gte: backoffThreshold } },
     },
     orderBy: { createdAt: "asc" },
@@ -496,13 +513,7 @@ export async function retryFailedEmails(): Promise<{
     // double-send. Two overlapping cron runs race the same guarded update and
     // only one wins.
     const claim = await prisma.emailLog.updateMany({
-      where: {
-        id: emailLog.id,
-        status: "FAILED",
-        attempts: emailLog.attempts,
-        htmlBody: emailLog.htmlBody,
-        bookingRetryHtmlBody: emailLog.bookingRetryHtmlBody,
-      },
+      where: emailRetryClaimWhere(emailLog),
       data: {
         status: "QUEUED",
         attempts: newAttempts,

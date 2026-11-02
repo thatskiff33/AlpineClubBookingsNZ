@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type Stripe from "stripe";
+import { matchesWhere } from "./support/prisma-where";
 
 /**
  * #4647 (`INV-INT-032`, `INV-INT-033`): ONE owner for retrying the alert about a
@@ -12,7 +13,7 @@ import type Stripe from "stripe";
  * claim (`unrecognised-stripe-payment.ts`, `admin-alert-once.ts`,
  * `alert-cooldown.ts`), the unmuteable sender, `sendEmail` with its EmailLog
  * row and retention rule, and `retryFailedEmails`. The doubles are the store
- * (in-memory tables keyed and filtered as the queries ask), the mail transport
+ * (in-memory tables filtered by the shared `matchesWhere`), the mail transport
  * (counts what went out), the Checkout read, and the club's settings.
  */
 type EmailLogRow = Record<string, unknown> & { id: string };
@@ -29,31 +30,8 @@ const state = vi.hoisted(() => ({
   stampFailures: 0,
 }));
 
-/** A field filter the queries under test use; anything else fails loudly rather than matching silently. */
-function matchesField(value: unknown, filter: unknown): boolean {
-  if (filter === null || typeof filter !== "object" || filter instanceof Date) {
-    return filter instanceof Date
-      ? value instanceof Date && value.getTime() === filter.getTime()
-      : value === filter;
-  }
-  const ops = filter as Record<string, unknown>;
-  return Object.entries(ops).every(([op, operand]) => {
-    if (op === "lt") return value instanceof Date ? value < (operand as Date) : (value as number) < (operand as number);
-    if (op === "gte") return value instanceof Date ? value >= (operand as Date) : (value as number) >= (operand as number);
-    if (op === "not") return operand === null ? value != null : !matchesField(value, operand);
-    throw new Error(`unsupported filter operator ${op}`);
-  });
-}
-
-function matchesWhere(row: Record<string, unknown>, where: Record<string, unknown>): boolean {
-  return Object.entries(where).every(([key, filter]) => {
-    if (key === "OR") return (filter as Record<string, unknown>[]).some((branch) => matchesWhere(row, branch));
-    return matchesField(row[key] ?? null, filter);
-  });
-}
-
-vi.mock("@/lib/prisma", () => ({
-  prisma: {
+vi.mock("@/lib/prisma", () => {
+  const prisma = {
     unrecognisedStripePayment: {
       findUnique: async ({ where }: { where: { stripePaymentIntentId?: string; id?: string } }) => {
         if (where.stripePaymentIntentId) return state.stripeRows.get(where.stripePaymentIntentId) ?? null;
@@ -79,9 +57,9 @@ vi.mock("@/lib/prisma", () => ({
       },
     },
     alertCooldown: {
-      updateMany: async ({ where, data }: { where: { key: string; lastAlertedAt: unknown }; data: { lastAlertedAt: Date } }) => {
+      updateMany: async ({ where, data }: { where: Record<string, unknown> & { key: string }; data: { lastAlertedAt: Date } }) => {
         const held = state.cooldowns.get(where.key);
-        if (!held || !matchesField(held, where.lastAlertedAt)) return { count: 0 };
+        if (!held || !matchesWhere({ key: where.key, lastAlertedAt: held }, where)) return { count: 0 };
         state.cooldowns.set(where.key, data.lastAlertedAt);
         return { count: 1 };
       },
@@ -104,8 +82,8 @@ vi.mock("@/lib/prisma", () => ({
       },
       findMany: async ({ where }: { where: { key: { in: string[] }; lastAlertedAt: unknown } }) =>
         [...state.cooldowns]
-          .filter(([key, at]) => where.key.in.includes(key) && matchesField(at, where.lastAlertedAt))
-          .map(([key, lastAlertedAt]) => ({ key, lastAlertedAt })),
+          .map(([key, lastAlertedAt]) => ({ key, lastAlertedAt }))
+          .filter((row) => matchesWhere(row, where)),
     },
     emailLog: {
       create: async ({ data }: { data: Record<string, unknown> }) => {
@@ -117,6 +95,7 @@ vi.mock("@/lib/prisma", () => ({
           bookingDetailLinkIncluded: null,
           bookingBodyOverrideApplied: null,
           bookingRecipientMemberId: null,
+          deliveryBlockReason: null,
           attempts: 1,
           createdAt: new Date(),
           ...data,
@@ -140,6 +119,8 @@ vi.mock("@/lib/prisma", () => ({
       },
       findMany: async ({ where, take }: { where: Record<string, unknown>; take?: number }) =>
         [...state.emailLogs.values()].filter((row) => matchesWhere(row, where)).slice(0, take),
+      count: async ({ where }: { where: Record<string, unknown> }) =>
+        [...state.emailLogs.values()].filter((row) => matchesWhere(row, where)).length,
     },
     member: {
       // One Finance editor; `hasAdminAreaAccess` below admits them.
@@ -147,8 +128,20 @@ vi.mock("@/lib/prisma", () => ({
     },
     environmentSafetySettings: { findUnique: async () => null },
     emailTemplateOverride: { findUnique: async () => null },
-  },
-}));
+    // #4669: the release of an attempt nobody received, all or nothing.
+    $transaction: async (work: (tx: unknown) => Promise<unknown>) => {
+      const before = new Map([...state.emailLogs].map(([id, row]) => [id, structuredClone(row)]));
+      try {
+        return await work(prisma);
+      } catch (err) {
+        state.emailLogs.clear();
+        for (const [id, row] of before) state.emailLogs.set(id, row);
+        throw err;
+      }
+    },
+  };
+  return { prisma };
+});
 
 vi.mock("@/lib/admin-permissions", async (importOriginal) => ({
   ...((await importOriginal()) as typeof import("@/lib/admin-permissions")),
@@ -299,6 +292,7 @@ describe("the unrecognised Stripe payment alert has one retry owner (#4647)", ()
     const intent = paymentIntent("pi_4647", metadata);
 
     // 1. The transport is down: nobody receives it, the claim is given back and the webhook fails.
+    // #4669: the row kept its body until the send failed, then was released.
     state.transportDown = true;
     await expect(record(intent, event("evt_4647"))).rejects.toBeInstanceOf(UnrecognisedStripePaymentAlertNotSentError);
     expect(state.delivered).toHaveLength(0);

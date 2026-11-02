@@ -51,6 +51,7 @@ import { releaseBookingJournalForTeardown } from "./support/booking-financial-hi
 import { realElapsedMs } from "@/lib/__tests__/helpers/clock";
 
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
+import { openClientTransactionsElsewhere } from "./support/open-client-transactions";
 import { memberMoneyTestContext } from "./support/member-money-fixtures";
 import { resetStripeRaceHooks, stripeRaceHooks } from "./support/stripe-race-double";
 
@@ -375,14 +376,8 @@ let webhookClient: PrismaClient;
      * #4631: transactions open on the app client's connections (the webhook
      * client's and this probe's own excluded) - a Stripe call made inside one shows here.
      */
-    async function openRaceTransactions(): Promise<number> {
-      const rows = await webhookClient.$queryRaw<Array<{ count: number }>>`
-        SELECT COUNT(*)::int AS "count" FROM pg_stat_activity
-        WHERE datname = current_database() AND pid <> pg_backend_pid()
-          AND application_name <> 'race-3954-webhook' AND xact_start IS NOT NULL
-      `;
-      return rows[0]?.count ?? 0;
-    }
+    const openRaceTransactions = () =>
+      openClientTransactionsElsewhere(webhookClient, { excludeApplicationName: "race-3954-webhook" });
 
     async function waitForWebhookLock() {
       const startedAt = process.hrtime.bigint();
