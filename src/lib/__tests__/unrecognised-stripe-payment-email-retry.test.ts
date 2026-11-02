@@ -28,6 +28,8 @@ const state = vi.hoisted(() => ({
   releaseFailures: 0,
   /** #4670: how many coming `alertedAt` writes fail. */
   stampFailures: 0,
+  /** #4679: how many coming claim inserts commit and then throw, as when the connection drops before the reply. */
+  claimReplyDrops: 0,
 }));
 
 vi.mock("@/lib/prisma", () => {
@@ -68,6 +70,10 @@ vi.mock("@/lib/prisma", () => {
           throw Object.assign(new Error("Unique constraint failed"), { code: "P2002", clientVersion: "test" });
         }
         state.cooldowns.set(data.key, data.lastAlertedAt);
+        if (state.claimReplyDrops > 0) {
+          state.claimReplyDrops -= 1;
+          throw new Error("Server has closed the connection.");
+        }
         return data;
       },
       deleteMany: async ({ where }: { where: { key: string; lastAlertedAt: Date } }) => {
@@ -263,6 +269,7 @@ describe("the unrecognised Stripe payment alert has one retry owner (#4647)", ()
     state.transportDown = false;
     state.releaseFailures = 0;
     state.stampFailures = 0;
+    state.claimReplyDrops = 0;
     vi.stubEnv("NODE_ENV", "production");
     vi.stubEnv("NEXTAUTH_URL", "https://bookings.example.test");
     // A live installation, so the send and the retry cron both transmit.
@@ -336,6 +343,7 @@ describe("the unrecognised Stripe payment alert across a failed write around the
     state.transportDown = false;
     state.releaseFailures = 0;
     state.stampFailures = 0;
+    state.claimReplyDrops = 0;
     vi.stubEnv("NODE_ENV", "production");
     vi.stubEnv("NEXTAUTH_URL", "https://bookings.example.test");
     declareEnvironmentRole("production");
@@ -371,6 +379,24 @@ describe("the unrecognised Stripe payment alert across a failed write around the
     // Past the in-flight window, the kept claim with no alertedAt is not taken over.
     vi.setSystemTime(new Date(start.getTime() + 60 * MINUTE));
     await record("evt_4670_again");
+    expect(state.delivered).toHaveLength(1);
+  });
+
+  // #4679: the claim's insert committed, but its reply was lost, so the claim call threw.
+  it("fails the webhook when its claim committed but the call threw, and Stripe's redelivery sends it once", async () => {
+    state.claimReplyDrops = 1;
+    await expect(record("evt_4679")).rejects.toBeInstanceOf(UnrecognisedStripePaymentAlertNotSentError);
+    // The stamp it tried to write was its own, so it is given back, not read as a sibling's send in flight.
+    expect(state.cooldowns.size).toBe(0);
+    expect(state.delivered).toHaveLength(0);
+
+    vi.setSystemTime(new Date(start.getTime() + 2 * MINUTE));
+    await record("evt_4679");
+    expect(state.delivered).toHaveLength(1);
+    expect(state.stripeRows.get("pi_4670")?.alertedAt).toBeInstanceOf(Date);
+
+    // A later delivery finds the alert sent and sends nothing more.
+    await record("evt_4679_again");
     expect(state.delivered).toHaveLength(1);
   });
 });

@@ -36,6 +36,12 @@ const state = vi.hoisted(() => ({
   releaseFailures: 0,
   /** #4670: how many coming `alertedAt` writes fail. */
   stampFailures: 0,
+  /**
+   * #4679: what each coming claim call does, in order: claims as usual, or
+   * throws after its write committed, or before writing anything. A throw
+   * reports the stamp it tried to write.
+   */
+  claimCalls: [] as ("as-usual" | "throws-after-commit" | "throws-before-write")[],
 }));
 
 const mocks = vi.hoisted(() => ({
@@ -117,21 +123,26 @@ vi.mock("@/lib/email", () => ({
 
 // The real helper's rule, over a key set: claim, send, keep - or give the claim
 // back when the send throws, through the store, so a failing release leaves it
-// held (#4670). `unrecognised-stripe-payment-email-retry.test.ts` runs the real helper.
+// held (#4670); a claim call that throws reports the stamp it tried to write
+// and gives nothing back (#4679). `unrecognised-stripe-payment-email-retry.test.ts`
+// runs the real helper.
 vi.mock("@/lib/admin-alert-once", async () => {
   const { prisma } = await import("@/lib/prisma");
   const heldIn = (keys: readonly string[]) => new Map([...state.heldKeys].filter(([key]) => keys.includes(key)));
   return {
     sendAdminAlertOnceEverClaim: async ({ key, send }: { key: string; send: () => Promise<unknown> }) => {
-      if (state.heldKeys.has(key)) return { kept: false, claimedAt: null };
       const claimedAt = new Date();
+      const claimCall = state.claimCalls.shift() ?? "as-usual";
+      if (claimCall === "throws-after-commit") state.heldKeys.set(key, claimedAt);
+      if (claimCall !== "as-usual") return { kept: false, claimedAt, claimUncertain: true };
+      if (state.heldKeys.has(key)) return { kept: false, claimedAt: null, claimUncertain: false };
       state.heldKeys.set(key, claimedAt);
       try {
         await send();
-        return { kept: true, claimedAt };
+        return { kept: true, claimedAt, claimUncertain: false };
       } catch {
         await prisma.alertCooldown.deleteMany({ where: { key, lastAlertedAt: claimedAt } }).catch(() => undefined);
-        return { kept: false, claimedAt };
+        return { kept: false, claimedAt, claimUncertain: false };
       }
     },
     readHeldOnceEverAlertTimes: async (keys: readonly string[]) => heldIn(keys),
@@ -199,6 +210,7 @@ describe("recordUnrecognisedStripePayment (#4532)", () => {
     state.beforeInsert = null;
     state.releaseFailures = 0;
     state.stampFailures = 0;
+    state.claimCalls = [];
     mocks.findCheckoutSession.mockResolvedValue(null);
   });
 
@@ -448,6 +460,7 @@ describe("the alert claim's in-flight window against the webhook lease (#4647)",
     state.beforeInsert = null;
     state.releaseFailures = 0;
     state.stampFailures = 0;
+    state.claimCalls = [];
     mocks.findCheckoutSession.mockResolvedValue(null);
   });
 
@@ -507,6 +520,7 @@ describe("the alert across a failed write around the send (#4670)", () => {
     state.beforeInsert = null;
     state.releaseFailures = 0;
     state.stampFailures = 0;
+    state.claimCalls = [];
     mocks.findCheckoutSession.mockResolvedValue(null);
   });
 
@@ -555,6 +569,79 @@ describe("the alert across a failed write around the send (#4670)", () => {
     await recordUnrecognisedStripePayment(paymentIntent(), event("evt_other"), CLUB_FORMAT_TEST);
 
     expect(mocks.sendAlert).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * #4679: the claim call threw. Its write may have committed - the connection
+ * dropped before the reply - and that claim is this delivery's own, never a
+ * sibling's in flight, so the delivery gives back the stamp it tried to write
+ * and fails the webhook rather than completing it with no alert sent.
+ */
+describe("the alert when its claim call throws (#4679)", () => {
+  const key = unrecognisedStripePaymentAlertKey("pi_donation");
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    state.rows.clear();
+    state.heldKeys.clear();
+    state.beforeInsert = null;
+    state.releaseFailures = 0;
+    state.stampFailures = 0;
+    state.claimCalls = [];
+    mocks.findCheckoutSession.mockResolvedValue(null);
+  });
+
+  it("gives back a claim whose write committed before the call threw, fails the webhook, and the redelivery sends once", async () => {
+    state.claimCalls = ["throws-after-commit"];
+
+    await expect(recordUnrecognisedStripePayment(paymentIntent(), event(), CLUB_FORMAT_TEST)).rejects.toBeInstanceOf(
+      UnrecognisedStripePaymentAlertNotSentError,
+    );
+    expect(mocks.sendAlert).not.toHaveBeenCalled();
+    expect(state.heldKeys.has(key)).toBe(false);
+
+    // Stripe redelivers well inside the in-flight window: nothing reads as a sibling's claim.
+    await recordUnrecognisedStripePayment(paymentIntent(), event(), CLUB_FORMAT_TEST);
+    expect(mocks.sendAlert).toHaveBeenCalledTimes(1);
+    expect(state.rows.get("pi_donation")?.alertedAt).toBeInstanceOf(Date);
+    expect(state.heldKeys.has(key)).toBe(true);
+  });
+
+  it("leaves a sibling's claim alone when the call threw before writing, and fails the webhook once more than needed", async () => {
+    const siblings = new Date(Date.now() - 60_000);
+    state.heldKeys.set(key, siblings);
+    state.claimCalls = ["throws-before-write"];
+
+    await expect(recordUnrecognisedStripePayment(paymentIntent(), event(), CLUB_FORMAT_TEST)).rejects.toBeInstanceOf(
+      UnrecognisedStripePaymentAlertNotSentError,
+    );
+    expect(state.heldKeys.get(key)).toBe(siblings);
+    expect(mocks.sendAlert).not.toHaveBeenCalled();
+  });
+
+  it("still fails the webhook when giving the uncertain claim back fails too", async () => {
+    state.claimCalls = ["throws-after-commit"];
+    state.releaseFailures = 1;
+
+    await expect(recordUnrecognisedStripePayment(paymentIntent(), event(), CLUB_FORMAT_TEST)).rejects.toBeInstanceOf(
+      UnrecognisedStripePaymentAlertNotSentError,
+    );
+    expect(state.heldKeys.has(key)).toBe(true);
+    expect(mocks.sendAlert).not.toHaveBeenCalled();
+  });
+
+  it("gives back the takeover's own uncertain claim and fails, rather than completing on it", async () => {
+    // A dead delivery's claim, past the in-flight window: this delivery takes it over,
+    // and the takeover's claim call throws after committing.
+    state.heldKeys.set(key, new Date(Date.now() - UNRECOGNISED_ALERT_IN_FLIGHT_MS - 60_000));
+    state.claimCalls = ["as-usual", "throws-after-commit"];
+
+    await expect(recordUnrecognisedStripePayment(paymentIntent(), event(), CLUB_FORMAT_TEST)).rejects.toBeInstanceOf(
+      UnrecognisedStripePaymentAlertNotSentError,
+    );
+    expect(state.heldKeys.has(key)).toBe(false);
+    expect(mocks.sendAlert).not.toHaveBeenCalled();
   });
 });
 
