@@ -43,7 +43,10 @@
  *    and the reclaiming runner's ask is written and collected;
  *  - #4676: a release attempt whose claim hold throws (the price moved
  *    mid-mint) keeps its intent while the row is still its own, and the retry
- *    back at that figure is answered with, and records, that very intent.
+ *    back at that figure is answered with, and records, that very intent;
+ *  - #4693: when the retry re-sizes instead, records a new intent and closes the
+ *    row, the close-time sweep cancels the first intent, once, by its release
+ *    id, and leaves the recorded one alone.
  *
  * Envelope: identical to `concurrency-lock-races.realdb.test.ts`, which imports
  * this file; the describe runs ONLY when `RUN_CONCURRENCY_RACE_TESTS=1`,
@@ -569,6 +572,11 @@ let previousDatabaseUrl: string | undefined;
         intent.status = "canceled";
         return { paymentIntent: { ...intent }, canceled: true };
       };
+      // #4693: the close-time sweep's bounded list, read-after-write like Stripe's own.
+      stripeRaceHooks.list = async ({ matches }) => ({
+        intents: [...stripe.intents.values()].filter((intent) => matches(intent as unknown as Stripe.PaymentIntent)).map((intent) => ({ ...intent })),
+        complete: true,
+      });
     }
 
     /** The release's mint, with something landing first - after the release's read, before its claim. */
@@ -660,8 +668,12 @@ let previousDatabaseUrl: string | undefined;
       const cancelled: Array<{ id: string; openTransactions: number }> = [];
       const cancel = stripeRaceHooks.cancel!;
       stripeRaceHooks.cancel = async (id) => {
-        cancelled.push({ id, openTransactions: await openTransactionsElsewhere() });
-        return cancel(id);
+        const openTransactions = await openTransactionsElsewhere();
+        const result = (await cancel(id)) as { canceled: boolean };
+        // #4693: the reclaiming runner's close-time sweep may cancel it first; the stale attempt's
+        // own settle then reads it cancelled and cancels nothing. Only a real cancel is counted.
+        if (result.canceled) cancelled.push({ id, openTransactions });
+        return result;
       };
       const byKey = new Map<string, string>();
       const create = stripeRaceHooks.create!;
@@ -843,11 +855,18 @@ let previousDatabaseUrl: string | undefined;
     it("#4652: a stale attempt's intent a payment row names is left to that row, though its recovery closed without it", async () => {
       const { stale, cancelled } = await releaseLosesClaimToStaleReclaim(async (id) => {
         fakeXero.state.invoiceDueCents.set(INVOICE_ID, CREDIT_CENTS - 1_000);
+        // A writer recorded the intent after the reclaiming runner closed the row, before any proof
+        // read it - the runner's close-time sweep (#4693), as it lists, or the stale attempt's settle.
+        const list = stripeRaceHooks.list!;
+        stripeRaceHooks.list = async (args) => {
+          stripeRaceHooks.list = list;
+          await prisma.paymentTransaction.create({
+            data: { id: "race-4652-named", paymentId: PAYMENT_ID, kind: "ADDITIONAL", source: "STRIPE", status: "FAILED", amountCents: CREDIT_CENTS, stripePaymentIntentId: stripe.created[0]! },
+          });
+          return list(args);
+        };
         await reclaimingRunner(id);
-        // A writer recorded the intent before the stale attempt's proof re-read it.
-        await prisma.paymentTransaction.create({
-          data: { id: "race-4652-named", paymentId: PAYMENT_ID, kind: "ADDITIONAL", source: "STRIPE", status: "FAILED", amountCents: CREDIT_CENTS, stripePaymentIntentId: stripe.created[0]! },
-        });
+        expect(stripeRaceHooks.list).toBe(list);
       });
 
       expect(cancelled.map(({ id }) => id)).not.toContain(stale);
@@ -917,6 +936,62 @@ let previousDatabaseUrl: string | undefined;
       expect((await releaseOperation()).paymentIntentId).toBe(firstIntent);
       expect(cancelled).toEqual([]);
       await expectReleaseAskedAlone();
+    });
+
+    /**
+     * #4693 (`INV-PAY-120`): as #4676, the first attempt mints and its hold throws on a price moved
+     * under it - but the price does not move back. The retry re-sizes, mints under the
+     * amount-suffixed key, records THAT intent and closes the row. The first intent, written
+     * nowhere and named by nothing, is found by the release id it carries and cancelled once;
+     * the recorded one is untouched; a second sweep of the same row cancels nothing more.
+     */
+    it("#4693: a hold that throws, then a re-sized retry that records its own intent and closes - the first intent is cancelled exactly once, the recorded one untouched", async () => {
+      await seedCreditPaidBooking();
+      await convergeSpentCredit();
+      expect(await enqueueRelease()).toBe(1);
+      const cancelled: string[] = [];
+      const cancel = stripeRaceHooks.cancel!;
+      stripeRaceHooks.cancel = async (id) => {
+        cancelled.push(id);
+        return cancel(id);
+      };
+      const create = stripeRaceHooks.create!;
+      let first: string | null = null;
+      stripeRaceHooks.create = async (args) => {
+        const intent = (await create(args)) as FakeIntent;
+        if (first === null && args.metadata?.reason === "credit_released_outside_app") {
+          first = intent.id;
+          stripeRaceHooks.create = create;
+          // The booking now owes less than the release: the retry asks for less, under another key.
+          await prisma.booking.update({ where: { id: BOOKING_ID }, data: { finalPriceCents: { decrement: 500 } } });
+        }
+        return intent;
+      };
+
+      expect(await runRelease()).toBe("failed");
+      expect(first).not.toBeNull();
+      const firstIntent = first as unknown as string;
+      expect(await additionalRows()).toEqual([]);
+      expect(cancelled).toEqual([]);
+      expect(stripe.intents.get(firstIntent)?.metadata).toMatchObject({ creditReleaseId: expect.any(String) });
+
+      expect(await runRelease()).toBe("succeeded");
+      const recorded = (await releaseOperation()).paymentIntentId;
+      expect(recorded).not.toBe(firstIntent);
+      expect(stripe.created).toEqual([firstIntent, recorded]);
+      expect(await additionalRows()).toEqual([
+        expect.objectContaining({ reason: "credit_released_outside_app", amountCents: CREDIT_CENTS - 500, stripePaymentIntentId: recorded, status: "PENDING" }),
+      ]);
+      expect(await releaseOperation()).toMatchObject({ status: "SUCCEEDED", attempts: 2 });
+      expect(cancelled).toEqual([firstIntent]);
+      expect(stripe.intents.get(firstIntent)?.status).toBe("canceled");
+      expect(stripe.intents.get(recorded)?.status).toBe("requires_payment_method");
+
+      // Idempotent: the row swept again finds the first intent already cancelled.
+      const { sweepAbandonedAskIntents } = await import("@/lib/abandoned-ask-intent-sweep");
+      await sweepAbandonedAskIntents((await releaseOperation()).id, "runner-close");
+      expect(cancelled).toEqual([firstIntent]);
+      expect(stripe.intents.get(recorded)?.status).toBe("requires_payment_method");
     });
 
     it("merges: one request for both, the edit's invoice follows it, and the one card payment is recorded against both invoices, once", async () => {
