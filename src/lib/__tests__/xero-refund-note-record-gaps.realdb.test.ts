@@ -305,7 +305,7 @@ let prisma: (typeof import("@/lib/prisma"))["prisma"];
       return { run: processQueuedXeroOutboxOperations({ limit: 1 }), paymentsMade };
     }
 
-    it("MUTATION: a record behind a Payment row held past its whole budget writes nothing and fails nothing - the row stays RUNNING, and one audit row and one alert name the note", async () => {
+    it("MUTATION: a record behind a Payment row held past its whole budget records nothing and fails nothing - the row stays RUNNING with only the #4688 fence code, and one audit row and one alert name the note", async () => {
       const operationId = await queuedRefundNote();
       const { PAYMENT_ROW_WAIT_TRANSACTION_OPTIONS } = await import("@/lib/payment-transactions");
       const holder = await holdPaymentRow(PAYMENT_ROW_WAIT_TRANSACTION_OPTIONS.timeout + 3_000);
@@ -317,7 +317,9 @@ let prisma: (typeof import("@/lib/prisma"))["prisma"];
       // The worker never fails the row (its catch would) nor counts the run a success: skipped.
       expect(result).toMatchObject({ failed: 0, succeeded: 0, skipped: 1 });
       const row = await prisma.xeroSyncOperation.findUniqueOrThrow({ where: { id: operationId }, select: { status: true, xeroObjectId: true, lastErrorCode: true, completedAt: true } });
-      expect(row).toEqual({ status: "RUNNING", xeroObjectId: null, lastErrorCode: null, completedAt: null });
+      // #4688: the only write is the fence stamp, which holds the payment's later refund notes until the resolve.
+      const { XERO_REFUND_NOTE_UNRECORDED_ERROR_CODE } = await import("@/lib/xero-operation-error-codes");
+      expect(row).toEqual({ status: "RUNNING", xeroObjectId: null, lastErrorCode: XERO_REFUND_NOTE_UNRECORDED_ERROR_CODE, completedAt: null });
       expect(await recordsOfNote()).toEqual({ rows: [], links: [], pointer: null });
       // Never settled: no refund payment was recorded against the note in Xero.
       expect(raised.paymentsMade).toEqual([]);
@@ -327,14 +329,15 @@ let prisma: (typeof import("@/lib/prisma"))["prisma"];
         {
           category: "xero",
           targetId: BOOKING_ID,
-          metadata: expect.objectContaining({ reason: "record-wait-lost", errorCode: "P2028", creditNoteId: NOTE, creditNoteNumber: "CN-4656", amountCents: 20_000, paymentId: PAYMENT_ID, recordedCreditNoteId: null, rowFound: true }),
+          metadata: expect.objectContaining({ reason: "record-wait-lost", errorCode: "P2028", creditNoteId: NOTE, creditNoteNumber: "CN-4656", amountCents: 20_000, paymentId: PAYMENT_ID, recordedCreditNoteId: null, rowFound: true, laterNotesHeld: true }),
         },
       ]);
       expect(send).toHaveBeenCalledTimes(1);
       expect(send).toHaveBeenCalledWith(expect.objectContaining({
         errorType: "XERO_SUCCESS_AFTER_RESOLUTION",
-        errorMessage: expect.stringMatching(/Xero made credit note CN-4656 for \$200\.00 \(Xero id race-4656-note, booking race-4656-booking\) for this refund.*did not mark the operation failed.*Resolve it by hand with this note's number.*Do not retry this operation/),
+        errorMessage: expect.stringMatching(/Xero made credit note CN-4656 for \$200\.00 \(Xero id race-4656-note, booking race-4656-booking\) for this refund.*did not mark the operation failed.*Resolve it by hand with this note's number.*Do not retry this operation.*Until it is resolved, the app raises no other refund note on this payment/),
       }));
+      expect(send).not.toHaveBeenCalledWith(expect.objectContaining({ errorMessage: expect.stringContaining("is sized as if this note did not exist") }));
       const { xeroSuccessAfterResolutionAlertKey } = await import("@/lib/xero-success-after-resolution-alert");
       expect(await prisma.alertCooldown.count({ where: { key: xeroSuccessAfterResolutionAlertKey(operationId, NOTE) } })).toBe(1);
     });
