@@ -11,6 +11,7 @@ import { liveRunningXeroOperationFilter } from "@/lib/xero-stale-operations";
 import { XERO_OUTBOX_ADDITIONAL_CAPTURE_RECEIPT_TYPE } from "@/lib/additional-capture-receipt-payload";
 import { asRecord, responseNamesXeroInvoice } from "@/lib/xero-json";
 import { sanitizeForJson } from "@/lib/xero-sync";
+import { scanSpacesWaitCode } from "@/lib/xero-operation-wait-spacing";
 
 /** The `lastErrorCode` a receipt carries while it waits (busy) and goes back to PENDING. */
 export const ADDITIONAL_CAPTURE_RECEIPT_WAITING_CODE = "ADDITIONAL_CAPTURE_RECEIPT_WAITING";
@@ -97,13 +98,7 @@ export const ADDITIONAL_CAPTURE_RECEIPT_RECHECK_MS = 60 * 1000;
  * a null code included, is scanned as before.
  */
 export function outboxScanSpacesWaitingReceipts(now: Date) {
-  return {
-    OR: [
-      { lastErrorCode: null },
-      { lastErrorCode: { not: ADDITIONAL_CAPTURE_RECEIPT_WAITING_CODE } },
-      { updatedAt: { lte: new Date(now.getTime() - ADDITIONAL_CAPTURE_RECEIPT_RECHECK_MS) } },
-    ],
-  };
+  return scanSpacesWaitCode(ADDITIONAL_CAPTURE_RECEIPT_WAITING_CODE, ADDITIONAL_CAPTURE_RECEIPT_RECHECK_MS, now);
 }
 
 /**

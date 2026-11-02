@@ -196,6 +196,42 @@ after the completion's
 (`lockPaymentForRefundedTotal`), with no provider call. Proven against real
 PostgreSQL by `edit-financial-review-cancelled-refund-xero.realdb.test.ts`.
 
+The stale threshold ends that hold, so a row whose note Xero made but whose
+record lost its wait (#4656) would stop holding anything back after 15
+minutes. Since #4688 (`INV-INT-035`) that record stamps its own row
+`REFUND_NOTE_UNRECORDED` and `assertNoUnrecordedRefundNote` (every
+`createXeroCreditNote`, any mode) refuses while the payment has such a row
+unresolved, at any age, with the same busy error. Classified under
+`INV-LOCK-001`: no global cohort, no advisory key, no row lock added. The
+stamp is one claim-guarded `updateMany` on the operation row alone (this
+run's RUNNING claim, or the FAILED row Mark failed left under it; never a
+resolved row or one naming a note), outside the record's transaction - it never takes the
+Payment row the record just failed to get, so it cannot add a wait cycle to
+`INV-LOCK-002`'s order (Payment, operation row, link). The fence read, like
+the in-flight read, holds no lock. The stamp lands as the record gives up,
+before its trace; until then the row holds others back only as a live claim.
+The fence lifts only through the resolve's own status-guarded claim
+(`manuallyResolvedAt`): a resolve recording the note's number claims under
+`lock(1)`, then the Payment row, then the row, so the fence lifts in the
+commit that records the note and its link, and a create that reads it lifted
+reads that coverage too; a plain resolve's row-only mark lifts it with the
+row's recorded amount counted as covered (`INV-INT-025`). The fence also
+lifts once a live or voided link on the payment records the stamped note
+(#4692: another row resolved with it, or a retry recorded it); that link is
+written in its writer's own commit, so a create that reads the fence lifted
+reads the note's coverage too. A resolve no longer refuses over a PENDING copy
+the fence holds; the outbox cancels it at its next claim
+(`findResolvedSiblingSince`). A copy claimed in the instant before the mark
+commits passes that check, so the create asks it again once the fence reads
+lifted (`passUnrecordedRefundNoteFence`): a lifted fence means the mark has
+committed, so the copy then closes CANCELLED before any sizing - needed for a
+refund request's note, whose plain mark takes no lock and writes no link the
+create's coverage read would see. Mark failed and the bulk reset write the row
+status-guarded as before, and keep the code; Mark failed's plain write
+refuses a stamped row, so a stamp landing after its read is never
+overwritten. Proven against real PostgreSQL by
+`xero-unrecorded-refund-note-fence.realdb.test.ts`.
+
 ### A Xero retry claims the original row it writes (#2262 H3, #3462, #4256)
 
 A retry that writes the original operation row - the booking invoice replay,
@@ -6785,7 +6821,10 @@ first), the note is traced (`traceUnrecordedLateNote`: logged, one `xero` audit
 row, #4374's alert once, all saying resolve by hand with its number, never
 retry), and the create throws `RefundNoteNotRecordedError`, which no caller
 counts a success (a queued retry fails its REQUEUE row naming the note), and
-whose message never calls a note the row already records unrecorded. A
+whose message never calls a note the row already records unrecorded. #4688:
+before the trace, a row-only, status-guarded write stamps the row, which then
+holds the payment's later refund notes until Resolve by hand (above, "One
+refund credit note in flight per payment"). A
 transaction that committed but answered P2028 is found by the trace's re-read
 on this run's claim and finishes as recorded. No new advisory key, registered site or row-lock site
 (the Payment row is the existing helper's statement). Proven against real

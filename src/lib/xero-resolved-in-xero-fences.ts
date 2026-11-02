@@ -89,6 +89,21 @@ export function isRefundNoteCreateRow(row: {
   );
 }
 
+/**
+ * #4692 review (`INV-SSOT`): the same population on one payment, as a query -
+ * the base the resolved coverage reader and the unrecorded-note fence
+ * (`xero-refund-note-in-flight.ts`) each narrow. A legacy row with no recorded
+ * queue type is read too; its payload says whether it was a refund or an
+ * account-credit note.
+ */
+export function paymentRefundNoteCreateRowsWhere(paymentId: string) {
+  return {
+    ...REFUND_NOTE_CREATE_ROW,
+    localId: paymentId,
+    OR: REFUND_NOTE_CREATE_QUEUE_TYPES.map((queueType) => ({ queueType })),
+  } as const satisfies Prisma.XeroSyncOperationWhereInput;
+}
+
 export interface ResolvedRefundCreditNoteCoverage {
   coveredCents: number;
   correlationKeys: string[];
@@ -104,12 +119,8 @@ export async function readResolvedRefundCreditNoteCoverage(
 ): Promise<ResolvedRefundCreditNoteCoverage> {
   const rows = await db.xeroSyncOperation.findMany({
     where: {
-      ...REFUND_NOTE_CREATE_ROW,
-      localId: paymentId,
+      ...paymentRefundNoteCreateRowsWhere(paymentId),
       manuallyResolvedAt: { not: null },
-      // A legacy row with no recorded queue type is read too; its payload
-      // says whether it was a refund or an account-credit note.
-      OR: REFUND_NOTE_CREATE_QUEUE_TYPES.map((queueType) => ({ queueType })),
       ...(rowsWhere ? { AND: [rowsWhere] } : {}),
     },
     orderBy: { createdAt: "asc" },
@@ -237,6 +248,20 @@ export async function findResolvedBookingInvoiceCreate(
     select: { id: true, manuallyResolvedAt: true },
   });
   return toResolved(row);
+}
+
+/**
+ * #3635 round 4 (`INV-INT-025`): the response of a copy closed CANCELLED
+ * because an officer resolved a sibling for the same document after it was
+ * queued - by the outbox at its claim, or by a refund-note create once the
+ * fence its sibling held reads lifted (#4692 review).
+ */
+export function resolvedSiblingCopySkippedPayload(resolvedOperationId: string) {
+  return {
+    skipped: "resolved-in-xero",
+    resolvedOperationId,
+    reason: "An officer resolved this document by hand in Xero after this copy was queued, so it was not sent.",
+  } as const;
 }
 
 /**

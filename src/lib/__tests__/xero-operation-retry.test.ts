@@ -176,6 +176,8 @@ import {
   XeroOperationRetryError,
 } from "@/lib/xero-operation-retry";
 import { RESOLVED_IN_XERO_RETRY_REASON } from "@/lib/xero-operation-resolution";
+import { XERO_REFUND_NOTE_UNRECORDED_ERROR_CODE } from "@/lib/xero-operation-error-codes";
+import { UNRECORDED_REFUND_NOTE_RETRY_REASON } from "@/lib/xero-refund-note-in-flight";
 import {
   XERO_OUTBOX_CREDIT_NOTE_ALLOCATION_TYPE,
   XERO_OUTBOX_APPLIED_CREDIT_ALLOCATION_TYPE,
@@ -209,6 +211,25 @@ function makeOperation(overrides: Record<string, unknown> = {}) {
 }
 
 const RESOLVED_AT = new Date("2026-06-20T00:00:00.000Z");
+
+describe("#4688: a row whose refund note Xero made but the app could not record is never offered for retry", () => {
+  const unrecorded = (overrides: Record<string, unknown> = {}) =>
+    makeOperation({ entityType: "CREDIT_NOTE", queueType: "REFUND_CREDIT_NOTE", lastErrorCode: XERO_REFUND_NOTE_UNRECORDED_ERROR_CODE, ...overrides });
+
+  it("MUTATION: refuses it with the resolve-by-hand reason; the same row without the code is retryable", () => {
+    expect(getXeroOperationRetryMeta(unrecorded())).toEqual({ supported: false, reason: UNRECORDED_REFUND_NOTE_RETRY_REASON });
+    expect(getXeroOperationRetryMeta(unrecorded({ lastErrorCode: "ORPHANED_STALE_RUNNING" })).reason).not.toBe(UNRECORDED_REFUND_NOTE_RETRY_REASON);
+    // The control on a row whose shape is otherwise retryable: only the code refuses it.
+    const retryable = makeOperation();
+    expect(getXeroOperationRetryMeta(retryable).supported).toBe(true);
+    expect(getXeroOperationRetryMeta({ ...retryable, lastErrorCode: XERO_REFUND_NOTE_UNRECORDED_ERROR_CODE }).supported).toBe(false);
+    expect(getXeroOperationRetryMeta({ ...retryable, lastErrorCode: XERO_REFUND_NOTE_UNRECORDED_ERROR_CODE, xeroObjectId: "cn_recorded" }).reason).not.toBe(UNRECORDED_REFUND_NOTE_RETRY_REASON);
+  });
+
+  it("an officer's resolve says resolved, not unrecorded", () => {
+    expect(getXeroOperationRetryMeta(unrecorded({ manuallyResolvedAt: RESOLVED_AT }))).toEqual({ supported: false, reason: RESOLVED_IN_XERO_RETRY_REASON });
+  });
+});
 
 describe("resolved in Xero is never re-run (#3635, INV-INT-025)", () => {
   beforeEach(() => {
