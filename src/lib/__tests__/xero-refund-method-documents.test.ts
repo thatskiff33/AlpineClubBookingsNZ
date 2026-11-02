@@ -71,6 +71,8 @@ vi.mock("@/lib/prisma", () => {
       findUnique: async () => null,
       // #3791: the unconverged-deallocation read a review's note defers on.
       findFirst: (...a: unknown[]) => deallocationFence.findFirst(...a),
+      // #4688: no unrecorded refund note fences these payments.
+      findMany: async () => [],
     },
     memberCredit: { updateMany: mocks.memberCreditUpdateMany },
   };
