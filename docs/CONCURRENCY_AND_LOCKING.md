@@ -286,6 +286,31 @@ many milliseconds after the first was stamped, so that does not happen. No advis
 schema change or new participant. Proven against real PostgreSQL by
 `xero-shared-operation-outcome.realdb.test.ts`.
 
+Since #4673 a failure is narrower still: a FAILED outcome, from either writer,
+lands only on a row carrying its own claim's `startedAt`, RUNNING or already
+ended FAILED, never on PENDING, WAITING_PAYMENT, SKIPPED or CANCELLED: a
+withdrawal (`settleKeptLateCaptureRecordOnApproval`, the kept change receipt's)
+cancels a FAILED row keeping its `startedAt`, so a stalled handler's self-fail
+would otherwise make a withdrawn row retryable (PR #4687 review). The race it closes: a run stalls, Reset stale
+running fails its row, an officer's Retry hands an in-place requeue type (the
+organiser adjustment, applied-credit allocation and deallocation, kept late
+capture, released change invoice, card receipt, group invoice and its VOIDs,
+subscription invoice, and the kept-capture close's requeue) back to PENDING
+with `startedAt` cleared, and the stalled run then fails. Its write matches
+nothing, so the queued Retry stands; the outbox counts the refusal skipped and
+exposes no charge error; the additional-capture refusal stamps its code only
+on its own claim's FAILED row and alerts nobody for a refused one. The outbox's
+cooldown give-back to PENDING matches only its own claim's RUNNING or FAILED
+row, so a stalled run's pre-HTTP refusal never revives a FAILED row a later
+claim ended. A claim's own RUNNING row, a repair's marker aside, takes its
+failure, so a refusal never strands a row RUNNING. Limit: the membership
+cancellation credit note's retry takes no claim and writes under the reset
+row's `startedAt`, so a stalled first run's late failure can still replace
+that retry's own error. Still no advisory key, row lock, schema change or new
+participant: the claim is the row's `startedAt`, compared in the same
+status-guarded `updateMany`. Proven by
+`xero-late-failure-after-retry.realdb.test.ts`.
+
 ### The Xero token refresh uses a row lease, shared across colours (#3454)
 
 `xero-token-store.ts` composes no booking, capacity, membership or money
@@ -3557,6 +3582,25 @@ re-sizes and may mint under the same key, and Stripe answers with that intent.
 It stays open, never offered, logged under the cleanup event. Reads and one
 provider call only, after the hold's transaction: no lock, key, participant or
 order changes. Proven on real Postgres through the credit-release writers.
+#4675: the runner's SUCCEEDED close (`completePaymentRecoveryOperation`) was
+fenced only off SUCCEEDED, so an attempt that read "nothing owed", stalled past
+the stale reaper and woke after a reclaiming runner had minted the ask closed
+that runner's row; its hold then lost and the debt was never asked for. The
+close is now a status-guarded `updateMany` on the claim the attempt holds:
+PROCESSING, its `attempts` and its exact `processingStartedAt`
+(`heldPaymentRecoveryClaimWhere`, the claim hold's own fence). A claim time a
+hold re-stamps travels with the attempt (the hold returns the re-stamped
+claim), and the succeeded-intent hand-off reads back the claim its own write
+took, under that write's row lock. A lost close writes and sends nothing: each
+once-only epilogue hangs off its `true`, and the credit-release ask writes its
+no-ask audit row in the close's transaction and alerts officers only after a
+close it won. Only the webhook's close of a superseded intent Stripe reports
+cancelled holds no claim and keeps the SUCCEEDED-only fence
+(`completeUnclaimedPaymentRecoveryOperation`; its one caller is pinned by
+`payment-recovery-completion-fence-census.test.ts`). So a lost hold #4631 and
+#4652 settle now follows only a net-off, a fold or a reclaiming runner's own
+close, and their proof stands. No lock, key, participant or order changes.
+Proven on real Postgres (`credit-release-merge-into-edit.realdb.test.ts`).
 Round 6: the retire closes waiting recoveries before it stamps the rows - the
 runner's own order (its claim hold writes the recovery, then its row; since
 #4217 both take the `Payment` row before either) - and a
@@ -6035,7 +6079,10 @@ Stripe call:
   the attempt's `attempts` and a live claim, so an attempt the reaper gave up
   on cannot write `FAILED` over a reclaimed one. Not on the claim time: an
   attempt may re-stamp that itself (`holdAdditionalIntentRecoveryClaim`, the
-  worker's own superseded hand-off). The reaper's write takes both fences, each
+  worker's own superseded hand-off). **Its close** (`completePaymentRecoveryOperation`,
+  #4675) is fenced on the claim time as well, because every re-stamp is
+  threaded to it: the hold returns the claim it re-stamped, and the hand-off
+  reads back the claim its write took. The reaper's write takes both fences, each
   its own clause. Every claim therefore counts an attempt: the worker's claim,
   and the superseded hand-off a succeeded-intent door makes
   (`queueSupersededPaymentIntentRefundRecovery`: the webhook, and since #4300

@@ -2798,10 +2798,10 @@ _Legacy: settles tasks raised before #4317._
   unpaid fence; cancellations queued; parked invoices CANCELLED. A capture or
   deadlock in between rolls the edit back (409); one after commit is
   refunded in full. It writes the re-issue's recovery and billed-offset note.
-  An orphaned intent (#4052) is cancelled at Stripe, best-effort, unless a
-  row, recovery or live runner claim may own it - a lost claim's, the
-  runner's or credit-release ask's (#4631, #4652), only once its recovery
-  closed without it. One uncancellable is left and logged.
+  An orphaned Stripe intent (#4052) is cancelled, best-effort, unless a
+  row, recovery or live claim may own it; a lost hold's (#4631, #4652) once
+  its recovery closed without it. The runner's close is fenced on its claim
+  (`completePaymentRecoveryOperation`, #4675). One uncancellable is logged.
 - **A declined card stays live** (#4052).
 - **Asks awaiting a failed mint's retry** count, sized as the replay would. A
   retry claimed within two minutes refuses the edit; an older claim is closed.
@@ -3711,11 +3711,12 @@ _Split from `INV-PAY-056` (#3220)._
   opinion on a fact its callers already hold. `nextRetryAt` is forced to `null`
   when terminal rather than trusted from the caller, because a terminal row
   that keeps a retry time is re-claimable and is therefore not terminal.
-  **The write is status-fenced**, like `completePaymentRecoveryOperation` and
-  for the same reason: the worker's arm used `update` by id, which throws
-  `P2025` on a row a manual mark-paid reversal deleted mid-flight — from inside
-  the worker loop's own `catch`, so the throw escaped the loop and abandoned
-  every remaining operation in the batch. A fenced `updateMany` matches
+  **The write is status-fenced**, like `completePaymentRecoveryOperation`
+  (also claim-fenced since #4675) and for the same reason: the worker's arm
+  used `update` by id, which throws `P2025` on a row a manual mark-paid
+  reversal deleted mid-flight — from inside the worker loop's own `catch`, so
+  the throw escaped the loop and abandoned every remaining operation in the
+  batch. A fenced `updateMany` matches
   nothing instead, and the fence also stops a `SUCCEEDED` row being dragged
   back to `FAILED` by a worker holding a stale in-memory copy. **A row that
   matched nothing is still tallied as this attempt's outcome**, so a row that

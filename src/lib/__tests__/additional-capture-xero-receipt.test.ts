@@ -266,7 +266,7 @@ const expectRefused = (reason: string) => {
     expect.objectContaining({ lastErrorMessage: expect.stringContaining("was not recorded in Xero") }),
   );
   expect(mocks.updateManyOperation).toHaveBeenCalledWith({
-    where: { id: "op_receipt", status: "FAILED" },
+    where: { id: "op_receipt", status: "FAILED", startedAt: TEST_XERO_CLAIMED_AT },
     data: { lastErrorCode: ADDITIONAL_CAPTURE_RECEIPT_REFUSED_CODE },
   });
   expect(mocks.sendAdminXeroSyncErrorAlert).toHaveBeenCalledTimes(1);
@@ -579,6 +579,22 @@ describe("recordAdditionalCaptureReceipt", () => {
       await run(seam);
       expectRefused("nothing-due");
       expect(mocks.recheckPrimaryInvoiceWorthGap).not.toHaveBeenCalled();
+      expect(seam.createXeroPaymentForInvoice).not.toHaveBeenCalled();
+    });
+
+    // #4673 (PR #4687 review): a refusal whose failure lost its claim (an officer's
+    // Retry queued the row again, or a later run failed it) stamps nothing and
+    // alerts nobody: the run that holds the row decides.
+    it("MUTATION: a refusal whose failure was refused (INV-INT-029) stamps no code and alerts no officer", async () => {
+      invoices[PRIMARY] = { amountDue: 0 };
+      mocks.failXeroSyncOperation.mockResolvedValueOnce(null);
+      const seam = providers();
+      await expect(run(seam)).resolves.toBeNull();
+      expect(mocks.failXeroSyncOperation).toHaveBeenCalledTimes(1);
+      expect(mocks.updateManyOperation).not.toHaveBeenCalledWith(
+        expect.objectContaining({ data: { lastErrorCode: ADDITIONAL_CAPTURE_RECEIPT_REFUSED_CODE } }),
+      );
+      expect(mocks.sendAdminXeroSyncErrorAlert).not.toHaveBeenCalled();
       expect(seam.createXeroPaymentForInvoice).not.toHaveBeenCalled();
     });
 
