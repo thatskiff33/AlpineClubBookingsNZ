@@ -1986,18 +1986,31 @@ on `manuallyResolvedAt`.
     recorded on the payment, or a void, before the retry changes that key, and
     Xero raises a second note; how long Xero honours a key is not checked in
     code either.
-  - **Never reported as a success.** The create then throws
-    `RefundNoteNotRecordedError` (`xero-refund-note-record.ts`) past its own
-    failure path, so the row stays as the record left it. The outbox counts
-    the run skipped. A queued retry - which runs the create inline, on a row of
-    its own - fails its REQUEUE row with a message naming the note and the row
-    to resolve, never the usual "requeue it" (`describeQueuedRetryFailure`);
-    when a resolve recording a note kept the note out, it closes the REQUEUE
-    row CANCELLED (`skipped: "resolved-in-xero"`), the note named. Before this,
-    the create returned `""` and the REQUEUE row closed SUCCEEDED ("Retried
-    Xero refund credit note creation") while its inline row stayed RUNNING,
-    holding every other refund note on the payment
-    (`assertNoRefundCreditNoteInFlight`) until a stale reset.
+  - **Never reported as a success.** Whenever this run did not record the
+    note, the create throws `RefundNoteNotRecordedError`
+    (`xero-refund-note-record.ts`) past its own failure path, so the row stays
+    as the record left it. Its outcome says why, and its message says only
+    what is true: `record-wait-lost` (recorded nowhere), `resolved-by-hand` (a
+    resolve recorded another note), `resolved-with-this-note` (a resolve
+    recorded this very note - #4426's commonest case, nothing to do) or
+    `recorded-by-another-claim` (another run's RUNNING claim records it and
+    finishes it; unreachable today, as a refund-note CREATE row is never
+    claimed again in place). The outbox counts the run skipped - never
+    succeeded, since this run completed nothing - logging at warn, or at info
+    for the two outcomes where the row already records the note. A queued
+    retry - which runs the create inline, on a row of its own - fails its
+    REQUEUE row on `record-wait-lost` with a message naming the note and the
+    row to resolve, never the usual "requeue it" (`describeQueuedRetryFailure`);
+    on the other outcomes it closes the REQUEUE row CANCELLED with
+    `skipped: "resolved-in-xero-after-run"` (never `"resolved-in-xero"`, which
+    says nothing ran), the outcome, and the note under a key that says what it
+    is (`resolvedWithCreditNoteId`, `recordedCreditNoteId` or
+    `unrecordedCreditNoteId`). Before this, the create returned `""` and the
+    REQUEUE row closed SUCCEEDED ("Retried Xero refund credit note creation").
+    The inline row still stays RUNNING, as before; while it is younger than
+    the stale threshold (`STALE_RUNNING_XERO_OPERATION_MINUTES`, 15 minutes)
+    it counts as in flight and holds back every other refund note on the
+    payment (`assertNoRefundCreditNoteInFlight`), and after that it does not.
   - **A commit whose answer was lost.** A transaction can commit and still
     answer P2028. The trace's re-read then finds this very note on the row: on
     this run's own claim (not resolved by hand, not RUNNING under another
@@ -2018,7 +2031,17 @@ on `manuallyResolvedAt`.
   - Limits: a queue of holders longer than 30s in total still runs the wait
     out, and is traced, not recorded; Resolve by hand refuses the RUNNING row
     until Mark failed or Reset stale running clears it; an alert that reaches
-    nobody is not sent again.
+    nobody is not sent again. And until an officer resolves it, the
+    unrecorded note is invisible to every later refund note on the payment:
+    once its row is past the stale threshold (15 minutes) it no longer counts
+    as in flight (`liveRunningXeroOperationFilter`), and a later create sizes
+    and keys itself on recorded coverage only - a later Stripe refund's delta,
+    the nightly self-heal (`cron-credit-reconciliation.ts`), or Retry all
+    (`operations/retry-all`, which requeues every replayable FAILED row,
+    including the original row a retry ran for). Xero can then hold an extra
+    note before anyone acts. The alert says so and asks for a prompt resolve;
+    fencing those creates on an unrecorded note is a follow-up, not built
+    here.
   - **The account-credit note's `MemberCredit` stamp, not confirmed: a
     stated limit.** `createUnappliedXeroCreditNote` stamps the note on the
     member's credit (`backfill*CreditXeroNote`) before its claim-guarded

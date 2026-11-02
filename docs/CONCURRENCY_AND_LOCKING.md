@@ -6700,7 +6700,8 @@ row, which stays RUNNING under its claim (or FAILED, if Mark failed reached it
 first), the note is traced (`traceUnrecordedLateNote`: logged, one `xero` audit
 row, #4374's alert once, all saying resolve by hand with its number, never
 retry), and the create throws `RefundNoteNotRecordedError`, which no caller
-counts a success (a queued retry fails its REQUEUE row naming the note). A
+counts a success (a queued retry fails its REQUEUE row naming the note), and
+whose message never calls a note the row already records unrecorded. A
 transaction that committed but answered P2028 is found by the trace's re-read
 on this run's claim and finishes as recorded. No new advisory key, registered site or row-lock site
 (the Payment row is the existing helper's statement). Proven against real

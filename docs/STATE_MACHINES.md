@@ -4108,10 +4108,13 @@ RUNNING payment refund-note create -> Xero returns its note -> the record
   RUNNING under its claim (or FAILED, if Mark failed reached it first), never
   failed by the create: one `xero` audit row and one
   XERO_SUCCESS_AFTER_RESOLUTION alert name the note -> Mark failed or Reset
-  stale running -> FAILED -> Resolve by hand with its number, never Retry. A
-  queued retry whose inline create ends so fails its REQUEUE row (CANCELLED
-  when a resolve recording a note kept the note out), never SUCCEEDED; a
-  record that committed but answered P2028 finishes as recorded
+  stale running -> FAILED -> Resolve by hand with its number, never Retry,
+  and promptly: past 15 minutes the row no longer counts as in flight, and a
+  later refund note on the payment is sized without this one. A queued retry
+  whose inline create ends so fails its REQUEUE row; one whose note a resolve
+  kept out, or already records, closes it CANCELLED (`resolved-in-xero-after-run`);
+  never SUCCEEDED. A record that committed but answered P2028 finishes as
+  recorded
 RUNNING -> Reset stale running -> FAILED, then the organiser adjustment's
   stalled create answers (#4655, `INV-INT-034`): its note is written on the row
   before any allocation only where no other note is recorded and the row is
