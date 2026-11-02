@@ -66,6 +66,8 @@ const mocks = vi.hoisted(() => ({
   xeroObjectLinkFindFirst: vi.fn(),
   xeroObjectLinkFindMany: vi.fn(),
   xeroSyncOperationUpdate: vi.fn(),
+  // #4688: no unrecorded refund note fences the payment in these runs.
+  xeroSyncOperationFindFirst: vi.fn(async () => null),
   chargeFindUnique: vi.fn(),
   chargeUpdate: vi.fn(),
   transaction: vi.fn(),
@@ -132,7 +134,7 @@ vi.mock("@/lib/prisma", () => ({
       findUnique: mocks.creditNoteAllocationFindUnique,
       findMany: mocks.creditNoteAllocationFindMany,
     },
-    xeroSyncOperation: { update: mocks.xeroSyncOperationUpdate },
+    xeroSyncOperation: { update: mocks.xeroSyncOperationUpdate, findFirst: mocks.xeroSyncOperationFindFirst },
     membershipSubscriptionCharge: {
       findUnique: mocks.chargeFindUnique,
       update: mocks.chargeUpdate,
