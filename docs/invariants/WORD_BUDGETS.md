@@ -120,7 +120,7 @@ stays for the agent-doc ceilings below.
 | `INV-PRIV-013` | 627 |
 | `INV-MOD-006` | 623 |
 | `INV-HOST-042` | 607 |
-| `INV-ADDPAY-023` | 586 |
+| `INV-ADDPAY-023` | 584 |
 | `INV-LOCK-002` | 589 |
 | `INV-CONFIG-003` | 578 |
 | `INV-LIFE-042` | 562 |
