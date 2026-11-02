@@ -388,25 +388,26 @@ async function keepExistingRow(
  *   (`savedCardAttemptId`). `Event.request` is null for any state change Stripe
  *   did not attribute to an API request, so an intent whose lost-response POST
  *   answered `processing` and captured asynchronously arrives with no key, and
- *   every redelivery of it carries none either. Before #4646 nothing could link
- *   it, and the row ended at `attempt_key_expired` with the card charged.
+ *   every redelivery of it carries none either. Only a `_v2` key's sends carry
+ *   the id, and nothing mints one until #4682 (`mintedSavedCardChargeKey`).
  *
  * Either way only a PRIMARY Stripe row that is PENDING/PROCESSING and holds NO
- * intent id is adopted, and only when its `reference` is the key ITS OWN id
- * builds for this booking (`savedCardChargeKeyShape`, the rule
- * `beginSavedCardChargeAttempt` recognises attempt rows by). By metadata, the
- * row's payment must also be this booking's, and its key must be the shape
- * whose sends carry the id (`names_attempt`): a row minted before #4646 never
- * sent one, so nothing that names it by metadata came from its own POST. So a
- * stray key or a forged id can never claim another row. The write itself is
+ * intent id is adopted, only when its `reference` is a key ITS OWN id builds
+ * for this booking, in either shape (`savedCardChargeKeyShape`, the rule
+ * `beginSavedCardChargeAttempt` recognises attempt rows by), and only when the
+ * row's payment is this booking's. By metadata, its key must also be the shape
+ * whose sends carry the id (`names_attempt`): an original-key row never sent
+ * one, so nothing that names it by metadata came from its own POST. So a stray
+ * key or a forged id can never claim another row. The write itself is
  * `settleSavedCardChargeAttempt` with `adopting`, forward only and claimed on
  * "still no intent" under the Payment lock, so a race with the charging code's
  * own settle, or between two deliveries, resolves with one writer. Returns null
  * when there is nothing to adopt, and the handler proceeds as before.
  *
- * The one case left is Stripe's limit plus the deploy: an attempt minted before
- * #4646 whose capture was asynchronous carries no key and no id, so it still
- * ends at `attempt_key_expired`, alerted as unmatched (`INV-INT-033`).
+ * The case left is Stripe's limit plus the rollout: an original-key attempt —
+ * every one minted until #4682 — whose capture was asynchronous carries no key
+ * and no id, so it still ends at `attempt_key_expired`, alerted as unmatched
+ * (`INV-INT-033`).
  */
 export async function adoptSavedCardChargeAttemptForIntent(params: {
   paymentIntent: SavedCardChargeAnswer;
@@ -434,8 +435,9 @@ export async function adoptSavedCardChargeAttemptForIntent(params: {
     select: { id: true, paymentId: true, reference: true, payment: { select: { bookingId: true } } },
   });
   if (!row) return null;
-  // The row's key is its own for this booking (`reference` equals the event's
-  // key, by the lookup); by metadata, the shape whose sends carry the id.
+  // Either way the row's key is its own for this booking in either shape
+  // (`reference` equals the event's key, by the lookup), and its payment is
+  // this booking's; by metadata, only the shape whose sends carry the id.
   const shape = savedCardChargeKeyShape(row.reference, bookingId, row.id);
   const linked = byKey !== null ? shape !== null : shape === "names_attempt";
   if (!linked || row.payment.bookingId !== bookingId) return null;

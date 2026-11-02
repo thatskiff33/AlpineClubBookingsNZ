@@ -11,7 +11,16 @@
  * `attempt_key_expired` with the "could not match an app payment" alert
  * (`INV-INT-033`).
  *
- * EVERY STEP IS THE REAL CODE: the charge is the real charge-saved-method
+ * Read first, write later: only a `_v2` attempt key's sends carry the attempt
+ * id, and this release reads `_v2` rows but still MINTS the original key
+ * (`mintedSavedCardChargeKey`), because the release before it cannot read
+ * `_v2`. #4682 flips the mint. So the adoption cases start from the real
+ * route's lost-answer attempt, re-key its row to `_v2` exactly as #4682's mint
+ * will write it, and let the real route REPLAY it: what Stripe then holds is
+ * the `_v2` key and the metadata naming the row, sent by the real code. A fresh
+ * attempt today is proved separately to reach the alert, the stated limit.
+ *
+ * EVERY OTHER STEP IS THE REAL CODE: the charge is the real charge-saved-method
  * route, whose off-session charge the harness's one `@/lib/stripe` double
  * makes fail without an answer (a dropped connection, so the attempt row stays
  * PENDING with no intent); the capture is the real webhook processor. Only
@@ -142,7 +151,8 @@ type SentCharge = { idempotencyKey: string; metadata: Record<string, string>; am
 /**
  * The member presses "pay with my saved card"; Stripe takes the POST, but the
  * connection drops before its answer arrives, so the attempt row stays PENDING
- * with no intent. Returns what the POST sent, as Stripe now holds it.
+ * with no intent. Returns what the POST sent, as Stripe now holds it. Run a
+ * second time over the same row, the route replays it rather than minting.
  */
 async function chargeWithLostAnswer(): Promise<{ sent: SentCharge; attemptRowId: string }> {
   const sent: SentCharge[] = [];
@@ -164,6 +174,28 @@ async function chargeWithLostAnswer(): Promise<{ sent: SentCharge; attemptRowId:
   expect(attempt).toMatchObject({ status: "PENDING", stripePaymentIntentId: null, reference: sent[0]!.idempotencyKey });
   expect((await prisma.booking.findUniqueOrThrow({ where: { id: BOOKING_ID } })).status).toBe("PENDING");
   return { sent: sent[0]!, attemptRowId: attempt!.id };
+}
+
+/**
+ * #4646: the same lost answer on a `_v2` attempt, the shape #4682 will mint.
+ * The real route mints the original key, the row is re-keyed to `_v2` as
+ * #4682's mint will write it (no earlier release writes one), and the real
+ * route then replays that row — recognised as an attempt, not re-minted — and
+ * loses the answer again. Returns what the replay sent: the `_v2` key and the
+ * metadata naming the row.
+ */
+async function chargeV2AttemptWithLostAnswer(): Promise<{ sent: SentCharge; attemptRowId: string }> {
+  const { savedCardChargeIdempotencyKey } = await import("@/lib/saved-card-charge-key");
+  const { attemptRowId } = await chargeWithLostAnswer();
+  await prisma.paymentTransaction.update({ where: { id: attemptRowId }, data: { reference: savedCardChargeIdempotencyKey(BOOKING_ID, attemptRowId) } });
+
+  const replayed = await chargeWithLostAnswer();
+
+  expect(replayed.attemptRowId).toBe(attemptRowId);
+  expect(await prisma.paymentTransaction.count({ where: { paymentId: PAYMENT_ID } })).toBe(1);
+  expect(replayed.sent.idempotencyKey).toBe(savedCardChargeIdempotencyKey(BOOKING_ID, attemptRowId));
+  expect(replayed.sent.metadata).toEqual({ bookingId: BOOKING_ID, memberId: OWNER_ID, savedCardAttemptId: attemptRowId });
+  return replayed;
 }
 
 /** Stripe's `payment_intent.succeeded` for the intent that POST made, through the real webhook processor. */
@@ -280,16 +312,17 @@ async function expectSettledOnce(paymentIntentId: string, attemptRowId: string):
       }
     });
 
-    it("the lost POST sent the attempt's own key and named its row in the metadata", async () => {
+    it("a fresh attempt mints the ORIGINAL key, which the release before #4646 recognises, and sends no attempt id (#4682 flips it)", async () => {
       const { sent, attemptRowId } = await chargeWithLostAnswer();
-      const { savedCardChargeIdempotencyKey } = await import("@/lib/saved-card-charge-key");
+      const { savedCardChargeKeyShape } = await import("@/lib/saved-card-charge-key");
 
-      expect(sent.idempotencyKey).toBe(savedCardChargeIdempotencyKey(BOOKING_ID, attemptRowId));
-      expect(sent.metadata).toEqual({ bookingId: BOOKING_ID, memberId: OWNER_ID, savedCardAttemptId: attemptRowId });
+      expect(savedCardChargeKeyShape(sent.idempotencyKey, BOOKING_ID, attemptRowId)).toBe("no_attempt_id");
+      expect(sent.idempotencyKey).toBe(["pending_charge", BOOKING_ID, attemptRowId].join("_"));
+      expect(sent.metadata).toEqual({ bookingId: BOOKING_ID, memberId: OWNER_ID });
     });
 
     it("the asynchronous capture (request null) adopts the row and settles the booking once; a redelivery and a replay add nothing, and nothing is called unmatched", async () => {
-      const { sent, attemptRowId } = await chargeWithLostAnswer();
+      const { sent, attemptRowId } = await chargeV2AttemptWithLostAnswer();
       const intent = `${INTENT_PREFIX}async`;
       const capture = succeededEvent(intent, sent);
 
@@ -303,7 +336,7 @@ async function expectSettledOnce(paymentIntentId: string, attemptRowId: string):
     });
 
     it("a capture Stripe attributes to the request (its key) and the asynchronous one (no key) racing for the same row: one adoption wins and the booking settles once", async () => {
-      const { sent, attemptRowId } = await chargeWithLostAnswer();
+      const { sent, attemptRowId } = await chargeV2AttemptWithLostAnswer();
       const intent = `${INTENT_PREFIX}race`;
       const byKey = succeededEvent(intent, sent, { id: "req_race_4646", idempotency_key: sent.idempotencyKey });
       const byMetadata = succeededEvent(intent, sent);
@@ -314,7 +347,7 @@ async function expectSettledOnce(paymentIntentId: string, attemptRowId: string):
     });
 
     it("the two adoptions themselves, run at once: exactly one writes the capture as new money, the other writes nothing", async () => {
-      const { sent, attemptRowId } = await chargeWithLostAnswer();
+      const { sent, attemptRowId } = await chargeV2AttemptWithLostAnswer();
       const { adoptSavedCardChargeAttemptForIntent } = await import("@/lib/saved-card-charge-settle");
       const paymentIntent = { id: `${INTENT_PREFIX}adopt_race`, status: "succeeded" as const, amount: sent.amountCents, payment_method: CARD };
 
@@ -332,16 +365,14 @@ async function expectSettledOnce(paymentIntentId: string, attemptRowId: string):
       expect(await prisma.paymentTransaction.count({ where: { paymentId: PAYMENT_ID } })).toBe(1);
     });
 
-    it("the stated limit: an attempt minted before #4646 sent no attempt id, so its asynchronous capture is still alerted as unmatched, once", async () => {
+    it("the stated limit until #4682: a fresh attempt's lost answer, captured asynchronously, is still alerted as unmatched, once", async () => {
+      // As this release mints it: the original key, the metadata without the row.
       const { sent, attemptRowId } = await chargeWithLostAnswer();
-      // As the old code minted it: the key without its #4646 ending, the metadata without the row.
-      const oldMetadata = Object.fromEntries(Object.entries(sent.metadata).filter(([key]) => key !== "savedCardAttemptId"));
-      await prisma.paymentTransaction.update({ where: { id: attemptRowId }, data: { reference: sent.idempotencyKey.replace(/_v2$/, "") } });
-      const intent = `${INTENT_PREFIX}pre_4646`;
-      const capture = succeededEvent(intent, { ...sent, metadata: oldMetadata });
+      expect(sent.metadata).not.toHaveProperty("savedCardAttemptId");
+      const intent = `${INTENT_PREFIX}original_key`;
 
-      expect(await deliver(capture)).toBe(200);
-      expect(await deliver(succeededEvent(intent, { ...sent, metadata: oldMetadata }))).toBe(200);
+      expect(await deliver(succeededEvent(intent, sent))).toBe(200);
+      expect(await deliver(succeededEvent(intent, sent))).toBe(200);
 
       expect(await prisma.unrecognisedStripePayment.findMany({ where: { stripePaymentIntentId: intent }, select: { reason: true, bookingId: true } })).toEqual([
         { reason: "APP_INTENT_NO_TRANSACTION", bookingId: BOOKING_ID },

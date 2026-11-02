@@ -84,16 +84,19 @@
  * `payment_failed`) webhook, which adopts the row by the idempotency key Stripe
  * stamps on the event or, when the event carries none (an asynchronous
  * capture: `Event.request` is null on it and on every redelivery), by the
- * attempt id the metadata carries (#4646, `adoptSavedCardChargeAttemptForIntent`).
- * A row minted before #4646 sent no attempt id, so its asynchronous capture is
- * adopted by neither, and a redelivery does not change that: it ends here, the
- * capture is alerted as unmatched (`INV-INT-033`) and a person matches it.
- * Refusing is still right — the alternative is a charge with no local witness.
+ * attempt id a `_v2` key's metadata carries (#4646,
+ * `adoptSavedCardChargeAttemptForIntent`). Until #4682 every new attempt mints
+ * the original key, which sends no attempt id (`mintedSavedCardChargeKey`), so
+ * its asynchronous capture is adopted by neither, and a redelivery does not
+ * change that: it ends here, the capture is alerted as unmatched
+ * (`INV-INT-033`) and a person matches it. Refusing is still right — the
+ * alternative is a charge with no local witness.
  *
  * What the ledger rows now mean, so nobody "tidies" them: a PRIMARY Stripe row
- * whose `reference` is this module's key built from ITS OWN id is a saved-card
- * charge attempt. PENDING with no intent id: minted, Stripe not yet (or not
- * certainly) asked. PROCESSING with an intent id: Stripe answered with an
+ * whose `reference` is a key built from ITS OWN id for this booking, in either
+ * shape (`savedCardChargeKeyShape`), is a saved-card charge attempt. PENDING
+ * with no intent id: minted, Stripe not yet (or not certainly) asked.
+ * PROCESSING with an intent id: Stripe answered with an
  * unfinished intent. FAILED: this attempt is over — a definite refusal, a dead
  * intent, or overtaken by a later card (`reason` suffixed with why). SUCCEEDED:
  * captured. Rows that are NOT attempt rows fall into two groups. A PRIMARY
@@ -146,7 +149,7 @@ import logger from "@/lib/logger";
 import { LEDGER_ROWS_OLDEST_FIRST } from "@/lib/payment-ledger-order";
 import { readSupersededOwnership } from "@/lib/superseded-capture-ownership";
 import { isCapturedTransactionStatus } from "./payment-transactions";
-import { SAVED_CARD_CHARGE_KEY_PREFIX, savedCardChargeIdempotencyKey, savedCardChargeKeyShape } from "./saved-card-charge-key";
+import { mintedSavedCardChargeKey, SAVED_CARD_CHARGE_KEY_PREFIX, savedCardChargeKeyShape } from "./saved-card-charge-key";
 
 /**
  * Attempt rows by the key prefix (`saved-card-charge-key.ts`), so no reader and
@@ -619,12 +622,13 @@ export async function beginSavedCardChargeAttempt(
     return {
       kind: "replay",
       attemptRowId: replay.id,
-      // #4646: an attempt row's OWN stored key, never a rebuilt one: a row
-      // minted before #4646 is re-sent under its old key, and its shape picks
-      // the old metadata (`buildSavedCardChargeMetadata`), so the re-send is
-      // its first send byte for byte. Any other replayed row names its intent
-      // and is retrieved, so the key built for it is one nothing sends.
-      idempotencyKey: isAttemptRow(replay, bookingId) ? replay.reference : savedCardChargeIdempotencyKey(bookingId, replay.id),
+      // #4646: an attempt row's OWN stored key, never a rebuilt one: each
+      // shape is re-sent under its own key, and the shape picks the metadata
+      // (`buildSavedCardChargeMetadata`), so the re-send is its first send byte
+      // for byte — a `_v2` row with its attempt id, an original one without.
+      // Any other replayed row names its intent and is retrieved, so the key
+      // built for it is one nothing sends.
+      idempotencyKey: isAttemptRow(replay, bookingId) ? replay.reference : mintedSavedCardChargeKey(bookingId, replay.id),
       paymentIntentId: replay.stripePaymentIntentId,
       staleIntentIdsToCancel,
     };
@@ -642,7 +646,9 @@ export async function beginSavedCardChargeAttempt(
     },
     select: { id: true },
   });
-  const idempotencyKey = savedCardChargeIdempotencyKey(bookingId, created.id);
+  // #4646: the one switch for the shape a new attempt mints — the original key
+  // until #4682, so the release before #4646 still recognises this row.
+  const idempotencyKey = mintedSavedCardChargeKey(bookingId, created.id);
   await tx.paymentTransaction.update({
     where: { id: created.id },
     data: { reference: idempotencyKey },

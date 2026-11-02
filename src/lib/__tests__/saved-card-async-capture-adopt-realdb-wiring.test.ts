@@ -26,5 +26,7 @@ describe("the saved-card asynchronous capture real-database proof stays wired in
     expect(suite).toContain('process.env.RUN_CONCURRENCY_RACE_TESTS === "1"');
     expect(suite).toContain("the asynchronous capture (request null) adopts the row and settles the booking once");
     expect(suite).toContain("exactly one writes the capture as new money, the other writes nothing");
+    // #4682's limit: until the mint flips, a fresh attempt is alerted, not adopted.
+    expect(suite).toContain("the stated limit until #4682: a fresh attempt's lost answer, captured asynchronously, is still alerted as unmatched, once");
   });
 });

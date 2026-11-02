@@ -622,9 +622,11 @@ import "./credit-release-merge-into-edit.realdb.test";
 import "./saved-card-charge-worth.realdb.test";
 // #4646 reuses it to prove a saved-card charge whose answer was lost and whose
 // capture was asynchronous (`payment_intent.succeeded` with `request: null`) is
-// adopted by the attempt id its metadata carries: the booking settles once, a
-// redelivery adds nothing, the key and metadata adoptions racing for one row
-// have one winner, and nothing is called unmatched. Skipped unless
+// adopted by the attempt id a `_v2` attempt's metadata carries: the booking
+// settles once, a redelivery adds nothing, the key and metadata adoptions racing
+// for one row have one winner, and nothing is called unmatched; and that a fresh
+// attempt still mints the original key, so until #4682 its asynchronous capture
+// is alerted as unmatched. Skipped unless
 // RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own `race-4646-` fixtures.
 import "./saved-card-async-capture-adopt.realdb.test";
 // #4265 reuses it to prove a refund-note row covers only its own live,

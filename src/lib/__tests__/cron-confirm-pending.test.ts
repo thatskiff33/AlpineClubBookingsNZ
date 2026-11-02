@@ -268,7 +268,7 @@ const mockPaymentTransactionDeleteMany = vi.fn();
 /** The id the attempt row is minted with, so the key can be asserted exactly. */
 const ATTEMPT_ROW_ID = "txn_attempt_1";
 const attemptKeyFor = (bookingId: string) =>
-  `pending_charge_${bookingId}_${ATTEMPT_ROW_ID}_v2`;
+  `pending_charge_${bookingId}_${ATTEMPT_ROW_ID}`;
 const paymentTransactionMocks = {
   findMany: (...args: unknown[]) => mockPaymentTransactionFindMany(...args),
   create: (...args: unknown[]) => mockPaymentTransactionCreate(...args),
@@ -888,7 +888,7 @@ describe("Cron: Confirm Pending Bookings", () => {
       // from `format` inside stripe.ts, so a caller cannot pass a second answer.
       customerId: "cus_b1",
       paymentMethodId: "pm_b1",
-      metadata: { bookingId: "b1", memberId: "member_b1", savedCardAttemptId: ATTEMPT_ROW_ID },
+      metadata: { bookingId: "b1", memberId: "member_b1" },
       idempotencyKey: expectedIdempotencyKey,
     });
     // The attempt row is minted inside the claim (after the Payment upsert,
@@ -1055,7 +1055,7 @@ describe("Cron: Confirm Pending Bookings", () => {
         amountCents: 12000,
         customerId: "cus_parent_1",
         paymentMethodId: "pm_parent_1",
-        metadata: { bookingId: "child_1", memberId: "member_child_1", savedCardAttemptId: ATTEMPT_ROW_ID },
+        metadata: { bookingId: "child_1", memberId: "member_child_1" },
       })
     );
     expect(mockEnqueueXeroBookingInvoiceOperation).toHaveBeenCalledWith("child_1", {
