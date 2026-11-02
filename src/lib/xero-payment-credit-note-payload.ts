@@ -14,6 +14,19 @@ import { parseRefundMethod, readRefundNoteWording } from "@/lib/xero-refund-meth
 import type { CashRefundMethod, RefundNoteWording } from "@/lib/xero-refund-method";
 
 /**
+ * #4705 (PR #4711 review): whether a payment's credit-note CREATE row is an
+ * account-credit note's - queued as one, or executed by
+ * `createUnappliedXeroCreditNote`, whose payload always keeps
+ * `refundAmountCents` and carries no refund allocation. An applied-credit
+ * remainder mint (`creditNotes` alone) and a refund note are not.
+ */
+export function isAccountCreditNotePayload(payload: Record<string, unknown>): boolean {
+  const queueType = readString(payload.queueType);
+  if (queueType !== null) return queueType === XERO_OUTBOX_ACCOUNT_CREDIT_NOTE_TYPE;
+  return readNumber(payload.refundAmountCents) !== null && payload.allocation === undefined;
+}
+
+/**
  * `INV-PAY-101`: the refund method a stored payload carries, as the cash-refund
  * builders take it. Both the enqueue-time shape and the execution-time shape
  * record it under the same key; account credit never reaches a cash builder, so

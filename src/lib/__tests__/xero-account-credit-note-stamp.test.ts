@@ -9,13 +9,19 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   findFirst: vi.fn(),
   updateMany: vi.fn(),
+  operationFindMany: vi.fn(),
+  sliceFindFirst: vi.fn(),
 }));
 
 vi.mock("@/lib/prisma", () => ({
-  prisma: { memberCredit: { findFirst: mocks.findFirst, updateMany: mocks.updateMany } },
+  prisma: {
+    memberCredit: { findFirst: mocks.findFirst, updateMany: mocks.updateMany },
+    xeroSyncOperation: { findMany: mocks.operationFindMany },
+    memberCreditNoteAllocation: { findFirst: mocks.sliceFindFirst },
+  },
 }));
 
-import { stampCancellationCreditXeroNote } from "@/lib/xero-account-credit-note-stamp";
+import { accountCreditNoteHeld, accountCreditNoteRaisedFor, stampCancellationCreditXeroNote } from "@/lib/xero-account-credit-note-stamp";
 import { internetBankingLateCashCreditDescription, isInternetBankingLateCashCredit } from "@/lib/internet-banking-late-cash-credit";
 
 const base = { memberId: "member_1", bookingId: "booking_1234567890", refundAmountCents: 5000, creditNoteId: "cn_1" };
@@ -109,6 +115,84 @@ describe("stampCancellationCreditXeroNote (#4685)", () => {
     mocks.findFirst.mockResolvedValue(null);
     await expect(stampCancellationCreditXeroNote(base)).resolves.toBeNull();
     expect(mocks.updateMany).not.toHaveBeenCalled();
+  });
+});
+
+describe("accountCreditNoteRaisedFor (#4705)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  const params = { creditNoteId: "cn_1", paymentIds: ["pay_1", "pay_2"] };
+
+  it("MUTATION: reads the credit the note's own outbox row named, from the queued or executed shape, and the payment that named it", async () => {
+    mocks.operationFindMany.mockResolvedValue([
+      { localId: "pay_2", requestPayload: { queueType: "ACCOUNT_CREDIT_NOTE", refundAmountCents: 5000, memberCreditId: "credit_b" } },
+      { localId: "pay_2", requestPayload: { creditNotes: [], refundAmountCents: 5000, memberCreditId: "credit_b" } },
+    ]);
+
+    await expect(accountCreditNoteRaisedFor(params)).resolves.toEqual({ memberCreditId: "credit_b", paymentIds: ["pay_2"] });
+    expect(mocks.operationFindMany).toHaveBeenCalledWith({
+      where: {
+        direction: "OUTBOUND",
+        entityType: "CREDIT_NOTE",
+        operationType: "CREATE",
+        localModel: "Payment",
+        localId: { in: ["pay_1", "pay_2"] },
+        xeroObjectId: "cn_1",
+      },
+      select: { localId: true, requestPayload: true },
+    });
+  });
+
+  it("MUTATION: rows naming no credit, or different credits, name none, and return every payment that raised the note", async () => {
+    mocks.operationFindMany.mockResolvedValue([{ localId: "pay_1", requestPayload: { queueType: "ACCOUNT_CREDIT_NOTE", refundAmountCents: 5000 } }, { localId: "pay_1", requestPayload: null }]);
+    await expect(accountCreditNoteRaisedFor(params)).resolves.toEqual({ paymentIds: ["pay_1"] });
+
+    mocks.operationFindMany.mockResolvedValue([
+      { localId: "pay_1", requestPayload: { queueType: "ACCOUNT_CREDIT_NOTE", refundAmountCents: 5000, memberCreditId: "credit_a" } },
+      { localId: "pay_2", requestPayload: { creditNotes: [], refundAmountCents: 5000, memberCreditId: "credit_b" } },
+    ]);
+    await expect(accountCreditNoteRaisedFor(params)).resolves.toEqual({ paymentIds: ["pay_1", "pay_2"] });
+  });
+
+  it("MUTATION (PR #4711 review): a payment whose row for the note is not an account-credit note's raised it for no credit", async () => {
+    mocks.operationFindMany.mockResolvedValue([
+      // An applied-credit remainder mint, and a refund note, naming the note.
+      { localId: "pay_1", requestPayload: { creditNotes: [{ lineItems: [{ unitAmount: 50 }] }] } },
+      { localId: "pay_2", requestPayload: { creditNotes: [], allocation: { invoiceId: "inv_1", amount: 50 }, memberCreditId: "credit_b" } },
+    ]);
+    await expect(accountCreditNoteRaisedFor(params)).resolves.toEqual({ paymentIds: [] });
+  });
+
+  it("asks nothing without a payment to scope the read to", async () => {
+    await expect(accountCreditNoteRaisedFor({ creditNoteId: "cn_1", paymentIds: [] })).resolves.toEqual({ paymentIds: [] });
+    expect(mocks.operationFindMany).not.toHaveBeenCalled();
+  });
+});
+
+describe("accountCreditNoteHeld (#4705, PR #4711 review)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.findFirst.mockResolvedValue(null);
+    mocks.sliceFindFirst.mockResolvedValue(null);
+  });
+
+  it("MUTATION: a note any lot, of any type, records is held", async () => {
+    mocks.findFirst.mockResolvedValue({ id: "lot_admin" });
+    await expect(accountCreditNoteHeld("cn_1")).resolves.toBe(true);
+    // Not scoped to a member, booking or type: any lot holding the note counts.
+    expect(mocks.findFirst).toHaveBeenCalledWith({ where: { xeroCreditNoteId: "cn_1" }, select: { id: true } });
+  });
+
+  it("MUTATION: a note an applied slice records is held", async () => {
+    mocks.sliceFindFirst.mockResolvedValue({ id: "slice_1" });
+    await expect(accountCreditNoteHeld("cn_1")).resolves.toBe(true);
+    expect(mocks.sliceFindFirst).toHaveBeenCalledWith({ where: { xeroCreditNoteId: "cn_1" }, select: { id: true } });
+  });
+
+  it("a note nothing records is not held", async () => {
+    await expect(accountCreditNoteHeld("cn_1")).resolves.toBe(false);
   });
 });
 

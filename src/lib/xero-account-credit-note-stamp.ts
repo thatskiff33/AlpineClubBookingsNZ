@@ -19,6 +19,11 @@
  * different credits at the same instant can still both land: nothing locks the
  * pair (`INV-INT-036`'s limit).
  *
+ * #4705: the inbound credit-note reconcile stamps through here too, only for
+ * a note nothing holds and only through a payment whose own outbox row raised
+ * it as an account-credit note; it reads the credit off that row
+ * (`accountCreditNoteRaisedFor`), else takes the fallback.
+ *
  * Locking (`INV-LOCK-001`): none added. The stamp changes no balance, booking
  * status or settlement money - only the link - and each write is one
  * null-guarded single-row update, so a lost race writes nothing; no key, no
@@ -29,6 +34,9 @@ import { cancellationCreditDescription } from "@/lib/cancellation-settled-money"
 import { internetBankingLateCashCreditDescription } from "@/lib/internet-banking-late-cash-credit";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
+import { asRecord } from "@/lib/xero-json";
+import { readAccountCreditNoteCredit } from "@/lib/xero-operation-outbox-payload";
+import { isAccountCreditNotePayload } from "@/lib/xero-payment-credit-note-payload";
 
 /** The descriptions the account-credit pipeline's cancellation credits carry. */
 function stampableCancellationDescriptions(bookingId: string): string[] {
@@ -107,6 +115,63 @@ export async function stampCancellationCreditXeroNote(params: {
     });
     if (stamped.count === 1) return candidate.id;
   }
+}
+
+/**
+ * #4705: which of `paymentIds` raised `creditNoteId` as an account-credit
+ * note - an outbound CREATE row naming the note in that shape
+ * (`isAccountCreditNotePayload`) - and the credit those rows named
+ * (`memberCreditId`, kept on the queued and executed shapes). Read by the
+ * inbound reconcile, which reaches a note by its id and stamps only through
+ * these payments: a payment whose link to the note no such row explains (one
+ * #1925's local provenance linked, or a note made by hand in Xero) raised it
+ * for no credit (PR #4711 review). One credit named returns it with the
+ * payments that named it; none, or rows that disagree, return no credit, and
+ * the stamp falls back to its old match through every such payment.
+ */
+export async function accountCreditNoteRaisedFor(params: {
+  creditNoteId: string;
+  paymentIds: string[];
+}): Promise<{ paymentIds: string[]; memberCreditId?: string }> {
+  if (params.paymentIds.length === 0) return { paymentIds: [] };
+  const rows = await prisma.xeroSyncOperation.findMany({
+    where: {
+      direction: "OUTBOUND",
+      entityType: "CREDIT_NOTE",
+      operationType: "CREATE",
+      localModel: "Payment",
+      localId: { in: params.paymentIds },
+      xeroObjectId: params.creditNoteId,
+    },
+    select: { localId: true, requestPayload: true },
+  });
+  const raised = rows.flatMap((row) => {
+    const payload = asRecord(row.requestPayload);
+    if (!row.localId || !payload || !isAccountCreditNotePayload(payload)) return [];
+    return [{ paymentId: row.localId, memberCreditId: readAccountCreditNoteCredit(payload).memberCreditId }];
+  });
+  const credits = new Set(raised.flatMap((row) => row.memberCreditId ?? []));
+  const [memberCreditId] = credits;
+  if (credits.size === 1 && memberCreditId) {
+    return { memberCreditId, paymentIds: [...new Set(raised.filter((row) => row.memberCreditId === memberCreditId).map((row) => row.paymentId))] };
+  }
+  return { paymentIds: [...new Set(raised.map((row) => row.paymentId))] };
+}
+
+/**
+ * #4705 (PR #4711 review): whether any credit lot, of any type, or any applied
+ * slice already records the note. The inbound reconcile stamps only a note
+ * nothing holds: a held note is either already on its credit, or an
+ * applied-credit note whose holder is a lot this stamp never sees (an
+ * admin-adjustment remainder), and stamping it on a cancellation credit too
+ * would give one note two holders.
+ */
+export async function accountCreditNoteHeld(creditNoteId: string): Promise<boolean> {
+  const [lot, slice] = await Promise.all([
+    prisma.memberCredit.findFirst({ where: { xeroCreditNoteId: creditNoteId }, select: { id: true } }),
+    prisma.memberCreditNoteAllocation.findFirst({ where: { xeroCreditNoteId: creditNoteId }, select: { id: true } }),
+  ]);
+  return lot !== null || slice !== null;
 }
 
 /**

@@ -600,7 +600,8 @@ as the lot's note).
 - **The stamp writes that row by id** (`stampCancellationCreditXeroNote`),
   scoped to its member, booking, type and amount, and only while it names no
   note. It never overwrites a note, and a note already on one of the booking's
-  cancellation credits stamps nothing more.
+  cancellation credits stamps nothing more. Inbound reconciles stamp unheld
+  notes through it, by the outbox row's credit (#4705).
 - **Rows queued before the field** name no credit, so the stamp falls back to
   the old match (member, booking, amount, the three pipeline descriptions), one
   credit at a time, oldest first - never every equal credit at once.
@@ -610,8 +611,7 @@ as the lot's note).
 - **Limits.** A payment gets one account-credit note (the enqueue keys it on
   the amount; no writer retires its link), so a second equal credit gets none,
   and no writer mints one today. Two writers stamping one note on two credits
-  at once can both land. The inbound credit-note handler's own stamp is not
-  yet scoped (#4705).
+  at once can both land.
 
 Pinned by `xero-account-credit-note-stamp.test.ts`,
 `xero-operation-outbox-payload.test.ts`, `xero-operation-outbox.test.ts`,
