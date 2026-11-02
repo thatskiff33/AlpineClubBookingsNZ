@@ -3641,7 +3641,11 @@ call it: the member email's durable `EmailLog` row (primary key, for the retry
 worker to send), and `AlertCooldown` once-ever claims for the records and the
 admin alert (a conditional `updateMany` or a unique-guarded insert), with a
 sent marker; an alert claim older than the stale reaper's threshold and never
-marked sent is a dead attempt's, given back under its exact stamp and sent.
+marked sent is a dead attempt's, given back under its exact stamp and sent,
+and a younger one is a sibling's still sending, so the row waits with its
+attempt handed back (`waitPaymentRecoveryOperation`). The claim, give-back and
+takeover are the one shared sequence (`sendAdminAlertOnceEverWithTakeover`)
+the unrecognised Stripe payment alert also uses.
 The next claim proves the refund the row's own by a bounded Stripe read
 (exact runner metadata) and a ledger read, outside any transaction. None of
 these is a lifecycle, settlement-money, capacity or credit writer, so no

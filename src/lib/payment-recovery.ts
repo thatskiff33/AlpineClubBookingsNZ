@@ -67,7 +67,7 @@ import { unretryableRecoveryCause } from "@/lib/recovery-unretryable-cause";
 import { ORDINARY_ASK_RECOVERY_REASON, planOrdinaryAskMint } from "@/lib/ordinary-ask-request";
 import { sendAdminPaymentFailureAlert } from "@/lib/email";
 import { closeCancellationRefundAfterReplay, closeCapacityRaceRefundRecordingEvent, recordDuplicateCaptureRefundEvent } from "@/lib/booking-events";
-import { reportSupersededPaymentRefund, reportUnannouncedSupersededPaymentRefund } from "@/lib/superseded-additional-refund";
+import { reportSupersededPaymentRefund, reportUnannouncedSupersededPaymentRefund, SUPERSEDED_REFUND_REPORT_IN_FLIGHT_MESSAGE } from "@/lib/superseded-additional-refund";
 import logger from "@/lib/logger";
 import { createAuditLog } from "@/lib/audit";
 import {
@@ -1966,7 +1966,7 @@ async function processCancelPaymentIntentOperation(
 async function processRefundSupersededPaymentOperation(
   operation: PaymentRecoveryOperation,
   format: ClubFormat,
-) {
+): Promise<PaymentRecoveryProcessOutcome> {
   if (!operation.paymentTransactionId) {
     throw new Error("Payment recovery operation is missing paymentTransactionId");
   }
@@ -2013,9 +2013,12 @@ async function processRefundSupersededPaymentOperation(
   // #4690: a refund of this row's own that an earlier attempt made but never announced (it was
   // reaped, or crashed, before its notice) is announced here, once, before the close.
   if (outstandingCents <= 0) {
-    await reportUnannouncedSupersededPaymentRefund(operation, format);
+    if ((await reportUnannouncedSupersededPaymentRefund(operation, format)) === "in-flight") {
+      await waitPaymentRecoveryOperation(operation, SUPERSEDED_REFUND_REPORT_IN_FLIGHT_MESSAGE, format);
+      return "waited";
+    }
     await completePaymentRecoveryOperation(operation);
-    return;
+    return "done";
   }
 
   const metadata = cardRefundOperationRefundMetadata(operation);
@@ -2070,8 +2073,9 @@ async function processRefundSupersededPaymentOperation(
   // #3340: the club's own record of the refund and the member's explanation, after the reconcile
   // so the amount owing it quotes is the post-refund one. #4690: once per row whichever attempt
   // sends it, and BEFORE the close, so a notice that fails (it throws) keeps the row open for a
-  // retry; a replay, or an attempt whose close then loses (#4675), sends nothing twice.
-  await reportSupersededPaymentRefund({
+  // retry; a replay, or an attempt whose close then loses (#4675), sends nothing twice. Another
+  // attempt still sending the alert is waited on, never failed: its attempt is handed back.
+  const reported = await reportSupersededPaymentRefund({
     format,
     operationId: operation.id,
     bookingId: operation.bookingId,
@@ -2079,7 +2083,12 @@ async function processRefundSupersededPaymentOperation(
     paymentIntentId: operation.paymentIntentId,
     refundedAmountCents: plan.reduce((sum, slice) => sum + slice.amountCents, 0),
   });
+  if (reported === "in-flight") {
+    await waitPaymentRecoveryOperation(operation, SUPERSEDED_REFUND_REPORT_IN_FLIGHT_MESSAGE, format);
+    return "waited";
+  }
   await completePaymentRecoveryOperation(operation);
+  return "done";
 }
 
 async function processBookingModificationRefundOperation(
@@ -3258,8 +3267,7 @@ async function processPaymentRecoveryOperation(
   if (
     operation.type === PaymentRecoveryOperationType.REFUND_SUPERSEDED_PAYMENT
   ) {
-    await processRefundSupersededPaymentOperation(operation, format);
-    return "done";
+    return processRefundSupersededPaymentOperation(operation, format);
   }
 
   // #2262: the dispatch is EXHAUSTIVE, never a fall-through. The final arm

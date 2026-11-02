@@ -67,7 +67,11 @@ vi.mock("@/lib/prisma", () => ({
           throw Object.assign(new Error("Unique constraint failed"), { code: "P2002", clientVersion: "test" });
         }
         mocks.cooldowns.set(data.key, data.lastAlertedAt);
-        if (fault === "after") throw new Error("connection reset after commit");
+        if (fault === "after") {
+          // Time passes before the lost reply surfaces, so only the exact stamp written gives it back.
+          vi.setSystemTime(Date.now() + 1);
+          throw new Error("connection reset after commit");
+        }
         return data;
       },
       deleteMany: async ({ where }: { where: { key: string; lastAlertedAt: Date } }) => {
@@ -398,7 +402,7 @@ describe("reportSupersededPaymentRefund sends once per recovery row (#4690)", ()
   });
 
   it("records the member's email durably under the row's id, for the retry worker to send", async () => {
-    await report();
+    await expect(report()).resolves.toBe("reported");
 
     expect(mocks.sendMemberEmail).toHaveBeenCalledWith(
       expect.objectContaining({ idempotencyKey: OPERATION_ID }),
@@ -435,10 +439,14 @@ describe("reportSupersededPaymentRefund sends once per recovery row (#4690)", ()
     expect(sent()).toEqual(ONCE_EACH);
   });
 
-  it("the booking unreadable: it throws and sends nothing, so the row stays open", async () => {
+  it("the booking unreadable: it throws and sends nothing, so the row stays open - saying what to do if no retry is left", async () => {
     mocks.findBooking.mockRejectedValueOnce(new Error("database unavailable"));
 
-    await expect(report()).rejects.toBeInstanceOf(SupersededRefundReportNotSettledError);
+    const error = await report().catch((thrown: unknown) => thrown);
+    expect(error).toBeInstanceOf(SupersededRefundReportNotSettledError);
+    // Quoted to officers verbatim when it was the last attempt: never a promise of a retry.
+    expect((error as Error).message).toContain("if this was the last attempt, the member and the admins may not have been told");
+    expect((error as Error).message).not.toMatch(/stays open/);
     expect(sent()).toEqual({ memberEmails: 0, adminAlerts: 0, auditRows: 0, events: 0 });
     expect(await supersededRefundReportSettled(OPERATION_ID)).toBe(false);
   });
@@ -502,10 +510,10 @@ describe("reportSupersededPaymentRefund sends once per recovery row (#4690)", ()
     expect(await supersededRefundReportSettled(OPERATION_ID)).toBe(true);
   });
 
-  it("MUTATION: an alert claim a sibling took inside the stale threshold is left to it - nothing sent, it throws so the row waits", async () => {
+  it("MUTATION: an alert claim a sibling took inside the stale threshold is left to it - nothing sent, and the report says in-flight so the row waits", async () => {
     mocks.cooldowns.set(KEYS.alert, new Date(Date.now() - PAYMENT_RECOVERY_STALE_PROCESSING_MS + 60_000));
 
-    await expect(report()).rejects.toBeInstanceOf(SupersededRefundReportNotSettledError);
+    await expect(report()).resolves.toBe("in-flight");
     expect(mocks.sendAdminAlert).not.toHaveBeenCalled();
     expect(mocks.cooldowns.has(KEYS.alert)).toBe(true);
   });
@@ -551,8 +559,8 @@ describe("reportUnannouncedSupersededPaymentRefund", () => {
     mocks.listRefunds.mockResolvedValue([stripeRefund("re_own", ownMetadata)]);
     mocks.findRefunds.mockResolvedValue([ledgerRow("re_own")]);
 
-    await reportUnannouncedSupersededPaymentRefund(operation, CLUB_FORMAT_TEST);
-    await reportUnannouncedSupersededPaymentRefund(operation, CLUB_FORMAT_TEST);
+    await expect(reportUnannouncedSupersededPaymentRefund(operation, CLUB_FORMAT_TEST)).resolves.toBe("reported");
+    await expect(reportUnannouncedSupersededPaymentRefund(operation, CLUB_FORMAT_TEST)).resolves.toBe("reported");
 
     expect(mocks.listRefunds).toHaveBeenCalledWith("pi_superseded", { timeoutMs: 10_000, singlePage: true });
     expect(mocks.findRefunds).toHaveBeenCalledWith(expect.objectContaining({
@@ -572,7 +580,7 @@ describe("reportUnannouncedSupersededPaymentRefund", () => {
     mocks.listRefunds.mockResolvedValue([stripeRefund("re_other", metadata)]);
     mocks.findRefunds.mockResolvedValue([ledgerRow("re_other")]);
 
-    await reportUnannouncedSupersededPaymentRefund(operation, CLUB_FORMAT_TEST);
+    await expect(reportUnannouncedSupersededPaymentRefund(operation, CLUB_FORMAT_TEST)).resolves.toBe("none");
 
     expect(sent()).toEqual({ memberEmails: 0, adminAlerts: 0, auditRows: 0, events: 0 });
     expect(mocks.findRefunds).not.toHaveBeenCalled();

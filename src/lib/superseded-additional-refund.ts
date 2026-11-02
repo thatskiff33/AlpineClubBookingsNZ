@@ -2,8 +2,9 @@ import { BookingEventType, Prisma, type PaymentRecoveryOperation } from "@prisma
 
 import { bookingOwner } from "@/lib/booking-owner";
 import { bookingOutstandingCents } from "@/lib/additional-payment-ask";
-import { findHeldOnceEverAlertKeys, readHeldOnceEverAlertTimes, sendAdminAlertOnceEverClaim, type OnceEverAlertClaim } from "@/lib/admin-alert-once";
-import { ALERT_ONCE_EVER_WINDOW_MS, claimAlertCooldown, releaseAlertCooldown } from "@/lib/alert-cooldown";
+import { findHeldOnceEverAlertKeys } from "@/lib/admin-alert-once";
+import { giveBackOwnOnceEverClaim, sendAdminAlertOnceEverWithTakeover } from "@/lib/admin-alert-once-takeover";
+import { ALERT_ONCE_EVER_WINDOW_MS, claimAlertCooldown } from "@/lib/alert-cooldown";
 import { logAudit } from "@/lib/audit";
 import { recordBookingEvent } from "@/lib/booking-events";
 import { sendAdminSupersededPaymentRefundAlert } from "@/lib/email/admin-alerts-finance";
@@ -59,7 +60,9 @@ import type { ClubFormat } from "@/lib/club-format";
  * reads nothing outstanding. A mail provider failure is not one: the member's
  * email is recorded for the retry worker, and an admin copy that failed is
  * replayed by the email retry cron. A booking with no owner to address gets the
- * audit row and its own `critical` escalation row, as before.
+ * audit row and its own `critical` escalation row, as before. It returns
+ * `in-flight` when another attempt is still sending the admin alert: the row
+ * then waits rather than failing (`SupersededRefundReportOutcome`).
  *
  * THE AMOUNT OWING IS THE BOOKING'S WHOLE OUTSTANDING, not just its ask. It
  * comes from `bookingOutstandingCents`, which is `INV-PAY-047` rearranged, so
@@ -88,29 +91,44 @@ export async function reportSupersededPaymentRefund(params: {
   refundedAmountCents: number;
   /** The club's format (#3565), resolved before any transaction by the caller. */
   format: ClubFormat;
-}): Promise<void> {
+}): Promise<SupersededRefundReportOutcome> {
   const keys = supersededRefundReportKeys(params.operationId);
-  if (await supersededRefundReportSettled(params.operationId)) return;
+  if (await supersededRefundReportSettled(params.operationId)) return "reported";
   const context = await loadReportContext(params);
   if (context) await recordMemberNotice(params, context);
   await writeRecordsOnce(params, context, keys);
   if (!context) {
     // Nothing can be addressed; the critical row above is the escalation.
     await markReported(keys, params);
-    return;
+    return "reported";
   }
-  await sendAdminAlertOnce(params, context, keys);
+  return sendAdminAlertOnce(params, context, keys);
 }
+
+/**
+ * What a report came to (#4690): `reported` - sent now, or already - or
+ * `in-flight`, when another attempt holds the admin alert's claim and is still
+ * sending it. That is a wait, not a failure: the recovery worker puts the row
+ * back with its attempt handed back (`waitPaymentRecoveryOperation`), and a
+ * later run finds the report settled and closes it.
+ */
+export type SupersededRefundReportOutcome = "reported" | "in-flight";
+
+/** The recovery row's `lastError` while it waits on another attempt's alert (#4690). */
+export const SUPERSEDED_REFUND_REPORT_IN_FLIGHT_MESSAGE =
+  "The superseded-payment refund was made, and another attempt is sending its notice; this row waits for it, then closes (#4690).";
 
 /**
  * #4690: the refund's notice is not settled - the member's email was not
  * recorded, or the admin alert neither sent nor known to be sent. Thrown to
- * the recovery worker BEFORE the row's close, so the row stays open and the
- * next claim sends what is missing; everything already sent stays sent once.
+ * the recovery worker BEFORE the row's close, so the row stays open and a
+ * retry sends what is missing; everything already sent stays sent once. Its
+ * text is the row's `lastError`, and the officers' alert quotes it when no
+ * retry is left, so it says what to do then.
  */
 export class SupersededRefundReportNotSettledError extends Error {
   constructor(readonly operationId: string, reason: string) {
-    super(`The superseded-payment refund was made, but its notice is not settled yet: ${reason}. The row stays open and its retry sends the notice once (#4690).`);
+    super(`The superseded-payment refund was made, but its notice is not settled: ${reason}. A retry sends the notice once; if this was the last attempt, the member and the admins may not have been told - check the booking and tell the member (#4690).`);
     this.name = "SupersededRefundReportNotSettledError";
   }
 }
@@ -120,7 +138,7 @@ export class SupersededRefundReportNotSettledError extends Error {
  * member's email has its own (its `EmailLog` row, `idempotencyKey` the row id).
  * - `records`: claimed before the audit row and booking event are written, so
  *   they are written once (a crash between the two loses them, never doubles them);
- * - `alert`: the admin alert's once-ever claim (`sendAdminAlertOnceEverClaim`);
+ * - `alert`: the admin alert's once-ever claim (`sendAdminAlertOnceEverWithTakeover`);
  * - `reported`: written once the alert went out, or reached nobody: the report
  *   is settled, and a later attempt reads it and sends nothing.
  */
@@ -166,8 +184,8 @@ export async function supersededRefundReportSettled(operationId: string): Promis
 export async function reportUnannouncedSupersededPaymentRefund(
   operation: Pick<PaymentRecoveryOperation, "id" | "type" | "idempotencyKey" | "stripeKeyPrefix" | "bookingId" | "paymentId" | "paymentIntentId">,
   format: ClubFormat,
-): Promise<void> {
-  if (await supersededRefundReportSettled(operation.id)) return;
+): Promise<SupersededRefundReportOutcome | "none"> {
+  if (await supersededRefundReportSettled(operation.id)) return "reported";
   const logContext = { operationId: operation.id, bookingId: operation.bookingId, paymentIntentId: operation.paymentIntentId };
   const refunds = await listRefundsForPaymentIntent(operation.paymentIntentId, { timeoutMs: 10_000, singlePage: true });
   const own = refunds.filter((refund) =>
@@ -177,7 +195,7 @@ export async function reportUnannouncedSupersededPaymentRefund(
   );
   if (own.length === 0) {
     logger.info(logContext, "Superseded-payment refund row found nothing outstanding and no refund of its own; closed without a notice");
-    return;
+    return "none";
   }
   const recorded = (await prisma.paymentRefund.findMany({
     where: { paymentId: operation.paymentId, stripeRefundId: { in: own.map((refund) => refund.id) } },
@@ -188,9 +206,9 @@ export async function reportUnannouncedSupersededPaymentRefund(
       { ...logContext, ownRefundIds: own.map((refund) => refund.id), recordedRefundIds: recorded.map((row) => row.stripeRefundId) },
       "Superseded-payment refund row's own Stripe refund is not recorded as made; no notice was sent",
     );
-    return;
+    return "none";
   }
-  await reportSupersededPaymentRefund({
+  return reportSupersededPaymentRefund({
     format,
     operationId: operation.id,
     bookingId: operation.bookingId,
@@ -287,7 +305,12 @@ async function writeRecordsOnce(params: ReportParams, context: ReportContext | n
   } catch (err) {
     logger.error({ err, operationId, bookingId }, "Failed to claim a superseded-payment refund's records; none were written");
     // #4679: the write may have landed; a claim held under this exact stamp is this call's own.
-    await giveBackOwnClaim(keys.records, claimedAt, { operationId, bookingId }, 2);
+    await giveBackOwnOnceEverClaim({
+      key: keys.records,
+      label: "superseded-payment refund records",
+      context: { operationId, bookingId },
+      claim: { claimedAt, claimUncertain: true },
+    });
     throw new SupersededRefundReportNotSettledError(operationId, "its records' claim failed");
   }
   if (!claimed) return;
@@ -351,58 +374,43 @@ async function writeRecordsOnce(params: ReportParams, context: ReportContext | n
 }
 
 /**
- * The admin alert, once ever per row (`INV-INT-032`'s rule, #4670/#4679). A
- * call that took the claim and sent it, or found nobody to receive it, writes
- * `reported`. Its own failed send, or a claim write that threw, is given back
- * (twice for the uncertain claim) and the report is not settled. A claim held
- * elsewhere with no `reported` is a sibling attempt's while it is younger than
- * the stale reaper's threshold - not settled, so the row waits for a retry -
- * and a dead attempt's after it: given back and sent here.
+ * The admin alert, once ever per row, by the shared sequence
+ * (`sendAdminAlertOnceEverWithTakeover`, `INV-INT-032`'s rule): a call that
+ * took the claim and sent it, or found nobody to receive it, writes `reported`.
+ * Its own failed send, or a claim write that threw, is given back and the
+ * report is not settled. A claim held elsewhere with no `reported` is a sibling
+ * attempt's while younger than the stale reaper's threshold - `in-flight`, so
+ * the row waits - and a dead attempt's after it: given back and sent here.
  */
-async function sendAdminAlertOnce(params: ReportParams, context: ReportContext, keys: ReportKeys): Promise<void> {
+async function sendAdminAlertOnce(params: ReportParams, context: ReportContext, keys: ReportKeys): Promise<SupersededRefundReportOutcome> {
   const { bookingId, operationId, paymentIntentId, refundedAmountCents, format } = params;
   const logContext = { operationId, bookingId, paymentIntentId };
   let sendReturned = false;
-  const attempt = () =>
-    sendAdminAlertOnceEverClaim({
-      key: keys.alert,
-      label: "superseded-payment refund alert",
-      context: logContext,
-      send: async () => {
-        const result = await sendAdminSupersededPaymentRefundAlert({
-          memberName: context.memberName,
-          checkIn: context.checkIn,
-          checkOut: context.checkOut,
-          refundedAmountCents,
-          amountOwingCents: context.amountOwingCents,
-          paymentIntentId,
-          bookingId,
-        }, format);
-        sendReturned = true;
-        await markReported(keys, logContext);
-        return result;
-      },
-    });
-  /** True when settled by this call; false when another holder has the claim. */
-  const settledBy = async (claim: OnceEverAlertClaim): Promise<boolean> => {
-    if (claim.kept || sendReturned) return true;
-    if (!claim.claimedAt) return false;
-    await giveBackOwnClaim(keys.alert, claim.claimedAt, logContext, claim.claimUncertain ? 2 : 1);
-    throw new SupersededRefundReportNotSettledError(operationId, "the admin alert was not sent");
-  };
-
-  if (await settledBy(await attempt())) return;
-  if (await supersededRefundReportSettled(operationId)) return;
-  const heldAt = (await readHeldOnceEverAlertTimes([keys.alert], new Date())).get(keys.alert);
-  if (!heldAt) throw new SupersededRefundReportNotSettledError(operationId, "the admin alert's claim was given back meanwhile");
-  if (Date.now() - heldAt.getTime() < PAYMENT_RECOVERY_STALE_PROCESSING_MS) {
-    throw new SupersededRefundReportNotSettledError(operationId, "another attempt is sending the admin alert");
-  }
-  // Older than any live attempt and never marked sent: its sender died between claim and send.
-  await releaseAlertCooldown({ key: keys.alert, claimedAt: heldAt });
-  if (await settledBy(await attempt())) return;
-  if (await supersededRefundReportSettled(operationId)) return;
-  throw new SupersededRefundReportNotSettledError(operationId, "another attempt took the admin alert over");
+  const outcome = await sendAdminAlertOnceEverWithTakeover({
+    key: keys.alert,
+    label: "superseded-payment refund alert",
+    context: logContext,
+    send: async () => {
+      const result = await sendAdminSupersededPaymentRefundAlert({
+        memberName: context.memberName,
+        checkIn: context.checkIn,
+        checkOut: context.checkOut,
+        refundedAmountCents,
+        amountOwingCents: context.amountOwingCents,
+        paymentIntentId,
+        bookingId,
+      }, format);
+      sendReturned = true;
+      await markReported(keys, logContext);
+      return result;
+    },
+    isSent: () => supersededRefundReportSettled(operationId),
+    inFlightMs: PAYMENT_RECOVERY_STALE_PROCESSING_MS,
+  });
+  if (outcome === "in-flight") return "in-flight";
+  // Not kept but sent: nobody could receive it, and `reported` settles that.
+  if (outcome === "settled" || sendReturned) return "reported";
+  throw new SupersededRefundReportNotSettledError(operationId, "the admin alert was not sent");
 }
 
 /** The settled marker. Never throws: the alert is out, so a failed write is logged for an operator. */
@@ -410,16 +418,4 @@ async function markReported(keys: ReportKeys, logContext: Record<string, unknown
   await claimAlertCooldown({ key: keys.reported, windowMs: ALERT_ONCE_EVER_WINDOW_MS }).catch((err) =>
     logger.error({ ...logContext, err }, "A superseded-payment refund's notice went out, but its sent marker was not written"),
   );
-}
-
-/** Give back a claim held under this call's exact stamp, so a newer claim is never touched. Never throws. */
-async function giveBackOwnClaim(key: string, claimedAt: Date, logContext: Record<string, unknown>, tries: number): Promise<void> {
-  for (let attempt = 1; attempt <= tries; attempt += 1) {
-    try {
-      await releaseAlertCooldown({ key, claimedAt });
-      return;
-    } catch (err) {
-      logger.error({ ...logContext, err, key, attempt }, "Failed to give back a superseded-payment refund notice claim");
-    }
-  }
 }

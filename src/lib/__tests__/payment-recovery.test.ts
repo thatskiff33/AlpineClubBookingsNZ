@@ -393,6 +393,8 @@ vi.mock("@/lib/superseded-additional-refund", () => ({
     mockReportSupersededPaymentRefund(...args),
   reportUnannouncedSupersededPaymentRefund: (...args: unknown[]) =>
     mockReportUnannouncedSupersededPaymentRefund(...args),
+  // A stand-in: the runner records whatever the module names, verbatim.
+  SUPERSEDED_REFUND_REPORT_IN_FLIGHT_MESSAGE: "waiting on another attempt's notice",
 }));
 
 // #4253 release 2: the released-credit branch, reduced to the one call these tests need - a release
@@ -1255,6 +1257,43 @@ describe("payment recovery worker", () => {
 
       expect(result).toMatchObject({ succeeded: 0, retried: 1 });
       expect(closeCallOrder()).toBeNull();
+    });
+
+    /*
+      #4700 review (S1): another attempt still sending the admin alert is a WAIT, not a failure. A
+      thrown "not settled" on the final attempt went terminal and quoted its text to officers;
+      waiting hands the claim's attempt back, never goes terminal and alerts nobody.
+    */
+    it.each([
+      ["the attempt that refunded", 0, () => mockReportSupersededPaymentRefund],
+      ["the next claim, finding the refund made", 6000, () => mockReportUnannouncedSupersededPaymentRefund],
+    ])("MUTATION: %s, with another attempt still sending the alert, waits on the final attempt - attempt handed back, not closed, not terminal, no alert", async (_label, refunded, report) => {
+      mockPaymentRecoveryFindUnique.mockResolvedValue(
+        makeOperation({ type: PaymentRecoveryOperationType.REFUND_SUPERSEDED_PAYMENT, attempts: MAX_PAYMENT_RECOVERY_ATTEMPTS }),
+      );
+      mockPaymentTransactionFindUnique.mockResolvedValue({
+        id: "txn-1",
+        paymentId: "payment-1",
+        stripePaymentIntentId: "pi_superseded",
+        amountCents: 6000,
+        refundedAmountCents: refunded,
+        status: PaymentStatus.SUCCEEDED,
+      });
+      report().mockResolvedValueOnce("in-flight");
+
+      const result = await processPaymentRecoveryOperations({ limit: 1 });
+
+      expect(result).toMatchObject({ succeeded: 0, retried: 1 });
+      expect(closeCallOrder()).toBeNull();
+      const waited = mockPaymentRecoveryUpdateMany.mock.calls
+        .map(([args]) => args as { data: Record<string, unknown> })
+        .find((args) => args.data.status === PaymentRecoveryOperationStatus.FAILED);
+      expect(waited?.data).toMatchObject({
+        attempts: MAX_PAYMENT_RECOVERY_ATTEMPTS - 1,
+        lastError: "waiting on another attempt's notice",
+        nextRetryAt: expect.any(Date),
+      });
+      expect(mockSendAdminPaymentFailureAlert).not.toHaveBeenCalled();
     });
 
     it("MUTATION: the next claim, finding the refund made, asks for the unannounced notice before it closes, and refunds nothing", async () => {

@@ -4528,19 +4528,36 @@ next claim reads nothing outstanding
     recorded as made in the ledger                     -> report, then close
   none (another door's refund), or not recorded as made -> close, no notice
 report not settled (email not recorded, alert not sent) -> throws; row retried
-alert claim held, no sent marker: younger than the stale threshold -> retried;
+alert claim held, no sent marker: younger than the stale threshold
+  -> the row waits (attempt handed back: never terminal, no officer alert);
   older -> the dead attempt's claim is given back and the alert sent
 ```
 
-One stated limit, the price of refusing a close the attempt no longer owns: a
-final attempt the reaper ended for good (FAILED at the attempt ceiling,
-officers alerted) stays FAILED even when its work then completed; the owed
-readers count recorded refunds, so a refund it made reads as paid, not owed. A
-superseded-payment refund it made is still announced, by that attempt. Crash
-windows the keys cannot close: an attempt that dies between its admin alert
-and the sent marker has the alert sent again by a takeover after the stale
-threshold, and one that dies between the records' claim and their write loses
-the audit row and booking event (the notices still go out).
+The admin alert's claim, give-back and takeover are the shared once-ever
+sequence (`sendAdminAlertOnceEverWithTakeover`), the one the unrecognised
+Stripe payment alert uses (`INV-INT-032`). A report not settled says in its
+error, which officers read if no retry is left, that the member may not have
+been told.
+
+Stated limits:
+
+- The price of refusing a close the attempt no longer owns: a final attempt
+  the reaper ended for good (FAILED at the attempt ceiling, officers alerted)
+  stays FAILED even when its work then completed; the owed readers count
+  recorded refunds, so a refund it made reads as paid, not owed. A
+  superseded-payment refund it made is still announced by that attempt, if its
+  report settles in that attempt: the reaper cleared its claim, so a report
+  that does not settle there fails nothing and nothing retries it.
+- The admin alert can be sent twice; the member's email cannot. An attempt
+  that dies, stalls 30 minutes or more, or fails to write the sent marker,
+  between its admin alert and the marker, has the alert sent again by a
+  takeover after the stale threshold.
+- An attempt that dies between the records' claim and their write loses the
+  audit row and booking event; the notices still go out.
+- The next claim's close now needs a Stripe refund-list read to prove a refund
+  the row's own. A Stripe outage, or a list with more than one page, keeps the
+  row open and spends its attempts - also for a row another door's refund
+  (a cancellation's) brought to nothing outstanding.
 
 The rule is `INV-PAY-120`; the interleavings are in
 `docs/CONCURRENCY_AND_LOCKING.md`. To verify:
