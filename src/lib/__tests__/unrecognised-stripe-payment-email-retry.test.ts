@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type Stripe from "stripe";
+import { matchesWhere } from "./support/prisma-where";
 
 /**
  * #4647 (`INV-INT-032`, `INV-INT-033`): ONE owner for retrying the alert about a
@@ -12,7 +13,7 @@ import type Stripe from "stripe";
  * claim (`unrecognised-stripe-payment.ts`, `admin-alert-once.ts`,
  * `alert-cooldown.ts`), the unmuteable sender, `sendEmail` with its EmailLog
  * row and retention rule, and `retryFailedEmails`. The doubles are the store
- * (in-memory tables keyed and filtered as the queries ask), the mail transport
+ * (in-memory tables filtered by the shared `matchesWhere`), the mail transport
  * (counts what went out), the Checkout read, and the club's settings.
  */
 type EmailLogRow = Record<string, unknown> & { id: string };
@@ -28,31 +29,6 @@ const state = vi.hoisted(() => ({
   /** #4670: how many coming `alertedAt` writes fail. */
   stampFailures: 0,
 }));
-
-/** A field filter the queries under test use; anything else fails loudly rather than matching silently. */
-function matchesField(value: unknown, filter: unknown): boolean {
-  if (filter === null || typeof filter !== "object" || filter instanceof Date) {
-    return filter instanceof Date
-      ? value instanceof Date && value.getTime() === filter.getTime()
-      : value === filter;
-  }
-  const ops = filter as Record<string, unknown>;
-  return Object.entries(ops).every(([op, operand]) => {
-    if (op === "in") return (operand as unknown[]).includes(value);
-    if (op === "gt") return (value as number) > (operand as number);
-    if (op === "lt") return value instanceof Date ? value < (operand as Date) : (value as number) < (operand as number);
-    if (op === "gte") return value instanceof Date ? value >= (operand as Date) : (value as number) >= (operand as number);
-    if (op === "not") return operand === null ? value != null : !matchesField(value, operand);
-    throw new Error(`unsupported filter operator ${op}`);
-  });
-}
-
-function matchesWhere(row: Record<string, unknown>, where: Record<string, unknown>): boolean {
-  return Object.entries(where).every(([key, filter]) => {
-    if (key === "OR") return (filter as Record<string, unknown>[]).some((branch) => matchesWhere(row, branch));
-    return matchesField(row[key] ?? null, filter);
-  });
-}
 
 vi.mock("@/lib/prisma", () => {
   const prisma = {
@@ -81,9 +57,9 @@ vi.mock("@/lib/prisma", () => {
       },
     },
     alertCooldown: {
-      updateMany: async ({ where, data }: { where: { key: string; lastAlertedAt: unknown }; data: { lastAlertedAt: Date } }) => {
+      updateMany: async ({ where, data }: { where: Record<string, unknown> & { key: string }; data: { lastAlertedAt: Date } }) => {
         const held = state.cooldowns.get(where.key);
-        if (!held || !matchesField(held, where.lastAlertedAt)) return { count: 0 };
+        if (!held || !matchesWhere({ key: where.key, lastAlertedAt: held }, where)) return { count: 0 };
         state.cooldowns.set(where.key, data.lastAlertedAt);
         return { count: 1 };
       },
@@ -106,8 +82,8 @@ vi.mock("@/lib/prisma", () => {
       },
       findMany: async ({ where }: { where: { key: { in: string[] }; lastAlertedAt: unknown } }) =>
         [...state.cooldowns]
-          .filter(([key, at]) => where.key.in.includes(key) && matchesField(at, where.lastAlertedAt))
-          .map(([key, lastAlertedAt]) => ({ key, lastAlertedAt })),
+          .map(([key, lastAlertedAt]) => ({ key, lastAlertedAt }))
+          .filter((row) => matchesWhere(row, where)),
     },
     emailLog: {
       create: async ({ data }: { data: Record<string, unknown> }) => {
