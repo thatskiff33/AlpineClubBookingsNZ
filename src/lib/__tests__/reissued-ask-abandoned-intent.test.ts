@@ -106,12 +106,22 @@ describe("settleLostReissuedAskFence", () => {
   it.each([
     ["claimed by the runner (PROCESSING), still naming the key", { status: "PROCESSING", lastError: null, paymentIntentId: "mod_reissued_ask_mod_reduction" }],
     ["claimed by the runner (PROCESSING), which wrote the door's own intent", { status: "PROCESSING", lastError: null, paymentIntentId: "pi_door" }],
-    ["failed for good", { status: "FAILED", lastError: "out of attempts", paymentIntentId: "mod_reissued_ask_mod_reduction" }],
+    // #4693: a FAILED row with attempts left is no proof; one failed for good is (below).
+    ["failed with a retry left", { status: "FAILED", lastError: "Stripe is down", attempts: 2, paymentIntentId: "mod_reissued_ask_mod_reduction" }],
     ["still waiting", { status: "PENDING", lastError: null, paymentIntentId: "mod_reissued_ask_mod_reduction" }],
   ])("MUTATION: a recovery %s is never a proof - nothing cancelled", async (_label, moved) => {
     h.recovery = { id: "op_reissue", ...moved };
     await settleLostReissuedAskFence(CALL);
     expect(h.cancel).not.toHaveBeenCalled();
+  });
+
+  // #4693: no claim takes a row failed for good again, the door writes only a PENDING one, and
+  // no reduction nets it off - so nobody records an intent under its key again.
+  it("MUTATION: a recovery failed for good (its attempts spent) leaves the door's abandoned - cancelled", async () => {
+    h.recovery = { id: "op_reissue", status: "FAILED", lastError: "out of attempts", attempts: 5, paymentIntentId: "mod_reissued_ask_mod_reduction" };
+    await settleLostReissuedAskFence(CALL);
+    expect(h.cancel).toHaveBeenCalledWith("pi_door", { cancellationReason: "abandoned" });
+    expect(h.info).toHaveBeenCalledWith(expect.objectContaining({ outcome: "cancelled", closedBy: "failed-for-good" }), expect.any(String));
   });
 
   it("MUTATION: an intent another recovery names (a queued cancel, a refund) is left to it", async () => {
