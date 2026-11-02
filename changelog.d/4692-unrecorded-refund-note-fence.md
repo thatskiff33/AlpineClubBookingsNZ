@@ -11,7 +11,8 @@
   self-heal leaves it alone. Mark failed keeps the mark. Once resolved, the
   waiting notes go ahead, sized with the recorded note counted; the hold also
   ends if that note is recorded through another job (the original job a
-  retry ran for, say). A waiting note is looked at again only every few
+  retry ran for, say), and the job that made it can then be resolved with
+  that same number. A waiting note is looked at again only every few
   minutes, so it never holds up the payment's or anyone else's other Xero jobs,
   and a copy of the same note queued while it waited no longer stops the
   resolve: it is cancelled afterwards. The officers' alert and the operations

@@ -221,9 +221,12 @@ lifts once a live or voided link on the payment records the stamped note
 written in its writer's own commit, so a create that reads the fence lifted
 reads the note's coverage too. A resolve no longer refuses over a PENDING copy
 the fence holds; the outbox cancels it at its next claim
-(`findResolvedSiblingSince`), and a copy claimed in the instant before the
-resolve commits is sized with the resolved note counted, as any create that
-reads the fence lifted. Mark failed and the bulk reset write the row
+(`findResolvedSiblingSince`). A copy claimed in the instant before the mark
+commits passes that check, so the create asks it again once the fence reads
+lifted (`passUnrecordedRefundNoteFence`): a lifted fence means the mark has
+committed, so the copy then closes CANCELLED before any sizing - needed for a
+refund request's note, whose plain mark takes no lock and writes no link the
+create's coverage read would see. Mark failed and the bulk reset write the row
 status-guarded as before, and keep the code; Mark failed's plain write
 refuses a stamped row, so a stamp landing after its read is never
 overwritten. Proven against real PostgreSQL by

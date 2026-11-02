@@ -567,7 +567,9 @@ refund note on that payment is sized or raised until that note is recorded
   refund-note creates; the nightly self-heal queues none.
 - **Resolving lifts it.** The resolve's claim sets `manuallyResolvedAt`; a
   withdrawn resolve restores the fence. A PENDING copy the fence holds does
-  not refuse the resolve: the outbox cancels it afterwards (`INV-INT-025`).
+  not refuse the resolve; once the fence reads lifted, a copy queued before
+  the resolve closes CANCELLED (`INV-INT-025`). A stamped row whose note
+  another row recorded resolves with that note, adding no link.
   Mark failed and Reset stale running keep the code and the note's message.
 - **Limits.** Until the stamp lands the row holds others back only as a live
   claim (#3880). A stamp that fails is logged, and the alert says nothing

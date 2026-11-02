@@ -2074,10 +2074,14 @@ on `manuallyResolvedAt`.
     one commit). A PENDING copy of the same document (re-queued after Mark
     failed) does not refuse that resolve (`findQueuedLiveCopy`): the fence
     keeps it from minting, and the outbox closes it CANCELLED at its next claim
-    (`findResolvedSiblingSince`); a copy RUNNING still refuses. So does the
-    note being recorded through another row - the original a retry ran for,
-    resolved with this note, or a retry that recorded it - since the stamped
-    row itself could then never be resolved with it.
+    (`findResolvedSiblingSince`) - or, when that check ran before the mark
+    landed, the create does once the fence reads lifted
+    (`passUnrecordedRefundNoteFence`); a copy RUNNING still refuses. So does
+    the note being recorded through another row - the original a retry ran for,
+    resolved with this note, or a retry that recorded it. The stamped row is
+    then resolved with that same note's number: recorded on the row with no
+    second link (`stampedUnrecordedNoteId`), so its resolved coverage counts
+    nothing twice.
     The waiting notes then run, sized with the resolved note counted. A
     withdrawn resolve restores the fence. The alert and the audit row
     (`laterNotesHeld`) say whether the fence is up. Limits: before the stamp
