@@ -291,20 +291,21 @@ let prisma: (typeof import("@/lib/prisma"))["prisma"];
       const rowB = await queueNote(3_000);
       expect(await runOutbox(rowB)).toMatchObject({ succeeded: 0, failed: 0, skipped: 1 });
       const { XERO_REFUND_NOTE_AWAITING_RESOLVE_CODE } = await import("@/lib/xero-operation-error-codes");
-      const waitingB = await prisma.xeroSyncOperation.findUniqueOrThrow({ where: { id: rowB }, select: { status: true, lastErrorCode: true, lastErrorMessage: true, updatedAt: true } });
-      expect(waitingB).toEqual({
+      expect(await prisma.xeroSyncOperation.findUniqueOrThrow({ where: { id: rowB }, select: { status: true, lastErrorCode: true, lastErrorMessage: true } })).toEqual({
         status: "PENDING",
         lastErrorCode: XERO_REFUND_NOTE_AWAITING_RESOLVE_CODE,
         lastErrorMessage: expect.stringContaining(`until an officer resolves ${rowA} by hand`),
-        updatedAt: expect.any(Date),
       });
       expect(xeroNotes).toHaveLength(1);
-      // #4692 review (finding 1): before its recheck is due, a kick's scan passes B by - it never takes the head of the queue.
+      // #4692 review (finding 1): before its recheck is due, a kick's scan passes B by - though B is the
+      // oldest row queued - so it never takes the head of the queue: B's create never runs to read the fence.
+      const inFlight = await import("@/lib/xero-refund-note-in-flight");
+      const fenceReads = vi.spyOn(inFlight, "assertNoUnrecordedRefundNote");
       const { processQueuedXeroOutboxOperations } = await import("@/lib/xero-operation-outbox");
       await processQueuedXeroOutboxOperations({ limit: 1 });
-      expect(await prisma.xeroSyncOperation.findUniqueOrThrow({ where: { id: rowB }, select: { status: true, updatedAt: true } })).toEqual({
-        status: "PENDING", updatedAt: waitingB.updatedAt,
-      });
+      expect(fenceReads).not.toHaveBeenCalledWith(PAYMENT_ID);
+      fenceReads.mockRestore();
+      expect(await prisma.xeroSyncOperation.findUniqueOrThrow({ where: { id: rowB }, select: { status: true } })).toEqual({ status: "PENDING" });
 
       // 2. The nightly self-heal lists the payment's gap but queues nothing for it.
       const healed = await nightlySelfHeal();
