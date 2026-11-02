@@ -1229,9 +1229,10 @@ async function alertPaymentRecoveryFailure(operation: PaymentRecoveryOperation, 
  * re-claimable, so not terminal) and `attempts` to the ceiling every dead-row
  * reader tests (`INV-PAY-092`).
  *
- * STATUS-FENCED, as the runner's SUCCEEDED close is. The worker's arm used `update` by id, which throws `P2025` when a
- * manual mark-paid reversal has DELETED the row mid-flight - and it is called
- * from inside the loop's `catch`, so that throw escaped the loop and abandoned
+ * STATUS-FENCED, as the runner's SUCCEEDED close is. The worker's arm used
+ * `update` by id, which throws `P2025` when a manual mark-paid reversal has
+ * DELETED the row mid-flight - and it is called from inside the loop's
+ * `catch`, so that throw escaped the loop and abandoned
  * every remaining operation in the batch. `updateMany` matches nothing instead,
  * and the fence also stops a `SUCCEEDED` row being dragged back to `FAILED` by a
  * worker holding a stale in-memory copy.
@@ -2072,9 +2073,9 @@ async function processRefundSupersededPaymentOperation(
    * the MONEY is safe - but the epilogue would run a second time, sending the
    * member a second "we have refunded you" email and the admins a second alert,
    * on a change whose entire point is not confusing members about card movement.
-   * `completePaymentRecoveryOperation`'s `updateMany` is fenced on
-   * `status != SUCCEEDED`, so exactly one attempt can win it, and that attempt
-   * is the one that speaks.
+   * `completePaymentRecoveryOperation`'s `updateMany` is fenced on this
+   * attempt's claim (#4675), so exactly one attempt can win it, and that
+   * attempt is the one that speaks.
    */
   const closed = await completePaymentRecoveryOperation(operation);
   if (!closed) {
