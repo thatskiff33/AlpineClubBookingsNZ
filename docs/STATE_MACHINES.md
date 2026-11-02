@@ -4553,10 +4553,17 @@ keyed on the recovery row (`supersededRefundReportKeys`; the email's
 `EmailLog` row), and the report runs before the close, so it goes out once
 whichever attempt sends it:
 
+Each attempt sizes its refund on the ledger only after the resend preflight
+(`INV-PAY-145`) has recorded every refund Stripe lists on the charge (#4699).
+Another door's refund listed but not yet recorded comes off the ask, so no
+attempt asks Stripe for more than the charge still holds; one that leaves
+nothing, or the row's own refund an earlier attempt made, takes the
+nothing-outstanding branch below on that same attempt.
+
 ```text
 attempt makes and records the refund -> report (once per row) -> close
   close lost (reaped, reclaimed) -> the notice is already out; nothing more
-next claim reads nothing outstanding
+claim reads nothing outstanding, after its preflight records Stripe's list
   report marked sent                                   -> close
   a refund on the row's intent carrying exactly its runner's metadata,
     recorded as made in the ledger                     -> report, then close

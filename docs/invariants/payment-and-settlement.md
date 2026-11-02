@@ -1799,7 +1799,9 @@ release).
 - Refunds on the captured charge are recorded through
   `recordStripeRefundsAgainstTransaction`, including ones the app has not seen.
   The existing note router is shared with `charge.refunded`, so recording first
-  does not suppress the refund's accounting correction.
+  does not suppress the refund's accounting correction. The superseded-payment
+  refund is sized on the ledger after this recording (#4699), never asking for
+  what another door's listed refund already took.
 - A counted refund made outside the app (`cardRefundDoorOf`), on that charge
   at or after the recovery debt's creation second, holds the entire row before
   any slice is sent, regardless of the refund's amount. Counted status comes
@@ -1815,7 +1817,8 @@ release).
   this charge-backed rule. A dashboard refund made after the provider read can
   still race the send; this read is not a Stripe-side lock.
 - Proven by `card-refund-resend-preflight.test.ts`, `payment-recovery.test.ts`,
-  `stripe.test.ts`, `recorded-card-refund-notes.test.ts` and the existing webhook
+  `stripe.test.ts`, `recorded-card-refund-notes.test.ts`,
+  `superseded-refund-notice-once.realdb.test.ts` and the existing webhook
   contracts.
 
 ## INV-PAY-146

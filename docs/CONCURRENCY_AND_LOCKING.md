@@ -3682,6 +3682,12 @@ advisory lock is taken (`INV-LOCK-001`), no key is minted (`INV-LOCK-002`) and
 no site is registered (`INV-LOCK-003`); the close keeps its claim fence. A
 report not settled throws before the close, so the row is retried. Proven on
 real Postgres (`superseded-refund-notice-once.realdb.test.ts`).
+#4699: the attempt sizes its refund on a second plain read of its charge row,
+taken after the resend preflight's recording (`INV-PAY-145`) and before its
+Stripe request, outside any transaction. A read, not a writer: no advisory lock
+(`INV-LOCK-001`), no key (`INV-LOCK-002`), no site (`INV-LOCK-003`). A refund
+another door makes between that read and the request is the race `INV-PAY-145`
+states: Stripe refuses the excess and the row retries, moving no money twice.
 Round 6: the retire closes waiting recoveries before it stamps the rows - the
 runner's own order (its claim hold writes the recovery, then its row; since
 #4217 both take the `Payment` row before either) - and a
