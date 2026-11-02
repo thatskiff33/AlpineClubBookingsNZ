@@ -28,6 +28,7 @@ describe("the bound group-settlement invoice's race proof stays wired into CI (#
     expect(suite).toContain('"fence-first"');
     expect(suite).toContain('"reaper-first"');
     expect(suite).toContain("two observers abandoning one invoice converge on one VOID row");
+    expect(suite).toContain("#4710: stall, reset, Retry, then a late PARTIAL whose email failed");
     expect(suite).toContain("pg_advisory_xact_lock(1)");
   });
 });

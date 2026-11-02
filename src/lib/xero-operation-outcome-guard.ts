@@ -2,7 +2,7 @@
  * The write guard of a Xero operation outcome (#4356, `INV-INT-029`), used by
  * `completeXeroSyncOperation` and `failXeroSyncOperation` (`xero-sync.ts`).
  */
-import type { Prisma } from "@prisma/client";
+import type { Prisma, XeroSyncOperation } from "@prisma/client";
 import logger from "@/lib/logger";
 import { XERO_REPAIR_CLAIM_RUNNING_CODES } from "@/lib/xero-stale-operations";
 
@@ -73,7 +73,7 @@ export function ownRunningClaim(claim: XeroOperationClaim) {
  * part-success of the same keyed call. So by construction a FAILED or
  * CANCELLED never lands on a recorded success, nor a PARTIAL on SUCCEEDED.
  */
-const XERO_OWN_CLAIM_OUTCOME_STATUSES = new Map<string, readonly string[]>([
+const XERO_OWN_CLAIM_OUTCOME_STATUSES = new Map<XeroSyncOperation["status"], readonly XeroSyncOperation["status"][]>([
   ["FAILED", ["RUNNING", "FAILED"]],
   ["CANCELLED", ["RUNNING", "FAILED"]],
   ["PARTIAL", ["RUNNING", "FAILED", "PARTIAL"]],

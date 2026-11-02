@@ -2,10 +2,11 @@
  * #4686 (`INV-INT-029`): the trace of a part-success whose attempt lost its
  * claim - stalled, reset, then queued again by an officer's Retry, withdrawn,
  * or ended by another attempt. Its Xero object is not written over the row and
- * not linked; it is re-checked, audited once and alerted once per object, each
- * step caught. The refused write itself is pinned by `xero-sync.test.ts`, and
- * the whole path against real PostgreSQL by
- * `xero-late-cancelled-partial-after-retry.realdb.test.ts`.
+ * not linked; it is re-checked, audited once per refused delivery and alerted
+ * once per object, naming what did not finish, each step caught. The refused
+ * write itself is pinned by `xero-sync.test.ts`, the shared skeleton's other
+ * users by their own suites, and the whole path against real PostgreSQL by
+ * `xero-late-failure-after-retry.realdb.test.ts`.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { XeroSyncOperation } from "@prisma/client";
@@ -27,11 +28,11 @@ vi.mock("@/lib/xero-success-after-resolution-alert", async (importOriginal) => (
   unrecordedLateSuccessAlert: mocks.alert,
 }));
 
-import { afterLostClaimPartial, LATE_PARTIAL_NOT_RECORDED_ACTION, traceLostClaimPartial } from "@/lib/xero-late-partial-trace";
+import { afterLostClaimPartial, LATE_PARTIAL_NOT_RECORDED_ACTION, partialFaultSummary, traceLostClaimPartial } from "@/lib/xero-late-partial-trace";
 import { xeroClaim } from "./helpers/xero-claim";
 
 const EARLIER = new Date("2026-06-30T23:00:00.000Z");
-const partial = { claim: xeroClaim("op_late", EARLIER), xeroObjectType: "INVOICE", xeroObjectId: "inv_late", xeroObjectNumber: "INV-9" };
+const partial = { claim: xeroClaim("op_late", EARLIER), xeroObjectType: "INVOICE", xeroObjectId: "inv_late", xeroObjectNumber: "INV-9", fault: null };
 
 function row(fields: Partial<XeroSyncOperation> = {}): XeroSyncOperation {
   return {
@@ -72,6 +73,9 @@ describe("a part-success that lost its claim is traced, never recorded (#4686)",
     expect(late).toEqual({ xeroObjectType: "INVOICE", xeroObjectId: "inv_late", xeroObjectNumber: "INV-9" });
     expect(message).toContain("invoice INV-9");
     expect(message).toContain("queued to run again");
+    // PR #4708 review: the stall is told once, and no raw status enum reaches an officer.
+    expect(message.match(/stall/g)).toHaveLength(1);
+    expect(message).toContain("Part of its work, such as a payment, an email or an allocation, was not done.");
     expect(warning).toContain("#4686");
     expect(mocks.send).toHaveBeenCalledTimes(1);
   });
@@ -137,6 +141,52 @@ describe("a part-success that lost its claim is traced, never recorded (#4686)",
       await afterLostClaimPartial(partial.claim, { xeroObjectId: null }, false);
       expect(mocks.findUnique).not.toHaveBeenCalled();
       expect(mocks.error).not.toHaveBeenCalled();
+    });
+  });
+
+  // PR #4708 review: the part that did not finish reaches the audit row and the alert.
+  describe("what did not finish", () => {
+    it("MUTATION: a group invoice's failed email is named in the audit metadata, its details and the alert", async () => {
+      mocks.findUnique.mockResolvedValue(row({ status: "WAITING_PAYMENT" }));
+      const fault = partialFaultSummary({ responsePayload: { invoice: { invoiceID: "inv_late" }, invoiceEmailError: new Error("Xero 500: the email failed") } });
+      expect(fault).toBe("invoice email: Xero 500: the email failed");
+      await traceLostClaimPartial({ ...partial, fault });
+      const audit = mocks.audit.mock.calls[0]![0];
+      expect(audit.metadata).toMatchObject({ fault: "invoice email: Xero 500: the email failed" });
+      expect(audit.details).toContain("did not finish this: invoice email: Xero 500: the email failed");
+      expect(audit.details).toContain("waiting for a payment");
+      expect(audit.details).not.toContain("WAITING_PAYMENT");
+      const message = mocks.alert.mock.calls[0]![2] as string;
+      expect(message).toContain("It did not finish this: invoice email: Xero 500: the email failed.");
+      expect(message).toContain("(waiting for a payment)");
+      expect(message).not.toMatch(/waiting_payment|WAITING_PAYMENT/);
+    });
+
+    it("MUTATION: reads every fault key and the completion's own message, redacted and capped", () => {
+      expect(
+        partialFaultSummary({
+          responsePayload: {
+            paymentError: "card declined",
+            refundPaymentError: { message: "refund refused" },
+            allocationError: { code: 400 },
+            emailError: "smtp down",
+            invoiceEmailFailureCause: "CONFIGURATION",
+          },
+          lastErrorMessage: "The invoice email still failed.",
+        }),
+      ).toBe(
+        'payment: card declined; refund payment: refund refused; allocation: {"code":400}; email: smtp down; invoice email cause: CONFIGURATION; The invoice email still failed.',
+      );
+      expect(partialFaultSummary({ responsePayload: { paymentError: "Bearer abcdefghijklmnopqrstuvwxyz0123456789" } })).not.toContain("abcdefghijklmnopqrstuvwxyz0123456789");
+      expect(partialFaultSummary({ responsePayload: { paymentError: "x".repeat(2000) } })!.length).toBe(500);
+      expect(partialFaultSummary({ responsePayload: { invoice: {}, paymentError: null } })).toBeNull();
+      expect(partialFaultSummary({})).toBeNull();
+    });
+
+    it("the hand-off carries the completion's fault to the trace", async () => {
+      mocks.findUnique.mockResolvedValue(row());
+      await afterLostClaimPartial(partial.claim, { ...partial, responsePayload: { emailError: "smtp down" } }, false);
+      expect(mocks.audit.mock.calls[0]![0].metadata).toMatchObject({ fault: "email: smtp down" });
     });
   });
 });

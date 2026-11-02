@@ -22,6 +22,7 @@ import {
   buildXeroIdempotencyKey,
   startXeroSyncOperation,
   type XeroObjectLinkInput,
+  type XeroSyncOperationCompletion,
 } from "@/lib/xero-sync";
 import { buildXeroInvoiceUrl } from "@/lib/xero-links";
 import { XERO_OUTBOX_GROUP_SETTLEMENT_INVOICE_TYPE } from "@/lib/xero-operation-outbox-payload";
@@ -95,6 +96,25 @@ export function groupSettlementInvoiceLink(
     xeroObjectUrl: buildXeroInvoiceUrl(invoice.id),
     role: GROUP_SETTLEMENT_INVOICE_ROLE,
     ...(options?.active === undefined ? {} : { active: options.active }),
+  };
+}
+
+/**
+ * #4710 (PR #4708): the outcome of a claimed CREATE that finds its settlement
+ * already pointing at an invoice - a Retry queued after a stalled run bound it.
+ * Nothing is raised or emailed again; the row closes SUCCEEDED on the bound
+ * invoice, as the booking invoice's #2262 H3 path does, never left RUNNING for
+ * the stale reset to loop on. No link is written: the bound one stands, and
+ * re-writing it could re-activate a retired invoice's link (#3642).
+ */
+export function boundGroupSettlementInvoiceCompletion(invoice: { id: string; number: string | null }): XeroSyncOperationCompletion {
+  return {
+    status: "SUCCEEDED",
+    responsePayload: { skipped: true, reason: "Invoice already raised for this settlement; nothing was sent again." },
+    xeroObjectType: "INVOICE",
+    xeroObjectId: invoice.id,
+    xeroObjectNumber: invoice.number,
+    xeroObjectUrl: buildXeroInvoiceUrl(invoice.id),
   };
 }
 

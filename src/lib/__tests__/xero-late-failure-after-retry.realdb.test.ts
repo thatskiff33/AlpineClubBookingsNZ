@@ -37,11 +37,14 @@
  * #4686, the same race for a late CANCELLED or PARTIAL (`completeXeroSyncOperation`
  * under the stalled run's claim, as an in-place requeue type's handler writes it -
  * a kept late capture's skip, a group invoice's emailed-not part-success):
- * - Retry queued, then a late CANCELLED: the row stays PENDING and the queued run
- *   completes;
+ * - Retry queued, then a late CANCELLED: the row stays PENDING and the queued
+ *   organiser run raises its own note and completes the row SUCCEEDED;
  * - Retry queued, then a late PARTIAL: the row stays PENDING, its object is not
- *   linked, one `xero.operation.late_partial_not_recorded` audit row and one
- *   alert name it, and the queued run completes;
+ *   linked, a `xero.operation.late_partial_not_recorded` audit row per refused
+ *   delivery and one alert name it and what did not finish, and the queued
+ *   organiser run completes the row SUCCEEDED (a queued group invoice whose
+ *   invoice is already bound closes SUCCEEDED on it instead, #4710:
+ *   `group-settlement-invoice-binding-races.realdb.test.ts`);
  * - control, no Retry: the late PARTIAL lands on its own claim's reset row,
  *   recording its object, with no audit row or alert.
  *
@@ -370,14 +373,19 @@ function fakeXero() {
       const audits = await lateTrace(operationId);
       expect(audits).toHaveLength(1);
       expect(audits[0]).toMatchObject({ category: "xero", severity: "important", outcome: "blocked" });
-      expect(audits[0]!.metadata).toMatchObject({ xeroObjectId: LATE_INVOICE, rowStatus: "PENDING", claimStartedAt: stalledClaimAt.toISOString() });
+      expect(audits[0]!.metadata).toMatchObject({
+        xeroObjectId: LATE_INVOICE, rowStatus: "PENDING", claimStartedAt: stalledClaimAt.toISOString(), fault: "email: Xero 500: the email failed",
+      });
       expect(send).toHaveBeenCalledTimes(1);
       expect(send).toHaveBeenCalledWith(expect.objectContaining({ errorType: "XERO_SUCCESS_AFTER_RESOLUTION", errorMessage: expect.stringContaining("INV-LATE") }));
+      expect(send).toHaveBeenCalledWith(expect.objectContaining({ errorMessage: expect.stringContaining("It did not finish this: email: Xero 500: the email failed.") }));
       expect(await prisma.alertCooldown.count({ where: { key: `xero-success-after-resolution:${operationId}:${LATE_INVOICE}` } })).toBe(1);
 
-      // The same late answer again (a second delivery) records nothing more and alerts no one again.
+      // The same late answer again (a second delivery) records nothing on the row and alerts no one
+      // again; it writes one more audit row - one per refused delivery.
       await expect(lateOutcome(operationId, stalledClaimAt, "PARTIAL")).resolves.toBeNull();
       expect(send).toHaveBeenCalledTimes(1);
+      expect(await lateTrace(operationId)).toHaveLength(2);
 
       await queuedRunCompletes(operationId, stalled);
     });

@@ -602,7 +602,7 @@ attempt's claim. Two callers can share one row (#1354).
   CANCELLED (a withdrawal keeps `startedAt`). One that lost its claim (an
   in-place Retry) is dropped; the queued run writes its own. A dropped
   PARTIAL's Xero object is not linked (that run's keyed call records it):
-  audited and alerted once.
+  audited per delivery, alerted once.
 - **A repair's claim is kept too.** The PARTIAL and FAILED refund-note
   repairs mark their RUNNING claim; only SUCCEEDED, or that claim's own
   outcome (`retryClaim`), lands there.
@@ -611,8 +611,8 @@ attempt's claim. Two callers can share one row (#1354).
   operation after commit (one reaching nobody retries only on another
   success). Late notes under `INV-INT-028` and `INV-INT-034` keep out:
   audited and alerted.
-- **A refused write leaves the row:** null; the outbox counts a refused
-  failure skipped. A missing row throws, or logs for a guarded caller. A
+- **A refused write leaves the row:** null; the outbox counts refused
+  failures skipped. A missing row throws, or logs for a guarded caller. A
   success refused for a later claim records its links, warned.
 - **Claims, resets and marks write directly,** guarded; the outbox and
   REQUEUE hand-backs to PENDING touch only their own claim.

@@ -1043,10 +1043,17 @@ note.
    row records: it is not linked, since the queued run's same keyed call
    normally answers with it and records it, and a link would answer that
    run's own checks (a credit note's counts toward refund coverage). It is
-   warned, audited once (`xero.operation.late_partial_not_recorded`, `xero`,
+   warned, given one audit row per refused delivery
+   (`xero.operation.late_partial_not_recorded`, `xero`,
    `xero-late-partial-trace.ts`) and alerted once per object (the
    `XERO_SUCCESS_AFTER_RESOLUTION` alert, key
-   `xero-success-after-resolution:<operation id>:<object id>`). Mark non-replayable writes only onto a FAILED or
+   `xero-success-after-resolution:<operation id>:<object id>`); both name what
+   the attempt did not finish (`partialFaultSummary`: its payment, refund
+   payment, allocation or email error, redacted), since the queued run may not
+   redo it. The trace's re-read, audit, alert skeleton is the late credit
+   notes' own (`traceLateXeroObject`, `INV-SSOT`). A queued group invoice
+   whose settlement already points at an invoice raises nothing and closes its
+   claimed row SUCCEEDED on that invoice (#4710), never left RUNNING. Mark non-replayable writes only onto a FAILED or
    PARTIAL row, so a retry that claimed it after the officer's read gets the
    409 "a retry is running"; a queued retry of a row marked not replayable is
    closed as skipped. Rows repaired before this release stay partly
