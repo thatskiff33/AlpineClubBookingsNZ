@@ -26,7 +26,11 @@
  *   old match would pick (PR #4706 review);
  * - a row queued without the credit id still stamps, by the old match;
  * - a replay of a linked note stamps no second credit: the old match stamped
- *   every equal credit, and now a note stamps one.
+ *   every equal credit, and now a note stamps one;
+ * - #4705: the inbound credit-note reconcile (`reconcileXeroCreditNote`, its
+ *   Xero read faked) stamps through the same stamp - one of two equal
+ *   cancellation credits, oldest first, where no outbox row names one, and the
+ *   credit the note's own outbox row named where one does.
  *
  * Ordinary Vitest runs skip the whole file. It reuses the guarded, disposable
  * loopback PostgreSQL `concurrency-lock-races.realdb.test.ts` provisions, which
@@ -80,6 +84,10 @@ function fakeXero() {
       await prisma.xeroSyncOperation.deleteMany({ where: { localId: PAYMENT_ID } });
       await prisma.xeroObjectLink.deleteMany({ where: { localId: PAYMENT_ID } });
       await prisma.memberCredit.deleteMany({ where: { memberId: MEMBER_ID } });
+      // #4705: the inbound reconcile's audit rows, its mirror's re-check slots, and its recount of the payment.
+      await prisma.auditLog.deleteMany({ where: { targetId: PAYMENT_ID } });
+      await prisma.xeroSyncCursor.deleteMany({ where: { scope: { contains: P } } });
+      await prisma.payment.updateMany({ where: { id: PAYMENT_ID }, data: { refundedAmountCents: 0, status: "SUCCEEDED" } });
     }
 
     async function deleteFixtures() {
@@ -209,6 +217,48 @@ function fakeXero() {
       await expect(createUnappliedXeroCreditNote(PAYMENT_ID, CREDIT_CENTS, CLUB_FORMAT_TEST, { memberCreditId: OLDER_CREDIT })).resolves.toBe(`${P}-note-1`);
       await expect(createUnappliedXeroCreditNote(PAYMENT_ID, CREDIT_CENTS, CLUB_FORMAT_TEST)).resolves.toBe(`${P}-note-1`);
       expect(xero.created).toEqual([`${P}-note-1`]);
+      expect(await notes()).toEqual({ [OLDER_CREDIT]: null, [NEWER_CREDIT]: `${P}-note-1` });
+    });
+
+    /** #4705: the inbound reconcile of `noteId`, Xero's read of the note faked as an unspent account-credit note. */
+    async function reconcileInbound(noteId: string) {
+      const total = CREDIT_CENTS / 100;
+      const creditNote = { creditNoteID: noteId, creditNoteNumber: `CN-IN-${noteId}`, status: "AUTHORISED", total, appliedAmount: 0, remainingCredit: total, allocations: [], payments: [] };
+      const apiClient = await import("@/lib/xero-api-client");
+      vi.spyOn(apiClient, "getAuthenticatedXeroClient").mockResolvedValue({
+        xero: { accountingApi: { ...xero.accountingApi, getCreditNote: async () => ({ body: { creditNotes: [creditNote] } }) } },
+        tenantId: `tenant-${P}`,
+      } as never);
+      const { reconcileXeroCreditNote } = await import("@/lib/xero-inbound/credit-note");
+      return reconcileXeroCreditNote(noteId);
+    }
+
+    it("MUTATION #4705: an inbound note on a booking with two equal cancellation credits stamps one only, the oldest", async () => {
+      // The cancellation flow's description: the one the inbound handler's own
+      // updateMany matched, so the old stamp put this note on both credits.
+      const { cancellationCreditDescription } = await import("@/lib/cancellation-settled-money");
+      await prisma.memberCredit.updateMany({ where: { memberId: MEMBER_ID }, data: { description: cancellationCreditDescription(BOOKING_ID) } });
+      // The note reached the payment by its link alone: no outbox row names a credit.
+      const noteId = `${P}-inbound-note`;
+      await prisma.xeroObjectLink.create({
+        data: { localModel: "Payment", localId: PAYMENT_ID, xeroObjectType: "CREDIT_NOTE", xeroObjectId: noteId, role: "ACCOUNT_CREDIT_NOTE", active: true },
+      });
+
+      await expect(reconcileInbound(noteId)).resolves.toMatchObject({ handled: true, matchedAccountCreditPayments: 1, updatedCredits: 1 });
+      expect(await notes()).toEqual({ [OLDER_CREDIT]: noteId, [NEWER_CREDIT]: null });
+
+      // A replay of the event stamps nothing more.
+      await expect(reconcileInbound(noteId)).resolves.toMatchObject({ updatedCredits: 0 });
+      expect(await notes()).toEqual({ [OLDER_CREDIT]: noteId, [NEWER_CREDIT]: null });
+    });
+
+    it("MUTATION #4705: an inbound note stamps the credit its own outbox row named, not the older equal one", async () => {
+      await enqueueFor(NEWER_CREDIT);
+      await expect(runOutbox()).resolves.toMatchObject({ succeeded: 1, failed: 0 });
+      // The outbox's own stamp never landed (a crash between Xero's answer and the write).
+      await prisma.memberCredit.updateMany({ where: { memberId: MEMBER_ID }, data: { xeroCreditNoteId: null } });
+
+      await expect(reconcileInbound(`${P}-note-1`)).resolves.toMatchObject({ handled: true, updatedCredits: 1 });
       expect(await notes()).toEqual({ [OLDER_CREDIT]: null, [NEWER_CREDIT]: `${P}-note-1` });
     });
   },
