@@ -67,13 +67,14 @@ import { unretryableRecoveryCause } from "@/lib/recovery-unretryable-cause";
 import { ORDINARY_ASK_RECOVERY_REASON, planOrdinaryAskMint } from "@/lib/ordinary-ask-request";
 import { sendAdminPaymentFailureAlert } from "@/lib/email";
 import { closeCancellationRefundAfterReplay, closeCapacityRaceRefundRecordingEvent, recordDuplicateCaptureRefundEvent } from "@/lib/booking-events";
-import { reportSupersededPaymentRefund } from "@/lib/superseded-additional-refund";
+import { reportSupersededPaymentRefund, reportUnannouncedSupersededPaymentRefund } from "@/lib/superseded-additional-refund";
 import logger from "@/lib/logger";
 import { createAuditLog } from "@/lib/audit";
 import {
   heldPaymentRecoveryClaimWhere,
   MAX_PAYMENT_RECOVERY_ATTEMPTS,
   PAYMENT_RECOVERY_CLAIMABLE_LATER_WHERE,
+  PAYMENT_RECOVERY_STALE_PROCESSING_MS,
   type PaymentRecoveryClaim,
 } from "@/lib/payment-recovery-constants";
 import { stripeReferenceId } from "@/lib/stripe-references";
@@ -88,7 +89,6 @@ import { compareLedgerRowsNewestFirst, LEDGER_ROWS_NEWEST_FIRST, LEDGER_ROWS_OLD
 
 type PaymentRecoveryStore = Prisma.TransactionClient | typeof prisma;
 
-const STALE_PROCESSING_MINUTES = 30;
 /**
  * How many stale `PROCESSING` rows one sweep hands back (#3220 fix round). See
  * `resetStaleProcessingOperations`: each row now costs an alert and possibly a
@@ -1735,7 +1735,7 @@ async function claimPaymentRecoveryOperation(operationId: string) {
  */
 async function resetStaleProcessingOperations(format: ClubFormat) {
   const staleBefore = new Date(
-    Date.now() - STALE_PROCESSING_MINUTES * 60 * 1000
+    Date.now() - PAYMENT_RECOVERY_STALE_PROCESSING_MS
   );
 
   const stale = await prisma.paymentRecoveryOperation.findMany({
@@ -2010,9 +2010,10 @@ async function processRefundSupersededPaymentOperation(
     0
   );
 
-  // Silent, as after a crash: a refund an earlier attempt made but whose close it lost (#4675,
-  // reaped while it ran) is not announced here - nothing records which refund it would announce.
+  // #4690: a refund of this row's own that an earlier attempt made but never announced (it was
+  // reaped, or crashed, before its notice) is announced here, once, before the close.
   if (outstandingCents <= 0) {
+    await reportUnannouncedSupersededPaymentRefund(operation, format);
     await completePaymentRecoveryOperation(operation);
     return;
   }
@@ -2066,46 +2067,19 @@ async function processRefundSupersededPaymentOperation(
     },
   });
 
-  /**
-   * #3340: the club's own record of the refund, and the member's explanation.
-   *
-   * AFTER the reconcile, so the "still owing" figure it quotes is the
-   * post-refund one. It never throws - see its own docblock - so it cannot cost
-   * the operation its terminal transition.
-   *
-   * FENCED ON THE COMPLETION CLAIM (#3340 fix round), which is why it now runs
-   * after it rather than before. The `outstandingCents <= 0` short-circuit above
-   * is NOT an idempotence gate: it only becomes true once the transaction row's
-   * `refundedAmountCents` has been written, and a failure between the Stripe
-   * refund and that write re-enters with the refund already made. Stripe answers
-   * the replay with the same refund and the ledger dedupes on the refund id, so
-   * the MONEY is safe - but the epilogue would run a second time, sending the
-   * member a second "we have refunded you" email and the admins a second alert,
-   * on a change whose entire point is not confusing members about card movement.
-   * `completePaymentRecoveryOperation`'s `updateMany` is fenced on this
-   * attempt's claim (#4675), so exactly one attempt can win it, and that
-   * attempt is the one that speaks.
-   */
-  const closed = await completePaymentRecoveryOperation(operation);
-  if (!closed) {
-    logger.warn(
-      {
-        operationId: operation.id,
-        bookingId: operation.bookingId,
-        paymentIntentId: operation.paymentIntentId,
-      },
-      "Superseded-payment refund replayed against an operation that was already closed; the refund is idempotent and the notices were sent by the attempt that closed it",
-    );
-    return;
-  }
-
+  // #3340: the club's own record of the refund and the member's explanation, after the reconcile
+  // so the amount owing it quotes is the post-refund one. #4690: once per row whichever attempt
+  // sends it, and BEFORE the close, so a notice that fails (it throws) keeps the row open for a
+  // retry; a replay, or an attempt whose close then loses (#4675), sends nothing twice.
   await reportSupersededPaymentRefund({
     format,
+    operationId: operation.id,
     bookingId: operation.bookingId,
     paymentId: operation.paymentId,
     paymentIntentId: operation.paymentIntentId,
     refundedAmountCents: plan.reduce((sum, slice) => sum + slice.amountCents, 0),
   });
+  await completePaymentRecoveryOperation(operation);
 }
 
 async function processBookingModificationRefundOperation(

@@ -1774,6 +1774,10 @@ export async function sendSetupIntentFailedEmail(params: {
  * its own. Booking-scoped like its siblings, so the per-booking "No emails"
  * switch applies; the operator alert beside it is admin-audience and is not
  * silenceable, which is the standing split for money notifications.
+ *
+ * #4690: durable and once only. `idempotencyKey` is the refund's recovery row:
+ * the first call records the email for the retry worker to send, and any later
+ * call finds that row and sends nothing.
  */
 export async function sendSupersededPaymentRefundedEmail(params: {
   bookingId: string;
@@ -1791,12 +1795,16 @@ export async function sendSupersededPaymentRefundedEmail(params: {
   refundedAmountCents: number;
   amountOwingCents: number;
   lodgeId?: string | null;
+  /** The recovery row whose refund this announces (#4690). */
+  idempotencyKey: string;
 },
   format: ClubFormat,
 ) {
   await sendEmail({
     to: params.email,
     subject: `Payment Refunded - ${EMAIL_DEFAULT_LODGE_NAME}`,
+    idempotencyKey: params.idempotencyKey,
+    deferDelivery: true,
     html: await renderEmailHtml(() => supersededPaymentRefundedTemplate(params, format)),
     bookingContext: bookingOwnerEmailContext(
       params.bookingId,
