@@ -418,7 +418,7 @@ describe("organiser extra adjustment provider execution", () => {
 
     it("MUTATION: with nothing left to allocate, the completion itself waits on the claim", async () => {
       mocks.operation = { xeroObjectId: "waiver", xeroObjectNumber: "CN-8", correlationKey: "scope" };
-      mocks.note = { creditNoteID: "waiver", total: 40, allocations: [{ invoice: { invoiceID: "extra" }, amount: 40 }] };
+      mocks.note = { creditNoteID: "waiver", total: 40, allocations: [{ invoice: { invoiceID: "extra" }, amount: 40, date: "2026-07-01" }] };
       lostAt(1);
       await expect(execute(payload(), claim)).resolves.toBe("stood-down");
       expect(mocks.createCreditNoteAllocation).not.toHaveBeenCalled();
