@@ -624,6 +624,20 @@ let previousDatabaseUrl: string | undefined;
     });
 
     /**
+     * The stale reaper's write (`markPaymentRecoveryOperationFailed`), fenced on the attempt it
+     * read: the row handed back to retry, its claim time cleared. A copy of its NON-terminal data
+     * (that function is private): keep it in step with it.
+     */
+    async function reapStaleClaim(operationId: string) {
+      const held = await prisma.paymentRecoveryOperation.findUniqueOrThrow({ where: { id: operationId } });
+      const reaped = await prisma.paymentRecoveryOperation.updateMany({
+        where: { id: operationId, status: "PROCESSING", attempts: held.attempts, processingStartedAt: held.processingStartedAt },
+        data: { status: "FAILED", lastError: "Payment recovery worker timed out before completion.", processingStartedAt: null, nextRetryAt: new Date() },
+      });
+      expect(reaped.count).toBe(1);
+    }
+
+    /**
      * #4652 (`INV-PAY-120`): the release's first attempt mints, then stalls past the stale
      * reaper's threshold before its claim hold. Inside its mint the reaper's own fenced write
      * hands the row back (`resetStaleProcessingOperations`), and `reclaim` runs whatever comes
@@ -659,14 +673,7 @@ let previousDatabaseUrl: string | undefined;
           stale = intent.id;
           stripeRaceHooks.create = mint;
           vi.setSystemTime(new Date(frozenNow.getTime() + 31 * 60_000));
-          const held = await prisma.paymentRecoveryOperation.findUniqueOrThrow({ where: { id: operation.id } });
-          // The stale reaper's write (`markPaymentRecoveryOperationFailed`), fenced on the attempt it read.
-          // A copy of its NON-terminal data (that function is private): keep it in step with it.
-          const reaped = await prisma.paymentRecoveryOperation.updateMany({
-            where: { id: operation.id, status: "PROCESSING", attempts: held.attempts, processingStartedAt: held.processingStartedAt },
-            data: { status: "FAILED", lastError: "Payment recovery worker timed out before completion.", processingStartedAt: null, nextRetryAt: new Date() },
-          });
-          expect(reaped.count).toBe(1);
+          await reapStaleClaim(operation.id);
           await reclaim(operation.id);
         }
         return intent;
@@ -688,6 +695,82 @@ let previousDatabaseUrl: string | undefined;
 
     /** Transactions open on any other client connection to this database - a Stripe call made inside one shows here. */
     const openTransactionsElsewhere = () => openClientTransactionsElsewhere(prisma);
+
+    /**
+     * #4675 (`INV-PAY-120`), the issue's sequence: the release's first attempt reads the booking
+     * owing nothing and stalls before its close; the stale reaper hands the row back; a reclaiming
+     * runner finds the released credit owed again and mints its ask; only then does the stale
+     * attempt wake and close the row. Its close is fenced on the claim it held, so it matches
+     * nothing and records nothing; the live runner keeps its claim, writes its ask and closes the
+     * row naming it. Before the fence the stale close won, the live hold lost (#4652 then
+     * cancelled its intent) and the debt was never asked for.
+     */
+    it("#4675: a stale attempt that read 'nothing owed' cannot close the row a reclaiming runner minted for - the live ask is recorded", async () => {
+      await seedCreditPaidBooking();
+      await convergeSpentCredit();
+      expect(await enqueueRelease()).toBe(1);
+      const operation = await releaseOperation();
+      await prisma.paymentRecoveryOperation.update({ where: { id: operation.id }, data: { nextRetryAt: new Date(0) } });
+      // What the stale attempt reads: the booking's price came down by the released credit.
+      await prisma.booking.update({ where: { id: BOOKING_ID }, data: { finalPriceCents: { decrement: CREDIT_CENTS } } });
+
+      const { runPaymentRecoveryOperationNow } = await import("@/lib/payment-recovery");
+      const frozenNow = new Date();
+      const api = fakeXero.client.accountingApi;
+      const getInvoice = api.getInvoice;
+      let liveMinted!: () => void;
+      const minted = new Promise<void>((resolve) => (liveMinted = resolve));
+      let staleWoke!: () => void;
+      const staleClosed = new Promise<void>((resolve) => (staleWoke = resolve));
+      let live: Promise<string> | null = null;
+      const liveIntents: string[] = [];
+      // The stale attempt's invoice read - after it read the booking - is where it stalls.
+      api.getInvoice = async (...args: Parameters<typeof getInvoice>) => {
+        api.getInvoice = getInvoice;
+        vi.setSystemTime(new Date(frozenNow.getTime() + 31 * 60_000));
+        await reapStaleClaim(operation.id);
+        // Meanwhile the price goes back up: the booking owes the released credit again.
+        await prisma.booking.update({ where: { id: BOOKING_ID }, data: { finalPriceCents: { increment: CREDIT_CENTS } } });
+        const create = stripeRaceHooks.create!;
+        stripeRaceHooks.create = async (mintArgs) => {
+          stripeRaceHooks.create = create;
+          const intent = (await create(mintArgs)) as FakeIntent;
+          liveIntents.push(intent.id);
+          // The reclaiming runner has minted; the stale attempt wakes and closes before its hold.
+          liveMinted();
+          await staleClosed;
+          return intent;
+        };
+        live = runPaymentRecoveryOperationNow(operation.id, CLUB_FORMAT_TEST);
+        await minted;
+        return getInvoice(...args);
+      };
+      try {
+        // The stale attempt: "nothing unasked", so it closes without asking - and loses.
+        expect(await runPaymentRecoveryOperationNow(operation.id, CLUB_FORMAT_TEST)).toBe("succeeded");
+        staleWoke();
+        expect(live).not.toBeNull();
+        expect(await live!).toBe("succeeded");
+      } finally {
+        api.getInvoice = getInvoice;
+        vi.setSystemTime(frozenNow);
+      }
+
+      // The live runner kept its claim: its ask is written and the row closed naming it.
+      expect(liveIntents).toHaveLength(1);
+      const [ask] = liveIntents;
+      expect(await prisma.paymentRecoveryOperation.findUniqueOrThrow({ where: { id: operation.id }, select: { status: true, paymentIntentId: true, attempts: true } }))
+        .toEqual({ status: "SUCCEEDED", paymentIntentId: ask, attempts: 2 });
+      expect(await additionalRows()).toEqual([
+        expect.objectContaining({ reason: "credit_released_outside_app", amountCents: CREDIT_CENTS, carriedAskCents: 0, status: "PENDING", stripePaymentIntentId: ask }),
+      ]);
+      expect(stripe.intents.get(ask!)?.status).toBe("requires_payment_method");
+      // The stale attempt's lost close recorded nothing.
+      const audits = await prisma.auditLog.findMany({ where: { targetId: BOOKING_ID, action: { startsWith: "payment.credit_release_ask." } }, select: { action: true } });
+      expect(audits.map((row) => row.action)).toEqual(["payment.credit_release_ask.raised"]);
+      // And the debt is collected: paid once, recorded once on the booking's invoice.
+      await expectReleaseAskedAlone();
+    });
 
     it("#4652: a stale attempt whose reclaiming runner asked for less under an amount-suffixed key has its own intent cancelled at Stripe, outside every transaction", async () => {
       const { operationId, stale, cancelled } = await releaseLosesClaimToStaleReclaim(async (id) => {
