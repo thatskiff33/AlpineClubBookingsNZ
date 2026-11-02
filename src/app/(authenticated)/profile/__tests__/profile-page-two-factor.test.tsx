@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   loadEffectiveModuleFlags: vi.fn(),
   loadMemberFieldsFlags: vi.fn(),
   memberFindUnique: vi.fn(),
+  memberHoldsRetiredRecoveryCodes: vi.fn(),
   requiresPaidSubscriptionForMemberForBooking: vi.fn(),
 }));
 
@@ -34,6 +35,10 @@ vi.mock("@/lib/prisma", () => ({
       findUnique: mocks.memberFindUnique,
     },
   },
+}));
+
+vi.mock("@/lib/two-factor", () => ({
+  memberHoldsRetiredRecoveryCodes: mocks.memberHoldsRetiredRecoveryCodes,
 }));
 
 vi.mock("@/lib/promo", () => ({
@@ -188,6 +193,7 @@ describe("ProfilePage two-factor card", () => {
     mocks.getAvailablePromoCodesForMember.mockResolvedValue([]);
     mocks.loadMemberFieldsFlags.mockResolvedValue({ showOccupation: false });
     mocks.loadEffectiveModuleFlags.mockResolvedValue(moduleFlags(false));
+    mocks.memberHoldsRetiredRecoveryCodes.mockResolvedValue(false);
   });
 
   it("hides the card when the module is off and the member is not enrolled", async () => {
@@ -212,6 +218,30 @@ describe("ProfilePage two-factor card", () => {
       "The club currently has two-factor sign-in disabled, but your account remains enrolled.",
     );
     expect(html).not.toContain("Enrollment is required");
+  });
+
+  it("tells an enrolled member whose recovery codes were retired by a key change to regenerate them (#4456)", async () => {
+    mocks.memberFindUnique.mockResolvedValue(
+      member({ twoFactorEnabled: true, twoFactorMethod: "TOTP" }),
+    );
+    mocks.memberHoldsRetiredRecoveryCodes.mockResolvedValue(true);
+
+    const html = await renderProfilePage();
+
+    expect(mocks.memberHoldsRetiredRecoveryCodes).toHaveBeenCalledExactlyOnceWith("member-1");
+    expect(html).toContain('data-testid="retired-recovery-codes-notice"');
+    expect(html).toContain("Your saved recovery codes no longer work");
+    expect(html).toContain("Choose Regenerate codes to get a new set");
+  });
+
+  it("shows no retired-codes notice when the member's codes still work (#4456)", async () => {
+    mocks.memberFindUnique.mockResolvedValue(
+      member({ twoFactorEnabled: true, twoFactorMethod: "TOTP" }),
+    );
+
+    const html = await renderProfilePage();
+
+    expect(html).not.toContain("retired-recovery-codes-notice");
   });
 
   it("keeps the existing not-enrolled guidance when the module is on", async () => {

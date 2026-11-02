@@ -36,7 +36,7 @@ import {
 } from "@/lib/xero-connection";
 import { invalidateXeroOrganisationCaches } from "@/lib/xero-organisation-cache-bus";
 import { XERO_TOKEN_ROW_ORDER } from "@/lib/xero-token-row-order";
-import { getAuthSecretWithSource, isAuthSecretStrongEnough } from "@/lib/integration-crypto";
+import { credentialCaptureAvailable } from "@/lib/integration-crypto";
 import { XeroTokenDecryptError } from "@/lib/xero-token-errors";
 import {
   freshRowMirror,
@@ -593,13 +593,12 @@ export async function getXeroConnectionStatus(): Promise<{
       tokenExpiresAt: null,
     };
   }
-  // Readable is not enough: under an auth secret the capture gate now refuses,
+  // Readable is not enough: under a key the capture gate now refuses,
   // the tokens still decrypt but no refresh can store its rotated pair, so every
   // call fails once the access token expires. "Connected" must not sit over
   // that (#3454 review).
   const usable =
-    (await getXeroTokenReadability()) === "readable" &&
-    isAuthSecretStrongEnough(getAuthSecretWithSource()?.secret);
+    (await getXeroTokenReadability()) === "readable" && credentialCaptureAvailable();
   return {
     connected: usable,
     needsReentry: !usable,

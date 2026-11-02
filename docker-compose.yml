@@ -74,6 +74,10 @@ x-app-environment: &app-environment
   NEXTAUTH_URL: ${NEXTAUTH_URL:-http://localhost:3000}
   NEXTAUTH_SECRET: ${NEXTAUTH_SECRET}
   AUTH_SECRET: ${AUTH_SECRET:-${NEXTAUTH_SECRET}}
+  # The data-encryption key ring (#4456): stored provider credentials and
+  # authenticator secrets are encrypted under its first key. Unset, they stay
+  # under AUTH_SECRET as before. See CONFIGURATION.md before setting it.
+  DATA_ENCRYPTION_KEYS: ${DATA_ENCRYPTION_KEYS:-}
   AUTH_TRUST_HOST: ${AUTH_TRUST_HOST:-true}
   # Stripe credentials are DB-only (#2082): the secret key, publishable key, and
   # webhook signing secret are captured in-app and stored encrypted — no STRIPE_*

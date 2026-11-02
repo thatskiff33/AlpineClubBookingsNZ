@@ -2016,9 +2016,74 @@ web slot is observed by the cron-leader within the credential cache TTL
 (30–60s), no restart required. Analytics is off for the same kind of gap — from
 the deploy until the measurement id is saved.
 
+### Adding a data-encryption key (#4456)
+
+`DATA_ENCRYPTION_KEYS` moves stored provider credentials and authenticator
+secrets off `AUTH_SECRET`, so the auth secret can afterwards be rotated (or
+replaced after a leak) without losing them. The variable, its format and its
+rules are in [`CONFIGURATION.md` → Data-encryption keys](CONFIGURATION.md#data-encryption-keys-4456).
+Production operator steps are the owner's.
+
+1. **Drain the previous release first.** A release older than #4456 cannot read
+   data written under a data key, so deploy this release with the variable
+   still unset and wait until no container runs the old one (blue/green: the
+   old slot has stopped).
+2. **Generate and store a key**: `openssl rand -base64 32`. Keep it with the
+   database backups' secrets, but **not in the same place as the backups
+   themselves** — a backup plus its key decrypts every stored credential.
+3. **Set** `DATA_ENCRYPTION_KEYS=<id>:<key>` (for example `k2026:...`) in the
+   environment and redeploy. From then on every new credential save,
+   authenticator enrolment, Xero token refresh and two-factor code uses it.
+4. **Tell members about recovery codes.** Recovery codes issued before this step
+   stop working now (owner decision on #4456). Members holding them see a
+   notice on the sign-in challenge and their profile telling them to generate a
+   new set; an admin should regenerate their own straight away.
+5. **Move what is still on `AUTH_SECRET`.** Admin → Setup → "Data Encryption
+   Key" counts the provider credentials and authenticator secrets still
+   encrypted under it. Re-entering a credential in Admin → Integrations writes
+   it under the data key; a member re-enrolling their authenticator moves
+   theirs. (A command that re-encrypts every row in place is the second part of
+   #4456.)
+6. When the step is **green**, nothing stored depends on `AUTH_SECRET`; rotating
+   it now only signs everyone out and invalidates links signed with it.
+
+**Once rows are written under the ring, there is no going back without it.**
+Data written under a data key can only be read by a container that holds that
+key. So:
+
+- during the redeploy that sets the variable, the previous colour (the same
+  release, started without the ring) cannot read rows the new colour or the
+  recreated cron leader has already written — a Xero token refresh, a saved
+  credential, a member enrolling an authenticator or regenerating recovery
+  codes. Set it in a quiet window and expect that colour to show "needs
+  re-entry" or refuse those members' codes until traffic has moved;
+- rolling back to a release older than #4456, routing Caddy back to a colour
+  started without the ring, or unsetting the variable strands every
+  ring-keyed credential, authenticator secret and recovery code (the setup
+  step goes red and says so, and credential capture refuses rather than
+  quietly saving under `AUTH_SECRET`).
+
+**The safe sequence if that deploy fails:** once the engine has recreated the
+cron leader with the ring (it does so before the step-16 warm-up gate), keep
+the ring set and either let the deploy complete or redeploy the same release
+with it; never route traffic back to a colour without it. If you must roll
+back to an older release, restore the ring-less state from the pre-deploy
+backup instead, as an owner-approved data operation.
+
+**Adding a newer key later:** put it **first** (`DATA_ENCRYPTION_KEYS=k2027:<new>,k2026:<old>`),
+redeploy, move the rows still on the old key, and only then remove the old
+entry. Removing a key any earlier strands every row that names it.
+
 ### Auth-secret rotation runbook
 
-Rotating `AUTH_SECRET`/`NEXTAUTH_SECRET` is a **planned maintenance event**, not
+**If `DATA_ENCRYPTION_KEYS` is set and Admin → Setup → "Data Encryption Key"
+is green**, rotating `AUTH_SECRET`/`NEXTAUTH_SECRET` drops only the sessions
+and the links and tokens signed with it; stored credentials and 2FA enrolments
+are unaffected. Do that first if you can
+([Adding a data-encryption key](#adding-a-data-encryption-key-4456)). The rest
+of this runbook is for a deployment where the step is not green.
+
+Rotating `AUTH_SECRET`/`NEXTAUTH_SECRET` is then a **planned maintenance event**, not
 a casual refresh. Rotation drops, all at once:
 
 - **all sessions** (everyone is signed out);
@@ -2047,11 +2112,12 @@ a casual refresh. Rotation drops, all at once:
    credentials (Admin > Integrations) and reconnect Xero.
 5. Communicate to members that they must re-enroll 2FA on next sign-in.
 
-**Security consequence (see `docs/SECURITY-ATTACK-SURFACE.md`):** because all
+**Security consequence (see `docs/SECURITY-ATTACK-SURFACE.md`):** while
 provider credentials are encrypted under key material derived from this one
 secret, a database backup **plus** the auth secret is enough to decrypt every
-stored credential. Production and staging/clones must therefore **never** share
-an auth secret.
+stored credential; once they are on a data key, the backup plus that key is.
+Production and staging/clones must therefore **never** share an auth secret or
+a data key.
 
 ## Cron Schedule
 
@@ -2132,6 +2198,12 @@ before deployment; Admin Modules do not replace that safety check.
 Preferred rollback is to route Caddy back to the previous healthy color while it
 is still running. If schema changes have already applied, rollback must respect
 the migration policy and any compatibility constraints in the migration PR.
+
+**Not once a data-encryption key is in use (#4456).** Rows written under
+`DATA_ENCRYPTION_KEYS` cannot be read by an older release or by a colour started
+without the ring, so routing back to one strands those credentials, two-factor
+secrets and recovery codes. Keep the ring set and go forward; the safe sequence
+is in [Adding a data-encryption key](#adding-a-data-encryption-key-4456).
 
 **The previous release's images are held back from the deploy's own prune
 (#3539).** That rollback needs the previous images on the host, and the deploy

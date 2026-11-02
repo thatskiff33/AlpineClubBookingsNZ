@@ -25,6 +25,7 @@ import { MembershipCancellationPanel } from "./membership-cancellation-panel";
 import { TwoFactorSecurityCard } from "./two-factor-security-card";
 import { GoogleAccountCard } from "./google-account-card";
 import { googleCredentialsConfigured } from "@/lib/google-oauth";
+import { memberHoldsRetiredRecoveryCodes } from "@/lib/two-factor";
 import { AuditTimeline } from "@/components/audit-timeline";
 import { SectionNav, type SectionNavItem } from "@/components/section-nav";
 import {
@@ -261,6 +262,9 @@ export default async function ProfilePage({
   const modules = await loadEffectiveModuleFlags();
   const showTwoFactorSecurityCard =
     modules.twoFactor || member.twoFactorEnabled;
+  // #4456: codes retired by a key change; the card tells the member to replace them.
+  const recoveryCodesRetired =
+    member.twoFactorEnabled && (await memberHoldsRetiredRecoveryCodes(member.id));
   const googleLinkedNow = Boolean(member.googleSub);
   // Show the Connected-accounts control when the club offers Google sign-in, or
   // whenever the member already has an account linked (so they can disconnect it
@@ -443,6 +447,7 @@ export default async function ProfilePage({
                 enabled={member.twoFactorEnabled}
                 method={member.twoFactorMethod}
                 moduleEnabled={modules.twoFactor}
+                recoveryCodesRetired={recoveryCodesRetired}
               />
             ) : null}
             {googleLinked ? (

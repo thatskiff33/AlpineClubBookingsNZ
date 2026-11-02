@@ -36,6 +36,8 @@ const mocks = vi.hoisted(() => {
     create: vi.fn(),
     updateMany: vi.fn(),
     deleteMany: vi.fn(),
+    // #4456: rows already under a ring key, asked before an AUTH_SECRET write.
+    count: vi.fn(async () => 0),
   });
   const tx = {
     integrationCredential: credentialDelegate(),
@@ -64,7 +66,6 @@ vi.mock("@/lib/logger", () => ({ default: mocks.logger, logger: mocks.logger }))
 import { sanitizeAuditMetadata } from "@/lib/audit";
 import {
   encryptCredential,
-  INTEGRATION_CREDENTIAL_LABEL,
 } from "@/lib/integration-crypto";
 import {
   CredentialActorError,
@@ -101,7 +102,6 @@ function storedRow(provider: string, key: string, value: string) {
     provider,
     key,
     plaintext: value,
-    label: INTEGRATION_CREDENTIAL_LABEL,
   });
   return {
     id: `${provider}-${key}`,
@@ -521,13 +521,11 @@ describe("a stale concurrent write loses deterministically (#2723)", () => {
       provider: "stripe",
       key: "secret_key",
       plaintext: "",
-      label: INTEGRATION_CREDENTIAL_LABEL,
     });
     const second = encryptCredential({
       provider: "stripe",
       key: "secret_key",
       plaintext: "",
-      label: INTEGRATION_CREDENTIAL_LABEL,
     });
     expect(first.ciphertext).toBe("");
     expect(second.ciphertext).toBe("");

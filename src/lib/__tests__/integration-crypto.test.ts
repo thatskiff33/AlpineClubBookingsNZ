@@ -2,7 +2,6 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   AUTH_SECRET_PLACEHOLDER_BLOCKLIST,
   CredentialDecryptError,
-  INTEGRATION_CREDENTIAL_LABEL,
   WeakAuthSecretError,
   authSecretWeaknessReason,
   decryptCredential,
@@ -51,7 +50,6 @@ describe("integration-crypto: strength gate", () => {
         provider: "xero",
         key: "client_id",
         plaintext: "secret-value",
-        label: INTEGRATION_CREDENTIAL_LABEL,
       }),
     ).toThrow(WeakAuthSecretError);
   });
@@ -67,7 +65,6 @@ describe("integration-crypto: encrypt/decrypt", () => {
         provider: "xero",
         key: "client_secret",
         plaintext: "same-plaintext",
-        label: INTEGRATION_CREDENTIAL_LABEL,
       });
       ivs.add(enc.iv);
     }
@@ -80,7 +77,6 @@ describe("integration-crypto: encrypt/decrypt", () => {
       provider: "xero",
       key: "client_secret",
       plaintext,
-      label: INTEGRATION_CREDENTIAL_LABEL,
     });
     expect(enc.ciphertext).not.toContain(plaintext);
     expect(enc.secretSource).toBe("AUTH_SECRET");
@@ -91,6 +87,7 @@ describe("integration-crypto: encrypt/decrypt", () => {
       iv: enc.iv,
       authTag: enc.authTag,
       labelVersion: enc.labelVersion,
+      secretSource: enc.secretSource,
     });
     expect(dec).toBe(plaintext);
   });
@@ -100,7 +97,6 @@ describe("integration-crypto: encrypt/decrypt", () => {
       provider: "xero",
       key: "client_id",
       plaintext: "value-A",
-      label: INTEGRATION_CREDENTIAL_LABEL,
     });
     // Same ciphertext bytes, but decrypt under a different key slot → AAD
     // mismatch → GCM auth failure.
@@ -112,6 +108,7 @@ describe("integration-crypto: encrypt/decrypt", () => {
         iv: enc.iv,
         authTag: enc.authTag,
         labelVersion: enc.labelVersion,
+        secretSource: enc.secretSource,
       }),
     ).toThrow(CredentialDecryptError);
   });
@@ -121,7 +118,6 @@ describe("integration-crypto: encrypt/decrypt", () => {
       provider: "xero",
       key: "webhook_key",
       plaintext: "hook",
-      label: INTEGRATION_CREDENTIAL_LABEL,
     });
     expect(enc.secretSource).toBe("AUTH_SECRET");
     // Same value, now under NEXTAUTH_SECRET (AUTH_SECRET removed).
@@ -135,6 +131,7 @@ describe("integration-crypto: encrypt/decrypt", () => {
         iv: enc.iv,
         authTag: enc.authTag,
         labelVersion: enc.labelVersion,
+        secretSource: enc.secretSource,
       }),
     ).toBe("hook");
   });
@@ -144,7 +141,6 @@ describe("integration-crypto: encrypt/decrypt", () => {
       provider: "xero",
       key: "client_id",
       plaintext: "value",
-      label: INTEGRATION_CREDENTIAL_LABEL,
     });
     setAuthSecret("AUTH_SECRET", OTHER_STRONG_SECRET);
     expect(() =>
@@ -155,6 +151,7 @@ describe("integration-crypto: encrypt/decrypt", () => {
         iv: enc.iv,
         authTag: enc.authTag,
         labelVersion: enc.labelVersion,
+        secretSource: enc.secretSource,
       }),
     ).toThrow(CredentialDecryptError);
   });

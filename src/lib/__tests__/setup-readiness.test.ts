@@ -59,6 +59,9 @@ const baseEnv = {
   // Strong (>= 32 chars, non-placeholder) so the auth-secret strength check
   // (#2079) stays green in the "complete setup" scenario.
   AUTH_SECRET: "a".repeat(48),
+  // A data-encryption key ring (#4456), so the Data Encryption Key step is
+  // green too; a test value, never a real key.
+  DATA_ENCRYPTION_KEYS: `test1:${Buffer.from(Array.from({ length: 32 }, (_, index) => index + 1)).toString("base64")}`,
   CRON_SECRET: "cron-secret",
   SEED_ADMIN_EMAIL: "admin@example.org",
   SEED_ADMIN_PASSWORD: "change-me",
@@ -83,6 +86,8 @@ const baseEnv = {
 };
 
 const completeDatabase: SetupDatabaseSnapshot = {
+  // #4456: stored data checked, and nothing on AUTH_SECRET.
+  dataKeyUsage: { credentialRowsByKeyId: {}, totpRowsByKeyId: {}, recoveryCodesByKeyId: {} },
   adminCount: 1,
   adminModuleSettings: {
     kiosk: true,
@@ -239,6 +244,7 @@ describe("setup-readiness", () => {
     expect(JSON.stringify(readiness)).not.toContain("smtp-secret");
     expect(JSON.stringify(readiness)).not.toContain("xero-secret");
     expect(JSON.stringify(readiness)).not.toContain("addy-secret");
+    expect(JSON.stringify(readiness)).not.toContain(baseEnv.DATA_ENCRYPTION_KEYS.slice("test1:".length));
 
     const report = renderSetupCheckReport(readiness);
     expect(report).toContain("accounting.reports.profitandloss.read");

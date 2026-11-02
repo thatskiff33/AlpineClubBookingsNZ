@@ -1878,6 +1878,16 @@ rows as an owner-approved data operation (see below).
   record-keeping loss, not a behavioural one, with the single fail-closed exception
   named in §2.4.1's rollback boundary.
 
+- **Data written under a data-encryption key (#4456).** Once
+  `DATA_ENCRYPTION_KEYS` is set and the new colour or the cron leader has
+  written a credential, an authenticator secret or a recovery code under it,
+  re-pointing Caddy to a colour started without the ring, rolling back to a
+  release older than #4456, or unsetting the variable leaves those rows
+  unreadable (credentials need re-entry, authenticators stop verifying,
+  recovery codes stop matching). Keep the ring set and go forward
+  ([`DEPLOYMENT.md` → Adding a data-encryption key](../DEPLOYMENT.md#adding-a-data-encryption-key-4456));
+  the pre-deploy backup is the only route back to a ring-less state.
+
 If a rollback becomes necessary, capture evidence, re-point to the old color to
 restore service, and escalate to the owner before any data-repair action.
 

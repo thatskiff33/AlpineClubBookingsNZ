@@ -232,6 +232,10 @@ const h = vi.hoisted(() => {
   };
 
   const integrationCredential = {
+    // #4456: rows already under a ring key, asked before an AUTH_SECRET write.
+    count: vi.fn(async (args: { where: { secretSource: { startsWith: string } } }) =>
+      state.credential.filter((row) => String(row.secretSource).startsWith(args.where.secretSource.startsWith)).length,
+    ),
     findUnique: vi.fn(async (args: { where: Row }) =>
       clone(state.credential.find((row) => matches(row, args.where)) ?? null),
     ),
@@ -298,7 +302,7 @@ const h = vi.hoisted(() => {
    * later did — so the double records it, and every test asserts there were
    * none. Without this, passing `prisma` where `tx` belongs is invisible here.
    */
-  const READS = new Set(["findFirst", "findUnique", "findMany"]);
+  const READS = new Set(["findFirst", "findUnique", "findMany", "count"]);
   function moduleClient<T extends Record<string, (...args: never[]) => unknown>>(
     table: string,
     delegate: T,
@@ -955,6 +959,24 @@ describe("a refresh refuses before spending the token when its save could not su
     await expect(assertXeroTokensCanBeStored()).rejects.toBeInstanceOf(
       XeroTokenSaveUnavailableError,
     );
+  });
+
+  it("refuses before spending the token when the ring is unset but a credential is under a ring key (#4456)", async () => {
+    delete process.env.DATA_ENCRYPTION_KEYS;
+    h.state.credential.push({
+      id: "ic-ring",
+      provider: "stripe",
+      key: "secret_key",
+      ciphertext: "00",
+      iv: "00",
+      authTag: "00",
+      secretSource: "DATA_ENCRYPTION_KEY:k1",
+      labelVersion: "integration-credential:v2",
+      updatedByUserId: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+    await expect(assertXeroTokensCanBeStored()).rejects.toBeInstanceOf(XeroTokenSaveUnavailableError);
   });
 
   it("passes when the save would succeed, and writes nothing", async () => {
