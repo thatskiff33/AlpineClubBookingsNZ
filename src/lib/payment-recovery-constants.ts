@@ -9,6 +9,15 @@ import type { PaymentRecoveryOperationStatus, Prisma } from "@prisma/client";
 export const MAX_PAYMENT_RECOVERY_ATTEMPTS = 5;
 
 /**
+ * #4693 (review of PR #4698): each Stripe request an unwritten ask intent's cleanup
+ * makes - the runner's stamp, the settle's and the close-time sweep's reads and
+ * cancel - is bounded so, with no retries (the #3641 shape). They run in a
+ * member's edit request and in the runner, and one that times out is only a
+ * cleanup that did not happen yet.
+ */
+export const ABANDONED_INTENT_STRIPE_TIMEOUT_MS = 5_000;
+
+/**
  * #4690 (`INV-SSOT`): how long a PROCESSING attempt may run before the stale
  * reaper counts it dead and hands its row back (`resetStaleProcessingOperations`).
  * A superseded-payment refund's alert claim older than this, with no sent

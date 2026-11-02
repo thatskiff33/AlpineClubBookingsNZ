@@ -27,8 +27,10 @@
  * Such an intent is cancelled at Stripe here, best-effort, with Stripe's
  * `abandoned` reason, after the door's transactions have committed - and only
  * on proof that nothing else owns it: no payment row and no recovery names it.
- * A failed read proves nothing and cancels nothing. Anything else (FAILED,
- * still PENDING) is left. The outcome is logged under one event name
+ * A failed read proves nothing and cancels nothing. #4693: a recovery that
+ * failed for good is the same proof - nothing claims, writes or nets it off
+ * again. Anything else (FAILED with a retry left, still PENDING) is left. The
+ * outcome is logged under one event name
  * (`ABANDONED_REISSUE_INTENT_LOG_EVENT`) so an operator can find an intent this
  * left; nothing is written locally - no transaction row is invented for it, and
  * an intent Stripe no longer lets us cancel (already cancelled, or captured) is
@@ -53,7 +55,7 @@
  * the close that precedes a lost hold is a net-off, a fold or the reclaiming
  * runner's own. Anything else - a recovery reset, or reclaimed by a
  * runner still PROCESSING (even one that wrote another intent), PENDING or
- * FAILED - may yet record it, and is left. So is an intent the runner ADOPTED
+ * FAILED with a retry left - may yet record it, and is left. So is an intent the runner ADOPTED
  * by matching (#4036) rather than minted under its own key: it is not the
  * runner's own, and another edit's stalled door or recovery may still record it
  * under that edit's key, which the owner check cannot see.
@@ -66,6 +68,11 @@
  *
  * #4676: either runner's hold that THROWS, rather than loses, takes the same
  * proof before it rethrows; a row it leaves claimed keeps the intent.
+ *
+ * #4693: whatever such a settle leaves is picked up when the row ends, by the
+ * close-time sweep (`abandoned-ask-intent-sweep.ts`), which settles each intent
+ * the row's marker names through `closedWithoutIntent` and the owner check and
+ * cancel here (`cancelAbandonedReissuedAskIntent`).
  */
 import { PaymentRecoveryOperationStatus } from "@prisma/client";
 
@@ -75,8 +82,9 @@ import {
   type ReissuedAskRecovery,
 } from "@/lib/additional-ask-reissue";
 import logger from "@/lib/logger";
+import { ABANDONED_INTENT_STRIPE_TIMEOUT_MS, isPaymentRecoveryOperationExhausted } from "@/lib/payment-recovery-constants";
 import { prisma } from "@/lib/prisma";
-import { cancelPaymentIntentIfCancellableWithResult } from "@/lib/stripe";
+import { cancelPaymentIntentIfCancellableWithResult, getPaymentIntent } from "@/lib/stripe";
 
 /** The `event` every outcome of this cleanup is logged under (#4052). */
 export const ABANDONED_REISSUE_INTENT_LOG_EVENT = "reissued-ask.abandoned-intent-cleanup";
@@ -112,17 +120,27 @@ export async function settleLostReissuedAskFence({
 }
 
 /**
- * #4052's proof, one rule for the door and the runner: the recovery ended
- * SUCCEEDED without naming this intent - a net-off or fold (`reissueClosedUnminted`),
- * or a runner closed it under its own claim (#4675) with another intent or none
- * ("minted-elsewhere").
+ * #4052's proof, one rule for the door, the runner and the close-time sweep
+ * (#4693): the recovery ended SUCCEEDED without naming this intent - a net-off or
+ * fold (`reissueClosedUnminted`), or a runner closed it under its own claim
+ * (#4675) with another intent or none ("minted-elsewhere") - or, #4693, it failed
+ * for good (`isPaymentRecoveryOperationExhausted`): no claim takes it again, no
+ * door writes it (PENDING only) and no reduction nets it off (in flight only),
+ * so nobody records an intent under it again either.
  * Null for anything else, which may yet record it.
  */
-function closedWithoutIntent(
-  moved: Pick<ReissuedAskRecovery, "status" | "lastError" | "paymentIntentId"> | null,
+export function closedWithoutIntent(
+  moved: Pick<ReissuedAskRecovery, "status" | "lastError" | "paymentIntentId" | "attempts"> | null,
   paymentIntentId: string,
 ): ClosedBy | null {
-  if (moved?.status !== PaymentRecoveryOperationStatus.SUCCEEDED || moved.paymentIntentId === paymentIntentId) return null;
+  if (!moved || moved.paymentIntentId === paymentIntentId) return null;
+  return recoveryEndedBy(moved);
+}
+
+/** How the recovery ended, by the rule above, whatever it names; null while it may yet record an intent. */
+export function recoveryEndedBy(moved: Pick<ReissuedAskRecovery, "status" | "lastError" | "attempts">): ClosedBy | null {
+  if (isPaymentRecoveryOperationExhausted(moved)) return "failed-for-good";
+  if (moved.status !== PaymentRecoveryOperationStatus.SUCCEEDED) return null;
   return reissueClosedUnminted(moved) ?? "minted-elsewhere";
 }
 
@@ -156,7 +174,7 @@ export async function settleLostRecoveryClaimHold(call: {
 }): Promise<void> {
   const { adopted, holdThrew = false, ...intent } = call;
   const moved = await prisma.paymentRecoveryOperation
-    .findUnique({ where: { id: call.operationId }, select: { status: true, lastError: true, paymentIntentId: true } })
+    .findUnique({ where: { id: call.operationId }, select: { status: true, lastError: true, paymentIntentId: true, attempts: true } })
     .catch((err: unknown) => {
       logger.error({ err, ...call, event: ABANDONED_REISSUE_INTENT_LOG_EVENT, outcome: "unread" }, "Could not re-read a recovery whose claim hold lost or threw; its minted intent is not cancelled (#4631, #4676)");
       return null;
@@ -209,9 +227,15 @@ export async function runClaimHoldSettlingIntent<T>(
   return held;
 }
 
-type ClosedBy = NonNullable<ReturnType<typeof reissueClosedUnminted>> | "minted-elsewhere";
+type ClosedBy = NonNullable<ReturnType<typeof reissueClosedUnminted>> | "minted-elsewhere" | "failed-for-good";
 
-async function cancelAbandonedReissuedAskIntent(call: {
+/**
+ * The owner check - no payment row and no recovery names the intent - then the
+ * best-effort Stripe cancel (`abandoned`), outside every transaction. The one
+ * copy of that rule: the door's and runner's settles and the close-time sweep
+ * (`sweepAbandonedAskIntents`, #4693) all cancel through it.
+ */
+export async function cancelAbandonedReissuedAskIntent(call: {
   bookingId: string;
   /** Who minted it: the door names its edit, the runner its recovery (#4631). */
   bookingModificationId?: string;
@@ -241,17 +265,40 @@ async function cancelAbandonedReissuedAskIntent(call: {
     const result = await cancelPaymentIntentIfCancellableWithResult(call.paymentIntentId, {
       // The member never declined it: the club retired the ask before offering it.
       cancellationReason: "abandoned",
+      timeoutMs: ABANDONED_INTENT_STRIPE_TIMEOUT_MS,
     });
-    const outcome = { ...context, outcome: result.canceled ? "cancelled" : "uncancellable", canceled: result.canceled, intentStatus: result.paymentIntent.status };
+    const intentStatus = result.paymentIntent.status;
+    const outcome = { ...context, outcome: result.canceled ? "cancelled" : "uncancellable", canceled: result.canceled, intentStatus };
     if (result.canceled) {
       logger.info(outcome, "Cancelled the unused intent minted for an ask whose recovery moved mid-mint (#4052)");
+    } else if (intentStatus === "canceled") {
+      logAlreadyCancelled(context);
     } else {
       logger.warn(outcome, "Left an abandoned ask's intent alone: Stripe no longer lets it be cancelled (#4052)");
     }
   } catch (err) {
+    // #4693: two settles of one intent (a sweep and a settle) can race; the loser's cancel is
+    // refused because the winner's landed first. Read back, that is not a failure.
+    if (await cancelledMeanwhile(call.paymentIntentId)) {
+      logAlreadyCancelled(context);
+      return;
+    }
     logger.error(
       { err, ...context, outcome: "cancel-failed" },
       "Could not cancel the unused intent minted for an ask whose recovery moved mid-mint; it was never offered, so it cannot be paid, and stays in Stripe (#4052)",
     );
+  }
+}
+
+function logAlreadyCancelled(context: Record<string, unknown>): void {
+  logger.info({ ...context, outcome: "already-cancelled", intentStatus: "canceled" }, "An abandoned ask's intent was already cancelled - by another settle or sweep of it, or by this cancel itself when its reply timed out; nothing to do (#4693)");
+}
+
+/** Whether the intent now reads cancelled; a read that fails proves nothing (false). */
+async function cancelledMeanwhile(paymentIntentId: string): Promise<boolean> {
+  try {
+    return (await getPaymentIntent(paymentIntentId, { timeoutMs: ABANDONED_INTENT_STRIPE_TIMEOUT_MS })).status === "canceled";
+  } catch {
+    return false;
   }
 }
