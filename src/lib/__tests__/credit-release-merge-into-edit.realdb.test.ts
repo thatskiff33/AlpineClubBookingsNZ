@@ -892,7 +892,18 @@ let previousDatabaseUrl: string | undefined;
         return intent;
       };
 
-      expect(await runRelease()).toBe("failed");
+      const logger = (await import("@/lib/logger")).default;
+      const warn = vi.spyOn(logger, "warn").mockImplementation(() => undefined);
+      try {
+        expect(await runRelease()).toBe("failed");
+        // #4676's own hand-off: the proof re-read the row, still this attempt's, and left the intent.
+        expect(warn).toHaveBeenCalledWith(
+          expect.objectContaining({ event: "reissued-ask.abandoned-intent-cleanup", outcome: "left-open", holdThrew: true, paymentIntentId: first, status: "PROCESSING" }),
+          expect.any(String),
+        );
+      } finally {
+        warn.mockRestore();
+      }
       expect(first).not.toBeNull();
       const firstIntent = first as unknown as string;
       expect(await additionalRows()).toEqual([]);

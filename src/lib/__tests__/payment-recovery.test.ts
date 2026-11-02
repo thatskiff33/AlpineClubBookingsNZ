@@ -4116,6 +4116,20 @@ describe("payment recovery worker", () => {
         expectReachedThrownHold();
         expect(mockCancelPaymentIntentIfCancellableWithResult).not.toHaveBeenCalled();
       });
+
+      it("MUTATION (#4676 review): an ADOPTED intent on a row still this attempt's is logged as adopted, never left open - another edit's ask may hold it", async () => {
+        throwHoldThenRead({ status: "PROCESSING", lastError: null });
+        ordinaryAskMint4631.adopted = true;
+        const result = await processPaymentRecoveryOperations({ limit: 1 });
+        expectReachedThrownHold();
+        expect(mockCancelPaymentIntentIfCancellableWithResult).not.toHaveBeenCalled();
+        expect(logger.warn).toHaveBeenCalledWith(
+          expect.objectContaining({ event: "reissued-ask.abandoned-intent-cleanup", outcome: "adopted", paymentIntentId: "pi_recovered", holdThrew: true }),
+          expect.stringContaining("never to be cancelled by hand"),
+        );
+        expect(logger.warn).not.toHaveBeenCalledWith(expect.objectContaining({ outcome: "left-open" }), expect.any(String));
+        expect(result).toMatchObject({ processed: 1, succeeded: 0, retried: 1, failed: 0 });
+      });
     });
 
     it("MUTATION (#3954 round 6, F6): re-checks its claim after the supersede and queues no invoice once a reduction has retired the row it wrote", async () => {

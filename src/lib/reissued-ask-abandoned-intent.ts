@@ -162,14 +162,17 @@ export async function settleLostRecoveryClaimHold(call: {
       return null;
     });
   const closedBy = closedWithoutIntent(moved, call.paymentIntentId);
-  if (closedBy && adopted) {
+  const read = { ...call, status: moved?.status, recoveryPaymentIntentId: moved?.paymentIntentId, closedBy };
+  if (adopted) {
+    // #4676 review: whatever the re-read, never `left-open` - another edit's ask may hold it.
     logger.warn(
-      { ...intent, event: ABANDONED_REISSUE_INTENT_LOG_EVENT, closedBy, outcome: "adopted" },
-      "Additional intent recovery lost its claim on an intent it adopted by matching (#4036); not its own, so it is left in Stripe (#4631)",
+      { ...read, event: ABANDONED_REISSUE_INTENT_LOG_EVENT, outcome: "adopted" },
+      holdThrew
+        ? "Additional intent recovery's claim hold threw on an intent it adopted by matching (#4036); not its own - another ask may hold it - so it is left in Stripe, never to be cancelled by hand (#4676)"
+        : "Additional intent recovery lost its claim on an intent it adopted by matching (#4036); not its own, so it is left in Stripe (#4631)",
     );
     return;
   }
-  const read = { ...call, status: moved?.status, recoveryPaymentIntentId: moved?.paymentIntentId, closedBy };
   if (holdThrew) {
     // #4676: found by this event when it is left - a retry may yet record it, or mint another.
     logger.warn(
@@ -183,6 +186,27 @@ export async function settleLostRecoveryClaimHold(call: {
     );
   }
   if (closedBy) await cancelAbandonedReissuedAskIntent({ ...intent, closedBy });
+}
+
+/**
+ * #4631, #4652, #4676 (`INV-PAY-120`): runs a runner's claim hold for the intent it minted, and
+ * when the hold wrote nothing settles that intent (`settleLostRecoveryClaimHold`) after the
+ * hold's transaction has ended: a lost hold (null) returns null, a hold that threw is rethrown
+ * to the runner's retry. The one hand-off both runners use.
+ */
+export async function runClaimHoldSettlingIntent<T>(
+  minted: { operationId: string; bookingId: string; paymentIntentId: string; adopted: boolean },
+  hold: () => Promise<T | null>,
+): Promise<T | null> {
+  let held: T | null;
+  try {
+    held = await hold();
+  } catch (err) {
+    await settleLostRecoveryClaimHold({ ...minted, holdThrew: true });
+    throw err;
+  }
+  if (held === null) await settleLostRecoveryClaimHold(minted);
+  return held;
 }
 
 type ClosedBy = NonNullable<ReturnType<typeof reissueClosedUnminted>> | "minted-elsewhere";

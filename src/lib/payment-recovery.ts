@@ -3189,7 +3189,11 @@ async function processCreateAdditionalPaymentIntentOperation(
   // Dynamic import: booking-payment-cleanup imports this module.
   const { queueSupersededAdditionalIntentCancellationRows, cancelSupersededAdditionalIntentsNow } =
     await import("@/lib/booking-payment-cleanup");
-  const held = await holdAdditionalIntentRecoveryClaim(operation, async (store) => {
+  // #4631, #4676 (`INV-PAY-120`): a hold that wrote nothing - lost, or threw (rethrown) - settles
+  // `pi` after its transaction, by #4052's proof. Dynamic import: that module imports this one.
+  const { runClaimHoldSettlingIntent } = await import("@/lib/reissued-ask-abandoned-intent");
+  const minted = { operationId: operation.id, bookingId: operation.bookingId, paymentIntentId: pi.id, adopted };
+  const held = await runClaimHoldSettlingIntent(minted, () => holdAdditionalIntentRecoveryClaim(operation, async (store) => {
     await assertAdditionalAskSizingCurrent(store, operation.paymentId, ask);
     // #4036 review: an adopted intent another ask recorded meanwhile is never written over.
     await refuseAdoptedIntentOnLedger(store, { intent: pi, adopted });
@@ -3226,19 +3230,8 @@ async function processCreateAdditionalPaymentIntentOperation(
       newPaymentIntentId: pi.id,
       store,
     });
-  }).catch(async (err: unknown) => {
-    // #4676: a hold that threw rolled back; the lost hold's proof, then the retry.
-    const { settleLostRecoveryClaimHold } = await import("@/lib/reissued-ask-abandoned-intent");
-    await settleLostRecoveryClaimHold({ operationId: operation.id, bookingId: operation.bookingId, paymentIntentId: pi.id, adopted, holdThrew: true });
-    throw err;
-  });
-  if (held === null) {
-    // #4631 (`INV-PAY-120`): the hold's transaction has ended; #4052's proof and
-    // Stripe cancel run outside it. Dynamic import: that module imports this one.
-    const { settleLostRecoveryClaimHold } = await import("@/lib/reissued-ask-abandoned-intent");
-    await settleLostRecoveryClaimHold({ operationId: operation.id, bookingId: operation.bookingId, paymentIntentId: pi.id, adopted });
-    return "done";
-  }
+  }));
+  if (held === null) return "done";
   await cancelSupersededAdditionalIntentsNow({
     format,
     bookingId: operation.bookingId,
