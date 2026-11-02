@@ -40,7 +40,10 @@
  *  - #4675: a release attempt that read "nothing owed" and stalled before its
  *    close, then woke after the reaper and a reclaiming runner that minted:
  *    its close, fenced on its own claim, matches nothing and records nothing,
- *    and the reclaiming runner's ask is written and collected.
+ *    and the reclaiming runner's ask is written and collected;
+ *  - #4676: a release attempt whose claim hold throws (the price moved
+ *    mid-mint) keeps its intent while the row is still its own, and the retry
+ *    back at that figure is answered with, and records, that very intent.
  *
  * Envelope: identical to `concurrency-lock-races.realdb.test.ts`, which imports
  * this file; the describe runs ONLY when `RUN_CONCURRENCY_RACE_TESTS=1`,
@@ -850,6 +853,59 @@ let previousDatabaseUrl: string | undefined;
       expect(cancelled.map(({ id }) => id)).not.toContain(stale);
       expect(stripe.intents.get(stale)?.status).toBe("requires_payment_method");
       expect(await prisma.paymentTransaction.findUniqueOrThrow({ where: { stripePaymentIntentId: stale }, select: { id: true } })).toEqual({ id: "race-4652-named" });
+    });
+
+    /**
+     * #4676 (`INV-PAY-120`): the release's first attempt mints, and the booking's price moves
+     * before its claim hold, which re-reads the sizing under its locks and THROWS. Nothing is
+     * written; the row is still this attempt's when the lost hold's proof re-reads it, so the
+     * intent is kept. Why it must be: the price moves back, and the retry - sizing the same
+     * figure, minting under the same key - is answered with that very intent and records it.
+     */
+    it("#4676: a hold that throws on a price moved mid-mint keeps its intent - the retry back at that figure records that very intent", async () => {
+      await seedCreditPaidBooking();
+      await convergeSpentCredit();
+      expect(await enqueueRelease()).toBe(1);
+      const cancelled: string[] = [];
+      const cancel = stripeRaceHooks.cancel!;
+      stripeRaceHooks.cancel = async (id) => {
+        cancelled.push(id);
+        return cancel(id);
+      };
+      const byKey = new Map<string, string>();
+      const create = stripeRaceHooks.create!;
+      const mint = async (args: Parameters<NonNullable<typeof stripeRaceHooks.create>>[0]) => {
+        const known = args.idempotencyKey ? byKey.get(args.idempotencyKey) : undefined;
+        if (known) return { ...stripe.intents.get(known)! };
+        const intent = (await create(args)) as FakeIntent;
+        if (args.idempotencyKey) byKey.set(args.idempotencyKey, intent.id);
+        return intent;
+      };
+      let first: string | null = null;
+      stripeRaceHooks.create = async (args) => {
+        const intent = await mint(args);
+        if (first === null && args.metadata?.reason === "credit_released_outside_app") {
+          first = intent.id;
+          stripeRaceHooks.create = mint;
+          await prisma.booking.update({ where: { id: BOOKING_ID }, data: { finalPriceCents: { increment: 500 } } });
+        }
+        return intent;
+      };
+
+      expect(await runRelease()).toBe("failed");
+      expect(first).not.toBeNull();
+      const firstIntent = first as unknown as string;
+      expect(await additionalRows()).toEqual([]);
+      expect(await releaseOperation()).toMatchObject({ status: "FAILED", lastError: expect.stringContaining("changed while") });
+      expect(cancelled).toEqual([]);
+      expect(stripe.intents.get(firstIntent)?.status).toBe("requires_payment_method");
+
+      await prisma.booking.update({ where: { id: BOOKING_ID }, data: { finalPriceCents: { decrement: 500 } } });
+      expect(await runRelease()).toBe("succeeded");
+      expect(stripe.created).toEqual([firstIntent]);
+      expect((await releaseOperation()).paymentIntentId).toBe(firstIntent);
+      expect(cancelled).toEqual([]);
+      await expectReleaseAskedAlone();
     });
 
     it("merges: one request for both, the edit's invoice follows it, and the one card payment is recorded against both invoices, once", async () => {

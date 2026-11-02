@@ -3590,7 +3590,9 @@ proof: "the next mint's amount-suffixed key differs". Sizing moves both ways
 figure replays the key inside Stripe's 24-hour window, Stripe answering with
 the intent as first minted, not as cancelled; while the row is open nothing
 proves the intent terminal. Reads and one provider call, after the hold's
-transaction: no lock, key, participant or order changes.
+transaction: no lock, key, participant or order changes. Proven on real
+Postgres: the retry back at the figure records the kept intent
+(`credit-release-merge-into-edit.realdb.test.ts`).
 Round 6: the retire closes waiting recoveries before it stamps the rows - the
 runner's own order (its claim hold writes the recovery, then its row; since
 #4217 both take the `Payment` row before either) - and a
