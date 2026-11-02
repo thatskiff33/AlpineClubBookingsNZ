@@ -4036,10 +4036,15 @@ two callers on one row (the hand-off above) each record their own outcome of
   stale-reset or failed attempt's late outcome never lands on the retry's
   claim, so the row stays RUNNING for the retry and the booking invoice
   retry's settle-time fence. A failure (or a FAILED completion) lands only on
-  its own claim's row: RUNNING, or FAILED or CANCELLED under its `startedAt`
-  (#4673); never PENDING, WAITING_PAYMENT or SKIPPED, nor a row another claim
-  ended. A refused write answers null: no link, no repeated-failure alert; the
-  outbox counts it skipped and exposes no subscription charge error
+  its own claim's row: RUNNING or FAILED under its `startedAt` (#4673); never
+  PENDING, WAITING_PAYMENT, SKIPPED or CANCELLED (a withdrawal cancels a FAILED
+  row keeping its `startedAt`, PR #4687), nor a row another claim ended. A
+  refused write answers null: no link, no repeated-failure alert; the outbox
+  counts it skipped and exposes no subscription charge error, and an
+  additional-capture refusal stamps no code and alerts no officer. Limit: the
+  membership cancellation credit note's retry takes no claim and runs under the
+  reset row's `startedAt`, so a stalled first run's late failure can still
+  replace that retry's own failure (an error refreshed, the row FAILED either way)
 worker claims operation -> provider call -> success or retryable failure
 success -> SUCCEEDED clears lastErrorCode and lastErrorMessage, so an earlier
   wait's or failure's code is not shown on it (#4049); PARTIAL keeps them
@@ -4203,7 +4208,9 @@ retry of an outbox-run row (group invoice and its VOIDs, kept late capture,
   the stalled run fails late (#4673, INV-INT-029): refused, the row stays
   PENDING with no error, the stalled run counts it skipped, and the queued run
   writes its own outcome; once the queued run has failed under its own claim,
-  the stalled failure leaves its error as it is
+  the stalled failure leaves its error as it is, and a pre-HTTP cooldown
+  refusing the stalled run gives back to PENDING only its own claim's RUNNING
+  or FAILED row, never the queued run's FAILED one (PR #4687)
 primary booking invoice create saves its link -> worth gap check (#3980,
   INV-PAY-136), and again on its "invoice already exists" replay
   a second save of the same invoice stores nothing -> re-check from the first's

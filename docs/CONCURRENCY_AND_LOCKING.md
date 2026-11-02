@@ -263,18 +263,27 @@ schema change or new participant. Proven against real PostgreSQL by
 
 Since #4673 a failure is narrower still: a FAILED outcome, from either writer,
 lands only on a row carrying its own claim's `startedAt`, RUNNING or already
-ended FAILED or CANCELLED (`keepCancelled` keeps CANCELLED), never on PENDING,
-WAITING_PAYMENT or SKIPPED. The race it closes: a run stalls, Reset stale
+ended FAILED, never on PENDING, WAITING_PAYMENT, SKIPPED or CANCELLED: a
+withdrawal (`settleKeptLateCaptureRecordOnApproval`, the kept change receipt's)
+cancels a FAILED row keeping its `startedAt`, so a stalled handler's self-fail
+would otherwise make a withdrawn row retryable (PR #4687 review). The race it closes: a run stalls, Reset stale
 running fails its row, an officer's Retry hands an in-place requeue type (the
 organiser adjustment, applied-credit allocation and deallocation, kept late
 capture, released change invoice, card receipt, group invoice and its VOIDs,
 subscription invoice, and the kept-capture close's requeue) back to PENDING
 with `startedAt` cleared, and the stalled run then fails. Its write matches
 nothing, so the queued Retry stands; the outbox counts the refusal skipped and
-exposes no charge error. A claim's own RUNNING row, a repair's marker aside,
-takes its failure, so a refusal never strands a row RUNNING. Still no advisory key, row lock, schema
-change or new participant: the claim is the row's `startedAt`, compared in the
-same status-guarded `updateMany`. Proven by
+exposes no charge error; the additional-capture refusal stamps its code only
+on its own claim's FAILED row and alerts nobody for a refused one. The outbox's
+cooldown give-back to PENDING matches only its own claim's RUNNING or FAILED
+row, so a stalled run's pre-HTTP refusal never revives a FAILED row a later
+claim ended. A claim's own RUNNING row, a repair's marker aside, takes its
+failure, so a refusal never strands a row RUNNING. Limit: the membership
+cancellation credit note's retry takes no claim and writes under the reset
+row's `startedAt`, so a stalled first run's late failure can still replace
+that retry's own error. Still no advisory key, row lock, schema change or new
+participant: the claim is the row's `startedAt`, compared in the same
+status-guarded `updateMany`. Proven by
 `xero-late-failure-after-retry.realdb.test.ts`.
 
 ### The Xero token refresh uses a row lease, shared across colours (#3454)

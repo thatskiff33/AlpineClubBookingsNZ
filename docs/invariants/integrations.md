@@ -563,8 +563,8 @@ attempt's claim. Two callers can share one row (#1354).
   claim's `startedAt`, from its start, outbox or REQUEUE claim, retry claim or
   late-note re-take (`INV-INT-034`). No outcome, a success included, lands on
   a RUNNING row another claim holds.
-- **A failure lands only on its own claim's row (#4673):** RUNNING, or FAILED
-  or CANCELLED under its `startedAt` (`keepCancelled` keeps CANCELLED). One
+- **A failure lands only on its own claim's row (#4673):** RUNNING or FAILED
+  under its `startedAt`, never CANCELLED (a withdrawal keeps `startedAt`). One
   that lost its claim, say to an in-place Retry, is dropped; the queued run
   writes its own.
 - **A repair's claim is kept too.** The PARTIAL and FAILED refund-note
@@ -579,8 +579,8 @@ attempt's claim. Two callers can share one row (#1354).
 - **A refused write changes nothing:** null, no link, no alert; the outbox
   counts a refused failure skipped. A missing row throws, or logs for a guarded
   caller. A success refused for a later claim still records its links, warned.
-- **Claims, resets and marks write directly,** guarded as before; the outbox
-  and REQUEUE hand-backs to PENDING touch only their claim.
+- **Claims, resets and marks write directly,** guarded; the outbox and
+  REQUEUE hand-backs to PENDING touch only their own claim.
 
 Pinned by `xero-sync.test.ts`, `xero-outbox-fail-fast.test.ts`,
 `xero-success-after-resolution-alert.test.ts` and, against real PostgreSQL,

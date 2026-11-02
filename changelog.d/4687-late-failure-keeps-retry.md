@@ -5,3 +5,5 @@
   alert. That late failure is now set aside: the job stays queued, the queued
   run goes ahead and records its own result, and the old run is counted as
   skipped rather than failed.
+  A late failure also no longer reopens a job a treasurer withdrew, and a
+  late Xero cooldown no longer puts a newer failed attempt back in the queue.
