@@ -10,5 +10,7 @@
   request has since been closed without that payment, the payment is cancelled
   at Stripe. Members never saw it, so nothing changes for them. If the request
   is still open, the payment is left alone, because the retry may use it, and
-  a `left-open` entry is logged so the club's operator can find it. Retries
-  happen as before.
+  a `left-open` entry is logged so the club's operator can find it. Do not
+  cancel such a payment by hand while its request is still open: a retry can
+  ask Stripe for the same payment again and record it as the member's request.
+  Retries happen as before.

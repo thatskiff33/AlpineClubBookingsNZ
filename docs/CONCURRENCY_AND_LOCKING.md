@@ -3581,10 +3581,13 @@ write failed - rolled back and wrote nothing, as a lost one did, but its error
 skipped the settle. Both runners now catch it, take the same
 `settleLostRecoveryClaimHold` proof under no lock, then rethrow to the retry
 (`markPaymentRecoveryOperationFailed`, fenced off SUCCEEDED, so it never
-reopens a closed row). An adopted intent is still never cancelled. Stated
+reopens a closed row). An adopted intent is still never cancelled, and is
+logged `adopted`, never `left-open`: another edit's ask may hold it. Stated
 limit: the re-read usually finds the row still this attempt's, which proves
 nothing, so the intent stays open, never offered, logged `left-open` under the
-cleanup event; a retry may record it, or mint another and leave it. Rejected
+cleanup event; a retry may record it, or mint another and leave it. A later
+net-off or fold of the unclaimed row, before its retry, or a terminal failure
+also leaves it: nothing re-reads that row again (#4693). Rejected
 proof: "the next mint's amount-suffixed key differs". Sizing moves both ways
 (an increase, a reduction, Xero's amount due), and a later retry back at this
 figure replays the key inside Stripe's 24-hour window, Stripe answering with
