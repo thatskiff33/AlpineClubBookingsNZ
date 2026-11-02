@@ -343,6 +343,39 @@ let harnessRole: { restore: () => void } | undefined;
       expect(await ledgerRefunds()).toEqual([{ stripeRefundId: "re_race_4690_1", amountCents: SUPERSEDED_CENTS }]);
     });
 
+    /*
+      #4699: another door's refund Stripe lists but the ledger has not recorded yet. The resend
+      preflight records it, and the refund is sized on the ledger after that: Stripe is asked only
+      for what the charge still holds (this double refuses more, as Stripe does), or for nothing.
+    */
+    it.each([
+      ["part of the capture: Stripe is asked only for the rest, and that is announced", 2_500, 1, ONCE_EACH],
+      ["the whole capture: nothing is asked for, and the row closes with no notice", SUPERSEDED_CENTS, 0, NONE],
+    ])("#4699: another door's refund Stripe lists but the ledger has not recorded, for %s", async (_label, cancelledCents, asks, notices) => {
+      const operationId = await seedCapturedSupersededAsk();
+      madeAtStripe.set("cancellation", stripeRefund("re_race_4699_cancellation", cancelledCents, { bookingId: BOOKING_ID, reason: "cancellation" }));
+      stripeMakesRefunds();
+      const makeRefund = stripeRaceHooks.refund!;
+      stripeRaceHooks.refund = async (args) => {
+        const unrefunded = SUPERSEDED_CENTS - [...madeAtStripe.values()].reduce((sum, refund) => sum + refund.amount, 0);
+        if (args.amountCents > unrefunded) throw new Error("Refund amount is greater than unrefunded amount on charge");
+        return makeRefund(args);
+      };
+
+      expect(await recovery.runPaymentRecoveryOperationNow(operationId, CLUB_FORMAT_TEST)).toBe("succeeded");
+
+      expect(await rowNow(operationId)).toEqual({ status: "SUCCEEDED", attempts: 1 });
+      expect(refundAsks).toBe(asks);
+      const refunds = await ledgerRefunds();
+      expect(refunds.reduce((sum, refund) => sum + refund.amountCents, 0)).toBe(SUPERSEDED_CENTS);
+      expect(refunds).toContainEqual({ stripeRefundId: "re_race_4699_cancellation", amountCents: cancelledCents });
+      expect(await announced()).toEqual(notices);
+      if (asks > 0) {
+        const event = await prisma.bookingEvent.findFirstOrThrow({ where: { bookingId: BOOKING_ID, type: "REFUNDED" }, select: { amountCents: true } });
+        expect(event.amountCents).toBe(SUPERSEDED_CENTS - cancelledCents);
+      }
+    });
+
     it("another door's refund (a cancellation's) brings the row to nothing outstanding: closed with no notice", async () => {
       const operationId = await seedCapturedSupersededAsk();
       // The cancellation door refunded the whole capture first, under its own metadata, and recorded it.
