@@ -71,6 +71,7 @@ import { isXeroAppliedCreditOperationBusyError } from "@/lib/xero-applied-credit
 import {
   findResolvedBookingInvoiceCreate,
   findResolvedSiblingSince,
+  resolvedSiblingCopySkippedPayload,
   readResolvedRefundCreditNoteCoverage,
   sumRefundCreditNoteCoverageCents,
 } from "@/lib/xero-resolved-in-xero-fences";
@@ -3047,15 +3048,7 @@ export async function processQueuedXeroOutboxOperations(options?: {
     // hand-made document stands for it. Closed CANCELLED, before any Xero call.
     const resolvedSibling = await findResolvedSiblingSince(queuedOperation);
     if (resolvedSibling) {
-      await completeXeroSyncOperation(claimed, {
-        status: "CANCELLED",
-        responsePayload: {
-          skipped: "resolved-in-xero",
-          resolvedOperationId: resolvedSibling.id,
-          reason:
-            "An officer resolved this document by hand in Xero after this copy was queued, so it was not sent.",
-        },
-      });
+      await completeXeroSyncOperation(claimed, { status: "CANCELLED", responsePayload: resolvedSiblingCopySkippedPayload(resolvedSibling.id) });
       result.skipped += 1;
       continue;
     }

@@ -358,9 +358,15 @@ let prisma: (typeof import("@/lib/prisma"))["prisma"];
       });
       expect(await findUnrecordedRefundNoteOperation(PAYMENT_ID)).toBeNull();
 
-      // The copy, queued before the resolve, closes CANCELLED at its next claim, before any Xero call (`INV-INT-025`).
-      expect(await runOutbox(rowY)).toMatchObject({ skipped: 1 });
-      expect(await prisma.xeroSyncOperation.findUniqueOrThrow({ where: { id: rowY }, select: { status: true } })).toEqual({ status: "CANCELLED" });
+      // The copy, queued before the resolve, closes CANCELLED before any Xero call (`INV-INT-025`) - even when the
+      // outbox's check at the claim ran before the mark landed (made so here): once the fence reads lifted, the
+      // create asks again (#4692 review, F2).
+      const fences = await import("@/lib/xero-resolved-in-xero-fences");
+      vi.spyOn(fences, "findResolvedSiblingSince").mockResolvedValueOnce(null);
+      await runOutbox(rowY);
+      expect(await prisma.xeroSyncOperation.findUniqueOrThrow({ where: { id: rowY }, select: { status: true, responsePayload: true } })).toEqual({
+        status: "CANCELLED", responsePayload: expect.objectContaining({ skipped: "resolved-in-xero", resolvedOperationId: rowA }),
+      });
       expect(xeroNotes).toHaveLength(1);
 
       // 5. B now runs, sized with A counted: $30 at the $80 watermark - never $80.

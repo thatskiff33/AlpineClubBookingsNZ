@@ -82,6 +82,8 @@ function matches(row: Row, where: Row | undefined): boolean {
       if ("notIn" in expected) return !(expected as { notIn: unknown[] }).notIn.includes(actual);
       if ("not" in expected) return actual !== (expected as { not: unknown }).not;
       if ("gte" in expected) return actual instanceof Date && actual >= (expected as { gte: Date }).gte;
+      // #4692 review: the resolved-sibling check's strict floor (`findResolvedSiblingSince`).
+      if ("gt" in expected) return actual instanceof Date && actual > (expected as { gt: Date }).gt;
       // A JSON path filter (`paidAnotherWayCloseNoteRowsWhere`): one top-level key.
       if ("path" in expected) {
         const { path, equals } = expected as { path: string[]; equals: unknown };
@@ -279,6 +281,8 @@ function coveredCents() {
 vi.mock("@/lib/xero-resolved-in-xero-fences", async (importOriginal) => {
   const actual = (await importOriginal()) as typeof import("@/lib/xero-resolved-in-xero-fences");
   return {
+    // #4692 review: the fence reads its row scope and the resolved-sibling check from here.
+    ...actual,
     readResolvedRefundCreditNoteCoverage: vi.fn(async (paymentId: string) =>
       state.realResolved ? actual.readResolvedRefundCreditNoteCoverage(paymentId) : state.resolved,
     ),

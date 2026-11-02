@@ -16,7 +16,7 @@
  */
 
 import { reviewTaskKeyParts } from "@/lib/xero-review-task-key";
-import { assertNoRefundCreditNoteInFlight, assertNoUnrecordedRefundNote } from "@/lib/xero-refund-note-in-flight";
+import { assertNoRefundCreditNoteInFlight, passUnrecordedRefundNoteFence } from "@/lib/xero-refund-note-in-flight";
 import { recordCreatedRefundNote, RefundNoteNotRecordedError } from "@/lib/xero-refund-note-record";
 import { mayRecordAsCanonicalRefundNote, readCanonicalRefundNoteField, refundNoteKeyAfterVoidParts, refundRequestOwnNotes, type RefundNoteKeyScope } from "@/lib/xero-refund-note-status";
 import {
@@ -319,7 +319,7 @@ export async function createXeroCreditNote(
     }
   }
 
-  await assertNoUnrecordedRefundNote(paymentId); // #4688 (`INV-INT-035`): no note sized while Xero holds one unrecorded
+  if ((await passUnrecordedRefundNoteFence(paymentId, queuedOperation)) === "closed") return ""; // #4688, #4692 (`INV-INT-035`)
   let existingCreditNoteId: string | null = null;
   let existingCreditNoteNumber: string | null = null;
   // F4 (#1354): in delta mode the amounts billed to Xero are derived from

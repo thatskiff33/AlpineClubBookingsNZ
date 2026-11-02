@@ -240,6 +240,20 @@ export async function findResolvedBookingInvoiceCreate(
 }
 
 /**
+ * #3635 round 4 (`INV-INT-025`): the response of a copy closed CANCELLED
+ * because an officer resolved a sibling for the same document after it was
+ * queued - by the outbox at its claim, or by a refund-note create once the
+ * fence its sibling held reads lifted (#4692 review).
+ */
+export function resolvedSiblingCopySkippedPayload(resolvedOperationId: string) {
+  return {
+    skipped: "resolved-in-xero",
+    resolvedOperationId,
+    reason: "An officer resolved this document by hand in Xero after this copy was queued, so it was not sent.",
+  } as const;
+}
+
+/**
  * #3635 round 4 (review N3): a queued copy of a document is stale when an
  * officer resolved a sibling for the SAME document (same correlation key)
  * after this copy was queued - the sibling's hand-made document now stands for
