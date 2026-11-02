@@ -13,10 +13,16 @@
  * So whoever ends the row sweeps it, after every transaction has ended:
  *
  * - the runner, after an attempt that was not the row's first ends it
- *   (`sweepAfterRunnerClose`) - a first attempt follows no earlier mint;
+ *   (`sweepAfterRunnerClose`) - a first attempt follows no earlier mint by the
+ *   runner;
  * - the edit whose reduction netted a waiting row off, or whose increase folded
- *   one in, after its commit (`sweepAskRecoveriesClosedByEdit`) - the edits its
- *   own history names (`unpaidAskOffsetHistory`), rows a runner had claimed;
+ *   one in, after its commit and its own mint (`sweepAskRecoveriesClosedByEdit`)
+ *   - the edits its own history names (`unpaidAskOffsetHistory`), rows a runner
+ *   had claimed;
+ * - except a re-issue's row still naming its door's key, whatever its attempts:
+ *   the door mints under that key before any attempt, and its write is fenced
+ *   on PENDING, so a row that ended without it never takes it
+ *   (`isUnmintedReissueRow`, review of PR #4698);
  * - the failure that ends the row for good (`failPaymentRecoveryOperation`).
  *
  * The sweep lists the recent intents that carry the row's own marker - which no
@@ -36,7 +42,10 @@
  *
  * A review charge's row is never swept: it can be re-armed after it closes
  * (`rearmEditFinancialReviewChargeRecovery`). The scan is bounded
- * (`ABANDONED_ASK_SWEEP_MAX_SCANNED`); one that stops early settles only what it
+ * (`ABANDONED_ASK_SWEEP_MAX_SCANNED`), and each Stripe request in it too
+ * (`ABANDONED_INTENT_STRIPE_TIMEOUT_MS`, no retries): it runs in a member's edit
+ * request and in the runner, which a member's edit also drives
+ * (`drainSupersededPrimaryIntents`). A scan that stops early settles only what it
  * read and says so. Every failure is logged and nothing throws: the sweep is
  * best-effort, as the settle it extends is.
  */
@@ -59,6 +68,8 @@ import {
   stripeIdempotencyKeyForAskAmount,
 } from "@/lib/payment-recovery-keys";
 import { prisma } from "@/lib/prisma";
+import type { PaymentRecoveryProcessOutcome } from "@/lib/payment-recovery";
+import { ABANDONED_INTENT_STRIPE_TIMEOUT_MS } from "@/lib/payment-recovery-constants";
 import {
   ABANDONED_REISSUE_INTENT_LOG_EVENT,
   cancelAbandonedReissuedAskIntent,
@@ -133,6 +144,7 @@ export async function sweepAbandonedAskIntents(operationId: string, trigger: Aba
       createdSince: new Date(row.createdAt.getTime() - MINTED_INTENT_LOOKBACK_MS),
       customerId: row.payment?.stripeCustomerId ?? undefined,
       maxScanned: ABANDONED_ASK_SWEEP_MAX_SCANNED,
+      timeoutMs: ABANDONED_INTENT_STRIPE_TIMEOUT_MS,
     });
     // Already cancelled - by the settle, or an earlier sweep of the same row - needs nothing.
     const open = scan.intents.filter((intent) => intent.id !== row.paymentIntentId && intent.status !== "canceled");
@@ -155,22 +167,33 @@ export async function sweepAbandonedAskIntents(operationId: string, trigger: Aba
 }
 
 /**
+ * A re-issue's row its door wrote, still naming the door's key (`queueReissuedAskRecovery`):
+ * the door mints under that key before any attempt claims the row, so an intent may be
+ * left whatever the row's attempts.
+ */
+export function isUnmintedReissueRow(row: Pick<PaymentRecoveryOperation, "idempotencyKey" | "paymentIntentId">): boolean {
+  const editId = bookingModificationIdForAdditionalIntentRecoveryKey(row.idempotencyKey);
+  return editId !== null && row.paymentIntentId === buildReissuedAskStripeIdempotencyKey(editId);
+}
+
+/**
  * The runner's half: after an attempt that ended the row (`done`), sweep - unless
- * it was the row's first attempt, which follows no earlier mint by the runner.
+ * it was the row's first attempt, which follows no earlier mint by the runner, and
+ * the row is not a re-issue still naming its door's key, whose door may have minted.
  */
 export async function sweepAfterRunnerClose(
-  operation: Pick<PaymentRecoveryOperation, "id" | "attempts">,
-  outcome: string,
+  operation: Pick<PaymentRecoveryOperation, "id" | "attempts" | "idempotencyKey" | "paymentIntentId">,
+  outcome: PaymentRecoveryProcessOutcome,
 ): Promise<void> {
-  if (outcome !== "done" || operation.attempts < 2) return;
+  if (outcome !== "done" || (operation.attempts < 2 && !isUnmintedReissueRow(operation))) return;
   await sweepAbandonedAskIntents(operation.id, "runner-close");
 }
 
 /**
- * The edit's half, after its commit: the waiting rows its reduction netted off or
- * its increase folded in - the edits its history names (`unpaidAskOffsetHistory`)
- * whose rows ended so (`reissueClosedUnminted`) after a runner had claimed them.
- * Never throws.
+ * The edit's half, after its commit and its own mint: the waiting rows its reduction
+ * netted off or its increase folded in - the edits its history names
+ * (`unpaidAskOffsetHistory`) whose rows ended so (`reissueClosedUnminted`) after a
+ * runner had claimed them, or still naming a re-issue door's key. Never throws.
  */
 export async function sweepAskRecoveriesClosedByEdit({
   bookingId,
@@ -192,7 +215,9 @@ export async function sweepAskRecoveriesClosedByEdit({
         type: PaymentRecoveryOperationType.CREATE_ADDITIONAL_PAYMENT_INTENT,
         idempotencyKey: { in: editIds.map(buildAdditionalIntentRecoveryIdempotencyKey) },
         status: PaymentRecoveryOperationStatus.SUCCEEDED,
-        attempts: { gte: 1 },
+        // A runner claimed it - or it is a re-issue still naming its door's key, which the door
+        // may have minted under before any claim (`isUnmintedReissueRow`).
+        OR: [{ attempts: { gte: 1 } }, { paymentIntentId: { in: editIds.map(buildReissuedAskStripeIdempotencyKey) } }],
       },
       select: { id: true, status: true, lastError: true },
     });

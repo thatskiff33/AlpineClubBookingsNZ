@@ -124,6 +124,7 @@ describe("isIntentForOrdinaryAskPlan (#4036)", () => {
   // intent was created no later.
   const ROW_AT = new Date("2026-06-30T00:00:00.000Z");
   const atRow = ROW_AT.getTime() / 1000;
+  const ROW = { id: "op_this_row", createdAt: ROW_AT };
   const minted = {
     amount: 6_000,
     currency: "nzd",
@@ -133,7 +134,7 @@ describe("isIntentForOrdinaryAskPlan (#4036)", () => {
   };
 
   it("matches the door's intent", () => {
-    expect(isIntentForOrdinaryAskPlan(minted, plan, "nzd", ROW_AT)).toBe(true);
+    expect(isIntentForOrdinaryAskPlan(minted, plan, "nzd", ROW)).toBe(true);
   });
 
   it.each([
@@ -146,20 +147,28 @@ describe("isIntentForOrdinaryAskPlan (#4036)", () => {
     ["already paid", { status: "succeeded" }],
     ["no metadata", { metadata: null }],
   ])("refuses %s", (_label, change) => {
-    expect(isIntentForOrdinaryAskPlan({ ...minted, ...change }, plan, "nzd", ROW_AT)).toBe(false);
+    expect(isIntentForOrdinaryAskPlan({ ...minted, ...change }, plan, "nzd", ROW)).toBe(false);
   });
 
   it("MUTATION: a door-reason intent is this ask's only if created by the row (clock skew allowed) - a later one is another door minting now", () => {
     const skew = DOOR_INTENT_CLOCK_SKEW_MS / 1000;
-    expect(isIntentForOrdinaryAskPlan({ ...minted, created: atRow + skew }, plan, "nzd", ROW_AT)).toBe(true);
-    expect(isIntentForOrdinaryAskPlan({ ...minted, created: atRow + skew + 1 }, plan, "nzd", ROW_AT)).toBe(false);
-    expect(isIntentForOrdinaryAskPlan({ ...minted, created: undefined }, plan, "nzd", ROW_AT)).toBe(false);
+    expect(isIntentForOrdinaryAskPlan({ ...minted, created: atRow + skew }, plan, "nzd", ROW)).toBe(true);
+    expect(isIntentForOrdinaryAskPlan({ ...minted, created: atRow + skew + 1 }, plan, "nzd", ROW)).toBe(false);
+    expect(isIntentForOrdinaryAskPlan({ ...minted, created: undefined }, plan, "nzd", ROW)).toBe(false);
+  });
+
+  // #4693 (review of PR #4698): a runner stamped it for another row - that row's own, and its
+  // close-time sweep may cancel it. Unstamped (every pre-#4693 intent) or stamped for this row matches.
+  it("MUTATION: an intent stamped for ANOTHER recovery row is never adopted", () => {
+    const stamped = (askRecoveryId: string) => ({ ...minted, metadata: { ...minted.metadata, askRecoveryId } });
+    expect(isIntentForOrdinaryAskPlan(stamped("op_other_row"), plan, "nzd", ROW)).toBe(false);
+    expect(isIntentForOrdinaryAskPlan(stamped("op_this_row"), plan, "nzd", ROW)).toBe(true);
   });
 
   it("#4079 - an intent under the runner's own reason is never adopted, before the row or after it", () => {
     const runnerReason = { ...minted.metadata, reason: ORDINARY_ASK_RECOVERY_REASON };
-    expect(isIntentForOrdinaryAskPlan({ ...minted, metadata: runnerReason }, plan, "nzd", ROW_AT)).toBe(false);
-    expect(isIntentForOrdinaryAskPlan({ ...minted, created: atRow + 3_600, metadata: runnerReason }, plan, "nzd", ROW_AT)).toBe(false);
+    expect(isIntentForOrdinaryAskPlan({ ...minted, metadata: runnerReason }, plan, "nzd", ROW)).toBe(false);
+    expect(isIntentForOrdinaryAskPlan({ ...minted, created: atRow + 3_600, metadata: runnerReason }, plan, "nzd", ROW)).toBe(false);
   });
 
   it("MUTATION: #4079 - nor by a plan whose key names no door, though that plan sends the runner's reason", () => {
@@ -172,7 +181,7 @@ describe("isIntentForOrdinaryAskPlan (#4036)", () => {
     });
     expect(noDoor.metadata.reason).toBe(ORDINARY_ASK_RECOVERY_REASON);
     const runnerReason = { ...minted.metadata, reason: ORDINARY_ASK_RECOVERY_REASON };
-    expect(isIntentForOrdinaryAskPlan({ ...minted, metadata: runnerReason }, noDoor, "nzd", ROW_AT)).toBe(false);
+    expect(isIntentForOrdinaryAskPlan({ ...minted, metadata: runnerReason }, noDoor, "nzd", ROW)).toBe(false);
   });
 
   it("the adoptable bound is the row's creation plus the clock skew", () => {

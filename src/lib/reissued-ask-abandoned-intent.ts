@@ -82,12 +82,13 @@ import {
   type ReissuedAskRecovery,
 } from "@/lib/additional-ask-reissue";
 import logger from "@/lib/logger";
-import { isPaymentRecoveryOperationExhausted } from "@/lib/payment-recovery-constants";
+import { ABANDONED_INTENT_STRIPE_TIMEOUT_MS, isPaymentRecoveryOperationExhausted } from "@/lib/payment-recovery-constants";
 import { prisma } from "@/lib/prisma";
-import { cancelPaymentIntentIfCancellableWithResult } from "@/lib/stripe";
+import { cancelPaymentIntentIfCancellableWithResult, getPaymentIntent } from "@/lib/stripe";
 
 /** The `event` every outcome of this cleanup is logged under (#4052). */
 export const ABANDONED_REISSUE_INTENT_LOG_EVENT = "reissued-ask.abandoned-intent-cleanup";
+
 
 /**
  * After the door's write lost its fence: re-read the recovery (null when the
@@ -265,17 +266,40 @@ export async function cancelAbandonedReissuedAskIntent(call: {
     const result = await cancelPaymentIntentIfCancellableWithResult(call.paymentIntentId, {
       // The member never declined it: the club retired the ask before offering it.
       cancellationReason: "abandoned",
+      timeoutMs: ABANDONED_INTENT_STRIPE_TIMEOUT_MS,
     });
-    const outcome = { ...context, outcome: result.canceled ? "cancelled" : "uncancellable", canceled: result.canceled, intentStatus: result.paymentIntent.status };
+    const intentStatus = result.paymentIntent.status;
+    const outcome = { ...context, outcome: result.canceled ? "cancelled" : "uncancellable", canceled: result.canceled, intentStatus };
     if (result.canceled) {
       logger.info(outcome, "Cancelled the unused intent minted for an ask whose recovery moved mid-mint (#4052)");
+    } else if (intentStatus === "canceled") {
+      logAlreadyCancelled(context);
     } else {
       logger.warn(outcome, "Left an abandoned ask's intent alone: Stripe no longer lets it be cancelled (#4052)");
     }
   } catch (err) {
+    // #4693: two settles of one intent (a sweep and a settle) can race; the loser's cancel is
+    // refused because the winner's landed first. Read back, that is not a failure.
+    if (await cancelledMeanwhile(call.paymentIntentId)) {
+      logAlreadyCancelled(context);
+      return;
+    }
     logger.error(
       { err, ...context, outcome: "cancel-failed" },
       "Could not cancel the unused intent minted for an ask whose recovery moved mid-mint; it was never offered, so it cannot be paid, and stays in Stripe (#4052)",
     );
+  }
+}
+
+function logAlreadyCancelled(context: Record<string, unknown>): void {
+  logger.info({ ...context, outcome: "already-cancelled", intentStatus: "canceled" }, "An abandoned ask's intent was already cancelled - by another settle or sweep of it; nothing to do (#4693)");
+}
+
+/** Whether the intent now reads cancelled; a read that fails proves nothing (false). */
+async function cancelledMeanwhile(paymentIntentId: string): Promise<boolean> {
+  try {
+    return (await getPaymentIntent(paymentIntentId, { timeoutMs: ABANDONED_INTENT_STRIPE_TIMEOUT_MS })).status === "canceled";
+  } catch {
+    return false;
   }
 }

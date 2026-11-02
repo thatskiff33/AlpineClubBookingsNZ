@@ -826,16 +826,21 @@ reduction edit, under the door's locks
          logged `left-open` (an adopted one `adopted`) (#4676)
        the row ENDS later -> its close-time sweep (#4693): a later attempt's
          close (not the row's first), the edit that netted it off or folded
-         it in (after commit, from its history; rows a runner had claimed),
-         or the failure that ends it for good lists the recent intents
+         it in (after commit and after its own mint, from its history; rows a
+         runner had claimed - a re-issue's row still naming its door's key
+         whatever its attempts, as its door may have minted under it), or the
+         failure that ends it for good lists the recent intents
          carrying the row's own marker - a release's `creditReleaseId`, a
          re-issue's `reissuedAskKey`, or the `askRecoveryId` the runner
          stamps on its own ordinary intent after minting - and cancels each
          the row does not name by the same proof and owner check; a bounded
          scan that stops early (`complete: false`) settles only what it read
-         and logs `sweep-incomplete`. Never swept: an unmarked intent (the
-         door's own, never handed to the runner, or one minted before
-         #4693), an adopted one, and a review charge's (it can be re-armed)
+         and logs `sweep-incomplete`; each Stripe request is bounded (5s, no
+         retries), and a cancel another settle won is logged
+         `already-cancelled`. Never swept: an unmarked intent (the door's own,
+         never handed to the runner, or one minted before #4693), an adopted
+         one, and a review charge's (it can be re-armed). A refused replay
+         never adopts an intent stamped for another row
        a stalled runner's close -> fenced on its own claim (PROCESSING,
          attempts, claim time), so it never closes a row a reclaiming runner
          holds; that runner's ask is written (#4675)

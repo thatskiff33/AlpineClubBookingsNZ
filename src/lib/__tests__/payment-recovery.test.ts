@@ -3939,7 +3939,7 @@ describe("payment recovery worker", () => {
 
         expectReachedLostHold();
         expect(mockCancelPaymentIntentIfCancellableWithResult).toHaveBeenCalledTimes(1);
-        expect(mockCancelPaymentIntentIfCancellableWithResult).toHaveBeenCalledWith("pi_recovered", { cancellationReason: "abandoned" });
+        expect(mockCancelPaymentIntentIfCancellableWithResult).toHaveBeenCalledWith("pi_recovered", { cancellationReason: "abandoned", timeoutMs: 5_000 });
         // The pin: never inside a transaction - the hold's had ended.
         expect(transactionsOpenAtCancel).toEqual([0]);
         const holdIndex = mockPaymentRecoveryUpdateMany.mock.calls.findIndex(([args]) => {
@@ -4084,7 +4084,7 @@ describe("payment recovery worker", () => {
 
         expectReachedThrownHold();
         expect(mockCancelPaymentIntentIfCancellableWithResult).toHaveBeenCalledTimes(1);
-        expect(mockCancelPaymentIntentIfCancellableWithResult).toHaveBeenCalledWith("pi_recovered", { cancellationReason: "abandoned" });
+        expect(mockCancelPaymentIntentIfCancellableWithResult).toHaveBeenCalledWith("pi_recovered", { cancellationReason: "abandoned", timeoutMs: 5_000 });
         expect(transactionsOpenAtCancel).toEqual([0]);
         expect(result).toMatchObject({ processed: 1, succeeded: 0, retried: 1, failed: 0 });
       });
@@ -4199,13 +4199,13 @@ describe("payment recovery worker", () => {
 
         expect(result).toMatchObject({ processed: 1, succeeded: 1, failed: 0 });
         // This attempt's own intent was stamped with the row before its hold ran.
-        expect(mockStampPaymentIntentMetadata).toHaveBeenCalledWith("pi_recovered", { askRecoveryId: "recovery-additional" });
+        expect(mockStampPaymentIntentMetadata).toHaveBeenCalledWith("pi_recovered", { askRecoveryId: "recovery-additional" }, { timeoutMs: 5_000 });
         expect(mockUpsertPaymentIntentTransaction).toHaveBeenCalledWith(expect.objectContaining({ paymentIntentId: "pi_recovered" }));
         expect(mockListRecentPaymentIntentsMatching).toHaveBeenCalledWith(
           expect.objectContaining({ customerId: "cus_123", createdSince: new Date(new Date("2026-06-01T00:00:00.000Z").getTime() - 5 * 60 * 1000) }),
         );
         expect(mockCancelPaymentIntentIfCancellableWithResult).toHaveBeenCalledTimes(1);
-        expect(mockCancelPaymentIntentIfCancellableWithResult).toHaveBeenCalledWith("pi_first_attempt", { cancellationReason: "abandoned" });
+        expect(mockCancelPaymentIntentIfCancellableWithResult).toHaveBeenCalledWith("pi_first_attempt", { cancellationReason: "abandoned", timeoutMs: 5_000 });
         expect(openAt).toEqual({ list: [0], cancel: [0] });
       });
 

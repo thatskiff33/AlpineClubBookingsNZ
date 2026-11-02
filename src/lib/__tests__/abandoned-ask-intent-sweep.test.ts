@@ -130,10 +130,12 @@ describe("sweepAbandonedAskIntents", () => {
         createdSince: new Date(CREATED_AT.getTime() - 5 * 60 * 1000),
         customerId: "cus_1",
         maxScanned: ABANDONED_ASK_SWEEP_MAX_SCANNED,
+        // #4693 review: each Stripe request is bounded - it runs in a member's edit request.
+        timeoutMs: 5_000,
       }),
     );
     expect(h.cancel).toHaveBeenCalledTimes(1);
-    expect(h.cancel).toHaveBeenCalledWith("pi_left_open", { cancellationReason: "abandoned" });
+    expect(h.cancel).toHaveBeenCalledWith("pi_left_open", { cancellationReason: "abandoned", timeoutMs: 5_000 });
     expect(h.info).toHaveBeenCalledWith(
       expect.objectContaining({ event: ABANDONED_REISSUE_INTENT_LOG_EVENT, outcome: "cancelled", paymentIntentId: "pi_left_open", closedBy: "minted-elsewhere" }),
       expect.any(String),
@@ -169,7 +171,7 @@ describe("sweepAbandonedAskIntents", () => {
     h.row = { ...ORDINARY_ROW, ...moved };
     h.intents = [stamped("pi_left_open")];
     await sweepAbandonedAskIntents("op_ordinary", "net-off-or-fold");
-    expect(h.cancel).toHaveBeenCalledWith("pi_left_open", { cancellationReason: "abandoned" });
+    expect(h.cancel).toHaveBeenCalledWith("pi_left_open", { cancellationReason: "abandoned", timeoutMs: 5_000 });
     expect(h.info).toHaveBeenCalledWith(expect.objectContaining({ outcome: "cancelled", closedBy }), expect.any(String));
   });
 
@@ -196,7 +198,7 @@ describe("sweepAbandonedAskIntents", () => {
     h.intents = [stamped("pi_left_open")];
     h.complete = false;
     await sweepAbandonedAskIntents("op_ordinary", "runner-close");
-    expect(h.cancel).toHaveBeenCalledWith("pi_left_open", { cancellationReason: "abandoned" });
+    expect(h.cancel).toHaveBeenCalledWith("pi_left_open", { cancellationReason: "abandoned", timeoutMs: 5_000 });
     expect(h.warn).toHaveBeenCalledWith(
       expect.objectContaining({ event: ABANDONED_REISSUE_INTENT_LOG_EVENT, outcome: "sweep-incomplete", complete: false, sweptIntentIds: ["pi_left_open"] }),
       expect.stringContaining("an older one may stay open"),
@@ -220,14 +222,27 @@ describe("sweepAfterRunnerClose", () => {
     ["the row's first attempt", 1, "done"],
     ["an attempt put back to wait", 3, "waited"],
   ])("MUTATION: %s sweeps nothing", async (_label, attempts, outcome) => {
-    await sweepAfterRunnerClose({ id: "op_ordinary", attempts }, outcome);
+    await sweepAfterRunnerClose({ id: "op_ordinary", attempts, idempotencyKey: ORDINARY_ROW.idempotencyKey, paymentIntentId: "mod_guest_booking_1_mod_increase" }, outcome as "done" | "waited");
     expect(h.recoveryFind).not.toHaveBeenCalled();
   });
 
   it("a later attempt that ended the row sweeps it", async () => {
     h.intents = [stamped("pi_left_open")];
-    await sweepAfterRunnerClose({ id: "op_ordinary", attempts: 2 }, "done");
-    expect(h.cancel).toHaveBeenCalledWith("pi_left_open", { cancellationReason: "abandoned" });
+    await sweepAfterRunnerClose({ id: "op_ordinary", attempts: 2, idempotencyKey: ORDINARY_ROW.idempotencyKey, paymentIntentId: "pi_recorded" }, "done");
+    expect(h.cancel).toHaveBeenCalledWith("pi_left_open", { cancellationReason: "abandoned", timeoutMs: 5_000 });
+  });
+
+  // #4693 review: the re-issue's door mints under the row's key before any attempt; its write
+  // loses the PENDING fence once a runner claims, so the runner's FIRST attempt may close the
+  // row with its own intent and leave the door's.
+  it("MUTATION: a re-issue's first attempt that ends the row still naming its door's key sweeps the door's intent", async () => {
+    const reissueKey = buildAdditionalIntentRecoveryIdempotencyKey("mod_cut");
+    h.row = { ...ORDINARY_ROW, id: "op_reissue", idempotencyKey: reissueKey, attempts: 1, paymentIntentId: "pi_runner_y" };
+    h.intents = [
+      { id: "pi_door_x", amount: 3000, status: "requires_payment_method", metadata: { ...ASK, reason: "modification_reissued_ask", reissuedAskKey: "mod_reissued_ask_mod_cut" } },
+    ];
+    await sweepAfterRunnerClose({ id: "op_reissue", attempts: 1, idempotencyKey: reissueKey, paymentIntentId: "mod_reissued_ask_mod_cut" }, "done");
+    expect(h.cancel).toHaveBeenCalledWith("pi_door_x", { cancellationReason: "abandoned", timeoutMs: 5_000 });
   });
 });
 
@@ -251,12 +266,27 @@ describe("sweepAskRecoveriesClosedByEdit", () => {
         where: expect.objectContaining({
           bookingId: "booking_1",
           status: "SUCCEEDED",
-          attempts: { gte: 1 },
+          // #4693 review: or a re-issue still naming its door's key, whose door may have minted at attempts 0.
+          OR: [{ attempts: { gte: 1 } }, { paymentIntentId: { in: ["mod_reissued_ask_mod_increase", "mod_reissued_ask_mod_row_only", "mod_reissued_ask_mod_cut"] } }],
           idempotencyKey: { in: ["mod_increase", "mod_row_only", "mod_cut"].map(buildAdditionalIntentRecoveryIdempotencyKey) },
         }),
       }),
     );
     expect(h.recoveryFind.mock.calls.map(([args]) => (args as { where: { id: string } }).where.id)).toEqual(["op_ordinary", "op_cut"]);
+  });
+
+  it("MUTATION (#4693 review): a re-issue netted off at attempts 0 - its door minted, then died before its write - has the door's intent swept", async () => {
+    h.editFind.mockResolvedValue({ newData: { unpaidAskRetiredModificationIds: ["mod_cut"] } });
+    h.recoveryFindMany.mockResolvedValue([{ id: "op_cut", status: "SUCCEEDED", lastError: PENDING_ASK_NETTED_BY_REDUCTION_NOTE }]);
+    h.row = {
+      ...ORDINARY_ROW, id: "op_cut", idempotencyKey: buildAdditionalIntentRecoveryIdempotencyKey("mod_cut"), attempts: 0,
+      lastError: PENDING_ASK_NETTED_BY_REDUCTION_NOTE, paymentIntentId: "mod_reissued_ask_mod_cut",
+    };
+    h.intents = [
+      { id: "pi_door_x", amount: 3000, status: "requires_payment_method", metadata: { ...ASK, reason: "modification_reissued_ask", reissuedAskKey: "mod_reissued_ask_mod_cut" } },
+    ];
+    await sweepAskRecoveriesClosedByEdit({ bookingId: "booking_1", bookingModificationId: "mod_reduction" });
+    expect(h.cancel).toHaveBeenCalledWith("pi_door_x", { cancellationReason: "abandoned", timeoutMs: 5_000 });
   });
 
   it("an edit whose history names no ask reads no recovery", async () => {

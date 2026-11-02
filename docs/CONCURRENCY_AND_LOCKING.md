@@ -3643,8 +3643,10 @@ each the row does not name by the same proof (`closedWithoutIntent`, which now
 also takes a row failed for good: no claim, door or reduction reaches it again)
 and owner check. Classification (`INV-LOCK-001`..`003`): the sweep, the stamp
 and the history read are reads and provider calls only, run after the runner's
-attempt has returned, after the edit's commit (`createModificationAdditionalPaymentIntent`),
-or after the terminal failure's status write - never inside a transaction; it
+attempt has returned, after the edit's commit and its own mint
+(`createModificationAdditionalPaymentIntent`), or after the terminal failure's
+status write - never inside a transaction, each Stripe request bounded (5s, no
+retries); it
 takes no lock, key or tier, and changes no participant or order. A cancel racing
 a writer is the same owner-check window #4652 already states. Reconciled with
 #4652 (PR #4674), #4675 (PR #4689) and #4676 (PR #4694). Proven on real

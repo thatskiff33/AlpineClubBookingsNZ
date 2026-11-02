@@ -787,8 +787,10 @@ describe("#3954: after commit, the minter cancels what the reduction retired, th
       const result = await adjust(grownBooking({ creditPaid: true }), -2_000);
       await mintAfter(result);
       expect(mocks.listIntents).toHaveBeenCalledTimes(1);
+      // #4693 review: AFTER the door's own mint - the sweep's Stripe reads never delay the member's ask.
+      expect(mocks.createIntent.mock.invocationCallOrder[0]!).toBeLessThan(mocks.listIntents.mock.invocationCallOrder[0]!);
       expect(mocks.cancelIntent).toHaveBeenCalledTimes(1);
-      expect(mocks.cancelIntent).toHaveBeenCalledWith("pi_stranded", { cancellationReason: "abandoned" });
+      expect(mocks.cancelIntent).toHaveBeenCalledWith("pi_stranded", { cancellationReason: "abandoned", timeoutMs: 5_000 });
     });
 
     it("MUTATION: a row the edit names that no runner ever claimed is not swept - nothing listed", async () => {
@@ -936,7 +938,7 @@ describe("#3954: after commit, the minter cancels what the reduction retired, th
       await loseFenceTo({ status: "SUCCEEDED", ...moved });
 
       expect(mocks.cancelIntent).toHaveBeenCalledTimes(1);
-      expect(mocks.cancelIntent).toHaveBeenCalledWith("pi_reissued_3000", { cancellationReason: "abandoned" });
+      expect(mocks.cancelIntent).toHaveBeenCalledWith("pi_reissued_3000", { cancellationReason: "abandoned", timeoutMs: 5_000 });
       expect(minterDb.recoveryUpdateMany.mock.invocationCallOrder[0]!).toBeLessThan(mocks.cancelIntent.mock.invocationCallOrder[0]!);
       expect(mocks.upsert).not.toHaveBeenCalled();
       expect(queueReissueInvoice).not.toHaveBeenCalled();

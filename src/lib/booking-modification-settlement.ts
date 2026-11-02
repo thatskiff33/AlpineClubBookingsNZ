@@ -380,6 +380,19 @@ function mintedAsk(pi: { id: string; client_secret: string | null }, live: boole
  * than wait for an exception that never comes.
  */
 export async function createModificationAdditionalPaymentIntent(
+  params: Parameters<typeof mintModificationAdditionalAsk>[0],
+): Promise<ModificationAdditionalAskMint> {
+  try {
+    return await mintModificationAdditionalAsk(params);
+  } finally {
+    // #4693 (`INV-PAY-120`): a waiting ask's recovery this edit netted off or folded in is swept
+    // for intents an earlier attempt minted and never wrote - AFTER the mint (review of PR #4698),
+    // so its bounded Stripe reads never hold the member's own ask past the re-issue's grace.
+    await sweepAskRecoveriesClosedByEdit({ bookingId: params.bookingId, bookingModificationId: params.result.bookingModificationId });
+  }
+}
+
+async function mintModificationAdditionalAsk(
   params: {
     bookingId: string;
     result: BookingModificationPaymentContext;
@@ -425,9 +438,6 @@ export async function createModificationAdditionalPaymentIntent(
     bookingId,
     retired: result.retiredAdditionalAsks,
   });
-  // #4693 (`INV-PAY-120`): and a waiting ask's recovery it netted off or folded in is swept for
-  // the intents an earlier attempt minted and never wrote - after commit, best-effort.
-  await sweepAskRecoveriesClosedByEdit({ bookingId, bookingModificationId: result.bookingModificationId });
 
   // #3954: a re-issued ask was already asked of this card, so a credit-paid
   // ($0) booking whose reduction captured nothing still mints it. #4052: the

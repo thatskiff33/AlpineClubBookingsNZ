@@ -14,6 +14,7 @@ const mockRefundsCreate = vi.fn();
 const mockRefundsList = vi.fn();
 const mockPaymentIntentsRetrieve = vi.fn();
 const mockPaymentIntentsCancel = vi.fn();
+const mockPaymentIntentsUpdate = vi.fn();
 // #3954 round 8: the metadata lookup's list, an async iterable per call.
 const mockPaymentIntentsList = vi.fn();
 const mockSetupIntentsRetrieve = vi.fn();
@@ -34,6 +35,7 @@ vi.mock("stripe", () => {
         retrieve: mockPaymentIntentsRetrieve,
         cancel: mockPaymentIntentsCancel,
         list: mockPaymentIntentsList,
+        update: mockPaymentIntentsUpdate,
       },
       setupIntents: {
         create: mockSetupIntentsCreate,
@@ -81,6 +83,8 @@ const {
   findRecentPaymentIntentByMetadata,
   listRecentPaymentIntentsMatching,
   findCheckoutSessionForPaymentIntent,
+  cancelPaymentIntentIfCancellableWithResult,
+  stampPaymentIntentMetadata,
 } = await import("../stripe");
 
 describe("Stripe library", () => {
@@ -608,6 +612,13 @@ describe("listRecentPaymentIntentsMatching", () => {
     expect(mockPaymentIntentsList).toHaveBeenCalledTimes(2);
   });
 
+  it("MUTATION (#4693 review): a bounded scan sends every page request with its timeout and no retries", async () => {
+    mockPaymentIntentsList.mockReturnValueOnce(listOf([])).mockReturnValueOnce(listOf([]));
+    await listRecentPaymentIntentsMatching({ matches: matches as never, createdSince, customerId: "cus_1", timeoutMs: 5_000 });
+    for (const call of mockPaymentIntentsList.mock.calls) expect(call[1]).toEqual({ timeout: 5_000, maxNetworkRetries: 0 });
+    expect(mockPaymentIntentsList).toHaveBeenCalledTimes(2);
+  });
+
   it("a window read to its end is complete", async () => {
     mockPaymentIntentsList.mockReturnValueOnce(listOf([{ id: "pi_1", amount: 6_000 }, { id: "pi_2", amount: 10 }]));
     const found = await listRecentPaymentIntentsMatching({ matches: matches as never, createdSince, maxScanned: 3 });
@@ -631,5 +642,28 @@ describe("bounded refund preflight listing", () => {
     await expect(listRefundsForPaymentIntent("pi_test", { timeoutMs: 10_000, singlePage: true }))
       .rejects.toThrow("INV-PAY-145");
     expect(mockRefundsList).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("#4693 review: an abandoned ask's cleanup bounds each Stripe request", () => {
+  it("MUTATION: a bounded cancel bounds its read and its cancel, with no retries", async () => {
+    mockPaymentIntentsRetrieve.mockResolvedValueOnce({ id: "pi_1", status: "requires_payment_method" });
+    mockPaymentIntentsCancel.mockResolvedValueOnce({ id: "pi_1", status: "canceled" });
+    await cancelPaymentIntentIfCancellableWithResult("pi_1", { cancellationReason: "abandoned", timeoutMs: 5_000 });
+    expect(mockPaymentIntentsRetrieve).toHaveBeenLastCalledWith("pi_1", {}, { timeout: 5_000, maxNetworkRetries: 0 });
+    expect(mockPaymentIntentsCancel).toHaveBeenLastCalledWith("pi_1", { cancellation_reason: "abandoned" }, { timeout: 5_000, maxNetworkRetries: 0 });
+  });
+
+  it("an unbounded cancel sends exactly what it always sent", async () => {
+    mockPaymentIntentsRetrieve.mockResolvedValueOnce({ id: "pi_1", status: "requires_payment_method" });
+    mockPaymentIntentsCancel.mockResolvedValueOnce({ id: "pi_1", status: "canceled" });
+    await cancelPaymentIntentIfCancellableWithResult("pi_1");
+    expect(mockPaymentIntentsRetrieve).toHaveBeenLastCalledWith("pi_1");
+    expect(mockPaymentIntentsCancel).toHaveBeenLastCalledWith("pi_1", { cancellation_reason: "requested_by_customer" });
+  });
+
+  it("the runner's stamp is a bounded metadata update", async () => {
+    await stampPaymentIntentMetadata("pi_1", { askRecoveryId: "op_1" }, { timeoutMs: 5_000 });
+    expect(mockPaymentIntentsUpdate).toHaveBeenLastCalledWith("pi_1", { metadata: { askRecoveryId: "op_1" } }, { timeout: 5_000, maxNetworkRetries: 0 });
   });
 });

@@ -202,21 +202,28 @@ export const DOOR_INTENT_CLOCK_SKEW_MS = 60 * 1000;
  * plan whose key names no door sends it now, and its earlier request was a
  * runner's, after the row - a lost-claim runner's mint or a currency
  * re-issue's, which this match cannot tell apart, so that refusal fails closed.
+ *
+ * #4693 (review of PR #4698): nor is an intent a runner stamped for ANOTHER row
+ * (`ASK_RECOVERY_METADATA_KEY`): it is that row's own, and that row's close-time
+ * sweep may cancel it. An unstamped intent - every one the previous release
+ * minted - matches as before.
  */
 export function isIntentForOrdinaryAskPlan(
   intent: { amount: number; currency: string; status: string; created?: number; metadata?: Record<string, string> | null },
   plan: OrdinaryAskMintPlan,
   currency: string,
-  recoveryCreatedAt: Date,
+  recovery: { id: string; createdAt: Date },
 ): boolean {
   const metadata = intent.metadata ?? {};
+  const stampedFor = metadata[ASK_RECOVERY_METADATA_KEY];
   return (
     metadata.bookingId === plan.bookingId &&
     metadata.type === ADDITIONAL_ASK_INTENT_TYPE &&
     metadata.reason === plan.metadata.reason &&
     metadata.reason !== ORDINARY_ASK_RECOVERY_REASON &&
+    (stampedFor === undefined || stampedFor === recovery.id) &&
     typeof intent.created === "number" &&
-    intent.created * 1000 <= latestAdoptableIntentCreatedAt(recoveryCreatedAt).getTime() &&
+    intent.created * 1000 <= latestAdoptableIntentCreatedAt(recovery.createdAt).getTime() &&
     intent.amount === plan.amountCents &&
     intent.currency === currency &&
     staleIntentAction(intent) === "reissue"

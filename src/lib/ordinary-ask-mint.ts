@@ -49,6 +49,7 @@ import {
   type OrdinaryAskMintPlan,
 } from "@/lib/ordinary-ask-request";
 import {
+  ABANDONED_INTENT_STRIPE_TIMEOUT_MS,
   isPaymentRecoveryOperationInFlight,
   PAYMENT_RECOVERY_OPERATION_IN_FLIGHT_WHERE,
 } from "@/lib/payment-recovery-constants";
@@ -114,7 +115,7 @@ export async function mintOrdinaryAskIntent({
  */
 async function stampRecoveryOnIntent(paymentIntentId: string, operationId: string, bookingId: string): Promise<void> {
   try {
-    await stampPaymentIntentMetadata(paymentIntentId, { [ASK_RECOVERY_METADATA_KEY]: operationId });
+    await stampPaymentIntentMetadata(paymentIntentId, { [ASK_RECOVERY_METADATA_KEY]: operationId }, { timeoutMs: ABANDONED_INTENT_STRIPE_TIMEOUT_MS });
   } catch (err) {
     logger.warn(
       { err, paymentIntentId, operationId, bookingId },
@@ -171,7 +172,7 @@ async function findIntentMintedForOrdinaryAsk({
   if (plan.metadata.reason === ORDINARY_ASK_RECOVERY_REASON) return null;
   const currency = stripeChargeCurrency(format);
   const scan = await listRecentPaymentIntentsMatching({
-    matches: (intent) => isIntentForOrdinaryAskPlan(intent, plan, currency, recovery.createdAt),
+    matches: (intent) => isIntentForOrdinaryAskPlan(intent, plan, currency, recovery),
     createdSince: new Date(recovery.createdAt.getTime() - MINTED_INTENT_LOOKBACK_MS),
     // #4079: nothing created after the row could match, so none of it is read.
     createdUntil: latestAdoptableIntentCreatedAt(recovery.createdAt),

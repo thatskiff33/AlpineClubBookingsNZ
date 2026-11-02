@@ -97,7 +97,7 @@ describe("mintOrdinaryAskIntent stamps the runner's own intent with its recovery
     expect(mocks.createPaymentIntent).toHaveBeenCalledWith(
       expect.objectContaining({ metadata: { bookingId: BOOKING, type: "modification_additional", reason: "guest_add_price_increase" } }),
     );
-    expect(mocks.stampPaymentIntentMetadata).toHaveBeenCalledWith("pi_new", { askRecoveryId: "op_4036" });
+    expect(mocks.stampPaymentIntentMetadata).toHaveBeenCalledWith("pi_new", { askRecoveryId: "op_4036" }, { timeoutMs: 5_000 });
     expect(mocks.createPaymentIntent.mock.invocationCallOrder[0]).toBeLessThan(mocks.stampPaymentIntentMetadata.mock.invocationCallOrder[0]!);
   });
 
@@ -114,6 +114,16 @@ describe("mintOrdinaryAskIntent stamps the runner's own intent with its recovery
       mintOrdinaryAskIntent({ format: CLUB_FORMAT_TEST, plan, customerId: "cus_door", recovery: RECOVERY }),
     ).resolves.toMatchObject({ adopted: true });
     expect(mocks.stampPaymentIntentMetadata).not.toHaveBeenCalled();
+  });
+
+  it("MUTATION (#4693 review): a refused replay never adopts an intent stamped for ANOTHER recovery row - it fails closed", async () => {
+    const err = refusal();
+    mocks.createPaymentIntent.mockRejectedValue(err);
+    stripeHolds(intent("pi_other_rows", { metadata: { bookingId: BOOKING, type: "modification_additional", reason: door.reason, askRecoveryId: "op_other_row" } }));
+    await expect(
+      mintOrdinaryAskIntent({ format: CLUB_FORMAT_TEST, plan, customerId: "cus_door", recovery: RECOVERY }),
+    ).rejects.toBe(err);
+    expect(mocks.listRecentPaymentIntentsMatching).toHaveBeenCalledTimes(1);
   });
 
   it("a failed stamp is logged and the ask goes on with its intent", async () => {

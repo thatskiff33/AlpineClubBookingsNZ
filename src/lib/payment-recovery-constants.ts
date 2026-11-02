@@ -9,6 +9,15 @@ import type { PaymentRecoveryOperationStatus, Prisma } from "@prisma/client";
 export const MAX_PAYMENT_RECOVERY_ATTEMPTS = 5;
 
 /**
+ * #4693 (review of PR #4698): each Stripe request an unwritten ask intent's cleanup
+ * makes - the runner's stamp, the settle's and the close-time sweep's reads and
+ * cancel - is bounded so, with no retries (the #3641 shape). They run in a
+ * member's edit request and in the runner, and one that times out is only a
+ * cleanup that did not happen yet.
+ */
+export const ABANDONED_INTENT_STRIPE_TIMEOUT_MS = 5_000;
+
+/**
  * #4126 (`INV-SSOT`): a pre-persisted door's row no worker has touched - still
  * PENDING, never attempted. The runner's claim (PENDING -> PROCESSING, attempts
  * + 1) ends it, and from then the runner owns the row. The door's

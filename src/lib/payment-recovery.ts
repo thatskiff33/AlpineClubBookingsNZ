@@ -3252,7 +3252,7 @@ async function processCreateAdditionalPaymentIntentOperation(
  * What one processed operation came to: `done`, or `waited` when it was put back to wait
  * (`waitPaymentRecoveryOperation`, #4253) - which the run counts as a retry, never a success.
  */
-type PaymentRecoveryProcessOutcome = "done" | "waited";
+export type PaymentRecoveryProcessOutcome = "done" | "waited";
 
 async function processPaymentRecoveryOperation(
   operation: PaymentRecoveryOperation,

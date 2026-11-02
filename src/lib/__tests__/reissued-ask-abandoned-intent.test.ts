@@ -14,6 +14,7 @@ const h = vi.hoisted(() => ({
   rowFind: vi.fn(),
   ownerOpFind: vi.fn(),
   cancel: vi.fn(),
+  get: vi.fn(),
   info: vi.fn(),
   warn: vi.fn(),
   error: vi.fn(),
@@ -24,7 +25,7 @@ vi.mock("@/lib/prisma", () => ({
     paymentTransaction: { findUnique: h.rowFind },
   },
 }));
-vi.mock("@/lib/stripe", () => ({ cancelPaymentIntentIfCancellableWithResult: h.cancel }));
+vi.mock("@/lib/stripe", () => ({ cancelPaymentIntentIfCancellableWithResult: h.cancel, getPaymentIntent: h.get }));
 vi.mock("@/lib/logger", () => ({ default: { info: h.info, warn: h.warn, error: h.error } }));
 
 const { ABANDONED_REISSUE_INTENT_LOG_EVENT, settleLostRecoveryClaimHold, settleLostReissuedAskFence } = await import("@/lib/reissued-ask-abandoned-intent");
@@ -47,13 +48,14 @@ beforeEach(() => {
   h.rowFind.mockImplementation(async () => h.row);
   h.ownerOpFind.mockResolvedValue(null);
   h.cancel.mockImplementation(async (id: string) => ({ paymentIntent: { id, status: "canceled" }, canceled: true }));
+  h.get.mockImplementation(async (id: string) => ({ id, status: "requires_payment_method" }));
 });
 
 describe("settleLostReissuedAskFence", () => {
   it("MUTATION: cancels a proven abandoned intent as abandoned and hands back the re-read", async () => {
     await expect(settleLostReissuedAskFence(CALL)).resolves.toEqual(NETTED);
     expect(h.rowFind).toHaveBeenCalledWith({ where: { stripePaymentIntentId: "pi_door" }, select: { id: true } });
-    expect(h.cancel).toHaveBeenCalledWith("pi_door", { cancellationReason: "abandoned" });
+    expect(h.cancel).toHaveBeenCalledWith("pi_door", { cancellationReason: "abandoned", timeoutMs: 5_000 });
     expect(h.info).toHaveBeenCalledWith(expect.objectContaining({ canceled: true, paymentIntentId: "pi_door" }), expect.any(String));
   });
 
@@ -62,8 +64,28 @@ describe("settleLostReissuedAskFence", () => {
     h.cancel.mockResolvedValueOnce({ paymentIntent: { id: "pi_door", status: "canceled" }, canceled: false });
     await settleLostReissuedAskFence(CALL);
     expect(h.cancel).toHaveBeenCalledTimes(2);
-    expect(h.info).toHaveBeenCalledTimes(1);
-    expect(h.warn).toHaveBeenCalledWith(expect.objectContaining({ canceled: false, intentStatus: "canceled" }), expect.any(String));
+    expect(h.info.mock.calls.filter(([context]) => (context as { outcome?: string }).outcome === "cancelled")).toHaveLength(1);
+    // #4693 (review of PR #4698): already cancelled - by another settle or sweep - is not a refusal.
+    expect(h.info).toHaveBeenCalledWith(expect.objectContaining({ outcome: "already-cancelled", intentStatus: "canceled" }), expect.any(String));
+    expect(h.warn).not.toHaveBeenCalled();
+  });
+
+  it("MUTATION (#4693 review): a cancel refused because another settle or sweep cancelled it first is read back and logged already-cancelled, never cancel-failed", async () => {
+    h.cancel.mockRejectedValueOnce(Object.assign(new Error("This PaymentIntent's status is canceled"), { code: "payment_intent_unexpected_state" }));
+    h.get.mockResolvedValueOnce({ id: "pi_door", status: "canceled" });
+    await settleLostReissuedAskFence(CALL);
+    expect(h.get).toHaveBeenCalledWith("pi_door", { timeoutMs: 5_000 });
+    expect(h.info).toHaveBeenCalledWith(expect.objectContaining({ outcome: "already-cancelled", paymentIntentId: "pi_door" }), expect.any(String));
+    expect(h.error).not.toHaveBeenCalled();
+  });
+
+  it("a cancel that fails while the intent still reads open, or whose read-back fails, is cancel-failed", async () => {
+    h.cancel.mockRejectedValueOnce(new Error("Stripe is down"));
+    await settleLostReissuedAskFence(CALL);
+    h.cancel.mockRejectedValueOnce(new Error("Stripe is down"));
+    h.get.mockRejectedValueOnce(new Error("timed out"));
+    await settleLostReissuedAskFence(CALL);
+    expect(h.error.mock.calls.map(([context]) => (context as { outcome?: string }).outcome)).toEqual(["cancel-failed", "cancel-failed"]);
   });
 
   it("a recovery re-read that fails proves nothing: null back, nothing cancelled", async () => {
@@ -92,7 +114,7 @@ describe("settleLostReissuedAskFence", () => {
     h.recovery = { id: "op_reissue", status: "SUCCEEDED", lastError: null, paymentIntentId: "pi_runner_suffixed_key" };
     await settleLostReissuedAskFence(CALL);
     expect(h.ownerOpFind).toHaveBeenCalledWith({ where: { paymentIntentId: "pi_door" }, select: { id: true } });
-    expect(h.cancel).toHaveBeenCalledWith("pi_door", { cancellationReason: "abandoned" });
+    expect(h.cancel).toHaveBeenCalledWith("pi_door", { cancellationReason: "abandoned", timeoutMs: 5_000 });
   });
 
   // Delta review: the runner's locked write repoints the recovery at the intent
@@ -100,7 +122,7 @@ describe("settleLostReissuedAskFence", () => {
   it("MUTATION: a recovery the runner still holds, already repointed at ANOTHER intent, leaves the door's abandoned - cancelled", async () => {
     h.recovery = { id: "op_reissue", status: "PROCESSING", lastError: null, paymentIntentId: "pi_runner_suffixed_key" };
     await settleLostReissuedAskFence(CALL);
-    expect(h.cancel).toHaveBeenCalledWith("pi_door", { cancellationReason: "abandoned" });
+    expect(h.cancel).toHaveBeenCalledWith("pi_door", { cancellationReason: "abandoned", timeoutMs: 5_000 });
   });
 
   it.each([
@@ -120,7 +142,7 @@ describe("settleLostReissuedAskFence", () => {
   it("MUTATION: a recovery failed for good (its attempts spent) leaves the door's abandoned - cancelled", async () => {
     h.recovery = { id: "op_reissue", status: "FAILED", lastError: "out of attempts", attempts: 5, paymentIntentId: "mod_reissued_ask_mod_reduction" };
     await settleLostReissuedAskFence(CALL);
-    expect(h.cancel).toHaveBeenCalledWith("pi_door", { cancellationReason: "abandoned" });
+    expect(h.cancel).toHaveBeenCalledWith("pi_door", { cancellationReason: "abandoned", timeoutMs: 5_000 });
     expect(h.info).toHaveBeenCalledWith(expect.objectContaining({ outcome: "cancelled", closedBy: "failed-for-good" }), expect.any(String));
   });
 
@@ -181,7 +203,7 @@ describe("settleLostRecoveryClaimHold (#4631, #4652)", () => {
     expect(h.recoveryFind).toHaveBeenCalledWith({ where: { id: "op_recovery" }, select: { status: true, lastError: true, paymentIntentId: true, attempts: true } });
     expect(h.rowFind).toHaveBeenCalledWith({ where: { stripePaymentIntentId: "pi_runner" }, select: { id: true } });
     expect(h.ownerOpFind).toHaveBeenCalledWith({ where: { paymentIntentId: "pi_runner" }, select: { id: true } });
-    expect(h.cancel).toHaveBeenCalledWith("pi_runner", { cancellationReason: "abandoned" });
+    expect(h.cancel).toHaveBeenCalledWith("pi_runner", { cancellationReason: "abandoned", timeoutMs: 5_000 });
     expect(h.info).toHaveBeenCalledWith(
       expect.objectContaining({ event: ABANDONED_REISSUE_INTENT_LOG_EVENT, outcome: "cancelled", operationId: "op_recovery", closedBy }),
       expect.any(String),
@@ -275,7 +297,14 @@ describe("settleLostRecoveryClaimHold (#4631, #4652)", () => {
   it("repeated: an intent Stripe already cancelled is left alone, not reported cancelled", async () => {
     h.cancel.mockResolvedValueOnce({ paymentIntent: { id: "pi_runner", status: "canceled" }, canceled: false });
     await settleLostRecoveryClaimHold(RUNNER);
-    expect(h.info).not.toHaveBeenCalled();
-    expect(h.warn).toHaveBeenCalledWith(expect.objectContaining({ outcome: "uncancellable", intentStatus: "canceled" }), expect.any(String));
+    // #4693 review: already cancelled is no refusal; never reported as cancelled.
+    expect(h.info).not.toHaveBeenCalledWith(expect.objectContaining({ outcome: "cancelled" }), expect.any(String));
+    expect(h.info).toHaveBeenCalledWith(expect.objectContaining({ outcome: "already-cancelled", intentStatus: "canceled" }), expect.any(String));
+  });
+
+  it("an intent Stripe will not cancel for another reason (captured) is still uncancellable", async () => {
+    h.cancel.mockResolvedValueOnce({ paymentIntent: { id: "pi_runner", status: "succeeded" }, canceled: false });
+    await settleLostRecoveryClaimHold(RUNNER);
+    expect(h.warn).toHaveBeenCalledWith(expect.objectContaining({ outcome: "uncancellable", intentStatus: "succeeded" }), expect.any(String));
   });
 });
