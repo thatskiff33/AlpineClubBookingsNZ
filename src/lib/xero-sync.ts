@@ -912,8 +912,7 @@ export async function completeXeroSyncOperation(
   // #4373: the claim this outcome was made under; it never lands on another claim (`INV-INT-029`).
   claim: XeroOperationClaim,
   completion: XeroSyncOperationCompletion,
-  // #4356 (`INV-INT-029`): no PARTIAL, FAILED or CANCELLED completion lands on a recorded success or a repair's claim; null then.
-  // #4673, #4686: nor on any row but this claim's own; a PARTIAL that lost its claim has its Xero object traced.
+  // #4356, #4673, #4686 (`INV-INT-029`): no PARTIAL, FAILED or CANCELLED completion lands on a recorded success, a repair's claim or another claim's row; null then.
   // #4256: `retryClaim` writes only onto that retry claim, clearing its marker code; `alert: false` raises no repeated-failure alert.
   options?: { store?: Prisma.TransactionClient; retryClaim?: true; alert?: false },
 ): Promise<(XeroSyncOperation & { deferredPostCommit?: () => Promise<void> }) | null> {
@@ -927,8 +926,7 @@ export async function completeXeroSyncOperation(
         : null),
   );
 
-  // #4686 (`INV-INT-029`): set when a part-success is refused because its attempt lost its claim.
-  let lostClaim = false;
+  let lostClaim = false; // #4686: a part-success refused because its attempt lost its claim (`INV-INT-029`).
   const completeWithClient = async (tx: Prisma.TransactionClient) => {
     const status = completion.status ?? "SUCCEEDED";
     const data = {
@@ -953,9 +951,7 @@ export async function completeXeroSyncOperation(
         recordLinks: async () => {
           for (const link of completion.extraLinks ?? []) await upsertXeroObjectLinkWithClient(tx, link);
         },
-        lostClaim: () => {
-          lostClaim = true;
-        },
+        lostClaim: () => void (lostClaim = true),
       });
     }
     const operation = await tx.xeroSyncOperation.findUniqueOrThrow({ where: { id: operationId } });
@@ -970,22 +966,8 @@ export async function completeXeroSyncOperation(
     ? await completeWithClient(options.store)
     : await prisma.$transaction(completeWithClient);
 
-  // #4686 (`INV-INT-029`): its Xero object is traced after commit, never written over the row. A caller's own
-  // transaction (`store`) has not committed yet, so it is only logged there; no such caller completes PARTIAL.
-  if (lostClaim && completion.xeroObjectId) {
-    const partial = { claim, xeroObjectType: completion.xeroObjectType ?? null, xeroObjectId: completion.xeroObjectId, xeroObjectNumber: completion.xeroObjectNumber ?? null };
-    if (options?.store) {
-      logger.error(partial, "Xero part-success not recorded after its claim was lost, inside a caller's transaction: no audit row or alert (#4686)");
-    } else {
-      try {
-        const { traceLostClaimPartial } = await import("./xero-late-partial-trace");
-        await traceLostClaimPartial(partial);
-      } catch (error) {
-        logger.error({ ...partial, err: error }, "Xero part-success not recorded after its claim was lost, and its trace failed (#4686)");
-      }
-    }
-  }
-
+  // #4686: its Xero object is traced after commit (or only logged inside a caller's own `store`), never written over the row.
+  if (lostClaim) await import("./xero-late-partial-trace").then((trace) => trace.afterLostClaimPartial(claim, completion, Boolean(options?.store)), (err) => logger.error({ operationId, err }, "Xero part-success trace not loaded (#4686)"));
   // #4374 (`INV-INT-029`): a success landing on a row resolved in Xero warns and alerts once, after commit. On an
   // injected store that is its owner's commit: the owner runs the `deferredPostCommit` returned here after it.
   const resolvedRowAlert = successAfterResolutionAlert(operation);

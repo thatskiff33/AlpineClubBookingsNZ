@@ -87,7 +87,7 @@ vi.mock("@/lib/xero-hardening", () => ({
 
 // #4686: the lost-claim part-success trace runs after commit; its own suite covers it.
 vi.mock("@/lib/xero-late-partial-trace", () => ({
-  traceLostClaimPartial: vi.fn(),
+  afterLostClaimPartial: vi.fn(),
 }));
 
 vi.mock("@/lib/logger", () => ({
@@ -2301,7 +2301,7 @@ describe("outcome writes never replace a recorded success (#4356, INV-INT-029)",
       mocks.transaction.mockImplementation(async (callback: (tx: unknown) => Promise<unknown>) => callback(store));
     }
     async function traced() {
-      return vi.mocked((await import("@/lib/xero-late-partial-trace")).traceLostClaimPartial);
+      return vi.mocked((await import("@/lib/xero-late-partial-trace")).afterLostClaimPartial);
     }
 
     it.each(["PARTIAL", "CANCELLED"])("MUTATION: a late %s leaves the Retry's PENDING row as it is: null, no link, no alert", async (status) => {
@@ -2335,7 +2335,7 @@ describe("outcome writes never replace a recorded success (#4356, INV-INT-029)",
       expect(row).toEqual(before);
       expect(mocks.txLinkUpsert).not.toHaveBeenCalled();
       expect(trace).toHaveBeenCalledTimes(1);
-      expect(trace).toHaveBeenCalledWith({ claim: { id: "op_shared", startedAt: claimedAt }, ...lateObject });
+      expect(trace).toHaveBeenCalledWith({ id: "op_shared", startedAt: claimedAt }, expect.objectContaining(lateObject), false);
     });
 
     it("warns inside the refused write, naming the object and both claims", async () => {
@@ -2349,21 +2349,11 @@ describe("outcome writes never replace a recorded success (#4356, INV-INT-029)",
       );
     });
 
-    it("on a caller's own transaction, logs the object and runs no trace before that transaction commits", async () => {
+    it("MUTATION: on a caller's own transaction (`store`), says so, so the trace only logs before that transaction commits", async () => {
       const trace = await traced();
-      const logger = (await import("@/lib/logger")).default;
       const { store } = queuedByRetry();
       await expect(completeXeroSyncOperation(xeroClaim("op_shared", EARLIER), { status: "PARTIAL", ...lateObject }, { store })).resolves.toBeNull();
-      expect(trace).not.toHaveBeenCalled();
-      expect(logger.error).toHaveBeenCalledWith(expect.objectContaining({ xeroObjectId: "inv_late" }), expect.stringContaining("caller's transaction"));
-    });
-
-    it("a trace that throws never throws into the run", async () => {
-      const trace = await traced();
-      trace.mockRejectedValueOnce(new Error("audit table gone"));
-      const { store } = queuedByRetry();
-      onModuleClient(store);
-      await expect(completeXeroSyncOperation(xeroClaim("op_shared", EARLIER), { status: "PARTIAL", ...lateObject })).resolves.toBeNull();
+      expect(trace).toHaveBeenCalledWith({ id: "op_shared", startedAt: EARLIER }, expect.objectContaining(lateObject), true);
     });
 
     const notTraced: Array<[string, () => Promise<unknown>]> = [
@@ -2386,11 +2376,6 @@ describe("outcome writes never replace a recorded success (#4356, INV-INT-029)",
         const { store } = queuedByRetry();
         onModuleClient(store);
         return completeXeroSyncOperation(xeroClaim("op_shared", EARLIER), { status: "PARTIAL", ...lateObject }, { retryClaim: true });
-      }],
-      ["a part-success naming no Xero object", async () => {
-        const { store } = queuedByRetry();
-        onModuleClient(store);
-        return completeXeroSyncOperation(xeroClaim("op_shared", EARLIER), { status: "PARTIAL" });
       }],
     ];
 

@@ -47,6 +47,26 @@ export interface LostClaimPartial {
   xeroObjectNumber: string | null;
 }
 
+/**
+ * `completeXeroSyncOperation`'s hand-off once its refused write has returned:
+ * a part-success naming no object made nothing to trace. Inside a caller's own
+ * transaction (`store`), not yet committed, it is only logged - no production
+ * caller completes PARTIAL there. Never throws.
+ */
+export async function afterLostClaimPartial(
+  claim: XeroOperationClaim,
+  completion: { xeroObjectType?: string | null; xeroObjectId?: string | null; xeroObjectNumber?: string | null },
+  insideCallerTransaction: boolean,
+): Promise<void> {
+  if (!completion.xeroObjectId) return;
+  const partial = { claim, xeroObjectType: completion.xeroObjectType ?? null, xeroObjectId: completion.xeroObjectId, xeroObjectNumber: completion.xeroObjectNumber ?? null };
+  if (insideCallerTransaction) {
+    logger.error(partial, "Xero part-success not recorded after its claim was lost, inside a caller's transaction: no audit row or alert (#4686)");
+    return;
+  }
+  await traceLostClaimPartial(partial);
+}
+
 /** Re-read, audit and alert a part-success no row records. Never throws. */
 export async function traceLostClaimPartial(partial: LostClaimPartial): Promise<void> {
   const trace = {

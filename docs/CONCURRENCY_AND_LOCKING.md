@@ -330,6 +330,26 @@ participant: the claim is the row's `startedAt`, compared in the same
 status-guarded `updateMany`. Proven by
 `xero-late-failure-after-retry.realdb.test.ts`.
 
+Since #4686 a CANCELLED or PARTIAL completion is held to the same rule: it
+lands only on its own claim's RUNNING or FAILED row (a PARTIAL also on its own
+claim's PARTIAL, two callers sharing the row, #1354), never on the Retry's
+PENDING row, a withdrawn CANCELLED one or a row another claim ended. Every
+production CANCELLED writer completes its own RUNNING claim (the outbox's,
+REQUEUE's or retry's claimed row, or the booking invoice's started row), so
+none relied on landing elsewhere; a start handed a queued winner's row
+(#1354) now leaves it PENDING, and that queued run makes the same
+marked-paid check and cancels itself. A refused PARTIAL's Xero object is not
+linked or written over the row: `refusedOutcomeWrite` warns inside the
+completion's transaction, and after commit, outside any transaction,
+`traceLostClaimPartial` re-reads the row, writes one `xero` audit row and
+sends #4374's alert once per object (`sendAdminAlertOnceEver`). Classified
+per `INV-LOCK-001`: no global, lodge or member tier, as before - the write
+is the same single-row status-guarded `updateMany`, the audit row and the
+once-ever alert claim are independent single-row writes that hold no lock
+across the email. `INV-LOCK-002`: no new key or order. `INV-LOCK-003`: no new
+participant to register. The membership cancellation credit note's limit
+above applies to its late PARTIAL too. Proven by the same suite.
+
 ### The Xero token refresh uses a row lease, shared across colours (#3454)
 
 `xero-token-store.ts` composes no booking, capacity, membership or money

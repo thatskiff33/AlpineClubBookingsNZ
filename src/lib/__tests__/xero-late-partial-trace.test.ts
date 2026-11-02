@@ -23,11 +23,11 @@ vi.mock("@/lib/prisma", () => ({ prisma: { xeroSyncOperation: { findUnique: mock
 vi.mock("@/lib/audit", () => ({ createAuditLog: mocks.audit }));
 vi.mock("@/lib/logger", () => ({ default: { warn: mocks.warn, error: mocks.error, info: mocks.info } }));
 vi.mock("@/lib/xero-success-after-resolution-alert", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/xero-success-after-resolution-alert")>()),
+  ...((await importOriginal()) as typeof import("@/lib/xero-success-after-resolution-alert")),
   unrecordedLateSuccessAlert: mocks.alert,
 }));
 
-import { LATE_PARTIAL_NOT_RECORDED_ACTION, traceLostClaimPartial } from "@/lib/xero-late-partial-trace";
+import { afterLostClaimPartial, LATE_PARTIAL_NOT_RECORDED_ACTION, traceLostClaimPartial } from "@/lib/xero-late-partial-trace";
 import { xeroClaim } from "./helpers/xero-claim";
 
 const EARLIER = new Date("2026-06-30T23:00:00.000Z");
@@ -112,5 +112,31 @@ describe("a part-success that lost its claim is traced, never recorded (#4686)",
     mocks.send.mockRejectedValueOnce(new Error("smtp down"));
     await expect(traceLostClaimPartial(partial)).resolves.toBeUndefined();
     expect(mocks.error).toHaveBeenCalledWith(expect.anything(), expect.stringContaining("alert failed"));
+  });
+
+  describe("the hand-off after the refused write", () => {
+    const object = { xeroObjectType: "INVOICE", xeroObjectId: "inv_late", xeroObjectNumber: "INV-9" };
+
+    it("traces the object after commit", async () => {
+      mocks.findUnique.mockResolvedValue(row());
+      await afterLostClaimPartial(partial.claim, object, false);
+      expect(mocks.findUnique).toHaveBeenCalledWith({ where: { id: "op_late" } });
+      expect(mocks.audit).toHaveBeenCalledTimes(1);
+      expect(mocks.alert).toHaveBeenCalledTimes(1);
+    });
+
+    it("MUTATION: inside a caller's own transaction, only logs the object: no read, audit row or alert before that commit", async () => {
+      await afterLostClaimPartial(partial.claim, object, true);
+      expect(mocks.findUnique).not.toHaveBeenCalled();
+      expect(mocks.audit).not.toHaveBeenCalled();
+      expect(mocks.alert).not.toHaveBeenCalled();
+      expect(mocks.error).toHaveBeenCalledWith(expect.objectContaining({ xeroObjectId: "inv_late" }), expect.stringContaining("caller's transaction"));
+    });
+
+    it("MUTATION: a part-success naming no Xero object made nothing to trace", async () => {
+      await afterLostClaimPartial(partial.claim, { xeroObjectId: null }, false);
+      expect(mocks.findUnique).not.toHaveBeenCalled();
+      expect(mocks.error).not.toHaveBeenCalled();
+    });
   });
 });

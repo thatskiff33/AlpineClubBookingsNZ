@@ -1035,7 +1035,18 @@ note.
    but SUCCEEDED lands on the row (`INV-INT-029`). And since #4373 no outcome
    at all lands on a RUNNING row another claim stamped: every complete and
    fail carries the claim (`startedAt`) it was made under, so a stale-reset
-   or failed attempt's late outcome never lands on the retry's claim. Mark non-replayable writes only onto a FAILED or
+   or failed attempt's late outcome never lands on the retry's claim. Since
+   #4673 and #4686 a FAILED, CANCELLED or PARTIAL outcome lands only on its own
+   claim's RUNNING or FAILED row (a PARTIAL also on its own PARTIAL), so a
+   stalled attempt's late outcome never undoes an officer's in-place Retry
+   (PENDING) or a withdrawal. A late PARTIAL so refused made a Xero object no
+   row records: it is not linked, since the queued run's same keyed call
+   normally answers with it and records it, and a link would answer that
+   run's own checks (a credit note's counts toward refund coverage). It is
+   warned, audited once (`xero.operation.late_partial_not_recorded`, `xero`,
+   `xero-late-partial-trace.ts`) and alerted once per object (the
+   `XERO_SUCCESS_AFTER_RESOLUTION` alert, key
+   `xero-success-after-resolution:<operation id>:<object id>`). Mark non-replayable writes only onto a FAILED or
    PARTIAL row, so a retry that claimed it after the officer's read gets the
    409 "a retry is running"; a queued retry of a row marked not replayable is
    closed as skipped. Rows repaired before this release stay partly
