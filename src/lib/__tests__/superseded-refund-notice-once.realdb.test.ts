@@ -15,9 +15,11 @@
  *   reaper hands the row back, the attempt wakes, records the refund and loses
  *   its close; the next claim closes the row. One member email, one admin alert,
  *   one audit row, one booking event; a second run adds nothing.
- * - the reclaiming runner gets there first: Stripe answers its replay of the
- *   row's key with the stalled attempt's refund, and it announces it; the
- *   stalled attempt, waking, sends nothing more.
+ * - the reclaiming runner gets there first: Stripe lists the stalled attempt's
+ *   refund, so its preflight records it and it announces it with nothing left
+ *   to ask (#4699); or Stripe's list lags, and Stripe answers its replay of the
+ *   row's key with that refund, which it announces. Either way the stalled
+ *   attempt, waking, sends nothing more.
  * - the next claim's half: the attempt recorded its refund and stalled before
  *   its notice; the next claim reads nothing outstanding, proves the recorded
  *   refund the row's own on Stripe, and announces it before its close.
@@ -279,7 +281,15 @@ let harnessRole: { restore: () => void } | undefined;
       expect(await announced()).toEqual(ONCE_EACH);
     });
 
-    it("the reclaiming runner gets there first: Stripe answers its replay with the stalled attempt's refund, it announces it, and the stalled attempt then sends nothing", async () => {
+    /*
+      #4699: the reclaiming runner sizes its refund on the ledger after its preflight records what
+      Stripe lists. Listed, the stalled attempt's refund leaves nothing outstanding, so the runner
+      asks for nothing and announces it as the row's own; only a list that lags it replays the key.
+    */
+    it.each([
+      ["Stripe lists the stalled attempt's refund: its preflight records it, and it announces it with nothing left to ask", true, 1],
+      ["Stripe's list lags: Stripe answers its replay with the stalled attempt's refund, and it announces it", false, 2],
+    ])("the reclaiming runner gets there first - %s; the stalled attempt then sends nothing", async (_label, listed, asks) => {
       const operationId = await seedCapturedSupersededAsk();
       const frozenNow = new Date();
       let afterNextClaim: Awaited<ReturnType<typeof announced>> | undefined;
@@ -287,7 +297,13 @@ let harnessRole: { restore: () => void } | undefined;
       stripeMakesRefunds(async () => {
         vi.setSystemTime(new Date(frozenNow.getTime() + 31 * 60_000));
         await reapStaleClaim(operationId);
-        expect(await recovery.runPaymentRecoveryOperationNow(operationId, CLUB_FORMAT_TEST)).toBe("succeeded");
+        const listRefunds = stripeRaceHooks.listRefunds;
+        if (!listed) stripeRaceHooks.listRefunds = async () => [];
+        try {
+          expect(await recovery.runPaymentRecoveryOperationNow(operationId, CLUB_FORMAT_TEST)).toBe("succeeded");
+        } finally {
+          stripeRaceHooks.listRefunds = listRefunds;
+        }
         afterNextClaim = await announced();
       });
       try {
@@ -300,8 +316,8 @@ let harnessRole: { restore: () => void } | undefined;
       expect(afterNextClaim).toEqual(ONCE_EACH);
       expect(await announced()).toEqual(ONCE_EACH);
       expect(await rowNow(operationId)).toEqual({ status: "SUCCEEDED", attempts: 2 });
-      // Both asked under the row's key, and Stripe made one refund, recorded once.
-      expect(refundAsks).toBe(2);
+      // Stripe made one refund, recorded once; a lagging list has both ask under the row's key.
+      expect(refundAsks).toBe(asks);
       expect(await ledgerRefunds()).toEqual([{ stripeRefundId: "re_race_4690_1", amountCents: SUPERSEDED_CENTS }]);
       const alert = await prisma.emailLog.findFirstOrThrow({ where: { to: ADMIN_EMAIL, templateName: ADMIN_TEMPLATE }, select: { subject: true } });
       expect(alert.subject).toContain("Ada Proof");
