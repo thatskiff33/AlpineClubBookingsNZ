@@ -1961,27 +1961,62 @@ on `manuallyResolvedAt`.
     traced as #4426 says.
   - **The 5s default, confirmed and fixed.** The record ran on Prisma's
     interactive defaults (2s `maxWait`, 5s `timeout`), while the Payment row's
-    longest holders run 30s transactions: the nightly bank-refund void
-    follow-up (`followUpVoidedBankRefundNote`) and a group cancel enqueueing a
-    refund note. A timeout reached the create's catch, which failed the row -
+    longest documented holder runs a 30s transaction: the nightly bank-refund
+    void follow-up (`followUpVoidedBankRefundNote`, `{ timeout: 30_000 }`). A
+    timeout reached the create's catch, which failed the row -
     and the note Xero had made was recorded nowhere, with no alert. The record
     now runs on `PAYMENT_ROW_WAIT_TRANSACTION_OPTIONS` (`maxWait` 10s, `timeout`
     30s, `payment-transactions.ts`), shared with the inbound recount's claim
-    (#4288), which waits on the same row for the same reason. If the wait
-    still runs out (`isRecordWaitLost`: P2028, P2034 or SQLSTATE 40P01, 55P03),
-    nothing was written, and the create returns without settling, completing
-    or failing the row: it stays RUNNING under this run's claim (or FAILED, if
-    Mark failed reached it first), the note is
+    (#4288), which waits on the same row for the same reason. If the record
+    still cannot get its locks in time (`isRecordWaitLost`: P2028, P2034 or
+    SQLSTATE 40P01 - a deadlock - or 55P03), nothing was written, and the
+    create neither settles, completes nor fails the row: it stays RUNNING under
+    this run's claim (or FAILED, if Mark failed reached it first), the note is
     logged first, audited once (the same
     `xero.refund_credit_note.late_note_not_recorded` action, `reason:
     "record-wait-lost"`) and alerted once through #4374's alert
-    (`traceUnrecordedLateNote`), naming the note, its amount and the booking.
-    The alert asks the officer not to raise another note: once the row shows
-    as stuck running, Mark failed and Resolve by hand with this note's number
-    (or Retry, which sends Xero the same key and normally gets this note
-    back). A FAILED row written over it would have read as "nothing made".
-    Limits: a queue of holders longer than 30s in total still runs the wait
-    out, and is traced, not recorded; Resolve and Retry refuse the RUNNING row
+    (`traceUnrecordedLateNote`, its log line saying why), naming the note, its
+    amount and the booking. A FAILED row written over it would have read as
+    "nothing made". The alert and the audit row ask the officer to resolve by
+    hand with this note's number - once the row shows as stuck running, Mark
+    failed, then Resolve by hand - and not to retry it, nor raise another
+    note. A retry is not safe here: in delta mode its Xero key follows the
+    watermark and the after-void parts read at run time, and its amount the
+    cents still uncovered, which include this unrecorded note. Another note
+    recorded on the payment, or a void, before the retry changes that key, and
+    Xero raises a second note; how long Xero honours a key is not checked in
+    code either.
+  - **Never reported as a success.** The create then throws
+    `RefundNoteNotRecordedError` (`xero-refund-note-record.ts`) past its own
+    failure path, so the row stays as the record left it. The outbox counts
+    the run skipped. A queued retry - which runs the create inline, on a row of
+    its own - fails its REQUEUE row with a message naming the note and the row
+    to resolve, never the usual "requeue it" (`describeQueuedRetryFailure`);
+    when a resolve recording a note kept the note out, it closes the REQUEUE
+    row CANCELLED (`skipped: "resolved-in-xero"`), the note named. Before this,
+    the create returned `""` and the REQUEUE row closed SUCCEEDED ("Retried
+    Xero refund credit note creation") while its inline row stayed RUNNING,
+    holding every other refund note on the payment
+    (`assertNoRefundCreditNoteInFlight`) until a stale reset.
+  - **A commit whose answer was lost.** A transaction can commit and still
+    answer P2028. The trace's re-read then finds this very note on the row: on
+    this run's own claim (not resolved by hand, not RUNNING under another
+    claim) the record is its own, and the create settles and completes as for
+    any record; on a resolve recording the same note, nothing is alerted and
+    nothing settled.
+  - **The note is not written to the row, by choice.** Writing the
+    unrecorded note's id onto the row alone (no Payment lock) would let the
+    #3548 retry leg finish on it instead of minting again, but that leg was
+    built for a note the full record wrote: it would link the note with no
+    metadata (amount, watermark, per-refund flag, which coverage and the
+    one-canonical-note rule read), make it the payment's note without the
+    per-refund check, and skip the freshness check above; the trace's re-read
+    would also read it as recorded and send no alert. A marker in
+    `responsePayload` would need a recovery path of its own. The officer's
+    resolve by hand records the note, its link and its amount, checked
+    (`INV-INT-028`).
+  - Limits: a queue of holders longer than 30s in total still runs the wait
+    out, and is traced, not recorded; Resolve by hand refuses the RUNNING row
     until Mark failed or Reset stale running clears it; an alert that reaches
     nobody is not sent again.
   - **The account-credit note's `MemberCredit` stamp, not confirmed: a

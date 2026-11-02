@@ -6687,12 +6687,17 @@ Payment row every writer of that fact takes, the resolve's claim included
 operation row, then the link, unchanged for every counterpart (the resolve,
 its withdrawal, the #4161 heal's `NOWAIT`, the enqueue's existing-note
 branch). The record's budget is `PAYMENT_ROW_WAIT_TRANSACTION_OPTIONS`
-(`maxWait` 10s, `timeout` 30s), not Prisma's 5s: the bank-void follow-up and a
-group cancel's enqueue hold the row in 30s transactions. A wait that still
-runs out (P2028, P2034 or 40P01, 55P03) committed nothing; the create then
-neither settles nor fails its row, which stays RUNNING under its claim, and
-the note is traced (`traceUnrecordedLateNote`: logged, one `xero` audit row,
-#4374's alert once). No new advisory key, registered site or row-lock site
+(`maxWait` 10s, `timeout` 30s), not Prisma's 5s: the bank-void follow-up
+(`followUpVoidedBankRefundNote`, `{ timeout: 30_000 }`) holds the row in a 30s
+transaction. A record that still cannot get its locks in time (P2028, P2034 or
+40P01, 55P03) committed nothing; the create then neither settles nor fails its
+row, which stays RUNNING under its claim (or FAILED, if Mark failed reached it
+first), the note is traced (`traceUnrecordedLateNote`: logged, one `xero` audit
+row, #4374's alert once, all saying resolve by hand with its number, never
+retry), and the create throws `RefundNoteNotRecordedError`, which no caller
+counts a success (a queued retry fails its REQUEUE row naming the note). A
+transaction that committed but answered P2028 is found by the trace's re-read
+on this run's claim and finishes as recorded. No new advisory key, registered site or row-lock site
 (the Payment row is the existing helper's statement). Proven against real
 PostgreSQL by `xero-refund-note-record-gaps.realdb.test.ts`: two records of
 one per-refund note, the first held at its link write, the second shown queued

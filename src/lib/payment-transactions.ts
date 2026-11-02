@@ -639,10 +639,10 @@ const REFUND_LEDGER_WRITERS_MIGRATION = "20260509090000_enrich_payment_refund_le
 /**
  * #4656: the budget of a short transaction that waits on a `Payment` row and
  * must not lose its write to Prisma's 2s/5s defaults. The row's longest
- * documented holders run 30s transactions: the nightly bank-refund void
- * follow-up (`followUpVoidedBankRefundNote`) and a group cancel enqueueing a
- * refund note. Shared by the inbound recount's claim (#4288) and the refund
- * credit-note create's record (`recordCreatedRefundNote`).
+ * documented holder runs a 30s transaction: the nightly bank-refund void
+ * follow-up (`followUpVoidedBankRefundNote`, `{ timeout: 30_000 }`). Shared by
+ * the inbound recount's claim (#4288) and the refund credit-note create's
+ * record (`recordCreatedRefundNote`).
  */
 export const PAYMENT_ROW_WAIT_TRANSACTION_OPTIONS = { maxWait: 10_000, timeout: 30_000 } as const;
 
