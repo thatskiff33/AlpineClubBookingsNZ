@@ -130,6 +130,7 @@ File: [`invariants/money.md`](invariants/money.md). Prefix `INV-MONEY`.
 | `INV-MONEY-042` | Sealed journals reject later legs; accounts and source identities persist |
 | `INV-MONEY-043` | Money lines, credit links and group settlements refuse booking deletion |
 | `INV-MONEY-044` | Booking doors post their legacy charge lines into the journal once |
+| `INV-MONEY-045` | Bank-transfer charges post at binding; confirmation links, never recharges |
 
 ## Booking Dates And Capacity
 
@@ -262,7 +263,7 @@ Prefix `INV-PAY`.
 | `INV-PAY-086` | Captured money on any PRIMARY row refuses a new attempt; INV-PAY-054 ordering |
 | `INV-PAY-087` | The refusal alert is capped and anchored; an expected INV-PAY-053 card copy |
 | `INV-PAY-088` | Stripe's answer is recorded on the attempt row, forward only |
-| `INV-PAY-089` | A key is only re-sent inside Stripe's window, or recovered by it |
+| `INV-PAY-089` | A key is only re-sent in Stripe's window; lost answers adopted exactly |
 | `INV-PAY-090` | The pre-charge sweep excludes attempt rows by the key prefix |
 | `INV-PAY-056` | A payment recovery becomes terminally failed in exactly one place |
 | `INV-PAY-091` | Terminality is an argument, not a re-derivation; the write is fenced |
@@ -939,6 +940,7 @@ File: [`invariants/integrations.md`](invariants/integrations.md). Prefix
 | `INV-INT-031` | A Xero payment link retires only on confirmed DELETED, never absence |
 | `INV-INT-032` | Stripe payments the app did not create: recorded and alerted once |
 | `INV-INT-033` | App booking payments no payment row settles: recorded, alerted once |
+| `INV-INT-034` | An organiser note created after a reset: recorded, or alerted once |
 
 ## Operations
 

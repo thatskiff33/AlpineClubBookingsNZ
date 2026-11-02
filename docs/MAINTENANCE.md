@@ -1920,7 +1920,17 @@ the total of the journal's live charge components with the ledger lines it links
 confirmed earlier is not compared (M9 back-posts it). The comparison is of each
 booking's total, not component by component (a give-back may legitimately be
 taken from a change fee), so money posted to the wrong component of the right
-booking is not caught here; the mapping is pinned by its tests. It prints:
+booking is not caught here; the mapping is pinned by its tests. Since Ledger
+M3c (#4628, [`INV-MONEY-045`](invariants/money.md#inv-money-045)) a
+bank-transfer booking charged at its binding moment and not yet confirmed on
+the ledger is judged by `JOURNAL_PENDING` instead: the journal's live charge
+against the booking's final price plus the change fees recorded on its payment,
+or, once cancelled, the kept figure its CANCELLED snapshot froze (none: zero).
+A disagreement there means a writer moved the price before payment without a
+journal event; the confirmation will re-state it once (logged as "confirmation
+lines differ from the charge posted before settlement"), so acknowledge it to
+the cent or let the booking settle. A charge line on such a booking is
+`UNBRIDGED_CHARGE_LINE`: a confirmation that skipped the bridge. It prints:
 
 - per identity, how many bookings it applies to, agree, disagree, are
   classified, or are a coverage gap;
@@ -2663,6 +2673,32 @@ writing its audit entry, the app's log is the only record of it; if the email
 cannot reach anyone, the audit entry and the log remain. In the rare case of
 two copies of one job both getting the late note back, each writes an audit
 entry; the email still goes once.
+
+An organiser adjustment's credit note (the waiver of a group organiser's unpaid
+extra, or an organiser's bank-transfer refund note) has its own rule (#4655).
+If its job stalls in Xero and you press **Reset stale running**, the stalled
+call may still come back with a note:
+
+- If you did nothing else, the app records the note on the job, takes the job
+  back as running, and finishes it (allocates the waiver, or records the
+  refund payment); the job shows as succeeded. One note, nothing to do. While
+  it shows as running, **Resolve** and **Retry** are refused: wait for it to
+  finish or fail. If it fails, it fails with the note kept, and **Retry**
+  finishes from that note.
+- If you pressed **Retry** after the reset, the app records the note on the
+  queued job, and the retry finishes from it instead of raising a second note.
+- If you resolved the job by hand, or a retry was already running its own
+  create, or the job has since finished with a different note, the app leaves
+  the job exactly as it is and records nothing. The audit log gets one Xero
+  entry naming the late note (its number, Xero id, amount and booking), and the
+  finance contacts get one **Xero Sync Error** email naming it. Check the late
+  note in Xero, and that nothing is allocated from it or paid against it,
+  before voiding it. If a retry was running, wait for it to finish first: it
+  may have recorded that very note, in which case nothing needs voiding.
+
+Limit: if the app stops between deciding not to record the note and writing
+its audit entry, the app's log is the only record of it; if the email cannot
+reach anyone, it is not sent again, and the audit entry and the log remain.
 
 There is no undo on the panel. If you marked one by mistake, fix the Xero side
 by hand, or use **Targeted force sync** for that one booking's invoice: it

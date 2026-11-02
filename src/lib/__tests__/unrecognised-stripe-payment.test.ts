@@ -32,6 +32,10 @@ const state = vi.hoisted(() => ({
   heldKeys: new Map<string, Date>(),
   /** Runs inside createMany before the insert: a concurrent delivery's row. */
   beforeInsert: null as null | (() => void),
+  /** #4670: how many coming claim releases (the helper's, then the caller's) fail. */
+  releaseFailures: 0,
+  /** #4670: how many coming `alertedAt` writes fail. */
+  stampFailures: 0,
 }));
 
 const mocks = vi.hoisted(() => ({
@@ -49,6 +53,10 @@ vi.mock("@/lib/prisma", () => ({
         return [...state.rows.values()].find((row) => row.id === where.id) ?? null;
       },
       update: async ({ where, data }: { where: { id: string }; data: { alertedAt: Date } }) => {
+        if (state.stampFailures > 0) {
+          state.stampFailures -= 1;
+          throw new Error("database blip");
+        }
         const row = [...state.rows.values()].find((item) => item.id === where.id);
         if (!row) throw new Error("missing row");
         Object.assign(row, data);
@@ -75,7 +83,18 @@ vi.mock("@/lib/prisma", () => ({
       },
     },
     alertCooldown: {
+      // The real `claimAlertCooldown`, which writes the sent marker (#4670), over the same key set.
+      updateMany: async () => ({ count: 0 }),
+      create: async ({ data }: { data: { key: string; lastAlertedAt: Date } }) => {
+        if (state.heldKeys.has(data.key)) throw Object.assign(new Error("unique"), { code: "P2002" });
+        state.heldKeys.set(data.key, data.lastAlertedAt);
+        return data;
+      },
       deleteMany: async ({ where }: { where: { key: string; lastAlertedAt: Date } }) => {
+        if (state.releaseFailures > 0) {
+          state.releaseFailures -= 1;
+          throw new Error("database blip");
+        }
         const held = state.heldKeys.get(where.key);
         if (held && held.getTime() === where.lastAlertedAt.getTime()) {
           state.heldKeys.delete(where.key);
@@ -97,22 +116,28 @@ vi.mock("@/lib/email", () => ({
 }));
 
 // The real helper's rule, over a key set: claim, send, keep - or give the claim
-// back when the send throws. `admin-alert-once.test.ts` pins the helper itself.
-vi.mock("@/lib/admin-alert-once", () => ({
-  sendAdminAlertOnceEver: async ({ key, send }: { key: string; send: () => Promise<unknown> }) => {
-    if (state.heldKeys.has(key)) return false;
-    state.heldKeys.set(key, new Date());
-    try {
-      await send();
-      return true;
-    } catch {
-      state.heldKeys.delete(key);
-      return false;
-    }
-  },
-  readHeldOnceEverAlertTimes: async (keys: readonly string[]) =>
-    new Map([...state.heldKeys].filter(([key]) => keys.includes(key))),
-}));
+// back when the send throws, through the store, so a failing release leaves it
+// held (#4670). `unrecognised-stripe-payment-email-retry.test.ts` runs the real helper.
+vi.mock("@/lib/admin-alert-once", async () => {
+  const { prisma } = await import("@/lib/prisma");
+  const heldIn = (keys: readonly string[]) => new Map([...state.heldKeys].filter(([key]) => keys.includes(key)));
+  return {
+    sendAdminAlertOnceEverClaim: async ({ key, send }: { key: string; send: () => Promise<unknown> }) => {
+      if (state.heldKeys.has(key)) return { kept: false, claimedAt: null };
+      const claimedAt = new Date();
+      state.heldKeys.set(key, claimedAt);
+      try {
+        await send();
+        return { kept: true, claimedAt };
+      } catch {
+        await prisma.alertCooldown.deleteMany({ where: { key, lastAlertedAt: claimedAt } }).catch(() => undefined);
+        return { kept: false, claimedAt };
+      }
+    },
+    readHeldOnceEverAlertTimes: async (keys: readonly string[]) => heldIn(keys),
+    findHeldOnceEverAlertKeys: async (keys: readonly string[]) => new Set(heldIn(keys).keys()),
+  };
+});
 
 vi.mock("@/lib/logger", () => ({ default: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() } }));
 
@@ -120,14 +145,16 @@ import {
   describeUnrecognisedPayment,
   recordUnmatchedAppStripePayment,
   recordUnrecognisedStripePayment,
+  UNRECOGNISED_ALERT_CLAIM_LAG_MARGIN_MS,
   UNRECOGNISED_ALERT_IN_FLIGHT_MS,
   stripeDashboardPaymentUrl,
   unrecognisedPaymentAmountLabel,
   unrecognisedStripePaymentAlertKey,
+  unrecognisedStripePaymentAlertSentKey,
   UnrecognisedStripePaymentAlertNotSentError,
   UNRECOGNISED_PAYMENT_DESCRIPTION_MAX_LENGTH,
 } from "@/lib/unrecognised-stripe-payment";
-import { STRIPE_WEBHOOK_PROCESSING_LEASE_MINUTES } from "@/lib/stripe-webhook-service";
+import { STRIPE_WEBHOOK_PROCESSING_LEASE_MINUTES } from "@/lib/stripe-webhook-lease";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 const CREATED = Date.parse("2026-06-30T21:00:00.000Z") / 1000;
@@ -170,6 +197,8 @@ describe("recordUnrecognisedStripePayment (#4532)", () => {
     state.rows.clear();
     state.heldKeys.clear();
     state.beforeInsert = null;
+    state.releaseFailures = 0;
+    state.stampFailures = 0;
     mocks.findCheckoutSession.mockResolvedValue(null);
   });
 
@@ -381,6 +410,154 @@ describe("recordUnrecognisedStripePayment (#4532)", () => {
   });
 });
 
+/**
+ * #4647: the window a held claim with no `alertedAt` counts as in flight is the
+ * webhook lease less a margin. The dead attempt stamped its lease first and its
+ * claim up to the margin later; a takeover comes only once that lease expired.
+ * The clock is frozen, so every age below is exact.
+ */
+describe("the alert claim's in-flight window against the webhook lease (#4647)", () => {
+  const LEASE_MS = STRIPE_WEBHOOK_PROCESSING_LEASE_MINUTES * 60_000;
+  const key = unrecognisedStripePaymentAlertKey("pi_donation");
+
+  /** A stored row a dead delivery wrote, and its claim taken `ageMs` ago. */
+  function deadDeliveryClaim(ageMs: number) {
+    state.rows.set("pi_donation", {
+      id: "row_1",
+      stripePaymentIntentId: "pi_donation",
+      stripeChargeId: "ch_donation",
+      stripeCheckoutSessionId: null,
+      stripePaymentLinkId: null,
+      amountCents: 5000,
+      currency: "nzd",
+      stripeCreatedAt: new Date("2026-06-30T21:00:00.000Z"),
+      description: null,
+      stripeEventId: "evt_donation",
+      alertedAt: null,
+      createdAt: new Date(),
+      reason: "NOT_APP_CREATED",
+      bookingId: null,
+    });
+    state.heldKeys.set(key, new Date(Date.now() - ageMs));
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    state.rows.clear();
+    state.heldKeys.clear();
+    state.beforeInsert = null;
+    state.releaseFailures = 0;
+    state.stampFailures = 0;
+    mocks.findCheckoutSession.mockResolvedValue(null);
+  });
+
+  it("is the webhook lease less a positive margin, so it is derived and never equal to the lease", () => {
+    expect(UNRECOGNISED_ALERT_CLAIM_LAG_MARGIN_MS).toBeGreaterThan(0);
+    expect(UNRECOGNISED_ALERT_IN_FLIGHT_MS).toBe(LEASE_MS - UNRECOGNISED_ALERT_CLAIM_LAG_MARGIN_MS);
+    expect(UNRECOGNISED_ALERT_IN_FLIGHT_MS).toBeGreaterThan(0);
+  });
+
+  it("sends on a takeover 1 ms after the lease expired, though the dead attempt claimed late in its lease", async () => {
+    // The dead attempt's lease was stamped 1 ms more than a lease ago (so a
+    // takeover is allowed now), and its claim just inside the margin after that.
+    const leaseStampedAgoMs = LEASE_MS + 1;
+    deadDeliveryClaim(leaseStampedAgoMs - (UNRECOGNISED_ALERT_CLAIM_LAG_MARGIN_MS - 1));
+
+    await recordUnrecognisedStripePayment(paymentIntent(), event(), CLUB_FORMAT_TEST);
+
+    expect(mocks.sendAlert).toHaveBeenCalledTimes(1);
+    expect(state.rows.get("pi_donation")?.alertedAt).toBeInstanceOf(Date);
+    expect(state.heldKeys.get(key)).toEqual(new Date());
+  });
+
+  it("leaves a claim 1 ms younger than the window to its holder, and completes without sending", async () => {
+    const heldAt = new Date(Date.now() - (UNRECOGNISED_ALERT_IN_FLIGHT_MS - 1));
+    deadDeliveryClaim(UNRECOGNISED_ALERT_IN_FLIGHT_MS - 1);
+
+    await recordUnrecognisedStripePayment(paymentIntent(), event(), CLUB_FORMAT_TEST);
+
+    expect(mocks.sendAlert).not.toHaveBeenCalled();
+    expect(state.heldKeys.get(key)).toEqual(heldAt);
+    expect(state.rows.get("pi_donation")?.alertedAt).toBeNull();
+  });
+
+  it("releases a claim exactly as old as the window, and sends", async () => {
+    deadDeliveryClaim(UNRECOGNISED_ALERT_IN_FLIGHT_MS);
+
+    await recordUnrecognisedStripePayment(paymentIntent(), event(), CLUB_FORMAT_TEST);
+
+    expect(mocks.sendAlert).toHaveBeenCalledTimes(1);
+    expect(state.rows.get("pi_donation")?.alertedAt).toBeInstanceOf(Date);
+  });
+});
+
+/**
+ * #4670: the alert goes out exactly once across a failed claim release and a
+ * failed `alertedAt` write - the two writes around the send that can fail
+ * after the claim was taken.
+ */
+describe("the alert across a failed write around the send (#4670)", () => {
+  const key = unrecognisedStripePaymentAlertKey("pi_donation");
+  const sentKey = unrecognisedStripePaymentAlertSentKey("pi_donation");
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    state.rows.clear();
+    state.heldKeys.clear();
+    state.beforeInsert = null;
+    state.releaseFailures = 0;
+    state.stampFailures = 0;
+    mocks.findCheckoutSession.mockResolvedValue(null);
+  });
+
+  it("fails the webhook when the send failed and giving the claim back failed, and the redelivery sends", async () => {
+    mocks.sendAlert.mockRejectedValueOnce(new Error("mail down"));
+    state.releaseFailures = 1;
+
+    // Its own leftover claim is not a sibling's in flight: never complete the event on it.
+    await expect(recordUnrecognisedStripePayment(paymentIntent(), event(), CLUB_FORMAT_TEST)).rejects.toBeInstanceOf(
+      UnrecognisedStripePaymentAlertNotSentError,
+    );
+    expect(state.heldKeys.has(key)).toBe(false);
+
+    await recordUnrecognisedStripePayment(paymentIntent(), event(), CLUB_FORMAT_TEST);
+    expect(mocks.sendAlert).toHaveBeenCalledTimes(2);
+    expect(state.rows.get("pi_donation")?.alertedAt).toBeInstanceOf(Date);
+  });
+
+  it("still fails the webhook when the second release fails too", async () => {
+    mocks.sendAlert.mockRejectedValueOnce(new Error("mail down"));
+    state.releaseFailures = 2;
+
+    await expect(recordUnrecognisedStripePayment(paymentIntent(), event(), CLUB_FORMAT_TEST)).rejects.toBeInstanceOf(
+      UnrecognisedStripePaymentAlertNotSentError,
+    );
+    expect(state.heldKeys.has(key)).toBe(true);
+  });
+
+  it("keeps the claim and completes when the alert went out but its alertedAt write failed", async () => {
+    state.stampFailures = 1;
+
+    await recordUnrecognisedStripePayment(paymentIntent(), event(), CLUB_FORMAT_TEST);
+
+    expect(mocks.sendAlert).toHaveBeenCalledTimes(1);
+    expect(state.rows.get("pi_donation")?.alertedAt).toBeNull();
+    expect(state.heldKeys.has(key)).toBe(true);
+    expect(state.heldKeys.has(sentKey)).toBe(true);
+  });
+
+  it("reads the sent marker as sent, so a delivery past the in-flight window never sends a second alert", async () => {
+    state.stampFailures = 1;
+    await recordUnrecognisedStripePayment(paymentIntent(), event(), CLUB_FORMAT_TEST);
+    // The kept claim, unstamped, is older than the window a delivery would take it over after.
+    state.heldKeys.set(key, new Date(Date.now() - UNRECOGNISED_ALERT_IN_FLIGHT_MS - 60_000));
+
+    await recordUnrecognisedStripePayment(paymentIntent(), event("evt_other"), CLUB_FORMAT_TEST);
+
+    expect(mocks.sendAlert).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("what the record and alert say (#4532)", () => {
   it("formats the amount in the payment's own currency", () => {
     expect(unrecognisedPaymentAmountLabel(5000, "nzd", CLUB_FORMAT_TEST)).toBe("$50.00");
@@ -412,10 +589,6 @@ describe("what the record and alert say (#4532)", () => {
     expect(state.rows.get("pi_donation")?.stripeCreatedAt).toEqual(new Date(CREATED * 1000));
   });
 
-  it("treats a claim older than the webhook lease as abandoned", () => {
-    expect(UNRECOGNISED_ALERT_IN_FLIGHT_MS).toBe(STRIPE_WEBHOOK_PROCESSING_LEASE_MINUTES * 60 * 1000);
-  });
-
   it("links the Stripe dashboard in the event's mode", () => {
     expect(stripeDashboardPaymentUrl("pi_1", true)).toBe("https://dashboard.stripe.com/payments/pi_1");
     expect(stripeDashboardPaymentUrl("pi_1", false)).toBe("https://dashboard.stripe.com/test/payments/pi_1");
@@ -445,6 +618,8 @@ describe("recordUnmatchedAppStripePayment (#4624)", () => {
     state.rows.clear();
     state.heldKeys.clear();
     state.beforeInsert = null;
+    state.releaseFailures = 0;
+    state.stampFailures = 0;
   });
 
   it("records an app intent no payment transaction names once, with its booking, and alerts once with its own alert", async () => {

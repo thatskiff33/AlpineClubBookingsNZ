@@ -1417,7 +1417,9 @@ describe("Stripe webhook Xero alerting", () => {
   });
 
   describe("a saved-card charge attempt whose POST answer was lost is adopted by the event's idempotency key (#3267, INV-PAY-055)", () => {
-    const ATTEMPT_KEY = "pending_charge_booking-1_txn_attempt_1";
+    const ATTEMPT_KEY = "pending_charge_booking-1_txn_attempt_1_v2";
+    /** The attempt row as the adoption's lookup selects it. */
+    const ATTEMPT_ROW = { id: "txn_attempt_1", paymentId: "payment-1", reference: ATTEMPT_KEY, payment: { bookingId: "booking-1" } };
     const paidBooking = {
       id: "booking-1",
       status: "CONFIRMED",
@@ -1446,7 +1448,7 @@ describe("Stripe webhook Xero alerting", () => {
           },
         },
       } as any);
-      mockPaymentTransactionFindFirst.mockResolvedValue({ id: "txn_attempt_1", paymentId: "payment-1" });
+      mockPaymentTransactionFindFirst.mockResolvedValue(ATTEMPT_ROW);
       // Unknown by intent id before adoption, found by it after.
       mockFindPaymentTransactionByIntentId
         .mockResolvedValueOnce(null)
@@ -1470,10 +1472,11 @@ describe("Stripe webhook Xero alerting", () => {
           stripePaymentIntentId: null,
           status: { in: ["PENDING", "PROCESSING"] },
         },
-        select: { id: true, paymentId: true },
+        select: { id: true, paymentId: true, reference: true, payment: { select: { bookingId: true } } },
       });
       expect(mockPaymentTransactionUpdateMany).toHaveBeenCalledWith({
-        where: { id: "txn_attempt_1", status: { notIn: ["REFUNDED", "PARTIALLY_REFUNDED"] } },
+        // #4646: an adoption claims only a row that still holds no intent.
+        where: { id: "txn_attempt_1", status: { notIn: ["REFUNDED", "PARTIALLY_REFUNDED"] }, stripePaymentIntentId: null },
         data: { stripePaymentIntentId: "pi_lost", status: "SUCCEEDED", amountCents: 5000, paymentMethodId: "pm_123" },
       });
       expect(mockReconcilePaymentAggregates).toHaveBeenCalledWith({ paymentId: "payment-1", store: expect.anything() });
@@ -1504,7 +1507,7 @@ describe("Stripe webhook Xero alerting", () => {
           },
         },
       } as any);
-      mockPaymentTransactionFindFirst.mockResolvedValue({ id: "txn_attempt_1", paymentId: "payment-1" });
+      mockPaymentTransactionFindFirst.mockResolvedValue(ATTEMPT_ROW);
       mockFindPaymentTransactionByIntentId
         .mockResolvedValueOnce(null)
         .mockResolvedValueOnce({ id: "txn_attempt_1", paymentId: "payment-1", kind: "PRIMARY", amountCents: 5000, status: "FAILED" });
@@ -1514,7 +1517,7 @@ describe("Stripe webhook Xero alerting", () => {
 
       expect(response.status).toBe(200);
       expect(mockPaymentTransactionUpdateMany).toHaveBeenCalledWith({
-        where: { id: "txn_attempt_1", status: { in: ["PENDING", "PROCESSING"] } },
+        where: { id: "txn_attempt_1", status: { in: ["PENDING", "PROCESSING"] }, stripePaymentIntentId: null },
         data: { stripePaymentIntentId: "pi_lost_declined", status: "FAILED", amountCents: 5000, paymentMethodId: "pm_123" },
       });
       expect(mockMarkPaymentIntentTransactionFailed).toHaveBeenCalledWith({ paymentIntentId: "pi_lost_declined" });
@@ -1539,6 +1542,44 @@ describe("Stripe webhook Xero alerting", () => {
       expect(mockMarkBookingPaymentSucceeded).not.toHaveBeenCalled();
     });
 
+    // #4646: an asynchronous capture arrives with `request: null`, and so does
+    // every redelivery of it; the attempt id its metadata carries is the link.
+    it("payment_intent.succeeded with no request: the attempt row the metadata names is adopted and the booking settled with it as new money, and nothing is called unmatched (#4646)", async () => {
+      mockConstructWebhookEvent.mockReturnValue({
+        id: "evt_async_capture",
+        type: "payment_intent.succeeded",
+        request: null,
+        data: {
+          object: {
+            id: "pi_async",
+            status: "succeeded",
+            amount: 5000,
+            metadata: { bookingId: "booking-1", memberId: "member-1", savedCardAttemptId: "txn_attempt_1" },
+            payment_method: "pm_123",
+          },
+        },
+      } as any);
+      mockPaymentTransactionFindFirst.mockResolvedValue(ATTEMPT_ROW);
+      mockFindPaymentTransactionByIntentId
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce({ id: "txn_attempt_1", paymentId: "payment-1", kind: "PRIMARY", amountCents: 5000, status: "SUCCEEDED" });
+      mockBookingFindUnique.mockResolvedValue(paidBooking);
+
+      const response = await POST(makeRequest());
+
+      expect(response.status).toBe(200);
+      expect(mockPaymentTransactionFindFirst).toHaveBeenCalledWith({
+        where: { id: "txn_attempt_1", kind: "PRIMARY", source: "STRIPE", stripePaymentIntentId: null, status: { in: ["PENDING", "PROCESSING"] } },
+        select: { id: true, paymentId: true, reference: true, payment: { select: { bookingId: true } } },
+      });
+      expect(mockPaymentTransactionUpdateMany).toHaveBeenCalledWith({
+        where: { id: "txn_attempt_1", status: { notIn: ["REFUNDED", "PARTIALLY_REFUNDED"] }, stripePaymentIntentId: null },
+        data: { stripePaymentIntentId: "pi_async", status: "SUCCEEDED", amountCents: 5000, paymentMethodId: "pm_123" },
+      });
+      expect(mockMarkBookingPaymentSucceeded).toHaveBeenCalledWith(expect.objectContaining({ paymentIntentId: "pi_async", recordedByCaller: true }));
+      expect(mockRecordUnmatchedAppStripePayment).not.toHaveBeenCalled();
+    });
+
     it("adopts only a row whose key was built from ITS OWN id for THIS booking: a matching reference on a row whose id disagrees is left alone", async () => {
       mockConstructWebhookEvent.mockReturnValue({
         id: "evt_wrong_row",
@@ -1548,7 +1589,7 @@ describe("Stripe webhook Xero alerting", () => {
           object: { id: "pi_lost", status: "succeeded", amount: 5000, metadata: { bookingId: "booking-1" }, payment_method: "pm_123" },
         },
       } as any);
-      mockPaymentTransactionFindFirst.mockResolvedValue({ id: "txn_somebody_else", paymentId: "payment-9" });
+      mockPaymentTransactionFindFirst.mockResolvedValue({ ...ATTEMPT_ROW, id: "txn_somebody_else", paymentId: "payment-9" });
 
       const response = await POST(makeRequest());
 
@@ -4585,11 +4626,12 @@ describe("Stripe webhook Xero alerting", () => {
     });
 
     it("stays silent for a saved-card attempt whose lost answer the event's idempotency key adopts", async () => {
+      // The original key, the one this release mints (#4646 mints `_v2` only from #4682).
       const key = "pending_charge_booking-1_txn_attempt_9";
       mockConstructWebhookEvent.mockReturnValue(
         appSucceededEvent("evt_app_adopted", { bookingId: "booking-1" }, { id: "req_9", idempotency_key: key }),
       );
-      mockPaymentTransactionFindFirst.mockResolvedValue({ id: "txn_attempt_9", paymentId: "payment-1" });
+      mockPaymentTransactionFindFirst.mockResolvedValue({ id: "txn_attempt_9", paymentId: "payment-1", reference: key, payment: { bookingId: "booking-1" } });
       mockFindPaymentTransactionByIntentId.mockResolvedValueOnce(null).mockResolvedValueOnce({
         id: "txn_attempt_9",
         paymentId: "payment-1",

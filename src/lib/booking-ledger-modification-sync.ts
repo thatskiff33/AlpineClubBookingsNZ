@@ -18,6 +18,9 @@ import "server-only";
  * member-money journal in the same transaction, from the context the door
  * resolved before it opened, for a booking whose confirmation is there. A
  * journal refusal is never caught: it rolls the edit or the closure back.
+ *
+ * #4628 (M3c): an edit of a booking not yet confirmed on the ledger re-states
+ * its pending journal charge instead (`booking-ledger-pending-charge.ts`).
  */
 import type { BookingModification, ManualRefundTaskDirection, Prisma } from "@prisma/client";
 
@@ -42,6 +45,7 @@ import type { BookingPriceRebase } from "@/lib/booking-review-price-rebase";
 import { rebasedPriceMovementCents } from "@/lib/booking-review-price-rebase-history";
 import logger from "@/lib/logger";
 import { postBookingLedgerJournal, type BookingJournalContext } from "@/lib/member-money/doors";
+import { postPendingModificationCharge } from "@/lib/booking-ledger-pending-charge";
 
 /**
  * One priced edit's lines, anchored on the `BookingModification` row it just
@@ -73,8 +77,14 @@ export async function postModificationLedgerLines({
   site: string;
 }): Promise<void> {
   const { id: bookingModificationId, priceDiffCents, changeFeeCents } = bookingModification;
+  if (!(await bookingHasConfirmationLines(store, bookingId))) {
+    // #4628: no legacy line yet, but a bank-transfer booking bound before
+    // settlement carries its charge in the journal; this edit re-states it from
+    // the stored rows the edit just wrote (a booking never bound posts nothing).
+    await postPendingModificationCharge(store, journal, { bookingId, lodgeId, modificationId: bookingModificationId });
+    return;
+  }
   if (sides === null) return;
-  if (!(await bookingHasConfirmationLines(store, bookingId))) return;
   const postedLines = await findPostedChargeLines(store, bookingId);
   let rows: ReturnType<typeof buildBookingLedgerRows> = [];
   try {

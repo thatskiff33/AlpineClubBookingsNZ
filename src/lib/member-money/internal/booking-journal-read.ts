@@ -1,5 +1,5 @@
 import type { Prisma } from "@prisma/client";
-import type { BookingChargeAccount } from "./booking-charges";
+import { BINDING_CHARGE_SOURCE_VERSION, type BookingChargeAccount } from "./booking-charges";
 import { componentKey, liveComponentGross } from "./components";
 import { memberMoneyEventKeys } from "./keys";
 
@@ -14,6 +14,13 @@ import { memberMoneyEventKeys } from "./keys";
  */
 export interface BookingJournalCharges {
   charged: boolean;
+  /**
+   * #4628 (M3c): the R01 is a binding R01 (a bank-transfer booking charged
+   * before settlement) and no legacy line of the booking is bridged yet, so the
+   * journal holds a pending charge the legacy ledger does not have. Absent
+   * reads as false (a reader that did not ask).
+   */
+  pending?: boolean;
   components: ReadonlyArray<{ account: BookingChargeAccount; chargeIdentity: string; liveGrossCents: number }>;
   /** The booking's legacy lines a journal batch links (`MemberMoneySourceLink`). */
   bridgedLineIds: ReadonlySet<string>;
@@ -85,8 +92,9 @@ export async function readBookingJournalCharges(
   const result = new Map<string, BookingJournalCharges>();
   if (bookingIds.length === 0) return result;
   const keys = new Map<string, string>(bookingIds.map((bookingId) => [memberMoneyEventKeys.bookingCharge(bookingId), bookingId]));
-  const charged = await db.memberMoneyEvent.findMany({ where: { eventKey: { in: [...keys.keys()] } }, select: { eventKey: true } });
+  const charged = await db.memberMoneyEvent.findMany({ where: { eventKey: { in: [...keys.keys()] } }, select: { eventKey: true, sourceVersion: true } });
   const chargedIds = new Set(charged.map((event) => keys.get(event.eventKey)));
+  const boundIds = new Set(charged.filter((event) => event.sourceVersion === BINDING_CHARGE_SOURCE_VERSION).map((event) => keys.get(event.eventKey)));
   const legs = await db.memberMoneyLine.findMany({ where: chargeLegsOf(bookingIds), orderBy: { id: "asc" }, select: LEG_SELECT });
   const journalSince = await readJournalSince(db);
   const links = await db.memberMoneySourceLink.findMany({
@@ -103,10 +111,12 @@ export async function readBookingJournalCharges(
   const byBooking = new Map<string, ChargeLeg[]>();
   for (const leg of legs) byBooking.set(leg.bookingId!, [...(byBooking.get(leg.bookingId!) ?? []), leg]);
   for (const bookingId of bookingIds) {
+    const bridgedLineIds = bridged.get(bookingId) ?? new Set<string>();
     result.set(bookingId, {
       charged: chargedIds.has(bookingId),
+      pending: boundIds.has(bookingId) && bridgedLineIds.size === 0,
       components: liveChargeComponents(byBooking.get(bookingId) ?? []),
-      bridgedLineIds: bridged.get(bookingId) ?? new Set(),
+      bridgedLineIds,
       journalSince,
     });
   }

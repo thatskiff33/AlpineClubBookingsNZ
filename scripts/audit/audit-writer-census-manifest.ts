@@ -727,9 +727,13 @@ export const AUDIT_CENSUS_TOTALS = {
   // 531 -> 532 (#4426): `xero.refund_credit_note.late_note_not_recorded`, the one row a refund
   // credit-note create writes when Xero answers after its job was resolved by hand recording a
   // note, an awaited `createAuditLog` with a literal `xero` category.
-  // 532 -> 533 (this main-sync, 2 Nov 2026): RE-MEASURED with `pnpm run audit:census` on the
+  // 532 -> 533 (main-sync, 2 Nov 2026): RE-MEASURED with `pnpm run audit:census` on the
   // merged tree.
-  writeSites: 533,
+  // 533 -> 534 (#4655): `xero.organiser_adjustment_note.late_note_not_recorded`, the one row an
+  // organiser adjustment's credit-note create writes when Xero answers after its job was reset
+  // and the row may not take the note, an awaited `createAuditLog` with a literal `xero` category.
+  // RE-MEASURED with `pnpm run audit:census` on the merged tree (second main-sync, 2 Nov 2026).
+  writeSites: 534,
   /**
    * Of those, sites whose event object carries no `category` key.
    *
@@ -949,7 +953,8 @@ export const AUDIT_CENSUS_TOTALS = {
     // 162 -> 165 (#4432): the sync-now outcome, its failure and the webhook threshold, above.
     // 165 -> 167 (#4457): the retention settings update and the member anonymisation, above.
     // 167 -> 168 (#4426): the late refund note's row, above.
-    createAuditLog: { total: 168, uncategorised: 0 },
+    // 168 -> 169 (#4655): the late organiser adjustment note's row, above.
+    createAuditLog: { total: 169, uncategorised: 0 },
     // 8 -> 9 (#2581 child 2 review): `recordAgeUpParentEmailHandoffAudit`
     // moved off its hand-built `prisma.auditLog.create`, the last one in `src/`.
     // Same row, same dedupe keys (`action` + `subjectMemberId` + `outcome`) —
@@ -1443,7 +1448,9 @@ export const AUDIT_CENSUS_TOTALS = {
     // `XERO_WEBHOOK_THRESHOLD_UPDATED`, beside the other `xero` rows. Nobody's readership changes.
     // 47 -> 48 (#4426): `xero.refund_credit_note.late_note_not_recorded`, beside the other `xero` rows.
     // Nobody's readership changes.
-    xero: 48,
+    // 48 -> 49 (#4655): `xero.organiser_adjustment_note.late_note_not_recorded`, beside the other
+    // `xero` rows. Nobody's readership changes.
+    xero: 49,
     // 12 -> 14 (#2581 child 2): `BULK_COMMUNICATION_SENT` and
     // `EMAIL_SUPPRESSION_CLEARED`. Safe only BECAUSE child 1 moved
     // `communication` out of the support-only system entry into the membership

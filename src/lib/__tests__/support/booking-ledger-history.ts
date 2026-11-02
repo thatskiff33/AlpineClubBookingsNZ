@@ -459,7 +459,8 @@ export function historyPromoCodePrefix(prefix: string): string {
 /** Everything under `prefix`, fixtures included. */
 export async function cleanHistories(prisma: PrismaClient, prefix: string): Promise<void> {
   const names = historyNames(prefix);
-  const rows = await prisma.booking.findMany({ where: { id: { startsWith: prefix } }, select: { id: true } });
+  // #4628: a real create on the prefix's own lodge names its booking with a fresh id.
+  const rows = await prisma.booking.findMany({ where: { OR: [{ id: { startsWith: prefix } }, { lodgeId: names.lodgeId }] }, select: { id: true } });
   const ids = rows.map((row) => row.id);
   const where = { bookingId: { in: ids } };
   const payments = await prisma.payment.findMany({ where, select: { id: true } });

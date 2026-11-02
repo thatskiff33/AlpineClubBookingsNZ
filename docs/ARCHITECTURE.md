@@ -1944,7 +1944,9 @@ consult (`INV-MONEY-043`), since M3a (#4626) the posting command
 lives in `internal/`. The booking-ledger chokepoints (confirmation, modification
 and review close, cancellation, the group settle and the back-post) and member
 merge post only through the server-only `src/lib/member-money/doors.ts`
-(`INV-MONEY-044`); `member-money-journal-inert-census.test.ts` admits exactly
+(`INV-MONEY-044`), as, since M3c (#4628), the bank-transfer binding doors and
+the pending-charge syncs do through `booking-ledger-pending-charge.ts`
+(`INV-MONEY-045`); `member-money-journal-inert-census.test.ts` admits exactly
 those callers. Writers implement the existing advisory tiers
 (`INV-LOCK-001`–`003`); the journal adds no advisory key, outbox or provider call. The verifier reads a repeatable-read,
 read-only snapshot. See [deployment grants](../DEPLOYMENT.md#member-money-journal-grants-m1)

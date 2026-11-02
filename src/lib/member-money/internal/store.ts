@@ -242,6 +242,41 @@ export async function writeMemberMoneyBatch(
   return { eventId, journalId, replayed: false };
 }
 
+/**
+ * #4628 (`INV-MONEY-042`): link legacy lines to a batch already posted, without
+ * posting another. Source links (and their leg postings) are the one thing the
+ * database lets join a sealed batch: no line, obligation or application can.
+ * Each line gets a `BOOKING_LEDGER` source link in that journal and, where the
+ * journal carries money, a posting naming `receivableLegId`, a leg of that same
+ * journal (the database refuses a link to a nonzero journal without one, and a
+ * leg of another journal). A line already linked is refused by its unique key,
+ * which aborts the caller's transaction: callers link only unbridged lines,
+ * under `lock(1)`.
+ */
+export async function linkLegacyLinesToPostedBatch(
+  db: Db,
+  input: { journalId: string; receivableLegId: string | null; lines: readonly { id: string; version: string }[] },
+): Promise<number> {
+  if (input.lines.length === 0) return 0;
+  const links = input.lines.map((line) => ({ id: randomUUID(), line }));
+  await db.memberMoneySourceLink.createMany({
+    data: links.map(({ id, line }) => ({
+      id,
+      journalId: input.journalId,
+      sourceKind: "BOOKING_LEDGER" as const,
+      sourceId: line.id,
+      sourceVersion: line.version,
+      bookingLedgerLineId: line.id,
+    })),
+  });
+  if (input.receivableLegId !== null) {
+    await db.memberMoneySourcePosting.createMany({
+      data: links.map(({ id }) => ({ id: randomUUID(), journalId: input.journalId, sourceLinkId: id, lineId: input.receivableLegId! })),
+    });
+  }
+  return links.length;
+}
+
 /** Read a posted journal, verbatim, for an exact reversal. A read only. */
 export async function readMemberMoneyJournalToReverse(db: Db, journalId: string): Promise<MemberMoneyJournalToReverse> {
   const journal = await db.memberMoneyJournal.findUnique({

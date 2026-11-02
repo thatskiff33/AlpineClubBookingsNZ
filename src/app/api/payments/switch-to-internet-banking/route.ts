@@ -38,6 +38,8 @@ import {
   loadInternetBankingPaymentSettings,
 } from "@/lib/internet-banking-settings";
 import { recordInternetBankingPaymentTransaction } from "@/lib/payment-transactions";
+import { postBindingCharge } from "@/lib/booking-ledger-pending-charge";
+import { resolveBookingMoneyPostingContext } from "@/lib/member-money/doors";
 import { retireCardIntentBeforeElection } from "@/lib/card-intent-retirement";
 import {
   alreadySwitchedBody,
@@ -109,6 +111,8 @@ export async function POST(request: NextRequest) {
   // The club's format (#3565), resolved once, before any transaction or
   // lock below — never per amount and never inside a transaction.
   const format = await clubFormatValues();
+  // #4628: the journal's posting context, likewise before the transaction (`INV-LOCK-004`).
+  const journal = await resolveBookingMoneyPostingContext();
   const booking = await prisma.booking.findUnique({
     where: { id: bookingId },
     include: {
@@ -460,6 +464,8 @@ export async function POST(request: NextRequest) {
       reason: "internet_banking_switch_at_pay",
       store: tx,
     });
+    // #4628 (R01): the invoice binds the charge from here, under lock(1) and the lodge key.
+    await postBindingCharge(tx, journal, locked.id, locked.lodgeId);
 
     return { type: "updated" as const, payment, creditElection };
   }).catch((err: unknown) => {

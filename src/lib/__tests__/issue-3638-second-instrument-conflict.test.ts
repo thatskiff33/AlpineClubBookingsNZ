@@ -109,6 +109,10 @@ vi.mock("@/lib/booking-ledger-settlement-sync", () => ({
 vi.mock("@/lib/booking-ledger-credit-sync", () => ({
   syncBookingLedgerCredits: vi.fn(),
 }));
+// #4628: the Xero receipt's PAID claim posts the confirmation's lines (proved against PostgreSQL).
+vi.mock("@/lib/booking-ledger-confirmation-sync", () => ({
+  postStoredBookingConfirmationLedgerLines: vi.fn(async () => {}),
+}));
 vi.mock("@/lib/booking-credit-election", () => ({
   clearStaleCreditElection: vi.fn().mockResolvedValue(null),
 }));

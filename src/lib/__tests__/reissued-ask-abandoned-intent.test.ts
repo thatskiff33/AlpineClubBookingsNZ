@@ -144,16 +144,26 @@ describe("settleLostReissuedAskFence", () => {
  * `payment-recovery.test.ts`, and the real-PostgreSQL ones in
  * `additional-ask-reduction.realdb.test.ts`.
  */
-describe("settleLostRecoveryClaimHold (#4631)", () => {
+describe("settleLostRecoveryClaimHold (#4631, #4652)", () => {
   const RUNNER = { operationId: "op_recovery", bookingId: "booking_1", paymentIntentId: "pi_runner", adopted: false };
+  /** The Stripe key the recovery names until a hold writes an intent over it. */
+  const KEY = "credit_release_ask_pi_release_1";
+
+  beforeEach(() => {
+    h.recovery = { status: "SUCCEEDED", lastError: PENDING_ASK_NETTED_BY_REDUCTION_NOTE, paymentIntentId: KEY };
+  });
 
   it.each([
-    ["netted off by a reduction", PENDING_ASK_NETTED_BY_REDUCTION_NOTE, "netted"],
-    ["folded in by an increase", WAITING_REISSUE_FOLDED_BY_INCREASE_NOTE, "folded"],
-  ])("MUTATION: a recovery %s has the runner's unwritten intent cancelled as abandoned", async (_label, lastError, closedBy) => {
-    h.recovery = { status: "SUCCEEDED", lastError };
+    ["netted off by a reduction", PENDING_ASK_NETTED_BY_REDUCTION_NOTE, KEY, "netted"],
+    ["folded in by an increase", WAITING_REISSUE_FOLDED_BY_INCREASE_NOTE, KEY, "folded"],
+    // #4652: a stale reclaim - the runner that took the claim over wrote another intent
+    // (an amount-suffixed key), or closed the row without one, and nothing reopens it.
+    ["closed by a reclaiming runner with ANOTHER intent", null, "pi_reclaimer", "minted-elsewhere"],
+    ["closed by a reclaiming runner with no intent", null, KEY, "minted-elsewhere"],
+  ])("MUTATION: a recovery %s has the runner's unwritten intent cancelled as abandoned", async (_label, lastError, paymentIntentId, closedBy) => {
+    h.recovery = { status: "SUCCEEDED", lastError, paymentIntentId };
     await settleLostRecoveryClaimHold(RUNNER);
-    expect(h.recoveryFind).toHaveBeenCalledWith({ where: { id: "op_recovery" }, select: { status: true, lastError: true } });
+    expect(h.recoveryFind).toHaveBeenCalledWith({ where: { id: "op_recovery" }, select: { status: true, lastError: true, paymentIntentId: true } });
     expect(h.rowFind).toHaveBeenCalledWith({ where: { stripePaymentIntentId: "pi_runner" }, select: { id: true } });
     expect(h.ownerOpFind).toHaveBeenCalledWith({ where: { paymentIntentId: "pi_runner" }, select: { id: true } });
     expect(h.cancel).toHaveBeenCalledWith("pi_runner", { cancellationReason: "abandoned" });
@@ -182,10 +192,13 @@ describe("settleLostRecoveryClaimHold (#4631)", () => {
   });
 
   it.each([
-    ["reset for retry (PENDING)", { status: "PENDING", lastError: null }],
-    ["reclaimed by another runner (PROCESSING)", { status: "PROCESSING", lastError: null }],
-    ["completed with a mint (SUCCEEDED, no note)", { status: "SUCCEEDED", lastError: null }],
-    ["failed for good", { status: "FAILED", lastError: "out of attempts" }],
+    ["reset for retry (PENDING)", { status: "PENDING", lastError: null, paymentIntentId: KEY }],
+    ["reclaimed by another runner (PROCESSING)", { status: "PROCESSING", lastError: null, paymentIntentId: KEY }],
+    // #4652: a stated limit - a live claim, and a later run of it may still mint under this key.
+    ["reclaimed by a runner that already wrote ANOTHER intent (PROCESSING)", { status: "PROCESSING", lastError: null, paymentIntentId: "pi_reclaimer" }],
+    ["completed naming THIS intent (the reclaiming runner wrote it)", { status: "SUCCEEDED", lastError: null, paymentIntentId: "pi_runner" }],
+    ["failed for good", { status: "FAILED", lastError: "out of attempts", paymentIntentId: KEY }],
+    ["failed after writing ANOTHER intent", { status: "FAILED", lastError: "Xero is down", paymentIntentId: "pi_reclaimer" }],
     ["gone", null],
   ])("MUTATION: a recovery %s is never a proof - nothing cancelled", async (_label, moved) => {
     h.recovery = moved;
@@ -197,10 +210,11 @@ describe("settleLostRecoveryClaimHold (#4631)", () => {
 
   // Review (F2): an intent the runner found by matching (#4036) is not its own.
   it.each([
-    ["netted off", PENDING_ASK_NETTED_BY_REDUCTION_NOTE],
-    ["folded in", WAITING_REISSUE_FOLDED_BY_INCREASE_NOTE],
-  ])("MUTATION: an ADOPTED intent is never cancelled, even with its recovery %s", async (_label, lastError) => {
-    h.recovery = { status: "SUCCEEDED", lastError };
+    ["netted off", PENDING_ASK_NETTED_BY_REDUCTION_NOTE, KEY],
+    ["folded in", WAITING_REISSUE_FOLDED_BY_INCREASE_NOTE, KEY],
+    ["closed by a reclaiming runner with another intent", null, "pi_reclaimer"],
+  ])("MUTATION: an ADOPTED intent is never cancelled, even with its recovery %s", async (_label, lastError, paymentIntentId) => {
+    h.recovery = { status: "SUCCEEDED", lastError, paymentIntentId };
     await settleLostRecoveryClaimHold({ ...RUNNER, adopted: true });
     expect(h.rowFind).not.toHaveBeenCalled();
     expect(h.cancel).not.toHaveBeenCalled();
@@ -208,6 +222,21 @@ describe("settleLostRecoveryClaimHold (#4631)", () => {
       expect.objectContaining({ event: ABANDONED_REISSUE_INTENT_LOG_EVENT, outcome: "adopted", operationId: "op_recovery", paymentIntentId: "pi_runner" }),
       expect.any(String),
     );
+  });
+
+  // #4652: the interleaving - a writer records the intent after the proof's re-read and
+  // before the owner check; the owner check sees it, and the cancel never reaches it.
+  it("MUTATION: a writer recording the intent between the proof's re-read and the owner check wins - nothing cancelled", async () => {
+    h.recovery = { status: "SUCCEEDED", lastError: null, paymentIntentId: "pi_reclaimer" };
+    h.recoveryFind.mockImplementationOnce(async () => {
+      const read = h.recovery;
+      h.row = { id: "txn_written_meanwhile" };
+      return read;
+    });
+    await settleLostRecoveryClaimHold(RUNNER);
+    expect(h.rowFind).toHaveBeenCalledWith({ where: { stripePaymentIntentId: "pi_runner" }, select: { id: true } });
+    expect(h.cancel).not.toHaveBeenCalled();
+    expect(h.warn).toHaveBeenCalledWith(expect.objectContaining({ outcome: "owned", paymentTransactionId: "txn_written_meanwhile" }), expect.any(String));
   });
 
   it("a recovery re-read that fails proves nothing: logged, nothing cancelled, nothing thrown", async () => {
@@ -218,7 +247,6 @@ describe("settleLostRecoveryClaimHold (#4631)", () => {
   });
 
   it("a Stripe cancel that fails is logged and swallowed: best-effort", async () => {
-    h.recovery = { status: "SUCCEEDED", lastError: PENDING_ASK_NETTED_BY_REDUCTION_NOTE };
     h.cancel.mockRejectedValueOnce(new Error("Stripe is down"));
     await expect(settleLostRecoveryClaimHold(RUNNER)).resolves.toBeUndefined();
     expect(h.error).toHaveBeenCalledWith(
@@ -228,7 +256,6 @@ describe("settleLostRecoveryClaimHold (#4631)", () => {
   });
 
   it("repeated: an intent Stripe already cancelled is left alone, not reported cancelled", async () => {
-    h.recovery = { status: "SUCCEEDED", lastError: PENDING_ASK_NETTED_BY_REDUCTION_NOTE };
     h.cancel.mockResolvedValueOnce({ paymentIntent: { id: "pi_runner", status: "canceled" }, canceled: false });
     await settleLostRecoveryClaimHold(RUNNER);
     expect(h.info).not.toHaveBeenCalled();

@@ -136,3 +136,37 @@ describe("the JOURNAL comparison (#4627)", () => {
     expect(report.gateClosedBecause.join(" ")).toMatch(/journal is inactive/);
   });
 });
+
+describe("comparison report v2: a bank-transfer charge pending in the journal (#4628)", () => {
+  const pending = (status: "PAYMENT_PENDING" | "CANCELLED", liveGrossCents: number, extra: Partial<BookingLedgerCensusRow> = {}, lines: CensusLedgerLine[] = []) => ({
+    ...row(lines, { charged: true, pending: true, components: [{ account: "BOOKING_REVENUE", chargeIdentity: CHARGE, liveGrossCents }], bridgedLineIds: all([]) }),
+    booking: { id: B, status, deletedAt: null, organiserSettled: false, finalPriceCents: 12000 },
+    ...extra,
+  });
+  const payment = (changeFeeCents: number) => ({
+    id: "pay", source: "INTERNET_BANKING", status: "PENDING", amountCents: 12000, creditAppliedCents: 0, refundedAmountCents: 0,
+    changeFeeCents, additionalAmountCents: 0, additionalPaymentStatus: null, xeroInvoiceId: null, manuallyMarkedPaidAt: null,
+  }) as BookingLedgerCensusRow["payment"];
+
+  it("agrees when the journal carries the booking's final price plus the fees on its payment, under JOURNAL_PENDING", () => {
+    const result = journalChargeComparison(pending("PAYMENT_PENDING", 14500, { payment: payment(2500) }));
+    expect(result.identity).toMatchObject({ identity: "JOURNAL_PENDING", status: "AGREE", columnCents: 14500, ledgerCents: 14500 });
+    expect(result.integrity).toEqual([]);
+  });
+
+  it("disagrees, to the cent, when a writer moved the price without posting", () => {
+    expect(journalChargeComparison(pending("PAYMENT_PENDING", 10000, { payment: payment(0) })).identity)
+      .toMatchObject({ identity: "JOURNAL_PENDING", status: "DISAGREE", columnCents: 10000, ledgerCents: 12000, deltaCents: -2000 });
+  });
+
+  it("compares a cancelled pending charge with what the CANCELLED snapshot kept, nothing where it froze none", () => {
+    expect(journalChargeComparison(pending("CANCELLED", 0)).identity).toMatchObject({ status: "AGREE", ledgerCents: 0 });
+    const kept = { cancellation: { refundMethod: null, settledAmountCents: null, keptCents: 3000 } };
+    expect(journalChargeComparison(pending("CANCELLED", 3000, kept)).identity).toMatchObject({ status: "AGREE", ledgerCents: 3000 });
+  });
+
+  it("finds a legacy charge line on a pending booking: a confirmation that skipped the bridge", () => {
+    const result = journalChargeComparison(pending("PAYMENT_PENDING", 12000, {}, [nightA, capture]));
+    expect(result.integrity).toEqual([expect.objectContaining({ lineId: "n1", kind: "UNBRIDGED_CHARGE_LINE" })]);
+  });
+});

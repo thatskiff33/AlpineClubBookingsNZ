@@ -14,13 +14,18 @@
  *   so a redelivery, a lease takeover or a concurrent delivery writes nothing
  *   more; a later delivery reads the stored row;
  * - the alert by its once-ever `AlertCooldown` key, claimed before the send,
- *   and by `alertedAt` on the row, written only after a recipient was sent.
- *   A send that does not go out throws, the claim is given back, and the
- *   webhook answers 500 so Stripe redelivers. A claim still held with no
- *   `alertedAt` is a delivery that died: inside the webhook lease it belongs
- *   to a sibling still sending; older than that lease, this delivery releases
- *   it and sends. A Checkout read that throws is not stored as "no Checkout":
- *   nothing is inserted, and Stripe redelivers.
+ *   and by `alertedAt` on the row, written only after a recipient was sent
+ *   or (#4669) the email retry cron holds its copies.
+ *   A send nobody received throws, the claim is given back, and the
+ *   webhook answers 500 so Stripe redelivers; #4670: a delivery whose
+ *   give-back failed gives back its own claim again and still fails. A claim
+ *   still held with no `alertedAt` is a delivery that died: younger than the
+ *   webhook lease less a margin it belongs to a sibling still sending; older,
+ *   this delivery releases it and sends (`UNRECOGNISED_ALERT_IN_FLIGHT_MS`),
+ *   unless the sent marker, written when a sent alert's `alertedAt` write
+ *   failed, says it went out. A Checkout
+ *   read that throws is not stored as "no Checkout": nothing is inserted, and
+ *   Stripe redelivers.
  *
  * #4624 (`INV-INT-033`): the same record, claim and alert hold a succeeded
  * PaymentIntent the app DID create - it carries the app's `bookingId` - that
@@ -44,12 +49,12 @@ import {
   type UnrecognisedStripePayment,
 } from "@prisma/client";
 
-import { readHeldOnceEverAlertTimes, sendAdminAlertOnceEver } from "@/lib/admin-alert-once";
-import { releaseAlertCooldown } from "@/lib/alert-cooldown";
+import { findHeldOnceEverAlertKeys, readHeldOnceEverAlertTimes, sendAdminAlertOnceEverClaim } from "@/lib/admin-alert-once";
+import { ALERT_ONCE_EVER_WINDOW_MS, claimAlertCooldown, releaseAlertCooldown } from "@/lib/alert-cooldown";
 import { currencyHasTwoDecimalPlaces, canonicalCurrencyCode } from "@/lib/club-currency-minor-unit";
 import type { ClubFormat } from "@/lib/club-format";
 import { sendAdminUnmatchedAppStripePaymentAlert, sendAdminUnrecognisedStripePaymentAlert } from "@/lib/email";
-import { UNMUTEABLE_ALERT_SENT, type AdminAlertSendOutcome } from "@/lib/email/admin-alert-send-result";
+import { UNMUTEABLE_ALERT_SENT, type UnmuteableAdminAlertOutcome } from "@/lib/email/admin-alert-send-result";
 import type {
   UnmatchedAppStripePaymentAlertFields,
   UnrecognisedStripePaymentAlertFields,
@@ -58,6 +63,7 @@ import { emailClubDateTime } from "@/lib/email-templates-club-time";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 import { findCheckoutSessionForPaymentIntent } from "@/lib/stripe";
+import { STRIPE_WEBHOOK_PROCESSING_LEASE_MINUTES } from "@/lib/stripe-webhook-lease";
 import { UNMATCHED_APP_LEDGER_MATCH_LABEL } from "@/lib/unrecognised-stripe-payment-note";
 import { formatCents } from "@/lib/utils";
 
@@ -73,11 +79,27 @@ export function unrecognisedStripePaymentAlertKey(paymentIntentId: string): stri
 }
 
 /**
- * A claim younger than this belongs to a delivery still inside the webhook
- * processing lease (`STRIPE_WEBHOOK_PROCESSING_LEASE_MINUTES`). Older than
- * that, with no `alertedAt`, the holder is gone.
+ * The most a delivery's alert claim may trail its own webhook lease stamp: the
+ * handler's work before the claim - database reads and, for a foreign payment,
+ * the Checkout read (two calls of at most 10 seconds each). Real runtime is
+ * seconds. Both stamps come from the delivering instance's clock, so a later
+ * delivery compares both against one clock and no skew enters.
  */
-export const UNRECOGNISED_ALERT_IN_FLIGHT_MS = 15 * 60 * 1000;
+export const UNRECOGNISED_ALERT_CLAIM_LAG_MARGIN_MS = 5 * 60_000;
+
+/**
+ * A claim younger than this, with no `alertedAt`, belongs to a delivery that may
+ * still be sending; older, the holder is gone and this delivery sends.
+ *
+ * #4647: the webhook processing lease LESS {@link UNRECOGNISED_ALERT_CLAIM_LAG_MARGIN_MS},
+ * never equal to it. The claim is stamped after the lease starts, so with an
+ * equal window a takeover arriving just after the lease expired could find the
+ * dead attempt's claim still "fresh", return, and complete the event: the alert
+ * would never be sent. A takeover comes more than one lease after the lease
+ * stamp, so it finds a claim taken within the margin of that stamp expired.
+ */
+export const UNRECOGNISED_ALERT_IN_FLIGHT_MS =
+  STRIPE_WEBHOOK_PROCESSING_LEASE_MINUTES * 60_000 - UNRECOGNISED_ALERT_CLAIM_LAG_MARGIN_MS;
 
 /** The alert was neither sent nor left claimed, so the webhook must fail and Stripe redeliver. */
 export class UnrecognisedStripePaymentAlertNotSentError extends Error {
@@ -165,6 +187,16 @@ async function recordAndAlert(
   await ensureAlert(row, event, format);
 }
 
+/**
+ * #4670: the marker that the alert went out although its `alertedAt` write
+ * failed. Without it the kept claim with no `alertedAt` would read, once older
+ * than {@link UNRECOGNISED_ALERT_IN_FLIGHT_MS}, as a delivery that died before
+ * sending, and a later delivery would take it over and send a second alert.
+ */
+export function unrecognisedStripePaymentAlertSentKey(paymentIntentId: string): string {
+  return `${unrecognisedStripePaymentAlertKey(paymentIntentId)}:sent`;
+}
+
 /** Send the one alert, or fail the webhook so Stripe redelivers. */
 async function ensureAlert(
   row: UnrecognisedStripePayment,
@@ -173,47 +205,97 @@ async function ensureAlert(
 ): Promise<void> {
   const key = unrecognisedStripePaymentAlertKey(row.stripePaymentIntentId);
   const mail = alertMail(row, event.livemode, format);
+  const context = { paymentIntentId: row.stripePaymentIntentId, reason: row.reason };
   const send = () =>
-    sendAdminAlertOnceEver({
+    sendAdminAlertOnceEverClaim({
       key,
       label: mail.label,
-      context: { paymentIntentId: row.stripePaymentIntentId, reason: row.reason },
+      context,
       send: async () => {
+        // #4669: `queued-for-retry` means the email retry cron holds every
+        // copy, so the claim is kept and Stripe must not redeliver for it.
         const outcome = await mail.send();
-        if (outcome !== "sent") {
+        if (outcome === "undelivered") {
           throw new UnrecognisedStripePaymentAlertNotSentError(row.stripePaymentIntentId);
         }
-        await prisma.unrecognisedStripePayment.update({
-          where: { id: row.id },
-          data: { alertedAt: new Date() },
-        });
+        await stampAlertSent(row, context);
         return UNMUTEABLE_ALERT_SENT;
       },
     });
 
-  if (await send()) return;
-  if (await alertWasSent(row.id)) return;
+  /**
+   * #4670: this delivery took the claim and the send failed. The helper gave
+   * the claim back, unless that release failed: then the claim held is this
+   * delivery's own, not a sibling's in flight, and returning would complete the
+   * event with no alert sent. Give it back again - guarded by the exact stamp
+   * this call wrote, so a newer claim is never touched - and fail the webhook so
+   * Stripe's redelivery claims afresh and sends.
+   */
+  const giveBackOwnClaimAndFail = async (claimedAt: Date): Promise<never> => {
+    await releaseAlertCooldown({ key, claimedAt }).catch((err) =>
+      logger.error({ ...context, err }, `Failed again to release the ${mail.label} claim`),
+    );
+    throw new UnrecognisedStripePaymentAlertNotSentError(row.stripePaymentIntentId);
+  };
+
+  // Not kept with a claim of its own means this send did not go out
+  // (`stampAlertSent` never throws), so give it back before any further read
+  // that could itself fail and leave the claim held.
+  const first = await send();
+  if (first.kept) return;
+  if (first.claimedAt) await giveBackOwnClaimAndFail(first.claimedAt);
+  if (await alertWasSent(row)) return;
 
   const heldAt = (await readHeldOnceEverAlertTimes([key], new Date())).get(key);
   if (!heldAt) {
     throw new UnrecognisedStripePaymentAlertNotSentError(row.stripePaymentIntentId);
   }
-  // A sibling delivery of another event still owns a fresh claim. The same
-  // event's redelivery never reaches here while that attempt's lease is live.
+  // A fresh claim held here belongs to a sibling still sending. This delivery's
+  // own failed send gave its claim back above (#4670), so the same event's
+  // redelivery reaches a claim only when an attempt crashed: that attempt's
+  // lease then holds the redelivery off until the claim is past this window
+  // (#4647).
   if (Date.now() - heldAt.getTime() < UNRECOGNISED_ALERT_IN_FLIGHT_MS) return;
 
   await releaseAlertCooldown({ key, claimedAt: heldAt });
-  if (await send()) return;
-  if (await alertWasSent(row.id)) return;
+  const second = await send();
+  if (second.kept) return;
+  if (second.claimedAt) await giveBackOwnClaimAndFail(second.claimedAt);
+  if (await alertWasSent(row)) return;
   throw new UnrecognisedStripePaymentAlertNotSentError(row.stripePaymentIntentId);
 }
 
-async function alertWasSent(id: string): Promise<boolean> {
+/**
+ * Stamp `alertedAt` once the alert went out. #4670: a failed write never fails
+ * the send - the mail is out, so the claim must be kept and the event complete,
+ * or Stripe's redelivery would send it again. The sent marker stands in for
+ * the stamp; if it fails too, both failures are logged for an operator.
+ */
+async function stampAlertSent(row: UnrecognisedStripePayment, context: Record<string, unknown>): Promise<void> {
+  try {
+    await prisma.unrecognisedStripePayment.update({
+      where: { id: row.id },
+      data: { alertedAt: new Date() },
+    });
+    return;
+  } catch (err) {
+    logger.error({ ...context, err }, "The Stripe payment alert was sent, but its alertedAt stamp failed; writing the sent marker");
+  }
+  const sentKey = unrecognisedStripePaymentAlertSentKey(row.stripePaymentIntentId);
+  await claimAlertCooldown({ key: sentKey, windowMs: ALERT_ONCE_EVER_WINDOW_MS }).catch((err) =>
+    logger.error({ ...context, err }, "The Stripe payment alert was sent, but neither its alertedAt stamp nor its sent marker was written"),
+  );
+}
+
+/** Sent: the row's `alertedAt`, or (#4670) the marker written when that stamp failed. */
+async function alertWasSent(row: UnrecognisedStripePayment): Promise<boolean> {
   const current = await prisma.unrecognisedStripePayment.findUnique({
-    where: { id },
+    where: { id: row.id },
     select: { alertedAt: true },
   });
-  return current?.alertedAt != null;
+  if (current?.alertedAt != null) return true;
+  const sentKey = unrecognisedStripePaymentAlertSentKey(row.stripePaymentIntentId);
+  return (await findHeldOnceEverAlertKeys([sentKey], new Date())).has(sentKey);
 }
 
 /** The stored row for this intent: the existing one, or the one this delivery inserts. */
@@ -323,7 +405,7 @@ function alertMail(
   row: UnrecognisedStripePayment,
   livemode: boolean,
   format: ClubFormat,
-): { label: string; send: () => Promise<AdminAlertSendOutcome> } {
+): { label: string; send: () => Promise<UnmuteableAdminAlertOutcome> } {
   const reason = row.reason;
   if (reason === UnrecognisedStripePaymentReason.NOT_APP_CREATED) {
     const fields = alertFields(row, livemode, format);

@@ -14,6 +14,11 @@
  * payment transaction names is recorded and alerted the same way, under its own
  * reason and alert, once, under redelivery and under concurrent deliveries.
  *
+ * #4670: exactly once across a failed write around the send - a claim
+ * give-back that fails, and an `alertedAt` write that fails after the mail
+ * went out. Those two cases inject the failure with a one-shot spy on the real
+ * Prisma delegate; everything else stays real.
+ *
  * Ordinary Vitest runs skip the whole file. It needs the guarded, disposable
  * loopback PostgreSQL every realdb suite uses (`CONCURRENCY_RACE_DATABASE_URL`,
  * `RUN_CONCURRENCY_RACE_TESTS=1`), and owns and cleans its own `race-4532`
@@ -205,6 +210,65 @@ let harnessRole: { before: string | undefined; restore: () => void } | undefined
       expect(await alertClaims(intent)).toBe(1);
       expect(await completed(a.id)).toBe(1);
       expect(await completed(b.id)).toBe(1);
+    });
+
+    // #4670: the real claim, its exact stamp and the sent marker, in PostgreSQL.
+    it("fails the event when the send failed and giving the claim back failed, and the redelivery sends (#4670)", async () => {
+      const intent = `${INTENT_PREFIX}release_fails`;
+      const first = succeededEvent(intent);
+      // The recipients cannot be read, so the send throws; the helper's give-back then fails once.
+      const recipients = vi.spyOn(prisma.member, "findMany").mockRejectedValue(new Error("database blip"));
+      const giveBack = vi.spyOn(prisma.alertCooldown, "deleteMany").mockRejectedValueOnce(new Error("database blip"));
+
+      try {
+        expect(await deliver(first)).toBe(500);
+        expect(giveBack).toHaveBeenCalledTimes(2);
+      } finally {
+        recipients.mockRestore();
+        giveBack.mockRestore();
+      }
+
+      // Its own claim, given back by its exact stamp: the redelivery is not read as a sibling's send.
+      expect(await alertClaims(intent)).toBe(0);
+      expect(await completed(first.id)).toBe(0);
+
+      expect(await deliver(first)).toBe(200);
+      const [row] = await rows(intent);
+      expect(row.alertedAt).toBeInstanceOf(Date);
+      expect(await alertClaims(intent)).toBe(1);
+    });
+
+    it("sends once when the alertedAt write fails after the send, even to a replay past the in-flight window (#4670)", async () => {
+      const intent = `${INTENT_PREFIX}stamp_fails`;
+      const sentLogs = () => prisma.emailLog.count({ where: { templateName: TEMPLATE, subject: { contains: "$25.00" } } });
+      const before = await sentLogs();
+      const stamp = vi.spyOn(prisma.unrecognisedStripePayment, "update").mockRejectedValueOnce(new Error("database blip"));
+      const first = succeededEvent(intent);
+
+      try {
+        expect(await deliver(first)).toBe(200);
+      } finally {
+        stamp.mockRestore();
+      }
+
+      const [row] = await rows(intent);
+      expect(row.alertedAt).toBeNull();
+      expect(await completed(first.id)).toBe(1);
+      expect(await alertClaims(intent)).toBe(1);
+      expect(await prisma.alertCooldown.count({ where: { key: `${alertKey(intent)}:sent` } })).toBe(1);
+      const sent = await sentLogs();
+      expect(sent).toBeGreaterThan(before);
+
+      // The kept claim, unstamped, is older than the window a takeover would take it after.
+      await prisma.alertCooldown.update({
+        where: { key: alertKey(intent) },
+        data: { lastAlertedAt: new Date(Date.now() - 60 * 60_000) },
+      });
+      const replay = succeededEvent(intent);
+      expect(await deliver(replay)).toBe(200);
+
+      expect(await sentLogs()).toBe(sent);
+      expect(await completed(replay.id)).toBe(1);
     });
 
     // #4624 inverts #4532's "leaves an app intent alone": an app intent no

@@ -48,6 +48,7 @@ import { formatCents } from "@/lib/utils";
 import type { ClubFormat } from "@/lib/club-format";
 import { syncBookingLedgerSettlements } from "@/lib/booking-ledger-settlement-sync";
 import { postCancellationLedgerLines } from "@/lib/booking-ledger-cancellation-sync";
+import { postStoredBookingConfirmationLedgerLines } from "@/lib/booking-ledger-confirmation-sync";
 import { resolveBookingMoneyPostingContext } from "@/lib/member-money/doors";
 import { syncBookingLedgerCredits } from "@/lib/booking-ledger-credit-sync";
 import { sumInternetBankingMintedCentsForBookings } from "@/lib/internet-banking-late-cash-credit";
@@ -1367,6 +1368,9 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
       }
       // #4211 (`INV-PAY-043`): the bank receipt's row settled it; a card capture arriving later is refunded.
       await recordSettlingTransaction(tx, { paymentId: fresh.id, transactionId: await findSettlingInternetBankingTransactionId(tx, fresh.id) });
+      // #4628: this PAID claim is the booking's confirmation, as the settle's is (`INV-MONEY-032`): its
+      // charge lines post here, under lock(1) and the lodge key, and link to the journal charge its binding posted.
+      await postStoredBookingConfirmationLedgerLines(tx, fresh.bookingId, journal!);
       await reconcileBedAllocationsForBookingWithLodgeLockHeld({
         bookingId: fresh.bookingId,
         db: tx,

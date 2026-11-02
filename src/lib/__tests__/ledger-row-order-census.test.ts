@@ -135,9 +135,9 @@ const UNORDERED_ROW_SETS: Record<string, string> = {
  */
 const UNPROVEN_FIRST_READS: Record<string, string> = {
   "src/lib/saved-card-charge-settle.ts > adoptSavedCardChargeAttemptForIntent > row":
-    "looks the attempt row up by `reference`, the saved-card idempotency key, which embeds the row's own id " +
-    "(savedCardChargeIdempotencyKey(bookingId, row.id)), and re-checks that key against the row it got, so " +
-    "only that one row can be adopted.",
+    "looks the attempt row up by `reference`, the saved-card idempotency key, which embeds the row's own id, " +
+    "or (#4646) by `id` from the intent's metadata, and re-checks the row's key against its own id and this " +
+    "booking (savedCardChargeKeyShape), so only that one row can be adopted.",
 };
 
 /**

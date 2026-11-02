@@ -9,7 +9,7 @@ import {
   UNRECOGNISED_STRIPE_PAYMENT_NOTE,
 } from "@/lib/unrecognised-stripe-payment-note";
 import { renderEmailHtml } from "@/lib/email-theme";
-import { type AdminAlertSendOutcome } from "./admin-alert-send-result";
+import { type UnmuteableAdminAlertOutcome } from "./admin-alert-send-result";
 import { sendUnmuteableAdminAlert } from "./admin-alerts-shared";
 
 /**
@@ -22,7 +22,7 @@ import { sendUnmuteableAdminAlert } from "./admin-alerts-shared";
  */
 export async function sendAdminUnrecognisedStripePaymentAlert(
   fields: UnrecognisedStripePaymentAlertFields,
-): Promise<AdminAlertSendOutcome> {
+): Promise<UnmuteableAdminAlertOutcome> {
   return sendUnmuteableAdminAlert({
     subject: `Stripe payment the app did not create - code it in Xero: ${fields.amount}`,
     html: await renderEmailHtml(() => adminUnrecognisedStripePaymentTemplate(fields)),
@@ -42,7 +42,7 @@ export async function sendAdminUnrecognisedStripePaymentAlert(
  */
 export async function sendAdminUnmatchedAppStripePaymentAlert(
   fields: UnmatchedAppStripePaymentAlertFields,
-): Promise<AdminAlertSendOutcome> {
+): Promise<UnmuteableAdminAlertOutcome> {
   return sendUnmuteableAdminAlert({
     subject: `Booking card payment the app could not match - check it: ${fields.amount}`,
     html: await renderEmailHtml(() => adminUnmatchedAppStripePaymentTemplate(fields)),

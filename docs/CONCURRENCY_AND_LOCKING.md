@@ -158,7 +158,20 @@ Provider execution uses the committed outbox's guarded RUNNING claim and
 claim token. Invoice reads, voids, credit creation, allocation and refund-note
 settlement run outside database transactions. Refund notes wait for the
 matching bank-transfer hand-back's completion; a lost outbox claim cannot save
-its outcome. This composes with the existing cancel/capture/refund cohort and
+its outcome. #4655: the created note's record (`recordCreatedOrganiserNote`) is
+status-guarded `updateMany`s on the operation row, tried in turn, and takes no
+advisory key. It lands on this run's claim, or on a row no claim holds and no
+resolve closed - FAILED after a reset, taken back RUNNING under a fresh
+`startedAt` in the same write (#4672), or PENDING after a retry - and never on
+another claim's RUNNING row or over another note. The executor hands the fresh
+claim to the outbox (`onRetake`), whose completion, busy and cooldown
+give-backs and failure write are all guarded on it; Resolve
+(`claimResolvedInXeroMark`) and Retry (`requeueOutboxRowForRetry`) take only
+FAILED or PARTIAL, so they lose to the RUNNING row, and the stale reset still
+fails it if the process dies. The reset, requeue, outbox claim and resolve
+mark write that row status-guarded too, so whichever commits first wins. A
+lost record runs no allocation or payout and writes no failure; its audit row
+and alert run after, outside any transaction. This composes with the existing cancel/capture/refund cohort and
 with the supplementary-anchor protocol rather than holding a lock across Xero.
 
 ### One refund credit note in flight per payment, by claim order (#3880)
@@ -3502,6 +3515,23 @@ and amount, created by its own recovery row's creation plus the 60 s skew
 (`latestAdoptableIntentCreatedAt`, #4036, #4079); that adoption landing
 between the owner check and the cancel is the gap left. Reads and one provider call
 only: no lock, key, participant or order changes. Proven on real Postgres.
+#4652: the same proof, widened to the door's own rule (`closedWithoutIntent`):
+any recovery closed SUCCEEDED without naming the intent, so also a stale
+reclaim's runner that closed it with an amount-suffixed intent or none. Closed
+is terminal: the claim takes only PENDING or FAILED, and the one re-arm of a
+closed additional-ask recovery is a review charge's, whose replay never reaches
+a lost hold. The credit-release ask settles its lost hold the same way. Its
+recovery is never netted off or folded (`inFlightAskRecoveries` leaves it out),
+so only the stale reaper and a reclaim move it; its Stripe key is scoped to its
+release and minted only by that recovery's runner, and no refused replay adopts
+its reason (`isIntentForOrdinaryAskPlan`), so once closed nothing records its
+intent and its owner-check gap is empty. Accepted window, a stated limit: a
+recovery still claimed, even by a runner that already wrote another intent,
+handed back to retry, or failed for good, keeps the stale attempt's intent - a credit-release retry
+re-sizes and may mint under the same key, and Stripe answers with that intent.
+It stays open, never offered, logged under the cleanup event. Reads and one
+provider call only, after the hold's transaction: no lock, key, participant or
+order changes. Proven on real Postgres through the credit-release writers.
 Round 6: the retire closes waiting recoveries before it stamps the rows - the
 runner's own order (its claim hold writes the recovery, then its row; since
 #4217 both take the `Payment` row before either) - and a
@@ -4466,7 +4496,12 @@ the pre-#4217 code). Now:
   the Stripe settle (`settleBookingPaymentInTransaction`, straight after its
   `Payment` upsert, before the ledger lookup that may backfill). On the root
   client the saved-card settle runs in a short transaction of its own, so a
-  unique violation there rolls it back whole and it runs once more.
+  unique violation there rolls it back whole and it runs once more. The
+  webhook's adoption of a lost-answer attempt row is that settle (#4646), with
+  its row write also claimed on "still no intent" under the payment lock: of
+  two adoptions (by key and by metadata), or an adoption and the charging
+  code's own settle, one writes, and the loser writes and reconciles nothing.
+  It adds no lock.
 - The Internet Banking settle (#4094) takes it after `lock(1)`, the lodge key
   and the member key, and re-reads the payment's figures under it; its rows are
   read under it. Its figure logic (#3979, `INV-PAY-126`) is unchanged, except
@@ -5566,6 +5601,39 @@ Ledger M3b adds no advisory key and no new lock site. Its participants:
 Reconciled against #4626 (the command and its `lock(1)` assertion), #4564 (M2's
 RESTRICT keys and the journal-aware teardown), #4622, #4629 and #4630, the last
 merges touching these writers.
+
+## The M3c bank-transfer binding doors and the confirmation bridge (#4628)
+
+Ledger M3c adds no advisory key and no new lock site, and changes no door's lock
+order. Its participants:
+
+- **The binding doors** post R01 through `postPendingBookingJournal` after
+  their booking, guest and payment writes, inside the transaction that already
+  holds global `lock(1)` then the lodge key: the internet-banking arm of
+  `createConfirmedBooking` (its own transaction, or the exception approval's),
+  the switch to internet banking (which also holds the owner's credit-ledger
+  key, taken before), and both pay-on-account arms of the school and member
+  request approvals. Each resolves its posting context before the transaction
+  (`INV-LOCK-004`): the bookings route, the group join (an EACH_PAYS_OWN joiner
+  may pay by internet banking) and the switch route read it, the approval reuses
+  the batch executor's, the school approval reads it on its club zone. The
+  create's input type requires the context wherever the method can be internet
+  banking, so a caller cannot omit it and compile.
+- **The pending-charge syncs.** The modification and cancellation posters,
+  reached by every edit and cancel door under its `lock(1)`, re-state a pending
+  charge where the booking is not yet confirmed on the ledger. They read the
+  stored rows the door just wrote; nothing depends on capacity.
+- **The confirmation bridge** runs at the top of `postBookingLedgerJournal`,
+  so every confirmation door (the settle, the Xero receipt, an edit's
+  auto-pay, the group settle, the back-post) links its first legacy lines under
+  the `lock(1)` it already holds. Appending source links to a sealed batch takes
+  no lock on the batch's rows; the unique link key refuses a second link of one
+  line. A restatement, when needed, is a correction, which the engine refuses
+  without `lock(1)`. It takes the booking row lock first, as M3b's adapter does.
+
+Reconciled against #4636 (M3b: the doors, the booking row lock, the inactive
+journal), #4630 (M3a) and #4634 (the finished-stay fee owed, which the planned
+confirmation includes), the last merges touching these writers.
 
 ## A credit note spent outside the app: global, then the member's credit ledger (#4219)
 

@@ -393,10 +393,12 @@ export async function processCreditReleaseAskOperation(
     });
   });
   if (held === null) {
-    logger.warn(
-      { operationId: operation.id, bookingId: operation.bookingId, paymentIntentId: intent.id },
-      "Credit-release ask lost its claim before writing its row; nothing written (the minted intent was never offered to anyone)",
-    );
+    // #4652 (`INV-PAY-120`): nothing written, and the hold's transaction has ended. The intent was
+    // never offered; it is cancelled at Stripe, best-effort, once a reclaiming runner closed this
+    // row without it and nothing names it (`settleLostRecoveryClaimHold`). Minted under this
+    // release's own key, never adopted. Dynamic import: that module reaches the recovery runner.
+    const { settleLostRecoveryClaimHold } = await import("@/lib/reissued-ask-abandoned-intent");
+    await settleLostRecoveryClaimHold({ operationId: operation.id, bookingId: operation.bookingId, paymentIntentId: intent.id, adopted: false });
     return;
   }
   await cancelSupersededAdditionalIntentsNow({

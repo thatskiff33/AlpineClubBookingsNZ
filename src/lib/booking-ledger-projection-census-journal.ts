@@ -1,11 +1,14 @@
 /**
- * COMPARISON REPORT V1: THE JOURNAL AGAINST THE LEGACY LEDGER (#4627, Ledger
- * M3b; the M3 plan on #4515). Pure: the census row in, one identity and its
- * integrity findings out, added to the booking's evaluation.
+ * COMPARISON REPORTS V1 AND V2: THE JOURNAL AGAINST THE LEGACY LEDGER (#4627,
+ * Ledger M3b; #4628, M3c; the M3 plan on #4515). Pure: the census row in, ONE
+ * journal identity and its integrity findings out, added to the booking's
+ * evaluation: `JOURNAL_PENDING` (v2, `pendingChargeComparison` below) for a
+ * bank-transfer booking whose binding R01 is in the journal and none of whose
+ * legacy lines is linked yet, `JOURNAL` (v1) for every other booking.
  *
- * For every booking whose confirmation (R01) is in the member-money journal,
- * the journal's live charge components must add up to the legacy charge lines
- * bridged to it. Each line counts only through the one rule that maps a legacy
+ * V1: for every booking whose confirmation (R01) is in the member-money journal
+ * and linked, the journal's live charge components must add up to the legacy
+ * charge lines bridged to it. Each line counts only through the one rule that maps a legacy
  * line to a component (`journalComponentOfLegacyLine`, `INV-SSOT`), so a
  * settlement line never does. The comparison is of the booking's total, not
  * component by component: a give-back the booking charge cannot absorb is taken
@@ -15,8 +18,9 @@
  * the bridged lines add up to, so an acknowledgement uses the census's own
  * format, with identity `JOURNAL`.
  *
- * Every charge line with money on such a booking must be bridged: one that is
- * not is an `UNBRIDGED_CHARGE_LINE` integrity finding (a door that wrote the
+ * Every charge line with money on such a booking must be bridged (and on a
+ * pending one, none may exist: see v2): one that is not is an
+ * `UNBRIDGED_CHARGE_LINE` integrity finding (a door that wrote the
  * legacy line and skipped the journal), which holds the gate. A booking
  * confirmed before M3b is NOT_APPLICABLE: M9 back-posts its whole history.
  */
@@ -25,11 +29,45 @@ import type { BookingLedgerEvaluation, BookingLedgerIdentityResult, BookingLedge
 import type { BookingLedgerCensusRow } from "@/lib/booking-ledger-projection-census-row";
 import type { BookingLedgerCensusReport } from "@/lib/booking-ledger-projection-census-report";
 
+/**
+ * COMPARISON REPORT V2 (#4628, M3c): a bank-transfer booking charged at its
+ * binding moment holds its charge in the journal only, until its legacy
+ * confirmation writes lines and links them (`pending`). Its live components
+ * are compared with what the booking says it owes: its final price plus the
+ * fees recorded on its payment (`bookingAmountOwedCents`'s charge side, before
+ * credit, which the journal does not yet post), or, once cancelled, what the
+ * club kept as the CANCELLED snapshot froze it (nothing, where it froze none).
+ * Identity `JOURNAL_PENDING`, in place of `JOURNAL`: `columnCents` = what the journal carries,
+ * `ledgerCents` = what the booking owes, the census's acknowledgement format.
+ * A pending booking has no legacy charge line by definition: one with money is
+ * a confirmation that skipped the bridge, `UNBRIDGED_CHARGE_LINE`.
+ */
+function pendingChargeComparison(row: BookingLedgerCensusRow, journal: NonNullable<BookingLedgerCensusRow["journal"]>): {
+  identity: BookingLedgerIdentityResult;
+  integrity: BookingLedgerIntegrityFinding[];
+} {
+  const columnCents = journal.components.reduce((sum, component) => sum + component.liveGrossCents, 0);
+  const ledgerCents = row.booking.status === "CANCELLED"
+    ? (row.cancellation?.keptCents ?? 0)
+    : row.booking.finalPriceCents + (row.payment?.changeFeeCents ?? 0);
+  const integrity: BookingLedgerIntegrityFinding[] = row.lines
+    .filter((line) => line.side !== "SETTLEMENT" && line.amountCents !== 0)
+    .map((line) => ({ bookingId: row.booking.id, lineId: line.id, kind: "UNBRIDGED_CHARGE_LINE",
+      detail: `a ${line.kind} line on a booking whose bank-transfer charge is pending in the journal, but the confirmation bridge never linked it` }));
+  return {
+    identity: { identity: "JOURNAL_PENDING", status: columnCents === ledgerCents ? "AGREE" : "DISAGREE", columnCents, ledgerCents,
+      deltaCents: columnCents - ledgerCents, explainedBy: [] },
+    integrity,
+  };
+}
+
+/** The booking's one journal identity: `JOURNAL_PENDING` while its bank-transfer charge is pending, `JOURNAL` otherwise. */
 export function journalChargeComparison(row: BookingLedgerCensusRow): {
   identity: BookingLedgerIdentityResult;
   integrity: BookingLedgerIntegrityFinding[];
 } {
   const notApplicable = { identity: "JOURNAL", status: "NOT_APPLICABLE", columnCents: 0, ledgerCents: 0, deltaCents: 0, explainedBy: [] } as const;
+  if (row.journal?.charged && row.journal.pending) return pendingChargeComparison(row, row.journal);
   if (!row.journal?.charged) {
     // Confirmed before M3b, or never confirmed: not compared. But a booking
     // created after the journal's first R01 and confirmed on the ledger must

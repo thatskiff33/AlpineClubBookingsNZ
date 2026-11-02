@@ -27,17 +27,34 @@ import { prisma } from "@/lib/prisma";
  * Never throws; returns whether the claim was kept. `context` is logged with
  * every failure, `label` names the alert in those lines.
  */
-export async function sendAdminAlertOnceEver({
-  key,
-  label,
-  context,
-  send,
-}: {
+export async function sendAdminAlertOnceEver(args: OnceEverAlertArgs): Promise<boolean> {
+  return (await sendAdminAlertOnceEverClaim(args)).kept;
+}
+
+type OnceEverAlertArgs = {
   key: string;
   label: string;
   context: Record<string, unknown>;
   send: () => Promise<AdminAlertSendResult>;
-}): Promise<boolean> {
+};
+
+/**
+ * What one `sendAdminAlertOnceEver` call did with the claim (#4670): `kept`
+ * as that function returns it, and `claimedAt`, the exact stamp this call
+ * wrote when it took the claim, or null when another holder had it. Not kept
+ * with a stamp means this call's send failed: a claim still held under that
+ * exact stamp is its own, left by a release that failed, never a sibling's,
+ * and `releaseAlertCooldown` with it gives back that claim and no other.
+ */
+export type OnceEverAlertClaim = { kept: boolean; claimedAt: Date | null };
+
+/** `sendAdminAlertOnceEver`, reporting the claim's stamp as well (#4670). Same rule; never throws. */
+export async function sendAdminAlertOnceEverClaim({
+  key,
+  label,
+  context,
+  send,
+}: OnceEverAlertArgs): Promise<OnceEverAlertClaim> {
   const claimedAt = new Date();
   let claimed = false;
   try {
@@ -46,9 +63,9 @@ export async function sendAdminAlertOnceEver({
       windowMs: ALERT_ONCE_EVER_WINDOW_MS,
       now: claimedAt,
     });
-    if (!claimed) return false;
+    if (!claimed) return { kept: false, claimedAt: null };
     const result = await send();
-    if (adminAlertIsDeliveredOrQueued(result)) return true;
+    if (adminAlertIsDeliveredOrQueued(result)) return { kept: true, claimedAt };
     logger.error(
       { ...context, result },
       `No admin can receive the ${label}; it will be retried in a day`
@@ -61,7 +78,7 @@ export async function sendAdminAlertOnceEver({
     }).catch((err) =>
       logger.error({ ...context, err }, `Failed to defer the ${label} claim`)
     );
-    return false;
+    return { kept: false, claimedAt };
   } catch (err) {
     logger.error({ ...context, err }, `Failed to send the ${label}; it will be retried`);
   }
@@ -70,7 +87,7 @@ export async function sendAdminAlertOnceEver({
       logger.error({ ...context, err }, `Failed to release the ${label} claim`)
     );
   }
-  return false;
+  return { kept: false, claimedAt: claimed ? claimedAt : null };
 }
 
 /**

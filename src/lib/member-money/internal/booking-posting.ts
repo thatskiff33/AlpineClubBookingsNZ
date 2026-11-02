@@ -1,19 +1,28 @@
 import type { Prisma } from "@prisma/client";
 import { bookingOwnerProviderMetadata } from "../../booking-owner";
 import { calendarDateOfDateOnlyInstant } from "../../club-time";
+import logger from "../../logger";
 import {
+  BINDING_CHARGE_SOURCE_VERSION,
   bookingChargeEventIdentity,
+  bookingComponentKey,
   planBookingChargeEvent,
   planMemberMergeTransfer,
   type BookingChargeEvent,
   type LegacyChargeLine,
 } from "./booking-charges";
 import { readBookingLiveComponents } from "./booking-journal-read";
+import {
+  planPendingBookingCharge,
+  standingComponentTargets,
+  type PendingChargeEvent,
+  type StandingChargeLine,
+} from "./booking-pending-charges";
 import { memberMoneyEventKeys, type MemberMoneyEventKey } from "./keys";
 import { isBookingJournalInactive, type BookingJournalContext } from "./journal-activity";
 import { MemberMoneyPlanError, type MemberMoneyDebtor, type MemberMoneyPostingContext } from "./plan";
 import { postMemberMoneyEvent } from "./post";
-import type { MemberMoneyPosting } from "./store";
+import { linkLegacyLinesToPostedBatch, type MemberMoneyPosting } from "./store";
 
 /**
  * THE BOOKING DOORS' WAY INTO THE JOURNAL (#4627, Ledger M3b). Each legacy
@@ -90,7 +99,7 @@ async function unbridgedLines(tx: Db, bookingId: string, postingKeys: readonly s
 
 /** An event as a door names it; a closure and the back-post are named by the first line they write, read back here. */
 export type BookingLedgerJournalEvent =
-  | Exclude<BookingChargeEvent, { kind: "review-close" | "back-post" }>
+  | Exclude<BookingChargeEvent, { kind: "review-close" | "back-post" | "binding" | "restatement" }>
   | { kind: "review-close"; taskId: string; officerMemberId: string }
   | { kind: "back-post" };
 
@@ -109,6 +118,10 @@ export async function postBookingLedgerJournal(
   input: BookingLedgerJournalInput,
 ): Promise<MemberMoneyPosting | null> {
   if (isBookingJournalInactive(context)) return null;
+  // #4628: a bank-transfer booking charged at its binding moment links its
+  // first legacy lines (its confirmation's) to that charge before anything
+  // else reads them, so they are never charged a second time.
+  await bridgeBindingCharge(tx, context, input.bookingId, input.lodgeId);
   const named = input.event;
   if (named.kind !== "back-post" && named.kind !== "review-close"
     && await eventPosted(tx, bookingChargeEventIdentity(input.bookingId, named).eventKey)) {
@@ -156,6 +169,104 @@ async function postCatchUp(
     liveComponents: await readBookingLiveComponents(tx, input.bookingId),
   });
   if (plan) await postMemberMoneyEvent(tx, context, plan);
+}
+
+/**
+ * #4628 (M3c): A BANK-TRANSFER BOOKING'S CHARGE BEFORE SETTLEMENT. The door
+ * holds `lock(1)` (and its lodge key, where it has one) and has written its
+ * business change; `standing` is what its legacy side planned the booking's
+ * confirmation would post now (`booking-pending-charges.ts`). The binding R01
+ * posts once, under the confirmation's own key; an edit or cancellation before
+ * the legacy confirmation re-states the charge, and posts only for a booking
+ * whose R01 is a binding R01 with no legacy line bridged yet. Any other booking
+ * posts nothing here: one confirmed on the legacy ledger posts through
+ * `postBookingLedgerJournal`, one never bound is not a sale. A repeat is a no-op.
+ */
+export async function postPendingBookingJournal(
+  tx: Db,
+  context: BookingJournalContext,
+  input: {
+    bookingId: string;
+    lodgeId: string;
+    event: Exclude<PendingChargeEvent, { kind: "restatement" }>;
+    /**
+     * Planned only once the booking is known to post, so a booking never bound
+     * costs no plan; null where the legacy planner declined (it logs why), which posts nothing.
+     */
+    standing: () => Promise<readonly StandingChargeLine[] | null>;
+  },
+): Promise<MemberMoneyPosting | null> {
+  if (isBookingJournalInactive(context)) return null;
+  if (await eventPosted(tx, bookingChargeEventIdentity(input.bookingId, input.event).eventKey)) return null;
+  if (input.event.kind !== "binding" && !(await pendingBindingCharge(tx, input.bookingId))) return null;
+  const standing = await input.standing();
+  if (standing === null) return null;
+  const debtor = await lockedBookingDebtor(tx, input.bookingId);
+  const plan = planPendingBookingCharge({
+    bookingId: input.bookingId,
+    lodgeId: input.lodgeId,
+    event: input.event,
+    debtor,
+    standing,
+    liveComponents: await readBookingLiveComponents(tx, input.bookingId),
+  });
+  return plan ? postMemberMoneyEvent(tx, context, plan) : null;
+}
+
+/**
+ * The booking's binding R01, while its charge is still pending: posted at a
+ * binding moment, and no legacy line of the booking yet bridged to the journal.
+ * Null for a booking never bound, or one whose confirmation has been linked.
+ */
+async function pendingBindingCharge(tx: Db, bookingId: string): Promise<{ journalId: string; receivableLegId: string | null } | null> {
+  const r01 = await tx.memberMoneyEvent.findUnique({
+    where: { eventKey: memberMoneyEventKeys.bookingCharge(bookingId) },
+    select: { sourceVersion: true, journal: { select: { id: true, lines: { where: { account: "MEMBER_RECEIVABLE" }, orderBy: { id: "asc" }, take: 1, select: { id: true } } } } },
+  });
+  if (r01?.sourceVersion !== BINDING_CHARGE_SOURCE_VERSION || !r01.journal) return null;
+  const bridged = await tx.memberMoneySourceLink.findFirst({ where: { bookingLedgerLine: { bookingId } }, select: { id: true } });
+  if (bridged) return null;
+  return { journalId: r01.journal.id, receivableLegId: r01.journal.lines[0]?.id ?? null };
+}
+
+/**
+ * THE CONFIRMATION BRIDGE (#4628; `INV-MONEY-042`). A booking charged at its
+ * binding moment has no legacy line until its confirmation writes them, under
+ * the same `lock(1)`. Its first legacy lines (whichever door writes them: the
+ * settle, the Xero receipt, an edit's zero-dollar auto-pay, the back-post) are
+ * linked here to the binding R01, by source links appended to that sealed batch
+ * and postings naming its receivable leg. They post no second charge.
+ *
+ * The confirmation is planned from the same stored rows as the standing charge,
+ * so its lines add up, component by component, to what the journal carries.
+ * Where a writer moved the price without posting, they do not: the journal is
+ * first re-stated to the lines, once (`chargeRestatement`), and that is logged,
+ * because it means a door changed the price without a journal event.
+ */
+async function bridgeBindingCharge(tx: Db, context: MemberMoneyPostingContext, bookingId: string, lodgeId: string): Promise<void> {
+  const pending = await pendingBindingCharge(tx, bookingId);
+  if (!pending) return;
+  const lines = (await unbridgedLines(tx, bookingId, "every charge line")).filter((line) => line.amountCents !== 0);
+  if (lines.length === 0) return;
+  const live = await readBookingLiveComponents(tx, bookingId);
+  const targets = standingComponentTargets(bookingId, lines);
+  const liveByKey = new Map(live.map((component) => [bookingComponentKey(component), component.liveGrossCents]));
+  const moved = [...targets].some(([key, target]) => (liveByKey.get(key) ?? 0) !== target.grossCents)
+    || live.some((component) => component.liveGrossCents !== 0 && !targets.has(bookingComponentKey(component)));
+  if (moved) {
+    const debtor = await lockedBookingDebtor(tx, bookingId);
+    const plan = planPendingBookingCharge({ bookingId, lodgeId, event: { kind: "restatement" }, debtor, standing: lines, liveComponents: live });
+    if (plan) await postMemberMoneyEvent(tx, context, plan);
+    logger.warn(
+      { bookingId, journal: live, lines: [...targets.values()] },
+      "Member-money journal: a bank-transfer booking's confirmation lines differ from the charge posted before settlement; restated (#4628)",
+    );
+  }
+  await linkLegacyLinesToPostedBatch(tx, {
+    journalId: pending.journalId,
+    receivableLegId: pending.receivableLegId,
+    lines: lines.map((line) => ({ id: line.id, version: line.postingKey ?? line.id })),
+  });
 }
 
 /**

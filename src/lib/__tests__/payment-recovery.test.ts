@@ -3879,14 +3879,17 @@ describe("payment recovery worker", () => {
 
     /**
      * #4631: the hold lost, so the intent the runner minted is written nowhere.
-     * When a net-off or a fold closed the recovery and nothing names the intent,
-     * it is cancelled at Stripe as abandoned - after the hold's transaction has
+     * When the recovery ended without it - a net-off, a fold, or (#4652) a stale
+     * reclaim's runner that closed it with another intent or none - and nothing
+     * names the intent, it is cancelled at Stripe as abandoned - after the hold's transaction has
      * ended, on #4052's proof re-read just before the cancel. The proof itself
      * is `reissued-ask-abandoned-intent.test.ts`'s; the real-PostgreSQL races
      * are `additional-ask-reduction.realdb.test.ts`'s.
      */
     describe("#4631: a lost claim hold cancels the runner's own unwritten intent", () => {
-      const CLOSED_READ = { status: true, lastError: true };
+      const CLOSED_READ = { status: true, lastError: true, paymentIntentId: true };
+      /** The Stripe key the recovery names until a hold writes an intent over it. */
+      const KEY = "mod_guest_bk1_mod-9";
       const transactionsOpenAtCancel: number[] = [];
       // `clearAllMocks` keeps implementations; this one has no `beforeEach` default to restore it.
       afterEach(() => {
@@ -3894,7 +3897,7 @@ describe("payment recovery worker", () => {
         ordinaryAskMint4631.adopted = false;
       });
 
-      function loseHoldTo(moved: { status: string; lastError: string | null }, owners: { row?: { id: string } | null; recovery?: { id: string } | null } = {}) {
+      function loseHoldTo(moved: { status: string; lastError: string | null; paymentIntentId?: string }, owners: { row?: { id: string } | null; recovery?: { id: string } | null } = {}) {
         const operation = additionalIntentOperation({ status: "PROCESSING", attempts: 1, processingStartedAt: new Date("2026-06-30T23:00:00.000Z") });
         primeQueue(operation);
         // The claim succeeds; the hold, re-asserting it before the row is written, finds it gone.
@@ -3902,7 +3905,7 @@ describe("payment recovery worker", () => {
           args.data?.status === "PROCESSING" ? { count: 1 } : { count: 0 },
         );
         mockPaymentRecoveryFindUnique.mockImplementation(async (args: { select?: unknown }) =>
-          JSON.stringify(args?.select) === JSON.stringify(CLOSED_READ) ? moved : operation,
+          JSON.stringify(args?.select) === JSON.stringify(CLOSED_READ) ? { paymentIntentId: KEY, ...moved } : operation,
         );
         const defaultRow = mockPaymentTransactionFindUnique.getMockImplementation();
         mockPaymentTransactionFindUnique.mockImplementation(async (args: { where?: { stripePaymentIntentId?: string } }) =>
@@ -3927,10 +3930,13 @@ describe("payment recovery worker", () => {
       }
 
       it.each([
-        ["netted off by a price reduction", PENDING_ASK_NETTED_BY_REDUCTION_NOTE],
-        ["folded into a later increase's ask", WAITING_REISSUE_FOLDED_BY_INCREASE_NOTE],
-      ])("MUTATION: a recovery %s has the runner's intent cancelled as abandoned, outside every transaction, and the run ends cleanly", async (_label, lastError) => {
-        loseHoldTo({ status: "SUCCEEDED", lastError });
+        ["netted off by a price reduction", PENDING_ASK_NETTED_BY_REDUCTION_NOTE, KEY],
+        ["folded into a later increase's ask", WAITING_REISSUE_FOLDED_BY_INCREASE_NOTE, KEY],
+        // #4652: a stale reclaim's runner closed it with another (amount-suffixed) intent, or with none.
+        ["closed by a reclaiming runner with ANOTHER intent", null, "pi_reclaimer"],
+        ["closed by a reclaiming runner with no intent", null, KEY],
+      ])("MUTATION: a recovery %s has the runner's intent cancelled as abandoned, outside every transaction, and the run ends cleanly", async (_label, lastError, paymentIntentId) => {
+        loseHoldTo({ status: "SUCCEEDED", lastError, paymentIntentId });
 
         const result = await processPaymentRecoveryOperations({ limit: 1 });
 
@@ -3998,7 +4004,11 @@ describe("payment recovery worker", () => {
       it.each([
         ["reset for a retry (PENDING)", { status: "PENDING", lastError: null }],
         ["reclaimed by another runner (PROCESSING)", { status: "PROCESSING", lastError: null }],
-      ])("a recovery %s may yet record the intent - nothing cancelled", async (_label, moved) => {
+        // #4652: stated limits - a live claim that already wrote another intent, and the
+        // reclaiming runner's own write of THIS intent (Stripe answered its key with it).
+        ["reclaimed by a runner that already wrote ANOTHER intent (PROCESSING)", { status: "PROCESSING", lastError: null, paymentIntentId: "pi_reclaimer" }],
+        ["closed naming THIS intent", { status: "SUCCEEDED", lastError: null, paymentIntentId: "pi_recovered" }],
+      ])("MUTATION: a recovery %s may yet record the intent, or has - nothing cancelled", async (_label, moved) => {
         loseHoldTo(moved);
         await processPaymentRecoveryOperations({ limit: 1 });
         expectReachedLostHold();

@@ -13,7 +13,7 @@
  * a lost claim rolls the whole record back: no pointer, no link, the officer's
  * note left on the row. The late note is then logged, audited once (`xero`)
  * and surfaced to the officers through #4374's alert
- * (`unrecordedLateSuccessAlert`), never silently linked - unless it IS the note
+ * (`traceUnrecordedLateNote`, shared with #4655's organiser note), never silently linked - unless it IS the note
  * the resolve recorded (Xero committed it and only its answer was lost, and the
  * officer found it), when nothing is wrong and only an info line is logged.
  *
@@ -32,14 +32,11 @@
  * `lock(1)`, Payment, the row, the link), so the two never wait on each other
  * in a cycle.
  */
-import type { Prisma, XeroSyncOperation } from "@prisma/client";
+import type { Prisma } from "@prisma/client";
 
 import { createAuditLog } from "@/lib/audit";
-import { clubFormatValues } from "@/lib/club-format-server";
-import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
-import { formatCents } from "@/lib/utils";
-import { unrecordedLateSuccessAlert } from "@/lib/xero-success-after-resolution-alert";
+import { traceUnrecordedLateNote } from "@/lib/xero-late-note-trace";
 import { upsertXeroObjectLink } from "@/lib/xero-sync";
 
 /** #4426: the audit action of a late refund note the create did not record. */
@@ -106,68 +103,27 @@ export async function recordCreatedRefundNote(note: CreatedRefundNote): Promise<
   } catch (error) {
     if (!(error instanceof ResolvedWithANoteMeanwhile)) throw error;
   }
-  const trace = {
-    operationId: note.operationId,
-    paymentId: note.paymentId,
-    bookingId: note.bookingId,
-    creditNoteId: note.creditNoteId,
-    creditNoteNumber: note.creditNoteNumber,
-    amountCents: note.amountCents,
-  };
-  // The first trace, before anything else can fail: the note exists in Xero and nothing here records it.
-  logger.warn(trace, "Refund credit note from Xero: the claim was lost to a resolve by hand recording a note; re-checking the operation (INV-INT-029, #4426)");
   // None of what follows throws into the create: its catch would fail the officer's row.
-  let row: XeroSyncOperation | null;
-  try {
-    row = await prisma.xeroSyncOperation.findUnique({ where: { id: note.operationId } });
-  } catch (error) {
-    logger.error({ ...trace, err: error }, "Refund credit note from Xero not recorded, and its operation could not be re-read: no audit row or alert; this log is its only record (#4426)");
-    return "resolved-by-hand";
-  }
-  if (row?.xeroObjectId === note.creditNoteId) {
-    logger.info(trace, "The late answer is the note the resolve recorded: nothing to record or alert (#4426)");
-    return "resolved-by-hand";
-  }
-  try {
-    await createAuditLog({
-      action: LATE_REFUND_NOTE_NOT_RECORDED_ACTION,
-      targetId: note.bookingId,
-      entityType: "XeroSyncOperation",
-      entityId: note.operationId,
-      category: "xero",
-      severity: "important",
-      outcome: "blocked",
-      summary: "Refund credit note from a stalled Xero job not recorded: the job was resolved by hand",
-      details: `Xero answered a stalled refund credit-note job with credit note ${note.creditNoteNumber ?? note.creditNoteId} after an officer resolved the job by hand, recording a note. The app did not record or link it; check it in Xero.`,
-      metadata: { ...trace, recordedCreditNoteId: row?.xeroObjectId ?? null, rowFound: row !== null },
-    });
-  } catch (error) {
-    logger.error({ ...trace, err: error }, "Refund credit note from Xero not recorded, and its audit row failed (#4426)");
-  }
-  if (!row) {
-    logger.error(trace, "Refund credit note from Xero not recorded, and its operation row is gone: no alert sent (#4426)");
-    return "resolved-by-hand";
-  }
-  try {
-    await unrecordedLateSuccessAlert(row, {
-      xeroObjectType: "CREDIT_NOTE",
-      xeroObjectId: note.creditNoteId,
-      xeroObjectNumber: note.creditNoteNumber,
-      amount: await formattedAmount(note),
-      bookingId: note.bookingId,
-    })();
-  } catch (error) {
-    logger.error({ ...trace, err: error }, "Refund credit note from Xero not recorded, and its alert failed (#4426)");
-  }
+  await traceUnrecordedLateNote(note, {
+    subject: "Refund credit note",
+    lostTo: "the claim was lost to a resolve by hand recording a note",
+    issue: "#4426",
+    context: { paymentId: note.paymentId },
+    sameNote: "The late answer is the note the resolve recorded: nothing to record or alert (#4426)",
+    audit: async (trace, row) => {
+      await createAuditLog({
+        action: LATE_REFUND_NOTE_NOT_RECORDED_ACTION,
+        targetId: note.bookingId,
+        entityType: "XeroSyncOperation",
+        entityId: note.operationId,
+        category: "xero",
+        severity: "important",
+        outcome: "blocked",
+        summary: "Refund credit note from a stalled Xero job not recorded: the job was resolved by hand",
+        details: `Xero answered a stalled refund credit-note job with credit note ${note.creditNoteNumber ?? note.creditNoteId} after an officer resolved the job by hand, recording a note. The app did not record or link it; check it in Xero.`,
+        metadata: { ...trace, recordedCreditNoteId: row?.xeroObjectId ?? null, rowFound: row !== null },
+      });
+    },
+  });
   return "resolved-by-hand";
-}
-
-/** The note's amount in the club's money format, or null when the format cannot be read (the alert still goes). */
-async function formattedAmount(note: CreatedRefundNote): Promise<string | null> {
-  try {
-    return formatCents(note.amountCents, await clubFormatValues());
-  } catch (error) {
-    logger.warn({ operationId: note.operationId, err: error }, "Club money format unreadable; the late-note alert names no amount");
-    return null;
-  }
 }

@@ -124,7 +124,19 @@ export type BookingChargeEvent =
    */
   | { kind: "review-close"; taskId: string; officerMemberId: string; firstLineId: string }
   /** The back-post, named by the first line it writes (`memberMoneyEventKeys.backPost`). */
-  | { kind: "back-post"; firstLineId: string };
+  | { kind: "back-post"; firstLineId: string }
+  /**
+   * #4628 (M3c): R01 at a bank-transfer booking's binding moment, before any
+   * legacy line exists. The same key as the confirmation's R01, so a booking
+   * charges once; its source names the binding, so a later confirmation knows
+   * to link to it (`booking-pending-charges.ts`).
+   */
+  | { kind: "binding" }
+  /** #4628: the restatement a binding booking's legacy confirmation may need (`memberMoneyEventKeys.chargeRestatement`). */
+  | { kind: "restatement" };
+
+/** The source version a binding R01 records: how a confirmation tells it from its own R01 (#4628). */
+export const BINDING_CHARGE_SOURCE_VERSION = "binding";
 
 /**
  * A booking is cancelled once: `CANCELLED` is terminal and every cancel path
@@ -145,6 +157,12 @@ export function bookingChargeEventIdentity(bookingId: string, event: BookingChar
     case "confirmation":
       return { eventKey: memberMoneyEventKeys.bookingCharge(bookingId), rule: "R01", origin: "APP", actorMemberId: null,
         source: { kind: "BOOKING", id: bookingId, version: "confirmation" } };
+    case "binding":
+      return { eventKey: memberMoneyEventKeys.bookingCharge(bookingId), rule: "R01", origin: "APP", actorMemberId: null,
+        source: { kind: "BOOKING", id: bookingId, version: BINDING_CHARGE_SOURCE_VERSION } };
+    case "restatement":
+      return { eventKey: memberMoneyEventKeys.chargeRestatement(bookingId), rule: "R02", origin: "APP", actorMemberId: null,
+        source: { kind: "BOOKING", id: bookingId, version: "confirmation-restatement" } };
     case "modification":
       return { eventKey: memberMoneyEventKeys.modification(event.modificationId), rule: "R02", origin: "APP", actorMemberId: null,
         source: { kind: "BOOKING", id: bookingId, version: `modification:${event.modificationId}` } };
@@ -160,13 +178,16 @@ export function bookingChargeEventIdentity(bookingId: string, event: BookingChar
   }
 }
 
-const REASONS = {
-  R01: "Booking confirmed: its charge lines, posted as one payable obligation (R01)",
-  R02: "Booking edited: its charge components re-posted as the edit priced them (R02/R03)",
-  R04: "Booking cancelled: its extinguished charges reversed and what the club keeps charged (R04)",
-  R21: "Booking review closed: its re-price and agreed adjustment posted (R21)",
-  R26: "Booking-ledger gap fill: lines no batch posted (a door's logged gap, or written while the journal was inactive), filled in for a booking already in the journal (R26)",
-} as const;
+/** Why each event posted, by the event a door names (the batch's reason: provenance, not hashed). */
+export const BOOKING_CHARGE_REASONS: Record<BookingChargeEvent["kind"], string> = {
+  confirmation: "Booking confirmed: its charge lines, posted as one payable obligation (R01)",
+  modification: "Booking edited: its charge components re-posted as the edit priced them (R02/R03)",
+  cancellation: "Booking cancelled: its extinguished charges reversed and what the club keeps charged (R04)",
+  "review-close": "Booking review closed: its re-price and agreed adjustment posted (R21)",
+  "back-post": "Booking-ledger gap fill: lines no batch posted (a door's logged gap, or written while the journal was inactive), filled in for a booking already in the journal (R26)",
+  binding: "Bank-transfer booking bound: the charge its confirmation will post, as one payable obligation before any money arrives (R01)",
+  restatement: "Bank-transfer booking confirmed: its charge restated to the lines the confirmation wrote, which a door had moved without posting (R02)",
+};
 
 const lineSource = (line: LegacyChargeLine): MemberMoneySource => ({
   kind: "BOOKING_LEDGER",
@@ -251,7 +272,7 @@ export function planBookingChargeEvent(input: BookingChargePlanInput): MemberMon
   if (lines.length === 0) {
     if (identity.rule !== "R01") return null;
     return { kind: "ZERO", eventKey: identity.eventKey, origin: identity.origin, source: identity.source,
-      reason: `${REASONS.R01}, with nothing yet to charge`, actorMemberId: identity.actorMemberId };
+      reason: `${BOOKING_CHARGE_REASONS[input.event.kind]}, with nothing yet to charge`, actorMemberId: identity.actorMemberId };
   }
   const booking = { bookingId: input.bookingId, lodgeId: input.lodgeId };
   const problems: string[] = [];
@@ -293,20 +314,9 @@ export function planBookingChargeEvent(input: BookingChargePlanInput): MemberMon
     moved.set(key, entry);
   }
   rebalance(moved, bookingChargeIdentity(input.bookingId), problems);
-  for (const { component, live, after, lines: touching } of moved.values()) {
-    if (after < 0) continue; // `rebalance` has already refused the batch.
-    if (after === live) continue;
-    const source = touching.length === 1 ? lineSource(touching[0]!) : undefined;
-    const shared = { account: component.account, booking, chargeIdentity: component.chargeIdentity,
-      ...(source ? { source } : {}) } as const;
-    // A correction takes the whole live component; what remains is charged afresh.
-    if (live > 0) {
-      legs.push({ type: "revenue", ...shared, side: "DEBIT", grossCents: live, evidence: { rule: identity.rule, correction: true } });
-    }
-    if (after > 0) {
-      legs.push({ type: "revenue", ...shared, side: "CREDIT", grossCents: after, evidence: { rule: identity.rule } });
-    }
-  }
+  // `rebalance` has already refused a batch that leaves a component negative.
+  legs.push(...componentMovementLegs(booking, identity.rule, [...moved.values()].filter((entry) => entry.after >= 0).map(
+    ({ lines: touching, ...entry }) => ({ ...entry, ...(touching.length === 1 ? { source: lineSource(touching[0]!) } : {}) }))));
   if (problems.length > 0) throw new MemberMoneyPlanError(problems);
 
   return {
@@ -315,7 +325,7 @@ export function planBookingChargeEvent(input: BookingChargePlanInput): MemberMon
     origin: identity.origin,
     source: identity.source,
     additionalSources: lines.map(lineSource),
-    reason: REASONS[identity.rule],
+    reason: BOOKING_CHARGE_REASONS[input.event.kind],
     actorMemberId: identity.actorMemberId,
     obligations: obligationKey
       ? [{ key: obligationKey, kind: "CHARGE", debtor: input.debtor, faceCents: receivableCents,
@@ -323,6 +333,37 @@ export function planBookingChargeEvent(input: BookingChargePlanInput): MemberMon
       : [],
     legs,
   };
+}
+
+/** A component an event moves: the gross it carries live, and what the event leaves it carrying. */
+export interface ComponentMove {
+  component: BookingChargeComponent;
+  live: number;
+  after: number;
+  /** The one legacy line that moves it, where exactly one does; otherwise the event's own source. */
+  source?: MemberMoneySource;
+}
+
+/**
+ * The revenue legs that move each component from its live gross to `after`,
+ * the one rule every booking charge batch uses (`INV-SSOT-001`): a correction
+ * takes the WHOLE live component, and what remains is charged afresh. A
+ * component left where it was posts nothing.
+ */
+export function componentMovementLegs(
+  booking: { bookingId: string; lodgeId: string },
+  rule: string,
+  moves: readonly ComponentMove[],
+): MemberMoneyLegPlan[] {
+  const legs: MemberMoneyLegPlan[] = [];
+  for (const { component, live, after, source } of moves) {
+    if (after === live) continue;
+    const shared = { account: component.account, booking, chargeIdentity: component.chargeIdentity,
+      ...(source ? { source } : {}) } as const;
+    if (live > 0) legs.push({ type: "revenue", ...shared, side: "DEBIT", grossCents: live, evidence: { rule, correction: true } });
+    if (after > 0) legs.push({ type: "revenue", ...shared, side: "CREDIT", grossCents: after, evidence: { rule } });
+  }
+  return legs;
 }
 
 /** One booking's receivable a merged-away member still carries, signed (Dr positive). */

@@ -1482,8 +1482,10 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
     // 399 -> 401 unpinned (#4457): the retention settings and member-anonymisation rows.
     // 401 -> 402 unpinned (#4533): the officer's finished-stay promo correction request.
     // 402 -> 403 unpinned (#4426): the late refund note's row, unpinned `xero`.
-    // RE-MEASURED with `pnpm run audit:census` on the merged tree.
-    ).toEqual({ pinned: 130, unpinned: 403 });
+    // RE-MEASURED with `pnpm run audit:census` on the merged tree (first main-sync, 2 Nov 2026).
+    // 403 -> 404 unpinned (#4655): the late organiser adjustment note's row, unpinned `xero`.
+    // RE-MEASURED with `pnpm run audit:census` on the merged tree (second main-sync, 2 Nov 2026).
+    ).toEqual({ pinned: 130, unpinned: 404 });
   });
 
   it("pins which classified writers a MEMBER can now see about themselves", () => {

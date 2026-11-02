@@ -483,7 +483,7 @@ re-run, never offered for retry, never re-minted beside (owner decision,
 - **One predicate.** `isResolvedInXero` (`xero-operation-resolution.ts`); a
   `where` clause spells it on `manuallyResolvedAt`. The mark leaves the row
   `FAILED`/`PARTIAL`, so status alone reads it as live; a late success lands
-  and alerts, except over a recorded refund note (`INV-INT-029`).
+  and alerts, except where `INV-INT-029` says.
 - **Retries refuse it.** `getXeroOperationRetryMeta` refuses first; retry and
   requeue answer 409; the drain closes that queued row `CANCELLED`.
 - **Enqueues and the outbox respect it.** A resolved refund note covers its
@@ -563,9 +563,9 @@ its outcome of the same keyed Xero call there.
   also keeps CANCELLED.
 - **Every outcome carries its claim (#4373):** the row's id and its RUNNING
   claim's `startedAt`, from the started row, the outbox or REQUEUE claim
-  (`claimXeroSyncOperationToRunning`) or a retry's claim. No outcome, a
-  success included, lands on a RUNNING row another claim holds, such as a
-  retry's after a stale reset or failure.
+  (`claimXeroSyncOperationToRunning`), a retry's claim or a late note's
+  re-take (`INV-INT-034`). No outcome, a success included, lands on a RUNNING
+  row another claim holds, such as a retry's after a reset.
 - **A repair's claim is kept too.** The PARTIAL repair and FAILED
   refund-note repair stamp a marker code on their RUNNING claim; no outcome
   but SUCCEEDED lands there unless written onto that claim (`retryClaim`).
@@ -573,8 +573,8 @@ its outcome of the same keyed Xero call there.
   (#4374). The write leaves the mark; if it recorded a Xero object, after
   commit it warns and alerts officers once per operation; Xero may hold it
   twice. Limit: an alert reaching nobody retries only when another success
-  lands. Except a refund-note create's different late note over a note a
-  resolve recorded (#4426): audited and alerted, not recorded.
+  lands. Except the late credit notes `INV-INT-028` (#4426) and
+  `INV-INT-034` (#4655) keep out: audited and alerted, not recorded.
 - **A refused write changes nothing.** It answers null, writes no link and
   raises no alert. A missing row throws, or is logged for a guarded caller.
   A success refused for a later claim still records its links, warned.
@@ -583,6 +583,40 @@ its outcome of the same keyed Xero call there.
 
 Pinned by `xero-sync.test.ts`, `xero-success-after-resolution-alert.test.ts`
 and, against real PostgreSQL, `xero-shared-operation-outcome.realdb.test.ts`.
+
+### INV-INT-034
+
+An organiser adjustment's credit note that Xero creates after its stalled job
+was reset is recorded on the job or surfaced once, never silently lost (#4655).
+
+- **It lands where a success may.** `recordCreatedOrganiserNote`
+  (`organiser-extra-note-record.ts`) writes it on its row, before any
+  allocation or payout, in status-guarded `updateMany`s, only where the row
+  records no other note: this run's RUNNING claim; an unresolved FAILED row (a
+  reset), taken back RUNNING under a fresh claim in the same write; or an
+  unresolved PENDING row (a Retry queued it in place: this run stops and the
+  queued run continues). A retry never raises a second note.
+- **A re-taken row is this run's (#4672).** The outbox completes, gives back
+  and fails it under the fresh claim; Resolve and Retry refuse it while
+  RUNNING, and Reset stale running still covers a dead process.
+- **Anywhere else it is kept out.** A row resolved by hand, marked
+  non-replayable, held by another claim (or a live row with its key),
+  recording a different note or closed takes nothing; the run returns
+  without failing it. `traceUnrecordedLateNote` (#4426's) warns,
+  writes one `xero` audit row
+  (`xero.organiser_adjustment_note.late_note_not_recorded`) and sends #4374's
+  alert once per note, each step caught.
+- **A resolved row is a stated choice.** Unlike a plain-resolved refund-note
+  row (#4426), it never takes a late note: landing would only add an
+  allocation or payout after an officer took the adjustment over.
+- **Limits.** A retry may record the same note through Xero's idempotency
+  key; the alert says to compare first. A process dying before the audit row
+  leaves the warning only. A run whose own claim is reset after it recorded
+  the note can still pay out after a resolve, under #4374's alert (#4680).
+
+Pinned by `organiser-extra-note-record.test.ts`,
+`organiser-extra-adjustment.test.ts` and, against real PostgreSQL,
+`organiser-late-note-after-reset.realdb.test.ts`.
 
 ## Stored outbox payloads (#3971)
 
@@ -675,12 +709,12 @@ Pinned by `xero-deleted-payment-links.test.ts`, `xero-deleted-payment-link-backf
 ### INV-INT-032
 A succeeded Stripe payment the app did not create is recorded once and alerted once; it never completes silently.
 
-- **Recognised means routed.** `isAppCreatedPaymentIntent` (`stripe-app-intent-metadata.ts`) is the one definition: a non-empty `bookingId`, or `type: "group_settlement"`. Both PaymentIntent wire functions in `stripe.ts` require `AppPaymentIntentMetadata`, and a census holds every Stripe money-object creation (PaymentIntent, Checkout session, Payment Link, invoice, subscription, charge) to those two. Key presence is not recognition: a Payment Link's own `type` or `memberId` metadata is still foreign.
-- **One record.** `payment_intent.succeeded` for any other intent writes one `UnrecognisedStripePayment` row: amount in Stripe's smallest unit, currency, created instant, PaymentIntent, charge, Checkout session and Payment Link ids, and the line items (else the intent's description), capped. The unique PaymentIntent id is the claim; a later delivery reads the stored row and asks Stripe nothing. The Checkout read is best effort and runs before the write, outside any transaction.
-- **One alert.** `admin-unrecognised-stripe-payment`, unmuteable and delivery-locked, to Finance editors, claimed once ever per PaymentIntent. Every delivery asks for it, so one that died between row and send is finished by the next. A send that throws gives the claim back and fails the event, so Stripe redelivers. No card data or payer identity is sent.
+- **Recognised means routed.** `appPaymentIntentRoute` (`stripe-app-intent-metadata.ts`) is the one definition: a non-empty `bookingId` or `type: "group_settlement"`. Both PaymentIntent wire functions in `stripe.ts` require `AppPaymentIntentMetadata`, and a census holds every Stripe money-object creation (PaymentIntent, Checkout session, Payment Link, invoice, subscription, charge) to those two. Key presence is not recognition: a Payment Link's own `type` or `memberId` metadata is still foreign.
+- **One record.** `payment_intent.succeeded` for any other intent writes one `UnrecognisedStripePayment` row: amount in Stripe's smallest unit, currency, created instant, PaymentIntent, charge, Checkout session and Payment Link ids, and the line items (else the intent's description), capped. The unique PaymentIntent id is the claim; a later delivery reads the stored row and asks Stripe nothing. The Checkout read runs before the write, outside any transaction.
+- **One alert.** `admin-unrecognised-stripe-payment`, unmuteable and delivery-locked, to Finance editors, claimed once ever per PaymentIntent. A delivery that died before sending is finished by the next. A send nobody received releases its copies, gives its own claim back, twice if need be, and fails the event: Stripe redelivers; the email cron replays one recipient's lost copy, or all once it claimed one, keeping the claim (#4669). An unstamped claim is a sibling's for the webhook lease less a margin, then taken over, unless a sent marker shows it went out. No card data or payer identity is sent.
 - **Nothing else.** The event completes; no booking, settlement, ledger or Xero document is touched, and no advisory lock is taken. Coding the money in Xero is the treasurer's, by hand.
 
-Pinned by `stripe-app-intent-metadata.test.ts`, `unrecognised-stripe-payment.test.ts`, `stripe-webhook-alerts.test.ts`, `admin-unrecognised-stripe-payment-alert.test.ts` and, against a real database, `unrecognised-stripe-payment.realdb.test.ts`.
+Pinned by `stripe-app-intent-metadata.test.ts`, `unrecognised-stripe-payment.test.ts`, `unrecognised-stripe-payment-email-retry.test.ts`, `caller-retried-alert-replay.test.ts`, `stripe-webhook-alerts.test.ts`, `admin-unrecognised-stripe-payment-alert.test.ts` and, against a real database, `unrecognised-stripe-payment.realdb.test.ts`.
 
 ## A succeeded app intent no payment row settles (#4624)
 
@@ -688,7 +722,7 @@ Pinned by `stripe-app-intent-metadata.test.ts`, `unrecognised-stripe-payment.tes
 A succeeded PaymentIntent the app created for a booking that matches no PRIMARY payment transaction is recorded once and alerted once; it never completes silently.
 
 - **Where.** `handlePaymentIntentSucceeded` (`stripe-webhook-service.ts`), after the group-settlement, superseded-capture and additional-ask routes and the saved-card attempt adoption: no row names the intent (`APP_INTENT_NO_TRANSACTION`), or the row is not `PRIMARY` (`APP_INTENT_NOT_PRIMARY`). Those routes are the expected cases and never reach it. [`STATE_MACHINES.md`](../STATE_MACHINES.md#a-succeeded-app-intent-no-primary-row-settles-4624) lists every minting flow and whether it can.
-- **One record, one alert.** `recordUnmatchedAppStripePayment` reuses `INV-INT-032`'s `UnrecognisedStripePayment` row (with `reason` and the metadata `bookingId`; no Checkout read) and its once-ever key, so one PaymentIntent has one row and one alert whichever case recorded it first; the stored row's reason picks the mail. The alert is `admin-unmatched-app-stripe-payment`: unmuteable, delivery-locked, to Finance editors. A send that fails gives the claim back and fails the event, so Stripe redelivers.
+- **One record, one alert.** `recordUnmatchedAppStripePayment` reuses `INV-INT-032`'s `UnrecognisedStripePayment` row (with `reason` and the metadata `bookingId`; no Checkout read) and its once-ever key, so one PaymentIntent has one row and one alert whichever case recorded it first; the stored row's reason picks the mail. The alert is `admin-unmatched-app-stripe-payment`: unmuteable, delivery-locked, to Finance editors. Retried as for `INV-INT-032`: by Stripe's redelivery when nobody received it, by the email retry cron for one recipient's lost copy (#4669).
 - **Nothing else.** The booking, its payment, ledger, capacity and Xero are untouched, and no advisory lock is taken: matching the money to the booking or refunding it is a person's.
 
-Pinned by `unrecognised-stripe-payment.test.ts`, `stripe-webhook-alerts.test.ts` ("#4624"), `admin-unrecognised-stripe-payment-alert.test.ts` and, against a real database, `unrecognised-stripe-payment.realdb.test.ts`.
+Pinned by `unrecognised-stripe-payment.test.ts`, `unrecognised-stripe-payment-email-retry.test.ts`, `caller-retried-alert-replay.test.ts`, `stripe-webhook-alerts.test.ts` ("#4624"), `admin-unrecognised-stripe-payment-alert.test.ts` and, against a real database, `unrecognised-stripe-payment.realdb.test.ts`.
