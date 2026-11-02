@@ -1035,7 +1035,35 @@ note.
    but SUCCEEDED lands on the row (`INV-INT-029`). And since #4373 no outcome
    at all lands on a RUNNING row another claim stamped: every complete and
    fail carries the claim (`startedAt`) it was made under, so a stale-reset
-   or failed attempt's late outcome never lands on the retry's claim. Mark non-replayable writes only onto a FAILED or
+   or failed attempt's late outcome never lands on the retry's claim. Since
+   #4673 and #4686 a FAILED, CANCELLED or PARTIAL outcome lands only on its own
+   claim's RUNNING or FAILED row (a PARTIAL also on its own PARTIAL), so a
+   stalled attempt's late outcome never undoes an officer's in-place Retry
+   (PENDING) or a withdrawal. A late PARTIAL so refused made a Xero object no
+   row records: it is not linked, since the queued run's same keyed call
+   normally answers with it and records it, and a link would answer that
+   run's own checks (a credit note's counts toward refund coverage). It is
+   warned, given one audit row per refused delivery
+   (`xero.operation.late_partial_not_recorded`, `xero`,
+   `xero-late-partial-trace.ts`) and alerted once per object (the
+   `XERO_SUCCESS_AFTER_RESOLUTION` alert, key
+   `xero-success-after-resolution:<operation id>:<object id>`); both name what
+   the attempt did not finish (`partialFaultSummary`: its payment, refund
+   payment, refund payment, allocation or email error, or a stray subscription
+   invoice to void, each redacted on its own), since the queued run may not
+   redo it. The trace's re-read, audit, alert skeleton is the late credit
+   notes' own (`traceLateXeroObject`, `INV-SSOT`). A part-success naming an
+   unfinished step is traced even when a SUCCEEDED row already records its
+   object (the queued run closed on it first) or a later claim holds the row
+   RUNNING (its links still recorded, review F1, and the alert says so): that
+   run may not have redone the step - a bound group invoice is not emailed
+   again, while a subscription run emails one not yet sent - so the alert and
+   audit row tell officers to check in Xero whether it is done before doing it
+   by hand. A PARTIAL row on the same object ends the trace: its own outcome
+   shows the step. Only a PARTIAL is handed over; a full success left nothing
+   unfinished (PR #4708 rounds 2-3). A queued group invoice
+   whose settlement already points at an invoice raises nothing and closes its
+   claimed row SUCCEEDED on that invoice (#4710), never left RUNNING. Mark non-replayable writes only onto a FAILED or
    PARTIAL row, so a retry that claimed it after the officer's read gets the
    409 "a retry is running"; a queued retry of a row marked not replayable is
    closed as skipped. Rows repaired before this release stay partly

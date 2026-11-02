@@ -4084,7 +4084,17 @@ two callers on one row (the hand-off above) each record their own outcome of
   retry's settle-time fence. A failure (or a FAILED completion) lands only on
   its own claim's row: RUNNING or FAILED under its `startedAt` (#4673); never
   PENDING, WAITING_PAYMENT, SKIPPED or CANCELLED (a withdrawal cancels a FAILED
-  row keeping its `startedAt`, PR #4687), nor a row another claim ended. A
+  row keeping its `startedAt`, PR #4687), nor a row another claim ended. So
+  does a CANCELLED or PARTIAL completion (#4686; a PARTIAL also on its own
+  claim's PARTIAL); a PARTIAL refused anywhere but its own claim's recorded
+  success or a later claim's RUNNING row has its Xero object warned, audited
+  per refused delivery (`xero.operation.late_partial_not_recorded`) and
+  alerted once, each naming what did not finish, never linked; one naming an
+  unfinished step (a PARTIAL only) is traced even on a SUCCEEDED row
+  recording its object or one held RUNNING by a later claim (which still
+  records its links), since that run may not have redone the step - officers
+  check in Xero before doing it by hand; a PARTIAL row on that object already
+  shows its own unfinished step, so it ends the trace. A
   refused write answers null: no link, no repeated-failure alert; the outbox
   counts it skipped and exposes no subscription charge error, and an
   additional-capture refusal stamps no code and alerts no officer. Limit: the
@@ -4286,7 +4296,11 @@ retry of an outbox-run row (group invoice and its VOIDs, kept late capture,
   writes its own outcome; once the queued run has failed under its own claim,
   the stalled failure leaves its error as it is, and a pre-HTTP cooldown
   refusing the stalled run gives back to PENDING only its own claim's RUNNING
-  or FAILED row, never the queued run's FAILED one (PR #4687)
+  or FAILED row, never the queued run's FAILED one (PR #4687); a late
+  CANCELLED or PARTIAL is refused the same way (#4686): the row stays PENDING
+  for the queued run, and a PARTIAL's Xero object is audited per delivery and
+  alerted once, not recorded; a queued group invoice whose settlement already
+  points at an invoice closes SUCCEEDED on it (#4710), never left RUNNING
 primary booking invoice create saves its link -> worth gap check (#3980,
   INV-PAY-136), and again on its "invoice already exists" replay
   a second save of the same invoice stores nothing -> re-check from the first's

@@ -85,6 +85,11 @@ vi.mock("@/lib/xero-hardening", () => ({
   maybeNotifyXeroRepeatedFailure: vi.fn(),
 }));
 
+// #4686: the lost-claim part-success trace runs after commit; its own suite covers it.
+vi.mock("@/lib/xero-late-partial-trace", () => ({
+  afterLostClaimPartial: vi.fn(),
+}));
+
 vi.mock("@/lib/logger", () => ({
   default: {
     error: vi.fn(),
@@ -119,12 +124,10 @@ const NOT_A_REPAIR_CLAIM = {
     { lastErrorCode: { notIn: ["PARTIAL_REPAIR_RUNNING", "REFUND_NOTE_REPAIR_RUNNING"] } },
   ],
 };
-/** #4373: not RUNNING under a claim other than `xeroClaim`'s default. */
+/** #4373: not RUNNING under a claim other than `xeroClaim`'s default - a success's guard. */
 const NOT_ANOTHER_CLAIM = { OR: [{ status: { not: "RUNNING" } }, { startedAt: TEST_XERO_CLAIMED_AT }] };
-/** #4356/#4373: the guard on an outcome other than SUCCEEDED, keeping `status`. */
-const outcomeGuard = (status: object) => ({ AND: [{ status }, NOT_A_REPAIR_CLAIM, NOT_ANOTHER_CLAIM] });
-/** #4673: a failure's guard - `xeroClaim`'s own row, in one of `statuses`, off a repair's claim. */
-const failureGuard = (statuses: string[]) => ({
+/** #4673, #4686: a failure's, cancel's or part-success's guard - `xeroClaim`'s own row, in one of `statuses`, off a repair's claim. */
+const ownClaimGuard = (statuses: string[]) => ({
   AND: [{ status: { in: statuses }, startedAt: TEST_XERO_CLAIMED_AT }, NOT_A_REPAIR_CLAIM],
 });
 
@@ -1707,7 +1710,7 @@ describe("failXeroSyncOperation keepCancelled", () => {
     ).resolves.toBeNull();
     expect(mocks.operationUpdateManyAndReturn).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: "op_kept", ...failureGuard(["RUNNING", "FAILED"]) },
+        where: { id: "op_kept", ...ownClaimGuard(["RUNNING", "FAILED"]) },
         data: expect.objectContaining({ status: "FAILED" }),
       })
     );
@@ -1736,7 +1739,7 @@ describe("failXeroSyncOperation named errors (#4218)", () => {
     );
     expect(mocks.operationUpdateManyAndReturn).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: "op_1", ...failureGuard(["RUNNING", "FAILED"]) },
+        where: { id: "op_1", ...ownClaimGuard(["RUNNING", "FAILED"]) },
         data: expect.objectContaining({
           status: "FAILED",
           lastErrorCode: "CREDIT_NOTE_SPENT_OUTSIDE_APP",
@@ -1831,7 +1834,7 @@ describe("a PARTIAL completion never lands on SUCCEEDED", () => {
       xeroSyncOperation: {
         updateMany: vi.fn().mockResolvedValue({ count }),
         update: vi.fn(),
-        findUnique: vi.fn().mockResolvedValue({ status: "SUCCEEDED" }),
+        findUnique: vi.fn().mockResolvedValue({ status: "SUCCEEDED", startedAt: TEST_XERO_CLAIMED_AT }),
         findUniqueOrThrow: vi.fn().mockResolvedValue({ id: "op_note", status: "PARTIAL" }),
       },
     };
@@ -1848,7 +1851,7 @@ describe("a PARTIAL completion never lands on SUCCEEDED", () => {
     ).resolves.toBeNull();
     expect(tx.xeroSyncOperation.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: "op_note", ...outcomeGuard({ not: "SUCCEEDED" }) },
+        where: { id: "op_note", ...ownClaimGuard(["RUNNING", "FAILED", "PARTIAL"]) },
         data: expect.objectContaining({ status: "PARTIAL" }),
       }),
     );
@@ -2061,16 +2064,21 @@ describe("outcome writes never replace a recorded success (#4356, INV-INT-029)",
     expect(outcome === null).toBe(!failureLandsOn(existing));
   });
 
-  it.each(STATUSES)("MUTATION: a PARTIAL completion lands on a %s row unless it is SUCCEEDED", async (existing) => {
+  // #4686: a part-success lands as a failure does, and on its own claim's PARTIAL row (two callers sharing it, #1354).
+  const partialLandsOn = (status: string) => ["RUNNING", "FAILED", "PARTIAL"].includes(status);
+
+  it.each(STATUSES)("MUTATION (#4686): a PARTIAL completion lands on its own claim's %s row only when it is RUNNING, FAILED or PARTIAL", async (existing) => {
     const { row, store } = oneRow(existing);
     await completeXeroSyncOperation(xeroClaim("op_shared"), { status: "PARTIAL", xeroObjectId: "inv_l" }, { store });
-    expect(row.status).toBe(existing === "SUCCEEDED" ? "SUCCEEDED" : "PARTIAL");
+    expect(row.status).toBe(partialLandsOn(existing) ? "PARTIAL" : existing);
+    expect(row.xeroObjectId).toBe(partialLandsOn(existing) ? "inv_l" : null);
   });
 
-  it.each(STATUSES)("MUTATION: a CANCELLED completion lands on a %s row only when it holds no recorded success", async (existing) => {
+  it.each(STATUSES)("MUTATION (#4686): a CANCELLED completion lands on its own claim's %s row only as a failure does", async (existing) => {
     const { row, store } = oneRow(existing);
     await completeXeroSyncOperation(xeroClaim("op_shared"), { status: "CANCELLED" }, { store });
-    expect(row.status).toBe(recordedSuccess(existing) ? existing : "CANCELLED");
+    expect(row.status).toBe(failureLandsOn(existing) ? "CANCELLED" : existing);
+    expect(recordedSuccess(existing) && row.status !== existing).toBe(false);
   });
 
   it.each(STATUSES)("MUTATION (#4673): a FAILED completion lands on its own claim's %s row only as a failure does", async (existing) => {
@@ -2270,6 +2278,138 @@ describe("outcome writes never replace a recorded success (#4356, INV-INT-029)",
       const { row, store } = oneRow("RUNNING");
       await expect(completeXeroSyncOperation(xeroClaim("op_shared", null), { status: "SUCCEEDED" }, { store })).resolves.toBeNull();
       expect(row.status).toBe("RUNNING");
+    });
+  });
+
+  // #4686: stall -> Reset stale running -> an officer's Retry queues the row in
+  // place (PENDING, `startedAt` cleared) -> the stalled run comes back. Its
+  // CANCELLED or PARTIAL lands only on its own claim's row, never the Retry; a
+  // PARTIAL's Xero object is traced after commit, never linked.
+  describe("a late CANCELLED or PARTIAL that lost its claim (#4686)", () => {
+    const EARLIER = new Date("2026-06-30T23:00:00.000Z");
+    const lateObject = { xeroObjectType: "INVOICE", xeroObjectId: "inv_late", xeroObjectNumber: "INV-9" };
+    const lateLinks = [{ localModel: "Payment", localId: "pay_1", xeroObjectType: "INVOICE", xeroObjectId: "inv_late", role: "PRIMARY_INVOICE" }];
+
+    /** The row as the Retry left it: PENDING, no claim. */
+    function queuedByRetry() {
+      const one = oneRow("PENDING");
+      one.row.startedAt = null;
+      return one;
+    }
+    /** Completion on the module client, as every production caller but a contact write does. */
+    function onModuleClient(store: never) {
+      mocks.transaction.mockImplementation(async (callback: (tx: unknown) => Promise<unknown>) => callback(store));
+    }
+    async function traced() {
+      return vi.mocked((await import("@/lib/xero-late-partial-trace")).afterLostClaimPartial);
+    }
+
+    it.each(["PARTIAL", "CANCELLED"])("MUTATION: a late %s leaves the Retry's PENDING row as it is: null, no link, no alert", async (status) => {
+      const { maybeNotifyXeroRepeatedFailure } = await import("@/lib/xero-hardening");
+      const { row, store } = queuedByRetry();
+      onModuleClient(store);
+      await expect(
+        completeXeroSyncOperation(xeroClaim("op_shared", EARLIER), { status, ...lateObject, extraLinks: lateLinks }),
+      ).resolves.toBeNull();
+      expect(row).toMatchObject({ status: "PENDING", startedAt: null, xeroObjectId: null });
+      expect(mocks.txLinkUpsert).not.toHaveBeenCalled();
+      expect(maybeNotifyXeroRepeatedFailure).not.toHaveBeenCalled();
+    });
+
+    const lostClaimRows: Array<[string, () => ReturnType<typeof oneRow>, Date]> = [
+      ["the Retry's PENDING row", queuedByRetry, EARLIER],
+      ["its own claim's row, withdrawn (CANCELLED)", () => oneRow("CANCELLED"), TEST_XERO_CLAIMED_AT],
+      ["a FAILED row a later claim ended", () => oneRow("FAILED"), EARLIER],
+      ["a SUCCEEDED row a later claim ended with another object", () => oneRow("SUCCEEDED", "inv_other"), EARLIER],
+      ["a row queued WAITING_PAYMENT", () => oneRow("WAITING_PAYMENT"), TEST_XERO_CLAIMED_AT],
+    ];
+
+    it.each(lostClaimRows)("MUTATION: a late PARTIAL refused on %s traces its Xero object after commit, unlinked", async (_label, make, claimedAt) => {
+      const trace = await traced();
+      const { row, store } = make();
+      const before = { ...row };
+      onModuleClient(store);
+      await expect(
+        completeXeroSyncOperation(xeroClaim("op_shared", claimedAt), { status: "PARTIAL", ...lateObject, extraLinks: lateLinks }),
+      ).resolves.toBeNull();
+      expect(row).toEqual(before);
+      expect(mocks.txLinkUpsert).not.toHaveBeenCalled();
+      expect(trace).toHaveBeenCalledTimes(1);
+      expect(trace).toHaveBeenCalledWith({ id: "op_shared", startedAt: claimedAt }, expect.objectContaining(lateObject), false, false);
+    });
+
+    it("warns inside the refused write, naming the object and both claims", async () => {
+      const logger = (await import("@/lib/logger")).default;
+      const { store } = queuedByRetry();
+      onModuleClient(store);
+      await completeXeroSyncOperation(xeroClaim("op_shared", EARLIER), { status: "PARTIAL", ...lateObject });
+      expect(logger.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ operationId: "op_shared", xeroObjectId: "inv_late", heldStatus: "PENDING", claimStartedAt: EARLIER, heldClaimStartedAt: null }),
+        expect.stringContaining("#4686"),
+      );
+    });
+
+    it("MUTATION: on a caller's own transaction (`store`), says so, so the trace only logs before that transaction commits", async () => {
+      const trace = await traced();
+      const { store } = queuedByRetry();
+      await expect(completeXeroSyncOperation(xeroClaim("op_shared", EARLIER), { status: "PARTIAL", ...lateObject }, { store })).resolves.toBeNull();
+      expect(trace).toHaveBeenCalledWith({ id: "op_shared", startedAt: EARLIER }, expect.objectContaining(lateObject), true, false);
+    });
+
+    const notTraced: Array<[string, () => Promise<unknown>]> = [
+      ["its own claim's SUCCEEDED row (a caller sharing it recorded the better outcome, #1354)", async () => {
+        const { store } = oneRow("SUCCEEDED", "inv_late");
+        onModuleClient(store);
+        return completeXeroSyncOperation(xeroClaim("op_shared"), { status: "PARTIAL", ...lateObject });
+      }],
+      ["a CANCELLED completion, which made nothing", async () => {
+        const { store } = queuedByRetry();
+        onModuleClient(store);
+        return completeXeroSyncOperation(xeroClaim("op_shared", EARLIER), { status: "CANCELLED" });
+      }],
+      ["a retry's own lost claim", async () => {
+        const { store } = queuedByRetry();
+        onModuleClient(store);
+        return completeXeroSyncOperation(xeroClaim("op_shared", EARLIER), { status: "PARTIAL", ...lateObject }, { retryClaim: true });
+      }],
+    ];
+
+    // PR #4708 round 2: a later claim's RUNNING row records the links (review F1) and still hands the
+    // object over, saying so; the hand-off traces it only when it names an unfinished step.
+    // PR #4708 round 3: a full success left nothing unfinished, so it is never handed to the part-success trace.
+    it("MUTATION: a late SUCCEEDED refused on a later claim's RUNNING row records its links and is not handed over", async () => {
+      const trace = await traced();
+      const { row, store } = oneRow("RUNNING");
+      onModuleClient(store);
+      await expect(
+        completeXeroSyncOperation(xeroClaim("op_shared", EARLIER), { ...lateObject, responsePayload: { emailError: "smtp down" }, lastErrorMessage: "late" }),
+      ).resolves.toBeNull();
+      expect(row).toMatchObject({ status: "RUNNING", startedAt: TEST_XERO_CLAIMED_AT, xeroObjectId: null });
+      expect(trace).not.toHaveBeenCalled();
+    });
+
+    it("MUTATION: a late PARTIAL refused on a later claim's RUNNING row records its links and is handed over as such", async () => {
+      const trace = await traced();
+      const { row, store } = oneRow("RUNNING");
+      onModuleClient(store);
+      await expect(completeXeroSyncOperation(xeroClaim("op_shared", EARLIER), { status: "PARTIAL", ...lateObject })).resolves.toBeNull();
+      expect(row).toMatchObject({ status: "RUNNING", startedAt: TEST_XERO_CLAIMED_AT, xeroObjectId: null });
+      expect(trace).toHaveBeenCalledWith({ id: "op_shared", startedAt: EARLIER }, expect.objectContaining(lateObject), false, true);
+    });
+
+    it.each(notTraced)("MUTATION: traces nothing for %s", async (_label, write) => {
+      const trace = await traced();
+      await expect(write()).resolves.toBeNull();
+      expect(trace).not.toHaveBeenCalled();
+    });
+
+    it("a PARTIAL on its own claim's FAILED row (its stale reset, no Retry) still lands and records its object", async () => {
+      const trace = await traced();
+      const { row, store } = oneRow("FAILED");
+      onModuleClient(store);
+      await expect(completeXeroSyncOperation(xeroClaim("op_shared"), { status: "PARTIAL", ...lateObject })).resolves.toMatchObject({ status: "PARTIAL" });
+      expect(row).toMatchObject({ status: "PARTIAL", xeroObjectId: "inv_late" });
+      expect(trace).not.toHaveBeenCalled();
     });
   });
 

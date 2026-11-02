@@ -733,7 +733,10 @@ export const AUDIT_CENSUS_TOTALS = {
   // adjustment run writes when it finds, before a money-moving Xero call after recording its note,
   // that a stale reset took its claim, an awaited `createAuditLog` with a literal `xero` category.
   // RE-MEASURED with `pnpm run audit:census`.
-  writeSites: 532,
+  // 532 -> 533 (#4686): `xero.operation.late_partial_not_recorded`, the one row a Xero operation's
+  // part-success writes when its attempt lost its claim and its Xero object was not recorded, an
+  // awaited `createAuditLog` with a literal `xero` category. RE-MEASURED with `pnpm run audit:census`.
+  writeSites: 533,
   /**
    * Of those, sites whose event object carries no `category` key.
    *
@@ -955,7 +958,8 @@ export const AUDIT_CENSUS_TOTALS = {
     // 167 -> 168 (#4426): the late refund note's row, above.
     // 168 -> 169 (#4655): the late organiser adjustment note's row, above.
     // 169 -> 170 (#4680): the organiser adjustment run's stand-down row, above.
-    createAuditLog: { total: 170, uncategorised: 0 },
+    // 170 -> 171 (#4686): the lost-claim part-success's row, above.
+    createAuditLog: { total: 171, uncategorised: 0 },
     // 8 -> 9 (#2581 child 2 review): `recordAgeUpParentEmailHandoffAudit`
     // moved off its hand-built `prisma.auditLog.create`, the last one in `src/`.
     // Same row, same dedupe keys (`action` + `subjectMemberId` + `outcome`) —
@@ -1446,7 +1450,9 @@ export const AUDIT_CENSUS_TOTALS = {
     // `xero` rows. Nobody's readership changes.
     // 49 -> 50 (#4680): `xero.organiser_adjustment_note.run_stood_down`, beside the other `xero`
     // rows. Nobody's readership changes.
-    xero: 50,
+    // 50 -> 51 (#4686): `xero.operation.late_partial_not_recorded`, beside the other `xero` rows.
+    // Nobody's readership changes.
+    xero: 51,
     // 12 -> 14 (#2581 child 2): `BULK_COMMUNICATION_SENT` and
     // `EMAIL_SUPPRESSION_CLEARED`. Safe only BECAUSE child 1 moved
     // `communication` out of the support-only system entry into the membership
