@@ -819,6 +819,9 @@ reduction edit, under the door's locks
          SUCCEEDED with another intent or none (#4652); a recovery reset,
          PENDING, FAILED or still claimed (even by a runner that already wrote
          another intent), or an intent it adopted by matching (#4036), keeps it
+       a stalled runner's close -> fenced on its own claim (PROCESSING,
+         attempts, claim time), so it never closes a row a reclaiming runner
+         holds; that runner's ask is written (#4675)
   -> enqueue CANCEL_PAYMENT_INTENT for each retired intent (same transaction)
   -> WAITING_PAYMENT supplementary invoices on it, or on a closed recovery's
        edit -> read for what they bill, then CANCELLED
@@ -2376,6 +2379,10 @@ inbound fence records its conflict the same way, under the
                                or recovery names it; a row still claimable or claimed, or failed
                                for good, keeps it: a retry may mint under the same key and get
                                it back, otherwise it stays open, never offered (#4652, INV-PAY-120)
+  stale close lost (the attempt read nothing owed, then its row was reaped and reclaimed by a runner
+                               that minted): its close is fenced on its own claim and matches nothing,
+                               so it writes no audit row and alerts nobody; the reclaiming runner's
+                               ask is written and closes the row (#4675, INV-PAY-120)
   chase while unpaid (INV-ADDPAY-048): request email now, reminders at 7, 14, 21 and 28
                                days; after the fourth reminder only the officers' queues chase
   reminder withheld for an officer (INV-ADDPAY-051): Xero shows the invoice owing less than the
@@ -4436,6 +4443,26 @@ and the stuck-state page's "Exhausted recovery operations" read it as dead; the
 debt stays on the row (`INV-PAY-092`, `INV-MOD-060`). To verify:
 `payment-recovery.test.ts` and `additional-ask-reduction.realdb.test.ts`
 ("#4081").
+
+### Recovery close under the attempt's claim (#4675)
+
+A runner closes its recovery row only while the row is still its own:
+
+```text
+claim (PENDING|FAILED -> PROCESSING, attempts + 1, processingStartedAt now)
+  -> hold re-stamps processingStartedAt (claim-fenced); the attempt keeps the new claim
+  -> close: PROCESSING + this attempt's attempts + its claim time -> SUCCEEDED
+       stalled past the reaper (FAILED, claim time cleared)  -> close matches nothing
+       reclaimed since (attempts moved on)                  -> close matches nothing
+  lost close -> nothing written or sent; the row stays with its holder or waits for a claim
+webhook close of a cancelled superseded intent (no claim) -> any status but SUCCEEDED
+```
+
+The rule is `INV-PAY-120`; the interleavings are in
+`docs/CONCURRENCY_AND_LOCKING.md`. To verify:
+`credit-release-merge-into-edit.realdb.test.ts` ("#4675"),
+`payment-recovery.test.ts`, `credit-release-ask.test.ts` and
+`payment-recovery-completion-fence-census.test.ts`.
 
 ### Edit review-charge recovery row (#3402)
 

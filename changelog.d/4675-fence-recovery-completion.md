@@ -1,0 +1,1 @@
+- Payment recovery: a background retry that stalled and woke late can no longer close a recovery another retry has taken over, so a card payment request it raised for money still owed is kept and asked for instead of being lost.

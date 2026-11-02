@@ -36,7 +36,11 @@
  *    (the stale reaper's fenced write, then the real runner): once the
  *    reclaiming runner closed the row without the stale attempt's intent, that
  *    intent is cancelled at Stripe, once, with no transaction open; while the
- *    row may yet record it, or a row names it, it is left.
+ *    row may yet record it, or a row names it, it is left;
+ *  - #4675: a release attempt that read "nothing owed" and stalled before its
+ *    close, then woke after the reaper and a reclaiming runner that minted:
+ *    its close, fenced on its own claim, matches nothing and records nothing,
+ *    and the reclaiming runner's ask is written and collected.
  *
  * Envelope: identical to `concurrency-lock-races.realdb.test.ts`, which imports
  * this file; the describe runs ONLY when `RUN_CONCURRENCY_RACE_TESTS=1`,

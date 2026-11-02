@@ -3532,6 +3532,25 @@ re-sizes and may mint under the same key, and Stripe answers with that intent.
 It stays open, never offered, logged under the cleanup event. Reads and one
 provider call only, after the hold's transaction: no lock, key, participant or
 order changes. Proven on real Postgres through the credit-release writers.
+#4675: the runner's SUCCEEDED close (`completePaymentRecoveryOperation`) was
+fenced only off SUCCEEDED, so an attempt that read "nothing owed", stalled past
+the stale reaper and woke after a reclaiming runner had minted the ask closed
+that runner's row; its hold then lost and the debt was never asked for. The
+close is now a status-guarded `updateMany` on the claim the attempt holds:
+PROCESSING, its `attempts` and its exact `processingStartedAt`
+(`heldPaymentRecoveryClaimWhere`, the claim hold's own fence). A claim time a
+hold re-stamps travels with the attempt (the hold returns the re-stamped
+claim), and the succeeded-intent hand-off reads back the claim its own write
+took, under that write's row lock. A lost close writes and sends nothing: each
+once-only epilogue hangs off its `true`, and the credit-release ask writes its
+no-ask audit row in the close's transaction and alerts officers only after a
+close it won. Only the webhook's close of a superseded intent Stripe reports
+cancelled holds no claim and keeps the SUCCEEDED-only fence
+(`completeUnclaimedPaymentRecoveryOperation`; its one caller is pinned by
+`payment-recovery-completion-fence-census.test.ts`). So a lost hold #4631 and
+#4652 settle now follows only a net-off, a fold or a reclaiming runner's own
+close, and their proof stands. No lock, key, participant or order changes.
+Proven on real Postgres (`credit-release-merge-into-edit.realdb.test.ts`).
 Round 6: the retire closes waiting recoveries before it stamps the rows - the
 runner's own order (its claim hold writes the recovery, then its row; since
 #4217 both take the `Payment` row before either) - and a
@@ -6010,7 +6029,10 @@ Stripe call:
   the attempt's `attempts` and a live claim, so an attempt the reaper gave up
   on cannot write `FAILED` over a reclaimed one. Not on the claim time: an
   attempt may re-stamp that itself (`holdAdditionalIntentRecoveryClaim`, the
-  worker's own superseded hand-off). The reaper's write takes both fences, each
+  worker's own superseded hand-off). **Its close** (`completePaymentRecoveryOperation`,
+  #4675) is fenced on the claim time as well, because every re-stamp is
+  threaded to it: the hold returns the claim it re-stamped, and the hand-off
+  reads back the claim its write took. The reaper's write takes both fences, each
   its own clause. Every claim therefore counts an attempt: the worker's claim,
   and the superseded hand-off a succeeded-intent door makes
   (`queueSupersededPaymentIntentRefundRecovery`: the webhook, and since #4300

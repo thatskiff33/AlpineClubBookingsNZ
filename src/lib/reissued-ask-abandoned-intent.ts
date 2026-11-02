@@ -48,7 +48,10 @@
  * hold's transaction has ended, and the same cancel apply
  * (`settleLostRecoveryClaimHold`). #4652: that covers a net-off or fold
  * (`reissueClosedUnminted`) and a stale reclaim whose runner closed it with
- * another intent or none. Anything else - a recovery reset, or reclaimed by a
+ * another intent or none. #4675: a runner closes only under the claim it holds,
+ * so a stale attempt can no longer close a recovery another runner reclaimed -
+ * the close that precedes a lost hold is a net-off, a fold or the reclaiming
+ * runner's own. Anything else - a recovery reset, or reclaimed by a
  * runner still PROCESSING (even one that wrote another intent), PENDING or
  * FAILED - may yet record it, and is left. So is an intent the runner ADOPTED
  * by matching (#4036) rather than minted under its own key: it is not the
@@ -108,7 +111,8 @@ export async function settleLostReissuedAskFence({
 /**
  * #4052's proof, one rule for the door and the runner: the recovery ended
  * SUCCEEDED without naming this intent - a net-off or fold (`reissueClosedUnminted`),
- * or its own runner closed it with another intent or none ("minted-elsewhere").
+ * or a runner closed it under its own claim (#4675) with another intent or none
+ * ("minted-elsewhere").
  * Null for anything else, which may yet record it.
  */
 function closedWithoutIntent(
