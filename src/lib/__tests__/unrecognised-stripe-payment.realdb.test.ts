@@ -17,7 +17,8 @@
  * #4670: exactly once across a failed write around the send - a claim
  * give-back that fails, and an `alertedAt` write that fails after the mail
  * went out. Those two cases inject the failure with a one-shot spy on the real
- * Prisma delegate; everything else stays real.
+ * Prisma delegate; everything else stays real. #4679: so does a claim whose
+ * insert commits but whose call throws.
  *
  * Ordinary Vitest runs skip the whole file. It needs the guarded, disposable
  * loopback PostgreSQL every realdb suite uses (`CONCURRENCY_RACE_DATABASE_URL`,
@@ -236,6 +237,38 @@ let harnessRole: { before: string | undefined; restore: () => void } | undefined
       const [row] = await rows(intent);
       expect(row.alertedAt).toBeInstanceOf(Date);
       expect(await alertClaims(intent)).toBe(1);
+    });
+
+    // #4679: the claim's insert commits in PostgreSQL, but the call throws, as when the connection drops before the reply.
+    it("fails the event when the claim committed but its call threw, and the redelivery sends once (#4679)", async () => {
+      const intent = `${INTENT_PREFIX}claim_reply_lost`;
+      const sentLogs = () => prisma.emailLog.count({ where: { templateName: TEMPLATE, subject: { contains: "$25.00" } } });
+      const before = await sentLogs();
+      const first = succeededEvent(intent);
+      const realCreate = prisma.alertCooldown.create.bind(prisma.alertCooldown);
+      const claim = vi.spyOn(prisma.alertCooldown, "create").mockImplementationOnce(((args: Parameters<typeof realCreate>[0]) =>
+        realCreate(args).then(() => {
+          throw new Error("Server has closed the connection.");
+        })) as never);
+
+      try {
+        expect(await deliver(first)).toBe(500);
+        expect(claim.mock.calls[0]?.[0]).toMatchObject({ data: { key: alertKey(intent) } });
+      } finally {
+        claim.mockRestore();
+      }
+
+      // The committed claim was this delivery's own: given back by the stamp it tried to write, not read as a sibling's.
+      expect(await alertClaims(intent)).toBe(0);
+      expect(await completed(first.id)).toBe(0);
+      expect(await sentLogs()).toBe(before);
+
+      expect(await deliver(first)).toBe(200);
+      const [row] = await rows(intent);
+      expect(row.alertedAt).toBeInstanceOf(Date);
+      expect(await alertClaims(intent)).toBe(1);
+      expect(await completed(first.id)).toBe(1);
+      expect(await sentLogs()).toBe(before + 1);
     });
 
     it("sends once when the alertedAt write fails after the send, even to a replay past the in-flight window (#4670)", async () => {
