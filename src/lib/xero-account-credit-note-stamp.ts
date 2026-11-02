@@ -19,6 +19,10 @@
  * different credits at the same instant can still both land: nothing locks the
  * pair (`INV-INT-036`'s limit).
  *
+ * #4705: the inbound credit-note reconcile stamps through here too. It has the
+ * note but not the row, so it reads the credit off the note's own outbox row
+ * (`accountCreditNoteRaisedFor`), else takes the fallback.
+ *
  * Locking (`INV-LOCK-001`): none added. The stamp changes no balance, booking
  * status or settlement money - only the link - and each write is one
  * null-guarded single-row update, so a lost race writes nothing; no key, no
@@ -29,6 +33,8 @@ import { cancellationCreditDescription } from "@/lib/cancellation-settled-money"
 import { internetBankingLateCashCreditDescription } from "@/lib/internet-banking-late-cash-credit";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
+import { asRecord } from "@/lib/xero-json";
+import { readAccountCreditNoteCredit } from "@/lib/xero-operation-outbox-payload";
 
 /** The descriptions the account-credit pipeline's cancellation credits carry. */
 function stampableCancellationDescriptions(bookingId: string): string[] {
@@ -107,6 +113,34 @@ export async function stampCancellationCreditXeroNote(params: {
     });
     if (stamped.count === 1) return candidate.id;
   }
+}
+
+/**
+ * #4705: the credit an account-credit note was raised for, as the note's own
+ * outbox row named it (`memberCreditId`, kept on the queued and executed
+ * shapes). Read by the inbound reconcile, which reaches a note by its id. One
+ * credit named across the payments' rows is returned; none, or rows that
+ * disagree, return nothing, and the stamp falls back to its old match.
+ */
+export async function accountCreditNoteRaisedFor(params: {
+  creditNoteId: string;
+  paymentIds: string[];
+}): Promise<{ memberCreditId?: string }> {
+  if (params.paymentIds.length === 0) return {};
+  const rows = await prisma.xeroSyncOperation.findMany({
+    where: {
+      direction: "OUTBOUND",
+      entityType: "CREDIT_NOTE",
+      operationType: "CREATE",
+      localModel: "Payment",
+      localId: { in: params.paymentIds },
+      xeroObjectId: params.creditNoteId,
+    },
+    select: { requestPayload: true },
+  });
+  const named = new Set(rows.flatMap((row) => readAccountCreditNoteCredit(asRecord(row.requestPayload) ?? {}).memberCreditId ?? []));
+  const [memberCreditId] = named;
+  return named.size === 1 && memberCreditId ? { memberCreditId } : {};
 }
 
 /**

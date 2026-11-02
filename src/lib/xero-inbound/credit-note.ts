@@ -1,4 +1,3 @@
-import { CreditType } from "@prisma/client";
 import { bookingOwner } from "@/lib/booking-owner";
 import { prisma } from "@/lib/prisma";
 import logger from "@/lib/logger";
@@ -13,7 +12,7 @@ import { writeXeroInboundAuditLogs } from "./audit";
 import { type XeroAuditLocalLink } from "./types";
 import { repairAccountCreditAllocationBusinessState, repairRefundedPaymentBusinessState, resolveAccountCreditPaymentsFromMemberCredits, resolveAppliedCreditPaymentsFromLocalProvenance } from "./credit-note-repairs";
 import { resolveModificationRefundAmountsByPaymentId } from "./modification-note-refunds";
-import { cancellationCreditDescription } from "@/lib/cancellation-settled-money";
+import { accountCreditNoteRaisedFor, stampCancellationCreditXeroNote } from "@/lib/xero-account-credit-note-stamp";
 import { isIncludedRefundCreditNoteStatus, isRefundNoteLinkOf, mayRecordAsCanonicalRefundNote, withoutVoidedRefundNoteLinks, xeroCreditNoteSnapshotMetadata } from "@/lib/xero-refund-note-status";
 
 /** #4291: the audit source naming a recount reached only through a voided mirror. */
@@ -214,6 +213,14 @@ export async function reconcileXeroCreditNote(creditNoteId: string) {
 
   const creditNoteAmountCents = getCreditNoteAmountCents(creditNote);
   let updatedCredits = 0;
+  // #4705: the note stamps the one credit it was raised for, through the
+  // outbox's own stamp (`INV-INT-036`): the credit its outbox row named, else
+  // one equal credit, oldest first - and none once a credit holds the note, so
+  // a second payment on the booking stamps nothing more.
+  const raisedFor =
+    accountCreditPayments.length > 0 && creditNoteAmountCents !== null
+      ? await accountCreditNoteRaisedFor({ creditNoteId: creditNote.creditNoteID, paymentIds: accountCreditPayments.map((payment) => payment.id) })
+      : {};
   for (const payment of accountCreditPayments) {
     if (creditNoteAmountCents === null) {
       continue;
@@ -225,20 +232,14 @@ export async function reconcileXeroCreditNote(creditNoteId: string) {
     const creditOwnerMemberId = bookingOwner(payment.booking).memberId;
     if (!creditOwnerMemberId) continue;
 
-    const backfilledCredits = await prisma.memberCredit.updateMany({
-      where: {
-        memberId: creditOwnerMemberId,
-        sourceBookingId: payment.bookingId,
-        amountCents: creditNoteAmountCents,
-        type: CreditType.CANCELLATION_REFUND,
-        description: cancellationCreditDescription(payment.bookingId),
-        xeroCreditNoteId: null,
-      },
-      data: {
-        xeroCreditNoteId: creditNote.creditNoteID,
-      },
+    const stampedCreditId = await stampCancellationCreditXeroNote({
+      memberId: creditOwnerMemberId,
+      bookingId: payment.bookingId,
+      refundAmountCents: creditNoteAmountCents,
+      creditNoteId: creditNote.creditNoteID,
+      ...raisedFor,
     });
-    updatedCredits += backfilledCredits.count;
+    if (stampedCreditId) updatedCredits += 1;
   }
   const allocationTargets = buildCreditNoteAllocationTargets(creditNote);
   const resolvedCreditNoteLinks = dedupeXeroObjectLinks([
