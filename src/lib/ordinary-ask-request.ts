@@ -36,10 +36,10 @@
  */
 import {
   bookingModificationIdForAdditionalIntentRecoveryKey,
-  buildReissuedAskStripeIdempotencyKey,
   isEditFinancialReviewAdditionalIntentRecoveryKey,
   stripeIdempotencyKeyForAskAmount,
 } from "@/lib/payment-recovery-keys";
+import { rowNamesReissuedAskDoorKey } from "@/lib/reissued-ask-door-key";
 import {
   isCreditReleaseAskRecoveryKey,
 } from "@/lib/credit-release-ask-keys";
@@ -48,6 +48,16 @@ import type { AppPaymentIntentMetadata } from "@/lib/stripe-app-intent-metadata"
 
 /** The Stripe metadata `type` every additional ask's intent carries. */
 export const ADDITIONAL_ASK_INTENT_TYPE = "modification_additional";
+
+/**
+ * #4693: the metadata key the recovery runner stamps on an ordinary ask's intent
+ * it minted under its own row's key, naming that row (`mintOrdinaryAskIntent`).
+ * Stamped by an update after the create, never sent in it: the door's request
+ * under the same key carries no such key, and a replay must send what it sent.
+ * An intent without it - the door's own, or one minted before #4693 - is simply
+ * never found by the close-time sweep (`sweepAbandonedAskIntents`).
+ */
+export const ASK_RECOVERY_METADATA_KEY = "askRecoveryId";
 
 /**
  * The reason the recovery runner writes on the ledger row it records, and the
@@ -192,21 +202,28 @@ export const DOOR_INTENT_CLOCK_SKEW_MS = 60 * 1000;
  * plan whose key names no door sends it now, and its earlier request was a
  * runner's, after the row - a lost-claim runner's mint or a currency
  * re-issue's, which this match cannot tell apart, so that refusal fails closed.
+ *
+ * #4693 (review of PR #4698): nor is an intent a runner stamped for ANOTHER row
+ * (`ASK_RECOVERY_METADATA_KEY`): it is that row's own, and that row's close-time
+ * sweep may cancel it. An unstamped intent - every one the previous release
+ * minted - matches as before.
  */
 export function isIntentForOrdinaryAskPlan(
   intent: { amount: number; currency: string; status: string; created?: number; metadata?: Record<string, string> | null },
   plan: OrdinaryAskMintPlan,
   currency: string,
-  recoveryCreatedAt: Date,
+  recovery: { id: string; createdAt: Date },
 ): boolean {
   const metadata = intent.metadata ?? {};
+  const stampedFor = metadata[ASK_RECOVERY_METADATA_KEY];
   return (
     metadata.bookingId === plan.bookingId &&
     metadata.type === ADDITIONAL_ASK_INTENT_TYPE &&
     metadata.reason === plan.metadata.reason &&
     metadata.reason !== ORDINARY_ASK_RECOVERY_REASON &&
+    (stampedFor === undefined || stampedFor === recovery.id) &&
     typeof intent.created === "number" &&
-    intent.created * 1000 <= latestAdoptableIntentCreatedAt(recoveryCreatedAt).getTime() &&
+    intent.created * 1000 <= latestAdoptableIntentCreatedAt(recovery.createdAt).getTime() &&
     intent.amount === plan.amountCents &&
     intent.currency === currency &&
     staleIntentAction(intent) === "reissue"
@@ -242,7 +259,7 @@ export function couldRecoveryRowOwnIntent(
     // #4253: a credit-release request sends a reason of its own (`INV-ADDPAY-045`).
     isCreditReleaseAskRecoveryKey(row.idempotencyKey) ||
     isEditFinancialReviewAdditionalIntentRecoveryKey(row.idempotencyKey) ||
-    (bookingModificationId && row.paymentIntentId === buildReissuedAskStripeIdempotencyKey(bookingModificationId))
+    rowNamesReissuedAskDoorKey(row)
   ) {
     return false;
   }

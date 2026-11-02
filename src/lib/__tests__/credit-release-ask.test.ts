@@ -469,7 +469,7 @@ describe("processCreditReleaseAskOperation", () => {
    */
   describe("#4652: a lost claim cancels the intent it minted only once its row was closed without it", () => {
     const KEY = buildCreditReleaseAskStripeIdempotencyKey("rel-1");
-    const PROOF_READ = { where: { id: "op-1" }, select: { status: true, lastError: true, paymentIntentId: true } };
+    const PROOF_READ = { where: { id: "op-1" }, select: { status: true, lastError: true, paymentIntentId: true, attempts: true } };
     const cancelledWithOpen: number[] = [];
 
     function loseClaimTo(moved: Record<string, unknown> | null, owners: { row?: { id: string } | null; recovery?: { id: string } | null } = {}) {
@@ -515,7 +515,7 @@ describe("processCreditReleaseAskOperation", () => {
       expect(mocks.prisma.paymentRecoveryOperation.findUnique).toHaveBeenCalledWith(PROOF_READ);
       expect(mocks.prisma.paymentTransaction.findUnique).toHaveBeenCalledWith({ where: { stripePaymentIntentId: "pi_new" }, select: { id: true } });
       expect(mocks.prisma.paymentRecoveryOperation.findFirst).toHaveBeenCalledWith({ where: { paymentIntentId: "pi_new" }, select: { id: true } });
-      expect(mocks.cancelIntent).toHaveBeenCalledWith("pi_new", { cancellationReason: "abandoned" });
+      expect(mocks.cancelIntent).toHaveBeenCalledWith("pi_new", { cancellationReason: "abandoned", timeoutMs: 5_000 });
       // The pin: the hold's transaction had ended, and none is open around the cancel.
       expect(cancelledWithOpen).toEqual([0]);
       expect(deps.holdClaim.mock.invocationCallOrder[0]!).toBeLessThan(mocks.cancelIntent.mock.invocationCallOrder[0]!);
@@ -584,7 +584,7 @@ describe("processCreditReleaseAskOperation", () => {
    */
   describe("#4676: a hold that throws cancels its minted intent only on the lost hold's proof, then rethrows", () => {
     const KEY = buildCreditReleaseAskStripeIdempotencyKey("rel-1");
-    const PROOF_READ = { where: { id: "op-1" }, select: { status: true, lastError: true, paymentIntentId: true } };
+    const PROOF_READ = { where: { id: "op-1" }, select: { status: true, lastError: true, paymentIntentId: true, attempts: true } };
     const cancelledWithOpen: number[] = [];
 
     function throwHoldThenRead(moved: Record<string, unknown> | null, owners: { row?: { id: string } | null } = {}) {
@@ -622,7 +622,7 @@ describe("processCreditReleaseAskOperation", () => {
       expect(mocks.upsert).not.toHaveBeenCalled();
       expect(mocks.prisma.paymentRecoveryOperation.findUnique).toHaveBeenCalledWith(PROOF_READ);
       expect(mocks.cancelIntent).toHaveBeenCalledTimes(1);
-      expect(mocks.cancelIntent).toHaveBeenCalledWith("pi_new", { cancellationReason: "abandoned" });
+      expect(mocks.cancelIntent).toHaveBeenCalledWith("pi_new", { cancellationReason: "abandoned", timeoutMs: 5_000 });
       expect(cancelledWithOpen).toEqual([0]);
       expect(deps.complete).not.toHaveBeenCalled();
       expect(mocks.cancelSuperseded).not.toHaveBeenCalled();

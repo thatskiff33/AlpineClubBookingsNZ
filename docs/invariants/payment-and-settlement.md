@@ -2801,8 +2801,8 @@ _Legacy: settles tasks raised before #4317._
   and billed-offset note.
   An orphaned Stripe intent (#4052) is cancelled, best-effort, unless a
   row, recovery or live claim may own it; a lost or throwing hold's (#4631,
-  #4652, #4676) once its recovery closed without it. The runner's close is
-  claim-fenced (#4675). One uncancellable is logged.
+  #4652, #4676) once its recovery ended without it. The runner's close
+  is claim-fenced (#4675). One uncancellable is logged.
 - **A declined card stays live** (#4052).
 - **Asks awaiting a failed mint's retry** count, sized as the replay would. A
   retry claimed within two minutes refuses the edit; an older claim is closed.
