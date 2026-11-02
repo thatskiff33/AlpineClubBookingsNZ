@@ -939,7 +939,7 @@ File: [`invariants/integrations.md`](invariants/integrations.md). Prefix
 | `INV-INT-032` | Stripe payments the app did not create: recorded and alerted once |
 | `INV-INT-033` | App booking payments no payment row settles: recorded, alerted once |
 | `INV-INT-034` | An organiser note created after a reset: recorded, or alerted once |
-| `INV-INT-035` | An unrecorded refund note holds its payment's refund notes until it is recorded |
+| `INV-INT-035` | An unrecorded refund note holds its payment's refund notes until recorded |
 
 ## Operations
 
