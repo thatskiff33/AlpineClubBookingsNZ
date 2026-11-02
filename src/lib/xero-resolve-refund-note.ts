@@ -50,7 +50,8 @@ import {
   retryRunningRefusal,
 } from "@/lib/xero-operation-resolve-guards";
 import { parsePaymentCreditNoteRetryInput } from "@/lib/xero-payment-credit-note-payload";
-import { countsTowardRefundNoteCoverage, creditNoteCreateRowsRecordingWhere } from "@/lib/xero-refund-note-status";
+import { countsTowardRefundNoteCoverage, creditNoteCreateRowsRecordingWhere, refundNoteIdSets } from "@/lib/xero-refund-note-status";
+import { stampedUnrecordedNoteId } from "@/lib/xero-refund-note-in-flight";
 import { isRefundNoteCreateRow } from "@/lib/xero-resolved-in-xero-fences";
 
 /** The fields of an operation row the shape below reads. */
@@ -227,7 +228,7 @@ export async function claimResolveRecordingRefundNote(input: {
       if (await findRetryRunningOrSince(input.operationId, input.readAt, tx)) {
         throw new ManualBookingPaymentError(RESOLVE_NOTE_RETRY_RAN_MESSAGE, 409);
       }
-      if (await findQueuedLiveCopy({ id: input.operationId, correlationKey: row.correlationKey, entityType: row.entityType, operationType: row.operationType }, tx)) {
+      if (await findQueuedLiveCopy({ id: input.operationId, ...row }, tx)) {
         throw new ManualBookingPaymentError(QUEUED_LIVE_COPY_REFUSAL, 409);
       }
       // One after the other on the interactive transaction (#1357).
@@ -247,7 +248,13 @@ export async function claimResolveRecordingRefundNote(input: {
         link.role === "REFUND_CREDIT_NOTE" &&
         !link.active &&
         asRecord(link.metadata)?.[RESOLVED_OPERATION_LINK_KEY] === input.operationId;
-      if (recordedByRow || !links.every(ownWithdrawn)) {
+      // #4692 review (F4, `INV-INT-035`): the note this row's own stamp names, already linked live on the
+      // payment through another row (the original a retry ran for, resolved with it): recorded on this row
+      // too, with no second link, so it covers nothing twice - else the row could never be resolved.
+      const ownNoteLinkedHere =
+        stampedUnrecordedNoteId(row) === input.note.creditNoteId &&
+        (await refundNoteIdSets(input.paymentId, tx)).active.has(input.note.creditNoteId);
+      if (!ownNoteLinkedHere && (recordedByRow || !links.every(ownWithdrawn))) {
         throw new ManualBookingPaymentError(handMadeNoteAlreadyRecordedMessage(input.note.creditNoteNumber), 409);
       }
       const resolvedAt = new Date();
@@ -268,6 +275,7 @@ export async function claimResolveRecordingRefundNote(input: {
         },
       });
       if (claimed.count !== 1) return { outcome: "lost" };
+      if (ownNoteLinkedHere) return { outcome: "claimed", resolvedAt };
       await writeHandMadeRefundNoteLink(tx, {
         paymentId: input.paymentId,
         note: input.note,
@@ -338,6 +346,8 @@ const RESOLVE_ROW_SELECT = {
   idempotencyKey: true,
   xeroObjectId: true,
   manuallyResolvedAt: true,
+  // #4692 review: a row holding an unrecorded note is not refused over a copy that fence holds.
+  lastErrorCode: true,
 } satisfies Prisma.XeroSyncOperationSelect;
 
 /** A refusal the resolve route answers, and audits where a number was offered or needed. */

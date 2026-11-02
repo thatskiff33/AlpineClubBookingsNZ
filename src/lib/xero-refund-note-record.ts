@@ -39,7 +39,11 @@
  * (RUNNING under this run's claim, or FAILED if Mark failed reached it first)
  * for an officer told to resolve it by hand with the note's number. Never to
  * retry it: a retry is sized and keyed on what the app records, which leaves
- * this note out, so Xero can answer it with a second note. The create then
+ * this note out, so Xero can answer it with a second note. #4688: before the
+ * trace, the row is stamped `XERO_REFUND_NOTE_UNRECORDED_ERROR_CODE`
+ * (`fenceUnrecordedNote`: row-only, status-guarded), which holds back every
+ * later refund note on the payment, Retry and the nightly self-heal until the
+ * resolve. The create then
  * throws `RefundNoteNotRecordedError`, so no caller reports the run a success.
  * A record that committed although its answer was an error is found by the
  * trace's re-read and carries on as recorded.
@@ -54,7 +58,10 @@ import type { Prisma, XeroSyncOperation } from "@prisma/client";
 
 import { createAuditLog } from "@/lib/audit";
 import { isWriteConflictOrDeadlock } from "@/lib/additional-ask-reduction-error";
+import logger from "@/lib/logger";
 import { lockPaymentForRefundedTotal, PAYMENT_ROW_WAIT_TRANSACTION_OPTIONS } from "@/lib/payment-transactions";
+import { XERO_REFUND_NOTE_UNRECORDED_ERROR_CODE } from "@/lib/xero-operation-error-codes";
+import { holdsUnrecordedRefundNote, unrecordedNoteStampPayload } from "@/lib/xero-refund-note-in-flight";
 import { heldByAnotherClaim } from "@/lib/xero-operation-outcome-guard";
 import { prisma } from "@/lib/prisma";
 import { isPostgresLockNotAvailable, isTransactionContention } from "@/lib/prisma-errors";
@@ -135,7 +142,7 @@ function notRecordedMessage(outcome: Exclude<RefundNoteRecordOutcome, "recorded"
   const named = `refund credit note ${note.creditNoteNumber ?? note.creditNoteId} (Xero id ${note.creditNoteId})`;
   switch (outcome) {
     case "record-wait-lost":
-      return `Xero made ${named}, but the app's record of it on Xero operation ${note.operationId} could not get its locks in time, so nothing records or links it and the operation was not marked failed. Do not retry: resolve operation ${note.operationId} by hand with this note's number (mark it failed first if it still shows running), promptly - until then a later refund note on this payment is sized as if this note did not exist.`;
+      return `Xero made ${named}, but the app's record of it on Xero operation ${note.operationId} could not get its locks in time, so nothing records or links it and the operation was not marked failed. Do not retry: resolve operation ${note.operationId} by hand with this note's number (mark it failed first if it still shows running), promptly.`;
     case "resolved-by-hand":
       return `Xero made ${named} after Xero operation ${note.operationId} was resolved by hand recording another note, so the app did not record or link it. Do not retry: check it in Xero against the note the resolve recorded.`;
     case "resolved-with-this-note":
@@ -212,7 +219,9 @@ export async function recordCreatedRefundNote(note: CreatedRefundNote): Promise<
     }
     if (!isRecordWaitLost(error)) throw error;
     // Nor here, and the row is left as it is (this run's RUNNING claim, or a row Mark failed meanwhile):
-    // failing it would read as "nothing made" while Xero holds the note.
+    // failing it would read as "nothing made" while Xero holds the note. #4688: but stamped first, so no
+    // later refund note on the payment is sized without this one; the trace's re-read then says whether it held.
+    await fenceUnrecordedNote(note);
     const traced = await traceUnrecordedLateNote(note, recordWaitLost(note, error));
     return traced.kind === "same-note" ? whoseRecord(note, traced.row) : "record-wait-lost";
   }
@@ -231,6 +240,48 @@ export async function recordCreatedRefundNote(note: CreatedRefundNote): Promise<
 function whoseRecord(note: CreatedRefundNote, row: XeroSyncOperation): RefundNoteRecordOutcome {
   if (row.manuallyResolvedAt !== null) return "resolved-with-this-note";
   return heldByAnotherClaim(row, { id: note.operationId, startedAt: note.claimStartedAt }) ? "recorded-by-another-claim" : "recorded";
+}
+
+/**
+ * #4688 (`INV-INT-035`): stamp the row whose note the record could not write,
+ * so `findUnrecordedRefundNoteOperation` fences the payment's refund notes
+ * whatever the row's age. Row-only (no Payment lock, which the record just
+ * failed to get) and status-guarded: this run's RUNNING claim, or the FAILED
+ * row Mark failed or a stale reset left; never a row resolved by hand, nor one
+ * that records a note (a record that committed after all, or a resolve
+ * recording this note), so the #3548 repair leg and the trace's re-read see
+ * the row exactly as before - the note itself is still written nowhere. Never
+ * throws: a stamp that fails leaves the alert saying the fence is not up.
+ */
+async function fenceUnrecordedNote(note: CreatedRefundNote): Promise<boolean> {
+  try {
+    const stamped = await prisma.xeroSyncOperation.updateMany({
+      where: {
+        id: note.operationId,
+        manuallyResolvedAt: null,
+        xeroObjectId: null,
+        // This run's claim, RUNNING or failed by Mark failed (which keeps `startedAt`) - never another's (`INV-INT-029`).
+        OR: [...(note.claimStartedAt ? [{ status: "RUNNING", startedAt: note.claimStartedAt }] : []), { status: "FAILED", startedAt: note.claimStartedAt }],
+      },
+      data: {
+        lastErrorCode: XERO_REFUND_NOTE_UNRECORDED_ERROR_CODE,
+        lastErrorMessage: unrecordedNoteRowMessage(note),
+        responsePayload: unrecordedNoteStampPayload(note.creditNoteId),
+      },
+    });
+    return stamped.count === 1;
+  } catch (error) {
+    logger.error(
+      { operationId: note.operationId, paymentId: note.paymentId, creditNoteId: note.creditNoteId, err: error },
+      "Refund credit note from Xero not recorded, and its operation could not be marked as holding an unrecorded note: later refund notes on this payment are not held back (#4688)",
+    );
+    return false;
+  }
+}
+
+/** #4688: what the fenced row says: Mark failed carries it forward, and a stale reset leaves it (#4692 review). */
+function unrecordedNoteRowMessage(note: Pick<CreatedRefundNote, "creditNoteId" | "creditNoteNumber">): string {
+  return `Xero made refund credit note ${note.creditNoteNumber ?? note.creditNoteId} (Xero id ${note.creditNoteId}), but the app's record of it on this operation could not get its locks in time, so nothing records or links it. Do not retry: resolve this operation by hand with this note's number. Until then no other refund note is raised on this payment (#4688).`;
 }
 
 /** #4426: the trace of a note kept out by a resolve by hand recording a note. */
@@ -261,14 +312,25 @@ function recordWaitLost(note: CreatedRefundNote, error: unknown): LateNoteTrace 
     sameNote: "The operation records this note after all (its record committed, or a resolve recorded this note): nothing to alert (#4656)",
     alertWarning: "Refund credit note made in Xero, but its record could not get its locks in time and it is not recorded on its operation (INV-INT-029, #4656)",
     audit: (trace, row) =>
-      auditUnrecordedNote(note, { ...trace, errorCode: typeof errorCode === "string" ? errorCode : null }, row, {
+      auditUnrecordedNote(note, { ...trace, errorCode: typeof errorCode === "string" ? errorCode : null, laterNotesHeld: row !== null && holdsUnrecordedRefundNote(row) }, row, {
         reason: "record-wait-lost",
         summary: "Refund credit note made in Xero not recorded: the app's record could not get its locks in time",
-        details: `Xero made refund credit note ${note.creditNoteNumber ?? note.creditNoteId}, but the app's record of it could not get its locks in time, so it is not recorded or linked, and the operation was not marked failed. Resolve the operation by hand with this note's number, promptly: until then a later refund note on this payment is sized as if this note did not exist. Do not retry it or raise another note: a retry can make a second one.`,
+        details: `Xero made refund credit note ${note.creditNoteNumber ?? note.creditNoteId}, but the app's record of it could not get its locks in time, so it is not recorded or linked, and the operation was not marked failed. Resolve the operation by hand with this note's number. ${laterNotesSentence(row)} Do not retry it or raise another note: a retry can make a second one.`,
       }),
-    alertMessage: (_row, late) =>
-      `Xero made ${describeUnrecordedObject(late)} for this refund, but the app could not record it: its record could not get its locks in time (another job was holding the payment, or the database broke a deadlock). The app did not record it, link it to the payment or record a refund payment against it in Xero, and did not mark the operation failed. Resolve it by hand with this note's number: once the operation shows as stuck running, mark it failed (unless it already is), then use Resolve by hand and enter this number where it asks for one. Do not retry this operation, or an earlier one for the same refund, and do not raise another note: a retry is sized and keyed on what the app has recorded, which leaves this note out, so Xero can make a second one. Resolve it promptly: until you do, a later refund note on this payment (raised for another refund, by the nightly self-heal, or by Retry all) is sized as if this note did not exist, so Xero can end up holding an extra note.`,
+    alertMessage: (row, late) =>
+      `Xero made ${describeUnrecordedObject(late)} for this refund, but the app could not record it: its record could not get its locks in time (another job was holding the payment, or the database broke a deadlock). The app did not record it, link it to the payment or record a refund payment against it in Xero, and did not mark the operation failed. Resolve it by hand with this note's number: once the operation shows as stuck running, mark it failed (unless it already is), then use Resolve by hand and enter this number where it asks for one. Do not retry this operation, or an earlier one for the same refund, and do not raise another note: a retry is sized and keyed on what the app has recorded, which leaves this note out, so Xero can make a second one. ${laterNotesSentence(row)}`,
   };
+}
+
+/**
+ * #4688: what happens to the payment's later refund notes until the resolve -
+ * held back when the row carries the fence, and otherwise the old warning,
+ * since then nothing holds them.
+ */
+function laterNotesSentence(row: Parameters<typeof holdsUnrecordedRefundNote>[0] | null): string {
+  return row !== null && holdsUnrecordedRefundNote(row)
+    ? "Until it is resolved, the app raises no other refund note on this payment: later refunds' notes, the nightly self-heal's and Retry wait for the resolve, then are sized with this note counted."
+    : "Resolve it promptly: the app could not mark the operation as holding this note, so until you do, a later refund note on this payment (raised for another refund, by the nightly self-heal, or by Retry all) is sized as if this note did not exist, and Xero can end up holding an extra note.";
 }
 
 /** The one audit row of a note Xero made that the create did not record (`xero`, `important`). */

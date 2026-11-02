@@ -18,7 +18,8 @@
  *   or (#4669) the email retry cron holds its copies.
  *   A send nobody received throws, the claim is given back, and the
  *   webhook answers 500 so Stripe redelivers; #4670: a delivery whose
- *   give-back failed gives back its own claim again and still fails. A claim
+ *   give-back failed gives back its own claim again and still fails; #4679:
+ *   so does one whose claim call threw, by the stamp it tried to write. A claim
  *   still held with no `alertedAt` is a delivery that died: younger than the
  *   webhook lease less a margin it belongs to a sibling still sending; older,
  *   this delivery releases it and sends (`UNRECOGNISED_ALERT_IN_FLIGHT_MS`),
@@ -230,20 +231,34 @@ async function ensureAlert(
    * event with no alert sent. Give it back again - guarded by the exact stamp
    * this call wrote, so a newer claim is never touched - and fail the webhook so
    * Stripe's redelivery claims afresh and sends.
+   *
+   * #4679: the same when the claim call threw (`claimUncertain`). Its write may
+   * have committed, and that claim, too, is this delivery's own: give back the
+   * stamp it tried to write, a no-op if nothing landed, and fail. At worst
+   * Stripe redelivers once more than needed. The helper made no release of its
+   * own here, so this one gets two tries - as a failed send's claim does, the
+   * helper's then this one.
    */
-  const giveBackOwnClaimAndFail = async (claimedAt: Date): Promise<never> => {
-    await releaseAlertCooldown({ key, claimedAt }).catch((err) =>
-      logger.error({ ...context, err }, `Failed again to release the ${mail.label} claim`),
-    );
+  const giveBackOwnClaimAndFail = async ({ claimedAt, claimUncertain }: { claimedAt: Date; claimUncertain: boolean }): Promise<never> => {
+    const failed = claimUncertain ? "Failed to give back the uncertain" : "Failed again to release the";
+    for (let attempt = 1; attempt <= (claimUncertain ? 2 : 1); attempt += 1) {
+      try {
+        await releaseAlertCooldown({ key, claimedAt });
+        break;
+      } catch (err) {
+        logger.error({ ...context, err, attempt }, `${failed} ${mail.label} claim`);
+      }
+    }
     throw new UnrecognisedStripePaymentAlertNotSentError(row.stripePaymentIntentId);
   };
 
   // Not kept with a claim of its own means this send did not go out
-  // (`stampAlertSent` never throws), so give it back before any further read
-  // that could itself fail and leave the claim held.
+  // (`stampAlertSent` never throws), or (#4679) its claim call threw, so give
+  // it back before any further read that could itself fail and leave the claim
+  // held.
   const first = await send();
   if (first.kept) return;
-  if (first.claimedAt) await giveBackOwnClaimAndFail(first.claimedAt);
+  if (first.claimedAt) await giveBackOwnClaimAndFail({ claimedAt: first.claimedAt, claimUncertain: first.claimUncertain });
   if (await alertWasSent(row)) return;
 
   const heldAt = (await readHeldOnceEverAlertTimes([key], new Date())).get(key);
@@ -260,7 +275,7 @@ async function ensureAlert(
   await releaseAlertCooldown({ key, claimedAt: heldAt });
   const second = await send();
   if (second.kept) return;
-  if (second.claimedAt) await giveBackOwnClaimAndFail(second.claimedAt);
+  if (second.claimedAt) await giveBackOwnClaimAndFail({ claimedAt: second.claimedAt, claimUncertain: second.claimUncertain });
   if (await alertWasSent(row)) return;
   throw new UnrecognisedStripePaymentAlertNotSentError(row.stripePaymentIntentId);
 }

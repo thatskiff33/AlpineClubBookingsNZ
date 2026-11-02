@@ -71,6 +71,7 @@ import { isXeroAppliedCreditOperationBusyError } from "@/lib/xero-applied-credit
 import {
   findResolvedBookingInvoiceCreate,
   findResolvedSiblingSince,
+  resolvedSiblingCopySkippedPayload,
   readResolvedRefundCreditNoteCoverage,
   sumRefundCreditNoteCoverageCents,
 } from "@/lib/xero-resolved-in-xero-fences";
@@ -78,6 +79,7 @@ import { createXeroSupplementaryInvoice } from "@/lib/xero-supplementary-invoice
 import { createXeroKeptLateCaptureInvoice } from "@/lib/xero-kept-late-capture-invoice";
 import { recordAdditionalCaptureReceipt } from "@/lib/additional-capture-xero-receipt";
 import { outboxScanSpacesWaitingReceipts } from "@/lib/additional-capture-receipt-gate";
+import { scanSpacesRefundNotesAwaitingResolve } from "@/lib/xero-refund-note-in-flight";
 import { primaryInvoiceGapPayload } from "@/lib/additional-capture-receipt-payload";
 import { anchorCaptureHasReceipt, bookingHasUnattributedCaptures, keptInvoiceBillsChangeCapture } from "@/lib/additional-capture-receipt-link";
 import { isXeroConnected } from "@/lib/xero-token-store";
@@ -2960,9 +2962,8 @@ export async function processQueuedXeroOutboxOperations(options?: {
       queueType: {
         in: [...XERO_OUTBOX_QUEUE_TYPES],
       },
-      // #3954 round 8: a billed-offset note waiting for its edit's own note
-      // is looked at again only every few minutes, not on every kick.
-      AND: [outboxScanLeavesAwaitingOwnNote(new Date()), outboxScanSpacesWaitingReceipts(new Date())],
+      // Rows waiting their turn are looked at only every few minutes, not on every kick (#3954, #3953, #4692 `INV-INT-035`).
+      AND: [outboxScanLeavesAwaitingOwnNote(new Date()), outboxScanSpacesWaitingReceipts(new Date()), scanSpacesRefundNotesAwaitingResolve(new Date())],
     },
     // Ties on `createdAt` (same ms; all rows under the frozen clock) fall to `id`:
     // deterministic, not insertion order (#4663; STATE_MACHINES.md).
@@ -3047,15 +3048,7 @@ export async function processQueuedXeroOutboxOperations(options?: {
     // hand-made document stands for it. Closed CANCELLED, before any Xero call.
     const resolvedSibling = await findResolvedSiblingSince(queuedOperation);
     if (resolvedSibling) {
-      await completeXeroSyncOperation(claimed, {
-        status: "CANCELLED",
-        responsePayload: {
-          skipped: "resolved-in-xero",
-          resolvedOperationId: resolvedSibling.id,
-          reason:
-            "An officer resolved this document by hand in Xero after this copy was queued, so it was not sent.",
-        },
-      });
+      await completeXeroSyncOperation(claimed, { status: "CANCELLED", responsePayload: resolvedSiblingCopySkippedPayload(resolvedSibling.id) });
       result.skipped += 1;
       continue;
     }

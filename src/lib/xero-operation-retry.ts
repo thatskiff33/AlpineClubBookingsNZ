@@ -88,6 +88,7 @@ import type { ClubFormat } from "@/lib/club-format";
 import { readRefundRequestIdFromPayload } from "@/lib/refund-request-credit-note";
 import { findResolvedSiblingSince } from "@/lib/xero-resolved-in-xero-fences";
 import { cardRefundIdOfNoteRow } from "@/lib/card-refund-own-note-share";
+import { holdsUnrecordedRefundNote, UNRECORDED_REFUND_NOTE_RETRY_REASON } from "@/lib/xero-refund-note-in-flight";
 import {
   isStrayInvoiceAfterCloseOutcome,
   membershipChargeNeedsNoInvoice,
@@ -125,6 +126,7 @@ type RetryableOperation = Pick<
   // Optional so row shapes selected before #1354 stay assignable; callers
   // that omit it simply fall back to payload-based delta detection.
   queueType?: XeroSyncOperation["queueType"];
+  lastErrorCode?: XeroSyncOperation["lastErrorCode"]; // #4688: optional; Retry's own refusal reads the stored row
 };
 
 export class XeroOperationRetryError extends Error {
@@ -1024,6 +1026,8 @@ export function getXeroOperationRetryMeta(operation: RetryableOperation): XeroOp
   if (isResolvedInXeroForRetry(operation)) {
     return { supported: false, reason: RESOLVED_IN_XERO_RETRY_REASON };
   }
+  // #4688 (`INV-INT-035`): Xero made this row's note and the app could not record it.
+  if (holdsUnrecordedRefundNote(operation)) return { supported: false, reason: UNRECORDED_REFUND_NOTE_RETRY_REASON };
 
   if (!operation.replayable) {
     return {

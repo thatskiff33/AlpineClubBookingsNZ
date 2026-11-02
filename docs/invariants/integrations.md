@@ -548,6 +548,40 @@ Pinned by `xero-resolve-refund-note.test.ts`,
 `xero-late-refund-note-after-resolve.realdb.test.ts`,
 `xero-refund-note-record-gaps.realdb.test.ts`.
 
+### INV-INT-035
+
+While Xero holds a payment refund note the app could not record, no other
+refund note on that payment is sized or raised until that note is recorded
+(#4688).
+
+- **The mark is on the row.** A record that loses its wait (`INV-INT-028`,
+  #4656) stamps its own create row `REFUND_NOTE_UNRECORDED`, naming the note
+  in its response payload; row-only and guarded on its claim: RUNNING, or the
+  FAILED row Mark failed left; never a resolved row or one naming a note.
+- **One read fences.** `findUnrecordedRefundNoteOperation`: a stamped,
+  unresolved row naming no note, whatever its status or age, unless a live
+  or voided link on the payment now records its note. Every refund-note create
+  waits on it before sizing, back to PENDING as
+  `REFUND_NOTE_AWAITING_RESOLVE`, which the outbox scan and the retry drain
+  space out (#4692); Retry, Requeue and Retry all refuse the payment's
+  refund-note creates; the nightly self-heal queues none.
+- **Resolving lifts it.** The resolve's claim sets `manuallyResolvedAt`; a
+  withdrawn resolve restores the fence. A PENDING copy the fence holds does
+  not refuse the resolve; once the fence reads lifted, a copy queued before
+  the resolve closes CANCELLED (`INV-INT-025`). A stamped row whose note
+  another row recorded resolves with that note, adding no link.
+  Mark failed and Reset stale running keep the code and the note's message.
+- **Limits.** Until the stamp lands the row holds others back only as a live
+  claim (#3880). A stamp that fails is logged, and the alert says nothing
+  holds later notes back.
+
+Pinned by `xero-refund-note-in-flight.test.ts`,
+`xero-late-refund-note-record.test.ts`, `xero-refund-note-crash-window.test.ts`,
+`xero-operation-outbox.test.ts`, `xero-operation-queue.test.ts`,
+`xero-resolve-refund-note.test.ts`, `xero-operation-routes.test.ts`,
+`cron-credit-reconciliation.test.ts` and, against real PostgreSQL,
+`xero-unrecorded-refund-note-fence.realdb.test.ts`.
+
 ## One outcome per Xero operation row (#4356)
 
 ### INV-INT-029
@@ -714,7 +748,7 @@ A succeeded Stripe payment the app did not create is recorded once and alerted o
 
 - **Recognised means routed.** `appPaymentIntentRoute` (`stripe-app-intent-metadata.ts`) is the one definition: a non-empty `bookingId` or `type: "group_settlement"`. Both PaymentIntent wire functions in `stripe.ts` require `AppPaymentIntentMetadata`, and a census holds every Stripe money-object creation (PaymentIntent, Checkout session, Payment Link, invoice, subscription, charge) to those two. Key presence is not recognition: a Payment Link's own `type` or `memberId` metadata is still foreign.
 - **One record.** `payment_intent.succeeded` for any other intent writes one `UnrecognisedStripePayment` row: amount in Stripe's smallest unit, currency, created instant, PaymentIntent, charge, Checkout session and Payment Link ids, and the line items (else the intent's description), capped. The unique PaymentIntent id is the claim; a later delivery reads the stored row and asks Stripe nothing. The Checkout read runs before the write, outside any transaction.
-- **One alert.** `admin-unrecognised-stripe-payment`, unmuteable and delivery-locked, to Finance editors, claimed once ever per PaymentIntent. A delivery that died before sending is finished by the next. A send nobody received releases its copies, gives its own claim back, twice if need be, and fails the event: Stripe redelivers; the email cron replays one recipient's lost copy, or all once it claimed one, keeping the claim (#4669). An unstamped claim is a sibling's for the webhook lease less a margin, then taken over, unless a sent marker shows it went out. No card data or payer identity is sent.
+- **One alert.** `admin-unrecognised-stripe-payment`, unmuteable and delivery-locked, to Finance editors, claimed once ever per PaymentIntent. A send nobody received releases its copies, gives its own claim back, twice if need be, and fails the event, as does a claim write that threw (#4679): Stripe redelivers; the email cron replays one recipient's lost copy, or all once it claimed one, keeping the claim (#4669). An unstamped claim is a sibling's for the webhook lease less a margin, then taken over and sent, unless a sent marker shows it went out. No card data or payer identity is sent.
 - **Nothing else.** The event completes; no booking, settlement, ledger or Xero document is touched, and no advisory lock is taken. Coding the money in Xero is the treasurer's, by hand.
 
 Pinned by `stripe-app-intent-metadata.test.ts`, `unrecognised-stripe-payment.test.ts`, `unrecognised-stripe-payment-email-retry.test.ts`, `caller-retried-alert-replay.test.ts`, `stripe-webhook-alerts.test.ts`, `admin-unrecognised-stripe-payment-alert.test.ts` and, against a real database, `unrecognised-stripe-payment.realdb.test.ts`.

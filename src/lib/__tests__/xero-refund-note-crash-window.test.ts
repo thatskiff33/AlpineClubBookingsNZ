@@ -82,6 +82,8 @@ function matches(row: Row, where: Row | undefined): boolean {
       if ("notIn" in expected) return !(expected as { notIn: unknown[] }).notIn.includes(actual);
       if ("not" in expected) return actual !== (expected as { not: unknown }).not;
       if ("gte" in expected) return actual instanceof Date && actual >= (expected as { gte: Date }).gte;
+      // #4692 review: the resolved-sibling check's strict floor (`findResolvedSiblingSince`).
+      if ("gt" in expected) return actual instanceof Date && actual > (expected as { gt: Date }).gt;
       // A JSON path filter (`paidAnotherWayCloseNoteRowsWhere`): one top-level key.
       if ("path" in expected) {
         const { path, equals } = expected as { path: string[]; equals: unknown };
@@ -279,6 +281,8 @@ function coveredCents() {
 vi.mock("@/lib/xero-resolved-in-xero-fences", async (importOriginal) => {
   const actual = (await importOriginal()) as typeof import("@/lib/xero-resolved-in-xero-fences");
   return {
+    // #4692 review: the fence reads its row scope and the resolved-sibling check from here.
+    ...actual,
     readResolvedRefundCreditNoteCoverage: vi.fn(async (paymentId: string) =>
       state.realResolved ? actual.readResolvedRefundCreditNoteCoverage(paymentId) : state.resolved,
     ),
@@ -478,7 +482,8 @@ import {
 } from "@/lib/xero-refund-note-unsettled";
 import { REFUND_UNSETTLED_NO_ACCOUNT_REASON } from "@/lib/xero-invoice-payments";
 import { PARTIAL_REPAIR_CLAIM_LOST_MESSAGE, retryXeroSyncOperation } from "@/lib/xero-operation-retry";
-import { XeroRefundCreditNoteInFlightError } from "@/lib/xero-applied-credit-operation-serialization";
+import { XeroRefundCreditNoteInFlightError, XeroRefundCreditNoteUnrecordedError } from "@/lib/xero-applied-credit-operation-serialization";
+import { XERO_REFUND_NOTE_UNRECORDED_ERROR_CODE } from "@/lib/xero-operation-error-codes";
 import { addUnsettledRefundCreditNoteFindings } from "@/lib/xero-booking-repair-findings";
 import type { BookingXeroRepairAction, MutableFinding } from "@/lib/xero-booking-repair-types";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
@@ -1083,6 +1088,27 @@ describe("#3880: one refund note in flight per payment, from coverage read to re
     expect(coveredCents()).toBe(2000);
     expect(row("op_a")).toMatchObject({ status: "SUCCEEDED", xeroObjectId: "cn_1" });
     expect(row("op_b")).toMatchObject({ status: "SUCCEEDED", xeroObjectId: "cn_2" });
+  });
+
+  // #4688 (`INV-INT-035`): the note Xero made for op_a whose record lost its wait is in no coverage read.
+  it.each([
+    ["still RUNNING, past the stale threshold", "RUNNING"],
+    ["FAILED by Mark failed, keeping its code", "FAILED"],
+  ])("MUTATION (#4688): a sibling whose note is unrecorded - %s - holds every later note back with no Xero call, until its resolve", async (_label, status) => {
+    twoHandBacks();
+    claimedAgo("op_a", 20);
+    Object.assign(row("op_a"), { status, lastErrorCode: XERO_REFUND_NOTE_UNRECORDED_ERROR_CODE });
+
+    const waited = await dispatch("op_b").then(() => null, (error: unknown) => error);
+    expect(waited).toBeInstanceOf(XeroRefundCreditNoteUnrecordedError);
+    expect((waited as Error).message).toContain("op_a");
+    expect(state.xero.notes.size).toBe(0);
+
+    // The officer's Resolve by hand sets the mark (here a plain one, recording the row's amount): the fence lifts.
+    row("op_b").status = "PENDING";
+    row("op_a").manuallyResolvedAt = new Date();
+    await dispatch("op_b");
+    expect(state.xero.notes.size).toBe(1);
   });
 
   it("MUTATION: a review's note on a bank-transfer payment is one of several: its link says so, and it is never written as the payment's one note", async () => {

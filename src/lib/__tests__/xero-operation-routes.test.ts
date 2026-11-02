@@ -901,9 +901,9 @@ describe("Xero operation admin retry routes", () => {
   );
 
   it("resets stale running operations without erasing provider-created recovery proof", async () => {
-    // None of the three is a PARTIAL repair (#4256), so the repair write matches nothing.
+    // None of the three is a PARTIAL repair (#4256) or holds an unrecorded refund note (#4688), so those writes match nothing.
     mocks.xeroOperationUpdateMany.mockImplementation(async ({ where }: { where: { lastErrorCode?: unknown } }) => ({
-      count: where.lastErrorCode === "PARTIAL_REPAIR_RUNNING" ? 0 : 3,
+      count: where.lastErrorCode === "PARTIAL_REPAIR_RUNNING" || where.lastErrorCode === "REFUND_NOTE_UNRECORDED" ? 0 : 3,
     }));
 
     const response = await resetStaleRunning();
@@ -934,13 +934,21 @@ describe("Xero operation admin retry routes", () => {
       })
     );
     // #4256: the FAILED write leaves a stuck PARTIAL repair to the PARTIAL one.
-    const [failedWrite, repairWrite] = mocks.xeroOperationUpdateMany.mock.calls.map(
+    const [failedWrite, unrecordedWrite, repairWrite] = mocks.xeroOperationUpdateMany.mock.calls.map(
       (call) => call[0] as { where: Record<string, unknown>; data: Record<string, unknown> },
     );
     expect(failedWrite.where.OR).toEqual([
       { lastErrorCode: null },
-      { lastErrorCode: { not: "PARTIAL_REPAIR_RUNNING" } },
+      { lastErrorCode: { notIn: ["PARTIAL_REPAIR_RUNNING", "REFUND_NOTE_UNRECORDED"] } },
     ]);
+    // #4688: a row holding an unrecorded refund note goes to FAILED keeping its code, the payment's fence.
+    expect(unrecordedWrite).toMatchObject({
+      where: { status: "RUNNING", lastErrorCode: "REFUND_NOTE_UNRECORDED" },
+      data: { status: "FAILED" },
+    });
+    expect(unrecordedWrite.data).not.toHaveProperty("lastErrorCode");
+    // #4692 review (finding 4): nor its message, which names the note the officer resolves with.
+    expect(unrecordedWrite.data.lastErrorMessage).toBeUndefined();
     expect(repairWrite).toMatchObject({
       where: { status: "RUNNING", lastErrorCode: "PARTIAL_REPAIR_RUNNING" },
       data: { status: "PARTIAL", lastErrorCode: "ORPHANED_STALE_RUNNING" },
@@ -984,7 +992,7 @@ describe("Xero operation admin retry routes", () => {
 
   it("MUTATION: words the bulk reset's audit and answer from both counts when a stuck repair went back to PARTIAL (#4256)", async () => {
     mocks.xeroOperationUpdateMany.mockImplementation(async ({ where }: { where: { lastErrorCode?: unknown } }) => ({
-      count: where.lastErrorCode === "PARTIAL_REPAIR_RUNNING" ? 1 : 2,
+      count: where.lastErrorCode === "PARTIAL_REPAIR_RUNNING" ? 1 : where.lastErrorCode === "REFUND_NOTE_UNRECORDED" ? 0 : 2,
     }));
 
     const response = await resetStaleRunning();
@@ -1039,6 +1047,8 @@ describe("Xero operation admin retry routes", () => {
           status: "RUNNING",
           // The real threshold: the helper reads its own module's filter.
           startedAt: { equals: stuckSince, lt: new Date("2026-06-30T23:45:00.000Z") },
+          // #4688: never over a stamp that landed after the read (an unrecorded refund note).
+          OR: [{ lastErrorCode: null }, { lastErrorCode: { notIn: ["REFUND_NOTE_UNRECORDED"] } }],
         },
         data: {
           status: "FAILED",
@@ -1102,12 +1112,39 @@ describe("Xero operation admin retry routes", () => {
           id: "op_stuck",
           status: "RUNNING",
           startedAt: { equals: stuckSince, lt: new Date("2026-06-30T23:45:00.000Z") },
+          // #4688: never over a stamp that landed after the read (an unrecorded refund note).
+          OR: [{ lastErrorCode: null }, { lastErrorCode: { notIn: ["REFUND_NOTE_UNRECORDED"] } }],
         },
         data: expect.objectContaining({
           status: "FAILED",
           lastErrorCode: "ORPHANED_STALE_RUNNING",
           lastErrorMessage: expect.stringContaining(`The last error recorded before it stuck: ${stuckRow.lastErrorMessage}`),
         }),
+      });
+    });
+
+    // #4688: Mark failed never lifts the fence an unrecorded refund note puts on its payment.
+    it("MUTATION: fails a row holding an unrecorded refund note KEEPING its code, carrying the note's message (#4688)", async () => {
+      const unrecordedMessage = "Xero made refund credit note CN-1 (Xero id cn-1), but ... Do not retry: resolve this operation by hand with this note's number.";
+      mocks.xeroOperationFindUnique.mockResolvedValue({ ...stuckRow, entityType: "CREDIT_NOTE", lastErrorCode: "REFUND_NOTE_UNRECORDED", lastErrorMessage: unrecordedMessage });
+      mocks.xeroOperationUpdateMany.mockResolvedValue({ count: 1 });
+
+      const response = await markFailedOperation(markRequest(), params);
+
+      expect(response.status).toBe(200);
+      expect(mocks.xeroOperationUpdateMany).toHaveBeenCalledTimes(1);
+      expect(mocks.xeroOperationUpdateMany).toHaveBeenCalledWith({
+        where: {
+          id: "op_stuck",
+          status: "RUNNING",
+          startedAt: { equals: stuckSince, lt: new Date("2026-06-30T23:45:00.000Z") },
+          lastErrorCode: "REFUND_NOTE_UNRECORDED",
+        },
+        data: {
+          status: "FAILED",
+          lastErrorMessage: `Operation was stuck RUNNING past the staleness threshold and was marked FAILED by an operator. The last error recorded before it stuck: ${unrecordedMessage}`,
+          completedAt: new Date("2026-07-01T00:00:00.000Z"),
+        },
       });
     });
 

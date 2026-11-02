@@ -2010,7 +2010,8 @@ on `manuallyResolvedAt`.
     The inline row still stays RUNNING, as before; while it is younger than
     the stale threshold (`STALE_RUNNING_XERO_OPERATION_MINUTES`, 15 minutes)
     it counts as in flight and holds back every other refund note on the
-    payment (`assertNoRefundCreditNoteInFlight`), and after that it does not.
+    payment (`assertNoRefundCreditNoteInFlight`); after that, #4688's stamp
+    holds them back (below).
   - **A commit whose answer was lost.** A transaction can commit and still
     answer P2028. The trace's re-read then finds this very note on the row: on
     this run's own claim (not resolved by hand, not RUNNING under another
@@ -2027,21 +2028,67 @@ on `manuallyResolvedAt`.
     would also read it as recorded and send no alert. A marker in
     `responsePayload` would need a recovery path of its own. The officer's
     resolve by hand records the note, its link and its amount, checked
-    (`INV-INT-028`).
+    (`INV-INT-028`). #4688's fence keeps this: it stamps a code
+    (`lastErrorCode`), never the note, so `xeroObjectId` stays null, the
+    repair leg never reads the row as its own note, and the re-read still
+    alerts.
   - Limits: a queue of holders longer than 30s in total still runs the wait
     out, and is traced, not recorded; Resolve by hand refuses the RUNNING row
     until Mark failed or Reset stale running clears it; an alert that reaches
-    nobody is not sent again. And until an officer resolves it, the
-    unrecorded note is invisible to every later refund note on the payment:
-    once its row is past the stale threshold (15 minutes) it no longer counts
-    as in flight (`liveRunningXeroOperationFilter`), and a later create sizes
-    and keys itself on recorded coverage only - a later Stripe refund's delta,
-    the nightly self-heal (`cron-credit-reconciliation.ts`), or Retry all
-    (`operations/retry-all`, which requeues every replayable FAILED row,
-    including the original row a retry ran for). Xero can then hold an extra
-    note before anyone acts. The alert says so and asks for a prompt resolve;
-    fencing those creates on an unrecorded note is a follow-up, not built
-    here.
+    nobody is not sent again.
+  - **Later refund notes wait for the resolve (#4688, `INV-INT-035`).** Past
+    the stale threshold the row no longer counts as in flight
+    (`liveRunningXeroOperationFilter`), and every coverage read leaves the
+    unrecorded note out, so a later create - a later Stripe refund's delta, the
+    nightly self-heal, Retry all requeueing the original row a retry ran for -
+    would size and key itself as if the note did not exist, and Xero could hold
+    an extra note before anyone acted. So the record that loses its wait first
+    stamps its own row `REFUND_NOTE_UNRECORDED` (`fenceUnrecordedNote`, a
+    row-only `updateMany` guarded on this run's claim: its RUNNING claim, or
+    the FAILED row Mark failed left under it; never a row resolved by hand or
+    one naming a note), naming the note's Xero id in its response payload
+    (`unrecordedNoteStampPayload`), then traces the note. While the payment has
+    such a row unresolved (`findUnrecordedRefundNoteOperation`, whatever the
+    row's status or age) and no live or voided link on the payment records
+    that note:
+    - every refund-note create, in any mode, waits before it sizes or mints
+      (`assertNoUnrecordedRefundNote` in `createXeroCreditNote`; the busy error
+      sends an outbox row, or a queued retry's REQUEUE row, back to PENDING
+      under `REFUND_NOTE_AWAITING_RESOLVE`, which the outbox scan and the retry
+      drain leave out for five minutes at a time
+      (`scanSpacesRefundNotesAwaitingResolve`, #4692), so a wait that lasts
+      days never takes the head of every oldest-first scan);
+    - Retry, Requeue and Retry all refuse the row (`getXeroOperationRetryMeta`)
+      and any other refund-note create on the payment that would mint
+      (`unrecordedRefundNoteRetryRefusal`, 409 with the row to resolve); Retry
+      all lists each as skipped with that reason;
+    - the nightly self-heal queues no note for the payment, a close's or a card
+      one, and logs why; the payment stays in its alert;
+    - Mark failed and Reset stale running take the row to FAILED keeping the
+      code and the message naming the note (`writeStaleRunningXeroOperationReset`),
+      and the operations panel explains it as a note made in Xero but not
+      recorded: resolve by hand, never retry.
+
+    Resolve by hand lifts it: its claim sets `manuallyResolvedAt` (and, with a
+    number, the note and its link, under `lock(1)`, then the Payment row, in
+    one commit). A PENDING copy of the same document (re-queued after Mark
+    failed) does not refuse that resolve (`findQueuedLiveCopy`): the fence
+    keeps it from minting, and the outbox closes it CANCELLED at its next claim
+    (`findResolvedSiblingSince`) - or, when that check ran before the mark
+    landed, the create does once the fence reads lifted
+    (`passUnrecordedRefundNoteFence`); a copy RUNNING still refuses. So does
+    the note being recorded through another row - the original a retry ran for,
+    resolved with this note, or a retry that recorded it. The stamped row is
+    then resolved with that same note's number: recorded on the row with no
+    second link (`stampedUnrecordedNoteId`), so its resolved coverage counts
+    nothing twice.
+    The waiting notes then run, sized with the resolved note counted. A
+    withdrawn resolve restores the fence. The alert and the audit row
+    (`laterNotesHeld`) say whether the fence is up. Limits: before the stamp
+    lands, the row holds others back only while its claim is live; a stamp that
+    fails is logged and the alert then gives #4656's warning (later notes are
+    sized without this one); a resolve with no number lifts the fence with the
+    note still unrecorded, as for any plain resolve.
   - **The account-credit note's `MemberCredit` stamp, not confirmed: a
     stated limit.** `createUnappliedXeroCreditNote` stamps the note on the
     member's credit (`backfill*CreditXeroNote`) before its claim-guarded

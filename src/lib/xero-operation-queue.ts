@@ -25,6 +25,7 @@ import { XeroRefundCreditNoteInFlightError } from "@/lib/xero-applied-credit-ope
 import { XERO_REQUEUE_OPERATION_TYPE } from "@/lib/xero-hardening-shared";
 import { isRetryOfVoidedRefundRequestNote, VOIDED_REQUEST_NOTE_RETRY_REASON } from "@/lib/xero-refund-note-status";
 import { RefundNoteNotRecordedError, refundNoteRecordedElsewhere } from "@/lib/xero-refund-note-record";
+import { scanSpacesRefundNotesAwaitingResolve, unrecordedRefundNoteRetryRefusal } from "@/lib/xero-refund-note-in-flight";
 
 // The requeue correlation key is `${REQUEUE_CORRELATION_KEY_PREFIX}${originalOperationId}`.
 // Operation IDs are cuids, so the key stays well under the idempotency-key
@@ -110,6 +111,10 @@ export async function enqueueXeroSyncOperationRetry(
   if (await isRetryOfVoidedRefundRequestNote(operation, prisma)) {
     throw new XeroOperationRetryError(VOIDED_REQUEST_NOTE_RETRY_REASON, 409);
   }
+  // #4688 (`INV-INT-035`): never queued while Xero holds an unrecorded refund note on the payment - Retry all
+  // skips it with the reason. A retry queued before the note went unrecorded waits at the create instead.
+  const unrecordedRefusal = await unrecordedRefundNoteRetryRefusal(operation);
+  if (unrecordedRefusal) throw new XeroOperationRetryError(unrecordedRefusal, 409);
 
   const correlationKey = buildXeroOperationRequeueCorrelationKey(operationId);
   const existingQueuedRetry = await prisma.xeroSyncOperation.findFirst({
@@ -190,6 +195,8 @@ export async function processQueuedXeroOperationRetries(
     where: {
       status: "PENDING",
       operationType: XERO_REQUEUE_OPERATION_TYPE,
+      // #4692 review: a retry held by an unrecorded note waits days, not the head of every drain.
+      ...scanSpacesRefundNotesAwaitingResolve(new Date()),
     },
     // `createdAt` ties (same millisecond; every row under the frozen test clock)
     // fall to `id`: deterministic, not insertion order (#4663).
@@ -300,10 +307,11 @@ export async function processQueuedXeroOperationRetries(
       }
       if (error instanceof XeroRefundCreditNoteInFlightError) {
         // #3880: another refund note on this payment is mid-raise. Nothing ran,
-        // so this retry waits its turn in PENDING, reason kept, as the outbox does.
+        // so this retry waits its turn in PENDING, reason kept, as the outbox does;
+        // a wait on an unrecorded note names itself, so the scan spaces it (#4692 review).
         await prisma.xeroSyncOperation.updateMany({
           where: { id: queuedOperation.id, status: "RUNNING", startedAt: claimed.startedAt },
-          data: { status: "PENDING", startedAt: null, lastErrorCode: null, lastErrorMessage: error.message },
+          data: { status: "PENDING", startedAt: null, lastErrorCode: error.waitCode, lastErrorMessage: error.message },
         });
         result.skipped += 1;
         continue;
