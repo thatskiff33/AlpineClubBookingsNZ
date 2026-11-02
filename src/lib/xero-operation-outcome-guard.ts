@@ -33,7 +33,8 @@ export const NOT_A_XERO_REPAIR_CLAIM = {
  * and the `startedAt` its RUNNING claim was stamped with when this caller
  * started it (`startXeroSyncOperation`'s row) or claimed it
  * (`claimXeroSyncOperationToRunning`, a retry's claim). A started row is one as
- * it stands. Null `startedAt`: a caller handed a row no claim holds yet.
+ * it stands. Null `startedAt`: a caller handed a row no claim holds yet; its
+ * failure lands on no live row (#4673).
  */
 export interface XeroOperationClaim {
   readonly id: string;
@@ -50,6 +51,27 @@ function notAnotherClaim(claim: XeroOperationClaim): Prisma.XeroSyncOperationWhe
 }
 
 /**
+ * #4673 (`INV-INT-029`): the statuses a FAILED outcome may land on, and only
+ * on a row carrying its own claim's `startedAt`: that claim's RUNNING row, or
+ * the FAILED or CANCELLED end that claim (or a stale reset of it) already
+ * wrote. Never a PENDING row - an officer's Retry queued it in place, or the
+ * outbox gave it back - nor one waiting, skipped or ended under another claim.
+ */
+const XERO_FAILURE_OWN_CLAIM_STATUSES: readonly string[] = ["RUNNING", "FAILED", "CANCELLED"];
+
+/**
+ * #4673: a FAILED outcome's rows - this claim's own, in a status a failure may
+ * replace. A failure that lost its claim is dropped: the run or retry that
+ * holds the row now writes its own outcome.
+ */
+function ownClaimFailureRow(claim: XeroOperationClaim, kept: readonly string[]): Prisma.XeroSyncOperationWhereInput {
+  return {
+    status: { in: XERO_FAILURE_OWN_CLAIM_STATUSES.filter((status) => !kept.includes(status)) },
+    startedAt: claim.startedAt,
+  };
+}
+
+/**
  * #4356 (`INV-INT-029`): the write guard of an outcome (`status`) on an
  * operation row. Two callers can hold one row - a start that loses the insert
  * race is handed the winner's ACTIVE row (#1354) - and each records its own
@@ -60,9 +82,12 @@ function notAnotherClaim(claim: XeroOperationClaim): Prisma.XeroSyncOperationWhe
  * replace the payload the repair reads and make the repair's own give-back
  * lose. #4373: and no outcome, a success included, lands on a RUNNING row
  * another claim holds - a late outcome of an earlier attempt never lands on a
- * retry's claim. A SUCCEEDED write lands on anything else; `alsoKeep` keeps
- * one more status out. `retryClaim` writes onto this RUNNING claim only, which
- * no recorded outcome is.
+ * retry's claim. #4673: and a failure (FAILED, from either writer) lands only
+ * on this claim's own row (`ownClaimFailureRow`), so a stalled run's late
+ * failure never undoes the Retry an officer queued after a stale reset. A
+ * SUCCEEDED write lands on anything else; `alsoKeep` keeps one more status
+ * out. `retryClaim` writes onto this RUNNING claim only, which no recorded
+ * outcome is.
  */
 export function outcomeWriteGuard(
   claim: XeroOperationClaim,
@@ -78,6 +103,7 @@ export function outcomeWriteGuard(
   if (status === "SUCCEEDED") return notAnotherClaim(claim);
   const kept = XERO_RECORDED_SUCCESS_STATUSES.filter((held) => held !== status);
   if (options.alsoKeep) kept.push(options.alsoKeep);
+  if (status === "FAILED") return { AND: [ownClaimFailureRow(claim, kept), NOT_A_XERO_REPAIR_CLAIM] };
   return {
     AND: [
       { status: kept.length === 1 ? { not: kept[0] } : { notIn: kept } },
@@ -100,7 +126,8 @@ type OutcomeRowReader = Pick<Prisma.TransactionClient, "xeroSyncOperation">;
  * Xero object exists, and if that claim then fails it would be recorded
  * nowhere. The row's status and claim are left as they are, and it is logged
  * at warn. A refusal for any other reason (INV-INT-029's recorded outcome, a
- * repair's marker, a retry's own lost claim) still records nothing.
+ * repair's marker, a retry's own lost claim, #4673's failure on a row no longer
+ * this claim's) still records nothing.
  */
 export async function refusedOutcomeWrite(
   db: OutcomeRowReader,
