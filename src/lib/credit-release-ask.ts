@@ -52,6 +52,7 @@ import {
   creditReleaseIdForAskRecoveryKey,
 } from "@/lib/credit-release-ask-keys";
 import { isCapturedPaymentStatus } from "@/lib/booking-payment-state";
+import type { PaymentRecoveryClaim } from "@/lib/payment-recovery-constants";
 import { lockPaymentForRefundedTotal, upsertPaymentIntentTransaction } from "@/lib/payment-transactions";
 import { prisma } from "@/lib/prisma";
 import { mintedIntentCustomerId, resolveAskCustomerId } from "@/lib/reissued-ask-mint";
@@ -65,13 +66,16 @@ import { localChargeRefusal } from "@/lib/stripe-charge-currency";
  * `payment-recovery.ts` and importing that module here would be a cycle.
  */
 export interface CreditReleaseAskRunnerDeps {
-  /** Writes under the runner's claim, in one transaction (`holdAdditionalIntentRecoveryClaim`). */
+  /** Writes under the runner's claim, in one transaction (`holdAdditionalIntentRecoveryClaim`); returns the re-stamped claim. */
   holdClaim: <T>(
-    operation: Pick<PaymentRecoveryOperation, "id" | "paymentId" | "attempts" | "processingStartedAt">,
+    operation: PaymentRecoveryClaim & Pick<PaymentRecoveryOperation, "paymentId">,
     write: (store: Prisma.TransactionClient) => Promise<T>,
-  ) => Promise<{ value: T; heldAt: Date } | null>;
-  /** Closes the row (`completePaymentRecoveryOperation`). */
-  complete: (operationId: string) => Promise<unknown>;
+  ) => Promise<{ value: T; claim: PaymentRecoveryClaim } | null>;
+  /**
+   * Closes the row only while this attempt still holds `claim` (`completePaymentRecoveryOperation`,
+   * #4675), in `store`'s transaction when given. `true` only for the call that closed it.
+   */
+  complete: (claim: PaymentRecoveryClaim, store?: Prisma.TransactionClient) => Promise<boolean>;
   /**
    * Puts the row back to wait at the longest retry interval WITHOUT spending the attempt the
    * claim took (`waitPaymentRecoveryOperation`): for a release blocked only by something that
@@ -104,26 +108,39 @@ const NO_ASK_SUMMARY: Record<NoAskReason, string> = {
   "below-card-minimum": "The released credit is too small to collect by card; an officer was told",
 };
 
+/**
+ * Closes the row having asked for nothing, and records why - the audit row in the close's own
+ * transaction, written only when this attempt's claim closed it (#4675). An attempt the stale
+ * reaper gave up on closes nothing and records nothing: the row is another runner's, which may
+ * find money owed and ask for it. Returns whether it closed.
+ */
 async function closeWithoutAsk(
   operation: PaymentRecoveryOperation,
   reason: NoAskReason,
   deps: CreditReleaseAskRunnerDeps,
   detail: Record<string, unknown> = {},
-): Promise<void> {
-  await createAuditLog({
-    action: "payment.credit_release_ask.not_raised",
-    targetId: operation.bookingId,
-    entityType: "Booking",
-    entityId: operation.bookingId,
-    category: "payment",
-    severity: reason === "below-card-minimum" ? "important" : "info",
-    outcome: "success",
-    summary: NO_ASK_SUMMARY[reason],
-    details: reason,
-    metadata: { operationId: operation.id, releasedCents: operation.amountCents, ...detail },
+): Promise<boolean> {
+  const closed = await prisma.$transaction(async (tx) => {
+    if (!(await deps.complete(operation, tx))) return false;
+    await createAuditLog(
+      {
+        action: "payment.credit_release_ask.not_raised",
+        targetId: operation.bookingId,
+        entityType: "Booking",
+        entityId: operation.bookingId,
+        category: "payment",
+        severity: reason === "below-card-minimum" ? "important" : "info",
+        outcome: "success",
+        summary: NO_ASK_SUMMARY[reason],
+        details: reason,
+        metadata: { operationId: operation.id, releasedCents: operation.amountCents, ...detail },
+      },
+      tx,
+    );
+    return true;
   });
-  logger.info({ operationId: operation.id, bookingId: operation.bookingId, reason }, NO_ASK_SUMMARY[reason]);
-  await deps.complete(operation.id);
+  if (closed) logger.info({ operationId: operation.id, bookingId: operation.bookingId, reason }, NO_ASK_SUMMARY[reason]);
+  return closed;
 }
 
 /** Everything the request's size and the ask it supersedes were read from; compared again under the lock. */
@@ -297,7 +314,8 @@ export async function processCreditReleaseAskOperation(
   }
   const refusal = localChargeRefusal(format, ask.amountCents);
   if (refusal) {
-    await closeWithoutAsk(operation, "below-card-minimum", deps, { askCents: ask.amountCents });
+    // #4675: the officers are told only by the attempt that closed the row.
+    if (!(await closeWithoutAsk(operation, "below-card-minimum", deps, { askCents: ask.amountCents }))) return;
     const { alertPaymentRecoveryOfficers } = await import("@/lib/payment-recovery-alert");
     await alertPaymentRecoveryOfficers(
       {
@@ -417,5 +435,6 @@ export async function processCreditReleaseAskOperation(
     paymentId: operation.paymentId,
     paymentIntentId: intent.id,
   });
-  await deps.complete(operation.id);
+  // Under the claim the hold re-stamped (#4675).
+  await deps.complete(held.claim);
 }

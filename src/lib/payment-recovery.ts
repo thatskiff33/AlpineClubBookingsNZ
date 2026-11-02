@@ -70,7 +70,12 @@ import { closeCancellationRefundAfterReplay, closeCapacityRaceRefundRecordingEve
 import { reportSupersededPaymentRefund } from "@/lib/superseded-additional-refund";
 import logger from "@/lib/logger";
 import { createAuditLog } from "@/lib/audit";
-import { MAX_PAYMENT_RECOVERY_ATTEMPTS, PAYMENT_RECOVERY_CLAIMABLE_LATER_WHERE } from "@/lib/payment-recovery-constants";
+import {
+  heldPaymentRecoveryClaimWhere,
+  MAX_PAYMENT_RECOVERY_ATTEMPTS,
+  PAYMENT_RECOVERY_CLAIMABLE_LATER_WHERE,
+  type PaymentRecoveryClaim,
+} from "@/lib/payment-recovery-constants";
 import { stripeReferenceId } from "@/lib/stripe-references";
 import { claimAlertCooldown } from "@/lib/alert-cooldown";
 import { formatCents } from "@/lib/utils";
@@ -1125,48 +1130,70 @@ async function enqueueSupersededPaymentRefundRecovery({
   });
 }
 
+/** The SUCCEEDED close's own columns, one spelling for both closes below. */
+function succeededPaymentRecoveryData() {
+  return {
+    status: PaymentRecoveryOperationStatus.SUCCEEDED,
+    nextRetryAt: null,
+    lastError: null,
+    processingStartedAt: null,
+    succeededAt: new Date(),
+  } satisfies Prisma.PaymentRecoveryOperationUpdateManyMutationInput;
+}
+
 /**
- * Terminal SUCCEEDED close, STATUS-FENCED (#2262 H2). `updateMany` rather than
- * update-by-id, so an operation the manual-mark-paid reversal DELETED mid-flight
- * simply matches nothing instead of throwing P2025 — a closed/deleted operation
- * can never be resurrected by a worker that still holds an in-memory copy. The
- * fence excludes only SUCCEEDED (already terminal): the webhook-side closers
- * (completeCanceledSupersededPaymentIntentRecovery and the succeeded-intent
- * handoff) legitimately close PENDING/FAILED rows whose work verifiably
- * finished, so fencing to PROCESSING-only would break them.
+ * The runner's terminal SUCCEEDED close, FENCED ON THE CLAIM IT HOLDS (#4675,
+ * `INV-PAY-120`): still PROCESSING, with exactly the `attempts` and
+ * `processingStartedAt` this attempt claimed or re-stamped
+ * (`heldPaymentRecoveryClaimWhere`). An attempt that stalled past the stale
+ * reaper finds its row handed back (claim time cleared) or reclaimed by another
+ * runner (`attempts` moved on), and matches nothing: before this a stale
+ * attempt that read "nothing owed" closed a reclaimed row under a runner that
+ * had just minted the ask, whose claim hold then lost, and the debt was never
+ * asked for. `updateMany`, so a row a manual mark-paid reversal DELETED
+ * mid-flight matches nothing rather than throwing P2025 (#2262 H2), and a
+ * closed row is never resurrected.
  *
- * IT RETURNS WHETHER THIS CALL IS THE ONE THAT CLOSED IT (#3340 fix round).
- * Because the fence lets exactly one concurrent or repeated attempt match, that
- * verdict is a claim a caller can hang a once-only epilogue off - rather than
- * off a re-derived condition that a partially-applied replay can make true
- * twice. #4125: `store` closes it inside a caller's transaction; `lossExpected`
- * logs a lost close at debug, for a replay whose inline door can close the same
- * row first - the duplicate capture, the treasurer-approved late capture and
- * the capacity race - where losing is an expected outcome, not an anomaly.
+ * A LOST CLOSE WRITES AND SENDS NOTHING. It returns whether THIS call closed
+ * the row (#3340 fix round), and exactly one attempt can: every once-only
+ * epilogue - a notice, an event, a Xero correction, an audit row - hangs off
+ * `true`, never off a re-derived condition a partial replay can make true
+ * twice. A row it did not close stays with whoever holds it, or waits for the
+ * next claim, which re-reads and re-decides. #4125: `store` closes it inside a
+ * caller's transaction, which must then honour `false` (write nothing more);
+ * `lossExpected` logs a lost close at debug, for a replay whose inline door can
+ * close the same row first - the duplicate capture, the treasurer-approved late
+ * capture and the capacity race.
  */
 async function completePaymentRecoveryOperation(
-  operationId: string,
+  claim: PaymentRecoveryClaim,
   { store = prisma, lossExpected = false }: { store?: PaymentRecoveryStore; lossExpected?: boolean } = {},
 ): Promise<boolean> {
   const closed = await store.paymentRecoveryOperation.updateMany({
-    where: {
-      id: operationId,
-      status: { not: PaymentRecoveryOperationStatus.SUCCEEDED },
-    },
-    data: {
-      status: PaymentRecoveryOperationStatus.SUCCEEDED,
-      nextRetryAt: null,
-      lastError: null,
-      processingStartedAt: null,
-      succeededAt: new Date(),
-    },
+    where: heldPaymentRecoveryClaimWhere(claim),
+    data: succeededPaymentRecoveryData(),
   });
   if (closed.count === 0) {
     logger[lossExpected ? "debug" : "warn"](
-      { operationId },
-      "Payment recovery completion matched no live operation (already succeeded, or deleted by a manual mark-paid reversal); nothing was resurrected"
+      { operationId: claim.id, attempts: claim.attempts },
+      "Payment recovery completion matched no live claim of this attempt (already succeeded, handed back or reclaimed after this attempt stalled, or deleted by a manual mark-paid reversal); nothing was closed or resurrected",
     );
   }
+  return closed.count === 1;
+}
+
+/**
+ * The webhook's close of a superseded intent's cancellation that Stripe reports
+ * cancelled (`completeCanceledSupersededPaymentIntentRecovery`): it holds no
+ * claim, and Stripe's own report is its evidence the work is done, so it closes
+ * a PENDING, PROCESSING or FAILED row alike. Fenced only off SUCCEEDED (already
+ * terminal). No runner path closes through here (#4675).
+ */
+async function completeUnclaimedPaymentRecoveryOperation(operationId: string): Promise<boolean> {
+  const closed = await prisma.paymentRecoveryOperation.updateMany({
+    where: { id: operationId, status: { not: PaymentRecoveryOperationStatus.SUCCEEDED } },
+    data: succeededPaymentRecoveryData(),
+  });
   return closed.count === 1;
 }
 
@@ -1202,8 +1229,7 @@ async function alertPaymentRecoveryFailure(operation: PaymentRecoveryOperation, 
  * re-claimable, so not terminal) and `attempts` to the ceiling every dead-row
  * reader tests (`INV-PAY-092`).
  *
- * STATUS-FENCED, like `completePaymentRecoveryOperation` and for the same
- * reason. The worker's arm used `update` by id, which throws `P2025` when a
+ * STATUS-FENCED, as the runner's SUCCEEDED close is. The worker's arm used `update` by id, which throws `P2025` when a
  * manual mark-paid reversal has DELETED the row mid-flight - and it is called
  * from inside the loop's `catch`, so that throw escaped the loop and abandoned
  * every remaining operation in the batch. `updateMany` matches nothing instead,
@@ -1586,10 +1612,9 @@ async function failPaymentRecoveryOperation(
     message: cause ?? errorMessage(error),
     terminal,
     nextRetryAt: nextRetryDate(operation.attempts),
-    // Everything but SUCCEEDED, matching `completePaymentRecoveryOperation`'s
-    // fence: the row was PROCESSING when this worker claimed it, but the
-    // webhook-side closers can move it underneath us and a finished operation
-    // must never be reopened as a failure.
+    // Everything but SUCCEEDED: the row was PROCESSING when this worker
+    // claimed it, but the webhook-side closers can move it underneath us and a
+    // finished operation must never be reopened as a failure.
     fromStatuses: NON_TERMINAL_PAYMENT_RECOVERY_STATUSES,
     // #4083: only the attempt this worker holds.
     fromAttempts: operation.attempts,
@@ -1833,7 +1858,9 @@ async function handoffSucceededSupersededIntentToRefund({
   // commit. A hand-off first makes it refuse; a reversal first leaves nothing
   // to claim. Apart, a flip after that check charged and refunded the member
   // on a booking left unpaid. No provider call runs inside.
-  const claimed = await prisma.$transaction(async (tx) => {
+  // #4675: the claim this hand-off now holds is read back under the row lock its
+  // own write took, and its close below is fenced on it like any runner's.
+  const claimed = await prisma.$transaction(async (tx): Promise<PaymentRecoveryClaim | null> => {
     await lockPaymentForRefundedTotal(tx, operation.paymentId);
     const claim = await tx.paymentRecoveryOperation.updateMany({
       where: { id: operation.id, status: { in: [...NON_TERMINAL_PAYMENT_RECOVERY_STATUSES] } },
@@ -1843,10 +1870,18 @@ async function handoffSucceededSupersededIntentToRefund({
         ...(takenFromOutside ? { attempts: { increment: 1 } } : {}),
       },
     });
-    if (claim.count === 1) await markSupersededTransactionSucceeded({ operation, amountCents, paymentMethodId, store: tx });
-    return claim;
+    if (claim.count !== 1) return null;
+    await markSupersededTransactionSucceeded({ operation, amountCents, paymentMethodId, store: tx });
+    // The row this transaction just wrote and still locks, so never missing; if it were, the
+    // throw rolls the flip back with the claim.
+    const held = await tx.paymentRecoveryOperation.findUnique({
+      where: { id: operation.id },
+      select: { id: true, attempts: true, processingStartedAt: true },
+    });
+    if (!held) throw new Error(`Payment recovery operation ${operation.id} vanished under its own hand-off claim`);
+    return held;
   });
-  if (claimed.count === 0) {
+  if (claimed === null) {
     logger.error(
       {
         operationId: operation.id,
@@ -1869,7 +1904,7 @@ async function handoffSucceededSupersededIntentToRefund({
       amountCents,
     })
   ) {
-    await completePaymentRecoveryOperation(operation.id);
+    await completePaymentRecoveryOperation(claimed);
     return true;
   }
 
@@ -1881,7 +1916,7 @@ async function handoffSucceededSupersededIntentToRefund({
     amountCents,
   });
 
-  await completePaymentRecoveryOperation(operation.id);
+  await completePaymentRecoveryOperation(claimed);
   return true;
 }
 
@@ -1911,7 +1946,7 @@ async function processCancelPaymentIntentOperation(
 
   if (isPaymentIntentCancelConfirmed(result)) {
     await markSupersededTransactionFailed(operation);
-    await completePaymentRecoveryOperation(operation.id);
+    await completePaymentRecoveryOperation(operation);
     return;
   }
 
@@ -1968,7 +2003,7 @@ async function processRefundSupersededPaymentOperation(
   );
 
   if (outstandingCents <= 0) {
-    await completePaymentRecoveryOperation(operation.id);
+    await completePaymentRecoveryOperation(operation);
     return;
   }
 
@@ -2041,7 +2076,7 @@ async function processRefundSupersededPaymentOperation(
    * `status != SUCCEEDED`, so exactly one attempt can win it, and that attempt
    * is the one that speaks.
    */
-  const closed = await completePaymentRecoveryOperation(operation.id);
+  const closed = await completePaymentRecoveryOperation(operation);
   if (!closed) {
     logger.warn(
       {
@@ -2090,7 +2125,7 @@ async function processBookingModificationRefundOperation(
       "@/lib/group-cancel"
     );
     await executeGroupSettlementRefundPlan(settlementId, format);
-    await completePaymentRecoveryOperation(operation.id);
+    await completePaymentRecoveryOperation(operation);
     return;
   }
 
@@ -2205,7 +2240,7 @@ async function processBookingModificationRefundOperation(
     const outstandingCents = Math.min(operation.amountCents, refundableCents);
 
     if (outstandingCents <= 0) {
-      await completePaymentRecoveryOperation(operation.id);
+      await completePaymentRecoveryOperation(operation);
       return;
     }
 
@@ -2261,7 +2296,7 @@ async function processBookingModificationRefundOperation(
   // way, for what the plan refunded, in the close's own transaction.
   if (isBookingCancellationRecovery || operation.idempotencyKey.startsWith(CAPACITY_CLAIM_FAILED_REFUND_RECOVERY_PREFIX)) {
     const refunded = { bookingId: operation.bookingId, amountCents: plan.reduce((sum, slice) => sum + slice.amountCents, 0) };
-    const close = (tx: Prisma.TransactionClient) => completePaymentRecoveryOperation(operation.id, { store: tx, lossExpected: true });
+    const close = (tx: Prisma.TransactionClient) => completePaymentRecoveryOperation(operation, { store: tx, lossExpected: true });
     await (isBookingCancellationRecovery
       ? closeCancellationRefundAfterReplay({ ...refunded, format }, close)
       : closeCapacityRaceRefundRecordingEvent({ ...refunded, actorMemberId: null }, close));
@@ -2274,7 +2309,7 @@ async function processBookingModificationRefundOperation(
     operation.idempotencyKey,
   );
   if (duplicatePaymentIntentId !== null) {
-    if (await completePaymentRecoveryOperation(operation.id, { lossExpected: true })) {
+    if (await completePaymentRecoveryOperation(operation, { lossExpected: true })) {
       await recordDuplicateCaptureRefundEvent({
         bookingId: operation.bookingId,
         amountCents: operation.amountCents,
@@ -2293,14 +2328,14 @@ async function processBookingModificationRefundOperation(
   // replay that actually moves the operation to SUCCEEDED (delta D6), so an
   // inline success whose close was lost is not recorded twice.
   if (isLateCaptureRefundStripeKeyPrefix(operation.stripeKeyPrefix)) {
-    if (await completePaymentRecoveryOperation(operation.id, { lossExpected: true })) {
+    if (await completePaymentRecoveryOperation(operation, { lossExpected: true })) {
       const amountCents = plan.reduce((sum, slice) => sum + slice.amountCents, 0);
       await finishApprovedLateCaptureRefundAfterReplay({ ...operation, amountCents, refundId });
     }
     return;
   }
 
-  await completePaymentRecoveryOperation(operation.id);
+  await completePaymentRecoveryOperation(operation);
 }
 
 /**
@@ -2480,30 +2515,26 @@ async function raiseDeferredSupplementaryInvoiceForRecoveredIntent(params: {
  * a reduction outright while the supersede and invoice below finish.
  */
 async function holdAdditionalIntentRecoveryClaim<T>(
-  operation: Pick<PaymentRecoveryOperation, "id" | "paymentId" | "attempts" | "processingStartedAt">,
+  operation: PaymentRecoveryClaim & Pick<PaymentRecoveryOperation, "paymentId">,
   write: (store: Prisma.TransactionClient) => Promise<T>,
   /**
    * #4442 review C-F1: `"payment-row"` for a re-stamp that writes nothing - the
    * reduction it fences orders on the Payment row, so it waits on no global holder.
    */
   locks: "queue" | "payment-row" = "queue",
-): Promise<{ value: T; heldAt: Date } | null> {
+): Promise<{ value: T; claim: PaymentRecoveryClaim } | null> {
   return prisma.$transaction(async (tx) => {
     // #4217, #4442 (`INV-LOCK-002`): the global key, then the Payment row, before the recovery row, as a reduction netting this ask off takes them.
     if (locks === "queue") await lockAdditionalAskQueue(tx, operation.paymentId);
     else await lockPaymentForRefundedTotal(tx, operation.paymentId);
     const heldAt = new Date();
     const held = await tx.paymentRecoveryOperation.updateMany({
-      where: {
-        id: operation.id,
-        status: PaymentRecoveryOperationStatus.PROCESSING,
-        attempts: operation.attempts,
-        processingStartedAt: operation.processingStartedAt,
-      },
+      where: heldPaymentRecoveryClaimWhere(operation),
       data: { processingStartedAt: heldAt },
     });
     if (held.count !== 1) return null;
-    return { value: await write(tx), heldAt };
+    // #4675: the re-stamped claim, which the attempt's later hold and close are fenced on.
+    return { value: await write(tx), claim: { id: operation.id, attempts: operation.attempts, processingStartedAt: heldAt } };
   }, ADDITIONAL_ASK_QUEUE_TRANSACTION_OPTIONS);
 }
 
@@ -2530,7 +2561,7 @@ async function processCreateAdditionalPaymentIntentOperation(
     const { processCreditReleaseAskOperation } = await import("@/lib/credit-release-ask");
     const answer = await processCreditReleaseAskOperation(operation, format, {
       holdClaim: holdAdditionalIntentRecoveryClaim,
-      complete: (operationId) => completePaymentRecoveryOperation(operationId),
+      complete: (claim, store) => completePaymentRecoveryOperation(claim, { store }),
       wait: (waiting, message) => waitPaymentRecoveryOperation(waiting, message, format),
     });
     return answer === "waited" ? "waited" : "done";
@@ -2873,7 +2904,7 @@ async function processCreateAdditionalPaymentIntentOperation(
   const guard = await import("@/lib/ended-booking-ask-guard");
   if (await guard.bookingEndedBeforeAskMint(operation.bookingId, bookingModificationId)) {
     await guard.retireOutstandingAskOnEndedBooking({ format, bookingId: operation.bookingId, paymentId: operation.paymentId });
-    await completePaymentRecoveryOperation(operation.id);
+    await completePaymentRecoveryOperation(operation);
     return "done";
   }
 
@@ -2883,7 +2914,7 @@ async function processCreateAdditionalPaymentIntentOperation(
    * deferred, complete. One closure so a retry that finds its OWN row runs
    * exactly them (#4442 review C-F1).
    */
-  const finishRecoveredAsk = async (paymentIntentId: string, claimedAt: Date | null) => {
+  const finishRecoveredAsk = async (paymentIntentId: string, claim: PaymentRecoveryClaim) => {
     // #3954 round 6: the Stripe cancels before this can take a while. A price
     // reduction may have netted this ask off since (a claim older than
     // `RECENT_RECOVERY_CLAIM_MS` reads as a stalled worker), retiring the row
@@ -2891,7 +2922,7 @@ async function processCreateAdditionalPaymentIntentOperation(
     // invoice is queued to wait on this intent. A lost claim queues none: the
     // reduction accounted for this ask's money in its own invoice and history.
     const stillHeld = await holdAdditionalIntentRecoveryClaim(
-      { id: operation.id, paymentId: operation.paymentId, attempts: operation.attempts, processingStartedAt: claimedAt },
+      { ...claim, paymentId: operation.paymentId },
       async () => true,
       "payment-row",
     );
@@ -2974,7 +3005,7 @@ async function processCreateAdditionalPaymentIntentOperation(
       }
     }
 
-    await completePaymentRecoveryOperation(operation.id);
+    await completePaymentRecoveryOperation(stillHeld.claim);
   };
 
   // #4442 review C-F1: THIS recovery's own row, written by an earlier attempt
@@ -2995,10 +3026,10 @@ async function processCreateAdditionalPaymentIntentOperation(
         { operationId: operation.id, bookingId: operation.bookingId, paymentIntentId: ownRow.stripePaymentIntentId },
         "Additional intent recovery found its own row already withdrawn by a price reduction (#4442); no supplementary invoice queued for it",
       );
-      await completePaymentRecoveryOperation(operation.id);
+      await completePaymentRecoveryOperation(operation);
       return "done";
     }
-    await finishRecoveredAsk(ownRow.stripePaymentIntentId, operation.processingStartedAt);
+    await finishRecoveredAsk(ownRow.stripePaymentIntentId, operation);
     return "done";
   }
 
@@ -3013,7 +3044,7 @@ async function processCreateAdditionalPaymentIntentOperation(
     isRecoveryReplaySettled(replay, operation, payment.transactions) ||
     operation.amountCents <= 0
   ) {
-    await completePaymentRecoveryOperation(operation.id);
+    await completePaymentRecoveryOperation(operation);
     return "done";
   }
 
@@ -3204,11 +3235,11 @@ async function processCreateAdditionalPaymentIntentOperation(
   // #4316: a cancel committed since that check could not see this intent; retired as the
   // cancel retires one (a failure throws, to retry), the debt closes - no invoice is owed.
   if (await guard.replayRetiresAskOnEndedBooking({ format, bookingId: operation.bookingId, paymentId: operation.paymentId, paymentIntentId: pi.id })) {
-    await completePaymentRecoveryOperation(operation.id);
+    await completePaymentRecoveryOperation(held.claim);
     return "done";
   }
 
-  await finishRecoveredAsk(pi.id, held.heldAt);
+  await finishRecoveredAsk(pi.id, held.claim);
   return "done";
 }
 
@@ -3514,7 +3545,7 @@ export async function completeCanceledSupersededPaymentIntentRecovery({
   }
 
   await markSupersededTransactionFailed(operation);
-  await completePaymentRecoveryOperation(operation.id);
+  await completeUnclaimedPaymentRecoveryOperation(operation.id);
   return true;
 }
 
