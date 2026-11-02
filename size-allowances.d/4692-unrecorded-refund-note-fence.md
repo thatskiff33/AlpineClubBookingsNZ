@@ -6,8 +6,8 @@ these lines are only where the two existing gates call it.
 
 file: src/lib/xero-credit-notes.ts
 lines: 1384
-reason: one call, `assertNoUnrecordedRefundNote(paymentId)`, in
-  `createXeroCreditNote` before it sizes a refund note in any mode. It has to
+reason: one call, `passUnrecordedRefundNoteFence(paymentId, queuedOperation)`,
+  in `createXeroCreditNote` before it sizes a refund note in any mode. It has to
   sit in the one create every refund-note path runs, after the #3548 own-note
   leg and before the coverage reads, beside the in-flight check it extends;
   moving it to a caller would leave the other caller unfenced.
