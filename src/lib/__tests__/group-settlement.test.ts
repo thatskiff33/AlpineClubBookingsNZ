@@ -202,7 +202,7 @@ import {
 } from "@/lib/group-settlement";
 import { GroupBookingError } from "@/lib/group-booking";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
-import { UNSUPPORTED_CHARGE_CURRENCY_MEMBER_MESSAGE } from "@/lib/stripe-charge-currency";
+import { BELOW_STRIPE_MINIMUM_CODE, BELOW_STRIPE_MINIMUM_MEMBER_MESSAGE, UNSUPPORTED_CHARGE_CURRENCY_MEMBER_MESSAGE } from "@/lib/stripe-charge-currency";
 import {
   PAYMENT_PROCESSING_CODE,
   PAYMENT_PROCESSING_MESSAGE,
@@ -970,6 +970,68 @@ describe("createGroupSettlementIntent", () => {
     expect(mocks.bookingUpdateMany).not.toHaveBeenCalled();
     expect(mocks.findOrCreateCustomer).not.toHaveBeenCalled();
     expect(mocks.createPaymentIntent).not.toHaveBeenCalled();
+  });
+
+  it.each([1, 49])("#101: refuses a %i card settlement before committing children or calling Stripe", async (cents) => {
+    mocks.groupBookingFindUnique.mockResolvedValue(organiserPaysGroup());
+    mocks.bookingFindMany.mockResolvedValue([
+      { id: "child-1", finalPriceCents: cents, status: BookingStatus.PAYMENT_PENDING },
+    ]);
+
+    const refusal = createGroupSettlementIntent("ABCD2345", ORGANISER);
+
+    await expect(refusal).rejects.toBeInstanceOf(GroupBookingError);
+    await expect(refusal).rejects.toMatchObject({
+      status: 409,
+      code: BELOW_STRIPE_MINIMUM_CODE,
+      message: BELOW_STRIPE_MINIMUM_MEMBER_MESSAGE,
+    });
+    expect(mocks.bookingUpdateMany).not.toHaveBeenCalled();
+    expect(mocks.findOrCreateCustomer).not.toHaveBeenCalled();
+    expect(mocks.createPaymentIntent).not.toHaveBeenCalled();
+  });
+
+  /** #101: a child the commit can claim under the lock, re-read at `lockedCents`. */
+  function claimableChild(lockedCents: number) {
+    mocks.bookingFindUnique.mockImplementation(async ({ where }: { where: { id: string } }) => ({
+      id: where.id,
+      status: BookingStatus.PAYMENT_PENDING,
+      finalPriceCents: lockedCents,
+      checkIn: new Date("2026-07-01"),
+      checkOut: new Date("2026-07-03"),
+      guests: [],
+    }));
+    mocks.checkCapacity.mockResolvedValue({ available: true, nightDetails: [] });
+  }
+
+  it("#101: refuses a post-lock total below the minimum before any Stripe call", async () => {
+    mocks.groupBookingFindUnique.mockResolvedValue(organiserPaysGroup());
+    // The pre-lock read owes 4500; the locked re-read finds it repriced to 30.
+    mocks.bookingFindMany
+      .mockResolvedValueOnce([{ id: "child-1", finalPriceCents: 4500, status: BookingStatus.PAYMENT_PENDING }])
+      .mockResolvedValue([{ id: "child-1", finalPriceCents: 30, status: BookingStatus.PAYMENT_PENDING }]);
+    claimableChild(30);
+
+    await expect(createGroupSettlementIntent("ABCD2345", ORGANISER)).rejects.toMatchObject({
+      status: 409,
+      code: BELOW_STRIPE_MINIMUM_CODE,
+    });
+    expect(mocks.findOrCreateCustomer).not.toHaveBeenCalled();
+    expect(mocks.createPaymentIntent).not.toHaveBeenCalled();
+  });
+
+  it("#101: settles exactly the minimum by card as before", async () => {
+    mocks.groupBookingFindUnique.mockResolvedValue(organiserPaysGroup());
+    mocks.bookingFindMany.mockResolvedValue([
+      { id: "child-1", finalPriceCents: 50, status: BookingStatus.PAYMENT_PENDING },
+    ]);
+    claimableChild(50);
+
+    await expect(createGroupSettlementIntent("ABCD2345", ORGANISER)).resolves.toMatchObject({
+      outcome: "ready",
+      amountCents: 50,
+    });
+    expect(mocks.createPaymentIntent).toHaveBeenCalledWith(expect.objectContaining({ amountCents: 50 }));
   });
 
   it("internet banking: rejects with 400 when the module is off (no beds held, no invoice)", async () => {

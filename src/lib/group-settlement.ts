@@ -94,7 +94,7 @@ import {
   type ClearedReplacement,
 } from "@/lib/group-settlement-invoice-replacement";
 import { clubFormatValues } from "@/lib/club-format-server";
-import { chargeCurrencyRefusal, UNSUPPORTED_CHARGE_CURRENCY_MEMBER_MESSAGE } from "@/lib/stripe-charge-currency";
+import { BELOW_STRIPE_MINIMUM_CODE, BELOW_STRIPE_MINIMUM_MEMBER_MESSAGE, BelowStripeMinimumError, chargeCurrencyRefusal, localChargeRefusal, UNSUPPORTED_CHARGE_CURRENCY_MEMBER_MESSAGE } from "@/lib/stripe-charge-currency";
 import { intentCurrencyDiffers } from "@/lib/additional-intent-currency";
 import { organiserHasPaidSettlement } from "@/lib/group-organiser-paid";
 import {
@@ -233,6 +233,12 @@ function refuseProcessingSettlementIntent(intent: { status: string }): void {
   }
 }
 
+function refuseBelowCardMinimum(format: ClubFormat, amountCents: number): void {
+  if (localChargeRefusal(format, amountCents) instanceof BelowStripeMinimumError) {
+    throw new GroupBookingError(BELOW_STRIPE_MINIMUM_MEMBER_MESSAGE, 409, { code: BELOW_STRIPE_MINIMUM_CODE });
+  }
+}
+
 export async function createGroupSettlementIntent(
   rawCode: string,
   sessionUserId: string,
@@ -328,6 +334,9 @@ export async function createGroupSettlementIntent(
     }
   }
 
+  // #101: below the card minimum, refused before any child is committed to CONFIRMED.
+  refuseBelowCardMinimum(format, preLockAmountCents);
+
   // Lock, re-read and claim before deriving provider amount. Repricing writers
   // share lock(1), so this returned snapshot is authoritative for this attempt.
   const { children: committedChildren, hostingCoverageQueued } =
@@ -394,6 +403,9 @@ export async function createGroupSettlementIntent(
       };
     }
   }
+
+  // #101: the post-lock total is what would be charged; refused before any Stripe call.
+  refuseBelowCardMinimum(format, amountCents);
 
   const customer = await findOrCreateCustomer({
     email: group.organiserMember.email,

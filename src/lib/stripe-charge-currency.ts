@@ -178,6 +178,18 @@ export const BELOW_STRIPE_MINIMUM_MEMBER_BODY = Object.freeze({
   error: BELOW_STRIPE_MINIMUM_MEMBER_MESSAGE,
 });
 
+/**
+ * What an administrator, or the cron, is told when a saved-card charge is below
+ * the minimum (#101). Nothing was claimed, written or sent to Stripe.
+ */
+export const BELOW_STRIPE_MINIMUM_ADMIN_MESSAGE =
+  "No card was charged: the amount is below the smallest charge Stripe accepts by card. Settle it another way, such as by bank transfer.";
+
+export const BELOW_STRIPE_MINIMUM_ADMIN_BODY = Object.freeze({
+  code: BELOW_STRIPE_MINIMUM_CODE,
+  error: BELOW_STRIPE_MINIMUM_ADMIN_MESSAGE,
+});
+
 export function isBelowStripeMinimum(value: unknown): value is { code: typeof BELOW_STRIPE_MINIMUM_CODE; error: string } {
   if (!value || typeof value !== "object") return false;
   const candidate = value as Record<string, unknown>;
