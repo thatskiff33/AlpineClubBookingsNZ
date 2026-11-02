@@ -74,7 +74,8 @@ vi.mock("@/lib/prisma", () => {
       // #4688: no unrecorded refund note fences these payments.
       findMany: async () => [],
     },
-    memberCredit: { updateMany: mocks.memberCreditUpdateMany },
+    // #4685: the stamp reads which credit holds the note before it writes.
+    memberCredit: { findFirst: vi.fn().mockResolvedValue(null), updateMany: mocks.memberCreditUpdateMany },
   };
   return { prisma };
 });
