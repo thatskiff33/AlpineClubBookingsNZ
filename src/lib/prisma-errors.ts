@@ -64,11 +64,14 @@ export function isPostgresLockNotAvailable(
  * `timeout` ran out, or the transaction had already closed) and P2034 (a write
  * conflict or deadlock). Nothing the transaction wrote was committed.
  *
- * The same pair as `waitlist-confirm/route.ts`, `admin/site-style/route.ts`,
- * `deletion-request-decision.ts` and `waitlist-return-contract.ts`, which keep
- * their own sets: two of them also carry `P2002`, a unique-constraint retry
- * rather than contention, so unifying them is a decision about those paths.
- * Shared by the linked date move and (#4656) the refund-note create's record.
+ * The one reading (#4656): the linked date move, the refund-note create's
+ * record, `waitlist-confirm/route.ts`, `admin/site-style/route.ts`, the
+ * deletion release and the return to the waitlist all ask it. Four writers
+ * keep their own set - `admin/club-time-zone/route.ts`,
+ * `admin/club-format/route.ts`, `admin/ai-spend-currency/route.ts` and
+ * `environment-safety-override-write.ts` - because theirs also carries
+ * `P2002`: a racing first insert of a singleton row, retried as contention
+ * there, which is a unique-constraint violation everywhere else.
  */
 export function isTransactionContention(error: unknown): boolean {
   const code = (error as { code?: unknown } | null)?.code;
