@@ -475,6 +475,7 @@ import {
   REFUND_NOTE_SETTLED_IN_XERO_REASON,
   refundCreditNotePaymentIdempotencyKey,
   refundPaymentLinkWhere,
+  settleRefundNoteFromXero,
 } from "@/lib/xero-refund-note-settlement";
 import {
   applyRefundNoteSettlementRepair,
@@ -952,6 +953,21 @@ describe("a refund note interrupted between the two persists (#3548)", () => {
     expect(state.xero.notes.size).toBe(1);
     expect(row()).toMatchObject({ status: "SUCCEEDED" });
     expect(row().responsePayload).toMatchObject({ refundPayment: { paymentID: "pay_1" }, interruptedAttemptCompleted: true });
+  });
+
+  it("MUTATION (#4680): a caller's beforePayment answering false, asked after the note read, pays nothing and says it stood down; true pays once", async () => {
+    await firstAttemptDies("at-settlement");
+    const settle = (beforePayment: () => Promise<boolean>) => settleRefundNoteFromXero({
+      paymentId: PAYMENT_ID, creditNoteId: "cn_1", creationKeys: [NOTE_KEY_5000], refundMethod: "card", refundMethodRecorded: true,
+      fallbackPaymentDate: async () => "2026-07-01", beforePayment,
+    });
+    const refused = vi.fn(async () => false);
+    await expect(settle(refused)).resolves.toMatchObject({ stoodDown: true, outcome: { refundPaymentResponseBody: null, refundPaymentErr: null } });
+    expect(refused).toHaveBeenCalledOnce();
+    expect(state.xero.createPaymentsCalls).toEqual([]);
+
+    await expect(settle(async () => true)).resolves.not.toHaveProperty("stoodDown");
+    expect(state.xero.createPaymentsCalls).toEqual([expect.objectContaining({ creditNoteId: "cn_1", amount: 50 })]);
   });
 });
 
