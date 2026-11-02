@@ -54,6 +54,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import type { SuiteEnvironmentRoleDeclaration } from "./helpers/environment-role";
 import { releaseBookingJournalForTeardown } from "./support/booking-financial-history-teardown";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
+import { openClientTransactionsElsewhere } from "./support/open-client-transactions";
 import { assertSafeRaceDbUrl } from "./support/race-db-url";
 import { resetStripeRaceHooks, stripeRaceHooks } from "./support/stripe-race-double";
 
@@ -685,14 +686,8 @@ let previousDatabaseUrl: string | undefined;
       expect(await runPaymentRecoveryOperationNow(operationId, CLUB_FORMAT_TEST)).toBe("succeeded");
     }
 
-    /** Transactions open on any other connection to this database - a Stripe call made inside one shows here. */
-    async function openTransactionsElsewhere(): Promise<number> {
-      const rows = await prisma.$queryRaw<Array<{ count: number }>>`
-        SELECT COUNT(*)::int AS "count" FROM pg_stat_activity
-        WHERE datname = current_database() AND pid <> pg_backend_pid() AND xact_start IS NOT NULL
-      `;
-      return rows[0]?.count ?? 0;
-    }
+    /** Transactions open on any other client connection to this database - a Stripe call made inside one shows here. */
+    const openTransactionsElsewhere = () => openClientTransactionsElsewhere(prisma);
 
     it("#4652: a stale attempt whose reclaiming runner asked for less under an amount-suffixed key has its own intent cancelled at Stripe, outside every transaction", async () => {
       const { operationId, stale, cancelled } = await releaseLosesClaimToStaleReclaim(async (id) => {
