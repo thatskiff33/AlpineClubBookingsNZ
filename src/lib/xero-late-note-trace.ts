@@ -65,7 +65,7 @@ export interface LateNoteTrace {
  * so nothing was audited or alerted; the row is handed back for the caller to
  * judge whose record that was (#4656). `traced`: everything else.
  */
-export type LateNoteTraceResult = { kind: "same-note"; row: XeroSyncOperation } | { kind: "traced" };
+type LateNoteTraceResult = { kind: "same-note"; row: XeroSyncOperation } | { kind: "traced" };
 
 /** Log, audit and alert a late note the create did not record. Never throws. */
 export async function traceUnrecordedLateNote(note: UnrecordedLateNote, report: LateNoteTrace): Promise<LateNoteTraceResult> {
