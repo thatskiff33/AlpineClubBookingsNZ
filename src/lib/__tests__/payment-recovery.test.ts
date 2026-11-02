@@ -4097,16 +4097,35 @@ describe("payment recovery worker", () => {
       it("MUTATION: the close after a mint is fenced on the claim time the last hold re-stamped, not the one the run was handed", async () => {
         const claimedAt = new Date("2026-06-30T23:00:00.000Z");
         primeQueue(additionalIntentOperation({ attempts: 1, processingStartedAt: claimedAt }));
+        // The clock is frozen, so each hold would stamp the same instant and a close on an
+        // earlier claim would pass unseen. A minute passes after every re-stamp instead.
+        const frozen = new Date();
+        const isHold = (args: { where?: { status?: unknown }; data?: Record<string, unknown> }) =>
+          args.where?.status === "PROCESSING" && args.data !== undefined && "processingStartedAt" in args.data && !("status" in args.data);
+        const counted = mockPaymentRecoveryUpdateMany.getMockImplementation()!;
+        mockPaymentRecoveryUpdateMany.mockImplementation(async (args: { where?: { status?: unknown }; data?: Record<string, unknown> }) => {
+          const answer = await counted(args);
+          if (isHold(args)) vi.setSystemTime(new Date(Date.now() + 60_000));
+          return answer;
+        });
 
-        await processPaymentRecoveryOperations({ limit: 1 });
+        try {
+          await processPaymentRecoveryOperations({ limit: 1 });
+        } finally {
+          vi.setSystemTime(frozen);
+        }
 
         const holds = mockPaymentRecoveryUpdateMany.mock.calls
           .map(([args]) => args as { where: Record<string, unknown>; data: Record<string, unknown> })
-          .filter((args) => args.where.status === "PROCESSING" && "processingStartedAt" in args.data && !("status" in args.data));
+          .filter(isHold);
         expect(holds).toHaveLength(2);
-        const heldAt = holds.at(-1)!.data.processingStartedAt as Date;
-        expect(heldAt).not.toEqual(claimedAt);
-        expect(SUCCEEDED_CLOSES().map((close) => close.where)).toEqual([heldClaimWhere("recovery-additional", 1, heldAt)]);
+        const [first, second] = holds.map((hold) => hold.data.processingStartedAt as Date);
+        // The second hold re-asserts the first's re-stamped claim, and stamps a later one.
+        expect(holds[1]!.where.processingStartedAt).toEqual(first);
+        expect(second!.getTime()).toBeGreaterThan(first!.getTime());
+        expect(first).not.toEqual(claimedAt);
+        // The close is fenced on the LAST hold's claim, not the first's or the run's own.
+        expect(SUCCEEDED_CLOSES().map((close) => close.where)).toEqual([heldClaimWhere("recovery-additional", 1, second)]);
       });
     });
 
