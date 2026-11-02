@@ -3970,7 +3970,10 @@ Pinned by `caller-retried-alert-replay.test.ts` and, against a real database,
 The Stripe webhook fails even when the claim give-back fails: the delivery
 gives back its own claim, by its exact stamp, again. A sent alert whose
 `alertedAt` write fails keeps its claim and a sent marker, so the event
-completes and no redelivery sends it again (#4670).
+completes and no redelivery sends it again (#4670). A claim call that throws
+may still have committed its write, so the delivery gives back the stamp it
+tried to write, a no-op if nothing landed, and fails the webhook; the
+redelivery claims afresh and sends (#4679).
 
 To verify: retry backoff, suppression handling, durable recipient identity,
 direct/inherited mailbox drift, revoked-authority fail-closed behavior,

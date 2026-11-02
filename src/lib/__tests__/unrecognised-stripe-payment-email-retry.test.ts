@@ -331,7 +331,7 @@ describe("the unrecognised Stripe payment alert has one retry owner (#4647)", ()
  * #4670: exactly once across the writes around the send, through the real
  * once-ever helper and its real claim stamps.
  */
-describe("the unrecognised Stripe payment alert across a failed write around the send (#4670)", () => {
+describe("the unrecognised Stripe payment alert across a failed write around the send (#4670, #4679)", () => {
   let start: Date;
 
   beforeEach(() => {
