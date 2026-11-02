@@ -36,10 +36,12 @@ function readCensus(): Map<string, string[]> {
   const source = readFileSync(path.join(ROOT, HELPER), "utf8");
   const start = source.indexOf("#4696 CENSUS");
   expect(start, "the census block in admin-alert-once.ts").toBeGreaterThan(-1);
-  const block = source.slice(start, source.indexOf("*/", start));
+  // The block runs to the first empty line, which follows its closing line.
+  const lines = source.slice(start).split("\n");
+  const block = lines.slice(0, lines.findIndex((line) => line.trim() === ""));
   const groups = new Map<string, string[]>();
   let heading: string | null = null;
-  for (const line of block.split("\n")) {
+  for (const line of block) {
     const entry = /^\s*\*\s+-\s+(\S+\.ts)\s*$/.exec(line);
     if (entry) {
       expect(heading, `${entry[1]} sits under no group heading`).not.toBeNull();
