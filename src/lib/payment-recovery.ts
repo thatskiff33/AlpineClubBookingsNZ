@@ -36,6 +36,7 @@ import {
   reconcilePaymentAggregates,
   capturedStripeTransactions,
   recordStripeRefundsAgainstTransaction,
+  refundHeadroomIncrementCents,
   refundPaymentTransactions,
   upsertPaymentIntentTransaction,
   type RefundAllocationSlice,
@@ -1968,14 +1969,7 @@ async function processRefundSupersededPaymentOperation(
     throw new Error("Payment recovery operation is missing paymentTransactionId");
   }
 
-  const transaction = await prisma.paymentTransaction.findUnique({
-    where: { id: operation.paymentTransactionId },
-  });
-
-  if (!transaction) {
-    throw new Error("Payment transaction not found for refund recovery");
-  }
-
+  const transaction = await readSupersededRefundCharge(operation.paymentTransactionId);
   if (!isCapturedTransactionStatus(transaction.status)) {
     await markSupersededTransactionSucceeded({
       operation,
@@ -1983,14 +1977,7 @@ async function processRefundSupersededPaymentOperation(
     });
   }
 
-  const refreshedTransaction = await prisma.paymentTransaction.findUnique({
-    where: { id: operation.paymentTransactionId },
-  });
-
-  if (!refreshedTransaction) {
-    throw new Error("Payment transaction not found for refund recovery");
-  }
-
+  const refreshedTransaction = await readSupersededRefundCharge(operation.paymentTransactionId);
   const persistedPlan = parseRefundAllocationPlan(operation.allocationPlan);
   const preflightPlan = await checkCardRefundResend({
     operation,
@@ -1999,13 +1986,11 @@ async function processRefundSupersededPaymentOperation(
     transactions: [refreshedTransaction],
   });
 
-  const outstandingCents = Math.max(
-    Math.min(
-      operation.amountCents,
-      refreshedTransaction.amountCents - refreshedTransaction.refundedAmountCents
-    ),
-    0
-  );
+  // #4699: sized on the ledger AFTER the preflight records what Stripe lists. Another door's refund
+  // it has just recorded is off the charge, so no ask exceeds what Stripe can still refund; one that
+  // leaves nothing closes through the path below. A plain read, outside every transaction.
+  const recordedTransaction = await readSupersededRefundCharge(refreshedTransaction.id);
+  const outstandingCents = refundHeadroomIncrementCents(recordedTransaction, operation.amountCents);
 
   // #4690: a refund of this row's own that an earlier attempt made but never announced (it was
   // reaped, or crashed, before its notice) is announced here, once, before the close.
@@ -2080,6 +2065,13 @@ async function processRefundSupersededPaymentOperation(
   if (reported === "in-flight") return waitOnSupersededRefundReport(operation, format);
   await completePaymentRecoveryOperation(operation);
   return "done";
+}
+
+/** The superseded refund's charge row, read afresh each time a write may have moved it (#4699). */
+async function readSupersededRefundCharge(paymentTransactionId: string) {
+  const transaction = await prisma.paymentTransaction.findUnique({ where: { id: paymentTransactionId } });
+  if (!transaction) throw new Error("Payment transaction not found for refund recovery");
+  return transaction;
 }
 
 /** #4690: another attempt is still sending the refund's notice - wait for it, attempt handed back. */

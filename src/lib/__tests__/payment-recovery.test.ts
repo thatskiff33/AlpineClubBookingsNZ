@@ -365,6 +365,8 @@ vi.mock("@/lib/payment-transactions", async (importOriginal) => ({
   planStripeRefundAllocation: mockPlanStripeRefundAllocation,
   // #4359: the preflight's no-plan fallback and the executor share this pure filter.
   capturedStripeTransactions: ((await importOriginal()) as typeof import("@/lib/payment-transactions")).capturedStripeTransactions,
+  // #4699 review: the superseded refund is sized through this pure headroom fold.
+  refundHeadroomIncrementCents: ((await importOriginal()) as typeof import("@/lib/payment-transactions")).refundHeadroomIncrementCents,
   // #4217: the runner's claim hold locks the Payment row before the recovery row.
   lockPaymentForRefundedTotal: (...args: unknown[]) => mockLockPaymentForRefundedTotal(...args),
   markPaymentIntentTransactionFailed: (...args: unknown[]) => mock4316.markFailed(...args),
@@ -1321,6 +1323,80 @@ describe("payment recovery worker", () => {
         CLUB_FORMAT_TEST,
       );
       expect(mockReportUnannouncedSupersededPaymentRefund.mock.invocationCallOrder[0]).toBeLessThan(closeCallOrder()!);
+    });
+  });
+
+  /*
+    #4699: THE REFUND IS SIZED ON THE LEDGER AS THE PREFLIGHT LEFT IT. The resend
+    preflight (`INV-PAY-145`) records every refund Stripe lists on the charge. A
+    cancellation's refund listed there but not yet recorded used to be invisible to
+    the sizing, read before it: the attempt asked Stripe for the whole ask, more
+    than the charge still held, and Stripe's refusal spent one of the row's
+    attempts. The ledger here moves only when the (mocked) one refund writer
+    records a refund, as the real writer does.
+  */
+  describe("sizes the superseded-payment refund after the preflight records what Stripe lists (#4699)", () => {
+    const cancellationRefund = (amount: number) => ({
+      id: "re_cancellation",
+      amount,
+      currency: "nzd",
+      status: "succeeded",
+      payment_intent: "pi_superseded",
+      created: Math.floor(new Date("2026-05-24T00:00:00.000Z").getTime() / 1000),
+      metadata: buildBookingCancellationRefundMetadata("booking-1"),
+    });
+    let ledgerRefundedCents = 0;
+    beforeEach(() => {
+      ledgerRefundedCents = 0;
+      mockPaymentRecoveryFindUnique.mockResolvedValue(
+        makeOperation({ type: PaymentRecoveryOperationType.REFUND_SUPERSEDED_PAYMENT }),
+      );
+      mockPaymentTransactionFindUnique.mockImplementation(async () => ({
+        id: "txn-1",
+        paymentId: "payment-1",
+        stripePaymentIntentId: "pi_superseded",
+        amountCents: 6000,
+        refundedAmountCents: ledgerRefundedCents,
+        status: PaymentStatus.SUCCEEDED,
+      }));
+      mockRecordStripeRefundsAgainstTransaction.mockImplementation(async ({ refunds }: { refunds: Array<{ amount: number }> }) => {
+        ledgerRefundedCents += refunds.reduce((sum, refund) => sum + refund.amount, 0);
+        return { readAsRefused: [], payment: { id: "payment-1", source: "STRIPE" }, appliedCents: 0, newlyCountedRefundIds: [] };
+      });
+      mockProcessRefund.mockImplementation(async ({ amountCents }: { amountCents: number }) => {
+        // Stripe's own answer: never more than the charge still holds.
+        if (amountCents > 6000 - ledgerRefundedCents) throw new Error("Refund amount is greater than unrefunded amount on charge");
+        return { id: "re_superseded", amount: amountCents, currency: "nzd", status: "succeeded", payment_intent: "pi_superseded" };
+      });
+    });
+
+    it("MUTATION: asks Stripe only for what the charge holds after another door's listed refund, and announces that", async () => {
+      mockListRefundsForPaymentIntent.mockResolvedValue([cancellationRefund(2000)]);
+
+      const result = await processPaymentRecoveryOperations({ limit: 1 });
+
+      expect(result).toMatchObject({ succeeded: 1, failed: 0, retried: 0 });
+      expect(mockProcessRefund).toHaveBeenCalledTimes(1);
+      expect(mockProcessRefund).toHaveBeenCalledWith(expect.objectContaining({ paymentIntentId: "pi_superseded", amountCents: 4000 }));
+      expect(mockReportSupersededPaymentRefund).toHaveBeenCalledWith(expect.objectContaining({ operationId: "recovery-1", refundedAmountCents: 4000 }));
+      expect(mockReportUnannouncedSupersededPaymentRefund).not.toHaveBeenCalled();
+    });
+
+    it("MUTATION: another door's listed refund that leaves nothing closes through the nothing-outstanding path, refunding nothing", async () => {
+      mockListRefundsForPaymentIntent.mockResolvedValue([cancellationRefund(6000)]);
+
+      const result = await processPaymentRecoveryOperations({ limit: 1 });
+
+      expect(result).toMatchObject({ succeeded: 1, failed: 0, retried: 0 });
+      expect(mockProcessRefund).not.toHaveBeenCalled();
+      expect(mockReportSupersededPaymentRefund).not.toHaveBeenCalled();
+      expect(mockReportUnannouncedSupersededPaymentRefund).toHaveBeenCalledWith(
+        expect.objectContaining({ id: "recovery-1", type: PaymentRecoveryOperationType.REFUND_SUPERSEDED_PAYMENT }),
+        CLUB_FORMAT_TEST,
+      );
+      expect(mockPaymentRecoveryUpdateMany).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ status: PaymentRecoveryOperationStatus.SUCCEEDED }) }),
+      );
     });
   });
 
