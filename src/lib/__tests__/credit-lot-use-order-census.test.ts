@@ -76,6 +76,9 @@ const NOT_A_USE_ORDER: Record<string, string> = {
   "src/lib/credit-release-ask-sweep.ts > enqueueCreditReleaseAsks":
     "lists the released-credit rows waiting for a request, oldest first, to enqueue one durable row " +
     "each (keyed by the release's own id); no lot is used or allocated from it.",
+  "src/lib/xero-account-credit-note-stamp.ts > stampCancellationCreditXeroNote":
+    "#4685: picks which equal cancellation credit an older queued row's account-credit note is " +
+    "recorded on, oldest first; it links a note, and no lot is used, allocated or minted from it.",
   "src/lib/edit-financial-review-account-credit.ts > creditSliceStillOwedAfterCancellation":
     "reads at most two cancellation-restore rows and refuses when there are " +
     "two, so which row comes first cannot change the answer.",

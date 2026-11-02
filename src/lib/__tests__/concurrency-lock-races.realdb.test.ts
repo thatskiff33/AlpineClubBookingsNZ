@@ -735,6 +735,11 @@ import "./xero-erased-contact-status-metadata.realdb.test";
 // made. Skipped unless RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own
 // `race-4690-` fixtures.
 import "./superseded-refund-notice-once.realdb.test";
+// #4685 reuses it to prove an account-credit Xero note stamps the one credit it
+// was raised for, by id, and that a row queued without the id still stamps.
+// Skipped unless RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own
+// `race-4685-` fixtures.
+import "./xero-account-credit-note-stamp.realdb.test";
 // #2374 (AID-5) deliberately is NOT imported here, unlike the two suites above.
 // `ai-diagnostics-select-only-role.realdb.test.ts` provisions and drops a cluster
 // ROLE and revokes `TEMPORARY ... FROM PUBLIC` on the shared throwaway database

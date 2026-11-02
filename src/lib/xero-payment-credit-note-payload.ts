@@ -6,6 +6,7 @@
 import { providerAmountToCents } from "@/lib/money-provider-amount";
 import { asArray, asRecord, readNumber, readString } from "@/lib/xero-json";
 import {
+  readAccountCreditNoteCredit,
   XERO_OUTBOX_ACCOUNT_CREDIT_NOTE_TYPE,
   XERO_OUTBOX_REFUND_CREDIT_NOTE_TYPE,
 } from "@/lib/xero-operation-outbox-payload";
@@ -70,6 +71,8 @@ export function parsePaymentCreditNoteRetryInput(
   handBackTaskId?: string;
   /** #4312 (`INV-ADDPAY-047`): the card refund on a bank transfer a note answers. */
   cardRefundId?: string;
+  /** #4685: an account-credit note's own credit, on both shapes; absent on older rows. */
+  memberCreditId?: string;
 } | null {
   const payload = asRecord(operation.requestPayload);
   if (!payload) {
@@ -112,6 +115,7 @@ export function parsePaymentCreditNoteRetryInput(
     return {
       amountCents: Math.round(queuedRefundAmount),
       kind: "unapplied",
+      ...readAccountCreditNoteCredit(payload),
     };
   }
 
@@ -140,5 +144,6 @@ export function parsePaymentCreditNoteRetryInput(
   return {
     amountCents: unitAmountCents,
     kind: "unapplied",
+    ...readAccountCreditNoteCredit(payload),
   };
 }

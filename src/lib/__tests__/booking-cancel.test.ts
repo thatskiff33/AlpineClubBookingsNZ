@@ -483,7 +483,7 @@ describe("cancelBooking credit refunds", () => {
     mocks.restoreCreditFromBooking.mockResolvedValue(0);
     mocks.lockMemberCreditLedger.mockResolvedValue(undefined);
     mocks.recordBookingEvent.mockResolvedValue(undefined);
-    mocks.createCancellationCredit.mockResolvedValue(undefined);
+    mocks.createCancellationCredit.mockResolvedValue("credit_cancel_1");
     mocks.sendBookingCancelledEmail.mockResolvedValue(undefined);
     // #4097: the shortfall task is the row the insert wrote, read back by its key.
     mocks.sendAdminManualRefundTaskAlert.mockResolvedValue({ sent: true });
@@ -585,11 +585,13 @@ describe("cancelBooking credit refunds", () => {
       amountCents: 5000,
       store: expect.anything(),
     });
+    // #4685: the row names the credit tx1 wrote, so its note stamps that credit by id.
     expect(mocks.enqueueXeroAccountCreditNoteOperation).toHaveBeenCalledWith(
       "payment_1",
       5000,
       {
         createdByMemberId: "member_1",
+        memberCreditId: "credit_cancel_1",
       }
     );
     expect(mocks.kickQueuedXeroOutboxOperationsIfConnected).toHaveBeenCalledWith({
