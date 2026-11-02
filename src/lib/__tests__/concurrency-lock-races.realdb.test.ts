@@ -688,6 +688,13 @@ import "./xero-late-refund-note-after-resolve.realdb.test";
 // and audits and alerts the note once. Skipped unless RUN_CONCURRENCY_RACE_TESTS=1;
 // it owns and cleans its own `race-4656-` fixtures.
 import "./xero-refund-note-record-gaps.realdb.test";
+// #4688 reuses it to prove a refund note Xero made but the app could not record
+// (its record lost its wait) fences the payment's later refund notes past the
+// 15-minute in-flight hold: a later refund's note, the nightly self-heal and Retry
+// all raise nothing until Resolve by hand records it, and the next note is then
+// sized with it counted. Skipped unless RUN_CONCURRENCY_RACE_TESTS=1; it owns and
+// cleans its own `race-4688-` fixtures.
+import "./xero-unrecorded-refund-note-fence.realdb.test";
 // #4655 reuses it to prove an organiser adjustment's credit note that Xero creates
 // after its stalled job was reset is recorded or surfaced: it lands on a reset or
 // re-queued row (one note, never a second), and on a row resolved by hand or held by
