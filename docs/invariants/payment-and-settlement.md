@@ -2788,7 +2788,7 @@ _Legacy: settles tasks raised before #4317._
 ## INV-PAY-120
 
 - **A price reduction is first set against the member's unpaid card ask**
-  (#3954, owner decisions of 8-10 Oct 2026), card-paid and credit-paid alike, at
+  (#3954, owner decisions 8-10 Oct 2026), card-paid and credit-paid alike, at
   every reduction door: cancelled when covered, else re-issued smaller; only
   the rest is refunded, credited or given back by `INV-MOD-011`'s tier, and the
   offset is untiered. Each door reads the ask once
@@ -2796,11 +2796,12 @@ _Legacy: settles tasks raised before #4317._
 - **Retired in the edit's transaction** (`retireUnpaidAskChain`): waiting
   recoveries closed first, then unpaid rows FAILED and `withdrawnAt` behind an
   unpaid fence; cancellations queued; parked invoices CANCELLED. A capture or
-  deadlock in between rolls the edit back (409); one after commit is
-  refunded in full. It writes the re-issue's recovery and billed-offset note.
+  deadlock between rolls the edit back (409); one after commit is
+  refunded in full, announced once (#4690). It writes the re-issue's recovery
+  and billed-offset note.
   An orphaned Stripe intent (#4052) is cancelled, best-effort, unless a
   row, recovery or live claim may own it; a lost or throwing hold's (#4631,
-  #4652, #4676) once its recovery ended without it (#4693). The runner's close
+  #4652, #4676) once its recovery ended without it. The runner's close
   is claim-fenced (#4675). One uncancellable is logged.
 - **A declined card stays live** (#4052).
 - **Asks awaiting a failed mint's retry** count, sized as the replay would. A

@@ -781,11 +781,12 @@ edit raises an ask -> mint the replacement intent
   -> each superseded ask's WAITING_PAYMENT supplementary invoice, a declined
        ask's included, re-pointed at the replacing intent (#3403, INV-PAY-140)
   -> the member's card sees only the replacing intent
-REFUND_SUPERSEDED_PAYMENT completes
-  -> reconcile aggregates, THEN one audit row + one REFUNDED BookingEvent
-     (discriminated, so the cancellation narrative never reads it as a
-     settlement) + ONE member email (superseded-payment-refunded, naming the
-     corrected amount owing) + ONE admin alert
+REFUND_SUPERSEDED_PAYMENT refunds
+  -> reconcile aggregates, THEN, once per recovery row and before its close
+     (#4690): one audit row + one REFUNDED BookingEvent (discriminated, so the
+     cancellation narrative never reads it as a settlement) + ONE member email
+     (superseded-payment-refunded, naming the corrected amount owing; recorded
+     for the email retry worker) + ONE admin alert
      (admin-superseded-payment-refund)
 ```
 
@@ -4529,25 +4530,65 @@ claim (PENDING|FAILED -> PROCESSING, attempts + 1, processingStartedAt now)
   -> close: PROCESSING + this attempt's attempts + its claim time -> SUCCEEDED
        stalled past the reaper (FAILED, claim time cleared)  -> close matches nothing
        reclaimed since (attempts moved on)                  -> close matches nothing
-  lost close -> nothing written or sent; the row stays with its holder or waits for a claim
+  lost close -> the close writes and sends nothing; the row stays with its holder or waits for a claim
 webhook close of a cancelled superseded intent (no claim) -> any status but SUCCEEDED
 ```
 
-Two stated limits, both the price of refusing a close the attempt no longer
-owns. An attempt whose work landed but whose close lost is closed silently by
-the next claim, as a crashed attempt is: a superseded-payment refund made and
-recorded by an attempt the reaper had handed back finds nothing outstanding on
-the next claim, which closes the row without the member's "we refunded you"
-notice or the admin alert (`reportSupersededPaymentRefund` runs only after a
-close the attempt won, and nothing records which refund it announced, so the
-next claim cannot tell an unannounced refund of its own from another path's).
-And a final attempt the reaper ended for good (FAILED at the attempt ceiling,
-officers alerted) stays FAILED even when its work then completed; the owed
-readers count recorded refunds, so a refund it made reads as paid, not owed.
+A superseded-payment refund's notice does not hang off the close (#4690). The
+member's email, the admin alert, the audit row and the booking event are each
+keyed on the recovery row (`supersededRefundReportKeys`; the email's
+`EmailLog` row), and the report runs before the close, so it goes out once
+whichever attempt sends it:
+
+```text
+attempt makes and records the refund -> report (once per row) -> close
+  close lost (reaped, reclaimed) -> the notice is already out; nothing more
+next claim reads nothing outstanding
+  report marked sent                                   -> close
+  a refund on the row's intent carrying exactly its runner's metadata,
+    recorded as made in the ledger                     -> report, then close
+  none (another door's refund), or not recorded as made -> close, no notice
+report not settled (email not recorded, alert not sent) -> throws; row retried
+alert claim held, no sent marker: younger than the stale threshold
+  -> the row waits (attempt handed back: never terminal, no officer alert);
+  older -> the dead attempt's claim is given back and the alert sent
+    (a sibling re-claims it first -> the row waits)
+```
+
+The admin alert's claim, give-back and takeover are the shared once-ever
+sequence (`sendAdminAlertOnceEverWithTakeover`), the one the unrecognised
+Stripe payment alert uses (`INV-INT-032`). A report not settled says in its
+error, which officers read if no retry is left, that the member may not have
+been told.
+
+Stated limits:
+
+- The price of refusing a close the attempt no longer owns: a final attempt
+  the reaper ended for good (FAILED at the attempt ceiling, officers alerted)
+  stays FAILED even when its work then completed; the owed readers count
+  recorded refunds, so a refund it made reads as paid, not owed. A
+  superseded-payment refund it made is still announced by that attempt, if its
+  report settles in that attempt: the reaper cleared its claim, so a report
+  that does not settle there fails nothing and nothing retries it.
+- The admin alert can be sent twice; the member's email cannot. An attempt
+  that dies, stalls 30 minutes or more, or fails to write the sent marker,
+  between its admin alert and the marker, has the alert sent again by a
+  takeover after the stale threshold.
+- An attempt that dies between the records' claim and their write loses the
+  audit row and booking event; the notices still go out.
+- A waiting row comes back at the longest backoff (12 hours). Until then the
+  open row keeps the superseded capture in `holdsForMember` / `refundInFlight`,
+  though the refund is made and recorded.
+- The next claim's close now needs a Stripe refund-list read to prove a refund
+  the row's own. A Stripe outage, or a list with more than one page, keeps the
+  row open and spends its attempts - also for a row another door's refund
+  (a cancellation's) brought to nothing outstanding.
 
 The rule is `INV-PAY-120`; the interleavings are in
 `docs/CONCURRENCY_AND_LOCKING.md`. To verify:
 `credit-release-merge-into-edit.realdb.test.ts` ("#4675"),
+`superseded-refund-notice-once.realdb.test.ts` (#4690),
+`superseded-additional-refund.test.ts`,
 `payment-recovery.test.ts`, `credit-release-ask.test.ts` and
 `payment-recovery-completion-fence-census.test.ts`.
 
