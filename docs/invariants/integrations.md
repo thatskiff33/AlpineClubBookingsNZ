@@ -600,8 +600,8 @@ as the lot's note).
 - **The stamp writes that row by id** (`stampCancellationCreditXeroNote`),
   scoped to its member, booking, type and amount, and only while it names no
   note. It never overwrites a note, and a note already on one of the booking's
-  cancellation credits stamps nothing more. Inbound reconciles stamp through
-  it, by the outbox row's credit (#4705).
+  cancellation credits stamps nothing more. Inbound reconciles stamp unheld
+  notes through it, by the outbox row's credit (#4705).
 - **Rows queued before the field** name no credit, so the stamp falls back to
   the old match (member, booking, amount, the three pipeline descriptions), one
   credit at a time, oldest first - never every equal credit at once.
