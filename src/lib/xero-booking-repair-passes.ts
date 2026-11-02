@@ -555,10 +555,8 @@ async function applyQueuedAction(
       return;
     }
     case "QUEUE_ACCOUNT_CREDIT_NOTE": {
-      const result = await deps.enqueueXeroAccountCreditNoteOperation(
-        String(action.payload.paymentId),
-        Number(action.payload.refundAmountCents)
-      );
+      const result = await deps.enqueueXeroAccountCreditNoteOperation(String(action.payload.paymentId), Number(action.payload.refundAmountCents),
+        typeof action.payload.memberCreditId === "string" ? { memberCreditId: action.payload.memberCreditId } : undefined); // #4685: the credit its stamp writes
       action.status = result.queueOperationId ? "queued" : "skipped";
       action.resultMessage = result.message;
       return;

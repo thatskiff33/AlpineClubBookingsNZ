@@ -2092,10 +2092,11 @@ on `manuallyResolvedAt`.
     note still unrecorded, as for any plain resolve.
   - **The account-credit note's `MemberCredit` stamp, not confirmed: a
     stated limit.** `createUnappliedXeroCreditNote` stamps the note on the
-    member's credit (`backfill*CreditXeroNote`) before its claim-guarded
-    completion (#4372), and the stamp carries no claim. It cannot stamp a
-    second note: it writes only a credit naming none (`xeroCreditNoteId:
-    null`). After a manual resolve - a plain one, since the numbered resolve
+    member's credit (`xero-account-credit-note-stamp.ts`) before its
+    claim-guarded completion (#4372), and the stamp carries no claim. It
+    cannot stamp a second note: it writes only the credit the row names, by
+    id, else one by the old match, and only while it names none
+    (`xeroCreditNoteId: null`, `INV-INT-036`, #4685). After a manual resolve - a plain one, since the numbered resolve
     (`INV-INT-028`) is for refund notes only and an account-credit row records
     no note - the late note is the only one the app knows, and its completion
     lands on the resolved row too (`INV-INT-029`: a success lands on any row

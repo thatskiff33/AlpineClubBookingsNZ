@@ -7,8 +7,32 @@ import {
   subscriptionInvoiceOutboxRow,
   XERO_OUTBOX_QUEUE_TYPES,
 } from "@/lib/xero-operation-outbox-payload";
+import { parsePaymentCreditNoteRetryInput } from "@/lib/xero-payment-credit-note-payload";
 
 describe("xero operation outbox payload parsing", () => {
+  it("#4685: reads an account-credit note's own credit, and none from a row queued before it", () => {
+    expect(readQueuedOutboxPayload({ queueType: "ACCOUNT_CREDIT_NOTE", refundAmountCents: 4200, memberCreditId: "credit_1" })).toEqual({
+      queueType: "ACCOUNT_CREDIT_NOTE", refundAmountCents: 4200, memberCreditId: "credit_1",
+    });
+    expect(readQueuedOutboxPayload({ queueType: "ACCOUNT_CREDIT_NOTE", refundAmountCents: 4200 })).toEqual({
+      queueType: "ACCOUNT_CREDIT_NOTE", refundAmountCents: 4200,
+    });
+    // An unreadable id reads as none: the stamp then falls back, never stamps a bad id.
+    expect(readQueuedOutboxPayload({ queueType: "ACCOUNT_CREDIT_NOTE", refundAmountCents: 4200, memberCreditId: 7 })).toEqual({
+      queueType: "ACCOUNT_CREDIT_NOTE", refundAmountCents: 4200,
+    });
+    expect(readQueuedOutboxPayload({ queueType: "ACCOUNT_CREDIT_NOTE", memberCreditId: "credit_1" })).toBeNull();
+  });
+
+  it("#4685: the retry parser reads the same credit off the queued and executed account-credit shapes", () => {
+    expect(parsePaymentCreditNoteRetryInput({ requestPayload: { queueType: "ACCOUNT_CREDIT_NOTE", refundAmountCents: 4200, memberCreditId: "credit_1" } }))
+      .toEqual({ amountCents: 4200, kind: "unapplied", memberCreditId: "credit_1" });
+    expect(parsePaymentCreditNoteRetryInput({ requestPayload: { creditNotes: [{ lineItems: [{ unitAmount: 42 }] }], memberCreditId: "credit_1" } }))
+      .toEqual({ amountCents: 4200, kind: "unapplied", memberCreditId: "credit_1" });
+    expect(parsePaymentCreditNoteRetryInput({ requestPayload: { queueType: "ACCOUNT_CREDIT_NOTE", refundAmountCents: 4200 } }))
+      .toEqual({ amountCents: 4200, kind: "unapplied" });
+  });
+
   it("normalizes entrance fee invoice payloads with integer cents", () => {
     expect(
       readQueuedOutboxPayload({

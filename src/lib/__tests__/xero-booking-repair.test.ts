@@ -993,6 +993,31 @@ describe("runBookingXeroRepair", () => {
     });
   });
 
+  describe("#4685: the missing account-credit note names its credit", () => {
+    const credit = (id: string, amountCents: number) => ({
+      id, amountCents, type: "CANCELLATION_REFUND", description: "Cancellation refund for booking booking_",
+      xeroCreditNoteId: null, createdAt: new Date("2026-05-03T00:00:00Z"),
+    });
+    const queueAccountCreditNote = async (credits: ReturnType<typeof credit>[]) => {
+      const deps = createDependencies({ bookings: [{ ...makeBooking({ status: "CANCELLED" }), creditsFromCancellation: credits }] });
+      const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, { dependencies: deps, scope: { all: true }, apply: true });
+      const action = report.passes[0].bookings[0].actions.find((candidate) => candidate.type === "QUEUE_ACCOUNT_CREDIT_NOTE");
+      return { deps, action };
+    };
+
+    it("MUTATION: one cancellation credit is the whole sum - the action and the enqueue name it", async () => {
+      const { deps, action } = await queueAccountCreditNote([credit("credit_cancel", 5000)]);
+      expect(action?.payload).toEqual({ paymentId: "payment_1", refundAmountCents: 5000, memberCreditId: "credit_cancel" });
+      expect(deps.enqueueXeroAccountCreditNoteOperation).toHaveBeenCalledWith("payment_1", 5000, { memberCreditId: "credit_cancel" });
+    });
+
+    it("two cancellation credits make the sum - no credit is named, and the stamp falls back to its amount match", async () => {
+      const { deps, action } = await queueAccountCreditNote([credit("credit_a", 2500), credit("credit_b", 2500)]);
+      expect(action?.payload).toEqual({ paymentId: "payment_1", refundAmountCents: 5000 });
+      expect(deps.enqueueXeroAccountCreditNoteOperation).toHaveBeenCalledWith("payment_1", 5000, undefined);
+    });
+  });
+
   it("#4299 F5: an organiser-paid bank place keeps its ordinary findings beside its organiser billing finding", async () => {
     const booking = makeBooking({
       status: "CANCELLED",

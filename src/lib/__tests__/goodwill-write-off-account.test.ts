@@ -243,8 +243,8 @@ describe("goodwill credit spent on a booking (#2717)", () => {
  *
  * Restored cancellation credit (#1547) is the sharp case. It is the member's own
  * prepaid money coming back, it is written with no note, and NOTHING ever
- * backfills one — `backfillCancellationCreditXeroNote` matches three literal
- * descriptions and "Credit restored from cancelled booking …" is not among them.
+ * backfills one — `stampCancellationCreditXeroNote` stamps the credit a note names,
+ * else three literal descriptions, and "Credit restored from cancelled booking …" is neither.
  * Booked as goodwill it would show the club an expense it never incurred beside
  * revenue it did bill; net profit is unchanged, which is exactly why nobody
  * notices until a treasurer asks what the goodwill line is.
