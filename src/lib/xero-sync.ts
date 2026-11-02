@@ -997,11 +997,9 @@ export async function completeXeroSyncOperation(
 type FailXeroSyncOperationGuard =
   | {
       /**
-       * #3635 round-3 N5: leave a row another writer has already WITHDRAWN
-       * (CANCELLED) as it is - the outbox's catch runs after its handler, and an
-       * approval can withdraw a kept row in between. Answers null then.
-       * Since PR #4687 review every failure keeps CANCELLED (`INV-INT-029`);
-       * this still marks a guarded caller, which a missing row only logs for.
+       * #3635 round-3 N5: a guarded caller (a missing row only logs). A WITHDRAWN
+       * (CANCELLED) row is left as it is - since PR #4687 review every failure
+       * keeps CANCELLED (`INV-INT-029`). Answers null then.
        */
       keepCancelled: true;
       retryClaim?: never;
