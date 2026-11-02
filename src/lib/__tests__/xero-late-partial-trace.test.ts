@@ -189,4 +189,60 @@ describe("a part-success that lost its claim is traced, never recorded (#4686)",
       expect(mocks.audit.mock.calls[0]![0].metadata).toMatchObject({ fault: "email: smtp down" });
     });
   });
+
+  // PR #4708 round 2: the email failure must reach an officer in the two likeliest race orders.
+  describe("an unfinished step on an object the operation already records", () => {
+    it("MUTATION: a faulted part-success is audited and alerted even when the row records its object (the queued run closed on it first)", async () => {
+      mocks.findUnique.mockResolvedValue(row({ status: "SUCCEEDED", xeroObjectId: "inv_late", startedAt: new Date("2026-07-01T00:40:00.000Z") }));
+      await traceLostClaimPartial({ ...partial, fault: "invoice email: Xero 500: the email failed" });
+      expect(mocks.audit).toHaveBeenCalledTimes(1);
+      expect(mocks.audit.mock.calls[0]![0].details).toContain("records the same item, but not the unfinished step");
+      expect(mocks.alert).toHaveBeenCalledTimes(1);
+      const message = mocks.alert.mock.calls[0]![2] as string;
+      expect(message).toContain("It did not finish this: invoice email: Xero 500: the email failed.");
+      expect(message).toContain("records this same item (succeeded)");
+      expect(mocks.info).not.toHaveBeenCalled();
+    });
+
+    it("a part-success with no unfinished step still stops on the same object", async () => {
+      mocks.findUnique.mockResolvedValue(row({ status: "SUCCEEDED", xeroObjectId: "inv_late" }));
+      await traceLostClaimPartial(partial);
+      expect(mocks.audit).not.toHaveBeenCalled();
+      expect(mocks.alert).not.toHaveBeenCalled();
+    });
+
+    it("MUTATION: refused for a later claim's RUNNING row (links already recorded), it is traced only when it names an unfinished step", async () => {
+      mocks.findUnique.mockResolvedValue(row({ status: "RUNNING", startedAt: new Date("2026-07-01T00:40:00.000Z") }));
+      await afterLostClaimPartial(partial.claim, { ...partial }, false, true);
+      expect(mocks.findUnique).not.toHaveBeenCalled();
+      expect(mocks.audit).not.toHaveBeenCalled();
+
+      await afterLostClaimPartial(partial.claim, { ...partial, responsePayload: { invoiceEmailError: "Xero 500: the email failed" } }, false, true);
+      expect(mocks.audit).toHaveBeenCalledTimes(1);
+      expect(mocks.alert).toHaveBeenCalledTimes(1);
+      expect(mocks.alert.mock.calls[0]![2]).toContain("Another run of the operation holds it now (running)");
+    });
+  });
+
+  describe("the fault summary's redaction (PR #4708 round 2)", () => {
+    it("MUTATION: a part holding an email is redacted alone, keeping its label and the other parts", () => {
+      const summary = partialFaultSummary({
+        responsePayload: { paymentError: "card declined", invoiceEmailError: "Xero 400: bad recipient jane@example.org" },
+        lastErrorMessage: "Payment reference 123456789 rejected",
+      });
+      expect(summary).toBe("payment: card declined; invoice email: [REDACTED]; [REDACTED]");
+      expect(summary).not.toContain("jane@example.org");
+    });
+
+    it("MUTATION: redacts before it caps, so a capped email is never shown", () => {
+      const summary = partialFaultSummary({ responsePayload: { paymentError: "x".repeat(495) + "jane@example.org" } });
+      expect(summary).toBe("payment: [REDACTED]");
+    });
+
+    it("names a subscription invoice raised after its charge closed", () => {
+      expect(partialFaultSummary({ responsePayload: { conflict: "STRAY_INVOICE_AFTER_CLOSE", invoice: {} } })).toBe(
+        "stray invoice to void (its charge closed while it was raised): STRAY_INVOICE_AFTER_CLOSE",
+      );
+    });
+  });
 });

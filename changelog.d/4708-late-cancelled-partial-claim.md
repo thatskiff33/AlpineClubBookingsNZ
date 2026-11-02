@@ -4,9 +4,11 @@
   the queued job as cancelled or part-done, so the Retry never ran. The job now
   stays queued for the Retry to run. When the old run had already made
   something in Xero (a part-done invoice or credit note), the app does not
-  record it over the queued job: it adds an entry to the audit log each time
+  write it over the queued job. It adds an entry to the audit log each time
   the old run reports back, and sends finance officers one Xero sync error
   alert naming it and what it left unfinished (for example an invoice email
   that failed), so they can check Xero for a duplicate and finish that part by
-  hand: the Retry may not redo it. A retried group invoice that was already
-  raised now closes as done instead of staying stuck as running.
+  hand. That happens even when the Retry has already finished, or is still
+  running, by the time the old run reports back, because the Retry may not
+  redo the unfinished part. A retried group invoice that was already raised
+  now closes as done instead of staying stuck as running.

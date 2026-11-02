@@ -109,6 +109,11 @@ export interface LateXeroObjectTrace {
   issue: string;
   /** The info line when the re-read row records this very object. */
   sameObject: string;
+  /**
+   * PR #4708 round 2: false traces the object even when the row records it -
+   * a part-success's unfinished step is recorded nowhere. Omitted, true.
+   */
+  stopOnSameObject?: boolean;
   /** The caller's own audit row, given the re-read row (null when it is gone). */
   audit: (row: XeroSyncOperation | null) => Promise<void>;
   /** The object as the alert names it; read only when an alert is due. */
@@ -134,7 +139,7 @@ export async function traceLateXeroObject(input: LateXeroObjectTrace): Promise<L
     logger.error({ ...trace, err: error }, `${notRecorded}, and its operation could not be re-read: no audit row or alert; this log is its only record (${issue})`);
     return { kind: "traced" };
   }
-  if (row?.xeroObjectId === input.xeroObjectId) {
+  if (input.stopOnSameObject !== false && row?.xeroObjectId === input.xeroObjectId) {
     logger.info(trace, input.sameObject);
     return { kind: "same-note", row };
   }

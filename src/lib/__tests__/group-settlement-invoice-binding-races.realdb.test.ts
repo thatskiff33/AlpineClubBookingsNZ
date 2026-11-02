@@ -27,12 +27,14 @@
  * #4710 (PR #4708): a stalled CREATE that bound its invoice, was reset and then
  * queued again in place by Retry, whose late PARTIAL (the email failed) is
  * refused and traced: the queued run finds the invoice bound and closes its row
- * SUCCEEDED on it, never left RUNNING for the stale reset to loop on.
+ * SUCCEEDED on it, never left RUNNING for the stale reset to loop on. PR #4708
+ * round 2: in the two other orders - the queued run closes first, or holds the
+ * row RUNNING behind `lock(1)` - the failed email is still audited and alerted.
  */
 import type { PrismaClient } from "@prisma/client";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { realElapsedMs } from "@/lib/__tests__/helpers/clock";
+import { FROZEN_TEST_CLOCK_BASE_ISO, realElapsedMs } from "@/lib/__tests__/helpers/clock";
 
 const RUN = process.env.RUN_CONCURRENCY_RACE_TESTS === "1";
 const RACE_DB_URL = process.env.CONCURRENCY_RACE_DATABASE_URL ?? "";
@@ -359,6 +361,7 @@ let savedModuleSettings: { xeroIntegration: boolean; internetBankingPayments: bo
 
     afterEach(() => {
       vi.restoreAllMocks();
+      vi.setSystemTime(new Date(FROZEN_TEST_CLOCK_BASE_ISO));
     });
 
     afterAll(async () => {
@@ -383,7 +386,8 @@ let savedModuleSettings: { xeroIntegration: boolean; internetBankingPayments: bo
       await Promise.all([lockHolderClient?.$disconnect(), observerClient?.$disconnect()]);
     });
 
-    it("#4710: stall, reset, Retry, then a late PARTIAL whose email failed - refused and traced, and the queued run closes SUCCEEDED on the bound invoice", async () => {
+    /** #4710: the bound settlement, and its CREATE stalled, reset and queued again in place by Retry. */
+    async function stalledBoundCreateRequeued() {
       await child(CHILD_A, "CONFIRMED", 4_500);
       await prisma.groupBookingSettlement.create({
         data: {
@@ -409,38 +413,86 @@ let savedModuleSettings: { xeroIntegration: boolean; internetBankingPayments: bo
       const { retryXeroSyncOperation } = await import("@/lib/xero-operation-retry");
       const { CLUB_FORMAT_TEST } = await import("@/lib/__tests__/support/club-format-fixture");
       await expect(retryXeroSyncOperation(operationId, CLUB_FORMAT_TEST)).resolves.toMatchObject({ message: "Queued the group settlement invoice operation for retry." });
-      expect(await prisma.xeroSyncOperation.findUniqueOrThrow({ where: { id: operationId } })).toMatchObject({ status: "PENDING", startedAt: null });
+      expect(await operation(operationId)).toMatchObject({ status: "PENDING", startedAt: null });
 
-      // The stalled run's email fails and it completes PARTIAL under its old claim.
       const email = await import("@/lib/email");
       const send = vi.fn(async () => ({ deliveryAllowed: true, recipients: 1, sent: 1, queuedForRetry: 0, notDelivered: 0 }));
       vi.spyOn(email, "sendAdminXeroSyncErrorAlert").mockImplementation(send as never);
+      // The queued run makes no Xero call: the invoice is bound. Its claim is a later instant than the stalled one's.
+      const apiClient = await import("@/lib/xero-api-client");
+      vi.spyOn(apiClient, "getAuthenticatedXeroClient").mockRejectedValue(new Error("the queued run must make no Xero call"));
+      vi.setSystemTime(new Date(stalledClaimAt.getTime() + 40 * 60_000));
+      return { operationId, stalledClaimAt, send };
+    }
+
+    const operation = (operationId: string) => prisma.xeroSyncOperation.findUniqueOrThrow({ where: { id: operationId } });
+
+    /** The stalled run's email fails, and it completes PARTIAL under its old claim. */
+    async function lateEmailFailedPartial(operationId: string, stalledClaimAt: Date) {
       const { completeXeroSyncOperation } = await import("@/lib/xero-sync");
-      await expect(
-        completeXeroSyncOperation(
-          { id: operationId, startedAt: stalledClaimAt },
-          {
-            status: "PARTIAL", responsePayload: { invoice: { invoiceID: BOUND_INVOICE }, invoiceEmailError: new Error("Xero 500: the email failed") },
-            xeroObjectType: "INVOICE", xeroObjectId: BOUND_INVOICE, xeroObjectNumber: "INV-BOUND",
-          },
-        ),
-      ).resolves.toBeNull();
-      expect(await prisma.xeroSyncOperation.findUniqueOrThrow({ where: { id: operationId } })).toMatchObject({ status: "PENDING", startedAt: null, xeroObjectId: null });
+      return completeXeroSyncOperation(
+        { id: operationId, startedAt: stalledClaimAt },
+        {
+          status: "PARTIAL", responsePayload: { invoice: { invoiceID: BOUND_INVOICE }, invoiceEmailError: new Error("Xero 500: the email failed") },
+          xeroObjectType: "INVOICE", xeroObjectId: BOUND_INVOICE, xeroObjectNumber: "INV-BOUND",
+        },
+      );
+    }
+
+    async function queuedRun() {
+      const { processQueuedXeroOutboxOperations } = await import("@/lib/xero-operation-outbox");
+      return processQueuedXeroOutboxOperations({ limit: 1 });
+    }
+
+    /** The email failure reached officers: one audit row naming it, and one alert. */
+    async function emailFailureTraced(operationId: string, send: ReturnType<typeof vi.fn>) {
       const audits = await prisma.auditLog.findMany({ where: { entityId: operationId, action: "xero.operation.late_partial_not_recorded" } });
       expect(audits).toHaveLength(1);
       expect(audits[0]!.metadata).toMatchObject({ fault: "invoice email: Xero 500: the email failed" });
+      expect(send).toHaveBeenCalledTimes(1);
       expect(send).toHaveBeenCalledWith(expect.objectContaining({ errorMessage: expect.stringContaining("invoice email: Xero 500: the email failed") }));
+    }
 
-      // The queued run: the invoice is bound, so it raises and emails nothing and closes its own claim.
-      const apiClient = await import("@/lib/xero-api-client");
-      vi.spyOn(apiClient, "getAuthenticatedXeroClient").mockRejectedValue(new Error("the queued run must make no Xero call"));
-      const { processQueuedXeroOutboxOperations } = await import("@/lib/xero-operation-outbox");
-      await expect(processQueuedXeroOutboxOperations({ limit: 1 })).resolves.toMatchObject({ succeeded: 1, failed: 0 });
-      const closed = await prisma.xeroSyncOperation.findUniqueOrThrow({ where: { id: operationId } });
+    /** The queued run closed its own claim SUCCEEDED on the bound invoice, never left RUNNING. */
+    async function closedOnBoundInvoice(operationId: string, stalledClaimAt: Date) {
+      const closed = await operation(operationId);
       expect(closed).toMatchObject({ status: "SUCCEEDED", xeroObjectId: BOUND_INVOICE, xeroObjectNumber: "INV-BOUND" });
-      expect(closed.status).not.toBe("RUNNING");
-      expect(closed.startedAt).not.toBeNull();
+      expect(closed.startedAt!.getTime()).toBeGreaterThan(stalledClaimAt.getTime());
       expect(closed.completedAt).not.toBeNull();
+    }
+
+    it("#4710: stall, reset, Retry, then a late PARTIAL whose email failed - refused and traced, and the queued run closes SUCCEEDED on the bound invoice", async () => {
+      const { operationId, stalledClaimAt, send } = await stalledBoundCreateRequeued();
+      await expect(lateEmailFailedPartial(operationId, stalledClaimAt)).resolves.toBeNull();
+      expect(await operation(operationId)).toMatchObject({ status: "PENDING", startedAt: null, xeroObjectId: null });
+      await emailFailureTraced(operationId, send);
+
+      await expect(queuedRun()).resolves.toMatchObject({ succeeded: 1, failed: 0 });
+      await closedOnBoundInvoice(operationId, stalledClaimAt);
+    });
+
+    it("#4708 round 2 (a): the queued run closes SUCCEEDED on the bound invoice first, then the late PARTIAL's failed email arrives - still audited and alerted", async () => {
+      const { operationId, stalledClaimAt, send } = await stalledBoundCreateRequeued();
+      await expect(queuedRun()).resolves.toMatchObject({ succeeded: 1, failed: 0 });
+      await closedOnBoundInvoice(operationId, stalledClaimAt);
+
+      await expect(lateEmailFailedPartial(operationId, stalledClaimAt)).resolves.toBeNull();
+      await closedOnBoundInvoice(operationId, stalledClaimAt);
+      await emailFailureTraced(operationId, send);
+    });
+
+    it("#4708 round 2 (b): the queued run holds the row RUNNING behind lock(1) when the late PARTIAL's failed email arrives - still audited and alerted", async () => {
+      const { operationId, stalledClaimAt, send } = await stalledBoundCreateRequeued();
+      const [queued] = await raceBehindLockOne([queuedRun], 1, "the queued run behind lock(1)", async () => {
+        const held = await operation(operationId);
+        expect(held.status).toBe("RUNNING");
+        expect(held.startedAt!.getTime()).toBeGreaterThan(stalledClaimAt.getTime());
+        await expect(lateEmailFailedPartial(operationId, stalledClaimAt)).resolves.toBeNull();
+        expect(await operation(operationId)).toMatchObject({ status: "RUNNING", startedAt: held.startedAt });
+      });
+      expect(queued).toMatchObject({ status: "fulfilled", value: expect.objectContaining({ succeeded: 1, failed: 0 }) });
+      await closedOnBoundInvoice(operationId, stalledClaimAt);
+      await emailFailureTraced(operationId, send);
     });
 
     it("a refused change to a bound settlement rolls back the bed it claimed for a late joiner", async () => {

@@ -4089,7 +4089,10 @@ two callers on one row (the hand-off above) each record their own outcome of
   claim's PARTIAL); a PARTIAL refused anywhere but its own claim's recorded
   success or a later claim's RUNNING row has its Xero object warned, audited
   per refused delivery (`xero.operation.late_partial_not_recorded`) and
-  alerted once, each naming what did not finish, never linked. A
+  alerted once, each naming what did not finish, never linked; one naming an
+  unfinished step is traced even on a row recording its object or held
+  RUNNING by a later claim (which still records its links), since neither
+  run redoes that step. A
   refused write answers null: no link, no repeated-failure alert; the outbox
   counts it skipped and exposes no subscription charge error, and an
   additional-capture refusal stamps no code and alerts no officer. Limit: the

@@ -343,7 +343,11 @@ linked or written over the row: `refusedOutcomeWrite` warns inside the
 completion's transaction, and after commit, outside any transaction,
 `traceLostClaimPartial` re-reads the row, writes one `xero` audit row per
 refused delivery and sends #4374's alert once per object
-(`sendAdminAlertOnceEver`), through the late notes' `traceLateXeroObject`.
+(`sendAdminAlertOnceEver`), through the late notes' `traceLateXeroObject`;
+one naming an unfinished step is traced the same way after a later claim's
+RUNNING row refused it, its links recorded in the refused write's own
+transaction as before. The trace takes no lock, so it never waits on the
+queued run's `lock(1)`.
 The group invoice's bound-invoice return (#4710) completes its own claim
 SUCCEEDED through the same guarded writer, under the lock-free outbox claim
 it already held. Classified

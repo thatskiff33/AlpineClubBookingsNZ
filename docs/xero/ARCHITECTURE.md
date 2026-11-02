@@ -1049,9 +1049,14 @@ note.
    `XERO_SUCCESS_AFTER_RESOLUTION` alert, key
    `xero-success-after-resolution:<operation id>:<object id>`); both name what
    the attempt did not finish (`partialFaultSummary`: its payment, refund
-   payment, allocation or email error, redacted), since the queued run may not
+   payment, refund payment, allocation or email error, or a stray subscription
+   invoice to void, each redacted on its own), since the queued run may not
    redo it. The trace's re-read, audit, alert skeleton is the late credit
-   notes' own (`traceLateXeroObject`, `INV-SSOT`). A queued group invoice
+   notes' own (`traceLateXeroObject`, `INV-SSOT`). A part-success naming an
+   unfinished step is traced even when the row already records its object
+   (the queued run closed on it first) or a later claim holds the row RUNNING
+   (its links still recorded, review F1): neither run redoes that step
+   (PR #4708 round 2). A queued group invoice
    whose settlement already points at an invoice raises nothing and closes its
    claimed row SUCCEEDED on that invoice (#4710), never left RUNNING. Mark non-replayable writes only onto a FAILED or
    PARTIAL row, so a retry that claimed it after the officer's read gets the

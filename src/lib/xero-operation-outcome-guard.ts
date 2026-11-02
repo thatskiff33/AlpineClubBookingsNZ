@@ -2,7 +2,8 @@
  * The write guard of a Xero operation outcome (#4356, `INV-INT-029`), used by
  * `completeXeroSyncOperation` and `failXeroSyncOperation` (`xero-sync.ts`).
  */
-import type { Prisma, XeroSyncOperation } from "@prisma/client";
+import type { Prisma } from "@prisma/client";
+import type { XeroRerunnableOperationStatus } from "@/lib/xero-active-operation-statuses";
 import logger from "@/lib/logger";
 import { XERO_REPAIR_CLAIM_RUNNING_CODES } from "@/lib/xero-stale-operations";
 
@@ -72,8 +73,10 @@ export function ownRunningClaim(claim: XeroOperationClaim) {
  * claim's PARTIAL - two callers sharing one row (#1354) each record their own
  * part-success of the same keyed call. So by construction a FAILED or
  * CANCELLED never lands on a recorded success, nor a PARTIAL on SUCCEEDED.
+ * Keyed and valued on the rerunnable statuses (`XeroRerunnableOperationStatus`)
+ * and CANCELLED, so a misspelt entry does not compile (PR #4708 round 2).
  */
-const XERO_OWN_CLAIM_OUTCOME_STATUSES = new Map<XeroSyncOperation["status"], readonly XeroSyncOperation["status"][]>([
+const XERO_OWN_CLAIM_OUTCOME_STATUSES = new Map<XeroRerunnableOperationStatus | "CANCELLED", readonly XeroRerunnableOperationStatus[]>([
   ["FAILED", ["RUNNING", "FAILED"]],
   ["CANCELLED", ["RUNNING", "FAILED"]],
   ["PARTIAL", ["RUNNING", "FAILED", "PARTIAL"]],
@@ -123,7 +126,7 @@ export function outcomeWriteGuard(
   if (status === "SUCCEEDED") return notAnotherClaim(claim);
   // #4673, #4686: a failure, cancel or part-success keeps every recorded success it may not
   // replace and CANCELLED by construction (`alsoKeep` adds nothing).
-  const ownStatuses = XERO_OWN_CLAIM_OUTCOME_STATUSES.get(status);
+  const ownStatuses = XERO_OWN_CLAIM_OUTCOME_STATUSES.get(status as XeroRerunnableOperationStatus | "CANCELLED");
   if (ownStatuses) return { AND: [ownClaimOutcomeRow(claim, ownStatuses), NOT_A_XERO_REPAIR_CLAIM] };
   const kept = XERO_RECORDED_SUCCESS_STATUSES.filter((held) => held !== status);
   if (options.alsoKeep) kept.push(options.alsoKeep);
@@ -148,7 +151,9 @@ type OutcomeRowReader = Pick<Prisma.TransactionClient, "xeroSyncOperation">;
  * claim holds the row RUNNING still records its links (`lateSuccess`): the
  * Xero object exists, and if that claim then fails it would be recorded
  * nowhere. The row's status and claim are left as they are, and it is logged
- * at warn. #4686: one refused because it lost its claim anywhere else (a
+ * at warn; PR #4708 round 2: a part-success naming an unfinished step is also
+ * handed to `lateSuccess.lostClaim`, so an officer hears of that step (the
+ * later claim may not redo it). #4686: one refused because it lost its claim anywhere else (a
  * PENDING row an officer's Retry queued, a withdrawn or skipped row, a row
  * another claim ended) is warned and handed to `lateSuccess.lostClaim`, which
  * traces its Xero object after commit; no link is written. A refusal for any
@@ -161,7 +166,7 @@ export async function refusedOutcomeWrite(
   claim: XeroOperationClaim,
   status: string,
   caller: { retryClaim?: true; keepCancelled?: boolean },
-  lateSuccess?: { xeroObjectId: string | null; recordLinks: () => Promise<void>; lostClaim: () => void },
+  lateSuccess?: { xeroObjectId: string | null; recordLinks: () => Promise<void>; lostClaim: (laterClaimHolds: boolean) => void },
 ): Promise<null> {
   const operationId = claim.id;
   const row = await db.xeroSyncOperation.findUnique({ where: { id: operationId }, select: { status: true, startedAt: true } });
@@ -176,6 +181,8 @@ export async function refusedOutcomeWrite(
   if (caller.retryClaim) return null;
   if (lateSuccess && holdsRecordedXeroSuccess(status) && heldByAnotherClaim(row, claim)) {
     await lateSuccess.recordLinks();
+    // PR #4708 round 2: a part-success with an unfinished step is traced too (`afterLostClaimPartial`).
+    lateSuccess.lostClaim(true);
     logger.warn(
       { operationId, status, xeroObjectId: lateSuccess.xeroObjectId, claimStartedAt: claim.startedAt, heldClaimStartedAt: row.startedAt },
       "Xero operation outcome not recorded on a later claim's RUNNING row; its Xero links were recorded (INV-INT-029)",
@@ -184,7 +191,7 @@ export async function refusedOutcomeWrite(
   }
   // #4686: not this claim's row any more, and not its own better outcome (#1354): the object is recorded nowhere.
   if (lateSuccess && holdsRecordedXeroSuccess(status) && !holdsOwnRecordedXeroSuccess(row, claim)) {
-    lateSuccess.lostClaim();
+    lateSuccess.lostClaim(false);
     logger.warn(
       { operationId, status, xeroObjectId: lateSuccess.xeroObjectId, heldStatus: row.status, claimStartedAt: claim.startedAt, heldClaimStartedAt: row.startedAt },
       "Xero operation outcome not recorded: its claim was lost (reset, then queued again, withdrawn or ended by another claim); its Xero object is traced (INV-INT-029, #4686)",

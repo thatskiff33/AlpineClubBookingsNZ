@@ -926,7 +926,7 @@ export async function completeXeroSyncOperation(
         : null),
   );
 
-  let lostClaim = false; // #4686: a part-success refused because its attempt lost its claim (`INV-INT-029`).
+  let lostClaim = null as { laterClaimHolds: boolean } | null; // #4686: a part-success refused for a lost claim (`INV-INT-029`).
   const completeWithClient = async (tx: Prisma.TransactionClient) => {
     const status = completion.status ?? "SUCCEEDED";
     const data = {
@@ -951,7 +951,7 @@ export async function completeXeroSyncOperation(
         recordLinks: async () => {
           for (const link of completion.extraLinks ?? []) await upsertXeroObjectLinkWithClient(tx, link);
         },
-        lostClaim: () => void (lostClaim = true),
+        lostClaim: (laterClaimHolds) => void (lostClaim = { laterClaimHolds }),
       });
     }
     const operation = await tx.xeroSyncOperation.findUniqueOrThrow({ where: { id: operationId } });
@@ -967,7 +967,7 @@ export async function completeXeroSyncOperation(
     : await prisma.$transaction(completeWithClient);
 
   // #4686: its Xero object is traced after commit (or only logged inside a caller's own `store`), never written over the row.
-  if (lostClaim) await import("./xero-late-partial-trace").then((trace) => trace.afterLostClaimPartial(claim, completion, Boolean(options?.store)), (err) => logger.error({ operationId, err }, "Xero part-success trace not loaded (#4686)"));
+  if (lostClaim) await import("./xero-late-partial-trace").then((trace) => trace.afterLostClaimPartial(claim, completion, Boolean(options?.store), lostClaim!.laterClaimHolds), (err) => logger.error({ operationId, err }, "Xero part-success trace not loaded (#4686)"));
   // #4374 (`INV-INT-029`): a success landing on a row resolved in Xero warns and alerts once, after commit. On an
   // injected store that is its owner's commit: the owner runs the `deferredPostCommit` returned here after it.
   const resolvedRowAlert = successAfterResolutionAlert(operation);

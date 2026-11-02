@@ -2335,7 +2335,7 @@ describe("outcome writes never replace a recorded success (#4356, INV-INT-029)",
       expect(row).toEqual(before);
       expect(mocks.txLinkUpsert).not.toHaveBeenCalled();
       expect(trace).toHaveBeenCalledTimes(1);
-      expect(trace).toHaveBeenCalledWith({ id: "op_shared", startedAt: claimedAt }, expect.objectContaining(lateObject), false);
+      expect(trace).toHaveBeenCalledWith({ id: "op_shared", startedAt: claimedAt }, expect.objectContaining(lateObject), false, false);
     });
 
     it("warns inside the refused write, naming the object and both claims", async () => {
@@ -2353,7 +2353,7 @@ describe("outcome writes never replace a recorded success (#4356, INV-INT-029)",
       const trace = await traced();
       const { store } = queuedByRetry();
       await expect(completeXeroSyncOperation(xeroClaim("op_shared", EARLIER), { status: "PARTIAL", ...lateObject }, { store })).resolves.toBeNull();
-      expect(trace).toHaveBeenCalledWith({ id: "op_shared", startedAt: EARLIER }, expect.objectContaining(lateObject), true);
+      expect(trace).toHaveBeenCalledWith({ id: "op_shared", startedAt: EARLIER }, expect.objectContaining(lateObject), true, false);
     });
 
     const notTraced: Array<[string, () => Promise<unknown>]> = [
@@ -2361,11 +2361,6 @@ describe("outcome writes never replace a recorded success (#4356, INV-INT-029)",
         const { store } = oneRow("SUCCEEDED", "inv_late");
         onModuleClient(store);
         return completeXeroSyncOperation(xeroClaim("op_shared"), { status: "PARTIAL", ...lateObject });
-      }],
-      ["a later claim's RUNNING row (review F1 records its links instead)", async () => {
-        const { store } = oneRow("RUNNING");
-        onModuleClient(store);
-        return completeXeroSyncOperation(xeroClaim("op_shared", EARLIER), { status: "PARTIAL", ...lateObject });
       }],
       ["a CANCELLED completion, which made nothing", async () => {
         const { store } = queuedByRetry();
@@ -2378,6 +2373,17 @@ describe("outcome writes never replace a recorded success (#4356, INV-INT-029)",
         return completeXeroSyncOperation(xeroClaim("op_shared", EARLIER), { status: "PARTIAL", ...lateObject }, { retryClaim: true });
       }],
     ];
+
+    // PR #4708 round 2: a later claim's RUNNING row records the links (review F1) and still hands the
+    // object over, saying so; the hand-off traces it only when it names an unfinished step.
+    it("MUTATION: a late PARTIAL refused on a later claim's RUNNING row records its links and is handed over as such", async () => {
+      const trace = await traced();
+      const { row, store } = oneRow("RUNNING");
+      onModuleClient(store);
+      await expect(completeXeroSyncOperation(xeroClaim("op_shared", EARLIER), { status: "PARTIAL", ...lateObject })).resolves.toBeNull();
+      expect(row).toMatchObject({ status: "RUNNING", startedAt: TEST_XERO_CLAIMED_AT, xeroObjectId: null });
+      expect(trace).toHaveBeenCalledWith({ id: "op_shared", startedAt: EARLIER }, expect.objectContaining(lateObject), false, true);
+    });
 
     it.each(notTraced)("MUTATION: traces nothing for %s", async (_label, write) => {
       const trace = await traced();
