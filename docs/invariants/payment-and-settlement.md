@@ -3712,10 +3712,11 @@ _Split from `INV-PAY-056` (#3220)._
   when terminal rather than trusted from the caller, because a terminal row
   that keeps a retry time is re-claimable and is therefore not terminal.
   **The write is status-fenced**, like `completePaymentRecoveryOperation`
-  (also claim-fenced since #4675) and for the same reason: the worker's arm used `update` by id, which throws
-  `P2025` on a row a manual mark-paid reversal deleted mid-flight — from inside
-  the worker loop's own `catch`, so the throw escaped the loop and abandoned
-  every remaining operation in the batch. A fenced `updateMany` matches
+  (also claim-fenced since #4675) and for the same reason: the worker's arm
+  used `update` by id, which throws `P2025` on a row a manual mark-paid
+  reversal deleted mid-flight — from inside the worker loop's own `catch`, so
+  the throw escaped the loop and abandoned every remaining operation in the
+  batch. A fenced `updateMany` matches
   nothing instead, and the fence also stops a `SUCCEEDED` row being dragged
   back to `FAILED` by a worker holding a stale in-memory copy. **A row that
   matched nothing is still tallied as this attempt's outcome**, so a row that
