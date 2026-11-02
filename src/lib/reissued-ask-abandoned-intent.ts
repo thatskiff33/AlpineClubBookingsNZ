@@ -63,6 +63,9 @@
  * recovery is never netted off or folded, so only a stale reclaim moves it. Its
  * lost hold takes the same proof: no door, no adoption and no other recovery
  * mints or matches under its key or reason, so a closed one is terminal.
+ *
+ * #4676: either runner's hold that THROWS, rather than loses, takes the same
+ * proof before it rethrows; a row it leaves claimed keeps the intent.
  */
 import { PaymentRecoveryOperationStatus } from "@prisma/client";
 
@@ -130,6 +133,15 @@ function closedWithoutIntent(
  * without it (`closedWithoutIntent`) and no row or recovery names that intent.
  * Never throws: an unread or unproven recovery cancels nothing, and the run
  * ends as before.
+ *
+ * #4676: a hold that THREW (sizing or merge moved under its locks) rolled back
+ * and wrote nothing either, so it takes the same proof before its caller
+ * rethrows. The row is then usually still this attempt's (PROCESSING), which
+ * proves nothing: a retry may size the same figure, mint under the same key
+ * and be answered with this intent. Only a close since the throw - a net-off,
+ * a fold or a reclaiming runner's - lets it go. A different key now proves
+ * nothing either: sizing moves both ways, and a later retry back at this
+ * figure replays the key, Stripe answering with this intent as first minted.
  */
 export async function settleLostRecoveryClaimHold(call: {
   operationId: string;
@@ -138,14 +150,16 @@ export async function settleLostRecoveryClaimHold(call: {
   paymentIntentId: string;
   /** Found by matching (`mintOrdinaryAskIntent`, #4036), not minted under this recovery's key: never cancelled. */
   adopted: boolean;
+  /** #4676: the hold threw rather than lost; the caller rethrows after this. */
+  holdThrew?: boolean;
 }): Promise<void> {
+  const { adopted, holdThrew = false, ...intent } = call;
   const moved = await prisma.paymentRecoveryOperation
     .findUnique({ where: { id: call.operationId }, select: { status: true, lastError: true, paymentIntentId: true } })
     .catch((err: unknown) => {
-      logger.error({ err, ...call, event: ABANDONED_REISSUE_INTENT_LOG_EVENT, outcome: "unread" }, "Could not re-read a recovery whose claim was lost; its minted intent is not cancelled (#4631)");
+      logger.error({ err, ...call, event: ABANDONED_REISSUE_INTENT_LOG_EVENT, outcome: "unread" }, "Could not re-read a recovery whose claim hold lost or threw; its minted intent is not cancelled (#4631, #4676)");
       return null;
     });
-  const { adopted, ...intent } = call;
   const closedBy = closedWithoutIntent(moved, call.paymentIntentId);
   if (closedBy && adopted) {
     logger.warn(
@@ -154,10 +168,19 @@ export async function settleLostRecoveryClaimHold(call: {
     );
     return;
   }
-  logger.warn(
-    { ...call, status: moved?.status, recoveryPaymentIntentId: moved?.paymentIntentId, closedBy },
-    "Additional intent recovery lost its claim before writing its row; nothing written - the minted intent was never offered to anyone, and is cancelled at Stripe only when its recovery ended without it (#3954, #4631, #4652)",
-  );
+  const read = { ...call, status: moved?.status, recoveryPaymentIntentId: moved?.paymentIntentId, closedBy };
+  if (holdThrew) {
+    // #4676: found by this event when it is left - a retry may yet record it, or mint another.
+    logger.warn(
+      { ...read, event: ABANDONED_REISSUE_INTENT_LOG_EVENT, ...(closedBy ? {} : { outcome: "left-open" }) },
+      "Additional intent recovery's claim hold threw before writing its row; nothing written - the minted intent was never offered, and is cancelled at Stripe only when its recovery has since ended without it (#4676)",
+    );
+  } else {
+    logger.warn(
+      read,
+      "Additional intent recovery lost its claim before writing its row; nothing written - the minted intent was never offered to anyone, and is cancelled at Stripe only when its recovery ended without it (#3954, #4631, #4652)",
+    );
+  }
   if (closedBy) await cancelAbandonedReissuedAskIntent({ ...intent, closedBy });
 }
 

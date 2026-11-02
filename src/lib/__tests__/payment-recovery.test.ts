@@ -4017,6 +4017,107 @@ describe("payment recovery worker", () => {
       });
     });
 
+    /**
+     * #4676 (`INV-PAY-120`): the hold held its claim, then its write THREW (the sizing moved
+     * under the lock), so its transaction rolled back and the runner's intent is written
+     * nowhere. The lost hold's proof runs before the error goes on to the retry: cancelled
+     * only once the recovery has since closed without it. A row still this attempt's proves
+     * nothing - the retry may size the same figure, mint under the same key and be answered
+     * with this very intent.
+     */
+    describe("#4676: a claim hold that throws cancels the runner's intent only on the lost hold's proof, then rethrows", () => {
+      const CLOSED_READ = { status: true, lastError: true, paymentIntentId: true };
+      const KEY = "mod_guest_bk1_mod-9";
+      const transactionsOpenAtCancel: number[] = [];
+      afterEach(() => {
+        mockPaymentRecoveryFindFirst.mockReset();
+        ordinaryAskMint4631.adopted = false;
+      });
+
+      function throwHoldThenRead(moved: { status: string; lastError: string | null; paymentIntentId?: string }, owners: { row?: { id: string } | null } = {}) {
+        const operation = additionalIntentOperation({ status: "PROCESSING", attempts: 1, processingStartedAt: new Date("2026-06-30T23:00:00.000Z") });
+        primeQueue(operation);
+        // The claim and the hold both match; the write under the hold then throws.
+        mockPaymentRecoveryUpdateMany.mockResolvedValue({ count: 1 });
+        mockUpsertPaymentIntentTransaction.mockRejectedValueOnce(new Error("The booking's payment changed while the ask was being written; retrying"));
+        mockPaymentRecoveryFindUnique.mockImplementation(async (args: { select?: unknown }) =>
+          JSON.stringify(args?.select) === JSON.stringify(CLOSED_READ) ? { paymentIntentId: KEY, ...moved } : operation,
+        );
+        const defaultRow = mockPaymentTransactionFindUnique.getMockImplementation();
+        mockPaymentTransactionFindUnique.mockImplementation(async (args: { where?: { stripePaymentIntentId?: string } }) =>
+          args?.where?.stripePaymentIntentId === "pi_recovered" ? (owners.row ?? null) : defaultRow?.(args),
+        );
+        mockPaymentRecoveryFindFirst.mockResolvedValue(null);
+        transactionsOpenAtCancel.length = 0;
+        mockCancelPaymentIntentIfCancellableWithResult.mockReset();
+        mockCancelPaymentIntentIfCancellableWithResult.mockImplementation(async (id: string) => {
+          transactionsOpenAtCancel.push(openTransactions.count);
+          return { canceled: true, paymentIntent: { id, status: "canceled" } };
+        });
+      }
+
+      /** Not vacuous: the run minted, its write under the hold threw, and the recovery was re-read for the proof. */
+      function expectReachedThrownHold() {
+        expect(mockCreatePaymentIntent).toHaveBeenCalledTimes(1);
+        expect(mockUpsertPaymentIntentTransaction).toHaveBeenCalledTimes(1);
+        expect(mockPaymentRecoveryUpdate).not.toHaveBeenCalled();
+        expect(mockPaymentRecoveryFindUnique).toHaveBeenCalledWith({ where: { id: "recovery-additional" }, select: CLOSED_READ });
+        // Rethrown: the hold's own error is what the retry records.
+        expect(mockPaymentRecoveryUpdateMany).toHaveBeenCalledWith(
+          expect.objectContaining({ data: expect.objectContaining({ lastError: expect.stringContaining("payment changed while") }) }),
+        );
+      }
+
+      it.each([
+        ["netted off by a price reduction", PENDING_ASK_NETTED_BY_REDUCTION_NOTE, KEY],
+        ["closed by a reclaiming runner with ANOTHER intent", null, "pi_reclaimer"],
+      ])("MUTATION: a recovery since %s has the intent cancelled once, outside every transaction, and the run still retries", async (_label, lastError, paymentIntentId) => {
+        throwHoldThenRead({ status: "SUCCEEDED", lastError, paymentIntentId });
+
+        const result = await processPaymentRecoveryOperations({ limit: 1 });
+
+        expectReachedThrownHold();
+        expect(mockCancelPaymentIntentIfCancellableWithResult).toHaveBeenCalledTimes(1);
+        expect(mockCancelPaymentIntentIfCancellableWithResult).toHaveBeenCalledWith("pi_recovered", { cancellationReason: "abandoned" });
+        expect(transactionsOpenAtCancel).toEqual([0]);
+        expect(result).toMatchObject({ processed: 1, succeeded: 0, retried: 1, failed: 0 });
+      });
+
+      it.each([
+        ["still this attempt's, naming the key it minted under (PROCESSING)", { status: "PROCESSING", lastError: null }],
+        ["reset for a retry (PENDING)", { status: "PENDING", lastError: null }],
+        ["closed naming THIS intent", { status: "SUCCEEDED", lastError: null, paymentIntentId: "pi_recovered" }],
+      ])("MUTATION: a recovery %s is no proof - nothing cancelled, the intent logged as left open, and the run retries", async (_label, moved) => {
+        throwHoldThenRead(moved);
+
+        const result = await processPaymentRecoveryOperations({ limit: 1 });
+
+        expectReachedThrownHold();
+        expect(mockCancelPaymentIntentIfCancellableWithResult).not.toHaveBeenCalled();
+        expect(logger.warn).toHaveBeenCalledWith(
+          expect.objectContaining({ event: "reissued-ask.abandoned-intent-cleanup", outcome: "left-open", paymentIntentId: "pi_recovered", holdThrew: true }),
+          expect.any(String),
+        );
+        expect(result).toMatchObject({ processed: 1, succeeded: 0, retried: 1, failed: 0 });
+      });
+
+      it("MUTATION: an intent a payment row names is never cancelled, even on the proof", async () => {
+        throwHoldThenRead({ status: "SUCCEEDED", lastError: PENDING_ASK_NETTED_BY_REDUCTION_NOTE }, { row: { id: "txn_recorded" } });
+        await processPaymentRecoveryOperations({ limit: 1 });
+        expectReachedThrownHold();
+        expect(mockPaymentTransactionFindUnique).toHaveBeenCalledWith({ where: { stripePaymentIntentId: "pi_recovered" }, select: { id: true } });
+        expect(mockCancelPaymentIntentIfCancellableWithResult).not.toHaveBeenCalled();
+      });
+
+      it("MUTATION: an ADOPTED intent (#4036) is never cancelled, even on the proof", async () => {
+        throwHoldThenRead({ status: "SUCCEEDED", lastError: PENDING_ASK_NETTED_BY_REDUCTION_NOTE });
+        ordinaryAskMint4631.adopted = true;
+        await processPaymentRecoveryOperations({ limit: 1 });
+        expectReachedThrownHold();
+        expect(mockCancelPaymentIntentIfCancellableWithResult).not.toHaveBeenCalled();
+      });
+    });
+
     it("MUTATION (#3954 round 6, F6): re-checks its claim after the supersede and queues no invoice once a reduction has retired the row it wrote", async () => {
       primeQueue(additionalIntentOperation({ status: "PROCESSING", attempts: 1, processingStartedAt: new Date("2026-06-30T23:00:00.000Z") }));
       // The claim and the hold that writes the row succeed; the re-check after

@@ -409,6 +409,11 @@ export async function processCreditReleaseAskOperation(
       newPaymentIntentId: intent.id,
       store,
     });
+  }).catch(async (err: unknown) => {
+    // #4676: a hold that threw rolled back; the lost hold's proof, then the retry.
+    const { settleLostRecoveryClaimHold } = await import("@/lib/reissued-ask-abandoned-intent");
+    await settleLostRecoveryClaimHold({ operationId: operation.id, bookingId: operation.bookingId, paymentIntentId: intent.id, adopted: false, holdThrew: true });
+    throw err;
   });
   if (held === null) {
     // #4652 (`INV-PAY-120`): nothing written, and the hold's transaction has ended. The intent was
