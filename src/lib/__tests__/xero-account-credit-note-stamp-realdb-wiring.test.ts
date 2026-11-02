@@ -25,6 +25,7 @@ describe("the account-credit note stamp's real-database proof stays wired into C
     expect(suite).toContain("MUTATION: two equal credits on one booking each get their own note");
     expect(suite).toContain("MUTATION: a row queued without the credit id, as the deployed release queues it, still stamps by the old match");
     expect(suite).toContain("a replay of the linked note stamps no second credit");
+    expect(suite).toContain("MUTATION: a failed create keeps the credit on its executed payload, and the Retry stamps that credit");
     expect(suite).toContain("processQueuedXeroOutboxOperations");
     expect(suite).toContain("enqueueXeroAccountCreditNoteOperation");
     expect(suite).toContain('assertSafeRaceDbUrl(RACE_DB_URL, "Account-credit note stamp by id (#4685)")');

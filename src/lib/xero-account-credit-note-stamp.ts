@@ -14,7 +14,10 @@
  *
  * Every stamp keeps the `xeroCreditNoteId: null` guard: it never overwrites a
  * credit's note. And a note already on one of the booking's cancellation
- * credits never stamps a second (a replay of a created note finds it there).
+ * credits never stamps a second (a replay of a created note finds it there),
+ * re-read before each write. Two writers stamping the same note on two
+ * different credits at the same instant can still both land: nothing locks the
+ * pair (`INV-INT-036`'s limit).
  *
  * Locking (`INV-LOCK-001`): none added. The stamp changes no balance, booking
  * status or settlement money - only the link - and each write is one
@@ -23,19 +26,19 @@
  */
 import { CreditType } from "@prisma/client";
 import { cancellationCreditDescription } from "@/lib/cancellation-settled-money";
+import { internetBankingLateCashCreditDescription } from "@/lib/internet-banking-late-cash-credit";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 
 /** The descriptions the account-credit pipeline's cancellation credits carry. */
 function stampableCancellationDescriptions(bookingId: string): string[] {
-  const bookingLabel = bookingId.slice(0, 8);
-  // The cancellation-flow literal plus the two Internet Banking payment-credit
-  // literals (late capacity failure, and a payment landing on an
-  // already-cancelled booking, #1357).
+  // The cancellation-flow description plus the Internet Banking pipeline's two
+  // (late capacity failure, and a payment landing on an already-cancelled
+  // booking, #1357), each from its writers' own builder.
   return [
     cancellationCreditDescription(bookingId),
-    `Internet Banking payment credit for booking ${bookingLabel}`,
-    `Internet Banking payment credit for cancelled booking ${bookingLabel}`,
+    internetBankingLateCashCreditDescription(bookingId, { bookingCancelled: false }),
+    internetBankingLateCashCreditDescription(bookingId, { bookingCancelled: true }),
   ];
 }
 
@@ -57,13 +60,14 @@ export async function stampCancellationCreditXeroNote(params: {
     sourceBookingId: params.bookingId,
     type: CreditType.CANCELLATION_REFUND,
   };
-  const holder = await prisma.memberCredit.findFirst({
-    where: { ...owned, xeroCreditNoteId: params.creditNoteId },
-    select: { id: true },
-  });
-  if (holder) return null;
+  // A note already on one of the booking's cancellation credits stamps no
+  // other. Read before every write, so a fallback pass that lost its candidate
+  // to this same note (a concurrent retry, the inbound handler) stops there.
+  const noteHeld = async () =>
+    (await prisma.memberCredit.findFirst({ where: { ...owned, xeroCreditNoteId: params.creditNoteId }, select: { id: true } })) !== null;
 
   if (params.memberCreditId) {
+    if (await noteHeld()) return null;
     const stamped = await prisma.memberCredit.updateMany({
       where: {
         id: params.memberCreditId,
@@ -85,6 +89,7 @@ export async function stampCancellationCreditXeroNote(params: {
   // stamp means that credit just took a note, so the next pass reads one fewer
   // candidate and the loop ends.
   for (;;) {
+    if (await noteHeld()) return null;
     const candidate = await prisma.memberCredit.findFirst({
       where: {
         ...owned,

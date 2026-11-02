@@ -22,6 +22,16 @@ const CANCELLATION_REFUND = "CANCELLATION_REFUND" satisfies CreditType;
 export const INTERNET_BANKING_LATE_CASH_CREDIT_DESCRIPTION_PREFIX =
   "Internet Banking payment credit for ";
 
+/**
+ * The description the pipeline writes on its credit for a booking: the
+ * late-capacity arm's booking was live, the cancelled arm's was not. One
+ * spelling for both writers, the cancelled arm's dedup and the account-credit
+ * note's stamp (#4685).
+ */
+export function internetBankingLateCashCreditDescription(bookingId: string, { bookingCancelled }: { bookingCancelled: boolean }): string {
+  return `${INTERNET_BANKING_LATE_CASH_CREDIT_DESCRIPTION_PREFIX}${bookingCancelled ? "cancelled booking" : "booking"} ${bookingId.slice(0, 8)}`;
+}
+
 /** The rows themselves, as a `MemberCredit` where clause. */
 export const INTERNET_BANKING_LATE_CASH_CREDIT_WHERE = {
   type: CANCELLATION_REFUND,

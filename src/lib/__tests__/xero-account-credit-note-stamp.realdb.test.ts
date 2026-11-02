@@ -16,9 +16,14 @@
  * Proven:
  * - two equal credits each get their own note: the note queued for the newer
  *   credit stamps that credit only, and the next note the older one. The
- *   payment holds one live account-credit link at a time, so the second note is
- *   raised once the first link is retired, as the inbound void handler retires
- *   it (a stated limit: the enqueue keys a payment's note on its amount);
+ *   payment holds one live account-credit link and the enqueue keys its note on
+ *   the amount, and no writer retires an `ACCOUNT_CREDIT_NOTE` link (the void
+ *   path retires refund-note roles only), so a second note on one payment is
+ *   not reachable through today's pipeline: this test retires the link
+ *   directly to reach the stamp (`INV-INT-036`'s limit);
+ * - a queued row whose Xero create failed keeps its credit on the executed
+ *   payload, and the officer's Retry stamps that credit, not the older one the
+ *   old match would pick (PR #4706 review);
  * - a row queued without the credit id still stamps, by the old match;
  * - a replay of a linked note stamps no second credit: the old match stamped
  *   every equal credit, and now a note stamps one.
@@ -48,18 +53,23 @@ const DESCRIPTION = `Internet Banking payment credit for cancelled booking ${BOO
 
 let prisma: (typeof import("@/lib/prisma"))["prisma"];
 
-/** A fake Xero whose every account-credit create answers with a new note. */
+/** A fake Xero whose every account-credit create answers with a new note, unless told to refuse the next. */
 function fakeXero() {
   const created: string[] = [];
+  const control = { refuseNext: false };
   const accountingApi = {
     createCreditNotes: async (_tenant: string, body: { creditNotes: Array<{ lineItems: Array<{ unitAmount: number }> }> }) => {
+      if (control.refuseNext) {
+        control.refuseNext = false;
+        throw new Error(`${P}: Xero refused the create`);
+      }
       const id = `${P}-note-${created.length + 1}`;
       created.push(id);
       const total = body.creditNotes[0]!.lineItems[0]!.unitAmount;
       return { body: { creditNotes: [{ creditNoteID: id, creditNoteNumber: `CN-${created.length}`, total, remainingCredit: total, status: "AUTHORISED" }] } };
     },
   };
-  return { accountingApi, created };
+  return { accountingApi, created, control };
 }
 
 (RUN ? describe : describe.skip)(
@@ -153,12 +163,27 @@ function fakeXero() {
       expect(xero.created).toEqual([`${P}-note-1`]);
       expect(await notes()).toEqual({ [OLDER_CREDIT]: null, [NEWER_CREDIT]: `${P}-note-1` });
 
-      // The payment's one live account-credit link retired, as the inbound void handler retires it.
+      // No writer retires an account-credit link today; the test retires it to reach a second note's stamp.
       await prisma.xeroObjectLink.updateMany({ where: { localId: PAYMENT_ID, role: "ACCOUNT_CREDIT_NOTE" }, data: { active: false } });
       await enqueueFor(OLDER_CREDIT);
       await expect(runOutbox()).resolves.toMatchObject({ succeeded: 1, failed: 0 });
       expect(xero.created).toEqual([`${P}-note-1`, `${P}-note-2`]);
       expect(await notes()).toEqual({ [OLDER_CREDIT]: `${P}-note-2`, [NEWER_CREDIT]: `${P}-note-1` });
+    });
+
+    it("MUTATION: a failed create keeps the credit on its executed payload, and the Retry stamps that credit", async () => {
+      await enqueueFor(NEWER_CREDIT);
+      xero.control.refuseNext = true;
+      await expect(runOutbox()).resolves.toMatchObject({ succeeded: 0, failed: 1 });
+      const failed = await prisma.xeroSyncOperation.findFirstOrThrow({ where: { localId: PAYMENT_ID, status: "FAILED" } });
+      // The executed shape (the handler rewrote the payload before calling Xero), still naming its credit.
+      expect(failed.requestPayload).toMatchObject({ creditNotes: expect.any(Array), memberCreditId: NEWER_CREDIT });
+      expect(await notes()).toEqual({ [OLDER_CREDIT]: null, [NEWER_CREDIT]: null });
+
+      const { retryXeroSyncOperation } = await import("@/lib/xero-operation-retry");
+      await expect(retryXeroSyncOperation(failed.id, CLUB_FORMAT_TEST)).resolves.toMatchObject({ message: "Retried Xero account-credit note creation." });
+      expect(xero.created).toEqual([`${P}-note-1`]);
+      expect(await notes()).toEqual({ [OLDER_CREDIT]: null, [NEWER_CREDIT]: `${P}-note-1` });
     });
 
     it("MUTATION: a row queued without the credit id, as the deployed release queues it, still stamps by the old match", async () => {

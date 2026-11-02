@@ -16,6 +16,7 @@ vi.mock("@/lib/prisma", () => ({
 }));
 
 import { stampCancellationCreditXeroNote } from "@/lib/xero-account-credit-note-stamp";
+import { internetBankingLateCashCreditDescription, isInternetBankingLateCashCredit } from "@/lib/internet-banking-late-cash-credit";
 
 const base = { memberId: "member_1", bookingId: "booking_1234567890", refundAmountCents: 5000, creditNoteId: "cn_1" };
 const owned = { memberId: "member_1", sourceBookingId: "booking_1234567890", type: "CANCELLATION_REFUND" };
@@ -80,10 +81,23 @@ describe("stampCancellationCreditXeroNote (#4685)", () => {
     expect(mocks.updateMany).toHaveBeenCalledWith({ where: { id: "credit_a", xeroCreditNoteId: null }, data: { xeroCreditNoteId: "cn_1" } });
   });
 
-  it("the fallback moves to the next candidate when another writer stamped the first, and stops when none is left", async () => {
+  it("MUTATION (PR #4706 review): a fallback pass that lost its candidate to THIS note stops - the note is never put on a second credit", async () => {
     mocks.findFirst
       .mockResolvedValueOnce(null) // holder check
       .mockResolvedValueOnce({ id: "credit_a" })
+      .mockResolvedValueOnce({ id: "credit_a" }); // holder check: a concurrent writer stamped cn_1 on credit_a
+    mocks.updateMany.mockResolvedValueOnce({ count: 0 });
+
+    await expect(stampCancellationCreditXeroNote(base)).resolves.toBeNull();
+    expect(mocks.updateMany).toHaveBeenCalledTimes(1);
+    expect(mocks.findFirst).toHaveBeenNthCalledWith(3, { where: { ...owned, xeroCreditNoteId: "cn_1" }, select: { id: true } });
+  });
+
+  it("the fallback moves to the next candidate when another writer stamped the first with another note, and stops when none is left", async () => {
+    mocks.findFirst
+      .mockResolvedValueOnce(null) // holder check
+      .mockResolvedValueOnce({ id: "credit_a" })
+      .mockResolvedValueOnce(null) // holder check: credit_a took some other note
       .mockResolvedValueOnce({ id: "credit_b" })
       .mockResolvedValueOnce(null);
     mocks.updateMany.mockResolvedValueOnce({ count: 0 }).mockResolvedValueOnce({ count: 1 });
@@ -95,5 +109,16 @@ describe("stampCancellationCreditXeroNote (#4685)", () => {
     mocks.findFirst.mockResolvedValue(null);
     await expect(stampCancellationCreditXeroNote(base)).resolves.toBeNull();
     expect(mocks.updateMany).not.toHaveBeenCalled();
+  });
+});
+
+describe("internetBankingLateCashCreditDescription (PR #4706 review)", () => {
+  it("spells the pipeline's two descriptions once, under the prefix its readers key on", () => {
+    expect(internetBankingLateCashCreditDescription("booking_1234567890", { bookingCancelled: false })).toBe("Internet Banking payment credit for booking booking_");
+    expect(internetBankingLateCashCreditDescription("booking_1234567890", { bookingCancelled: true })).toBe("Internet Banking payment credit for cancelled booking booking_");
+    for (const bookingCancelled of [false, true]) {
+      const description = internetBankingLateCashCreditDescription("booking_1234567890", { bookingCancelled });
+      expect(isInternetBankingLateCashCredit({ description, type: "CANCELLATION_REFUND" })).toBe(true);
+    }
   });
 });

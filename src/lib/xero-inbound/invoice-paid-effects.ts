@@ -51,7 +51,7 @@ import { postCancellationLedgerLines } from "@/lib/booking-ledger-cancellation-s
 import { postStoredBookingConfirmationLedgerLines } from "@/lib/booking-ledger-confirmation-sync";
 import { resolveBookingMoneyPostingContext } from "@/lib/member-money/doors";
 import { syncBookingLedgerCredits } from "@/lib/booking-ledger-credit-sync";
-import { sumInternetBankingMintedCentsForBookings } from "@/lib/internet-banking-late-cash-credit";
+import { internetBankingLateCashCreditDescription, sumInternetBankingMintedCentsForBookings } from "@/lib/internet-banking-late-cash-credit";
 import { lockMemberCreditLedger, restoreCreditFromBooking } from "@/lib/member-credit";
 import { lockPaymentForRefundedTotal } from "@/lib/payment-transactions";
 import { findUnconvergedAppliedCreditDeallocation, XeroAppliedCreditOperationBusyError } from "@/lib/xero-applied-credit-operation-serialization";
@@ -939,8 +939,8 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
             type: CreditType.CANCELLATION_REFUND,
             description: {
               in: [
-                `Internet Banking payment credit for booking ${bookingLabel}`,
-                `Internet Banking payment credit for cancelled booking ${bookingLabel}`,
+                internetBankingLateCashCreditDescription(settlementPayment.bookingId, { bookingCancelled: false }),
+                internetBankingLateCashCreditDescription(settlementPayment.bookingId, { bookingCancelled: true }),
               ],
             },
           },
@@ -1013,7 +1013,7 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
               memberId: creditMemberId,
               amountCents: actionableCents,
               type: CreditType.CANCELLATION_REFUND,
-              description: `Internet Banking payment credit for cancelled booking ${bookingLabel}`,
+              description: internetBankingLateCashCreditDescription(settlementPayment.bookingId, { bookingCancelled: true }),
               sourceBookingId: settlementPayment.bookingId,
             },
           });
@@ -1275,7 +1275,7 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
             );
           }
 
-          const creditDescription = `Internet Banking payment credit for booking ${fresh.bookingId.slice(0, 8)}`;
+          const creditDescription = internetBankingLateCashCreditDescription(fresh.bookingId, { bookingCancelled: false });
           // #3369: the same decision as the cancelled arm above — an
           // organisation-owned booking has no member account, so there is
           // nothing to mint into and nothing to dedupe against. The warning is
