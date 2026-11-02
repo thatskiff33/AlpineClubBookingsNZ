@@ -2232,6 +2232,11 @@ let webhookClient: PrismaClient;
       expect(await prisma.paymentRecoveryOperation.findUniqueOrThrow({ where: { id: recovery.id }, select: { status: true, paymentIntentId: true } }))
         .toEqual({ status: "SUCCEEDED", paymentIntentId: doorIntent.id });
       expect((await payment()).additionalPaymentIntentId).toBe(doorIntent.id);
+      // #4693: the replay's create still carried the door's metadata alone (never refused, above);
+      // the runner then stamped the intent Stripe handed back with its row, by an update.
+      expect(stripe.intents.get(doorIntent.id)!.metadata).toEqual({
+        bookingId: BOOKING_ID, type: "modification_additional", reason: "guest_add_price_increase", askRecoveryId: recovery.id,
+      });
     });
 
     it("#4036: the runner's replay is refused (the stored customer moved since the door) - it finds the door's intent, records it, and leaves the payment's customer alone", async () => {
@@ -2259,6 +2264,8 @@ let webhookClient: PrismaClient;
       // card stays paired with the customer it was saved under.
       expect((await payment()).stripeCustomerId).toBe("cus_race_4036_moved");
       expect((await prisma.paymentRecoveryOperation.findUniqueOrThrow({ where: { id: recovery.id } })).status).toBe("SUCCEEDED");
+      // #4693: an ADOPTED intent is not this row's own, so it is never stamped with the row.
+      expect(stripe.intents.get(doorIntent.id)!.metadata).not.toHaveProperty("askRecoveryId");
     });
 
     // #4079: only the pre-#4036 runner sent its own reason under a door's key,
