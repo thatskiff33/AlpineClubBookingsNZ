@@ -3412,14 +3412,10 @@ export async function processQueuedXeroOutboxOperations(options?: {
           "Failed to mark queued Xero outbox operation FAILED after an error"
         );
       }
-      // #4673 (`INV-INT-029`): refused - the row is no longer this run's (a Retry
-      // queued it again, a later claim holds or ended it) or keeps a success or a
-      // withdrawal. Nothing failed for it: no charge error, no failed count.
+      // #4673 (`INV-INT-029`): refused - no longer this run's row (a Retry queued it again, a later claim
+      // holds or ended it) or it keeps a success or a withdrawal. Nothing failed: no charge error, not counted failed.
       if (failedRow === null) {
-        logger.warn(
-          { err: error, queueOperationId: queuedOperation.id, queueType: payload?.queueType ?? null },
-          "Queued Xero outbox operation's failure was not recorded: the row is no longer this run's (INV-INT-029)",
-        );
+        logger.warn({ err: error, queueOperationId: queuedOperation.id, queueType: payload?.queueType ?? null }, "Queued Xero outbox operation's failure was not recorded: the row is no longer this run's (INV-INT-029)");
         result.skipped += 1;
         continue;
       }
