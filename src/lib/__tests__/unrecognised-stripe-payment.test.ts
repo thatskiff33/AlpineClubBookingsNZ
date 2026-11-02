@@ -132,7 +132,7 @@ vi.mock("@/lib/email", () => ({
 // one (#4696 moved it here from the takeover module).
 vi.mock("@/lib/admin-alert-once", async (importOriginal) => {
   const { prisma } = await import("@/lib/prisma");
-  const { giveBackOwnOnceEverClaim } = await importOriginal<typeof import("@/lib/admin-alert-once")>();
+  const { giveBackOwnOnceEverClaim } = (await importOriginal()) as typeof import("@/lib/admin-alert-once");
   const heldIn = (keys: readonly string[]) => new Map([...state.heldKeys].filter(([key]) => keys.includes(key)));
   return {
     sendAdminAlertOnceEverClaim: async ({ key, send }: { key: string; send: () => Promise<unknown> }) => {
