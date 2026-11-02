@@ -1761,6 +1761,78 @@ let webhookClient: PrismaClient;
       await expectReissueAlone(c, recovery.id);
     });
 
+    /**
+     * #4442 M4 and #4693 (`INV-PAY-120`): the runner's first replay mints the re-issue carrying C,
+     * C is paid under it, and its claim hold THROWS - its intent written nowhere. Then the row ends:
+     * the next replay re-sizes, records its own intent and closes (`runner`), or a later increase
+     * folds the waiting re-issue in (`folded`). Either way the close-time sweep finds the first
+     * intent by its re-issue key and cancels it, once, with no transaction open.
+     */
+    async function runnerHoldThrowsOnCPaid() {
+      const { REISSUED_ASK_REASON } = await import("@/lib/payment-recovery-keys");
+      await grownBooking("card", 1_000);
+      const result = await removeLeavingGuest();
+      const stripe = fakeStripe();
+      let doorFails = true;
+      stripeRaceHooks.create = (async (args: Parameters<typeof stripe.create>[0]) => {
+        if (doorFails) {
+          doorFails = false;
+          throw new Error("socket hang up");
+        }
+        return stripe.create(args);
+      }) as never;
+      expect((await mintAtDoor(result)).additionalPaymentIntentId).toBeUndefined();
+      const c = await askMintedSinceReduction();
+      const recovery = await reissueRecovery(result.bookingModificationId!);
+      const cancelled: Array<{ id: string; openTransactions: number }> = [];
+      stripeRaceHooks.cancel = (async (id: string) => {
+        cancelled.push({ id, openTransactions: await openRaceTransactions() });
+        const intent = stripe.intents.get(id);
+        if (!intent || intent.status === "canceled" || intent.status === "succeeded") return { paymentIntent: { id, status: intent?.status }, canceled: false };
+        intent.status = "canceled";
+        return { paymentIntent: { id, status: "canceled" }, canceled: true };
+      }) as never;
+      stripeRaceHooks.create = (async (args: Parameters<typeof stripe.create>[0]) => {
+        if (args.metadata?.reason === REISSUED_ASK_REASON && stripe.intents.get(c)!.status !== "succeeded") await staleTabPays(stripe, c);
+        return stripe.create(args);
+      }) as never;
+      await prisma.paymentRecoveryOperation.update({ where: { id: recovery.id }, data: { nextRetryAt: new Date("2026-06-30T00:00:00.000Z") } });
+      const { runPaymentRecoveryOperationNow } = await import("@/lib/payment-recovery");
+      expect(await runPaymentRecoveryOperationNow(recovery.id, CLUB_FORMAT_TEST)).toBe("failed");
+      const first = [...stripe.intents.values()].find((intent) => intent.amount === 5_000)!;
+      expect(await prisma.paymentTransaction.findUnique({ where: { stripePaymentIntentId: first.id } })).toBeNull();
+      expect(cancelled).toEqual([]);
+      return { stripe, c, recovery, first, cancelled };
+    }
+
+    it("#4693: the runner's hold throws, then its re-sized retry records its own intent and closes - the first intent is cancelled once, the recorded one untouched", async () => {
+      const { stripe, c, recovery, first, cancelled } = await runnerHoldThrowsOnCPaid();
+      await prisma.paymentRecoveryOperation.update({ where: { id: recovery.id }, data: { nextRetryAt: new Date("2026-06-30T00:00:00.000Z") } });
+      const { runPaymentRecoveryOperationNow } = await import("@/lib/payment-recovery");
+      expect(await runPaymentRecoveryOperationNow(recovery.id, CLUB_FORMAT_TEST)).toBe("succeeded");
+      await expectReissueAlone(c, recovery.id);
+      const recorded = (await liveAsks())[0]!.stripePaymentIntentId!;
+      expect(recorded).not.toBe(first.id);
+      expect(cancelled).toEqual([{ id: first.id, openTransactions: 0 }]);
+      expect(stripe.intents.get(first.id)!.status).toBe("canceled");
+      expect(stripe.intents.get(recorded)!.status).toBe("requires_payment_method");
+      expect(stripe.intents.get(c)!.status).toBe("succeeded");
+    });
+
+    it("#4693: the runner's hold throws, then a later increase folds the waiting re-issue in - the fold's sweep cancels the first intent once", async () => {
+      const { stripe, recovery, first, cancelled } = await runnerHoldThrowsOnCPaid();
+      await closeWaitingReissue("folded");
+      expect(await prisma.paymentRecoveryOperation.findUniqueOrThrow({ where: { id: recovery.id }, select: { status: true, attempts: true } }))
+        .toEqual({ status: "SUCCEEDED", attempts: 1 });
+      // The fold's door sweeps after its commit (`sweepAskRecoveriesClosedByEdit`, from its history).
+      const { sweepAbandonedAskIntents } = await import("@/lib/abandoned-ask-intent-sweep");
+      await sweepAbandonedAskIntents(recovery.id, "net-off-or-fold");
+      expect(cancelled).toEqual([{ id: first.id, openTransactions: 0 }]);
+      expect(stripe.intents.get(first.id)!.status).toBe("canceled");
+      await sweepAbandonedAskIntents(recovery.id, "net-off-or-fold");
+      expect(cancelled).toEqual([{ id: first.id, openTransactions: 0 }]);
+    });
+
     it("#4442 M4: C paid inside the runner's re-issue replay - its claim hold writes nothing, and the next replay carries none of C", async () => {
       await grownBooking("card", 1_000);
       const result = await removeLeavingGuest();
