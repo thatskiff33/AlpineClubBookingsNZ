@@ -4126,9 +4126,11 @@ RUNNING payment refund-note create -> Xero returns its note -> the record
   alert name the note -> Mark failed or Reset stale running -> FAILED, code
   kept -> Resolve by hand with its number, never Retry (Retry, Requeue and
   Retry all refuse it). Until that resolve, at any age, every other refund
-  note on the payment waits in PENDING before sizing, Retry refuses the
+  note on the payment waits in PENDING before sizing (REFUND_NOTE_AWAITING_RESOLVE,
+  which the outbox scan and retry drain space out, #4692), Retry refuses the
   payment's refund-note creates and the nightly self-heal queues none; the
-  resolve's mark lifts it, and a withdrawn mark restores it. A queued retry
+  resolve's mark lifts it, as does the note being linked on the payment through
+  another row, and a withdrawn mark restores it. A queued retry
   whose inline create ends so fails its REQUEUE row; one whose note a resolve
   kept out, or already records, closes it CANCELLED (`resolved-in-xero-after-run`);
   never SUCCEEDED. A record that committed but answered P2028 finishes as

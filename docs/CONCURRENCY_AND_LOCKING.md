@@ -203,9 +203,9 @@ minutes. Since #4688 (`INV-INT-035`) that record stamps its own row
 `createXeroCreditNote`, any mode) refuses while the payment has such a row
 unresolved, at any age, with the same busy error. Classified under
 `INV-LOCK-001`: no global cohort, no advisory key, no row lock added. The
-stamp is one status-guarded `updateMany` on the operation row alone (this
-run's RUNNING claim, or the FAILED row Mark failed left; never a resolved row
-or one naming a note), outside the record's transaction - it never takes the
+stamp is one claim-guarded `updateMany` on the operation row alone (this
+run's RUNNING claim, or the FAILED row Mark failed left under it; never a
+resolved row or one naming a note), outside the record's transaction - it never takes the
 Payment row the record just failed to get, so it cannot add a wait cycle to
 `INV-LOCK-002`'s order (Payment, operation row, link). The fence read, like
 the in-flight read, holds no lock. The stamp lands as the record gives up,
@@ -215,7 +215,15 @@ The fence lifts only through the resolve's own status-guarded claim
 `lock(1)`, then the Payment row, then the row, so the fence lifts in the
 commit that records the note and its link, and a create that reads it lifted
 reads that coverage too; a plain resolve's row-only mark lifts it with the
-row's recorded amount counted as covered (`INV-INT-025`). Mark failed and the bulk reset write the row
+row's recorded amount counted as covered (`INV-INT-025`). The fence also
+lifts once a live or voided link on the payment records the stamped note
+(#4692: another row resolved with it, or a retry recorded it); that link is
+written in its writer's own commit, so a create that reads the fence lifted
+reads the note's coverage too. A resolve no longer refuses over a PENDING copy
+the fence holds; the outbox cancels it at its next claim
+(`findResolvedSiblingSince`), and a copy claimed in the instant before the
+resolve commits is sized with the resolved note counted, as any create that
+reads the fence lifted. Mark failed and the bulk reset write the row
 status-guarded as before, and keep the code; Mark failed's plain write
 refuses a stamped row, so a stamp landing after its read is never
 overwritten. Proven against real PostgreSQL by

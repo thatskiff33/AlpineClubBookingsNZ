@@ -2044,13 +2044,20 @@ on `manuallyResolvedAt`.
     would size and key itself as if the note did not exist, and Xero could hold
     an extra note before anyone acted. So the record that loses its wait first
     stamps its own row `REFUND_NOTE_UNRECORDED` (`fenceUnrecordedNote`, a
-    row-only, status-guarded `updateMany`: this run's RUNNING claim, or the
-    FAILED row Mark failed left; never a row resolved by hand or one naming a
-    note), then traces the note. While the payment has such a row unresolved
-    (`unrecordedRefundNoteOperationWhere`, whatever the row's status or age):
+    row-only `updateMany` guarded on this run's claim: its RUNNING claim, or
+    the FAILED row Mark failed left under it; never a row resolved by hand or
+    one naming a note), naming the note's Xero id in its response payload
+    (`unrecordedNoteStampPayload`), then traces the note. While the payment has
+    such a row unresolved (`findUnrecordedRefundNoteOperation`, whatever the
+    row's status or age) and no live or voided link on the payment records
+    that note:
     - every refund-note create, in any mode, waits before it sizes or mints
       (`assertNoUnrecordedRefundNote` in `createXeroCreditNote`; the busy error
-      sends an outbox row, or a queued retry's REQUEUE row, back to PENDING);
+      sends an outbox row, or a queued retry's REQUEUE row, back to PENDING
+      under `REFUND_NOTE_AWAITING_RESOLVE`, which the outbox scan and the retry
+      drain leave out for five minutes at a time
+      (`scanSpacesRefundNotesAwaitingResolve`, #4692), so a wait that lasts
+      days never takes the head of every oldest-first scan);
     - Retry, Requeue and Retry all refuse the row (`getXeroOperationRetryMeta`)
       and any other refund-note create on the payment that would mint
       (`unrecordedRefundNoteRetryRefusal`, 409 with the row to resolve); Retry
@@ -2058,13 +2065,19 @@ on `manuallyResolvedAt`.
     - the nightly self-heal queues no note for the payment, a close's or a card
       one, and logs why; the payment stays in its alert;
     - Mark failed and Reset stale running take the row to FAILED keeping the
-      code (`writeStaleRunningXeroOperationReset`), and the operations panel
-      explains it as a note made in Xero but not recorded: resolve by hand,
-      never retry.
+      code and the message naming the note (`writeStaleRunningXeroOperationReset`),
+      and the operations panel explains it as a note made in Xero but not
+      recorded: resolve by hand, never retry.
 
-    Only Resolve by hand lifts it: its claim sets `manuallyResolvedAt` (and,
-    with a number, the note and its link, under `lock(1)`, then the Payment
-    row, in one commit).
+    Resolve by hand lifts it: its claim sets `manuallyResolvedAt` (and, with a
+    number, the note and its link, under `lock(1)`, then the Payment row, in
+    one commit). A PENDING copy of the same document (re-queued after Mark
+    failed) does not refuse that resolve (`findQueuedLiveCopy`): the fence
+    keeps it from minting, and the outbox closes it CANCELLED at its next claim
+    (`findResolvedSiblingSince`); a copy RUNNING still refuses. So does the
+    note being recorded through another row - the original a retry ran for,
+    resolved with this note, or a retry that recorded it - since the stamped
+    row itself could then never be resolved with it.
     The waiting notes then run, sized with the resolved note counted. A
     withdrawn resolve restores the fence. The alert and the audit row
     (`laterNotesHeld`) say whether the fence is up. Limits: before the stamp

@@ -551,28 +551,32 @@ Pinned by `xero-resolve-refund-note.test.ts`,
 ### INV-INT-035
 
 While Xero holds a payment refund note the app could not record, no other
-refund note on that payment is sized or raised until an officer resolves it
-by hand (#4688).
+refund note on that payment is sized or raised until that note is recorded
+(#4688).
 
 - **The mark is on the row.** A record that loses its wait (`INV-INT-028`,
-  #4656) stamps its own create row `REFUND_NOTE_UNRECORDED`, row-only and
-  status-guarded: its RUNNING claim, or the FAILED row Mark failed left; never
-  a resolved row or one naming a note. The note itself is written nowhere.
-- **One predicate fences.** `unrecordedRefundNoteOperationWhere`
-  (`xero-refund-note-in-flight.ts`): stamped, unresolved, naming no note,
-  whatever its status or age. Every refund-note create waits on it before
-  sizing (busy error, back to PENDING); Retry, Requeue and Retry all refuse
-  the payment's refund-note creates; the nightly self-heal queues none.
-- **Only a resolve lifts it.** The resolve's claim sets `manuallyResolvedAt`;
-  a withdrawn resolve restores the fence. Mark failed and Reset stale running
-  keep the code.
+  #4656) stamps its own create row `REFUND_NOTE_UNRECORDED`, naming the note
+  in its response payload; row-only and guarded on its claim: RUNNING, or the
+  FAILED row Mark failed left; never a resolved row or one naming a note.
+- **One read fences.** `findUnrecordedRefundNoteOperation`: a stamped,
+  unresolved row naming no note, whatever its status or age, unless a live
+  or voided link on the payment now records its note. Every refund-note create
+  waits on it before sizing, back to PENDING as
+  `REFUND_NOTE_AWAITING_RESOLVE`, which the outbox scan and the retry drain
+  space out (#4692); Retry, Requeue and Retry all refuse the payment's
+  refund-note creates; the nightly self-heal queues none.
+- **Resolving lifts it.** The resolve's claim sets `manuallyResolvedAt`; a
+  withdrawn resolve restores the fence. A PENDING copy the fence holds does
+  not refuse the resolve: the outbox cancels it afterwards (`INV-INT-025`).
+  Mark failed and Reset stale running keep the code and the note's message.
 - **Limits.** Until the stamp lands the row holds others back only as a live
   claim (#3880). A stamp that fails is logged, and the alert says nothing
   holds later notes back.
 
 Pinned by `xero-refund-note-in-flight.test.ts`,
 `xero-late-refund-note-record.test.ts`, `xero-refund-note-crash-window.test.ts`,
-`xero-operation-queue.test.ts`, `xero-operation-routes.test.ts`,
+`xero-operation-outbox.test.ts`, `xero-operation-queue.test.ts`,
+`xero-resolve-refund-note.test.ts`, `xero-operation-routes.test.ts`,
 `cron-credit-reconciliation.test.ts` and, against real PostgreSQL,
 `xero-unrecorded-refund-note-fence.realdb.test.ts`.
 
