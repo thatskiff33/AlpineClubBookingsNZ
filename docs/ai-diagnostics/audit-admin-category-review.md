@@ -584,9 +584,9 @@ land.
 manifest moving with it. The numbers this page was written against:
 
 ```
-row-producing sites:  530
+row-producing sites:  531
 uncategorised:        0
-category values: admin 111, booking 109, xero 48, family 35, payment 67,
+category values: admin 111, booking 109, xero 49, family 35, payment 67,
                  lodge 68, account 19, security 25, privacy 22,
                  communication 21, system 4
 ```
@@ -883,6 +883,13 @@ request was left to the officers, filed `payment` with the rest.
 `pnpm run audit:census`): `xero.credit_note.outside_spend_mirrored` and
 `xero.credit_note.outside_spend_restored`, the inbound credit-note mirror's rows, filed
 `xero` beside the converge's.
+
+#4655 then added one (`xero` 48 -> 49, 530 -> 531, MEASURED with
+`pnpm run audit:census`): `xero.organiser_adjustment_note.late_note_not_recorded`, the
+row an organiser adjustment's credit-note create writes when Xero answers after its job
+was reset and the job may no longer take the note (resolved by hand, run again or
+closed), so the late note it did not record has a durable trace. Filed `xero` beside the
+other Xero rows; nobody's readership changes.
 
 #4426 then added one (`xero` 47 -> 48, 529 -> 530, MEASURED with
 `pnpm run audit:census`): `xero.refund_credit_note.late_note_not_recorded`, the row a

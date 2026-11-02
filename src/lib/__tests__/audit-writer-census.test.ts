@@ -1482,7 +1482,9 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
     // RE-MEASURED with `pnpm run audit:census`.
     // 399 -> 400 unpinned (#4426): the late refund note's row, unpinned `xero`.
     // RE-MEASURED with `pnpm run audit:census`.
-    ).toEqual({ pinned: 130, unpinned: 400 });
+    // 400 -> 401 unpinned (#4655): the late organiser adjustment note's row, unpinned `xero`.
+    // RE-MEASURED with `pnpm run audit:census`.
+    ).toEqual({ pinned: 130, unpinned: 401 });
   });
 
   it("pins which classified writers a MEMBER can now see about themselves", () => {

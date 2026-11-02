@@ -483,7 +483,7 @@ re-run, never offered for retry, never re-minted beside (owner decision,
 - **One predicate.** `isResolvedInXero` (`xero-operation-resolution.ts`); a
   `where` clause spells it on `manuallyResolvedAt`. The mark leaves the row
   `FAILED`/`PARTIAL`, so status alone reads it as live; a late success lands
-  and alerts, except over a recorded refund note (`INV-INT-029`).
+  and alerts, except where `INV-INT-029` says.
 - **Retries refuse it.** `getXeroOperationRetryMeta` refuses first; retry and
   requeue answer 409; the drain closes that queued row `CANCELLED`.
 - **Enqueues and the outbox respect it.** A resolved refund note covers its
@@ -563,9 +563,9 @@ its outcome of the same keyed Xero call there.
   also keeps CANCELLED.
 - **Every outcome carries its claim (#4373):** the row's id and its RUNNING
   claim's `startedAt`, from the started row, the outbox or REQUEUE claim
-  (`claimXeroSyncOperationToRunning`) or a retry's claim. No outcome, a
-  success included, lands on a RUNNING row another claim holds, such as a
-  retry's after a stale reset or failure.
+  (`claimXeroSyncOperationToRunning`), a retry's claim or a late note's
+  re-take (`INV-INT-034`). No outcome, a success included, lands on a RUNNING
+  row another claim holds, such as a retry's after a reset.
 - **A repair's claim is kept too.** The PARTIAL repair and FAILED
   refund-note repair stamp a marker code on their RUNNING claim; no outcome
   but SUCCEEDED lands there unless written onto that claim (`retryClaim`).
@@ -573,8 +573,8 @@ its outcome of the same keyed Xero call there.
   (#4374). The write leaves the mark; if it recorded a Xero object, after
   commit it warns and alerts officers once per operation; Xero may hold it
   twice. Limit: an alert reaching nobody retries only when another success
-  lands. Except a refund-note create's different late note over a note a
-  resolve recorded (#4426): audited and alerted, not recorded.
+  lands. Except the late credit notes `INV-INT-028` (#4426) and
+  `INV-INT-034` (#4655) keep out: audited and alerted, not recorded.
 - **A refused write changes nothing.** It answers null, writes no link and
   raises no alert. A missing row throws, or is logged for a guarded caller.
   A success refused for a later claim still records its links, warned.
@@ -583,6 +583,40 @@ its outcome of the same keyed Xero call there.
 
 Pinned by `xero-sync.test.ts`, `xero-success-after-resolution-alert.test.ts`
 and, against real PostgreSQL, `xero-shared-operation-outcome.realdb.test.ts`.
+
+### INV-INT-034
+
+An organiser adjustment's credit note that Xero creates after its stalled job
+was reset is recorded on the job or surfaced once, never silently lost (#4655).
+
+- **It lands where a success may.** `recordCreatedOrganiserNote`
+  (`organiser-extra-note-record.ts`) writes it on its row, before any
+  allocation or payout, in status-guarded `updateMany`s, only where the row
+  records no other note: this run's RUNNING claim; an unresolved FAILED row (a
+  reset), taken back RUNNING under a fresh claim in the same write; or an
+  unresolved PENDING row (a Retry queued it in place: this run stops and the
+  queued run continues). A retry never raises a second note.
+- **A re-taken row is this run's (#4672).** The outbox completes, gives back
+  and fails it under the fresh claim; Resolve and Retry refuse it while
+  RUNNING, and Reset stale running still covers a dead process.
+- **Anywhere else it is kept out.** A row resolved by hand, marked
+  non-replayable, held by another claim (or a live row with its key),
+  recording a different note or closed takes nothing; the run returns
+  without failing it. `traceUnrecordedLateNote` (#4426's) warns,
+  writes one `xero` audit row
+  (`xero.organiser_adjustment_note.late_note_not_recorded`) and sends #4374's
+  alert once per note, each step caught.
+- **A resolved row is a stated choice.** Unlike a plain-resolved refund-note
+  row (#4426), it never takes a late note: landing would only add an
+  allocation or payout after an officer took the adjustment over.
+- **Limits.** A retry may record the same note through Xero's idempotency
+  key; the alert says to compare first. A process dying before the audit row
+  leaves the warning only. A run whose own claim is reset after it recorded
+  the note can still pay out after a resolve, under #4374's alert (#4680).
+
+Pinned by `organiser-extra-note-record.test.ts`,
+`organiser-extra-adjustment.test.ts` and, against real PostgreSQL,
+`organiser-late-note-after-reset.realdb.test.ts`.
 
 ## Stored outbox payloads (#3971)
 
