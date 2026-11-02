@@ -109,7 +109,7 @@ const mocks = vi.hoisted(() => {
   // otherwise leaves the row as it is and answers null (#4356, #4373, #4673,
   // `INV-INT-029`). The mock reproduces that write against the store so the
   // outbox's un-claim runs against a genuinely-FAILED row.
-  const selfFail = async (claim: { id: string; startedAt: Date | null }, _error?: unknown) => {
+  const selfFail = async (claim: { id: string; startedAt: Date | null }) => {
     const row = rows.get(claim.id);
     if (!row || !["RUNNING", "FAILED"].includes(row.status)) return null;
     // #4373/#4673: nor over a row another claim stamped, or none did.
@@ -120,7 +120,10 @@ const mocks = vi.hoisted(() => {
     row.completedAt = new Date();
     return { ...row };
   };
-  const failXeroSyncOperation = vi.fn(selfFail);
+  // Typed as the real writer's arity, so the handlers' calls (error, payload, options) type-check.
+  const failXeroSyncOperation = vi.fn(
+    selfFail as (claim: { id: string; startedAt: Date | null }, error?: unknown, payload?: unknown, options?: unknown) => ReturnType<typeof selfFail>,
+  );
 
   /**
    * #3170 fix round (F1): the worker re-reads an operation's payload AFTER it
