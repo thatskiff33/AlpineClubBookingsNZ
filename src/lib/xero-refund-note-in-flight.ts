@@ -1,7 +1,11 @@
-import type { Prisma } from "@prisma/client";
+import type { Prisma, XeroSyncOperation } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
-import { XeroRefundCreditNoteInFlightError } from "@/lib/xero-applied-credit-operation-serialization";
+import {
+  XeroRefundCreditNoteInFlightError,
+  XeroRefundCreditNoteUnrecordedError,
+} from "@/lib/xero-applied-credit-operation-serialization";
 import { XERO_REQUEUE_OPERATION_TYPE } from "@/lib/xero-hardening-shared";
+import { XERO_REFUND_NOTE_UNRECORDED_ERROR_CODE } from "@/lib/xero-operation-error-codes";
 import { XERO_OUTBOX_REFUND_CREDIT_NOTE_TYPE } from "@/lib/xero-operation-outbox-payload";
 import { liveRunningXeroOperationFilter } from "@/lib/xero-stale-operations";
 
@@ -61,4 +65,98 @@ export async function assertNoRefundCreditNoteInFlight(
     select: { id: true },
   });
   if (inFlight) throw new XeroRefundCreditNoteInFlightError(paymentId, inFlight.id);
+}
+
+/**
+ * #4688 (`INV-INT-028`): the payment's refund-note create rows whose note Xero
+ * made but the record could not write (`record-wait-lost`): stamped
+ * `XERO_REFUND_NOTE_UNRECORDED_ERROR_CODE` by `recordCreatedRefundNote`, not
+ * resolved by hand, and still naming no note. Whatever its status or age - the stale threshold that ends
+ * the in-flight hold above does not end this one - such a row means Xero holds a
+ * note the coverage reads leave out, so no refund note on the payment may be
+ * sized until an officer's Resolve by hand records it (or takes the refund over).
+ * The resolve's own claim sets `manuallyResolvedAt`, which is what lifts it; a
+ * withdrawn resolve puts it back, as the note is unrecorded again. Mark failed
+ * and a stale reset keep the code (`writeStaleRunningXeroOperationReset`).
+ */
+export function unrecordedRefundNoteOperationWhere(paymentId: string) {
+  return {
+    ...paymentCreditNoteOperationWhere(paymentId),
+    operationType: "CREATE",
+    OR: [{ queueType: XERO_OUTBOX_REFUND_CREDIT_NOTE_TYPE }, { queueType: null }],
+    lastErrorCode: XERO_REFUND_NOTE_UNRECORDED_ERROR_CODE,
+    manuallyResolvedAt: null,
+    xeroObjectId: null,
+  } as const satisfies Prisma.XeroSyncOperationWhereInput;
+}
+
+/** #4688: the payment's oldest refund-note create whose note is unrecorded, or null. */
+export async function findUnrecordedRefundNoteOperation(
+  paymentId: string,
+  db: Pick<Prisma.TransactionClient, "xeroSyncOperation"> = prisma,
+): Promise<{ id: string } | null> {
+  return db.xeroSyncOperation.findFirst({
+    where: unrecordedRefundNoteOperationWhere(paymentId),
+    orderBy: { createdAt: "asc" },
+    select: { id: true },
+  });
+}
+
+/**
+ * #4688: no refund note is raised on a payment while Xero holds one of its
+ * notes unrecorded. Asked by every refund-note create (`createXeroCreditNote`,
+ * whatever its mode) before it sizes or mints; the busy error holds the row in
+ * PENDING, as an in-flight note does, until the officer resolves the
+ * unrecorded one. Read without a lock, as the in-flight check is. The stamp
+ * lands as the record gives up; before that, its row holds others back only as
+ * a live claim (younger than the stale threshold) - a stated limit.
+ */
+export async function assertNoUnrecordedRefundNote(paymentId: string): Promise<void> {
+  const unrecorded = await findUnrecordedRefundNoteOperation(paymentId);
+  if (unrecorded) throw new XeroRefundCreditNoteUnrecordedError(paymentId, unrecorded.id);
+}
+
+/** #4688: why Retry refuses the row whose own note is unrecorded. */
+export const UNRECORDED_REFUND_NOTE_RETRY_REASON =
+  "Xero made this operation's refund credit note, but the app could not record it. Do not retry: a retry is sized without that note and could raise a second one. Resolve this operation by hand with that note's number (the alert and the error message name it).";
+
+/**
+ * #4688: the row itself holds an unrecorded note - the fence's predicate on
+ * one row (`unrecordedRefundNoteOperationWhere`), for `getXeroOperationRetryMeta`.
+ * The code is stamped only on a payment refund-note create row.
+ */
+export function holdsUnrecordedRefundNote(row: {
+  lastErrorCode?: string | null;
+  manuallyResolvedAt: Date | null;
+  xeroObjectId: string | null;
+}): boolean {
+  return row.lastErrorCode === XERO_REFUND_NOTE_UNRECORDED_ERROR_CODE && row.manuallyResolvedAt === null && row.xeroObjectId === null;
+}
+
+/**
+ * #4688: Retry (single, Requeue and Retry all) refuses a payment refund-note
+ * create that would raise a note while the payment holds an unrecorded one -
+ * that row itself, or any other, such as the original a retry ran for. A row
+ * that already records its note is the #3548 repair leg, which raises none,
+ * and passes. Null when the retry may go ahead.
+ */
+export async function unrecordedRefundNoteRetryRefusal(
+  operation: Pick<XeroSyncOperation, "id" | "direction" | "entityType" | "operationType" | "localModel" | "localId" | "queueType" | "xeroObjectId">,
+): Promise<string | null> {
+  if (
+    operation.direction !== "OUTBOUND" ||
+    operation.entityType !== "CREDIT_NOTE" ||
+    operation.operationType !== "CREATE" ||
+    operation.localModel !== "Payment" ||
+    !operation.localId ||
+    (operation.queueType !== null && operation.queueType !== XERO_OUTBOX_REFUND_CREDIT_NOTE_TYPE) ||
+    operation.xeroObjectId !== null
+  ) {
+    return null;
+  }
+  const unrecorded = await findUnrecordedRefundNoteOperation(operation.localId);
+  if (!unrecorded) return null;
+  return unrecorded.id === operation.id
+    ? UNRECORDED_REFUND_NOTE_RETRY_REASON
+    : `Xero made a refund credit note on this payment that operation ${unrecorded.id} could not record. A retry now is sized without it and could raise a second note: resolve operation ${unrecorded.id} by hand with that note's number first, then retry this one.`;
 }

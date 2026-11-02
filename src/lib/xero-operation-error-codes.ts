@@ -14,3 +14,14 @@
  * state is UNKNOWN rather than that no invoice was raised.
  */
 export const XERO_ORPHANED_STALE_RUNNING_ERROR_CODE = "ORPHANED_STALE_RUNNING";
+
+/**
+ * #4688 (`INV-INT-028`): the code a payment refund-note create stamps on its
+ * own row when Xero made the note but the record could not get its locks in
+ * time (`record-wait-lost`), so the note is recorded nowhere. While the row
+ * carries it and is not resolved by hand, no refund note is raised on the
+ * payment (`findUnrecordedRefundNoteOperation`), Retry refuses the payment's
+ * refund-note creates, and the nightly self-heal queues none. A stale reset
+ * and Mark failed keep it; only Resolve by hand lifts it.
+ */
+export const XERO_REFUND_NOTE_UNRECORDED_ERROR_CODE = "REFUND_NOTE_UNRECORDED";

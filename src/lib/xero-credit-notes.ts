@@ -16,7 +16,7 @@
  */
 
 import { reviewTaskKeyParts } from "@/lib/xero-review-task-key";
-import { assertNoRefundCreditNoteInFlight } from "@/lib/xero-refund-note-in-flight";
+import { assertNoRefundCreditNoteInFlight, assertNoUnrecordedRefundNote } from "@/lib/xero-refund-note-in-flight";
 import { recordCreatedRefundNote, RefundNoteNotRecordedError } from "@/lib/xero-refund-note-record";
 import { mayRecordAsCanonicalRefundNote, readCanonicalRefundNoteField, refundNoteKeyAfterVoidParts, refundRequestOwnNotes, type RefundNoteKeyScope } from "@/lib/xero-refund-note-status";
 import {
@@ -318,6 +318,10 @@ export async function createXeroCreditNote(
       return own.xeroObjectId;
     }
   }
+
+  // #4688 (`INV-INT-028`): Xero holds a note on this payment the app never recorded (a record that lost its
+  // wait), which every coverage read below leaves out: nothing is sized or raised until an officer resolves it.
+  await assertNoUnrecordedRefundNote(paymentId);
 
   let existingCreditNoteId: string | null = null;
   let existingCreditNoteNumber: string | null = null;

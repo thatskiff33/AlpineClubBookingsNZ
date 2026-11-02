@@ -104,6 +104,21 @@ export class XeroRefundCreditNoteInFlightError extends XeroAppliedCreditOperatio
   }
 }
 
+/**
+ * #4688 (`INV-INT-028`): Xero holds a refund note on this payment that the
+ * app never recorded (its create's record lost its wait), so any note sized
+ * now would leave it out. A subclass of the in-flight error, so the outbox and
+ * the retry queue hold the row in PENDING the same way, until an officer
+ * resolves the unrecorded note's operation by hand.
+ */
+export class XeroRefundCreditNoteUnrecordedError extends XeroRefundCreditNoteInFlightError {
+  constructor(paymentId: string, unrecordedOperationId: string) {
+    super(paymentId, unrecordedOperationId);
+    this.message = `Xero made a refund credit note on payment ${paymentId} that operation ${unrecordedOperationId} could not record; this note waits until an officer resolves ${unrecordedOperationId} by hand with that note's number`;
+    this.name = "XeroRefundCreditNoteUnrecordedError";
+  }
+}
+
 export function isXeroAppliedCreditOperationBusyError(
   error: unknown
 ): error is XeroAppliedCreditOperationBusyError {
