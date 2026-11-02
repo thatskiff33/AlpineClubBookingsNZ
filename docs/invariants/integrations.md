@@ -607,11 +607,11 @@ as the lot's note).
 - **No lock.** The write moves no balance, status or settlement money, and each
   is one null-guarded single-row update (`INV-LOCK-001`; no key or order,
   `INV-LOCK-002`; no new site, `INV-LOCK-003`).
-- **Limits.** The enqueue still keys a payment's account-credit note on its
-  amount and the payment holds one live account-credit link, so two equal
-  credits on one booking get two notes only once the first link is retired.
-  No writer mints two such credits on one booking today. A modification
-  note's stamp was already one row (`sourceBookingModificationId` is unique).
+- **Limits.** A payment gets one account-credit note (the enqueue keys it on
+  the amount; no writer retires its link), so a second equal credit gets none,
+  and no writer mints one today. Two writers stamping one note on two credits
+  at once can both land. The inbound credit-note handler's own stamp is not
+  yet scoped (#4705).
 
 Pinned by `xero-account-credit-note-stamp.test.ts`,
 `xero-operation-outbox-payload.test.ts`, `xero-operation-outbox.test.ts`,
