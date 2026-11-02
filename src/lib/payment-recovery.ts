@@ -36,6 +36,7 @@ import {
   reconcilePaymentAggregates,
   capturedStripeTransactions,
   recordStripeRefundsAgainstTransaction,
+  refundHeadroomIncrementCents,
   refundPaymentTransactions,
   upsertPaymentIntentTransaction,
   type RefundAllocationSlice,
@@ -1989,10 +1990,7 @@ async function processRefundSupersededPaymentOperation(
   // it has just recorded is off the charge, so no ask exceeds what Stripe can still refund; one that
   // leaves nothing closes through the path below. A plain read, outside every transaction.
   const recordedTransaction = await readSupersededRefundCharge(refreshedTransaction.id);
-  const outstandingCents = Math.max(
-    Math.min(operation.amountCents, recordedTransaction.amountCents - recordedTransaction.refundedAmountCents),
-    0,
-  );
+  const outstandingCents = refundHeadroomIncrementCents(recordedTransaction, operation.amountCents);
 
   // #4690: a refund of this row's own that an earlier attempt made but never announced (it was
   // reaped, or crashed, before its notice) is announced here, once, before the close.

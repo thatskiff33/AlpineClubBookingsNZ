@@ -1800,8 +1800,8 @@ release).
   `recordStripeRefundsAgainstTransaction`, including ones the app has not seen.
   The existing note router is shared with `charge.refunded`, so recording first
   does not suppress the refund's accounting correction. The superseded-payment
-  refund is sized on the ledger after this recording (#4699), never asking for
-  what another door's listed refund already took.
+  refund is sized on the ledger after this recording (#4699); a stored plan's
+  slices are still sent as written (#4103).
 - A counted refund made outside the app (`cardRefundDoorOf`), on that charge
   at or after the recovery debt's creation second, holds the entire row before
   any slice is sent, regardless of the refund's amount. Counted status comes
