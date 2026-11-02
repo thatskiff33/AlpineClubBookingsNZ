@@ -520,13 +520,12 @@ officer made, and that note records no other refund: one note, one refund
 
 - **Asked of one population.** `refundNoteResolveShape`
   (`xero-resolve-refund-note.ts`) asks for the number on a FAILED row naming no
-  note, among the rows `readResolvedRefundCreditNoteCoverage` reads (one set of
-  row constants) that are their own refund's (`countsTowardRefundNoteCoverage`).
-  A refund request's note (#4391), a row naming its note and every other row
-  resolve as `INV-INT-025` says; a number sent for one is refused. Refused
-  too: a PARTIAL row naming no note, an unreadable amount (Mark
-  non-replayable; the treasurer decides), and a row a retry or same-key run
-  already raised.
+  note, among the rows `readResolvedRefundCreditNoteCoverage` reads that are
+  their own refund's (`countsTowardRefundNoteCoverage`). A refund request's
+  note (#4391), a row naming its note and every other row resolve as
+  `INV-INT-025` says; a number sent for one is refused. Refused too: a PARTIAL
+  row naming no note, an unreadable amount (Mark non-replayable), and a row a
+  retry or same-key run already raised.
 - **Checked as the hand-made answer is.** `verifyHandMadeRefundNote`
   (`INV-ADDPAY-042`), before any transaction: approved or paid, a sales credit
   note for the booking's contact, the row's exact amount.
@@ -534,19 +533,20 @@ officer made, and that note records no other refund: one note, one refund
   retry since the read, a superseding run, a live copy, another create row or
   any link recording the note refuses with a 409 and nothing written; then the
   status-guarded claim writes the mark and the note, and the answer's own
-  writer (`writeHandMadeRefundNoteLink`) its live link, so the inbound sync
-  catches a void and coverage counts the note once. Either order of resolve and
-  answer ends with one record. A withdrawn mark retires its link (audited; a
-  failed withdrawal alerts); only that row takes it back. Every refusal is
-  audited.
+  writer (`writeHandMadeRefundNoteLink`) its live link, so a void is caught and
+  the note counted once. Either order of resolve and answer records once. A
+  withdrawn mark retires its link (audited; a failed withdrawal alerts); only
+  that row takes it back. Every refusal is audited.
 - **Legacy.** A row resolved before #4421 names no note.
-- **A late create keeps out (#4426).** A stalled create never records its note
-  over this one (`recordCreatedRefundNote`): a different note is audited and
-  alerted, never linked or settled.
+- **A create records once (#4426, #4656).** Under the Payment row,
+  `recordCreatedRefundNote` claims its row, then refuses a note another create
+  row records; a note kept out or not recorded in time is audited and
+  alerted, never linked, settled or failed.
 
 Pinned by `xero-resolve-refund-note.test.ts`,
 `resolve-records-refund-note.realdb.test.ts`, `advisory-lock-guard.test.ts`,
-`xero-late-refund-note-after-resolve.realdb.test.ts`.
+`xero-late-refund-note-after-resolve.realdb.test.ts`,
+`xero-refund-note-record-gaps.realdb.test.ts`.
 
 ## One outcome per Xero operation row (#4356)
 

@@ -4055,6 +4055,13 @@ FAILED/PARTIAL -> officer marks it resolved in Xero -> done: status unchanged,
   any other -> one `xero` audit row and one XERO_SUCCESS_AFTER_RESOLUTION
   alert naming it. After a plain resolve (no note recorded) or a Mark failed
   with no resolve the late note lands as any success does (-> SUCCEEDED)
+RUNNING payment refund-note create -> Xero returns its note -> the record
+  (#4656, INV-INT-028): the Payment row, the row's claim, then no other create
+  row may record the note (-> rolled back, FAILED as before); a record that
+  cannot wait out a holder of the Payment row in its 30s budget writes
+  nothing and stays RUNNING under its claim, never FAILED: one `xero` audit
+  row and one XERO_SUCCESS_AFTER_RESOLUTION alert name the note -> Mark
+  failed or Reset stale running -> FAILED -> Resolve by hand with its number
 RUNNING -> Reset stale running -> FAILED, then the organiser adjustment's
   stalled create answers (#4655, `INV-INT-034`): its note is written on the row
   before any allocation only where no other note is recorded and the row is

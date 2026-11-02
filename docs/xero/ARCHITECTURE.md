@@ -1898,9 +1898,10 @@ on `manuallyResolvedAt`.
   threshold, be marked failed, and be resolved by hand recording the note the
   officer made while its own call is still waiting. When Xero then answers,
   the create records its note through `recordCreatedRefundNote`
-  (`xero-refund-note-record.ts`): one transaction writing the payment's
-  pointer (only when the note takes it), then a status-guarded `updateMany`
-  claiming the row and writing its note, then the link. The claim refuses only
+  (`xero-refund-note-record.ts`): one transaction taking the Payment row
+  (#4656), then a status-guarded `updateMany` claiming the row and writing its
+  note, then the freshness check (#4656, below), the payment's pointer (only
+  when the note takes it) and the link. The claim refuses only
   a row whose resolve RECORDED a note (`manuallyResolvedAt` set and
   `xeroObjectId` set); a lost claim rolls the whole record back, so the row
   keeps the officer's note, no link names the late one and the pointer is
@@ -1937,6 +1938,69 @@ on `manuallyResolvedAt`.
   that reaches nobody is not sent again (the audit row and the log remain); a
   process that dies between the rollback and the audit row leaves only the
   warning in the log.
+- **The record checks its note under its locks, and outwaits the Payment row's
+  holders (#4656, `INV-INT-028`, `INV-ADDPAY-041`).** Three gaps the #4426
+  reviews found by reading the code, each checked against it:
+  - **Freshness, confirmed and fixed.** `assertFreshRefundNoteFromCreate`
+    refuses a note another create row on the payment already records. It ran
+    before the record's transaction, under no lock. Two writers record a note
+    on a payment's create row: the create's record and "Resolve by hand"
+    (`claimResolveRecordingRefundNote`); the completion only repeats the note
+    its own record wrote, and the covered-by-an-existing-note branch names a
+    note already linked. Two creates answered with one note - a stalled run and
+    the retry that sent Xero the same key - could each pass the check before
+    the other committed, so both rows named the note and both settled against
+    it; a note taking no pointer locked no shared row at all. Now the record
+    takes the Payment row first for every note (`lockPaymentForRefundedTotal`),
+    claims its own row, and only then asks, on its own transaction: a second
+    record of the note queues on the Payment row, reads the first's commit and
+    is refused, failing its own row as before. The resolve takes `lock(1)` then
+    the same Payment row, so a resolve and a record serialise too, whichever
+    commits first. The claim now comes before the check, so a refusal never
+    fails a row an officer resolved recording a note: that row's late note is
+    traced as #4426 says.
+  - **The 5s default, confirmed and fixed.** The record ran on Prisma's
+    interactive defaults (2s `maxWait`, 5s `timeout`), while the Payment row's
+    longest holders run 30s transactions: the nightly bank-refund void
+    follow-up (`followUpVoidedBankRefundNote`) and a group cancel enqueueing a
+    refund note. A timeout reached the create's catch, which failed the row -
+    and the note Xero had made was recorded nowhere, with no alert. The record
+    now runs on `PAYMENT_ROW_WAIT_TRANSACTION_OPTIONS` (`maxWait` 10s, `timeout`
+    30s, `payment-transactions.ts`), shared with the inbound recount's claim
+    (#4288), which waits on the same row for the same reason. If the wait
+    still runs out (`isRecordWaitLost`: P2028, P2034 or SQLSTATE 40P01, 55P03),
+    nothing was written, and the create returns without settling, completing
+    or failing the row: it stays RUNNING under this run's claim, the note is
+    logged first, audited once (the same
+    `xero.refund_credit_note.late_note_not_recorded` action, `reason:
+    "record-wait-lost"`) and alerted once through #4374's alert
+    (`traceUnrecordedLateNote`), naming the note, its amount and the booking.
+    The alert asks the officer not to raise another note: once the row shows
+    as stuck running, Mark failed and Resolve by hand with this note's number
+    (or Retry, which sends Xero the same key and normally gets this note
+    back). A FAILED row written over it would have read as "nothing made".
+    Limits: a queue of holders longer than 30s in total still runs the wait
+    out, and is traced, not recorded; Resolve and Retry refuse the RUNNING row
+    until Mark failed or Reset stale running clears it; an alert that reaches
+    nobody is not sent again.
+  - **The account-credit note's `MemberCredit` stamp, not confirmed: a
+    stated limit.** `createUnappliedXeroCreditNote` stamps the note on the
+    member's credit (`backfill*CreditXeroNote`) before its claim-guarded
+    completion (#4372), and the stamp carries no claim. It cannot stamp a
+    second note: it writes only a credit naming none (`xeroCreditNoteId:
+    null`). After a manual resolve - a plain one, since the numbered resolve
+    (`INV-INT-028`) is for refund notes only and an account-credit row records
+    no note - the late note is the only one the app knows, and its completion
+    lands on the resolved row too (`INV-INT-029`: a success lands on any row
+    no claim holds) and raises #4374's alert, so the credit and the row name
+    the same note. The stamp would outrun a refused completion only on a row
+    another claim holds RUNNING, and no claim re-takes an account-credit
+    create row: its retry runs inline on a row of its own, with the same Xero
+    key, so Xero answers it with the same note. What stays: if Xero ever
+    answered that retry with a different note (its key no longer honoured),
+    the credit keeps whichever note stamped first while both rows record
+    theirs - Xero then holds two notes, which the stamp neither causes nor
+    could prevent.
 - **The outbox.** After it claims a row and before any Xero call, the outbox
   asks `findResolvedSiblingSince`: was a sibling for the same document (same
   correlation key) resolved after this copy was queued? If so the copy is
