@@ -6318,7 +6318,7 @@ describe("processStoredXeroInboundEvents", () => {
   }
 
   /** An account-credit note event for `cn_credit_1`, linked to each payment of booking `bk123456789`. */
-  function mockAccountCreditNoteEvent(paymentIds: string[] = ["pay_credit_1"]) {
+  function mockAccountCreditNoteEvent(paymentIds: string[] = ["pay_credit_1"], bookingOf: Record<string, string> = {}) {
     mocks.inboundFindMany.mockResolvedValue([
       {
         id: "evt_5",
@@ -6357,7 +6357,7 @@ describe("processStoredXeroInboundEvents", () => {
       .mockResolvedValueOnce(
         paymentIds.map((id) => ({
           id,
-          bookingId: "bk123456789",
+          bookingId: bookingOf[id] ?? "bk123456789",
           booking: {
             memberId: "mem_credit_1",
           },
@@ -6550,6 +6550,25 @@ describe("processStoredXeroInboundEvents", () => {
     expect(mocks.memberCreditUpdateMany).not.toHaveBeenCalled();
   });
 
+  it("MUTATION #4705 (PR #4711 review): a credit the outbox row named is stamped only through the payment that named it, with no warning from another booking's payment", async () => {
+    // pay_other, on another booking, is read first; the row names pay_credit_1's credit.
+    mockAccountCreditNoteEvent(["pay_other", "pay_credit_1"], { pay_other: "bk_other_booking" });
+    const notes = memberCreditTable([
+      { id: "credit_older", createdAt: "2026-06-01" },
+      { id: "credit_newer", createdAt: "2026-06-02" },
+    ]);
+    mocks.xeroSyncOperationFindMany.mockImplementation((async ({ where }: { where: Record<string, unknown> }) =>
+      where?.xeroObjectId === "cn_credit_1" && where?.localModel === "Payment"
+        ? [{ localId: "pay_credit_1", requestPayload: { queueType: "ACCOUNT_CREDIT_NOTE", refundAmountCents: 9700, memberCreditId: "credit_newer" } }]
+        : []) as never);
+
+    await expect(processStoredXeroInboundEvents()).resolves.toMatchObject({ succeeded: 1, failed: 0 });
+
+    expect(notes()).toEqual({ credit_older: null, credit_newer: "cn_credit_1" });
+    expect(mocks.memberCreditUpdateMany).toHaveBeenCalledTimes(1);
+    expect(logger.warn).not.toHaveBeenCalledWith(expect.anything(), expect.stringContaining("not stamped on its credit"));
+  });
+
   it("MUTATION #4705: two account-credit payments on the booking stamp the note on one credit, and a credit already holding it stops the stamp", async () => {
     mockAccountCreditNoteEvent(["pay_credit_1", "pay_credit_2"]);
     const notes = memberCreditTable([
@@ -6735,6 +6754,8 @@ describe("processStoredXeroInboundEvents", () => {
     // note's amount; the note was raised for no credit there.
     mocks.memberCreditFindFirst.mockImplementation((async ({ where }: { where: Record<string, unknown> }) =>
       where.type === "CANCELLATION_REFUND" && where.xeroCreditNoteId === null ? { id: "credit_bk_admin_cancel" } : null) as never);
+    // That credit would take a stamp, as the real row would.
+    mocks.memberCreditUpdateMany.mockImplementation((async ({ where }: { where: { id?: string } }) => ({ count: where.id === "credit_bk_admin_cancel" ? 1 : 0 })) as never);
 
     await expect(processStoredXeroInboundEvents()).resolves.toMatchObject({ succeeded: 1, failed: 0 });
 
