@@ -819,6 +819,12 @@ reduction edit, under the door's locks
          SUCCEEDED with another intent or none (#4652); a recovery reset,
          PENDING, FAILED or still claimed (even by a runner that already wrote
          another intent), or an intent it adopted by matching (#4036), keeps it
+       a claim hold that THREW (sizing moved under its locks, or a write
+         failed) -> rolled back, nothing written; the same proof, then the
+         error reaches the retry: a row still its own keeps the intent,
+         logged `left-open` (an adopted one `adopted`) (#4676); a later
+         net-off or fold of the unclaimed row, or a terminal failure, also
+         leaves it, as nothing re-reads that row (#4693)
        a stalled runner's close -> fenced on its own claim (PROCESSING,
          attempts, claim time), so it never closes a row a reclaiming runner
          holds; that runner's ask is written (#4675)
@@ -2379,6 +2385,12 @@ inbound fence records its conflict the same way, under the
                                or recovery names it; a row still claimable or claimed, or failed
                                for good, keeps it: a retry may mint under the same key and get
                                it back, otherwise it stays open, never offered (#4652, INV-PAY-120)
+  claim hold threw mid-mint (sizing or the merge moved under its locks, or a write failed): nothing
+                               written; the intent takes the lost hold's proof before the error
+                               reaches the retry, so a row still this attempt's keeps it (logged
+                               `left-open`) and one since closed SUCCEEDED without it lets it go;
+                               a throw on the final attempt fails the row for good and leaves it,
+                               as nothing re-reads that row (#4676, #4693, INV-PAY-120)
   stale close lost (the attempt read nothing owed, then its row was reaped and reclaimed by a runner
                                that minted): its close is fenced on its own claim and matches nothing,
                                so it writes no audit row and alerts nobody; the reclaiming runner's

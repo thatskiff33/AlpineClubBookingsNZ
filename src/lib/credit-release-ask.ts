@@ -352,7 +352,13 @@ export async function processCreditReleaseAskOperation(
   const { queueSupersededAdditionalIntentCancellationRows, cancelSupersededAdditionalIntentsNow } = await import(
     "@/lib/booking-payment-cleanup"
   );
-  const held = await deps.holdClaim(operation, async (store) => {
+  // #4631, #4652, #4676 (`INV-PAY-120`): a hold that wrote nothing - lost, or threw (rethrown to
+  // the retry) - leaves an intent never offered; it is cancelled at Stripe, best-effort, once a
+  // reclaiming runner closed this row without it and nothing names it. Minted under this
+  // release's own key, never adopted. Dynamic import: that module reaches the recovery runner.
+  const { runClaimHoldSettlingIntent } = await import("@/lib/reissued-ask-abandoned-intent");
+  const minted = { operationId: operation.id, bookingId: operation.bookingId, paymentIntentId: intent.id, adopted: false };
+  const held = await runClaimHoldSettlingIntent(minted, () => deps.holdClaim(operation, async (store) => {
     // Re-read under the Payment row lock: the figures that sized this request, and the ask it
     // supersedes, must be the ones now (a capture, a reduction, an edit or another release may
     // have moved them since the read above). A difference throws and the row retries, re-sized.
@@ -409,16 +415,8 @@ export async function processCreditReleaseAskOperation(
       newPaymentIntentId: intent.id,
       store,
     });
-  });
-  if (held === null) {
-    // #4652 (`INV-PAY-120`): nothing written, and the hold's transaction has ended. The intent was
-    // never offered; it is cancelled at Stripe, best-effort, once a reclaiming runner closed this
-    // row without it and nothing names it (`settleLostRecoveryClaimHold`). Minted under this
-    // release's own key, never adopted. Dynamic import: that module reaches the recovery runner.
-    const { settleLostRecoveryClaimHold } = await import("@/lib/reissued-ask-abandoned-intent");
-    await settleLostRecoveryClaimHold({ operationId: operation.id, bookingId: operation.bookingId, paymentIntentId: intent.id, adopted: false });
-    return;
-  }
+  }));
+  if (held === null) return;
   await cancelSupersededAdditionalIntentsNow({
     format,
     bookingId: operation.bookingId,

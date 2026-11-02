@@ -575,6 +575,79 @@ describe("processCreditReleaseAskOperation", () => {
     });
   });
 
+  /**
+   * #4676 (`INV-PAY-120`): the claim hold THREW - the payment moved under its lock - so its
+   * transaction rolled back and the intent this attempt minted is written nowhere. It takes the
+   * lost hold's proof before the error goes on to the retry: cancelled only once the row has since
+   * been closed without it. A row still this attempt's proves nothing: the retry may size the same
+   * figure, mint under the same key and be answered with this very intent.
+   */
+  describe("#4676: a hold that throws cancels its minted intent only on the lost hold's proof, then rethrows", () => {
+    const KEY = buildCreditReleaseAskStripeIdempotencyKey("rel-1");
+    const PROOF_READ = { where: { id: "op-1" }, select: { status: true, lastError: true, paymentIntentId: true } };
+    const cancelledWithOpen: number[] = [];
+
+    function throwHoldThenRead(moved: Record<string, unknown> | null, owners: { row?: { id: string } | null } = {}) {
+      const read = payment();
+      mocks.prisma.payment.findUnique.mockResolvedValue(read);
+      // A capture landed between the read and the lock: the real write throws, and the hold's transaction ends.
+      store.payment.findUnique.mockResolvedValue({ ...read, amountCents: 38_500 });
+      const deps = runnerDeps();
+      deps.holdClaim.mockImplementation((async (_op: unknown, write: (s: unknown) => Promise<unknown>) => {
+        mocks.openTransactions += 1;
+        try {
+          return { value: await write(store), claim: HELD_CLAIM };
+        } finally {
+          mocks.openTransactions -= 1;
+        }
+      }) as never);
+      mocks.prisma.paymentRecoveryOperation.findUnique.mockResolvedValue(moved);
+      mocks.prisma.paymentTransaction.findUnique.mockImplementation(async () => owners.row ?? null);
+      return deps;
+    }
+
+    beforeEach(() => {
+      mocks.openTransactions = 0;
+      cancelledWithOpen.length = 0;
+      mocks.cancelIntent.mockImplementation(async (id: string) => {
+        cancelledWithOpen.push(mocks.openTransactions);
+        return { paymentIntent: { id, status: "canceled" }, canceled: true };
+      });
+    });
+
+    it("MUTATION: a row since closed without the intent has it cancelled once, outside every transaction, and the error still reaches the retry", async () => {
+      const deps = throwHoldThenRead({ status: "SUCCEEDED", lastError: null, paymentIntentId: "pi_reclaimer" });
+      await expect(run({ deps })).rejects.toThrow(/changed while/);
+      expect(mocks.createIntent).toHaveBeenCalledTimes(1);
+      expect(mocks.upsert).not.toHaveBeenCalled();
+      expect(mocks.prisma.paymentRecoveryOperation.findUnique).toHaveBeenCalledWith(PROOF_READ);
+      expect(mocks.cancelIntent).toHaveBeenCalledTimes(1);
+      expect(mocks.cancelIntent).toHaveBeenCalledWith("pi_new", { cancellationReason: "abandoned" });
+      expect(cancelledWithOpen).toEqual([0]);
+      expect(deps.complete).not.toHaveBeenCalled();
+      expect(mocks.cancelSuperseded).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ["still this attempt's, naming the key it minted under (PROCESSING)", { status: "PROCESSING", lastError: null, paymentIntentId: KEY }],
+      ["closed naming THIS intent", { status: "SUCCEEDED", lastError: null, paymentIntentId: "pi_new" }],
+      ["gone", null],
+    ])("MUTATION: a row %s is no proof - nothing cancelled, and the error still reaches the retry", async (_label, moved) => {
+      const deps = throwHoldThenRead(moved);
+      await expect(run({ deps })).rejects.toThrow(/changed while/);
+      expect(mocks.prisma.paymentRecoveryOperation.findUnique).toHaveBeenCalledWith(PROOF_READ);
+      expect(mocks.prisma.paymentTransaction.findUnique).not.toHaveBeenCalled();
+      expect(mocks.cancelIntent).not.toHaveBeenCalled();
+    });
+
+    it("MUTATION: an intent a payment row names is never cancelled, even on the proof", async () => {
+      const deps = throwHoldThenRead({ status: "SUCCEEDED", lastError: null, paymentIntentId: "pi_reclaimer" }, { row: { id: "txn-recorded" } });
+      await expect(run({ deps })).rejects.toThrow(/changed while/);
+      expect(mocks.prisma.paymentTransaction.findUnique).toHaveBeenCalledWith({ where: { stripePaymentIntentId: "pi_new" }, select: { id: true } });
+      expect(mocks.cancelIntent).not.toHaveBeenCalled();
+    });
+  });
+
   it("rejects a key that names no release", async () => {
     const bad = { ...(operation as object), idempotencyKey: "something_else" } as never;
     await expect(processCreditReleaseAskOperation(bad, CLUB_FORMAT_TEST, asDeps(runnerDeps()), vi.fn())).rejects.toThrow(/no release id/);
