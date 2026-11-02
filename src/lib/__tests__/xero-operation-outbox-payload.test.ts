@@ -1,14 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
   getQueuedOutboxExpectedOperation,
-  isAccountCreditNotePayload,
   readQueuedOutboxPayload,
   readQueueType,
   subscriptionInvoiceChargeId,
   subscriptionInvoiceOutboxRow,
   XERO_OUTBOX_QUEUE_TYPES,
 } from "@/lib/xero-operation-outbox-payload";
-import { parsePaymentCreditNoteRetryInput } from "@/lib/xero-payment-credit-note-payload";
+import { isAccountCreditNotePayload, parsePaymentCreditNoteRetryInput } from "@/lib/xero-payment-credit-note-payload";
 
 describe("xero operation outbox payload parsing", () => {
   it("#4685: reads an account-credit note's own credit, and none from a row queued before it", () => {

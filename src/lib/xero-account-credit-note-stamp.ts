@@ -35,7 +35,8 @@ import { internetBankingLateCashCreditDescription } from "@/lib/internet-banking
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 import { asRecord } from "@/lib/xero-json";
-import { isAccountCreditNotePayload, readAccountCreditNoteCredit } from "@/lib/xero-operation-outbox-payload";
+import { readAccountCreditNoteCredit } from "@/lib/xero-operation-outbox-payload";
+import { isAccountCreditNotePayload } from "@/lib/xero-payment-credit-note-payload";
 
 /** The descriptions the account-credit pipeline's cancellation credits carry. */
 function stampableCancellationDescriptions(bookingId: string): string[] {
