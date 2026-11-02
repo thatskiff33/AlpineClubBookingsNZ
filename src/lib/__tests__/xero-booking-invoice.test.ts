@@ -139,6 +139,10 @@ const mocks = vi.hoisted(() => {
       findFirst: vi.fn().mockResolvedValue(null),
     },
   };
+  // #4656: a refund note's record asks, inside its transaction, that no other create row records the
+  // note - the same reads as the global client's, so a test's stubs reach them.
+  Object.assign(tx, { xeroObjectLink: prisma.xeroObjectLink });
+  Object.assign(tx.xeroSyncOperation, { findFirst: prisma.xeroSyncOperation.findFirst });
 
   const xeroClientInstance = {
     initialize: vi.fn().mockResolvedValue(undefined),
