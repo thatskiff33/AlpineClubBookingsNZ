@@ -28,9 +28,13 @@ const mocks = vi.hoisted(() => ({
   getMemberCreditBalance: vi.fn(),
   deriveBookingAppliedCreditCents: vi.fn(),
   acquireLodgeCapacityLock: vi.fn(),
+  postBindingCharge: vi.fn(),
 }));
 
 vi.mock("@/lib/auth", () => ({ auth: mocks.auth }));
+// #4628: the binding R01 runs on PostgreSQL (`booking-ledger-pending-charge.realdb.test.ts`); here, that the switch calls it.
+vi.mock("@/lib/member-money/doors", () => ({ resolveBookingMoneyPostingContext: vi.fn(async () => ({ journal: "context" })) }));
+vi.mock("@/lib/booking-ledger-pending-charge", () => ({ postBindingCharge: mocks.postBindingCharge }));
 vi.mock("@/lib/session-guards", () => ({
   requireActiveSessionUser: mocks.requireActiveSessionUser,
 }));
@@ -277,6 +281,9 @@ describe("POST /api/payments/switch-to-internet-banking", () => {
     const res = await POST(postRequest());
     expect(res.status).toBe(200);
     expect(mocks.upsert).toHaveBeenCalled();
+    // #4628: the switch binds the charge inside its locked transaction, with the context read before it.
+    expect(mocks.postBindingCharge).toHaveBeenCalledTimes(1);
+    expect(mocks.postBindingCharge.mock.calls[0]![1]).toEqual({ journal: "context" });
   });
 
   it("rejects an organiser-settled booking with 400", async () => {

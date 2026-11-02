@@ -39,6 +39,7 @@
  */
 import type Stripe from "stripe";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { releaseBookingJournalForTeardown } from "./support/booking-financial-history-teardown";
 
 import { realElapsedMs } from "@/lib/__tests__/helpers/clock";
 import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
@@ -196,6 +197,8 @@ let xeroEdit: typeof import("@/lib/xero-booking-edit-settlement");
       await prisma.xeroSyncOperation.deleteMany({ where: { localModel: "Payment", localId: { in: paymentIds } } });
       await prisma.xeroSyncOperation.deleteMany({ where: { localModel: "BookingModification", localId: { startsWith: P } } });
       await prisma.bookingEvent.deleteMany({ where: { bookingId: { in: bookingIds } } });
+      // #4627: the doors post journal batches bridged to these lines; release them first.
+      await releaseBookingJournalForTeardown(prisma, bookingIds);
       await prisma.bookingLedgerLine.deleteMany({ where: { bookingId: { in: bookingIds } } });
       await prisma.auditLog.deleteMany({ where: { targetId: { in: bookingIds } } });
       await prisma.paymentRecoveryOperation.deleteMany({ where: { bookingId: { in: bookingIds } } });

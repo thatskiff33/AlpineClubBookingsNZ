@@ -32,6 +32,7 @@
  * to the harness's one shared `@/lib/stripe` double.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { releaseBookingJournalForTeardown } from "./support/booking-financial-history-teardown";
 
 import { assertSafeRaceDbUrl } from "./support/race-db-url";
 import { resetStripeRaceHooks, stripeRaceHooks } from "./support/stripe-race-double";
@@ -78,6 +79,8 @@ let prisma: (typeof import("@/lib/prisma"))["prisma"];
       await prisma.auditLog.deleteMany({ where: { targetId: { in: [BOOKING_ID, PAYMENT_ID] } } });
       await prisma.bookingEvent.deleteMany({ where: { bookingId: BOOKING_ID } });
       await prisma.xeroSyncOperation.deleteMany({ where: { localId: { in: [PAYMENT_ID, BOOKING_ID] } } });
+      // #4627: the doors post journal batches bridged to these lines; release them first.
+      await releaseBookingJournalForTeardown(prisma, [BOOKING_ID]);
       await prisma.bookingLedgerLine.deleteMany({ where: { bookingId: BOOKING_ID } });
       await prisma.bedAllocation.deleteMany({ where: { bookingId: BOOKING_ID } });
       await prisma.manualRefundTask.deleteMany({ where: { bookingId: BOOKING_ID } });
@@ -613,7 +616,7 @@ let prisma: (typeof import("@/lib/prisma"))["prisma"];
       await prisma.paymentTransaction.deleteMany({ where: { paymentId: PAYMENT_ID } });
       await prisma.booking.update({ where: { id: BOOKING_ID }, data: { status: "PAID", totalPriceCents: 0, finalPriceCents: 0 } });
       await prisma.payment.update({ where: { id: PAYMENT_ID }, data: { amountCents: 0, status: "SUCCEEDED", stripePaymentIntentId: null } });
-      const { savedCardChargeIdempotencyKey } = await import("@/lib/saved-card-charge-attempt");
+      const { savedCardChargeIdempotencyKey } = await import("@/lib/saved-card-charge-key");
       const key = savedCardChargeIdempotencyKey(BOOKING_ID, ATTEMPT_ROW);
       await prisma.paymentTransaction.create({
         data: { id: ATTEMPT_ROW, paymentId: PAYMENT_ID, kind: "PRIMARY", source: "STRIPE", amountCents: PRICE_CENTS, status: "PENDING", reference: key, createdAt: MINTED_AT },

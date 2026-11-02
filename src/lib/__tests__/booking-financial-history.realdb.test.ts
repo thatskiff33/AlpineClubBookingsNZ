@@ -18,6 +18,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { assertSafeRaceDbUrl } from "./support/race-db-url";
 import { releaseBookingFinancialHistoryForTeardown } from "./support/booking-financial-history-teardown";
+import { bookingChargePlan, memberMoneyTestContext } from "./support/member-money-fixtures";
 import type { BookingFinancialHistoryRelation } from "@/lib/booking-financial-history";
 
 const RUN = process.env.RUN_CONCURRENCY_RACE_TESTS === "1";
@@ -48,11 +49,16 @@ async function name(relation: BookingFinancialHistoryRelation, bookingId: string
         },
       });
       return;
-    case "MemberMoneyLine.bookingId":
-      // The journal is inert until M3 and its rows are immutable, so no fixture
-      // can post one and remove it; the census and the catalog proof in
-      // database-roles.realdb.test.ts hold this key. The reader still runs below.
+    case "MemberMoneyLine.bookingId": {
+      // M3a (#4626): posted through the command, as a door will; the teardown
+      // below removes it again although the journal is immutable.
+      const { postMemberMoneyEvent, memberMoneyEventKeys } = await import("@/lib/member-money");
+      await prisma.$transaction((tx) => postMemberMoneyEvent(tx, memberMoneyTestContext(), bookingChargePlan({
+        eventKey: memberMoneyEventKeys.bookingCharge(bookingId), debtor: { kind: "MEMBER", memberId: MEMBER_ID },
+        grossCents: 100, booking: { bookingId, lodgeId: LODGE_ID },
+      })));
       return;
+    }
     case "MemberCredit.sourceBookingId":
       await prisma.memberCredit.create({
         data: { memberId: MEMBER_ID, amountCents: 100, type: "CANCELLATION_REFUND", description: "race 4514", sourceBookingId: bookingId },
@@ -150,9 +156,7 @@ async function clean(bookingIds: string[]): Promise<void> {
 
   it("finds exactly the bookings their one kind of history names, through every relation", async () => {
     const found = await financialHistory.bookingsWithFinancialHistory(prisma, bookingIds);
-    const expected = financialHistory.BOOKING_FINANCIAL_HISTORY_RELATIONS
-      .filter((relation) => relation !== "MemberMoneyLine.bookingId")
-      .map(bookingFor);
+    const expected = financialHistory.BOOKING_FINANCIAL_HISTORY_RELATIONS.map(bookingFor);
     expect([...found].sort()).toEqual(expected.sort());
   });
 
@@ -169,6 +173,7 @@ async function clean(bookingIds: string[]): Promise<void> {
   it("releases every kind for teardown, so a suite's cleanup deletes its bookings as before M2", async () => {
     await releaseBookingFinancialHistoryForTeardown(prisma, [
       bookingFor("BookingLedgerLine.bookingId"),
+      bookingFor("MemberMoneyLine.bookingId"),
       bookingFor("MemberCredit.sourceBookingId"),
       bookingFor("MemberCredit.appliedToBookingId"),
       bookingFor("MemberCredit.sourceBookingModificationId"),

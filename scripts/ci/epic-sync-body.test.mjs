@@ -17,6 +17,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { validateChangelogFragment } from "./check-pr-changelog-fragment.mjs";
 import { validateConcurrencyDeclaration } from "./check-pr-concurrency-declaration.mjs";
+import { planDeviationVerdict } from "./check-pr-plan-deviation.mjs";
 import { parseArgs, readSyncMerge } from "./epic-sync-body.mjs";
 import { COMMENT_OPEN, renderEpicSyncPrBody, renderHandSyncPrBody } from "./render-epic-sync-pr-body.mjs";
 
@@ -43,6 +44,8 @@ describe("the hand-opened sync description", () => {
     expect(validateConcurrencyDeclaration(body, files)).toEqual({ outcome: "complete" });
     expect(validateChangelogFragment(body, HOSTILE_CHANGES)).toEqual({ outcome: "none-marker" });
     expect(body).not.toMatch(/^\s*-\s*\[[xX]\]\s*N\/A\b/m);
+    // #4463: passes the plan-deviation section as it will be once enforced.
+    expect(planDeviationVerdict(body, { enforced: true })).toMatchObject({ status: "pass", outcome: "none" });
   });
 
   it("names the merge and both parents, and says what wrote it", () => {

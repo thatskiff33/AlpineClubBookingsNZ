@@ -11,6 +11,8 @@ import {
   sendBookingConfirmedEmail,
 } from "@/lib/email";
 import { providerAmountToCents } from "@/lib/money-provider-amount";
+import { isDeletedXeroPaymentStatus } from "@/lib/xero-inbound/object-links";
+import { sumListedXeroPaymentCents } from "@/lib/xero-inbound/amounts";
 import { findSettlingInternetBankingTransactionId, recordSettlingTransaction } from "@/lib/payment-settler";
 import {
   findSecondInstrumentSettlement,
@@ -46,6 +48,8 @@ import { formatCents } from "@/lib/utils";
 import type { ClubFormat } from "@/lib/club-format";
 import { syncBookingLedgerSettlements } from "@/lib/booking-ledger-settlement-sync";
 import { postCancellationLedgerLines } from "@/lib/booking-ledger-cancellation-sync";
+import { postStoredBookingConfirmationLedgerLines } from "@/lib/booking-ledger-confirmation-sync";
+import { resolveBookingMoneyPostingContext } from "@/lib/member-money/doors";
 import { syncBookingLedgerCredits } from "@/lib/booking-ledger-credit-sync";
 import { sumInternetBankingMintedCentsForBookings } from "@/lib/internet-banking-late-cash-credit";
 import { lockMemberCreditLedger, restoreCreditFromBooking } from "@/lib/member-credit";
@@ -114,9 +118,7 @@ export function classifyXeroInvoiceCashEvidence(
     return amountPaidCents > 0 ? "cash" : "none";
   }
   if (Array.isArray(invoice.payments)) {
-    const cashPayments = invoice.payments.filter(
-      (payment) => String(payment.status ?? "").toUpperCase() !== "DELETED"
-    );
+    const cashPayments = invoice.payments.filter((payment) => !isDeletedXeroPaymentStatus(payment.status));
     return cashPayments.length > 0 ? "cash" : "none";
   }
   return "indeterminate";
@@ -161,17 +163,9 @@ export function quantifyXeroInvoiceCashCents(
       complete = false;
     }
     if (Array.isArray(invoice.payments)) {
-      for (const payment of invoice.payments) {
-        if (String(payment.status ?? "").toUpperCase() === "DELETED") {
-          continue;
-        }
-        const paymentCents = providerAmountToCents(payment.amount);
-        if (paymentCents !== null) {
-          knownCents += paymentCents;
-        } else {
-          complete = false;
-        }
-      }
+      const listed = sumListedXeroPaymentCents(invoice.payments);
+      knownCents += listed.cents;
+      complete &&= listed.complete;
     }
   }
 
@@ -448,6 +442,8 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
     new Set(payments.map((payment) => payment.bookingId))
   );
 
+  // #4627: the journal's posting context, resolved before any payment's transaction (`INV-LOCK-004`).
+  const journal = payments.length > 0 ? await resolveBookingMoneyPostingContext() : null;
   for (const payment of payments) {
     // #3979: written inside the transaction, alerted only after it commits.
     // Declared through `as` so the read after the await is not narrowed to null.
@@ -1253,7 +1249,7 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
           // #3611: the cash goes back as credit, so nothing is kept; a booking
           // already confirmed on the ledger (a mark-paid since reversed) has its
           // stay taken back, under the lock(1) this transaction took first.
-          await postCancellationLedgerLines({ store: tx, bookingId: fresh.bookingId, lodgeId: locked.booking.lodgeId, keptCents: 0, site: "xero-inbound:late-capacity-cancel" });
+          await postCancellationLedgerLines({ store: tx, journal: journal!, bookingId: fresh.bookingId, lodgeId: locked.booking.lodgeId, keptCents: 0, site: "xero-inbound:late-capacity-cancel" });
 
           // #1459: this arm mints too, so it takes the same quantified-cash
           // clamp as the already-cancelled arm — a live booking's invoice can
@@ -1372,6 +1368,9 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
       }
       // #4211 (`INV-PAY-043`): the bank receipt's row settled it; a card capture arriving later is refunded.
       await recordSettlingTransaction(tx, { paymentId: fresh.id, transactionId: await findSettlingInternetBankingTransactionId(tx, fresh.id) });
+      // #4628: this PAID claim is the booking's confirmation, as the settle's is (`INV-MONEY-032`): its
+      // charge lines post here, under lock(1) and the lodge key, and link to the journal charge its binding posted.
+      await postStoredBookingConfirmationLedgerLines(tx, fresh.bookingId, journal!);
       await reconcileBedAllocationsForBookingWithLodgeLockHeld({
         bookingId: fresh.bookingId,
         db: tx,

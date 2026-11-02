@@ -1,6 +1,7 @@
 import { queueOrganiserExtraForChange } from "@/lib/organiser-extra-invoice-queue";
 import { paidByOrganiserInternetBanking } from "@/lib/group-organiser-paid";
 import { postStoredBookingConfirmationLedgerLines } from "@/lib/booking-ledger-confirmation-sync";
+import { resolveBookingMoneyPostingContext } from "@/lib/member-money/doors";
 import { LEDGER_ROWS_OLDEST_FIRST } from "@/lib/payment-ledger-order";
 import { isUnpaidConfirmedWholeLodge } from "@/lib/booking-payment-flow";
 import { bookingAmountOwedCents, bookingWorthCents } from "@/lib/booking-payment-state";
@@ -41,8 +42,8 @@ import {
 import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-coverage-drain";
 import type { HostingCoverageOverrideInput } from "@/lib/adult-member-hosting-same-owner";
 import type { HostingCoverageLinkedMoveInput } from "@/lib/adult-member-hosting-linked-move";
+import { additionalAskEmailTerms } from "@/lib/additional-ask-email-terms";
 import {
-  additionalAmountToName,
   createModificationAdditionalPaymentIntent,
   type ModificationAdditionalAskMint,
   executeBookingModificationRefund,
@@ -356,6 +357,8 @@ export async function modifyBookingDates({
   // The club's format (#3565), for the same reason and at the same point: the
   // edit renders money under both locks, so it is read before either is taken.
   const format = await clubFormatValues();
+  // #4627: the journal's posting context, before the transaction for the same reason.
+  const journal = await resolveBookingMoneyPostingContext();
 
   const result = await prisma.$transaction(async (tx) => {
     // Two-tier lock protocol (#1881): a date change moves money (reduction
@@ -1247,6 +1250,7 @@ export async function modifyBookingDates({
     await queueOrganiserExtraForChange(tx, booking, bookingModification);
     await postModificationLedgerLines({
       store: tx,
+      journal,
       bookingId,
       lodgeId: booking.lodgeId,
       bookingModification,
@@ -1256,7 +1260,7 @@ export async function modifyBookingDates({
     // #4019: this new whole-lodge PAID path bypasses the ordinary settle.
     // Post after guest/night writes and the edit, at the final price only.
     if (zeroDollarAutoPaid && unpaidConfirmedWholeLodge) {
-      await postStoredBookingConfirmationLedgerLines(tx, bookingId);
+      await postStoredBookingConfirmationLedgerLines(tx, bookingId, journal);
     }
 
     // D-3813-6 (`INV-PAY-117`): a reduction on a booking paid by internet
@@ -1613,8 +1617,6 @@ async function dispatchDatePostTransactionSideEffects({
       result.booking.id,
     );
 
-    // #3954 round 9: an ask a reduction retired before it was offered is not named.
-    const namedAdditionalCents = additionalAmountToName(result.additionalAmountCents, additionalMint);
     sendBookingModifiedEmail({
       addedGuests: [], // #4030: a date change adds nobody
       bookingId: result.booking.id,
@@ -1634,16 +1636,10 @@ async function dispatchDatePostTransactionSideEffects({
       refundAmountCents: result.refundAmountCents,
       accountCreditAmountCents: result.accountCreditAmountCents,
       appliedCreditGivenBackCents: result.appliedCreditGivenBackCents,
-      additionalAmountCents: namedAdditionalCents,
+      // #4052: the figure and its method, decided together; never a retired ask (#3954 round 9).
+      ...additionalAskEmailTerms(result, additionalMint),
       billedToOrganiserCents: result.billedToOrganiserCents, // #4299
       unpaidAskCancelled: result.unpaidAskCancelled,
-      additionalPaymentMethod:
-        namedAdditionalCents > 0 &&
-        result.paymentSource === PaymentSource.INTERNET_BANKING
-          ? "INTERNET_BANKING"
-          : namedAdditionalCents > 0 && result.hasSucceededPayment
-            ? "STRIPE"
-            : undefined,
       paymentReference: result.paymentReference,
       xeroInvoiceNumber: result.xeroInvoiceNumber,
       // #2390: same words as the edit preview and the booking history.
@@ -1725,6 +1721,8 @@ export async function adminShiftBookingDates({
   const clubTodayDateOnly = await clubTodayDateOnlyInstant();
   // The club's format (#3565), before the transaction for the same reason.
   const format = await clubFormatValues();
+  // #4627: the journal's posting context, before the transaction for the same reason.
+  const journal = await resolveBookingMoneyPostingContext();
 
   const result = await prisma.$transaction(async (tx) => {
     // Two-tier lock protocol (#1881): this admin date move claims capacity for
@@ -2079,6 +2077,7 @@ export async function adminShiftBookingDates({
     const promo = { promoAdjustmentCents: booking.promoAdjustmentCents };
     await postModificationLedgerLines({
       store: tx,
+      journal,
       bookingId,
       lodgeId: booking.lodgeId,
       bookingModification,

@@ -24,8 +24,16 @@ import {
   type AdminAlertRecipientDeliveryOutcome,
 } from "@/lib/email-admin-alert-escalation";
 import { sendEmail } from "./core";
-import { type EmailAttachment, shouldPersistEmailHtml } from "./internal";
-import { type AdminAlertSendOutcome, type AdminAlertSendResult } from "./admin-alert-send-result";
+import {
+  type EmailAttachment,
+  isCallerRetriedAlertTemplate,
+  shouldPersistEmailHtml,
+} from "./internal";
+import {
+  type AdminAlertSendResult,
+  type UnmuteableAdminAlertOutcome,
+} from "./admin-alert-send-result";
+import { releaseUnreceivedAlertCopies } from "./caller-retried-alert";
 
 /**
  * Candidate rows for any admin-audience email (#2548). The audience is decided
@@ -347,6 +355,12 @@ async function resolveClubSupportMailbox(): Promise<string> {
  * per-recipient error isolation, and the same undeliverable escalation when not one
  * recipient received it. Returns sent/undelivered for callers that own retries.
  *
+ * #4669: for a caller-retried template (`isCallerRetriedAlertTemplate`), a send
+ * nobody received first releases its rows (`caller-retried-alert.ts`), so the
+ * owner's retry is the only one; `queued-for-retry` when the email retry cron
+ * already holds a copy and so keeps them all. A copy lost while another went
+ * out is the cron's to replay.
+ *
  * IT DOES NOT CONSULT THE CLUB-WIDE DELIVERY POLICY EITHER, and that is not an
  * oversight. Every template sent through here is in
  * `LOCKED_DELIVERY_TEMPLATE_NAMES`, so `/admin/notification-delivery-policies`
@@ -369,7 +383,7 @@ export async function sendUnmuteableAdminAlert({
   templateData?: EmailTemplateData;
   /** The area whose editors own the work this alert reports. */
   requirement: AdminAccessRequirement;
-}): Promise<AdminAlertSendOutcome> {
+}): Promise<UnmuteableAdminAlertOutcome> {
   const { emails, source } = await resolveUnmuteableAdminAlertRecipients(
     requirement,
   );
@@ -380,6 +394,7 @@ export async function sendUnmuteableAdminAlert({
     );
   }
 
+  const attemptLogIds: string[] = [];
   const outcomes = await Promise.all(
     emails.map(async (email): Promise<AdminAlertRecipientDeliveryOutcome> => {
       try {
@@ -391,8 +406,15 @@ export async function sendUnmuteableAdminAlert({
           bookingContext: "none",
           templateName,
           templateData,
+          onAttemptLogged: (emailLogId) => attemptLogIds.push(emailLogId),
         });
-        return { status: outcome.status === "sent" ? "sent" : "suppressed" };
+        // A confirmed copy holds the message back and records that. Nothing is
+        // wrong and nothing should retry, so a once-ever caller keeps its claim.
+        // The other withhold reasons are faults and stay undelivered.
+        const heldOnACopy =
+          outcome.status === "withheld_for_environment" &&
+          outcome.reason === "environment_non_production";
+        return { status: outcome.status === "sent" || heldOnACopy ? "sent" : "suppressed" };
       } catch (err) {
         logger.error(
           { err, to: email, templateName },
@@ -403,7 +425,14 @@ export async function sendUnmuteableAdminAlert({
     }),
   );
 
-  if (outcomes.every((outcome) => outcome.status !== "sent")) {
+  const nobodyReceivedIt = outcomes.every((outcome) => outcome.status !== "sent");
+  // Before anything else can fail, and before the owner can retry.
+  const release =
+    nobodyReceivedIt && isCallerRetriedAlertTemplate(templateName)
+      ? await releaseUnreceivedAlertCopies(attemptLogIds, templateName)
+      : null;
+
+  if (nobodyReceivedIt) {
     // No `outcomes.length > 0` guard, unlike sendToAdmins: an empty set is
     // impossible here by construction, so if one ever appears it is a defect and
     // must escalate rather than pass as "nothing to do".
@@ -420,7 +449,8 @@ export async function sendUnmuteableAdminAlert({
       ),
     );
   }
-  return outcomes.some((outcome) => outcome.status === "sent") ? "sent" : "undelivered";
+  if (!nobodyReceivedIt) return "sent";
+  return release === "cron-holds-a-copy" ? "queued-for-retry" : "undelivered";
 }
 
 export async function shouldSendDirectAdminSystemEmail(templateName: string) {

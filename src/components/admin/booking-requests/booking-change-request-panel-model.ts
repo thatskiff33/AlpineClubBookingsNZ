@@ -27,6 +27,22 @@ export interface BookingChangeRequestData {
    * it describes. Answered by the list route through the executor's mapping.
    */
   acceptsOfficerGuests?: boolean;
+  /**
+   * #4533: a pending request on a finished stay that names no promo code, so
+   * the officer may enter one on the member's behalf.
+   */
+  acceptsOfficerPromo?: boolean;
+  /**
+   * #4533 review: the booker's codes the booking carries and the club's
+   * `multiPromoCodes` switch, so the officer's code is ADDED to them, never
+   * sent as a replacement.
+   */
+  officerPromoBase?: { bookerCodes: string[]; multiPromoCodes: boolean } | null;
+  /**
+   * #4533: the promo change the request carries, and whether it is the
+   * request's one change (the only shape whose email the officer may withhold).
+   */
+  promoCorrection?: { codes: string[]; onlyChange: boolean } | null;
   /** #4088: each guest's requested nights, from the list route. */
   requestedGuestNights?: RequestedGuestNights[];
   requestedChanges: {
@@ -90,6 +106,8 @@ export interface BookingChangeRequestData {
       email: string;
     } | null;
     organisation: { name: string; email: string | null } | null;
+    /** #4533: the booking's "No emails" switch (admin list only), which drops the email choice. */
+    noEmails?: boolean;
     /** #4030: the member ids already on the booking (list route only), for the officer's finder. */
     guests?: Array<{ memberId: string | null }>;
     payment: {
@@ -137,6 +155,10 @@ export interface DecisionDraft {
   settlementMethod: FinishedStaySettlementMethod;
   /** #4030 Part B: the guests the officer has entered for a free-text request. */
   officerGuests: NewGuest[];
+  /** #4533: the promo code the officer has entered, as typed ("" when none). */
+  officerPromoCode: string;
+  /** #4533: whether a promo-only correction emails the member (default yes). */
+  notifyMember: boolean;
 }
 
 export const EMPTY_DECISION_DRAFT: DecisionDraft = {
@@ -145,4 +167,6 @@ export const EMPTY_DECISION_DRAFT: DecisionDraft = {
   linkedModificationId: "",
   settlementMethod: "",
   officerGuests: [],
+  officerPromoCode: "",
+  notifyMember: true,
 };

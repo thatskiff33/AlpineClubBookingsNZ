@@ -427,6 +427,17 @@ vi.mock("@/lib/logger", () => ({
   },
 }));
 
+// #4532: the record-and-alert of a payment the app did not create, pinned on its own
+// in `unrecognised-stripe-payment.test.ts`; here only the dispatch reaches it.
+const mockRecordUnrecognisedStripePayment = vi.hoisted(() => vi.fn<(...args: unknown[]) => Promise<void>>(async () => undefined));
+// #4624: the app's own intent that no PRIMARY row settles, pinned on its own in
+// `unrecognised-stripe-payment.test.ts`; here only the dispatch reaches it.
+const mockRecordUnmatchedAppStripePayment = vi.hoisted(() => vi.fn<(...args: unknown[]) => Promise<void>>(async () => undefined));
+vi.mock("@/lib/unrecognised-stripe-payment", () => ({
+  recordUnrecognisedStripePayment: (...args: unknown[]) => mockRecordUnrecognisedStripePayment(...args),
+  recordUnmatchedAppStripePayment: (...args: unknown[]) => mockRecordUnmatchedAppStripePayment(...args),
+}));
+
 import { POST } from "@/app/api/webhooks/stripe/route";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
@@ -1406,7 +1417,9 @@ describe("Stripe webhook Xero alerting", () => {
   });
 
   describe("a saved-card charge attempt whose POST answer was lost is adopted by the event's idempotency key (#3267, INV-PAY-055)", () => {
-    const ATTEMPT_KEY = "pending_charge_booking-1_txn_attempt_1";
+    const ATTEMPT_KEY = "pending_charge_booking-1_txn_attempt_1_v2";
+    /** The attempt row as the adoption's lookup selects it. */
+    const ATTEMPT_ROW = { id: "txn_attempt_1", paymentId: "payment-1", reference: ATTEMPT_KEY, payment: { bookingId: "booking-1" } };
     const paidBooking = {
       id: "booking-1",
       status: "CONFIRMED",
@@ -1435,7 +1448,7 @@ describe("Stripe webhook Xero alerting", () => {
           },
         },
       } as any);
-      mockPaymentTransactionFindFirst.mockResolvedValue({ id: "txn_attempt_1", paymentId: "payment-1" });
+      mockPaymentTransactionFindFirst.mockResolvedValue(ATTEMPT_ROW);
       // Unknown by intent id before adoption, found by it after.
       mockFindPaymentTransactionByIntentId
         .mockResolvedValueOnce(null)
@@ -1459,10 +1472,11 @@ describe("Stripe webhook Xero alerting", () => {
           stripePaymentIntentId: null,
           status: { in: ["PENDING", "PROCESSING"] },
         },
-        select: { id: true, paymentId: true },
+        select: { id: true, paymentId: true, reference: true, payment: { select: { bookingId: true } } },
       });
       expect(mockPaymentTransactionUpdateMany).toHaveBeenCalledWith({
-        where: { id: "txn_attempt_1", status: { notIn: ["REFUNDED", "PARTIALLY_REFUNDED"] } },
+        // #4646: an adoption claims only a row that still holds no intent.
+        where: { id: "txn_attempt_1", status: { notIn: ["REFUNDED", "PARTIALLY_REFUNDED"] }, stripePaymentIntentId: null },
         data: { stripePaymentIntentId: "pi_lost", status: "SUCCEEDED", amountCents: 5000, paymentMethodId: "pm_123" },
       });
       expect(mockReconcilePaymentAggregates).toHaveBeenCalledWith({ paymentId: "payment-1", store: expect.anything() });
@@ -1493,7 +1507,7 @@ describe("Stripe webhook Xero alerting", () => {
           },
         },
       } as any);
-      mockPaymentTransactionFindFirst.mockResolvedValue({ id: "txn_attempt_1", paymentId: "payment-1" });
+      mockPaymentTransactionFindFirst.mockResolvedValue(ATTEMPT_ROW);
       mockFindPaymentTransactionByIntentId
         .mockResolvedValueOnce(null)
         .mockResolvedValueOnce({ id: "txn_attempt_1", paymentId: "payment-1", kind: "PRIMARY", amountCents: 5000, status: "FAILED" });
@@ -1503,7 +1517,7 @@ describe("Stripe webhook Xero alerting", () => {
 
       expect(response.status).toBe(200);
       expect(mockPaymentTransactionUpdateMany).toHaveBeenCalledWith({
-        where: { id: "txn_attempt_1", status: { in: ["PENDING", "PROCESSING"] } },
+        where: { id: "txn_attempt_1", status: { in: ["PENDING", "PROCESSING"] }, stripePaymentIntentId: null },
         data: { stripePaymentIntentId: "pi_lost_declined", status: "FAILED", amountCents: 5000, paymentMethodId: "pm_123" },
       });
       expect(mockMarkPaymentIntentTransactionFailed).toHaveBeenCalledWith({ paymentIntentId: "pi_lost_declined" });
@@ -1528,6 +1542,44 @@ describe("Stripe webhook Xero alerting", () => {
       expect(mockMarkBookingPaymentSucceeded).not.toHaveBeenCalled();
     });
 
+    // #4646: an asynchronous capture arrives with `request: null`, and so does
+    // every redelivery of it; the attempt id its metadata carries is the link.
+    it("payment_intent.succeeded with no request: the attempt row the metadata names is adopted and the booking settled with it as new money, and nothing is called unmatched (#4646)", async () => {
+      mockConstructWebhookEvent.mockReturnValue({
+        id: "evt_async_capture",
+        type: "payment_intent.succeeded",
+        request: null,
+        data: {
+          object: {
+            id: "pi_async",
+            status: "succeeded",
+            amount: 5000,
+            metadata: { bookingId: "booking-1", memberId: "member-1", savedCardAttemptId: "txn_attempt_1" },
+            payment_method: "pm_123",
+          },
+        },
+      } as any);
+      mockPaymentTransactionFindFirst.mockResolvedValue(ATTEMPT_ROW);
+      mockFindPaymentTransactionByIntentId
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce({ id: "txn_attempt_1", paymentId: "payment-1", kind: "PRIMARY", amountCents: 5000, status: "SUCCEEDED" });
+      mockBookingFindUnique.mockResolvedValue(paidBooking);
+
+      const response = await POST(makeRequest());
+
+      expect(response.status).toBe(200);
+      expect(mockPaymentTransactionFindFirst).toHaveBeenCalledWith({
+        where: { id: "txn_attempt_1", kind: "PRIMARY", source: "STRIPE", stripePaymentIntentId: null, status: { in: ["PENDING", "PROCESSING"] } },
+        select: { id: true, paymentId: true, reference: true, payment: { select: { bookingId: true } } },
+      });
+      expect(mockPaymentTransactionUpdateMany).toHaveBeenCalledWith({
+        where: { id: "txn_attempt_1", status: { notIn: ["REFUNDED", "PARTIALLY_REFUNDED"] }, stripePaymentIntentId: null },
+        data: { stripePaymentIntentId: "pi_async", status: "SUCCEEDED", amountCents: 5000, paymentMethodId: "pm_123" },
+      });
+      expect(mockMarkBookingPaymentSucceeded).toHaveBeenCalledWith(expect.objectContaining({ paymentIntentId: "pi_async", recordedByCaller: true }));
+      expect(mockRecordUnmatchedAppStripePayment).not.toHaveBeenCalled();
+    });
+
     it("adopts only a row whose key was built from ITS OWN id for THIS booking: a matching reference on a row whose id disagrees is left alone", async () => {
       mockConstructWebhookEvent.mockReturnValue({
         id: "evt_wrong_row",
@@ -1537,7 +1589,7 @@ describe("Stripe webhook Xero alerting", () => {
           object: { id: "pi_lost", status: "succeeded", amount: 5000, metadata: { bookingId: "booking-1" }, payment_method: "pm_123" },
         },
       } as any);
-      mockPaymentTransactionFindFirst.mockResolvedValue({ id: "txn_somebody_else", paymentId: "payment-9" });
+      mockPaymentTransactionFindFirst.mockResolvedValue({ ...ATTEMPT_ROW, id: "txn_somebody_else", paymentId: "payment-9" });
 
       const response = await POST(makeRequest());
 
@@ -4355,6 +4407,245 @@ describe("Stripe webhook Xero alerting", () => {
   // longer ACKs every redelivery as a duplicate; (b) a concurrent redelivery is
   // no longer ACKed while an in-flight attempt later fails.
   // ---------------------------------------------------------------------------
+  describe("a succeeded payment the app did not create (#4532, INV-INT-032)", () => {
+    function foreignSucceededEvent(eventId: string, metadata: Record<string, string>) {
+      return {
+        id: eventId,
+        type: "payment_intent.succeeded",
+        livemode: true,
+        data: { object: { id: "pi_foreign", amount: 5000, currency: "nzd", metadata } },
+      } as any;
+    }
+
+    it.each([
+      ["no metadata at all (a dashboard charge)", {}],
+      ["a Payment Link's own metadata", { type: "donation", memberId: "m_1" }],
+    ])("records and alerts it, never reaches a booking, and completes the event: %s", async (_label, metadata) => {
+      const event = foreignSucceededEvent("evt_foreign", metadata);
+      mockConstructWebhookEvent.mockReturnValue(event);
+
+      const response = await POST(makeRequest());
+
+      expect(response.status).toBe(200);
+      expect(mockRecordUnrecognisedStripePayment).toHaveBeenCalledTimes(1);
+      expect(mockRecordUnrecognisedStripePayment).toHaveBeenCalledWith(event.data.object, event, CLUB_FORMAT_TEST);
+      expect(mockFindPaymentTransactionByIntentId).not.toHaveBeenCalled();
+      expect(mockApplyGroupSettlementSucceeded).not.toHaveBeenCalled();
+      expect(mockQueueSupersededPaymentIntentRefundRecovery).not.toHaveBeenCalled();
+      expect(mockSendBookingConfirmedEmail).not.toHaveBeenCalled();
+      expect(mockProcessedWebhookUpdateMany).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ status: "COMPLETED" }) }),
+      );
+    });
+
+    it.each([
+      ["a booking's intent", { bookingId: "booking-1" }],
+      ["a group settlement", { type: "group_settlement", groupBookingId: "group-1" }],
+    ])("leaves the app's own intents to their paths: %s", async (_label, metadata) => {
+      mockConstructWebhookEvent.mockReturnValue(foreignSucceededEvent("evt_ours", metadata));
+
+      await POST(makeRequest());
+
+      expect(mockRecordUnrecognisedStripePayment).not.toHaveBeenCalled();
+    });
+
+    it("answers 500 and gives the claim back when the record or alert fails, so Stripe redelivers", async () => {
+      mockConstructWebhookEvent.mockReturnValue(foreignSucceededEvent("evt_foreign_fail", {}));
+      mockRecordUnrecognisedStripePayment.mockRejectedValueOnce(new Error("alert not sent"));
+
+      const response = await POST(makeRequest());
+
+      expect(response.status).toBe(500);
+      expect(mockProcessedWebhookDeleteMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: expect.objectContaining({ eventId: "evt_foreign_fail", status: "PROCESSING" }) }),
+      );
+      expect(mockProcessedWebhookUpdateMany).not.toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ status: "COMPLETED" }) }),
+      );
+    });
+  });
+
+  describe("a succeeded app intent no PRIMARY payment transaction settles (#4624, INV-INT-033)", () => {
+    function appSucceededEvent(eventId: string, metadata: Record<string, string>, request: unknown = null) {
+      return {
+        id: eventId,
+        type: "payment_intent.succeeded",
+        livemode: true,
+        request,
+        data: { object: { id: "pi_app", amount: 12000, currency: "nzd", status: "succeeded", metadata } },
+      } as any;
+    }
+
+    function expectCompletedWithoutSettling() {
+      expect(mockMarkBookingPaymentSucceeded).not.toHaveBeenCalled();
+      expect(mockSendBookingConfirmedEmail).not.toHaveBeenCalled();
+      expect(mockEnqueueXeroBookingInvoiceOperation).not.toHaveBeenCalled();
+      expect(mockProcessedWebhookUpdateMany).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ status: "COMPLETED" }) }),
+      );
+    }
+
+    it("records and alerts a booking intent no payment transaction names, even after the attempt adoption, and settles nothing", async () => {
+      const event = appSucceededEvent("evt_app_unmatched", { bookingId: "booking-1" });
+      mockConstructWebhookEvent.mockReturnValue(event);
+
+      const response = await POST(makeRequest());
+
+      expect(response.status).toBe(200);
+      expect(mockRecordUnmatchedAppStripePayment).toHaveBeenCalledTimes(1);
+      expect(mockRecordUnmatchedAppStripePayment).toHaveBeenCalledWith(event.data.object, event, CLUB_FORMAT_TEST, {
+        bookingId: "booking-1",
+        matchedKind: null,
+      });
+      expect(mockRecordUnrecognisedStripePayment).not.toHaveBeenCalled();
+      expectCompletedWithoutSettling();
+    });
+
+    it("records and alerts a booking intent whose only row is an ADDITIONAL one while the intent is not marked an additional ask", async () => {
+      const event = appSucceededEvent("evt_app_not_primary", { bookingId: "booking-1" });
+      mockConstructWebhookEvent.mockReturnValue(event);
+      mockFindPaymentTransactionByIntentId.mockResolvedValue({
+        id: "txn-additional",
+        paymentId: "payment-1",
+        kind: "ADDITIONAL",
+        amountCents: 12000,
+        status: "PENDING",
+      });
+
+      const response = await POST(makeRequest());
+
+      expect(response.status).toBe(200);
+      expect(mockRecordUnmatchedAppStripePayment).toHaveBeenCalledWith(event.data.object, event, CLUB_FORMAT_TEST, {
+        bookingId: "booking-1",
+        matchedKind: "ADDITIONAL",
+      });
+      expectCompletedWithoutSettling();
+    });
+
+    it("re-reads after a failed adoption: a saved-card charge whose own settle wrote the intent meanwhile is settled, never alerted (#4624 review)", async () => {
+      mockConstructWebhookEvent.mockReturnValue(appSucceededEvent("evt_app_settled_meanwhile", { bookingId: "booking-1" }));
+      // First read: no row yet. The adoption finds no null-intent attempt row (the
+      // request's settle has just written the intent onto it). The re-read finds it.
+      mockPaymentTransactionFindFirst.mockResolvedValue(null);
+      mockFindPaymentTransactionByIntentId.mockResolvedValueOnce(null).mockResolvedValueOnce({
+        id: "txn_attempt_settled",
+        paymentId: "payment-1",
+        kind: "PRIMARY",
+        amountCents: 12000,
+        status: "SUCCEEDED",
+      });
+      mockBookingFindUnique.mockResolvedValue({
+        id: "booking-1",
+        status: "PAYMENT_PENDING",
+        finalPriceCents: 12000,
+        checkIn: new Date("2026-07-10"),
+        checkOut: new Date("2026-07-12"),
+        member: { firstName: "Alice", lastName: "Example", email: "alice@example.com" },
+        payment: null,
+      });
+      mockMarkBookingPaymentSucceeded.mockResolvedValueOnce({ outcome: "already_paid", bookingId: "booking-1", bumpedBookingIds: [] });
+
+      const response = await POST(makeRequest());
+
+      expect(response.status).toBe(200);
+      expect(mockFindPaymentTransactionByIntentId).toHaveBeenCalledTimes(2);
+      expect(mockRecordUnmatchedAppStripePayment).not.toHaveBeenCalled();
+      expect(mockMarkBookingPaymentSucceeded).toHaveBeenCalledWith(
+        expect.objectContaining({ bookingId: "booking-1", paymentIntentId: "pi_app", recordedByCaller: false }),
+      );
+    });
+
+    it("answers 500 and gives the claim back when the record or alert fails, so Stripe redelivers", async () => {
+      mockConstructWebhookEvent.mockReturnValue(appSucceededEvent("evt_app_fail", { bookingId: "booking-1" }));
+      mockRecordUnmatchedAppStripePayment.mockRejectedValueOnce(new Error("alert not sent"));
+
+      const response = await POST(makeRequest());
+
+      expect(response.status).toBe(500);
+      expect(mockProcessedWebhookDeleteMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: expect.objectContaining({ eventId: "evt_app_fail", status: "PROCESSING" }) }),
+      );
+    });
+
+    // The expected cases: each is routed before the unmatched return, so none is recorded or alerted.
+    it("stays silent for a booking intent its PRIMARY row settles (the ordinary payment)", async () => {
+      mockConstructWebhookEvent.mockReturnValue(appSucceededEvent("evt_app_primary", { bookingId: "booking-1" }));
+      mockFindPaymentTransactionByIntentId.mockResolvedValue({
+        id: "txn-1",
+        paymentId: "payment-1",
+        kind: "PRIMARY",
+        amountCents: 12000,
+        status: "PROCESSING",
+      });
+      mockBookingFindUnique.mockResolvedValue({
+        id: "booking-1",
+        status: "PAYMENT_PENDING",
+        finalPriceCents: 12000,
+        checkIn: new Date("2026-07-10"),
+        checkOut: new Date("2026-07-12"),
+        member: { firstName: "Alice", lastName: "Example", email: "alice@example.com" },
+        payment: null,
+      });
+
+      await POST(makeRequest());
+
+      expect(mockMarkBookingPaymentSucceeded).toHaveBeenCalled();
+      expect(mockRecordUnmatchedAppStripePayment).not.toHaveBeenCalled();
+    });
+
+    it("stays silent for an additional ask's intent, which its own handler takes", async () => {
+      mockConstructWebhookEvent.mockReturnValue(
+        appSucceededEvent("evt_app_additional", { bookingId: "booking-1", type: "modification_additional" }),
+      );
+
+      await POST(makeRequest());
+
+      expect(mockRecordUnmatchedAppStripePayment).not.toHaveBeenCalled();
+      expect(mockRecordUnrecognisedStripePayment).not.toHaveBeenCalled();
+    });
+
+    it("stays silent for a group organiser's settlement intent, which the settlement takes", async () => {
+      mockConstructWebhookEvent.mockReturnValue(
+        appSucceededEvent("evt_app_group", { type: "group_settlement", groupBookingId: "group-1" }),
+      );
+
+      await POST(makeRequest());
+
+      expect(mockApplyGroupSettlementSucceeded).toHaveBeenCalled();
+      expect(mockRecordUnmatchedAppStripePayment).not.toHaveBeenCalled();
+    });
+
+    it("stays silent for a superseded intent the refund machinery owns, with or without a ledger row", async () => {
+      mockConstructWebhookEvent.mockReturnValue(appSucceededEvent("evt_app_superseded", { bookingId: "booking-1" }));
+      mockQueueSupersededPaymentIntentRefundRecovery.mockResolvedValueOnce(true);
+
+      const response = await POST(makeRequest());
+
+      expect(response.status).toBe(200);
+      expect(mockRecordUnmatchedAppStripePayment).not.toHaveBeenCalled();
+    });
+
+    it("stays silent for a saved-card attempt whose lost answer the event's idempotency key adopts", async () => {
+      // The original key, the one this release mints (#4646 mints `_v2` only from #4682).
+      const key = "pending_charge_booking-1_txn_attempt_9";
+      mockConstructWebhookEvent.mockReturnValue(
+        appSucceededEvent("evt_app_adopted", { bookingId: "booking-1" }, { id: "req_9", idempotency_key: key }),
+      );
+      mockPaymentTransactionFindFirst.mockResolvedValue({ id: "txn_attempt_9", paymentId: "payment-1", reference: key, payment: { bookingId: "booking-1" } });
+      mockFindPaymentTransactionByIntentId.mockResolvedValueOnce(null).mockResolvedValueOnce({
+        id: "txn_attempt_9",
+        paymentId: "payment-1",
+        kind: "PRIMARY",
+        amountCents: 12000,
+        status: "SUCCEEDED",
+      });
+
+      await POST(makeRequest());
+
+      expect(mockRecordUnmatchedAppStripePayment).not.toHaveBeenCalled();
+    });
+  });
+
   describe("webhook dedup processing lease (#1887)", () => {
     function succeededEvent(eventId: string) {
       return {

@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { applyLinkMetadataMerge, isLinkMetadataMergeStatement, readLinkMetadataMerge } from "./support/xero-link-metadata-merge-double";
 
 /**
  * #2901 cross-module regression: note creation/normalization
@@ -280,6 +281,11 @@ const fakePrisma = vi.hoisted(() => {
         );
         return row ? { ...row } : null;
       },
+      findUniqueOrThrow: async (args: { where: { id: string } }) => {
+        const row = state.links.find((link) => link.id === args.where.id);
+        if (!row) throw new Error(`link ${args.where.id} not found`);
+        return { ...row };
+      },
       upsert: async (args: {
         where: {
           localModel_localId_xeroObjectType_xeroObjectId_role: {
@@ -356,7 +362,16 @@ const fakePrisma = vi.hoisted(() => {
     },
     $transaction: async <T>(fn: (tx: unknown) => Promise<T>) => fn(client),
     // #4161: the heal's link row lock; the fake runs one writer at a time.
-    $executeRaw: async () => 1,
+    // #4445: the funnel's metadata merge is a statement too, applied here by
+    // its one test double to the row it names.
+    $executeRaw: async (template: TemplateStringsArray, ...values: unknown[]) => {
+      if (!isLinkMetadataMergeStatement(template)) return 1;
+      const merge = readLinkMetadataMerge(values);
+      const row = state.links.find((link) => link.id === merge.linkId);
+      if (!row) return 0;
+      row.metadata = applyLinkMetadataMerge(row.metadata, merge) as FakeLinkRow["metadata"];
+      return 1;
+    },
   };
   return client;
 });

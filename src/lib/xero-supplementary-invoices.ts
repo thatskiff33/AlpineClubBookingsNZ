@@ -157,7 +157,7 @@ export async function createXeroSupplementaryInvoice(params: {
 
   const organiserBilling = booking ? await resolveOrganiserBilling(prisma, booking) : null;
   const originalInvoiceId = organiserBilling?.combinedInvoiceId ?? booking?.payment?.xeroInvoiceId;
-  const recordPayment = organiserBilling ? false : requestedRecordPayment;
+  let recordPayment = organiserBilling ? false : requestedRecordPayment;
 
   if (!booking || !originalInvoiceId) {
     if (syncOperation) {
@@ -279,6 +279,14 @@ export async function createXeroSupplementaryInvoice(params: {
       where: { id: syncOperation!.id },
       data: { requestPayload: sanitizeForJson(queuedRequestPayload) },
     });
+  }
+  // #4494 (`INV-ADDPAY-046`): a gap invoice queued before the fix, or by the
+  // previous colour, may pay from cash overlapping the credit-release sweep's
+  // share. Raised unpaid instead; the payload is stored below before the Xero call.
+  if (recordPayment && queuedRequestPayload && syncOperation) {
+    const { unpaidGapPayloadIfOverlapping } = await import("@/lib/credit-release-xero-payment");
+    const unpaid = await unpaidGapPayloadIfOverlapping({ operationId: syncOperation.id, bookingId, payload: queuedRequestPayload });
+    if (unpaid) [recordPayment, queuedRequestPayload] = [false, unpaid];
   }
   // Read the club day ONCE. `buildInvoice` is called for the recorded
   // `requestPayload` and again for each contact-repair attempt, so a per-call

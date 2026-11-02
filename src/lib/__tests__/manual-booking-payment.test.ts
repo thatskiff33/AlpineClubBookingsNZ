@@ -67,6 +67,11 @@ const mocks = vi.hoisted(() => ({
   cancelPaymentIntentIfCancellable: vi.fn(),
 }));
 
+// #4627: the journal half runs on PostgreSQL (`booking-ledger-journal.realdb.test.ts`), not on this fake store.
+vi.mock("@/lib/member-money/doors", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/member-money/doors")),
+  postBookingLedgerJournal: vi.fn(async () => null),
+}));
 vi.mock("@/lib/prisma", () => ({
   prisma: { $transaction: (...args: unknown[]) => mocks.transaction(...args) },
 }));

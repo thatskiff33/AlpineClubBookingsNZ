@@ -1450,6 +1450,15 @@ const ROW_LOCK_SITE_INVENTORY: Record<string, number> = {
   // Singleton-keyed; no advisory lock; disjoint from booking/money writers. See
   // docs/CONCURRENCY_AND_LOCKING.md -> "Club-theme logo writer".
   "src/lib/club-theme.ts": 1,
+  // Per-account password throttle (#4609, INV-AUTH): `claimPasswordAttempt`
+  // ensures the account's `LoginThrottle` row, then locks it
+  // (`SELECT 1 … FOR UPDATE`) before the read-decide-count, so parallel guesses
+  // queue and a burst at the end of a wait admits one. Keyed on an immutable
+  // HMAC id; no advisory key, never composed with another lock, no provider
+  // call, and the password compare runs after commit. A row lost between the
+  // ensure and the lock (a clear or the idle sweep) is ensured and locked once
+  // more. See docs/CONCURRENCY_AND_LOCKING.md -> "Login throttle claim".
+  "src/lib/login-throttle.ts": 1,
   // #3029 C3: the held-party dietary rebuild locks the booking's guest rows
   // (`SELECT 1 … FOR UPDATE`, id order) before reading the values it carries,
   // so a concurrent single-row admin edit is read or refused, never lost.
@@ -1463,6 +1472,18 @@ const ROW_LOCK_SITE_INVENTORY: Record<string, number> = {
   // refund writer takes it. See docs/CONCURRENCY_AND_LOCKING.md ->
   // "Booking-ledger back-post".
   "src/lib/booking-ledger-back-post.ts": 2,
+  // #4627 (Ledger M3b): the journal adapter takes the booking row
+  // (`SELECT 1 … FOR NO KEY UPDATE`) before it reads the owner it posts as the
+  // receivable's debtor. Every door has already UPDATEd that row in the same
+  // transaction, after lock(1) and its lodge key, so this adds no edge; member
+  // merge's owner move is its counterpart. See docs/CONCURRENCY_AND_LOCKING.md ->
+  // "The M3b booking doors and member merge's journal transfer".
+  "src/lib/member-money/internal/booking-posting.ts": 1,
+  // #4627: an edit review's closure takes its booking row straight after its claim,
+  // before any credit write (giveBackCancelledShareCredit, applyLocalRefundAllocation,
+  // an account-credit mint: each a KEY SHARE on the owner's Member row), so neither
+  // those nor the journal adapter's owner read invert against member merge's owner move.
+  "src/lib/manual-refund-task-resolution.ts": 1,
   // #3635 (review outbox F1/F4): the kept-late-capture enqueue and the
   // worker's send-time decision lock the #3639 approval task's row
   // (`SELECT 1 … FOR UPDATE`), the row the dismissal, reopen and approval

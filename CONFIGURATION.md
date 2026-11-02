@@ -2524,6 +2524,26 @@ Existing env-configured deployments upgrading past #2079 must re-enter Xero
 credentials in-app and reconnect Xero — see the **upgrade runbook** in
 `DEPLOYMENT.md`.
 
+## GST treatment (member-money ledger)
+
+The club's GST treatment is a database setting, `ClubTaxSettings`
+(`INV-CONFIG-007`, #4626). It records three things: whether the club is
+GST-registered, the rate in basis points (1500 is 15%), and the club date it
+applies from. There is no environment variable and, for now, no screen.
+
+- **Default.** With no row, the club is GST-registered at 15% from 1 October
+  2010, with GST included in every price. That is the treatment the Xero
+  invoices already show (the inclusive `OUTPUT2` code), so a deployment that
+  never sets it records charges exactly as it invoices them.
+- **Who reads it.** Only the member-money ledger, which splits tax out of each
+  charge in whole cents. Xero does not read it yet: its documents still
+  hard-code the inclusive 15% code until #4632.
+- **Nothing writes it yet,** on purpose. Changing it before Xero reads it would
+  give the ledger and the invoices two different answers, so a census fails on
+  any code that writes the row. A club that is not GST-registered needs the
+  screen #4632 brings before the ledger starts recording its booking charges
+  (M3b). Until then the ledger posts nothing for any club.
+
 ## Finance dashboard
 
 ### Membership and joining fee authority

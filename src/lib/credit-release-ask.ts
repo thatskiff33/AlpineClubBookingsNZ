@@ -35,6 +35,7 @@ import {
 
 import { bookingLedgerResidualCents, outstandingAdditionalAskCents } from "@/lib/additional-payment-ask";
 import { sizeCreditReleaseAsk } from "@/lib/credit-release-ask-size";
+import { CREDIT_RELEASE_MERGE_WAIT_WORDS, readCreditReleaseMergeVerdict } from "@/lib/credit-release-merge";
 import { createAuditLog } from "@/lib/audit";
 import { signalCreditReleaseToOfficers } from "@/lib/release-ask-officer-signal";
 import { bookingOwner } from "@/lib/booking-owner";
@@ -51,6 +52,7 @@ import {
   creditReleaseIdForAskRecoveryKey,
 } from "@/lib/credit-release-ask-keys";
 import { isCapturedPaymentStatus } from "@/lib/booking-payment-state";
+import type { PaymentRecoveryClaim } from "@/lib/payment-recovery-constants";
 import { lockPaymentForRefundedTotal, upsertPaymentIntentTransaction } from "@/lib/payment-transactions";
 import { prisma } from "@/lib/prisma";
 import { mintedIntentCustomerId, resolveAskCustomerId } from "@/lib/reissued-ask-mint";
@@ -64,13 +66,16 @@ import { localChargeRefusal } from "@/lib/stripe-charge-currency";
  * `payment-recovery.ts` and importing that module here would be a cycle.
  */
 export interface CreditReleaseAskRunnerDeps {
-  /** Writes under the runner's claim, in one transaction (`holdAdditionalIntentRecoveryClaim`). */
+  /** Writes under the runner's claim, in one transaction (`holdAdditionalIntentRecoveryClaim`); returns the re-stamped claim. */
   holdClaim: <T>(
-    operation: Pick<PaymentRecoveryOperation, "id" | "paymentId" | "attempts" | "processingStartedAt">,
+    operation: PaymentRecoveryClaim & Pick<PaymentRecoveryOperation, "paymentId">,
     write: (store: Prisma.TransactionClient) => Promise<T>,
-  ) => Promise<{ value: T; heldAt: Date } | null>;
-  /** Closes the row (`completePaymentRecoveryOperation`). */
-  complete: (operationId: string) => Promise<unknown>;
+  ) => Promise<{ value: T; claim: PaymentRecoveryClaim } | null>;
+  /**
+   * Closes the row only while this attempt still holds `claim` (`completePaymentRecoveryOperation`,
+   * #4675), in `store`'s transaction when given. `true` only for the call that closed it.
+   */
+  complete: (claim: PaymentRecoveryClaim, store?: Prisma.TransactionClient) => Promise<boolean>;
   /**
    * Puts the row back to wait at the longest retry interval WITHOUT spending the attempt the
    * claim took (`waitPaymentRecoveryOperation`): for a release blocked only by something that
@@ -79,9 +84,9 @@ export interface CreditReleaseAskRunnerDeps {
   wait: (operation: PaymentRecoveryOperation, message: string) => Promise<unknown>;
 }
 
-/** What a release waiting behind an unpaid edit request records on its recovery row. */
+/** What a release that cannot merge into an unpaid edit request records on its recovery row (#4491). */
 export const CREDIT_RELEASE_WAITING_ON_EDIT_MESSAGE =
-  "An unpaid edit request is open on this booking; the released-credit request waits until it is paid or withdrawn";
+  "An unpaid edit request is open on this booking and its Xero invoice cannot follow a combined request; the released-credit request waits until it is paid or withdrawn";
 
 /** Why a row was closed without asking for anything: the audit row's wording and its code. */
 type NoAskReason =
@@ -103,26 +108,39 @@ const NO_ASK_SUMMARY: Record<NoAskReason, string> = {
   "below-card-minimum": "The released credit is too small to collect by card; an officer was told",
 };
 
+/**
+ * Closes the row having asked for nothing, and records why - the audit row in the close's own
+ * transaction, written only when this attempt's claim closed it (#4675). An attempt the stale
+ * reaper gave up on closes nothing and records nothing: the row is another runner's, which may
+ * find money owed and ask for it. Returns whether it closed.
+ */
 async function closeWithoutAsk(
   operation: PaymentRecoveryOperation,
   reason: NoAskReason,
   deps: CreditReleaseAskRunnerDeps,
   detail: Record<string, unknown> = {},
-): Promise<void> {
-  await createAuditLog({
-    action: "payment.credit_release_ask.not_raised",
-    targetId: operation.bookingId,
-    entityType: "Booking",
-    entityId: operation.bookingId,
-    category: "payment",
-    severity: reason === "below-card-minimum" ? "important" : "info",
-    outcome: "success",
-    summary: NO_ASK_SUMMARY[reason],
-    details: reason,
-    metadata: { operationId: operation.id, releasedCents: operation.amountCents, ...detail },
+): Promise<boolean> {
+  const closed = await prisma.$transaction(async (tx) => {
+    if (!(await deps.complete(operation, tx))) return false;
+    await createAuditLog(
+      {
+        action: "payment.credit_release_ask.not_raised",
+        targetId: operation.bookingId,
+        entityType: "Booking",
+        entityId: operation.bookingId,
+        category: "payment",
+        severity: reason === "below-card-minimum" ? "important" : "info",
+        outcome: "success",
+        summary: NO_ASK_SUMMARY[reason],
+        details: reason,
+        metadata: { operationId: operation.id, releasedCents: operation.amountCents, ...detail },
+      },
+      tx,
+    );
+    return true;
   });
-  logger.info({ operationId: operation.id, bookingId: operation.bookingId, reason }, NO_ASK_SUMMARY[reason]);
-  await deps.complete(operation.id);
+  if (closed) logger.info({ operationId: operation.id, bookingId: operation.bookingId, reason }, NO_ASK_SUMMARY[reason]);
+  return closed;
 }
 
 /** Everything the request's size and the ask it supersedes were read from; compared again under the lock. */
@@ -205,26 +223,42 @@ export async function processCreditReleaseAskOperation(
     return;
   }
 
-  // An unpaid EDIT request may have its own supplementary invoice, which a release request
-  // superseding it could not pay (an edit made after the release merges instead, `INV-ADDPAY-048`).
-  // The release waits for it to be paid or withdrawn - for as long as that takes. A throw here used
-  // to spend the row's attempts in about 17 hours and leave it terminal, and the sweep never looks
-  // at a release twice, so the money was never asked for. Now the row is put back at the longest
-  // retry interval with its attempt handed back, and the officers are told once (`INV-ADDPAY-051`).
-  // Asked BEFORE the Xero read below: it needs only the payment and the ledger, and a waiting row
-  // must never take the read's failure path (an unreachable Xero would otherwise spend its attempts
-  // and make it terminal after all), nor read Xero every 12 hours for nothing.
-  if (outstandingAdditionalAskCents(payment) > 0 && payment.additionalPaymentIntentId) {
-    const live = await prisma.paymentTransaction.findUnique({
-      where: { stripePaymentIntentId: payment.additionalPaymentIntentId },
-      select: { reason: true },
-    });
-    if (live?.reason !== CREDIT_RELEASE_ASK_REASON) {
+  // An unpaid EDIT request open on the booking is MERGED into this one (#4491, `INV-ADDPAY-052`):
+  // the mint below carries its balance and supersedes it, and the supersede moves its waiting
+  // supplementary invoice onto this request, so one card payment pays both invoices. Where that
+  // move would not take every edit invoice, the release waits for the edit to be paid or withdrawn
+  // - for as long as that takes. A throw here used to spend the row's attempts in about 17 hours
+  // and leave it terminal, and the sweep never looks at a release twice, so the money was never
+  // asked for. Now the row is put back at the longest retry interval with its attempt handed back,
+  // and the officers are told once (`INV-ADDPAY-051`). Decided BEFORE the Xero read below: it needs
+  // only the database, and a waiting row must never take the read's failure path (an unreachable
+  // Xero would otherwise spend its attempts and make it terminal after all), nor read Xero every
+  // 12 hours for nothing.
+  const liveAsk =
+    outstandingAdditionalAskCents(payment) > 0 && payment.additionalPaymentIntentId
+      ? {
+          id: payment.id,
+          bookingId: operation.bookingId,
+          xeroInvoiceId: payment.xeroInvoiceId,
+          additionalAmountCents: payment.additionalAmountCents,
+          additionalPaymentIntentId: payment.additionalPaymentIntentId,
+        }
+      : null;
+  if (liveAsk) {
+    const merge = await readCreditReleaseMergeVerdict(prisma, liveAsk);
+    if (!merge.merge) {
       await signalCreditReleaseToOfficers({
         bookingId: operation.bookingId,
         reason: "waiting-on-edit-request",
         key: `waiting-on-edit-request:${operation.id}`,
-        metadata: { operationId: operation.id, releasedCents: operation.amountCents, editPaymentIntentId: payment.additionalPaymentIntentId },
+        // Why it could not merge, in the officers' own note (#4491).
+        detail: CREDIT_RELEASE_MERGE_WAIT_WORDS[merge.reason],
+        metadata: {
+          operationId: operation.id,
+          releasedCents: operation.amountCents,
+          editPaymentIntentId: liveAsk.additionalPaymentIntentId,
+          notMergedBecause: merge.reason,
+        },
       });
       logger.info({ operationId: operation.id, bookingId: operation.bookingId }, CREDIT_RELEASE_WAITING_ON_EDIT_MESSAGE);
       await deps.wait(operation, CREDIT_RELEASE_WAITING_ON_EDIT_MESSAGE);
@@ -280,7 +314,8 @@ export async function processCreditReleaseAskOperation(
   }
   const refusal = localChargeRefusal(format, ask.amountCents);
   if (refusal) {
-    await closeWithoutAsk(operation, "below-card-minimum", deps, { askCents: ask.amountCents });
+    // #4675: the officers are told only by the attempt that closed the row.
+    if (!(await closeWithoutAsk(operation, "below-card-minimum", deps, { askCents: ask.amountCents }))) return;
     const { alertPaymentRecoveryOfficers } = await import("@/lib/payment-recovery-alert");
     await alertPaymentRecoveryOfficers(
       {
@@ -325,6 +360,11 @@ export async function processCreditReleaseAskOperation(
     const fresh = await store.payment.findUnique({ where: { id: operation.paymentId }, include: { booking: true } });
     if (!fresh?.booking || sizingBasis(fresh) !== sizingBasis(payment)) {
       throw new Error("The booking's payment changed while the released-credit request was being raised; retrying");
+    }
+    // The merge decided again under the lock (#4491): an edit invoice that can no longer follow
+    // this request (sent, retired or resolved since) means the row retries and waits instead.
+    if (liveAsk && !(await readCreditReleaseMergeVerdict(store, liveAsk)).merge) {
+      throw new Error("The unpaid edit request on the booking changed while the released-credit request was being raised; retrying");
     }
     await refuseAdoptedIntentOnLedger(store, { intent, adopted: false });
     await upsertPaymentIntentTransaction({
@@ -371,10 +411,12 @@ export async function processCreditReleaseAskOperation(
     });
   });
   if (held === null) {
-    logger.warn(
-      { operationId: operation.id, bookingId: operation.bookingId, paymentIntentId: intent.id },
-      "Credit-release ask lost its claim before writing its row; nothing written (the minted intent was never offered to anyone)",
-    );
+    // #4652 (`INV-PAY-120`): nothing written, and the hold's transaction has ended. The intent was
+    // never offered; it is cancelled at Stripe, best-effort, once a reclaiming runner closed this
+    // row without it and nothing names it (`settleLostRecoveryClaimHold`). Minted under this
+    // release's own key, never adopted. Dynamic import: that module reaches the recovery runner.
+    const { settleLostRecoveryClaimHold } = await import("@/lib/reissued-ask-abandoned-intent");
+    await settleLostRecoveryClaimHold({ operationId: operation.id, bookingId: operation.bookingId, paymentIntentId: intent.id, adopted: false });
     return;
   }
   await cancelSupersededAdditionalIntentsNow({
@@ -393,5 +435,6 @@ export async function processCreditReleaseAskOperation(
     paymentId: operation.paymentId,
     paymentIntentId: intent.id,
   });
-  await deps.complete(operation.id);
+  // Under the claim the hold re-stamped (#4675).
+  await deps.complete(held.claim);
 }

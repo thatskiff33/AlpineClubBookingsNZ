@@ -719,7 +719,17 @@ export const AUDIT_CENSUS_TOTALS = {
   // `privacy.retention.member_anonymised` (`privacy`, so only membership:view readers see
   // which member was anonymised), each an awaited `createAuditLog` with a literal category.
   // RE-MEASURED with `pnpm run audit:census` after merging #4555.
-  writeSites: 528,
+  // 528 -> 529 (#4533): `booking-change-request.create` for the promo correction request an
+  // officer raises from Edit Booking on a finished stay, a `logAudit` with a literal `booking`
+  // category, like the member's own request. RE-MEASURED with `pnpm run audit:census`.
+  // 529 -> 530 (#4426): `xero.refund_credit_note.late_note_not_recorded`, the one row a refund
+  // credit-note create writes when Xero answers after its job was resolved by hand recording a
+  // note, an awaited `createAuditLog` with a literal `xero` category. RE-MEASURED with `pnpm run audit:census`.
+  // 530 -> 531 (#4655): `xero.organiser_adjustment_note.late_note_not_recorded`, the one row an
+  // organiser adjustment's credit-note create writes when Xero answers after its job was reset
+  // and the row may not take the note, an awaited `createAuditLog` with a literal `xero` category.
+  // RE-MEASURED with `pnpm run audit:census`.
+  writeSites: 531,
   /**
    * Of those, sites whose event object carries no `category` key.
    *
@@ -822,7 +832,8 @@ export const AUDIT_CENSUS_TOTALS = {
     // 273 -> 273 (#4149): the two handlers' refund entries, one shared writer,
     // and the lost-record recovery's own entry.
     // 273 -> 274 (#4170): the refunded-outside-the-app entry.
-    logAudit: { total: 274, uncategorised: 0 },
+    // 274 -> 275 (#4533): the officer's finished-stay promo correction request, above.
+    logAudit: { total: 275, uncategorised: 0 },
     // 101 -> 102 (#2627): the deletion-approval release, above.
     // 102 -> 104 (#2595): the two reviewed-move writes, above.
     // 104 -> 105 (#2649): the return-to-waitlist repair, above.
@@ -937,7 +948,9 @@ export const AUDIT_CENSUS_TOTALS = {
     // 161 -> 162 (#4359): the re-send hold's row, above.
     // 162 -> 165 (#4432): the sync-now outcome, its failure and the webhook threshold, above.
     // 165 -> 167 (#4457): the retention settings update and the member anonymisation, above.
-    createAuditLog: { total: 167, uncategorised: 0 },
+    // 167 -> 168 (#4426): the late refund note's row, above.
+    // 168 -> 169 (#4655): the late organiser adjustment note's row, above.
+    createAuditLog: { total: 169, uncategorised: 0 },
     // 8 -> 9 (#2581 child 2 review): `recordAgeUpParentEmailHandoffAudit`
     // moved off its hand-built `prisma.auditLog.create`, the last one in `src/`.
     // Same row, same dedupe keys (`action` + `subjectMemberId` + `outcome`) —
@@ -1069,7 +1082,9 @@ export const AUDIT_CENSUS_TOTALS = {
     // money changing, read by booking officers like every `booking.modify.*`.
     // 107 -> 108 (#3750): the executed change-request approval, `booking` like
     // the acknowledgement of the same action.
-    booking: 108,
+    // 108 -> 109 (#4533): the officer's finished-stay promo correction request,
+    // `booking` like the member's own request — the same readers.
+    booking: 109,
     // 16 -> 33 (#2581 child 2): the seventeen money writers — subscription
     // billing, member credit, fee configuration, saved-card charges and the five
     // Stripe webhook outcomes. `payment` is `support` plus `finance`, the
@@ -1420,7 +1435,11 @@ export const AUDIT_CENSUS_TOTALS = {
     // Nobody's readership changes.
     // 44 -> 47 (#4432): `XERO_SYNC_NOW` (outcome and failure) and
     // `XERO_WEBHOOK_THRESHOLD_UPDATED`, beside the other `xero` rows. Nobody's readership changes.
-    xero: 47,
+    // 47 -> 48 (#4426): `xero.refund_credit_note.late_note_not_recorded`, beside the other `xero` rows.
+    // Nobody's readership changes.
+    // 48 -> 49 (#4655): `xero.organiser_adjustment_note.late_note_not_recorded`, beside the other
+    // `xero` rows. Nobody's readership changes.
+    xero: 49,
     // 12 -> 14 (#2581 child 2): `BULK_COMMUNICATION_SENT` and
     // `EMAIL_SUPPRESSION_CLEARED`. Safe only BECAUSE child 1 moved
     // `communication` out of the support-only system entry into the membership

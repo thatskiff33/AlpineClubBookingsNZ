@@ -174,24 +174,14 @@ export const DELETION_REJECT_AFTER_RELEASE_NOTICE_REQUIRED_CODE =
 export const DELETION_REJECT_AFTER_RELEASE_NOTICE_REQUIRED_MESSAGE = `This rejection must be emailed to the member. ${DELETION_APPROVAL_RELEASED_DISCLOSURE} Declining the request silently would leave them with cancelled stays and no notice at all.`;
 
 /**
- * Prisma's transaction contention codes: P2028 (transaction API error, which
- * covers an exhausted `maxWait`/`timeout`) and P2034 (write conflict / deadlock,
- * retryable by definition). Same set, and the same 503 answer, as
- * `src/app/api/admin/site-style/route.ts` and `admin-bed-allocation-routes.ts`,
- * for the same reason those chose it: the counterpart writer legitimately holds
- * the row for the length of a whole transaction, so an exhausted wait is
- * contention rather than a fault, nothing was written, and trying again shortly
- * is the real remedy. See `docs/CONCURRENCY_AND_LOCKING.md`.
+ * The release's answer to Prisma's transaction contention (P2028, P2034:
+ * `isTransactionContention`), the same 503 as `src/app/api/admin/site-style/route.ts`
+ * and `admin-bed-allocation-routes.ts`, for the same reason those chose it: the
+ * counterpart writer legitimately holds the row for the length of a whole
+ * transaction, so an exhausted wait is contention rather than a fault, nothing
+ * was written, and trying again shortly is the real remedy. See
+ * `docs/CONCURRENCY_AND_LOCKING.md`.
  */
-const TRANSACTION_CONTENTION_CODES = new Set(["P2028", "P2034"]);
-
-export function isDeletionRequestTransactionContention(
-  error: unknown,
-): boolean {
-  const code = (error as { code?: unknown } | null)?.code;
-  return typeof code === "string" && TRANSACTION_CONTENTION_CODES.has(code);
-}
-
 export const DELETION_REQUEST_RELEASE_CONTENDED_CODE =
   "DELETION_REQUEST_RELEASE_CONTENDED";
 export const DELETION_REQUEST_RELEASE_CONTENDED_MESSAGE =
@@ -409,7 +399,7 @@ export async function claimDeletionRequestDecision(
  * holds the row for a whole anonymisation transaction, the caller must give the
  * transaction a budget bigger than Prisma's 5 s default and map an exhausted
  * wait to a retry-later rather than a bare 500 — see
- * {@link isDeletionRequestTransactionContention} and the route's release branch.
+ * `isTransactionContention` (`prisma-errors.ts`) and the route's release branch.
  *
  * @returns the attribution the transition destroyed, and the `reviewedAt` it
  * stamped — the durable release marker, see {@link deletionApprovalWasReleased}.

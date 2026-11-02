@@ -303,6 +303,16 @@ const EMAIL_AUDIT_DEFAULTS_BASE = {
     "defaultSubject": "Late payment refunded outside the app - check Xero: {{memberName}}",
     "defaultBody": "Late Payment Refunded Outside the App\n\nA card payment that arrived after this booking was cancelled has been refunded outside the app - for example in the Stripe dashboard.\n\n{{outsideAppRefundNote}}\n\nMember: {{memberName}}\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nBooking: {{bookingId}}\nAmount refunded: {{amount}}\nStripe reference: {{paymentIntentId}}\n\nView Payments: {{reviewUrl}}"
   },
+  // #4532 (`INV-INT-032`): a Stripe payment the app did not create.
+  "admin-unrecognised-stripe-payment": {
+    "defaultSubject": "Stripe payment the app did not create - code it in Xero: {{amount}}",
+    "defaultBody": "Stripe Payment the App Did Not Create\n\nA payment was taken on the club's Stripe account outside the app - through a Stripe Payment Link, a Checkout page or the Stripe dashboard. The app has no booking for it and has sent nothing to Xero.\n\n{{unrecognisedPaymentNote}}\n\nAmount: {{amount}}\nReceived: {{receivedAt}}\nDescription: {{description}}\nStripe payment: {{paymentIntentId}}\nCharge: {{chargeId}}\nCheckout session: {{checkoutSessionId}}\nPayment Link: {{paymentLinkId}}\n\nOpen in Stripe: {{stripeDashboardUrl}}"
+  },
+  // #4624 (`INV-INT-033`): a booking card payment the app started but cannot match.
+  "admin-unmatched-app-stripe-payment": {
+    "defaultSubject": "Booking card payment the app could not match - check it: {{amount}}",
+    "defaultBody": "Booking Card Payment the App Could Not Match\n\nA card payment the app started for a booking went through in Stripe, but the app has no matching payment on that booking, so it did not mark the booking paid and has sent nothing to Xero.\n\n{{unmatchedAppPaymentNote}}\n\nAmount: {{amount}}\nReceived: {{receivedAt}}\nBooking: {{bookingId}}\nFound in the app: {{ledgerMatch}}\nStripe payment: {{paymentIntentId}}\nCharge: {{chargeId}}\n\nOpen in Stripe: {{stripeDashboardUrl}}"
+  },
   "admin-late-capture-held": {
     "defaultSubject": "Late payment held for approval: {{memberName}}",
     "defaultBody": "Late Payment Held for Approval\n\nA card payment went through after its booking was cancelled and has NOT been refunded - your club has a treasurer approve these refunds, or the card provider refused the automatic refund - so the money is still with the club.\n\nOpen the refund tasks on the payments board and either refund it to the card (through Stripe) or close it without refunding, with a note - for example, when the cancellation was a mistake.\n\nMember: {{memberName}}\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nBooking: {{bookingId}}\nAmount held: {{amount}}\n\nView Payments: {{reviewUrl}}"

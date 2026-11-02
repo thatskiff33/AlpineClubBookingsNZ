@@ -599,7 +599,9 @@ it is left to a later change.
 
 `pnpm run booking-ledger:census` (#3583, `INV-MONEY-037`; read-only, one
 `RepeatableRead`, `READ ONLY` snapshot — the `censusBookingMoneyReconciliation`
-pattern, `INV-MONEY-031`) evaluates those seven identities for every booking and
+pattern, `INV-MONEY-031`) evaluates those seven identities, and since #4627 an
+eighth, `JOURNAL` (the member-money journal's charges against the lines it
+links, `INV-MONEY-044`), for every booking and
 reports, per identity, the count that applies, agrees, disagrees, is
 classified or is a coverage gap, and per disagreeing booking both figures and
 the delta — never a repair. It also reports **coverage** (bookings with money
@@ -986,7 +988,7 @@ to bundle.
 | [#3581](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3581) | Settlement lines from payment rows — card capture, bank receipt, cash recorded, card refund, and their reversals — converging where the payment mirror is derived | lines nothing reads | High (money writers touched, no behaviour change) |
 | [#3599](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3599) | Settlement lines from account credit (applied, issued, restored) and the hand-back — split from #3581, whose chokepoint never sees them | lines nothing reads | High |
 | [#3582](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3582) | Posting from the edit, review-share, rebase and cancellation writers | lines nothing reads | High |
-| [#3583](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3583) | The back-post script for every existing booking, and `pnpm run booking-ledger:census`: the seven identities (§6), coverage, the invariant entry, the CI seed run | a dry-run report and a read-only census — **the cut-over gate** | High |
+| [#3583](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3583) | The back-post script for every existing booking, and `pnpm run booking-ledger:census`: the seven identities (§6; `JOURNAL` joined them in #4627), coverage, the invariant entry, the CI seed run | a dry-run report and a read-only census — **the cut-over gate** | High |
 | [#3854](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3854) | A group organiser's settlement: the `GROUP_SETTLEMENT` anchor (expand), each settled child's confirmation and share, the organiser cancel's plan refunds — owner decision 2A on #3583, before #3584 moves a reader that shows a group child | lines nothing reads | High (schema, money writers) |
 | [#3584](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3584) | Reads switch, one surface per PR: statement, emails, history, reports, officer panel | member-visible figures from the ledger, census-proven equal | High |
 | [#3585](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3585) | Xero renderers read ledger slices; `settlementMethod` names the method on every credit note | Xero documents unchanged in content | High |

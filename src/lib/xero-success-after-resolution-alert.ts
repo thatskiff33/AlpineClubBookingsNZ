@@ -31,9 +31,13 @@ import {
   resolutionLabel,
 } from "@/lib/xero-operation-resolution";
 
-/** The once-ever claim key of one operation's alert. */
-export function xeroSuccessAfterResolutionAlertKey(operationId: string): string {
-  return `xero-success-after-resolution:${operationId}`;
+/**
+ * The once-ever claim key of one operation's alert. #4426: a late Xero object
+ * the app did not record is keyed by its own id too, so each one is told.
+ */
+export function xeroSuccessAfterResolutionAlertKey(operationId: string, unrecordedObjectId?: string): string {
+  const key = `xero-success-after-resolution:${operationId}`;
+  return unrecordedObjectId ? `${key}:${unrecordedObjectId}` : key;
 }
 
 /** The alert's body: what happened, and what an officer should check in Xero. */
@@ -67,20 +71,100 @@ export function successAfterResolutionAlert(
   operation: XeroSyncOperation | null,
 ): (() => Promise<void>) | null {
   if (operation?.status !== "SUCCEEDED" || !isResolvedInXero(operation)) return null;
-  const context = {
-    operationId: operation.id,
-    localModel: operation.localModel,
-    localId: operation.localId,
-    xeroObjectId: operation.xeroObjectId,
-  };
-  const errorMessage = alertMessage(operation);
+  return alertOnce(
+    operation,
+    xeroSuccessAfterResolutionAlertKey(operation.id),
+    { xeroObjectId: operation.xeroObjectId },
+    alertMessage(operation),
+    "Xero success landed on an operation already resolved in Xero; Xero may now hold the item twice (INV-INT-029)",
+  );
+}
+
+/** A Xero object a late success made, which the app did not record (#4426). */
+export interface UnrecordedXeroObject {
+  xeroObjectType: string;
+  xeroObjectId: string;
+  xeroObjectNumber: string | null;
+  /** Its amount, already in the club's money format, when known. */
+  amount?: string | null;
+  bookingId?: string | null;
+}
+
+/** An object type as an officer reads it: `CREDIT_NOTE` is "credit note". */
+function objectLabel(type: string | null | undefined): string {
+  return type ? type.toLowerCase().replace(/_/g, " ") : "item";
+}
+
+/**
+ * The late object as an officer reads it: "credit note CN-B for $200.00
+ * (Xero id cn-b, booking b-1)". #4656: also the refund note a record that
+ * could not get its locks left unrecorded (`recordCreatedRefundNote`).
+ */
+export function describeUnrecordedObject(late: UnrecordedXeroObject): string {
+  return `${objectLabel(late.xeroObjectType)} ${late.xeroObjectNumber ?? late.xeroObjectId}${late.amount ? ` for ${late.amount}` : ""} (Xero id ${late.xeroObjectId}${late.bookingId ? `, booking ${late.bookingId}` : ""})`;
+}
+
+/** The sentence every late-object alert opens its story with: a stalled attempt came back and made it. */
+export function stalledAttemptCameBack(late: UnrecordedXeroObject): string {
+  return `an earlier attempt at the same Xero call, which had stalled, came back: it made ${describeUnrecordedObject(late)} in Xero.`;
+}
+
+/**
+ * #4426 (`INV-INT-029`): a late success the executor did NOT record, because
+ * an officer resolved its row by hand, recording a note, while Xero was
+ * answering - a refund credit note's create (`recordCreatedRefundNote`). The
+ * row keeps what the resolve recorded; the late object is named here, once
+ * per object, so an officer can check it against the one made by hand. A
+ * resolve withdrawn since (the re-read row is no longer resolved) is said so.
+ * #4655: a caller whose late object was kept out for another reason (an
+ * organiser adjustment's note, `recordCreatedOrganiserNote`) says why in
+ * `errorMessage`; the key and the once-ever send stay this one's. #4656: a
+ * caller whose object never reached the row (its record could not get its
+ * locks in time) says so in `warning` too.
+ * Same thunk contract as `successAfterResolutionAlert`: run outside any
+ * transaction; never throws.
+ */
+export function unrecordedLateSuccessAlert(
+  operation: XeroSyncOperation,
+  late: UnrecordedXeroObject,
+  errorMessage: string = refundNoteLateMessage(operation, late),
+  warning: string = LATE_SUCCESS_NOT_RECORDED_WARNING,
+): () => Promise<void> {
+  return alertOnce(
+    operation,
+    xeroSuccessAfterResolutionAlertKey(operation.id, late.xeroObjectId),
+    { unrecordedXeroObjectId: late.xeroObjectId, unrecordedXeroObjectNumber: late.xeroObjectNumber, recordedXeroObjectId: operation.xeroObjectId, bookingId: late.bookingId ?? null },
+    errorMessage,
+    warning,
+  );
+}
+
+/** The alert's log line when the caller names no other reason (#4426, #4655). */
+const LATE_SUCCESS_NOT_RECORDED_WARNING =
+  "Xero success arrived after its operation was reset or resolved and was not recorded on it; Xero may now hold the item twice (INV-INT-029)";
+
+/** #4426: a refund note's late answer, kept out by a resolve recording a note (or one withdrawn since). */
+function refundNoteLateMessage(operation: XeroSyncOperation, late: UnrecordedXeroObject): string {
+  const label = objectLabel(late.xeroObjectType);
+  const came = `${stalledAttemptCameBack(late)} The app did not record it, link it to the payment or record a refund payment against it in Xero.`;
+  return isResolvedInXero(operation)
+    ? `This Xero operation was marked "${resolutionLabel(operation.manuallyResolvedReason)}", recording ${objectLabel(operation.xeroObjectType)} ${operation.xeroObjectNumber ?? operation.xeroObjectId ?? "(none)"}, and then ${came} The operation keeps the one the resolve recorded. Xero may now hold two for one item: check the late one in Xero and that it is not recorded on the payment before voiding it.`
+    : `This Xero operation was resolved by hand, recording a ${label}, and then ${came} That resolve has since been withdrawn, so the operation now records no ${label}. Check the late one in Xero: if it is the one this operation should record, resolve the operation by hand with its number rather than voiding it.`;
+}
+
+/** The warning and the once-ever alert both shapes send. */
+function alertOnce(
+  operation: XeroSyncOperation,
+  key: string,
+  objects: Record<string, unknown>,
+  errorMessage: string,
+  warning: string,
+): () => Promise<void> {
+  const context = { operationId: operation.id, localModel: operation.localModel, localId: operation.localId, ...objects };
   return async () => {
-    logger.warn(
-      context,
-      "Xero success landed on an operation already resolved in Xero; Xero may now hold the item twice (INV-INT-029)",
-    );
+    logger.warn(context, warning);
     await sendAdminAlertOnceEver({
-      key: xeroSuccessAfterResolutionAlertKey(operation.id),
+      key,
       label: "Xero success-after-resolution alert",
       context,
       send: async () => {

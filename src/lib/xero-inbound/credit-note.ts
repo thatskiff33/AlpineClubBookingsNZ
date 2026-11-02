@@ -7,7 +7,8 @@ import { buildXeroInvoiceUrl } from "@/lib/xero-links";
 import { callXeroApi, getAuthenticatedXeroClient } from "@/lib/xero-api-client";
 import { type XeroObjectLinkInput, upsertXeroObjectLink } from "@/lib/xero-sync";
 import { buildCreditNoteAllocationTargets, buildSyntheticAllocationLinkId, buildXeroPaymentDisplayNumber, getCreditNoteAmountCents } from "./amounts";
-import { dedupeResolvedXeroObjectLinks, dedupeXeroObjectLinks, findActiveXeroObjectLinks, findPaymentIdsWithCancelledRefundNoteMirror, getDerivedInboundAllocationRole, recoverBookingScopedLinksFromOutboundOperations } from "./object-links";
+import { dedupeResolvedXeroObjectLinks, dedupeXeroObjectLinks, findActiveXeroObjectLinks, findPaymentIdsWithCancelledRefundNoteMirror, getDerivedInboundAllocationRole, isDeletedXeroPaymentStatus, recoverBookingScopedLinksFromOutboundOperations } from "./object-links";
+import { creditNotePaymentsForAbsence, retireDeletedPaymentLinksAbsentFromPayload } from "./deleted-payment-links";
 import { writeXeroInboundAuditLogs } from "./audit";
 import { type XeroAuditLocalLink } from "./types";
 import { repairAccountCreditAllocationBusinessState, repairRefundedPaymentBusinessState, resolveAccountCreditPaymentsFromMemberCredits, resolveAppliedCreditPaymentsFromLocalProvenance } from "./credit-note-repairs";
@@ -394,6 +395,7 @@ export async function reconcileXeroCreditNote(creditNoteId: string) {
               xeroObjectId: payment.paymentID!,
               xeroObjectNumber: buildXeroPaymentDisplayNumber(payment),
               role: "REFUND_PAYMENT",
+              active: !isDeletedXeroPaymentStatus(payment.status), // #4531: never re-adopted
               metadata: {
                 creditNoteId: creditNote.creditNoteID,
                 amount: payment.amount ?? null,
@@ -409,6 +411,13 @@ export async function reconcileXeroCreditNote(creditNoteId: string) {
   for (const link of refundPaymentLinks) {
     await upsertXeroObjectLink(link);
   }
+  // #4531: a refund payment deleted in Xero leaves the note's payload; retired once Xero confirms it.
+  const deletedPaymentLinks = await retireDeletedPaymentLinksAbsentFromPayload({
+    session: { xero, tenantId },
+    document: { kind: "CREDIT_NOTE", id: creditNote.creditNoteID },
+    payments: creditNotePaymentsForAbsence(creditNote),
+    localScope: resolvedCreditNoteLinks.filter((link) => isRefundNoteLinkOf(link)),
+  });
 
   const auditMetadata = {
     creditNoteId: creditNote.creditNoteID,
@@ -474,5 +483,6 @@ export async function reconcileXeroCreditNote(creditNoteId: string) {
     relatedLinksUpdated: resolvedCreditNoteLinks.length,
     allocationsUpdated: allocationLinks.length,
     refundPaymentsUpdated: refundPaymentLinks.length,
+    deletedPaymentLinks,
   };
 }

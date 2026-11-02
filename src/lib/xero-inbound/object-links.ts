@@ -3,6 +3,7 @@ import { type XeroObjectLinkInput } from "@/lib/xero-sync";
 import { isRefundCreditNoteLinkCancelledInXero } from "@/lib/xero-refund-note-status";
 import { type ResolvedXeroObjectLink } from "./types";
 import { BOOKING_SCOPED_OUTBOUND_MODELS } from "./constants";
+import { isLiveXeroPaymentStatus } from "@/lib/xero-payment-status";
 
 export function dedupeXeroObjectLinks(links: XeroObjectLinkInput[]): XeroObjectLinkInput[] {
   const seen = new Map<string, XeroObjectLinkInput>();
@@ -55,24 +56,30 @@ export const INVOICE_PAYMENT_ROLE = "INVOICE_PAYMENT";
  */
 export const PRIMARY_INVOICE_CASH_ALLOCATIONS_KEY = "overpaymentOrPrepaymentAllocations";
 export const SUPPLEMENTARY_INVOICE_PAYMENT_ROLE = "SUPPLEMENTARY_INVOICE_PAYMENT";
+export const SUBSCRIPTION_PAYMENT_ROLE = "SUBSCRIPTION_PAYMENT";
+export const REFUND_PAYMENT_ROLE = "REFUND_PAYMENT";
+
+/**
+ * #4531 (`INV-SSOT`): an invoice link's role -> the role of a payment on that
+ * invoice. The one map `getDerivedInboundPaymentRole` reads and
+ * `INVOICE_DERIVED_PAYMENT_ROLES` is built from, so an invoice role added here
+ * is both derived and a deleted-payment candidate.
+ */
+export const INVOICE_LINK_PAYMENT_ROLES = {
+  PRIMARY_INVOICE: INVOICE_PAYMENT_ROLE,
+  SUPPLEMENTARY_INVOICE: SUPPLEMENTARY_INVOICE_PAYMENT_ROLE,
+  SUBSCRIPTION_INVOICE: SUBSCRIPTION_PAYMENT_ROLE,
+} as const;
 
 export function getDerivedInboundPaymentRole(link: Pick<ResolvedXeroObjectLink, "xeroObjectType" | "role">) {
   if (link.xeroObjectType === "PAYMENT") {
     return link.role;
   }
 
-  switch (link.role) {
-    case "PRIMARY_INVOICE":
-      return INVOICE_PAYMENT_ROLE;
-    case "SUPPLEMENTARY_INVOICE":
-      return SUPPLEMENTARY_INVOICE_PAYMENT_ROLE;
-    case "SUBSCRIPTION_INVOICE":
-      return "SUBSCRIPTION_PAYMENT";
-    case "REFUND_CREDIT_NOTE":
-      return "REFUND_PAYMENT";
-    default:
-      return null;
+  if (Object.hasOwn(INVOICE_LINK_PAYMENT_ROLES, link.role)) {
+    return INVOICE_LINK_PAYMENT_ROLES[link.role as keyof typeof INVOICE_LINK_PAYMENT_ROLES];
   }
+  return link.role === "REFUND_CREDIT_NOTE" ? REFUND_PAYMENT_ROLE : null;
 }
 
 /**
@@ -83,6 +90,19 @@ export const BOOKING_INVOICE_PAYMENT_ROLES = [
   INVOICE_PAYMENT_ROLE,
   SUPPLEMENTARY_INVOICE_PAYMENT_ROLE,
 ] as const;
+
+/**
+ * #4531: the roles `getDerivedInboundPaymentRole` gives a payment on an
+ * invoice's own links (primary, supplementary, subscription) - every payment
+ * link the inbound invoice reconcile writes. Only these are a deleted-payment
+ * candidate on an invoice read; a refund payment naming the invoice sits on its
+ * credit note, never in the invoice's `Payments`.
+ */
+export const INVOICE_DERIVED_PAYMENT_ROLES: readonly string[] = Object.values(INVOICE_LINK_PAYMENT_ROLES);
+
+// The payment-status rule lives in one pure module (#4576); re-exported here for
+// the inbound reconcile's existing callers.
+export { DELETED_XERO_PAYMENT_STATUS, isDeletedXeroPaymentStatus } from "@/lib/xero-payment-status";
 
 /**
  * #3643: whether a stored link records money paid against a booking's invoice.
@@ -103,9 +123,8 @@ export function isRecordedBookingInvoicePayment(link: {
     link.metadata && typeof link.metadata === "object"
       ? (link.metadata as { status?: unknown }).status
       : null;
-  // Xero's payment statuses are AUTHORISED and DELETED; VOIDED is refused too
-  // because the #3535 audit always did, and one list now serves both.
-  return !["DELETED", "VOIDED"].includes(String(status ?? "").toUpperCase());
+  // Neither DELETED nor VOIDED: the one live-payment rule (#4576).
+  return isLiveXeroPaymentStatus(status);
 }
 
 export function getDerivedInboundAllocationRole(creditNoteRole: string) {

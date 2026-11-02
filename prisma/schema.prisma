@@ -3362,6 +3362,20 @@ model RateLimitCounter {
   @@index([resetAt])
 }
 
+// Per-account password sign-in throttle (#4609, INV-AUTH). One row per account
+// key: an HMAC of the normalised sign-in email under the auth secret, never the
+// address itself. Club-wide like RateLimitCounter, so no lodgeId. A claim locks
+// the row before the password is compared (src/lib/login-throttle.ts); a valid
+// password or a password reset deletes it, and rows idle for an hour are
+// swept. No @updatedAt and no defaults: every instant is written by the app.
+model LoginThrottle {
+  id            String   @id
+  failureCount  Int
+  lastFailureAt DateTime
+
+  @@index([lastFailureAt])
+}
+
 // #1211: cross-instance cooldown for repeat operational admin alerts. One row
 // per alert key; the stale payment-recovery-queue alert atomically claims a
 // fresh window here (conditional updateMany on the id, falling back to a
@@ -4798,6 +4812,65 @@ model ProcessedWebhookEvent {
   @@index([source])
 }
 
+// #4532 (`INV-INT-032`): a succeeded Stripe payment on the club's account that
+// the app did not create - a Stripe Payment Link, a Checkout page or a dashboard
+// charge, whose PaymentIntent carries none of the app's metadata
+// (`isAppCreatedPaymentIntent`). One row per PaymentIntent, written by the
+// `payment_intent.succeeded` webhook and claimed by the unique intent id, so a
+// redelivery or a concurrent delivery writes nothing more. Nothing reaches
+// Xero from here (part 2 of #4532 would); the treasurer codes it by hand from
+// the admin alert. The webhook inserts the row and later stamps `alertedAt`
+// once that mail has gone out; it does not otherwise change the row. The
+// application role can still update or delete it, so part 2 (#4621) must not
+// treat the row as privilege-narrowed if it records a Xero posting here.
+// Club-wide: no booking, so no lodge.
+//
+// #4624 (`INV-INT-033`): the same record, claim and once-ever alert hold a
+// succeeded PaymentIntent the app DID create (it carries the app's `bookingId`)
+// that matches no PRIMARY payment transaction, so no path settles it. `reason`
+// says which; `bookingId` is the metadata's, stored as text with no relation
+// because the booking may not exist here. The row still has no lodge.
+model UnrecognisedStripePayment {
+  id                      String   @id @default(cuid())
+  stripePaymentIntentId   String   @unique
+  stripeChargeId          String?
+  stripeCheckoutSessionId String?
+  stripePaymentLinkId     String?
+  // Stripe's smallest currency unit: cents for every two-decimal currency.
+  amountCents             Int
+  // As Stripe gives it: lower-case ISO 4217.
+  currency                String
+  // When the succeeded event was created: when it was paid, not when the
+  // PaymentIntent was first opened. An instant, not a lodge night.
+  stripeCreatedAt         DateTime
+  // The Checkout line items, else the PaymentIntent's own description; capped.
+  description             String?
+  // The webhook event that recorded it.
+  stripeEventId           String
+  // Set only after the Finance alert was sent. A later delivery that finds it
+  // null sends again; a held cooldown without this stamp is not a sent alert.
+  alertedAt               DateTime?
+  createdAt               DateTime @default(now())
+  // #4624: why it was recorded. The default is #4532's case, so a row the
+  // previous release inserts without the column reads as what it is.
+  reason                  UnrecognisedStripePaymentReason @default(NOT_APP_CREATED)
+  // #4624: the app intent's metadata `bookingId`; null for NOT_APP_CREATED.
+  bookingId               String?
+}
+
+// #4624 (`INV-INT-033`): why a succeeded Stripe payment is an
+// `UnrecognisedStripePayment`.
+enum UnrecognisedStripePaymentReason {
+  // #4532: the PaymentIntent carries none of the app's metadata.
+  NOT_APP_CREATED
+  // The app's intent (a `bookingId`), but no payment transaction names it,
+  // even after the saved-card attempt adoption.
+  APP_INTENT_NO_TRANSACTION
+  // The app's intent, but the transaction that names it is not PRIMARY while
+  // the intent is not marked an additional ask, so neither path settles it.
+  APP_INTENT_NOT_PRIMARY
+}
+
 // ---------------------------------------------------------------------------
 // Webhook Delivery Monitoring (OBS-08)
 // ---------------------------------------------------------------------------
@@ -5702,6 +5775,25 @@ model ClubFormatSettings {
   updatedAt         DateTime @default(now()) @updatedAt
 
   @@index([updatedByMemberId])
+}
+
+// The club's GST treatment for member-money journal postings (#4626, Ledger
+// M3a; D3 in docs/design/member-money-ledger.md). Singleton (id="default"). An
+// ABSENT row resolves to the code defaults in src/lib/club-tax-settings.ts —
+// registered, 1500 basis points, in force from 2010-10-01 — which reproduce the
+// GST-inclusive 15% treatment every Xero document already renders, so no seed or
+// backfill is needed. The column defaults equal those values. The migration adds
+// a CHECK holding the rate to whole basis points from 0 to 10000. Nothing writes
+// the row yet; the journal posting command reads a treatment its caller resolves
+// from it before the transaction (INV-LOCK-004). The admin surface that first
+// writes it adds its audit columns (updatedByMemberId) with their registrations.
+model ClubTaxSettings {
+  id                 String   @id @default("default")
+  gstRegistered      Boolean  @default(true)
+  taxRateBasisPoints Int      @default(1500)
+  effectiveFrom      DateTime @default(dbgenerated("'2010-10-01'::date")) @db.Date
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @default(now()) @updatedAt
 }
 
 // Club-wide login & security policy singleton (epic #2030, child #2033). Mirrors
@@ -9010,6 +9102,8 @@ model MemberMoneyLine {
   @@index([bookingId])
   @@index([lodgeId])
   @@index([obligationId])
+  /// A component (#4626): corrections, reversals and re-charges read its legs.
+  @@index([account, chargeIdentity])
   sourcePostings MemberMoneySourcePosting[]
   @@unique([id, journalId])
 }

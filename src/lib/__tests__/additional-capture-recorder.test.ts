@@ -16,7 +16,17 @@ vi.mock("@/lib/xero-primary-invoice-gap-anchors", () => ({
   findPrimaryInvoiceGapInvoice: mocks.findPrimaryInvoiceGapInvoice,
 }));
 
-import { attributeGapCash, readCaptureRecorder, readSupplementaryRecordedIntents } from "@/lib/additional-capture-recorder";
+import {
+  attributeGapCash,
+  creditReleaseShareOverlaps,
+  gapPaymentMayBeInXero,
+  gapRowCanStillSend,
+  GAP_SEND_WAIT_MS,
+  readCapturedStripeCash,
+  readCaptureRecorder,
+  readRecordedByPrimaryOrGap,
+  readSupplementaryRecordedIntents,
+} from "@/lib/additional-capture-recorder";
 import { intentsRecordedByPrimaryCash } from "@/lib/xero-primary-invoice-fee-at-link";
 import { primaryInvoiceGapPayload } from "@/lib/additional-capture-receipt-payload";
 
@@ -45,8 +55,8 @@ describe("intentsRecordedByPrimaryCash (F)", () => {
 
 describe("attributeGapCash (A)", () => {
   const captures = [
-    { paymentIntentId: "pi_primary", netCents: 30_000 },
-    { paymentIntentId: "pi_change", netCents: 8_000 },
+    { paymentIntentId: "pi_primary", netCents: 30_000, sweptCents: 0 },
+    { paymentIntentId: "pi_change", netCents: 8_000, sweptCents: 0 },
   ];
 
   it("pays the gap from the cash the primary left, naming the capture it came from", () => {
@@ -94,6 +104,70 @@ describe("attributeGapCash (A)", () => {
         gapCents: 3_000,
       }),
     ).toEqual({ leftoverCents: 3_000, covered: [{ paymentIntentId: "pi_change", cents: 3_000 }] });
+  });
+
+  describe("#4494: never from the credit-release sweep's share", () => {
+    const linked = { recorded: ["pi_a"], partial: null };
+
+    it("MUTATION: a release capture the sweep records in full pays nothing - the gap is raised unpaid", () => {
+      expect(
+        attributeGapCash({
+          captures: [
+            { paymentIntentId: "pi_a", netCents: 20_000, sweptCents: 0 },
+            { paymentIntentId: "pi_release", netCents: 5_000, sweptCents: 5_000 },
+          ],
+          claimed: new Set(),
+          primaryCashCents: 20_000,
+          recordedAtLink: linked,
+          gapCents: 3_000,
+        }),
+      ).toEqual({ leftoverCents: 0, covered: [] });
+    });
+
+    it("MUTATION: only the swept part of a mixed capture is excluded, never the whole capture", () => {
+      expect(
+        attributeGapCash({
+          captures: [{ paymentIntentId: "pi_mixed", netCents: 10_000, sweptCents: 4_000 }],
+          claimed: new Set(),
+          primaryCashCents: 0,
+          recordedAtLink: { recorded: [], partial: null },
+          gapCents: 6_000,
+        }),
+      ).toEqual({ leftoverCents: 6_000, covered: [{ paymentIntentId: "pi_mixed", cents: 6_000 }] });
+    });
+
+    it("MUTATION: a swept figure larger than the net contributes nothing, never a negative", () => {
+      expect(
+        attributeGapCash({
+          captures: [
+            { paymentIntentId: "pi_held", netCents: 2_000, sweptCents: 5_000 },
+            { paymentIntentId: "pi_b", netCents: 4_000, sweptCents: 0 },
+          ],
+          claimed: new Set(),
+          // Walked: a negative figure would hand the primary 30.00 back and swallow pi_b's spare cash.
+          primaryCashCents: 1_000,
+          gapCents: 3_000,
+        }),
+      ).toEqual({ leftoverCents: 3_000, covered: [{ paymentIntentId: "pi_b", cents: 3_000 }] });
+    });
+
+    it("MUTATION: the legacy walk never hands the primary's cash to swept cents (taken out BEFORE the walk)", () => {
+      // 60.00 of primary cash, walked oldest first. Taken out first, the release
+      // capture absorbs only its 20.00 rest and the newer 40.00 is the primary's:
+      // nothing is spare. Taken out after, the walk would spend 50.00 on it and
+      // leave 30.00 of the newer capture looking spare.
+      expect(
+        attributeGapCash({
+          captures: [
+            { paymentIntentId: "pi_release", netCents: 5_000, sweptCents: 3_000 },
+            { paymentIntentId: "pi_b", netCents: 4_000, sweptCents: 0 },
+          ],
+          claimed: new Set(),
+          primaryCashCents: 6_000,
+          gapCents: 3_000,
+        }),
+      ).toEqual({ leftoverCents: 0, covered: [] });
+    });
   });
 
   it("marks the gap's payload with what it took, so the names survive its send", () => {
@@ -387,5 +461,188 @@ describe("readSupplementaryRecordedIntents (round 3, F3)", () => {
       store as never,
     );
     expect([...recorded].sort()).toEqual(["pi_carrier", "pi_named", "pi_paid"]);
+  });
+});
+
+describe("readCapturedStripeCash (#4494)", () => {
+  const additional = (over: Record<string, unknown>) => ({
+    id: "row",
+    kind: "ADDITIONAL",
+    source: "STRIPE",
+    status: "SUCCEEDED",
+    reason: "edit_price_increase",
+    amountCents: 4_000,
+    refundedAmountCents: 0,
+    carriedAskCents: 0,
+    withdrawnAt: null,
+    stripePaymentIntentId: null as string | null,
+    bookingModificationId: null,
+    ...over,
+  });
+  // One payment's ledger, oldest first.
+  const ledger = [
+    additional({ id: "primary", kind: "PRIMARY", reason: null, amountCents: 30_000, stripePaymentIntentId: "pi_primary" }),
+    // A release request paid on its own: all of it is the sweep's.
+    additional({ id: "release", reason: "credit_released_outside_app", amountCents: 5_000, stripePaymentIntentId: "pi_release" }),
+    // A release request an edit's request carried, paid together: 40.00 is the sweep's.
+    additional({ id: "release_2", reason: "credit_released_outside_app", status: "PENDING", amountCents: 4_000 }),
+    additional({ id: "mixed", amountCents: 10_000, carriedAskCents: 4_000, stripePaymentIntentId: "pi_mixed" }),
+    // A release capture partly refunded: the sweep holds it, so all of its net is taken.
+    additional({ id: "held", reason: "credit_released_outside_app", status: "PARTIALLY_REFUNDED", amountCents: 6_000, refundedAmountCents: 1_000, stripePaymentIntentId: "pi_held" }),
+    // An edit's own capture: none of it.
+    additional({ id: "edit", amountCents: 2_000, stripePaymentIntentId: "pi_edit", bookingModificationId: "mod_edit" }),
+  ];
+  const store = {
+    paymentTransaction: {
+      findMany: vi.fn(async ({ where }: { where: { kind?: string; payment?: unknown } }) =>
+        where.kind === "ADDITIONAL"
+          ? ledger.filter((row) => row.kind === "ADDITIONAL")
+          : ledger.filter((row) => row.stripePaymentIntentId !== null),
+      ),
+      findUnique: vi.fn(async () => ({ paymentId: "pay_1" })),
+    },
+  };
+
+  it("names each capture's swept cents through the credit-release share: all, part, held or none", async () => {
+    const captures = await readCapturedStripeCash("booking_1", store as never);
+    expect(captures.map(({ paymentIntentId, netCents, sweptCents }) => ({ paymentIntentId, netCents, sweptCents }))).toEqual([
+      { paymentIntentId: "pi_primary", netCents: 30_000, sweptCents: 0 },
+      { paymentIntentId: "pi_release", netCents: 5_000, sweptCents: 5_000 },
+      { paymentIntentId: "pi_mixed", netCents: 10_000, sweptCents: 4_000 },
+      { paymentIntentId: "pi_held", netCents: 5_000, sweptCents: 5_000 },
+      { paymentIntentId: "pi_edit", netCents: 2_000, sweptCents: 0 },
+    ]);
+  });
+});
+
+describe("readRecordedByPrimaryOrGap and creditReleaseShareOverlaps (#4494)", () => {
+  const gapRow = (status: string, cents?: number) => ({
+    id: "op_gap",
+    status,
+    requestPayload: {
+      primaryInvoiceGap: true,
+      coveredPaymentIntentIds: ["pi_release"],
+      ...(cents === undefined ? {} : { coveredCaptureCents: { pi_release: cents } }),
+    },
+  });
+  let rows: Array<ReturnType<typeof gapRow>>;
+  // Answers the reader's gap query the way PostgreSQL would: CANCELLED rows excluded by the filter it sends.
+  const store = {
+    xeroSyncOperation: {
+      findFirst: vi.fn(async ({ where }: { where: { status?: { not?: string } } }) =>
+        rows.find((row) => row.status !== where.status?.not) ?? null,
+      ),
+    },
+    paymentTransaction: { findUnique: vi.fn(async () => ({ amountCents: 5_000 })) },
+  };
+  beforeEach(() => {
+    rows = [];
+  });
+
+  it("reads the gap's cents beside the part the primary reached, and all of it for a legacy row", async () => {
+    await expect(readRecordedByPrimaryOrGap("pi_release", null, store as never)).resolves.toEqual({ kind: "part", cents: 0 });
+    rows = [gapRow("PENDING", 3_000)];
+    await expect(readRecordedByPrimaryOrGap("pi_release", null, store as never)).resolves.toEqual({ kind: "part", cents: 3_000 });
+    const atLink = { partiallyRecordedCaptureAtLink: { paymentIntentId: "pi_release", cents: 2_000 } } as never;
+    await expect(readRecordedByPrimaryOrGap("pi_release", atLink, store as never)).resolves.toEqual({ kind: "gap-invoice", operationId: "op_gap" });
+    rows = [gapRow("FAILED")];
+    await expect(readRecordedByPrimaryOrGap("pi_release", null, store as never)).resolves.toEqual({ kind: "gap-invoice", operationId: "op_gap" });
+  });
+
+  it("#4494 fix round: says, for the sweep only, whether the gap row's payment can be in Xero yet and whether it can still send", async () => {
+    const now = new Date("2026-07-01T00:00:00.000Z");
+    const unsent = {
+      ...gapRow("PENDING", 3_000),
+      xeroObjectId: null,
+      responsePayload: null,
+      lastErrorCode: null,
+      manuallyResolvedAt: null,
+      localModel: null,
+      localId: null,
+      replayable: true,
+      createdAt: new Date("2026-06-30T00:00:00.000Z"),
+    };
+    rows = [unsent as never];
+    await expect(readRecordedByPrimaryOrGap("pi_release", null, store as never, { withGapSendState: { now } })).resolves.toEqual({
+      kind: "part",
+      cents: 3_000,
+      gapSend: { operationId: "op_gap", mayBeInXero: false, canStillSend: true, rerunnable: true },
+    });
+    // The receipt's reading is unchanged: a queued gap's cents count, with no send state.
+    await expect(readRecordedByPrimaryOrGap("pi_release", null, store as never)).resolves.toEqual({ kind: "part", cents: 3_000 });
+  });
+
+  it("MUTATION: ignores a CANCELLED gap row", async () => {
+    rows = [gapRow("CANCELLED", 3_000)];
+    await expect(readRecordedByPrimaryOrGap("pi_release", null, store as never)).resolves.toEqual({ kind: "part", cents: 0 });
+  });
+
+  it("overlaps where the sweep's share and what was recorded exceed the card, or the sweep holds a capture something recorded", () => {
+    const share = (ownCents: number, held = false) => ({ ownCents, held });
+    expect(creditReleaseShareOverlaps({ kind: "part", cents: 3_000 }, share(5_000), 5_000)).toBe(true);
+    expect(creditReleaseShareOverlaps({ kind: "part", cents: 6_000 }, share(4_000), 10_000)).toBe(false);
+    expect(creditReleaseShareOverlaps({ kind: "part", cents: 0 }, share(5_000), 5_000)).toBe(false);
+    expect(creditReleaseShareOverlaps({ kind: "gap-invoice", operationId: "op_gap" }, share(1), 5_000)).toBe(true);
+    expect(creditReleaseShareOverlaps({ kind: "gap-invoice", operationId: "op_gap" }, share(0), 5_000)).toBe(false);
+    expect(creditReleaseShareOverlaps({ kind: "part", cents: 1 }, share(0, true), 5_000)).toBe(true);
+    expect(creditReleaseShareOverlaps({ kind: "part", cents: 0 }, share(0, true), 5_000)).toBe(false);
+  });
+});
+
+describe("gapPaymentMayBeInXero (#4494 fix round)", () => {
+  const row = (over: Record<string, unknown>) => ({
+    status: "FAILED",
+    requestPayload: { primaryInvoiceGap: true, coveredPaymentIntentIds: ["pi_release"] },
+    xeroObjectId: null,
+    responsePayload: null,
+    lastErrorCode: null,
+    manuallyResolvedAt: null,
+    localModel: "BookingModification",
+    localId: "mod_gap",
+    ...over,
+  });
+  const store = { xeroObjectLink: { findFirst: vi.fn() } };
+  beforeEach(() => store.xeroObjectLink.findFirst.mockReset().mockResolvedValue(null));
+  const ask = (over: Record<string, unknown>) => gapPaymentMayBeInXero(row(over) as never, store as never);
+
+  it("is yes for a row that sent, went PARTIAL or was resolved by hand", async () => {
+    await expect(ask({ status: "SUCCEEDED" })).resolves.toBe(true);
+    await expect(ask({ status: "PARTIAL" })).resolves.toBe(true);
+    await expect(ask({ manuallyResolvedAt: new Date("2026-06-30T00:00:00.000Z") })).resolves.toBe(true);
+  });
+
+  it("MUTATION: is yes for any evidence an attempt reached Xero", async () => {
+    await expect(ask({ xeroObjectId: "inv_gap" })).resolves.toBe(true);
+    await expect(ask({ responsePayload: { invoice: { invoices: [{ invoiceID: "inv_gap" }] } } })).resolves.toBe(true);
+    await expect(ask({ responsePayload: { payment: { paymentID: "pay_gap" } } })).resolves.toBe(true);
+    await expect(ask({ lastErrorCode: "ORPHANED_STALE_RUNNING" })).resolves.toBe(true);
+    // Delta review d-1: a send stores the invoice body before any Xero call, so a payment that landed before its completion failed still counts.
+    await expect(ask({ requestPayload: { primaryInvoiceGap: true, invoices: [{ type: "ACCREC" }] } })).resolves.toBe(true);
+    store.xeroObjectLink.findFirst.mockResolvedValueOnce({ id: "link_gap" });
+    await expect(ask({})).resolves.toBe(true);
+  });
+
+  it("is no only for a row that provably never reached Xero", async () => {
+    await expect(ask({ responsePayload: { message: "Account code 200 has been archived" } })).resolves.toBe(false);
+    await expect(ask({ status: "PENDING" })).resolves.toBe(false);
+    await expect(ask({ status: "RUNNING", localModel: null })).resolves.toBe(false);
+  });
+});
+
+describe("gapRowCanStillSend (#4494 delta review d-3)", () => {
+  const now = new Date("2026-07-01T00:00:00.000Z");
+  const queuedAgo = (ms: number) => new Date(now.getTime() - ms);
+  const row = (over: Record<string, unknown>) => ({ status: "PENDING", replayable: true, manuallyResolvedAt: null, createdAt: queuedAgo(60_000), ...over }) as never;
+
+  it("is yes while the row is queued, sending, waiting, or FAILED and still replayable, within the bound", () => {
+    for (const status of ["PENDING", "RUNNING", "WAITING_PAYMENT", "FAILED", "PARTIAL"]) expect(gapRowCanStillSend(row({ status }), now)).toBe(true);
+    expect(gapRowCanStillSend(row({ createdAt: queuedAgo(GAP_SEND_WAIT_MS) }), now)).toBe(true);
+  });
+
+  it("MUTATION: is no once it cannot send, or is past the bound", () => {
+    expect(gapRowCanStillSend(row({ status: "FAILED", replayable: false }), now)).toBe(false);
+    expect(gapRowCanStillSend(row({ status: "SKIPPED" }), now)).toBe(false);
+    expect(gapRowCanStillSend(row({ manuallyResolvedAt: now }), now)).toBe(false);
+    expect(gapRowCanStillSend(row({ createdAt: queuedAgo(GAP_SEND_WAIT_MS + 1) }), now)).toBe(false);
   });
 });

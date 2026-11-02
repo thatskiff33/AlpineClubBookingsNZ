@@ -1739,9 +1739,9 @@ _Legacy: settles tasks raised before #4317._
   (`INV-PAY-098`). Nothing owed closes the row with an audit.
 - **No second invoice.** The amount already stands on the booking's invoice, so
   the row is written `hadIssuedXeroInvoice: false`.
-- **It waits behind an unpaid edit request**, never going terminal
-  [INV-ADDPAY-051]; carrying that edit into this request is #4491. An edit
-  made after the release merges the two [INV-ADDPAY-048].
+- **It merges into an unpaid edit request** [INV-ADDPAY-052], or waits behind
+  one whose invoice cannot follow it, never going terminal [INV-ADDPAY-051].
+  An edit made after the release merges the two [INV-ADDPAY-048].
 - **It closes, never guesses.** Cancelled, bumped, uncaptured and
   organiser-settled bookings close without an ask; an invoice not yet open in
   Xero throws and retries. A booking that ended is asked nothing
@@ -1775,6 +1775,13 @@ _Legacy: settles tasks raised before #4317._
   closed when Xero shows its invoice paid: the card payment is
   cancelled first (a succeeded or processing one is left), then one transaction
   under the global key fences the row and writes the money as bank cash.
+- **Never the gap invoice's cash** (#4494). The #3980 gap invoice treats the
+  sweep's share as taken, all of a held capture (`readCreditReleaseCaptureShare`).
+  Overlap means a gap invoice's cents plus the sweep's share exceed the gross
+  capture. The sweep holds and alerts where an overlapping gap may have paid,
+  or cannot send (non-replayable, or queued over seven days); it waits while
+  an unsent one can. Its send, Retry or PARTIAL repair records no payment on
+  overlap, still naming its captures unless provably never sent.
 - **No new advisory key.** Home: `credit-release-xero-payment.ts`,
   `credit-release-ask-close.ts`.
 
@@ -1834,6 +1841,7 @@ _Legacy: settles tasks raised before #4317._
   `additional-ask-cause.ts`, and none says a change
   raised the total where the request is only the released credit.
 - **An edit on an unpaid release merges into ONE request** for the member
+  (and a release on an unpaid edit, [INV-ADDPAY-052])
   (carried, `INV-PAY-098`), worded as both, on the edit chase until check-out
   and on this weekly chase after it (its released credit is still owed). One card payment
   is recorded against both invoices: the release's own money on the booking's
@@ -1890,7 +1898,8 @@ _Legacy: settles tasks raised before #4317._
   the automatic reminder; the re-send is refused with that reason's own words.
   Nothing is closed or resized on a part payment. Only a read with no answer
   (Xero down, a 5xx) claims nothing and leaves the reminder due.
-- **A release behind an unpaid edit request waits as long as that takes.** Its
+- **A release that cannot merge into an unpaid edit request** [INV-ADDPAY-052]
+  **waits as long as that takes.** Its
   recovery row goes back to the longest retry interval with the claim's attempt
   handed back (`waitPaymentRecoveryOperation`), decided before any Xero read, so
   even an unreachable Xero never runs it out of attempts; it is asked for once
@@ -1902,3 +1911,30 @@ _Legacy: settles tasks raised before #4317._
   `payment.credit_release_ask.left_to_officers` audit row on the booking, written
   once per key, says why the app stopped (`release-ask-officer-signal.ts`).
 - Home: `credit-release-reminder-gate.ts`, `credit-release-ask.ts`.
+
+### INV-ADDPAY-052
+
+- **A release on an unpaid edit request merges into ONE request** (#4491, the
+  owner's 24 Oct 2026 decision on #4253, mirroring [INV-ADDPAY-048]). The
+  release's mint carries the live request's balance (`INV-PAY-098`) and
+  supersedes it; the supersede moves each waiting edit invoice onto the release
+  request (`followSupersededAskInvoicesToCarrier`, `INV-PAY-140`). No separate
+  release request is raised. The cause reads `mixed`; no bank transfer is
+  offered [INV-ADDPAY-049]. A request only of released credit supersedes as
+  before.
+- **One card payment, each share on its own invoice, once.** Its capture
+  releases the edit's invoice for the edit's own amount; the sweep records the
+  released credit on the booking's invoice [INV-ADDPAY-046]; the capture's
+  receipt stands down (`readCaptureRecorder`).
+- **It merges only where every edit invoice can follow**
+  (`decideCreditReleaseMerge`): the rows carry one another in full; each
+  edit's money is on the booking's invoice (made before it, with no invoice of
+  its own, a #3980 gap invoice included) or on a supplementary invoice waiting
+  on the request that passes the move's own test
+  (`anchorInvoicesMoveRefusal`); no other invoice names the request; never both
+  kinds of billing. Otherwise it waits [INV-ADDPAY-051], the officers' note
+  saying why, and is asked for alone once the edit is paid or withdrawn.
+- **Decided twice, before the Stripe mint and on the claim's store under the
+  `Payment` row lock**, beside the sizing fence: a change in between throws and
+  the row retries; a lost claim supersedes and moves nothing. No new lock or
+  advisory key. Home: `credit-release-merge.ts`, `credit-release-ask.ts`.

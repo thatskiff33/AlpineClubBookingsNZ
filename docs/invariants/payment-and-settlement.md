@@ -1720,11 +1720,11 @@ release).
 - **A change's card capture that nothing else records is recorded against the
   Xero invoice that bills it, by one recorder** (#3953; owner, 21 Oct 2026).
 - **One recorder.** The primary's create stores the captures its cash covers;
-  every other gets an `ADDITIONAL_CAPTURE_RECEIPT` row, at the link save or the
-  late-success release. The gap invoice pays only from unclaimed cash, naming
-  what it took. A receipt stands down where the primary or a paying
-  supplementary invoice (naming it, covering it, or the change's own) records
-  it (`readCaptureRecorder`).
+  every other gets an `ADDITIONAL_CAPTURE_RECEIPT` row, at link save or
+  late-success release. The gap invoice pays only from unclaimed cash, never
+  the sweep's share (`INV-ADDPAY-046`), naming what it took. A receipt stands
+  down where the primary or a paying supplementary invoice (naming it,
+  covering it, or the change's own) records it (`readCaptureRecorder`).
 - **No stamp.** A review charge's change is read from its reason
   (`captureChangeId`). One with neither decides under the booking's key, which
   a paying invoice there naming no capture takes first, and refuses beside one.
@@ -2796,25 +2796,28 @@ _Legacy: settles tasks raised before #4317._
 - **Retired in the edit's transaction** (`retireUnpaidAskChain`): waiting
   recoveries closed first, then unpaid rows FAILED and `withdrawnAt` behind an
   unpaid fence; cancellations queued; parked invoices CANCELLED. A capture or
-  deadlock in between rolls the edit back (409); a capture after commit is
-  refunded in full. The re-issue's recovery and the billed-offset note are
-  written in the same transaction.
+  deadlock in between rolls the edit back (409); one after commit is
+  refunded in full. It writes the re-issue's recovery and billed-offset note.
+  An orphaned Stripe intent (#4052) is cancelled, best-effort, unless a
+  row, recovery or live claim may own it; a lost hold's (#4631, #4652) once
+  its recovery closed without it. The runner's close is fenced on its claim
+  (`completePaymentRecoveryOperation`, #4675). One uncancellable is logged.
+- **A declined card stays live** (#4052).
 - **Asks awaiting a failed mint's retry** count, sized as the replay would. A
   retry claimed within two minutes refuses the edit; an older claim is closed.
-  A later increase folds a waiting re-issue in and records it, so its own
-  replay asks for it again. Both minters send one Stripe request
+  A later increase folds a waiting re-issue in, recording it so its replay
+  asks for it again. Both minters send one Stripe request
   (`planReissuedAskMint`).
 - **Only the member's price asks.** An officer's review charge is never set
-  against. Nor is a financial review's settled refund share: the officer
-  decided that refund from the booking's evidence, so it is paid as decided,
-  and the ledger census reports the booking if the member then pays the ask
-  too.
+  against. Nor is a financial review's settled refund share: paid as the
+  officer decided, the ledger census reporting the booking if the member
+  pays the ask.
 - **Xero** (`splitUnpaidAskOffsetForXero`). The smaller ask gets its own
   supplementary invoice for what the retired asks' invoices left after the
   offset. The rest of the offset, where evidence shows the primary invoice
   billed it (`unpaidAskBillingEvidence`), takes a scoped invoice-correction
-  note, raised after the edit's own note; where that cannot be established, the
-  repair pass reports it for a person.
+  note, raised after the edit's own note; otherwise the repair pass reports it
+  for a person.
 
 ## INV-PAY-121
 
@@ -3379,8 +3382,9 @@ _Split from `INV-PAY-054` (#3268, epic #3270)._
   `charge-saved-method-route.test.ts` (the claim it gained),
   `payment-transactions-refunds.test.ts` (the intent pointer an attempt row
   must not null), `stripe-webhook-alerts.test.ts` (adoption by the event's
-  idempotency key) and `advisory-lock-guard.test.ts` (the two new
-  `charge-saved-method` sites).
+  idempotency key or, #4646, the metadata's attempt id),
+  `saved-card-async-capture-adopt.realdb.test.ts` (#4646, real PostgreSQL) and
+  `advisory-lock-guard.test.ts` (the two new `charge-saved-method` sites).
 
 ## INV-PAY-081
 
@@ -3391,9 +3395,13 @@ _Split from `INV-PAY-055` (#3267, epic #3270)._
   runs INSIDE the caller's claim transaction — global `pg_advisory_xact_lock(1)`
   then the lodge capacity lock, after the status-guarded PENDING -> CONFIRMED
   claim — and creates the row (PENDING, the card about to be charged, the
-  path's `reason`), then stamps its `reference` with
-  `pending_charge_<bookingId>_<rowId>`. A row is an attempt row only when its
-  `reference` is the key built from ITS OWN id. Because every path writes its
+  path's `reason`), then stamps its `reference` with the key
+  `mintedSavedCardChargeKey` builds: `pending_charge_<bookingId>_<rowId>`,
+  until #4682 switches it to the `_v2` key (that key plus `_v2`, #4646). A row
+  is an attempt row only when its `reference` is either key built from ITS OWN
+  id (`savedCardChargeKeyShape`): read first, write later, because the release
+  before #4646 reads only the original key and would mint a second charge
+  beside a `_v2` row it met. Because every path writes its
   row under the same two locks, two paths can never both hold an open attempt
   for one payment: the second to take the locks reads the first's row. That is
   the guard the shared key used to provide by accident, and it now covers
@@ -3401,12 +3409,14 @@ _Split from `INV-PAY-055` (#3267, epic #3270)._
   row is written under the same locks — a route writing its attempt unlocked
   would re-open the race the ledger closes.
 
-- **Metadata converges on one builder.** `buildSavedCardChargeMetadata`
-  returns `{ bookingId, memberId }` for every path; the per-path `source` that
-  broke the shared key is gone, and which path minted an attempt is recorded on
-  the row's `reason` (`SAVED_CARD_CHARGE_REASON`, a closed union). The one
-  charge call is `chargeSavedCardAttempt`; nothing else calls
-  `chargePaymentMethod` for a saved card.
+- **Metadata converges on one builder, a function of the key.**
+  `buildSavedCardChargeMetadata` returns `{ bookingId, memberId }` for every
+  path, plus `savedCardAttemptId` only under a `_v2` key; a row is re-sent
+  under its stored key with its first body, so Stripe sees no parameter
+  mismatch. Which path minted an attempt is on the
+  row's `reason` (`SAVED_CARD_CHARGE_REASON`, a closed union). The one charge
+  call is `chargeSavedCardAttempt`; nothing else calls `chargePaymentMethod`
+  for a saved card.
 
 ## INV-PAY-082
 
@@ -3616,8 +3626,8 @@ _Split from `INV-PAY-055` (#3267, epic #3270)._
 _Split from `INV-PAY-055` (#3267, epic #3270)._
 
 - **A key may only be RE-SENT inside Stripe's window, and a lost response is
-  recovered by that key.** Stripe keeps an idempotency key for 24 hours; the
-  same key sent after that is a new request and executes a NEW charge, with
+  recovered by an exact link.** Stripe keeps an idempotency key for 24 hours;
+  the same key sent after that is a new request and executes a NEW charge, with
   nothing local able to tell it apart from the first. So an attempt row that is
   PENDING with no intent and older than
   `SAVED_CARD_CHARGE_KEY_RESEND_WINDOW_MS` (23 hours, an hour of margin,
@@ -3626,20 +3636,21 @@ _Split from `INV-PAY-055` (#3267, epic #3270)._
   `SavedCardChargeRefusedError` (`attempt_key_expired`) and a person checks
   Stripe. That state is rare because the normal recovery is quicker: a
   `payment_intent.succeeded` or `.payment_failed` webhook for an intent the
-  ledger does not know adopts the PENDING no-intent attempt row whose
-  `reference` equals the event's `request.idempotency_key` — the key is the one
-  thing both sides hold — and settles it, forward only, before the handler
-  proceeds as usual (`adoptSavedCardChargeAttemptForIntent`). Without that
-  adoption a captured charge whose response was lost was invisible even to
-  `INV-PAY-043`, and the re-send after 24 hours was a second charge. **Adoption
-  is not a universal recovery, and the limit is Stripe's:** `Event.request` is
-  null for any state change Stripe did not attribute to an API request, so an
-  intent whose lost-response POST answered `processing` and captured
-  asynchronously later produces a `payment_intent.succeeded` with no
-  idempotency key at all. Nothing can adopt it; the row stays PENDING with no
-  intent id and falls through to the 23-hour `attempt_key_expired` refusal,
-  which is the fail-safe end of that road — no second charge, and a person is
-  told to look in Stripe.
+  ledger does not know adopts the PENDING no-intent attempt row and settles it,
+  forward only, before the handler proceeds as usual
+  (`adoptSavedCardChargeAttemptForIntent`). The link is the event's
+  `request.idempotency_key`, which the row stores on `reference`, or, when the
+  event carries no saved-card key, the `savedCardAttemptId` in the intent's
+  metadata (#4646): `Event.request` is null on an asynchronous capture and on
+  every redelivery of it. Either way the row's key is its own, in either shape,
+  and its payment that booking's; by metadata its key must also be the `_v2`
+  shape whose sends carry the id. Nothing adopts by booking and amount. The row
+  write is claimed on "still no intent" under the Payment lock, so a lost
+  adoption writes nothing. Without adoption a lost response's capture was
+  invisible even to `INV-PAY-043`, and the re-send after 24 hours was a second
+  charge. **The limit until #4682:** new attempts still mint the original key
+  (`INV-PAY-081`), which sends no id, so their asynchronous capture ends at
+  `attempt_key_expired`, alerted once as unmatched (`INV-INT-033`).
 
 ## INV-PAY-090
 
@@ -3700,11 +3711,12 @@ _Split from `INV-PAY-056` (#3220)._
   opinion on a fact its callers already hold. `nextRetryAt` is forced to `null`
   when terminal rather than trusted from the caller, because a terminal row
   that keeps a retry time is re-claimable and is therefore not terminal.
-  **The write is status-fenced**, like `completePaymentRecoveryOperation` and
-  for the same reason: the worker's arm used `update` by id, which throws
-  `P2025` on a row a manual mark-paid reversal deleted mid-flight — from inside
-  the worker loop's own `catch`, so the throw escaped the loop and abandoned
-  every remaining operation in the batch. A fenced `updateMany` matches
+  **The write is status-fenced**, like `completePaymentRecoveryOperation`
+  (also claim-fenced since #4675) and for the same reason: the worker's arm
+  used `update` by id, which throws `P2025` on a row a manual mark-paid
+  reversal deleted mid-flight — from inside the worker loop's own `catch`, so
+  the throw escaped the loop and abandoned every remaining operation in the
+  batch. A fenced `updateMany` matches
   nothing instead, and the fence also stops a `SUCCEEDED` row being dragged
   back to `FAILED` by a worker holding a stale in-memory copy. **A row that
   matched nothing is still tallied as this attempt's outcome**, so a row that
@@ -3840,6 +3852,8 @@ _Split from `INV-PAY-057` (#3220)._
   payment, its covering link (amount, watermark, capture) and its id on the
   row. A process that dies after that leaves a FAILED row naming its note:
   coverage counts the note, so nothing re-mints it, and the retry finishes it.
+  That record never lands over a note a resolve by hand recorded (#4426,
+  `INV-INT-028`).
 - **One read-back-then-settle** (`finishRefundCreditNoteSettlement`) serves the
   builder's own row, the retry and repair leg, and the repair tool. It reads the
   note back and records what Xero shows (paid, allocated, or part-paid with
@@ -3950,14 +3964,17 @@ _Split from `INV-PAY-057` (#3220)._
 - **Never silent.** A kept figure, or cash disagreeing with
   `bookingAmountOwedCents` beyond what supplementary invoices bill, writes an
   admin-only marker in the settle's transaction (`SETTLEMENT_MARKERS`) and sends
-  an unmuteable alert after commit, recorded once sent. The cancel arms alert
+  an unmuteable alert after commit, recorded once sent. The marker retries a
+  send nobody received; the email retry cron, one recipient's lost copy
+  (#4446, #4669). The cancel arms alert
   themselves: their credit's face is the receipt, and a mixed invoice is
   measured against its total less the member's own applied credit and any
   applied correction or no-cash note, which moved no cash (#4095).
 - `pnpm run payments:audit-ib-settled-cash` lists receipts differing from the
   recorded cash, and refunded totals beyond the rows.
 - Pinned by `settle-from-cash.test.ts`, `xero-inbound-reconciliation.test.ts`,
-  `ib-settled-cash-audit.test.ts` and `ib-settle-from-cash.realdb.test.ts`.
+  `ib-settled-cash-audit.test.ts`, `caller-retried-alert-replay.test.ts` and
+  `ib-settle-from-cash.realdb.test.ts`.
 
 ## INV-PAY-126
 

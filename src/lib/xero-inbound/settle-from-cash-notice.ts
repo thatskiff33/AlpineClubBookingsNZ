@@ -267,6 +267,9 @@ export async function raiseCashSettlementAlert(input: {
       },
       input.format,
     );
+    // #4669: a copy the email retry cron holds (`queued-for-retry`), or one
+    // recipient's lost copy beside a sent one, is the cron's; only a send that
+    // reached nobody is retried here.
     if (outcome === "undelivered") throw new Error("Settlement figure alert reached no recipient");
   } catch (err) {
     logger.error(

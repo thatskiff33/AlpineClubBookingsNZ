@@ -36,7 +36,7 @@ import "server-only";
  * that has already posted").
  *
  * NEVER GUESSED. After posting, and inside the same transaction, the booking is
- * judged by the census's own evaluation (`evaluateBookingLedgerIdentities`) on
+ * judged by the census's own evaluation (`evaluateWithJournal`, #4627) on
  * the row it now reads. A booking left with a disagreement, a coverage gap or an
  * integrity finding is rolled back and LISTED with the reason and both figures;
  * a named class is not a refusal (the census reports it, and the owner signs it
@@ -71,6 +71,8 @@ import type { Prisma, PrismaClient } from "@prisma/client";
 import { planGroupChildBackPost } from "@/lib/booking-ledger-back-post-group";
 import { postHandBackLedgerLine } from "@/lib/booking-ledger-hand-back";
 import { postCancellationLedgerLines } from "@/lib/booking-ledger-cancellation-sync";
+import { countBookingJournalEvents, isJournalEraBooking, readJournalSince } from "@/lib/member-money";
+import { postBookingLedgerJournal, resolveBookingMoneyPostingContext, type BookingJournalContext } from "@/lib/member-money/doors";
 import { planConfirmationChargeLines } from "@/lib/booking-ledger-confirmation-posting";
 import { syncBookingLedgerCredits } from "@/lib/booking-ledger-credit-sync";
 import {
@@ -81,12 +83,11 @@ import {
 } from "@/lib/booking-ledger-modification-posting";
 import { handBackKey, modificationChangeFeeKey } from "@/lib/booking-ledger-posting-keys";
 import {
-  evaluateBookingLedgerIdentities,
   postConfirmationEditsWithoutLines,
   type BookingLedgerEvaluation,
 } from "@/lib/booking-ledger-projection-census";
 import type { BookingLedgerCensusRow } from "@/lib/booking-ledger-projection-census-row";
-import { cancelledSnapshotKept, readBookingLedgerCensusRow } from "@/lib/booking-ledger-projection-census-store";
+import { cancelledSnapshotKept, evaluateWithJournal, readBookingLedgerCensusRow } from "@/lib/booking-ledger-projection-census-store";
 import { bookingHasConfirmationLines, findPostedChargeLines } from "@/lib/booking-ledger-read";
 import { syncBookingLedgerSettlements } from "@/lib/booking-ledger-settlement-sync";
 import {
@@ -104,6 +105,7 @@ import {
   type ModificationPricingSide,
 } from "@/lib/booking-modification-lines";
 import {
+  backPostTotals,
   type BackPostRefusal,
   type BookingBackPostOutcome,
   type BookingLedgerBackPostRun,
@@ -190,6 +192,7 @@ async function lockBookingForBackPost(tx: Tx, bookingId: string): Promise<boolea
 
 const BOOKING_SELECT = {
   id: true,
+  createdAt: true,
   lodgeId: true,
   status: true,
   totalPriceCents: true,
@@ -494,11 +497,12 @@ function namedClasses(evaluation: BookingLedgerEvaluation): string[] {
  * and judge the result. Throws `BackPostRollback` for a refusal; returns the
  * outcome otherwise (the caller rolls a dry run back itself).
  */
-async function backPostBooking(tx: Tx, bookingId: string): Promise<BookingBackPostOutcome> {
+async function backPostBooking(tx: Tx, bookingId: string, journal: BookingJournalContext): Promise<BookingBackPostOutcome> {
   if (!(await lockBookingForBackPost(tx, bookingId))) return { bookingId, kind: "NOTHING_TO_POST", classes: [] };
   const lineIds = async () =>
     (await tx.bookingLedgerLine.findMany({ where: { bookingId }, select: { id: true } })).map((line) => line.id);
   const before = new Set(await lineIds());
+  const journalBefore = await countBookingJournalEvents(tx, bookingId);
 
   const first = await readBookingLedgerCensusRow(tx, bookingId);
   if (!first) return { bookingId, kind: "NOTHING_TO_POST", classes: [] };
@@ -549,6 +553,18 @@ async function backPostBooking(tx: Tx, bookingId: string): Promise<BookingBackPo
   if ("kind" in charges) throw refuse(charges);
   await writeBookingLedgerRows(tx, buildBookingLedgerRows([...charges.postings, ...(group?.postings ?? [])]));
   steps.push(...charges.steps, ...(group?.steps ?? []));
+  // #4627: a journal-era booking confirmed with no R01 (this fill, or a door while the journal was
+  // inactive) posts it here; then every unbridged charge line of an R01 booking goes as R26 batches
+  // (the door's catch-up). One confirmed before M3b posts nothing: M9's whole.
+  const confirmationKeys = (await tx.bookingLedgerLine.findMany({ where: { bookingId, anchorKind: "CONFIRMATION", side: "CHARGE" }, select: { postingKey: true } }))
+    .flatMap((line) => (line.postingKey ? [line.postingKey] : []));
+  if (confirmationKeys.length > 0 && isJournalEraBooking(booking.createdAt, await readJournalSince(tx))) {
+    await postBookingLedgerJournal(tx, journal, { bookingId, lodgeId: booking.lodgeId, event: { kind: "confirmation" }, postingKeys: confirmationKeys });
+  }
+  await postBookingLedgerJournal(tx, journal, {
+    bookingId, lodgeId: booking.lodgeId, event: { kind: "back-post" },
+    postingKeys: charges.postings.map((posting) => posting.postingKey),
+  });
 
   // The cancellation, once the stay it takes back is on the ledger.
   const cancellationPosted = first.lines.some((line) => line.anchorKind === "CANCELLATION" && line.side !== "SETTLEMENT");
@@ -557,13 +573,14 @@ async function backPostBooking(tx: Tx, bookingId: string): Promise<BookingBackPo
     if (kept === null) {
       throw refuse(cannotPost(bookingId, "CENSUS_WOULD_NOT_PASS", "the CANCELLED event's snapshot holds no kept or retained figure"));
     }
-    await postCancellationLedgerLines({ store: tx, bookingId, lodgeId: booking.lodgeId, ...kept, site: "booking-ledger-back-post" });
+    await postCancellationLedgerLines({ store: tx, journal, bookingId, lodgeId: booking.lodgeId, ...kept, site: "booking-ledger-back-post" });
     steps.push(`cancellation (kept ${kept.keptCents})`);
   }
 
   // Judged by the census, on what this transaction now reads.
   const after = await readBookingLedgerCensusRow(tx, bookingId);
-  const evaluation = evaluateBookingLedgerIdentities(after ?? first);
+  // With the journal comparison (#4627): a fill that left the journal behind is refused too.
+  const evaluation = evaluateWithJournal(after ?? first);
   const disagrees = evaluation.identities.some((identity) => identity.status === "DISAGREE");
   if (disagrees || evaluation.coverage.length > 0 || evaluation.integrity.length > 0) {
     const what = [
@@ -575,8 +592,9 @@ async function backPostBooking(tx: Tx, bookingId: string): Promise<BookingBackPo
   }
   const inserted = (await lineIds()).filter((id) => !before.has(id)).sort();
   const classes = namedClasses(evaluation);
-  if (inserted.length === 0) return { bookingId, kind: "NOTHING_TO_POST", classes };
-  return { bookingId, kind: "POSTED", lines: inserted.length, lineIds: inserted, steps, classes };
+  const journalBatches = (await countBookingJournalEvents(tx, bookingId)) - journalBefore;
+  if (inserted.length === 0) return journalBatches > 0 ? { bookingId, kind: "JOURNAL_ONLY", journalBatches, steps, classes } : { bookingId, kind: "NOTHING_TO_POST", classes };
+  return { bookingId, kind: "POSTED", lines: inserted.length, lineIds: inserted, journalBatches, steps, classes };
 }
 
 // ---------------------------------------------------------------------------
@@ -619,11 +637,12 @@ async function backPostOne(
   client: Pick<PrismaClient, "$transaction">,
   bookingId: string,
   apply: boolean,
+  journal: BookingJournalContext,
 ): Promise<BookingBackPostOutcome> {
   try {
     return await client.$transaction(
       async (tx) => {
-        const result = await backPostBooking(tx, bookingId);
+        const result = await backPostBooking(tx, bookingId, journal);
         // A dry run posts, judges and then rolls everything back.
         if (!apply) throw new BackPostRollback(result.kind === "POSTED" ? { ...result, lineIds: [] } : result);
         return result;
@@ -651,8 +670,10 @@ export async function runBookingLedgerBackPost(args: {
   const runId = randomUUID();
   const startedAt = new Date().toISOString();
   const outcomes: BookingBackPostOutcome[] = [];
+  // #4627: the journal's posting context, once per run, before any booking's transaction.
+  const journal = await resolveBookingMoneyPostingContext();
   const one = async (bookingId: string) => {
-    const outcome = await backPostOne(args.client, bookingId, args.apply);
+    const outcome = await backPostOne(args.client, bookingId, args.apply, journal);
     outcomes.push(outcome);
     args.onOutcome?.(outcome);
   };
@@ -670,12 +691,5 @@ export async function runBookingLedgerBackPost(args: {
     }
   }
 
-  const totals = {
-    bookings: outcomes.length,
-    posted: outcomes.filter((outcome) => outcome.kind === "POSTED").length,
-    lines: outcomes.reduce((sum, outcome) => sum + (outcome.kind === "POSTED" ? outcome.lines : 0), 0),
-    nothingToPost: outcomes.filter((outcome) => outcome.kind === "NOTHING_TO_POST").length,
-    cannotPost: outcomes.filter((outcome) => outcome.kind === "CANNOT_POST").length,
-  };
-  return { mode: args.apply ? "apply" : "dry-run", runId, startedAt, finishedAt: new Date().toISOString(), outcomes, totals };
+  return { mode: args.apply ? "apply" : "dry-run", runId, startedAt, finishedAt: new Date().toISOString(), outcomes, totals: backPostTotals(outcomes) };
 }

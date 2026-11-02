@@ -39,6 +39,7 @@
  * connected, so every note stays the outbox row the app wrote.
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { releaseBookingJournalForTeardown } from "./support/booking-financial-history-teardown";
 
 import type { CalendarDate } from "@/lib/club-time";
 
@@ -105,6 +106,8 @@ let CLUB_FORMAT_TEST: (typeof import("@/lib/__tests__/support/club-format-fixtur
       await prisma.xeroSyncOperation.deleteMany({ where: { localId: { in: [...paymentIds, ...bookingIds, MODIFICATION_ID] } } });
       await prisma.paymentRefund.deleteMany({ where: { paymentId: { in: paymentIds } } });
       await prisma.paymentRecoveryOperation.deleteMany({ where: { bookingId: { in: bookingIds } } });
+      // #4627: the doors post journal batches bridged to these lines; release them first.
+      await releaseBookingJournalForTeardown(prisma, bookingIds);
       await prisma.bookingLedgerLine.deleteMany({ where: { bookingId: { in: bookingIds } } });
       await prisma.memberCredit.deleteMany({ where: { memberId: MEMBER_ID } });
       await prisma.manualRefundTask.deleteMany({ where: { bookingId: { in: bookingIds } } });

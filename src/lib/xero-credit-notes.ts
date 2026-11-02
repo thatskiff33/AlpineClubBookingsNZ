@@ -17,7 +17,8 @@
 
 import { reviewTaskKeyParts } from "@/lib/xero-review-task-key";
 import { assertNoRefundCreditNoteInFlight } from "@/lib/xero-refund-note-in-flight";
-import { assertFreshRefundNoteFromCreate, mayRecordAsCanonicalRefundNote, readCanonicalRefundNoteField, refundNoteKeyAfterVoidParts, refundRequestOwnNotes, type RefundNoteKeyScope } from "@/lib/xero-refund-note-status";
+import { recordCreatedRefundNote, RefundNoteNotRecordedError } from "@/lib/xero-refund-note-record";
+import { mayRecordAsCanonicalRefundNote, readCanonicalRefundNoteField, refundNoteKeyAfterVoidParts, refundRequestOwnNotes, type RefundNoteKeyScope } from "@/lib/xero-refund-note-status";
 import {
   XERO_OUTBOX_ACCOUNT_CREDIT_NOTE_TYPE,
   XERO_OUTBOX_MODIFICATION_ACCOUNT_CREDIT_NOTE_TYPE,
@@ -781,37 +782,27 @@ export async function createXeroCreditNote(
     };
     const createdNoteId = createdNote.creditNoteID;
     const createdNoteNumber = createdNote.creditNoteNumber ?? null;
-    await assertFreshRefundNoteFromCreate(paymentId, operationId!, { creditNoteID: createdNoteId, status: createdNote.status }, prisma);
-    await prisma.$transaction(async (tx) => {
+    // #4426, #4656 (`INV-INT-029`): checked fresh and recorded under the Payment row. A note kept out (a resolve
+    // recorded one) or recorded nowhere (no locks in time) is audited and alerted, never settled, completed or
+    // failed - and never reported as a success: the throw below skips this function's failure path.
+    const record = await recordCreatedRefundNote({
+      paymentId,
+      bookingId: payment.booking.id,
+      operationId: operationId!,
+      creditNoteId: createdNoteId,
+      creditNoteNumber: createdNoteNumber,
+      amountCents: effectiveRefundAmountCents,
+      xeroStatus: createdNote.status,
       // #3827 (D-3813-8): a request's own note never takes the pointer, nor
       // does a per-refund note (#3880 F1).
-      if (refundRequestId === null && !perRefundNote) {
-        await tx.payment.update({
-          where: { id: paymentId },
-          data: { xeroRefundCreditNoteId: createdNoteId },
-        });
-      }
-      await upsertXeroObjectLink(
-        {
-          localModel: "Payment",
-          localId: paymentId,
-          xeroObjectType: "CREDIT_NOTE",
-          xeroObjectId: createdNoteId,
-          xeroObjectNumber: createdNoteNumber,
-          role: noteLinkRole,
-          metadata: noteLinkMetadata,
-        },
-        { store: tx }
-      );
-      await tx.xeroSyncOperation.update({
-        where: { id: operationId! },
-        data: {
-          xeroObjectType: "CREDIT_NOTE",
-          xeroObjectId: createdNoteId,
-          xeroObjectNumber: createdNoteNumber,
-        },
-      });
+      writesPointer: refundRequestId === null && !perRefundNote,
+      linkRole: noteLinkRole,
+      linkMetadata: noteLinkMetadata,
+      claimStartedAt: operationClaim!.startedAt,
     });
+    if (record !== "recorded") {
+      throw new RefundNoteNotRecordedError(record, { operationId: operationId!, creditNoteId: createdNoteId, creditNoteNumber: createdNoteNumber });
+    }
 
     // The first attempt's settlement and completion, shared with the retry
     // that finishes an interrupted attempt (#3548): one path, one payload.
@@ -843,6 +834,8 @@ export async function createXeroCreditNote(
 
     return createdNote.creditNoteID;
   } catch (error) {
+    // #4656: a note the record did not write leaves the row as the record left it.
+    if (error instanceof RefundNoteNotRecordedError) throw error;
     await failXeroSyncOperation(operationClaim!, error);
     throw error;
   }

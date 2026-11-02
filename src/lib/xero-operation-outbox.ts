@@ -34,7 +34,7 @@ import {
   startXeroSyncOperation,
   upsertXeroObjectLink,
 } from "@/lib/xero-sync";
-import { holdsRecordedXeroSuccess, NOT_A_XERO_REPAIR_CLAIM } from "@/lib/xero-operation-outcome-guard";
+import { holdsRecordedXeroSuccess, NOT_A_XERO_REPAIR_CLAIM, type XeroOperationClaim } from "@/lib/xero-operation-outcome-guard";
 import {
   createXeroInvoiceForBooking,
   updateXeroBookingInvoiceForBooking,
@@ -47,6 +47,7 @@ import {
 } from "@/lib/xero-credit-notes";
 import { readRefundRequestIdFromPayload } from "@/lib/refund-request-credit-note";
 import { refundNoteKeyAfterVoidParts } from "@/lib/xero-refund-note-status";
+import { RefundNoteNotRecordedError, refundNoteRecordedElsewhere } from "@/lib/xero-refund-note-record";
 import {
   readModificationNoteWording,
   readRefundNoteWording,
@@ -2867,11 +2868,11 @@ export async function queueApprovedMembershipCancellationXeroOperations(params: 
   const queuedResults: Array<{ queueOperationId: string | null; message: string }> = [];
 
   // Enqueue the credit note BEFORE the contact cleanup. The outbox processes
-  // operations oldest-first (orderBy createdAt asc), so this ensures the credit
-  // note is pushed to Xero before the contact is archived. Archiving first
-  // would block the credit note, because Xero rejects credit notes raised
-  // against an archived contact. The contact operation also re-checks this at
-  // run time and defers if the credit note has not settled yet.
+  // operations oldest-first (createdAt, then id: a same-millisecond pair is not
+  // guaranteed in call order, #4663), so this puts the credit note ahead of the
+  // contact archive. Archiving first would block it: Xero rejects credit notes
+  // against an archived contact. The contact operation re-checks this at run
+  // time and defers if the credit note has not settled yet.
   if (subscription) {
     queuedResults.push(
       await enqueueXeroMembershipCancellationCreditNoteOperation(
@@ -2963,9 +2964,9 @@ export async function processQueuedXeroOutboxOperations(options?: {
       // is looked at again only every few minutes, not on every kick.
       AND: [outboxScanLeavesAwaitingOwnNote(new Date()), outboxScanSpacesWaitingReceipts(new Date())],
     },
-    orderBy: {
-      createdAt: "asc",
-    },
+    // Ties on `createdAt` (same ms; all rows under the frozen clock) fall to `id`:
+    // deterministic, not insertion order (#4663; STATE_MACHINES.md).
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     take: limit,
   });
   // The club's format (#3565), once for the whole batch: three of the documents
@@ -3063,6 +3064,10 @@ export async function processQueuedXeroOutboxOperations(options?: {
       ? buildPrecomputedEntranceFeeContext(payload)
       : null;
     const subscriptionChargeId = subscriptionInvoiceChargeId(queuedOperation);
+    // #4655 (#4672 review S1/S2, `INV-INT-029`): the claim this dispatch's outcome is
+    // written under. An organiser adjustment whose late note re-took a row a reset
+    // failed hands back its fresh claim; every give-back and failure below follows it.
+    let outcomeClaim: XeroOperationClaim = claimed;
 
     try {
       if (
@@ -3178,7 +3183,12 @@ export async function processQueuedXeroOutboxOperations(options?: {
         // #3953: a change's card capture nothing waited on, recorded against the invoice billing it.
         await recordAdditionalCaptureReceipt({ syncOperation: claimed, createdByMemberId: queuedOperation.createdByMemberId ?? undefined });
       } else if (payload?.queueType === XERO_OUTBOX_ORGANISER_EXTRA_ADJUSTMENT_TYPE) {
-        await executeOrganiserExtraAdjustment(payload, claimed);
+        const ran = await executeOrganiserExtraAdjustment(payload, claimed, { onRetake: (retaken) => { outcomeClaim = retaken; } });
+        // #4655: a run whose note was recorded on a row queued again, or on none, wrote no outcome.
+        if (ran === "stood-down") {
+          result.skipped += 1;
+          continue;
+        }
       } else if (payload?.queueType === XERO_OUTBOX_SUPPLEMENTARY_INVOICE_TYPE) {
         await createXeroSupplementaryInvoice({
           bookingId: payload.bookingId,
@@ -3262,6 +3272,14 @@ export async function processQueuedXeroOutboxOperations(options?: {
 
       result.succeeded += 1;
     } catch (error) {
+      if (error instanceof RefundNoteNotRecordedError) {
+        // #4656 (`INV-INT-029`): a note this run did not record, already traced; the row stays as the record left it.
+        // Skipped, never succeeded: this run completed nothing, even where the row records this very note.
+        const level = refundNoteRecordedElsewhere(error.outcome) ? "info" : "warn";
+        logger[level]({ queueOperationId: queuedOperation.id, outcome: error.outcome }, error.message);
+        result.skipped += 1;
+        continue;
+      }
       if (isXeroAppliedCreditOperationBusyError(error)) {
         // Two independent outbox runners can claim allocation and deallocation
         // for the same Payment before either handler observes the other. That
@@ -3271,7 +3289,7 @@ export async function processQueuedXeroOutboxOperations(options?: {
         // deallocation says what it is waiting for.
         await prisma.xeroSyncOperation.updateMany({
           // #4356: never take back a repair's marked claim; #4373: nor any claim but this dispatch's (`INV-INT-029`).
-          where: { id: queuedOperation.id, status: "RUNNING", startedAt: claimed.startedAt, ...NOT_A_XERO_REPAIR_CLAIM },
+          where: { id: queuedOperation.id, status: "RUNNING", startedAt: outcomeClaim.startedAt, ...NOT_A_XERO_REPAIR_CLAIM },
           data: {
             status: "PENDING",
             startedAt: null,
@@ -3329,7 +3347,7 @@ export async function processQueuedXeroOutboxOperations(options?: {
           where: {
             id: queuedOperation.id,
             // #4373: RUNNING only as this dispatch's own claim, never a later retry's (`INV-INT-029`).
-            AND: [{ OR: [{ status: "RUNNING", startedAt: claimed.startedAt }, { status: "FAILED" }] }],
+            AND: [{ OR: [{ status: "RUNNING", startedAt: outcomeClaim.startedAt }, { status: "FAILED" }] }],
             // Never revive a row an officer resolved (#3635, `INV-INT-025`), nor a repair's marked claim (#4356).
             manuallyResolvedAt: null,
             ...NOT_A_XERO_REPAIR_CLAIM,
@@ -3413,7 +3431,7 @@ export async function processQueuedXeroOutboxOperations(options?: {
         // #3635 round-3 N5: never over a row withdrawn in the meantime (an
         // approval cancels a kept row it finds FAILED); CANCELLED stands.
         await failXeroSyncOperation(
-          claimed,
+          outcomeClaim,
           error instanceof Error ? error : new Error(String(error)),
           undefined,
           { keepCancelled: true }

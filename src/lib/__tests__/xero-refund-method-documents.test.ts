@@ -51,6 +51,8 @@ vi.mock("@/lib/prisma", () => {
   const prisma = {
     // #3548: a new refund note is recorded (payment, link, row) in one transaction.
     $transaction: (run: (tx: unknown) => unknown) => run(prisma),
+    // #4656: its first statement takes the Payment row (`lockPaymentForRefundedTotal`).
+    $executeRaw: async () => 1,
     payment: { findUnique: mocks.paymentFindUnique, update: mocks.paymentUpdate },
     booking: { findUnique: mocks.bookingFindUnique, findUniqueOrThrow: mocks.bookingFindUniqueOrThrow },
     bookingModification: {
@@ -64,6 +66,8 @@ vi.mock("@/lib/prisma", () => {
     },
     xeroSyncOperation: {
       update: mocks.xeroSyncOperationUpdate,
+      // #4426: a refund note's record claims its row; no row here is resolved by hand.
+      updateMany: async () => ({ count: 1 }),
       findUnique: async () => null,
       // #3791: the unconverged-deallocation read a review's note defers on.
       findFirst: (...a: unknown[]) => deallocationFence.findFirst(...a),

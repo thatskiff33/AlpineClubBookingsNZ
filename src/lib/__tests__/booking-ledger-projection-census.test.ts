@@ -407,6 +407,14 @@ const report = (rows: BookingLedgerCensusRow[], acknowledgements: Parameters<typ
 
 // ---------------------------------------------------------------------------
 
+
+/** #4627: a snapshot whose member-money journal holds nothing for these bookings. */
+const EMPTY_JOURNAL = {
+  memberMoneyEvent: { findMany: async () => [], aggregate: async () => ({ _min: { recordedAt: null } }) },
+  memberMoneyLine: { findMany: async () => [] },
+  memberMoneySourceLink: { findMany: async () => [] },
+};
+
 describe("the identities agree on lines the real planners wrote (#3583)", () => {
   it.each([
     ["a card-paid booking", cardPaid],
@@ -1777,6 +1785,7 @@ describe("paging inside the snapshot", () => {
           ),
         ),
       },
+      ...EMPTY_JOURNAL,
     };
     const seen: Array<[string, string[]]> = [];
     const evaluations = await evaluateBookingLedgerPages(tx as never, 2, (subject) => {
@@ -2543,7 +2552,7 @@ describe("#4147: a capacity race's cancel is judged by its own refund rows and w
         events: [{ snapshot: { refundMethod: "card", refundPercentage: 50, paidAmountCents: 19_000, settledAmountCents: 9_500, retainedAmountCents: 5_000, ...(cancelledBecause ? { cancelledBecause } : {}) } }],
         ledgerLines: subject.lines,
       };
-      const tx = { booking: { findMany: vi.fn(async () => [stored]) }, memberCredit: { findMany: vi.fn(async () => []) } };
+      const tx = { booking: { findMany: vi.fn(async () => [stored]) }, memberCredit: { findMany: vi.fn(async () => []) }, ...EMPTY_JOURNAL };
       const seen: BookingLedgerCensusRow[] = [];
       await evaluateBookingLedgerPages(tx as never, 10, (row) => {
         seen.push(row);

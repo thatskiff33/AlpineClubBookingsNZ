@@ -29,8 +29,10 @@ export const XERO_OPERATION_REASON_MAX = 500;
  * failure overview, the operations list's failure-state filter, contact-create
  * recovery, the retry claims in `xero-operation-retry.ts`, the resolve route,
  * the outbox cooldown hand-back, the repeated-failure alert, the refund-note
- * link repair and the review charge's still-coming read,
- * `supplementaryInvoiceStillComingWhere`, #3947) or `manuallyResolvedAt: { not: null }` (the enqueue fences in
+ * link repair, the review charge's still-coming read,
+ * `supplementaryInvoiceStillComingWhere`, #3947, and the deleted-payment
+ * retire's hold-back, `rerunnableOperationWhere`, #4531, and a refund-note
+ * create's record of its note, `recordCreatedRefundNote`, #4426) or `manuallyResolvedAt: { not: null }` (the enqueue fences in
  * `xero-resolved-in-xero-fences.ts`, `hasInvoiceClearingNote`, and the review
  * charge's done read, `resolvedSupplementaryInvoiceOperationsWhere`, #3947) - a `where`
  * clause cannot call a function, so those stay spelled out (`INV-INT-025`).

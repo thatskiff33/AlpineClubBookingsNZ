@@ -25,6 +25,33 @@ export function isUntouchedPrePersistedRow(row: { status: PaymentRecoveryOperati
 }
 
 /**
+ * #4675 (`INV-PAY-120`, `INV-SSOT`): THE CLAIM ONE RECOVERY ATTEMPT HOLDS - the
+ * `attempts` and `processingStartedAt` its claim wrote
+ * (`claimPaymentRecoveryOperation`, or a succeeded-intent hand-off's), or the
+ * claim time a hold re-stamped since (`holdAdditionalIntentRecoveryClaim`).
+ */
+export type PaymentRecoveryClaim = {
+  id: string;
+  attempts: number;
+  processingStartedAt: Date | null;
+};
+
+/**
+ * The row is still this attempt's: PROCESSING, with exactly the claim it holds.
+ * The stale reaper clears `processingStartedAt` and a reclaim increments
+ * `attempts`, so an attempt the reaper gave up on matches nothing. The runner's
+ * claim hold and its SUCCEEDED close are both fenced on it.
+ */
+export function heldPaymentRecoveryClaimWhere(claim: PaymentRecoveryClaim) {
+  return {
+    id: claim.id,
+    status: "PROCESSING",
+    attempts: claim.attempts,
+    processingStartedAt: claim.processingStartedAt,
+  } as const satisfies Prisma.PaymentRecoveryOperationWhereInput;
+}
+
+/**
  * IS A RECOVERY OPERATION STILL IN FLIGHT — will the runner still make it?
  * (#3854 K1): `PENDING` and `PROCESSING`, and a `FAILED` row with a retry
  * still scheduled (`nextRetryAt` set) and attempts left. A `FAILED` row with

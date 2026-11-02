@@ -152,19 +152,3 @@ export class LinkedDateMoveContendedError extends ApiError {
     this.name = "LinkedDateMoveContendedError";
   }
 }
-
-
-/**
- * Prisma's transaction contention codes.
- *
- * The same pair, for the same reason, as `waitlist-confirm/route.ts`,
- * `admin/site-style/route.ts`, `deletion-request-decision.ts` and
- * `waitlist-return-contract.ts`. It is deliberately NOT hoisted into a shared
- * module here: two of the existing copies also carry `P2002`, which is a
- * unique-constraint retry rather than contention, so unifying them is a decision
- * about those paths and not a side effect of this one.
- */
-export function isTransactionContention(error: unknown): boolean {
-  const code = (error as { code?: unknown } | null)?.code;
-  return code === "P2028" || code === "P2034";
-}

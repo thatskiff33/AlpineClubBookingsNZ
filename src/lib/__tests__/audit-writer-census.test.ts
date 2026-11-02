@@ -1478,8 +1478,13 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
     // 393 -> 396 unpinned (#4432): the two sync-now rows and the webhook threshold, unpinned `xero`.
     // RE-MEASURED with `pnpm run audit:census`.
     // 396 -> 398 unpinned (#4457): the retention settings and member-anonymisation rows.
+    // 398 -> 399 unpinned (#4533): the officer's finished-stay promo correction request.
     // RE-MEASURED with `pnpm run audit:census`.
-    ).toEqual({ pinned: 130, unpinned: 398 });
+    // 399 -> 400 unpinned (#4426): the late refund note's row, unpinned `xero`.
+    // RE-MEASURED with `pnpm run audit:census`.
+    // 400 -> 401 unpinned (#4655): the late organiser adjustment note's row, unpinned `xero`.
+    // RE-MEASURED with `pnpm run audit:census`.
+    ).toEqual({ pinned: 130, unpinned: 401 });
   });
 
   it("pins which classified writers a MEMBER can now see about themselves", () => {

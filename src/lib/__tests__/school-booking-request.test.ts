@@ -8,6 +8,14 @@ import {
   PaymentStatus,
 } from "@prisma/client";
 
+// #4627: the journal half runs on PostgreSQL (`booking-ledger-journal.realdb.test.ts`), not on this fake store.
+vi.mock("@/lib/member-money/doors", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/member-money/doors")),
+  postBookingLedgerJournal: vi.fn(async () => null),
+  // #4628: the binding R01 too, and the context its approval reads before the transaction.
+  postPendingBookingJournal: vi.fn(async () => null),
+  resolveBookingMoneyPostingContext: vi.fn(async () => ({ journal: "context" })),
+}));
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     bookingRequest: {

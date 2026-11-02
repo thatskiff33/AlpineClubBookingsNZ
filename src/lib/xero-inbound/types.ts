@@ -1,3 +1,4 @@
+import type { DeletedPaymentRecheckOutcome } from "./deleted-payment-links";
 
 
 export interface StoredXeroInboundEvent {
@@ -107,6 +108,8 @@ export interface RunXeroInboundReconciliationCycleResult {
   contactReconciliation: IncrementalContactReconciliationResult | null;
   membershipReconciliation: IncrementalMembershipReconciliationResult | null;
   invoiceReconciliation: IncrementalInvoiceReconciliationResult | null;
+  /** #4531: the scheduled re-check of links pending a deleted-payment check; an error message when it failed. */
+  deletedPaymentRecheck?: DeletedPaymentRecheckOutcome | { error: string } | null;
 }
 
 export class XeroInboundReplayError extends Error {
