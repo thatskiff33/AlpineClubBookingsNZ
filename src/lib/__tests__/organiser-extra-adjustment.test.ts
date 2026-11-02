@@ -459,7 +459,7 @@ describe("organiser extra adjustment provider execution", () => {
       { step: "resize", dueNow: 30, allocated: [] },
       { step: "allocation", dueNow: 40, allocated: [] },
       { step: "completion", dueNow: 0, allocated: [{ invoice: { invoiceID: "extra" }, amount: 40, date: "2026-07-01" }] },
-    ])("MUTATION: a retry continuing from a recorded $40 note that stands down at its $step names the note's $40, not the $dueNow due now", async ({ step, dueNow, allocated }) => {
+    ])("MUTATION: a retry continuing from a recorded 4000c note that stands down at its $step names the note's 4000c, not the $dueNow dollars due now", async ({ step, dueNow, allocated }) => {
       mocks.operation = { xeroObjectId: "waiver", xeroObjectNumber: "CN-1", correlationKey: "scope" };
       mocks.note = { creditNoteID: "waiver", creditNoteNumber: "CN-1", total: 40, allocations: allocated };
       // The organiser paid since the note was raised: this run's due is less than the note.
