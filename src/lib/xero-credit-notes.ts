@@ -319,10 +319,7 @@ export async function createXeroCreditNote(
     }
   }
 
-  // #4688 (`INV-INT-028`): Xero holds a note on this payment the app never recorded (a record that lost its
-  // wait), which every coverage read below leaves out: nothing is sized or raised until an officer resolves it.
-  await assertNoUnrecordedRefundNote(paymentId);
-
+  await assertNoUnrecordedRefundNote(paymentId); // #4688 (`INV-INT-035`): no note sized while Xero holds one unrecorded
   let existingCreditNoteId: string | null = null;
   let existingCreditNoteNumber: string | null = null;
   // F4 (#1354): in delta mode the amounts billed to Xero are derived from

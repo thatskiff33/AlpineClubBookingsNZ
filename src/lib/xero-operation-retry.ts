@@ -126,9 +126,7 @@ type RetryableOperation = Pick<
   // Optional so row shapes selected before #1354 stay assignable; callers
   // that omit it simply fall back to payload-based delta detection.
   queueType?: XeroSyncOperation["queueType"];
-  // #4688: optional, as `queueType` is; Retry's own refusal reads the stored row
-  // (`unrecordedRefundNoteRetryRefusal`), so a shape without it only shows Retry.
-  lastErrorCode?: XeroSyncOperation["lastErrorCode"];
+  lastErrorCode?: XeroSyncOperation["lastErrorCode"]; // #4688: optional; Retry's own refusal reads the stored row
 };
 
 export class XeroOperationRetryError extends Error {
@@ -1028,10 +1026,8 @@ export function getXeroOperationRetryMeta(operation: RetryableOperation): XeroOp
   if (isResolvedInXeroForRetry(operation)) {
     return { supported: false, reason: RESOLVED_IN_XERO_RETRY_REASON };
   }
-  // #4688 (`INV-INT-028`): Xero made this row's note and the app could not record it.
-  if (holdsUnrecordedRefundNote(operation)) {
-    return { supported: false, reason: UNRECORDED_REFUND_NOTE_RETRY_REASON };
-  }
+  // #4688 (`INV-INT-035`): Xero made this row's note and the app could not record it.
+  if (holdsUnrecordedRefundNote(operation)) return { supported: false, reason: UNRECORDED_REFUND_NOTE_RETRY_REASON };
 
   if (!operation.replayable) {
     return {

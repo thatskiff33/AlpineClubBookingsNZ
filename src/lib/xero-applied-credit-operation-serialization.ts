@@ -105,7 +105,7 @@ export class XeroRefundCreditNoteInFlightError extends XeroAppliedCreditOperatio
 }
 
 /**
- * #4688 (`INV-INT-028`): Xero holds a refund note on this payment that the
+ * #4688 (`INV-INT-035`): Xero holds a refund note on this payment that the
  * app never recorded (its create's record lost its wait), so any note sized
  * now would leave it out. A subclass of the in-flight error, so the outbox and
  * the retry queue hold the row in PENDING the same way, until an officer

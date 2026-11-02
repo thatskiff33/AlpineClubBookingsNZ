@@ -1086,7 +1086,7 @@ describe("#3880: one refund note in flight per payment, from coverage read to re
     expect(row("op_b")).toMatchObject({ status: "SUCCEEDED", xeroObjectId: "cn_2" });
   });
 
-  // #4688 (`INV-INT-028`): the note Xero made for op_a whose record lost its wait is in no coverage read.
+  // #4688 (`INV-INT-035`): the note Xero made for op_a whose record lost its wait is in no coverage read.
   it.each([
     ["still RUNNING, past the stale threshold", "RUNNING"],
     ["FAILED by Mark failed, keeping its code", "FAILED"],

@@ -68,7 +68,7 @@ export async function assertNoRefundCreditNoteInFlight(
 }
 
 /**
- * #4688 (`INV-INT-028`): the payment's refund-note create rows whose note Xero
+ * #4688 (`INV-INT-035`): the payment's refund-note create rows whose note Xero
  * made but the record could not write (`record-wait-lost`): stamped
  * `XERO_REFUND_NOTE_UNRECORDED_ERROR_CODE` by `recordCreatedRefundNote`, not
  * resolved by hand, and still naming no note. Whatever its status or age - the stale threshold that ends

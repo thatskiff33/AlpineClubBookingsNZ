@@ -1,5 +1,5 @@
 /**
- * Real-PostgreSQL proof of #4688 (`INV-INT-028`): while Xero holds a refund
+ * Real-PostgreSQL proof of #4688 (`INV-INT-035`): while Xero holds a refund
  * note on a payment that the app could not record - its create's record lost
  * its wait (#4656, `record-wait-lost`) - no later refund note on that payment
  * is sized or raised, however old the row is, until an officer's Resolve by

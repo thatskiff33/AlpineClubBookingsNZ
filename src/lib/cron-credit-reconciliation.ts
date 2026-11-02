@@ -90,7 +90,7 @@ export async function reconcileCreditBalances(): Promise<{
     // the gap after it; a payment whose late captures cannot be checked
     // tonight gets no card note.
     //
-    // #4688 (`INV-INT-028`): nor does a payment on which Xero holds a refund
+    // #4688 (`INV-INT-035`): nor does a payment on which Xero holds a refund
     // note the app could not record (its record lost its wait). The gap read
     // above leaves that note out, so it may BE the gap: no note is queued for
     // the payment, a close's or a card one, until an officer resolves it by

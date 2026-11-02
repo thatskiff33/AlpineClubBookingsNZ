@@ -242,7 +242,7 @@ function whoseRecord(note: CreatedRefundNote, row: XeroSyncOperation): RefundNot
 }
 
 /**
- * #4688 (`INV-INT-028`): stamp the row whose note the record could not write,
+ * #4688 (`INV-INT-035`): stamp the row whose note the record could not write,
  * so `findUnrecordedRefundNoteOperation` fences the payment's refund notes
  * whatever the row's age. Row-only (no Payment lock, which the record just
  * failed to get) and status-guarded: this run's RUNNING claim, or the FAILED

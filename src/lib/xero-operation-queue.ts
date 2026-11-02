@@ -111,7 +111,7 @@ export async function enqueueXeroSyncOperationRetry(
   if (await isRetryOfVoidedRefundRequestNote(operation, prisma)) {
     throw new XeroOperationRetryError(VOIDED_REQUEST_NOTE_RETRY_REASON, 409);
   }
-  // #4688 (`INV-INT-028`): never queued while Xero holds an unrecorded refund note on the payment - Retry all
+  // #4688 (`INV-INT-035`): never queued while Xero holds an unrecorded refund note on the payment - Retry all
   // skips it with the reason. A retry queued before the note went unrecorded waits at the create instead.
   const unrecordedRefusal = await unrecordedRefundNoteRetryRefusal(operation);
   if (unrecordedRefusal) throw new XeroOperationRetryError(unrecordedRefusal, 409);

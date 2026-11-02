@@ -16,7 +16,7 @@
 export const XERO_ORPHANED_STALE_RUNNING_ERROR_CODE = "ORPHANED_STALE_RUNNING";
 
 /**
- * #4688 (`INV-INT-028`): the code a payment refund-note create stamps on its
+ * #4688 (`INV-INT-035`): the code a payment refund-note create stamps on its
  * own row when Xero made the note but the record could not get its locks in
  * time (`record-wait-lost`), so the note is recorded nowhere. While the row
  * carries it and is not resolved by hand, no refund note is raised on the
