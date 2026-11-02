@@ -941,6 +941,9 @@ let webhookClient: PrismaClient;
       const cancelled: Array<{ id: string; openTransactions: number }> = [];
       stripeRaceHooks.cancel = (async (id: string) => {
         cancelled.push({ id, openTransactions: await openRaceTransactions() });
+        // #4693: cancelled as Stripe cancels it, so the runner's close-time sweep after this
+        // attempt (its second) lists it cancelled and leaves it.
+        if (stripe.intents.has(id)) stripe.intents.get(id)!.status = "canceled";
         return { paymentIntent: { id, status: "canceled" }, canceled: true };
       }) as never;
       const { readUnpaidPriceAsk, retireUnpaidAskChain } = await import("@/lib/additional-ask-reduction");
@@ -1278,6 +1281,11 @@ let webhookClient: PrismaClient;
         complete: true,
       })) as never;
       stripeRaceHooks.cancel = (async (id: string) => ({ paymentIntent: { id, status: "canceled" }, canceled: true })) as never;
+      // #4693: the runner's stamp merges into the intent's metadata, as Stripe's update does.
+      stripeRaceHooks.stamp = async (id, metadata) => {
+        const intent = intents.get(id);
+        if (intent) intent.metadata = { ...intent.metadata, ...metadata };
+      };
       return { intents, create };
     }
 
