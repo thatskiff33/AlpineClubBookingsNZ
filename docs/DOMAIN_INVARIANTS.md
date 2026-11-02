@@ -117,7 +117,7 @@ File: [`invariants/money.md`](invariants/money.md). Prefix `INV-MONEY`.
 | `INV-MONEY-012` | Club `familyBillingMode` decides whether family billing exists; stale schedules raise exceptions |
 | `INV-MONEY-013` | A multi-family member's per-family fee bills only via their admin-chosen billing family |
 | `INV-MONEY-014` | One family/type/membership-year tuple carries at most one durable charge |
-| `INV-MONEY-045` | Subscription category is a second billing axis; type xor category per charge, shared accessor, shared exemption/reversal rules |
+| `INV-MONEY-046` | Subscription category is a second billing axis, independent of membership type |
 | `INV-MONEY-015` | Approval stands when billing setup is incomplete; billing records a visible exception |
 | `INV-MONEY-016` | Membership type governs liability, including archived role defaults; role grants no exemption |
 | `INV-MONEY-017` | Paid-up: NOT_REQUIRED type, PAID current-season row, exempt tier; nomination honours first |
@@ -1013,7 +1013,7 @@ ten pre-split domain headings the index keeps verbatim.
 | `INV-SSOT-004` | Two instruments claiming independence must measure the same way; `stripComments` lives once |
 | `INV-SSOT-005` | Who owns a booking is answered by `bookingOwner()` and nowhere else |
 | `INV-SSOT-006` | Id- or input-carrying Prisma `startsWith` prefixes go through `exactPrefix` |
-| `INV-SSOT-007` | A charge's family-dedup key/display name are built by `chargeFamilyAxisKey`/`chargeAxisDisplayName`, nowhere else |
+| `INV-SSOT-007` | A charge's dedup key and display name share one builder only |
 
 ## Authentication
 

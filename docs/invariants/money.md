@@ -801,7 +801,7 @@ check the others.
   charge. A later family member produces a visible exception; neither coverage
   mutation nor a second invoice is allowed.
 
-## INV-MONEY-045
+## INV-MONEY-046
 
 - Subscription category is a second, independent billing axis (`INV-LIFE-094`),
   resolved before and separately from `MembershipType`'s own fee. A

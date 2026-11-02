@@ -572,7 +572,7 @@ case-sensitive default. #4146, #4165, #4190.
 
 A `MembershipSubscriptionCharge`'s family-dedup key and display name are built
 by `chargeFamilyAxisKey()` / `chargeAxisDisplayName()` in
-`src/lib/membership-charge-axis.ts`, nowhere else. `INV-MONEY-045`.
+`src/lib/membership-charge-axis.ts`, nowhere else. `INV-MONEY-046`.
 
 - **Why one accessor.** The charge is billed on exactly one of two mutually
   exclusive axes — `membershipTypeId` or `subscriptionCategoryId` — per the

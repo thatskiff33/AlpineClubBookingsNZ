@@ -238,6 +238,10 @@ procedure.
   baseline.
 - [`../XERO_MEMBER_GROUPING_RUNBOOK.md`](../XERO_MEMBER_GROUPING_RUNBOOK.md) —
   operating the Xero member-grouping cutover.
+- [Subscription Category Redesign Reconciliation](../guides/subscription-category-redesign-production-reconciliation.md)
+  — the one-off, out-of-band script and runbook for a production database that
+  already ran the original subscription-category migrations before the
+  redesigned pair replaced them.
 - [Backups](../guides/backups.md) — S3-backed PostgreSQL backups, configured
   in-app, run on demand or nightly, with a scripted restore drill.
 - [Club Time Zone](../guides/club-time.md) — the one time zone the club runs on,
