@@ -134,14 +134,15 @@ function closedWithoutIntent(
  * Never throws: an unread or unproven recovery cancels nothing, and the run
  * ends as before.
  *
- * #4676: a hold that THREW (sizing or merge moved under its locks) rolled back
- * and wrote nothing either, so it takes the same proof before its caller
- * rethrows. The row is then usually still this attempt's (PROCESSING), which
- * proves nothing: a retry may size the same figure, mint under the same key
- * and be answered with this intent. Only a close since the throw - a net-off,
- * a fold or a reclaiming runner's - lets it go. A different key now proves
- * nothing either: sizing moves both ways, and a later retry back at this
- * figure replays the key, Stripe answering with this intent as first minted.
+ * #4676: a hold that THREW (sizing moved under its locks, or a write failed)
+ * rolled back and wrote nothing either, so it takes the same proof before its
+ * caller rethrows. The row is then usually still this attempt's (PROCESSING),
+ * which proves nothing: a retry may size the same figure, mint under the same
+ * key and be answered with this intent. Only a close since the throw - a
+ * net-off, a fold or a reclaiming runner's - lets it go. A different key now
+ * proves nothing either: sizing moves both ways, and a later retry back at
+ * this figure replays the key, Stripe answering with this intent as first
+ * minted.
  */
 export async function settleLostRecoveryClaimHold(call: {
   operationId: string;
