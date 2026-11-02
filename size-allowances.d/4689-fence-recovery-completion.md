@@ -1,7 +1,7 @@
 # File-size allowance for #4675 - the claim-fenced recovery close
 
 file: src/lib/payment-recovery.ts
-lines: 3606
+lines: 3615
 reason: the runner's SUCCEEDED close is fenced on the claim the attempt holds,
   and the claim has to reach it from where it is taken and re-stamped: the
   claim hold returns its re-stamped claim, the succeeded-intent hand-off reads
