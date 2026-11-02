@@ -50,6 +50,16 @@ import type { AppPaymentIntentMetadata } from "@/lib/stripe-app-intent-metadata"
 export const ADDITIONAL_ASK_INTENT_TYPE = "modification_additional";
 
 /**
+ * #4693: the metadata key the recovery runner stamps on an ordinary ask's intent
+ * it minted under its own row's key, naming that row (`mintOrdinaryAskIntent`).
+ * Stamped by an update after the create, never sent in it: the door's request
+ * under the same key carries no such key, and a replay must send what it sent.
+ * An intent without it - the door's own, or one minted before #4693 - is simply
+ * never found by the close-time sweep (`sweepAbandonedAskIntents`).
+ */
+export const ASK_RECOVERY_METADATA_KEY = "askRecoveryId";
+
+/**
  * The reason the recovery runner writes on the ledger row it records, and the
  * Stripe metadata reason it sent before #4036. A request whose key names no
  * door below still sends it, from both minters alike. A refused replay never

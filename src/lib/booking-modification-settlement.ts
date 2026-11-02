@@ -13,6 +13,7 @@ import {
 } from "@/lib/additional-ask-reissue";
 import { asksMemberCard } from "@/lib/additional-ask-email-terms";
 import { settleLostReissuedAskFence } from "@/lib/reissued-ask-abandoned-intent";
+import { sweepAskRecoveriesClosedByEdit } from "@/lib/abandoned-ask-intent-sweep";
 import { queueFoldedReissuedAskInvoices, queueReissuedAskSupplementaryInvoice } from "@/lib/reissued-ask-invoice";
 import {
   mintedIntentCustomerId,
@@ -424,6 +425,9 @@ export async function createModificationAdditionalPaymentIntent(
     bookingId,
     retired: result.retiredAdditionalAsks,
   });
+  // #4693 (`INV-PAY-120`): and a waiting ask's recovery it netted off or folded in is swept for
+  // the intents an earlier attempt minted and never wrote - after commit, best-effort.
+  await sweepAskRecoveriesClosedByEdit({ bookingId, bookingModificationId: result.bookingModificationId });
 
   // #3954: a re-issued ask was already asked of this card, so a credit-paid
   // ($0) booking whose reduction captured nothing still mints it. #4052: the

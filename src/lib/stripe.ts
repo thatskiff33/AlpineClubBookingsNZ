@@ -476,6 +476,19 @@ async function scanRecentPaymentIntents(
 }
 
 /**
+ * #4693: add metadata keys to an intent that already exists - Stripe merges them
+ * into what it carries. Not part of any create request, so a key replayed later
+ * still sends the parameters it was first sent with (`planOrdinaryAskMint`).
+ */
+export async function stampPaymentIntentMetadata(
+  paymentIntentId: string,
+  metadata: Readonly<Record<string, string>>,
+): Promise<void> {
+  const stripe = await getStripe();
+  await stripe.paymentIntents.update(paymentIntentId, { metadata: { ...metadata } });
+}
+
+/**
  * #3170 (epic #2797): raise what an EXISTING, unpaid PaymentIntent asks for.
  *
  * The one operation that lets a booking edit carry ONE request while more than

@@ -75,6 +75,7 @@ import {
   type ReissuedAskRecovery,
 } from "@/lib/additional-ask-reissue";
 import logger from "@/lib/logger";
+import { isPaymentRecoveryOperationExhausted } from "@/lib/payment-recovery-constants";
 import { prisma } from "@/lib/prisma";
 import { cancelPaymentIntentIfCancellableWithResult } from "@/lib/stripe";
 
@@ -112,17 +113,27 @@ export async function settleLostReissuedAskFence({
 }
 
 /**
- * #4052's proof, one rule for the door and the runner: the recovery ended
- * SUCCEEDED without naming this intent - a net-off or fold (`reissueClosedUnminted`),
- * or a runner closed it under its own claim (#4675) with another intent or none
- * ("minted-elsewhere").
+ * #4052's proof, one rule for the door, the runner and the close-time sweep
+ * (#4693): the recovery ended SUCCEEDED without naming this intent - a net-off or
+ * fold (`reissueClosedUnminted`), or a runner closed it under its own claim
+ * (#4675) with another intent or none ("minted-elsewhere") - or, #4693, it failed
+ * for good (`isPaymentRecoveryOperationExhausted`): no claim takes it again, no
+ * door writes it (PENDING only) and no reduction nets it off (in flight only),
+ * so nobody records an intent under it again either.
  * Null for anything else, which may yet record it.
  */
-function closedWithoutIntent(
-  moved: Pick<ReissuedAskRecovery, "status" | "lastError" | "paymentIntentId"> | null,
+export function closedWithoutIntent(
+  moved: Pick<ReissuedAskRecovery, "status" | "lastError" | "paymentIntentId" | "attempts"> | null,
   paymentIntentId: string,
 ): ClosedBy | null {
-  if (moved?.status !== PaymentRecoveryOperationStatus.SUCCEEDED || moved.paymentIntentId === paymentIntentId) return null;
+  if (!moved || moved.paymentIntentId === paymentIntentId) return null;
+  return recoveryEndedBy(moved);
+}
+
+/** How the recovery ended, by the rule above, whatever it names; null while it may yet record an intent. */
+export function recoveryEndedBy(moved: Pick<ReissuedAskRecovery, "status" | "lastError" | "attempts">): ClosedBy | null {
+  if (isPaymentRecoveryOperationExhausted(moved)) return "failed-for-good";
+  if (moved.status !== PaymentRecoveryOperationStatus.SUCCEEDED) return null;
   return reissueClosedUnminted(moved) ?? "minted-elsewhere";
 }
 
@@ -156,7 +167,7 @@ export async function settleLostRecoveryClaimHold(call: {
 }): Promise<void> {
   const { adopted, holdThrew = false, ...intent } = call;
   const moved = await prisma.paymentRecoveryOperation
-    .findUnique({ where: { id: call.operationId }, select: { status: true, lastError: true, paymentIntentId: true } })
+    .findUnique({ where: { id: call.operationId }, select: { status: true, lastError: true, paymentIntentId: true, attempts: true } })
     .catch((err: unknown) => {
       logger.error({ err, ...call, event: ABANDONED_REISSUE_INTENT_LOG_EVENT, outcome: "unread" }, "Could not re-read a recovery whose claim hold lost or threw; its minted intent is not cancelled (#4631, #4676)");
       return null;
@@ -209,9 +220,15 @@ export async function runClaimHoldSettlingIntent<T>(
   return held;
 }
 
-type ClosedBy = NonNullable<ReturnType<typeof reissueClosedUnminted>> | "minted-elsewhere";
+type ClosedBy = NonNullable<ReturnType<typeof reissueClosedUnminted>> | "minted-elsewhere" | "failed-for-good";
 
-async function cancelAbandonedReissuedAskIntent(call: {
+/**
+ * The owner check - no payment row and no recovery names the intent - then the
+ * best-effort Stripe cancel (`abandoned`), outside every transaction. The one
+ * copy of that rule: the door's and runner's settles and the close-time sweep
+ * (`sweepAbandonedAskIntents`, #4693) all cancel through it.
+ */
+export async function cancelAbandonedReissuedAskIntent(call: {
   bookingId: string;
   /** Who minted it: the door names its edit, the runner its recovery (#4631). */
   bookingModificationId?: string;

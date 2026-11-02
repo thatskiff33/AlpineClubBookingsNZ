@@ -1422,12 +1422,9 @@ async function markPaymentRecoveryOperationFailed({
 async function cancelStrandedAdditionalIntentForDeadRecovery(
   operation: PaymentRecoveryOperation
 ) {
-  if (
-    operation.type !==
-    PaymentRecoveryOperationType.CREATE_ADDITIONAL_PAYMENT_INTENT
-  ) {
-    return;
-  }
+  if (operation.type !== PaymentRecoveryOperationType.CREATE_ADDITIONAL_PAYMENT_INTENT) return;
+  // #4693 (`INV-PAY-120`): the intents an attempt minted and never wrote die with it too. Never throws.
+  await (await import("@/lib/abandoned-ask-intent-sweep")).sweepAbandonedAskIntents(operation.id, "failed-for-good");
 
   /**
    * Scoped to the completed-financial-review shape, which is the one the repair
@@ -3278,7 +3275,10 @@ async function processPaymentRecoveryOperation(
     operation.type ===
     PaymentRecoveryOperationType.CREATE_ADDITIONAL_PAYMENT_INTENT
   ) {
-    return processCreateAdditionalPaymentIntentOperation(operation, format);
+    const outcome = await processCreateAdditionalPaymentIntentOperation(operation, format);
+    // #4693 (`INV-PAY-120`): an attempt that ended the row sweeps what an earlier one left unwritten.
+    await (await import("@/lib/abandoned-ask-intent-sweep")).sweepAfterRunnerClose(operation, outcome);
+    return outcome;
   }
 
   if (

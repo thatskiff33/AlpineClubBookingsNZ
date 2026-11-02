@@ -41,6 +41,7 @@ import type Stripe from "stripe";
 import type { ClubFormat } from "@/lib/club-format";
 import logger from "@/lib/logger";
 import {
+  ASK_RECOVERY_METADATA_KEY,
   couldRecoveryRowOwnIntent,
   isIntentForOrdinaryAskPlan,
   latestAdoptableIntentCreatedAt,
@@ -53,7 +54,7 @@ import {
 } from "@/lib/payment-recovery-constants";
 import { prisma } from "@/lib/prisma";
 import { MINTED_INTENT_LOOKBACK_MS } from "@/lib/reissued-ask-mint";
-import { createPaymentIntent, listRecentPaymentIntentsMatching } from "@/lib/stripe";
+import { createPaymentIntent, listRecentPaymentIntentsMatching, stampPaymentIntentMetadata } from "@/lib/stripe";
 import { stripeChargeCurrency } from "@/lib/stripe-charge-currency";
 import { stripeErrorApiType } from "@/lib/stripe-errors";
 
@@ -80,17 +81,15 @@ export async function mintOrdinaryAskIntent({
    */
   recovery: { id: string; createdAt: Date } | null;
 }): Promise<OrdinaryAskMint> {
+  let intent: Stripe.PaymentIntent;
   try {
-    return {
-      intent: await createPaymentIntent({
-        format,
-        amountCents: plan.amountCents,
-        customerId,
-        metadata: { ...plan.metadata },
-        idempotencyKey: plan.idempotencyKey,
-      }),
-      adopted: false,
-    };
+    intent = await createPaymentIntent({
+      format,
+      amountCents: plan.amountCents,
+      customerId,
+      metadata: { ...plan.metadata },
+      idempotencyKey: plan.idempotencyKey,
+    });
   } catch (err) {
     if (!recovery || stripeErrorApiType(err) !== "idempotency_error") throw err;
     const minted = await findIntentMintedForOrdinaryAsk({ format, plan, customerId, recovery });
@@ -100,6 +99,27 @@ export async function mintOrdinaryAskIntent({
       "An ordinary additional ask's key had already minted an intent under other parameters; using that intent (#4036)",
     );
     return { intent: minted, adopted: true };
+  }
+  if (recovery) await stampRecoveryOnIntent(intent.id, recovery.id, plan.bookingId);
+  return { intent, adopted: false };
+}
+
+/**
+ * #4693 (`INV-PAY-120`): the runner's own intent - minted, or handed back, under
+ * this row's key; never an adopted one - is stamped with the row's id
+ * (`ASK_RECOVERY_METADATA_KEY`) before any claim hold runs, so a later close
+ * can find it if a hold that throws, loses or never runs leaves it unwritten.
+ * Best-effort, by an update outside every transaction: a failed stamp only
+ * leaves the intent as unstamped intents always were, so the ask goes on.
+ */
+async function stampRecoveryOnIntent(paymentIntentId: string, operationId: string, bookingId: string): Promise<void> {
+  try {
+    await stampPaymentIntentMetadata(paymentIntentId, { [ASK_RECOVERY_METADATA_KEY]: operationId });
+  } catch (err) {
+    logger.warn(
+      { err, paymentIntentId, operationId, bookingId },
+      "Could not stamp the recovery on an ordinary additional ask's intent; a close-time sweep will not find it if it is left unwritten (#4693)",
+    );
   }
 }
 
