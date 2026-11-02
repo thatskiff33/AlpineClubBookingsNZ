@@ -253,12 +253,13 @@ let prisma: (typeof import("@/lib/prisma"))["prisma"];
       return reconcileCreditBalances();
     }
 
+    // By id: runOutbox back-dates every row it runs to one instant, so createdAt ties.
+    const byId = (a: { id: string }, b: { id: string }) => a.id.localeCompare(b.id);
     const createRows = () =>
       prisma.xeroSyncOperation.findMany({
         where: { localModel: "Payment", localId: PAYMENT_ID, entityType: "CREDIT_NOTE", operationType: "CREATE" },
-        orderBy: { createdAt: "asc" },
         select: { id: true, status: true },
-      });
+      }).then((rows) => rows.sort(byId));
 
     it("MUTATION: past 15 minutes, a later refund's note, the nightly self-heal and Retry all raise nothing; Resolve by hand lifts the fence; the next note is sized with A counted", async () => {
       await fakeXero();
@@ -293,7 +294,7 @@ let prisma: (typeof import("@/lib/prisma"))["prisma"];
       // 2. The nightly self-heal lists the payment's gap but queues nothing for it.
       const healed = await nightlySelfHeal();
       expect(healed.refundsMissingXeroCreditNotes).toBeGreaterThanOrEqual(1);
-      expect(await createRows()).toEqual([{ id: rowA, status: "RUNNING" }, { id: rowB, status: "PENDING" }]);
+      expect(await createRows()).toEqual([{ id: rowA, status: "RUNNING" }, { id: rowB, status: "PENDING" }].sort(byId));
 
       // Mark failed keeps the fence: the row is FAILED, still carrying the code.
       const { markStaleRunningXeroOperationFailed } = await import("@/lib/xero-stale-operations");
@@ -340,7 +341,7 @@ let prisma: (typeof import("@/lib/prisma"))["prisma"];
 
       // And the self-heal finds nothing left to ask for.
       await nightlySelfHeal();
-      expect((await createRows()).map((row) => row.id)).toEqual([rowA, rowB]);
+      expect((await createRows()).map((row) => row.id)).toEqual([{ id: rowA }, { id: rowB }].sort(byId).map((row) => row.id));
       expect(xeroNotes).toHaveLength(2);
     });
   },
