@@ -24,7 +24,7 @@ import { xeroSyncErrorText } from "@/lib/xero-sync-error-text";
 import { XeroRefundCreditNoteInFlightError } from "@/lib/xero-applied-credit-operation-serialization";
 import { XERO_REQUEUE_OPERATION_TYPE } from "@/lib/xero-hardening-shared";
 import { isRetryOfVoidedRefundRequestNote, VOIDED_REQUEST_NOTE_RETRY_REASON } from "@/lib/xero-refund-note-status";
-import { RefundNoteNotRecordedError } from "@/lib/xero-refund-note-record";
+import { RefundNoteNotRecordedError, refundNoteRecordedElsewhere } from "@/lib/xero-refund-note-record";
 
 // The requeue correlation key is `${REQUEUE_CORRELATION_KEY_PREFIX}${originalOperationId}`.
 // Operation IDs are cuids, so the key stays well under the idempotency-key
@@ -281,33 +281,21 @@ export async function processQueuedXeroOperationRetries(
         continue;
       }
       if (error instanceof RefundNoteNotRecordedError) {
-        // #4656 (`INV-INT-029`): the retry ran and Xero made a refund note its
-        // record did not write - it could not get its locks in time, or the row
-        // it ran on was resolved by hand recording a note meanwhile. Never a
-        // success: the note is already audited and alerted, and the row it ran
-        // on is left as the record left it. A lost record fails this row with
-        // the note named and no advice to requeue (a retry could make a second
-        // note); a resolve that kept it out closes this row skipped, as a
-        // retry the resolve refused does.
-        if (error.outcome === "record-wait-lost") {
-          await failXeroSyncOperation(claimed, error, undefined, {
-            lastErrorMessage: `Retry of Xero operation ${originalOperationId} ran, but did not finish: ${error.message}`,
-          });
-          result.failed += 1;
-        } else {
-          await completeXeroSyncOperation(claimed, {
-            status: "CANCELLED",
-            responsePayload: {
-              originalOperationId,
-              retriedOperationId: error.note.operationId,
-              skipped: "resolved-in-xero",
-              unrecordedCreditNoteId: error.note.creditNoteId,
-              unrecordedCreditNoteNumber: error.note.creditNoteNumber,
-              reason: error.message,
-            },
-          });
-          result.skipped += 1;
-        }
+        // #4656 (`INV-INT-029`): the retry ran and Xero answered with a refund
+        // note this run did not record. Never a success, and the row it ran on
+        // is left as the record left it. A record that could not get its locks
+        // fails this row naming the note, with no advice to requeue (a retry
+        // could make a second note; the note is already audited and alerted).
+        // Otherwise the operation was resolved by hand meanwhile - recording
+        // another note (alerted) or this very note (nothing to do) - or another
+        // run records it: this row closes CANCELLED, saying the retry ran.
+        await (error.outcome === "record-wait-lost"
+          ? failXeroSyncOperation(claimed, error, undefined, {
+              lastErrorMessage: `Retry of Xero operation ${originalOperationId} ran, but did not finish: ${error.message}`,
+            })
+          : completeXeroSyncOperation(claimed, { status: "CANCELLED", responsePayload: requeueRanNotRecordedPayload(originalOperationId, error) }));
+        if (error.outcome === "record-wait-lost") result.failed += 1;
+        else result.skipped += 1;
         continue;
       }
       if (error instanceof XeroRefundCreditNoteInFlightError) {
@@ -336,6 +324,33 @@ export async function processQueuedXeroOperationRetries(
   }
 
   return result;
+}
+
+/**
+ * #4656: a CANCELLED REQUEUE row whose retry ran and got an answer from Xero
+ * that the run did not record - never `skipped: "resolved-in-xero"`, which says
+ * nothing ran. Names the note as what it is: the resolve's own
+ * (`resolvedWithCreditNoteId`), another run's (`recordedCreditNoteId`), or one
+ * nothing records (`unrecordedCreditNoteId`).
+ */
+function requeueRanNotRecordedPayload(originalOperationId: string, error: RefundNoteNotRecordedError) {
+  const { operationId, creditNoteId, creditNoteNumber } = error.note;
+  const noteKey =
+    error.outcome === "resolved-with-this-note" ? "resolvedWithCreditNoteId"
+    : error.outcome === "recorded-by-another-claim" ? "recordedCreditNoteId"
+    : "unrecordedCreditNoteId";
+  return {
+    originalOperationId,
+    retriedOperationId: operationId,
+    skipped: "resolved-in-xero-after-run",
+    outcome: error.outcome,
+    [noteKey]: creditNoteId,
+    creditNoteNumber,
+    reason: error.message,
+    note: refundNoteRecordedElsewhere(error.outcome)
+      ? "The retry ran and Xero answered with the note this operation already records. Nothing to do."
+      : "The retry ran and Xero made this note after the operation was resolved by hand recording another note; it is not recorded. Check it in Xero (an alert was sent).",
+  };
 }
 
 /**

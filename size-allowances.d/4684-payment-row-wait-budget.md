@@ -18,7 +18,7 @@ reason: `createXeroCreditNote` throws `RefundNoteNotRecordedError` when Xero
   helper elsewhere would hide which path skips the failure write.
 
 file: src/lib/xero-operation-outbox.ts
-lines: 3462
+lines: 3464
 reason: the worker's catch must treat a refund note made but not recorded as
   skipped before its generic failure path runs. That ordering is the fix: the
   branch has to sit at the top of the one catch every queue type shares.

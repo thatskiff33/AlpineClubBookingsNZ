@@ -418,7 +418,7 @@ describe("processQueuedXeroOperationRetries", () => {
       expect(message).not.toMatch(/requeue|retry it again|fix the cause/i);
     });
 
-    it("MUTATION: a note kept out by a resolve by hand closes the REQUEUE row skipped (CANCELLED), naming the note, never SUCCEEDED", async () => {
+    it("MUTATION: a note kept out by a resolve recording another note closes the REQUEUE row CANCELLED, saying the retry ran and naming the unrecorded note", async () => {
       mocks.findManyQueued.mockResolvedValue([makeQueuedOperation()]);
       mocks.retryXeroSyncOperation.mockRejectedValue(new RefundNoteNotRecordedError("resolved-by-hand", note));
 
@@ -430,20 +430,21 @@ describe("processQueuedXeroOperationRetries", () => {
 
       expect(mocks.failXeroSyncOperation).not.toHaveBeenCalled();
       expect(mocks.completeXeroSyncOperation).toHaveBeenCalledTimes(1);
-      expect(mocks.completeXeroSyncOperation).toHaveBeenCalledWith(
-        expect.objectContaining({ id: "queue_1" }),
-        {
-          status: "CANCELLED",
-          responsePayload: expect.objectContaining({
-            originalOperationId: "op_123",
-            retriedOperationId: "op_inline",
-            skipped: "resolved-in-xero",
-            unrecordedCreditNoteId: "cn-x",
-            unrecordedCreditNoteNumber: "CN-X",
-            reason: expect.stringContaining("Do not retry"),
-          }),
-        },
-      );
+      const [claim, completion] = mocks.completeXeroSyncOperation.mock.calls[0]!;
+      expect(claim).toMatchObject({ id: "queue_1" });
+      expect(completion).toEqual({
+        status: "CANCELLED",
+        responsePayload: expect.objectContaining({
+          originalOperationId: "op_123",
+          retriedOperationId: "op_inline",
+          // Never "resolved-in-xero": that tag says nothing ran (#4656 re-lens N3).
+          skipped: "resolved-in-xero-after-run",
+          outcome: "resolved-by-hand",
+          unrecordedCreditNoteId: "cn-x",
+          reason: expect.stringContaining("Do not retry"),
+          note: expect.stringContaining("The retry ran"),
+        }),
+      });
     });
   });
 
