@@ -2961,14 +2961,8 @@ export async function processQueuedXeroOutboxOperations(options?: {
       queueType: {
         in: [...XERO_OUTBOX_QUEUE_TYPES],
       },
-      // #3954 round 8: a billed-offset note waiting for its edit's own note
-      // is looked at again only every few minutes, not on every kick; so is a
-      // refund note held by an unrecorded one (#4692 review, `INV-INT-035`).
-      AND: [
-        outboxScanLeavesAwaitingOwnNote(new Date()),
-        outboxScanSpacesWaitingReceipts(new Date()),
-        scanSpacesRefundNotesAwaitingResolve(new Date()),
-      ],
+      // Rows waiting their turn are looked at only every few minutes, not on every kick (#3954, #3953, #4692 `INV-INT-035`).
+      AND: [outboxScanLeavesAwaitingOwnNote(new Date()), outboxScanSpacesWaitingReceipts(new Date()), scanSpacesRefundNotesAwaitingResolve(new Date())],
     },
     // Ties on `createdAt` (same ms; all rows under the frozen clock) fall to `id`:
     // deterministic, not insertion order (#4663; STATE_MACHINES.md).
