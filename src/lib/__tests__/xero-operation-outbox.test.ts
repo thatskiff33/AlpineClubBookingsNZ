@@ -350,7 +350,10 @@ import {
   queueXeroBookingEditSettlement,
 } from "@/lib/xero-booking-edit-settlement";
 import { XERO_OUTBOX_QUEUE_TYPES } from "@/lib/xero-operation-outbox-payload";
-import { XeroAppliedCreditOperationBusyError, XeroRefundCreditNoteInFlightError } from "@/lib/xero-applied-credit-operation-serialization";
+import { XeroAppliedCreditOperationBusyError, XeroRefundCreditNoteInFlightError, XeroRefundCreditNoteUnrecordedError } from "@/lib/xero-applied-credit-operation-serialization";
+import { XERO_REFUND_NOTE_AWAITING_RESOLVE_CODE } from "@/lib/xero-operation-error-codes";
+import { REFUND_NOTE_AWAITING_RESOLVE_RECHECK_MS } from "@/lib/xero-refund-note-in-flight";
+import { matchesWhere } from "./support/prisma-where";
 import { NOT_A_XERO_REPAIR_CLAIM } from "@/lib/xero-operation-outcome-guard";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 import { TEST_XERO_CLAIMED_AT, xeroClaim } from "@/lib/__tests__/helpers/xero-claim";
@@ -2496,9 +2499,12 @@ describe("processQueuedXeroOutboxOperations", () => {
       status: "PENDING",
       direction: "OUTBOUND",
       queueType: { in: [...XERO_OUTBOX_QUEUE_TYPES] },
-      // #3954 round 8: a note waiting for its edit's own note is spaced out.
-      // #3954 round 8 and #3953 round 3: rows waiting their turn are spaced out.
-      AND: [expect.objectContaining({ OR: expect.any(Array) }), expect.objectContaining({ OR: expect.any(Array) })],
+      // #3954 round 8, #3953 round 3 and #4692 review: rows waiting their turn are spaced out.
+      AND: [
+        expect.objectContaining({ OR: expect.any(Array) }),
+        expect.objectContaining({ OR: expect.any(Array) }),
+        expect.objectContaining({ OR: expect.any(Array) }),
+      ],
     });
     // #4299: the eighteen pinned types and the organiser extra adjustment.
     expect(args.where.queueType.in).toHaveLength(19);
@@ -2649,7 +2655,61 @@ describe("processQueuedXeroOutboxOperations", () => {
           { updatedAt: { lte: new Date(Date.now() - ADDITIONAL_CAPTURE_RECEIPT_RECHECK_MS) } },
         ],
       },
+      // #4692 review: a refund note held by an unrecorded one, the same way.
+      {
+        OR: [
+          { lastErrorCode: null },
+          { lastErrorCode: { not: XERO_REFUND_NOTE_AWAITING_RESOLVE_CODE } },
+          { updatedAt: { lte: new Date(Date.now() - REFUND_NOTE_AWAITING_RESOLVE_RECHECK_MS) } },
+        ],
+      },
     ]);
+  });
+
+  describe("#4692 review (finding 1): a refund note held by an unrecorded one never stalls the outbox", () => {
+    it("MUTATION: hands the row back to PENDING under its wait code", async () => {
+      mocks.findManyOperations.mockResolvedValue([
+        {
+          id: "op_fenced",
+          localId: "payment_1",
+          localModel: "Payment",
+          entityType: "CREDIT_NOTE",
+          operationType: "CREATE",
+          createdByMemberId: null,
+          requestPayload: { queueType: "REFUND_CREDIT_NOTE", refundAmountCents: 3_000, watermarkCents: 8_000 },
+        },
+      ]);
+      mocks.createXeroCreditNote.mockRejectedValue(new XeroRefundCreditNoteUnrecordedError("payment_1", "op_unrecorded"));
+
+      await expect(processQueuedXeroOutboxOperations({ limit: 1 })).resolves.toMatchObject({ skipped: 1, failed: 0 });
+      expect(mocks.updateManyOperation).toHaveBeenCalledWith({
+        where: { id: "op_fenced", status: "RUNNING", startedAt: TEST_XERO_CLAIMED_AT, ...NOT_A_XERO_REPAIR_CLAIM },
+        data: expect.objectContaining({ status: "PENDING", startedAt: null, lastErrorCode: XERO_REFUND_NOTE_AWAITING_RESOLVE_CODE }),
+      });
+    });
+
+    it("MUTATION: with ten fenced notes waiting ahead of it, a limit-1 kick's scan still reaches the invoice queued after them", async () => {
+      const now = Date.now();
+      const fenced = Array.from({ length: 10 }, (_, i) => ({
+        id: `op_fenced_${i}`,
+        status: "PENDING",
+        direction: "OUTBOUND",
+        queueType: "REFUND_CREDIT_NOTE",
+        lastErrorCode: XERO_REFUND_NOTE_AWAITING_RESOLVE_CODE,
+        updatedAt: new Date(now - 1_000),
+        createdAt: new Date(now - 86_400_000 + i),
+      }));
+      const invoice = { id: "op_invoice", status: "PENDING", direction: "OUTBOUND", queueType: "BOOKING_INVOICE", lastErrorCode: null, updatedAt: new Date(now), createdAt: new Date(now) };
+      const scanned: string[][] = [];
+      mocks.findManyOperations.mockImplementation(async (args: { where: Record<string, unknown>; take: number }) => {
+        const rows = [...fenced, invoice].filter((row) => matchesWhere(row, args.where)).slice(0, args.take);
+        scanned.push(rows.map((row) => row.id));
+        return [];
+      });
+
+      await processQueuedXeroOutboxOperations({ limit: 1 });
+      expect(scanned).toEqual([["op_invoice"]]);
+    });
   });
 
   it("busy-requeues a manual retry, then executes its checkpointed deallocation once", async () => {
