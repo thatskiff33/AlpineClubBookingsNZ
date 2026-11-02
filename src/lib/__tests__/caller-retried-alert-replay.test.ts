@@ -489,7 +489,7 @@ describe("a caller-retried admin alert has one retry owner per lost copy (#4669)
     expect(deliveredTo()).toEqual([DEPUTY, TREASURER].sort());
   });
 
-  it("leaves a send nobody received to its owner when the release itself fails, the one duplicate it accepts", async () => {
+  it("leaves a send nobody received to its owner when the release itself fails, one of the two duplicates it accepts", async () => {
     const owner = OWNERS[0];
     state.failFor = new Set([TREASURER, DEPUTY]);
     state.transactionFails = true;

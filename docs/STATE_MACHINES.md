@@ -3924,10 +3924,24 @@ The release runs before the sender returns, so before the owner can retry,
 and normally long before the cron's 15-minute backoff lets it select the rows.
 A send that hangs past that is the race: the release and the cron's guarded
 claim each take the row lock, so exactly one wins each row, and a copy the
-cron won rolls the whole release back. Dropping the body rather than writing
-the retry ceiling keeps these rows out of the email-failure review queue: their
-owner is already re-sending them. A release that fails outright leaves the
-owner to retry, the one way a copy can go out twice, chosen over losing it.
+cron won rolls the whole release back. The release reads a row as the cron's
+only if it is past its first attempt and still holds a body, the cron's own
+selection: a copy the environment gate wrote straight to the retry ceiling
+without one is not the cron's. Dropping the body rather than writing the retry
+ceiling keeps released rows out of the email-failure review queue: their owner
+is already re-sending them.
+
+Stated limits. A copy can go out twice in two ways, both chosen over losing
+the alert: the release fails outright, or the process crashes or restarts
+after a copy's `FAILED` row was written and before the release commits. Either
+leaves the rows holding their bodies while the owner is told nobody received
+it, so the owner retries and the cron may replay as well. When the cron claimed
+a copy first, the owner stamps the alert sent, so delivery then rests on the
+cron's three attempts, about an hour of backoff, rather than the owner's longer
+retries; a copy that exhausts them lands in the email-failure review queue. In
+both nobody-received cases the `email.admin-alert-undeliverable` escalation is
+still written: it means nobody received the alert at send time, not that nobody
+ever will.
 Pinned by `caller-retried-alert-replay.test.ts` and, against a real database,
 `caller-retried-alert-release.realdb.test.ts`.
 
