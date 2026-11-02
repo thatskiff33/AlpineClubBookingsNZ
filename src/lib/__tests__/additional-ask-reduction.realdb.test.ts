@@ -1556,6 +1556,9 @@ let webhookClient: PrismaClient;
           await doorDone;
         } else if (stripe.intents.has(id)) {
           statusSeenByDoor = (await prisma.paymentRecoveryOperation.findUniqueOrThrow({ where: { id: recovery.id }, select: { status: true } })).status;
+          // #4693 review: cancelled as Stripe cancels it, so the runner's close-time sweep - which
+          // now runs on a re-issue's first attempt - lists it cancelled and leaves it.
+          stripe.intents.get(id)!.status = "canceled";
         }
         cancelled.push(id);
         return { paymentIntent: { id, status: "canceled" }, canceled: true };
