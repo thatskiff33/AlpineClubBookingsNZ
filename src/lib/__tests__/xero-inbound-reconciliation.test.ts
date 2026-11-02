@@ -6289,7 +6289,9 @@ describe("processStoredXeroInboundEvents", () => {
    * #4705: an in-memory `MemberCredit` table behind the stamp's two reads and
    * its single-row write, so the inbound reconcile's stamp is observed on rows.
    */
-  function memberCreditTable(rows: Array<{ id: string; createdAt: string; xeroCreditNoteId?: string | null; type?: string; description?: string }>) {
+  function memberCreditTable(
+    rows: Array<{ id: string; createdAt: string; xeroCreditNoteId?: string | null; type?: string; description?: string; sourceBookingId?: string }>
+  ) {
     const table = rows.map((row) => ({
       memberId: "mem_credit_1",
       sourceBookingId: "bk123456789",
@@ -6567,6 +6569,19 @@ describe("processStoredXeroInboundEvents", () => {
     expect(notes()).toEqual({ credit_older: null, credit_newer: "cn_credit_1" });
     expect(mocks.memberCreditUpdateMany).toHaveBeenCalledTimes(1);
     expect(logger.warn).not.toHaveBeenCalledWith(expect.anything(), expect.stringContaining("not stamped on its credit"));
+  });
+
+  it("MUTATION #4705 (PR #4711 review): a note linked to payments on two bookings stamps one credit, not one per booking", async () => {
+    mockAccountCreditNoteEvent(["pay_credit_1", "pay_other"], { pay_other: "bk_other_booking" });
+    // The stamp's own holder check is per booking, so the pass ends at its first stamp.
+    const notes = memberCreditTable([
+      { id: "credit_here", createdAt: "2026-06-01" },
+      { id: "credit_there", createdAt: "2026-06-01", sourceBookingId: "bk_other_booking", description: "Cancellation refund for booking bk_other" },
+    ]);
+
+    await expect(processStoredXeroInboundEvents()).resolves.toMatchObject({ succeeded: 1, failed: 0 });
+
+    expect(notes()).toEqual({ credit_here: "cn_credit_1", credit_there: null });
   });
 
   it("MUTATION #4705: two account-credit payments on the booking stamp the note on one credit, and a credit already holding it stops the stamp", async () => {
