@@ -10,12 +10,13 @@
  *   for the freshness race, two RUNNING create rows on the payment (two runs
  *   Xero answered with one note, as one key does); the other connection that
  *   holds the Payment row, standing in for its longest holders (the nightly
- *   bank-refund void follow-up, a group cancel's enqueue).
+ *   bank-refund void follow-up).
  * - REAL: the record itself, with its real link writer; for the timeout, the
  *   hand-back's completion (`resolveManualRefundTask`) queueing the note and the
  *   outbox worker (`processQueuedXeroOutboxOperations`) raising it against a
- *   fake Xero (no provider call), the once-ever alert's claim with only the
- *   email send replaced, and the audit writer.
+ *   fake Xero (no provider call), the retry queue (`enqueueXeroSyncOperationRetry`,
+ *   `processQueuedXeroOperationRetries`), the once-ever alert's claim with only
+ *   the email send replaced, and the audit writer.
  *
  * Proven:
  * 1. Two records of one note on two rows, the first held inside its
@@ -25,7 +26,11 @@
  * 2. A record behind a Payment row held past Prisma's 5s default still records.
  * 3. A record behind a Payment row held past its whole budget writes nothing:
  *    no pointer, no link, no note on the row, no settlement; the row stays
- *    RUNNING (never FAILED), one `xero` audit row and one alert name the note.
+ *    RUNNING (never FAILED), one `xero` audit row and one alert name the note,
+ *    and the worker counts the run skipped, never succeeded.
+ * 4. The same through a queued retry (#4656 money lens S2): the retry's inline
+ *    create row stays RUNNING, and the REQUEUE row is FAILED naming the note -
+ *    never SUCCEEDED, and never told to requeue.
  *
  * Ordinary Vitest runs skip the whole file. It reuses the guarded, disposable
  * loopback PostgreSQL `concurrency-lock-races.realdb.test.ts` provisions, which
@@ -136,9 +141,10 @@ let prisma: (typeof import("@/lib/prisma"))["prisma"];
     /** The record of NOTE on `operationId`, as the create makes it; a per-refund note by default (no pointer). */
     async function record(operationId: string, writesPointer = false) {
       const { recordCreatedRefundNote } = await import("@/lib/xero-refund-note-record");
+      const { startedAt } = await prisma.xeroSyncOperation.findUniqueOrThrow({ where: { id: operationId }, select: { startedAt: true } });
       return recordCreatedRefundNote({
         paymentId: PAYMENT_ID, bookingId: BOOKING_ID, operationId, creditNoteId: NOTE, creditNoteNumber: "CN-4656", amountCents: 20_000,
-        xeroStatus: "AUTHORISED", writesPointer, linkRole: "REFUND_CREDIT_NOTE", linkMetadata: { amountCents: 20_000, perDelta: true },
+        xeroStatus: "AUTHORISED", writesPointer, linkRole: "REFUND_CREDIT_NOTE", linkMetadata: { amountCents: 20_000, perDelta: true }, claimStartedAt: startedAt,
       });
     }
 
@@ -264,11 +270,17 @@ let prisma: (typeof import("@/lib/prisma"))["prisma"];
       return row.id;
     }
 
-    /** The outbox worker raising the queued note against a fake Xero answering at once with NOTE. */
-    async function raise(operationId: string) {
+    /**
+     * The outbox worker raising the queued note against a fake Xero answering at once with NOTE -
+     * or, with `failFirstCreate`, refusing the first create before it raises anything.
+     */
+    async function raise(operationId: string, options: { failFirstCreate?: boolean } = {}) {
       const paymentsMade: string[] = [];
+      let creates = 0;
       const accountingApi = {
         createCreditNotes: async (_tenant: string, body: { creditNotes: Array<{ lineItems: Array<{ unitAmount: number }> }> }) => {
+          creates += 1;
+          if (options.failFirstCreate && creates === 1) throw new Error(`${P}: Xero refused the first create`);
           const total = body.creditNotes[0]!.lineItems[0]!.unitAmount;
           return { body: { creditNotes: [{ creditNoteID: NOTE, creditNoteNumber: "CN-4656", total, remainingCredit: total, status: "AUTHORISED", payments: [] }] } };
         },
@@ -302,8 +314,8 @@ let prisma: (typeof import("@/lib/prisma"))["prisma"];
       const result = await raised.run;
       await holder.done;
 
-      // The worker returns as for any handled row: nothing threw into its catch, which would fail the row.
-      expect(result).toMatchObject({ failed: 0 });
+      // The worker never fails the row (its catch would) nor counts the run a success: skipped.
+      expect(result).toMatchObject({ failed: 0, succeeded: 0, skipped: 1 });
       const row = await prisma.xeroSyncOperation.findUniqueOrThrow({ where: { id: operationId }, select: { status: true, xeroObjectId: true, lastErrorCode: true, completedAt: true } });
       expect(row).toEqual({ status: "RUNNING", xeroObjectId: null, lastErrorCode: null, completedAt: null });
       expect(await recordsOfNote()).toEqual({ rows: [], links: [], pointer: null });
@@ -321,10 +333,52 @@ let prisma: (typeof import("@/lib/prisma"))["prisma"];
       expect(send).toHaveBeenCalledTimes(1);
       expect(send).toHaveBeenCalledWith(expect.objectContaining({
         errorType: "XERO_SUCCESS_AFTER_RESOLUTION",
-        errorMessage: expect.stringMatching(/Xero made credit note CN-4656 for \$200\.00 \(Xero id race-4656-note, booking race-4656-booking\) for this refund.*did not mark the operation failed/),
+        errorMessage: expect.stringMatching(/Xero made credit note CN-4656 for \$200\.00 \(Xero id race-4656-note, booking race-4656-booking\) for this refund.*did not mark the operation failed.*Resolve it by hand with this note's number.*Do not retry this operation/),
       }));
       const { xeroSuccessAfterResolutionAlertKey } = await import("@/lib/xero-success-after-resolution-alert");
       expect(await prisma.alertCooldown.count({ where: { key: xeroSuccessAfterResolutionAlertKey(operationId, NOTE) } })).toBe(1);
+    });
+
+    it("MUTATION (S2): a queued retry whose record loses its wait behind a long Payment hold fails its REQUEUE row naming the note - never SUCCEEDED - and leaves its inline row RUNNING", async () => {
+      const original = await queuedRefundNote();
+      const raised = await raise(original, { failFirstCreate: true });
+      expect(await raised.run).toMatchObject({ failed: 1 });
+      expect(await prisma.xeroSyncOperation.findUniqueOrThrow({ where: { id: original }, select: { status: true } })).toEqual({ status: "FAILED" });
+
+      const { enqueueXeroSyncOperationRetry, processQueuedXeroOperationRetries } = await import("@/lib/xero-operation-queue");
+      const { queueOperationId } = await enqueueXeroSyncOperationRetry(original, { createdByMemberId: OFFICER_ID });
+      // Oldest first is the drain's order: this REQUEUE row goes first, alone.
+      await prisma.$executeRaw`UPDATE "XeroSyncOperation" SET "createdAt" = ${new Date("2000-01-01T00:00:00.000Z")} WHERE "id" = ${queueOperationId}`;
+      const { PAYMENT_ROW_WAIT_TRANSACTION_OPTIONS } = await import("@/lib/payment-transactions");
+      const holder = await holdPaymentRow(PAYMENT_ROW_WAIT_TRANSACTION_OPTIONS.timeout + 3_000);
+      const retried = processQueuedXeroOperationRetries({ limit: 1 }, CLUB_FORMAT_TEST);
+      await waitForBlockedBy(holder.holderPid);
+      const result = await retried;
+      await holder.done;
+
+      // Before the fix the REQUEUE row closed SUCCEEDED ("Retried Xero refund credit note creation.").
+      expect(result).toMatchObject({ processed: 1, succeeded: 0, failed: 1 });
+      const requeue = await prisma.xeroSyncOperation.findUniqueOrThrow({ where: { id: queueOperationId }, select: { status: true, lastErrorMessage: true } });
+      expect(requeue.status).toBe("FAILED");
+      expect(requeue.lastErrorMessage).toContain("ran, but did not finish");
+      expect(requeue.lastErrorMessage).toContain("refund credit note CN-4656");
+      expect(requeue.lastErrorMessage).toContain("could not get its locks in time");
+      expect(requeue.lastErrorMessage).toContain("Do not retry");
+      expect(requeue.lastErrorMessage).not.toMatch(/requeue/i);
+
+      // The retry's own create row: RUNNING, naming nothing, never failed.
+      const inline = await prisma.xeroSyncOperation.findFirstOrThrow({
+        where: { localModel: "Payment", localId: PAYMENT_ID, entityType: "CREDIT_NOTE", operationType: "CREATE", id: { not: original } },
+        select: { id: true, status: true, xeroObjectId: true, completedAt: true },
+      });
+      expect(inline).toMatchObject({ status: "RUNNING", xeroObjectId: null, completedAt: null });
+      expect(await recordsOfNote()).toEqual({ rows: [], links: [], pointer: null });
+      expect(raised.paymentsMade).toEqual([]);
+
+      const { LATE_REFUND_NOTE_NOT_RECORDED_ACTION } = await import("@/lib/xero-refund-note-record");
+      expect(await prisma.auditLog.count({ where: { action: LATE_REFUND_NOTE_NOT_RECORDED_ACTION, entityId: inline.id } })).toBe(1);
+      expect(send).toHaveBeenCalledTimes(1);
+      expect(send).toHaveBeenCalledWith(expect.objectContaining({ errorMessage: expect.stringContaining("Do not retry this operation") }));
     });
   },
 );

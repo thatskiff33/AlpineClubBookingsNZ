@@ -26,6 +26,7 @@ describe("the refund-note record gaps' real-database proof stays wired into CI (
     expect(suite).toContain("MUTATION: two records of one note on two rows - the second queues on the Payment row");
     expect(suite).toContain("MUTATION: a record behind a Payment row held past Prisma's 5s default still records");
     expect(suite).toContain("MUTATION: a record behind a Payment row held past its whole budget writes nothing and fails nothing");
+    expect(suite).toContain("MUTATION (S2): a queued retry whose record loses its wait behind a long Payment hold fails its REQUEUE row naming the note");
     expect(suite).toContain("pg_blocking_pids");
     expect(suite).toContain('assertSafeRaceDbUrl(RACE_DB_URL, "Refund-note record gaps (#4656)")');
     expect(suite.indexOf("assertSafeRaceDbUrl(RACE_DB_URL")).toBeLessThan(suite.indexOf('await import("@/lib/prisma")'));
