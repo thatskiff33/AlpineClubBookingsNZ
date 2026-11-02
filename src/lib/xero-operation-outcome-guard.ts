@@ -51,6 +51,16 @@ function notAnotherClaim(claim: XeroOperationClaim): Prisma.XeroSyncOperationWhe
 }
 
 /**
+ * #4680 (`INV-INT-029`): the row as this claim holds it - RUNNING under the
+ * `startedAt` the claim stamped. A retry's claim outcome lands only there
+ * (`retryClaim`), and a run asks for it before a money-moving Xero call
+ * (`holdsXeroOperationClaim`).
+ */
+export function ownRunningClaim(claim: XeroOperationClaim) {
+  return { status: "RUNNING", startedAt: claim.startedAt } as const;
+}
+
+/**
  * #4673 (`INV-INT-029`): the statuses a FAILED outcome may land on, and only
  * on a row carrying its own claim's `startedAt`: that claim's RUNNING row, or
  * the FAILED end that claim (or a stale reset of it) already wrote. Never a
@@ -98,7 +108,7 @@ export function outcomeWriteGuard(
   if (!claim.id) throw new Error("A Xero operation outcome needs the operation's id.");
   if (options.retryClaim) {
     if (!claim.startedAt) throw new Error("A retry's claim outcome needs the claim's startedAt.");
-    return { status: "RUNNING", startedAt: claim.startedAt };
+    return ownRunningClaim(claim);
   }
   if (status === "SUCCEEDED") return notAnotherClaim(claim);
   // #4673: a failure keeps every recorded success and CANCELLED by construction (`alsoKeep` adds nothing).

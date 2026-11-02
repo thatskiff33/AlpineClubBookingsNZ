@@ -115,8 +115,12 @@ export async function traceUnrecordedLateNote(note: UnrecordedLateNote, report: 
   return { kind: "traced" };
 }
 
-/** The note's amount in the club's money format, or null when the format cannot be read (the alert still goes). */
-async function formattedAmount(note: UnrecordedLateNote): Promise<string | null> {
+/**
+ * The note's amount in the club's money format, or null when the format cannot
+ * be read (the alert still goes). #4680: also the stood-down organiser run's
+ * alert (`traceOrganiserRunStoodDown`).
+ */
+export async function formattedAmount(note: Pick<UnrecordedLateNote, "operationId" | "amountCents">): Promise<string | null> {
   try {
     return formatCents(note.amountCents, await clubFormatValues());
   } catch (error) {

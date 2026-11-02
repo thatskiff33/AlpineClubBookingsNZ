@@ -41,14 +41,22 @@ import { createAuditLog } from "@/lib/audit";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 import { isPrismaUniqueConstraintError } from "@/lib/prisma-errors";
-import { traceUnrecordedLateNote } from "@/lib/xero-late-note-trace";
+import { formattedAmount, traceUnrecordedLateNote } from "@/lib/xero-late-note-trace";
 import { runningClaimTransition } from "@/lib/xero-operation-claim";
 import type { XeroOperationClaim } from "@/lib/xero-operation-outcome-guard";
 import { isResolvedInXero, resolutionLabel } from "@/lib/xero-operation-resolution";
-import { stalledAttemptCameBack, type UnrecordedXeroObject } from "@/lib/xero-success-after-resolution-alert";
+import {
+  describeUnrecordedObject,
+  stalledAttemptCameBack,
+  unrecordedLateSuccessAlert,
+  type UnrecordedXeroObject,
+} from "@/lib/xero-success-after-resolution-alert";
 
 /** #4655: the audit action of a late organiser adjustment note the create did not record. */
 export const LATE_ORGANISER_NOTE_NOT_RECORDED_ACTION = "xero.organiser_adjustment_note.late_note_not_recorded";
+
+/** #4680: the audit action of an organiser adjustment run that stood down, its claim lost after it recorded its note. */
+export const ORGANISER_RUN_STOOD_DOWN_ACTION = "xero.organiser_adjustment_note.run_stood_down";
 
 export interface CreatedOrganiserNote {
   /** The run's claim: the row's id and the `startedAt` the outbox stamped. */
@@ -186,4 +194,87 @@ function organiserLateNoteMessage(row: XeroSyncOperation, late: UnrecordedXeroOb
     return `This organiser ${adjustmentLabel(purpose)} operation was reset after it stalled and is running again; then ${came} The run now going may record this same note (Xero can answer a repeat of the same call with it) or raise another: once that run has finished, compare the note the operation records with this one in Xero before voiding either.`;
   }
   return `This organiser ${adjustmentLabel(purpose)} operation was reset after it stalled and now stands ${row.status} without recording this note; then ${came} ${check.charAt(0).toUpperCase()}${check.slice(1)}`;
+}
+
+/** #4680: the Xero call a run that lost its claim did not make. `completion`: nothing was left to allocate. */
+export type OrganiserStandDownStep = "resize" | "allocation" | "refund-payment" | "completion";
+
+const STAND_DOWN_STEP: Record<OrganiserStandDownStep, string> = {
+  resize: "resizing the note to what is still due and allocating it to the organiser's invoice",
+  allocation: "allocating the note to the organiser's invoice",
+  "refund-payment": "recording a refund payment against the note",
+  completion: "recording the adjustment as done (the note was already allocated in full)",
+};
+
+/**
+ * #4680 (`INV-INT-034`): a run that recorded its note and then found, before a
+ * money-moving Xero call, that it no longer holds its claim
+ * (`holdsXeroOperationClaim`): a stale reset failed the row while the run
+ * waited on Xero, and an officer may since have resolved or queued it again,
+ * or a later claim taken it. The run makes no further Xero call and writes no
+ * outcome. Its trace: a warning first; a re-read of the row; one `xero` audit
+ * row; and, only when the row was resolved by hand, #4374's alert once per
+ * note (`unrecordedLateSuccessAlert`). Anywhere else the row still records the
+ * note, and whoever holds or retries it finishes from it, so there is nothing
+ * for an officer to check. Each step is caught; nothing throws into the
+ * outbox, whose failure write must not land on the officer's row. Run outside
+ * any transaction - the alert sends an email.
+ */
+export async function traceOrganiserRunStoodDown(note: CreatedOrganiserNote, step: OrganiserStandDownStep): Promise<void> {
+  const trace = {
+    operationId: note.claim.id,
+    claimStartedAt: note.claim.startedAt,
+    bookingId: note.bookingId,
+    purpose: note.purpose,
+    creditNoteId: note.creditNoteId,
+    creditNoteNumber: note.creditNoteNumber,
+    amountCents: note.amountCents,
+    step,
+  };
+  logger.warn(trace, "Organiser adjustment run no longer holds its claim after recording its credit note; it stands down and makes no Xero call (INV-INT-034, #4680)");
+  let row: XeroSyncOperation | null;
+  try {
+    row = await prisma.xeroSyncOperation.findUnique({ where: { id: note.claim.id } });
+  } catch (error) {
+    logger.error({ ...trace, err: error }, "Organiser adjustment run stood down, and its operation could not be re-read: no audit row or alert; this log is its only record (#4680)");
+    return;
+  }
+  const resolved = row ? isResolvedInXero(row) : false;
+  try {
+    await createAuditLog({
+      action: ORGANISER_RUN_STOOD_DOWN_ACTION,
+      targetId: note.bookingId,
+      entityType: "XeroSyncOperation",
+      entityId: note.claim.id,
+      category: "xero",
+      severity: "important",
+      outcome: "blocked",
+      summary: "Organiser adjustment run stopped: its stalled Xero job was reset",
+      details: `A stalled organiser ${adjustmentLabel(note.purpose)} job came back after it was reset${row ? ` (it now stands ${row.status}${resolved ? ", resolved by hand" : ""})` : ""} and stopped before ${STAND_DOWN_STEP[step]}. The app made no further Xero call for credit note ${note.creditNoteNumber ?? note.creditNoteId}.`,
+      metadata: { ...trace, claimStartedAt: note.claim.startedAt?.toISOString() ?? null, rowFound: row !== null, rowStatus: row?.status ?? null, resolvedByHand: row ? resolved : null },
+    });
+  } catch (error) {
+    logger.error({ ...trace, err: error }, "Organiser adjustment run stood down, and its audit row failed (#4680)");
+  }
+  if (!row || !resolved) return;
+  try {
+    const late: UnrecordedXeroObject = {
+      xeroObjectType: "CREDIT_NOTE",
+      xeroObjectId: note.creditNoteId,
+      xeroObjectNumber: note.creditNoteNumber,
+      amount: await formattedAmount({ operationId: note.claim.id, amountCents: note.amountCents }),
+      bookingId: note.bookingId,
+    };
+    await unrecordedLateSuccessAlert(row, late, organiserStoodDownMessage(row, late, note.purpose, step), ORGANISER_STOOD_DOWN_WARNING)();
+  } catch (error) {
+    logger.error({ ...trace, err: error }, "Organiser adjustment run stood down on a resolved operation, and its alert failed (#4680)");
+  }
+}
+
+const ORGANISER_STOOD_DOWN_WARNING =
+  "Organiser adjustment run stood down on an operation resolved by hand after its reset; the app did not allocate or pay against its credit note (INV-INT-034, #4680)";
+
+/** The alert's body: the run made its note, the officer resolved the job, and the run stopped short. */
+function organiserStoodDownMessage(row: XeroSyncOperation, late: UnrecordedXeroObject, purpose: CreatedOrganiserNote["purpose"], step: OrganiserStandDownStep): string {
+  return `This organiser ${adjustmentLabel(purpose)} operation stalled, was reset, and was then marked "${resolutionLabel(row.manuallyResolvedReason)}". Its run had already made ${describeUnrecordedObject(late)} in Xero and recorded it on this operation. When the run came back it stopped before ${STAND_DOWN_STEP[step]}, and made no further Xero call. The operation stays as resolved. If the adjustment was also made by hand in Xero, Xero may now hold two credit notes for it: check this one in Xero, and that nothing is allocated from it or paid against it, before voiding it.`;
 }
