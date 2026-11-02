@@ -25,9 +25,13 @@ import { prisma } from "@/lib/prisma";
  * - the send threw before reaching anyone: the claim is given back, so the
  *   next run retries;
  * - the claim call threw: nothing is sent, and the stamp it tried to write is
- *   given back, twice if need be (#4696): the write may have committed before
- *   the throw (#4679), and a claim nobody uses would hold the alert for good.
- *   A no-op when nothing landed; the next run claims afresh and sends.
+ *   given back (#4696) if the database answers one of two immediate tries: the
+ *   write may have committed before the throw (#4679). A no-op when nothing
+ *   landed; the next run claims afresh and sends. The claim stays held, and
+ *   the alert is lost, when both tries fail on the same outage (logged "Failed
+ *   to give back the uncertain ... claim"), or when the write commits only
+ *   after the give-back ran (the client dropped while the server was still
+ *   inserting; only the failed claim is logged).
  * Never throws; returns whether the claim was kept. `context` is logged with
  * every failure, `label` names the alert in those lines.
  */
@@ -40,32 +44,32 @@ export async function sendAdminAlertOnceEver(args: OnceEverAlertArgs): Promise<b
 }
 
 /*
- * #4696 CENSUS: every `sendAdminAlertOnceEver` caller, and what its next run
- * does with an uncertain claim given back. The give-back cannot let a sibling
- * send twice, bar one limit: it deletes only a row stamped with this call's own
- * stamp, and the call sent nothing; a sibling that read that row held sent
- * nothing; a sibling's own claim carries its own stamp. The limit: two claims
- * for one key in the same millisecond share a stamp, so at worst a duplicate,
- * never a loss.
- * The claim-reporting callers (`admin-alert-once-takeover.ts`) give back
- * their own.
+ * #4696 CENSUS, checked against the real callers by
+ * `admin-alert-once-census.test.ts`: every `sendAdminAlertOnceEver` caller in
+ * `src/lib`, grouped by whether anything sends its alert again once an
+ * uncertain claim is given back. Each caller's own docblock says how it runs.
+ * A give-back cannot make a sibling send twice: it deletes only a row under
+ * this call's own stamp, this call sent nothing, and a sibling that read that
+ * row held sent nothing. Limits: two claims for one key in the same millisecond
+ * share a stamp (at worst a duplicate); and the two cases above where the claim
+ * stays held, for good here, since these callers have no takeover
+ * (`admin-alert-once-takeover.ts` has, and gives back its own claims).
  *
- * Retried by the next run:
- * - internet-banking-payment-cron.ts (cron): the started-stay hold stays, re-offered each cycle;
- * - xero-waiting-invoice-reaper.ts (cron): a stamped row is offered to the alert every run;
- * - group-settlement-invoice-alerts.ts (group-settlement reaper cron): the started-stay group is kept, re-read each run;
- * - group-late-joiner.ts (settle request or webhook, then cron): `alertStartedStayPayerSwitches` each cycle;
- * - late-capture-refund-hold.ts (webhook, then cron): the payments cron re-announces every OPEN held task;
- * - late-capture-unrecorded-refunds.ts (webhook, then cron): the nightly self-heal raises it again;
- * - cancelled-booking-late-capture.ts (webhook, then cron): the nightly recovery skips only a held key.
- * Retried only by a later event on the same subject, with no schedule of its own:
- * - card-refund-cap-overflow.ts (inline after a refund write): a later refund write on the charge;
- * - superseded-ask-invoice-return.ts (inline at a capture's release): a later release of that capture;
- * - xero-success-after-resolution-alert.ts (inline after an outbox write): another late success on the row.
+ * Retried by its next run (cron, or a webhook or request then cron):
+ * - internet-banking-payment-cron.ts
+ * - xero-waiting-invoice-reaper.ts
+ * - group-settlement-invoice-alerts.ts
+ * - group-late-joiner.ts
+ * - late-capture-refund-hold.ts
+ * - late-capture-unrecorded-refunds.ts
+ * - cancelled-booking-late-capture.ts
+ * Retried only by a later event on the same subject, on no schedule:
+ * - card-refund-cap-overflow.ts
+ * - superseded-ask-invoice-return.ts
+ * - xero-success-after-resolution-alert.ts
  * Cannot retry (nothing calls again; the logged error is the trace):
- * - pre-persisted-refund-close.ts (inline, a lost close);
- * - capacity-race-refund-shortfall.ts (webhook, at the capacity-race cancel, which a redelivery does not
- *   repeat; any shortfall task on the payments board stands).
+ * - pre-persisted-refund-close.ts
+ * - capacity-race-refund-shortfall.ts
  */
 
 type OnceEverAlertArgs = {
