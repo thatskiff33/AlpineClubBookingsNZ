@@ -31,7 +31,7 @@ import { prisma } from "@/lib/prisma";
 const FIRST_ATTEMPT = 1;
 
 /** The rows were released, or the cron already holds one and keeps them all. */
-export type UnreceivedAlertRelease = "released" | "cron-holds-a-copy";
+type UnreceivedAlertRelease = "released" | "cron-holds-a-copy";
 
 class CronHoldsACopy extends Error {}
 

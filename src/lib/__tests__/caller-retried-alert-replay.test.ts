@@ -38,6 +38,8 @@ const state = vi.hoisted(() => ({
   failFor: new Set<string>(),
   /** A send to this recipient waits for `release` before it fails. */
   hang: null as null | { to: string; until: Promise<void> },
+  /** The next transaction throws before it runs, as a database fault would. */
+  transactionFails: false,
 }));
 
 function emailLogDelegate(store: Map<string, Row>) {
@@ -161,6 +163,10 @@ vi.mock("@/lib/prisma", () => {
   };
   // All or nothing, as PostgreSQL: a throw puts every EmailLog row back.
   prisma.$transaction = async (work: (tx: typeof prisma) => Promise<unknown>) => {
+    if (state.transactionFails) {
+      state.transactionFails = false;
+      throw new Error("database blip");
+    }
     const before = new Map([...state.emailLogs].map(([id, row]) => [id, structuredClone(row)]));
     try {
       return await work(prisma);
@@ -378,6 +384,7 @@ describe("a caller-retried admin alert has one retry owner per lost copy (#4669)
     state.delivered = [];
     state.failFor = new Set();
     state.hang = null;
+    state.transactionFails = false;
     vi.stubEnv("NODE_ENV", "production");
     vi.stubEnv("NEXTAUTH_URL", "https://bookings.example.test");
     declareEnvironmentRole("production");
@@ -465,6 +472,21 @@ describe("a caller-retried admin alert has one retry owner per lost copy (#4669)
     await retryFailedEmails();
     at(60);
     await retryFailedEmails();
+    await owner.retry();
+    expect(deliveredTo()).toEqual([DEPUTY, TREASURER].sort());
+  });
+
+  it("leaves a send nobody received to its owner when the release itself fails, the one duplicate it accepts", async () => {
+    const owner = OWNERS[0];
+    state.failFor = new Set([TREASURER, DEPUTY]);
+    state.transactionFails = true;
+    await owner.deliver();
+
+    // The owner was told nobody received it, so it retries rather than lose it.
+    expect(owner.kept()).toBe(false);
+    expect(alertRows(owner.template).map((row) => row.htmlBody)).toEqual([expect.any(String), expect.any(String)]);
+    state.failFor = new Set();
+    at(16);
     await owner.retry();
     expect(deliveredTo()).toEqual([DEPUTY, TREASURER].sort());
   });
