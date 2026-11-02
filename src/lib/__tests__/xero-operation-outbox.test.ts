@@ -1952,6 +1952,18 @@ describe("enqueueXeroAccountCreditNoteOperation", () => {
     );
   });
 
+  it("#4685: names the credit the note is for, additively, so its stamp writes that credit by id", async () => {
+    await enqueueXeroAccountCreditNoteOperation("payment_1", 4200, { memberCreditId: "credit_1" });
+
+    expect(mocks.startXeroSyncOperation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        // The key is unchanged: a row the deployed release queued still dedups this one.
+        correlationKey: "payment:payment_1:unapplied-credit-note:4200:v1",
+        requestPayload: { queueType: "ACCOUNT_CREDIT_NOTE", refundAmountCents: 4200, memberCreditId: "credit_1" },
+      })
+    );
+  });
+
   it("skips queueing when the account-credit note is already linked", async () => {
     mocks.findFirstLink.mockResolvedValue({ id: "link_account_credit_1" });
 
@@ -3089,6 +3101,27 @@ describe("processQueuedXeroOutboxOperations", () => {
     expect(mocks.createUnappliedXeroCreditNote).toHaveBeenCalledWith("payment_1", 4200, CLUB_FORMAT_TEST, {
       createdByMemberId: "admin_1",
       syncOperation: xeroClaim("op_account_credit_1"),
+    });
+  });
+
+  it("#4685: hands a queued account-credit note's credit to the create, and none for a row queued before it", async () => {
+    mocks.findManyOperations.mockResolvedValue([
+      {
+        id: "op_account_credit_named",
+        localId: "payment_1",
+        localModel: "Payment",
+        createdByMemberId: null,
+        requestPayload: { queueType: "ACCOUNT_CREDIT_NOTE", refundAmountCents: 4200, memberCreditId: "credit_1" },
+      },
+    ]);
+    mocks.createUnappliedXeroCreditNote.mockResolvedValue("cn_account_1");
+
+    await expect(processQueuedXeroOutboxOperations({ limit: 5 })).resolves.toMatchObject({ succeeded: 1, failed: 0 });
+
+    expect(mocks.createUnappliedXeroCreditNote).toHaveBeenCalledWith("payment_1", 4200, CLUB_FORMAT_TEST, {
+      createdByMemberId: undefined,
+      syncOperation: xeroClaim("op_account_credit_named"),
+      memberCreditId: "credit_1",
     });
   });
 

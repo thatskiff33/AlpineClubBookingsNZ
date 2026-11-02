@@ -955,6 +955,25 @@ describe("retryXeroSyncOperation", () => {
     });
   });
 
+  it.each([
+    ["queued", { queueType: "ACCOUNT_CREDIT_NOTE", refundAmountCents: 4500, memberCreditId: "credit_9" }],
+    ["executed", { creditNotes: [{ lineItems: [{ unitAmount: 45 }] }], refundAmountCents: 4500, memberCreditId: "credit_9" }],
+  ])("#4685: replays a %s-shape account-credit note op against the credit it names", async (_shape, requestPayload) => {
+    mocks.findUniqueOperation.mockResolvedValue(
+      makeOperation({ entityType: "CREDIT_NOTE", localId: "pay_9", requestPayload })
+    );
+
+    await expect(
+      retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST, { createdByMemberId: "admin_1" })
+    ).resolves.toEqual({ message: "Retried Xero account-credit note creation." });
+
+    expect(mocks.createUnappliedXeroCreditNote).toHaveBeenCalledWith("pay_9", 4500, CLUB_FORMAT_TEST, {
+      createdByMemberId: "admin_1",
+      repairExistingLink: true,
+      memberCreditId: "credit_9",
+    });
+  });
+
   it("replays booking invoice creation through the booking payment relationship, CLAIMING the row first (#2262 H3)", async () => {
     mocks.findUniqueOperation.mockResolvedValue(makeOperation());
     mocks.findUniquePayment.mockResolvedValue({ bookingId: "book_123" });

@@ -136,7 +136,6 @@ export async function createCancellationCredit(
 ): Promise<string> {
   const db = tx || prisma;
   const { id } = await db.memberCredit.create({
-    select: { id: true },
     data: {
       memberId,
       amountCents,

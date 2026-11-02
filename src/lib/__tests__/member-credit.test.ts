@@ -165,10 +165,11 @@ describe("member-credit helpers", () => {
   describe("createCancellationCredit", () => {
     it("creates a CANCELLATION_REFUND record with correct fields", async () => {
       const { prisma } = await import("@/lib/prisma");
-      vi.mocked(prisma.memberCredit.create).mockResolvedValue({} as any);
+      vi.mocked(prisma.memberCredit.create).mockResolvedValue({ id: "credit-1" } as any);
 
       const { createCancellationCredit } = await import("@/lib/member-credit");
-      await createCancellationCredit("member-1", 5000, "booking-abc12345", "xero-cn-1");
+      // #4685: the id is what the account-credit note's row names for its stamp.
+      await expect(createCancellationCredit("member-1", 5000, "booking-abc12345", "xero-cn-1")).resolves.toBe("credit-1");
 
       expect(prisma.memberCredit.create).toHaveBeenCalledWith({
         data: expect.objectContaining({
@@ -187,7 +188,7 @@ describe("member-credit helpers", () => {
 
     it("handles missing Xero credit note ID", async () => {
       const { prisma } = await import("@/lib/prisma");
-      vi.mocked(prisma.memberCredit.create).mockResolvedValue({} as any);
+      vi.mocked(prisma.memberCredit.create).mockResolvedValue({ id: "credit-2" } as any);
 
       const { createCancellationCredit } = await import("@/lib/member-credit");
       await createCancellationCredit("member-1", 3000, "booking-xyz");

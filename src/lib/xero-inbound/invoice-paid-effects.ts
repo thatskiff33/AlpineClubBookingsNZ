@@ -1008,8 +1008,7 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
         }
 
         if (credited) {
-          const mintedCredit = await tx.memberCredit.create({
-            select: { id: true }, // #4685: its Xero note's stamp writes this credit by id
+          const mintedCredit = await tx.memberCredit.create({ // #4685: its id names it to its Xero note's stamp
             data: {
               memberId: creditMemberId,
               amountCents: actionableCents,
@@ -1305,7 +1304,6 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
             select: { id: true },
           }) : null;
           const mintedCredit = lateCapacityCreditMemberId && !existingCredit && mintableCents > 0 ? await tx.memberCredit.create({
-              select: { id: true },
               data: {
                 memberId: lateCapacityCreditMemberId,
                 amountCents: mintableCents,
