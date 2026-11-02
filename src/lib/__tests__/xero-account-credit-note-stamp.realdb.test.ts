@@ -30,7 +30,8 @@
  * - #4705: the inbound credit-note reconcile (`reconcileXeroCreditNote`, its
  *   Xero read faked) stamps through the same stamp - one of two equal
  *   cancellation credits, oldest first, where no outbox row names one, and the
- *   credit the note's own outbox row named where one does.
+ *   credit the note's own outbox row named where one does; and none where a
+ *   lot of another kind already records the note (PR #4711 review).
  *
  * Ordinary Vitest runs skip the whole file. It reuses the guarded, disposable
  * loopback PostgreSQL `concurrency-lock-races.realdb.test.ts` provisions, which
@@ -252,10 +253,29 @@ function fakeXero() {
       expect(await notes()).toEqual({ [OLDER_CREDIT]: noteId, [NEWER_CREDIT]: null });
     });
 
+    it("MUTATION #4705: an inbound note a lot of another kind already records stamps no cancellation credit", async () => {
+      const { cancellationCreditDescription } = await import("@/lib/cancellation-settled-money");
+      await prisma.memberCredit.updateMany({ where: { memberId: MEMBER_ID }, data: { description: cancellationCreditDescription(BOOKING_ID) } });
+      const noteId = `${P}-remainder-note`;
+      // An admin-adjustment lot holds the note: the stamp's own holder check,
+      // scoped to the booking's cancellation credits, never sees it.
+      await prisma.memberCredit.create({
+        data: { id: `${P}-credit-admin`, memberId: MEMBER_ID, amountCents: CREDIT_CENTS, type: "ADMIN_ADJUSTMENT", description: `${P} remainder`, xeroCreditNoteId: noteId },
+      });
+      await prisma.xeroObjectLink.create({
+        data: { localModel: "Payment", localId: PAYMENT_ID, xeroObjectType: "CREDIT_NOTE", xeroObjectId: noteId, role: "ACCOUNT_CREDIT_NOTE", active: true },
+      });
+
+      await expect(reconcileInbound(noteId)).resolves.toMatchObject({ handled: true, updatedCredits: 0 });
+      expect(await notes()).toEqual({ [OLDER_CREDIT]: null, [NEWER_CREDIT]: null, [`${P}-credit-admin`]: noteId });
+    });
+
     it("MUTATION #4705: an inbound note stamps the credit its own outbox row named, not the older equal one", async () => {
       await enqueueFor(NEWER_CREDIT);
       await expect(runOutbox()).resolves.toMatchObject({ succeeded: 1, failed: 0 });
-      // The outbox's own stamp never landed (a crash between Xero's answer and the write).
+      // Clears the outbox's own stamp to simulate it absent, so the inbound
+      // reconcile alone must find the credit - pinning the reader's wiring, not
+      // a path the outbox is known to reach.
       await prisma.memberCredit.updateMany({ where: { memberId: MEMBER_ID }, data: { xeroCreditNoteId: null } });
 
       await expect(reconcileInbound(`${P}-note-1`)).resolves.toMatchObject({ handled: true, updatedCredits: 1 });

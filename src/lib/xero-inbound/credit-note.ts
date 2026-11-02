@@ -12,7 +12,7 @@ import { writeXeroInboundAuditLogs } from "./audit";
 import { type XeroAuditLocalLink } from "./types";
 import { repairAccountCreditAllocationBusinessState, repairRefundedPaymentBusinessState, resolveAccountCreditPaymentsFromMemberCredits, resolveAppliedCreditPaymentsFromLocalProvenance } from "./credit-note-repairs";
 import { resolveModificationRefundAmountsByPaymentId } from "./modification-note-refunds";
-import { accountCreditNoteRaisedFor, stampCancellationCreditXeroNote } from "@/lib/xero-account-credit-note-stamp";
+import { accountCreditNoteHeld, accountCreditNoteRaisedFor, stampCancellationCreditXeroNote } from "@/lib/xero-account-credit-note-stamp";
 import { isIncludedRefundCreditNoteStatus, isRefundNoteLinkOf, mayRecordAsCanonicalRefundNote, withoutVoidedRefundNoteLinks, xeroCreditNoteSnapshotMetadata } from "@/lib/xero-refund-note-status";
 
 /** #4291: the audit source naming a recount reached only through a voided mirror. */
@@ -214,17 +214,29 @@ export async function reconcileXeroCreditNote(creditNoteId: string) {
   const creditNoteAmountCents = getCreditNoteAmountCents(creditNote);
   let updatedCredits = 0;
   // #4705: the note stamps the one credit it was raised for, through the
-  // outbox's own stamp (`INV-INT-036`): the credit its outbox row named, else
-  // one equal credit, oldest first - and none once a credit holds the note, so
-  // a second payment on the booking stamps nothing more.
+  // outbox's own stamp (`INV-INT-036`), and only while nothing holds it. A
+  // resolved payment means a cancellation credit holds the note already, or
+  // (#1925's local provenance) a lot this stamp never sees does, and those are
+  // the payments of the bookings that credit was APPLIED to, where no credit
+  // was raised for this note (PR #4711 review). So only a payment reached
+  // through its ACCOUNT_CREDIT_NOTE link, for a note no lot or slice records,
+  // is stamped: the one whose outbox row named the credit, by id, else one
+  // equal credit, oldest first; the first stamp ends the pass.
+  const stampPayments =
+    resolvedAccountCreditPayments.length === 0 &&
+    creditNoteAmountCents !== null &&
+    accountCreditPayments.length > 0 &&
+    !(await accountCreditNoteHeld(creditNote.creditNoteID))
+      ? accountCreditPayments
+      : [];
   const raisedFor =
-    accountCreditPayments.length > 0 && creditNoteAmountCents !== null
-      ? await accountCreditNoteRaisedFor({ creditNoteId: creditNote.creditNoteID, paymentIds: accountCreditPayments.map((payment) => payment.id) })
-      : {};
-  for (const payment of accountCreditPayments) {
-    if (creditNoteAmountCents === null) {
-      continue;
-    }
+    stampPayments.length > 0
+      ? await accountCreditNoteRaisedFor({ creditNoteId: creditNote.creditNoteID, paymentIds: stampPayments.map((payment) => payment.id) })
+      : null;
+  for (const payment of stampPayments) {
+    if (creditNoteAmountCents === null) continue;
+    // The note was raised for another payment's credit: this one stamps nothing.
+    if (raisedFor && !raisedFor.paymentIds.includes(payment.id)) continue;
 
     // #3369: this stamps the note onto a MEMBER CREDIT row, and an
     // organisation-owned booking has none — credit belongs to a person's
@@ -237,9 +249,12 @@ export async function reconcileXeroCreditNote(creditNoteId: string) {
       bookingId: payment.bookingId,
       refundAmountCents: creditNoteAmountCents,
       creditNoteId: creditNote.creditNoteID,
-      ...raisedFor,
+      ...(raisedFor ? { memberCreditId: raisedFor.memberCreditId } : {}),
     });
-    if (stampedCreditId) updatedCredits += 1;
+    if (stampedCreditId) {
+      updatedCredits += 1;
+      break;
+    }
   }
   const allocationTargets = buildCreditNoteAllocationTargets(creditNote);
   const resolvedCreditNoteLinks = dedupeXeroObjectLinks([

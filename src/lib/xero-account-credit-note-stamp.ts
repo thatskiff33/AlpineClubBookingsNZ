@@ -118,15 +118,16 @@ export async function stampCancellationCreditXeroNote(params: {
 /**
  * #4705: the credit an account-credit note was raised for, as the note's own
  * outbox row named it (`memberCreditId`, kept on the queued and executed
- * shapes). Read by the inbound reconcile, which reaches a note by its id. One
- * credit named across the payments' rows is returned; none, or rows that
- * disagree, return nothing, and the stamp falls back to its old match.
+ * shapes), and the payments whose rows named it. Read by the inbound
+ * reconcile, which reaches a note by its id. One credit named across the
+ * payments' rows is returned; none, or rows that disagree, return null, and
+ * the stamp falls back to its old match.
  */
 export async function accountCreditNoteRaisedFor(params: {
   creditNoteId: string;
   paymentIds: string[];
-}): Promise<{ memberCreditId?: string }> {
-  if (params.paymentIds.length === 0) return {};
+}): Promise<{ memberCreditId: string; paymentIds: string[] } | null> {
+  if (params.paymentIds.length === 0) return null;
   const rows = await prisma.xeroSyncOperation.findMany({
     where: {
       direction: "OUTBOUND",
@@ -136,11 +137,32 @@ export async function accountCreditNoteRaisedFor(params: {
       localId: { in: params.paymentIds },
       xeroObjectId: params.creditNoteId,
     },
-    select: { requestPayload: true },
+    select: { localId: true, requestPayload: true },
   });
-  const named = new Set(rows.flatMap((row) => readAccountCreditNoteCredit(asRecord(row.requestPayload) ?? {}).memberCreditId ?? []));
-  const [memberCreditId] = named;
-  return named.size === 1 && memberCreditId ? { memberCreditId } : {};
+  const named = rows.flatMap((row) => {
+    const { memberCreditId } = readAccountCreditNoteCredit(asRecord(row.requestPayload) ?? {});
+    return memberCreditId && row.localId ? [{ memberCreditId, paymentId: row.localId }] : [];
+  });
+  const credits = new Set(named.map((row) => row.memberCreditId));
+  const [memberCreditId] = credits;
+  if (credits.size !== 1 || !memberCreditId) return null;
+  return { memberCreditId, paymentIds: [...new Set(named.map((row) => row.paymentId))] };
+}
+
+/**
+ * #4705 (PR #4711 review): whether any credit lot, of any type, or any applied
+ * slice already records the note. The inbound reconcile stamps only a note
+ * nothing holds: a held note is either already on its credit, or an
+ * applied-credit note whose holder is a lot this stamp never sees (an
+ * admin-adjustment remainder), and stamping it on a cancellation credit too
+ * would give one note two holders.
+ */
+export async function accountCreditNoteHeld(creditNoteId: string): Promise<boolean> {
+  const [lot, slice] = await Promise.all([
+    prisma.memberCredit.findFirst({ where: { xeroCreditNoteId: creditNoteId }, select: { id: true } }),
+    prisma.memberCreditNoteAllocation.findFirst({ where: { xeroCreditNoteId: creditNoteId }, select: { id: true } }),
+  ]);
+  return lot !== null || slice !== null;
 }
 
 /**

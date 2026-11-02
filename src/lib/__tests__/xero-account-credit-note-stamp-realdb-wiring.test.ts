@@ -28,6 +28,7 @@ describe("the account-credit note stamp's real-database proof stays wired into C
     expect(suite).toContain("MUTATION: a failed create keeps the credit on its executed payload, and the Retry stamps that credit");
     expect(suite).toContain("MUTATION #4705: an inbound note on a booking with two equal cancellation credits stamps one only, the oldest");
     expect(suite).toContain("MUTATION #4705: an inbound note stamps the credit its own outbox row named, not the older equal one");
+    expect(suite).toContain("MUTATION #4705: an inbound note a lot of another kind already records stamps no cancellation credit");
     expect(suite).toContain("processQueuedXeroOutboxOperations");
     expect(suite).toContain("enqueueXeroAccountCreditNoteOperation");
     expect(suite).toContain('assertSafeRaceDbUrl(RACE_DB_URL, "Account-credit note stamp by id (#4685)")');
