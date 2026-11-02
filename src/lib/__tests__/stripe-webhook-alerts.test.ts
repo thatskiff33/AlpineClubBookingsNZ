@@ -4626,7 +4626,8 @@ describe("Stripe webhook Xero alerting", () => {
     });
 
     it("stays silent for a saved-card attempt whose lost answer the event's idempotency key adopts", async () => {
-      const key = "pending_charge_booking-1_txn_attempt_9_v2";
+      // The original key, the one this release mints (#4646 mints `_v2` only from #4682).
+      const key = "pending_charge_booking-1_txn_attempt_9";
       mockConstructWebhookEvent.mockReturnValue(
         appSucceededEvent("evt_app_adopted", { bookingId: "booking-1" }, { id: "req_9", idempotency_key: key }),
       );

@@ -120,7 +120,7 @@ description = "A fabricated idempotency key from ANOTHER subsystem (the late-can
 regexes = ['''^late_cancel_refund_bk_1_pi_x$''']
 
 [[allowlists]]
-description = "The idempotency key of a saved-card attempt minted before #4646 (no `_v2` suffix), written out in `stripe-app-intent-metadata.test.ts` so the census proves an old attempt's re-sent metadata is still recognised as the app's own. A test's own label for a fabricated row: readable snake_case, no credential, and it names no real intent or booking. The same class as `pending_charge_b1` above (#4646)."
+description = "An original-shape saved-card attempt key (no `_v2` suffix), once written out in `stripe-app-intent-metadata.test.ts` in a commit of #4681 that history keeps; the file now builds it with `mintedSavedCardChargeKey`. A test's own label for a fabricated row: readable snake_case, no credential, and it names no real intent or booking. The same class as `pending_charge_b1` above (#4646)."
 regexes = ['''^pending_charge_bk_1_txn_1$''']
 
 [[allowlists]]
