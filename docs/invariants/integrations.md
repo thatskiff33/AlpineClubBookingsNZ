@@ -582,6 +582,43 @@ Pinned by `xero-refund-note-in-flight.test.ts`,
 `cron-credit-reconciliation.test.ts` and, against real PostgreSQL,
 `xero-unrecorded-refund-note-fence.realdb.test.ts`.
 
+## An account-credit note's member credit (#4685)
+
+### INV-INT-036
+
+An account-credit Xero note stamps the one member credit it was raised for, and
+a note is on at most one of a booking's cancellation credits
+(`MemberCredit.xeroCreditNoteId`, which `INV-PAY-023`'s allocation engine reads
+as the lot's note).
+
+- **The row names its credit.** Every enqueue of a payment's account-credit
+  note adds `memberCreditId` to the queued payload: the cancel's credit branch,
+  both inbound Internet Banking mint arms (a replay names the credit it found),
+  and the repair tool's missing-note action when one credit makes up its sum.
+  The executed payload keeps it, so a retry stamps the same credit. One reader,
+  `readAccountCreditNoteCredit`, serves both parses.
+- **The stamp writes that row by id** (`stampCancellationCreditXeroNote`),
+  scoped to its member, booking, type and amount, and only while it names no
+  note. It never overwrites a note, and a note already on one of the booking's
+  cancellation credits stamps nothing more.
+- **Rows queued before the field** name no credit, so the stamp falls back to
+  the old match (member, booking, amount, the three pipeline descriptions), one
+  credit at a time, oldest first - never every equal credit at once.
+- **No lock.** The write moves no balance, status or settlement money, and each
+  is one null-guarded single-row update (`INV-LOCK-001`; no key or order,
+  `INV-LOCK-002`; no new site, `INV-LOCK-003`).
+- **Limits.** The enqueue still keys a payment's account-credit note on its
+  amount and the payment holds one live account-credit link, so two equal
+  credits on one booking get two notes only once the first link is retired.
+  No writer mints two such credits on one booking today. A modification
+  note's stamp was already one row (`sourceBookingModificationId` is unique).
+
+Pinned by `xero-account-credit-note-stamp.test.ts`,
+`xero-operation-outbox-payload.test.ts`, `xero-operation-outbox.test.ts`,
+`xero-operation-retry.test.ts`, `booking-cancel.test.ts`,
+`xero-inbound-reconciliation.test.ts`, `xero-booking-repair.test.ts` and,
+against real PostgreSQL, `xero-account-credit-note-stamp.realdb.test.ts`.
+
 ## One outcome per Xero operation row (#4356)
 
 ### INV-INT-029
