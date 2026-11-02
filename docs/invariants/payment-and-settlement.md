@@ -3382,8 +3382,9 @@ _Split from `INV-PAY-054` (#3268, epic #3270)._
   `charge-saved-method-route.test.ts` (the claim it gained),
   `payment-transactions-refunds.test.ts` (the intent pointer an attempt row
   must not null), `stripe-webhook-alerts.test.ts` (adoption by the event's
-  idempotency key) and `advisory-lock-guard.test.ts` (the two new
-  `charge-saved-method` sites).
+  idempotency key or, #4646, the metadata's attempt id),
+  `saved-card-async-capture-adopt.realdb.test.ts` (#4646, real PostgreSQL) and
+  `advisory-lock-guard.test.ts` (the two new `charge-saved-method` sites).
 
 ## INV-PAY-081
 
@@ -3394,9 +3395,13 @@ _Split from `INV-PAY-055` (#3267, epic #3270)._
   runs INSIDE the caller's claim transaction — global `pg_advisory_xact_lock(1)`
   then the lodge capacity lock, after the status-guarded PENDING -> CONFIRMED
   claim — and creates the row (PENDING, the card about to be charged, the
-  path's `reason`), then stamps its `reference` with
-  `pending_charge_<bookingId>_<rowId>`. A row is an attempt row only when its
-  `reference` is the key built from ITS OWN id. Because every path writes its
+  path's `reason`), then stamps its `reference` with the key
+  `mintedSavedCardChargeKey` builds: `pending_charge_<bookingId>_<rowId>`,
+  until #4682 switches it to the `_v2` key (that key plus `_v2`, #4646). A row
+  is an attempt row only when its `reference` is either key built from ITS OWN
+  id (`savedCardChargeKeyShape`): read first, write later, because the release
+  before #4646 reads only the original key and would mint a second charge
+  beside a `_v2` row it met. Because every path writes its
   row under the same two locks, two paths can never both hold an open attempt
   for one payment: the second to take the locks reads the first's row. That is
   the guard the shared key used to provide by accident, and it now covers
@@ -3404,12 +3409,14 @@ _Split from `INV-PAY-055` (#3267, epic #3270)._
   row is written under the same locks — a route writing its attempt unlocked
   would re-open the race the ledger closes.
 
-- **Metadata converges on one builder.** `buildSavedCardChargeMetadata`
-  returns `{ bookingId, memberId }` for every path; the per-path `source` that
-  broke the shared key is gone, and which path minted an attempt is recorded on
-  the row's `reason` (`SAVED_CARD_CHARGE_REASON`, a closed union). The one
-  charge call is `chargeSavedCardAttempt`; nothing else calls
-  `chargePaymentMethod` for a saved card.
+- **Metadata converges on one builder, a function of the key.**
+  `buildSavedCardChargeMetadata` returns `{ bookingId, memberId }` for every
+  path, plus `savedCardAttemptId` only under a `_v2` key; a row is re-sent
+  under its stored key with its first body, so Stripe sees no parameter
+  mismatch. Which path minted an attempt is on the
+  row's `reason` (`SAVED_CARD_CHARGE_REASON`, a closed union). The one charge
+  call is `chargeSavedCardAttempt`; nothing else calls `chargePaymentMethod`
+  for a saved card.
 
 ## INV-PAY-082
 
@@ -3619,8 +3626,8 @@ _Split from `INV-PAY-055` (#3267, epic #3270)._
 _Split from `INV-PAY-055` (#3267, epic #3270)._
 
 - **A key may only be RE-SENT inside Stripe's window, and a lost response is
-  recovered by that key.** Stripe keeps an idempotency key for 24 hours; the
-  same key sent after that is a new request and executes a NEW charge, with
+  recovered by an exact link.** Stripe keeps an idempotency key for 24 hours;
+  the same key sent after that is a new request and executes a NEW charge, with
   nothing local able to tell it apart from the first. So an attempt row that is
   PENDING with no intent and older than
   `SAVED_CARD_CHARGE_KEY_RESEND_WINDOW_MS` (23 hours, an hour of margin,
@@ -3629,20 +3636,21 @@ _Split from `INV-PAY-055` (#3267, epic #3270)._
   `SavedCardChargeRefusedError` (`attempt_key_expired`) and a person checks
   Stripe. That state is rare because the normal recovery is quicker: a
   `payment_intent.succeeded` or `.payment_failed` webhook for an intent the
-  ledger does not know adopts the PENDING no-intent attempt row whose
-  `reference` equals the event's `request.idempotency_key` — the key is the one
-  thing both sides hold — and settles it, forward only, before the handler
-  proceeds as usual (`adoptSavedCardChargeAttemptForIntent`). Without that
-  adoption a captured charge whose response was lost was invisible even to
-  `INV-PAY-043`, and the re-send after 24 hours was a second charge. **Adoption
-  is not a universal recovery, and the limit is Stripe's:** `Event.request` is
-  null for any state change Stripe did not attribute to an API request, so an
-  intent whose lost-response POST answered `processing` and captured
-  asynchronously later produces a `payment_intent.succeeded` with no
-  idempotency key at all. Nothing can adopt it; the row stays PENDING with no
-  intent id and falls through to the 23-hour `attempt_key_expired` refusal,
-  which is the fail-safe end of that road — no second charge, and a person is
-  told to look in Stripe.
+  ledger does not know adopts the PENDING no-intent attempt row and settles it,
+  forward only, before the handler proceeds as usual
+  (`adoptSavedCardChargeAttemptForIntent`). The link is the event's
+  `request.idempotency_key`, which the row stores on `reference`, or, when the
+  event carries no saved-card key, the `savedCardAttemptId` in the intent's
+  metadata (#4646): `Event.request` is null on an asynchronous capture and on
+  every redelivery of it. Either way the row's key is its own, in either shape,
+  and its payment that booking's; by metadata its key must also be the `_v2`
+  shape whose sends carry the id. Nothing adopts by booking and amount. The row
+  write is claimed on "still no intent" under the Payment lock, so a lost
+  adoption writes nothing. Without adoption a lost response's capture was
+  invisible even to `INV-PAY-043`, and the re-send after 24 hours was a second
+  charge. **The limit until #4682:** new attempts still mint the original key
+  (`INV-PAY-081`), which sends no id, so their asynchronous capture ends at
+  `attempt_key_expired`, alerted once as unmatched (`INV-INT-033`).
 
 ## INV-PAY-090
 

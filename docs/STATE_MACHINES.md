@@ -1759,8 +1759,13 @@ saved card — the settlement cron, admin confirm-pending-guests and
 `charge-saved-method` — is one PRIMARY Stripe `PaymentTransaction` created
 inside the caller's claim transaction (under `lock(1)` and the lodge lock,
 after the PENDING -> CONFIRMED claim) BEFORE Stripe is asked, with its own
-Stripe idempotency key `pending_charge_<bookingId>_<rowId>` stored on
-`reference`:
+Stripe idempotency key stored on `reference`. Two key shapes are read as an
+attempt row's: `pending_charge_<bookingId>_<rowId>` and the `_v2` key (that key
+plus `_v2`, #4646). Only the first is minted until #4682
+(`mintedSavedCardChargeKey`), because the release before #4646 reads only it
+and would charge again beside a `_v2` row it met during a deploy or after a
+rollback. The charge's metadata names the row (`savedCardAttemptId`) only under
+a `_v2` key, so a re-sent key always sends its first body:
 
 ```text
 attempt row: PENDING (no intent id)  -- Stripe asked, intent returned -->
@@ -1797,8 +1802,16 @@ next attempt finds a PRIMARY row still holding captured cash -> REFUSED
   (`handOffSupersededCaptureAfterRefusal`), so that capture no longer holds
   the next attempt back; a real capture or a stopped refund still refuses
 `payment_intent.succeeded` / `.payment_failed` for an intent the ledger does not know
-  -> adopt the PENDING no-intent attempt row whose `reference` equals the event's
-     `request.idempotency_key`, settle it, then handle as usual (lost-response recovery)
+  -> adopt the PENDING/PROCESSING no-intent attempt row, settle it, then handle as
+     usual (lost-response recovery), linked exactly by
+       the event's saved-card `request.idempotency_key` = the row's `reference`, or
+       no saved-card key (`request` null: an asynchronous capture, and every
+       redelivery of it) -> the metadata's `savedCardAttemptId` = the row's id,
+       its payment this booking's and its key the `_v2` shape (#4646)
+     the row write is claimed on "still no intent": a lost adoption writes nothing
+     an original-key attempt (every one minted until #4682) has neither link
+     for an asynchronous capture
+       -> stays PENDING, ends at `attempt_key_expired`, alerted as unmatched
 ```
 
 Every write onto an attempt row is FORWARD ONLY. A capture is written over
@@ -1978,7 +1991,8 @@ payment_intent.succeeded, app metadata
   type group_settlement            -> organiser settlement (never unmatched)
   superseded machinery owns it     -> its refund or hold   (never unmatched)
   type modification_additional     -> additional-ask handler (never unmatched)
-  row by intent id, else saved-card attempt adopted by event.request.idempotency_key,
+  row by intent id, else saved-card attempt adopted by event.request.idempotency_key
+  or (#4646) by the metadata's savedCardAttemptId,
   else the row by intent id read once more
     PRIMARY row                    -> settle the booking as usual
     no row | non-PRIMARY row       -> UnrecognisedStripePayment (APP_INTENT_NO_TRANSACTION |
@@ -1994,7 +2008,8 @@ event so Stripe redelivers (`INV-INT-033`). Which minting flows can reach it:
 | Pay step and `/pay` link, PRIMARY | No | - | `attachMintedCardIntent` writes the PRIMARY row under lock(1) before the client secret leaves the server; a refused attach cancels the intent and never hands the secret out |
 | Saved-card charge, answer received (`chargeSavedCardAttempt`) | No | - | The request's `settleSavedCardChargeAttempt` writes the intent onto the attempt row. It can commit after the webhook's first read and before `adoptSavedCardChargeAttemptForIntent`, which then finds no row without an intent; so the webhook reads the row by intent id once more before calling the payment unmatched, finds the PRIMARY row, and settles as usual (`already_paid` when the request settled first) |
 | Saved-card charge, answer lost, Stripe attributes the capture to the request | No | - | `adoptSavedCardChargeAttemptForIntent` adopts it by `event.request.idempotency_key` |
-| Saved-card charge, answer lost, capture asynchronous (`event.request` null) or the attempt row already ended | Yes, `APP_INTENT_NO_TRANSACTION` | Lost money | The card was charged and no row can be linked; the attempt ends at `attempt_key_expired`, and a redelivered event reaches the same branch |
+| Saved-card charge under a `_v2` key, answer lost, capture asynchronous (`event.request` null) | No | - | `adoptSavedCardChargeAttemptForIntent` adopts it by the attempt id the metadata carries (`savedCardAttemptId`, #4646); a redelivery finds the row by intent id. This release reads `_v2` rows but does not mint them; #4682 does |
+| Saved-card charge under the original key (every one minted until #4682), answer lost, capture asynchronous; or the attempt row already ended | Yes, `APP_INTENT_NO_TRANSACTION` | Lost money | The card was charged and no row can be linked: the original key's metadata names no row, and an ended row is never adopted. The attempt ends at `attempt_key_expired`, and a redelivered event reaches the same branch |
 | An app intent confirmed outside the app after its attach was refused or never ran (dashboard or API) | Yes, `APP_INTENT_NO_TRANSACTION` | Lost money | No row was ever written for it |
 | An intent another deployment minted on the same Stripe account (its `bookingId` is not here) | Yes, `APP_INTENT_NO_TRANSACTION` | Unexpected: money this app holds no record of | One deployment serves one club, so it should not happen. Each deployment needs its own Stripe account or test sandbox: staging, development and CI sharing one test account would record each other's app intents. Their emails are held off production, so the cost there is only rows |
 | Additional asks: edit, review charge, currency and price re-issue, released credit | No | - | Each carries `type: ADDITIONAL_ASK_INTENT_TYPE` and is routed to `handleAdditionalModificationPaymentSucceeded` first |

@@ -616,7 +616,7 @@ let prisma: (typeof import("@/lib/prisma"))["prisma"];
       await prisma.paymentTransaction.deleteMany({ where: { paymentId: PAYMENT_ID } });
       await prisma.booking.update({ where: { id: BOOKING_ID }, data: { status: "PAID", totalPriceCents: 0, finalPriceCents: 0 } });
       await prisma.payment.update({ where: { id: PAYMENT_ID }, data: { amountCents: 0, status: "SUCCEEDED", stripePaymentIntentId: null } });
-      const { savedCardChargeIdempotencyKey } = await import("@/lib/saved-card-charge-attempt");
+      const { savedCardChargeIdempotencyKey } = await import("@/lib/saved-card-charge-key");
       const key = savedCardChargeIdempotencyKey(BOOKING_ID, ATTEMPT_ROW);
       await prisma.paymentTransaction.create({
         data: { id: ATTEMPT_ROW, paymentId: PAYMENT_ID, kind: "PRIMARY", source: "STRIPE", amountCents: PRICE_CENTS, status: "PENDING", reference: key, createdAt: MINTED_AT },
