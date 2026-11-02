@@ -116,10 +116,10 @@ export function stripeRaceDouble(actual: Stripe): Stripe {
       stripeRaceHooks.customer ? stripeRaceHooks.customer(args) : actual.findOrCreateCustomer(args)) as Stripe["findOrCreateCustomer"],
     chargePaymentMethod: ((args: Parameters<Stripe["chargePaymentMethod"]>[0]) =>
       stripeRaceHooks.charge ? stripeRaceHooks.charge(args) : actual.chargePaymentMethod(args)) as Stripe["chargePaymentMethod"],
-    stampPaymentIntentMetadata: ((paymentIntentId: string, metadata: Readonly<Record<string, string>>) =>
+    stampPaymentIntentMetadata: ((...args: Parameters<Stripe["stampPaymentIntentMetadata"]>) =>
       stripeRaceHooks.stamp
-        ? stripeRaceHooks.stamp(paymentIntentId, metadata)
-        : actual.stampPaymentIntentMetadata(paymentIntentId, metadata)) as Stripe["stampPaymentIntentMetadata"],
+        ? stripeRaceHooks.stamp(args[0], args[1])
+        : actual.stampPaymentIntentMetadata(...args)) as Stripe["stampPaymentIntentMetadata"],
     findCheckoutSessionForPaymentIntent: ((paymentIntentId: string) =>
       stripeRaceHooks.checkoutSession
         ? stripeRaceHooks.checkoutSession(paymentIntentId)
