@@ -31,17 +31,21 @@ description, active/archived state, and sort order).
 
 - **Create a category** — give it a name, an optional description, and an
   optional sort order (the display order on this page and on the member
-  assignment picker). The category's `key` is derived from the name and shown
-  read-only afterwards.
+  assignment picker). Leave sort order blank and it appends after the
+  highest sort order any existing category already has. The category's `key`
+  is derived from the name and shown read-only afterwards.
 - **Edit a category** — change its name, description, active state, or sort
   order at any time.
 - **Archive / Reactivate** — toggling a category off (Archived) hides it from
   the member-assignment picker without deleting its history; toggling it back
   on makes it assignable again.
 - **Delete a category** — only possible when it has **no member assignments**
-  and **no fee history**. If either exists, delete is refused and the page
-  tells you to re-assign those members (or archive the category instead) and
-  clear its fee history first.
+  and **no fee history**. The assignment count is across **every season a
+  member was ever assigned the category, past or present** — not just the
+  current season — so a category nobody is assigned to THIS season can still
+  refuse deletion over an old season's assignment. If either check fails,
+  delete is refused and the page tells you to re-assign those members (or
+  archive the category instead) and clear its fee history first.
 
 ## The built-in "Individual" category
 

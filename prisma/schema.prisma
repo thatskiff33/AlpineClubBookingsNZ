@@ -1124,8 +1124,10 @@ model MembershipSubscriptionCharge {
   status                MembershipSubscriptionChargeStatus @default(QUEUED)
   membershipAnnualFeeId String?
   // Exactly one of the membershipType* trio or the subscriptionCategory*
-  // quartet below is populated per charge (DB CHECK
-  // MembershipCharge_type_xor_category, num_nonnulls = 1) — a charge bills
+  // quartet below is populated per charge, the OTHER left entirely null —
+  // never a half-populated group (DB CHECK MembershipCharge_type_xor_category:
+  // num_nonnulls(membershipTypeId, subscriptionCategoryId) = 1 AND each
+  // group's own columns are all-null or all-set together) — a charge bills
   // either on the MembershipType axis (today's behaviour, unchanged) or on
   // the independent SubscriptionCategory axis (couple/family-style flat fees
   // decoupled from booking rights). The membershipType* trio widened from
@@ -1204,8 +1206,11 @@ model MembershipSubscriptionCharge {
   // on (seasonYear, subscriptionCategoryId, familyGroupId) — also recorded in
   // prisma/partial-unique-indexes.tsv. A raw-SQL CHECK
   // (MembershipCharge_type_xor_category) enforces num_nonnulls(membershipTypeId,
-  // subscriptionCategoryId) = 1 so every charge is unambiguously one axis or the
-  // other; not modelled here (Prisma cannot express CHECK constraints).
+  // subscriptionCategoryId) = 1 AND each axis's own column group (the
+  // membershipType* trio, the subscriptionCategory* quartet) is all-null or
+  // all-set together, so every charge is unambiguously one axis or the
+  // other with no half-populated group; not modelled here (Prisma cannot
+  // express CHECK constraints).
 }
 
 // Frozen per-line snapshot of an annual-fee component at the moment the charge

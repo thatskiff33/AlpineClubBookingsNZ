@@ -37,6 +37,15 @@ export type ChargeAxisKeyInput = {
  * populated per charge (DB CHECK `MembershipCharge_type_xor_category`).
  */
 export function chargeFamilyAxisKey(input: ChargeAxisKeyInput): string {
+  if (!input.membershipTypeId && !input.subscriptionCategoryId) {
+    // Billing review fix: a caller that forgot to pass the category id for
+    // a category-axis charge/warning used to fall through to
+    // `category:${null}` — collapsing every such call for a family onto
+    // ONE key regardless of which category, silently. Refusing here turns
+    // that mistake into an immediate, loud failure at the call site instead
+    // of a quiet cross-category collision discovered later.
+    throw new Error("chargeFamilyAxisKey: neither membershipTypeId nor subscriptionCategoryId is set.");
+  }
   const axis = input.membershipTypeId
     ? `type:${input.membershipTypeId}`
     : `category:${input.subscriptionCategoryId}`;

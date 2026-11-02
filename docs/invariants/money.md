@@ -813,7 +813,10 @@ check the others.
   sibling raw-SQL partial unique index, not a modification of the existing one.
   A `MembershipSubscriptionCharge` bills on exactly one axis: `membershipTypeId`
   and `subscriptionCategoryId` are mutually exclusive (DB CHECK
-  `num_nonnulls(...) = 1`). Every reader of these two columns off a persisted
+  `num_nonnulls(...) = 1`), and each axis's own column group (the
+  `membershipType*` trio, the `subscriptionCategory*` quartet) is all-null or
+  all-set together, never half-populated — the same CHECK enforces both.
+  Every reader of these two columns off a persisted
   charge row goes through the shared `chargeFamilyAxisKey`/
   `chargeAxisDisplayName` accessor (`INV-SSOT-007`), never a raw template
   literal, and the closed-family reversal rules (`INV-MONEY-018`, #4110) apply

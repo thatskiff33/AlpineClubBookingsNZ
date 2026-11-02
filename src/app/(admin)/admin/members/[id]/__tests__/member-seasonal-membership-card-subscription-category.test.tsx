@@ -161,4 +161,32 @@ describe("MemberSeasonalMembershipCard subscription category", () => {
     const previewCall = calls.find((c) => c.url.includes("/preview"))!;
     expect(previewCall.body).toMatchObject({ subscriptionCategoryId: null });
   });
+
+  // Maintainer review: the select had no accessible name (a bare <Label>
+  // with no htmlFor, paired with an id-less SelectTrigger).
+  it("gives the Subscription Category select an accessible name", async () => {
+    stubFetch();
+    render(<MemberSeasonalMembershipCard member={member()} onSaved={vi.fn()} />);
+    await screen.findByText("Individual");
+    expect(screen.getByLabelText("Subscription Category")).toBeTruthy();
+  });
+
+  // Maintainer review: the preview panel computed subscriptionCategoryChanged/
+  // newSubscriptionCategory but never rendered them, so an admin confirming a
+  // category change saw no trace of it in the preview.
+  it("shows the subscription category change in the preview panel", async () => {
+    const calls = stubFetch();
+    render(
+      <MemberSeasonalMembershipCard
+        member={member({ seasonalMembershipAssignments: [assignment] })}
+        onSaved={vi.fn()}
+      />,
+    );
+    await screen.findByText("Couple");
+    const applyFromInput = document.querySelector("#seasonal-membership-apply-from") as HTMLInputElement;
+    fireEvent.change(applyFromInput, { target: { value: "2026-05-01" } });
+    fireEvent.click(screen.getByRole("button", { name: /preview/i }));
+    await waitFor(() => expect(calls.some((c) => c.url.includes("/preview"))).toBe(true));
+    expect(await screen.findByText("Subscription category: Individual → Couple")).toBeTruthy();
+  });
 });

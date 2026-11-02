@@ -555,7 +555,7 @@ export function MemberSeasonalMembershipCard({
         */}
         <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)]">
           <div className="space-y-2">
-            <Label>Subscription Category</Label>
+            <Label htmlFor="seasonal-membership-subscription-category">Subscription Category</Label>
             <Select
               value={selectedSubscriptionCategoryId || "individual"}
               onValueChange={(value) =>
@@ -563,7 +563,7 @@ export function MemberSeasonalMembershipCard({
               }
               disabled={categoriesLoading}
             >
-              <SelectTrigger>
+              <SelectTrigger id="seasonal-membership-subscription-category">
                 <SelectValue placeholder="Individual" />
               </SelectTrigger>
               <SelectContent>
@@ -686,6 +686,17 @@ export function MemberSeasonalMembershipCard({
               <div className="mt-1 text-muted-foreground">
                 Applies from {preview.applyFrom ? formatCalendarDay(preview.applyFrom, clubTime.format) : "season start"}
               </div>
+              {preview.subscriptionCategoryChanged && (
+                // Maintainer review: the preview used to carry this change
+                // (subscriptionCategoryChanged/newSubscriptionCategory were
+                // already computed) without ever showing it, so an admin
+                // confirming the change saw no trace of it here.
+                <div className="mt-1 text-muted-foreground">
+                  Subscription category: {preview.previousAssignment?.subscriptionCategory?.name ?? "Individual"}
+                  {" → "}
+                  {preview.newSubscriptionCategory?.name ?? "Individual"}
+                </div>
+              )}
               <div className="mt-1 text-muted-foreground">
                 {seasonSelectLabel(
                   preview.currentSeasonSubscription.seasonYear,

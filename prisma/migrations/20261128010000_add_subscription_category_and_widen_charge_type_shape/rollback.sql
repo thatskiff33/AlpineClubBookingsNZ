@@ -38,6 +38,41 @@ BEGIN
 END;
 $wrong_order$;
 
+-- Maintainer review: this script drops the three new tables and the
+-- assignment column unconditionally — the OTHER guard above only concerns
+-- run ORDER, not whether an admin has actually saved real category
+-- configuration. With no category CHARGE ever confirmed (the other
+-- script's own SET NOT NULL guard only catches that case), an admin could
+-- still have created a real fee, a fee component, or assigned a category
+-- to a member's season, or a stored exception could still name one — all
+-- of which this script would silently destroy, and restarting the old app
+-- then bills those members as individuals with no record of why. Stop
+-- unless every one of those is empty.
+DO $saved_category_config$
+BEGIN
+    IF EXISTS (SELECT 1 FROM "SubscriptionCategoryFee") THEN
+        RAISE EXCEPTION 'subscription_category_fee_exists'
+            USING HINT = 'At least one SubscriptionCategoryFee row exists. Dropping SubscriptionCategory and its fee tables would silently destroy real admin-entered fee configuration — resolve it by hand before rolling back.';
+    END IF;
+    IF EXISTS (SELECT 1 FROM "SubscriptionCategoryFeeComponent") THEN
+        RAISE EXCEPTION 'subscription_category_fee_component_exists'
+            USING HINT = 'At least one SubscriptionCategoryFeeComponent row exists. Resolve it by hand before rolling back.';
+    END IF;
+    IF EXISTS (
+        SELECT 1 FROM "SeasonalMembershipAssignment" WHERE "subscriptionCategoryId" IS NOT NULL
+    ) THEN
+        RAISE EXCEPTION 'subscription_category_assignment_exists'
+            USING HINT = 'At least one SeasonalMembershipAssignment names a subscription category. Dropping the column would silently re-bill that member as an individual with no record of why — resolve it by hand before rolling back.';
+    END IF;
+    IF EXISTS (
+        SELECT 1 FROM "MembershipBillingException" WHERE "subscriptionCategoryId" IS NOT NULL
+    ) THEN
+        RAISE EXCEPTION 'subscription_category_exception_exists'
+            USING HINT = 'At least one MembershipBillingException names a subscription category. Resolve it by hand before rolling back.';
+    END IF;
+END;
+$saved_category_config$;
+
 ALTER TABLE "MembershipBillingException" DROP COLUMN IF EXISTS "subscriptionCategoryId";
 
 ALTER TABLE "MembershipSubscriptionCharge" DROP COLUMN IF EXISTS "subscriptionCategoryFeeId";

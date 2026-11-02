@@ -35,13 +35,47 @@
 BEGIN;
 
 -- ---------------------------------------------------------------------------
--- 0. Guard: refuse if real category data exists anywhere.
--- ---------------------------------------------------------------------------
+-- 0. Guard: refuse unless the database is ACTUALLY in the situation this
+--    script describes, and refuse if real category data exists anywhere.
+--
+-- Maintainer review: the data-only guard below passes just as cleanly on a
+-- database that has ALREADY applied the REDESIGNED pair
+-- (20261128010000/20261128020000) and simply has not created a custom
+-- category yet — nobody has assigned or charged a category, so every data
+-- check is satisfied, but the schema this script is about to DROP is the
+-- CURRENT, in-use one, not leftover scaffolding from a superseded design.
+-- The ledger check below closes that: this script may only run when BOTH
+-- old migrations are recorded applied AND BOTH new migrations are NOT, so
+-- it refuses outright on a database already on the new pair, data or not.
 DO $guard$
 BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM "_prisma_migrations"
+    WHERE migration_name = '20261121010000_add_subscription_category' AND finished_at IS NOT NULL
+  ) OR NOT EXISTS (
+    SELECT 1 FROM "_prisma_migrations"
+    WHERE migration_name = '20261121020000_widen_membership_charge_for_category' AND finished_at IS NOT NULL
+  ) THEN
+    RAISE EXCEPTION 'old_subscription_category_migrations_not_applied'
+      USING HINT = 'Both original migrations (20261121010000_add_subscription_category, 20261121020000_widen_membership_charge_for_category) must be recorded as applied in _prisma_migrations before this script runs. This database is not in the situation this script assumes — stop.';
+  END IF;
+  IF EXISTS (
+    SELECT 1 FROM "_prisma_migrations"
+    WHERE migration_name IN (
+      '20261128010000_add_subscription_category_and_widen_charge_type_shape',
+      '20261128020000_route_category_charges_and_enforce_axis_exclusivity'
+    )
+  ) THEN
+    RAISE EXCEPTION 'redesigned_subscription_category_migrations_already_applied'
+      USING HINT = 'At least one of the redesigned migrations (20261128010000/20261128020000) is already recorded in _prisma_migrations. This database is ALREADY on the new schema this script would otherwise destroy — stop.';
+  END IF;
   IF EXISTS (SELECT 1 FROM "SubscriptionCategory" WHERE NOT "isBuiltIn") THEN
     RAISE EXCEPTION 'subscription_category_data_exists'
       USING HINT = 'At least one non-built-in SubscriptionCategory row exists. This script assumes the feature was never used in production — stop and handle the real data by hand rather than running this.';
+  END IF;
+  IF EXISTS (SELECT 1 FROM "SubscriptionCategoryFee") THEN
+    RAISE EXCEPTION 'subscription_category_fee_data_exists'
+      USING HINT = 'At least one SubscriptionCategoryFee row exists. This script assumes the feature was never used in production — stop and handle the real data by hand rather than running this.';
   END IF;
   IF EXISTS (
     SELECT 1 FROM "MembershipSubscriptionCharge" WHERE "subscriptionCategoryId" IS NOT NULL

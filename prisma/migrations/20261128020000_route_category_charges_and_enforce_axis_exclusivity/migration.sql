@@ -65,8 +65,22 @@ CREATE UNIQUE INDEX "MembershipCharge_family_category_year_live_key"
 
 -- ---------------------------------------------------------------------------
 -- 2. Every charge bills on exactly one axis, from here on.
+--
+-- Maintainer review: `num_nonnulls(membershipTypeId, subscriptionCategoryId)
+-- = 1` only constrains the two ID columns — it says nothing about Key/Name/
+-- FeeId, so a type-axis charge (membershipTypeId set) could still carry a
+-- stray subscriptionCategoryName with subscriptionCategoryId left NULL (or
+-- vice versa), passing this CHECK while leaving a half-populated axis group
+-- on the row. Widened so each axis's FULL column group is all-null or
+-- all-set together, with exactly one group populated — matching the model
+-- comment's own stated intent ("the whole type trio or the whole category
+-- quartet").
 -- ---------------------------------------------------------------------------
 ALTER TABLE "MembershipSubscriptionCharge" ADD CONSTRAINT "MembershipCharge_type_xor_category"
-  CHECK (num_nonnulls("membershipTypeId", "subscriptionCategoryId") = 1);
+  CHECK (
+    num_nonnulls("membershipTypeId", "subscriptionCategoryId") = 1
+    AND num_nonnulls("membershipTypeId", "membershipTypeKey", "membershipTypeName") IN (0, 3)
+    AND num_nonnulls("subscriptionCategoryId", "subscriptionCategoryKey", "subscriptionCategoryName", "subscriptionCategoryFeeId") IN (0, 4)
+  );
 
 COMMIT;

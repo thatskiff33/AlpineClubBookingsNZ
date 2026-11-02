@@ -7,6 +7,7 @@ import type {
   MembershipFeeBillingBasis,
   MembershipFeeProrationRule,
   MembershipSubscriptionChargeSource,
+  MembershipTypeSubscriptionBehavior,
   Prisma,
   SubscriptionStatus,
 } from "@prisma/client";
@@ -33,8 +34,7 @@ import { prisma } from "@/lib/prisma";
 import { defaultMembershipTypeKeyForRole, storedRoleDefaultMembershipTypeWhere } from "@/lib/membership-types";
 import { getResolvedAccountMapping } from "@/lib/xero-mappings";
 import { isBilledThroughFamily, resolveBillingFamilyMembership } from "@/lib/membership-billing-family";
-import { chargeFamilyAxisKey } from "@/lib/membership-charge-axis";
-import { loadMemberSubscriptionSettlements } from "@/lib/subscription-lockout-facts";
+import { chargeAxisDisplayName, chargeFamilyAxisKey } from "@/lib/membership-charge-axis";
 import { subscriptionInvoiceOutboxRow } from "@/lib/xero-operation-outbox-payload";
 import { buildXeroIdempotencyKey, startXeroSyncOperation } from "@/lib/xero-sync";
 import {
@@ -661,6 +661,13 @@ export async function buildSubscriptionBillingPreview(input: {
               take: 1,
               select: {
                 membershipType: { select: { id: true, key: true, name: true, subscriptionBehavior: true } },
+                // Billing review fix: a holder's bare invoice may be the
+                // difference invoice for a CATEGORY-axis closed family
+                // charge, not a type-axis one — the holderKey built below
+                // needs to know which axis this holder's own assignment is
+                // actually on, same as the main loop already resolves for
+                // the member being billed.
+                subscriptionCategory: { select: { id: true, isActive: true } },
               },
             },
             subscriptions: {
@@ -1083,6 +1090,39 @@ export async function buildSubscriptionBillingPreview(input: {
     return ageTierSettingsCache;
   };
 
+  // Billing review fix (age-tier/REQUIRED-type exemption gap): whether a
+  // member's type policy exempts them from ANY season subscription, on
+  // EITHER billing axis. Shared so the type axis and the category axis
+  // cannot resolve a different answer for the same member/season — before
+  // this, the category branch asked `loadMemberSubscriptionSettlements`
+  // instead (a resolver built for the BOOKING-lockout gate, not this
+  // decision), which applies the tier gate unconditionally — even for a
+  // REQUIRED type — off the member's live, STORED `ageTier`. The type
+  // axis's own gate below only ever applied it for BASED_ON_AGE_TIER, off
+  // the season-start tier (stable all season, immune to a mid-season age-up).
+  // A REQUIRED-type member is NEVER tier-gated, on either axis.
+  function resolveSubscriptionTierExemption(input: {
+    subscriptionBehavior: MembershipTypeSubscriptionBehavior;
+    seasonStartTier: AgeTier | null;
+    ageTierSettings: AgeTierSettingData[];
+  }): boolean {
+    if (input.subscriptionBehavior === "NOT_REQUIRED") return true;
+    if (input.subscriptionBehavior !== "BASED_ON_AGE_TIER") return false;
+    return !requiresPaidSubscriptionForAgeTier(input.seasonStartTier, input.ageTierSettings);
+  }
+  // The season-start tier the exemption gate (and, for a BASED_ON_AGE_TIER
+  // type, the fee price itself — #2041/#2067 decision Q3) key off: the age
+  // at the START of the club's financial year, derived from DOB so
+  // mid-season birthdays never change that season's tier. Shared by both
+  // axes so a member's liability can't drift between them for the SAME
+  // underlying reason the type axis's own comment above states.
+  const resolveSeasonStartTier = async (member: { dateOfBirth: Date | null; ageTier: AgeTier }): Promise<AgeTier | null> => {
+    const ageTierSettings = await getAgeTierSettingsMemoized();
+    return member.dateOfBirth
+      ? computeAgeTierWithSettings(member.dateOfBirth, getSeasonStartDate(input.seasonYear), ageTierSettings)
+      : member.ageTier;
+  };
+
   // #2161 (D1): resolve one member's OWN effective billing basis using the SAME
   // policy/fee resolution the main loop performs (assignment-first membership
   // type → per-tier fee → billingBasis), reusing the shared memoized resolver and
@@ -1095,6 +1135,15 @@ export async function buildSubscriptionBillingPreview(input: {
   const resolveMemberMembershipType = (holder: (typeof familyInvoiceBlockers)[number]["member"]) =>
     holder.seasonalMembershipAssignments[0]?.membershipType
       ?? fallbackTypeByKey.get(defaultMembershipTypeKeyForRole(holder.role));
+  // Billing review fix: the holder's own CURRENT assignment, same source the
+  // charge-minting loop reads when it decides which axis's key to write a
+  // closed charge's coverage/difference-invoice rows under — so the holder
+  // key built below reconstructs the SAME key, on whichever axis the
+  // holder's own closed family charge actually used.
+  const resolveMemberSubscriptionCategory = (holder: (typeof familyInvoiceBlockers)[number]["member"]) => {
+    const category = holder.seasonalMembershipAssignments[0]?.subscriptionCategory;
+    return category && category.isActive ? category : null;
+  };
   const resolveMemberBillingBasis = async (
     holder: (typeof familyInvoiceBlockers)[number]["member"],
   ): Promise<MembershipFeeBillingBasis | null> => {
@@ -1149,23 +1198,32 @@ export async function buildSubscriptionBillingPreview(input: {
     // including one held by a member paid at the newest close (their own
     // family invoice), keeps suppressing as #2161 requires.
     const holderType = resolveMemberMembershipType(row.member);
-    // #2161 is deliberately NOT generalized to the category axis (no legacy
-    // category-billed member can exist — the feature has never shipped), so
-    // this key always passes subscriptionCategoryId null. It still MUST use
-    // the same generalized format `familyChargesByKey`/
-    // `differenceInvoiceHoldersByFamilyKey` key on, via chargeFamilyAxisKey,
-    // or this lookup silently misses every row: those maps stopped being
-    // keyed by the old raw `${seasonYear}:${typeId}:family:${familyGroupId}`
-    // string the moment the dedup loop above switched to the shared
-    // accessor.
-    const holderKey = holderType
+    // Billing review fix: a holder's bare invoice can be the difference
+    // invoice for either axis's closed family charge — `differenceInvoiceHoldersByFamilyKey`
+    // stores a holder under the CLOSED CHARGE's own axis key (built from
+    // `charge.membershipTypeId`/`charge.subscriptionCategoryId` above), so
+    // this lookup key must be built the same way: from the holder's own
+    // CURRENT category assignment when active, never hardcoding
+    // subscriptionCategoryId null. A holder reassigned off that category
+    // since the charge closed would miss here same as before the fix — the
+    // same staleness the main loop's own assignment-first resolution
+    // already accepts everywhere else.
+    const holderCategory = resolveMemberSubscriptionCategory(row.member);
+    const holderKey = holderCategory
       ? chargeFamilyAxisKey({
           seasonYear: input.seasonYear,
           familyGroupId: row.familyGroupId,
-          membershipTypeId: holderType.id,
-          subscriptionCategoryId: null,
+          membershipTypeId: null,
+          subscriptionCategoryId: holderCategory.id,
         })
-      : null;
+      : holderType
+        ? chargeFamilyAxisKey({
+            seasonYear: input.seasonYear,
+            familyGroupId: row.familyGroupId,
+            membershipTypeId: holderType.id,
+            subscriptionCategoryId: null,
+          })
+        : null;
     const differenceInvoice = holderKey != null
       && (differenceInvoiceHoldersByFamilyKey.get(holderKey)?.has(row.memberId) ?? false);
     if (!suppresses && sub?.xeroInvoiceId != null) {
@@ -1274,23 +1332,30 @@ export async function buildSubscriptionBillingPreview(input: {
       continue;
     }
     if (subscriptionCategory && subscriptionCategory.isActive) {
-      // Review finding (point 3): a member the settlement resolver treats as
-      // exempt (type NOT_REQUIRED, or BASED_ON_AGE_TIER with a persisted
-      // NOT_REQUIRED row or a tier-exempt season-start age) is never billed
-      // via category either — checked first, before any fee/family work,
-      // since an exempt member needs none of it. Mirrors the type axis's own
-      // `exemptMemberIds`/`exemptMembers` flow below: no charge, confirm
-      // still writes/keeps their NOT_REQUIRED row.
-      const categorySettlement = (
-        await loadMemberSubscriptionSettlements(db, {
-          memberIds: [member.id],
-          seasonYear: input.seasonYear,
-          subscriptionBehaviorByMember: new Map([[member.id, membershipType.subscriptionBehavior]]),
-        })
-      ).get(member.id);
-      if (categorySettlement && !categorySettlement.subscriptionRequired) {
+      // Review finding (point 3), corrected (billing review, age-tier/
+      // REQUIRED-type exemption gap): a member exempt from ANY season
+      // subscription (type NOT_REQUIRED, or BASED_ON_AGE_TIER with a
+      // tier-exempt season-start age) is never billed via category either
+      // — checked first, before any fee/family work, since an exempt member
+      // needs none of it. Mirrors the type axis's own `exemptMemberIds`/
+      // `exemptMembers` flow below: no charge, confirm still writes/keeps
+      // their NOT_REQUIRED row. Uses `resolveSubscriptionTierExemption`,
+      // the SAME shared gate the type axis calls below — not
+      // `loadMemberSubscriptionSettlements` (a BOOKING-lockout-oriented
+      // resolver that used to gate on the member's live STORED tier even
+      // for a REQUIRED type, so the same person could be billed on one
+      // axis and wrongly exempt on the other).
+      const categorySeasonStartTier = membershipType.subscriptionBehavior === "BASED_ON_AGE_TIER"
+        ? await resolveSeasonStartTier(member)
+        : null;
+      const categoryExempt = resolveSubscriptionTierExemption({
+        subscriptionBehavior: membershipType.subscriptionBehavior,
+        seasonStartTier: categorySeasonStartTier,
+        ageTierSettings: await getAgeTierSettingsMemoized(),
+      });
+      if (categoryExempt) {
         exemptMemberIds.add(member.id);
-        exemptMembers.push({ memberId: member.id, memberName, ageTier: member.ageTier });
+        exemptMembers.push({ memberId: member.id, memberName, ageTier: categorySeasonStartTier ?? member.ageTier });
         continue;
       }
       // Mirrors the type axis's own PER_FAMILY_FEE_IN_INDIVIDUAL_MODE guard:
@@ -1413,34 +1478,6 @@ export async function buildSubscriptionBillingPreview(input: {
           })
         : `${input.seasonYear}:category:${subscriptionCategory.id}:member:${member.id}`;
 
-      // #2161's operator marker / D1 auto-suppression applies identically
-      // regardless of axis — both are keyed purely by familyGroupId, and a
-      // category charge's coverage claim already carries billingBasis
-      // "PER_FAMILY" (see the entry below), so the existing D1 predicate in
-      // the familyInvoiceBlockers loop above already recognizes it with no
-      // changes needed there.
-      if (categoryFamilyGroupId && (suppressedFamilyGroupIds.has(categoryFamilyGroupId) || markedFamilyGroupIds.has(categoryFamilyGroupId))) {
-        if (!suppressedFamiliesSurfaced.has(categoryFamilyGroupId)) {
-          suppressedFamiliesSurfaced.add(categoryFamilyGroupId);
-          const info = familySuppressionInfo.get(categoryFamilyGroupId);
-          const marker = markerInfoByFamilyGroupId.get(categoryFamilyGroupId);
-          alreadyInvoicedFamilies.push({
-            familyGroupId: categoryFamilyGroupId,
-            holderMemberId: info?.holderMemberId ?? null,
-            holderName: info?.holderName ?? null,
-            xeroInvoiceNumber: info?.xeroInvoiceNumber ?? null,
-            status: info?.status ?? null,
-            holderBasisUnresolvable: info?.basisUnresolvable ?? false,
-            membersCovered: familyGroupSizeById.get(categoryFamilyGroupId) ?? 0,
-            operatorMarked: marker != null,
-            markerNote: marker?.note ?? null,
-            markedByName: marker?.markedByName ?? null,
-            markedAt: marker?.markedAt ?? null,
-          });
-        }
-        continue;
-      }
-
       // Family-level dedup against an existing category OR type charge for
       // this family (#4110, folded for category billing per review point 4
       // — `resolveClosedFamilyDecision` is the SAME function the type axis
@@ -1448,6 +1485,15 @@ export async function buildSubscriptionBillingPreview(input: {
       // Solo members need no equivalent: the universal coveredSet/paidSet
       // skip at the top of the loop already makes a re-run idempotent for
       // them.
+      //
+      // Billing review fix: this now runs BEFORE the suppressed/marked check
+      // below, matching the type axis's order. It used to run AFTER — a
+      // family already marked "already invoiced" via a bare live Xero
+      // invoice or an active coverage claim (checked below) was `continue`d
+      // straight past this decision, so a late joiner on a category charge,
+      // or a member no longer settled since the family's category charge
+      // closed, got no charge and neither FAMILY_ALREADY_BILLED nor
+      // CLOSED_FAMILY_MEMBER_NEEDS_DECISION — silently skipped instead.
       if (categoryFamilyGroupId) {
         const decision = resolveClosedFamilyDecision(categoryGroupingKey, member.id);
         if (decision.outcome === "settled") continue;
@@ -1480,7 +1526,85 @@ export async function buildSubscriptionBillingPreview(input: {
           }));
           continue;
         }
-        // decision.outcome === "none" falls through to mint/merge below.
+        // decision.outcome === "none" falls through to the suppression
+        // check next.
+      }
+
+      // #2161's operator marker / D1 auto-suppression applies identically
+      // regardless of axis — both are keyed purely by familyGroupId, and a
+      // category charge's coverage claim already carries billingBasis
+      // "PER_FAMILY" (see the entry below), so the existing D1 predicate in
+      // the familyInvoiceBlockers loop above already recognizes it with no
+      // changes needed there.
+      if (categoryFamilyGroupId && (suppressedFamilyGroupIds.has(categoryFamilyGroupId) || markedFamilyGroupIds.has(categoryFamilyGroupId))) {
+        // Billing review fix: when this family's existing charge is actually
+        // on the OTHER (type) axis, this is a genuine axis conflict, not a
+        // benign "someone already invoiced it" — raise
+        // MIXED_AXIS_FAMILY_BILLING so the admin fixes the assignment,
+        // instead of filing it as an ordinary already-invoiced audit line.
+        // `existingFamilyCharges` is the same raw query result
+        // `familyChargesByKey`/`billedFamilyTypes` above are built from, so
+        // this reads the same ground truth.
+        const otherAxisCharge = existingFamilyCharges.find(
+          (charge) => charge.familyGroupId === categoryFamilyGroupId && charge.membershipTypeId != null,
+        );
+        if (otherAxisCharge) {
+          exceptions.push(exception({
+            code: "MIXED_AXIS_FAMILY_BILLING",
+            message: `${memberName}'s family ${categoryFamilyGroupId} already has a membership-type charge. Assign ${subscriptionCategory.name} to every member of the family who should share it, or bill them separately, before invoicing.`,
+            seasonYear: input.seasonYear, memberId: member.id, familyGroupId: categoryFamilyGroupId,
+            membershipTypeId: null, subscriptionCategoryId: subscriptionCategory.id,
+            context: { memberName },
+          }));
+          continue;
+        }
+        if (!suppressedFamiliesSurfaced.has(categoryFamilyGroupId)) {
+          suppressedFamiliesSurfaced.add(categoryFamilyGroupId);
+          const info = familySuppressionInfo.get(categoryFamilyGroupId);
+          const marker = markerInfoByFamilyGroupId.get(categoryFamilyGroupId);
+          alreadyInvoicedFamilies.push({
+            familyGroupId: categoryFamilyGroupId,
+            holderMemberId: info?.holderMemberId ?? null,
+            holderName: info?.holderName ?? null,
+            xeroInvoiceNumber: info?.xeroInvoiceNumber ?? null,
+            status: info?.status ?? null,
+            holderBasisUnresolvable: info?.basisUnresolvable ?? false,
+            membersCovered: familyGroupSizeById.get(categoryFamilyGroupId) ?? 0,
+            operatorMarked: marker != null,
+            markerNote: marker?.note ?? null,
+            markedByName: marker?.markedByName ?? null,
+            markedAt: marker?.markedAt ?? null,
+          });
+        }
+        // Billing review fix: copy the membership-type path's "held, so ask
+        // the officer" exception (#4110 review rounds 6 and 7) — a member a
+        // closed CATEGORY charge covered who is no longer settled is asked
+        // about instead of silently skipped. `decisionReasonByFamilyKey` is
+        // keyed per-axis via `categoryGroupingKey`, so this only fires for a
+        // hold traceable to THIS family's category charge, never a
+        // type-axis one (that case was already handled above).
+        const heldReason = decisionReasonByFamilyKey.get(categoryGroupingKey)?.get(member.id);
+        if (heldReason) {
+          const info = familySuppressionInfo.get(categoryFamilyGroupId);
+          const heldBy = !info
+            ? "an operator's already-invoiced marker"
+            : info.hasLiveInvoice
+              ? `${info.holderName}'s Xero invoice${info.xeroInvoiceNumber ? ` ${info.xeroInvoiceNumber}` : ""}`
+              : `${info.holderName}'s family charge`;
+          exceptions.push(exception({
+            code: CLOSED_FAMILY_MEMBER_NEEDS_DECISION_CODE,
+            message: closedFamilyMemberDecisionMessage({
+              memberName, axisName: subscriptionCategory.name, reason: heldReason, heldBy,
+            }),
+            seasonYear: input.seasonYear,
+            memberId: member.id,
+            familyGroupId: categoryFamilyGroupId,
+            membershipTypeId: null,
+            subscriptionCategoryId: subscriptionCategory.id,
+            context: { memberName, subscriptionCategoryFeeId: categoryFee.id, reason: heldReason, heldBy },
+          }));
+        }
+        continue;
       }
 
       const currentCategoryEntry = familyGroups.get(categoryGroupingKey);
@@ -1583,17 +1707,9 @@ export async function buildSubscriptionBillingPreview(input: {
     // / required. Every OTHER policy has no computed tier, so its fee resolves
     // by the member's stored tier (joining-fee convention); a NOT_APPLICABLE
     // tier still short-circuits to the flat fee inside the resolver.
-    let seasonStartTier: AgeTier | null = null;
-    if (membershipType.subscriptionBehavior === "BASED_ON_AGE_TIER") {
-      const ageTierSettings = await getAgeTierSettingsMemoized();
-      seasonStartTier = member.dateOfBirth
-        ? computeAgeTierWithSettings(
-            member.dateOfBirth,
-            getSeasonStartDate(input.seasonYear),
-            ageTierSettings,
-          )
-        : member.ageTier;
-    }
+    const seasonStartTier: AgeTier | null = membershipType.subscriptionBehavior === "BASED_ON_AGE_TIER"
+      ? await resolveSeasonStartTier(member)
+      : null;
     // The tier ACTUALLY used to resolve the fee — also what names a
     // MISSING_FEE_SCHEDULE exception and keys the memo cache: the season-start
     // tier for a BASED_ON_AGE_TIER type, else the member's stored tier.
@@ -1617,9 +1733,19 @@ export async function buildSubscriptionBillingPreview(input: {
     // mint a zero charge + NOT_REQUIRED row on the entry path, so a resolved
     // NO_INVOICE fee is also left to fall through.
     if (membershipType.subscriptionBehavior === "BASED_ON_AGE_TIER") {
-      const ageTierSettings = await getAgeTierSettingsMemoized();
+      // Billing review fix: `resolveSubscriptionTierExemption` is the SAME
+      // shared gate the category branch above calls — for a
+      // BASED_ON_AGE_TIER type (confirmed by this branch already) it
+      // reduces to exactly the season-start tier check this always did, so
+      // this call changes no behavior here; it exists so the two axes can
+      // never drift apart on what counts as tier-exempt.
+      const tierExempt = resolveSubscriptionTierExemption({
+        subscriptionBehavior: membershipType.subscriptionBehavior,
+        seasonStartTier,
+        ageTierSettings: await getAgeTierSettingsMemoized(),
+      });
       if (
-        !requiresPaidSubscriptionForAgeTier(seasonStartTier, ageTierSettings) &&
+        tierExempt &&
         (!fee || fee.billingBasis === "PER_MEMBER")
       ) {
         // Skip the charge; confirm upserts a NOT_REQUIRED season row (Q4). Join
@@ -1935,13 +2061,28 @@ export async function buildSubscriptionBillingPreview(input: {
   for (const entry of entries) {
     const partly = partlyReversedClosedFamilies.get(entry.key);
     if (!partly) continue;
+    // Billing review fix: a category entry's `membershipTypeName` is null
+    // (the quartet, not the trio, is populated — see the type's own
+    // comment), so interpolating it directly rendered "This family's null
+    // charge…" for a category family. `chargeAxisDisplayName` is the
+    // shared resolver for whichever axis actually billed this entry.
+    // `subscriptionCategoryId` must also be passed to `exception()` so its
+    // fingerprint folds in the category id — otherwise two different
+    // categories warned for the same family+code (both membershipTypeId
+    // null) collide onto one fingerprint and only one warning can be
+    // stored.
+    const axisName = chargeAxisDisplayName({
+      membershipTypeName: entry.membershipTypeName,
+      subscriptionCategoryName: entry.subscriptionCategoryName ?? null,
+    });
     exceptions.push(exception({
       code: CLOSED_FAMILY_PARTLY_REVERSED_CODE,
-      message: `This family's ${entry.membershipTypeName} charge was closed as already paid, and since then only some of the members who were paid at the close are no longer paid or not required (${partly.reversedMemberNames.join(", ")}). Confirming invoices the full family fee to ${entry.recipient.name}.`,
+      message: `This family's ${axisName} charge was closed as already paid, and since then only some of the members who were paid at the close are no longer paid or not required (${partly.reversedMemberNames.join(", ")}). Confirming invoices the full family fee to ${entry.recipient.name}.`,
       seasonYear: input.seasonYear,
       memberId: null,
       familyGroupId: entry.familyGroupId,
       membershipTypeId: entry.membershipTypeId,
+      subscriptionCategoryId: entry.subscriptionCategoryId ?? null,
       context: { closedChargeId: partly.chargeId, reversedMemberNames: partly.reversedMemberNames },
     }));
   }
@@ -1952,13 +2093,20 @@ export async function buildSubscriptionBillingPreview(input: {
     const holders = invoiceHoldersByFamilyKey.get(entry.key);
     if (!holders) continue;
     const named = holders.map((holder) => `${holder.memberName} (${holder.invoice})`).join(", ");
+    // Billing review fix: same null-axis-name / missing-fingerprint-key gap
+    // as the partial-reversal warning above.
+    const axisName = chargeAxisDisplayName({
+      membershipTypeName: entry.membershipTypeName,
+      subscriptionCategoryName: entry.subscriptionCategoryName ?? null,
+    });
     exceptions.push(exception({
       code: CLOSED_FAMILY_REBILL_BESIDE_INVOICE_CODE,
-      message: `This family's ${entry.membershipTypeName} charge was closed as already paid and is now billed again for the full family fee, but ${holders.length === 1 ? "a member it covered already holds a Xero invoice" : "members it covered already hold Xero invoices"} for this season: ${named}. Confirming invoices the full family fee to ${entry.recipient.name} as well; check ${holders.length === 1 ? "that invoice" : "those invoices"} in Xero first.`,
+      message: `This family's ${axisName} charge was closed as already paid and is now billed again for the full family fee, but ${holders.length === 1 ? "a member it covered already holds a Xero invoice" : "members it covered already hold Xero invoices"} for this season: ${named}. Confirming invoices the full family fee to ${entry.recipient.name} as well; check ${holders.length === 1 ? "that invoice" : "those invoices"} in Xero first.`,
       seasonYear: input.seasonYear,
       memberId: null,
       familyGroupId: entry.familyGroupId,
       membershipTypeId: entry.membershipTypeId,
+      subscriptionCategoryId: entry.subscriptionCategoryId ?? null,
       context: { invoiceHolders: holders },
     }));
   }

@@ -2733,5 +2733,178 @@ describe("membership subscription billing", () => {
       expect(preview.exceptions.map((r) => r.code)).toEqual(["MIXED_AXIS_FAMILY_BILLING"]);
       expect(preview.exceptions[0]).toMatchObject({ memberId: "alice", familyGroupId: "family-1" });
     });
+
+    // Maintainer review (billing, defect 1): the partial-reversal and
+    // rebill-beside-invoice warnings used to build their message and
+    // fingerprint from `membershipTypeId`/`membershipTypeName` alone — null
+    // on a category entry, so the message read "This family's null charge…"
+    // and the exception's fingerprint never folded in the category id (two
+    // different categories warned for the same family+code would collide).
+    it("names the category (not \"null\") in the partial-reversal warning, and folds subscriptionCategoryId into the exception", async () => {
+      mocks.charges.findMany.mockResolvedValue([
+        // "Bill Member" paid at close and still paid now (stands); "Kid
+        // Member" paid at close, now NOT_INVOICED (reversed under the only/
+        // newest charge) — the minimal partial-reversal shape, mirroring the
+        // type-axis test of the same name above.
+        familyCharge("NOT_REQUIRED", [["Bill Member", "PAID"], ["Kid Member", "NOT_INVOICED"]], {
+          id: "closed-category-charge", membershipTypeId: null, subscriptionCategoryId: "cat-1",
+        }),
+      ]);
+      mocks.members.findMany.mockResolvedValue([
+        categoryMember("re-billable", {}, { familyGroupMemberships: [familyMembership()] }),
+      ]);
+      const preview = await buildSubscriptionBillingPreview({ seasonYear: 2026, decisionDate: new Date("2026-07-13T00:00:00.000Z") });
+      expect(preview.entries).toHaveLength(1);
+      expect(preview.exceptions).toEqual([
+        expect.objectContaining({
+          code: "CLOSED_FAMILY_PARTLY_REVERSED",
+          membershipTypeId: null,
+          subscriptionCategoryId: "cat-1",
+          message: expect.stringContaining("This family's Couple charge was closed as already paid"),
+        }),
+      ]);
+      expect(preview.exceptions[0]!.message).not.toContain("null");
+      // The fingerprint folds in the category id (the `exception()` helper's
+      // own 6-element digest for a category-axis call) — not the original
+      // 5-element type-only shape, which would collide two different
+      // categories' identical warnings onto one fingerprint.
+      expect(preview.exceptions[0]!.fingerprint).toBe(
+        stableDigest([2026, "CLOSED_FAMILY_PARTLY_REVERSED", null, "family-1", null, "cat-1"]),
+      );
+    });
+
+    // Maintainer review (billing, defect 2): the category branch used to
+    // check the live-invoice/marker suppression BEFORE calling
+    // resolveClosedFamilyDecision, so a family held by an external invoice
+    // or operator marker swallowed a pending decision silently — neither
+    // FAMILY_ALREADY_BILLED nor CLOSED_FAMILY_MEMBER_NEEDS_DECISION. Fixed
+    // by running the decision first and, on a hold, copying the type axis's
+    // "held, so ask the officer" exception (naming what holds it).
+    it("asks the officer to decide (naming the hold), not silently skipping, when an operator marker holds a reversed category family", async () => {
+      mocks.familyMarkers.findMany.mockResolvedValue([
+        { familyGroupId: "family-1", note: "Billed elsewhere", markedAt: new Date("2026-05-01T00:00:00.000Z"), markedBy: { firstName: "Ada", lastName: "Admin" } },
+      ]);
+      mocks.charges.findMany.mockResolvedValue([
+        // The previewed member ("re-billable") was paid at close and is now
+        // unpaid — reversed under the newest (only) charge, so
+        // `billedFamilyTypes` has NO entry for this key (resolveClosedFamilyDecision
+        // would say "none") and the re-bill is what the marker then holds back.
+        familyCharge("NOT_REQUIRED", [["re-billable", "NOT_INVOICED", "PAID"]], {
+          id: "closed-category-charge", membershipTypeId: null, subscriptionCategoryId: "cat-1",
+        }),
+      ]);
+      mocks.members.findMany.mockResolvedValue([
+        categoryMember("re-billable", {}, { familyGroupMemberships: [familyMembership()] }),
+      ]);
+      const preview = await buildSubscriptionBillingPreview({ seasonYear: 2026, decisionDate: new Date("2026-07-13T00:00:00.000Z") });
+      expect(preview.entries).toEqual([]);
+      expect(preview.exceptions).toEqual([
+        expect.objectContaining({
+          code: "CLOSED_FAMILY_MEMBER_NEEDS_DECISION",
+          memberId: "re-billable",
+          subscriptionCategoryId: "cat-1",
+          context: expect.objectContaining({ reason: "REVERSED_UNDER_NEWEST_CHARGE", heldBy: "an operator's already-invoiced marker" }),
+        }),
+      ]);
+    });
+
+    // Maintainer review (billing, defect 2, second half): when the family's
+    // existing charge is on the OTHER axis (a type-axis charge, live or
+    // closed), suppression used to file a plain "already invoiced" audit
+    // line — indistinguishable from the ordinary D1/D2 case. That hides a
+    // genuine cross-axis assignment conflict the admin needs to fix.
+    it("raises MIXED_AXIS_FAMILY_BILLING, not a plain already-invoiced note, when an operator marker's family already has a type-axis charge", async () => {
+      mocks.familyMarkers.findMany.mockResolvedValue([
+        { familyGroupId: "family-1", note: null, markedAt: new Date("2026-05-01T00:00:00.000Z"), markedBy: null },
+      ]);
+      mocks.charges.findMany.mockResolvedValue([
+        familyCharge("QUEUED", [], { id: "type-charge", membershipTypeId: "type-9", subscriptionCategoryId: null }),
+      ]);
+      mocks.members.findMany.mockResolvedValue([
+        categoryMember("newcomer", {}, { familyGroupMemberships: [familyMembership()] }),
+      ]);
+      const preview = await buildSubscriptionBillingPreview({ seasonYear: 2026, decisionDate: new Date("2026-07-13T00:00:00.000Z") });
+      expect(preview.entries).toEqual([]);
+      expect(preview.alreadyInvoicedFamilies).toEqual([]);
+      expect(preview.exceptions).toEqual([
+        expect.objectContaining({ code: "MIXED_AXIS_FAMILY_BILLING", memberId: "newcomer", familyGroupId: "family-1", subscriptionCategoryId: "cat-1" }),
+      ]);
+    });
+
+    // Maintainer review (billing, defect 3): the familyInvoiceBlockers loop's
+    // `holderKey` used to be built from the holder's membership TYPE only,
+    // never their category assignment — so a holder's bare invoice, stored
+    // under `differenceInvoiceHoldersByFamilyKey` on the CATEGORY key (the
+    // key the closed charge actually used), was never found. The holder's
+    // own type-resolved fee basis wrongly decided whether their invoice
+    // suppressed the family, and since the lookup always missed, a genuine
+    // difference invoice could wrongly suppress a family's re-bill with no
+    // warning telling the admin what was actually going on.
+    it("recognizes a holder's bare invoice as the category charge's own difference invoice, warning instead of wrongly suppressing the re-bill", async () => {
+      // type-1's own fee must NOT be PER_MEMBER, or the holder's bare invoice
+      // is skipped entirely regardless of the key (see resolveMemberBillingBasis) —
+      // same precondition the equivalent type-axis test (previewFamily) sets
+      // via its own `annual` fee override.
+      mocks.effectiveFee.mockResolvedValue(fee({ id: "fee-family", billingBasis: "PER_FAMILY", prorationRule: "NONE" }));
+      mocks.familyGroupMembers.findMany.mockResolvedValue([
+        {
+          familyGroupId: "family-1",
+          memberId: "cub-1",
+          member: {
+            firstName: "Cub", lastName: "One", role: "USER", dateOfBirth: null, ageTier: "ADULT",
+            seasonalMembershipAssignments: [{
+              membershipType: { id: "type-1", key: "FULL", name: "Full", subscriptionBehavior: "REQUIRED" },
+              subscriptionCategory: { id: "cat-1", isActive: true },
+            }],
+            subscriptions: [{
+              xeroInvoiceId: "xi-difference", xeroInvoiceNumber: "INV-DIFF", status: "UNPAID", chargeCoverage: [],
+            }],
+          },
+        },
+      ]);
+      mocks.charges.findMany.mockResolvedValue([
+        familyCharge("NOT_REQUIRED", [["Bill Member", "NOT_INVOICED", "PAID"], ["cub-1", "UNPAID", "NOT_REQUIRED"]], {
+          id: "closed-category-charge", membershipTypeId: null, subscriptionCategoryId: "cat-1",
+        }),
+      ]);
+      mocks.members.findMany.mockResolvedValue([
+        categoryMember("re-billable", {}, { familyGroupMemberships: [familyMembership()] }),
+      ]);
+      const preview = await buildSubscriptionBillingPreview({ seasonYear: 2026, decisionDate: new Date("2026-07-13T00:00:00.000Z") });
+      expect(preview.entries).toHaveLength(1);
+      expect(preview.entries[0]!.key).toBe("2026:category:cat-1:family:family-1");
+      expect(preview.alreadyInvoicedFamilies).toEqual([]);
+      expect(preview.exceptions).toEqual([
+        expect.objectContaining({
+          code: "CLOSED_FAMILY_REBILL_BESIDE_INVOICE",
+          subscriptionCategoryId: "cat-1",
+          context: { invoiceHolders: [{ memberName: "Cub One", invoice: "INV-DIFF" }] },
+        }),
+      ]);
+    });
+
+    // Maintainer review (billing, "one related gap"): category exemption used
+    // to route through `loadMemberSubscriptionSettlements` — a resolver built
+    // for the BOOKING-lockout gate — which applies the age-tier liability
+    // gate unconditionally, even for a REQUIRED type, off the member's live
+    // STORED tier. The type axis's own billing gate only ever applies that
+    // gate for BASED_ON_AGE_TIER, off the season-start tier. A REQUIRED-type
+    // member must never be tier-exempted on either axis.
+    it("never tier-exempts a REQUIRED-type category member, even when their stored ageTier would read as non-liable", async () => {
+      mocks.members.findMany.mockResolvedValue([
+        categoryMember("required-child", {}, {
+          ageTier: "CHILD", // the built-in default tier settings treat CHILD as not subscription-liable
+          seasonalMembershipAssignments: [{
+            membershipType: { id: "type-1", key: "FULL", name: "Full", subscriptionBehavior: "REQUIRED", annualFees: [fee()] },
+            subscriptionCategory: { id: "cat-1", key: "couple", name: "Couple", isActive: true },
+          }],
+        }),
+      ]);
+      const preview = await buildSubscriptionBillingPreview({ seasonYear: 2026, decisionDate: new Date("2026-07-13T00:00:00.000Z") });
+      expect(preview.exemptMemberIds).not.toContain("required-child");
+      expect(preview.entries).toHaveLength(1);
+      expect(preview.entries[0]!.subscriptionCategoryId).toBe("cat-1");
+      expect(preview.exceptions).toEqual([]);
+    });
   });
 });
