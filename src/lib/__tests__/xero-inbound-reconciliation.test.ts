@@ -2087,6 +2087,21 @@ describe("processStoredXeroInboundEvents", () => {
     return txRef;
   }
 
+  it("#4685: a replayed late-capacity arm mints nothing and names the credit it found to the account-credit note's row", async () => {
+    mockCapacityFailInboundEvent();
+    mocks.memberCreditFindFirst.mockResolvedValue({ id: "credit_existing" });
+
+    await expect(processStoredXeroInboundEvents()).resolves.toMatchObject({ succeeded: 1, failed: 0 });
+
+    expect(mocks.memberCreditCreate).not.toHaveBeenCalled();
+    expect(mocks.startXeroSyncOperation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        localId: "pay_ib_cap",
+        requestPayload: { queueType: "ACCOUNT_CREDIT_NOTE", refundAmountCents: 12345, memberCreditId: "credit_existing" },
+      })
+    );
+  });
+
   it("enqueues the offsetting Xero account-credit note inside the reconcile transaction when a late Internet Banking payment lands after capacity is gone", async () => {
     const txRef = mockCapacityFailInboundEvent();
 
@@ -2129,10 +2144,12 @@ describe("processStoredXeroInboundEvents", () => {
         operationType: "CREATE",
         localModel: "Payment",
         localId: "pay_ib_cap",
-        requestPayload: expect.objectContaining({
+        // #4685: the row names the credit this arm minted, for its note's stamp.
+        requestPayload: {
           queueType: "ACCOUNT_CREDIT_NOTE",
           refundAmountCents: 12345,
-        }),
+          memberCreditId: "credit_1",
+        },
         store: txRef.current,
       })
     );
@@ -3280,10 +3297,12 @@ describe("processStoredXeroInboundEvents", () => {
       expect.objectContaining({
         localModel: "Payment",
         localId: "pay_ib_cancelled",
-        requestPayload: expect.objectContaining({
+        // #4685: the row names the credit this arm minted, for its note's stamp.
+        requestPayload: {
           queueType: "ACCOUNT_CREDIT_NOTE",
           refundAmountCents: 12345,
-        }),
+          memberCreditId: "credit_1",
+        },
         store: txRef.current,
       })
     );

@@ -51,7 +51,7 @@ import { postCancellationLedgerLines } from "@/lib/booking-ledger-cancellation-s
 import { postStoredBookingConfirmationLedgerLines } from "@/lib/booking-ledger-confirmation-sync";
 import { resolveBookingMoneyPostingContext } from "@/lib/member-money/doors";
 import { syncBookingLedgerCredits } from "@/lib/booking-ledger-credit-sync";
-import { sumInternetBankingMintedCentsForBookings } from "@/lib/internet-banking-late-cash-credit";
+import { internetBankingLateCashCreditDescription, sumInternetBankingMintedCentsForBookings } from "@/lib/internet-banking-late-cash-credit";
 import { lockMemberCreditLedger, restoreCreditFromBooking } from "@/lib/member-credit";
 import { lockPaymentForRefundedTotal } from "@/lib/payment-transactions";
 import { findUnconvergedAppliedCreditDeallocation, XeroAppliedCreditOperationBusyError } from "@/lib/xero-applied-credit-operation-serialization";
@@ -939,8 +939,8 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
             type: CreditType.CANCELLATION_REFUND,
             description: {
               in: [
-                `Internet Banking payment credit for booking ${bookingLabel}`,
-                `Internet Banking payment credit for cancelled booking ${bookingLabel}`,
+                internetBankingLateCashCreditDescription(settlementPayment.bookingId, { bookingCancelled: false }),
+                internetBankingLateCashCreditDescription(settlementPayment.bookingId, { bookingCancelled: true }),
               ],
             },
           },
@@ -1008,12 +1008,12 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
         }
 
         if (credited) {
-          await tx.memberCredit.create({
+          const mintedCredit = await tx.memberCredit.create({ // #4685: its id names it to its Xero note's stamp
             data: {
               memberId: creditMemberId,
               amountCents: actionableCents,
               type: CreditType.CANCELLATION_REFUND,
-              description: `Internet Banking payment credit for cancelled booking ${bookingLabel}`,
+              description: internetBankingLateCashCreditDescription(settlementPayment.bookingId, { bookingCancelled: true }),
               sourceBookingId: settlementPayment.bookingId,
             },
           });
@@ -1044,7 +1044,7 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
           await enqueueXeroAccountCreditNoteOperation(
             settlementPayment.id,
             actionableCents,
-            { store: tx },
+            { store: tx, memberCreditId: mintedCredit.id },
           );
         }
 
@@ -1275,7 +1275,7 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
             );
           }
 
-          const creditDescription = `Internet Banking payment credit for booking ${fresh.bookingId.slice(0, 8)}`;
+          const creditDescription = internetBankingLateCashCreditDescription(fresh.bookingId, { bookingCancelled: false });
           // #3369: the same decision as the cancelled arm above — an
           // organisation-owned booking has no member account, so there is
           // nothing to mint into and nothing to dedupe against. The warning is
@@ -1303,8 +1303,7 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
             },
             select: { id: true },
           }) : null;
-          if (lateCapacityCreditMemberId && !existingCredit && mintableCents > 0) {
-            await tx.memberCredit.create({
+          const mintedCredit = lateCapacityCreditMemberId && !existingCredit && mintableCents > 0 ? await tx.memberCredit.create({
               data: {
                 memberId: lateCapacityCreditMemberId,
                 amountCents: mintableCents,
@@ -1312,9 +1311,8 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
                 description: creditDescription,
                 sourceBookingId: fresh.bookingId,
               },
-            });
-            await syncBookingLedgerCredits({ bookingId: fresh.bookingId, store: tx });
-          }
+            }) : null;
+          if (mintedCredit) await syncBookingLedgerCredits({ bookingId: fresh.bookingId, store: tx });
 
           // Enqueue the offsetting Xero account-credit note inside this same
           // transaction so the outbox intent commits atomically with the local
@@ -1322,9 +1320,9 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
           // local credit with no Xero mirror and no self-healing path (the
           // booking is now CANCELLED, so a re-run early-returns without
           // re-enqueueing). The enqueue is a local insert, no-ops when the
-          // amount is <= 0, and dedups, so it is safe to run in-tx.
+          // amount is <= 0, and dedups, so it is safe to run in-tx. #4685: it names the credit its note stamps.
           await enqueueXeroAccountCreditNoteOperation(fresh.id, mintableCents, {
-            store: tx,
+            store: tx, memberCreditId: (mintedCredit ?? existingCredit)?.id,
           });
 
           return {

@@ -1912,7 +1912,7 @@ export async function retryXeroSyncOperation(
 
       await xero.createUnappliedXeroCreditNote(operation.localId!, retryInput.amountCents, format, {
         createdByMemberId,
-        repairExistingLink: true,
+        repairExistingLink: true, memberCreditId: retryInput.memberCreditId, // #4685
       });
       return { message: "Retried Xero account-credit note creation." };
     }
