@@ -484,6 +484,15 @@ beforeEach(() => {
   clubFormatMock.mockResolvedValue(CLUB_FORMAT_TEST);
 });
 
+/**
+ * #4675: the runner's SUCCEEDED close is fenced on the claim it holds - still
+ * PROCESSING, with the `attempts` and `processingStartedAt` its claim read back
+ * (`makeOperation`'s, unless a test says otherwise).
+ */
+function heldClaimWhere(id: string, attempts = 1, processingStartedAt = new Date("2026-05-23T00:00:00.000Z")) {
+  return { id, status: PaymentRecoveryOperationStatus.PROCESSING, attempts, processingStartedAt };
+}
+
 function makeOperation(overrides: Record<string, unknown> = {}) {
   return {
     id: "recovery-1",
@@ -673,10 +682,7 @@ describe("payment recovery worker", () => {
     // #2262 H2: the terminal close is a STATUS-FENCED updateMany, so a row a
     // manual mark-paid reversal deleted can never be resurrected (P2025-free).
     expect(mockPaymentRecoveryUpdateMany).toHaveBeenCalledWith({
-      where: {
-        id: "recovery-1",
-        status: { not: PaymentRecoveryOperationStatus.SUCCEEDED },
-      },
+      where: heldClaimWhere("recovery-1"),
       data: expect.objectContaining({
         status: PaymentRecoveryOperationStatus.SUCCEEDED,
         nextRetryAt: null,
@@ -735,10 +741,7 @@ describe("payment recovery worker", () => {
     expect(mockFollowSupersededAskInvoices).toHaveBeenCalledWith({ paymentId: "payment-1" });
     expect(mockPaymentTransactionUpdateMany).toHaveBeenCalled();
     expect(mockPaymentRecoveryUpdateMany).toHaveBeenCalledWith({
-      where: {
-        id: "recovery-1",
-        status: { not: PaymentRecoveryOperationStatus.SUCCEEDED },
-      },
+      where: heldClaimWhere("recovery-1"),
       data: expect.objectContaining({
         status: PaymentRecoveryOperationStatus.SUCCEEDED,
       }),
@@ -1616,10 +1619,7 @@ describe("payment recovery worker", () => {
     );
     expect(mockPaymentRecoveryUpdateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: {
-          id: "recovery-mod-refund",
-          status: { not: PaymentRecoveryOperationStatus.SUCCEEDED },
-        },
+        where: heldClaimWhere("recovery-mod-refund"),
         data: expect.objectContaining({
           status: PaymentRecoveryOperationStatus.SUCCEEDED,
         }),
@@ -1881,7 +1881,7 @@ describe("payment recovery worker", () => {
 
     expect(mockQueueLateCaptureRefundCreditNote).not.toHaveBeenCalled();
     // #4125: the inline door can close it first, so losing that race is expected - debug, not a warning.
-    const lostClose = ([, message]: unknown[]) => typeof message === "string" && message.includes("completion matched no live operation");
+    const lostClose = ([, message]: unknown[]) => typeof message === "string" && message.includes("completion matched no live claim");
     expect(vi.mocked(logger.warn).mock.calls.filter(lostClose)).toHaveLength(0);
     expect(vi.mocked(logger.debug).mock.calls.filter(lostClose)).toHaveLength(1);
   });
@@ -2312,10 +2312,7 @@ describe("payment recovery worker", () => {
     // Replayed to completion.
     expect(mockPaymentRecoveryUpdateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: {
-          id: "recovery-cancel-crash",
-          status: { not: PaymentRecoveryOperationStatus.SUCCEEDED },
-        },
+        where: heldClaimWhere("recovery-cancel-crash"),
         data: expect.objectContaining({
           status: PaymentRecoveryOperationStatus.SUCCEEDED,
         }),
@@ -2415,10 +2412,7 @@ describe("payment recovery worker", () => {
     });
     expect(mockPaymentRecoveryUpdateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: {
-          id: "recovery-capacity",
-          status: { not: PaymentRecoveryOperationStatus.SUCCEEDED },
-        },
+        where: heldClaimWhere("recovery-capacity"),
         data: expect.objectContaining({
           status: PaymentRecoveryOperationStatus.SUCCEEDED,
         }),
@@ -2456,10 +2450,7 @@ describe("payment recovery worker", () => {
     expect(mockRefundPaymentTransactions).not.toHaveBeenCalled();
     expect(mockPaymentRecoveryUpdateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: {
-          id: "recovery-group-settlement",
-          status: { not: PaymentRecoveryOperationStatus.SUCCEEDED },
-        },
+        where: heldClaimWhere("recovery-group-settlement"),
         data: expect.objectContaining({
           status: PaymentRecoveryOperationStatus.SUCCEEDED,
         }),
@@ -4053,6 +4044,93 @@ describe("payment recovery worker", () => {
       expect(mockCompleteDeferredSupplementaryInvoice).not.toHaveBeenCalled();
     });
 
+    /**
+     * #4675 (`INV-PAY-120`): the runner's SUCCEEDED close is fenced on the claim
+     * this attempt holds. A stale attempt that read "nothing owed" (a later ask
+     * settled it) wakes after the reaper handed its row to another runner; its
+     * close matches nothing, and it writes, mints and sends nothing more.
+     */
+    describe("#4675: a close is fenced on the claim the attempt holds", () => {
+      const SUCCEEDED_CLOSES = () =>
+        mockPaymentRecoveryUpdateMany.mock.calls
+          .map(([args]) => args as { where: Record<string, unknown>; data: Record<string, unknown> })
+          .filter((args) => args.data.status === PaymentRecoveryOperationStatus.SUCCEEDED);
+
+      function settledByLaterAsk() {
+        mockPaymentFindUnique.mockResolvedValue({
+          id: "payment-1",
+          stripeCustomerId: "cus_123",
+          transactions: [
+            {
+              id: "txn-newer",
+              kind: "ADDITIONAL",
+              stripePaymentIntentId: "pi_later_edit",
+              amountCents: 4500,
+              refundedAmountCents: 0,
+              status: PaymentStatus.PENDING,
+              createdAt: new Date("2026-06-02T00:00:00.000Z"),
+            },
+          ],
+          booking: { id: "booking-1", memberId: "m1", member: { id: "m1", email: "alice@test.com", firstName: "Alice", lastName: "Smith" } },
+        });
+      }
+
+      it("MUTATION: a stale attempt's 'nothing owed' close is fenced on its own attempts and claim time, and on losing does nothing more", async () => {
+        const claimedAt = new Date("2026-06-30T23:00:00.000Z");
+        primeQueue(additionalIntentOperation({ attempts: 2, processingStartedAt: claimedAt }));
+        settledByLaterAsk();
+        // The reaper handed the row back and another runner reclaimed it: this close loses.
+        mockPaymentRecoveryUpdateMany.mockImplementation(async (args: { where?: { id?: string }; data?: { status?: unknown } }) =>
+          ({ count: args.data?.status === PaymentRecoveryOperationStatus.SUCCEEDED ? 0 : args.where?.id ? 1 : 0 }));
+
+        await processPaymentRecoveryOperations({ limit: 1 });
+
+        expect(SUCCEEDED_CLOSES().map((close) => close.where)).toEqual([heldClaimWhere("recovery-additional", 2, claimedAt)]);
+        expect(mockCreatePaymentIntent).not.toHaveBeenCalled();
+        expect(mockUpsertPaymentIntentTransaction).not.toHaveBeenCalled();
+        expect(mockAttachRecoveredIntent).not.toHaveBeenCalled();
+        expect(mockCompleteDeferredSupplementaryInvoice).not.toHaveBeenCalled();
+        const lostClose = ([, message]: unknown[]) => typeof message === "string" && message.includes("completion matched no live claim");
+        expect(vi.mocked(logger.warn).mock.calls.filter(lostClose)).toEqual([
+          [{ operationId: "recovery-additional", attempts: 2, processingStartedAt: claimedAt }, expect.any(String)],
+        ]);
+      });
+
+      it("MUTATION: the close after a mint is fenced on the claim time the last hold re-stamped, not the one the run was handed", async () => {
+        const claimedAt = new Date("2026-06-30T23:00:00.000Z");
+        primeQueue(additionalIntentOperation({ attempts: 1, processingStartedAt: claimedAt }));
+        // The clock is frozen, so each hold would stamp the same instant and a close on an
+        // earlier claim would pass unseen. A minute passes after every re-stamp instead.
+        const frozen = new Date();
+        const isHold = (args: { where?: { status?: unknown }; data?: Record<string, unknown> }) =>
+          args.where?.status === "PROCESSING" && args.data !== undefined && "processingStartedAt" in args.data && !("status" in args.data);
+        const counted = mockPaymentRecoveryUpdateMany.getMockImplementation()!;
+        mockPaymentRecoveryUpdateMany.mockImplementation(async (args: { where?: { status?: unknown }; data?: Record<string, unknown> }) => {
+          const answer = await counted(args);
+          if (isHold(args)) vi.setSystemTime(new Date(Date.now() + 60_000));
+          return answer;
+        });
+
+        try {
+          await processPaymentRecoveryOperations({ limit: 1 });
+        } finally {
+          vi.setSystemTime(frozen);
+        }
+
+        const holds = mockPaymentRecoveryUpdateMany.mock.calls
+          .map(([args]) => args as { where: Record<string, unknown>; data: Record<string, unknown> })
+          .filter(isHold);
+        expect(holds).toHaveLength(2);
+        const [first, second] = holds.map((hold) => hold.data.processingStartedAt as Date);
+        // The second hold re-asserts the first's re-stamped claim, and stamps a later one.
+        expect(holds[1]!.where.processingStartedAt).toEqual(first);
+        expect(second!.getTime()).toBeGreaterThan(first!.getTime());
+        expect(first).not.toEqual(claimedAt);
+        // The close is fenced on the LAST hold's claim, not the first's or the run's own.
+        expect(SUCCEEDED_CLOSES().map((close) => close.where)).toEqual([heldClaimWhere("recovery-additional", 1, second)]);
+      });
+    });
+
     it("completes without creating when a later edit already minted a newer additional intent", async () => {
       primeQueue(additionalIntentOperation());
       mockPaymentFindUnique.mockResolvedValue({
@@ -4827,12 +4905,11 @@ describe("payment recovery worker", () => {
       );
       mockPaymentRecoveryFindUnique.mockResolvedValue(dupOp);
       // The claim updateMany (status IN [PENDING,FAILED]) still flips, but the
-      // duplicate-capture terminal transition (status: { not: SUCCEEDED }) finds
-      // the row already SUCCEEDED — the inline path won the race and recorded it.
+      // duplicate-capture terminal transition (fenced on the held claim, #4675)
+      // finds the row already SUCCEEDED — the inline path won the race and recorded it.
       mockPaymentRecoveryUpdateMany.mockImplementation(
-        (args: { where?: { status?: unknown; id?: string } }) => {
-          const status = args.where?.status;
-          if (status && typeof status === "object" && "not" in status) {
+        (args: { where?: { id?: string }; data?: { status?: unknown } }) => {
+          if (args.data?.status === PaymentRecoveryOperationStatus.SUCCEEDED) {
             return Promise.resolve({ count: 0 });
           }
           return Promise.resolve({ count: args.where?.id ? 1 : 0 });
@@ -4844,9 +4921,12 @@ describe("payment recovery worker", () => {
       expect(result.succeeded).toBe(1);
       expect(mockRecordDuplicateCaptureRefundEvent).not.toHaveBeenCalled();
       // #4125: losing to the inline close is expected here, so it is no warning.
-      const lostClose = ([, message]: unknown[]) => typeof message === "string" && message.includes("completion matched no live operation");
+      const lostClose = ([, message]: unknown[]) => typeof message === "string" && message.includes("completion matched no live claim");
       expect(vi.mocked(logger.warn).mock.calls.filter(lostClose)).toHaveLength(0);
-      expect(vi.mocked(logger.debug).mock.calls.filter(lostClose)).toHaveLength(1);
+      // #4675: the debug line still names the claim the lost close held.
+      expect(vi.mocked(logger.debug).mock.calls.filter(lostClose)).toEqual([
+        [expect.objectContaining({ attempts: expect.any(Number), processingStartedAt: expect.any(Date) }), expect.any(String)],
+      ]);
     });
   });
 
@@ -4895,9 +4975,9 @@ describe("payment recovery worker", () => {
 
     it("records nothing when the row was already closed - the inline close recorded it (count 0)", async () => {
       queue(makeCapacityOp());
-      mockPaymentRecoveryUpdateMany.mockImplementation((args: { where?: { status?: unknown; id?: string } }) => {
-        const status = args.where?.status;
-        if (status && typeof status === "object" && "not" in status) return Promise.resolve({ count: 0 });
+      // #4675: the close (data SUCCEEDED, fenced on the held claim) loses; the claim still flips.
+      mockPaymentRecoveryUpdateMany.mockImplementation((args: { where?: { id?: string }; data?: { status?: unknown } }) => {
+        if (args.data?.status === PaymentRecoveryOperationStatus.SUCCEEDED) return Promise.resolve({ count: 0 });
         return Promise.resolve({ count: args.where?.id ? 1 : 0 });
       });
 
@@ -5017,9 +5097,9 @@ describe("payment recovery worker", () => {
 
     it("records nothing when the row was already closed - the inline close recorded it (count 0), and that is no warning", async () => {
       queue(makeCancelOp());
-      mockPaymentRecoveryUpdateMany.mockImplementation((args: { where?: { status?: unknown; id?: string } }) => {
-        const status = args.where?.status;
-        if (status && typeof status === "object" && "not" in status) return Promise.resolve({ count: 0 });
+      // #4675: the close (data SUCCEEDED, fenced on the held claim) loses; the claim still flips.
+      mockPaymentRecoveryUpdateMany.mockImplementation((args: { where?: { id?: string }; data?: { status?: unknown } }) => {
+        if (args.data?.status === PaymentRecoveryOperationStatus.SUCCEEDED) return Promise.resolve({ count: 0 });
         return Promise.resolve({ count: args.where?.id ? 1 : 0 });
       });
 
@@ -5027,7 +5107,7 @@ describe("payment recovery worker", () => {
 
       expect(result.succeeded).toBe(1);
       expect(mockBookingEventCreate).not.toHaveBeenCalled();
-      const lostClose = ([, message]: unknown[]) => typeof message === "string" && message.includes("completion matched no live operation");
+      const lostClose = ([, message]: unknown[]) => typeof message === "string" && message.includes("completion matched no live claim");
       expect(vi.mocked(logger.warn).mock.calls.filter(lostClose)).toHaveLength(0);
     });
 
@@ -5188,6 +5268,49 @@ describe("#2262 — deleted-operation coherence (H1/H2)", () => {
       .find((args) => args.data.status === PaymentRecoveryOperationStatus.PROCESSING && !("attempts" in args.where));
     expect(workerHandOff).toBeDefined();
     expect(workerHandOff?.data).not.toHaveProperty("attempts");
+  });
+
+  /**
+   * #4675: a hand-off holds the claim its own write took - read back under that
+   * write's row lock - and closes only while it still holds it. The webhook's
+   * close of a cancel Stripe reports cancelled holds no claim, and is fenced off
+   * SUCCEEDED alone.
+   */
+  it("#4675 — a hand-off's close is fenced on the claim its own write took, read back under the row lock", async () => {
+    const op = makeOperation({ status: PaymentRecoveryOperationStatus.PENDING, attempts: 2 });
+    mockPaymentRecoveryFindFirst.mockResolvedValue(op);
+    const handedAt = new Date("2026-07-01T00:00:00.000Z");
+    mockPaymentRecoveryFindUnique.mockResolvedValue({ id: op.id, attempts: 3, processingStartedAt: handedAt });
+
+    await expect(queueSupersededPaymentIntentRefundRecovery({ id: "pi_superseded", amount: 6000, payment_method: "pm_1" })).resolves.toBe(true);
+
+    expect(mockPaymentRecoveryFindUnique).toHaveBeenCalledWith({ where: { id: op.id }, select: { id: true, attempts: true, processingStartedAt: true } });
+    const closes = mockPaymentRecoveryUpdateMany.mock.calls
+      .map(([args]) => args as { where: Record<string, unknown>; data: Record<string, unknown> })
+      .filter((args) => args.data.status === PaymentRecoveryOperationStatus.SUCCEEDED);
+    expect(closes.map((close) => close.where)).toEqual([heldClaimWhere(op.id, 3, handedAt)]);
+  });
+
+  it("#4675 — the webhook's close that matches nothing (already closed, or deleted) says so at warn", async () => {
+    mockPaymentRecoveryFindFirst.mockResolvedValueOnce(makeOperation({ status: PaymentRecoveryOperationStatus.FAILED }));
+    mockPaymentRecoveryUpdateMany.mockImplementation(async (args: { data?: { status?: unknown } }) =>
+      ({ count: args.data?.status === PaymentRecoveryOperationStatus.SUCCEEDED ? 0 : 1 }));
+
+    await completeCanceledSupersededPaymentIntentRecovery({ paymentIntentId: "pi_superseded" });
+
+    const lostClose = ([, message]: unknown[]) => typeof message === "string" && message.includes("cancellation close matched no live operation");
+    expect(vi.mocked(logger.warn).mock.calls.filter(lostClose)).toEqual([[{ operationId: "recovery-1" }, expect.any(String)]]);
+  });
+
+  it("#4675 — the webhook's close of a cancelled superseded intent holds no claim: fenced off SUCCEEDED only", async () => {
+    mockPaymentRecoveryFindFirst.mockResolvedValueOnce(makeOperation({ status: PaymentRecoveryOperationStatus.FAILED }));
+
+    await expect(completeCanceledSupersededPaymentIntentRecovery({ paymentIntentId: "pi_superseded" })).resolves.toBe(true);
+
+    const closes = mockPaymentRecoveryUpdateMany.mock.calls
+      .map(([args]) => args as { where: Record<string, unknown>; data: Record<string, unknown> })
+      .filter((args) => args.data.status === PaymentRecoveryOperationStatus.SUCCEEDED);
+    expect(closes.map((close) => close.where)).toEqual([{ id: "recovery-1", status: { not: PaymentRecoveryOperationStatus.SUCCEEDED } }]);
   });
 
   it("#3639 — a hand-off the club holds for a treasurer moves no money: no superseded refund, the cancel op completes", async () => {

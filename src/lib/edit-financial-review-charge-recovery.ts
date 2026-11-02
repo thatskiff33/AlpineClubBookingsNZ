@@ -84,8 +84,9 @@ export async function rearmEditFinancialReviewChargeRecovery(idempotencyKey: str
  * or refused onto this edit while the replay runs - after the replay's own last
  * re-derivation, so the replay cannot have raised for it. Closing over that
  * would lose the share; instead the row goes straight back to PENDING, due at
- * once, and the next pass raises for it. Otherwise identical to
- * `completePaymentRecoveryOperation`, whose fence (not SUCCEEDED) it keeps.
+ * once, and the next pass raises for it. Otherwise it closes as
+ * `completePaymentRecoveryOperation` does, on its own fence (not SUCCEEDED,
+ * plus the exact attempt below) rather than that one's held claim (#4675).
  *
  * THE ATTEMPT FENCE, on both writes (the stale-worker reaper's
  * `fromProcessingStartedAt` pattern). A worker that stalls past the reaper's
