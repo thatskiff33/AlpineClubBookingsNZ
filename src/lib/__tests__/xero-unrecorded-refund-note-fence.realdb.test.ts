@@ -189,9 +189,13 @@ let prisma: (typeof import("@/lib/prisma"))["prisma"];
       vi.spyOn(invoicePayments, "resolveRefundSettlement").mockResolvedValue({ kind: "record", bankCode: "090" });
     }
 
-    /** The outbox worker running `operationId` alone (oldest first is its order). */
+    /**
+     * The outbox worker running `operationId` alone (oldest first is its order),
+     * its recheck due: a note handed back to wait on the fence is spaced out of
+     * the scan until then (#4692 review), so this ages `updatedAt` too.
+     */
     async function runOutbox(operationId: string) {
-      await prisma.$executeRaw`UPDATE "XeroSyncOperation" SET "createdAt" = ${new Date("2000-01-01T00:00:00.000Z")} WHERE "id" = ${operationId}`;
+      await prisma.$executeRaw`UPDATE "XeroSyncOperation" SET "createdAt" = ${new Date("2000-01-01T00:00:00.000Z")}, "updatedAt" = ${new Date("2000-01-01T00:00:00.000Z")} WHERE "id" = ${operationId}`;
       const { processQueuedXeroOutboxOperations } = await import("@/lib/xero-operation-outbox");
       return processQueuedXeroOutboxOperations({ limit: 1 });
     }
@@ -286,10 +290,21 @@ let prisma: (typeof import("@/lib/prisma"))["prisma"];
       await stripeRefund("b", 3_000);
       const rowB = await queueNote(3_000);
       expect(await runOutbox(rowB)).toMatchObject({ succeeded: 0, failed: 0, skipped: 1 });
-      expect(await prisma.xeroSyncOperation.findUniqueOrThrow({ where: { id: rowB }, select: { status: true, lastErrorMessage: true } })).toEqual({
-        status: "PENDING", lastErrorMessage: expect.stringContaining(`until an officer resolves ${rowA} by hand`),
+      const { XERO_REFUND_NOTE_AWAITING_RESOLVE_CODE } = await import("@/lib/xero-operation-error-codes");
+      const waitingB = await prisma.xeroSyncOperation.findUniqueOrThrow({ where: { id: rowB }, select: { status: true, lastErrorCode: true, lastErrorMessage: true, updatedAt: true } });
+      expect(waitingB).toEqual({
+        status: "PENDING",
+        lastErrorCode: XERO_REFUND_NOTE_AWAITING_RESOLVE_CODE,
+        lastErrorMessage: expect.stringContaining(`until an officer resolves ${rowA} by hand`),
+        updatedAt: expect.any(Date),
       });
       expect(xeroNotes).toHaveLength(1);
+      // #4692 review (finding 1): before its recheck is due, a kick's scan passes B by - it never takes the head of the queue.
+      const { processQueuedXeroOutboxOperations } = await import("@/lib/xero-operation-outbox");
+      await processQueuedXeroOutboxOperations({ limit: 1 });
+      expect(await prisma.xeroSyncOperation.findUniqueOrThrow({ where: { id: rowB }, select: { status: true, updatedAt: true } })).toEqual({
+        status: "PENDING", updatedAt: waitingB.updatedAt,
+      });
 
       // 2. The nightly self-heal lists the payment's gap but queues nothing for it.
       const healed = await nightlySelfHeal();
@@ -317,7 +332,16 @@ let prisma: (typeof import("@/lib/prisma"))["prisma"];
       expect(await runOutbox(rowB)).toMatchObject({ skipped: 1 });
       expect(xeroNotes).toHaveLength(1);
 
+      // #4692 review (finding 2): the same $50 refund queued again - a copy under row A's key - waits on the fence too.
+      const rowY = await queueNote(5_000);
+      expect(rowY).not.toBe(rowA);
+      const keys = await prisma.xeroSyncOperation.findMany({ where: { id: { in: [rowA, rowY] } }, select: { correlationKey: true } });
+      expect(new Set(keys.map((row) => row.correlationKey)).size).toBe(1);
+      expect(await runOutbox(rowY)).toMatchObject({ skipped: 1 });
+      expect(xeroNotes).toHaveLength(1);
+
       // 4. The officer resolves row A by hand with note A's number, through the real route: the fence lifts.
+      // The copy it holds does not refuse the resolve (it can mint nothing while the fence stands).
       const { POST: resolve } = await import("@/app/api/admin/xero/operations/[id]/resolve/route");
       const resolved = await resolve(
         new NextRequest(`http://localhost/api/admin/xero/operations/${rowA}/resolve`, {
@@ -333,6 +357,11 @@ let prisma: (typeof import("@/lib/prisma"))["prisma"];
       });
       expect(await findUnrecordedRefundNoteOperation(PAYMENT_ID)).toBeNull();
 
+      // The copy, queued before the resolve, closes CANCELLED at its next claim, before any Xero call (`INV-INT-025`).
+      expect(await runOutbox(rowY)).toMatchObject({ skipped: 1 });
+      expect(await prisma.xeroSyncOperation.findUniqueOrThrow({ where: { id: rowY }, select: { status: true } })).toEqual({ status: "CANCELLED" });
+      expect(xeroNotes).toHaveLength(1);
+
       // 5. B now runs, sized with A counted: $30 at the $80 watermark - never $80.
       expect(await runOutbox(rowB)).toMatchObject({ succeeded: 1 });
       expect(xeroNotes).toEqual([{ id: NOTE_A, cents: 5_000 }, { id: NOTE_B, cents: 3_000 }]);
@@ -341,7 +370,7 @@ let prisma: (typeof import("@/lib/prisma"))["prisma"];
 
       // And the self-heal finds nothing left to ask for.
       await nightlySelfHeal();
-      expect((await createRows()).map((row) => row.id)).toEqual([{ id: rowA }, { id: rowB }].sort(byId).map((row) => row.id));
+      expect((await createRows()).map((row) => row.id)).toEqual([{ id: rowA }, { id: rowB }, { id: rowY }].sort(byId).map((row) => row.id));
       expect(xeroNotes).toHaveLength(2);
     });
   },

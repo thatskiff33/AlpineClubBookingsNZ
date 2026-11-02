@@ -947,6 +947,8 @@ describe("Xero operation admin retry routes", () => {
       data: { status: "FAILED" },
     });
     expect(unrecordedWrite.data).not.toHaveProperty("lastErrorCode");
+    // #4692 review (finding 4): nor its message, which names the note the officer resolves with.
+    expect(unrecordedWrite.data.lastErrorMessage).toBeUndefined();
     expect(repairWrite).toMatchObject({
       where: { status: "RUNNING", lastErrorCode: "PARTIAL_REPAIR_RUNNING" },
       data: { status: "PARTIAL", lastErrorCode: "ORPHANED_STALE_RUNNING" },

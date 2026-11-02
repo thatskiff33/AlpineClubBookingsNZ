@@ -5,7 +5,10 @@ import {
   XeroRefundCreditNoteUnrecordedError,
 } from "@/lib/xero-applied-credit-operation-serialization";
 import { XERO_REQUEUE_OPERATION_TYPE } from "@/lib/xero-hardening-shared";
-import { XERO_REFUND_NOTE_UNRECORDED_ERROR_CODE } from "@/lib/xero-operation-error-codes";
+import { XERO_REFUND_NOTE_AWAITING_RESOLVE_CODE, XERO_REFUND_NOTE_UNRECORDED_ERROR_CODE } from "@/lib/xero-operation-error-codes";
+import { asRecord, readString } from "@/lib/xero-json";
+import { parsePaymentCreditNoteRetryInput } from "@/lib/xero-payment-credit-note-payload";
+import { isRefundCreditNoteLinkCancelledInXero } from "@/lib/xero-refund-note-status";
 import { XERO_OUTBOX_REFUND_CREDIT_NOTE_TYPE } from "@/lib/xero-operation-outbox-payload";
 import { liveRunningXeroOperationFilter } from "@/lib/xero-stale-operations";
 
@@ -68,38 +71,99 @@ export async function assertNoRefundCreditNoteInFlight(
 }
 
 /**
- * #4688 (`INV-INT-035`): the payment's refund-note create rows whose note Xero
- * made but the record could not write (`record-wait-lost`): stamped
+ * #4688: the payment refund-note create rows - the scope the fence stamps and
+ * reads, on the database and on one row, from these same constants.
+ */
+const REFUND_NOTE_CREATE_QUEUE_TYPES = [XERO_OUTBOX_REFUND_CREDIT_NOTE_TYPE, null] as const;
+
+function isPaymentRefundNoteCreateRow(row: Pick<XeroSyncOperation, "direction" | "entityType" | "operationType" | "localModel" | "localId" | "queueType" | "requestPayload">): row is typeof row & { localId: string } {
+  const scope = paymentCreditNoteOperationWhere(row.localId ?? "");
+  return (
+    row.direction === scope.direction &&
+    row.entityType === scope.entityType &&
+    row.operationType === "CREATE" &&
+    row.localModel === scope.localModel &&
+    !!row.localId &&
+    (REFUND_NOTE_CREATE_QUEUE_TYPES as ReadonlyArray<string | null>).includes(row.queueType) &&
+    // #4692 review: an inline account-credit row has a null queue type too.
+    parsePaymentCreditNoteRetryInput(row)?.kind === "refund"
+  );
+}
+
+/**
+ * #4688 (`INV-INT-035`): the payment's refund-note create rows stamped
  * `XERO_REFUND_NOTE_UNRECORDED_ERROR_CODE` by `recordCreatedRefundNote`, not
- * resolved by hand, and still naming no note. Whatever its status or age - the stale threshold that ends
- * the in-flight hold above does not end this one - such a row means Xero holds a
- * note the coverage reads leave out, so no refund note on the payment may be
- * sized until an officer's Resolve by hand records it (or takes the refund over).
- * The resolve's own claim sets `manuallyResolvedAt`, which is what lifts it; a
- * withdrawn resolve puts it back, as the note is unrecorded again. Mark failed
- * and a stale reset keep the code (`writeStaleRunningXeroOperationReset`).
+ * resolved by hand, and still naming no note - whatever their status or age
+ * (the stale threshold that ends the in-flight hold above does not end this
+ * one). The candidates of the fence; `findUnrecordedRefundNoteOperation`
+ * drops one whose note is since recorded on the payment by another row.
+ * The resolve's own claim sets `manuallyResolvedAt`; a withdrawn resolve puts
+ * it back, as the note is unrecorded again. Mark failed and a stale reset keep
+ * the code (`writeStaleRunningXeroOperationReset`).
  */
 export function unrecordedRefundNoteOperationWhere(paymentId: string) {
   return {
     ...paymentCreditNoteOperationWhere(paymentId),
     operationType: "CREATE",
-    OR: [{ queueType: XERO_OUTBOX_REFUND_CREDIT_NOTE_TYPE }, { queueType: null }],
+    OR: REFUND_NOTE_CREATE_QUEUE_TYPES.map((queueType) => ({ queueType })),
     lastErrorCode: XERO_REFUND_NOTE_UNRECORDED_ERROR_CODE,
     manuallyResolvedAt: null,
     xeroObjectId: null,
   } as const satisfies Prisma.XeroSyncOperationWhereInput;
 }
 
+/** #4692 review: the response-payload key the stamp names its note under (`recordCreatedRefundNote`). */
+const UNRECORDED_CREDIT_NOTE_ID_KEY = "unrecordedCreditNoteId" as const;
+
+/**
+ * #4692 review: the response payload the stamp writes, naming the Xero note it
+ * holds unrecorded, so the fence lifts once that note is recorded on the
+ * payment some other way (`findUnrecordedRefundNoteOperation`). The stamp
+ * reaches only a row naming no note, whose response payload holds nothing.
+ */
+export function unrecordedNoteStampPayload(creditNoteId: string) {
+  return { [UNRECORDED_CREDIT_NOTE_ID_KEY]: creditNoteId } satisfies Prisma.InputJsonObject;
+}
+
+/**
+ * #4692 review: the stamped row's note is now recorded on the payment by
+ * something else - the officer resolved ANOTHER row (the original a retry ran
+ * for) with it, or a retry recorded it - so the coverage reads count it and
+ * the fence has nothing left to hold. A link on the payment naming the note
+ * that is live, or whose recorded Xero status says it was voided or deleted
+ * (nothing to leave out then). A link a withdrawn resolve retired is neither:
+ * the note is unrecorded again and the fence stays. A stamp written before
+ * the row named its note (or naming none) is never lifted this way.
+ */
+async function noteNowRecordedOnPayment(
+  paymentId: string,
+  responsePayload: unknown,
+  db: Pick<Prisma.TransactionClient, "xeroObjectLink">,
+): Promise<boolean> {
+  const creditNoteId = readString(asRecord(responsePayload)?.[UNRECORDED_CREDIT_NOTE_ID_KEY]);
+  if (!creditNoteId) return false;
+  const links = await db.xeroObjectLink.findMany({
+    where: { localModel: "Payment", localId: paymentId, xeroObjectType: "CREDIT_NOTE", xeroObjectId: creditNoteId },
+    select: { active: true, metadata: true },
+  });
+  return links.some((link) => link.active || isRefundCreditNoteLinkCancelledInXero(link.metadata));
+}
+
 /** #4688: the payment's oldest refund-note create whose note is unrecorded, or null. */
 export async function findUnrecordedRefundNoteOperation(
   paymentId: string,
-  db: Pick<Prisma.TransactionClient, "xeroSyncOperation"> = prisma,
+  db: Pick<Prisma.TransactionClient, "xeroSyncOperation" | "xeroObjectLink"> = prisma,
 ): Promise<{ id: string } | null> {
-  return db.xeroSyncOperation.findFirst({
+  // One after the other (#1357): the stamped rows are few, usually one.
+  const stamped = await db.xeroSyncOperation.findMany({
     where: unrecordedRefundNoteOperationWhere(paymentId),
-    orderBy: { createdAt: "asc" },
-    select: { id: true },
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+    select: { id: true, responsePayload: true },
   });
+  for (const row of stamped) {
+    if (!(await noteNowRecordedOnPayment(paymentId, row.responsePayload, db))) return { id: row.id };
+  }
+  return null;
 }
 
 /**
@@ -116,21 +180,47 @@ export async function assertNoUnrecordedRefundNote(paymentId: string): Promise<v
   if (unrecorded) throw new XeroRefundCreditNoteUnrecordedError(paymentId, unrecorded.id);
 }
 
+/**
+ * #4692 review (finding 1): how long a note held by the fence is left out of
+ * the outbox scan and the retry drain before it is looked at again. It returns
+ * to PENDING with its `createdAt` unchanged, and may wait days for the
+ * resolve, so without this it would take the head of every oldest-first scan
+ * - every `limit: 1` kick, and with ten such rows every cron run.
+ */
+export const REFUND_NOTE_AWAITING_RESOLVE_RECHECK_MS = 5 * 60 * 1000;
+
+/**
+ * The scan's filter, as `outboxScanLeavesAwaitingOwnNote` is: leave out a row
+ * returned to wait on the fence until its recheck is due. Every other row - a
+ * null code included, which `not` alone would drop - is scanned as before.
+ */
+export function scanSpacesRefundNotesAwaitingResolve(now: Date) {
+  return {
+    OR: [
+      { lastErrorCode: null },
+      { lastErrorCode: { not: XERO_REFUND_NOTE_AWAITING_RESOLVE_CODE } },
+      { updatedAt: { lte: new Date(now.getTime() - REFUND_NOTE_AWAITING_RESOLVE_RECHECK_MS) } },
+    ],
+  } satisfies Prisma.XeroSyncOperationWhereInput;
+}
+
 /** #4688: why Retry refuses the row whose own note is unrecorded. */
 export const UNRECORDED_REFUND_NOTE_RETRY_REASON =
   "Xero made this operation's refund credit note, but the app could not record it. Do not retry: a retry is sized without that note and could raise a second one. Resolve this operation by hand with that note's number (the alert and the error message name it).";
 
 /**
- * #4688: the row itself holds an unrecorded note - the fence's predicate on
- * one row (`unrecordedRefundNoteOperationWhere`), for `getXeroOperationRetryMeta`.
- * The code is stamped only on a payment refund-note create row.
+ * #4688: the row itself holds an unrecorded note - the fence's predicate
+ * (`unrecordedRefundNoteOperationWhere`) on one row, for
+ * `getXeroOperationRetryMeta`, the resolve guards and the record's alert. The
+ * code is stamped only on a payment refund-note create row.
  */
 export function holdsUnrecordedRefundNote(row: {
   lastErrorCode?: string | null;
   manuallyResolvedAt: Date | null;
   xeroObjectId: string | null;
 }): boolean {
-  return row.lastErrorCode === XERO_REFUND_NOTE_UNRECORDED_ERROR_CODE && row.manuallyResolvedAt === null && row.xeroObjectId === null;
+  const fence = unrecordedRefundNoteOperationWhere("");
+  return row.lastErrorCode === fence.lastErrorCode && row.manuallyResolvedAt === fence.manuallyResolvedAt && row.xeroObjectId === fence.xeroObjectId;
 }
 
 /**
@@ -138,22 +228,12 @@ export function holdsUnrecordedRefundNote(row: {
  * create that would raise a note while the payment holds an unrecorded one -
  * that row itself, or any other, such as the original a retry ran for. A row
  * that already records its note is the #3548 repair leg, which raises none,
- * and passes. Null when the retry may go ahead.
+ * and passes; so does an account-credit note. Null when the retry may go ahead.
  */
 export async function unrecordedRefundNoteRetryRefusal(
-  operation: Pick<XeroSyncOperation, "id" | "direction" | "entityType" | "operationType" | "localModel" | "localId" | "queueType" | "xeroObjectId">,
+  operation: Pick<XeroSyncOperation, "id" | "direction" | "entityType" | "operationType" | "localModel" | "localId" | "queueType" | "requestPayload" | "xeroObjectId">,
 ): Promise<string | null> {
-  if (
-    operation.direction !== "OUTBOUND" ||
-    operation.entityType !== "CREDIT_NOTE" ||
-    operation.operationType !== "CREATE" ||
-    operation.localModel !== "Payment" ||
-    !operation.localId ||
-    (operation.queueType !== null && operation.queueType !== XERO_OUTBOX_REFUND_CREDIT_NOTE_TYPE) ||
-    operation.xeroObjectId !== null
-  ) {
-    return null;
-  }
+  if (!isPaymentRefundNoteCreateRow(operation) || operation.xeroObjectId !== null) return null;
   const unrecorded = await findUnrecordedRefundNoteOperation(operation.localId);
   if (!unrecorded) return null;
   return unrecorded.id === operation.id

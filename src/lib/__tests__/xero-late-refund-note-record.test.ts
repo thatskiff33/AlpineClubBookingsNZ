@@ -113,6 +113,7 @@ vi.mock("@/lib/logger", () => ({ default: { warn: mocks.warn, error: mocks.error
 import { isRecordWaitLost, LATE_REFUND_NOTE_NOT_RECORDED_ACTION, recordCreatedRefundNote } from "@/lib/xero-refund-note-record";
 import { xeroSuccessAfterResolutionAlertKey } from "@/lib/xero-success-after-resolution-alert";
 import { XERO_REFUND_NOTE_UNRECORDED_ERROR_CODE } from "@/lib/xero-operation-error-codes";
+import { unrecordedNoteStampPayload } from "@/lib/xero-refund-note-in-flight";
 
 const OPERATION_ID = "op-stalled";
 const RESOLVED_AT = new Date("2026-07-01T00:20:00.000Z");
@@ -397,8 +398,17 @@ describe("#4656: the record checks the note fresh under its locks, and a wait th
       expect((mocks.send.mock.calls[0]![0] as { errorMessage: string }).errorMessage).toContain("the app raises no other refund note on this payment");
     });
 
+    it("MUTATION (#4692 review, finding 3): names the note it holds unrecorded, so the fence lifts once another row records it", async () => {
+      seedRow();
+      mocks.paymentLock.mockRejectedValueOnce(timedOut());
+      await expect(recordCreatedRefundNote(LATE)).resolves.toBe("record-wait-lost");
+      expect(state.row).toMatchObject({ status: "RUNNING", xeroObjectId: null, responsePayload: unrecordedNoteStampPayload("cn-late-b") });
+    });
+
     it.each([
       ["another claim holds the row RUNNING", { startedAt: new Date("2026-07-01T00:30:00.000Z") }],
+      // #4692 review (finding 6): FAILED under another claim - not the one Mark failed failed under this run.
+      ["another claim's run left the row FAILED", { status: "FAILED", startedAt: new Date("2026-07-01T00:30:00.000Z") }],
       ["a resolve by hand closed it (a plain one, naming no note)", { status: "FAILED", manuallyResolvedAt: RESOLVED_AT }],
       ["the row records another note", { status: "FAILED", xeroObjectType: "CREDIT_NOTE", xeroObjectId: "cn-other" }],
       ["the row was handed back to PENDING", { status: "PENDING", startedAt: null }],

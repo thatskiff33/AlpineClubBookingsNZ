@@ -8,6 +8,7 @@ import { buildXeroOperationRequeueCorrelationKey } from "@/lib/xero-operation-qu
 import { XERO_REQUEUE_OPERATION_TYPE } from "@/lib/xero-hardening-shared";
 import { isStaleRunningXeroOperation } from "@/lib/xero-stale-operations";
 import { isAppliedCreditLedgerOperation } from "@/lib/xero-applied-credit-operation-serialization";
+import { holdsUnrecordedRefundNote } from "@/lib/xero-refund-note-in-flight";
 
 type OperationReader = Pick<Prisma.TransactionClient, "xeroSyncOperation">;
 
@@ -178,19 +179,35 @@ export const QUEUED_LIVE_COPY_REFUSAL =
  * now would leave that copy to mint a second document. The outbox also
  * cancels such a copy after a resolve (`findResolvedSiblingSince`); this is the
  * cheap, earlier answer.
+ *
+ * #4692 review (`INV-INT-035`): a row holding an unrecorded refund note fences
+ * its payment's refund notes, so a PENDING copy cannot mint while it stands -
+ * it waits on the fence until this very resolve, and its next claim then
+ * closes it CANCELLED, before any Xero call (`findResolvedSiblingSince`).
+ * Refusing over it would leave the payment with no way out, so only a copy
+ * running now counts against such a row.
  */
 export async function findQueuedLiveCopy(
-  operation: { id: string; correlationKey: string | null; entityType: string; operationType: string },
+  operation: {
+    id: string;
+    correlationKey: string | null;
+    entityType: string;
+    operationType: string;
+    lastErrorCode: string | null;
+    manuallyResolvedAt: Date | null;
+    xeroObjectId: string | null;
+  },
   db: OperationReader = prisma,
 ): Promise<{ id: string } | null> {
   if (!operation.correlationKey) return null;
+  const fenced = holdsUnrecordedRefundNote(operation);
   return db.xeroSyncOperation.findFirst({
     where: {
       id: { not: operation.id },
       correlationKey: operation.correlationKey,
       entityType: operation.entityType,
       operationType: operation.operationType,
-      status: { in: [...XERO_ACTIVE_OPERATION_STATUSES] },
+      status: { in: XERO_ACTIVE_OPERATION_STATUSES.filter((status) => !fenced || status !== "PENDING") },
     },
     select: { id: true },
   });
@@ -225,6 +242,9 @@ export async function resolvePrecheckRefusal(operation: {
   correlationKey: string | null;
   entityType: string;
   operationType: string;
+  lastErrorCode: string | null;
+  manuallyResolvedAt: Date | null;
+  xeroObjectId: string | null;
 }): Promise<string | null> {
   // #3635 decision 3: a retry that claimed the operation itself.
   if (operation.status === "RUNNING") return retryRunningRefusal(operation);

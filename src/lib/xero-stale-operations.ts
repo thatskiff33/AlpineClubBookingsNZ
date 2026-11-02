@@ -187,12 +187,14 @@ export async function writeStaleRunningXeroOperationReset(
     count.failed = failed.count;
   }
   if (only === undefined || only === "UNRECORDED") {
-    // #4688: the unrecorded note's code stays on the row; only the status, message and completion move.
+    // #4688: the unrecorded note's code stays on the row; only the status and completion move.
+    // The message names the note: Mark failed's carries it forward (`carriedStaleRunningCause`),
+    // and the bulk reset's generic one is not written over it (#4692 review).
     const unrecorded = await db.xeroSyncOperation.updateMany({
       where: { ...where, lastErrorCode: XERO_REFUND_NOTE_UNRECORDED_ERROR_CODE },
       data: {
         status: "FAILED",
-        lastErrorMessage,
+        lastErrorMessage: only === "UNRECORDED" ? lastErrorMessage : undefined,
         completedAt: now,
       },
     });

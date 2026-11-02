@@ -66,6 +66,8 @@ import {
   XeroOperationResolvedInXeroError,
 } from "@/lib/xero-operation-retry";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
+import { matchesWhere } from "./support/prisma-where";
+import { XERO_REFUND_NOTE_AWAITING_RESOLVE_CODE } from "@/lib/xero-operation-error-codes";
 
 function makeOperation(overrides: Record<string, unknown> = {}) {
   return {
@@ -165,12 +167,20 @@ describe("enqueueXeroSyncOperationRetry", () => {
 
   describe("#4688: never while Xero holds an unrecorded refund note on the payment", () => {
     const refundNoteRow = (overrides: Record<string, unknown> = {}) =>
-      makeOperation({ entityType: "CREDIT_NOTE", queueType: "REFUND_CREDIT_NOTE", xeroObjectId: null, ...overrides });
-    /** The fence's read answers the unrecorded row; the duplicate-retry read answers none. */
-    const unrecordedOn = (id: string) =>
-      mocks.findFirstQueued.mockImplementation(async ({ where }: { where: Record<string, unknown> }) =>
-        where.lastErrorCode === "REFUND_NOTE_UNRECORDED" ? { id } : null,
+      makeOperation({
+        entityType: "CREDIT_NOTE",
+        queueType: "REFUND_CREDIT_NOTE",
+        requestPayload: { queueType: "REFUND_CREDIT_NOTE", refundAmountCents: 5_000, watermarkCents: 5_000 },
+        xeroObjectId: null,
+        ...overrides,
+      });
+    /** The fence's read answers the unrecorded row (its stamp naming no note); the duplicate-retry read answers none. */
+    const unrecordedOn = (id: string) => {
+      mocks.findFirstQueued.mockResolvedValue(null);
+      mocks.findManyQueued.mockImplementation(async ({ where }: { where: Record<string, unknown> }) =>
+        where.lastErrorCode === "REFUND_NOTE_UNRECORDED" ? [{ id, responsePayload: null }] : [],
       );
+    };
 
     it("MUTATION: refuses with 409 the original a retry ran for (Retry all skips it with this reason), and queues nothing", async () => {
       mocks.findUniqueOperation.mockResolvedValue(refundNoteRow());
@@ -196,6 +206,7 @@ describe("enqueueXeroSyncOperationRetry", () => {
     it("queues the retry once the payment holds no unrecorded note (the officer resolved it)", async () => {
       mocks.findUniqueOperation.mockResolvedValue(refundNoteRow());
       mocks.findFirstQueued.mockResolvedValue(null);
+      mocks.findManyQueued.mockResolvedValue([]);
       await expect(enqueueXeroSyncOperationRetry("op_123")).resolves.toMatchObject({ queueOperationId: "queue_1" });
     });
   });
@@ -343,9 +354,31 @@ describe("processQueuedXeroOperationRetries", () => {
     await expect(processQueuedXeroOperationRetries({ limit: 5 }, CLUB_FORMAT_TEST)).resolves.toMatchObject({ failed: 0, skipped: 1 });
     expect(mocks.updateManyOperation).toHaveBeenLastCalledWith({
       where: { id: "queue_1", status: "RUNNING", startedAt: expect.any(Date) },
-      data: { status: "PENDING", startedAt: null, lastErrorCode: null, lastErrorMessage: expect.stringContaining("resolves op_unrecorded by hand") },
+      // #4692 review (finding 1): under the wait code the drain's scan spaces out.
+      data: { status: "PENDING", startedAt: null, lastErrorCode: XERO_REFUND_NOTE_AWAITING_RESOLVE_CODE, lastErrorMessage: expect.stringContaining("resolves op_unrecorded by hand") },
     });
     expect(mocks.failXeroSyncOperation).not.toHaveBeenCalled();
+  });
+
+  it("MUTATION (#4692 review, finding 1): ten retries held by an unrecorded note never take a limit-1 drain's slot from a retry queued after them", async () => {
+    const now = Date.now();
+    const held = Array.from({ length: 10 }, (_, i) => ({
+      id: `queue_held_${i}`,
+      status: "PENDING",
+      operationType: "REQUEUE",
+      lastErrorCode: XERO_REFUND_NOTE_AWAITING_RESOLVE_CODE,
+      updatedAt: new Date(now - 1_000),
+      createdAt: new Date(now - 86_400_000 + i),
+    }));
+    const fresh = { id: "queue_fresh", status: "PENDING", operationType: "REQUEUE", lastErrorCode: null, updatedAt: new Date(now), createdAt: new Date(now) };
+    const scanned: string[][] = [];
+    mocks.findManyQueued.mockImplementation(async (args: { where: Record<string, unknown>; take: number }) => {
+      scanned.push([...held, fresh].filter((row) => matchesWhere(row, args.where)).slice(0, args.take).map((row) => row.id));
+      return [];
+    });
+
+    await processQueuedXeroOperationRetries({ limit: 1 }, CLUB_FORMAT_TEST);
+    expect(scanned).toEqual([["queue_fresh"]]);
   });
 
   it("fails queued retries with malformed payloads", async () => {

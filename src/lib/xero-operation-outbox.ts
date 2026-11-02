@@ -78,6 +78,7 @@ import { createXeroSupplementaryInvoice } from "@/lib/xero-supplementary-invoice
 import { createXeroKeptLateCaptureInvoice } from "@/lib/xero-kept-late-capture-invoice";
 import { recordAdditionalCaptureReceipt } from "@/lib/additional-capture-xero-receipt";
 import { outboxScanSpacesWaitingReceipts } from "@/lib/additional-capture-receipt-gate";
+import { scanSpacesRefundNotesAwaitingResolve } from "@/lib/xero-refund-note-in-flight";
 import { primaryInvoiceGapPayload } from "@/lib/additional-capture-receipt-payload";
 import { anchorCaptureHasReceipt, bookingHasUnattributedCaptures, keptInvoiceBillsChangeCapture } from "@/lib/additional-capture-receipt-link";
 import { isXeroConnected } from "@/lib/xero-token-store";
@@ -2961,8 +2962,13 @@ export async function processQueuedXeroOutboxOperations(options?: {
         in: [...XERO_OUTBOX_QUEUE_TYPES],
       },
       // #3954 round 8: a billed-offset note waiting for its edit's own note
-      // is looked at again only every few minutes, not on every kick.
-      AND: [outboxScanLeavesAwaitingOwnNote(new Date()), outboxScanSpacesWaitingReceipts(new Date())],
+      // is looked at again only every few minutes, not on every kick; so is a
+      // refund note held by an unrecorded one (#4692 review, `INV-INT-035`).
+      AND: [
+        outboxScanLeavesAwaitingOwnNote(new Date()),
+        outboxScanSpacesWaitingReceipts(new Date()),
+        scanSpacesRefundNotesAwaitingResolve(new Date()),
+      ],
     },
     // Ties on `createdAt` (same ms; all rows under the frozen clock) fall to `id`:
     // deterministic, not insertion order (#4663; STATE_MACHINES.md).

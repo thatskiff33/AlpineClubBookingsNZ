@@ -227,7 +227,7 @@ export async function claimResolveRecordingRefundNote(input: {
       if (await findRetryRunningOrSince(input.operationId, input.readAt, tx)) {
         throw new ManualBookingPaymentError(RESOLVE_NOTE_RETRY_RAN_MESSAGE, 409);
       }
-      if (await findQueuedLiveCopy({ id: input.operationId, correlationKey: row.correlationKey, entityType: row.entityType, operationType: row.operationType }, tx)) {
+      if (await findQueuedLiveCopy({ id: input.operationId, ...row }, tx)) {
         throw new ManualBookingPaymentError(QUEUED_LIVE_COPY_REFUSAL, 409);
       }
       // One after the other on the interactive transaction (#1357).
@@ -338,6 +338,8 @@ const RESOLVE_ROW_SELECT = {
   idempotencyKey: true,
   xeroObjectId: true,
   manuallyResolvedAt: true,
+  // #4692 review: a row holding an unrecorded note is not refused over a copy that fence holds.
+  lastErrorCode: true,
 } satisfies Prisma.XeroSyncOperationSelect;
 
 /** A refusal the resolve route answers, and audits where a number was offered or needed. */

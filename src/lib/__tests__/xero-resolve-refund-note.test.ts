@@ -614,6 +614,43 @@ describe("Resolve by hand records the officer's note on a refund credit-note cre
     expect(state.rows.get("op_note")).toMatchObject(unresolved);
   });
 
+  describe("#4692 review (finding 2): a row holding an unrecorded note is never refused for good over a copy its fence holds", () => {
+    const stamped = (overrides: Partial<Row> = {}) => refundNoteRow({ lastErrorCode: "REFUND_NOTE_UNRECORDED", ...overrides });
+
+    it("MUTATION: resolves over a PENDING copy of the same refund (re-queued after Mark failed), which the fence keeps from minting", async () => {
+      state.rows.set("op_note", stamped());
+      state.rows.set("op_copy", refundNoteRow({ id: "op_copy", status: "PENDING" }));
+
+      const response = await resolve(withNumber);
+
+      expect(response.status).toBe(200);
+      expect(state.rows.get("op_note")).toMatchObject({ xeroObjectId: "cn-hand", xeroObjectNumber: "CN-0123", manuallyResolvedAt: expect.any(Date) });
+      // The copy is left to the outbox, which closes it CANCELLED at its next claim (`findResolvedSiblingSince`).
+      expect(state.rows.get("op_copy")).toMatchObject({ status: "PENDING" });
+    });
+
+    it("MUTATION: resolves over a PENDING copy queued while the route checked Xero (the claim's re-check under the locks)", async () => {
+      state.rows.set("op_note", stamped());
+      mocks.verifyHandMadeRefundNote.mockImplementationOnce(async () => {
+        state.rows.set("op_copy", refundNoteRow({ id: "op_copy", status: "PENDING" }));
+        return VERIFIED;
+      });
+
+      expect((await resolve(withNumber)).status).toBe(200);
+    });
+
+    it("still refuses over a copy RUNNING now: it is past the fence's read, or about to be", async () => {
+      state.rows.set("op_note", stamped());
+      state.rows.set("op_copy", refundNoteRow({ id: "op_copy", status: "RUNNING", startedAt: new Date("2026-07-01T00:00:00.000Z") }));
+
+      const response = await resolve(withNumber);
+
+      expect(response.status).toBe(409);
+      expect((await response.json()).error).toBe(QUEUED_LIVE_COPY_REFUSAL);
+      expect(state.rows.get("op_note")).toMatchObject(unresolved);
+    });
+  });
+
   it("MUTATION (audit, round 2): every refusal of a resolve that offered a number is audited, whichever check refused it", async () => {
     const cases: Array<[Row, Row | null]> = [
       [refundNoteRow({ status: "RUNNING" }), null],
