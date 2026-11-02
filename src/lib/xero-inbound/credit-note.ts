@@ -176,6 +176,8 @@ export async function reconcileXeroCreditNote(creditNoteId: string) {
               in: linkedAccountCreditPaymentIds,
             },
           },
+          // #4705: the stamp's pass ends at its first stamp, so it reads them in a fixed order.
+          orderBy: { id: "asc" },
           select: {
             id: true,
             bookingId: true,
@@ -214,46 +216,39 @@ export async function reconcileXeroCreditNote(creditNoteId: string) {
   const creditNoteAmountCents = getCreditNoteAmountCents(creditNote);
   let updatedCredits = 0;
   // #4705: the note stamps the one credit it was raised for, through the
-  // outbox's own stamp (`INV-INT-036`), and only while nothing holds it. A
-  // resolved payment means a cancellation credit holds the note already, or
-  // (#1925's local provenance) a lot this stamp never sees does, and those are
-  // the payments of the bookings that credit was APPLIED to, where no credit
-  // was raised for this note (PR #4711 review). So only a payment reached
-  // through its ACCOUNT_CREDIT_NOTE link, for a note no lot or slice records,
-  // is stamped: the one whose outbox row named the credit, by id, else one
-  // equal credit, oldest first; the first stamp ends the pass.
-  const stampPayments =
-    resolvedAccountCreditPayments.length === 0 &&
-    creditNoteAmountCents !== null &&
-    accountCreditPayments.length > 0 &&
-    !(await accountCreditNoteHeld(creditNote.creditNoteID))
-      ? accountCreditPayments
-      : [];
+  // outbox's own stamp (`INV-INT-036`), and only while no lot or slice records
+  // it - which also covers every note a resolver reached: a cancellation
+  // credit holds it, or (#1925's local provenance) a slice does. Only a payment
+  // whose own outbox row raised the note as an account-credit note is stamped
+  // (PR #4711 review): an ACCOUNT_CREDIT_NOTE link alone can be one local
+  // provenance wrote on a booking the credit was APPLIED to (#4712). The
+  // credit that row named is stamped by id, else one equal credit, oldest
+  // first; the first stamp ends the pass.
   const raisedFor =
-    stampPayments.length > 0
-      ? await accountCreditNoteRaisedFor({ creditNoteId: creditNote.creditNoteID, paymentIds: stampPayments.map((payment) => payment.id) })
+    creditNoteAmountCents !== null && accountCreditPayments.length > 0 && !(await accountCreditNoteHeld(creditNote.creditNoteID))
+      ? await accountCreditNoteRaisedFor({ creditNoteId: creditNote.creditNoteID, paymentIds: accountCreditPayments.map((payment) => payment.id) })
       : null;
-  for (const payment of stampPayments) {
-    if (creditNoteAmountCents === null) continue;
-    // The note was raised for another payment's credit: this one stamps nothing.
-    if (raisedFor && !raisedFor.paymentIds.includes(payment.id)) continue;
+  if (raisedFor && creditNoteAmountCents !== null) {
+    for (const payment of accountCreditPayments) {
+      if (!raisedFor.paymentIds.includes(payment.id)) continue;
 
-    // #3369: this stamps the note onto a MEMBER CREDIT row, and an
-    // organisation-owned booking has none — credit belongs to a person's
-    // account. Nothing to backfill.
-    const creditOwnerMemberId = bookingOwner(payment.booking).memberId;
-    if (!creditOwnerMemberId) continue;
+      // #3369: this stamps the note onto a MEMBER CREDIT row, and an
+      // organisation-owned booking has none — credit belongs to a person's
+      // account. Nothing to backfill.
+      const creditOwnerMemberId = bookingOwner(payment.booking).memberId;
+      if (!creditOwnerMemberId) continue;
 
-    const stampedCreditId = await stampCancellationCreditXeroNote({
-      memberId: creditOwnerMemberId,
-      bookingId: payment.bookingId,
-      refundAmountCents: creditNoteAmountCents,
-      creditNoteId: creditNote.creditNoteID,
-      ...(raisedFor ? { memberCreditId: raisedFor.memberCreditId } : {}),
-    });
-    if (stampedCreditId) {
-      updatedCredits += 1;
-      break;
+      const stampedCreditId = await stampCancellationCreditXeroNote({
+        memberId: creditOwnerMemberId,
+        bookingId: payment.bookingId,
+        refundAmountCents: creditNoteAmountCents,
+        creditNoteId: creditNote.creditNoteID,
+        ...(raisedFor.memberCreditId ? { memberCreditId: raisedFor.memberCreditId } : {}),
+      });
+      if (stampedCreditId) {
+        updatedCredits += 1;
+        break;
+      }
     }
   }
   const allocationTargets = buildCreditNoteAllocationTargets(creditNote);

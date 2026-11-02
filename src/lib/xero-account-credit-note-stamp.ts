@@ -19,8 +19,9 @@
  * different credits at the same instant can still both land: nothing locks the
  * pair (`INV-INT-036`'s limit).
  *
- * #4705: the inbound credit-note reconcile stamps through here too. It has the
- * note but not the row, so it reads the credit off the note's own outbox row
+ * #4705: the inbound credit-note reconcile stamps through here too, only for
+ * a note nothing holds and only through a payment whose own outbox row raised
+ * it as an account-credit note; it reads the credit off that row
  * (`accountCreditNoteRaisedFor`), else takes the fallback.
  *
  * Locking (`INV-LOCK-001`): none added. The stamp changes no balance, booking
@@ -34,7 +35,7 @@ import { internetBankingLateCashCreditDescription } from "@/lib/internet-banking
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 import { asRecord } from "@/lib/xero-json";
-import { readAccountCreditNoteCredit } from "@/lib/xero-operation-outbox-payload";
+import { isAccountCreditNotePayload, readAccountCreditNoteCredit } from "@/lib/xero-operation-outbox-payload";
 
 /** The descriptions the account-credit pipeline's cancellation credits carry. */
 function stampableCancellationDescriptions(bookingId: string): string[] {
@@ -116,18 +117,22 @@ export async function stampCancellationCreditXeroNote(params: {
 }
 
 /**
- * #4705: the credit an account-credit note was raised for, as the note's own
- * outbox row named it (`memberCreditId`, kept on the queued and executed
- * shapes), and the payments whose rows named it. Read by the inbound
- * reconcile, which reaches a note by its id. One credit named across the
- * payments' rows is returned; none, or rows that disagree, return null, and
- * the stamp falls back to its old match.
+ * #4705: which of `paymentIds` raised `creditNoteId` as an account-credit
+ * note - an outbound CREATE row naming the note in that shape
+ * (`isAccountCreditNotePayload`) - and the credit those rows named
+ * (`memberCreditId`, kept on the queued and executed shapes). Read by the
+ * inbound reconcile, which reaches a note by its id and stamps only through
+ * these payments: a payment whose link to the note no such row explains (one
+ * #1925's local provenance linked, or a note made by hand in Xero) raised it
+ * for no credit (PR #4711 review). One credit named returns it with the
+ * payments that named it; none, or rows that disagree, return no credit, and
+ * the stamp falls back to its old match through every such payment.
  */
 export async function accountCreditNoteRaisedFor(params: {
   creditNoteId: string;
   paymentIds: string[];
-}): Promise<{ memberCreditId: string; paymentIds: string[] } | null> {
-  if (params.paymentIds.length === 0) return null;
+}): Promise<{ paymentIds: string[]; memberCreditId?: string }> {
+  if (params.paymentIds.length === 0) return { paymentIds: [] };
   const rows = await prisma.xeroSyncOperation.findMany({
     where: {
       direction: "OUTBOUND",
@@ -139,14 +144,17 @@ export async function accountCreditNoteRaisedFor(params: {
     },
     select: { localId: true, requestPayload: true },
   });
-  const named = rows.flatMap((row) => {
-    const { memberCreditId } = readAccountCreditNoteCredit(asRecord(row.requestPayload) ?? {});
-    return memberCreditId && row.localId ? [{ memberCreditId, paymentId: row.localId }] : [];
+  const raised = rows.flatMap((row) => {
+    const payload = asRecord(row.requestPayload);
+    if (!row.localId || !payload || !isAccountCreditNotePayload(payload)) return [];
+    return [{ paymentId: row.localId, memberCreditId: readAccountCreditNoteCredit(payload).memberCreditId }];
   });
-  const credits = new Set(named.map((row) => row.memberCreditId));
+  const credits = new Set(raised.flatMap((row) => row.memberCreditId ?? []));
   const [memberCreditId] = credits;
-  if (credits.size !== 1 || !memberCreditId) return null;
-  return { memberCreditId, paymentIds: [...new Set(named.map((row) => row.paymentId))] };
+  if (credits.size === 1 && memberCreditId) {
+    return { memberCreditId, paymentIds: [...new Set(raised.filter((row) => row.memberCreditId === memberCreditId).map((row) => row.paymentId))] };
+  }
+  return { paymentIds: [...new Set(raised.map((row) => row.paymentId))] };
 }
 
 /**

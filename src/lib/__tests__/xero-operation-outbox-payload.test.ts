@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   getQueuedOutboxExpectedOperation,
+  isAccountCreditNotePayload,
   readQueuedOutboxPayload,
   readQueueType,
   subscriptionInvoiceChargeId,
@@ -422,5 +423,21 @@ describe("xero operation outbox payload parsing", () => {
         expectedEntityTypes.get(queueType)
       );
     }
+  });
+});
+
+describe("isAccountCreditNotePayload (#4705, PR #4711 review)", () => {
+  it("MUTATION: reads an account-credit note's queued and executed shapes as its own", () => {
+    expect(isAccountCreditNotePayload({ queueType: "ACCOUNT_CREDIT_NOTE", refundAmountCents: 5000 })).toBe(true);
+    expect(isAccountCreditNotePayload({ creditNotes: [], refundAmountCents: 5000, queueType: "ACCOUNT_CREDIT_NOTE", memberCreditId: "credit_1" })).toBe(true);
+    // An inline create's executed shape: no queue type, the amount kept.
+    expect(isAccountCreditNotePayload({ creditNotes: [], refundAmountCents: 5000 })).toBe(true);
+  });
+
+  it("MUTATION: refuses an applied-credit remainder mint, a refund note, and every other queue type", () => {
+    expect(isAccountCreditNotePayload({ creditNotes: [{ lineItems: [{ unitAmount: 50 }] }] })).toBe(false);
+    expect(isAccountCreditNotePayload({ creditNotes: [], allocation: { invoiceId: "inv_1", amount: 50 }, refundAmountCents: 5000 })).toBe(false);
+    expect(isAccountCreditNotePayload({ queueType: "REFUND_CREDIT_NOTE", refundAmountCents: 5000 })).toBe(false);
+    expect(isAccountCreditNotePayload({ queueType: "MODIFICATION_ACCOUNT_CREDIT_NOTE", refundAmountCents: 5000 })).toBe(false);
   });
 });

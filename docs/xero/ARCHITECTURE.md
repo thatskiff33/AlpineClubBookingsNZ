@@ -2097,10 +2097,13 @@ on `manuallyResolvedAt`.
     cannot stamp a second note: it writes only the credit the row names, by
     id, else one by the old match, and only while it names none
     (`xeroCreditNoteId: null`, `INV-INT-036`, #4685). The inbound
-    credit-note reconcile stamps through the same module, with the credit the
-    note's own outbox row named, else the old match one credit at a time,
-    and only a note no lot or applied slice records yet - never through a
-    payment only #1925's local provenance resolves (#4705). After a manual resolve - a plain one, since the numbered resolve
+    credit-note reconcile stamps through the same module, and only a note no
+    lot or applied slice records yet, through a payment whose own outbox row
+    raised it as an account-credit note (`isAccountCreditNotePayload`): the
+    credit that row named, else the old match one credit at a time. A link
+    alone - one #1925's local provenance wrote (#4712), or a note made by
+    hand in Xero - stamps nothing (#4705). After a manual resolve - a plain
+    one, since the numbered resolve
     (`INV-INT-028`) is for refund notes only and an account-credit row records
     no note - the late note is the only one the app knows, and its completion
     lands on the resolved row too (`INV-INT-029`: a success lands on any row

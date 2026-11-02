@@ -145,19 +145,28 @@ describe("accountCreditNoteRaisedFor (#4705)", () => {
     });
   });
 
-  it("MUTATION: rows naming no credit, or different credits, tie the note to none", async () => {
+  it("MUTATION: rows naming no credit, or different credits, name none, and return every payment that raised the note", async () => {
     mocks.operationFindMany.mockResolvedValue([{ localId: "pay_1", requestPayload: { queueType: "ACCOUNT_CREDIT_NOTE", refundAmountCents: 5000 } }, { localId: "pay_1", requestPayload: null }]);
-    await expect(accountCreditNoteRaisedFor(params)).resolves.toBeNull();
+    await expect(accountCreditNoteRaisedFor(params)).resolves.toEqual({ paymentIds: ["pay_1"] });
 
     mocks.operationFindMany.mockResolvedValue([
-      { localId: "pay_1", requestPayload: { memberCreditId: "credit_a" } },
-      { localId: "pay_2", requestPayload: { memberCreditId: "credit_b" } },
+      { localId: "pay_1", requestPayload: { queueType: "ACCOUNT_CREDIT_NOTE", refundAmountCents: 5000, memberCreditId: "credit_a" } },
+      { localId: "pay_2", requestPayload: { creditNotes: [], refundAmountCents: 5000, memberCreditId: "credit_b" } },
     ]);
-    await expect(accountCreditNoteRaisedFor(params)).resolves.toBeNull();
+    await expect(accountCreditNoteRaisedFor(params)).resolves.toEqual({ paymentIds: ["pay_1", "pay_2"] });
+  });
+
+  it("MUTATION (PR #4711 review): a payment whose row for the note is not an account-credit note's raised it for no credit", async () => {
+    mocks.operationFindMany.mockResolvedValue([
+      // An applied-credit remainder mint, and a refund note, naming the note.
+      { localId: "pay_1", requestPayload: { creditNotes: [{ lineItems: [{ unitAmount: 50 }] }] } },
+      { localId: "pay_2", requestPayload: { creditNotes: [], allocation: { invoiceId: "inv_1", amount: 50 }, memberCreditId: "credit_b" } },
+    ]);
+    await expect(accountCreditNoteRaisedFor(params)).resolves.toEqual({ paymentIds: [] });
   });
 
   it("asks nothing without a payment to scope the read to", async () => {
-    await expect(accountCreditNoteRaisedFor({ creditNoteId: "cn_1", paymentIds: [] })).resolves.toBeNull();
+    await expect(accountCreditNoteRaisedFor({ creditNoteId: "cn_1", paymentIds: [] })).resolves.toEqual({ paymentIds: [] });
     expect(mocks.operationFindMany).not.toHaveBeenCalled();
   });
 });

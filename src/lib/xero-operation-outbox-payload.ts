@@ -106,6 +106,19 @@ interface QueuedAccountCreditNoteOutboxPayload {
   memberCreditId?: string; // #4685: the credit the note is for; absent on rows queued before it
 }
 
+/**
+ * #4705 (PR #4711 review): whether a payment's credit-note CREATE row is an
+ * account-credit note's - queued as one, or executed by
+ * `createUnappliedXeroCreditNote`, whose payload always keeps
+ * `refundAmountCents` and carries no refund allocation. An applied-credit
+ * remainder mint (`creditNotes` alone) and a refund note are not.
+ */
+export function isAccountCreditNotePayload(payload: Record<string, unknown>): boolean {
+  const queueType = readString(payload.queueType);
+  if (queueType !== null) return queueType === XERO_OUTBOX_ACCOUNT_CREDIT_NOTE_TYPE;
+  return readNumber(payload.refundAmountCents) !== null && payload.allocation === undefined;
+}
+
 /** #4685: the account-credit note's own credit, read the same way from the queued and executed shapes. */
 export function readAccountCreditNoteCredit(payload: Record<string, unknown>): { memberCreditId?: string } {
   const memberCreditId = readString(payload.memberCreditId);
