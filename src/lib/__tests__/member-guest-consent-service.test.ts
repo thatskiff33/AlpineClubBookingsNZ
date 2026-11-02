@@ -1584,6 +1584,33 @@ describe("#3954: a decline or expiry whose reduction retired an unpaid ask settl
     expect(h.mint.mock.calls[0]?.[0].result).toBe(netted);
   });
 
+  it("MUTATION (#4693): reaches the minter when the removal netted off a waiting ask outright - no row retired, nothing re-issued - so its recovery is swept", async () => {
+    const cancelled = removalResult({ unpaidAskCancelled: true });
+    h.removeGuest.mockImplementationOnce(async ({ guestId }: { guestId: string }) => {
+      world().guests.delete(guestId);
+      return cancelled;
+    });
+    const outcome = await respondToMemberGuestConsent({
+      format: CLUB_FORMAT_TEST,
+      bookingId: BOOKING,
+      guestId: GUEST,
+      actorMemberId: TARGET,
+      action: "DECLINE",
+      now: NOW,
+      delegateResolver: acceptDelegate,
+    });
+    await finaliseMemberGuestConsentTransition({
+      format: CLUB_FORMAT_TEST,
+      bookingId: BOOKING,
+      guestId: GUEST,
+      targetMemberId: TARGET,
+      outcome,
+      actorMemberId: TARGET,
+    });
+    expect(h.mint).toHaveBeenCalledTimes(1);
+    expect(h.mint.mock.calls[0]?.[0].result).toBe(cancelled);
+  });
+
   it("reaches no minter for a removal that retired nothing", async () => {
     const outcome = await respondToMemberGuestConsent({
       format: CLUB_FORMAT_TEST,

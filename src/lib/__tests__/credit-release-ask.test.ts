@@ -469,7 +469,7 @@ describe("processCreditReleaseAskOperation", () => {
    */
   describe("#4652: a lost claim cancels the intent it minted only once its row was closed without it", () => {
     const KEY = buildCreditReleaseAskStripeIdempotencyKey("rel-1");
-    const PROOF_READ = { where: { id: "op-1" }, select: { status: true, lastError: true, paymentIntentId: true } };
+    const PROOF_READ = { where: { id: "op-1" }, select: { status: true, lastError: true, paymentIntentId: true, attempts: true } };
     const cancelledWithOpen: number[] = [];
 
     function loseClaimTo(moved: Record<string, unknown> | null, owners: { row?: { id: string } | null; recovery?: { id: string } | null } = {}) {
@@ -584,7 +584,7 @@ describe("processCreditReleaseAskOperation", () => {
    */
   describe("#4676: a hold that throws cancels its minted intent only on the lost hold's proof, then rethrows", () => {
     const KEY = buildCreditReleaseAskStripeIdempotencyKey("rel-1");
-    const PROOF_READ = { where: { id: "op-1" }, select: { status: true, lastError: true, paymentIntentId: true } };
+    const PROOF_READ = { where: { id: "op-1" }, select: { status: true, lastError: true, paymentIntentId: true, attempts: true } };
     const cancelledWithOpen: number[] = [];
 
     function throwHoldThenRead(moved: Record<string, unknown> | null, owners: { row?: { id: string } | null } = {}) {

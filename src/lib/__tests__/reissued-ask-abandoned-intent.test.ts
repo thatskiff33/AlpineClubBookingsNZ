@@ -160,10 +160,15 @@ describe("settleLostRecoveryClaimHold (#4631, #4652)", () => {
     // (an amount-suffixed key), or closed the row without one, and nothing reopens it.
     ["closed by a reclaiming runner with ANOTHER intent", null, "pi_reclaimer", "minted-elsewhere"],
     ["closed by a reclaiming runner with no intent", null, KEY, "minted-elsewhere"],
+    // #4693: failed for good - no claim, door or reduction takes the row again.
+    ["failed for good (its attempts spent)", "out of attempts", KEY, "failed-for-good"],
   ])("MUTATION: a recovery %s has the runner's unwritten intent cancelled as abandoned", async (_label, lastError, paymentIntentId, closedBy) => {
-    h.recovery = { status: "SUCCEEDED", lastError, paymentIntentId };
+    h.recovery =
+      closedBy === "failed-for-good"
+        ? { status: "FAILED", lastError, paymentIntentId, attempts: 5, nextRetryAt: null }
+        : { status: "SUCCEEDED", lastError, paymentIntentId, attempts: 2 };
     await settleLostRecoveryClaimHold(RUNNER);
-    expect(h.recoveryFind).toHaveBeenCalledWith({ where: { id: "op_recovery" }, select: { status: true, lastError: true, paymentIntentId: true } });
+    expect(h.recoveryFind).toHaveBeenCalledWith({ where: { id: "op_recovery" }, select: { status: true, lastError: true, paymentIntentId: true, attempts: true } });
     expect(h.rowFind).toHaveBeenCalledWith({ where: { stripePaymentIntentId: "pi_runner" }, select: { id: true } });
     expect(h.ownerOpFind).toHaveBeenCalledWith({ where: { paymentIntentId: "pi_runner" }, select: { id: true } });
     expect(h.cancel).toHaveBeenCalledWith("pi_runner", { cancellationReason: "abandoned" });
@@ -197,8 +202,10 @@ describe("settleLostRecoveryClaimHold (#4631, #4652)", () => {
     // #4652: a stated limit - a live claim, and a later run of it may still mint under this key.
     ["reclaimed by a runner that already wrote ANOTHER intent (PROCESSING)", { status: "PROCESSING", lastError: null, paymentIntentId: "pi_reclaimer" }],
     ["completed naming THIS intent (the reclaiming runner wrote it)", { status: "SUCCEEDED", lastError: null, paymentIntentId: "pi_runner" }],
-    ["failed for good", { status: "FAILED", lastError: "out of attempts", paymentIntentId: KEY }],
-    ["failed after writing ANOTHER intent", { status: "FAILED", lastError: "Xero is down", paymentIntentId: "pi_reclaimer" }],
+    // #4693: a FAILED row with attempts left will run again, so it is no proof; only one failed for good is.
+    ["failed with a retry left", { status: "FAILED", lastError: "Stripe is down", paymentIntentId: KEY, attempts: 4, nextRetryAt: new Date("2026-07-01T01:00:00.000Z") }],
+    ["failed after writing ANOTHER intent, with a retry left", { status: "FAILED", lastError: "Xero is down", paymentIntentId: "pi_reclaimer", attempts: 2, nextRetryAt: new Date("2026-07-01T01:00:00.000Z") }],
+    ["failed for good naming THIS intent", { status: "FAILED", lastError: "out of attempts", paymentIntentId: "pi_runner", attempts: 5, nextRetryAt: null }],
     ["gone", null],
   ])("MUTATION: a recovery %s is never a proof - nothing cancelled", async (_label, moved) => {
     h.recovery = moved;
