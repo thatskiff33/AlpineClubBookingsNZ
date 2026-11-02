@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const {
   mockFindMany,
   mockGetValue,
-  mockNeedsReentry,
+  mockUnreadableKeys,
   mockSetCredential,
   mockDeleteCredential,
   mockReadRow,
@@ -11,7 +11,7 @@ const {
   mockFindMany: vi.fn(),
   mockGetValue: vi.fn(),
   mockReadRow: vi.fn(),
-  mockNeedsReentry: vi.fn(),
+  mockUnreadableKeys: vi.fn(),
   mockSetCredential: vi.fn(),
   mockDeleteCredential: vi.fn(),
 }));
@@ -24,7 +24,7 @@ vi.mock("@/lib/prisma", () => ({
 
 vi.mock("@/lib/integration-credentials", () => ({
   getIntegrationCredentialValue: (...a: unknown[]) => mockGetValue(...a),
-  providerNeedsReentry: (...a: unknown[]) => mockNeedsReentry(...a),
+  providerUnreadableKeys: (...a: unknown[]) => mockUnreadableKeys(...a),
   setIntegrationCredential: (...a: unknown[]) => mockSetCredential(...a),
   deleteIntegrationCredential: (...a: unknown[]) => mockDeleteCredential(...a),
   readIntegrationCredentialRow: (...a: unknown[]) => mockReadRow(...a),
@@ -56,7 +56,7 @@ function rows(pairs: [string, Date][]): { key: string; updatedAt: Date }[] {
 describe("stripe-config resolvers", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockNeedsReentry.mockResolvedValue(false);
+    mockUnreadableKeys.mockResolvedValue([]);
   });
 
   it("resolves the secret key from the encrypted store", async () => {
@@ -109,7 +109,7 @@ describe("stripe-config resolvers", () => {
 describe("recordStripeWebhookVerified writes only when it would change the answer (#2723)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockNeedsReentry.mockResolvedValue(false);
+    mockUnreadableKeys.mockResolvedValue([]);
     mockSetCredential.mockResolvedValue(undefined);
     mockReadRow.mockResolvedValue(storedSecret(VERIFIED_WITH));
   });
@@ -275,7 +275,7 @@ describe("recordStripeWebhookVerified attests only to the secret it was verified
 describe("getStripeSetupState webhook-verified freshness", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockNeedsReentry.mockResolvedValue(false);
+    mockUnreadableKeys.mockResolvedValue([]);
   });
 
   const secretAt = new Date("2026-07-20T00:00:00.000Z");
@@ -316,5 +316,40 @@ describe("getStripeSetupState webhook-verified freshness", () => {
     const state = await getStripeSetupState();
     expect(state.webhookVerified).toBe(false);
     expect(state.webhookSecretSet).toBe(false);
+  });
+});
+
+describe("getStripeSetupState per-step re-entry (#98)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockFindMany.mockResolvedValue([]);
+  });
+
+  it("an unreadable webhook secret alone flags only the webhook step", async () => {
+    mockUnreadableKeys.mockResolvedValue(["webhook_secret"]);
+    const state = await getStripeSetupState();
+    expect(mockUnreadableKeys).toHaveBeenCalledWith(STRIPE_PROVIDER);
+    expect(state.needsReentry).toBe(true);
+    expect(state.keysNeedReentry).toBe(false);
+    expect(state.webhookSecretNeedsReentry).toBe(true);
+  });
+
+  it.each([["secret_key"], ["publishable_key"]])(
+    "an unreadable %s flags the keys step",
+    async (key) => {
+      mockUnreadableKeys.mockResolvedValue([key]);
+      const state = await getStripeSetupState();
+      expect(state.needsReentry).toBe(true);
+      expect(state.keysNeedReentry).toBe(true);
+      expect(state.webhookSecretNeedsReentry).toBe(false);
+    },
+  );
+
+  it("everything readable flags nothing", async () => {
+    mockUnreadableKeys.mockResolvedValue([]);
+    const state = await getStripeSetupState();
+    expect(state.needsReentry).toBe(false);
+    expect(state.keysNeedReentry).toBe(false);
+    expect(state.webhookSecretNeedsReentry).toBe(false);
   });
 });

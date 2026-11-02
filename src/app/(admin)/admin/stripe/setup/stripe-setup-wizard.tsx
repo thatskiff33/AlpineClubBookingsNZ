@@ -6,6 +6,7 @@ import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import { IntegrationWizard } from "@/components/admin/integration-wizard";
 import type { WizardStepConfig } from "@/components/admin/integration-wizard";
 import {
+  credentialsStepVerified,
   useStripeWizardContext,
   type StripeWizardContext,
   type StripeWizardServerConfig,
@@ -48,10 +49,7 @@ export function StripeSetupWizard({
         id: "credentials",
         title: "Enter keys",
         summary: "Secret + publishable",
-        isVerified: (ctx) =>
-          ctx.credentials.secret_key.set &&
-          ctx.credentials.publishable_key.set &&
-          !ctx.needsReentry,
+        isVerified: credentialsStepVerified,
         render: (ctx, helpers) => (
           <CredentialsStep context={ctx} helpers={helpers} />
         ),

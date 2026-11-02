@@ -19,7 +19,7 @@ import { prisma } from "@/lib/prisma";
 import {
   deleteIntegrationCredential,
   getIntegrationCredentialValue,
-  providerNeedsReentry,
+  providerUnreadableKeys,
   readIntegrationCredentialRow,
   setIntegrationCredential,
 } from "@/lib/integration-credentials";
@@ -267,6 +267,14 @@ export interface StripeSetupState {
   /** Any stored Stripe credential fails to decrypt (the auth secret changed). */
   needsReentry: boolean;
   /**
+   * The secret or publishable key fails to decrypt: the keys step asks for
+   * them. Apart from the webhook secret, which only the later webhook step can
+   * replace, so it must not block the keys step (#98).
+   */
+  keysNeedReentry: boolean;
+  /** The webhook signing secret fails to decrypt: the webhook step asks for it. */
+  webhookSecretNeedsReentry: boolean;
+  /**
    * A signature-verified webhook event arrived AND the marker is fresh — i.e.
    * it was recorded at or after the current webhook secret was last written.
    * A signing-secret swap makes the secret newer than the marker, so the badge
@@ -303,11 +311,17 @@ export async function getStripeSetupState(): Promise<StripeSetupState> {
     byKey.get(STRIPE_CREDENTIAL_KEYS.webhookSecret),
   );
 
+  const unreadable = new Set(await providerUnreadableKeys(STRIPE_PROVIDER));
+
   return {
     secretKeySet: byKey.has(STRIPE_CREDENTIAL_KEYS.secretKey),
     publishableKeySet: byKey.has(STRIPE_CREDENTIAL_KEYS.publishableKey),
     webhookSecretSet: byKey.has(STRIPE_CREDENTIAL_KEYS.webhookSecret),
-    needsReentry: await providerNeedsReentry(STRIPE_PROVIDER),
+    needsReentry: unreadable.size > 0,
+    keysNeedReentry:
+      unreadable.has(STRIPE_CREDENTIAL_KEYS.secretKey) ||
+      unreadable.has(STRIPE_CREDENTIAL_KEYS.publishableKey),
+    webhookSecretNeedsReentry: unreadable.has(STRIPE_CREDENTIAL_KEYS.webhookSecret),
     webhookVerified,
   };
 }
