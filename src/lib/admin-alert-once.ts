@@ -41,11 +41,12 @@ export async function sendAdminAlertOnceEver(args: OnceEverAlertArgs): Promise<b
 
 /*
  * #4696 CENSUS: every `sendAdminAlertOnceEver` caller, and what its next run
- * does with an uncertain claim given back. The give-back never lets a sibling
- * send twice: it deletes only a row stamped with this call's own stamp, and
- * the call sent nothing; a sibling that read that row held sent nothing; a
- * sibling's own claim carries its own stamp. Limit: two claims for one key in
- * the same millisecond share a stamp, so at worst a duplicate, never a loss.
+ * does with an uncertain claim given back. The give-back cannot let a sibling
+ * send twice, bar one limit: it deletes only a row stamped with this call's own
+ * stamp, and the call sent nothing; a sibling that read that row held sent
+ * nothing; a sibling's own claim carries its own stamp. The limit: two claims
+ * for one key in the same millisecond share a stamp, so at worst a duplicate,
+ * never a loss.
  * The claim-reporting callers (`admin-alert-once-takeover.ts`) give back
  * their own.
  *
