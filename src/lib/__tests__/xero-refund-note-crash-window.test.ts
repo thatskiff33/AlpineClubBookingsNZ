@@ -47,6 +47,12 @@ const state = vi.hoisted(() => ({
   onPayment: null as null | (() => void),
   bankTransferAccount: "090" as string | null,
   crash: null as null | "at-settlement" | "at-completion",
+  /**
+   * #4656: the next refund-note record's transaction (the one run on the Payment row's 30s budget)
+   * cannot get its locks (`lose-wait`, nothing written), or commits and still answers P2028
+   * (`commit-then-error`).
+   */
+  recordFault: null as null | "lose-wait" | "commit-then-error",
   xero: {
     notes: new Map<string, XeroNote>(),
     noteKeys: new Map<string, string>(),
@@ -159,7 +165,15 @@ vi.mock("@/lib/prisma", () => {
     $executeRaw: vi.fn(async () => 1),
     // #4656: PostgreSQL's rollback. The record now claims its row before it checks the note fresh, so a
     // refusal must leave nothing it wrote - the row's claim included - as the real transaction does.
-    $transaction: vi.fn(async (run: (tx: unknown) => unknown) => {
+    $transaction: vi.fn(async (run: (tx: unknown) => unknown, options?: { timeout?: number }) => {
+      const fault = options?.timeout === 30_000 ? state.recordFault : null;
+      if (fault) state.recordFault = null;
+      const lostWait = () => Object.assign(new Error("Transaction already closed: the timeout for this transaction was 30000 ms"), { code: "P2028" });
+      if (fault === "lose-wait") throw lostWait();
+      if (fault === "commit-then-error") {
+        await run(prisma);
+        throw lostWait();
+      }
       const payment = state.payment && { ...state.payment };
       const links = state.links.map((link) => ({ ...link }));
       const operations = state.operations.map((operation) => [operation, { ...operation }] as const);
@@ -461,6 +475,7 @@ import { XeroRefundCreditNoteInFlightError } from "@/lib/xero-applied-credit-ope
 import { addUnsettledRefundCreditNoteFindings } from "@/lib/xero-booking-repair-findings";
 import type { BookingXeroRepairAction, MutableFinding } from "@/lib/xero-booking-repair-types";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
+import { RefundNoteNotRecordedError } from "@/lib/xero-refund-note-record";
 
 const PAYMENT_ID = "cmpayment0001xyz";
 const NOTE_KEY_5000 = "payment:cmpayment0001xyz:refund-credit-note:5000:v2";
@@ -586,6 +601,7 @@ beforeEach(() => {
   state.onPayment = null;
   state.bankTransferAccount = "090";
   state.crash = null;
+  state.recordFault = null;
   state.xero.notes = new Map();
   state.xero.noteKeys = new Map();
   state.xero.paymentKeys = new Map();
@@ -922,6 +938,49 @@ describe("a refund note interrupted between the two persists (#3548)", () => {
     expect(state.xero.notes.size).toBe(1);
     expect(row()).toMatchObject({ status: "SUCCEEDED" });
     expect(row().responsePayload).toMatchObject({ refundPayment: { paymentID: "pay_1" }, interruptedAttemptCompleted: true });
+  });
+});
+
+describe("#4656: a note Xero made whose record could not get its locks is never reported as a success", () => {
+  it("MUTATION: the outbox's create throws RefundNoteNotRecordedError and leaves its row RUNNING - never FAILED, settled or completed", async () => {
+    queueRefundNote("op_1", 5000, 5000);
+    state.recordFault = "lose-wait";
+
+    const error = await dispatch("op_1").then(() => null, (thrown: unknown) => thrown);
+    expect(error).toBeInstanceOf(RefundNoteNotRecordedError);
+    expect(error).toMatchObject({ outcome: "record-wait-lost", note: { operationId: "op_1", creditNoteId: "cn_1" } });
+    expect(row("op_1")).toMatchObject({ status: "RUNNING", xeroObjectId: null });
+    expect(state.xero.notes.size).toBe(1);
+    expect(state.xero.createPaymentsCalls).toEqual([]);
+    expect(state.links).toEqual([]);
+    expect(state.payment!.xeroRefundCreditNoteId).toBeNull();
+  });
+
+  it("MUTATION (S2): a retry's inline row whose record loses its wait throws to the queue, its row left RUNNING, nothing settled", async () => {
+    queueRefundNote("op_1", 5000, 5000);
+    state.xero.failNextCreate = true;
+    await expect(dispatch("op_1")).rejects.toThrow();
+    expect(row("op_1").status).toBe("FAILED");
+
+    state.recordFault = "lose-wait";
+    const error = await retry("op_1").then(() => null, (thrown: unknown) => thrown);
+    expect(error).toBeInstanceOf(RefundNoteNotRecordedError);
+    const inline = state.operations.find((operation) => operation.id !== "op_1")!;
+    expect((error as RefundNoteNotRecordedError).note.operationId).toBe(inline.id);
+    expect(inline).toMatchObject({ status: "RUNNING", xeroObjectId: null });
+    expect(state.xero.createPaymentsCalls).toEqual([]);
+    expect(state.links).toEqual([]);
+  });
+
+  it("MUTATION (nit 6): a record that committed though it answered P2028 is this run's own - it settles and completes the row", async () => {
+    queueRefundNote("op_1", 5000, 5000);
+    state.recordFault = "commit-then-error";
+
+    await expect(dispatch("op_1")).resolves.toBe("cn_1");
+    expect(row("op_1")).toMatchObject({ status: "SUCCEEDED", xeroObjectId: "cn_1" });
+    expect(row("op_1").responsePayload).toMatchObject({ refundPayment: { paymentID: "pay_1" } });
+    expect(state.xero.createPaymentsCalls).toHaveLength(1);
+    expectNoSucceededRowWithNeither();
   });
 });
 

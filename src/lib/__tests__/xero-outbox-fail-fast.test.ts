@@ -194,6 +194,7 @@ import {
 import { XeroContactEnvironmentUnknownError } from "@/lib/xero-environment-write-gate";
 import { processQueuedXeroOutboxOperations } from "@/lib/xero-operation-outbox";
 import { NOT_A_XERO_REPAIR_CLAIM } from "@/lib/xero-operation-outcome-guard";
+import { RefundNoteNotRecordedError } from "@/lib/xero-refund-note-record";
 
 /** Seed one PENDING row into both the store and the initial scan result. */
 function seedOperation(row: Partial<StoredOperation> & { id: string }) {
@@ -282,6 +283,22 @@ describe("outbox processor fail-fast for all queue types (#1354)", () => {
     );
     expect(mocks.rows.get("op_refund_1")?.status).toBe("FAILED");
   });
+
+  it.each(["record-wait-lost", "resolved-by-hand"] as const)(
+    "MUTATION (#4656): a refund note made but not recorded (%s) leaves its row as the record left it - counted skipped, never failed or succeeded",
+    async (outcome) => {
+      queueOneRefundOperation();
+      mocks.createXeroCreditNote.mockRejectedValue(
+        new RefundNoteNotRecordedError(outcome, { operationId: "op_refund_1", creditNoteId: "cn-x", creditNoteNumber: "CN-X" }),
+      );
+
+      const result = await processQueuedXeroOutboxOperations({ limit: 1 });
+
+      expect(result).toMatchObject({ found: 1, failed: 0, succeeded: 0, skipped: 1 });
+      expect(mocks.failXeroSyncOperation).not.toHaveBeenCalled();
+      expect(mocks.rows.get("op_refund_1")?.status).toBe("RUNNING");
+    },
+  );
 
   // #2423 review F2. A process-global cooldown refused this operation before any
   // HTTP, so nothing was sent and the row must go back to PENDING for the next

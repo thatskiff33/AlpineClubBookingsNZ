@@ -56,10 +56,19 @@ export interface LateNoteTrace {
   audit: (trace: Record<string, unknown>, row: XeroSyncOperation | null) => Promise<void>;
   /** The alert's body for this row and late note; omitted, a refund note's (#4426). */
   alertMessage?: (row: XeroSyncOperation, late: UnrecordedXeroObject) => string;
+  /** The alert's log line; omitted, a late success kept off a reset or resolved row (#4426). */
+  alertWarning?: string;
 }
 
+/**
+ * What the trace found. `same-note`: the re-read row records this very note,
+ * so nothing was audited or alerted; the row is handed back for the caller to
+ * judge whose record that was (#4656). `traced`: everything else.
+ */
+export type LateNoteTraceResult = { kind: "same-note"; row: XeroSyncOperation } | { kind: "traced" };
+
 /** Log, audit and alert a late note the create did not record. Never throws. */
-export async function traceUnrecordedLateNote(note: UnrecordedLateNote, report: LateNoteTrace): Promise<void> {
+export async function traceUnrecordedLateNote(note: UnrecordedLateNote, report: LateNoteTrace): Promise<LateNoteTraceResult> {
   const trace = {
     operationId: note.operationId,
     ...report.context,
@@ -76,11 +85,11 @@ export async function traceUnrecordedLateNote(note: UnrecordedLateNote, report: 
     row = await prisma.xeroSyncOperation.findUnique({ where: { id: note.operationId } });
   } catch (error) {
     logger.error({ ...trace, err: error }, `${notRecorded}, and its operation could not be re-read: no audit row or alert; this log is its only record (${report.issue})`);
-    return;
+    return { kind: "traced" };
   }
   if (row?.xeroObjectId === note.creditNoteId) {
     logger.info(trace, report.sameNote);
-    return;
+    return { kind: "same-note", row };
   }
   try {
     await report.audit(trace, row);
@@ -89,7 +98,7 @@ export async function traceUnrecordedLateNote(note: UnrecordedLateNote, report: 
   }
   if (!row) {
     logger.error(trace, `${notRecorded}, and its operation row is gone: no alert sent (${report.issue})`);
-    return;
+    return { kind: "traced" };
   }
   try {
     const late: UnrecordedXeroObject = {
@@ -99,10 +108,11 @@ export async function traceUnrecordedLateNote(note: UnrecordedLateNote, report: 
       amount: await formattedAmount(note),
       bookingId: note.bookingId,
     };
-    await unrecordedLateSuccessAlert(row, late, report.alertMessage?.(row, late))();
+    await unrecordedLateSuccessAlert(row, late, report.alertMessage?.(row, late), report.alertWarning)();
   } catch (error) {
     logger.error({ ...trace, err: error }, `${notRecorded}, and its alert failed (${report.issue})`);
   }
+  return { kind: "traced" };
 }
 
 /** The note's amount in the club's money format, or null when the format cannot be read (the alert still goes). */

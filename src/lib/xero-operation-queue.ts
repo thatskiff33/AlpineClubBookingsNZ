@@ -24,6 +24,7 @@ import { xeroSyncErrorText } from "@/lib/xero-sync-error-text";
 import { XeroRefundCreditNoteInFlightError } from "@/lib/xero-applied-credit-operation-serialization";
 import { XERO_REQUEUE_OPERATION_TYPE } from "@/lib/xero-hardening-shared";
 import { isRetryOfVoidedRefundRequestNote, VOIDED_REQUEST_NOTE_RETRY_REASON } from "@/lib/xero-refund-note-status";
+import { RefundNoteNotRecordedError } from "@/lib/xero-refund-note-record";
 
 // The requeue correlation key is `${REQUEUE_CORRELATION_KEY_PREFIX}${originalOperationId}`.
 // Operation IDs are cuids, so the key stays well under the idempotency-key
@@ -277,6 +278,36 @@ export async function processQueuedXeroOperationRetries(
           },
         });
         result.skipped += 1;
+        continue;
+      }
+      if (error instanceof RefundNoteNotRecordedError) {
+        // #4656 (`INV-INT-029`): the retry ran and Xero made a refund note its
+        // record did not write - it could not get its locks in time, or the row
+        // it ran on was resolved by hand recording a note meanwhile. Never a
+        // success: the note is already audited and alerted, and the row it ran
+        // on is left as the record left it. A lost record fails this row with
+        // the note named and no advice to requeue (a retry could make a second
+        // note); a resolve that kept it out closes this row skipped, as a
+        // retry the resolve refused does.
+        if (error.outcome === "record-wait-lost") {
+          await failXeroSyncOperation(claimed, error, undefined, {
+            lastErrorMessage: `Retry of Xero operation ${originalOperationId} ran, but did not finish: ${error.message}`,
+          });
+          result.failed += 1;
+        } else {
+          await completeXeroSyncOperation(claimed, {
+            status: "CANCELLED",
+            responsePayload: {
+              originalOperationId,
+              retriedOperationId: error.note.operationId,
+              skipped: "resolved-in-xero",
+              unrecordedCreditNoteId: error.note.creditNoteId,
+              unrecordedCreditNoteNumber: error.note.creditNoteNumber,
+              reason: error.message,
+            },
+          });
+          result.skipped += 1;
+        }
         continue;
       }
       if (error instanceof XeroRefundCreditNoteInFlightError) {
