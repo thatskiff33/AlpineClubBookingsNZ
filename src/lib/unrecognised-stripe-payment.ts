@@ -14,8 +14,9 @@
  *   so a redelivery, a lease takeover or a concurrent delivery writes nothing
  *   more; a later delivery reads the stored row;
  * - the alert by its once-ever `AlertCooldown` key, claimed before the send,
- *   and by `alertedAt` on the row, written only after a recipient was sent.
- *   A send that does not go out throws, the claim is given back, and the
+ *   and by `alertedAt` on the row, written only after a recipient was sent
+ *   or (#4669) the email retry cron holds its copies.
+ *   A send nobody received throws, the claim is given back, and the
  *   webhook answers 500 so Stripe redelivers; #4670: a delivery whose
  *   give-back failed gives back its own claim again and still fails. A claim
  *   still held with no `alertedAt` is a delivery that died: younger than the
@@ -53,7 +54,7 @@ import { ALERT_ONCE_EVER_WINDOW_MS, claimAlertCooldown, releaseAlertCooldown } f
 import { currencyHasTwoDecimalPlaces, canonicalCurrencyCode } from "@/lib/club-currency-minor-unit";
 import type { ClubFormat } from "@/lib/club-format";
 import { sendAdminUnmatchedAppStripePaymentAlert, sendAdminUnrecognisedStripePaymentAlert } from "@/lib/email";
-import { UNMUTEABLE_ALERT_SENT, type AdminAlertSendOutcome } from "@/lib/email/admin-alert-send-result";
+import { UNMUTEABLE_ALERT_SENT, type UnmuteableAdminAlertOutcome } from "@/lib/email/admin-alert-send-result";
 import type {
   UnmatchedAppStripePaymentAlertFields,
   UnrecognisedStripePaymentAlertFields,
@@ -211,8 +212,10 @@ async function ensureAlert(
       label: mail.label,
       context,
       send: async () => {
+        // #4669: `queued-for-retry` means the email retry cron holds every
+        // copy, so the claim is kept and Stripe must not redeliver for it.
         const outcome = await mail.send();
-        if (outcome !== "sent") {
+        if (outcome === "undelivered") {
           throw new UnrecognisedStripePaymentAlertNotSentError(row.stripePaymentIntentId);
         }
         await stampAlertSent(row, context);
@@ -402,7 +405,7 @@ function alertMail(
   row: UnrecognisedStripePayment,
   livemode: boolean,
   format: ClubFormat,
-): { label: string; send: () => Promise<AdminAlertSendOutcome> } {
+): { label: string; send: () => Promise<UnmuteableAdminAlertOutcome> } {
   const reason = row.reason;
   if (reason === UnrecognisedStripePaymentReason.NOT_APP_CREATED) {
     const fields = alertFields(row, livemode, format);
