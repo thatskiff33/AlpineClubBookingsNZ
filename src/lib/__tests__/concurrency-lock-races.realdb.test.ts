@@ -672,6 +672,13 @@ import "./resolve-records-refund-note.realdb.test";
 // late note lands as before. Skipped unless RUN_CONCURRENCY_RACE_TESTS=1; it
 // owns and cleans its own `race-4426-` fixtures.
 import "./xero-late-refund-note-after-resolve.realdb.test";
+// #4656 reuses it to prove the refund-note create's record asks freshness under
+// the Payment row (a second record of the same note queues there, though neither
+// takes the pointer, and is refused), records behind a holder past Prisma's 5s
+// default, and, behind one past its whole budget, records nothing, fails nothing
+// and audits and alerts the note once. Skipped unless RUN_CONCURRENCY_RACE_TESTS=1;
+// it owns and cleans its own `race-4656-` fixtures.
+import "./xero-refund-note-record-gaps.realdb.test";
 // #4655 reuses it to prove an organiser adjustment's credit note that Xero creates
 // after its stalled job was reset is recorded or surfaced: it lands on a reset or
 // re-queued row (one note, never a second), and on a row resolved by hand or held by

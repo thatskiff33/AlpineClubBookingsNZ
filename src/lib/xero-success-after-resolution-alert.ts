@@ -97,15 +97,16 @@ function objectLabel(type: string | null | undefined): string {
 
 /**
  * The late object as an officer reads it: "credit note CN-B for $200.00
- * (Xero id cn-b, booking b-1)".
+ * (Xero id cn-b, booking b-1)". #4656: also the refund note a timed-out record
+ * left unrecorded (`recordCreatedRefundNote`).
  */
-function unrecordedObjectDescription(late: UnrecordedXeroObject): string {
+export function describeUnrecordedObject(late: UnrecordedXeroObject): string {
   return `${objectLabel(late.xeroObjectType)} ${late.xeroObjectNumber ?? late.xeroObjectId}${late.amount ? ` for ${late.amount}` : ""} (Xero id ${late.xeroObjectId}${late.bookingId ? `, booking ${late.bookingId}` : ""})`;
 }
 
 /** The sentence every late-object alert opens its story with: a stalled attempt came back and made it. */
 export function stalledAttemptCameBack(late: UnrecordedXeroObject): string {
-  return `an earlier attempt at the same Xero call, which had stalled, came back: it made ${unrecordedObjectDescription(late)} in Xero.`;
+  return `an earlier attempt at the same Xero call, which had stalled, came back: it made ${describeUnrecordedObject(late)} in Xero.`;
 }
 
 /**

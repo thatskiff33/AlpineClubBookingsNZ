@@ -27,7 +27,7 @@ describe("the late refund note's real-database proof stays wired into CI (#4426)
     expect(suite).toContain("MUTATION: the officer resolved with B itself");
     expect(suite).toContain("MUTATION: a plain resolve recorded no note");
     expect(suite).toContain("race, canonical note: the create's record holding the Payment row makes the resolve's claim wait on it");
-    expect(suite).toContain("race, per-refund note (no pointer)");
+    expect(suite).toContain("race, per-refund note (no pointer): the resolve's claim still waits on the Payment row");
     expect(suite).toContain("pg_blocking_pids");
     expect(suite).toContain('assertSafeRaceDbUrl(RACE_DB_URL, "Late refund note after resolve (#4426)")');
     expect(suite.indexOf("assertSafeRaceDbUrl(RACE_DB_URL")).toBeLessThan(suite.indexOf('await import("@/lib/prisma")'));
