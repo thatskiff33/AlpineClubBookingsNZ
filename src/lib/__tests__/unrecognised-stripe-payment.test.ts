@@ -128,9 +128,11 @@ vi.mock("@/lib/email", () => ({
 // back when the send throws, through the store, so a failing release leaves it
 // held (#4670); a claim call that throws reports the stamp it tried to write
 // and gives nothing back (#4679). `unrecognised-stripe-payment-email-retry.test.ts`
-// runs the real helper.
-vi.mock("@/lib/admin-alert-once", async () => {
+// runs the real helper. The give-back of the takeover's own claim is the real
+// one (#4696 moved it here from the takeover module).
+vi.mock("@/lib/admin-alert-once", async (importOriginal) => {
   const { prisma } = await import("@/lib/prisma");
+  const { giveBackOwnOnceEverClaim } = await importOriginal<typeof import("@/lib/admin-alert-once")>();
   const heldIn = (keys: readonly string[]) => new Map([...state.heldKeys].filter(([key]) => keys.includes(key)));
   return {
     sendAdminAlertOnceEverClaim: async ({ key, send }: { key: string; send: () => Promise<unknown> }) => {
@@ -148,6 +150,7 @@ vi.mock("@/lib/admin-alert-once", async () => {
         return { kept: false, claimedAt, claimUncertain: false };
       }
     },
+    giveBackOwnOnceEverClaim,
     readHeldOnceEverAlertTimes: async (keys: readonly string[]) => heldIn(keys),
     findHeldOnceEverAlertKeys: async (keys: readonly string[]) => new Set(heldIn(keys).keys()),
   };
