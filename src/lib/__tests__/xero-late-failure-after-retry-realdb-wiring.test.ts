@@ -26,6 +26,10 @@ describe("the late failure's real-database proof stays wired into CI (#4673)", (
     expect(suite).toContain("MUTATION: stall, reset, Retry, the queued run fails under its own claim, then the stalled create fails");
     expect(suite).toContain("then the stalled run meets a cooldown - the queued run's FAILED row is not given back");
     expect(suite).toContain("then the stalled handler self-fails - the row stays CANCELLED");
+    // #4686: the late CANCELLED and PARTIAL on the Retry's queued row.
+    expect(suite).toContain("MUTATION (#4686): stall, reset, Retry queues the row, then a late CANCELLED");
+    expect(suite).toContain("MUTATION (#4686): stall, reset, Retry queues the row, then a late PARTIAL");
+    expect(suite).toContain("control (#4686): stall, reset, no Retry, then a late PARTIAL");
     expect(suite).toContain("markStaleRunningXeroOperationFailed");
     expect(suite).toContain("retryXeroSyncOperation");
     expect(suite).toContain('assertSafeRaceDbUrl(RACE_DB_URL, "Late failure after an in-place Retry (#4673)")');

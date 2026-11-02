@@ -34,6 +34,17 @@
  *   row stays CANCELLED. The withdrawal is that writer's status-guarded
  *   `updateMany` shape on this row, not the writer itself.
  *
+ * #4686, the same race for a late CANCELLED or PARTIAL (`completeXeroSyncOperation`
+ * under the stalled run's claim, as an in-place requeue type's handler writes it -
+ * a kept late capture's skip, a group invoice's emailed-not part-success):
+ * - Retry queued, then a late CANCELLED: the row stays PENDING and the queued run
+ *   completes;
+ * - Retry queued, then a late PARTIAL: the row stays PENDING, its object is not
+ *   linked, one `xero.operation.late_partial_not_recorded` audit row and one
+ *   alert name it, and the queued run completes;
+ * - control, no Retry: the late PARTIAL lands on its own claim's reset row,
+ *   recording its object, with no audit row or alert.
+ *
  * Ordinary Vitest runs skip the whole file. It reuses the guarded, disposable
  * loopback PostgreSQL `concurrency-lock-races.realdb.test.ts` provisions, which
  * imports this file so CI reaches it; it owns and cleans its own `race-4673-`
@@ -54,6 +65,9 @@ const BOOKING_ID = `${P}-booking`;
 const PAYMENT_ID = `${P}-payment`;
 const INVOICE_ID = `${P}-extra-invoice`;
 const NOTE_QUEUED = `${P}-note-queued`;
+/** #4686: the Xero object a stalled run's late part-success made. */
+const LATE_INVOICE = `${P}-late-invoice`;
+const LATE_PARTIAL_ACTION = "xero.operation.late_partial_not_recorded";
 const STALE_MS = 16 * 60_000;
 /** When the queued run claims the row: past the stale threshold, so its claim is a later one. */
 const QUEUED_RUN_AT = new Date("2026-07-01T00:40:00.000Z");
@@ -122,6 +136,9 @@ function fakeXero() {
   { timeout: 60_000 },
   () => {
     async function clearRun() {
+      const ops = (await prisma.xeroSyncOperation.findMany({ where: { localId: BOOKING_ID }, select: { id: true } })).map((op) => op.id);
+      await prisma.alertCooldown.deleteMany({ where: { key: { in: ops.map((op) => `xero-success-after-resolution:${op}:${LATE_INVOICE}`) } } });
+      await prisma.auditLog.deleteMany({ where: { entityId: { in: ops } } });
       await prisma.xeroSyncOperation.deleteMany({ where: { localId: BOOKING_ID } });
       await prisma.xeroObjectLink.deleteMany({ where: { localId: { in: [BOOKING_ID, PAYMENT_ID] } } });
     }
@@ -153,12 +170,17 @@ function fakeXero() {
     }, 60_000);
 
     let xero: ReturnType<typeof fakeXero>;
+    let send: ReturnType<typeof vi.fn>;
     beforeEach(async () => {
       await clearRun();
       xero = fakeXero();
       const apiClient = await import("@/lib/xero-api-client");
       vi.spyOn(apiClient, "getAuthenticatedXeroClient").mockResolvedValue({ xero: { accountingApi: xero.accountingApi }, tenantId: `tenant-${P}` } as never);
       vi.spyOn(apiClient, "callXeroApi").mockImplementation(((call: () => unknown) => call()) as never);
+      // #4686: the late part-success's alert, sent once per object; no email leaves the test.
+      const email = await import("@/lib/email");
+      send = vi.fn(async () => ({ deliveryAllowed: true, recipients: 1, sent: 1, queuedForRetry: 0, notDelivered: 0 }));
+      vi.spyOn(email, "sendAdminXeroSyncErrorAlert").mockImplementation(send as never);
     });
 
     afterEach(async () => {
@@ -294,6 +316,84 @@ function fakeXero() {
       xero.creates[0]!.fail(new Error("Xero 500: the stalled create failed"));
       await expect(stalled).resolves.toMatchObject({ succeeded: 0, failed: 0, skipped: 1 });
       expect(await row(operationId)).toMatchObject({ status: "CANCELLED", lastErrorCode: "WITHDRAWN_FOR_TEST" });
+    });
+
+    /** #4686: the stalled run's late outcome, under its own claim, as an in-place requeue type's handler writes it. */
+    async function lateOutcome(operationId: string, stalledClaimAt: Date, status: "CANCELLED" | "PARTIAL") {
+      const { completeXeroSyncOperation } = await import("@/lib/xero-sync");
+      return completeXeroSyncOperation(
+        { id: operationId, startedAt: stalledClaimAt },
+        status === "CANCELLED"
+          ? { status, responsePayload: { skipped: true, reason: "late skip" } }
+          : {
+              status, responsePayload: { invoice: { invoiceID: LATE_INVOICE }, emailError: "Xero 500: the email failed" },
+              xeroObjectType: "INVOICE", xeroObjectId: LATE_INVOICE, xeroObjectNumber: "INV-LATE",
+              extraLinks: [{ localModel: "Booking", localId: BOOKING_ID, xeroObjectType: "INVOICE", xeroObjectId: LATE_INVOICE, role: "SUPPLEMENTARY_INVOICE" }],
+            },
+      );
+    }
+
+    /** The queued run then runs and completes on its own claim: the Retry stood. */
+    async function queuedRunCompletes(operationId: string, stalled: Promise<unknown>) {
+      vi.setSystemTime(QUEUED_RUN_AT);
+      const queued = runOutbox();
+      await xero.reached(2);
+      xero.creates[1]!.answer(NOTE_QUEUED, "CN-QUEUED");
+      await expect(queued).resolves.toMatchObject({ succeeded: 1, failed: 0 });
+      expect(await row(operationId)).toMatchObject({ status: "SUCCEEDED", startedAt: QUEUED_RUN_AT, xeroObjectId: NOTE_QUEUED });
+      xero.creates[0]!.fail(new Error("Xero 500: the stalled create failed"));
+      await expect(stalled).resolves.toMatchObject({ succeeded: 0, failed: 0, skipped: 1 });
+      expect(await row(operationId)).toMatchObject({ status: "SUCCEEDED", startedAt: QUEUED_RUN_AT, xeroObjectId: NOTE_QUEUED });
+    }
+
+    const lateTrace = (operationId: string) => prisma.auditLog.findMany({ where: { entityId: operationId, action: LATE_PARTIAL_ACTION } });
+
+    it("MUTATION (#4686): stall, reset, Retry queues the row, then a late CANCELLED - the row stays PENDING and the queued run completes", async () => {
+      const { operationId, stalled, stalledClaimAt } = await stalledThenReset();
+      await retry(operationId);
+
+      await expect(lateOutcome(operationId, stalledClaimAt, "CANCELLED")).resolves.toBeNull();
+      expect(await row(operationId)).toMatchObject({ status: "PENDING", startedAt: null, completedAt: null, lastErrorCode: null, xeroObjectId: null });
+      expect(await lateTrace(operationId)).toEqual([]);
+      expect(send).not.toHaveBeenCalled();
+
+      await queuedRunCompletes(operationId, stalled);
+    });
+
+    it("MUTATION (#4686): stall, reset, Retry queues the row, then a late PARTIAL - the row stays PENDING, its object is traced, not linked, and the queued run completes", async () => {
+      const { operationId, stalled, stalledClaimAt } = await stalledThenReset();
+      await retry(operationId);
+
+      await expect(lateOutcome(operationId, stalledClaimAt, "PARTIAL")).resolves.toBeNull();
+      expect(await row(operationId)).toMatchObject({ status: "PENDING", startedAt: null, completedAt: null, lastErrorCode: null, xeroObjectId: null, responsePayload: null });
+      expect(await prisma.xeroObjectLink.count({ where: { xeroObjectId: LATE_INVOICE } })).toBe(0);
+      const audits = await lateTrace(operationId);
+      expect(audits).toHaveLength(1);
+      expect(audits[0]).toMatchObject({ category: "xero", severity: "important", outcome: "blocked" });
+      expect(audits[0]!.metadata).toMatchObject({ xeroObjectId: LATE_INVOICE, rowStatus: "PENDING", claimStartedAt: stalledClaimAt.toISOString() });
+      expect(send).toHaveBeenCalledTimes(1);
+      expect(send).toHaveBeenCalledWith(expect.objectContaining({ errorType: "XERO_SUCCESS_AFTER_RESOLUTION", errorMessage: expect.stringContaining("INV-LATE") }));
+      expect(await prisma.alertCooldown.count({ where: { key: `xero-success-after-resolution:${operationId}:${LATE_INVOICE}` } })).toBe(1);
+
+      // The same late answer again (a second delivery) records nothing more and alerts no one again.
+      await expect(lateOutcome(operationId, stalledClaimAt, "PARTIAL")).resolves.toBeNull();
+      expect(send).toHaveBeenCalledTimes(1);
+
+      await queuedRunCompletes(operationId, stalled);
+    });
+
+    it("control (#4686): stall, reset, no Retry, then a late PARTIAL - it lands on its own claim's reset row, recording its object, untraced", async () => {
+      const { operationId, stalled, stalledClaimAt } = await stalledThenReset();
+
+      await expect(lateOutcome(operationId, stalledClaimAt, "PARTIAL")).resolves.toMatchObject({ status: "PARTIAL", xeroObjectId: LATE_INVOICE });
+      expect(await row(operationId)).toMatchObject({ status: "PARTIAL", startedAt: stalledClaimAt, xeroObjectId: LATE_INVOICE });
+      expect(await prisma.xeroObjectLink.count({ where: { xeroObjectId: LATE_INVOICE, active: true } })).toBe(1);
+      expect(await lateTrace(operationId)).toEqual([]);
+      expect(send).not.toHaveBeenCalled();
+
+      xero.creates[0]!.fail(new Error("Xero 500: the stalled create failed"));
+      await stalled;
+      expect(await row(operationId)).toMatchObject({ status: "PARTIAL", xeroObjectId: LATE_INVOICE });
     });
 
     it("control: stall, reset, no Retry, then the stalled create fails - the failure lands on its own claim's reset row", async () => {
