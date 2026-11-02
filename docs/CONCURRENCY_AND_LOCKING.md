@@ -261,6 +261,22 @@ many milliseconds after the first was stamped, so that does not happen. No advis
 schema change or new participant. Proven against real PostgreSQL by
 `xero-shared-operation-outcome.realdb.test.ts`.
 
+Since #4673 a failure is narrower still: a FAILED outcome, from either writer,
+lands only on a row carrying its own claim's `startedAt`, RUNNING or already
+ended FAILED or CANCELLED (`keepCancelled` keeps CANCELLED), never on PENDING,
+WAITING_PAYMENT or SKIPPED. The race it closes: a run stalls, Reset stale
+running fails its row, an officer's Retry hands an in-place requeue type (the
+organiser adjustment, applied-credit allocation and deallocation, kept late
+capture, released change invoice, card receipt, group invoice and its VOIDs,
+subscription invoice, and the kept-capture close's requeue) back to PENDING
+with `startedAt` cleared, and the stalled run then fails. Its write matches
+nothing, so the queued Retry stands; the outbox counts the refusal skipped and
+exposes no charge error. A claim's own RUNNING row, a repair's marker aside,
+takes its failure, so a refusal never strands a row RUNNING. Still no advisory key, row lock, schema
+change or new participant: the claim is the row's `startedAt`, compared in the
+same status-guarded `updateMany`. Proven by
+`xero-late-failure-after-retry.realdb.test.ts`.
+
 ### The Xero token refresh uses a row lease, shared across colours (#3454)
 
 `xero-token-store.ts` composes no booking, capacity, membership or money
