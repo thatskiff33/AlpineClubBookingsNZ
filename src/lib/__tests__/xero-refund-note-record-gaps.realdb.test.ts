@@ -315,7 +315,7 @@ let prisma: (typeof import("@/lib/prisma"))["prisma"];
         {
           category: "xero",
           targetId: BOOKING_ID,
-          metadata: expect.objectContaining({ reason: "record-wait-lost", creditNoteId: NOTE, creditNoteNumber: "CN-4656", amountCents: 20_000, paymentId: PAYMENT_ID, recordedCreditNoteId: null, rowFound: true }),
+          metadata: expect.objectContaining({ reason: "record-wait-lost", errorCode: "P2028", creditNoteId: NOTE, creditNoteNumber: "CN-4656", amountCents: 20_000, paymentId: PAYMENT_ID, recordedCreditNoteId: null, rowFound: true }),
         },
       ]);
       expect(send).toHaveBeenCalledTimes(1);
