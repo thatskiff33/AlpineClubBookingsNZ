@@ -637,6 +637,22 @@ describe("Resolve by hand records the officer's note on a refund credit-note cre
       expect(state.links.map((link) => link.id)).toEqual(["link_original"]);
     });
 
+    it("MUTATION: withdrawn because a retry was found running after the commit, it restores the stamped row and leaves the sibling's link live", async () => {
+      state.rows.set("op_note", stampedNaming("cn-hand"));
+      originalResolvedWithIt();
+      // A drain that claimed its queued retry just as the claim committed.
+      state.afterCommit = () => state.rows.set("op_requeue", requeueRow({ status: "RUNNING", startedAt: new Date() }));
+
+      const response = await resolve(withNumber);
+
+      expect(response.status).toBe(409);
+      expect((await response.json()).error).toMatch(/retry of this Xero operation is running/);
+      // Unresolved and naming no note again, still stamped: the row holds its fence once more.
+      expect(state.rows.get("op_note")).toMatchObject({ ...unresolved, lastErrorCode: "REFUND_NOTE_UNRECORDED" });
+      // The withdrawal retires only a link this resolve wrote - it wrote none - never the original's.
+      expect(state.links).toEqual([expect.objectContaining({ id: "link_original", active: true })]);
+    });
+
     it.each([
       ["the stamp names another note", () => stampedNaming("cn-other"), () => originalResolvedWithIt()],
       ["the row holds no stamp", () => refundNoteRow(), () => originalResolvedWithIt()],

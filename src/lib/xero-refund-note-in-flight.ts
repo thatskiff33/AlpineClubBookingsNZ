@@ -13,8 +13,7 @@ import { XERO_OUTBOX_REFUND_CREDIT_NOTE_TYPE } from "@/lib/xero-operation-outbox
 import {
   findResolvedSiblingSince,
   isRefundNoteCreateRow,
-  REFUND_NOTE_CREATE_QUEUE_TYPES,
-  REFUND_NOTE_CREATE_ROW,
+  paymentRefundNoteCreateRowsWhere,
   resolvedSiblingCopySkippedPayload,
 } from "@/lib/xero-resolved-in-xero-fences";
 import type { XeroOperationClaim } from "@/lib/xero-operation-outcome-guard";
@@ -107,12 +106,7 @@ export function unrecordedRefundNoteOperationWhere(paymentId: string) {
 
 /** The payment's refund-note create rows a record ever stamped, resolved since or not. */
 function stampedRefundNoteRowsWhere(paymentId: string) {
-  return {
-    ...REFUND_NOTE_CREATE_ROW,
-    localId: paymentId,
-    OR: REFUND_NOTE_CREATE_QUEUE_TYPES.map((queueType) => ({ queueType })),
-    lastErrorCode: XERO_REFUND_NOTE_UNRECORDED_ERROR_CODE,
-  } as const satisfies Prisma.XeroSyncOperationWhereInput;
+  return { ...paymentRefundNoteCreateRowsWhere(paymentId), lastErrorCode: XERO_REFUND_NOTE_UNRECORDED_ERROR_CODE } as const satisfies Prisma.XeroSyncOperationWhereInput;
 }
 
 /** #4692 review: the response-payload key the stamp names its note under (`recordCreatedRefundNote`). */

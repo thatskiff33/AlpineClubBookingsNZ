@@ -89,6 +89,21 @@ export function isRefundNoteCreateRow(row: {
   );
 }
 
+/**
+ * #4692 review (`INV-SSOT`): the same population on one payment, as a query -
+ * the base the resolved coverage reader and the unrecorded-note fence
+ * (`xero-refund-note-in-flight.ts`) each narrow. A legacy row with no recorded
+ * queue type is read too; its payload says whether it was a refund or an
+ * account-credit note.
+ */
+export function paymentRefundNoteCreateRowsWhere(paymentId: string) {
+  return {
+    ...REFUND_NOTE_CREATE_ROW,
+    localId: paymentId,
+    OR: REFUND_NOTE_CREATE_QUEUE_TYPES.map((queueType) => ({ queueType })),
+  } as const satisfies Prisma.XeroSyncOperationWhereInput;
+}
+
 export interface ResolvedRefundCreditNoteCoverage {
   coveredCents: number;
   correlationKeys: string[];
@@ -104,12 +119,8 @@ export async function readResolvedRefundCreditNoteCoverage(
 ): Promise<ResolvedRefundCreditNoteCoverage> {
   const rows = await db.xeroSyncOperation.findMany({
     where: {
-      ...REFUND_NOTE_CREATE_ROW,
-      localId: paymentId,
+      ...paymentRefundNoteCreateRowsWhere(paymentId),
       manuallyResolvedAt: { not: null },
-      // A legacy row with no recorded queue type is read too; its payload
-      // says whether it was a refund or an account-credit note.
-      OR: REFUND_NOTE_CREATE_QUEUE_TYPES.map((queueType) => ({ queueType })),
       ...(rowsWhere ? { AND: [rowsWhere] } : {}),
     },
     orderBy: { createdAt: "asc" },
