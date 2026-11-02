@@ -262,6 +262,7 @@ vi.mock("@/lib/email-delivery", async (importOriginal) => ({
 vi.mock("@/lib/logger", () => ({ default: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() } }));
 
 import { retryFailedEmails } from "@/lib/cron-email-retry";
+import { sendUnmuteableAdminAlert } from "@/lib/email/admin-alerts-shared";
 import { IB_SETTLEMENT_FIGURE_CHECK_EVENT_KIND } from "@/lib/manual-settlement-reversal-event";
 import {
   recordUnmatchedAppStripePayment,
@@ -465,6 +466,26 @@ describe("a caller-retried admin alert has one retry owner per lost copy (#4669)
     at(60);
     await retryFailedEmails();
     await owner.retry();
+    expect(deliveredTo()).toEqual([DEPUTY, TREASURER].sort());
+  });
+
+  it("leaves an unmuteable alert nobody else retries to the cron, even when every copy failed", async () => {
+    state.failFor = new Set([TREASURER, DEPUTY]);
+    const outcome = await sendUnmuteableAdminAlert({
+      subject: "A late capture was refunded",
+      html: "<p>late capture</p>",
+      templateName: "admin-late-capture-auto-refund",
+      requirement: { area: "finance", level: "edit" },
+    });
+    expect(outcome).toBe("undelivered");
+    const rows = alertRows("admin-late-capture-auto-refund");
+    expect(rows.map((row) => row.htmlBody)).toEqual([expect.any(String), expect.any(String)]);
+
+    state.failFor = new Set();
+    at(16);
+    await retryFailedEmails();
+    at(60);
+    await retryFailedEmails();
     expect(deliveredTo()).toEqual([DEPUTY, TREASURER].sort());
   });
 
