@@ -54,8 +54,9 @@ import type { ClubFormat } from "@/lib/club-format";
  * a close the attempt won, and an attempt the reaper had handed back (#4675)
  * made the refund, lost its close, and nobody announced it.
  *
- * WHAT IT THROWS. Only `SupersededRefundReportNotSettledError`, when the notice
- * may not have gone out: the row then stays open and the retry sends what is
+ * WHAT IT THROWS. Only `SupersededRefundReportNotSettledError` - a read it
+ * depends on that failed included, with the failure as its `cause` - when the
+ * notice may not have gone out: the row then stays open and the retry sends what is
  * missing - the refund itself is never repeated, because the ledger already
  * reads nothing outstanding. A mail provider failure is not one: the member's
  * email is recorded for the retry worker, and an admin copy that failed is
@@ -93,7 +94,9 @@ export async function reportSupersededPaymentRefund(params: {
   format: ClubFormat;
 }): Promise<SupersededRefundReportOutcome> {
   const keys = supersededRefundReportKeys(params.operationId);
-  if (await supersededRefundReportSettled(params.operationId)) return "reported";
+  if (await readOrNotSettled(params.operationId, "whether it was sent could not be read", () => supersededRefundReportSettled(params.operationId))) {
+    return "reported";
+  }
   const context = await loadReportContext(params);
   if (context) await recordMemberNotice(params, context);
   await writeRecordsOnce(params, context, keys);
@@ -127,9 +130,22 @@ export const SUPERSEDED_REFUND_REPORT_IN_FLIGHT_MESSAGE =
  * retry is left, so it says what to do then.
  */
 export class SupersededRefundReportNotSettledError extends Error {
-  constructor(readonly operationId: string, reason: string) {
-    super(`The superseded-payment refund was made, but its notice is not settled: ${reason}. A retry sends the notice once; if this was the last attempt, the member and the admins may not have been told - check the booking and tell the member (#4690).`);
+  constructor(readonly operationId: string, reason: string, options?: { cause?: unknown }) {
+    super(`The superseded-payment refund was made, but its notice is not settled: ${reason}. A retry sends the notice once; if this was the last attempt, the member and the admins may not have been told - check the booking and tell the member (#4690).`, options);
     this.name = "SupersededRefundReportNotSettledError";
+  }
+}
+
+/**
+ * A read the report's outcome depends on, which throws only as not settled
+ * (#4700 review): the officers' alert quotes the error on a final attempt, and
+ * a raw database or Stripe error would not say the refund was made.
+ */
+async function readOrNotSettled<T>(operationId: string, reason: string, read: () => Promise<T>): Promise<T> {
+  try {
+    return await read();
+  } catch (err) {
+    throw new SupersededRefundReportNotSettledError(operationId, reason, { cause: err });
   }
 }
 
@@ -185,9 +201,12 @@ export async function reportUnannouncedSupersededPaymentRefund(
   operation: Pick<PaymentRecoveryOperation, "id" | "type" | "idempotencyKey" | "stripeKeyPrefix" | "bookingId" | "paymentId" | "paymentIntentId">,
   format: ClubFormat,
 ): Promise<SupersededRefundReportOutcome | "none"> {
-  if (await supersededRefundReportSettled(operation.id)) return "reported";
+  if (await readOrNotSettled(operation.id, "whether it was sent could not be read", () => supersededRefundReportSettled(operation.id))) {
+    return "reported";
+  }
   const logContext = { operationId: operation.id, bookingId: operation.bookingId, paymentIntentId: operation.paymentIntentId };
-  const refunds = await listRefundsForPaymentIntent(operation.paymentIntentId, { timeoutMs: 10_000, singlePage: true });
+  const refunds = await readOrNotSettled(operation.id, "Stripe's refunds on the payment could not be read", () =>
+    listRefundsForPaymentIntent(operation.paymentIntentId, { timeoutMs: 10_000, singlePage: true }));
   const own = refunds.filter((refund) =>
     (!refund.payment_intent || stripeReferenceId(refund.payment_intent) === operation.paymentIntentId) &&
     carriesCardRefundOperationMetadata(operation, refund.metadata) &&
@@ -197,10 +216,10 @@ export async function reportUnannouncedSupersededPaymentRefund(
     logger.info(logContext, "Superseded-payment refund row found nothing outstanding and no refund of its own; closed without a notice");
     return "none";
   }
-  const recorded = (await prisma.paymentRefund.findMany({
+  const recorded = (await readOrNotSettled(operation.id, "the recorded refunds could not be read", () => prisma.paymentRefund.findMany({
     where: { paymentId: operation.paymentId, stripeRefundId: { in: own.map((refund) => refund.id) } },
     select: { stripeRefundId: true, amountCents: true, status: true },
-  })).filter((row) => isRecordedRefundStatus(row.status));
+  }))).filter((row) => isRecordedRefundStatus(row.status));
   if (recorded.length !== own.length) {
     logger.warn(
       { ...logContext, ownRefundIds: own.map((refund) => refund.id), recordedRefundIds: recorded.map((row) => row.stripeRefundId) },
@@ -380,13 +399,14 @@ async function writeRecordsOnce(params: ReportParams, context: ReportContext | n
  * Its own failed send, or a claim write that threw, is given back and the
  * report is not settled. A claim held elsewhere with no `reported` is a sibling
  * attempt's while younger than the stale reaper's threshold - `in-flight`, so
- * the row waits - and a dead attempt's after it: given back and sent here.
+ * the row waits - and a dead attempt's after it: given back and sent here
+ * (and waited on, if a sibling re-claims it first).
  */
 async function sendAdminAlertOnce(params: ReportParams, context: ReportContext, keys: ReportKeys): Promise<SupersededRefundReportOutcome> {
   const { bookingId, operationId, paymentIntentId, refundedAmountCents, format } = params;
   const logContext = { operationId, bookingId, paymentIntentId };
   let sendReturned = false;
-  const outcome = await sendAdminAlertOnceEverWithTakeover({
+  const outcome = await readOrNotSettled(operationId, "the admin alert's state could not be read", () => sendAdminAlertOnceEverWithTakeover({
     key: keys.alert,
     label: "superseded-payment refund alert",
     context: logContext,
@@ -406,8 +426,9 @@ async function sendAdminAlertOnce(params: ReportParams, context: ReportContext, 
     },
     isSent: () => supersededRefundReportSettled(operationId),
     inFlightMs: PAYMENT_RECOVERY_STALE_PROCESSING_MS,
-  });
-  if (outcome === "in-flight") return "in-flight";
+  }));
+  // A sibling that re-claimed after a takeover is still sending, too: wait for it.
+  if (outcome === "in-flight" || outcome === "taken-over") return "in-flight";
   // Not kept but sent: nobody could receive it, and `reported` settles that.
   if (outcome === "settled" || sendReturned) return "reported";
   throw new SupersededRefundReportNotSettledError(operationId, "the admin alert was not sent");

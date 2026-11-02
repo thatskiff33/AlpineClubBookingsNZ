@@ -237,7 +237,8 @@ async function ensureAlert(
     isSent: () => alertWasSent(row),
     inFlightMs: UNRECOGNISED_ALERT_IN_FLIGHT_MS,
   });
-  if (outcome === "not-sent") throw new UnrecognisedStripePaymentAlertNotSentError(row.stripePaymentIntentId);
+  // A sibling that re-claimed after this delivery's takeover: fail, so Stripe redelivers.
+  if (outcome === "not-sent" || outcome === "taken-over") throw new UnrecognisedStripePaymentAlertNotSentError(row.stripePaymentIntentId);
 }
 
 /**

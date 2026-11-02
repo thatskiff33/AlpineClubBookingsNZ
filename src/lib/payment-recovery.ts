@@ -2013,10 +2013,7 @@ async function processRefundSupersededPaymentOperation(
   // #4690: a refund of this row's own that an earlier attempt made but never announced (it was
   // reaped, or crashed, before its notice) is announced here, once, before the close.
   if (outstandingCents <= 0) {
-    if ((await reportUnannouncedSupersededPaymentRefund(operation, format)) === "in-flight") {
-      await waitPaymentRecoveryOperation(operation, SUPERSEDED_REFUND_REPORT_IN_FLIGHT_MESSAGE, format);
-      return "waited";
-    }
+    if ((await reportUnannouncedSupersededPaymentRefund(operation, format)) === "in-flight") return waitOnSupersededRefundReport(operation, format);
     await completePaymentRecoveryOperation(operation);
     return "done";
   }
@@ -2083,12 +2080,15 @@ async function processRefundSupersededPaymentOperation(
     paymentIntentId: operation.paymentIntentId,
     refundedAmountCents: plan.reduce((sum, slice) => sum + slice.amountCents, 0),
   });
-  if (reported === "in-flight") {
-    await waitPaymentRecoveryOperation(operation, SUPERSEDED_REFUND_REPORT_IN_FLIGHT_MESSAGE, format);
-    return "waited";
-  }
+  if (reported === "in-flight") return waitOnSupersededRefundReport(operation, format);
   await completePaymentRecoveryOperation(operation);
   return "done";
+}
+
+/** #4690: another attempt is still sending the refund's notice - wait for it, attempt handed back. */
+async function waitOnSupersededRefundReport(operation: PaymentRecoveryOperation, format: ClubFormat): Promise<"waited"> {
+  await waitPaymentRecoveryOperation(operation, SUPERSEDED_REFUND_REPORT_IN_FLIGHT_MESSAGE, format);
+  return "waited";
 }
 
 async function processBookingModificationRefundOperation(

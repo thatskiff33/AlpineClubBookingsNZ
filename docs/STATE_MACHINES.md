@@ -4531,6 +4531,7 @@ report not settled (email not recorded, alert not sent) -> throws; row retried
 alert claim held, no sent marker: younger than the stale threshold
   -> the row waits (attempt handed back: never terminal, no officer alert);
   older -> the dead attempt's claim is given back and the alert sent
+    (a sibling re-claims it first -> the row waits)
 ```
 
 The admin alert's claim, give-back and takeover are the shared once-ever
@@ -4554,6 +4555,9 @@ Stated limits:
   takeover after the stale threshold.
 - An attempt that dies between the records' claim and their write loses the
   audit row and booking event; the notices still go out.
+- A waiting row comes back at the longest backoff (12 hours). Until then the
+  open row keeps the superseded capture in `holdsForMember` / `refundInFlight`,
+  though the refund is made and recorded.
 - The next claim's close now needs a Stripe refund-list read to prove a refund
   the row's own. A Stripe outage, or a list with more than one page, keeps the
   row open and spends its attempts - also for a row another door's refund

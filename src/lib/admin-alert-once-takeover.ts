@@ -9,15 +9,20 @@ import logger from "@/lib/logger";
  * `INV-INT-032`) and the superseded-payment refund's (#4690). Claim and send
  * through `sendAdminAlertOnceEverClaim`; then:
  * - kept: `settled`;
- * - this call's own claim not kept (its send failed, or its claim write threw):
- *   given back under the exact stamp it wrote - twice for the uncertain claim,
- *   whose helper made no release of its own - and `not-sent`;
+ * - this call's own claim not kept (its send failed; its claim write threw; or
+ *   its send reached nobody and the claim helper deferred it for a day): given
+ *   back under the exact stamp it wrote - a no-op for a deferred claim, whose
+ *   stamp the deferral moved - twice for the uncertain claim, whose helper made
+ *   no release of its own, and `not-sent`;
  * - another holder has it: `settled` when `isSent` says it went out; given back
  *   meanwhile: `not-sent`; younger than `inFlightMs`: `in-flight`, a sibling
  *   still sending; older: a dead sender's, given back under its exact stamp and
- *   claimed and sent once more, read the same way.
- * Each caller keeps its own window and its own answer to `not-sent` and
- * `in-flight`. Throws only when a read or the takeover's release throws.
+ *   claimed and sent once more, read the same way - except that another
+ *   holder's claim found after the takeover (a sibling re-claimed it first) is
+ *   `taken-over`.
+ * Each caller keeps its own window and its own answer to `not-sent`,
+ * `in-flight` and `taken-over`. Throws only when a read or the takeover's
+ * release throws.
  */
 export async function sendAdminAlertOnceEverWithTakeover(args: {
   key: string;
@@ -28,7 +33,7 @@ export async function sendAdminAlertOnceEverWithTakeover(args: {
   isSent: () => Promise<boolean>;
   /** How long another holder's claim counts as a sibling still sending. */
   inFlightMs: number;
-}): Promise<"settled" | "in-flight" | "not-sent"> {
+}): Promise<"settled" | "in-flight" | "taken-over" | "not-sent"> {
   const { key, isSent, inFlightMs } = args;
   const attempt = () => sendAdminAlertOnceEverClaim(args);
   const read = async (claim: OnceEverAlertClaim): Promise<"settled" | "not-sent" | "held"> => {
@@ -47,7 +52,7 @@ export async function sendAdminAlertOnceEverWithTakeover(args: {
   if (Date.now() - heldAt.getTime() < inFlightMs) return "in-flight";
   await releaseAlertCooldown({ key, claimedAt: heldAt });
   const second = await read(await attempt());
-  return second === "held" ? "not-sent" : second;
+  return second === "held" ? "taken-over" : second;
 }
 
 /**

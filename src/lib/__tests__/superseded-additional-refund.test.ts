@@ -15,7 +15,10 @@ const mocks = vi.hoisted(() => ({
    * One-shot `AlertCooldown` faults by `op:key`: "before" throws with nothing
    * written; "after" writes, then throws - a commit whose reply was lost.
    */
-  cooldownFaults: new Map<string, "before" | "after">(),
+  cooldownFaults: new Map<string, "before" | "after" | "sibling-claims">(),
+  /** The `AlertCooldown` read (1-based) that throws, as a database outage would. */
+  failCooldownRead: null as number | null,
+  cooldownReads: 0,
   /** The member emails recorded, by key: the real `EmailLog` row is unique on it. */
   memberEmails: new Map<string, unknown>(),
 }));
@@ -31,7 +34,7 @@ function cooldownWhereMatches(row: { key: string; lastAlertedAt: Date }, where: 
     (range.gte === undefined || row.lastAlertedAt >= range.gte);
 }
 
-function takeCooldownFault(op: string, key: string): "before" | "after" | undefined {
+function takeCooldownFault(op: string, key: string): "before" | "after" | "sibling-claims" | undefined {
   const fault = mocks.cooldownFaults.get(`${op}:${key}`);
   mocks.cooldownFaults.delete(`${op}:${key}`);
   if (fault === "before") throw new Error(`${op} failed`);
@@ -75,16 +78,21 @@ vi.mock("@/lib/prisma", () => ({
         return data;
       },
       deleteMany: async ({ where }: { where: { key: string; lastAlertedAt: Date } }) => {
-        takeCooldownFault("deleteMany", where.key);
+        const fault = takeCooldownFault("deleteMany", where.key);
         const held = mocks.cooldowns.get(where.key);
         if (!held || held.getTime() !== where.lastAlertedAt.getTime()) return { count: 0 };
         mocks.cooldowns.delete(where.key);
+        // A live sibling claims the key the moment it is free.
+        if (fault === "sibling-claims") mocks.cooldowns.set(where.key, new Date());
         return { count: 1 };
       },
-      findMany: async ({ where }: { where: { key: { in: string[] }; lastAlertedAt: unknown } }) =>
-        [...mocks.cooldowns]
+      findMany: async ({ where }: { where: { key: { in: string[] }; lastAlertedAt: unknown } }) => {
+        mocks.cooldownReads += 1;
+        if (mocks.cooldownReads === mocks.failCooldownRead) throw new Error("database unavailable");
+        return [...mocks.cooldowns]
           .map(([key, lastAlertedAt]) => ({ key, lastAlertedAt }))
-          .filter((row) => cooldownWhereMatches(row, where)),
+          .filter((row) => cooldownWhereMatches(row, where));
+      },
     },
   },
 }));
@@ -98,6 +106,7 @@ import {
 } from "@/lib/superseded-additional-refund";
 import { SUPERSEDED_PAYMENT_REFUND_METADATA_REASON } from "@/lib/payment-recovery-keys";
 import { PAYMENT_RECOVERY_STALE_PROCESSING_MS } from "@/lib/payment-recovery-constants";
+import { FROZEN_TEST_CLOCK_BASE_ISO } from "./helpers/clock";
 import {
   isSupersededAdditionalRefundEvent,
   SUPERSEDED_ADDITIONAL_REFUND_EVENT_KIND,
@@ -173,6 +182,8 @@ const OPERATION_ID = "recovery_superseded_1";
 const KEYS = supersededRefundReportKeys(OPERATION_ID);
 
 beforeEach(() => {
+  // A fault below moves the clock on; every case starts from the suite's frozen instant again.
+  vi.setSystemTime(new Date(FROZEN_TEST_CLOCK_BASE_ISO));
   mocks.logAudit.mockClear();
   mocks.recordBookingEvent.mockClear();
   mocks.sendMemberEmail.mockReset();
@@ -182,6 +193,8 @@ beforeEach(() => {
   mocks.listRefunds.mockReset();
   mocks.cooldowns.clear();
   mocks.cooldownFaults.clear();
+  mocks.failCooldownRead = null;
+  mocks.cooldownReads = 0;
   mocks.memberEmails.clear();
   // The member email is durable and keyed (#4690): a second record of the same key sends nothing.
   mocks.sendMemberEmail.mockImplementation(async (params: { idempotencyKey: string }) => {
@@ -518,6 +531,32 @@ describe("reportSupersededPaymentRefund sends once per recovery row (#4690)", ()
     expect(mocks.cooldowns.has(KEYS.alert)).toBe(true);
   });
 
+  it("MUTATION: a sibling re-claims the alert after this call took a dead claim over - the report says in-flight and the row waits, nothing sent here", async () => {
+    mocks.cooldowns.set(KEYS.alert, new Date(Date.now() - PAYMENT_RECOVERY_STALE_PROCESSING_MS - 1));
+    // Between this call's release of the dead claim and its own claim, a live sibling claims it.
+    mocks.cooldownFaults.set(`deleteMany:${KEYS.alert}`, "sibling-claims");
+
+    await expect(report()).resolves.toBe("in-flight");
+    expect(mocks.sendAdminAlert).not.toHaveBeenCalled();
+    expect(mocks.cooldowns.has(KEYS.alert)).toBe(true);
+  });
+
+  it.each([
+    ["the sent marker, read first", 1, "whether it was sent could not be read"],
+    ["the alert's state, read after another holder's claim", 2, "the admin alert's state could not be read"],
+  ])("MUTATION: %s, unreadable - not settled, saying the refund was made, the database error as its cause", async (_label, read, reason) => {
+    // Another holder has the alert, so the shared sequence reads whether it went out.
+    mocks.cooldowns.set(KEYS.alert, new Date(Date.now() - 60_000));
+    mocks.failCooldownRead = read;
+
+    const error = await report().catch((thrown: unknown) => thrown);
+
+    expect(error).toBeInstanceOf(SupersededRefundReportNotSettledError);
+    expect((error as Error).message).toContain("The superseded-payment refund was made");
+    expect((error as Error).message).toContain(reason);
+    expect((error as Error).cause).toBeInstanceOf(Error);
+  });
+
   it("MUTATION: an alert claim held with the report marked sent is not taken over, however old", async () => {
     mocks.cooldowns.set(KEYS.alert, new Date(Date.now() - PAYMENT_RECOVERY_STALE_PROCESSING_MS - 1));
     mocks.cooldowns.set(KEYS.reported, new Date());
@@ -584,6 +623,23 @@ describe("reportUnannouncedSupersededPaymentRefund", () => {
 
     expect(sent()).toEqual({ memberEmails: 0, adminAlerts: 0, auditRows: 0, events: 0 });
     expect(mocks.findRefunds).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["Stripe's refund list", "listRefunds", "Stripe's refunds on the payment could not be read"],
+    ["the ledger's refunds", "findRefunds", "the recorded refunds could not be read"],
+  ])("MUTATION: %s unreadable - not settled, saying the refund was made, the provider error as its cause", async (_label, which, reason) => {
+    mocks.listRefunds.mockResolvedValue([stripeRefund("re_own", ownMetadata)]);
+    mocks.findRefunds.mockResolvedValue([ledgerRow("re_own")]);
+    (which === "listRefunds" ? mocks.listRefunds : mocks.findRefunds).mockRejectedValueOnce(new Error("unavailable"));
+
+    const error = await reportUnannouncedSupersededPaymentRefund(operation, CLUB_FORMAT_TEST).catch((thrown: unknown) => thrown);
+
+    expect(error).toBeInstanceOf(SupersededRefundReportNotSettledError);
+    expect((error as Error).message).toContain("The superseded-payment refund was made");
+    expect((error as Error).message).toContain(reason);
+    expect((error as Error).cause).toEqual(new Error("unavailable"));
+    expect(sent()).toEqual({ memberEmails: 0, adminAlerts: 0, auditRows: 0, events: 0 });
   });
 
   it("MUTATION: the row's own refund Stripe refused is not money back - nothing announced", async () => {
