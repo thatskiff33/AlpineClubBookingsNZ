@@ -97,15 +97,16 @@ function objectLabel(type: string | null | undefined): string {
 
 /**
  * The late object as an officer reads it: "credit note CN-B for $200.00
- * (Xero id cn-b, booking b-1)".
+ * (Xero id cn-b, booking b-1)". #4656: also the refund note a record that
+ * could not get its locks left unrecorded (`recordCreatedRefundNote`).
  */
-function unrecordedObjectDescription(late: UnrecordedXeroObject): string {
+export function describeUnrecordedObject(late: UnrecordedXeroObject): string {
   return `${objectLabel(late.xeroObjectType)} ${late.xeroObjectNumber ?? late.xeroObjectId}${late.amount ? ` for ${late.amount}` : ""} (Xero id ${late.xeroObjectId}${late.bookingId ? `, booking ${late.bookingId}` : ""})`;
 }
 
 /** The sentence every late-object alert opens its story with: a stalled attempt came back and made it. */
 export function stalledAttemptCameBack(late: UnrecordedXeroObject): string {
-  return `an earlier attempt at the same Xero call, which had stalled, came back: it made ${unrecordedObjectDescription(late)} in Xero.`;
+  return `an earlier attempt at the same Xero call, which had stalled, came back: it made ${describeUnrecordedObject(late)} in Xero.`;
 }
 
 /**
@@ -117,7 +118,9 @@ export function stalledAttemptCameBack(late: UnrecordedXeroObject): string {
  * resolve withdrawn since (the re-read row is no longer resolved) is said so.
  * #4655: a caller whose late object was kept out for another reason (an
  * organiser adjustment's note, `recordCreatedOrganiserNote`) says why in
- * `errorMessage`; the key, the once-ever send and the warning stay this one's.
+ * `errorMessage`; the key and the once-ever send stay this one's. #4656: a
+ * caller whose object never reached the row (its record could not get its
+ * locks in time) says so in `warning` too.
  * Same thunk contract as `successAfterResolutionAlert`: run outside any
  * transaction; never throws.
  */
@@ -125,15 +128,20 @@ export function unrecordedLateSuccessAlert(
   operation: XeroSyncOperation,
   late: UnrecordedXeroObject,
   errorMessage: string = refundNoteLateMessage(operation, late),
+  warning: string = LATE_SUCCESS_NOT_RECORDED_WARNING,
 ): () => Promise<void> {
   return alertOnce(
     operation,
     xeroSuccessAfterResolutionAlertKey(operation.id, late.xeroObjectId),
     { unrecordedXeroObjectId: late.xeroObjectId, unrecordedXeroObjectNumber: late.xeroObjectNumber, recordedXeroObjectId: operation.xeroObjectId, bookingId: late.bookingId ?? null },
     errorMessage,
-    "Xero success arrived after its operation was reset or resolved and was not recorded on it; Xero may now hold the item twice (INV-INT-029)",
+    warning,
   );
 }
+
+/** The alert's log line when the caller names no other reason (#4426, #4655). */
+const LATE_SUCCESS_NOT_RECORDED_WARNING =
+  "Xero success arrived after its operation was reset or resolved and was not recorded on it; Xero may now hold the item twice (INV-INT-029)";
 
 /** #4426: a refund note's late answer, kept out by a resolve recording a note (or one withdrawn since). */
 function refundNoteLateMessage(operation: XeroSyncOperation, late: UnrecordedXeroObject): string {

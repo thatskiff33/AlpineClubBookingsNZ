@@ -135,7 +135,7 @@ export async function refusedOutcomeWrite(
   return null;
 }
 
-/** #4373: the row is RUNNING under a claim other than this one. */
-function heldByAnotherClaim(row: { status: string; startedAt: Date | null }, claim: XeroOperationClaim): boolean {
+/** #4373: the row is RUNNING under a claim other than this one. #4656: also read by the refund-note record. */
+export function heldByAnotherClaim(row: { status: string; startedAt: Date | null }, claim: XeroOperationClaim): boolean {
   return row.status === "RUNNING" && (row.startedAt?.getTime() ?? null) !== (claim.startedAt?.getTime() ?? null);
 }

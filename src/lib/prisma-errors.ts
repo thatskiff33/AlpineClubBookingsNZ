@@ -59,6 +59,25 @@ export function isPostgresLockNotAvailable(
   );
 }
 
+/**
+ * Prisma's interactive-transaction contention codes: P2028 (its `maxWait` or
+ * `timeout` ran out, or the transaction had already closed) and P2034 (a write
+ * conflict or deadlock). Nothing the transaction wrote was committed.
+ *
+ * The one reading (#4656): the linked date move, the refund-note create's
+ * record, `waitlist-confirm/route.ts`, `admin/site-style/route.ts`, the
+ * deletion release and the return to the waitlist all ask it. Four writers
+ * keep their own set - `admin/club-time-zone/route.ts`,
+ * `admin/club-format/route.ts`, `admin/ai-spend-currency/route.ts` and
+ * `environment-safety-override-write.ts` - because theirs also carries
+ * `P2002`: a racing first insert of a singleton row, retried as contention
+ * there, which is a unique-constraint violation everywhere else.
+ */
+export function isTransactionContention(error: unknown): boolean {
+  const code = (error as { code?: unknown } | null)?.code;
+  return code === "P2028" || code === "P2034";
+}
+
 export function isPrismaUniqueConstraintError(error: unknown) {
   return hasPrismaErrorCode(error, "P2002");
 }

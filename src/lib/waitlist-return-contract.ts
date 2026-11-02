@@ -156,36 +156,20 @@ export const RETURN_TO_WAITLIST_CLAIM_LOST_MESSAGE =
   "The booking changed while it was being returned to the waitlist, so nothing was written. Reload the page and check where it ended up.";
 
 /**
- * Prisma's transaction contention codes: P2028 (transaction API error, which
- * covers an exhausted `maxWait`/`timeout`) and P2034 (write conflict/deadlock,
- * retryable by definition). Same set and same 503 answer as
- * `waitlist-confirm/route.ts`, `admin-bed-allocation-routes.ts`,
- * `admin/site-style/route.ts` and `deletion-request-decision.ts`, for the reason
- * `docs/CONCURRENCY_AND_LOCKING.md` gives: a counterpart writer legitimately
- * holds `lock(1)` or the lodge key for the length of a whole transaction, so an
- * exhausted wait is contention rather than a fault, nothing was committed, and
- * the real remedy is "again shortly", not "differently".
+ * Refused because the locked transaction could not take its locks in time
+ * (Prisma's transaction contention, P2028 or P2034: `isTransactionContention`).
+ * Nothing was written, so the operator is told to retry rather than to escalate:
+ * the same 503 answer as `waitlist-confirm/route.ts`,
+ * `admin-bed-allocation-routes.ts`, `admin/site-style/route.ts` and the deletion
+ * release, for the reason `docs/CONCURRENCY_AND_LOCKING.md` gives - a
+ * counterpart writer legitimately holds `lock(1)` or the lodge key for the
+ * length of a whole transaction, so an exhausted wait is contention rather than
+ * a fault, and the real remedy is "again shortly", not "differently".
  *
  * This route needs the distinction more than most: it exists precisely BECAUSE
  * lock contention broke the confirm's compensating release (#2623 T4). Reporting
  * its own contention as an opaque 500 would tell the operator the repair is
  * broken when the honest answer is that something else is holding the booking.
- */
-const RETURN_TO_WAITLIST_CONTENTION_CODES: ReadonlySet<string> = new Set([
-  "P2028",
-  "P2034",
-]);
-
-export function isReturnToWaitlistTransactionContention(
-  error: unknown,
-): boolean {
-  const code = (error as { code?: unknown } | null)?.code;
-  return typeof code === "string" && RETURN_TO_WAITLIST_CONTENTION_CODES.has(code);
-}
-
-/**
- * Refused because the locked transaction could not take its locks in time.
- * Nothing was written, so the operator is told to retry rather than to escalate.
  */
 export const RETURN_TO_WAITLIST_CONTENDED_MESSAGE =
   "Something else is holding this booking right now, so it could not be returned to the waitlist in time. Nothing was changed — try again in a moment.";

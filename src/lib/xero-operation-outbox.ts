@@ -47,6 +47,7 @@ import {
 } from "@/lib/xero-credit-notes";
 import { readRefundRequestIdFromPayload } from "@/lib/refund-request-credit-note";
 import { refundNoteKeyAfterVoidParts } from "@/lib/xero-refund-note-status";
+import { RefundNoteNotRecordedError, refundNoteRecordedElsewhere } from "@/lib/xero-refund-note-record";
 import {
   readModificationNoteWording,
   readRefundNoteWording,
@@ -3271,6 +3272,14 @@ export async function processQueuedXeroOutboxOperations(options?: {
 
       result.succeeded += 1;
     } catch (error) {
+      if (error instanceof RefundNoteNotRecordedError) {
+        // #4656 (`INV-INT-029`): a note this run did not record, already traced; the row stays as the record left it.
+        // Skipped, never succeeded: this run completed nothing, even where the row records this very note.
+        const level = refundNoteRecordedElsewhere(error.outcome) ? "info" : "warn";
+        logger[level]({ queueOperationId: queuedOperation.id, outcome: error.outcome }, error.message);
+        result.skipped += 1;
+        continue;
+      }
       if (isXeroAppliedCreditOperationBusyError(error)) {
         // Two independent outbox runners can claim allocation and deallocation
         // for the same Payment before either handler observes the other. That
