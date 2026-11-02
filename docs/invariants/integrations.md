@@ -552,37 +552,40 @@ Pinned by `xero-resolve-refund-note.test.ts`,
 
 ### INV-INT-029
 
-A recorded Xero outcome is never replaced by a worse one, and never lands on
-another attempt's claim. Two callers can hold one row (#1354), each recording
-its outcome of the same keyed Xero call there.
+A recorded Xero outcome is never replaced by a worse one, nor lands on another
+attempt's claim. Two callers can share one row (#1354).
 
 - **One guard, in the two writers.** `completeXeroSyncOperation` and
-  `failXeroSyncOperation` (`xero-sync.ts`) guard every outcome write with
-  `outcomeWriteGuard` (`xero-operation-outcome-guard.ts`). Only SUCCEEDED
-  lands on SUCCEEDED, only SUCCEEDED or PARTIAL on PARTIAL; `keepCancelled`
-  also keeps CANCELLED.
+  `failXeroSyncOperation` guard every outcome with `outcomeWriteGuard`
+  (`xero-operation-outcome-guard.ts`). Only SUCCEEDED lands on SUCCEEDED,
+  only SUCCEEDED or PARTIAL on PARTIAL.
 - **Every outcome carries its claim (#4373):** the row's id and its RUNNING
-  claim's `startedAt`, from the started row, the outbox or REQUEUE claim
-  (`claimXeroSyncOperationToRunning`), a retry's claim or a late note's
-  re-take (`INV-INT-034`). No outcome, a success included, lands on a RUNNING
-  row another claim holds, such as a retry's after a reset.
-- **A repair's claim is kept too.** The PARTIAL repair and FAILED
-  refund-note repair stamp a marker code on their RUNNING claim; no outcome
-  but SUCCEEDED lands there unless written onto that claim (`retryClaim`).
+  claim's `startedAt`, from its start, outbox or REQUEUE claim, retry claim or
+  late-note re-take (`INV-INT-034`). No outcome, a success included, lands on
+  a RUNNING row another claim holds.
+- **A failure lands only on its own claim's row (#4673):** RUNNING or FAILED
+  under its `startedAt`, never CANCELLED (a withdrawal keeps `startedAt`). One
+  that lost its claim, say to an in-place Retry, is dropped; the queued run
+  writes its own.
+- **A repair's claim is kept too.** The PARTIAL and FAILED refund-note
+  repairs mark their RUNNING claim; only SUCCEEDED, or that claim's own
+  outcome (`retryClaim`), lands there.
 - **A success lands on any row no claim holds,** even one resolved in Xero
-  (#4374). The write leaves the mark; if it recorded a Xero object, after
-  commit it warns and alerts officers once per operation; Xero may hold it
-  twice. Limit: an alert reaching nobody retries only when another success
-  lands. Except the late credit notes `INV-INT-028` (#4426) and
-  `INV-INT-034` (#4655) keep out: audited and alerted, not recorded.
-- **A refused write changes nothing.** It answers null, writes no link and
-  raises no alert. A missing row throws, or is logged for a guarded caller.
-  A success refused for a later claim still records its links, warned.
-- **Claims, resets and marks write directly,** guarded as before. The outbox
-  and REQUEUE hand-backs to PENDING touch only their own claim.
+  (#4374): the mark stays, and a recorded Xero object warns and alerts
+  officers once per operation after commit (Xero may hold it twice; an alert
+  reaching nobody retries only on another success). Late notes under
+  `INV-INT-028` (#4426) and `INV-INT-034` (#4655) keep out: audited and
+  alerted, not recorded.
+- **A refused write changes nothing:** null, no link, no alert; the outbox
+  counts a refused failure skipped. A missing row throws, or logs for a guarded
+  caller. A success refused for a later claim still records its links, warned.
+- **Claims, resets and marks write directly,** guarded; the outbox and
+  REQUEUE hand-backs to PENDING touch only their own claim.
 
-Pinned by `xero-sync.test.ts`, `xero-success-after-resolution-alert.test.ts`
-and, against real PostgreSQL, `xero-shared-operation-outcome.realdb.test.ts`.
+Pinned by `xero-sync.test.ts`, `xero-outbox-fail-fast.test.ts`,
+`xero-success-after-resolution-alert.test.ts` and, against real PostgreSQL,
+`xero-shared-operation-outcome.realdb.test.ts` and
+`xero-late-failure-after-retry.realdb.test.ts`.
 
 ### INV-INT-034
 

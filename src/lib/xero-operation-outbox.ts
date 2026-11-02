@@ -3346,8 +3346,8 @@ export async function processQueuedXeroOutboxOperations(options?: {
         const returned = await prisma.xeroSyncOperation.updateMany({
           where: {
             id: queuedOperation.id,
-            // #4373: RUNNING only as this dispatch's own claim, never a later retry's (`INV-INT-029`).
-            AND: [{ OR: [{ status: "RUNNING", startedAt: outcomeClaim.startedAt }, { status: "FAILED" }] }],
+            // #4373/#4687: RUNNING or self-failed FAILED only under this dispatch's own claim, never a later one's (`INV-INT-029`).
+            AND: [{ status: { in: ["RUNNING", "FAILED"] }, startedAt: outcomeClaim.startedAt }],
             // Never revive a row an officer resolved (#3635, `INV-INT-025`), nor a repair's marked claim (#4356).
             manuallyResolvedAt: null,
             ...NOT_A_XERO_REPAIR_CLAIM,
@@ -3381,12 +3381,12 @@ export async function processQueuedXeroOutboxOperations(options?: {
           result.skipped += 1;
           continue;
         }
-        // The row was in neither RUNNING nor FAILED (e.g. a concurrent worker
-        // moved it out from under us). Do NOT report a return-to-PENDING that
-        // did not happen — that false "skipped" is what let an incident summary
-        // tell an operator the queue would self-heal while invoices sat stuck.
-        // Fall through to the honest FAILED path so the log and the failed
-        // counter reflect a row that was NOT recovered.
+        // The row was not this claim's RUNNING or FAILED row (e.g. a concurrent
+        // worker moved it out from under us). Do NOT report a return-to-PENDING
+        // that did not happen — that false "skipped" is what let an incident
+        // summary tell an operator the queue would self-heal while invoices sat
+        // stuck. Fall through to the failure path: the row counts failed when the
+        // failure lands, and skipped when INV-INT-029 refuses it (#4673).
         logger.warn(
           {
             err: error,
@@ -3395,6 +3395,38 @@ export async function processQueuedXeroOutboxOperations(options?: {
           },
           "Xero cooldown refused an outbox operation but the row was not in a returnable state; failing it"
         );
+      }
+      // F4 (#1354): fail the operation for EVERY queue type, not just the two
+      // membership-cancellation types and payload-shape errors. An operation
+      // erroring BEFORE its handler overwrote requestPayload (token refresh,
+      // contact resolution, account mapping) previously stayed RUNNING with
+      // the queued payload; after an operator stale-reset the retry stack
+      // could not parse that shape — a permanent manual dead-end. FAILED rows
+      // are replayable, and the retry parser now understands the queued
+      // payload shape, so failing fast here closes the dead-end for all
+      // types.
+      let failedRow: Awaited<ReturnType<typeof failXeroSyncOperation>> | undefined;
+      try {
+        // #3635 round-3 N5: never over a row withdrawn in the meantime (an
+        // approval cancels a kept row it finds FAILED); CANCELLED stands.
+        failedRow = await failXeroSyncOperation(
+          outcomeClaim,
+          error instanceof Error ? error : new Error(String(error)),
+          undefined,
+          { keepCancelled: true }
+        );
+      } catch (failErr) {
+        logger.error(
+          { err: failErr, queueOperationId: queuedOperation.id },
+          "Failed to mark queued Xero outbox operation FAILED after an error"
+        );
+      }
+      // #4673 (`INV-INT-029`): refused - no longer this run's row (a Retry queued it again, a later claim
+      // holds or ended it) or it keeps a success or a withdrawal. Nothing failed: no charge error, not counted failed.
+      if (failedRow === null) {
+        logger.warn({ err: error, queueOperationId: queuedOperation.id, queueType: payload?.queueType ?? null }, "Queued Xero outbox operation's failure was not recorded: the row is no longer this run's (INV-INT-029)");
+        result.skipped += 1;
+        continue;
       }
       if (payload?.queueType === XERO_OUTBOX_SUBSCRIPTION_INVOICE_TYPE && subscriptionChargeId) {
         const currentCharge = await prisma.membershipSubscriptionCharge.findUnique({
@@ -3417,30 +3449,6 @@ export async function processQueuedXeroOutboxOperations(options?: {
             logger.error({ err: chargeError, chargeId: subscriptionChargeId }, "Failed to expose subscription charge outbox error");
           });
         }
-      }
-      // F4 (#1354): fail the operation for EVERY queue type, not just the two
-      // membership-cancellation types and payload-shape errors. An operation
-      // erroring BEFORE its handler overwrote requestPayload (token refresh,
-      // contact resolution, account mapping) previously stayed RUNNING with
-      // the queued payload; after an operator stale-reset the retry stack
-      // could not parse that shape — a permanent manual dead-end. FAILED rows
-      // are replayable, and the retry parser now understands the queued
-      // payload shape, so failing fast here closes the dead-end for all
-      // types.
-      try {
-        // #3635 round-3 N5: never over a row withdrawn in the meantime (an
-        // approval cancels a kept row it finds FAILED); CANCELLED stands.
-        await failXeroSyncOperation(
-          outcomeClaim,
-          error instanceof Error ? error : new Error(String(error)),
-          undefined,
-          { keepCancelled: true }
-        );
-      } catch (failErr) {
-        logger.error(
-          { err: failErr, queueOperationId: queuedOperation.id },
-          "Failed to mark queued Xero outbox operation FAILED after an error"
-        );
       }
       logger.error(
         {

@@ -3826,7 +3826,7 @@ describe("processQueuedXeroOutboxOperations dispatch domain (#1272)", () => {
       });
       await processQueuedXeroOutboxOperations({ limit: 1 });
       expect(mocks.updateManyOperation).toHaveBeenCalledWith(expect.objectContaining({
-        where: expect.objectContaining({ AND: [{ OR: [{ status: "RUNNING", startedAt: RETAKEN.startedAt }, { status: "FAILED" }] }] }),
+        where: expect.objectContaining({ AND: [{ status: { in: ["RUNNING", "FAILED"] }, startedAt: RETAKEN.startedAt }] }),
         data: expect.objectContaining({ status: "PENDING" }),
       }));
     });

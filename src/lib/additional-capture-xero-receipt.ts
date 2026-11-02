@@ -260,11 +260,14 @@ export async function recordAdditionalCaptureReceipt(
   const refuse = async (reason: AdditionalCaptureReceiptRefusal, details: Record<string, unknown> = {}) => {
     const message = `The card payment for this booking change was not recorded in Xero: ${REFUSAL_TEXT[reason]}.`;
     logger.error({ operationId, bookingId, paymentIntentId, reason, ...details }, message);
-    await failXeroSyncOperation(params.syncOperation, new Error(message), { refused: reason, ...details }, {
+    const failed = await failXeroSyncOperation(params.syncOperation, new Error(message), { refused: reason, ...details }, {
       lastErrorMessage: message,
     });
+    // #4673 (PR #4687 review): the row is no longer this run's (`INV-INT-029`): the
+    // run that holds it decides, so no refusal stamp and no officer alert from here.
+    if (failed === null) return null;
     await prisma.xeroSyncOperation.updateMany({
-      where: { id: operationId, status: "FAILED" },
+      where: { id: operationId, status: "FAILED", startedAt: params.syncOperation.startedAt },
       data: { lastErrorCode: ADDITIONAL_CAPTURE_RECEIPT_REFUSED_CODE },
     });
     await alertOfficer(paymentIntentId, operationId, message);
