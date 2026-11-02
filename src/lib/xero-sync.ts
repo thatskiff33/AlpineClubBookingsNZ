@@ -991,8 +991,8 @@ export async function completeXeroSyncOperation(
 /**
  * The optional write guard of {@link failXeroSyncOperation}: at most one, so a
  * caller can never pass two and have one silently dropped (#3462). Either way a failure
- * never lands on a recorded success, a repair's claim (#4356) or another claim (#4373,
- * `INV-INT-029`): null.
+ * never lands on a recorded success, a repair's claim (#4356), another claim (#4373), or
+ * anything but its own claim's RUNNING or FAILED row (#4673, `INV-INT-029`): null.
  */
 type FailXeroSyncOperationGuard =
   | {
@@ -1000,6 +1000,8 @@ type FailXeroSyncOperationGuard =
        * #3635 round-3 N5: leave a row another writer has already WITHDRAWN
        * (CANCELLED) as it is - the outbox's catch runs after its handler, and an
        * approval can withdraw a kept row in between. Answers null then.
+       * Since PR #4687 review every failure keeps CANCELLED (`INV-INT-029`);
+       * this still marks a guarded caller, which a missing row only logs for.
        */
       keepCancelled: true;
       retryClaim?: never;

@@ -105,19 +105,13 @@ const mocks = vi.hoisted(() => {
 
   // The handlers' own `catch` self-fails the outbox row via this shared helper
   // (xero-sync.ts): it writes FAILED + completedAt only over its own claim's row
-  // - RUNNING, or the FAILED or CANCELLED end that claim wrote (`keepCancelled`
-  // keeps CANCELLED) - and otherwise leaves the row as it is and answers null
-  // (#4356, #4373, #4673, `INV-INT-029`). The mock reproduces that write against
-  // the store so the outbox's un-claim runs against a genuinely-FAILED row.
-  const selfFail = async (
-    claim: { id: string; startedAt: Date | null },
-    _error?: unknown,
-    _payload?: unknown,
-    options?: { keepCancelled?: true },
-  ) => {
+  // - RUNNING, or the FAILED end that claim wrote; never CANCELLED - and
+  // otherwise leaves the row as it is and answers null (#4356, #4373, #4673,
+  // `INV-INT-029`). The mock reproduces that write against the store so the
+  // outbox's un-claim runs against a genuinely-FAILED row.
+  const selfFail = async (claim: { id: string; startedAt: Date | null }, _error?: unknown) => {
     const row = rows.get(claim.id);
-    const statuses = options?.keepCancelled ? ["RUNNING", "FAILED"] : ["RUNNING", "FAILED", "CANCELLED"];
-    if (!row || !statuses.includes(row.status)) return null;
+    if (!row || !["RUNNING", "FAILED"].includes(row.status)) return null;
     // #4373/#4673: nor over a row another claim stamped, or none did.
     if (row.startedAt?.getTime() !== claim.startedAt?.getTime()) return null;
     // Nor over a repair's marked RUNNING claim.
@@ -338,8 +332,8 @@ describe("outbox processor fail-fast for all queue types (#1354)", () => {
       expect(mocks.operationUpdateMany).toHaveBeenLastCalledWith({
         where: {
           id: "op_refund_1",
-          // #4373: RUNNING only as this dispatch's own claim.
-          AND: [{ OR: [{ status: "RUNNING", startedAt: expect.any(Date) }, { status: "FAILED" }] }],
+          // #4373/#4687: RUNNING or self-failed FAILED, only under this dispatch's own claim.
+          AND: [{ status: { in: ["RUNNING", "FAILED"] }, startedAt: expect.any(Date) }],
           manuallyResolvedAt: null,
           ...NOT_A_XERO_REPAIR_CLAIM,
         },
@@ -648,6 +642,31 @@ describe("a stalled run's late failure after an officer's in-place Retry (#4673)
     expect(result).toMatchObject({ failed: 0, skipped: 1 });
     expect(mocks.rows.get("op_sub_1")?.status).toBe("PENDING");
     expect(mocks.chargeUpdate).not.toHaveBeenCalled();
+  });
+
+  // PR #4687 review: S1 stalls, Reset fails it, Retry queues it, S2 reaches Xero and
+  // fails (FAILED under S2), then S1's handler meets a pre-HTTP cooldown. The
+  // give-back to PENDING is S1's own claim's only: S2's failure and error stand.
+  it("MUTATION: a stalled run's cooldown refusal never gives back a FAILED row a later claim ended", async () => {
+    const laterClaimAt = new Date("2026-07-01T00:40:00.000Z");
+    queueOneRefundOperation();
+    mocks.createXeroCreditNote.mockImplementation(async () => {
+      const claim = dispatchClaim("op_refund_1");
+      Object.assign(mocks.rows.get("op_refund_1")!, {
+        status: "FAILED", startedAt: laterClaimAt, completedAt: laterClaimAt, lastErrorMessage: "Xero 400: the later run's own failure",
+      });
+      const refusal = new XeroTransientOutageError(120, true);
+      await mocks.failXeroSyncOperation(claim, refusal);
+      throw refusal;
+    });
+
+    const result = await processQueuedXeroOutboxOperations({ limit: 1 });
+
+    expect(result).toMatchObject({ failed: 0, skipped: 1 });
+    expect(result.cooldownDeferred).toBeUndefined();
+    expect(mocks.rows.get("op_refund_1")).toMatchObject({
+      status: "FAILED", startedAt: laterClaimAt, completedAt: laterClaimAt, lastErrorMessage: "Xero 400: the later run's own failure",
+    });
   });
 
   it("control: the same failure on its own RUNNING claim is recorded, counted failed and exposed", async () => {

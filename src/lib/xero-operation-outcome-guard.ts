@@ -53,22 +53,21 @@ function notAnotherClaim(claim: XeroOperationClaim): Prisma.XeroSyncOperationWhe
 /**
  * #4673 (`INV-INT-029`): the statuses a FAILED outcome may land on, and only
  * on a row carrying its own claim's `startedAt`: that claim's RUNNING row, or
- * the FAILED or CANCELLED end that claim (or a stale reset of it) already
- * wrote. Never a PENDING row - an officer's Retry queued it in place, or the
- * outbox gave it back - nor one waiting, skipped or ended under another claim.
+ * the FAILED end that claim (or a stale reset of it) already wrote. Never a
+ * PENDING row - an officer's Retry queued it in place, or the outbox gave it
+ * back - nor one waiting, skipped or ended under another claim. PR #4687
+ * review: nor CANCELLED, whoever's: a withdrawal cancels a FAILED row keeping
+ * its `startedAt`, and a failure there would make a withdrawn row retryable.
  */
-const XERO_FAILURE_OWN_CLAIM_STATUSES: readonly string[] = ["RUNNING", "FAILED", "CANCELLED"];
+const XERO_FAILURE_OWN_CLAIM_STATUSES = ["RUNNING", "FAILED"] as const;
 
 /**
  * #4673: a FAILED outcome's rows - this claim's own, in a status a failure may
  * replace. A failure that lost its claim is dropped: the run or retry that
  * holds the row now writes its own outcome.
  */
-function ownClaimFailureRow(claim: XeroOperationClaim, kept: readonly string[]): Prisma.XeroSyncOperationWhereInput {
-  return {
-    status: { in: XERO_FAILURE_OWN_CLAIM_STATUSES.filter((status) => !kept.includes(status)) },
-    startedAt: claim.startedAt,
-  };
+function ownClaimFailureRow(claim: XeroOperationClaim): Prisma.XeroSyncOperationWhereInput {
+  return { status: { in: [...XERO_FAILURE_OWN_CLAIM_STATUSES] }, startedAt: claim.startedAt };
 }
 
 /**
@@ -83,8 +82,9 @@ function ownClaimFailureRow(claim: XeroOperationClaim, kept: readonly string[]):
  * lose. #4373: and no outcome, a success included, lands on a RUNNING row
  * another claim holds - a late outcome of an earlier attempt never lands on a
  * retry's claim. #4673: and a failure (FAILED, from either writer) lands only
- * on this claim's own row (`ownClaimFailureRow`), so a stalled run's late
- * failure never undoes the Retry an officer queued after a stale reset. A
+ * on this claim's own RUNNING or FAILED row (`ownClaimFailureRow`), so a
+ * stalled run's late failure never undoes the Retry an officer queued after a
+ * stale reset, nor a withdrawal (CANCELLED). A
  * SUCCEEDED write lands on anything else; `alsoKeep` keeps one more status
  * out. `retryClaim` writes onto this RUNNING claim only, which no recorded
  * outcome is.
@@ -101,9 +101,10 @@ export function outcomeWriteGuard(
     return { status: "RUNNING", startedAt: claim.startedAt };
   }
   if (status === "SUCCEEDED") return notAnotherClaim(claim);
+  // #4673: a failure keeps every recorded success and CANCELLED by construction (`alsoKeep` adds nothing).
+  if (status === "FAILED") return { AND: [ownClaimFailureRow(claim), NOT_A_XERO_REPAIR_CLAIM] };
   const kept = XERO_RECORDED_SUCCESS_STATUSES.filter((held) => held !== status);
   if (options.alsoKeep) kept.push(options.alsoKeep);
-  if (status === "FAILED") return { AND: [ownClaimFailureRow(claim, kept), NOT_A_XERO_REPAIR_CLAIM] };
   return {
     AND: [
       { status: kept.length === 1 ? { not: kept[0] } : { notIn: kept } },

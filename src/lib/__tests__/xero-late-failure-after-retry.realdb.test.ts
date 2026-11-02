@@ -24,7 +24,15 @@
  * - Retry queued, the queued run fails under its own claim, then the stalled
  *   create fails: the row keeps the queued run's failure;
  * - control, no Retry: the stalled create's failure lands on its own claim's
- *   reset row, replacing the reset's message.
+ *   reset row, replacing the reset's message;
+ * - PR #4687 review: Retry queued, the queued run fails, then the stalled run
+ *   meets a pre-HTTP cooldown - the outbox's give-back to PENDING leaves the
+ *   queued run's FAILED row and error as they are;
+ * - PR #4687 review: a withdrawal cancels the reset row (FAILED to CANCELLED,
+ *   `startedAt` kept, as `settleKeptLateCaptureRecordOnApproval` writes it),
+ *   then the stalled run's handler self-fails without `keepCancelled` - the
+ *   row stays CANCELLED. The withdrawal is that writer's status-guarded
+ *   `updateMany` shape on this row, not the writer itself.
  *
  * Ordinary Vitest runs skip the whole file. It reuses the guarded, disposable
  * loopback PostgreSQL `concurrency-lock-races.realdb.test.ts` provisions, which
@@ -247,6 +255,45 @@ function fakeXero() {
       const kept = await row(operationId);
       expect(kept).toMatchObject({ status: "FAILED", startedAt: QUEUED_RUN_AT, lastErrorMessage: queuedFailure.lastErrorMessage });
       expect(kept.completedAt?.getTime()).toBe(queuedFailure.completedAt?.getTime());
+    });
+
+    it("MUTATION (PR #4687 review): stall, reset, Retry, the queued run fails, then the stalled run meets a cooldown - the queued run's FAILED row is not given back", async () => {
+      const { operationId, stalled } = await stalledThenReset();
+      await retry(operationId);
+
+      vi.setSystemTime(QUEUED_RUN_AT);
+      const queued = runOutbox();
+      await xero.reached(2);
+      xero.creates[1]!.fail(new Error("Xero 400: the queued run's own refusal"));
+      await expect(queued).resolves.toMatchObject({ succeeded: 0, failed: 1 });
+      const queuedFailure = await row(operationId);
+      expect(queuedFailure).toMatchObject({ status: "FAILED", startedAt: QUEUED_RUN_AT });
+
+      xero.creates[0]!.fail(Object.assign(new Error("Xero cooldown: transient outage"), { name: "XeroTransientOutageError", preHttp: true }));
+      const result = await stalled;
+      expect(result).toMatchObject({ succeeded: 0, failed: 0, skipped: 1 });
+      expect(result.cooldownDeferred).toBeUndefined();
+      const kept = await row(operationId);
+      expect(kept).toMatchObject({ status: "FAILED", startedAt: QUEUED_RUN_AT, lastErrorMessage: queuedFailure.lastErrorMessage });
+      expect(kept.completedAt?.getTime()).toBe(queuedFailure.completedAt?.getTime());
+    });
+
+    it("MUTATION (PR #4687 review): stall, reset, a withdrawal cancels the row, then the stalled handler self-fails - the row stays CANCELLED", async () => {
+      const { operationId, stalled, stalledClaimAt } = await stalledThenReset();
+      const withdrawn = await prisma.xeroSyncOperation.updateMany({
+        where: { id: operationId, status: { in: ["PENDING", "FAILED"] }, manuallyResolvedAt: null },
+        data: { status: "CANCELLED", completedAt: new Date(), lastErrorCode: "WITHDRAWN_FOR_TEST", lastErrorMessage: "Withdrawn unsent." },
+      });
+      expect(withdrawn.count).toBe(1);
+
+      // A handler's own catch, as the kept late-capture invoice's: no `keepCancelled`.
+      const { failXeroSyncOperation } = await import("@/lib/xero-sync");
+      await expect(failXeroSyncOperation({ id: operationId, startedAt: stalledClaimAt }, new Error("Xero 500: the stalled create failed"))).resolves.toBeNull();
+      expect(await row(operationId)).toMatchObject({ status: "CANCELLED", startedAt: stalledClaimAt, lastErrorCode: "WITHDRAWN_FOR_TEST" });
+
+      xero.creates[0]!.fail(new Error("Xero 500: the stalled create failed"));
+      await expect(stalled).resolves.toMatchObject({ succeeded: 0, failed: 0, skipped: 1 });
+      expect(await row(operationId)).toMatchObject({ status: "CANCELLED", lastErrorCode: "WITHDRAWN_FOR_TEST" });
     });
 
     it("control: stall, reset, no Retry, then the stalled create fails - the failure lands on its own claim's reset row", async () => {

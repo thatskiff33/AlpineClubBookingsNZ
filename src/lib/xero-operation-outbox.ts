@@ -3337,8 +3337,8 @@ export async function processQueuedXeroOutboxOperations(options?: {
         const returned = await prisma.xeroSyncOperation.updateMany({
           where: {
             id: queuedOperation.id,
-            // #4373: RUNNING only as this dispatch's own claim, never a later retry's (`INV-INT-029`).
-            AND: [{ OR: [{ status: "RUNNING", startedAt: outcomeClaim.startedAt }, { status: "FAILED" }] }],
+            // #4373/#4687: RUNNING or self-failed FAILED only under this dispatch's own claim, never a later one's (`INV-INT-029`).
+            AND: [{ status: { in: ["RUNNING", "FAILED"] }, startedAt: outcomeClaim.startedAt }],
             // Never revive a row an officer resolved (#3635, `INV-INT-025`), nor a repair's marked claim (#4356).
             manuallyResolvedAt: null,
             ...NOT_A_XERO_REPAIR_CLAIM,
@@ -3372,12 +3372,12 @@ export async function processQueuedXeroOutboxOperations(options?: {
           result.skipped += 1;
           continue;
         }
-        // The row was in neither RUNNING nor FAILED (e.g. a concurrent worker
-        // moved it out from under us). Do NOT report a return-to-PENDING that
-        // did not happen — that false "skipped" is what let an incident summary
-        // tell an operator the queue would self-heal while invoices sat stuck.
-        // Fall through to the honest FAILED path so the log and the failed
-        // counter reflect a row that was NOT recovered.
+        // The row was not this claim's RUNNING or FAILED row (e.g. a concurrent
+        // worker moved it out from under us). Do NOT report a return-to-PENDING
+        // that did not happen — that false "skipped" is what let an incident
+        // summary tell an operator the queue would self-heal while invoices sat
+        // stuck. Fall through to the failure path: the row counts failed when the
+        // failure lands, and skipped when INV-INT-029 refuses it (#4673).
         logger.warn(
           {
             err: error,

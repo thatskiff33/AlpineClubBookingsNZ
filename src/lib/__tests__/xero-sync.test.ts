@@ -1736,7 +1736,7 @@ describe("failXeroSyncOperation named errors (#4218)", () => {
     );
     expect(mocks.operationUpdateManyAndReturn).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: "op_1", ...failureGuard(["RUNNING", "FAILED", "CANCELLED"]) },
+        where: { id: "op_1", ...failureGuard(["RUNNING", "FAILED"]) },
         data: expect.objectContaining({
           status: "FAILED",
           lastErrorCode: "CREDIT_NOTE_SPENT_OUTSIDE_APP",
@@ -2050,11 +2050,11 @@ describe("outcome writes never replace a recorded success (#4356, INV-INT-029)",
   });
 
   // #4673: a failure lands only on its own claim's row - RUNNING, or the FAILED
-  // or CANCELLED end that claim already wrote - never a PENDING, waiting or
-  // skipped row, whatever its `startedAt`.
-  const failureLandsOn = (status: string) => ["RUNNING", "FAILED", "CANCELLED"].includes(status);
+  // end that claim already wrote - never a PENDING, waiting, skipped or (PR #4687
+  // review) CANCELLED row, whatever its `startedAt`.
+  const failureLandsOn = (status: string) => ["RUNNING", "FAILED"].includes(status);
 
-  it.each(STATUSES)("MUTATION: a failure lands on its own claim's %s row only when it is RUNNING, FAILED or CANCELLED", async (existing) => {
+  it.each(STATUSES)("MUTATION: a failure lands on its own claim's %s row only when it is RUNNING or FAILED", async (existing) => {
     const { row } = oneRow(existing);
     const outcome = await failXeroSyncOperation(xeroClaim("op_shared"), new Error("Xero 429"));
     expect(row.status).toBe(failureLandsOn(existing) ? "FAILED" : existing);
@@ -2361,10 +2361,14 @@ describe("outcome writes never replace a recorded success (#4356, INV-INT-029)",
       expect(maybeNotifyXeroRepeatedFailure).toHaveBeenCalledWith(expect.objectContaining({ id: "op_shared", status: "FAILED" }));
     });
 
-    it("MUTATION: a CANCELLED end takes the failure only under its own claim, and never with keepCancelled", async () => {
+    // PR #4687 review: a withdrawal cancels a FAILED row keeping its `startedAt`, so
+    // a CANCELLED row under this claim may be a treasurer's, not this claim's end.
+    it("MUTATION: a CANCELLED row takes no failure, under its own claim or any, with or without keepCancelled", async () => {
+      const { maybeNotifyXeroRepeatedFailure } = await import("@/lib/xero-hardening");
       const own = oneRow("CANCELLED");
-      await expect(failXeroSyncOperation(xeroClaim("op_shared"), new Error("late"))).resolves.toMatchObject({ status: "FAILED" });
-      expect(own.row.status).toBe("FAILED");
+      await expect(failXeroSyncOperation(xeroClaim("op_shared"), new Error("late"))).resolves.toBeNull();
+      expect(own.row.status).toBe("CANCELLED");
+      expect(maybeNotifyXeroRepeatedFailure).not.toHaveBeenCalled();
       const withdrawn = queuedAgain("CANCELLED");
       await expect(failXeroSyncOperation(xeroClaim("op_shared"), new Error("late"))).resolves.toBeNull();
       expect(withdrawn.row.status).toBe("CANCELLED");
