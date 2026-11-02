@@ -155,7 +155,26 @@ vi.mock("@/lib/prisma", () => {
         return { count: hits.length };
       }),
     },
-    $transaction: vi.fn(async (run: (tx: unknown) => unknown) => run(prisma)),
+    // #4656: the record takes the Payment row first (`lockPaymentForRefundedTotal`); one fake client has nothing to lock.
+    $executeRaw: vi.fn(async () => 1),
+    // #4656: PostgreSQL's rollback. The record now claims its row before it checks the note fresh, so a
+    // refusal must leave nothing it wrote - the row's claim included - as the real transaction does.
+    $transaction: vi.fn(async (run: (tx: unknown) => unknown) => {
+      const payment = state.payment && { ...state.payment };
+      const links = state.links.map((link) => ({ ...link }));
+      const operations = state.operations.map((operation) => [operation, { ...operation }] as const);
+      try {
+        return await run(prisma);
+      } catch (error) {
+        state.payment = payment;
+        state.links = links;
+        state.operations = operations.map(([operation, before]) => {
+          for (const key of Object.keys(operation)) delete operation[key];
+          return Object.assign(operation, before);
+        });
+        throw error;
+      }
+    }),
   };
   return { prisma };
 });
