@@ -48,8 +48,8 @@
  * hold's transaction has ended, and the same cancel apply
  * (`settleLostRecoveryClaimHold`). #4652: that covers a net-off or fold
  * (`reissueClosedUnminted`) and a stale reclaim whose runner closed it with
- * another intent or none. #4675: a runner closes only under the claim it holds,
- * so a stale attempt can no longer close a recovery another runner reclaimed -
+ * another intent or none. #4675: the runner's close is fenced on its claim, so
+ * a stale attempt can no longer close a recovery another runner reclaimed -
  * the close that precedes a lost hold is a net-off, a fold or the reclaiming
  * runner's own. Anything else - a recovery reset, or reclaimed by a
  * runner still PROCESSING (even one that wrote another intent), PENDING or

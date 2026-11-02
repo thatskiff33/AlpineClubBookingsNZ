@@ -1175,7 +1175,8 @@ async function completePaymentRecoveryOperation(
   });
   if (closed.count === 0) {
     logger[lossExpected ? "debug" : "warn"](
-      { operationId: claim.id, attempts: claim.attempts },
+      // The claim this attempt held, so a reaped stale attempt's lost close can be traced.
+      { operationId: claim.id, attempts: claim.attempts, processingStartedAt: claim.processingStartedAt },
       "Payment recovery completion matched no live claim of this attempt (already succeeded, handed back or reclaimed after this attempt stalled, or deleted by a manual mark-paid reversal); nothing was closed or resurrected",
     );
   }
@@ -1194,6 +1195,12 @@ async function completeUnclaimedPaymentRecoveryOperation(operationId: string): P
     where: { id: operationId, status: { not: PaymentRecoveryOperationStatus.SUCCEEDED } },
     data: succeededPaymentRecoveryData(),
   });
+  if (closed.count === 0) {
+    logger.warn(
+      { operationId },
+      "Superseded-intent cancellation close matched no live operation (already succeeded, or deleted by a manual mark-paid reversal); nothing was closed",
+    );
+  }
   return closed.count === 1;
 }
 
@@ -2003,6 +2010,8 @@ async function processRefundSupersededPaymentOperation(
     0
   );
 
+  // Silent, as after a crash: a refund an earlier attempt made but whose close it lost (#4675,
+  // reaped while it ran) is not announced here - nothing records which refund it would announce.
   if (outstandingCents <= 0) {
     await completePaymentRecoveryOperation(operation);
     return;

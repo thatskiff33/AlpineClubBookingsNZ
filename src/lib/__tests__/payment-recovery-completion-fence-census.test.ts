@@ -6,7 +6,7 @@ import { stripComments } from "@/lib/__tests__/support/strip-comments";
 import { balancedBrackets } from "./support/balanced-brackets";
 
 /**
- * #4675 (`INV-PAY-120`): THE RUNNER CLOSES A RECOVERY ONLY UNDER THE CLAIM IT HOLDS.
+ * #4675 (`INV-PAY-120`): THE RUNNER'S CLOSE IS FENCED ON THE CLAIM IT HOLDS.
  *
  * A recovery attempt that stalled past the stale reaper used to close its row
  * SUCCEEDED after another runner had reclaimed it and minted the ask: the close

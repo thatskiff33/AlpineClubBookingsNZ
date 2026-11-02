@@ -2798,10 +2798,10 @@ _Legacy: settles tasks raised before #4317._
   unpaid fence; cancellations queued; parked invoices CANCELLED. A capture or
   deadlock in between rolls the edit back (409); one after commit is
   refunded in full. It writes the re-issue's recovery and billed-offset note.
-  An orphaned intent (#4052) is cancelled at Stripe, best-effort, unless a
+  An orphaned Stripe intent (#4052) is cancelled, best-effort, unless a
   row, recovery or live claim may own it; a lost hold's (#4631, #4652) once
-  its recovery closed without it. Runners close only under their claim
-  (#4675). One uncancellable is left and logged.
+  its recovery closed without it. The runner's close is fenced on its claim
+  (`completePaymentRecoveryOperation`, #4675). One uncancellable is logged.
 - **A declined card stays live** (#4052).
 - **Asks awaiting a failed mint's retry** count, sized as the replay would. A
   retry claimed within two minutes refuses the edit; an older claim is closed.

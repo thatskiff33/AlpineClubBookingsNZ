@@ -4091,7 +4091,9 @@ describe("payment recovery worker", () => {
         expect(mockAttachRecoveredIntent).not.toHaveBeenCalled();
         expect(mockCompleteDeferredSupplementaryInvoice).not.toHaveBeenCalled();
         const lostClose = ([, message]: unknown[]) => typeof message === "string" && message.includes("completion matched no live claim");
-        expect(vi.mocked(logger.warn).mock.calls.filter(lostClose)).toHaveLength(1);
+        expect(vi.mocked(logger.warn).mock.calls.filter(lostClose)).toEqual([
+          [{ operationId: "recovery-additional", attempts: 2, processingStartedAt: claimedAt }, expect.any(String)],
+        ]);
       });
 
       it("MUTATION: the close after a mint is fenced on the claim time the last hold re-stamped, not the one the run was handed", async () => {
@@ -4921,7 +4923,10 @@ describe("payment recovery worker", () => {
       // #4125: losing to the inline close is expected here, so it is no warning.
       const lostClose = ([, message]: unknown[]) => typeof message === "string" && message.includes("completion matched no live claim");
       expect(vi.mocked(logger.warn).mock.calls.filter(lostClose)).toHaveLength(0);
-      expect(vi.mocked(logger.debug).mock.calls.filter(lostClose)).toHaveLength(1);
+      // #4675: the debug line still names the claim the lost close held.
+      expect(vi.mocked(logger.debug).mock.calls.filter(lostClose)).toEqual([
+        [expect.objectContaining({ attempts: expect.any(Number), processingStartedAt: expect.any(Date) }), expect.any(String)],
+      ]);
     });
   });
 
@@ -5284,6 +5289,17 @@ describe("#2262 — deleted-operation coherence (H1/H2)", () => {
       .map(([args]) => args as { where: Record<string, unknown>; data: Record<string, unknown> })
       .filter((args) => args.data.status === PaymentRecoveryOperationStatus.SUCCEEDED);
     expect(closes.map((close) => close.where)).toEqual([heldClaimWhere(op.id, 3, handedAt)]);
+  });
+
+  it("#4675 — the webhook's close that matches nothing (already closed, or deleted) says so at warn", async () => {
+    mockPaymentRecoveryFindFirst.mockResolvedValueOnce(makeOperation({ status: PaymentRecoveryOperationStatus.FAILED }));
+    mockPaymentRecoveryUpdateMany.mockImplementation(async (args: { data?: { status?: unknown } }) =>
+      ({ count: args.data?.status === PaymentRecoveryOperationStatus.SUCCEEDED ? 0 : 1 }));
+
+    await completeCanceledSupersededPaymentIntentRecovery({ paymentIntentId: "pi_superseded" });
+
+    const lostClose = ([, message]: unknown[]) => typeof message === "string" && message.includes("cancellation close matched no live operation");
+    expect(vi.mocked(logger.warn).mock.calls.filter(lostClose)).toEqual([[{ operationId: "recovery-1" }, expect.any(String)]]);
   });
 
   it("#4675 — the webhook's close of a cancelled superseded intent holds no claim: fenced off SUCCEEDED only", async () => {

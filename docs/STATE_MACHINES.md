@@ -4446,7 +4446,10 @@ debt stays on the row (`INV-PAY-092`, `INV-MOD-060`). To verify:
 
 ### Recovery close under the attempt's claim (#4675)
 
-A runner closes its recovery row only while the row is still its own:
+The runner's close (`completePaymentRecoveryOperation`) takes a recovery row
+only while it is still the attempt's own. Not every writer is fenced so: the
+organiser child refund executor closes its own row off SUCCEEDED alone, and the
+worker's superseded hand-off re-takes its row without an attempt fence.
 
 ```text
 claim (PENDING|FAILED -> PROCESSING, attempts + 1, processingStartedAt now)
@@ -4457,6 +4460,18 @@ claim (PENDING|FAILED -> PROCESSING, attempts + 1, processingStartedAt now)
   lost close -> nothing written or sent; the row stays with its holder or waits for a claim
 webhook close of a cancelled superseded intent (no claim) -> any status but SUCCEEDED
 ```
+
+Two stated limits, both the price of refusing a close the attempt no longer
+owns. An attempt whose work landed but whose close lost is closed silently by
+the next claim, as a crashed attempt is: a superseded-payment refund made and
+recorded by an attempt the reaper had handed back finds nothing outstanding on
+the next claim, which closes the row without the member's "we refunded you"
+notice or the admin alert (`reportSupersededPaymentRefund` runs only after a
+close the attempt won, and nothing records which refund it announced, so the
+next claim cannot tell an unannounced refund of its own from another path's).
+And a final attempt the reaper ended for good (FAILED at the attempt ceiling,
+officers alerted) stays FAILED even when its work then completed; the owed
+readers count recorded refunds, so a refund it made reads as paid, not owed.
 
 The rule is `INV-PAY-120`; the interleavings are in
 `docs/CONCURRENCY_AND_LOCKING.md`. To verify:
