@@ -369,7 +369,8 @@ describe("organiser extra adjustment provider execution", () => {
   });
   describe("#4701: before voiding a wholly unpaid invoice, the waiver run checks it still holds its claim", () => {
     const unpaid = () => { mocks.invoice.amountPaid = 0; mocks.invoice.amountDue = 60; };
-    const wholeWaiver = () => payload({ cashAtPlanCents: 0, amountCents: 6_000 });
+    // More than is due, so the trace is seen to name what the void would release, not what was asked.
+    const wholeWaiver = () => payload({ cashAtPlanCents: 0, amountCents: 7_000 });
 
     it("MUTATION: a claim lost while the invoice read stalled voids nothing, completes nothing, and is traced", async () => {
       unpaid();
