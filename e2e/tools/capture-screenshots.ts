@@ -19,9 +19,11 @@
  *   pnpm run docs:screenshots      # capture every manifest entry
  *   pnpm run docs:screenshots --list      # dry run: print the manifest, no browser
  *   pnpm run docs:screenshots admin-dashboard public-home   # capture a subset
+ *   pnpm run docs:screenshots --user-guide  # refresh images embedded by the member guide
  *
  * Environment:
  *   E2E_BASE_URL   target app (default http://localhost:3001, matching E2E)
+ *   PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH   optional preinstalled browser override
  *
  * Safety: only ever point this at the local, ephemeral seeded staging stack.
  * Never a live or production deployment — it logs in and navigates admin pages.
@@ -39,6 +41,7 @@ import {
   type BrowserContext,
   type Page,
 } from "@playwright/test";
+import { userGuideScreenshotNames } from "../../scripts/lib/user-guide-screenshots.mjs";
 import { loginPersona, storageStatePath } from "../helpers/auth";
 import {
   DEMO_BOOKING_WINDOWS,
@@ -215,7 +218,9 @@ const CAPTURES: Capture[] = [
   { name: "member-dashboard", route: "/dashboard", area: "public", persona: "member" },
   { name: "member-profile", route: "/profile", area: "public", persona: "member" },
   { name: "member-bookings", route: "/bookings", area: "public", persona: "member" },
-  { name: "member-book", route: "/book", area: "public", persona: "member" },
+  { name: "member-book", route: "/book", area: "public", persona: "member", waitForText: "Select check-in date" },
+  { name: "member-lodge-roster", route: "/lodge-roster", area: "public", persona: "member", waitForText: "Who’s at the lodge" },
+  { name: "member-message-board", route: "/message-board", area: "public", persona: "member", waitForText: "Message board" },
   // Batch 3 (#2050): lodge-operations operator guides — physical-lodge day-to-day.
   // The lodge-ops sidebar section (hut leaders, roster, lodge kiosk, work parties,
   // lodge instructions), the lodge-scoped chores + rooms/beds inventory, and
@@ -437,6 +442,16 @@ function parseArgs(argv: string[]): { list: boolean; only: Set<string> } {
   const args = argv.slice(2);
   const list = args.includes("--list") || args.includes("--dry-run");
   const only = new Set(args.filter((a) => !a.startsWith("-")));
+  if (args.includes("--user-guide")) {
+    const guideRoot = path.resolve(import.meta.dirname, "..", "..", "docs", "user-guide");
+    for (const file of fs.readdirSync(guideRoot).filter((name) => name.endsWith(".md"))) {
+      const source = fs.readFileSync(path.join(guideRoot, file), "utf8");
+      for (const name of userGuideScreenshotNames(source)) {
+        only.add(name);
+      }
+    }
+    if (only.size === 0) throw new Error("No user-guide screenshots found");
+  }
   return { list, only };
 }
 
@@ -478,7 +493,11 @@ async function shoot(context: BrowserContext, capture: Capture): Promise<void> {
     // Wait for the document 'load' event (deterministic), not "networkidle":
     // networkidle can hang or resolve arbitrarily on pages with long-poll /
     // streaming / analytics requests. Give it an explicit navigation timeout.
-    await page.goto(new URL(capture.route, BASE_URL).toString(), { waitUntil: "load", timeout: 30_000 });
+    const response = await page.goto(new URL(capture.route, BASE_URL).toString(), { waitUntil: "load", timeout: 30_000 });
+    if (!response?.ok()) throw new Error(`Capture ${capture.name} did not load successfully`);
+    if (capture.persona === "member" && new URL(page.url()).pathname !== capture.route) {
+      throw new Error(`Capture ${capture.name} redirected away from its member screen`);
+    }
     await sessionSettled;
     // Settle: let web fonts finish so text is not captured in a fallback face,
     // bounded by an explicit timeout so a stuck font load cannot block a shot.
@@ -505,6 +524,10 @@ async function shoot(context: BrowserContext, capture: Capture): Promise<void> {
     // shared finite animation so named captures contain the chart data rather
     // than only axes/legends from the first frame.
     await page.waitForTimeout(1_800);
+    // Calendars announce pending availability in their day-button labels,
+    // rather than with a Loading sentinel. Never publish that transient state.
+    await page.getByRole("button", { name: /availability not loaded/ }).first()
+      .waitFor({ state: "hidden", timeout: 30_000 });
     if (capture.prepare) {
       await capture.prepare(page);
     }
@@ -534,7 +557,9 @@ async function main(): Promise<void> {
 
   let browser: Browser | undefined;
   try {
-    browser = await chromium.launch();
+    browser = await chromium.launch({
+      executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH,
+    });
 
     // Admin session: reuse the E2E setup's stored state if present, otherwise
     // log the demo admin in (completing the two-factor gate exactly like the

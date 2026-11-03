@@ -78,6 +78,7 @@
  * `pnpm run docs:linkcheck` already validates fragments against real headings, and
  * duplicating it would give two places to disagree.
  */
+import { userGuideScreenshotNames } from "../lib/user-guide-screenshots.mjs";
 import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
@@ -2889,6 +2890,38 @@ export function auditPermanentInvariantIds(
   return problems;
 }
 
+/** Screen coverage and reading budget for the navigable UX map (#4469). */
+export function auditUxFlowMap(files) {
+  const mapPath = "docs/UX_FLOW_MAP.md";
+  const source = files.get(mapPath);
+  if (source === undefined) return [];
+  const problems = [];
+  const budgetRow = (files.get(WORD_BUDGET_REGISTER) ?? "")
+    .match(/\| `docs\/UX_FLOW_MAP\.md` \| ([1-9][0-9]*) \|/);
+  if (!budgetRow) {
+    problems.push(`${WORD_BUDGET_REGISTER}: missing screen-map word ceiling.`);
+  } else if (countWords(source) > Number(budgetRow[1])) {
+    problems.push(`${mapPath}: ${countWords(source)} words exceeds its ${budgetRow[1]}-word ceiling.`);
+  }
+  // A route in a list or an unrelated paragraph is not a screen section.
+  const screens = new Set([...source.matchAll(
+    /^### [^\n]+\n(?:(?!^###? ).)*?^Screen: `\/admin\/([^`]+)`\./gms,
+  )].map((match) => match[1]));
+  for (const match of (files.get("docs/COVERAGE_MATRIX.md") ?? "")
+    .matchAll(/^\| `([^`]+)` \|/gm)) {
+    if (!screens.has(match[1])) {
+      problems.push(`${mapPath}: /admin/${match[1]} needs a screen section (COVERAGE_MATRIX.md).`);
+    }
+  }
+  for (const [file, content] of files) {
+    if (!/^docs\/user-guide\/[^/]+\.md$/.test(file)) continue;
+    if (userGuideScreenshotNames(content).length === 0) {
+      problems.push(`${file}: embed a named user-guide screenshot with descriptive alt text.`);
+    }
+  }
+  return problems;
+}
+
 /**
  * The whole check, over an in-memory map of repo-relative path -> file text.
  *
@@ -2912,6 +2945,7 @@ export function auditDocs(
     ...auditIndexRows(files),
     ...auditIndexCatalogueRows(files),
     ...auditWordBudgets(files),
+    ...auditUxFlowMap(files),
     ...auditAgentDocWordBudgets(files, baselineFiles),
     ...auditRoutingTable(files),
     ...auditLineNumberCitations(files),

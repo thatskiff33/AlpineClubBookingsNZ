@@ -40,7 +40,7 @@ Screen: `/`, `/login`.
 
 Journey: Browse club information, sign in, or follow account recovery. After sign-in, complete any required security or profile steps before opening the dashboard.
 
-[Guide](user-guide/your-account.md) · [History](UX_FLOW_HISTORY.md)
+[Guide](user-guide/your-account.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
 ### Membership application
 
@@ -48,7 +48,7 @@ Screen: `/join/apply`.
 
 Journey: Fill in personal details and nominators, submit the application, and follow the emailed nomination and account-setup steps.
 
-[Guide](user-guide/joining-the-club.md) · [History](UX_FLOW_HISTORY.md)
+[Guide](user-guide/joining-the-club.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
 ### Member dashboard
 
@@ -56,7 +56,7 @@ Screen: `/dashboard`.
 
 Journey: Read upcoming stays and account notices, then open a booking or choose Book a Stay.
 
-[Guide](user-guide/README.md) · [History](UX_FLOW_HISTORY.md)
+[Guide](user-guide/README.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
 ### Book a Stay
 
@@ -64,7 +64,7 @@ Screen: `/book`.
 
 Journey: Choose lodge and nights, add guests, review the price and rules, then confirm and follow the offered payment step. If a rule blocks the stay, use the available exception-request journey.
 
-[Guide](user-guide/booking-a-stay.md) · [History](UX_FLOW_HISTORY.md)
+[Guide](user-guide/booking-a-stay.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
 ### My Bookings and booking detail
 
@@ -72,7 +72,7 @@ Screen: `/bookings`, `/bookings/[id]`.
 
 Journey: Find a stay and open its detail. Review status, guests and amounts before paying, requesting a change or cancelling. Pending consent appears on the booking for an eligible invited member.
 
-[Guide](user-guide/changing-or-cancelling-a-booking.md) · [History](UX_FLOW_HISTORY.md)
+[Guide](user-guide/changing-or-cancelling-a-booking.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
 ### Payment and booking outcome
 
@@ -80,7 +80,7 @@ Screen: Booking detail and its payment action.
 
 Journey: Open the booking, inspect what is owed and choose an available payment method. Read the resulting status before leaving; bank payments can remain pending while settlement is checked.
 
-[Guide](user-guide/paying-for-your-stay.md) · [History](UX_FLOW_HISTORY.md)
+[Guide](user-guide/paying-for-your-stay.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
 ### Guest consent
 
@@ -88,7 +88,7 @@ Screen: Booking detail, including `#consent`, or the emailed response link.
 
 Journey: Read the organiser, lodge, dates, your nights and response deadline. Accept or decline using the available controls; a refusal explains who can act if you cannot.
 
-[Guide](user-guide/being-added-to-a-booking.md) · [History](UX_FLOW_HISTORY.md)
+[Guide](user-guide/being-added-to-a-booking.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
 ### Waitlist and offers
 
@@ -96,7 +96,7 @@ Screen: My Bookings and the offered booking.
 
 Journey: Join the waitlist for full nights, open an offer, and accept before its deadline. Check the booking status and any payment action afterward.
 
-[Guide](user-guide/waitlist-and-offers.md) · [History](UX_FLOW_HISTORY.md)
+[Guide](user-guide/waitlist-and-offers.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
 ### Profile and account security
 
@@ -104,7 +104,7 @@ Screen: `/profile`.
 
 Journey: Use the section rail to open personal details, sign-in security, notification preferences or privacy controls. Stage and save the relevant section.
 
-[Guide](user-guide/your-account.md) · [History](UX_FLOW_HISTORY.md)
+[Guide](user-guide/your-account.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
 ### Family and household
 
@@ -112,7 +112,7 @@ Screen: Family Group and Partner sections of `/profile`.
 
 Journey: Request to join or create a family group, manage eligible dependants, or declare a partner. Review the relationship and billing implications before submitting.
 
-[Guide](user-guide/managing-your-family.md) · [History](UX_FLOW_HISTORY.md)
+[Guide](user-guide/managing-your-family.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
 ### Who’s at the lodge
 
@@ -120,7 +120,7 @@ Screen: `/lodge-roster`.
 
 Journey: When enabled, choose the lodge card and read names and nights for the next 30 nights. Name visibility follows that lodge’s setting; contact and payment details are absent.
 
-[Guide](user-guide/whos-at-the-lodge.md) · [History](UX_FLOW_HISTORY.md)
+[Guide](user-guide/whos-at-the-lodge.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
 ### Message board
 
@@ -128,7 +128,7 @@ Screen: `/message-board`.
 
 Journey: When enabled, read recent posts, page to older posts, or compose a message. Review whether sharing with other clubs is available and selected before posting.
 
-[Guide](user-guide/the-message-board.md) · [History](UX_FLOW_HISTORY.md)
+[Guide](user-guide/the-message-board.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
 ## Admin overview
 
@@ -136,25 +136,31 @@ Journey: When enabled, read recent posts, page to older posts, or compose a mess
 
 Screen: `/admin/ai-diagnostics`.
 
+Shows: Diagnostic access, provisioning and deployment information.
+
 Journey: Inspect diagnostic access and follow the deployment guide to provision it.
 
-[Guide](ai-diagnostics/deployment.md) · [History](UX_FLOW_HISTORY.md)
+[Guide](ai-diagnostics/deployment.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
 ### Admin Dashboard — dashboard
 
 Screen: `/admin/dashboard`.
 
+Shows: Attention queues, headline statistics, recent bookings and quick-action links.
+
 Journey: Scan attention cards, follow a queue, or use a quick action to open its screen.
 
-[Guide](guides/dashboard.md) · [History](UX_FLOW_HISTORY.md)
+[Guide](guides/dashboard.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
 ### Testing — testing
 
 Screen: `/admin/testing`.
 
+Shows: A development-only error-boundary probe.
+
 Journey: Developer-only route-error probe; production returns Not Found. It is not an officer journey.
 
-[History](UX_FLOW_HISTORY.md)
+[History](UX_FLOW_HISTORY.md#journey-inventory)
 
 ## Admin bookings
 
@@ -162,105 +168,131 @@ Journey: Developer-only route-error probe; production returns Not Found. It is n
 
 Screen: `/admin/age-tier-settings`.
 
+Shows: Age-tier labels, boundaries and guest eligibility settings.
+
 Journey: Review age boundaries and labels before changing how guests are classified.
 
-[Guide](guides/age-tier-settings.md) · [History](UX_FLOW_HISTORY.md)
+[Guide](guides/age-tier-settings.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
 ### Bed Allocation — bed-allocation
 
 Screen: `/admin/bed-allocation`.
 
+Shows: A lodge-and-night board of guests, rooms, beds and allocation state.
+
 Journey: Choose lodge and nights, inspect guests and beds, preview moves or removals, then apply.
 
-[Guide](guides/bed-allocation.md) · [History](UX_FLOW_HISTORY.md)
+[Guide](guides/bed-allocation.md) · [History](UX_FLOW_HISTORY.md#reviewed-bed-allocation-moves-2595)
 
 ### Book on Behalf — book
 
 Screen: `/admin/book`.
 
+Shows: The booking wizard with an officer-selected booking owner.
+
 Journey: Choose a member, lodge, dates and guests; review the booking before submitting.
 
-[Guide](guides/book.md) · [History](UX_FLOW_HISTORY.md)
+[Guide](guides/book.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
 ### Booking Requests — booking-approvals
 
 Screen: `/admin/booking-approvals`.
 
+Shows: A redirect into the shared request queue’s Approvals tab.
+
 Journey: Follow the redirect into the Approvals tab of Booking Requests.
 
-[Guide](guides/booking-requests.md) · [History](UX_FLOW_HISTORY.md)
+[Guide](guides/booking-requests.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
 ### Booking Requests — booking-change-requests
 
 Screen: `/admin/booking-change-requests`.
 
+Shows: A redirect into the shared request queue’s Changes tab.
+
 Journey: Follow the redirect into the Changes tab of Booking Requests.
 
-[Guide](guides/booking-requests.md) · [History](UX_FLOW_HISTORY.md)
+[Guide](guides/booking-requests.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
 ### Booking Policies — booking-policies
 
 Screen: `/admin/booking-policies`.
 
+Shows: Booking rules and cancellation-policy settings.
+
 Journey: Review booking rules and cancellation policies before staging a change.
 
-[Guide](guides/booking-policies.md) · [History](UX_FLOW_HISTORY.md)
+[Guide](guides/booking-policies.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
 ### Booking Requests — booking-requests
 
 Screen: `/admin/booking-requests`.
 
+Shows: Tabbed request queues and request details with their current status and actions.
+
 Journey: Choose a queue tab, open a request, inspect the proposed stay, and use its available actions.
 
-[Guide](guides/booking-requests.md) · [History](UX_FLOW_HISTORY.md)
+[Guide](guides/booking-requests.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
 ### Bookings — bookings
 
 Screen: `/admin/bookings`.
 
+Shows: A filterable booking list; booking detail holds the stay, party, status and next actions.
+
 Journey: Filter the list, open a booking, and inspect its dates, guests and status before acting.
 
-[Guide](guides/bookings.md) · [History](UX_FLOW_HISTORY.md)
+[Guide](guides/bookings.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
 ### Bookings Setup — bookings-setup
 
 Screen: `/admin/bookings-setup`.
 
+Shows: Cards linking to the booking configuration screens.
+
 Journey: Open the relevant setup card for policies, seasons, fees or allocation settings.
 
-[Guide](guides/bookings-setup.md) · [History](UX_FLOW_HISTORY.md)
+[Guide](guides/bookings-setup.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
 ### Fees — fees
 
 Screen: `/admin/fees`.
 
+Shows: Consolidated fee sections with their own permission requirements.
+
 Journey: Review the relevant fee section; stage changes using its permission controls.
 
-[Guide](guides/fees.md) · [History](UX_FLOW_HISTORY.md)
+[Guide](guides/fees.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
 ### Promo Codes — promo-codes
 
 Screen: `/admin/promo-codes`.
 
+Shows: Promotion codes, validity windows and redemption limits.
+
 Journey: Inspect a promotion’s dates and limits before creating or editing a code.
 
-[Guide](guides/promo-codes.md) · [History](UX_FLOW_HISTORY.md)
+[Guide](guides/promo-codes.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
 ### Seasons — seasons
 
 Screen: `/admin/seasons`.
 
+Shows: Season date ranges and lodge rates.
+
 Journey: Choose a lodge and season, inspect dates and rates, and stage changes.
 
-[Guide](guides/seasons.md) · [History](UX_FLOW_HISTORY.md)
+[Guide](guides/seasons.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
 ### Waitlist — waitlist
 
 Screen: `/admin/waitlist`.
 
+Shows: Queued bookings, offers and their status.
+
 Journey: Inspect queued stays and offers, open the booking, and use the available queue actions.
 
-[Guide](guides/waitlist.md) · [History](UX_FLOW_HISTORY.md)
+[Guide](guides/waitlist.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
 ## Admin membership
 
@@ -268,137 +300,171 @@ Journey: Inspect queued stays and offers, open the booking, and use the availabl
 
 Screen: `/admin/committee`.
 
+Shows: Committee roles and assignments, with role and assignment editors.
+
 Journey: Inspect assignments; open Add or Edit Role and save the validated form.
 
-[Guide](guides/committee.md) · [History](UX_FLOW_HISTORY.md)
+[Guide](guides/committee.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
 ### Communications — communications
 
 Screen: `/admin/communications`.
 
+Shows: Member communication composition and audience selection.
+
 Journey: Choose recipients and compose a message; review the audience before sending.
 
-[Guide](guides/communications.md) · [History](UX_FLOW_HISTORY.md)
+[Guide](guides/communications.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
 ### Message Board — message-board
 
 Screen: `/admin/message-board`.
 
+Shows: Club messages and moderation controls.
+
 Journey: Read club posts and use the moderation actions allowed by the current role.
 
-[Guide](guides/message-board.md) · [History](UX_FLOW_HISTORY.md)
+[Guide](guides/message-board.md) · [History](UX_FLOW_HISTORY.md#club-message-board-2994-epic-2992)
 
 ### Member Notices — notices
 
 Screen: `/admin/notices`.
 
+Shows: Member notices, audiences and visibility controls.
+
 Journey: Choose an audience, compose a notice, and review its visibility before publishing.
 
-[Guide](guides/member-notices.md) · [History](UX_FLOW_HISTORY.md)
+[Guide](guides/member-notices.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
 ### Deletion Requests — deletion-requests
 
 Screen: `/admin/deletion-requests`.
 
+Shows: Pending account-deletion requests and their review details.
+
 Journey: Inspect a request and its member record before resolving it.
 
-[Guide](guides/deletion-requests.md) · [History](UX_FLOW_HISTORY.md)
+[Guide](guides/deletion-requests.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
 ### Family Groups — family-groups
 
 Screen: `/admin/family-groups`.
 
+Shows: Family memberships and billing relationships.
+
 Journey: Find a family, open its members, and review billing and relationship changes.
 
-[Guide](guides/family-groups.md) · [History](UX_FLOW_HISTORY.md)
+[Guide](guides/family-groups.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
 ### Family Suggestions — family-suggestions
 
 Screen: `/admin/family-suggestions`.
 
+Shows: Suggested member relationships awaiting review.
+
 Journey: Inspect suggested relationships and decide whether to link them.
 
-[Guide](guides/family-suggestions.md) · [History](UX_FLOW_HISTORY.md)
+[Guide](guides/family-suggestions.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
 ### Induction — induction
 
 Screen: `/admin/induction`.
 
+Shows: Member induction records and checklist progress.
+
 Journey: Inspect member induction progress and open the relevant checklist.
 
-[Guide](guides/induction.md) · [History](UX_FLOW_HISTORY.md)
+[Guide](guides/induction.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
 ### Lockers — lockers
 
 Screen: `/admin/lockers`.
 
+Shows: Lodge-scoped lockers, assignments and availability.
+
 Journey: Choose a lodge, inspect lockers and assignments, and manage the selected locker.
 
-[Guide](guides/lockers.md) · [History](UX_FLOW_HISTORY.md)
+[Guide](guides/lockers.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
 ### Member Applications — member-applications
 
 Screen: `/admin/member-applications`.
 
+Shows: Applications, nomination progress and officer decisions.
+
 Journey: Open an application, review its details and nominations, and use the available decision actions.
 
-[Guide](guides/member-applications.md) · [History](UX_FLOW_HISTORY.md)
+[Guide](guides/member-applications.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
 ### Member Fields — member-fields
 
 Screen: `/admin/member-fields`.
 
+Shows: The club’s configurable member-field definitions.
+
 Journey: Review the member fields collected by the club before changing their configuration.
 
-[Guide](guides/member-fields.md) · [History](UX_FLOW_HISTORY.md)
+[Guide](guides/member-fields.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
 ### Members — members
 
 Screen: `/admin/members`.
 
+Shows: A searchable member list and individual membership records.
+
 Journey: Search or filter members, open a profile, and use its permitted membership actions.
 
-[Guide](guides/members.md) · [History](UX_FLOW_HISTORY.md)
+[Guide](guides/members.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
 ### Cancellation Requests — membership-cancellation
 
 Screen: `/admin/membership-cancellation`.
 
+Shows: Cancellation notification and handling settings.
+
 Journey: Review the cancellation notification settings linked from Notifications & Email.
 
-[Guide](guides/membership-cancellations.md) · [History](UX_FLOW_HISTORY.md)
+[Guide](guides/membership-cancellations.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
 ### Cancellation Requests — membership-cancellations
 
 Screen: `/admin/membership-cancellations`.
 
+Shows: The membership cancellation review queue.
+
 Journey: Open a cancellation request and review its consequences before deciding it.
 
-[Guide](guides/membership-cancellations.md) · [History](UX_FLOW_HISTORY.md)
+[Guide](guides/membership-cancellations.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
 ### Membership & Members setup — membership-setup
 
 Screen: `/admin/membership-setup`.
 
+Shows: Cards linking to membership configuration.
+
 Journey: Open the appropriate membership configuration card.
 
-[Guide](guides/membership-setup.md) · [History](UX_FLOW_HISTORY.md)
+[Guide](guides/membership-setup.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
 ### Membership Types — membership-types
 
 Screen: `/admin/membership-types`.
 
+Shows: Membership types and their eligibility and billing configuration.
+
 Journey: Inspect a type, its eligibility and subscription settings before saving changes.
 
-[Guide](guides/membership-types.md) · [History](UX_FLOW_HISTORY.md)
+[Guide](guides/membership-types.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
 ### Subscription Lockout — subscription-lockout
 
 Screen: `/admin/subscription-lockout`.
 
+Shows: Lapsed-subscription rules and related notification settings.
+
 Journey: Review the lapsed-subscription rules and member-facing wording.
 
-[Guide](guides/subscription-lockout.md) · [History](UX_FLOW_HISTORY.md)
+[Guide](guides/subscription-lockout.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
 ## Admin lodge
 
@@ -406,89 +472,111 @@ Journey: Review the lapsed-subscription rules and member-facing wording.
 
 Screen: `/admin/calendar`.
 
+Shows: Club events and the controls for managing them.
+
 Journey: Choose a date range, inspect events, and open an event to manage it.
 
-[Guide](guides/calendar.md) · [History](UX_FLOW_HISTORY.md)
+[Guide](guides/calendar.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
 ### Chore Templates — chores
 
 Screen: `/admin/chores`.
 
+Shows: The selected lodge’s chore inventory.
+
 Journey: Choose a lodge, inspect its chore list, and stage chore changes.
 
-[Guide](guides/chores.md) · [History](UX_FLOW_HISTORY.md)
+[Guide](guides/chores.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
 ### Lobby Display — display
 
 Screen: `/admin/display`.
 
+Shows: The lobby-display hub, device management, templates, layouts and previews.
+
 Journey: Open Devices, Visual builder, Layouts, Templates or Reference from the display hub.
 
-[Guide](guides/display.md) · [History](UX_FLOW_HISTORY.md)
+[Guide](guides/display.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
 ### Hut Leaders — hut-leaders
 
 Screen: `/admin/hut-leaders`.
 
+Shows: Lodge-night leadership assignments and coverage.
+
 Journey: Choose lodge and nights, inspect cover, and manage eligible assignments.
 
-[Guide](guides/hut-leaders.md) · [History](UX_FLOW_HISTORY.md)
+[Guide](guides/hut-leaders.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
 ### Lodge Kiosk — lodge
 
 Screen: `/admin/lodge`.
 
+Shows: Lodge operational settings and kiosk entry points.
+
 Journey: Inspect lodge operations and open the kiosk or related operational screen.
 
-[Guide](guides/lodge.md) · [History](UX_FLOW_HISTORY.md)
+[Guide](guides/lodge.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
 ### Lodge Instructions — lodge-instructions
 
 Screen: `/admin/lodge-instructions`.
 
+Shows: Lodge instructions and supported content tokens.
+
 Journey: Choose lodge content, preview the instructions, and save staged wording.
 
-[Guide](guides/lodge-instructions.md) · [History](UX_FLOW_HISTORY.md)
+[Guide](guides/lodge-instructions.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
 ### Lodges — lodges
 
 Screen: `/admin/lodges`.
 
+Shows: The lodge list and each lodge’s settings and feature controls.
+
 Journey: Choose a lodge, open its settings, and manage only that lodge’s configuration.
 
-[Guide](guides/lodges.md) · [History](UX_FLOW_HISTORY.md)
+[Guide](guides/lodges.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
 ### Lodge Maintenance — maintenance-reports
 
 Screen: `/admin/maintenance-reports`.
 
+Shows: Lodge faults, their descriptions and resolution state.
+
 Journey: Filter faults by lodge and status, inspect a report, then record the next action.
 
-[Guide](guides/maintenance-reports.md) · [History](UX_FLOW_HISTORY.md)
+[Guide](guides/maintenance-reports.md) · [History](UX_FLOW_HISTORY.md#lodge-maintenance-reports-2780)
 
 ### Rooms & Beds — rooms-beds
 
 Screen: `/admin/rooms-beds`.
 
+Shows: Lodge-specific rooms and beds, plus allocation preferences.
+
 Journey: Choose a lodge, manage its room and bed inventory, and stage allocation preferences.
 
-[Guide](guides/rooms-beds.md) · [History](UX_FLOW_HISTORY.md)
+[Guide](guides/rooms-beds.md) · [History](UX_FLOW_HISTORY.md#bed-allocation-preferences-2593-relocated-2937)
 
 ### Chore Roster — roster
 
 Screen: `/admin/roster`.
 
+Shows: A day roster including arrivals, departures and staged chore assignments.
+
 Journey: Choose a lodge and day, inspect arrivals and departures, stage roster edits, then save or cancel.
 
-[Guide](guides/roster.md) · [History](UX_FLOW_HISTORY.md)
+[Guide](guides/roster.md) · [History](UX_FLOW_HISTORY.md#whole-roster-staged-editing-2586)
 
 ### Work Parties — work-parties
 
 Screen: `/admin/work-parties`.
 
+Shows: Work-party dates, participation and attendance.
+
 Journey: Inspect a work party, its participants and attendance before recording changes.
 
-[Guide](guides/work-parties.md) · [History](UX_FLOW_HISTORY.md)
+[Guide](guides/work-parties.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
 ## Admin finance
 
@@ -496,97 +584,121 @@ Journey: Inspect a work party, its participants and attendance before recording 
 
 Screen: `/admin/alpine-server`.
 
+Shows: Central-server registration and synchronisation status.
+
 Journey: Review the central-server connection and its synchronisation state.
 
-[Guide](guides/integrations.md) · [History](UX_FLOW_HISTORY.md)
+[Guide](guides/integrations.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
 ### Fees — fee-configuration
 
 Screen: `/admin/fee-configuration`.
 
+Shows: A redirect to the shared fee editor.
+
 Journey: Follow the redirect to the consolidated Fees screen.
 
-[Guide](guides/fees.md) · [History](UX_FLOW_HISTORY.md)
+[Guide](guides/fees.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
 ### Integrations — google
 
 Screen: `/admin/google`.
 
+Shows: The Google sign-in setup wizard and connection verification.
+
 Journey: Open the setup wizard, verify the sign-in credentials, and review connection status.
 
-[Guide](guides/integrations.md) · [History](UX_FLOW_HISTORY.md)
+[Guide](guides/integrations.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
 ### Integrations — integrations
 
 Screen: `/admin/integrations`.
 
+Shows: Provider connection cards and setup links.
+
 Journey: Inspect provider cards and open the appropriate setup or status screen.
 
-[Guide](guides/integrations.md) · [History](UX_FLOW_HISTORY.md)
+[Guide](guides/integrations.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
 ### Internet Banking — internet-banking
 
 Screen: `/admin/internet-banking`.
 
+Shows: Bank-payment instructions and configuration.
+
 Journey: Review bank-payment configuration and the instructions members will see.
 
-[Guide](guides/internet-banking.md) · [History](UX_FLOW_HISTORY.md)
+[Guide](guides/internet-banking.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
 ### Payments — payments
 
 Screen: `/admin/payments`.
 
+Shows: Payment records, statuses and links to related bookings.
+
 Journey: Filter payments, open a record, and inspect its booking and provider status.
 
-[Guide](guides/payments.md) · [History](UX_FLOW_HISTORY.md)
+[Guide](guides/payments.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
 ### Refunds & Credits — refund-requests
 
 Screen: `/admin/refund-requests`.
 
+Shows: Refund requests with booking context and decision controls.
+
 Journey: Open a request, inspect the booking and amounts, then use the permitted decision action.
 
-[Guide](guides/refund-requests.md) · [History](UX_FLOW_HISTORY.md)
+[Guide](guides/refund-requests.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
 ### Reports — reports
 
 Screen: `/admin/reports`.
 
+Shows: Financial summaries, period filters and exports.
+
 Journey: Choose a report, set the period and filters, then inspect or export the result.
 
-[Guide](guides/reports.md) · [History](UX_FLOW_HISTORY.md)
+[Guide](guides/reports.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
 ### Integrations — stripe
 
 Screen: `/admin/stripe`.
 
+Shows: The Stripe setup wizard and its verification results.
+
 Journey: Open the setup wizard, review each connection step, and verify status.
 
-[Guide](guides/integrations.md) · [History](UX_FLOW_HISTORY.md)
+[Guide](guides/integrations.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
 ### Subscriptions — subscriptions
 
 Screen: `/admin/subscriptions`.
 
+Shows: Subscription billing records and statuses.
+
 Journey: Filter subscription records and open the member or billing record for details.
 
-[Guide](guides/subscriptions.md) · [History](UX_FLOW_HISTORY.md)
+[Guide](guides/subscriptions.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
 ### Events Calendar — video-meetings
 
 Screen: `/admin/video-meetings`.
 
+Shows: Calendar-linked video meeting controls.
+
 Journey: Open the linked calendar event and join or manage its video meeting.
 
-[Guide](guides/calendar.md) · [History](UX_FLOW_HISTORY.md)
+[Guide](guides/calendar.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
 ### Xero Sync — xero
 
 Screen: `/admin/xero`.
 
+Shows: Connection setup, accounting operations and failure details.
+
 Journey: Inspect connection and operations status; open a failed item to follow its documented recovery.
 
-[Guide](guides/xero.md) · [History](UX_FLOW_HISTORY.md)
+[Guide](guides/xero.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
 ## Admin content
 
@@ -594,57 +706,71 @@ Journey: Inspect connection and operations status; open a failed item to follow 
 
 Screen: `/admin/appearance`.
 
+Shows: Theme presets and links to club identity controls.
+
 Journey: Choose a preset or open the identity editor; preview before saving.
 
-[Guide](guides/appearance.md) · [History](UX_FLOW_HISTORY.md)
+[Guide](guides/appearance.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
 ### Image Manager — image-manager
 
 Screen: `/admin/image-manager`.
 
+Shows: Reusable content images and upload controls.
+
 Journey: Browse images, upload an asset, and select it for the intended content.
 
-[Guide](guides/image-manager.md) · [History](UX_FLOW_HISTORY.md)
+[Guide](guides/image-manager.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
 ### Mountain Conditions — mountain-conditions
 
 Screen: `/admin/mountain-conditions`.
 
+Shows: The conditions content displayed on the public site.
+
 Journey: Inspect the public conditions content, stage an update, and publish it.
 
-[Guide](guides/mountain-conditions.md) · [History](UX_FLOW_HISTORY.md)
+[Guide](guides/mountain-conditions.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
 ### Page Content — page-content
 
 Screen: `/admin/page-content`.
 
+Shows: Editable public pages and supported authoritative tokens.
+
 Journey: Choose a public page, edit supported content and tokens, then preview and save.
 
-[Guide](guides/page-content.md) · [History](UX_FLOW_HISTORY.md)
+[Guide](guides/page-content.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
 ### Site Banners — site-banners
 
 Screen: `/admin/site-banners`.
 
+Shows: Public banner text and visibility settings.
+
 Journey: Choose banner content and visibility, preview it, then save.
 
-[Guide](guides/site-banners.md) · [History](UX_FLOW_HISTORY.md)
+[Guide](guides/site-banners.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
 ### Site Content — site-content
 
 Screen: `/admin/site-content`.
 
+Shows: Links to public content editors.
+
 Journey: Open the relevant public-content editor from the hub.
 
-[Guide](guides/site-content.md) · [History](UX_FLOW_HISTORY.md)
+[Guide](guides/site-content.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
 ### Site Style — site-style
 
 Screen: `/admin/site-style`.
 
+Shows: Theme settings and their preview.
+
 Journey: Preview the theme settings and save the staged appearance.
 
-[Guide](guides/site-style.md) · [History](UX_FLOW_HISTORY.md)
+[Guide](guides/site-style.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
 ## Admin support
 
@@ -652,177 +778,221 @@ Journey: Preview the theme settings and save the staged appearance.
 
 Screen: `/admin/access-roles`.
 
+Shows: Role definitions and their permission assignments.
+
 Journey: Inspect a role, review its permissions, then stage and save changes.
 
-[Guide](guides/access-roles.md) · [History](UX_FLOW_HISTORY.md)
+[Guide](guides/access-roles.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
 ### AI Help Assistant — ai-assistant
 
 Screen: `/admin/ai-assistant`.
 
+Shows: Assistant configuration, usage and spending controls.
+
 Journey: Read usage and the spend cap before changing the assistant settings.
 
-[Guide](guides/ai-help.md) · [History](UX_FLOW_HISTORY.md)
+[Guide](guides/ai-help.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
 ### Audit Log — audit-log
 
 Screen: `/admin/audit-log`.
 
+Shows: Searchable events with actor, category and affected record.
+
 Journey: Filter events, open an entry, and follow the affected record.
 
-[Guide](guides/audit-log.md) · [History](UX_FLOW_HISTORY.md)
+[Guide](guides/audit-log.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
 ### Background Jobs — background-jobs
 
 Screen: `/admin/background-jobs`.
 
+Shows: Scheduled jobs and their latest execution results.
+
 Journey: Inspect schedules and recent runs before running an eligible job.
 
-[Guide](guides/background-jobs.md) · [History](UX_FLOW_HISTORY.md)
+[Guide](guides/background-jobs.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
 ### Database Backups — backups
 
 Screen: `/admin/backups`.
 
+Shows: Backup configuration, available backups and recovery controls.
+
 Journey: Inspect backup status and follow the documented download or restore procedure.
 
-[Guide](guides/backups.md) · [History](UX_FLOW_HISTORY.md)
+[Guide](guides/backups.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
 ### Booking Messages — booking-messages
 
 Screen: `/admin/booking-messages`.
 
+Shows: Configurable booking-related messages.
+
 Journey: Read the booking message settings, stage the wording, and save.
 
-[Guide](guides/booking-messages.md) · [History](UX_FLOW_HISTORY.md)
+[Guide](guides/booking-messages.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
 ### Club Currency & Locale — club-format
 
 Screen: `/admin/club-format`.
 
+Shows: The club’s country, currency and related format settings.
+
 Journey: Read the club format; Full Admin can review and change the format.
 
-[Guide](guides/club-format.md) · [History](UX_FLOW_HISTORY.md)
+[Guide](guides/club-format.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
 ### Club Time Zone — club-time
 
 Screen: `/admin/club-time`.
 
+Shows: The club timezone and the consequences of changing it.
+
 Journey: Full Admin reviews the club timezone before saving a change.
 
-[Guide](guides/club-time.md) · [History](UX_FLOW_HISTORY.md)
+[Guide](guides/club-time.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
 ### Environment Safety — environment
 
 Screen: `/admin/environment`.
 
+Shows: The installation’s declared environment and safety override.
+
 Journey: Full Admin reviews environment identity and the controls for this deployment.
 
-[Guide](guides/environment-role.md) · [History](UX_FLOW_HISTORY.md)
+[Guide](guides/environment-role.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
 ### Export & Import (config transfer) — config-transfer
 
 Screen: `/admin/config-transfer`.
 
+Shows: Configuration export and import controls.
+
 Journey: Export configuration or inspect an import before applying it.
 
-[Guide](guides/config-transfer.md) · [History](UX_FLOW_HISTORY.md)
+[Guide](guides/config-transfer.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
 ### Email Deliverability — email-deliverability
 
 Screen: `/admin/email-deliverability`.
 
+Shows: Email delivery results and eligible retry controls.
+
 Journey: Filter delivery outcomes and inspect a failure before retrying eligible mail.
 
-[Guide](guides/email-deliverability.md) · [History](UX_FLOW_HISTORY.md)
+[Guide](guides/email-deliverability.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
 ### Email Messages — email-messages
 
 Screen: `/admin/email-messages`.
 
+Shows: Email templates, editable wording and supported tokens.
+
 Journey: Choose a message template, inspect its tokens, and stage wording changes.
 
-[Guide](guides/email-messages.md) · [History](UX_FLOW_HISTORY.md)
+[Guide](guides/email-messages.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
 ### System Health — health
 
 Screen: `/admin/health`.
 
+Shows: Component health and diagnostic results.
+
 Journey: Inspect health checks and follow the documented recovery for a failing component.
 
-[Guide](guides/health.md) · [History](UX_FLOW_HISTORY.md)
+[Guide](guides/health.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
 ### Issue Reports — issue-reports
 
 Screen: `/admin/issue-reports`.
 
+Shows: Reported problems, evidence and triage status.
+
 Journey: Filter reports, open the evidence, and update the report status.
 
-[Guide](guides/issue-reports.md) · [History](UX_FLOW_HISTORY.md)
+[Guide](guides/issue-reports.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
 ### Modules — modules
 
 Screen: `/admin/modules`.
 
+Shows: Feature switches and their setup prerequisites.
+
 Journey: Review each module’s purpose and prerequisites before enabling or disabling it.
 
-[Guide](guides/modules.md) · [History](UX_FLOW_HISTORY.md)
+[Guide](guides/modules.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
 ### Recipients — notification-recipients
 
 Screen: `/admin/notification-recipients`.
 
+Shows: Recipient assignments for club notifications.
+
 Journey: Review the officers or addresses receiving each notification.
 
-[Guide](guides/notification-recipients.md) · [History](UX_FLOW_HISTORY.md)
+[Guide](guides/notification-recipients.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
 ### Delivery Rules — notification-rules
 
 Screen: `/admin/notification-rules`.
 
+Shows: Notification delivery policies and switches.
+
 Journey: Choose a notification, review its delivery rules, and save staged changes.
 
-[Guide](guides/notification-rules.md) · [History](UX_FLOW_HISTORY.md)
+[Guide](guides/notification-rules.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
 ### Notifications & Email — notifications
 
 Screen: `/admin/notifications`.
 
+Shows: Links to notification, recipient and email configuration.
+
 Journey: Open the relevant notification settings or delivery screen from the hub.
 
-[Guide](guides/notifications.md) · [History](UX_FLOW_HISTORY.md)
+[Guide](guides/notifications.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
 ### Personal-data retention schedule — privacy-retention
 
 Screen: `/admin/privacy-retention`.
 
+Shows: Retention settings, eligible-record previews and cleanup actions.
+
 Journey: Preview eligible records before running the documented retention action.
 
-[Guide](PRIVACY_RETENTION.md) · [History](UX_FLOW_HISTORY.md)
+[Guide](PRIVACY_RETENTION.md) · [History](UX_FLOW_HISTORY.md#privacy-and-retention-4457)
 
 ### Login & Security — security
 
 Screen: `/admin/security`.
 
+Shows: Sign-in and account-security configuration.
+
 Journey: Inspect authentication controls and use the permitted security settings.
 
-[Guide](guides/security.md) · [History](UX_FLOW_HISTORY.md)
+[Guide](guides/security.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
 ### Setup — setup
 
 Screen: `/admin/setup`.
 
+Shows: The installation setup hub and configuration cards.
+
 Journey: Open the setup card for the configuration task you need.
 
-[Guide](guides/setup.md) · [History](UX_FLOW_HISTORY.md)
+[Guide](guides/setup.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
 ### Stuck States — stuck-states
 
 Screen: `/admin/stuck-states`.
 
+Shows: Operational incidents and guided repair actions.
+
 Journey: Inspect flagged records and use the documented recovery for the selected state.
 
-[Guide](guides/stuck-states.md) · [History](UX_FLOW_HISTORY.md)
+[Guide](guides/stuck-states.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
 ## Shared screen patterns
 

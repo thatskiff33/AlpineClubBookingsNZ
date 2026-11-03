@@ -15,7 +15,7 @@ rule and nothing there has an id**; they are an inventory the gate enforces
 exactly, so a row that is stale, duplicated, malformed or for an id nothing
 defines fails the check.
 
-The last table, [Agent docs](#agent-docs), holds the ceilings for the agent
+The [Agent docs](#agent-docs) table holds the ceilings for the agent
 guides under `docs/agents/`, under the looser rules stated there.
 
 To read a figure the way the gate does, run

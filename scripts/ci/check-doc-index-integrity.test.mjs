@@ -21,6 +21,7 @@ import {
   auditDefinitionHeadingShapes,
   auditDocReachability,
   auditDocs,
+  auditUxFlowMap,
   auditEncoding,
   auditInvalidUtf8Bytes,
   auditTextScanCoverage,
@@ -3983,5 +3984,57 @@ describe("agent-doc word ceilings (#4462)", () => {
   it("states the enforced slack in the register, so the doc and the gate agree", () => {
     const text = readFileSync(path.join(REPO_ROOT, WORD_BUDGET_REGISTER), "utf8").replace(/\s+/g, " ");
     expect(text).toContain(`at most ${AGENT_DOC_BUDGET_SLACK} words above its page`);
+  });
+});
+
+
+describe("screen map contracts (#4469)", () => {
+  function fixture() {
+    return new Map([
+      ["docs/UX_FLOW_MAP.md", "# Map\n### Members\n\nScreen: `/admin/members`.\n\nJourney: Find a member."],
+      ["docs/COVERAGE_MATRIX.md", "| `members` | membership |"],
+      [WORD_BUDGET_REGISTER, "| `docs/UX_FLOW_MAP.md` | 30 |"],
+      ["docs/user-guide/README.md", "![Dashboard showing upcoming stays](../images/public/member-dashboard.png)"],
+    ]);
+  }
+
+  it("accepts a screen section and an illustrated guide", () => {
+    expect(auditUxFlowMap(fixture())).toEqual([]);
+  });
+
+  it("rejects an area mentioned outside a screen section", () => {
+    const files = fixture();
+    files.set("docs/UX_FLOW_MAP.md", "# Map\nScreen: `/admin/members`.");
+    expect(auditUxFlowMap(files)).toEqual([expect.stringContaining("/admin/members needs a screen section")]);
+  });
+
+  it("recognises multiple screen sections in the same area", () => {
+    const files = fixture();
+    files.set("docs/COVERAGE_MATRIX.md", "| `members` | membership |\n| `committee` | membership |");
+    files.set("docs/UX_FLOW_MAP.md", files.get("docs/UX_FLOW_MAP.md") + "\n### Committee\n\nScreen: `/admin/committee`.");
+    files.set(WORD_BUDGET_REGISTER, "| `docs/UX_FLOW_MAP.md` | 100 |");
+    expect(auditUxFlowMap(files)).toEqual([]);
+  });
+
+  it("detects a new admin area without map coverage", () => {
+    const files = fixture();
+    files.set("docs/COVERAGE_MATRIX.md", "| `members` | membership |\n| `new-area` | support |");
+    expect(auditUxFlowMap(files)).toEqual([expect.stringContaining("/admin/new-area")]);
+  });
+
+  it("enforces the registered budget and fails when it is absent", () => {
+    const files = fixture();
+    files.set(WORD_BUDGET_REGISTER, "| `docs/UX_FLOW_MAP.md` | 1 |");
+    expect(auditUxFlowMap(files)).toEqual([expect.stringContaining("exceeds its 1-word ceiling")]);
+    files.delete(WORD_BUDGET_REGISTER);
+    expect(auditUxFlowMap(files)).toEqual([expect.stringContaining("missing screen-map word ceiling")]);
+  });
+
+  it("rejects an unillustrated guide and an image without alt text", () => {
+    const files = fixture();
+    for (const content of ["# Guide", "![](../images/public/member-dashboard.png)"]) {
+      files.set("docs/user-guide/README.md", content);
+      expect(auditUxFlowMap(files)).toEqual([expect.stringContaining("docs/user-guide/README.md")]);
+    }
   });
 });
