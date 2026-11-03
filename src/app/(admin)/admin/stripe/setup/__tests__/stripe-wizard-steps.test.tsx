@@ -8,7 +8,10 @@ import {
 } from "@/lib/__tests__/support/club-time-render";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CredentialsStep, WebhookStep } from "../stripe-wizard-steps";
-import type { StripeWizardContext } from "../use-stripe-wizard-context";
+import {
+  credentialsStepVerified,
+  type StripeWizardContext,
+} from "../use-stripe-wizard-context";
 import type { WizardStepHelpers } from "@/components/admin/integration-wizard";
 import { ADMIN_FULL_ADMIN_ONLY_ACTION_REASON } from "@/hooks/use-admin-area-edit-access";
 
@@ -41,7 +44,8 @@ function makeContext(
     isFullAdmin: true,
     connected: false,
     accountName: null,
-    needsReentry: false,
+    keysNeedReentry: false,
+    webhookSecretNeedsReentry: false,
     webhookVerified: false,
     ...overrides,
   };
@@ -218,5 +222,76 @@ describe("Stripe WebhookStep lists the events to send (#4104)", () => {
     const shown = Array.from(list.querySelectorAll("code")).map((code) => code.textContent);
     expect(shown).toEqual([...STRIPE_WEBHOOK_EVENT_TYPES]);
     expect(shown).toContain("refund.failed");
+  });
+});
+
+/*
+  #98 — after an auth-secret change, an unreadable webhook secret used to block
+  "Enter keys" (Continue disabled) although only the later webhook step can
+  replace it, so the wizard deadlocked. Each step now warns about, and blocks
+  on, only the credential it captures.
+*/
+describe("Stripe re-entry is per step (#98)", () => {
+  const bothKeysSet = {
+    secret_key: { set: true, setAt: "2026-07-01T00:00:00.000Z" },
+    publishable_key: { set: true, setAt: "2026-07-01T00:00:00.000Z" },
+    webhook_secret: { set: true, setAt: "2026-06-01T00:00:00.000Z" },
+  };
+  const KEYS_WARNING = /A stored Stripe key can no longer be read/;
+  const WEBHOOK_WARNING = /stored signing secret can no longer be read/;
+
+  it("only the webhook secret unreadable: keys step passes and shows no warning; webhook step warns", () => {
+    const context = makeContext({
+      credentials: bothKeysSet,
+      webhookSecretNeedsReentry: true,
+    });
+    expect(credentialsStepVerified(context)).toBe(true);
+
+    render(<CredentialsStep context={context} helpers={helpers} />);
+    expect(screen.queryByText(KEYS_WARNING)).toBeNull();
+    cleanup();
+
+    render(<WebhookStep context={context} helpers={helpers} />);
+    expect(screen.getByText(WEBHOOK_WARNING)).toBeTruthy();
+    expect(
+      (screen.getByLabelText("Signing secret") as HTMLInputElement).disabled,
+    ).toBe(false);
+  });
+
+  it("a key unreadable: keys step blocks and warns, as before", () => {
+    const context = makeContext({
+      credentials: bothKeysSet,
+      keysNeedReentry: true,
+    });
+    expect(credentialsStepVerified(context)).toBe(false);
+
+    render(<CredentialsStep context={context} helpers={helpers} />);
+    expect(screen.getByText(KEYS_WARNING)).toBeTruthy();
+    cleanup();
+
+    render(<WebhookStep context={context} helpers={helpers} />);
+    expect(screen.queryByText(WEBHOOK_WARNING)).toBeNull();
+  });
+
+  it("everything replaced: no warning on either step and the keys step passes", () => {
+    const context = makeContext({ credentials: bothKeysSet });
+    expect(credentialsStepVerified(context)).toBe(true);
+
+    render(<CredentialsStep context={context} helpers={helpers} />);
+    expect(screen.queryByText(KEYS_WARNING)).toBeNull();
+    cleanup();
+
+    render(<WebhookStep context={context} helpers={helpers} />);
+    expect(screen.queryByText(WEBHOOK_WARNING)).toBeNull();
+  });
+
+  it("a key not yet stored still blocks the keys step", () => {
+    expect(
+      credentialsStepVerified(
+        makeContext({
+          credentials: { ...bothKeysSet, publishable_key: { set: false, setAt: null } },
+        }),
+      ),
+    ).toBe(false);
   });
 });
