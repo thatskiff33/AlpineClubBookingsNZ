@@ -129,7 +129,11 @@ import { POST as changePassword } from "@/app/api/auth/change-password/route";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import bcrypt from "bcryptjs";
 import type { NextRequest } from "next/server";
-import { loginAccountKey, resetLoginThrottleProcessState } from "@/lib/login-throttle";
+import {
+  LOGIN_THROTTLE_DEGRADED_FREE_FAILURES,
+  loginAccountKey,
+  resetLoginThrottleProcessState,
+} from "@/lib/login-throttle";
 import { DUMMY_PASSWORD_HASH } from "@/lib/password-hashing";
 import { LOGIN_THROTTLED_CODE } from "@/lib/login-throttle-policy";
 
@@ -453,6 +457,27 @@ describe("change-password shares sign-in's account budget (#4640)", () => {
     await failFiveTimes(UNKNOWN_EMAIL);
     expect((await changeAttempt("right")).status).toBe(200);
     await expectThrottled(attempt(UNKNOWN_EMAIL, "wrong"));
+  });
+
+  it("shares and clears the fallback budget when the throttle store is down", async () => {
+    (mockPrisma.$transaction as ReturnType<typeof vi.fn>).mockImplementation(
+      async (operation: unknown[] | ((tx: unknown) => unknown)) => {
+        if (Array.isArray(operation)) return Promise.all(operation);
+        throw new Error("throttle store down");
+      },
+    );
+
+    for (let i = 0; i < LOGIN_THROTTLE_DEGRADED_FREE_FAILURES; i += 1) {
+      expect((await changeAttempt()).status).toBe(400);
+    }
+    await expectThrottled(attempt(OFFICER_EMAIL, "right"));
+    expect((await changeAttempt("right")).status).toBe(429);
+    expect(member.update).not.toHaveBeenCalled();
+
+    advance(30_000);
+    expect((await changeAttempt("right")).status).toBe(200);
+    await expect(attempt(OFFICER_EMAIL, "wrong")).resolves.toBeNull();
+    expect(rows.size).toBe(0);
   });
 
   it("does not spend a password attempt before session and input validation", async () => {
