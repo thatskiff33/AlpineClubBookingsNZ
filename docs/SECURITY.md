@@ -160,6 +160,14 @@ when the club has emailed sign-in links or Google switched on. A correct
 password after the wait signs in as before and clears the count; so does a
 completed password reset.
 
+**Changing a password (#4640).** The authenticated change-password route shares
+this budget, keyed on the member's stored email. Wrong current passwords count
+alongside sign-in guesses. While waiting, it returns HTTP 429 with
+`LOGIN_THROTTLED` and a generic wait message, without comparing the password or
+changing it. A valid current password after the wait clears the shared count,
+including when the member must change their password. Session and input checks
+run first; this route accepts no account identifier to guess against.
+
 **Enumeration parity.** The throttle answers before any member record is read,
 and its answer — `LOGIN_THROTTLED`, one message — is the same for a real, an
 unknown, an inactive and a deleted account, after the same dummy bcrypt
@@ -223,7 +231,7 @@ because of the failure itself.
   connection pool is too busy to give a claim a connection within a second —
   each replica counts on its own, at the divided budget, without reading the
   stored count; a restart forgets them.
-- Password sign-in only: emailed sign-in links, Google, two-factor code entry
+- Password sign-in and authenticated current-password checks only: emailed sign-in links, Google, two-factor code entry
   (its own lockout) and lodge PIN sign-in are separate, and forgot-password and
   sign-in-link request limits per account are #4613.
 

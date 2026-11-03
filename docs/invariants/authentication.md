@@ -38,7 +38,7 @@ This file holds only the rules.
 
 ## INV-AUTH-002
 
-- **The throttle decides before any Member read, from the key alone.** A
+- **At sign-in, the throttle decides before any Member read, from the key alone.** A
   throttled attempt runs the dummy bcrypt compare and answers
   `LOGIN_THROTTLED` — one error, one code, one message — for every account:
   real, unknown, inactive or deleted. Unknown emails are counted exactly as real
@@ -70,7 +70,10 @@ This file holds only the rules.
   resets the count** — the chosen reading of "5 wrong passwords within an hour",
   so failures spaced 59 minutes apart still add up; a fixed hourly window would
   also reset the ceiling every hour.
-- **Password sign-in only.** Emailed sign-in links, Google, two-factor code
+- **Password sign-in and authenticated current-password checks share the
+  budget** (#4640). Change-password uses the authenticated member's stored
+  email after session validation; a refused claim answers HTTP 429 with
+  `LOGIN_THROTTLED` without comparing the password. Emailed sign-in links, Google, two-factor code
   entry and lodge PIN sign-in are unaffected, and the per-address limiter is
   unchanged.
 - **A store failure never becomes a sign-in outage.** The claim falls back to a

@@ -2128,6 +2128,13 @@ mispricing a booking.
   provider call, and the bcrypt compare runs after commit, so INV-LOCK-001 and
   INV-LOCK-002 ordering is not engaged.
 
+  Password sign-in and `POST /api/auth/change-password` share this claim and
+  clear (#4640). Change-password resolves the authenticated member's stored
+  email first; its claim commits before bcrypt, and its clear runs after a valid
+  current password, before the separate password-update transaction. Neither
+  caller holds a Member lock while claiming. There is no new lock site or key
+  (`INV-LOCK-003`); the inventory remains the helper's existing row-lock site.
+
   The wait is bounded (#4637 review), because the threat is many concurrent
   guesses on ONE account and every waiter holds a pooled connection:
   - an unlocked read first refuses an account already waiting, so most of an

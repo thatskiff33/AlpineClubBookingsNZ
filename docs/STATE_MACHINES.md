@@ -5009,8 +5009,14 @@ an hour with no counted attempt -> count reads as 0; idle sweep deletes the row
 store failure -> same states, counted per process at the #1142 divided budget
 ```
 
+Authenticated change-password checks use the same claim/wait/clear transitions
+(#4640), keyed on the member's stored email after session validation. A waiting
+request answers HTTP 429 with `LOGIN_THROTTLED`, without comparing a password;
+an admitted valid current password clears the shared count before the change.
+
 To verify: `login-throttle-policy.test.ts` (the waits and the idle reset on the
-frozen clock), `login-throttle-auth.test.ts` (through the real password provider)
+frozen clock), `login-throttle-auth.test.ts` (through the real password provider
+and change-password route)
 and `login-throttle.realdb.test.ts` (the row lock under forced interleavings).
 
 ## Magic-Link Sign-In Lifecycle
