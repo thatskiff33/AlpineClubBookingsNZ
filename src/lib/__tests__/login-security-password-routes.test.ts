@@ -29,6 +29,10 @@ const mocks = vi.hoisted(() => {
 
 vi.mock("@/lib/prisma", () => ({ prisma: mocks.prisma }));
 vi.mock("@/lib/auth", () => ({ auth: mocks.auth }));
+vi.mock("@/lib/login-throttle", () => ({
+  claimPasswordAttempt: vi.fn().mockResolvedValue({ allowed: true }),
+  clearPasswordAttempts: vi.fn().mockResolvedValue(undefined),
+}));
 vi.mock("@/lib/session-guards", () => ({
   requireActiveSessionUser: mocks.requireActiveSessionUser,
 }));
@@ -101,6 +105,7 @@ describe("password routes honour the configured login-security policy (#2033)", 
     mocks.auth.mockResolvedValue({ user: { id: "member-1" } });
     mocks.requireActiveSessionUser.mockResolvedValue(null);
     mocks.memberFindUnique.mockResolvedValue({
+      email: "member@example.org",
       passwordHash: "hash",
       forcePasswordChange: false,
     });
