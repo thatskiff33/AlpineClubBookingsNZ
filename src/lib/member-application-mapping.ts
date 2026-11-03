@@ -18,6 +18,7 @@ import {
   memberHoldsPrivilegedRole,
 } from "@/lib/access-roles";
 import { prisma } from "@/lib/prisma";
+import { getAuthSecret, requireAuthSecret } from "@/lib/runtime-config";
 import {
   resolvePersonDecisions,
   type NormalizedPersonDecision,
@@ -923,17 +924,17 @@ function addressDiffs(
 // Preview token (HMAC over the full per-person outcome payload + updatedAts)
 // ---------------------------------------------------------------------------
 
+/**
+ * Production signs with the one auth secret (#4638); elsewhere a missing
+ * secret falls back to a fixed local key so previews work in development.
+ */
 function getPreviewSecret(): string {
-  const secret = process.env.AUTH_SECRET ?? process.env.NEXTAUTH_SECRET;
-  if (secret) {
-    return secret;
-  }
   if (process.env.NODE_ENV === "production") {
-    throw new Error(
+    return requireAuthSecret(
       "AUTH_SECRET or NEXTAUTH_SECRET is required for member application mapping preview tokens",
     );
   }
-  return "member-application-mapping-preview-local-secret";
+  return getAuthSecret() ?? "member-application-mapping-preview-local-secret";
 }
 
 export type ApprovalMappingTokenPayload = {

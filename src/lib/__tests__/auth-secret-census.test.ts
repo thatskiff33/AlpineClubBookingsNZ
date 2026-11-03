@@ -44,9 +44,6 @@ function secretReads(source: string): { env: number; optional: number } {
 // Exact counts reject additions inside an exempt file and stale exemptions.
 const ENV_READERS = {
   "src/lib/integration-crypto.ts": 2, // Reports the source key for encryption metadata.
-  "src/lib/member-merge.ts": 2, // Preserve raw keys and the non-production preview fallback.
-  "src/lib/member-application-mapping.ts": 2, // Same distinct preview contract.
-  "src/lib/seasonal-membership-assignments.ts": 2, // Same distinct preview contract.
 };
 const OPTIONAL_READERS = {
   "src/lib/runtime-config.ts": 2, // Canonical required reader and readiness diagnostics.
@@ -54,6 +51,11 @@ const OPTIONAL_READERS = {
   "src/lib/login-throttle.ts": 2, // Distinct throttle error and optional cleanup.
   "src/lib/lodge-pin-session.ts": 1, // Missing key returns null.
   "src/lib/two-factor.ts": 1, // Distinct encryption-key error.
+  // Preview tokens: production uses requireAuthSecret; only the
+  // non-production local fallback reads the optional secret.
+  "src/lib/member-merge.ts": 1,
+  "src/lib/member-application-mapping.ts": 1,
+  "src/lib/seasonal-membership-assignments.ts": 1,
 };
 
 describe("auth secret census", () => {
