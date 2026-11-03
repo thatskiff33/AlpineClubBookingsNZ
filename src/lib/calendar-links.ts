@@ -32,7 +32,7 @@ import {
   formatDateOnly,
   formatDateOnlyForTimeZone,
 } from "@/lib/date-only";
-import { getAuthSecret } from "@/lib/runtime-config";
+import { requireAuthSecret } from "@/lib/runtime-config";
 
 export interface BookingCalendarStay {
   bookingId: string;
@@ -54,15 +54,6 @@ export interface BookingCalendarLinks {
  */
 const DOWNLOAD_LINK_LIFETIME_AFTER_CHECKOUT_DAYS = 60;
 
-function calendarSecret(): string {
-  const secret = getAuthSecret();
-  if (!secret) {
-    throw new Error(
-      "AUTH_SECRET or NEXTAUTH_SECRET is required for booking calendar links",
-    );
-  }
-  return secret;
-}
 
 /** Epoch-seconds expiry minted for a stay's download link. */
 export function bookingCalendarLinkExpiry(stay: BookingCalendarStay): number {
@@ -77,7 +68,7 @@ export function bookingCalendarToken(
   bookingId: string,
   expiresAtSeconds: number,
 ): string {
-  return createHmac("sha256", calendarSecret())
+  return createHmac("sha256", requireAuthSecret("AUTH_SECRET or NEXTAUTH_SECRET is required for booking calendar links"))
     .update(`booking-calendar:${expiresAtSeconds}:${bookingId}`)
     .digest("base64url");
 }

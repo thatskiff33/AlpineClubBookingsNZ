@@ -2,7 +2,7 @@ import { createHmac, timingSafeEqual } from "crypto";
 import { cookies } from "next/headers";
 import type { AppRole } from "./member-roles";
 import { prisma } from "./prisma";
-import { getAuthSecret } from "./runtime-config";
+import { requireAuthSecret } from "./runtime-config";
 import logger from "./logger";
 import { getGoogleOAuthConfig } from "./google-config";
 import { isDeletedAccountRecord } from "./deleted-account";
@@ -122,18 +122,9 @@ function base64url(input: Buffer | string): string {
     .replace(/=+$/, "");
 }
 
-function requireSecret(): string {
-  const secret = getAuthSecret();
-  if (!secret) {
-    // Auth cannot function without this; fail closed rather than sign with a
-    // predictable key.
-    throw new Error("AUTH_SECRET is required for Google account linking");
-  }
-  return secret;
-}
 
 function sign(payload: string): string {
-  return base64url(createHmac("sha256", requireSecret()).update(payload).digest(),);
+  return base64url(createHmac("sha256", requireAuthSecret("AUTH_SECRET is required for Google account linking")).update(payload).digest(),);
 }
 
 /**
