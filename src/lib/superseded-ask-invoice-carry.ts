@@ -31,7 +31,9 @@
  *   `followSupersededAskInvoicesForIntentSafely`: a leg landing after the
  *   supersession's own move;
  * - the waiting-invoice reaper, before it retires an invoice whose booking no
- *   longer names its intent: the backstop for a crash between the others.
+ *   longer names its intent: the backstop for a crash between the others. It
+ *   keeps, never retires, an invoice whose ask's cancel is still in flight
+ *   (`supersededAskCancelInFlight`, #4665): that cancel's terminal step moves it.
  *
  * WHAT MOVES, and what is refused (each refusal leaves the row exactly as it
  * was, to the reaper and the booking-vs-Xero repair pass as before):
@@ -77,7 +79,7 @@
  * by a capture of its OWN intent, and widening that to another intent would
  * give the re-queue a second trigger it was never reviewed for.
  */
-import { PaymentSource, PaymentStatus, PaymentTransactionKind, type Prisma } from "@prisma/client";
+import { PaymentRecoveryOperationType, PaymentSource, PaymentStatus, PaymentTransactionKind, type Prisma } from "@prisma/client";
 
 import { isAdditionalAskRetiredBookingStatus } from "@/lib/additional-payment-chase";
 import { anchorCaptureHasReceipt, captureChangeId } from "@/lib/additional-capture-receipt-link";
@@ -85,6 +87,7 @@ import { keptCaptureAnchorId } from "@/lib/kept-late-capture-change-receipt";
 import { findActiveSupplementaryInvoiceLink } from "@/lib/late-capture-xero-receipt";
 import logger from "@/lib/logger";
 import { LEDGER_ROWS_OLDEST_FIRST } from "@/lib/payment-ledger-order";
+import { isPaymentRecoveryOperationInFlight, PAYMENT_RECOVERY_OPERATION_IN_FLIGHT_WHERE } from "@/lib/payment-recovery-constants";
 import { isCapturedTransactionStatus, isOpenIntentTransactionStatus } from "@/lib/payment-transaction-status";
 import { prisma } from "@/lib/prisma";
 import { SUPERSEDED_INTENT_OPERATION_TYPES } from "@/lib/superseded-intent-ownership";
@@ -163,7 +166,8 @@ export type CarriedChain = { carrier: LedgerRow; superseded: LedgerRow[] };
  * like a FAILED one, with whatever was already moved onto it (review 2, F1);
  * while its cancel is still in flight it is passed over, and the cancel
  * step's two terminal branches (FAILED, or the captured hand-off to its
- * refund) run the move once it lands.
+ * refund) run the move once it lands - the reaper keeps its invoice meanwhile
+ * (`supersededAskCancelInFlight`, #4665).
  *
  * Passed over, neither carrying nor carried: a row a price reduction withdrew
  * (`retireUnpaidAskChain` retires and counts its own invoices).
@@ -538,6 +542,25 @@ async function moveAnchorOntoCarrier(input: {
     }
     return { moved, refusal: moved > 0 ? null : ("changed-under-lock" as const) };
   });
+}
+
+/**
+ * #4665 (`INV-PAY-140`): IS THIS ASK'S SUPERSEDE CANCEL STILL IN FLIGHT? While
+ * it is, `supersededAskCarriers` passes the ask over - neither carrying nor
+ * carried - so a move finds nothing for the invoices waiting on it, and the
+ * cancel step's terminal branches run that move once it lands. The reaper asks
+ * this before it would retire such an invoice, and keeps it instead: retired,
+ * it could never follow the money, and the carrier's capture would name no
+ * invoice. In flight is the runner's own reading
+ * (`isPaymentRecoveryOperationInFlight`): a cancel the runner will never claim
+ * again moves nothing, so the reaper decides that invoice as before.
+ */
+export async function supersededAskCancelInFlight(paymentIntentId: string): Promise<boolean> {
+  const cancels = await prisma.paymentRecoveryOperation.findMany({
+    where: { type: PaymentRecoveryOperationType.CANCEL_PAYMENT_INTENT, paymentIntentId, ...PAYMENT_RECOVERY_OPERATION_IN_FLIGHT_WHERE },
+    select: { status: true, attempts: true, nextRetryAt: true },
+  });
+  return cancels.some(isPaymentRecoveryOperationInFlight);
 }
 
 /**

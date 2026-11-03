@@ -25,7 +25,8 @@
  *   - the booking no longer names it because a later request superseded it
  *     and carries its balance (#3403): moved to wait on that request
  *     (`followSupersededAskInvoicesSafely`), the backstop for the move at
- *     supersession;
+ *     supersession - and kept while that request's cancel of it is still in
+ *     flight, whose last step moves it (#4665);
  *   - the member can no longer pay it: retired (CANCELLED,
  *     `STALE_WAITING_PAYMENT`), the one state a later capture can revive.
  */
@@ -46,7 +47,7 @@ import {
   lateCaptureRefundState,
   releaseXeroSupplementaryInvoiceForCapturedPaymentIntent,
 } from "@/lib/xero-supplementary-invoice-late-capture";
-import { followSupersededAskInvoicesSafely } from "@/lib/superseded-ask-invoice-carry";
+import { followSupersededAskInvoicesSafely, supersededAskCancelInFlight } from "@/lib/superseded-ask-invoice-carry";
 import { stillWaitingOnIntentWhere } from "@/lib/xero-supplementary-invoice-statuses";
 
 const STALE_WAITING_PAYMENT_AGE_DAYS = 14;
@@ -270,18 +271,27 @@ function groupByIntent(
  * #3403: the backstop for the move at supersession. A superseded ask's balance
  * is carried by a later request, so its invoice is moved there first; only one
  * still waiting on this intent after that is retired.
+ *
+ * #4665: never while the ask's cancel is still in flight. Until it lands the
+ * ask is passed over (`supersededAskCarriers`), so the move above finds
+ * nothing, and the cancel's terminal step moves the invoice once it does. Asked
+ * AFTER the move: a cancel read as finished ran its own move before it
+ * completed, and the retire is guarded on this intent, so an invoice that move
+ * took is never retired.
  */
 async function moveToCarrierOrRetire(
   params: { operationId: string; paymentIntentId: string },
   paymentId: string,
-): Promise<"moved" | "retire"> {
+): Promise<"moved" | "keep" | "retire"> {
   const carried = await followSupersededAskInvoicesSafely({ paymentId });
-  if (!carried || carried.moved === 0) return "retire";
-  const stillHere = await prisma.xeroSyncOperation.findFirst({
-    where: { id: params.operationId, ...stillWaitingOnIntentWhere(params.paymentIntentId) },
-    select: { id: true },
-  });
-  return stillHere ? "retire" : "moved";
+  if (carried && carried.moved > 0) {
+    const stillHere = await prisma.xeroSyncOperation.findFirst({
+      where: { id: params.operationId, ...stillWaitingOnIntentWhere(params.paymentIntentId) },
+      select: { id: true },
+    });
+    if (!stillHere) return "moved";
+  }
+  return (await supersededAskCancelInFlight(params.paymentIntentId)) ? "keep" : "retire";
 }
 
 /**

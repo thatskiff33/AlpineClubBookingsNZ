@@ -34,6 +34,8 @@ const mocks = vi.hoisted(() => ({
   getPaymentIntent: vi.fn(),
   // #3403: the reaper's backstop move; its own module is tested on its own.
   followSupersededAskInvoicesSafely: vi.fn(),
+  // #4665: whether the superseded ask's cancel is still in flight; its own module reads the rows.
+  supersededAskCancelInFlight: vi.fn(),
   returnMovedInvoicesToCapturedIntent: vi.fn(async () => 0),
   alertTakenBackInvoicesPaidAgain: vi.fn(async () => 0),
   updateManyOperation: vi.fn(),
@@ -284,6 +286,7 @@ vi.mock("@/lib/xero-token-store", () => ({
 // was cancelled at the provider (locally a cancel and a decline are both FAILED).
 vi.mock("@/lib/superseded-ask-invoice-carry", () => ({
   followSupersededAskInvoicesSafely: mocks.followSupersededAskInvoicesSafely,
+  supersededAskCancelInFlight: mocks.supersededAskCancelInFlight,
   followSupersededAskInvoicesForIntentSafely: vi.fn(async () => undefined),
 }));
 // #3403 review (M1): proven in its own suite and against PostgreSQL; here it returns nothing.
@@ -4093,6 +4096,8 @@ describe("reapStaleWaitingPaymentXeroOutboxOperations", () => {
     mocks.findUniquePayment.mockResolvedValue(null);
     mocks.followSupersededAskInvoicesSafely.mockReset();
     mocks.followSupersededAskInvoicesSafely.mockResolvedValue(null);
+    mocks.supersededAskCancelInFlight.mockReset();
+    mocks.supersededAskCancelInFlight.mockResolvedValue(false);
     mocks.findFirstOperation.mockReset();
     mocks.getPaymentIntent.mockReset();
     mocks.getPaymentIntent.mockResolvedValue({ status: "requires_payment_method" });
@@ -4180,6 +4185,55 @@ describe("reapStaleWaitingPaymentXeroOutboxOperations", () => {
       const result = await reapStaleWaitingPaymentXeroOutboxOperations();
 
       expect(result.reaped).toBe(1);
+    });
+
+    describe("#4665: the superseded ask's cancel is still in flight", () => {
+      it("KEEPS it when the move found nothing: the cancel's last step moves it", async () => {
+        supersededAsk();
+        mocks.followSupersededAskInvoicesSafely.mockResolvedValue({ moved: 0 });
+        mocks.supersededAskCancelInFlight.mockResolvedValue(true);
+
+        const result = await reapStaleWaitingPaymentXeroOutboxOperations();
+
+        expect(mocks.supersededAskCancelInFlight).toHaveBeenCalledWith("pi_superseded");
+        expect(retireCall()).toBeUndefined();
+        expect(result).toEqual({ reaped: 0, released: 0, moved: 0, queueOperationIds: [] });
+      });
+
+      it("KEEPS it when the move failed outright", async () => {
+        supersededAsk();
+        mocks.followSupersededAskInvoicesSafely.mockResolvedValue(null);
+        mocks.supersededAskCancelInFlight.mockResolvedValue(true);
+
+        const result = await reapStaleWaitingPaymentXeroOutboxOperations();
+
+        expect(retireCall()).toBeUndefined();
+        expect(result.reaped).toBe(0);
+      });
+
+      it("KEEPS it when a move elsewhere left THIS row waiting on the ask", async () => {
+        supersededAsk();
+        mocks.followSupersededAskInvoicesSafely.mockResolvedValue({ moved: 1 });
+        mocks.findFirstOperation.mockResolvedValue({ id: "op_superseded_ask" });
+        mocks.supersededAskCancelInFlight.mockResolvedValue(true);
+
+        const result = await reapStaleWaitingPaymentXeroOutboxOperations();
+
+        expect(retireCall()).toBeUndefined();
+        expect(result.reaped).toBe(0);
+      });
+
+      it("never asks once the move took the row", async () => {
+        supersededAsk();
+        mocks.followSupersededAskInvoicesSafely.mockResolvedValue({ moved: 1 });
+        mocks.findFirstOperation.mockResolvedValue(null);
+        mocks.supersededAskCancelInFlight.mockResolvedValue(true);
+
+        const result = await reapStaleWaitingPaymentXeroOutboxOperations();
+
+        expect(mocks.supersededAskCancelInFlight).not.toHaveBeenCalled();
+        expect(result.moved).toBe(1);
+      });
     });
 
     it("never retires a row moved after its verdict: the reap is guarded on the intent it judged", async () => {
