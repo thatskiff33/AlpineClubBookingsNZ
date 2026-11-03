@@ -10,7 +10,7 @@ import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { settleRefundNoteFromXero } from "@/lib/xero-refund-note-settlement";
 import { syncOrganiserExtraInvoiceCash } from "@/lib/organiser-extra-receipt";
 import { reserveOrganiserExtraRacedCash } from "@/lib/organiser-extra-raced-cash";
-import { recordCreatedOrganiserNote, traceOrganiserRunStoodDown, type OrganiserStandDownStep } from "@/lib/organiser-extra-note-record";
+import { recordCreatedOrganiserNote, traceOrganiserRunStoodDown, traceOrganiserVoidStoodDown, type OrganiserStandDownStep } from "@/lib/organiser-extra-note-record";
 import { holdsXeroOperationClaim } from "@/lib/xero-operation-claim";
 import { XeroAppliedCreditOperationBusyError } from "@/lib/xero-applied-credit-operation-serialization";
 import type { XeroOperationClaim } from "@/lib/xero-operation-outcome-guard";
@@ -23,7 +23,8 @@ const REFUND_LINE = "Refund paid back to the group organiser by bank transfer";
  * `completed`: the row's outcome was written under the run's claim.
  * `stood-down`: #4655, the created note was recorded on a row queued again, or
  * on no row (traced); or #4680, the run no longer held its claim before a
- * money-moving call after the record (traced). This run wrote no outcome.
+ * money-moving call after the record, or #4701 before a waiver's invoice void
+ * (traced). This run wrote no outcome.
  */
 export type OrganiserExtraAdjustmentRun = "completed" | "stood-down";
 
@@ -92,6 +93,15 @@ export async function executeOrganiserExtraAdjustment(
       return "completed";
     }
     if (state.kind === "open" && dueCents > 0 && payload.amountCents >= dueCents) {
+      // #4701 (`INV-INT-034`): the void moves money too. A run that stalled in
+      // the invoice read past a reset (then perhaps an officer's Resolve or
+      // Retry) voids nothing: it stands down, traced, and writes no outcome.
+      if (!(await holdsXeroOperationClaim(claim))) {
+        await traceOrganiserVoidStoodDown({
+          claim, bookingId: payload.bookingId, invoiceId: extraInvoiceId, invoiceNumber: invoice.invoiceNumber ?? null, amountCents: dueCents,
+        });
+        return "stood-down";
+      }
       await callXeroApi(
         () => xero.accountingApi.updateInvoice(tenantId, extraInvoiceId, { invoices: [{ invoiceID: extraInvoiceId, status: Invoice.StatusEnum.VOIDED }] }, undefined, `${key}:void`),
         { operation: "updateInvoice", resourceType: "INVOICE", workflow: "organiserExtraAdjustment", context: `void organiser extra ${extraInvoiceId}` },
