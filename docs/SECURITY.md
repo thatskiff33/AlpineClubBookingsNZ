@@ -168,7 +168,7 @@ changing it. A valid current password after the wait clears the shared count,
 including when the member must change their password. Session and input checks
 run first; this route accepts no account identifier to guess against.
 
-**Enumeration parity.** The throttle answers before any member record is read,
+**Enumeration parity at sign-in.** The throttle answers before any member record is read,
 and its answer — `LOGIN_THROTTLED`, one message — is the same for a real, an
 unknown, an inactive and a deleted account, after the same dummy bcrypt
 compare. Unknown emails are counted exactly as real ones, so a throttled real
