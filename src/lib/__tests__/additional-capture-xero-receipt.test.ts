@@ -104,7 +104,11 @@ import {
   queueReceiptsForUnrecordedCaptures,
 } from "@/lib/additional-capture-receipt-enqueue";
 import { readAdditionalCaptureReceiptPayload } from "@/lib/additional-capture-receipt-payload";
-import { ADDITIONAL_CAPTURE_RECEIPT_WAITING_CODE, supplementaryReplayMayRecordPayment } from "@/lib/additional-capture-receipt-gate";
+import {
+  ADDITIONAL_CAPTURE_RECEIPT_PLANNING_CODE,
+  ADDITIONAL_CAPTURE_RECEIPT_WAITING_CODE,
+  supplementaryReplayMayRecordPayment,
+} from "@/lib/additional-capture-receipt-gate";
 import { ADDITIONAL_CAPTURE_PAYMENT_ROLE } from "@/lib/additional-capture-receipt-link";
 import { buildEditFinancialReviewChargeReason } from "@/lib/payment-recovery-keys";
 import { XeroAppliedCreditOperationBusyError } from "@/lib/xero-applied-credit-operation-serialization";
@@ -523,6 +527,37 @@ describe("recordAdditionalCaptureReceipt", () => {
     expect(mocks.completeXeroSyncOperation).toHaveBeenCalledWith(expect.objectContaining({ id: "op_receipt" }), { status: "CANCELLED", responsePayload: { skipped } });
     expect(mocks.sendAdminXeroSyncErrorAlert).not.toHaveBeenCalled();
     expect(seam.getAuthenticatedXeroClient).not.toHaveBeenCalled();
+  });
+
+  // #4707 (`INV-INT-029`): a stalled run's stand-down lands after a stale reset and a
+  // retry's claim took the row - that claim's planning stamp is the retry's, not this run's.
+  it("MUTATION: a stand-down after another claim took the row leaves that claim's planning stamp", async () => {
+    mocks.findUniqueTransaction.mockResolvedValue(capture({}, "CANCELLED"));
+    const newer = { id: "op_receipt", status: "RUNNING", startedAt: new Date("2026-07-01T00:05:00.000Z"), lastErrorCode: ADDITIONAL_CAPTURE_RECEIPT_PLANNING_CODE };
+    const row: Record<string, unknown> = { ...newer };
+    mocks.updateManyOperation.mockImplementation(async ({ where, data }: { where: Record<string, unknown>; data: Record<string, unknown> }) => {
+      const matches = Object.entries(where).every(([key, value]) =>
+        value instanceof Date ? row[key] instanceof Date && (row[key] as Date).getTime() === value.getTime() : row[key] === value,
+      );
+      if (matches) Object.assign(row, data);
+      return { count: matches ? 1 : 0 };
+    });
+
+    await expect(run()).resolves.toBeNull();
+
+    expect(mocks.completeXeroSyncOperation).toHaveBeenCalledWith(expect.objectContaining({ id: "op_receipt" }), expect.objectContaining({ status: "CANCELLED" }));
+    expect(row).toEqual(newer);
+  });
+
+  it("a stand-down clears the planning stamp from the end its own claim wrote", async () => {
+    mocks.findUniqueTransaction.mockResolvedValue(capture({}, "CANCELLED"));
+
+    await expect(run()).resolves.toBeNull();
+
+    expect(mocks.updateManyOperation).toHaveBeenCalledWith({
+      where: { id: "op_receipt", status: "CANCELLED", startedAt: TEST_XERO_CLAIMED_AT, lastErrorCode: ADDITIONAL_CAPTURE_RECEIPT_PLANNING_CODE },
+      data: { lastErrorCode: null },
+    });
   });
 
   /**
