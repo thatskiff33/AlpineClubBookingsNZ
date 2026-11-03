@@ -6529,6 +6529,28 @@ writer only ever ADDS active coverage, whose worst case (coverage above the
 target) suppresses further enqueues and is now reported as drift, never
 compounded by this repair.
 
+## Applied-credit account-note link repair: lock-free (#4712)
+
+`applyStaleAppliedCreditAccountNoteLinkRepair`
+(`src/lib/xero-applied-credit-account-note-link-repair.ts`, operator CLI
+`scripts/xero-applied-credit-account-note-link-repair.ts`) retires a payment's
+stale `ACCOUNT_CREDIT_NOTE` link with an `updateMany` guarded on `active: true`,
+then recounts that one payment through `repairRefundedPaymentBusinessState`
+(`creditNoteId: null`, #4095). The link write touches no money column, booking
+status or pointer, so under `INV-LOCK-001` it joins no advisory cohort and takes
+no key (`INV-LOCK-002`, `INV-LOCK-003` unchanged); the recount's money write is
+that writer's own status-guarded claim, retried once. No provider call.
+
+- **Outbox enqueue.** Retiring a link only removes the "already linked" block on
+  the booking's cancellation note; an enqueue that read the link first still
+  refuses, and the runbook's `xero:booking-repair` step raises it afterwards.
+- **Inbound reconcile.** A sync of the same note that read the link before it
+  was retired upserts it active again and recounts the note in. The repair
+  re-reads its retired links after the recount and names any such payment as
+  needing a second run, never reporting it settled.
+- **Concurrent recount.** A recount that loses its claim twice is named, not
+  retried further.
+
 ## Refund-note link heal (#4161)
 
 The nightly `link-cleanup` (`cleanupStaleCanonicalXeroObjectLinks`,
