@@ -6816,7 +6816,7 @@ describe("processStoredXeroInboundEvents", () => {
     expect(mocks.completeXeroSyncOperation).toHaveBeenCalledWith(
       expect.objectContaining({ id: "op_1" }),
       // The rest of the reconcile still runs against the resolved payment.
-      expect.objectContaining({ responsePayload: expect.objectContaining({ matchedAccountCreditPayments: 1, matchedAllocatedPayments: 1, updatedCredits: 0 }) })
+      expect.objectContaining({ responsePayload: expect.objectContaining({ matchedAppliedCreditPayments: 1, matchedAllocatedPayments: 1, updatedCredits: 0 }) })
     );
   });
 
@@ -6853,11 +6853,29 @@ describe("processStoredXeroInboundEvents", () => {
           // The fallback opened the applied-credit repair gate for a note with
           // no CANCELLATION_REFUND provenance, and the deleted-final-allocation
           // reconciliation ran against the resolved payment.
-          matchedAccountCreditPayments: 1,
+          matchedAppliedCreditPayments: 1,
           matchedAllocatedPayments: 1,
           updatedAppliedPayments: 1,
         }),
       }),
+    );
+  });
+
+  it("MUTATION #4712: a note resolved only through local provenance links the booking it was applied to as no account-credit note, and never recounts it as refunded", async () => {
+    await mockAdminRemainderNoteEvent();
+
+    await expect(processStoredXeroInboundEvents()).resolves.toMatchObject({ succeeded: 1, failed: 0 });
+
+    // The credit was spent on pay_admin_1's booking, not raised for it: an
+    // ACCOUNT_CREDIT_NOTE link there would block that booking's own
+    // cancellation note (see the outbox test of the same number).
+    expect(mocks.upsertXeroObjectLink).not.toHaveBeenCalledWith(expect.objectContaining({ role: "ACCOUNT_CREDIT_NOTE" }));
+    expect(mocks.upsertXeroObjectLink).not.toHaveBeenCalledWith(expect.objectContaining({ localModel: "Payment", localId: "pay_admin_1", xeroObjectType: "CREDIT_NOTE" }));
+    // Nor is the note counted as money paid back on it.
+    expect(mocks.paymentUpdateMany).not.toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ refundedAmountCents: expect.anything() }) }));
+    expect(mocks.completeXeroSyncOperation).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "op_1" }),
+      expect.objectContaining({ responsePayload: expect.objectContaining({ matchedAccountCreditPayments: 0, matchedAppliedCreditPayments: 1, matchedRefundedPayments: 0, matchedAllocatedPayments: 1 }) })
     );
   });
 

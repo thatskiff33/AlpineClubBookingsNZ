@@ -60,9 +60,14 @@ export async function reconcileXeroCreditNote(creditNoteId: string) {
   // fallback fails closed (returns []) on any ambiguity, preserving the existing
   // skip-with-no-write behaviour. Notes WITH CANCELLATION_REFUND provenance keep
   // the existing resolver unchanged — the fallback only runs when it is empty.
-  const resolvedAccountCreditPayments =
+  // #4712: these are payments on the bookings the credit was SPENT on, not ones
+  // the note was raised for, so they only open the applied-credit repair below:
+  // no ACCOUNT_CREDIT_NOTE link (it would block the booking's own cancellation
+  // note), no refund recount and no stamp. The slices and their ALLOCATION
+  // links already record the applied credit.
+  const appliedCreditPayments =
     canonicalAccountCreditPayments.length > 0
-      ? canonicalAccountCreditPayments
+      ? []
       : await resolveAppliedCreditPaymentsFromLocalProvenance(
           creditNote.creditNoteID
         );
@@ -117,7 +122,7 @@ export async function reconcileXeroCreditNote(creditNoteId: string) {
             mergeMetadata: true,
           }) satisfies XeroObjectLinkInput
       ),
-    ...resolvedAccountCreditPayments
+    ...canonicalAccountCreditPayments
       .filter((payment) => !existingAccountCreditPaymentIds.has(payment.id))
       .map(
         (payment) =>
@@ -221,7 +226,7 @@ export async function reconcileXeroCreditNote(creditNoteId: string) {
   // credit holds it, or (#1925's local provenance) a slice does. Only a payment
   // whose own outbox row raised the note as an account-credit note is stamped
   // (PR #4711 review): an ACCOUNT_CREDIT_NOTE link alone can be one local
-  // provenance wrote on a booking the credit was APPLIED to (#4712). The
+  // provenance wrote on a booking the credit was APPLIED to before #4712. The
   // credit that row named is stamped by id, else one equal credit, oldest
   // first; the first stamp ends the pass.
   const raisedFor =
@@ -374,7 +379,7 @@ export async function reconcileXeroCreditNote(creditNoteId: string) {
   });
 
   const accountCreditAllocationRepair =
-    accountCreditPayments.length > 0
+    accountCreditPayments.length > 0 || appliedCreditPayments.length > 0
       ? await repairAccountCreditAllocationBusinessState(
           creditNote.creditNoteID,
           allocationTargets
@@ -435,6 +440,7 @@ export async function reconcileXeroCreditNote(creditNoteId: string) {
     creditNoteNumber: creditNote.creditNoteNumber ?? null,
     matchedPayments: paymentCandidates.length,
     matchedAccountCreditPayments: accountCreditPayments.length,
+    matchedAppliedCreditPayments: appliedCreditPayments.length,
     updatedPayments,
     updatedCredits,
     updatedRefundedPayments: refundedPaymentRepair.updatedPayments,
@@ -482,6 +488,7 @@ export async function reconcileXeroCreditNote(creditNoteId: string) {
     creditNoteNumber: creditNote.creditNoteNumber ?? null,
     matchedPayments: paymentCandidates.length,
     matchedAccountCreditPayments: accountCreditPayments.length,
+    matchedAppliedCreditPayments: appliedCreditPayments.length,
     updatedPayments,
     updatedCredits,
     matchedRefundedPayments: refundedPaymentRepair.matchedPayments,
