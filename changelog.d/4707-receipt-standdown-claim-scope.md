@@ -1,0 +1,1 @@
+- **A stalled card-receipt run can no longer clear a newer run's planning mark.** When the Xero receipt for a booking change's card capture finishes with nothing to send, it now clears its planning mark only from the row it just finished under its own claim. A run that stalled past a stale reset used to clear the mark from the retry that had since taken the row.
