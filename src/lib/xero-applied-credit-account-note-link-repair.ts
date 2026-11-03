@@ -173,7 +173,9 @@ async function retireAndRecount(paymentId: string, stale: AccountNoteLinkCandida
     if (count === 1) retired.push(candidate);
     else result.notStale.push({ paymentId, reason: `link ${candidate.linkId} was no longer active` });
   }
-  if (retired.length === 0) return;
+  // Narrowed here, not by a length check, so the booking below is typed.
+  const [firstRetired] = retired;
+  if (!firstRetired) return;
   result.retired.push(...retired);
 
   await writeXeroInboundAuditLogs({
@@ -209,7 +211,7 @@ async function retireAndRecount(paymentId: string, stale: AccountNoteLinkCandida
   const after = await prisma.payment.findUniqueOrThrow({ where: { id: paymentId }, select: { refundedAmountCents: true } });
   result.recounted.push({
     paymentId,
-    bookingId: retired[0].bookingId,
+    bookingId: firstRetired.bookingId,
     refundedBeforeCents: before.refundedAmountCents,
     refundedAfterCents: after.refundedAmountCents,
   });
