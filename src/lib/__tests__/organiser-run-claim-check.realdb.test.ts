@@ -7,10 +7,11 @@
  * What is driven through the app's own writers, and what is seeded:
  * - SEEDED: the booking, its payment row, the organiser's completed
  *   bank-transfer hand-back, and the Xero invoice in a fake Xero (a $60
- *   organiser extra with $20 paid, $40 due; or paid in full, for the refund).
+ *   organiser extra with $20 paid, $40 due; paid in full, for the refund; or
+ *   unpaid, for #4701's void).
  * - REAL: the queued row (`startXeroSyncOperation`); the outbox worker
  *   (`processQueuedXeroOutboxOperations`) against the fake Xero, whose note
- *   reads wait until the test releases them (no provider call); the note's
+ *   (or invoice) reads wait until the test releases them (no provider call); the note's
  *   record on the run's own claim; the officer's Reset stale running
  *   (`markStaleRunningXeroOperationFailed`, given an instant past the stale
  *   threshold), Resolve mark (`claimResolvedInXeroMark`) and Retry
@@ -33,6 +34,13 @@
  *   lost its claim, completes nothing over the resolved row (no false
  *   "may hold twice" alert), standing down audited and alerted once;
  * - and, as a control, a refund note whose run is never reset pays once.
+ *
+ * #4701: a waiver of a wholly unpaid extra ($60 due) voids the invoice instead
+ * of raising a note, so its run stalls in its first invoice read, before the
+ * void, with no note recorded. Proven: reset, Resolve, then wake - the invoice
+ * is not voided, the row is as the officer left it, audited once and alerted
+ * once; and reset with no officer action, then wake - nothing voided, audited,
+ * no alert, and the officer's Retry then voids once.
  *
  * Ordinary Vitest runs skip the whole file. It reuses the guarded, disposable
  * loopback PostgreSQL `concurrency-lock-races.realdb.test.ts` provisions, which
@@ -72,18 +80,33 @@ interface FakeNote {
   lineItems: Array<{ description: string; quantity: number; unitAmount: number }>;
 }
 
-/** A fake Xero: one organiser extra invoice; a note create that answers at once; note reads the test can hold. */
-function fakeXero(paidInFull: boolean) {
+/** What the organiser has paid on the $60 extra: $20 of it, all of it (a refund note's), or none (a waiver voids it, #4701). */
+type Paid = "part" | "full" | "none";
+const PAID_DOLLARS: Record<Paid, number> = { part: 20, full: 60, none: 0 };
+
+/** A fake Xero: one organiser extra invoice; a note create that answers at once; note and invoice reads the test can hold. */
+function fakeXero(paid: Paid) {
   const invoice = {
     invoiceID: INVOICE_ID, invoiceNumber: "EXTRA-1", contact: { contactID: `${P}-organiser-contact` },
-    total: 60, amountPaid: paidInFull ? 60 : 20, amountCredited: 0, amountDue: paidInFull ? 0 : 40, status: paidInFull ? "PAID" : "AUTHORISED",
+    total: 60, amountPaid: PAID_DOLLARS[paid], amountCredited: 0, amountDue: 60 - PAID_DOLLARS[paid], status: paid === "full" ? "PAID" : "AUTHORISED",
   };
   const notes = new Map<string, FakeNote>();
   const allocations: string[] = [];
   const payments: string[] = [];
+  const voids: string[] = [];
   const reads = { held: null as Promise<void> | null, reached: 0 };
+  const invoiceReads = { held: null as Promise<void> | null, reached: 0 };
   const accountingApi = {
-    getInvoice: async () => ({ body: { invoices: [{ ...invoice }] } }),
+    getInvoice: async () => {
+      invoiceReads.reached += 1;
+      await invoiceReads.held;
+      return { body: { invoices: [{ ...invoice }] } };
+    },
+    updateInvoice: async (_tenant: string, id: string, body: { invoices: Array<{ status: string }> }) => {
+      invoice.status = body.invoices[0]!.status;
+      voids.push(id);
+      return { body: { invoices: [{ ...invoice }] } };
+    },
     createCreditNotes: async (_tenant: string, body: { creditNotes: Array<{ lineItems: Array<{ description: string; unitAmount: number }> }> }) => {
       const line = body.creditNotes[0]!.lineItems[0]!;
       const note: FakeNote = {
@@ -112,27 +135,32 @@ function fakeXero(paidInFull: boolean) {
       return { body: { payments: [{ paymentID: `${P}-refund-payment`, amount: payment.amount }] } };
     },
   };
-  /** Holds every note read until the returned release is called. */
-  function holdNoteReads(): () => void {
+  /** Holds every read of `gate` until the returned release is called. */
+  function hold(gate: typeof reads): () => void {
     let release!: () => void;
-    reads.held = new Promise((resolve) => { release = resolve; });
+    gate.held = new Promise((resolve) => { release = resolve; });
     return release;
   }
-  /** Waits (real time, bounded) until a note read has reached the fake Xero. */
-  async function readReached(): Promise<void> {
+  /** Waits (real time, bounded) until a read of `gate` has reached the fake Xero. */
+  async function reached(gate: typeof reads, what: string): Promise<void> {
     const started = process.hrtime.bigint();
-    while (reads.reached < 1) {
-      if (realElapsedMs(started) > 20_000) throw new Error("The note read never reached the fake Xero");
+    while (gate.reached < 1) {
+      if (realElapsedMs(started) > 20_000) throw new Error(`The ${what} read never reached the fake Xero`);
       await new Promise((resolve) => setTimeout(resolve, 10));
     }
   }
+  const holdNoteReads = () => hold(reads);
+  const readReached = () => reached(reads, "note");
+  /** #4701: the run's first read, of the invoice, before it would void it. */
+  const holdInvoiceReads = () => hold(invoiceReads);
+  const invoiceReadReached = () => reached(invoiceReads, "invoice");
   /** #4703 review 2: an officer pays the refund note by hand in Xero. */
   const payByHand = (id: string) => {
     const note = notes.get(id)!;
     note.payments = [{ paymentID: `${P}-officer-payment`, amount: note.total, status: "AUTHORISED" }];
     note.status = "PAID";
   };
-  return { accountingApi, notes, allocations, payments, holdNoteReads, readReached, payByHand };
+  return { accountingApi, invoice, notes, allocations, payments, voids, holdNoteReads, readReached, holdInvoiceReads, invoiceReadReached, payByHand };
 }
 
 (RUN ? describe : describe.skip)(
@@ -185,15 +213,15 @@ function fakeXero(paidInFull: boolean) {
 
     let send: ReturnType<typeof vi.fn>;
     let xero: ReturnType<typeof fakeXero>;
-    async function useXero(paidInFull = false) {
-      xero = fakeXero(paidInFull);
+    async function installXero(paid: Paid = "part") {
+      xero = fakeXero(paid);
       const apiClient = await import("@/lib/xero-api-client");
       vi.spyOn(apiClient, "getAuthenticatedXeroClient").mockResolvedValue({ xero: { accountingApi: xero.accountingApi }, tenantId: `tenant-${P}` } as never);
       vi.spyOn(apiClient, "callXeroApi").mockImplementation(((call: () => unknown) => call()) as never);
     }
     beforeEach(async () => {
       await clearRun();
-      await useXero();
+      await installXero();
       // The club's bank-transfer refund account, so a refund note's settlement would pay.
       const mappings = await import("@/lib/xero-mappings");
       vi.spyOn(mappings, "getResolvedAccountMapping").mockResolvedValue({ code: "090" } as never);
@@ -213,14 +241,16 @@ function fakeXero(paidInFull: boolean) {
       await deleteFixtures();
     }, 60_000);
 
-    /** The adjustment's row, queued as the netting reserves it: the $40 waiver, or the $5 bank-transfer refund note. */
-    async function queued(purpose: "waive" | "refund"): Promise<string> {
+    /** The adjustment's row, queued as the netting reserves it: the $40 waiver, the $60 one voiding an unpaid extra, or the $5 bank-transfer refund note. */
+    async function queued(purpose: "waive" | "refund" | "void"): Promise<string> {
       const { startXeroSyncOperation } = await import("@/lib/xero-sync");
-      const key = `organiser-extra:${BOOKING_ID}:cut:${purpose}:${INVOICE_ID}`;
+      const key = `organiser-extra:${BOOKING_ID}:cut:${purpose === "refund" ? "refund" : "waive"}:${INVOICE_ID}`;
       const row = await startXeroSyncOperation({
         direction: "OUTBOUND", entityType: "CREDIT_NOTE", operationType: "CREATE", localModel: "Booking", localId: BOOKING_ID,
         status: "PENDING", correlationKey: key, idempotencyKey: key,
-        requestPayload: purpose === "waive"
+        requestPayload: purpose === "void"
+          ? { queueType: "ORGANISER_EXTRA_ADJUSTMENT", bookingId: BOOKING_ID, scopeId: "cut", modificationId: null, invoiceId: INVOICE_ID, amountCents: 6_000, purpose: "waive", cashAtPlanCents: 0, refundPercentage: 50 }
+          : purpose === "waive"
           ? { queueType: "ORGANISER_EXTRA_ADJUSTMENT", bookingId: BOOKING_ID, scopeId: "cut", modificationId: null, invoiceId: INVOICE_ID, amountCents: 4_000, purpose, cashAtPlanCents: 2_000, refundPercentage: 50 }
           : { queueType: "ORGANISER_EXTRA_ADJUSTMENT", bookingId: BOOKING_ID, scopeId: "cut", modificationId: null, invoiceId: INVOICE_ID, amountCents: 500, purpose, cashAtPlanCents: 6_000, refundPercentage: 50, handBackTaskId: HAND_BACK_ID },
       });
@@ -262,11 +292,22 @@ function fakeXero(paidInFull: boolean) {
       return { operationId, run, release };
     }
 
+    /** #4701: the waiver of a wholly unpaid extra stalls in its first invoice read, before the void, its claim held. */
+    async function stalledBeforeVoid() {
+      await installXero("none");
+      const operationId = await queued("void");
+      const release = xero.holdInvoiceReads();
+      const run = runOutbox();
+      await xero.invoiceReadReached();
+      expect(await prisma.xeroSyncOperation.findUniqueOrThrow({ where: { id: operationId } })).toMatchObject({ status: "RUNNING", xeroObjectId: null });
+      return { operationId, run, release };
+    }
+
     const stoodDownAudits = () => prisma.auditLog.findMany({ where: { action: STOOD_DOWN_ACTION, targetId: BOOKING_ID } });
     const adjustmentLinks = () => prisma.xeroObjectLink.findMany({ where: { localId: { in: [BOOKING_ID, PAYMENT_ID] }, role: { in: ["ORGANISER_EXTRA_WAIVER", "ORGANISER_EXTRA_REFUND"] } } });
 
     it.each(["waive", "refund"] as const)("MUTATION: %s - record, stall, reset, Resolve, then wake: no allocation or payment, the officer's row untouched, audited once and alerted once", async (purpose) => {
-      if (purpose === "refund") await useXero(true);
+      if (purpose === "refund") await installXero("full");
       const { operationId, run, release } = await recordedAndStalled(purpose);
       await resetStale(operationId);
       const resolvedAt = new Date("2026-07-01T00:30:00.000Z");
@@ -342,7 +383,7 @@ function fakeXero(paidInFull: boolean) {
     });
 
     it("MUTATION (#4703 review 2): record, stall, reset, the note paid by hand, Resolve, then wake: nothing paid, nothing completed over the officer's row", async () => {
-      await useXero(true);
+      await installXero("full");
       const { operationId, run, release } = await recordedAndStalled("refund");
       await resetStale(operationId);
       xero.payByHand(NOTE);
@@ -359,8 +400,55 @@ function fakeXero(paidInFull: boolean) {
       expect(await prisma.alertCooldown.count({ where: { key: `xero-success-after-resolution:${operationId}` } })).toBe(0);
     });
 
+    it("MUTATION (#4701): stall in the invoice read before the void, reset, Resolve, then wake: the invoice is not voided, the officer's row untouched, audited once and alerted once", async () => {
+      const { operationId, run, release } = await stalledBeforeVoid();
+      await resetStale(operationId);
+      const resolvedAt = new Date("2026-07-01T00:30:00.000Z");
+      await resolveByHand(operationId, resolvedAt);
+      const officers = await prisma.xeroSyncOperation.findUniqueOrThrow({ where: { id: operationId } });
+
+      release();
+      await expect(run).resolves.toMatchObject({ succeeded: 0, skipped: 1, failed: 0 });
+
+      expect(xero.voids).toEqual([]);
+      expect(xero.invoice.status).toBe("AUTHORISED");
+      expect(xero.notes.size).toBe(0);
+      const row = await prisma.xeroSyncOperation.findUniqueOrThrow({ where: { id: operationId } });
+      expect(row).toMatchObject({
+        status: "FAILED", manuallyResolvedAt: resolvedAt, xeroObjectId: null,
+        lastErrorCode: officers.lastErrorCode, lastErrorMessage: officers.lastErrorMessage,
+      });
+      expect(row.completedAt?.getTime()).toBe(officers.completedAt?.getTime());
+      expect(row.responsePayload).toEqual(officers.responsePayload);
+
+      const audits = await stoodDownAudits();
+      expect(audits).toHaveLength(1);
+      expect(audits[0]).toMatchObject({ category: "xero", entityType: "XeroSyncOperation", entityId: operationId, outcome: "blocked" });
+      expect(audits[0]!.metadata).toMatchObject({ step: "void", invoiceId: INVOICE_ID, amountCents: 6_000, rowStatus: "FAILED", resolvedByHand: true });
+      expect(send).toHaveBeenCalledTimes(1);
+      expect((send.mock.calls[0]![0] as { errorMessage: string }).errorMessage).toContain("stopped before voiding the organiser's invoice EXTRA-1");
+      expect(await prisma.alertCooldown.count({ where: { key: `xero-success-after-resolution:${operationId}:${INVOICE_ID}` } })).toBe(1);
+    });
+
+    it("MUTATION (#4701): stall before the void, reset with no officer action, then wake: nothing voided, audited, no alert; the officer's Retry then voids once", async () => {
+      const { operationId, run, release } = await stalledBeforeVoid();
+      await resetStale(operationId);
+      release();
+      await expect(run).resolves.toMatchObject({ succeeded: 0, skipped: 1, failed: 0 });
+      expect(xero.voids).toEqual([]);
+      expect(await stoodDownAudits()).toEqual([expect.objectContaining({ metadata: expect.objectContaining({ step: "void", rowStatus: "FAILED", resolvedByHand: false }) })]);
+      expect(send).not.toHaveBeenCalled();
+
+      vi.setSystemTime(new Date("2026-07-01T00:40:00.000Z"));
+      await retry(operationId);
+      await expect(runOutbox()).resolves.toMatchObject({ succeeded: 1, failed: 0 });
+      expect(await prisma.xeroSyncOperation.findUniqueOrThrow({ where: { id: operationId } })).toMatchObject({ status: "SUCCEEDED" });
+      expect(xero.voids).toEqual([INVOICE_ID]);
+      expect(xero.notes.size).toBe(0);
+    });
+
     it("control: a refund note whose run keeps its claim is paid once and completed", async () => {
-      await useXero(true);
+      await installXero("full");
       const { operationId, run, release } = await recordedAndStalled("refund");
       release();
       await expect(run).resolves.toMatchObject({ succeeded: 1, failed: 0 });

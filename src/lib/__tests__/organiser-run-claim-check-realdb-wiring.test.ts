@@ -26,6 +26,7 @@ describe("the organiser run claim check's real-database proof stays wired into C
     expect(suite).toContain("record, stall, reset, Resolve, then wake: no allocation or payment");
     expect(suite).toContain("record, stall, reset with no officer action, then wake");
     expect(suite).toContain("record, stall, reset, Retry queued, then wake");
+    expect(suite).toContain("stall in the invoice read before the void, reset, Resolve, then wake: the invoice is not voided");
     expect(suite).toContain("markStaleRunningXeroOperationFailed");
     expect(suite).toContain('assertSafeRaceDbUrl(RACE_DB_URL, "Organiser run claim check (#4680)")');
     expect(suite.indexOf("assertSafeRaceDbUrl(RACE_DB_URL")).toBeLessThan(suite.indexOf('await import("@/lib/prisma")'));
