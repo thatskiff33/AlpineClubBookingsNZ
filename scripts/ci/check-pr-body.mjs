@@ -7,8 +7,8 @@
  *
  * `verify` runs gates that read the PR body rather than the code: the
  * concurrency declaration and the changelog fragment, and (#4463) the plan
- * deviation section and the soft size limit, which report WARN where CI prints
- * a `::warning::`. All fetch the live body
+ * deviation section and the soft size limit. Only the size check reports WARN
+ * where CI prints a `::warning::`. All fetch the live body
  * from GitHub, so before this script the only way to test a body was to open or
  * edit a PR and wait ~15 minutes for the answer — one field per attempt, because
  * each gate stops at its first failure. That loop cost four CI cycles on #2634
@@ -162,8 +162,8 @@ for (const [label, run] of [
   }
 }
 
-// #4463: the plan-deviation gate (WARN until `PLAN_DEVIATION_ENFORCED` flips,
-// then FAIL) and the soft size gate (never FAIL). Same verdict functions the CI
+// #4633: the enforced plan-deviation gate and the soft size gate (never FAIL).
+// Same verdict functions the CI
 // entrypoints print, so WARN here is a `::warning::` there.
 const warnings = [];
 let size = null;
@@ -175,7 +175,7 @@ try {
   // size verdict says it could not measure — a WARN, never a PASS.
 }
 for (const [label, verdict] of [
-  ["Plan deviation", planDeviationVerdict(body)],
+  ["Plan deviation", planDeviationVerdict(body, { changedFiles })],
   ["PR size", prSizeVerdict(body, size)],
 ]) {
   if (verdict.status === "fail") {

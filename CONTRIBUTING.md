@@ -418,13 +418,14 @@ long") and turn `verify` red with no finding. Do not reference
 `scripts/ci/pr-body-file.test.mjs` fails if it comes back. Keep a long
 description short anyway: link the review history rather than pasting it.
 
-**Two PR-body checks warn rather than fail** (#4463). The `## Plan Deviation`
-section is a `::warning::` until `PLAN_DEVIATION_ENFORCED` in
-`scripts/ci/check-pr-plan-deviation.mjs` is set to `true` (owner decision, 1 Nov
-2026: warn for seven days, then fail). The size check
+**The Plan Deviation check fails; the size check only warns** (#4463, #4633).
+A missing, empty or unlinked `## Plan Deviation` section fails `verify` and
+`pnpm run pr:check`. Only a known, nonempty diff restricted to `package.json`,
+`pnpm-workspace.yaml` and `pnpm-lock.yaml` is exempt, regardless of author.
+An unknown diff keeps the section required. The size check
 (`scripts/ci/check-pr-size.mjs`) only ever warns: over 800 changed lines, not
 counting files `.gitattributes` marks `linguist-generated`, with no `large-pr:`
-line. `pnpm run pr:check` reports both as `WARN`.
+line. `pnpm run pr:check` reports that check as `WARN`.
 
 **Adding a required context is a three-step sequence, and doing it out of
 order breaks every open pull request** — whenever a job producing a required
