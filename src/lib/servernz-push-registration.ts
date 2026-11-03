@@ -6,6 +6,7 @@ import {
   setIntegrationCredentialInTransaction,
 } from "@/lib/integration-credentials";
 import { getAppBaseUrl } from "@/lib/app-url";
+import type { CredentialActor } from "@/lib/integration-credential-actor";
 import logger from "@/lib/logger";
 import {
   ServerNzApiError,
@@ -41,6 +42,9 @@ export type PushRegistrationOutcome =
   | "awaiting-approval"
   | "failed";
 
+/** Who stores the secret when the mirror pass registers. */
+const MIRROR_PASS_ACTOR: CredentialActor = { kind: "system", actor: "servernz-push-registration" };
+
 /**
  * Make sure the central server knows where to push for this install.
  *
@@ -54,8 +58,13 @@ export type PushRegistrationOutcome =
  * fence for the identity the registration was sent on: one registered with a
  * connection replaced while the request was out is the old server's, and is
  * dropped rather than stored, so it cannot stop that re-registration.
+ *
+ * The secret is written as `actor`: the mirror pass's system actor, or the
+ * administrator whose key save started the registration (#4720 review).
  */
-export async function ensurePushRegistration(): Promise<PushRegistrationOutcome> {
+export async function ensurePushRegistration(
+  actor: CredentialActor = MIRROR_PASS_ACTOR,
+): Promise<PushRegistrationOutcome> {
   const existing = await getIntegrationCredentialValue(
     SERVERNZ_PROVIDER,
     SERVERNZ_CREDENTIAL_KEYS.pushSecret,
@@ -77,7 +86,7 @@ export async function ensurePushRegistration(): Promise<PushRegistrationOutcome>
           provider: SERVERNZ_PROVIDER,
           key: SERVERNZ_CREDENTIAL_KEYS.pushSecret,
           value: result.secret,
-          actor: { kind: "system", actor: "servernz-push-registration" },
+          actor,
           // Declared last-writer-wins, and deliberately NOT create-only (#2723).
           // `registerPushTarget` is a PUT: the central server keeps the most
           // recent registration and issues it a new secret version. So if two
@@ -124,14 +133,15 @@ export async function ensurePushRegistration(): Promise<PushRegistrationOutcome>
  * (triyder/AlpineClubBookingsNZ#97). The key save's fenced transaction has
  * committed, and removed the replaced connection's secret
  * (`clearServerNzPushSecret`), before this runs, so the registration is made
- * with the key just stored. Never throws: the key is stored whatever this
- * comes to, and the next mirror pass retries.
+ * with the key just stored. The secret is stored in the name of `memberId`,
+ * the administrator who saved the key. Never throws: the key is stored
+ * whatever this comes to, and the next mirror pass retries.
  */
-export async function registerAfterKeySave(): Promise<
+export async function registerAfterKeySave(memberId: string): Promise<
   PushRegistrationOutcome | typeof SERVER_VERSION_MISMATCH_CODE
 > {
   try {
-    return await ensurePushRegistration();
+    return await ensurePushRegistration({ kind: "admin", memberId });
   } catch (error) {
     if (error instanceof ServerNzVersionMismatchError) return SERVER_VERSION_MISMATCH_CODE;
     logger.warn({ err: error }, "Push registration after a key save failed");

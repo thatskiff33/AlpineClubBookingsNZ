@@ -13,6 +13,8 @@ import { assertStoredServerVersionMatches } from "@/lib/servernz-api";
 // Clubs registry up to the central server using the stored API key.
 export async function POST() {
   const guard = await requireAdmin({
+    // OTHER_LODGES_UPLOAD_PERMISSION, written out: the authorization proof
+    // reads each handler's gate at the call (a test pins the two equal).
     permission: { area: "finance", level: "edit" },
   });
   if (!guard.ok) return guard.response;

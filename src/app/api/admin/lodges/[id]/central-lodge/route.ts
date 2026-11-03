@@ -167,25 +167,39 @@ export async function PUT(
   } catch {
     return NextResponse.json({ error: "Could not save" }, { status: 500 });
   }
+  // Every refusal named (#4720 review): a new one fails to compile here.
+  // `duplicate` and `stale` need two rows or an expected link, which this
+  // one-row save without `expectCurrent` never sends.
   if (!saved.ok) {
-    if (saved.reason === "already-linked") {
-      return NextResponse.json(
-        {
-          error: `That central lodge is already linked to ${saved.holderName ?? "another lodge"}. Unlink it there first.`,
-        },
-        { status: 409 },
-      );
+    switch (saved.reason) {
+      case "already-linked":
+        return NextResponse.json(
+          {
+            error: `That central lodge is already linked to ${saved.holderName ?? "another lodge"}. Unlink it there first.`,
+          },
+          { status: 409 },
+        );
+      case "lodge-not-found":
+        return NextResponse.json({ error: "Lodge not found" }, { status: 404 });
+      case "not-owned":
+        return NextResponse.json(
+          {
+            error:
+              "That is not a lodge the Alpine Central Server says this club owns. Download from the central server, then choose again.",
+          },
+          { status: 400 },
+        );
+      case "duplicate":
+      case "stale":
+        return NextResponse.json(
+          { error: "That link was changed while this was open. Reload the page, then choose again." },
+          { status: 409 },
+        );
+      default: {
+        const unhandled: never = saved;
+        return unhandled;
+      }
     }
-    if (saved.reason === "lodge-not-found") {
-      return NextResponse.json({ error: "Lodge not found" }, { status: 404 });
-    }
-    return NextResponse.json(
-      {
-        error:
-          "That is not a lodge the Alpine Central Server says this club owns. Download from the central server, then choose again.",
-      },
-      { status: 400 },
-    );
   }
 
   // The Fees page fills the own lodge's rates only once it is linked, as the

@@ -333,7 +333,7 @@ export async function POST(request: Request) {
   // key's fenced write has committed (INV-INT-003).
   const pushRegistration =
     provider === SERVERNZ_PROVIDER && key === SERVERNZ_CREDENTIAL_KEYS.apiKey
-      ? await registerAfterKeySave()
+      ? await registerAfterKeySave(guard.memberId)
       : undefined;
 
   // Response confirms metadata only — the value is never returned.

@@ -187,7 +187,7 @@ beforeEach(() => {
   mocks.auth.mockResolvedValue(adminSession);
   mocks.requireActiveSessionUser.mockResolvedValue(null);
   mocks.auditLogCreate.mockResolvedValue(undefined);
-  mocks.uploadOtherClubsAfterSave.mockResolvedValue({ status: "uploaded", sent: 1 });
+  mocks.uploadOtherClubsAfterSave.mockResolvedValue({ status: "uploaded", sent: 1, accepted: 1 });
   mocks.readStoredServerVersion.mockResolvedValue({
     status: "match",
     serverVersion: "2.0",
@@ -396,12 +396,22 @@ describe("PATCH /api/admin/other-lodges/[id]", () => {
     mocks.uploadOtherClubsAfterSave.mockResolvedValue({ status: "running" });
     const response = await PATCH(jsonRequest("PATCH", { bedCapacity: 12 }), params("ol-1"));
     expect(response.status).toBe(200);
-    expect(mocks.uploadOtherClubsAfterSave).toHaveBeenCalledWith("admin-1");
+    // The session user, so the upload can check Finance edit (#4720 review).
+    expect(mocks.uploadOtherClubsAfterSave).toHaveBeenCalledWith(expect.objectContaining({ id: "admin-1" }));
     // After the write and its audit row, never inside a transaction.
     expect(mocks.auditLogCreate.mock.invocationCallOrder[0]).toBeLessThan(
       mocks.uploadOtherClubsAfterSave.mock.invocationCallOrder[0]!,
     );
     expect((await response.json()).upload).toEqual({ status: "running" });
+  });
+
+  it("does not upload a save that changed nothing (#4720 review)", async () => {
+    mocks.findUnique.mockResolvedValue(record());
+    const response = await PATCH(jsonRequest("PATCH", { bedCapacity: 40 }), params("ol-1"));
+    expect(response.status).toBe(200);
+    expect(mocks.update).not.toHaveBeenCalled();
+    expect(mocks.uploadOtherClubsAfterSave).not.toHaveBeenCalled();
+    expect((await response.json()).upload).toBeUndefined();
   });
 
   it("does not upload a save it refused", async () => {

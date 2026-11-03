@@ -348,9 +348,11 @@ Alpine Central Server**, for you to check its bookings and **Hide** it.
    no lodge for you yet, or every lodge it lists is already linked, the page
    says so instead. With the item disabled, enable it and press **Download**,
    then link each lodge from its **Central lodge** card.
-6. Saving **Edit my Lodge** uploads your lodge to the central server straight
-   away, and the panel says whether it was sent; the nightly sync sends
-   anything that was not. **Upload** pushes it by hand. **View all lodge
+6. Saving a change to **Edit my Lodge** uploads your lodge to the central
+   server straight away, when you also hold Finance edit (the **Upload**
+   button's permission), and the panel says whether the server accepted it; the
+   nightly sync sends anything that was not. A save that changes nothing sends
+   nothing. **Upload** pushes it by hand. **View all lodge
    details**, under Other Clubs details on the setup page, opens the Lodges
    page.
 

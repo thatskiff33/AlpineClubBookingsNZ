@@ -12,6 +12,7 @@ import {
   amenitiesInputSchema,
   otherLodgeAmenitiesDiffer,
   otherLodgeDataColumns,
+  otherLodgeDataDiffers,
   otherLodgeDataShape,
   otherLodgeNameSchema,
   otherLodgeSelect,
@@ -155,8 +156,10 @@ export async function PATCH(
     );
   }
 
+  // The panel sends the whole form: a re-save as it was writes and uploads nothing.
+  const columns = otherLodgeDataColumns(input);
   const data: Prisma.OtherLodgeUpdateManyMutationInput = {
-    ...otherLodgeDataColumns(input),
+    ...(otherLodgeDataDiffers(columns, existing) ? columns : {}),
     ...(renameTo !== null ? { name: renameTo } : {}),
     ...(ratesFromFees !== undefined && ratesFromFees !== existing.ratesFromFees ? { ratesFromFees } : {}),
   };
@@ -171,9 +174,9 @@ export async function PATCH(
   if (changedFields.length === 0 && !fromFees) {
     // The panel shows what it is handed, so the row goes back in the LIST shape
     // (with its `owned` flag), not the bare serializer the audit row uses.
-    return respondSaved({ otherLodge: serializeOtherLodgeForAdmin(existing, owned) }, session.user.id);
+    return NextResponse.json({ otherLodge: serializeOtherLodgeForAdmin(existing, owned) });
   }
-  if (changedFields.length === 0) return respondSaved(await filledFromFees(existing.id, owned, session.user.id), session.user.id);
+  if (changedFields.length === 0) return respondSaved(await filledFromFees(existing.id, owned, session.user.id), session.user);
 
   // An amenity-only edit changes no column on the lodge row, so `@updatedAt`
   // would not fire — and the central-server upload watermark is keyed on this
@@ -222,17 +225,13 @@ export async function PATCH(
     }),
   );
 
-  return respondSaved(
-    fromFees
-      ? await filledFromFees(updated.id, owned, session.user.id)
-      : { otherLodge: serializeOtherLodgeForAdmin(updated, owned) },
-    session.user.id,
-  );
+  const saved = fromFees ? await filledFromFees(updated.id, owned, session.user.id) : { otherLodge: serializeOtherLodgeForAdmin(updated, owned) };
+  return respondSaved(saved, session.user);
 }
 
-/** Answer a committed save, after uploading it at once (`uploadOtherClubsAfterSave`). */
-async function respondSaved(body: { otherLodge: unknown }, actor: string) {
-  return NextResponse.json({ ...body, upload: await uploadOtherClubsAfterSave(actor) });
+/** Answer a committed save, after uploading it (for an administrator who may press Upload). */
+async function respondSaved(body: { otherLodge: unknown }, user: Parameters<typeof uploadOtherClubsAfterSave>[0]) {
+  return NextResponse.json({ ...body, upload: await uploadOtherClubsAfterSave(user) });
 }
 
 /**

@@ -573,9 +573,10 @@ export function AlpineServerSetup({ initialState }: { initialState: InitialState
           <div className="mb-4 rounded-md border border-border bg-muted p-3 text-sm">
             <p className="font-medium">What leaves this club when an item is enabled</p>
             <p className="mt-1 text-muted-foreground">
-              Your lodge&apos;s name, location, bed count, and booking-officer
-              contact details are uploaded to the central server and used for the
-              central booking system.
+              Your lodges&apos; names, locations, bed counts and booking-officer
+              contact details are uploaded to the central server and redistributed
+              to every other connected club, where they appear on those clubs&apos;
+              pages.
             </p>
             <p className="mt-1 text-muted-foreground">
               The booking-officer email is the committee role&apos;s shared

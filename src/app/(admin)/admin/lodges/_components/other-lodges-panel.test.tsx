@@ -442,7 +442,13 @@ describe("Other lodges edit popup (#51, opened through Edit my Lodge)", () => {
   });
 
   it.each([
-    [{ status: "uploaded", sent: 1 }, "Saved, and sent to the Alpine Central Server."],
+    [{ status: "uploaded", sent: 1, accepted: 1 }, "Saved, and sent to the Alpine Central Server."],
+    // A lodge the server refused is not reported as sent (#4720 review).
+    [{ status: "uploaded", sent: 1, accepted: 0 }, "Saved, but the Alpine Central Server did not accept the change. The nightly sync sends it again."],
+    [{ status: "uploaded", sent: 2, accepted: 1 }, "Saved and sent, but the Alpine Central Server did not accept every lodge. The nightly sync sends the rest again."],
+    [{ status: "uploaded", sent: 0, accepted: 0 }, "Saved. The Alpine Central Server already has these details."],
+    [{ status: "owned-unreadable" }, "Saved, but this site's list of its own lodges could not be read, so nothing was sent. The next download from the Alpine Central Server rewrites it."],
+    [{ status: "no-upload-permission" }, "Saved. The nightly sync sends the change to the Alpine Central Server; sending it straight away needs Finance edit."],
     [{ status: "failed" }, "Saved, but the change could not be sent to the Alpine Central Server just now. The nightly sync tries again."],
     [{ status: "sharing-off" }, "Saved. Other Clubs sharing is off, so the change was not sent to the Alpine Central Server."],
   ])("says what uploading the saved lodge came to (%o)", async (upload, text) => {

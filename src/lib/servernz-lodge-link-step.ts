@@ -2,8 +2,8 @@ import "server-only";
 import {
   type CentralLodgeLinkAudit,
   labelOwnedLodges,
+  preselectedCentralLodgeId,
   saveCentralLodgeLinks,
-  suggestedCentralLodgeId,
 } from "@/lib/central-lodge-link";
 import { syncOwnOtherLodgesFromFees } from "@/lib/other-lodge-fees-sync";
 import type { OwnedCentralLodge } from "@/lib/other-lodges";
@@ -103,8 +103,6 @@ async function decideLinks(owned: ReadonlyArray<OwnedCentralLodge> | null): Prom
   const linkedActive = new Set(active.flatMap((l) => (l.centralLodgeId ? [l.centralLodgeId] : [])));
   if (ownedIds.every((id) => linkedActive.has(id))) return { kind: "already-linked" };
 
-  const suggested = suggestedCentralLodgeId(owned, active);
-  const [onlyActive] = active;
   // Not offered when another lodge (an inactive one) holds that link.
   const heldElsewhere = lodges.some((l) => l.centralLodgeId === owned[0]?.id);
 
@@ -112,7 +110,7 @@ async function decideLinks(owned: ReadonlyArray<OwnedCentralLodge> | null): Prom
     kind: "choose",
     lodges: lodges.map((l) => ({
       ...l,
-      suggestedCentralLodgeId: l.id === onlyActive?.id && !heldElsewhere ? suggested : null,
+      suggestedCentralLodgeId: preselectedCentralLodgeId(l.id, owned, active, heldElsewhere),
     })),
     owned: await labelOwnedLodges(owned),
   };

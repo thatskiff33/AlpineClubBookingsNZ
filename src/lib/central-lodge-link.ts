@@ -56,6 +56,22 @@ export function suggestedCentralLodgeId(
 }
 
 /**
+ * The central lodge to preselect for ONE local lodge, on the Central lodge
+ * card and in the setup page's link dialog alike (#4720 review: one rule). It
+ * is `suggestedCentralLodgeId`, offered only to the club's one active lodge,
+ * and only while no lodge (an inactive one included) holds that link.
+ */
+export function preselectedCentralLodgeId(
+  localLodgeId: string,
+  owned: ReadonlyArray<OwnedCentralLodge> | null,
+  activeLodges: ReadonlyArray<{ id: string; centralLodgeId: string | null }>,
+  onlyOwnedLinkHeld: boolean,
+): string | null {
+  if (onlyOwnedLinkHeld || activeLodges[0]?.id !== localLodgeId) return null;
+  return suggestedCentralLodgeId(owned, activeLodges);
+}
+
+/**
  * Each owned lodge with the label its option shows (#69): two may share a
  * name, so such a pair also shows the location their local copies hold.
  */
@@ -116,10 +132,7 @@ export async function centralLinkStatus(
   if (holder && holder.id !== localLodgeId) {
     return { answersFor: null, heldBy: holder.name, suggested: null };
   }
-  const active = await readActiveLodges();
-  const [onlyActive] = active;
-  const suggested =
-    onlyActive?.id === localLodgeId && !holder ? suggestedCentralLodgeId(owned, active) : null;
+  const suggested = preselectedCentralLodgeId(localLodgeId, owned, await readActiveLodges(), Boolean(holder));
   return { answersFor: null, heldBy: null, suggested };
 }
 

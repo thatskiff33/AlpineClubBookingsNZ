@@ -265,6 +265,7 @@ describe("POST /api/admin/integrations/credentials", () => {
     const res = await POST(makeRequest({ provider: "servernz", key: "api_key", value: "acs_replacement", expectedBaseUrl: SHOWN_URL }));
     expect(res.status).toBe(200);
     expect(mocks.registerAfterKeySave).toHaveBeenCalledTimes(1);
+    expect(mocks.registerAfterKeySave).toHaveBeenCalledWith("admin-1");
     // After the fenced write (which removed the old push secret), never inside it.
     expect(mocks.deleteIntegrationCredential.mock.invocationCallOrder[0]).toBeLessThan(
       mocks.registerAfterKeySave.mock.invocationCallOrder[0]!,

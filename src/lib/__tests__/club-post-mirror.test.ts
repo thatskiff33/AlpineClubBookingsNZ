@@ -1106,11 +1106,16 @@ describe("ensurePushRegistration outcome, and registerAfterKeySave", () => {
 
   it("never throws after a key save: a version pause and any other failure are outcomes", async () => {
     mocks.registerPushTarget.mockRejectedValueOnce(new mocks.FakeVersionError());
-    await expect(registerAfterKeySave()).resolves.toBe("server-version-mismatch");
+    await expect(registerAfterKeySave("admin-1")).resolves.toBe("server-version-mismatch");
     mocks.getIntegrationCredentialValue.mockRejectedValueOnce(new Error("database down"));
-    await expect(registerAfterKeySave()).resolves.toBe("failed");
+    await expect(registerAfterKeySave("admin-1")).resolves.toBe("failed");
     mocks.registerPushTarget.mockResolvedValueOnce({ secret: "s", secretVersion: 1, sentOn: SENT_ON });
-    await expect(registerAfterKeySave()).resolves.toBe("registered");
+    await expect(registerAfterKeySave("admin-1")).resolves.toBe("registered");
+    // The key-save's registration stores the secret in the administrator's
+    // name, not the mirror pass's system actor (#4720 review).
+    expect(mocks.setIntegrationCredential).toHaveBeenLastCalledWith(
+      expect.objectContaining({ key: "push_secret", actor: { kind: "admin", memberId: "admin-1" } }),
+    );
   });
 });
 

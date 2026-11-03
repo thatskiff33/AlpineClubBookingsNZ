@@ -27,8 +27,8 @@ vi.mock("@/lib/prisma", () => ({ prisma: { lodge: { findMany: mocks.lodgeFindMan
 vi.mock("@/lib/other-lodge-fees-sync", () => ({ syncOwnOtherLodgesFromFees: mocks.feesSync }));
 vi.mock("@/lib/servernz-sync-response", () => ({ auditDownload: mocks.audit }));
 vi.mock("@/lib/central-lodge-link", async (importOriginal) => ({
-  // The real suggestion rule; the writer and the labels are doubles.
-  suggestedCentralLodgeId: ((await importOriginal()) as typeof import("@/lib/central-lodge-link")).suggestedCentralLodgeId,
+  // The real preselect rule; the writer and the labels are doubles.
+  preselectedCentralLodgeId: ((await importOriginal()) as typeof import("@/lib/central-lodge-link")).preselectedCentralLodgeId,
   saveCentralLodgeLinks: mocks.saveLinks,
   labelOwnedLodges: mocks.labelOwned,
 }));
