@@ -2510,9 +2510,10 @@ pnpm run xero:applied-credit-account-note-link-repair --apply --payment <payment
   status are recounted from the links left (the #4095 recount). It prints each
   payment's refunded total before and after, and names any it could not
   settle: a failed recount, or a link an inbound sync running at the same time
-  made active again (run the repair again for that one). The recount never lowers a Stripe payment's
-  recorded refund, nor a bank-transfer payment's below its own refund detail:
-  it raises an admin alert instead, so settle that one by hand. Keep the dry-run output with the change record.
+  made active again (run the repair again for that one). The recount never
+  lowers a Stripe payment's recorded refund, nor a bank-transfer payment's
+  below its own refund detail: it raises an admin alert instead, so settle
+  that one by hand. Keep the dry-run output with the change record.
 - **Then raise the missing cancellation notes.** Retiring a link raises
   nothing by itself. For each booking `--apply` names, run
   `pnpm run xero:booking-repair --booking <bookingId> --dry-run`, review its
@@ -2523,7 +2524,8 @@ pnpm run xero:applied-credit-account-note-link-repair --apply --payment <payment
   Check both kinds in Xero by hand.
 
 It makes no Xero call. Design: [`xero/ARCHITECTURE.md`](xero/ARCHITECTURE.md),
-the `xero-applied-credit-account-note-link-repair` module row.
+the `xero-applied-credit-account-note-link-repair` module row; concurrency:
+[`CONCURRENCY_AND_LOCKING.md`](CONCURRENCY_AND_LOCKING.md#applied-credit-account-note-link-repair-lock-free-4712).
 
 ### Count voided bank-transfer refund notes before the follow-up writes (#4162)
 
