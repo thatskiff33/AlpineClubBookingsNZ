@@ -65,7 +65,7 @@ import {
 import { queuedReviewTaskId } from "@/lib/xero-review-task-key";
 import { xeroSyncErrorFields } from "@/lib/xero-sync-error-text";
 import { XERO_PARTIAL_REPAIR_RUNNING_CODE, XERO_REFUND_NOTE_REPAIR_RUNNING_CODE } from "@/lib/xero-stale-operations";
-import type { XeroOperationClaim } from "@/lib/xero-operation-outcome-guard";
+import { ownRunningClaim, type XeroOperationClaim } from "@/lib/xero-operation-outcome-guard";
 
 export const PARTIAL_REPAIR_CLAIM_LOST_MESSAGE =
   "The payment was sent to Xero, but this operation was reset while it ran. Retry it once to close it.";
@@ -412,7 +412,7 @@ async function runWithClaimedOriginal<T>(
       if (options?.from) {
         // Not `abandonedClaimErrors`: the original is back to PARTIAL, not FAILED.
         await prisma.xeroSyncOperation.updateMany({
-          where: { id: operationId, status: "RUNNING", startedAt: claimedAt },
+          where: { id: operationId, ...ownRunningClaim({ id: operationId, startedAt: claimedAt }) },
           data: { status: "PARTIAL", ...xeroSyncErrorFields(error), completedAt: new Date() },
         });
       } else {
