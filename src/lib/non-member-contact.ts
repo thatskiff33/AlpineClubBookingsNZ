@@ -30,6 +30,7 @@
 import { exactContains } from "@/lib/prisma-exact-prefix";
 import { randomBytes } from "crypto";
 import { hash } from "bcryptjs";
+import { PASSWORD_BCRYPT_COST } from "@/lib/password-hashing";
 import { AgeTier, Prisma, Role } from "@prisma/client";
 import { z } from "zod";
 import {
@@ -256,7 +257,7 @@ export async function createNonMemberContact(
 
   // Non-login members never authenticate; store a random bcrypt hash so the row
   // satisfies the schema without any usable credential (mirrors booking-request).
-  const placeholderPasswordHash = await hash(randomBytes(32).toString("hex"), 13);
+  const placeholderPasswordHash = await hash(randomBytes(32).toString("hex"), PASSWORD_BCRYPT_COST);
 
   const contact = await db.member.create({
     data: {

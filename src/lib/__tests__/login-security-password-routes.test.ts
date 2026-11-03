@@ -53,6 +53,8 @@ import { POST as resetPassword } from "@/app/api/auth/reset-password/route";
 import { POST as changePassword } from "@/app/api/auth/change-password/route";
 import { GET as passwordPolicy } from "@/app/api/auth/password-policy/route";
 
+import { PASSWORD_BCRYPT_COST } from "@/lib/password-hashing";
+
 const validToken = "a".repeat(64);
 
 function resetReq(password: string) {
@@ -120,6 +122,7 @@ describe("password routes honour the configured login-security policy (#2033)", 
       const res = await resetPassword(resetReq("Abcdefghijklmno1"));
       expect(res.status).toBe(200);
       expect(mocks.prisma.$transaction).toHaveBeenCalledTimes(1);
+      expect(mocks.bcryptHash).toHaveBeenCalledWith("Abcdefghijklmno1", PASSWORD_BCRYPT_COST);
     });
 
     it("change-password rejects a policy-violating new password", async () => {
@@ -132,6 +135,7 @@ describe("password routes honour the configured login-security policy (#2033)", 
       const res = await changePassword(changeReq("Abcdefghijklmno1"));
       expect(res.status).toBe(200);
       expect(mocks.prisma.$transaction).toHaveBeenCalledTimes(1);
+      expect(mocks.bcryptHash).toHaveBeenCalledWith("Abcdefghijklmno1", PASSWORD_BCRYPT_COST);
     });
   });
 

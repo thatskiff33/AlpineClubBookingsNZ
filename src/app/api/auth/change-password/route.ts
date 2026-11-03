@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import bcrypt from "bcryptjs";
+import { PASSWORD_BCRYPT_COST } from "@/lib/password-hashing";
 import { auth } from "@/lib/auth";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
@@ -60,7 +61,7 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const newHash = await bcrypt.hash(newPassword, 13);
+  const newHash = await bcrypt.hash(newPassword, PASSWORD_BCRYPT_COST);
 
   await prisma.$transaction([
     prisma.member.update({

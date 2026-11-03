@@ -26,6 +26,7 @@
  */
 import { randomBytes, randomInt } from "crypto";
 import { hash } from "bcryptjs";
+import { PASSWORD_BCRYPT_COST } from "@/lib/password-hashing";
 import {
   AgeTier,
   BookingEventType,
@@ -1679,7 +1680,7 @@ export async function verifyAndCreateNonMemberJoin(
 
   // Non-login member: store a random bcrypt hash so the row satisfies the
   // schema without any usable credential (mirrors approveBookingRequest).
-  const placeholderPasswordHash = await hash(randomBytes(32).toString("hex"), 13);
+  const placeholderPasswordHash = await hash(randomBytes(32).toString("hex"), PASSWORD_BCRYPT_COST);
   const reviewedAt = new Date();
   const holdDays = await getNonMemberHoldDays(checkIn, groupLodgeId);
   const nonMemberHoldUntil = resolveRequestBookingHoldUntil(

@@ -109,6 +109,7 @@ vi.mock("@/lib/google-config", () => ({
 import { FROZEN_TEST_CLOCK_BASE_ISO } from "@/lib/__tests__/helpers/clock";
 import { authConfig } from "@/lib/auth";
 import { loginAccountKey, resetLoginThrottleProcessState } from "@/lib/login-throttle";
+import { DUMMY_PASSWORD_HASH } from "@/lib/password-hashing";
 import { LOGIN_THROTTLED_CODE } from "@/lib/login-throttle-policy";
 
 type Authorize = (credentials: Record<string, string>, request?: Request) => Promise<unknown>;
@@ -189,6 +190,18 @@ beforeEach(() => {
 });
 
 describe("per-account password throttle through authorize (#4609)", () => {
+  it.each<[string, Record<string, unknown> | null]>([
+    ["unknown", null],
+    ["inactive", { active: false }],
+    ["deleted", { deletedAt: T0 }],
+  ])("runs the shared dummy comparison for a %s account", async (_label, overrides) => {
+    member.findFirst.mockResolvedValue(overrides === null ? null : officer(overrides));
+
+    await expect(attempt(OFFICER_EMAIL, "wrong")).resolves.toBeNull();
+
+    expect(mockBcryptCompare).toHaveBeenCalledExactlyOnceWith("wrong", DUMMY_PASSWORD_HASH);
+  });
+
   it("throttles one account guessed from many addresses; the wait doubles to 15 minutes", async () => {
     await failFiveTimes(OFFICER_EMAIL);
     // The 6th, from a 7th address: refused without a password check.
@@ -238,7 +251,7 @@ describe("per-account password throttle through authorize (#4609)", () => {
       });
       // The dummy compare still runs, exactly once, and never the real hash.
       expect(mockBcryptCompare).toHaveBeenCalledTimes(1);
-      expect(mockBcryptCompare.mock.calls[0][1]).not.toBe(REAL_HASH);
+      expect(mockBcryptCompare).toHaveBeenCalledWith("right", DUMMY_PASSWORD_HASH);
     }
     expect(outcomes[0]).toEqual(outcomes[1]);
     expect(outcomes[0]).toMatchObject({ code: LOGIN_THROTTLED_CODE });

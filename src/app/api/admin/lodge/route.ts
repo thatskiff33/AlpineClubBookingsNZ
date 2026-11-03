@@ -3,6 +3,7 @@ import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { logAudit } from "@/lib/audit";
 import bcrypt from "bcryptjs";
+import { PASSWORD_BCRYPT_COST } from "@/lib/password-hashing";
 import crypto from "crypto";
 import { z } from "zod";
 import { nameField } from "@/lib/zod-helpers";
@@ -164,7 +165,7 @@ export async function GET() {
   if (!lodge && isFullAdmin(session.user)) {
     // Auto-create the lodge account with a random password (admin must set via UI)
     const randomPassword = crypto.randomBytes(24).toString("base64url");
-    const passwordHash = await bcrypt.hash(randomPassword, 12);
+    const passwordHash = await bcrypt.hash(randomPassword, PASSWORD_BCRYPT_COST);
     lodge = await prisma.member.create({
       data: {
         email: LODGE_ACCOUNT_EMAIL,
@@ -324,7 +325,7 @@ export async function PUT(request: NextRequest) {
     changes.push(`email changed to ${email.toLowerCase()}`);
   }
   if (password) {
-    updateData.passwordHash = await bcrypt.hash(password, 12);
+    updateData.passwordHash = await bcrypt.hash(password, PASSWORD_BCRYPT_COST);
     changes.push("password changed");
   }
   if (firstName) {
@@ -424,7 +425,7 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const passwordHash = await bcrypt.hash(parsed.data.password, 12);
+  const passwordHash = await bcrypt.hash(parsed.data.password, PASSWORD_BCRYPT_COST);
   const created = await prisma.$transaction(async (tx) => {
     const member = await tx.member.create({
       data: {
