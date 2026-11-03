@@ -1719,6 +1719,52 @@ describe("payment recovery worker", () => {
     expect(data.allocationPlan).toEqual([slice]);
   });
 
+  it.each([2000, 6000])("sizes an unplanned modification refund after recording another door's %i-cent refund (#4713)", async (listedCents) => {
+    mockPaymentRecoveryFindUnique.mockResolvedValue(makeOperation({
+      type: PaymentRecoveryOperationType.REFUND_BOOKING_MODIFICATION,
+      amountCents: 6000,
+      allocationPlan: null,
+      paymentTransactionId: null,
+    }));
+    let recordedCents = 0;
+    mockPaymentFindUnique.mockImplementation(async () => ({
+      id: "payment-1",
+      transactions: [{
+        id: "txn-1", source: PaymentSource.STRIPE,
+        stripePaymentIntentId: "pi_original", amountCents: 6000,
+        refundedAmountCents: recordedCents, status: PaymentStatus.SUCCEEDED,
+        createdAt: new Date("2026-05-01T00:00:00.000Z"),
+      }],
+    }));
+    mockListRefundsForPaymentIntent.mockResolvedValue([{
+      id: "re_cancellation", amount: listedCents, currency: "nzd", status: "succeeded",
+      payment_intent: "pi_original",
+      created: Math.floor(new Date("2026-05-24T00:00:00.000Z").getTime() / 1000),
+      metadata: buildBookingCancellationRefundMetadata("booking-1"),
+    }]);
+    mockRecordStripeRefundsAgainstTransaction.mockImplementation(async () => {
+      recordedCents = listedCents;
+      return { readAsRefused: [], payment: { id: "payment-1", source: "STRIPE" }, appliedCents: 0, newlyCountedRefundIds: [] };
+    });
+    mockRefundPaymentTransactions.mockImplementation(async ({ amountCents }: { amountCents: number }) => {
+      if (amountCents > 6000 - recordedCents) throw new Error("Refund amount exceeds the charge's remaining balance");
+      return "re_modification";
+    });
+
+    const result = await processPaymentRecoveryOperations({ limit: 1 });
+
+    expect(result).toMatchObject({ succeeded: 1, failed: 0, retried: 0 });
+    expect(recordedCents).toBe(listedCents);
+    if (listedCents === 6000) {
+      expect(mockRefundPaymentTransactions).not.toHaveBeenCalled();
+      expect(mockPaymentRecoveryUpdate).not.toHaveBeenCalled();
+    } else {
+      const allocation = [{ paymentTransactionId: "txn-1", amountCents: 4000 }];
+      expect(mockRefundPaymentTransactions).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ amountCents: 4000, allocation }));
+      expect(mockPaymentRecoveryUpdate).toHaveBeenCalledWith(expect.objectContaining({ data: { allocationPlan: allocation } }));
+    }
+  });
+
   it("processes a booking modification refund recovery by replaying refundPaymentTransactions", async () => {
     mockPaymentRecoveryFindUnique.mockResolvedValue(
       makeOperation({
