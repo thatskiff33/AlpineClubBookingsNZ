@@ -3175,7 +3175,8 @@ export async function processQueuedXeroOutboxOperations(options?: {
         await recordAdditionalCaptureReceipt({ syncOperation: claimed, createdByMemberId: queuedOperation.createdByMemberId ?? undefined });
       } else if (payload?.queueType === XERO_OUTBOX_ORGANISER_EXTRA_ADJUSTMENT_TYPE) {
         const ran = await executeOrganiserExtraAdjustment(payload, claimed, { onRetake: (retaken) => { outcomeClaim = retaken; } });
-        // #4655: a run whose note was recorded on a row queued again, or on none, wrote no outcome.
+        // #4655: a run whose note was recorded on a row queued again, or on none, wrote no outcome;
+        // so did one that lost its claim before a money-moving call (#4680, #4701).
         if (ran === "stood-down") {
           result.skipped += 1;
           continue;

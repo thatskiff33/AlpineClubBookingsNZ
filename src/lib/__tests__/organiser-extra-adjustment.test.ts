@@ -10,6 +10,8 @@ const mocks = vi.hoisted(() => ({
   updateCreditNote: vi.fn(), task: vi.fn(),
   // #4680: the claim check's read (`holdsXeroOperationClaim`) and the stand-down's trace.
   held: vi.fn(), stoodDown: vi.fn(),
+  // #4701: the void's stand-down trace.
+  voidStoodDown: vi.fn(),
   // Every adjustment row of the booking, oldest first: the waivers' own rows and what they reserve.
   plans: [] as { requestPayload: unknown; correlationKey?: string }[],
   // N1 fix delta: each extra's own change (default: +$50 with a $10 fee).
@@ -43,7 +45,7 @@ vi.mock("@/lib/xero-api-client", () => ({
 vi.mock("@/lib/xero-sync", () => ({ completeXeroSyncOperation: mocks.complete, startXeroSyncOperation: mocks.start }));
 vi.mock("@/lib/xero-refund-note-settlement", () => ({ settleRefundNoteFromXero: mocks.settle }));
 // #4655: the note's record on the row has its own suite (`organiser-extra-note-record.test.ts`).
-vi.mock("@/lib/organiser-extra-note-record", () => ({ recordCreatedOrganiserNote: mocks.record, traceOrganiserRunStoodDown: mocks.stoodDown }));
+vi.mock("@/lib/organiser-extra-note-record", () => ({ recordCreatedOrganiserNote: mocks.record, traceOrganiserRunStoodDown: mocks.stoodDown, traceOrganiserVoidStoodDown: mocks.voidStoodDown }));
 vi.mock("@/lib/xero-mappings", () => ({ getResolvedAccountMapping: vi.fn(async () => ({ code: "219" })) }));
 vi.mock("@/lib/club-time-zone-runtime", () => ({ readClubTimeZoneOutsideRequest: vi.fn(async () => "Pacific/Auckland") }));
 
@@ -365,6 +367,33 @@ describe("organiser extra adjustment provider execution", () => {
     expect(mocks.createCreditNotes).toHaveBeenCalledOnce();
     expect(mocks.complete).toHaveBeenCalledOnce();
   });
+  describe("#4701: before voiding a wholly unpaid invoice, the waiver run checks it still holds its claim", () => {
+    const unpaid = () => { mocks.invoice.amountPaid = 0; mocks.invoice.amountDue = 60; };
+    const wholeWaiver = () => payload({ cashAtPlanCents: 0, amountCents: 6_000 });
+
+    it("MUTATION: a claim lost while the invoice read stalled voids nothing, completes nothing, and is traced", async () => {
+      unpaid();
+      mocks.held.mockResolvedValueOnce(null);
+      await expect(execute(wholeWaiver(), claim)).resolves.toBe("stood-down");
+      expect(mocks.held).toHaveBeenCalledWith({ where: { id: "operation", status: "RUNNING", startedAt: claim.startedAt }, select: { id: true } });
+      expect(mocks.updateInvoice).not.toHaveBeenCalled();
+      expect(mocks.createCreditNotes).not.toHaveBeenCalled();
+      expect(mocks.complete).not.toHaveBeenCalled();
+      expect(mocks.voidStoodDown).toHaveBeenCalledExactlyOnceWith({ claim, bookingId: "child", invoiceId: "extra", invoiceNumber: "EXTRA-1", amountCents: 6_000 });
+      expect(mocks.stoodDown).not.toHaveBeenCalled();
+    });
+
+    it("the claim is checked after the invoice read, immediately before the void, and a held claim voids and completes", async () => {
+      unpaid();
+      await expect(execute(wholeWaiver(), claim)).resolves.toBe("completed");
+      expect(mocks.held).toHaveBeenCalledOnce();
+      expect(mocks.held.mock.invocationCallOrder[0]).toBeGreaterThan(mocks.getInvoice.mock.invocationCallOrder.at(-1)!);
+      expect(mocks.held.mock.invocationCallOrder[0]).toBeLessThan(mocks.updateInvoice.mock.invocationCallOrder[0]!);
+      expect(mocks.complete).toHaveBeenCalledExactlyOnceWith(claim, { responsePayload: { voided: true, invoiceId: "extra" } });
+      expect(mocks.voidStoodDown).not.toHaveBeenCalled();
+    });
+  });
+
   describe("#4680: before each money-moving call after the record, the run checks it still holds its claim", () => {
     const refund = () => payload({ purpose: "refund", amountCents: 500, handBackTaskId: "hand-back" });
     const settled = () => { mocks.invoice = { ...mocks.invoice, amountDue: 0, amountCredited: 40 }; };
