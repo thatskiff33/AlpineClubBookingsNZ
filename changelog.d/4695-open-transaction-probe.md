@@ -1,0 +1,1 @@
+- Let the real-database provider-call probe wait briefly for in-flight transactions to finish, report backend details when they remain open, and verify that an awaited provider call inside a transaction still fails (#4695).
