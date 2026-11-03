@@ -4223,7 +4223,7 @@ describe("reapStaleWaitingPaymentXeroOutboxOperations", () => {
         expect(result.reaped).toBe(0);
       });
 
-      it("never asks once the move took the row", async () => {
+      it("counts it as moved once the move took the row, in flight or not", async () => {
         supersededAsk();
         mocks.followSupersededAskInvoicesSafely.mockResolvedValue({ moved: 1 });
         mocks.findFirstOperation.mockResolvedValue(null);
@@ -4231,8 +4231,29 @@ describe("reapStaleWaitingPaymentXeroOutboxOperations", () => {
 
         const result = await reapStaleWaitingPaymentXeroOutboxOperations();
 
-        expect(mocks.supersededAskCancelInFlight).not.toHaveBeenCalled();
+        expect(retireCall()).toBeUndefined();
         expect(result.moved).toBe(1);
+      });
+
+      it("KEEPS it when the cancel lands between the read and a move that took nothing", async () => {
+        supersededAsk();
+        // In flight when read; the cancel then marks the ask FAILED, its own
+        // move fails (swallowed) and it marks itself SUCCEEDED - after the
+        // reaper's move already found the ask open and moved nothing.
+        let cancelLanded = false;
+        mocks.supersededAskCancelInFlight.mockImplementation(async () => !cancelLanded);
+        mocks.followSupersededAskInvoicesSafely.mockImplementation(async () => {
+          cancelLanded = true;
+          return { moved: 0 };
+        });
+
+        const result = await reapStaleWaitingPaymentXeroOutboxOperations();
+
+        expect(mocks.supersededAskCancelInFlight.mock.invocationCallOrder[0]).toBeLessThan(
+          mocks.followSupersededAskInvoicesSafely.mock.invocationCallOrder[0],
+        );
+        expect(retireCall()).toBeUndefined();
+        expect(result).toEqual({ reaped: 0, released: 0, moved: 0, queueOperationIds: [] });
       });
     });
 

@@ -273,16 +273,20 @@ function groupByIntent(
  * still waiting on this intent after that is retired.
  *
  * #4665: never while the ask's cancel is still in flight. Until it lands the
- * ask is passed over (`supersededAskCarriers`), so the move above finds
- * nothing, and the cancel's terminal step moves the invoice once it does. Asked
- * AFTER the move: a cancel read as finished ran its own move before it
- * completed, and the retire is guarded on this intent, so an invoice that move
- * took is never retired.
+ * ask is passed over (`supersededAskCarriers`), so the move finds nothing, and
+ * the cancel's terminal step moves the invoice once it does. Asked BEFORE the
+ * move: the cancel marks the transaction FAILED, moves (swallowing a failure),
+ * then marks itself SUCCEEDED, so one read as in flight here may still land
+ * between this read and the move and leave nothing moved - kept for the next
+ * run. One read as finished has committed its FAILED, so the move below sees
+ * the ask as carried and is itself the cancel's move retried; only what it
+ * still leaves on this intent is retired.
  */
 async function moveToCarrierOrRetire(
   params: { operationId: string; paymentIntentId: string },
   paymentId: string,
 ): Promise<"moved" | "keep" | "retire"> {
+  const cancelInFlight = await supersededAskCancelInFlight(params.paymentIntentId);
   const carried = await followSupersededAskInvoicesSafely({ paymentId });
   if (carried && carried.moved > 0) {
     const stillHere = await prisma.xeroSyncOperation.findFirst({
@@ -291,7 +295,7 @@ async function moveToCarrierOrRetire(
     });
     if (!stillHere) return "moved";
   }
-  return (await supersededAskCancelInFlight(params.paymentIntentId)) ? "keep" : "retire";
+  return cancelInFlight ? "keep" : "retire";
 }
 
 /**
