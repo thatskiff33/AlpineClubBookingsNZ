@@ -2221,6 +2221,15 @@ async function processBookingModificationRefundOperation(
       )
       .sort(compareLedgerRowsNewestFirst); // #4132 (INV-PAY-133): a tie's last-inserted row first
 
+    // A capture arriving during preflight has no checked Stripe evidence yet.
+    // Retry with that charge included, rather than freezing an unchecked slice.
+    const checkedChargeIds = new Set(preflightPlan.map((slice) => slice.paymentTransactionId));
+    if (refundableTransactions.some((transaction) =>
+      transaction.source === PaymentSource.STRIPE && !checkedChargeIds.has(transaction.id),
+    )) {
+      throw new Error("Refundable charges changed during refund preflight; retry before planning");
+    }
+
     const refundableCents = refundableTransactions.reduce(
       (sum, transaction) =>
         sum + (transaction.amountCents - transaction.refundedAmountCents),

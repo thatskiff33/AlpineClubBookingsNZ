@@ -1765,6 +1765,43 @@ describe("payment recovery worker", () => {
     }
   });
 
+  it.each(["new", "pending"])("retries before freezing a plan when a %s charge becomes refundable during preflight (#4713)", async (initialState) => {
+    mockPaymentRecoveryFindUnique.mockResolvedValue(makeOperation({
+      type: PaymentRecoveryOperationType.REFUND_BOOKING_MODIFICATION,
+      amountCents: 6000,
+      allocationPlan: null,
+      paymentTransactionId: null,
+    }));
+    const original = {
+      id: "txn-1", source: PaymentSource.STRIPE,
+      stripePaymentIntentId: "pi_original", amountCents: 6000,
+      refundedAmountCents: 0, status: PaymentStatus.SUCCEEDED,
+      createdAt: new Date("2026-05-01T00:00:00.000Z"),
+    };
+    const arriving = {
+      ...original, id: "txn-new", stripePaymentIntentId: "pi_new",
+      createdAt: new Date("2026-05-02T00:00:00.000Z"),
+    };
+    let captured = false;
+    mockPaymentFindUnique.mockImplementation(async () => ({
+      id: "payment-1",
+      transactions: captured
+        ? [original, arriving]
+        : [original, ...(initialState === "pending" ? [{ ...arriving, status: PaymentStatus.PENDING }] : [])],
+    }));
+    mockListRefundsForPaymentIntent.mockImplementation(async () => {
+      captured = true;
+      return [];
+    });
+
+    const result = await processPaymentRecoveryOperations({ limit: 1 });
+
+    expect(result).toMatchObject({ succeeded: 0, retried: 1 });
+    expect(mockListRefundsForPaymentIntent).toHaveBeenCalledExactlyOnceWith("pi_original", expect.anything());
+    expect(mockRefundPaymentTransactions).not.toHaveBeenCalled();
+    expect(mockPaymentRecoveryUpdate).not.toHaveBeenCalled();
+  });
+
   it("processes a booking modification refund recovery by replaying refundPaymentTransactions", async () => {
     mockPaymentRecoveryFindUnique.mockResolvedValue(
       makeOperation({
