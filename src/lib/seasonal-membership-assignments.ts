@@ -362,10 +362,7 @@ function summarizeSubscriptionHistory(records: SubscriptionPreviewRecord[]) {
   };
 }
 
-/**
- * Production signs with the one auth secret (#4638); elsewhere a missing
- * secret falls back to a fixed local key so previews work in development.
- */
+// Production requires the auth secret (#4638); elsewhere a local key is the fallback.
 function getPreviewSecret(): string {
   if (process.env.NODE_ENV === "production") {
     return requireAuthSecret(
