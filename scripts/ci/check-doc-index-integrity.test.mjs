@@ -4037,4 +4037,18 @@ describe("screen map contracts (#4469)", () => {
       expect(auditUxFlowMap(files)).toEqual([expect.stringContaining("docs/user-guide/README.md")]);
     }
   });
+  it("ignores screen sections, budgets and illustrations in literal blocks", () => {
+    for (const wrap of [(text) => `\`\`\`md\n${text}\n\`\`\``, (text) => `<!--\n${text}\n-->`]) {
+      const screens = fixture();
+      screens.set("docs/UX_FLOW_MAP.md", wrap(screens.get("docs/UX_FLOW_MAP.md")));
+      expect(auditUxFlowMap(screens)).toEqual([expect.stringContaining("needs a screen section")]);
+      const budget = fixture();
+      budget.set(WORD_BUDGET_REGISTER, wrap(budget.get(WORD_BUDGET_REGISTER)));
+      expect(auditUxFlowMap(budget)).toEqual([expect.stringContaining("missing screen-map word ceiling")]);
+      const guide = fixture();
+      guide.set("docs/user-guide/README.md", wrap(guide.get("docs/user-guide/README.md")));
+      expect(auditUxFlowMap(guide)).toEqual([expect.stringContaining("embed a named user-guide screenshot")]);
+    }
+  });
+
 });
