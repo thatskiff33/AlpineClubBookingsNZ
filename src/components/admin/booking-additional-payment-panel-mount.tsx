@@ -1,10 +1,7 @@
 "use client";
 
-import { useSyncExternalStore, type ReactNode } from "react";
-
-const subscribe = () => () => {};
-const clientSnapshot = () => true;
-const serverSnapshot = () => false;
+import type { ReactNode } from "react";
+import { HydratedOnly } from "@/components/hydrated-only";
 
 /**
  * React can retain a hidden streamed page while hydrating its visible copy.
@@ -13,6 +10,5 @@ const serverSnapshot = () => false;
  * still owns the owed check, permissions, amounts and club formatting.
  */
 export function BookingAdditionalPaymentPanelMount({ children }: { children: ReactNode }) {
-  const hydrated = useSyncExternalStore(subscribe, clientSnapshot, serverSnapshot);
-  return hydrated ? children : <p className="text-sm text-muted-foreground" role="status">Loading additional-payment controls…</p>;
+  return <HydratedOnly fallback={<p className="text-sm text-muted-foreground" role="status">Loading additional-payment controls…</p>}>{children}</HydratedOnly>;
 }

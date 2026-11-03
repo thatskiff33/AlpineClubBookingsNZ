@@ -1,0 +1,1 @@
+- Mount the booking-history money-reconciliation status after hydration so retained hidden server markup cannot contain a second verdict; share the existing payment-panel hydration boundary.
