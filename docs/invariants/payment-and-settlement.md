@@ -1751,29 +1751,30 @@ release).
 
 ## INV-PAY-140
 
-**Related: `INV-PAY-098`** (a later request carries the balance),
+**Related: `INV-PAY-098`** (the carried balance),
 **`INV-PAY-104`** (late-success release), **`INV-PAY-139`** (one recorder).
 
 - **A superseded card change's waiting invoice follows the money** (#3403;
-  owner, 26 Oct 2026). Each change's supplementary invoice waits
-  `WAITING_PAYMENT` on its own ask. When a later request carries that ask's
-  balance, the invoice is re-pointed at the request that absorbed it: the
+  owner, 26 Oct 2026). A change's supplementary invoice waits
+  `WAITING_PAYMENT` on its own ask; when a later request carries that
+  balance, it is re-pointed at the absorbing request: the
   first later row still payable or captured that no superseded-intent
   operation names (`supersededAskCarriers`); a superseded row captured late
   (refunded) is carried on.
 - **Each for its own amount.** The carrier's capture releases every invoice
-  naming it; a carrier never paid invoices nothing. Never folded onto the
-  later invoice. Bank transfer queues each unpaid when priced: nothing moves.
+  naming it, never folded together; an unpaid carrier invoices nothing. Bank
+  transfer queues each unpaid when priced: nothing moves.
 - **Who moves it.** The supersede's cancel step (failed or captured), every
   superseding minter, an edit leg parking on an already-failed ask, and the
-  reaper before retiring.
+  reaper before retiring - never while the ask's cancel runs (#4665); its
+  last step moves it.
 - **Refused, left as it was:** an ended booking, a linked or second queued
   invoice, or a carrier that would bill more than its amount, or more than it
-  carried for other changes. Decided under the change's and the carrier's
+  carried for other changes. Decided under the change's and carrier's
   supplementary-invoice keys, booking first; writes guarded on status, intent
   and correlation key. A captured carrier releases at once, unpaid where a
   receipt for its capture is active or records it.
-- **Checked together:** a capture against the sum of every invoice naming it.
+- **Checked together:** a capture against every invoice naming it, summed.
 - **A capture of the carried ask.** A declined ask is cancelled too (#4422);
   a capture racing that cancel is refunded or held, invoices staying. A kept
   capture no cancel row owns returns the invoices first parked on it
