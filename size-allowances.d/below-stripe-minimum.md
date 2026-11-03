@@ -1,4 +1,13 @@
-# File-size allowances for the below-minimum card refusal on saved-card and group settlement (#101)
+# File-size allowances for the below-minimum card refusal (triyder/AlpineClubBookingsNZ#99 and #101)
+
+file: src/app/api/payments/create-payment-intent/route.ts
+lines: 913
+reason: the below-minimum refusal has to sit between the existing-intent
+  recovery and the Stripe customer lookup, inside this route's one pay flow,
+  so that a captured payment is still recognised and nothing reaches Stripe
+  for a refused amount. The rule and its message live in
+  `stripe-charge-currency.ts`; the route grows by the one guarded return and
+  its comment. Splitting the 900-line route is its own piece of work.
 
 file: src/app/api/payments/charge-saved-method/route.ts
 lines: 675
@@ -10,7 +19,7 @@ reason: the refusal has to sit inside this route's claim transaction, on the
   work.
 
 file: src/lib/group-settlement.ts
-lines: 1678
+lines: 1682
 reason: the refusal has to run twice in `createGroupSettlementIntent`: on the
   pre-lock total before the children are committed, and on the post-lock total
   before the customer lookup. A five-line local helper keeps the two calls to
