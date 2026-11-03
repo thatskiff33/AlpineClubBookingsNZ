@@ -435,6 +435,17 @@ export async function reconcileXeroCreditNote(creditNoteId: string) {
     localScope: resolvedCreditNoteLinks.filter((link) => isRefundNoteLinkOf(link)),
   });
 
+  // #4712: audit-only entries naming the payments reached only through local
+  // provenance, so their applied-credit repair is attributed; never handed to
+  // a link write.
+  const appliedCreditAuditLinks: XeroAuditLocalLink[] = appliedCreditPayments.map((payment) => ({
+    localModel: "Payment",
+    localId: payment.id,
+    xeroObjectType: "CREDIT_NOTE",
+    xeroObjectId: creditNote.creditNoteID!,
+    xeroObjectNumber: creditNote.creditNoteNumber ?? null,
+    role: "APPLIED_CREDIT_ALLOCATION",
+  }));
   const auditMetadata = {
     creditNoteId: creditNote.creditNoteID,
     creditNoteNumber: creditNote.creditNoteNumber ?? null,
@@ -450,7 +461,7 @@ export async function reconcileXeroCreditNote(creditNoteId: string) {
   };
   await writeXeroInboundAuditLogs({
     source: "xero-inbound-credit-note",
-    links: [...resolvedCreditNoteLinks, ...allocationLinks, ...refundPaymentLinks],
+    links: [...resolvedCreditNoteLinks, ...allocationLinks, ...refundPaymentLinks, ...appliedCreditAuditLinks],
     metadata: auditMetadata,
   });
   // #4291: the payments recounted only through their voided mirror.

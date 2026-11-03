@@ -2502,15 +2502,25 @@ pnpm run xero:applied-credit-account-note-link-repair --apply --payment <payment
   payment as *stale* - a slice or applied-credit ledger row shows the note was
   spent on the payment's booking, and neither an outbound create of the note
   for that payment nor a cancellation credit of that booking shows it was
-  raised there - or *unexplained*. Links the note was raised for are counted,
-  not listed.
-- **`--apply`.** Needs the reviewed payment ids. Each is classified again; a
-  stale link is retired (inactive, guarded on still active) with an audit row,
-  and the payment's refunded total and status are recounted from the links
-  left (the #4095 recount). The recount never lowers a Stripe payment's
+  raised there - *conflicting*, when both show, or *unexplained*, when
+  neither does. Links the note was raised for are counted, not listed.
+- **`--apply`.** Needs the reviewed payment ids, and works one payment at a
+  time. Each is classified again; a stale link is retired (inactive, guarded
+  on still active) with an audit row, and the payment's refunded total and
+  status are recounted from the links left (the #4095 recount). It prints each
+  payment's refunded total before and after, and names any it could not
+  settle: a failed recount, or a link an inbound sync running at the same time
+  made active again (run the repair again for that one). The recount never lowers a Stripe payment's
   recorded refund, nor a bank-transfer payment's below its own refund detail:
   it raises an admin alert instead, so settle that one by hand. Keep the dry-run output with the change record.
-- **Unexplained links** are never retired. Check them in Xero by hand.
+- **Then raise the missing cancellation notes.** Retiring a link raises
+  nothing by itself. For each booking `--apply` names, run
+  `pnpm run xero:booking-repair --booking <bookingId> --dry-run`, review its
+  missing account-credit note, and apply it.
+- **Conflicting and unexplained links** are never retired. A conflicting link
+  may mean the booking's own cancellation note was completed with the note
+  spent there, so the member's cancellation credit names the wrong note.
+  Check both kinds in Xero by hand.
 
 It makes no Xero call. Design: [`xero/ARCHITECTURE.md`](xero/ARCHITECTURE.md),
 the `xero-applied-credit-account-note-link-repair` module row.

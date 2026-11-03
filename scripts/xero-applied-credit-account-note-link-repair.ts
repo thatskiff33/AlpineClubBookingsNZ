@@ -15,6 +15,7 @@
 import "dotenv/config";
 import process from "node:process";
 import { prisma } from "../src/lib/prisma";
+import { getClubFormat } from "../src/lib/club-format-settings";
 import {
   applyStaleAppliedCreditAccountNoteLinkRepair,
   findStaleAppliedCreditAccountNoteLinks,
@@ -88,7 +89,7 @@ async function main() {
   }
 
   const result = await applyStaleAppliedCreditAccountNoteLinkRepair(args.paymentIds);
-  console.log(formatAppliedCreditAccountNoteLinkApply(result));
+  console.log(formatAppliedCreditAccountNoteLinkApply(result, await getClubFormat()));
   if (args.json) console.log("\n" + JSON.stringify(result, null, 2));
 }
 

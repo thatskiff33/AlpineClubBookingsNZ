@@ -379,7 +379,12 @@ function fakeXero() {
       expect(report.stale.filter((link) => link.paymentId === PAYMENT_ID)).toEqual([expect.objectContaining({ creditNoteId: APPLIED_NOTE, classification: "STALE" })]);
       expect(await accountNoteLinks()).toEqual([{ xeroObjectId: APPLIED_NOTE, active: true }]); // the dry run wrote nothing
 
-      await expect(repair.applyStaleAppliedCreditAccountNoteLinkRepair([PAYMENT_ID])).resolves.toMatchObject({ retired: [expect.objectContaining({ paymentId: PAYMENT_ID })], notStale: [], recountUnsettledPaymentIds: [] });
+      await expect(repair.applyStaleAppliedCreditAccountNoteLinkRepair([PAYMENT_ID])).resolves.toMatchObject({
+        retired: [expect.objectContaining({ paymentId: PAYMENT_ID })],
+        notStale: [],
+        recounted: [{ paymentId: PAYMENT_ID, bookingId: BOOKING_ID, refundedBeforeCents: APPLIED_CENTS, refundedAfterCents: 0 }],
+        needsAttention: [],
+      });
       expect(await accountNoteLinks()).toEqual([{ xeroObjectId: APPLIED_NOTE, active: false }]);
       expect(await prisma.payment.findUniqueOrThrow({ where: { id: PAYMENT_ID }, select: { refundedAmountCents: true, status: true } }))
         .toEqual({ refundedAmountCents: 0, status: "SUCCEEDED" });
@@ -391,7 +396,7 @@ function fakeXero() {
       expect(await notes()).toMatchObject({ [NEWER_CREDIT]: `${P}-note-1` });
     });
 
-    it("MUTATION #4712: the repair leaves alone a link it cannot explain and one the note was raised for", async () => {
+    it("MUTATION #4712: the repair leaves alone a link it cannot explain, one the note was raised for, and one both raised for and spent there", async () => {
       const repair = await import("@/lib/xero-applied-credit-account-note-link-repair");
       // Neither raised for this payment nor applied to its booking.
       await prisma.xeroObjectLink.create({
@@ -402,12 +407,17 @@ function fakeXero() {
       await expect(repair.applyStaleAppliedCreditAccountNoteLinkRepair([PAYMENT_ID])).resolves.toMatchObject({ retired: [] });
       expect(await accountNoteLinks()).toEqual([{ xeroObjectId: `${P}-unexplained-note`, active: true }]);
 
-      // The outbox raised a note for this payment, which a slice also spent here.
+      // The outbox raised a note for this payment.
       await prisma.xeroObjectLink.deleteMany({ where: { localId: PAYMENT_ID } });
       await enqueueFor(NEWER_CREDIT);
       await expect(runOutbox()).resolves.toMatchObject({ succeeded: 1, failed: 0 });
       // Its outbox row alone must say so: the credit's stamp is cleared.
       await prisma.memberCredit.updateMany({ where: { memberId: MEMBER_ID }, data: { xeroCreditNoteId: null } });
+      report = await repair.findStaleAppliedCreditAccountNoteLinks({ paymentIds: [PAYMENT_ID] });
+      expect(report).toMatchObject({ stale: [], conflicting: [], unexplained: [], raisedForPayment: 1 });
+
+      // A slice also spent that note here: the outbox may have completed the
+      // cancellation with a stale link's note, so it is listed, never retired.
       await prisma.memberCredit.create({
         data: { id: APPLIED_LOT, memberId: MEMBER_ID, amountCents: APPLIED_CENTS, type: "ADMIN_ADJUSTMENT", description: `${P} admin lot` },
       });
@@ -415,7 +425,7 @@ function fakeXero() {
         data: { id: APPLIED_SLICE, memberCreditId: APPLIED_LOT, xeroCreditNoteId: `${P}-note-1`, appliedToBookingId: BOOKING_ID, amountCents: APPLIED_CENTS },
       });
       report = await repair.findStaleAppliedCreditAccountNoteLinks({ paymentIds: [PAYMENT_ID] });
-      expect(report).toMatchObject({ stale: [], unexplained: [], raisedForPayment: 1 });
+      expect(report).toMatchObject({ stale: [], conflicting: [expect.objectContaining({ creditNoteId: `${P}-note-1` })], unexplained: [], raisedForPayment: 0 });
       await expect(repair.applyStaleAppliedCreditAccountNoteLinkRepair([PAYMENT_ID])).resolves.toMatchObject({ retired: [] });
       expect(await accountNoteLinks()).toEqual([{ xeroObjectId: `${P}-note-1`, active: true }]);
     });

@@ -6877,6 +6877,14 @@ describe("processStoredXeroInboundEvents", () => {
       expect.objectContaining({ id: "op_1" }),
       expect.objectContaining({ responsePayload: expect.objectContaining({ matchedAccountCreditPayments: 0, matchedAppliedCreditPayments: 1, matchedRefundedPayments: 0, matchedAllocatedPayments: 1 }) })
     );
+    // The applied-credit repair is still attributed to the payment, in the audit only.
+    expect(mocks.auditLogCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        entityType: "Payment",
+        entityId: "pay_admin_1",
+        metadata: expect.objectContaining({ source: "xero-inbound-credit-note", role: "APPLIED_CREDIT_ALLOCATION" }),
+      }),
+    });
   });
 
   it("recovers missing account-credit payment links from member credits during credit note reconciliation", async () => {
