@@ -128,7 +128,7 @@ import { authConfig } from "@/lib/auth";
 import { POST as changePassword } from "@/app/api/auth/change-password/route";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import bcrypt from "bcryptjs";
-import type { NextRequest } from "next/server";
+import { NextResponse, type NextRequest } from "next/server";
 import {
   LOGIN_THROTTLE_DEGRADED_FREE_FAILURES,
   loginAccountKey,
@@ -484,7 +484,9 @@ describe("change-password shares sign-in's account budget (#4640)", () => {
     mockAuth.mockResolvedValue(null);
     expect((await changeAttempt()).status).toBe(401);
     mockAuth.mockResolvedValue({ user: { id: "officer-1" } });
-    vi.mocked(requireActiveSessionUser).mockResolvedValue(new Response(null, { status: 403 }));
+    vi.mocked(requireActiveSessionUser).mockResolvedValue(
+      NextResponse.json({ error: "Forbidden" }, { status: 403 }),
+    );
     expect((await changeAttempt()).status).toBe(403);
     vi.mocked(requireActiveSessionUser).mockResolvedValue(null);
     expect((await changePassword(new Request("http://localhost/api/auth/change-password", {
