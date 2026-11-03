@@ -340,7 +340,7 @@ export async function createGroupSettlementIntent(
   // Lock, re-read and claim before deriving provider amount. Repricing writers
   // share lock(1), so this returned snapshot is authoritative for this attempt.
   const { children: committedChildren, hostingCoverageQueued } =
-    await commitChildrenToConfirmed(group.id, children, { method: "stripe" });
+    await commitChildrenToConfirmed(group.id, children, { method: "stripe", format });
   if (hostingCoverageQueued) {
     await settleHostingCoverageAfterCommit({ limit: 25 });
   }
@@ -403,9 +403,6 @@ export async function createGroupSettlementIntent(
       };
     }
   }
-
-  // #101: the post-lock total is what would be charged; refused before any Stripe call.
-  refuseBelowCardMinimum(format, amountCents);
 
   const customer = await findOrCreateCustomer({
     email: group.organiserMember.email,
@@ -733,7 +730,7 @@ async function commitChildrenToConfirmed(
    * without the bound-invoice rule deciding whether it may.
    */
   intent:
-    | { method: "stripe" }
+    | { method: "stripe"; format: ClubFormat }
     | { method: "internet_banking"; replacement: ClearedReplacement | null }
 ): Promise<{
   children: SettleableChild[];
@@ -920,6 +917,11 @@ async function commitChildrenToConfirmed(
     // rolls back: a joiner must never hold a bed that is on no bill. (A new
     // joiner who no longer fits was refused above with CAPACITY_EXCEEDED: an
     // invoice cannot be replaced to include a bed the lodge does not have.)
+    // #4715: the locked total is the one a card would be charged, so it is
+    // refused here, where the throw rolls back every child this commit
+    // confirmed; refused after the commit, they would stay CONFIRMED unpaid.
+    if (intent.method === "stripe") refuseBelowCardMinimum(intent.format, groupSettlementTotalCents(committed));
+
     if (intent.method === "internet_banking") {
       refuseChangeToBoundSettlement(
         await tx.groupBookingSettlement.findUnique({

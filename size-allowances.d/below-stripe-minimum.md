@@ -19,8 +19,10 @@ reason: the refusal has to sit inside this route's claim transaction, on the
   work.
 
 file: src/lib/group-settlement.ts
-lines: 1682
-reason: the refusal has to run twice in `createGroupSettlementIntent`: on the
-  pre-lock total before the children are committed, and on the post-lock total
-  before the customer lookup. A five-line local helper keeps the two calls to
-  one line each. Splitting this 1,600-line module is its own piece of work.
+lines: 1684
+reason: the refusal has to run twice for a card settlement: on the pre-lock
+  total in `createGroupSettlementIntent`, before the children are committed,
+  and on the locked total inside `commitChildrenToConfirmed`'s transaction, so
+  a refusal rolls back every child it confirmed. A five-line local helper
+  keeps the two calls to one line each. Splitting this 1,600-line module is
+  its own piece of work.

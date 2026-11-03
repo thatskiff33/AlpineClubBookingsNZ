@@ -1004,18 +1004,38 @@ describe("createGroupSettlementIntent", () => {
     mocks.checkCapacity.mockResolvedValue({ available: true, nightDetails: [] });
   }
 
-  it("#101: refuses a post-lock total below the minimum before any Stripe call", async () => {
+  it("#4715: refuses a post-lock total below the minimum inside the commit, so the confirmation rolls back", async () => {
     mocks.groupBookingFindUnique.mockResolvedValue(organiserPaysGroup());
     // The pre-lock read owes 4500; the locked re-read finds it repriced to 30.
     mocks.bookingFindMany
       .mockResolvedValueOnce([{ id: "child-1", finalPriceCents: 4500, status: BookingStatus.PAYMENT_PENDING }])
       .mockResolvedValue([{ id: "child-1", finalPriceCents: 30, status: BookingStatus.PAYMENT_PENDING }]);
     claimableChild(30);
+    mocks.bookingUpdateMany.mockResolvedValue({ count: 1 });
+    // Record what each transaction callback did: a throw from inside one is what
+    // Postgres rolls back, so the child's CONFIRMED claim never commits.
+    const transactionOutcomes: Array<"committed" | "rolled back"> = [];
+    mocks.transaction.mockImplementation(async (cb: (tx: typeof txClient) => unknown) => {
+      try {
+        const result = await cb(txClient);
+        transactionOutcomes.push("committed");
+        return result;
+      } catch (err) {
+        transactionOutcomes.push("rolled back");
+        throw err;
+      }
+    });
 
     await expect(createGroupSettlementIntent("ABCD2345", ORGANISER)).rejects.toMatchObject({
       status: 409,
       code: BELOW_STRIPE_MINIMUM_CODE,
     });
+    // The child was claimed inside the commit, and that same transaction threw.
+    expect(mocks.bookingUpdateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ status: BookingStatus.CONFIRMED }) }),
+    );
+    expect(transactionOutcomes).toEqual(["rolled back"]);
+    expect(mocks.settleHostingCoverage).not.toHaveBeenCalled();
     expect(mocks.findOrCreateCustomer).not.toHaveBeenCalled();
     expect(mocks.createPaymentIntent).not.toHaveBeenCalled();
   });
