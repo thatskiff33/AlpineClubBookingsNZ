@@ -89,6 +89,7 @@ const PROVENANCE_SCANNED_FILES = [
   "docs/END_TO_END_TEST_MATRIX.md",
   "docs/STATE_MACHINES.md",
   "docs/UX_FLOW_MAP.md",
+  "docs/UX_FLOW_HISTORY.md",
   "docs/CONCURRENCY_AND_LOCKING.md",
   "docs/guides/payments.md",
   "docs/guides/notification-recipients.md",

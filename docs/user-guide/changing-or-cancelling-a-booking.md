@@ -25,6 +25,8 @@ at the end.
 
 ## Step-by-step
 
+![My Bookings showing the stays you can open to request a change or cancellation](../images/public/member-bookings.png)
+
 ### Change a booking
 
 1. Open the booking from **My Bookings** (`/bookings`) and choose to edit it.
