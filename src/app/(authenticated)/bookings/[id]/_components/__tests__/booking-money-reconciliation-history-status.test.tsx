@@ -1,12 +1,64 @@
 // @vitest-environment jsdom
 
-import { render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { render, screen, within } from "@testing-library/react";
+import { act } from "react";
+import { hydrateRoot } from "react-dom/client";
+import { renderToString } from "react-dom/server";
+import { describe, expect, it, vi } from "vitest";
 
 import { BOOKING_MONEY_RECONCILIATION_WITHHELD } from "@/lib/booking-money-reconciliation-audience";
 import { BookingMoneyReconciliationHistoryStatus } from "../booking-money-reconciliation-history-status";
 
 describe("BookingMoneyReconciliationHistoryStatus", () => {
+  it("mounts one verdict when a hidden server stream remains beside the hydrated page", async () => {
+    const reconciled = (
+      <BookingMoneyReconciliationHistoryStatus
+        view={{
+          visibility: "VISIBLE",
+          reconciliation: { state: "RECONCILED", reasons: [] },
+        }}
+      />
+    );
+    const serverHtml = renderToString(reconciled);
+    const hiddenStream = document.createElement("div");
+    hiddenStream.hidden = true;
+    hiddenStream.innerHTML = serverHtml;
+    const visiblePage = document.createElement("main");
+    visiblePage.innerHTML = serverHtml;
+    document.body.append(hiddenStream, visiblePage);
+    const hydrationError = vi.fn();
+    let root: ReturnType<typeof hydrateRoot> | undefined;
+    const verdicts = () => within(document.body).queryAllByTestId("booking-history-money-reconciliation");
+    try {
+      expect(verdicts()).toHaveLength(0);
+      expect(within(visiblePage).getByRole("status").textContent).toContain("Loading money reconciliation");
+      await act(async () => {
+        root = hydrateRoot(visiblePage, reconciled, { onRecoverableError: hydrationError });
+      });
+      expect(hydrationError).not.toHaveBeenCalled();
+      expect(verdicts()).toHaveLength(1);
+      expect(within(hiddenStream).queryByTestId("booking-history-money-reconciliation")).toBeNull();
+      expect(verdicts()[0]?.getAttribute("data-reconciliation-state")).toBe("RECONCILED");
+
+      await act(async () => {
+        root!.render(<BookingMoneyReconciliationHistoryStatus view={{
+          visibility: "VISIBLE",
+          reconciliation: { state: "UNRECONCILED", reasons: ["HEADLINE_TOTAL_MISMATCH"] },
+        }} />);
+      });
+      expect(verdicts()).toHaveLength(1);
+      expect(verdicts()[0]?.getAttribute("data-reconciliation-reasons")).toBe("HEADLINE_TOTAL_MISMATCH");
+      await act(async () => {
+        root!.render(<BookingMoneyReconciliationHistoryStatus view={BOOKING_MONEY_RECONCILIATION_WITHHELD} />);
+      });
+      expect(verdicts()).toHaveLength(0);
+    } finally {
+      await act(async () => { root?.unmount(); });
+      hiddenStream.remove();
+      visiblePage.remove();
+    }
+  });
+
   it("renders no private state when the loader withheld it", () => {
     const { container } = render(
       <BookingMoneyReconciliationHistoryStatus
