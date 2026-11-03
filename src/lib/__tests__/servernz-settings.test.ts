@@ -84,7 +84,7 @@ describe("normalizeBaseUrl", () => {
   });
 });
 
-describe("serverNzDefaultBaseUrl (#81)", () => {
+describe("serverNzDefaultBaseUrl (triyder/AlpineClubBookingsNZ#81)", () => {
   const saved = process.env.SERVERNZ_DEFAULT_BASE_URL;
   afterEach(() => {
     if (saved === undefined) delete process.env.SERVERNZ_DEFAULT_BASE_URL;

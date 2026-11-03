@@ -415,7 +415,7 @@ describe("AlpineServerSetup key save names the shown address (#4470)", () => {
   });
 });
 
-describe("the deployment default server address (#81)", () => {
+describe("the deployment default server address (triyder/AlpineClubBookingsNZ#81)", () => {
   it("pre-fills the field and says where it came from while no address is saved", async () => {
     versionRouteAnswers({ status: "unknown" });
     render(
