@@ -1748,7 +1748,7 @@ describe("payment recovery worker", () => {
     });
     mockRefundPaymentTransactions.mockImplementation(async ({ amountCents }: { amountCents: number }) => {
       if (amountCents > 6000 - recordedCents) throw new Error("Refund amount exceeds the charge's remaining balance");
-      return "re_modification";
+      return { refunds: [{ paymentIntentId: "pi_original", refundId: "re_modification", amountCents }], totalRefundedAmountCents: amountCents };
     });
 
     const result = await processPaymentRecoveryOperations({ limit: 1 });
