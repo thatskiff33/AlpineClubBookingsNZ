@@ -3,6 +3,7 @@
 // duplicate data. Clubs customise the placeholders through the admin screens.
 import { type AgeTier, PrismaClient } from "@prisma/client";
 import bcrypt from "bcryptjs";
+import { PASSWORD_BCRYPT_COST } from "../src/lib/password-hashing";
 import { clubConfig } from "../src/config/club";
 import {
   CLUB_CONTACT_EMAIL,
@@ -494,7 +495,7 @@ async function main() {
   });
 
   if (!existingAdmin) {
-    const passwordHash = await bcrypt.hash(seedAdminPassword, 12);
+    const passwordHash = await bcrypt.hash(seedAdminPassword, PASSWORD_BCRYPT_COST);
     const admin = await prisma.member.create({
       data: buildSeedAdminMemberData({
         email: seedAdminEmail,
@@ -536,7 +537,7 @@ async function main() {
   if (!existingLodge) {
     const lodgePasswordHash = await bcrypt.hash(
       requireSeedEnv("SEED_LODGE_PASSWORD"),
-      12,
+      PASSWORD_BCRYPT_COST,
     );
     const lodge = await prisma.member.create({
       data: buildSeedLodgeMemberData({
