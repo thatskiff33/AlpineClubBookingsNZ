@@ -531,9 +531,10 @@ describe("recordAdditionalCaptureReceipt", () => {
 
   // #4707 (`INV-INT-029`): a stalled run's stand-down lands after a stale reset and a
   // retry's claim took the row - that claim's planning stamp is the retry's, not this run's.
-  it("MUTATION: a stand-down after another claim took the row leaves that claim's planning stamp", async () => {
+  // RUNNING pins the status scope; CANCELLED (a withdrawal keeps `startedAt`) pins `startedAt`.
+  it.each(["RUNNING", "CANCELLED"])("MUTATION: a stand-down after another claim took the row leaves that claim's planning stamp (%s)", async (newerStatus) => {
     mocks.findUniqueTransaction.mockResolvedValue(capture({}, "CANCELLED"));
-    const newer = { id: "op_receipt", status: "RUNNING", startedAt: new Date("2026-07-01T00:05:00.000Z"), lastErrorCode: ADDITIONAL_CAPTURE_RECEIPT_PLANNING_CODE };
+    const newer = { id: "op_receipt", status: newerStatus, startedAt: new Date("2026-07-01T00:05:00.000Z"), lastErrorCode: ADDITIONAL_CAPTURE_RECEIPT_PLANNING_CODE };
     const row: Record<string, unknown> = { ...newer };
     mocks.updateManyOperation.mockImplementation(async ({ where, data }: { where: Record<string, unknown>; data: Record<string, unknown> }) => {
       const matches = Object.entries(where).every(([key, value]) =>
