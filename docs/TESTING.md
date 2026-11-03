@@ -1690,6 +1690,19 @@ case reached the remainder-note mint because its credit lots tied on the
 frozen clock; the cure was an explicit fixture chronology and a regression that
 names the path (`INV-PAY-127`), not a declaration that let the mint go further.
 
+### Proving provider calls run outside transactions
+
+Use `openClientTransactionsElsewhere` from
+`src/lib/__tests__/support/open-client-transactions.ts` at the fake provider
+callback. It checks other client backends in the disposable database, allowing
+up to one second for in-flight work to settle. A transaction awaiting that
+callback cannot commit during the probe and still fails. A nonzero result logs
+`pid`, `query`, `xact_start` and `application_name` for diagnosis (#4695).
+The intentionally held webhook connection can be excluded by its application
+name; PostgreSQL background workers are always excluded. Do not filter to a
+process: the file lock below already serialises suites, and a connection left
+behind by an earlier suite must remain visible.
+
 ### Realdb files take turns on the race database
 
 Running several `*.realdb.test.ts` files in one `vitest run` used to fail
