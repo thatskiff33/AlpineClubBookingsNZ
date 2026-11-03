@@ -1,5 +1,6 @@
 import type { XeroSyncOperation } from "@prisma/client";
 import logger from "@/lib/logger";
+import { ownRunningClaim } from "@/lib/xero-operation-outcome-guard";
 import { prisma } from "@/lib/prisma";
 import { claimXeroSyncOperationToRunning } from "@/lib/xero-operation-claim";
 import { asRecord } from "@/lib/xero-json";
@@ -310,7 +311,7 @@ export async function processQueuedXeroOperationRetries(
         // so this retry waits its turn in PENDING, reason kept, as the outbox does;
         // a wait on an unrecorded note names itself, so the scan spaces it (#4692 review).
         await prisma.xeroSyncOperation.updateMany({
-          where: { id: queuedOperation.id, status: "RUNNING", startedAt: claimed.startedAt },
+          where: { id: queuedOperation.id, ...ownRunningClaim(claimed) },
           data: { status: "PENDING", startedAt: null, lastErrorCode: error.waitCode, lastErrorMessage: error.message },
         });
         result.skipped += 1;

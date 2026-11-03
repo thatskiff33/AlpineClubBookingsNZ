@@ -43,7 +43,7 @@ import { prisma } from "@/lib/prisma";
 import { isPrismaUniqueConstraintError } from "@/lib/prisma-errors";
 import { lateNoteObject, traceUnrecordedLateNote } from "@/lib/xero-late-note-trace";
 import { runningClaimTransition } from "@/lib/xero-operation-claim";
-import type { XeroOperationClaim } from "@/lib/xero-operation-outcome-guard";
+import { ownRunningClaim, type XeroOperationClaim } from "@/lib/xero-operation-outcome-guard";
 import { isResolvedInXero, resolutionLabel } from "@/lib/xero-operation-resolution";
 import {
   describeUnrecordedObject,
@@ -96,7 +96,7 @@ export function createdOrganiserNoteWrites(
   const noOtherNote = { OR: [{ xeroObjectId: null }, { xeroObjectId: note.creditNoteId }] };
   const fields = { xeroObjectType: "CREDIT_NOTE", xeroObjectId: note.creditNoteId, xeroObjectNumber: note.creditNoteNumber };
   return {
-    own: { where: { id, status: "RUNNING", startedAt: note.claim.startedAt, AND: [noOtherNote] }, data: fields },
+    own: { where: { id, ...ownRunningClaim(note.claim), AND: [noOtherNote] }, data: fields },
     retake: {
       // `replayable`: a row an officer marked non-replayable is dead to every runner (#4672 review).
       where: { id, status: "FAILED", manuallyResolvedAt: null, replayable: true, AND: [noOtherNote] },

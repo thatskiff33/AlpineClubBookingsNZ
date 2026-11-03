@@ -28,7 +28,7 @@ import { asRecord } from "@/lib/xero-json";
 import { captureChangeId } from "@/lib/additional-capture-receipt-link";
 import { XERO_OUTBOX_ADDITIONAL_CAPTURE_RECEIPT_TYPE } from "@/lib/additional-capture-receipt-payload";
 import { ADDITIONAL_CAPTURE_RECEIPT_PLANNING_CODE } from "@/lib/additional-capture-receipt-gate";
-import type { XeroOperationClaim } from "@/lib/xero-operation-outcome-guard";
+import { ownRunningClaim, type XeroOperationClaim } from "@/lib/xero-operation-outcome-guard";
 
 /** Whether a #3639 approval task owns this capture - a late capture on a cancelled booking. */
 export async function hasLateCaptureApprovalTask(paymentIntentId: string): Promise<boolean> {
@@ -67,7 +67,7 @@ export async function closeKeptReceiptNotKept(
   // #4373 (`INV-INT-029`): only on this worker's own claim - never a retry's,
   // after a stale reset, that holds the row RUNNING under another `startedAt`.
   const closed = await tx.xeroSyncOperation.updateMany({
-    where: { id: operationId, status: "RUNNING", startedAt: claim.startedAt, manuallyResolvedAt: null },
+    where: { id: operationId, ...ownRunningClaim(claim), manuallyResolvedAt: null },
     data: {
       status: "CANCELLED",
       completedAt: new Date(),
