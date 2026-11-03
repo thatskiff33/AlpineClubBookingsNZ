@@ -197,3 +197,14 @@ row per page:
 | `docs/agents/SCOPED_CONTEXT.md` | 850 |
 | `docs/agents/SEKRETON_ORCHESTRATOR.md` | 1800 |
 | `docs/agents/SUBAGENT_GUIDE.md` | 1100 |
+
+## Screen map
+
+The [UX flow map](../UX_FLOW_MAP.md) is a screen directory, grouped by area,
+with short journeys and links to the detailed guides. `docs:indexcheck` enforces
+this ceiling using its existing word counter. History belongs in the linked
+[archive](../UX_FLOW_HISTORY.md), rather than being appended to the map.
+
+| Document | Ceiling |
+| --- | ---: |
+| `docs/UX_FLOW_MAP.md` | 8000 |
