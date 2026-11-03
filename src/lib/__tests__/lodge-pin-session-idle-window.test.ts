@@ -1135,7 +1135,6 @@ describe("hut-leader PIN session: only one place can extend it (#3228)", () => {
       "docs/guides/lodge.md",
       "docs/guides/hut-leaders.md",
       "docs/SECURITY-ATTACK-SURFACE.md",
-      "docs/UX_FLOW_MAP.md",
     ];
     const expected = `${HUT_LEADER_PIN_SESSION_IDLE_MINUTES} minutes`;
     const ceilingHours = HUT_LEADER_PIN_SESSION_MAX_TOTAL_SECONDS / 3600;
