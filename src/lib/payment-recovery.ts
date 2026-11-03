@@ -2111,10 +2111,12 @@ async function processBookingModificationRefundOperation(
     return;
   }
 
-  const payment = await prisma.payment.findUnique({
+  const readPayment = () => prisma.payment.findUnique({
     where: { id: operation.paymentId },
     include: { transactions: { orderBy: [...LEDGER_ROWS_OLDEST_FIRST] } },
   });
+
+  const payment = await readPayment();
 
   if (!payment) {
     throw new Error(
@@ -2203,7 +2205,13 @@ async function processBookingModificationRefundOperation(
   if (plan) plan = preflightPlan;
 
   if (!plan) {
-    const refundableTransactions = payment.transactions
+    // Preflight records refunds from other doors. Size a new plan on that
+    // committed balance, rather than the snapshot used to check Stripe (#4713).
+    const recordedPayment = await readPayment();
+    if (!recordedPayment) {
+      throw new Error(`Payment ${operation.paymentId} not found after refund preflight`);
+    }
+    const refundableTransactions = recordedPayment.transactions
       .filter((transaction) =>
         isCapturedTransactionStatus(transaction.status),
       )
@@ -2212,6 +2220,15 @@ async function processBookingModificationRefundOperation(
           transaction.amountCents - transaction.refundedAmountCents > 0,
       )
       .sort(compareLedgerRowsNewestFirst); // #4132 (INV-PAY-133): a tie's last-inserted row first
+
+    // A capture arriving during preflight has no checked Stripe evidence yet.
+    // Retry with that charge included, rather than freezing an unchecked slice.
+    const checkedChargeIds = new Set(preflightPlan.map((slice) => slice.paymentTransactionId));
+    if (refundableTransactions.some((transaction) =>
+      transaction.source === PaymentSource.STRIPE && !checkedChargeIds.has(transaction.id),
+    )) {
+      throw new Error("Refundable charges changed during refund preflight; retry before planning");
+    }
 
     const refundableCents = refundableTransactions.reduce(
       (sum, transaction) =>
