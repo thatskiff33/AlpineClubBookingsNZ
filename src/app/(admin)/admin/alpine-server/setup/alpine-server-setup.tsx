@@ -584,7 +584,7 @@ export function AlpineServerSetup({ initialState }: { initialState: InitialState
               committee page.
             </p>
             <p className="mt-1 text-muted-foreground">
-              Only the booking officer&apos;s name and email are sent to other
+              The booking officer&apos;s name and email are displayed to other
               clubs to enable booking sharing when a lodge is at capacity.
             </p>
             <p className="mt-1 text-muted-foreground">No other member data is sent.</p>
