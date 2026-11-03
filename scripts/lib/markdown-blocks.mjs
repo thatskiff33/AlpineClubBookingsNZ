@@ -570,4 +570,3 @@ export function fencedLines(text) {
 export function literalAuditLines(text) {
   return scanMarkdownBlocks(text).literalAudit;
 }
-

@@ -37,6 +37,7 @@ import path from "node:path";
 import process from "node:process";
 import {
   chromium,
+  expect,
   type Browser,
   type BrowserContext,
   type Page,
@@ -513,13 +514,10 @@ async function shoot(context: BrowserContext, capture: Capture): Promise<void> {
     // The 'load' event fires before that fetch resolves, so a naive shot would
     // capture the spinner. Wait for every "Loading" sentinel to disappear (a
     // detached/hidden element counts as satisfied immediately, so pages that
-    // never show one are unaffected), then let the loaded content paint. The
-    // .catch keeps a genuinely stuck page from aborting the whole run.
-    await page
-      .locator("text=/Loading/i")
-      .first()
-      .waitFor({ state: "hidden", timeout: 15_000 })
-      .catch(() => undefined);
+    // never show one are unaffected), then let the loaded content paint.
+    // Check every visible sentinel and fail rather than publish an unfinished page.
+    await expect(page.locator("text=/Loading/i").filter({ visible: true }))
+      .toHaveCount(0, { timeout: 30_000 });
     // Recharts animates freshly-loaded SVG series for 1.5s. Wait through that
     // shared finite animation so named captures contain the chart data rather
     // than only axes/legends from the first frame.
