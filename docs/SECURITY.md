@@ -174,8 +174,9 @@ writer, including lodge accounts, placeholders and seeds, imports
 `PASSWORD_BCRYPT_COST` from that module. A regression test compares the dummy
 hash's encoded cost with a newly generated password hash; changing the cost
 requires regenerating the dummy hash too. Existing stored passwords keep their
-original cost until replaced, so this does not remove timing differences for
-older hashes. Hut-leader PINs use their separate policy.
+original cost until replaced, so their comparison time can differ from the
+dummy comparison. In particular, existing cost-12 seed and lodge accounts now
+compare faster than unknown accounts. Hut-leader PINs use their separate policy.
 
 **What is stored.** `LoginThrottle` holds an HMAC-SHA256 of the lower-cased
 email under `AUTH_SECRET` (domain label `login-throttle:v1:`), a count and the
