@@ -2350,7 +2350,10 @@ mispricing a booking.
   secret through `serverNzAnswerWriter` for the identity its registration
   was sent on (settings row, credential read, `push_secret` write, audit),
   so a registration in flight across a move stores nothing and the next pass
-  registers with the new server. The message-board mirror (`runMirrorSync`)
+  registers with the new server. The credentials route also runs it
+  (`registerAfterKeySave`, triyder/AlpineClubBookingsNZ#97) after the key
+  save's fenced transaction has committed, never inside it: the same fenced
+  store, no new lock, and its provider call outside every transaction. The message-board mirror (`runMirrorSync`)
   writes each page through `serverNzAnswerWriter(page.sentOn)`: post
   create/update/removal, failure count, cursor and last-sync time, each one
   short transaction (settings row, credential read, then the `ClubPost` row

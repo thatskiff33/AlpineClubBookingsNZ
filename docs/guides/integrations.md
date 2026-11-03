@@ -139,8 +139,9 @@ in the same save. A sync running at that moment either uses the previous
 connection together or waits for the change; it cannot send the old key to
 the new address. Enter a key issued by the new server before syncing again.
 The same save clears every sync position and the previous server's push
-secret (replacing the API key clears the push secret too), so the next sync
-registers this site with the new server for pushes. Pushes and free-beds
+secret (replacing the API key clears the push secret too), so this site
+registers with the new server for pushes as soon as the new key is saved
+(step 4 below), or at the next sync if that could not. Pushes and free-beds
 questions signed with the old secret stop being accepted within 45 seconds
 (the time another running copy of the site may still hold it in memory). A
 download, upload, message-board sync or push registration still running
@@ -213,7 +214,8 @@ server proves each question is genuine with the same signing secret it uses
 for the message board, so this only works once this site has registered for
 the message board's pushes: the **Message board** module is on (see
 [Modules](modules.md#settings-reference)) and the site's own address is
-`https://`, then the next sync registers it. Until then the search shows "beds
+`https://`, then saving the API key, or failing that the next sync, registers
+it. Until then the search shows "beds
 available unknown". It also answers nothing while **Other
 lodges** sharing is off. The server names the lodge by its **permanent central
 id**, and your site answers for the local lodge linked to it under **Admin →
@@ -331,7 +333,8 @@ Alpine Central Server**, for you to check its bookings and **Hide** it.
    the central lodge search cannot ask about free beds); the central server has
    not approved your connection yet (this site registers itself every 3 hours
    until it is approved, so come back afterwards); no server address is saved
-   yet; or it could not be reached (tried again every 3 hours).
+   yet; syncing is paused because the server runs a different software
+   version; or it could not be reached (tried again every 3 hours).
 5. With **Other Clubs details** enabled, the same save then downloads the
    distributed set — which also tells this site which lodge is yours and turns
    on **Edit my Lodge** in the Other lodges panel — and links your lodges to

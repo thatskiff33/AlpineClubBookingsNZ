@@ -20,6 +20,35 @@ vi.mock("@/hooks/use-admin-area-edit-access", async (importOriginal) => ({
   ...((await importOriginal()) as typeof import("@/hooks/use-admin-area-edit-access")),
   useAdminAreaEditAccess: () => true,
 }));
+// Radix Select does not open in jsdom; a native select keeps value binding,
+// disabled items and onValueChange testable. The trigger's id moves onto the
+// native select, so each row's label still names it.
+vi.mock("@/components/ui/select", async () => {
+  const { Children, isValidElement } = await import("react");
+  type Props = { id?: string; value?: string; disabled?: boolean; children?: React.ReactNode };
+  // Rendered by the Select double, which reads its `id` off the element.
+  const SelectTrigger: (props: Props) => null = () => null;
+  return {
+    Select: ({ value, onValueChange, disabled, children }: Props & { onValueChange?: (value: string) => void }) => {
+      const kids = Children.toArray(children);
+      const trigger = kids.find((kid) => isValidElement(kid) && kid.type === SelectTrigger);
+      const id = isValidElement<Props>(trigger) ? trigger.props.id : undefined;
+      return (
+        <select id={id} value={value} disabled={disabled} onChange={(event) => onValueChange?.(event.target.value)}>
+          {kids.filter((kid) => kid !== trigger)}
+        </select>
+      );
+    },
+    SelectTrigger,
+    SelectValue: () => null,
+    SelectContent: ({ children }: Props) => <>{children}</>,
+    SelectItem: ({ value, disabled, children }: Props) => (
+      <option value={value} disabled={disabled}>
+        {children}
+      </option>
+    ),
+  };
+});
 
 import { AlpineServerSetup } from "./alpine-server-setup";
 
@@ -128,7 +157,8 @@ describe("after the API key is saved", () => {
     const iwikau = within(dialog).getByLabelText("Iwikau") as HTMLSelectElement;
     const whakapapa = within(dialog).getByLabelText("Whakapapa") as HTMLSelectElement;
     expect(iwikau.value).toBe("c_b");
-    expect(whakapapa.value).toBe("");
+    expect(whakapapa.value).toBe("__not_linked__");
+    expect(within(whakapapa).getByRole("option", { name: "Not linked" })).toBeTruthy();
     // c_b is Iwikau's, so Whakapapa cannot take it.
     expect((within(whakapapa).getByRole("option", { name: "Iwikau Lodge" }) as HTMLOptionElement).disabled).toBe(true);
 
@@ -142,6 +172,22 @@ describe("after the API key is saved", () => {
     expect(screen.getByTestId("lodge-link-status").textContent).toBe("Lodge links saved.");
   });
 
+  it("sends Not linked as a cleared link, never as the item's own value", async () => {
+    routes("registered", {
+      kind: "choose",
+      lodges: [{ id: "l1", name: "Iwikau", active: true, centralLodgeId: "c_b", suggestedCentralLodgeId: null }],
+      owned: [{ id: "c_b", name: "Iwikau Lodge", label: "Iwikau Lodge" }],
+    });
+    await saveKey();
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.change(within(dialog).getByLabelText("Iwikau"), { target: { value: "__not_linked__" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Save links" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    const put = linkCalls().find(([, init]) => init?.method === "PUT");
+    expect(JSON.parse(String(put?.[1]?.body))).toEqual({
+      links: [{ lodgeId: "l1", centralLodgeId: null, expectCurrent: "c_b" }],
+    });
+  });
 });
 
 describe("Other Clubs details", () => {

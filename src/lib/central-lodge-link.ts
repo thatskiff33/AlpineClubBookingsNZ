@@ -129,9 +129,10 @@ export interface CentralLodgeLinkChange {
   /** The owned central lodge to link, or null to unlink. */
   centralLodgeId: string | null;
   /**
-   * The link the caller was shown, when it must still be the stored one: an
-   * automatic link passes `null` so it never overwrites a link someone saved
-   * meanwhile ("stale" otherwise). Absent: replace whatever is stored.
+   * The link the caller was shown, when it must still be the stored one: the
+   * setup page's dialog sends each row's, so it never overwrites a link
+   * someone saved meanwhile ("stale" otherwise). Absent: replace whatever is
+   * stored. Nothing links automatically (#4262).
    */
   expectCurrent?: string | null;
 }

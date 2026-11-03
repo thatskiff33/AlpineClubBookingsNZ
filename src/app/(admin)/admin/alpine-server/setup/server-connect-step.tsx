@@ -10,6 +10,13 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import type { PushRegistrationOutcome } from "@/lib/servernz-push-registration";
 import type { SERVER_VERSION_MISMATCH_CODE } from "@/lib/servernz-api-version";
 import type { LodgeLinkStep, LodgeLinkStepResult } from "@/lib/servernz-lodge-link-step";
@@ -60,7 +67,9 @@ export function registrationMessage(outcome: KeySaveRegistration | undefined): S
 }
 
 type Choose = Extract<LodgeLinkStep, { kind: "choose" }>;
-const NOT_LINKED = "";
+// The "Not linked" item's value: the Select primitive refuses an empty-string
+// item value, and no central lodge id is this.
+const NOT_LINKED = "__not_linked__";
 
 /**
  * The lodge step: run it after a key save, then show its outcome (and the
@@ -186,29 +195,32 @@ export function LodgeLinkDialog({ step, onClose }: { step: Choose; onClose: (sav
                   {lodge.name}
                   {lodge.active ? "" : " (inactive)"}
                 </Label>
-                <select
-                  id={id}
-                  className="border-input bg-background h-9 w-full rounded-md border px-3 text-sm"
+                <Select
                   value={chosen[lodge.id] ?? NOT_LINKED}
                   disabled={saving}
-                  onChange={(event) =>
-                    setChosen((prev) => ({ ...prev, [lodge.id]: event.target.value === NOT_LINKED ? null : event.target.value }))
+                  onValueChange={(value) =>
+                    setChosen((prev) => ({ ...prev, [lodge.id]: value === NOT_LINKED ? null : value }))
                   }
                 >
-                  <option value={NOT_LINKED}>Not linked</option>
-                  {step.owned.map((central) => (
-                    <option
-                      key={central.id}
-                      value={central.id}
-                      disabled={step.lodges.some((other) => other.id !== lodge.id && chosen[other.id] === central.id)}
-                    >
-                      {central.label}
-                    </option>
-                  ))}
-                  {lodge.centralLodgeId !== null && !step.owned.some((c) => c.id === lodge.centralLodgeId) ? (
-                    <option value={lodge.centralLodgeId}>No longer owned (clear this)</option>
-                  ) : null}
-                </select>
+                  <SelectTrigger id={id} className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={NOT_LINKED}>Not linked</SelectItem>
+                    {step.owned.map((central) => (
+                      <SelectItem
+                        key={central.id}
+                        value={central.id}
+                        disabled={step.lodges.some((other) => other.id !== lodge.id && chosen[other.id] === central.id)}
+                      >
+                        {central.label}
+                      </SelectItem>
+                    ))}
+                    {lodge.centralLodgeId !== null && !step.owned.some((c) => c.id === lodge.centralLodgeId) ? (
+                      <SelectItem value={lodge.centralLodgeId}>No longer owned (clear this)</SelectItem>
+                    ) : null}
+                  </SelectContent>
+                </Select>
               </div>
             );
           })}

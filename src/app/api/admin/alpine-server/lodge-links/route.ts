@@ -12,9 +12,10 @@ import { respondToSyncError } from "@/lib/servernz-sync-response";
 import { requireAdmin } from "@/lib/session-guards";
 
 // /api/admin/alpine-server/lodge-links — the setup page's step after an API
-// key is saved: POST downloads the central server's lodges and links this
-// club's lodge to the one it owns when that is the only choice, or hands back
-// the choice; PUT saves the choice the administrator made in the dialog.
+// key is saved: POST downloads the central server's lodges and hands back the
+// choice, links nothing (#4262: a one-lodge club's only owned lodge is
+// preselected, never saved); PUT saves the choice the administrator made in
+// the dialog.
 //
 // Full Admin, like the key save it follows: the finance area guards the page,
 // and linking lodges is lodge-area work, which a Full Admin holds too.
