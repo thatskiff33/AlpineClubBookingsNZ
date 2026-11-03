@@ -2483,6 +2483,38 @@ audit row (the audit writer resolves no subject for it), so keep this run's
 output. Design and call budget: [`xero/ARCHITECTURE.md` -> "A payment deleted
 in Xero (#4531)"](xero/ARCHITECTURE.md#a-payment-deleted-in-xero-4531).
 
+### Retire account-credit note links written on bookings a credit was applied to (#4712)
+
+Before #4712 the inbound credit-note reconcile, when it could place a note only
+through #1925's local provenance, linked the note as an account-credit note to
+every payment on the bookings the credit was spent on. That link stops the
+booking's own cancellation note being queued ("already linked"), and the
+payment's refunded total counted the note as money paid back. The reconcile no
+longer writes it; this repair retires the ones it left.
+
+```bash
+pnpm run xero:applied-credit-account-note-link-repair                    # dry run: lists, changes nothing
+pnpm run xero:applied-credit-account-note-link-repair --json             # machine-readable report too
+pnpm run xero:applied-credit-account-note-link-repair --apply --payment <payment id> [--payment <payment id> ...]
+```
+
+- **Dry run (the default).** Lists every active account-credit note link on a
+  payment as *stale* - a slice or applied-credit ledger row shows the note was
+  spent on the payment's booking, and neither an outbound create of the note
+  for that payment nor a cancellation credit of that booking shows it was
+  raised there - or *unexplained*. Links the note was raised for are counted,
+  not listed.
+- **`--apply`.** Needs the reviewed payment ids. Each is classified again; a
+  stale link is retired (inactive, guarded on still active) with an audit row,
+  and the payment's refunded total and status are recounted from the links
+  left (the #4095 recount). The recount never lowers a Stripe payment's
+  recorded refund, nor a bank-transfer payment's below its own refund detail:
+  it raises an admin alert instead, so settle that one by hand. Keep the dry-run output with the change record.
+- **Unexplained links** are never retired. Check them in Xero by hand.
+
+It makes no Xero call. Design: [`xero/ARCHITECTURE.md`](xero/ARCHITECTURE.md),
+the `xero-applied-credit-account-note-link-repair` module row.
+
 ### Count voided bank-transfer refund notes before the follow-up writes (#4162)
 
 `scripts/bank-refund-void-count.ts` sorts every voided bank-transfer refund
