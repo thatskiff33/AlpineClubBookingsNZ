@@ -1251,7 +1251,7 @@ test/demo mode or disabled:
 | `AUTH_SECRET`           | Auth.js session secret. Also the root of 2FA-secret and in-app provider-credential encryption (#2079) — use a strong value (>= 32 chars); rotating it is a planned maintenance event (see `DEPLOYMENT.md`). |
 | `NEXTAUTH_SECRET`       | Legacy Auth.js secret fallback; keep aligned with `AUTH_SECRET`. |
 | `NEXTAUTH_URL`          | Exact app origin, for example `http://localhost:3000`.           |
-| `SERVERNZ_DEFAULT_BASE_URL` | The Alpine Central Server this deployment pairs with, for example `https://alpine-server.lwtc.org.nz`. Offered only: the setup page pre-fills its address field from it while no address is saved, and an administrator's Save stores it; the sync and the Request a Connection link read the saved address alone. Must be `https` on a public host, or it is ignored as if unset (#81). |
+| `SERVERNZ_DEFAULT_BASE_URL` | The Alpine Central Server this deployment pairs with, for example `https://alpine-server.lwtc.org.nz`. Offered only: the setup page pre-fills its address field from it while no address is saved, and an administrator's Save stores it; the sync and the Request a Connection link read the saved address alone. Must be `https` on a public host, or it is ignored as if unset (triyder/AlpineClubBookingsNZ#81). |
 | `AUTH_TRUST_HOST`       | Set `true` behind trusted proxies/Compose.                       |
 | `CRON_SECRET`           | Shared secret for cron and deploy status endpoints.              |
 | `SEED_ADMIN_EMAIL`      | Email for the first seeded admin account.                        |
