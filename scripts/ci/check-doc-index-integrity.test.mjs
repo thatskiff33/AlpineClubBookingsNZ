@@ -4051,4 +4051,10 @@ describe("screen map contracts (#4469)", () => {
     }
   });
 
+  it("does not count a screenshot shown as an inline code example", () => {
+    const files = fixture();
+    files.set("docs/user-guide/README.md", "Example: `" + files.get("docs/user-guide/README.md") + "`");
+    expect(auditUxFlowMap(files)).toEqual([expect.stringContaining("embed a named user-guide screenshot")]);
+  });
+
 });

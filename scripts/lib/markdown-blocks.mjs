@@ -570,3 +570,11 @@ export function fencedLines(text) {
 export function literalAuditLines(text) {
   return scanMarkdownBlocks(text).literalAudit;
 }
+
+/** Visible prose lines, excluding inline code examples as well as literal blocks. */
+export function markdownProseLines(text) {
+  return scannableLines(text).map((line) => ({
+    ...line,
+    text: line.text.replace(/`[^`]*`/g, " "),
+  }));
+}

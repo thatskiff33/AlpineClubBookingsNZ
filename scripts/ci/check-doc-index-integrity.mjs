@@ -78,7 +78,7 @@
  * `pnpm run docs:linkcheck` already validates fragments against real headings, and
  * duplicating it would give two places to disagree.
  */
-import { scanMarkdownBlocks, scannableLines, literalAuditLines } from "../lib/markdown-blocks.mjs";
+import { scanMarkdownBlocks, scannableLines, markdownProseLines, literalAuditLines } from "../lib/markdown-blocks.mjs";
 export { SETEXT_HEADING_UNDERLINE_PATTERN, scanMarkdownFenceLines, scannableLines, fencedLines, literalAuditLines } from "../lib/markdown-blocks.mjs";
 import { userGuideScreenshotNames } from "../lib/user-guide-screenshots.mjs";
 import { execFileSync, spawnSync } from "node:child_process";
@@ -420,10 +420,7 @@ function formatNumberRuns(numbers) {
 export function markdownLinkTargets(fromPath, text) {
   const dir = path.posix.dirname(fromPath);
   const targets = [];
-  for (const { text: line } of scannableLines(text)) {
-    // Inline-code spans are stripped here (a link shown as code is not a link),
-    // which is the opposite of the citation scan and deliberately so.
-    const scannable = line.replace(/`[^`]*`/g, " ");
+  for (const { text: scannable } of markdownProseLines(text)) {
     const raw = [];
     for (const match of scannable.matchAll(INLINE_LINK)) raw.push(match[1]);
     const refMatch = scannable.match(REF_DEF);
