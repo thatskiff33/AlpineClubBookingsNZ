@@ -54,6 +54,8 @@ export interface BookingCalendarLinks {
  */
 const DOWNLOAD_LINK_LIFETIME_AFTER_CHECKOUT_DAYS = 60;
 
+const MISSING_SECRET_ERROR =
+  "AUTH_SECRET or NEXTAUTH_SECRET is required for booking calendar links";
 
 /** Epoch-seconds expiry minted for a stay's download link. */
 export function bookingCalendarLinkExpiry(stay: BookingCalendarStay): number {
@@ -68,7 +70,7 @@ export function bookingCalendarToken(
   bookingId: string,
   expiresAtSeconds: number,
 ): string {
-  return createHmac("sha256", requireAuthSecret("AUTH_SECRET or NEXTAUTH_SECRET is required for booking calendar links"))
+  return createHmac("sha256", requireAuthSecret(MISSING_SECRET_ERROR))
     .update(`booking-calendar:${expiresAtSeconds}:${bookingId}`)
     .digest("base64url");
 }

@@ -23,6 +23,8 @@ const PAIRING_CODE_PATTERN = new RegExp(
   `^[${PAIRING_CODE_ALPHABET}]{${PAIRING_CODE_LENGTH}}$`
 );
 
+const MISSING_SECRET_ERROR =
+  "AUTH_SECRET or NEXTAUTH_SECRET is required for lobby display pairing";
 
 export function isPairingCodeFormat(code: string): boolean {
   return PAIRING_CODE_PATTERN.test(code);
@@ -46,7 +48,7 @@ interface PairingBlobPayload {
 }
 
 function signPart(payloadPart: string): string {
-  return createHmac("sha256", requireAuthSecret("AUTH_SECRET or NEXTAUTH_SECRET is required for lobby display pairing"))
+  return createHmac("sha256", requireAuthSecret(MISSING_SECRET_ERROR))
     .update(`lodge-display-pairing:${payloadPart}`)
     .digest("base64url");
 }
@@ -167,7 +169,7 @@ export interface PreviewGrantPayload {
 }
 
 function signGrantPart(payloadPart: string): string {
-  return createHmac("sha256", requireAuthSecret("AUTH_SECRET or NEXTAUTH_SECRET is required for lobby display pairing"))
+  return createHmac("sha256", requireAuthSecret(MISSING_SECRET_ERROR))
     .update(`lodge-display-preview-grant:${payloadPart}`)
     .digest("base64url");
 }

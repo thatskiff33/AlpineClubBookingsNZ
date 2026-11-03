@@ -1,9 +1,8 @@
 import { readFileSync } from "node:fs";
-import { relative } from "node:path";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
 
-import { sourceFiles } from "./support/booking-guest-night-writer-scan";
+import { relativeSource, sourceFiles } from "./support/booking-guest-night-writer-scan";
 
 /**
  * #4638 / INV-SSOT: new signing paths use requireAuthSecret, not private copies.
@@ -73,9 +72,12 @@ describe("auth secret census", () => {
     const env: Record<string, number> = {};
     const optional: Record<string, number> = {};
     for (const file of sourceFiles()) {
-      const name = relative(process.cwd(), file).replaceAll("\\", "/");
+      const name = relativeSource(file);
       if (!name.startsWith("src/")) continue;
-      const reads = secretReads(readFileSync(file, "utf8"));
+      const code = readFileSync(file, "utf8");
+      // Every read the scan counts names one of these, so skip parsing the rest.
+      if (!code.includes("AUTH_SECRET") && !code.includes("getAuthSecret")) continue;
+      const reads = secretReads(code);
       if (reads.env) env[name] = reads.env;
       if (reads.optional) optional[name] = reads.optional;
     }

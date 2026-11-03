@@ -122,9 +122,16 @@ function base64url(input: Buffer | string): string {
     .replace(/=+$/, "");
 }
 
+// Auth cannot function without the secret; fail closed rather than sign with
+// a predictable key.
+const MISSING_SECRET_ERROR = "AUTH_SECRET is required for Google account linking";
 
 function sign(payload: string): string {
-  return base64url(createHmac("sha256", requireAuthSecret("AUTH_SECRET is required for Google account linking")).update(payload).digest(),);
+  return base64url(
+    createHmac("sha256", requireAuthSecret(MISSING_SECRET_ERROR))
+      .update(payload)
+      .digest(),
+  );
 }
 
 /**
