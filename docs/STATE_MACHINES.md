@@ -4697,7 +4697,12 @@ DEAD -> SUCCEEDED     ("Paid another way": finance:edit, lock(1), then the
 Before an ordinary charge-backed recovery sends any unmarked slice, its
 preflight reads Stripe once per involved intent, outside every transaction
 (`INV-PAY-145`). It records the returned charge refunds through the canonical
-writer and queues their existing accounting corrections. Exact `refundSliceKey`
+writer and queues their existing accounting corrections. A booking-modification
+recovery without a stored plan re-reads the payment after this recording before
+sizing and freezing its slices (#4713); no remaining balance completes without
+sending a refund. A newly refundable card charge missing from that preflight
+retries before freezing or sending, so the next attempt checks its refunds too.
+Stored plans retain their original slices. Exact `refundSliceKey`
 evidence marks an unmarked stored-plan slice with its refund, compare-and-set
 on the plan and the runner's `PROCESSING` claim (`INV-PAY-147`); a lost guard
 sends nothing. Both runners send only the returned plan's unmarked slices,
