@@ -190,7 +190,7 @@ beforeEach(() => {
 });
 
 describe("per-account password throttle through authorize (#4609)", () => {
-  it.each([
+  it.each<[string, Record<string, unknown> | null]>([
     ["unknown", null],
     ["inactive", { active: false }],
     ["deleted", { deletedAt: T0 }],
