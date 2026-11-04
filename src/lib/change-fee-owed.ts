@@ -24,6 +24,7 @@ import { BookingStatus } from "@prisma/client";
 import { hasCapturedPayment, type BookingPaymentState } from "@/lib/booking-payment-state";
 import { PAYMENT_OWED_BOOKING_STATUSES } from "@/lib/booking-status";
 import type { PrismaTransactionClient } from "@/lib/db-transaction";
+import { hasStrandedWaitlistConfirmShape } from "@/lib/waitlist-return-contract";
 
 /** The statuses whose pay step is still ahead: held, awaiting payment, or invoiced and unpaid. */
 const AWAITING_PAYMENT_STATUSES: ReadonlySet<string> = new Set<string>([
@@ -47,15 +48,20 @@ const CARD_PAY_STEP_AHEAD_STATUSES: ReadonlySet<string> = new Set<string>([
  * Whether an edit's change fee on this booking goes on its amount owed. Never
  * a joiner the group organiser settles, whose increases are billed to the
  * organiser instead. With no payment row, only a card booking still at its pay
- * step (#4735), which the fee opens a row for.
+ * step (#4735), which the fee opens a row for - and never a free one awaiting
+ * payment: that is a stranded or mid-flight free waitlist confirm, where a row
+ * means "the confirm finished" (`hasStrandedWaitlistConfirmShape`).
  */
 export function changeFeeGoesOnAmountOwed(booking: {
   status: string;
+  finalPriceCents: number;
   organiserSettled: boolean;
   payment: BookingPaymentState | null | undefined;
 }): boolean {
   if (booking.organiserSettled) return false;
-  if (booking.payment == null) return CARD_PAY_STEP_AHEAD_STATUSES.has(booking.status);
+  if (booking.payment == null) {
+    return CARD_PAY_STEP_AHEAD_STATUSES.has(booking.status) && !hasStrandedWaitlistConfirmShape(booking);
+  }
   return AWAITING_PAYMENT_STATUSES.has(booking.status) && !hasCapturedPayment(booking.payment);
 }
 
