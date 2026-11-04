@@ -3897,9 +3897,10 @@ _Split from `INV-PAY-057` (#3220)._
 - A booking worth $0 has nothing to charge: the cron and confirm-pending-guests
   confirm it, writing its $0 payment in the claim's transaction
   (`writeZeroWorthConfirmPayment`); charge-saved-method refuses it (#4399).
-- A finished-stay correction's fee on a stay with nothing captured is recorded
-  on the payment and posts its `CHANGE_FEE` line under its modification's key
-  at the settle, counting as income once captured.
+- A fee charged with nothing captured (a finished-stay correction, or an
+  unpaid booking's edit, #4661: `changeFeeGoesOnAmountOwed`) is recorded once on
+  the payment and posts its `CHANGE_FEE` line under its modification's key at
+  the settle, counting as income once captured.
 - **The primary invoice bills worth as the create read it**; an edit racing
   its create is refused or measured (`INV-PAY-136`). The link's transaction
   stores what was billed and Stripe cash (capped so ledger credit fits); a
@@ -3912,8 +3913,9 @@ _Split from `INV-PAY-057` (#3220)._
   `savedCardChargeCents`, #4357), `saved-card-charge-worth.realdb.test.ts`,
   `booking-detail-history-amount-owed.test.ts`,
   `booking-change-request-execution.realdb.test.ts`,
-  `xero-primary-invoice-fee-gap.test.ts` and
-  `primary-invoice-edit-race.realdb.test.ts`.
+  `xero-primary-invoice-fee-gap.test.ts`,
+  `primary-invoice-edit-race.realdb.test.ts` and
+  `unpaid-edit-change-fee-owed.realdb.test.ts`.
 
 ## INV-PAY-124
 

@@ -4,7 +4,7 @@ import { postStoredBookingConfirmationLedgerLines } from "@/lib/booking-ledger-c
 import { resolveBookingMoneyPostingContext } from "@/lib/member-money/doors";
 import { LEDGER_ROWS_OLDEST_FIRST } from "@/lib/payment-ledger-order";
 import { isUnpaidConfirmedWholeLodge } from "@/lib/booking-payment-flow";
-import { bookingAmountOwedCents, bookingWorthCents } from "@/lib/booking-payment-state";
+import { bookingAmountOwedCents, bookingWorthCents, recordedChangeFeeCents as feeOnPayment } from "@/lib/booking-payment-state";
 import {
   type AgeTier,
   type Booking,
@@ -167,6 +167,7 @@ import type { ClubFormat } from "@/lib/club-format";
 import { clubFormatValues } from "@/lib/club-format-server";
 import { unpaidAskOffsetHistory } from "@/lib/unpaid-ask-offset-marker";
 import { primaryInvoiceSettlementHistory } from "@/lib/booking-primary-invoice-claim";
+import { changeFeeAddedToAmountOwedHistory } from "@/lib/change-fee-owed";
 import type { BookingModifiedRefundDestination } from "@/lib/booking-modified-email-copy";
 
 export type ModifyBookingDatesInput = {
@@ -905,11 +906,13 @@ export async function modifyBookingDates({
     const appliedBeforeClamp = isRepriceablePrePayment
       ? await deriveBookingAppliedCreditCents(bookingId, tx)
       : 0;
+    // #3750 (#3955 review F1, `INV-PAY-119`): a change fee recorded on the
+    // payment is owed with the price, so credit is kept up to the booking's
+    // worth and the $0 decision reads what it owes — with any fee this edit just added (#4661).
+    const recordedChangeFeeCents = feeOnPayment(booking.payment) + payments.changeFeeAddedToAmountOwedCents;
+    // #4661 review F1: what a card intent must now be for, as the batch lifecycle compares.
+    let owedCents = bookingWorthCents({ finalPriceCents: newFinalPriceCents, changeFeeCents: recordedChangeFeeCents });
     if (appliedBeforeClamp > 0) {
-      // #3750 (#3955 review F1, `INV-PAY-119`): a change fee recorded on the
-      // payment is owed with the price, so credit is kept up to the booking's
-      // worth and the $0 decision reads what it owes — never the bare price.
-      const recordedChangeFeeCents = booking.payment?.changeFeeCents ?? null;
       const clampedCredit = await clampAppliedCreditToBookingPrice(
         {
           memberId: bookingOwner(booking).memberId,
@@ -927,6 +930,7 @@ export async function modifyBookingDates({
         changeFeeCents: recordedChangeFeeCents,
         appliedCreditCents: clampedCredit.appliedCreditCents,
       });
+      owedCents = effectivePriceCents;
       if (
         effectivePriceCents === 0 &&
         (newStatus === "PAYMENT_PENDING" ||
@@ -1171,8 +1175,8 @@ export async function modifyBookingDates({
         paymentId: updatedBooking.payment.id,
         // A credit-covered $0 auto-pay sweeps every positive pending intent
         // (effective price 0); otherwise supersede only the intents stranded at
-        // the old amount (#1161).
-        newFinalPriceCents: zeroDollarAutoPaid ? 0 : newFinalPriceCents,
+        // the old amount (#1161) — any but what the booking now owes.
+        newFinalPriceCents: zeroDollarAutoPaid ? 0 : owedCents,
       });
     }
 
@@ -1232,6 +1236,7 @@ export async function modifyBookingDates({
           // #3954: what an unpaid ask took of this reduction, for the Xero repair pass.
           ...unpaidAskOffsetHistory(payments),
           ...primaryInvoiceSettlementHistory(payments), // #3980: the gap's anchor
+          ...changeFeeAddedToAmountOwedHistory(payments.changeFeeAddedToAmountOwedCents), // #4661: the settle's fee line
           // #2390: the same sentence the member was shown at the edit, kept on
           // the booking's own history so the split has an answer later.
           ...(promoCoverage ? { promoCoverageNote: promoCoverage.message } : {}),

@@ -1467,7 +1467,9 @@ recalculates the promotion (bar a stay under way, `INV-MOD-043`), charges the ch
 decision D8), computes the settlement options, moves the booking's stored totals
 and each strand's `BookingGuest.priceCents`, and records the rate-type snapshot,
 as a priced edit always did. The capacity check is unchanged. No
-`EDIT_FINANCIAL_REVIEW` task is raised and no `NULL` is written.
+`EDIT_FINANCIAL_REVIEW` task is raised and no `NULL` is written. A fee on a
+booking with a payment row and nothing captured goes on its amount owed
+(`INV-PAY-119`, #4661).
 
 **A promotion change asked for in the same request is applied.** A parked edit
 used to drop a `promoCode`, `promoCodes` or `removePromoCode` and say so in one
