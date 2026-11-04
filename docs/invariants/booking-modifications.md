@@ -1469,7 +1469,10 @@ and each strand's `BookingGuest.priceCents`, and records the rate-type snapshot,
 as a priced edit always did. The capacity check is unchanged. No
 `EDIT_FINANCIAL_REVIEW` task is raised and no `NULL` is written. A fee on a
 booking with a payment row and nothing captured goes on its amount owed
-(`INV-PAY-119`, #4661).
+(`INV-PAY-119`, #4661), as does one on a card booking still at its pay step
+with no row yet, which the fee opens (#4735) - never a free one awaiting
+payment, where a row would read as a finished waitlist confirm
+(`hasStrandedWaitlistConfirmShape`).
 
 **A promotion change asked for in the same request is applied.** A parked edit
 used to drop a `promoCode`, `promoCodes` or `removePromoCode` and say so in one

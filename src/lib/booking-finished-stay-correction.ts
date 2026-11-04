@@ -26,7 +26,7 @@
 import type { BookingGuestNightPriceSource } from "@prisma/client";
 
 import { ApiError } from "@/lib/api-error";
-import { CHANGE_FEE_ADDED_TO_AMOUNT_OWED_PATH } from "@/lib/change-fee-owed";
+import { CHANGE_FEE_ADDED_TO_AMOUNT_OWED_PATH, recordFeeOnNewPayment } from "@/lib/change-fee-owed";
 import type { PrismaTransactionClient } from "@/lib/db-transaction";
 import { valueEditStrand } from "@/lib/edit-night-valuation";
 import {
@@ -289,9 +289,7 @@ export async function recordFinishedStayFeeOwed(
   },
 ): Promise<void> {
   if (!input.payment) {
-    await tx.payment.create({
-      data: { bookingId: input.bookingId, amountCents: 0, changeFeeCents: input.changeFeeCents },
-    });
+    await recordFeeOnNewPayment(tx, { bookingId: input.bookingId, changeFeeCents: input.changeFeeCents });
     return;
   }
   const recorded = await tx.payment.updateMany({

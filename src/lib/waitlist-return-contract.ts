@@ -57,6 +57,22 @@ export const RETURN_TO_WAITLIST_PAYMENT_PRESENT_MESSAGE =
 export const RETURN_TO_WAITLIST_NO_STRAND_EVIDENCE_MESSAGE =
   "Nothing on this booking records a waitlist confirmation that got stuck, so this is not the failure this repair fixes — a free booking can sit in Payment pending for several ordinary reasons. Nothing was changed. Check Admin -> Audit log for a 'waitlist.confirm_offer_release_failed' entry on this booking before using any other tool.";
 
+/**
+ * The cheap shape a stranded free waitlist confirm sits in: `PAYMENT_PENDING`,
+ * free, no `Payment` row. Necessary, never sufficient — see
+ * {@link findUnresolvedWaitlistStrandReport}. It is also the shape between a
+ * free confirm's two phases, so no other writer may open a payment row on it
+ * (#4735): that row would read as "the confirm finished", hiding the repair and
+ * failing the confirm's own `$0` row on `Payment.bookingId`.
+ */
+export function hasStrandedWaitlistConfirmShape(booking: {
+  status: string;
+  finalPriceCents: number;
+  payment: unknown;
+}): boolean {
+  return booking.status === "PAYMENT_PENDING" && booking.finalPriceCents === 0 && booking.payment == null;
+}
+
 /** Db handle for {@link findUnresolvedWaitlistStrandReport}: the live client or a transaction. */
 type WaitlistStrandAuditReader = Prisma.TransactionClient | PrismaClient;
 
