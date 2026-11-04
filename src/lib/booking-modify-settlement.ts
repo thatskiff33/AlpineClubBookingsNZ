@@ -57,6 +57,7 @@ import {
 import { clearStaleCreditElection } from "@/lib/booking-credit-election";
 import { resolveOrganiserBillingForNet } from "@/lib/organiser-billing";
 import { writeEditOnPayment } from "@/lib/booking-primary-invoice-claim";
+import { changeFeeGoesOnAmountOwed } from "@/lib/change-fee-owed";
 import {
   OrganiserChildRefundRefusedError,
   planOrganiserChildModificationRefund,
@@ -107,6 +108,8 @@ export type PaymentAdjustmentResult = {
   foldedReissuedAsks: FoldedReissuedAsks;
   /** #3980: read no invoice link and claimed it (`writeEditOnPayment`); the door marks its history row. */
   settledAgainstPrimaryInvoice: boolean;
+  /** #4661: the fee this edit added to an unpaid booking's amount owed (`changeFeeGoesOnAmountOwed`), 0 for none; the door marks its history row. */
+  changeFeeAddedToAmountOwedCents: number;
   /**
    * #4299 (`INV-PAY-148`): the increase invoiced to the group organiser of an
    * internet-banking group place; 0 otherwise. The joiner is asked for none of
@@ -230,6 +233,9 @@ export async function applyPaymentAdjustments(
   // #4299: the one home's answer, or the organiser's combined invoice standing for it.
   const hasIssuedXeroInvoice = hasIssuedPrimaryXeroInvoice(booking) || organiserBilling !== null;
   let feeRecordedHereCents = 0; // written with the payment's claim below (#3980)
+  // #4661 (`INV-MOD-042`): with no settled arm to collect it, a booking still to be paid owes the fee with its price.
+  const feeAddedToAmountOwed = changeFeeCents > 0 && !changeFeeRecordedByCaller && !hasSettledPayment &&
+    !zeroDollarCardIncrease && changeFeeGoesOnAmountOwed(booking);
   // #3827 (`INV-PAY-117`): net of edit refunds already promised back by hand.
   const remainingRefundableCents = await refundableCashForModification(tx, booking.payment, reduction);
 
@@ -289,7 +295,7 @@ export async function applyPaymentAdjustments(
     changeFeeCents,
     hasSettledPayment,
     hasIssuedXeroInvoice,
-    changeFeeRecordedByCaller,
+    changeFeeRecordedByCaller: changeFeeRecordedByCaller || feeAddedToAmountOwed, // recorded once, below
   });
   if (reissuedAsk.amountCents > 0) {
     additionalAsk = reissuedAsk;
@@ -374,6 +380,7 @@ export async function applyPaymentAdjustments(
   } else if (xeroAdditionalAmountCents > 0) {
     additionalAmountCents = xeroAdditionalAmountCents - billedToOrganiserCents;
   }
+  if (feeAddedToAmountOwed) feeRecordedHereCents = changeFeeCents;
 
   if (reduction.organiserExtras) {
     // #4299 S2: the edit's own tier, frozen even with no options (a cut wholly against the unpaid extra).
@@ -420,6 +427,7 @@ export async function applyPaymentAdjustments(
     organiserChildRefund,
     foldedReissuedAsks,
     settledAgainstPrimaryInvoice,
+    changeFeeAddedToAmountOwedCents: feeAddedToAmountOwed ? changeFeeCents : 0,
     billedToOrganiserCents,
     ...unpaidAskSettlement,
   };
