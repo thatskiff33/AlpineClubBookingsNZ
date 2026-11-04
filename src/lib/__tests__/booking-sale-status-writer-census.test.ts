@@ -12,9 +12,10 @@
  *
  * `POSTS` names the posting call the file makes, and the census checks the
  * file still makes it. There is no third kind for a sale that posts nothing:
- * #4660 made the credit-covered create and the pay-step credit settle post;
- * the zero-price doors this census still lists as NOT_A_SALE are #4738. A new
- * writer must post or be shown not to be a sale. Seeds under `prisma/` are
+ * #4660 made the credit-covered create and the pay-step credit settle post,
+ * and #4738 the zero-price doors (draft, waitlist offer, pending-guest and
+ * cron confirms, officer force-confirm). A new writer must post or be shown
+ * not to be a sale. Seeds under `prisma/` are
  * fixtures, not doors, and are not read.
  */
 import { readFileSync } from "node:fs";
@@ -48,10 +49,10 @@ const REVIEWED: Record<string, Classification> = {
   "src/lib/group-settlement.ts|PAID|1": { kind: "POSTS", call: "postGroupSettlementLedgerLines", why: "a group settle confirms each organiser-settled child" },
   "src/lib/booking-create.ts|PAID|1": { kind: "POSTS", call: "postStoredBookingConfirmationLedgerLines", why: "a $0 or fully credit-covered create confirms (#4660)" },
   "src/lib/booking-credit-election.ts|PAID|1": { kind: "POSTS", call: "postStoredBookingConfirmationLedgerLines", why: "a fully credit-covered pay-step settle confirms (#4660)" },
-  "src/app/api/admin/bookings/[id]/confirm-pending-guests/route.ts|PAID|1": { kind: "NOT_A_SALE", why: "only a $0 booking (savedCardChargeCents 0): nothing to charge" },
-  "src/app/api/bookings/[id]/confirm-draft/route.ts|PAID|1": { kind: "NOT_A_SALE", why: "only a $0 draft (finalPriceCents 0)" },
-  "src/app/api/bookings/[id]/waitlist-confirm/route.ts|PAID|1": { kind: "NOT_A_SALE", why: "only a $0 offer (finalPriceCents 0)" },
-  "src/lib/cron-confirm-pending.ts|PAID|1": { kind: "NOT_A_SALE", why: "only a $0 provisional booking (savedCardChargeCents 0)" },
+  "src/app/api/admin/bookings/[id]/confirm-pending-guests/route.ts|PAID|1": { kind: "POSTS", call: "postStoredBookingConfirmationLedgerLines", why: "an officer confirms a $0 pending booking (#4738)" },
+  "src/app/api/bookings/[id]/confirm-draft/route.ts|PAID|1": { kind: "POSTS", call: "postStoredBookingConfirmationLedgerLines", why: "a $0 draft confirms (#4738)" },
+  "src/app/api/bookings/[id]/waitlist-confirm/route.ts|PAID|1": { kind: "POSTS", call: "postStoredBookingConfirmationLedgerLines", why: "a $0 waitlist offer confirms (#4738)" },
+  "src/lib/cron-confirm-pending.ts|PAID|1": { kind: "POSTS", call: "postStoredBookingConfirmationLedgerLines", why: "the cron confirms a $0 provisional booking (#4738)" },
   // --- CANCELLED: a cancellation ---
   "src/lib/booking-cancel.ts|CANCELLED|5": { kind: "POSTS", call: "postCancellationLedgerLines", why: "every cancel path: R04, pending or confirmed" },
   "src/lib/cron-confirm-pending.ts|CANCELLED|3": { kind: "POSTS", call: "postCancellationLedgerLines", why: "capacity bump and hold-ended cancels" },
@@ -71,7 +72,7 @@ const REVIEWED: Record<string, Classification> = {
   "src/lib/booking-batch-modification-service.ts|computed:lifecycle.newStatus{?}|1": { kind: "POSTS", call: "postStoredBookingConfirmationLedgerLines", why: "the zero-dollar auto-pay confirms" },
   "src/lib/booking-guest-acceptance-reprice.ts|computed:lifecycle.newStatus{?}|1": { kind: "POSTS", call: "postStoredBookingConfirmationLedgerLines", why: "the zero-dollar auto-pay confirms" },
   "src/lib/booking-guest-removal-service.ts|computed:lifecycle.newStatus{?}|1": { kind: "POSTS", call: "postStoredBookingConfirmationLedgerLines", why: "the zero-dollar auto-pay confirms" },
-  "src/app/api/admin/bookings/[id]/force-confirm/route.ts|computed:nextStatus{AWAITING_REVIEW,PAID,PAYMENT_PENDING}|1": { kind: "NOT_A_SALE", why: "PAID only for a $0 booking; otherwise AWAITING_REVIEW or PAYMENT_PENDING" },
+  "src/app/api/admin/bookings/[id]/force-confirm/route.ts|computed:nextStatus{AWAITING_REVIEW,PAID,PAYMENT_PENDING}|1": { kind: "POSTS", call: "postStoredBookingConfirmationLedgerLines", why: "PAID only for a $0 booking, which confirms (#4738); otherwise AWAITING_REVIEW or PAYMENT_PENDING" },
   "src/app/api/bookings/[id]/guests/route.ts|computed:holdAdjustedStatus{?,PAYMENT_PENDING}|1": { kind: "NO_SALE_STATUS", why: "unchanged, or PENDING to PAYMENT_PENDING" },
   "src/lib/booking-create.ts|computed:effectiveStatus{?,AWAITING_REVIEW,CONFIRMED,PAYMENT_PENDING,PENDING}|1": { kind: "NO_SALE_STATUS", why: "AWAITING_REVIEW or the requested PENDING, PAYMENT_PENDING or CONFIRMED" },
   "src/lib/payment-reconciliation.ts|computed:restoredStatus{?,PAYMENT_PENDING}|1": { kind: "NO_SALE_STATUS", why: "a mark-paid reversal restores the unpaid status" },

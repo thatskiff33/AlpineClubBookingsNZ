@@ -17,6 +17,7 @@ import { recordWithheldBookingEmail } from "@/lib/booking-email-suppression";
 import logger from "@/lib/logger";
 import { revokePaymentLinkById, revokePaymentLinksForBooking } from "@/lib/payment-link";
 import { postCancellationLedgerLines } from "@/lib/booking-ledger-cancellation-sync";
+import { postStoredBookingConfirmationLedgerLines } from "@/lib/booking-ledger-confirmation-sync";
 import { resolveBookingMoneyPostingContext, type BookingJournalContext } from "@/lib/member-money/doors";
 import {
   SPLIT_GUEST_PAYMENT_LINK_TEMPLATE,
@@ -627,6 +628,8 @@ async function resolveHoldWindowUnderLock(
       });
 
       await writeZeroWorthConfirmPayment(tx, booking.id);
+      // #4738: the $0 booking's nights post once, under the won claim's locks.
+      await postStoredBookingConfirmationLedgerLines(tx, booking.id, journal);
 
       return { type: "confirmed_zero", booking };
     }

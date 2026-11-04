@@ -242,6 +242,17 @@ function payRequest() {
   });
 }
 
+// #4738: a $0 confirmation's lines and R01 are proved against PostgreSQL
+// (zero-price-confirmation.realdb.test.ts); here only the call is observed.
+const confirmationLedger = vi.hoisted(() => ({
+  postStoredBookingConfirmationLedgerLines: vi.fn<(...args: unknown[]) => Promise<void>>(async () => {}),
+}));
+vi.mock("@/lib/booking-ledger-confirmation-sync", () => confirmationLedger);
+vi.mock("@/lib/member-money/doors", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/member-money/doors")),
+  resolveBookingMoneyPostingContext: vi.fn(async () => ({ journal: "context" })),
+}));
+
 describe("#2266 door 1 — confirm-draft refuses an unresolved review", () => {
   it("refuses a $0 confirm on a review-PENDING draft, writing nothing", async () => {
     mocks.prismaBookingFindUnique.mockResolvedValue(flaggedDraft());
@@ -285,6 +296,9 @@ describe("#2266 door 1 — confirm-draft refuses an unresolved review", () => {
     });
 
     expect(res.status).toBe(200);
+    // #4738: the $0 draft's confirmation posts once, in the transaction that marks it PAID.
+    expect(confirmationLedger.postStoredBookingConfirmationLedgerLines).toHaveBeenCalledTimes(1);
+    expect(confirmationLedger.postStoredBookingConfirmationLedgerLines.mock.calls[0]!.slice(1)).toEqual([BOOKING_ID, { journal: "context" }]);
     expect(mocks.txBookingUpdate).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({ status: "PAID" }),

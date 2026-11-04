@@ -36,6 +36,8 @@ import {
   WAITLIST_OFFER_RELEASED_FLAGS,
 } from "@/lib/waitlist-confirm-recovery-contract";
 import { clubFormatValues } from "@/lib/club-format-server";
+import { postStoredBookingConfirmationLedgerLines } from "@/lib/booking-ledger-confirmation-sync";
+import { resolveBookingMoneyPostingContext, type BookingJournalContext } from "@/lib/member-money/doors";
 
 /**
  * #2623 T4 — budgets for the compensating offer release.
@@ -214,7 +216,7 @@ export async function POST(
     // global lock(1) first (mutual exclusion with cancel/settlement), then the
     // per-lodge lock (serialise the capacity claim against per-lodge creators),
     // re-read under the locks, re-check capacity, and status-guard the flip.
-    const runZeroDollarFlip = () => prisma.$transaction(async (tx) => {
+    const runZeroDollarFlip = (journal: BookingJournalContext) => prisma.$transaction(async (tx) => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
       await acquireLodgeCapacityLock(tx, booking.lodgeId);
 
@@ -293,6 +295,8 @@ export async function POST(
           status: "SUCCEEDED",
         },
       });
+      // #4738: the $0 offer's nights post once, under the won claim's locks.
+      await postStoredBookingConfirmationLedgerLines(tx, bookingId, journal);
       // The final PAYMENT_PENDING -> PAID claim is the transition that makes this
       // booking a live coverage source. Reconcile the committed shape without
       // trying to unwind an already-consumed offer, and durably enqueue any
@@ -393,7 +397,10 @@ export async function POST(
 
     let flip: Awaited<ReturnType<typeof runZeroDollarFlip>>;
     try {
-      flip = await runZeroDollarFlip();
+      // #4738: the confirmation's journal context, resolved before the flip's
+      // transaction opens (`INV-LOCK-004`) and inside this try, so a failure
+      // to resolve it releases the consumed offer like any other failed flip.
+      flip = await runZeroDollarFlip(await resolveBookingMoneyPostingContext());
     } catch (err) {
       const release = await releaseConsumedOffer();
 
