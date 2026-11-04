@@ -16,8 +16,8 @@
  * #4735: a card booking has no payment row until its pay step mints an intent,
  * so an edit before then opens one carrying only the fee
  * (`recordFeeOnNewPayment`), the shape a finished-stay correction already
- * writes. Every pay step refreshes that row's amount and keeps its fee, so the
- * fee is collected once, through the same amount-owed read.
+ * writes. No pay step overwrites that row's fee, and each charges what
+ * `bookingAmountOwedCents` reads, so the fee is collected once.
  */
 import { BookingStatus } from "@prisma/client";
 
