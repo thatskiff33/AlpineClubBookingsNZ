@@ -12,8 +12,10 @@
  *
  * `POSTS` names the posting call the file makes, and the census checks the
  * file still makes it. There is no third kind for a sale that posts nothing:
- * #4660 closed the last two such writers, so a new one must post or be shown
- * not to be a sale. Seeds under `prisma/` are fixtures, not doors, and are not read.
+ * #4660 made the credit-covered create and the pay-step credit settle post;
+ * the zero-price doors this census still lists as NOT_A_SALE are #4738. A new
+ * writer must post or be shown not to be a sale. Seeds under `prisma/` are
+ * fixtures, not doors, and are not read.
  */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
