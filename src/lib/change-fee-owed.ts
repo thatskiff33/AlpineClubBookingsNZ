@@ -13,10 +13,16 @@
  * supplementary invoice or credit note, and the settle posts its `CHANGE_FEE`
  * line under the edit's own key (`loadFeesAddedToAmountOwed`).
  */
+import { BookingStatus } from "@prisma/client";
+
 import { hasCapturedPayment, type BookingPaymentState } from "@/lib/booking-payment-state";
+import { PAYMENT_OWED_BOOKING_STATUSES } from "@/lib/booking-status";
 
 /** The statuses whose pay step is still ahead: held, awaiting payment, or invoiced and unpaid. */
-const AWAITING_PAYMENT_STATUSES: ReadonlySet<string> = new Set(["PENDING", "PAYMENT_PENDING", "CONFIRMED"]);
+const AWAITING_PAYMENT_STATUSES: ReadonlySet<string> = new Set<string>([
+  BookingStatus.PENDING,
+  ...PAYMENT_OWED_BOOKING_STATUSES,
+]);
 
 /**
  * Whether an edit's change fee on this booking goes on its amount owed. Needs

@@ -906,11 +906,13 @@ export async function modifyBookingDates({
     const appliedBeforeClamp = isRepriceablePrePayment
       ? await deriveBookingAppliedCreditCents(bookingId, tx)
       : 0;
+    // #3750 (#3955 review F1, `INV-PAY-119`): a change fee recorded on the
+    // payment is owed with the price, so credit is kept up to the booking's
+    // worth and the $0 decision reads what it owes — with any fee this edit just added (#4661).
+    const recordedChangeFeeCents = feeOnPayment(booking.payment) + payments.changeFeeAddedToAmountOwedCents;
+    // #4661 review F1: what a card intent must now be for, as the batch lifecycle compares.
+    let owedCents = bookingWorthCents({ finalPriceCents: newFinalPriceCents, changeFeeCents: recordedChangeFeeCents });
     if (appliedBeforeClamp > 0) {
-      // #3750 (#3955 review F1, `INV-PAY-119`): a change fee recorded on the
-      // payment is owed with the price, so credit is kept up to the booking's
-      // worth and the $0 decision reads what it owes — with any fee this edit just added (#4661).
-      const recordedChangeFeeCents = feeOnPayment(booking.payment) + payments.changeFeeAddedToAmountOwedCents;
       const clampedCredit = await clampAppliedCreditToBookingPrice(
         {
           memberId: bookingOwner(booking).memberId,
@@ -928,6 +930,7 @@ export async function modifyBookingDates({
         changeFeeCents: recordedChangeFeeCents,
         appliedCreditCents: clampedCredit.appliedCreditCents,
       });
+      owedCents = effectivePriceCents;
       if (
         effectivePriceCents === 0 &&
         (newStatus === "PAYMENT_PENDING" ||
@@ -1172,8 +1175,8 @@ export async function modifyBookingDates({
         paymentId: updatedBooking.payment.id,
         // A credit-covered $0 auto-pay sweeps every positive pending intent
         // (effective price 0); otherwise supersede only the intents stranded at
-        // the old amount (#1161).
-        newFinalPriceCents: zeroDollarAutoPaid ? 0 : newFinalPriceCents,
+        // the old amount (#1161) — any but what the booking now owes.
+        newFinalPriceCents: zeroDollarAutoPaid ? 0 : owedCents,
       });
     }
 

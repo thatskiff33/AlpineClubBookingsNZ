@@ -26,5 +26,6 @@ describe("the unpaid edit change-fee proof stays wired into CI (#4661)", () => {
     expect(suite).toContain('process.env.RUN_CONCURRENCY_RACE_TESTS === "1"');
     expect(suite).toContain("before its invoice: the fee goes on the payment once");
     expect(suite).toContain("after its invoice: the fee goes on the payment once");
+    expect(suite).toContain("through the date door: the fee goes on a card booking's payment once");
   });
 });

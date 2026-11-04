@@ -3897,8 +3897,8 @@ _Split from `INV-PAY-057` (#3220)._
 - A booking worth $0 has nothing to charge: the cron and confirm-pending-guests
   confirm it, writing its $0 payment in the claim's transaction
   (`writeZeroWorthConfirmPayment`); charge-saved-method refuses it (#4399).
-- A fee charged with nothing captured (a finished-stay correction, or any
-  edit before payment, #4661: `changeFeeGoesOnAmountOwed`) is recorded once on
+- A fee charged with nothing captured (a finished-stay correction, or an
+  unpaid booking's edit, #4661: `changeFeeGoesOnAmountOwed`) is recorded once on
   the payment and posts its `CHANGE_FEE` line under its modification's key at
   the settle, counting as income once captured.
 - **The primary invoice bills worth as the create read it**; an edit racing

@@ -16,6 +16,9 @@
  *     fee settles to PAID with that line posted once.
  *  2. Invoice already issued: the fee is recorded on the payment once, and the
  *     edit's settlement queues a supplementary invoice for it.
+ *  3. The date door (`modifyBookingDates`) on a card booking still to be paid:
+ *     the fee is recorded the same way, and the open intent at the bare price
+ *     is superseded, since it no longer pays what the booking owes.
  *
  * Ordinary Vitest runs skip the whole file. It reuses the guarded, disposable
  * loopback PostgreSQL `concurrency-lock-races.realdb.test.ts` provisions
@@ -55,6 +58,7 @@ const FEE_CENTS = PRICE_CENTS / 2;
 
 let prisma: PrismaClient;
 let batchService: typeof import("@/lib/booking-batch-modification-service");
+let dateService: typeof import("@/lib/booking-date-modification-service");
 let clubTimeServer: typeof import("@/lib/club-time/server");
 let confirmationSync: typeof import("@/lib/booking-ledger-confirmation-sync");
 let paidEffects: typeof import("@/lib/xero-inbound/invoice-paid-effects");
@@ -216,6 +220,7 @@ async function theEdit() {
     process.env.DATABASE_URL = RACE_DB_URL;
     ({ prisma } = (await import("@/lib/prisma")) as unknown as { prisma: PrismaClient });
     batchService = await import("@/lib/booking-batch-modification-service");
+    dateService = await import("@/lib/booking-date-modification-service");
     clubTimeServer = await import("@/lib/club-time/server");
     confirmationSync = await import("@/lib/booking-ledger-confirmation-sync");
     paidEffects = await import("@/lib/xero-inbound/invoice-paid-effects");
@@ -361,5 +366,36 @@ async function theEdit() {
       priceDiffCents: 0,
       changeFeeCents: FEE_CENTS,
     });
+  }, 60_000);
+
+  it("through the date door: the fee goes on a card booking's payment once and its intent at the bare price is superseded", async () => {
+    // The card booking awaiting payment: its PRIMARY row an open intent at the price.
+    await prisma.booking.update({ where: { id: BOOKING_ID }, data: { status: "PAYMENT_PENDING" } });
+    await prisma.payment.update({ where: { id: PAYMENT_ID }, data: { source: "STRIPE", reference: null, internetBankingHoldSlots: false } });
+    await prisma.paymentTransaction.update({
+      where: { id: PRIMARY_ID },
+      data: { source: "STRIPE", reference: null, reason: null, stripePaymentIntentId: "pi_race4661" },
+    });
+
+    await dateService.modifyBookingDates({
+      bookingId: BOOKING_ID,
+      actor: { id: OFFICER_ID, role: Role.ADMIN },
+      input: MOVED as never,
+      ipAddress: "127.0.0.1",
+    });
+
+    const edit = await theEdit();
+    expect(edit.changeFeeCents).toBe(FEE_CENTS);
+    expect(edit.newData).toMatchObject({ changeFeeAddedToAmountOwed: true });
+    const recorded = await prisma.payment.findUniqueOrThrow({ where: { id: PAYMENT_ID }, select: { changeFeeCents: true } });
+    expect(recorded.changeFeeCents).toBe(FEE_CENTS);
+
+    // #4661 review F1: the intent at the bare price would leave the fee unpaid.
+    expect(
+      await prisma.paymentRecoveryOperation.findMany({
+        where: { bookingId: BOOKING_ID, type: "CANCEL_PAYMENT_INTENT" },
+        select: { paymentTransactionId: true, amountCents: true },
+      }),
+    ).toEqual([{ paymentTransactionId: PRIMARY_ID, amountCents: PRICE_CENTS }]);
   }, 60_000);
 });

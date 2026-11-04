@@ -9,8 +9,9 @@ reason: the batch edit's history row carries the fee marker beside the
   sibling markers.
 
 file: src/lib/booking-date-modification-service.ts
-lines: 2264
+lines: 2267
 reason: the date edit's history row carries the same fee marker beside its
-  existing markers, and its credit clamp adds the fee the settlement just
-  recorded; both lines sit in the existing write and clamp, and there is no
-  seam to split them out without separating them from the code they extend.
+  existing markers, and the figure its credit clamp and superseded-intent
+  sweep compare against now includes the fee the settlement just recorded;
+  the lines sit in the existing write and clamp, and there is no seam to
+  split them out without separating them from the code they extend.
