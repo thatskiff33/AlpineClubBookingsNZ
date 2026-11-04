@@ -1067,9 +1067,10 @@ export async function joinGroupBookingAsMember(
     }
   }
 
-  // #4628: an EACH_PAYS_OWN joiner paying by internet banking binds its charge in
-  // the journal inside the create; its context is read here, on the join's zone,
-  // before the create's transaction (`INV-LOCK-004`).
+  // #4628, #4660: an EACH_PAYS_OWN joiner paying by internet banking binds its
+  // charge in the journal inside the create, and a $0 join confirms there; the
+  // context is read here, on the join's zone, before the create's transaction
+  // (`INV-LOCK-004`).
   const journal = await resolveBookingMoneyPostingContext({ zone: joinClubZone });
   let outcome: Awaited<ReturnType<typeof createConfirmedBooking>>;
   try {

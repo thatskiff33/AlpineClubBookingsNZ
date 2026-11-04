@@ -29,6 +29,7 @@ import type { BookingLedgerCensusReport } from "@/lib/booking-ledger-projection-
 import type { CalendarDate } from "@/lib/club-time";
 import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 import { assertSafeRaceDbUrl } from "@/lib/__tests__/support/race-db-url";
+import { memberMoneyTestContext } from "@/lib/__tests__/support/member-money-fixtures";
 
 const RUN = process.env.RUN_CONCURRENCY_RACE_TESTS === "1";
 const RACE_DB_URL = process.env.CONCURRENCY_RACE_DATABASE_URL ?? "";
@@ -148,7 +149,7 @@ async function creditPaidBooking(name: string, shape: "card" | "ib-allocated"): 
     expect(plan.reconciles).toBe(true);
     await postBookingLedgerLines(tx, plan.postings);
     await credit.applyCreditToBooking(memberId, 20_000, id, tx, CLUB_FORMAT_TEST);
-    await settleFullyCreditCoveredBooking(tx, { bookingId: id, appliedCreditCents: 20_000 });
+    await settleFullyCreditCoveredBooking(tx, { bookingId: id, appliedCreditCents: 20_000, journal: memberMoneyTestContext() });
   });
   const payment = await prisma.payment.findUniqueOrThrow({ where: { bookingId: id }, select: { id: true } });
   await prisma.payment.update({ where: { id: payment.id }, data: { id: paymentOf(id) } }).catch(() => undefined);

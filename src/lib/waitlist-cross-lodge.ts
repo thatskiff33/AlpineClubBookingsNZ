@@ -13,6 +13,7 @@ import { lodgeNullTolerantScope } from "@/lib/lodges";
 import { clubToday } from "@/lib/club-time";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { prisma } from "@/lib/prisma";
+import { resolveBookingMoneyPostingContext } from "@/lib/member-money/doors";
 import {
   acquireLodgeCapacityLock,
   checkCapacityForGuestRanges,
@@ -721,17 +722,22 @@ export async function confirmCrossLodgeWaitlistOffer(
     holdDays,
   });
 
+  // #3123 — the CLUB's zone (`INV-CONFIG-002`). The three `prisma.$transaction`
+  // spans this confirm runs have all closed by here, so this is a position
+  // outside every lock; `createConfirmedBooking` is transaction-aware and
+  // cannot resolve one for itself (`INV-LOCK-004`). The runtime reader
+  // because `cron-waitlist.ts` reaches this module from
+  // `src/instrumentation.node.ts`, where `server-only` throws at import.
+  const clubZone = await readClubTimeZoneOutsideRequest();
+  // #4660: a $0 confirm settles PAID inside the create and posts its R01 from
+  // this context, read here on the same zone, before the create's transaction.
+  const journal = await resolveBookingMoneyPostingContext({ zone: clubZone });
   let outcome;
   try {
     outcome = await createConfirmedBooking({
       format,
-      // #3123 — the CLUB's day (`INV-CONFIG-002`). The three `prisma.$transaction`
-      // spans this confirm runs have all closed by here, so this is a position
-      // outside every lock; `createConfirmedBooking` is transaction-aware and
-      // cannot resolve one for itself (`INV-LOCK-004`). The runtime reader
-      // because `cron-waitlist.ts` reaches this module from
-      // `src/instrumentation.node.ts`, where `server-only` throws at import.
-      todayAtClub: clubToday(await readClubTimeZoneOutsideRequest()),
+      journal,
+      todayAtClub: clubToday(clubZone),
       effectiveMemberId: memberId,
       isOnBehalf: false,
       sessionUserId: memberId,

@@ -59,6 +59,7 @@ import {
   SWITCHED_TO_INTERNET_BANKING_BODY,
 } from "@/lib/payment-recovery-contract";
 import { clubFormatValues } from "@/lib/club-format-server";
+import { resolveBookingMoneyPostingContext } from "@/lib/member-money/doors";
 import { chargeCurrencyRefusal, stripeChargeCurrency, UNSUPPORTED_CHARGE_CURRENCY_MEMBER_MESSAGE as CURRENCY_REFUSED, UnsupportedChargeCurrencyError } from "@/lib/stripe-charge-currency";
 import { intentCurrencyDiffers } from "@/lib/additional-intent-currency";
 import { staleIntentAction } from "@/lib/stale-intent-action";
@@ -254,11 +255,16 @@ export async function POST(request: NextRequest) {
     // because that arm can now settle the booking at $0, it claims capacity
     // like every other settle path (honouring a persisted override, #1771)
     // instead of settling blind.
-    const draftTransition =
+    const runsDraftTransition =
       (booking.status === "DRAFT" ||
         (booking.status === "PAYMENT_PENDING" &&
           booking.creditElectionCents != null)) &&
-      retired !== "notCancellable"
+      retired !== "notCancellable";
+    // #4660: a $0 settle below confirms the booking and posts its R01 from
+    // this context, resolved before the transaction opens (`INV-LOCK-004`).
+    const journal = runsDraftTransition ? await resolveBookingMoneyPostingContext() : null;
+    const draftTransition =
+      runsDraftTransition && journal
         ? await prisma.$transaction(async (tx) => {
             // Two-tier lock protocol (#1881): global booking/money lock first,
             // then the per-lodge capacity lock. The booking's lodge cannot
@@ -427,6 +433,7 @@ export async function POST(request: NextRequest) {
               const settled = await settleFullyCreditCoveredBooking(tx, {
                 bookingId,
                 appliedCreditCents,
+                journal,
               });
               superseded = settled.supersededPrimaryPaymentIntents;
               settledAtZero = true;
