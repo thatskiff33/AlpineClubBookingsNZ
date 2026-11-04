@@ -1,7 +1,7 @@
 # File-size allowances for the below-minimum card refusal (triyder/AlpineClubBookingsNZ#99 and #101)
 
 file: src/app/api/payments/create-payment-intent/route.ts
-lines: 913
+lines: 920
 reason: the below-minimum refusal has to sit between the existing-intent
   recovery and the Stripe customer lookup, inside this route's one pay flow,
   so that a captured payment is still recognised and nothing reaches Stripe
