@@ -50,6 +50,8 @@ import {
   readHostingCoverageOverride,
 } from "@/lib/adult-member-hosting-same-owner";
 import { clubFormatValues } from "@/lib/club-format-server";
+import { postStoredBookingConfirmationLedgerLines } from "@/lib/booking-ledger-confirmation-sync";
+import { resolveBookingMoneyPostingContext } from "@/lib/member-money/doors";
 
 export async function POST(
   request: NextRequest,
@@ -223,6 +225,10 @@ export async function POST(
     }
   }
 
+  // #4738: the confirmation below posts its lines and R01 from this context,
+  // resolved before the transaction opens (`INV-LOCK-004`).
+  const journal = await resolveBookingMoneyPostingContext();
+
   // Check capacity + transition to PAID in transaction
   try {
   await prisma.$transaction(async (tx) => {
@@ -255,6 +261,12 @@ export async function POST(
       throw new Error(
         "This booking needs admin review before it can be confirmed"
       );
+    }
+
+    // #4738: re-assert $0 under the lock. An edit after the outer check could
+    // have priced the draft; this route must never write PAID for a priced one.
+    if (freshBooking.finalPriceCents !== 0) {
+      throw new Error("Use the payment flow to complete non-zero bookings");
     }
 
     const capacity = await checkCapacityForGuestRanges(
@@ -294,6 +306,9 @@ export async function POST(
         creditElectionCents: null,
       },
     });
+    // #4738: a $0 draft (a promotion can take a priced stay to $0) is a
+    // confirmation like any other: its nights post once, under the locks above.
+    await postStoredBookingConfirmationLedgerLines(tx, id, journal);
     await reconcileBedAllocationsForBookingWithGlobalLockHeld({
       bookingId: id,
       db: tx,

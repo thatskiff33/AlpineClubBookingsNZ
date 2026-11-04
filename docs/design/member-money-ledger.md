@@ -349,8 +349,8 @@ does. Report v2 (`JOURNAL_PENDING`) compares a pending charge with the booking's
 final price plus its recorded fees, or what a cancellation kept. A census
 classifies every booking write that sets PAID or CANCELLED as posting or not
 a sale. A $0 or credit-covered create and the pay step's credit settle post
-their confirmation in their own transaction (#4660); the other zero-price doors
-the census lists as not a sale are #4738.
+their confirmation in their own transaction (#4660), as do the zero-price
+confirm-draft, waitlist, pending-guest, cron and force-confirm doors (#4738).
 
 Use the existing lock classification, never a new generic journal advisory key.
 Settlement/lifecycle commands take global `lock(1)` under `INV-LOCK-001`; capacity
