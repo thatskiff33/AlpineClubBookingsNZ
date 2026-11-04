@@ -43,6 +43,7 @@ import {
 import { priceBookingGuestsWithMembershipTypePolicy } from "@/lib/membership-type-policy";
 import { acquireLodgeCapacityLock, checkCapacityForGuestRanges } from "@/lib/capacity";
 import { postBindingCharge } from "@/lib/booking-ledger-pending-charge";
+import { postStoredBookingConfirmationLedgerLines } from "@/lib/booking-ledger-confirmation-sync";
 import {
   OverCapacityConfirmationRequiredError,
   overCapacityNights,
@@ -1195,6 +1196,10 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
           },
         });
         newBooking.status = BookingStatus.PAID;
+        // #4660: this PAID is the booking's confirmation, so its lines and R01
+        // post here, under this transaction's lock(1) and lodge key, after the
+        // promotion targets and the $0 payment are written. A retry posts nothing twice.
+        await postStoredBookingConfirmationLedgerLines(tx, newBooking.id, input.journal);
       } else if (
         internetBankingPaymentSelected &&
         effectivePriceCents > 0
@@ -1224,7 +1229,6 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
         });
         // #4628 (M3c, R01): the invoice binds the charge now, planned as the later confirmation plans its
         // lines, under this transaction's lock(1) and lodge key; the context came in resolved (`INV-LOCK-004`).
-        if (!input.journal) throw new Error("An internet-banking create needs its pre-transaction journal context (#4628).");
         await postBindingCharge(tx, input.journal, newBooking.id, bookingLodgeId);
       }
 

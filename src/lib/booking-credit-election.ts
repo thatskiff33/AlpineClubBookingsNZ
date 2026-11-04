@@ -20,6 +20,8 @@ import {
   type SupersededPrimaryPaymentIntent,
 } from "@/lib/booking-payment-cleanup";
 import type { ClubFormat } from "@/lib/club-format";
+import { postStoredBookingConfirmationLedgerLines } from "@/lib/booking-ledger-confirmation-sync";
+import type { BookingJournalContext } from "@/lib/member-money/doors";
 
 /**
  * The stored credit election (#2265, epic #2245 E1).
@@ -543,13 +545,20 @@ export class CreditCoveredSettlementConflictError extends Error {
  *
  * The PAID write is a status-guarded claim, so a booking that a concurrent
  * cancel moved out of `PAYMENT_PENDING` can never be clobbered back to PAID.
+ *
+ * #4660: the claim is the booking's confirmation, so its ledger lines and the
+ * journal's R01 post here, in the caller's transaction and under its locks,
+ * from the context the caller resolved before opening it (`INV-LOCK-004`). A
+ * retry posts nothing twice: a lost claim throws first, and a booking already
+ * confirmed on the ledger posts no second set (`postBookingConfirmationLedgerLines`).
  */
 export async function settleFullyCreditCoveredBooking(
   tx: Prisma.TransactionClient,
   {
     bookingId,
     appliedCreditCents,
-  }: { bookingId: string; appliedCreditCents: number },
+    journal,
+  }: { bookingId: string; appliedCreditCents: number; journal: BookingJournalContext },
 ): Promise<{ supersededPrimaryPaymentIntents: SupersededPrimaryPaymentIntent[] }> {
   // Status-guarded claim FIRST, so nothing else in this settlement is written
   // for a booking that is no longer payable.
@@ -625,6 +634,9 @@ export async function settleFullyCreditCoveredBooking(
       paymentId: payment.id,
       newFinalPriceCents: 0,
     });
+
+  // After the $0 payment row, whose recorded change fee the confirmation plans from.
+  await postStoredBookingConfirmationLedgerLines(tx, bookingId, journal);
 
   return { supersededPrimaryPaymentIntents };
 }

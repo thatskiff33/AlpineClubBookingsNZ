@@ -45,6 +45,12 @@ vi.mock("@/lib/adult-member-hosting-coverage-drain", () => ({
   settleHostingCoverageAfterCommit: vi.fn(async () => undefined),
 }));
 
+// #4660: the settle's confirmation lines and R01 run on PostgreSQL
+// (`credit-covered-confirmation.realdb.test.ts`); here, that the settle posts them.
+vi.mock("@/lib/booking-ledger-confirmation-sync", () => ({
+  postStoredBookingConfirmationLedgerLines: vi.fn(async () => undefined),
+}));
+
 
 import {
   clearStaleCreditElection,
@@ -53,7 +59,11 @@ import {
   CreditCoveredSettlementConflictError,
 } from "@/lib/booking-credit-election";
 import { queueSupersededPrimaryIntentCancellations } from "@/lib/booking-payment-cleanup";
+import { postStoredBookingConfirmationLedgerLines } from "@/lib/booking-ledger-confirmation-sync";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
+import { memberMoneyTestContext } from "./support/member-money-fixtures";
+
+const JOURNAL = memberMoneyTestContext();
 
 type LedgerRow = {
   memberId: string;
@@ -583,6 +593,7 @@ describe("#2265 settleFullyCreditCoveredBooking", () => {
     await settleFullyCreditCoveredBooking(fixture.tx as never, {
       bookingId: BOOKING_ID,
       appliedCreditCents: 10_000,
+      journal: JOURNAL,
     });
 
     // amountCents + creditAppliedCents = finalPriceCents.
@@ -597,6 +608,9 @@ describe("#2265 settleFullyCreditCoveredBooking", () => {
     expect(upsert.update.creditAppliedCents).toBe(10_000);
 
     expect(fixture.bookingRow.status).toBe(BookingStatus.PAID);
+    // #4660: the PAID is the booking's confirmation, posted once in this transaction.
+    expect(postStoredBookingConfirmationLedgerLines).toHaveBeenCalledTimes(1);
+    expect(postStoredBookingConfirmationLedgerLines).toHaveBeenCalledWith(fixture.tx, BOOKING_ID, JOURNAL);
   });
 
   it("sweeps every stale positive card intent, because nothing is owed", async () => {
@@ -607,6 +621,7 @@ describe("#2265 settleFullyCreditCoveredBooking", () => {
     await settleFullyCreditCoveredBooking(fixture.tx as never, {
       bookingId: BOOKING_ID,
       appliedCreditCents: 10_000,
+      journal: JOURNAL,
     });
 
     expect(queueSupersededPrimaryIntentCancellations).toHaveBeenCalledWith(
@@ -627,6 +642,7 @@ describe("#2265 settleFullyCreditCoveredBooking", () => {
     await settleFullyCreditCoveredBooking(fixture.tx as never, {
       bookingId: BOOKING_ID,
       appliedCreditCents: 10_000,
+      journal: JOURNAL,
     });
 
     const upsert = fixture.paymentUpserts[0] as {
@@ -652,6 +668,7 @@ describe("#2265 settleFullyCreditCoveredBooking", () => {
       settleFullyCreditCoveredBooking(fixture.tx as never, {
         bookingId: BOOKING_ID,
         appliedCreditCents: 10_000,
+        journal: JOURNAL,
       }),
     ).rejects.toBeInstanceOf(CreditCoveredSettlementConflictError);
 
@@ -660,6 +677,7 @@ describe("#2265 settleFullyCreditCoveredBooking", () => {
     expect(fixture.bookingRow.status).toBe(BookingStatus.CANCELLED);
     expect(fixture.tx.payment.upsert).not.toHaveBeenCalled();
     expect(queueSupersededPrimaryIntentCancellations).not.toHaveBeenCalled();
+    expect(postStoredBookingConfirmationLedgerLines).not.toHaveBeenCalled();
   });
 });
 
