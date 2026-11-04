@@ -38,8 +38,10 @@ export interface StripeWizardContext {
   connected: boolean;
   /** Connected Stripe account display name, when known. */
   accountName: string | null;
-  /** A stored Stripe credential no longer decrypts (auth secret changed). */
-  needsReentry: boolean;
+  /** The stored secret or publishable key no longer decrypts (auth secret changed). */
+  keysNeedReentry: boolean;
+  /** The stored webhook signing secret no longer decrypts; the webhook step replaces it (#98). */
+  webhookSecretNeedsReentry: boolean;
   /** A Stripe event, live or test (#3975), verified under the current signing secret. */
   webhookVerified: boolean;
 }
@@ -56,7 +58,8 @@ interface CredentialsResponse {
 interface StatusResponse {
   connected?: boolean;
   accountName?: string | null;
-  needsReentry?: boolean;
+  keysNeedReentry?: boolean;
+  webhookSecretNeedsReentry?: boolean;
   webhookVerified?: boolean;
 }
 
@@ -93,7 +96,9 @@ export function useStripeWizardContext(serverConfig: StripeWizardServerConfig): 
   });
   const [connected, setConnected] = useState(false);
   const [accountName, setAccountName] = useState<string | null>(null);
-  const [needsReentry, setNeedsReentry] = useState(false);
+  const [keysNeedReentry, setKeysNeedReentry] = useState(false);
+  const [webhookSecretNeedsReentry, setWebhookSecretNeedsReentry] =
+    useState(false);
   const [webhookVerified, setWebhookVerified] = useState(false);
 
   const load = useCallback(async () => {
@@ -117,7 +122,8 @@ export function useStripeWizardContext(serverConfig: StripeWizardServerConfig): 
         const data = (await statusRes.json()) as StatusResponse;
         setConnected(Boolean(data.connected));
         setAccountName(data.accountName ?? null);
-        setNeedsReentry(Boolean(data.needsReentry));
+        setKeysNeedReentry(Boolean(data.keysNeedReentry));
+        setWebhookSecretNeedsReentry(Boolean(data.webhookSecretNeedsReentry));
         setWebhookVerified(Boolean(data.webhookVerified));
       }
     } catch {
@@ -142,9 +148,23 @@ export function useStripeWizardContext(serverConfig: StripeWizardServerConfig): 
     isFullAdmin: isFull,
     connected,
     accountName,
-    needsReentry,
+    keysNeedReentry,
+    webhookSecretNeedsReentry,
     webhookVerified,
   };
 
   return { context, loading, refresh };
+}
+
+/**
+ * The "Enter keys" step is done when both keys are stored and readable. Only
+ * those two count: an unreadable webhook secret is the webhook step's to
+ * replace, and blocking here would leave that step unreachable (#98).
+ */
+export function credentialsStepVerified(ctx: StripeWizardContext): boolean {
+  return (
+    ctx.credentials.secret_key.set &&
+    ctx.credentials.publishable_key.set &&
+    !ctx.keysNeedReentry
+  );
 }

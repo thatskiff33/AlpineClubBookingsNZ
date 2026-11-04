@@ -140,6 +140,29 @@ export function unrecordedLateSuccessAlert(
   );
 }
 
+/**
+ * #4701 (`INV-INT-034`): a run that stood down, before a Xero call, on a row
+ * resolved by hand - an organiser waiver that never voided its invoice. The
+ * run made nothing in Xero; the officer who took the job over is told once
+ * per operation and object (`target`, the object the call would have
+ * changed) that it came back and stopped. Same thunk contract as
+ * `successAfterResolutionAlert`: run outside any transaction; never throws.
+ */
+export function stoodDownBeforeCallAlert(
+  operation: XeroSyncOperation,
+  target: { xeroObjectId: string; xeroObjectNumber: string | null; bookingId: string | null },
+  errorMessage: string,
+  warning: string,
+): () => Promise<void> {
+  return alertOnce(
+    operation,
+    xeroSuccessAfterResolutionAlertKey(operation.id, target.xeroObjectId),
+    { untouchedXeroObjectId: target.xeroObjectId, untouchedXeroObjectNumber: target.xeroObjectNumber, bookingId: target.bookingId },
+    errorMessage,
+    warning,
+  );
+}
+
 /** The alert's log line when the caller names no other reason (#4426, #4655). */
 const LATE_SUCCESS_NOT_RECORDED_WARNING =
   "Xero success arrived after its operation was reset or resolved and was not recorded on it; Xero may now hold the item twice (INV-INT-029)";

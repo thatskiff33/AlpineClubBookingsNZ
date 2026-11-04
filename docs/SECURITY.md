@@ -160,13 +160,31 @@ when the club has emailed sign-in links or Google switched on. A correct
 password after the wait signs in as before and clears the count; so does a
 completed password reset.
 
-**Enumeration parity.** The throttle answers before any member record is read,
+**Changing a password (#4640).** The authenticated change-password route shares
+this budget, keyed on the member's stored email. Wrong current passwords count
+alongside sign-in guesses. While waiting, it returns HTTP 429 with
+`LOGIN_THROTTLED` and a generic wait message, without comparing the password or
+changing it. A valid current password after the wait clears the shared count,
+including when the member must change their password. Session and input checks
+run first; this route accepts no account identifier to guess against.
+
+**Enumeration parity at sign-in.** The throttle answers before any member record is read,
 and its answer — `LOGIN_THROTTLED`, one message — is the same for a real, an
 unknown, an inactive and a deleted account, after the same dummy bcrypt
 compare. Unknown emails are counted exactly as real ones, so a throttled real
 account and a throttled unknown email look the same. One thing does differ: a
 valid sign-in or completed reset on a real account clears its count, which an
 unknown email's count never is (see the stated limits).
+
+**Password comparison cost (#4639).** Refused sign-ins use the precomputed
+`DUMMY_PASSWORD_HASH` in `src/lib/password-hashing.ts`. Every account-password
+writer, including lodge accounts, placeholders and seeds, imports
+`PASSWORD_BCRYPT_COST` from that module. A regression test compares the dummy
+hash's encoded cost with a newly generated password hash; changing the cost
+requires regenerating the dummy hash too. Existing stored passwords keep their
+original cost until replaced, so their comparison time can differ from the
+dummy comparison. In particular, existing cost-12 seed and lodge accounts now
+compare faster than unknown accounts. Hut-leader PINs use their separate policy.
 
 **What is stored.** `LoginThrottle` holds an HMAC-SHA256 of the lower-cased
 email under `AUTH_SECRET` (domain label `login-throttle:v1:`), a count and the
@@ -213,7 +231,7 @@ because of the failure itself.
   connection pool is too busy to give a claim a connection within a second —
   each replica counts on its own, at the divided budget, without reading the
   stored count; a restart forgets them.
-- Password sign-in only: emailed sign-in links, Google, two-factor code entry
+- Password sign-in and authenticated current-password checks only: emailed sign-in links, Google, two-factor code entry
   (its own lockout) and lodge PIN sign-in are separate, and forgot-password and
   sign-in-link request limits per account are #4613.
 

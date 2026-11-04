@@ -21,6 +21,7 @@
 import { createHash } from "node:crypto";
 import { type AgeTier, PrismaClient } from "@prisma/client";
 import bcrypt from "bcryptjs";
+import { PASSWORD_BCRYPT_COST } from "../src/lib/password-hashing";
 import { ensureAccessRoleDefinitions } from "../src/lib/access-role-definitions";
 import { bookingFinalPriceCents } from "../src/lib/booking-final-price";
 import { assertDemoSeedMayRun, DEMO_SEED_DOMAIN } from "../src/lib/demo-seed-guard";
@@ -89,7 +90,7 @@ const prisma = new PrismaClient({ adapter: createPrismaPgAdapter() });
 
 const DEMO_DOMAIN = DEMO_SEED_DOMAIN;
 const DEMO_PASSWORD = process.env.DEMO_SEED_PASSWORD ?? "demo1234";
-const PWHASH = bcrypt.hashSync(DEMO_PASSWORD, 12);
+const PWHASH = bcrypt.hashSync(DEMO_PASSWORD, PASSWORD_BCRYPT_COST);
 const SEASON_YEAR = 2026;
 
 // Date-only helper (schema uses @db.Date for most date columns).

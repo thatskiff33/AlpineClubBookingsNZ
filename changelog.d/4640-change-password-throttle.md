@@ -1,0 +1,1 @@
+- **Repeated current-password guesses now trigger a wait (#4640).** Changing a password shares sign-in's per-account attempt limit. A member must wait before trying again after repeated failures, and a valid current password clears the shared count.

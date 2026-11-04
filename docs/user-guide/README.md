@@ -32,6 +32,8 @@ the steps are the same.
 > update the matching entry in that corpus in the same pull request so the two
 > never drift.
 
+![Member dashboard showing upcoming bookings and account information](../images/public/member-dashboard.png)
+
 ## How these guides are written (member-guide skeleton)
 
 The [`STYLE_GUIDE.md`](../STYLE_GUIDE.md) defines the operator-guide skeleton
@@ -121,3 +123,22 @@ Conventions carried through every guide, matching the domain rules in
 - Policy references: [`CANCELLATIONS.md`](../CANCELLATIONS.md),
   [`AUTHORITATIVE_FEES.md`](../AUTHORITATIVE_FEES.md),
   [`STATE_MACHINES.md`](../STATE_MACHINES.md).
+
+## Refreshing the screenshots
+
+For maintainers: use a disposable local app with the demo seed, as described in
+[E2E setup](../E2E_PLAYWRIGHT.md). Enable **Member lodge roster** and **Message
+board** on that disposable app before capture; both modules start off. Never
+capture real member data or point the tool at a live deployment.
+
+Run `pnpm run docs:screenshots --user-guide --list` to inspect the selection,
+then `pnpm run docs:screenshots --user-guide` to refresh it. The tool reads the
+image references in these pages and resolves their names against its existing
+capture manifest. Unknown names fail before the browser starts. Commit the
+updated PNGs with the guide or screen change. Review each image for loaded
+content and demo-only data.
+
+The [wiki mirror](../../scripts/sync-user-guide-wiki.mjs) rewrites these same
+image references to raw repository image URLs on `main`. After merge, the wiki
+uses the updated images without keeping a separate copy. Maintainers can
+preview the generated pages with `pnpm run docs:wiki-sync --out <wiki-clone-dir>`.

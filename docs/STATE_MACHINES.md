@@ -4138,7 +4138,8 @@ supplementary invoice WAITING_PAYMENT on a card ask's intent (INV-PAY-104;
      ADDITIONAL_ASK_RETIRED_BY_REDUCTION (INV-PAY-120)
   -> the pay door closed and nothing carries it -> CANCELLED,
      STALE_WAITING_PAYMENT (the reaper; only a capture of that same intent
-     revives it)
+     revives it; while a supersede's cancel of that intent is still in
+     flight the reaper keeps it, and the cancel's last step moves it, #4665)
 inbound webhook/event recorded -> reconciliation worker processes event
 failure -> retry/backoff/admin visibility
 FAILED/PARTIAL -> officer marks it resolved in Xero -> done: status unchanged,
@@ -4697,7 +4698,12 @@ DEAD -> SUCCEEDED     ("Paid another way": finance:edit, lock(1), then the
 Before an ordinary charge-backed recovery sends any unmarked slice, its
 preflight reads Stripe once per involved intent, outside every transaction
 (`INV-PAY-145`). It records the returned charge refunds through the canonical
-writer and queues their existing accounting corrections. Exact `refundSliceKey`
+writer and queues their existing accounting corrections. A booking-modification
+recovery without a stored plan re-reads the payment after this recording before
+sizing and freezing its slices (#4713); no remaining balance completes without
+sending a refund. A newly refundable card charge missing from that preflight
+retries before freezing or sending, so the next attempt checks its refunds too.
+Stored plans retain their original slices. Exact `refundSliceKey`
 evidence marks an unmarked stored-plan slice with its refund, compare-and-set
 on the plan and the runner's `PROCESSING` claim (`INV-PAY-147`); a lost guard
 sends nothing. Both runners send only the returned plan's unmarked slices,
@@ -5009,8 +5015,14 @@ an hour with no counted attempt -> count reads as 0; idle sweep deletes the row
 store failure -> same states, counted per process at the #1142 divided budget
 ```
 
+Authenticated change-password checks use the same claim/wait/clear transitions
+(#4640), keyed on the member's stored email after session validation. A waiting
+request answers HTTP 429 with `LOGIN_THROTTLED`, without comparing a password;
+an admitted valid current password clears the shared count before the change.
+
 To verify: `login-throttle-policy.test.ts` (the waits and the idle reset on the
-frozen clock), `login-throttle-auth.test.ts` (through the real password provider)
+frozen clock), `login-throttle-auth.test.ts` (through the real password provider
+and change-password route)
 and `login-throttle.realdb.test.ts` (the row lock under forced interleavings).
 
 ## Magic-Link Sign-In Lifecycle

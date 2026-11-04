@@ -28,6 +28,7 @@ import { resolveBookingMoneyPostingContext } from "@/lib/member-money/doors";
 import { memberWholeLodgeChoosesPaymentMethod } from "@/lib/booking-payment-flow";
 import { randomBytes } from "crypto";
 import { hash } from "bcryptjs";
+import { PASSWORD_BCRYPT_COST } from "@/lib/password-hashing";
 import {
   AgeTier,
   BookingRequestStatus,
@@ -893,7 +894,7 @@ export async function approveSchoolBookingRequest(input: {
   // row satisfies the schema without any usable credential. Generate teacher
   // PINs (and their hashes) before the transaction so the plaintext PIN can be
   // emailed after commit while only the hash is persisted.
-  const placeholderPasswordHash = await hash(randomBytes(32).toString("hex"), 13);
+  const placeholderPasswordHash = await hash(randomBytes(32).toString("hex"), PASSWORD_BCRYPT_COST);
   const teacherPlans: TeacherCreationPlan[] = await Promise.all(
     teachers.map(async (teacher) => {
       const pin = assignTeachersAsHutLeaders ? generateHutLeaderPin() : null;

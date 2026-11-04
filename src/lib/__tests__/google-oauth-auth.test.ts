@@ -51,6 +51,7 @@ vi.mock("@/lib/prisma", () => ({
 
 vi.mock("@/lib/runtime-config", () => ({
   getAuthSecret: vi.fn(() => "test-secret"),
+  requireAuthSecret: vi.fn(() => "test-secret"),
   getAuthTrustHost: vi.fn(() => true),
 }));
 

@@ -806,6 +806,14 @@ it in `multi-lodge/member-cross-lodge.spec.ts`.
 - **Assert "it is gone" on the UNFILTERED locator** (`toHaveCount(0)`), so "gone"
   means gone from the DOM rather than merely hidden in a template.
 
+Scoping by test ID does not exclude a hidden ancestor. The booking-history
+reconciliation verdict (#4704) uses `HydratedOnly`, shared with the officer
+additional-payment panel, so retained server markup contains a loading message
+and only the hydrated page mounts the verdict. Its original E2E locator stays
+strict. The hydration regression constructs both copies and checks the whole
+DOM for one verdict, refreshed reasons and withheld access; it does not prove
+what triggered a particular full-app CI failure.
+
 ### 3. Fixed dates
 
 Nothing in a spec may hardcode a calendar date. Stay windows come from

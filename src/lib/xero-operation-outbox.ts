@@ -34,7 +34,7 @@ import {
   startXeroSyncOperation,
   upsertXeroObjectLink,
 } from "@/lib/xero-sync";
-import { holdsRecordedXeroSuccess, NOT_A_XERO_REPAIR_CLAIM, type XeroOperationClaim } from "@/lib/xero-operation-outcome-guard";
+import { holdsRecordedXeroSuccess, NOT_A_XERO_REPAIR_CLAIM, ownRunningClaim, type XeroOperationClaim } from "@/lib/xero-operation-outcome-guard";
 import {
   createXeroInvoiceForBooking,
   updateXeroBookingInvoiceForBooking,
@@ -3175,7 +3175,7 @@ export async function processQueuedXeroOutboxOperations(options?: {
         await recordAdditionalCaptureReceipt({ syncOperation: claimed, createdByMemberId: queuedOperation.createdByMemberId ?? undefined });
       } else if (payload?.queueType === XERO_OUTBOX_ORGANISER_EXTRA_ADJUSTMENT_TYPE) {
         const ran = await executeOrganiserExtraAdjustment(payload, claimed, { onRetake: (retaken) => { outcomeClaim = retaken; } });
-        // #4655: a run whose note was recorded on a row queued again, or on none, wrote no outcome.
+        // #4655, #4680, #4701: a stood-down run wrote no outcome, whether its note landed on a re-queued row, on none, or it lost its claim before a money-moving call.
         if (ran === "stood-down") {
           result.skipped += 1;
           continue;
@@ -3280,7 +3280,7 @@ export async function processQueuedXeroOutboxOperations(options?: {
         // deallocation says what it is waiting for.
         await prisma.xeroSyncOperation.updateMany({
           // #4356: never take back a repair's marked claim; #4373: nor any claim but this dispatch's (`INV-INT-029`).
-          where: { id: queuedOperation.id, status: "RUNNING", startedAt: outcomeClaim.startedAt, ...NOT_A_XERO_REPAIR_CLAIM },
+          where: { id: queuedOperation.id, ...ownRunningClaim(outcomeClaim), ...NOT_A_XERO_REPAIR_CLAIM },
           data: {
             status: "PENDING",
             startedAt: null,

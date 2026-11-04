@@ -21,6 +21,7 @@ import {
 } from "@/lib/credit-release-payment-plan";
 import { sendAdminXeroSyncErrorAlert } from "@/lib/email";
 import logger from "@/lib/logger";
+import { ownRunningClaim } from "@/lib/xero-operation-outcome-guard";
 import { LEDGER_ROWS_OLDEST_FIRST } from "@/lib/payment-ledger-order";
 import {
   CREDIT_RELEASE_ASK_REASON,
@@ -478,7 +479,7 @@ export async function skipPartialGapRepairPayment(
     const unpaid = await unpaidGapPayloadIfOverlapping({ operationId: operation.id, bookingId, payload });
     if (!unpaid) return null;
     await prisma.xeroSyncOperation.updateMany({
-      where: { id: claim.id, status: "RUNNING", startedAt: claim.startedAt },
+      where: { id: claim.id, ...ownRunningClaim(claim) },
       data: { requestPayload: sanitizeForJson(unpaid) },
     });
   }

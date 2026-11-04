@@ -14,6 +14,7 @@ import NextAuth, { CredentialsSignin, type NextAuthConfig } from "next-auth";
 import Credentials from "next-auth/providers/credentials";
 import Google from "next-auth/providers/google";
 import bcrypt from "bcryptjs";
+import { DUMMY_PASSWORD_HASH } from "./password-hashing";
 import { prisma } from "./prisma";
 import { getAuthSecret, getAuthTrustHost } from "./runtime-config";
 import logger from "./logger";
@@ -73,13 +74,6 @@ class MagicLinkPasswordChangeRequiredError extends CredentialsSignin {
   override code = "PASSWORD_CHANGE_REQUIRED";
 }
 
-// bcrypt hash of a random throwaway value. Compared against when no member
-// matches the email so unknown and known accounts take the same time,
-// preventing account enumeration via response timing.
-const DUMMY_PASSWORD_HASH =
-  // Not a live credential: a bcrypt hash of a random throwaway value, only ever
-  // compared against to equalise response timing (see comment above).
-  "$2b$12$vgnj5fAMZNzi.jYdELu0f.rjCvFqb/tgzYxtvBWJu8vCJYVO64SKC";
 const burnDummyCompare = (password: string) =>
   bcrypt.compare(password, DUMMY_PASSWORD_HASH);
 

@@ -15,7 +15,7 @@ rule and nothing there has an id**; they are an inventory the gate enforces
 exactly, so a row that is stale, duplicated, malformed or for an id nothing
 defines fails the check.
 
-The last table, [Agent docs](#agent-docs), holds the ceilings for the agent
+The [Agent docs](#agent-docs) table holds the ceilings for the agent
 guides under `docs/agents/`, under the looser rules stated there.
 
 To read a figure the way the gate does, run
@@ -197,3 +197,14 @@ row per page:
 | `docs/agents/SCOPED_CONTEXT.md` | 850 |
 | `docs/agents/SEKRETON_ORCHESTRATOR.md` | 1800 |
 | `docs/agents/SUBAGENT_GUIDE.md` | 1100 |
+
+## Screen map
+
+The [UX flow map](../UX_FLOW_MAP.md) is a screen directory, grouped by area,
+with short journeys and links to the detailed guides. `docs:indexcheck` enforces
+this ceiling using its existing word counter. History belongs in the linked
+[archive](../UX_FLOW_HISTORY.md), rather than being appended to the map.
+
+| Document | Ceiling |
+| --- | ---: |
+| `docs/UX_FLOW_MAP.md` | 8000 |

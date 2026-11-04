@@ -740,6 +740,11 @@ import "./superseded-refund-notice-once.realdb.test";
 // Skipped unless RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own
 // `race-4685-` fixtures.
 import "./xero-account-credit-note-stamp.realdb.test";
+// #4661 reuses it to prove an edit's change fee on an Internet Banking booking
+// still to be paid is recorded once on its payment and posts one CHANGE_FEE
+// line under the edit at the settle. Skipped unless RUN_CONCURRENCY_RACE_TESTS=1;
+// it owns and cleans its own `race-4661-` fixtures.
+import "./unpaid-edit-change-fee-owed.realdb.test";
 // #2374 (AID-5) deliberately is NOT imported here, unlike the two suites above.
 // `ai-diagnostics-select-only-role.realdb.test.ts` provisions and drops a cluster
 // ROLE and revokes `TEMPORARY ... FROM PUBLIC` on the shared throwaway database

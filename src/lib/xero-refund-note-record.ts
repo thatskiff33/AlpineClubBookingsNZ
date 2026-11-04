@@ -62,7 +62,7 @@ import logger from "@/lib/logger";
 import { lockPaymentForRefundedTotal, PAYMENT_ROW_WAIT_TRANSACTION_OPTIONS } from "@/lib/payment-transactions";
 import { XERO_REFUND_NOTE_UNRECORDED_ERROR_CODE } from "@/lib/xero-operation-error-codes";
 import { holdsUnrecordedRefundNote, unrecordedNoteStampPayload } from "@/lib/xero-refund-note-in-flight";
-import { heldByAnotherClaim } from "@/lib/xero-operation-outcome-guard";
+import { heldByAnotherClaim, ownRunningClaim } from "@/lib/xero-operation-outcome-guard";
 import { prisma } from "@/lib/prisma";
 import { isPostgresLockNotAvailable, isTransactionContention } from "@/lib/prisma-errors";
 import { traceUnrecordedLateNote, type LateNoteTrace } from "@/lib/xero-late-note-trace";
@@ -261,7 +261,7 @@ async function fenceUnrecordedNote(note: CreatedRefundNote): Promise<boolean> {
         manuallyResolvedAt: null,
         xeroObjectId: null,
         // This run's claim, RUNNING or failed by Mark failed (which keeps `startedAt`) - never another's (`INV-INT-029`).
-        OR: [...(note.claimStartedAt ? [{ status: "RUNNING", startedAt: note.claimStartedAt }] : []), { status: "FAILED", startedAt: note.claimStartedAt }],
+        OR: [...(note.claimStartedAt ? [{ ...ownRunningClaim({ id: note.operationId, startedAt: note.claimStartedAt }) }] : []), { status: "FAILED", startedAt: note.claimStartedAt }],
       },
       data: {
         lastErrorCode: XERO_REFUND_NOTE_UNRECORDED_ERROR_CODE,

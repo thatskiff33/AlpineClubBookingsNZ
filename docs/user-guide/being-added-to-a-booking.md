@@ -42,6 +42,8 @@ get it.
 
 ## Step-by-step
 
+![My Bookings showing where to open a stay and read its booking details](../images/public/member-bookings.png)
+
 ### Answering for yourself
 
 1. Open **Answer this request** in the email. It takes you to the booking's own

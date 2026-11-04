@@ -35,6 +35,8 @@ import { credentialVersionOf, type CredentialActor } from "@/lib/integration-cre
 import {
   CACHE_TTL_MS,
   getIntegrationsNeedingReentry,
+  providerNeedsReentry,
+  providerUnreadableKeys,
   readIntegrationCredentialRow,
   resetIntegrationCredentialCacheForTests,
   resolveIntegrationCredential,
@@ -198,6 +200,39 @@ describe("integration-credentials: state + source-flip + re-entry", () => {
     expect(await getIntegrationsNeedingReentry(["xero", "stripe"])).toEqual([
       "xero",
     ]);
+  });
+});
+
+describe("integration-credentials: which stored keys are unreadable (#98)", () => {
+  it("names only the keys that fail to decrypt when rows are mixed", async () => {
+    process.env.AUTH_SECRET = OTHER_STRONG_SECRET;
+    const stranded = storedRow("stripe", "webhook_secret", "whsec_old");
+    process.env.AUTH_SECRET = STRONG_SECRET;
+    mocks.prisma.integrationCredential.findMany.mockResolvedValue([
+      storedRow("stripe", "secret_key", "sk_test_new"),
+      storedRow("stripe", "publishable_key", "pk_test_new"),
+      stranded,
+    ]);
+
+    expect(await providerUnreadableKeys("stripe")).toEqual(["webhook_secret"]);
+    expect(await providerNeedsReentry("stripe")).toBe(true);
+  });
+
+  it("is empty when nothing is stored", async () => {
+    mocks.prisma.integrationCredential.findMany.mockResolvedValue([]);
+
+    expect(await providerUnreadableKeys("stripe")).toEqual([]);
+    expect(await providerNeedsReentry("stripe")).toBe(false);
+  });
+
+  it("is empty when every stored key reads", async () => {
+    mocks.prisma.integrationCredential.findMany.mockResolvedValue([
+      storedRow("stripe", "secret_key", "sk_test_new"),
+      storedRow("stripe", "webhook_secret", "whsec_new"),
+    ]);
+
+    expect(await providerUnreadableKeys("stripe")).toEqual([]);
+    expect(await providerNeedsReentry("stripe")).toBe(false);
   });
 });
 

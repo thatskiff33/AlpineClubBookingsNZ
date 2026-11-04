@@ -11,10 +11,11 @@
  * SQL `UPDATE "Booking"` that sets the status is refused outright.
  *
  * `POSTS` names the posting call the file makes, and the census checks the
- * file still makes it. `LEGACY_GAP` is a sale whose writer posts no legacy
- * confirmation line, so no journal event either: the booking-ledger back-post
- * confirms it later and posts its R01 (M3b), and the gap is reported, not
- * fixed here. Seeds under `prisma/` are fixtures, not doors, and are not read.
+ * file still makes it. There is no third kind for a sale that posts nothing:
+ * #4660 made the credit-covered create and the pay-step credit settle post;
+ * the zero-price doors this census still lists as NOT_A_SALE are #4738. A new
+ * writer must post or be shown not to be a sale. Seeds under `prisma/` are
+ * fixtures, not doors, and are not read.
  */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -32,7 +33,6 @@ const SALE_STATUSES = new Set(["PAID", "CANCELLED"]);
 type Classification =
   | { kind: "POSTS"; call: string; why: string }
   | { kind: "NOT_A_SALE"; why: string }
-  | { kind: "LEGACY_GAP"; why: string }
   | { kind: "NO_SALE_STATUS"; why: string };
 
 /**
@@ -46,12 +46,12 @@ const REVIEWED: Record<string, Classification> = {
   "src/lib/xero-inbound/invoice-paid-effects.ts|PAID|1": { kind: "POSTS", call: "postStoredBookingConfirmationLedgerLines", why: "the Xero receipt confirms the booking and links its binding R01 (#4628)" },
   "src/lib/school-booking-request.ts|PAID|1": { kind: "POSTS", call: "postStoredBookingConfirmationLedgerLines", why: "a credit-settled request approval" },
   "src/lib/group-settlement.ts|PAID|1": { kind: "POSTS", call: "postGroupSettlementLedgerLines", why: "a group settle confirms each organiser-settled child" },
+  "src/lib/booking-create.ts|PAID|1": { kind: "POSTS", call: "postStoredBookingConfirmationLedgerLines", why: "a $0 or fully credit-covered create confirms (#4660)" },
+  "src/lib/booking-credit-election.ts|PAID|1": { kind: "POSTS", call: "postStoredBookingConfirmationLedgerLines", why: "a fully credit-covered pay-step settle confirms (#4660)" },
   "src/app/api/admin/bookings/[id]/confirm-pending-guests/route.ts|PAID|1": { kind: "NOT_A_SALE", why: "only a $0 booking (savedCardChargeCents 0): nothing to charge" },
   "src/app/api/bookings/[id]/confirm-draft/route.ts|PAID|1": { kind: "NOT_A_SALE", why: "only a $0 draft (finalPriceCents 0)" },
   "src/app/api/bookings/[id]/waitlist-confirm/route.ts|PAID|1": { kind: "NOT_A_SALE", why: "only a $0 offer (finalPriceCents 0)" },
   "src/lib/cron-confirm-pending.ts|PAID|1": { kind: "NOT_A_SALE", why: "only a $0 provisional booking (savedCardChargeCents 0)" },
-  "src/lib/booking-create.ts|PAID|1": { kind: "LEGACY_GAP", why: "a create whose price account credit covers posts no confirmation line (back-post)" },
-  "src/lib/booking-credit-election.ts|PAID|1": { kind: "LEGACY_GAP", why: "a fully credit-covered settle posts no confirmation line (back-post)" },
   // --- CANCELLED: a cancellation ---
   "src/lib/booking-cancel.ts|CANCELLED|5": { kind: "POSTS", call: "postCancellationLedgerLines", why: "every cancel path: R04, pending or confirmed" },
   "src/lib/cron-confirm-pending.ts|CANCELLED|3": { kind: "POSTS", call: "postCancellationLedgerLines", why: "capacity bump and hold-ended cancels" },

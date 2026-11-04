@@ -148,6 +148,10 @@ re-creatable.
   capture names (`pnpm exec tsx e2e/tools/capture-screenshots.ts <name...>`), never
   the whole manifest — a full run commits images for pages other batches/PRs
   own, stranding orphan PNGs that their real PR then has to re-refresh.
+- **Member-guide refresh:** `pnpm run docs:screenshots --user-guide` selects
+  the named captures embedded by `docs/user-guide/*.md`, including its index.
+  Use `--user-guide --list` to inspect the selection without launching a browser.
+  The wiki mirror reads the same image references; do not duplicate its PNGs.
 - **Screenshot density:** one screenshot per capturable distinct route or tab
   (a guide covering six sub-pages embeds six captures). Client-side wizard or
   dialog sub-steps the URL-driven harness cannot reach are described in prose —

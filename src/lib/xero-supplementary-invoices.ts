@@ -55,7 +55,7 @@ import {
   resolveModificationDocumentLineItems,
 } from "@/lib/xero-modification-line-items";
 import type { ClubFormat } from "@/lib/club-format";
-import type { XeroOperationClaim } from "@/lib/xero-operation-outcome-guard";
+import { ownRunningClaim, type XeroOperationClaim } from "@/lib/xero-operation-outcome-guard";
 
 export async function createXeroSupplementaryInvoice(params: {
   bookingId: string;
@@ -407,7 +407,7 @@ export async function createXeroSupplementaryInvoice(params: {
       await lockSupplementaryInvoiceAnchor(tx, localId);
       if (!(await organiserExtraWaivedBeforeRaised(tx, localId))) return false;
       await tx.xeroSyncOperation.updateMany({
-        where: { id: claim.id, status: "RUNNING", startedAt: claim.startedAt },
+        where: { id: claim.id, ...ownRunningClaim(claim) },
         data: { status: "SKIPPED", lastErrorCode: ORGANISER_EXTRA_WAIVED_UNRAISED_CODE, completedAt: new Date(),
           lastErrorMessage: "Not raised: a cancellation or reduction waived the whole extra before it reached Xero." },
       });

@@ -32,7 +32,14 @@
  *   cancellation credits, oldest first, where no outbox row names one, and the
  *   credit the note's own outbox row named where one does; and none where a
  *   lot of another kind already records the note, or where only a link no
- *   account-credit outbox row explains reaches the payment (PR #4711 review).
+ *   account-credit outbox row explains reaches the payment (PR #4711 review);
+ * - #4712: a note #1925's local provenance resolves (an admin-adjustment lot's
+ *   note, applied to this booking) links the payment as no account-credit
+ *   note, so the booking's own cancellation note still queues, and the note
+ *   is never counted as refunded on it; and the one-off repair
+ *   (`xero-applied-credit-account-note-link-repair.ts`) retires such a link
+ *   written before the fix, recounts the payment, and leaves a link it cannot
+ *   explain, or one the note was raised for, alone.
  *
  * Ordinary Vitest runs skip the whole file. It reuses the guarded, disposable
  * loopback PostgreSQL `concurrency-lock-races.realdb.test.ts` provisions, which
@@ -54,6 +61,12 @@ const PAYMENT_ID = `${P}-payment`;
 const OLDER_CREDIT = `${P}-credit-older`;
 const NEWER_CREDIT = `${P}-credit-newer`;
 const CREDIT_CENTS = 5_000;
+/** #4712: an admin-adjustment lot's note, spent on this booking through one slice. */
+const APPLIED_NOTE = `${P}-applied-note`;
+const APPLIED_LOT = `${P}-credit-applied-lot`;
+const APPLIED_SLICE = `${P}-applied-slice`;
+const APPLIED_INVOICE = `${P}-applied-invoice`;
+const APPLIED_CENTS = 2_000;
 /** The already-cancelled Internet Banking arm's description (`invoice-paid-effects.ts`). */
 const DESCRIPTION = `Internet Banking payment credit for cancelled booking ${BOOKING_ID.slice(0, 8)}`;
 
@@ -84,7 +97,9 @@ function fakeXero() {
   () => {
     async function clearRun() {
       await prisma.xeroSyncOperation.deleteMany({ where: { localId: PAYMENT_ID } });
-      await prisma.xeroObjectLink.deleteMany({ where: { localId: PAYMENT_ID } });
+      await prisma.xeroObjectLink.deleteMany({ where: { localId: { in: [PAYMENT_ID, APPLIED_SLICE] } } });
+      // #4712: the applied credit's slice holds its lot.
+      await prisma.memberCreditNoteAllocation.deleteMany({ where: { appliedToBookingId: BOOKING_ID } });
       await prisma.memberCredit.deleteMany({ where: { memberId: MEMBER_ID } });
       // #4705: the inbound reconcile's audit rows, its mirror's re-check slots, and its recount of the payment.
       await prisma.auditLog.deleteMany({ where: { targetId: PAYMENT_ID } });
@@ -222,10 +237,10 @@ function fakeXero() {
       expect(await notes()).toEqual({ [OLDER_CREDIT]: null, [NEWER_CREDIT]: `${P}-note-1` });
     });
 
-    /** #4705: the inbound reconcile of `noteId`, Xero's read of the note faked as an unspent account-credit note. */
-    async function reconcileInbound(noteId: string) {
+    /** #4705: the inbound reconcile of `noteId`, Xero's read of the note faked as an unspent account-credit note, or as `overrides` say. */
+    async function reconcileInbound(noteId: string, overrides: Record<string, unknown> = {}) {
       const total = CREDIT_CENTS / 100;
-      const creditNote = { creditNoteID: noteId, creditNoteNumber: `CN-IN-${noteId}`, status: "AUTHORISED", total, appliedAmount: 0, remainingCredit: total, allocations: [], payments: [] };
+      const creditNote = { creditNoteID: noteId, creditNoteNumber: `CN-IN-${noteId}`, status: "AUTHORISED", total, appliedAmount: 0, remainingCredit: total, allocations: [], payments: [], ...overrides };
       const apiClient = await import("@/lib/xero-api-client");
       vi.spyOn(apiClient, "getAuthenticatedXeroClient").mockResolvedValue({
         xero: { accountingApi: { ...xero.accountingApi, getCreditNote: async () => ({ body: { creditNotes: [creditNote] } }) } },
@@ -263,7 +278,7 @@ function fakeXero() {
     });
 
     it("MUTATION #4705: an inbound note reaching the payment by a link no account-credit outbox row explains stamps nothing", async () => {
-      // A stale link, as #1925's local provenance leaves one (#4712): no lot or
+      // A stale link, as #1925's local provenance left one before #4712: no lot or
       // slice records the note, and no outbox row raised it as an account-credit note.
       const { cancellationCreditDescription } = await import("@/lib/cancellation-settled-money");
       await prisma.memberCredit.updateMany({ where: { memberId: MEMBER_ID }, data: { description: cancellationCreditDescription(BOOKING_ID) } });
@@ -303,6 +318,116 @@ function fakeXero() {
 
       await expect(reconcileInbound(`${P}-note-1`)).resolves.toMatchObject({ handled: true, updatedCredits: 1 });
       expect(await notes()).toEqual({ [OLDER_CREDIT]: null, [NEWER_CREDIT]: `${P}-note-1` });
+    });
+
+    /** #4712: the admin-adjustment lot whose note was spent on this booking, as the allocation engine records it. */
+    async function seedAppliedCredit() {
+      await prisma.memberCredit.create({
+        data: { id: APPLIED_LOT, memberId: MEMBER_ID, amountCents: APPLIED_CENTS, type: "ADMIN_ADJUSTMENT", description: `${P} admin lot`, xeroCreditNoteId: APPLIED_NOTE },
+      });
+      await prisma.memberCreditNoteAllocation.create({
+        data: { id: APPLIED_SLICE, memberCreditId: APPLIED_LOT, xeroCreditNoteId: APPLIED_NOTE, appliedToBookingId: BOOKING_ID, amountCents: APPLIED_CENTS },
+      });
+      await prisma.xeroObjectLink.create({
+        data: {
+          localModel: "MemberCreditNoteAllocation", localId: APPLIED_SLICE, xeroObjectType: "ALLOCATION", xeroObjectId: `${APPLIED_NOTE}:${APPLIED_INVOICE}`,
+          role: "APPLIED_CREDIT_ALLOCATION", active: true, metadata: { creditNoteId: APPLIED_NOTE, invoiceId: APPLIED_INVOICE, amountCents: APPLIED_CENTS },
+        },
+      });
+    }
+
+    /** The note as Xero reads it: fully spent on this booking's invoice. */
+    const appliedNoteReading = {
+      total: APPLIED_CENTS / 100,
+      appliedAmount: APPLIED_CENTS / 100,
+      remainingCredit: 0,
+      allocations: [{ invoice: { invoiceID: APPLIED_INVOICE }, amount: APPLIED_CENTS / 100 }],
+    };
+
+    async function accountNoteLinks() {
+      return prisma.xeroObjectLink.findMany({ where: { localId: PAYMENT_ID, role: "ACCOUNT_CREDIT_NOTE" }, select: { xeroObjectId: true, active: true } });
+    }
+
+    it("MUTATION #4712: a note resolved only through local provenance links no account-credit note, so the booking's own cancellation note still queues", async () => {
+      await seedAppliedCredit();
+
+      await expect(reconcileInbound(APPLIED_NOTE, appliedNoteReading)).resolves.toMatchObject({ handled: true, matchedAccountCreditPayments: 0, matchedAppliedCreditPayments: 1 });
+
+      expect(await accountNoteLinks()).toEqual([]);
+      // The note was spent here, not paid back.
+      expect(await prisma.payment.findUniqueOrThrow({ where: { id: PAYMENT_ID }, select: { refundedAmountCents: true, status: true } }))
+        .toEqual({ refundedAmountCents: 0, status: "SUCCEEDED" });
+      // The cancellation's own note queues, and the outbox raises it.
+      await enqueueFor(NEWER_CREDIT);
+      await expect(runOutbox()).resolves.toMatchObject({ succeeded: 1, failed: 0 });
+      expect(xero.created).toEqual([`${P}-note-1`]);
+      expect(await notes()).toMatchObject({ [NEWER_CREDIT]: `${P}-note-1`, [APPLIED_LOT]: APPLIED_NOTE });
+    });
+
+    it("MUTATION #4712: the repair retires a link local provenance wrote before the fix, recounts the payment, and the cancellation note then queues", async () => {
+      const repair = await import("@/lib/xero-applied-credit-account-note-link-repair");
+      await seedAppliedCredit();
+      // What the reconcile wrote before #4712: the link, and the note counted as refunded.
+      await prisma.xeroObjectLink.create({
+        data: { localModel: "Payment", localId: PAYMENT_ID, xeroObjectType: "CREDIT_NOTE", xeroObjectId: APPLIED_NOTE, role: "ACCOUNT_CREDIT_NOTE", active: true, metadata: { status: "AUTHORISED", total: APPLIED_CENTS / 100 } },
+      });
+      await prisma.payment.update({ where: { id: PAYMENT_ID }, data: { refundedAmountCents: APPLIED_CENTS, status: "PARTIALLY_REFUNDED" } });
+      const { enqueueXeroAccountCreditNoteOperation } = await import("@/lib/xero-operation-outbox");
+      await expect(enqueueXeroAccountCreditNoteOperation(PAYMENT_ID, CREDIT_CENTS, { memberCreditId: NEWER_CREDIT })).resolves.toMatchObject({ queueOperationId: null });
+
+      const report = await repair.findStaleAppliedCreditAccountNoteLinks();
+      expect(report.stale.filter((link) => link.paymentId === PAYMENT_ID)).toEqual([expect.objectContaining({ creditNoteId: APPLIED_NOTE, classification: "STALE" })]);
+      expect(await accountNoteLinks()).toEqual([{ xeroObjectId: APPLIED_NOTE, active: true }]); // the dry run wrote nothing
+
+      await expect(repair.applyStaleAppliedCreditAccountNoteLinkRepair([PAYMENT_ID])).resolves.toMatchObject({
+        retired: [expect.objectContaining({ paymentId: PAYMENT_ID })],
+        notStale: [],
+        recounted: [{ paymentId: PAYMENT_ID, bookingId: BOOKING_ID, refundedBeforeCents: APPLIED_CENTS, refundedAfterCents: 0 }],
+        needsAttention: [],
+      });
+      expect(await accountNoteLinks()).toEqual([{ xeroObjectId: APPLIED_NOTE, active: false }]);
+      expect(await prisma.payment.findUniqueOrThrow({ where: { id: PAYMENT_ID }, select: { refundedAmountCents: true, status: true } }))
+        .toEqual({ refundedAmountCents: 0, status: "SUCCEEDED" });
+      // A second apply finds nothing left to retire.
+      await expect(repair.applyStaleAppliedCreditAccountNoteLinkRepair([PAYMENT_ID])).resolves.toMatchObject({ retired: [], notStale: [{ paymentId: PAYMENT_ID, reason: expect.any(String) }] });
+
+      await enqueueFor(NEWER_CREDIT);
+      await expect(runOutbox()).resolves.toMatchObject({ succeeded: 1, failed: 0 });
+      expect(await notes()).toMatchObject({ [NEWER_CREDIT]: `${P}-note-1` });
+    });
+
+    it("MUTATION #4712: the repair leaves alone a link it cannot explain, one the note was raised for, and one both raised for and spent there", async () => {
+      const repair = await import("@/lib/xero-applied-credit-account-note-link-repair");
+      // Neither raised for this payment nor applied to its booking.
+      await prisma.xeroObjectLink.create({
+        data: { localModel: "Payment", localId: PAYMENT_ID, xeroObjectType: "CREDIT_NOTE", xeroObjectId: `${P}-unexplained-note`, role: "ACCOUNT_CREDIT_NOTE", active: true },
+      });
+      let report = await repair.findStaleAppliedCreditAccountNoteLinks({ paymentIds: [PAYMENT_ID] });
+      expect(report).toMatchObject({ stale: [], unexplained: [expect.objectContaining({ creditNoteId: `${P}-unexplained-note` })], raisedForPayment: 0 });
+      await expect(repair.applyStaleAppliedCreditAccountNoteLinkRepair([PAYMENT_ID])).resolves.toMatchObject({ retired: [] });
+      expect(await accountNoteLinks()).toEqual([{ xeroObjectId: `${P}-unexplained-note`, active: true }]);
+
+      // The outbox raised a note for this payment.
+      await prisma.xeroObjectLink.deleteMany({ where: { localId: PAYMENT_ID } });
+      await enqueueFor(NEWER_CREDIT);
+      await expect(runOutbox()).resolves.toMatchObject({ succeeded: 1, failed: 0 });
+      // Its outbox row alone must say so: the credit's stamp is cleared.
+      await prisma.memberCredit.updateMany({ where: { memberId: MEMBER_ID }, data: { xeroCreditNoteId: null } });
+      report = await repair.findStaleAppliedCreditAccountNoteLinks({ paymentIds: [PAYMENT_ID] });
+      expect(report).toMatchObject({ stale: [], conflicting: [], unexplained: [], raisedForPayment: 1 });
+
+      // A slice also spent that note here: the outbox may have completed the
+      // cancellation with a stale link's note, so it is listed, never retired.
+      await prisma.memberCredit.create({
+        data: { id: APPLIED_LOT, memberId: MEMBER_ID, amountCents: APPLIED_CENTS, type: "ADMIN_ADJUSTMENT", description: `${P} admin lot` },
+      });
+      await prisma.memberCreditNoteAllocation.create({
+        data: { id: APPLIED_SLICE, memberCreditId: APPLIED_LOT, xeroCreditNoteId: `${P}-note-1`, appliedToBookingId: BOOKING_ID, amountCents: APPLIED_CENTS },
+      });
+      report = await repair.findStaleAppliedCreditAccountNoteLinks({ paymentIds: [PAYMENT_ID] });
+      expect(report).toMatchObject({ stale: [], conflicting: [expect.objectContaining({ creditNoteId: `${P}-note-1` })], unexplained: [], raisedForPayment: 0 });
+      await expect(repair.applyStaleAppliedCreditAccountNoteLinkRepair([PAYMENT_ID])).resolves.toMatchObject({ retired: [] });
+      expect(await accountNoteLinks()).toEqual([{ xeroObjectId: `${P}-note-1`, active: true }]);
     });
   },
 );

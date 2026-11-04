@@ -9,7 +9,7 @@
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { rows, mockPrisma, mockBcryptCompare, mockLoadEffectiveModuleFlags, REAL_HASH } =
+const { rows, mockPrisma, mockBcryptCompare, mockLoadEffectiveModuleFlags, mockAuth, REAL_HASH } =
   vi.hoisted(() => {
     type Row = { failureCount: number; lastFailureAt: Date };
     const rows = new Map<string, Row>();
@@ -44,13 +44,14 @@ const { rows, mockPrisma, mockBcryptCompare, mockLoadEffectiveModuleFlags, REAL_
     };
     const mockPrisma: Record<string, unknown> = {
       loginThrottle,
-      member: { findFirst: vi.fn(), update: vi.fn().mockResolvedValue({}) },
+      member: { findFirst: vi.fn(), findUnique: vi.fn(), update: vi.fn().mockResolvedValue({}) },
+      auditLog: { create: vi.fn().mockResolvedValue({}) },
       magicLinkToken: { findUnique: vi.fn(), updateMany: vi.fn() },
       $executeRaw: vi.fn(async (_sql: TemplateStringsArray, id: string) =>
         rows.has(id) ? 1 : 0,
       ),
     };
-    mockPrisma.$transaction = vi.fn(async (fn: (tx: unknown) => unknown) => fn(mockPrisma));
+    mockPrisma.$transaction = vi.fn();
     const REAL_HASH = "$2b$12$the-officer-real-hash-for-tests-only-not-a-credential";
     return {
       rows,
@@ -60,6 +61,7 @@ const { rows, mockPrisma, mockBcryptCompare, mockLoadEffectiveModuleFlags, REAL_
         async (password: string, hash: string) => hash === REAL_HASH && password === "right",
       ),
       mockLoadEffectiveModuleFlags: vi.fn(),
+      mockAuth: vi.fn(),
     };
   });
 
@@ -81,13 +83,28 @@ vi.mock("next-auth", () => {
       handlers: {},
       signIn: vi.fn(),
       signOut: vi.fn(),
-      auth: vi.fn(),
+      auth: mockAuth,
       unstable_update: vi.fn(),
     })),
     CredentialsSignin,
   };
 });
-vi.mock("bcryptjs", () => ({ default: { compare: mockBcryptCompare } }));
+vi.mock("bcryptjs", () => ({
+  default: { compare: mockBcryptCompare, hash: vi.fn().mockResolvedValue("new-hash") },
+}));
+vi.mock("@/lib/session-guards", () => ({
+  requireActiveSessionUser: vi.fn().mockResolvedValue(null),
+}));
+vi.mock("@/lib/login-security-settings", () => ({
+  loadLoginSecuritySettings: vi.fn(async () => {
+    const { DEFAULT_LOGIN_SECURITY_POLICY } = await import("@/lib/password-policy");
+    return { policy: DEFAULT_LOGIN_SECURITY_POLICY };
+  }),
+}));
+vi.mock("@/lib/audit", () => ({
+  buildStructuredAuditLogCreateArgs: (value: unknown) => ({ data: value }),
+  getAuditRequestContext: () => ({}),
+}));
 vi.mock("@/lib/logger", () => ({
   default: { warn: vi.fn(), error: vi.fn(), info: vi.fn(), debug: vi.fn() },
 }));
@@ -108,7 +125,16 @@ vi.mock("@/lib/google-config", () => ({
 
 import { FROZEN_TEST_CLOCK_BASE_ISO } from "@/lib/__tests__/helpers/clock";
 import { authConfig } from "@/lib/auth";
-import { loginAccountKey, resetLoginThrottleProcessState } from "@/lib/login-throttle";
+import { POST as changePassword } from "@/app/api/auth/change-password/route";
+import { requireActiveSessionUser } from "@/lib/session-guards";
+import bcrypt from "bcryptjs";
+import { NextResponse, type NextRequest } from "next/server";
+import {
+  LOGIN_THROTTLE_DEGRADED_FREE_FAILURES,
+  loginAccountKey,
+  resetLoginThrottleProcessState,
+} from "@/lib/login-throttle";
+import { DUMMY_PASSWORD_HASH } from "@/lib/password-hashing";
 import { LOGIN_THROTTLED_CODE } from "@/lib/login-throttle-policy";
 
 type Authorize = (credentials: Record<string, string>, request?: Request) => Promise<unknown>;
@@ -122,6 +148,7 @@ const signInCallback = authConfig.callbacks!.signIn as unknown as (params: {
 
 const member = mockPrisma.member as {
   findFirst: ReturnType<typeof vi.fn>;
+  findUnique: ReturnType<typeof vi.fn>;
   update: ReturnType<typeof vi.fn>;
 };
 const magicLinkToken = mockPrisma.magicLinkToken as {
@@ -182,6 +209,13 @@ beforeEach(() => {
   vi.setSystemTime(T0);
   rows.clear();
   resetLoginThrottleProcessState();
+  (mockPrisma.$transaction as ReturnType<typeof vi.fn>).mockImplementation(
+    async (fn: ((tx: unknown) => unknown) | unknown[]) =>
+      Array.isArray(fn) ? Promise.all(fn) : fn(mockPrisma),
+  );
+  mockAuth.mockResolvedValue({ user: { id: "officer-1", email: "stale@example.org" } });
+  vi.mocked(requireActiveSessionUser).mockResolvedValue(null);
+  member.findUnique.mockResolvedValue(officer());
   member.findFirst.mockImplementation(async ({ where }: { where: { email?: string } }) =>
     where.email === OFFICER_EMAIL ? officer() : null,
   );
@@ -189,6 +223,18 @@ beforeEach(() => {
 });
 
 describe("per-account password throttle through authorize (#4609)", () => {
+  it.each<[string, Record<string, unknown> | null]>([
+    ["unknown", null],
+    ["inactive", { active: false }],
+    ["deleted", { deletedAt: T0 }],
+  ])("runs the shared dummy comparison for a %s account", async (_label, overrides) => {
+    member.findFirst.mockResolvedValue(overrides === null ? null : officer(overrides));
+
+    await expect(attempt(OFFICER_EMAIL, "wrong")).resolves.toBeNull();
+
+    expect(mockBcryptCompare).toHaveBeenCalledExactlyOnceWith("wrong", DUMMY_PASSWORD_HASH);
+  });
+
   it("throttles one account guessed from many addresses; the wait doubles to 15 minutes", async () => {
     await failFiveTimes(OFFICER_EMAIL);
     // The 6th, from a 7th address: refused without a password check.
@@ -238,7 +284,7 @@ describe("per-account password throttle through authorize (#4609)", () => {
       });
       // The dummy compare still runs, exactly once, and never the real hash.
       expect(mockBcryptCompare).toHaveBeenCalledTimes(1);
-      expect(mockBcryptCompare.mock.calls[0][1]).not.toBe(REAL_HASH);
+      expect(mockBcryptCompare).toHaveBeenCalledWith("right", DUMMY_PASSWORD_HASH);
     }
     expect(outcomes[0]).toEqual(outcomes[1]);
     expect(outcomes[0]).toMatchObject({ code: LOGIN_THROTTLED_CODE });
@@ -335,5 +381,119 @@ describe("per-account password throttle through authorize (#4609)", () => {
       new Error("store down"),
     );
     await expect(attempt(OFFICER_EMAIL, "right")).resolves.toMatchObject({ id: "officer-1" });
+  });
+});
+
+/** The request email is deliberately different: only the stored email counts. */
+function changeAttempt(currentPassword = "wrong") {
+  return changePassword(new Request("http://localhost/api/auth/change-password", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ currentPassword, newPassword: "new-password-123", email: UNKNOWN_EMAIL }),
+  }) as NextRequest);
+}
+
+describe("change-password shares sign-in's account budget (#4640)", () => {
+  it("claims the account attempt before comparing the current password", async () => {
+    mockBcryptCompare.mockImplementationOnce(async () => {
+      expect(rows.get(loginAccountKey(OFFICER_EMAIL))?.failureCount).toBe(1);
+      return false;
+    });
+    expect((await changeAttempt()).status).toBe(400);
+  });
+
+  it("counts wrong current passwords and refuses even a correct password during the wait", async () => {
+    for (let i = 0; i < 5; i += 1) {
+      const response = await changeAttempt();
+      expect(response.status).toBe(400);
+      expect(await response.json()).toEqual({ error: "Current password is incorrect" });
+    }
+    expect(rows.get(loginAccountKey(OFFICER_EMAIL))?.failureCount).toBe(5);
+    expect(rows.has(loginAccountKey(UNKNOWN_EMAIL))).toBe(false);
+    const compares = mockBcryptCompare.mock.calls.length;
+    for (const password of ["wrong", "right"]) {
+      const response = await changeAttempt(password);
+      expect(response.status).toBe(429);
+      expect(await response.json()).toEqual({
+        error: "Too many password attempts. Please wait a few minutes and try again.",
+        code: LOGIN_THROTTLED_CODE,
+      });
+    }
+    expect(mockBcryptCompare).toHaveBeenCalledTimes(compares);
+    expect(bcrypt.hash).not.toHaveBeenCalled();
+    expect(member.update).not.toHaveBeenCalled();
+    expect(rows.get(loginAccountKey(OFFICER_EMAIL))?.failureCount).toBe(5);
+  });
+
+  it("combines sign-in and current-password guesses in both directions", async () => {
+    for (let i = 0; i < 4; i += 1) await attempt(OFFICER_EMAIL, "wrong");
+    expect((await changeAttempt()).status).toBe(400);
+    await expectThrottled(attempt(OFFICER_EMAIL, "right"));
+    expect((await changeAttempt("right")).status).toBe(429);
+    advance(30_000);
+    expect((await changeAttempt()).status).toBe(400);
+    advance(59_000);
+    expect((await changeAttempt()).status).toBe(429);
+    advance(1_000);
+    expect((await changeAttempt()).status).toBe(400);
+    expect(rows.get(loginAccountKey(OFFICER_EMAIL))?.failureCount).toBe(7);
+  });
+
+  it("clears the shared budget after proving the current password, including forced changes", async () => {
+    member.findUnique.mockResolvedValue(officer({ forcePasswordChange: true }));
+    await failFiveTimes(OFFICER_EMAIL);
+    advance(30_000);
+    expect((await changeAttempt("right")).status).toBe(200);
+    expect(rows.has(loginAccountKey(OFFICER_EMAIL))).toBe(false);
+    expect(member.update).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: "officer-1" },
+      data: expect.objectContaining({ passwordHash: "new-hash", forcePasswordChange: false }),
+    }));
+    await failFiveTimes(OFFICER_EMAIL);
+    expect(rows.get(loginAccountKey(OFFICER_EMAIL))?.failureCount).toBe(5);
+  });
+
+  it("leaves other accounts' counts alone", async () => {
+    await failFiveTimes(UNKNOWN_EMAIL);
+    expect((await changeAttempt("right")).status).toBe(200);
+    await expectThrottled(attempt(UNKNOWN_EMAIL, "wrong"));
+  });
+
+  it("shares and clears the fallback budget when the throttle store is down", async () => {
+    (mockPrisma.$transaction as ReturnType<typeof vi.fn>).mockImplementation(
+      async (operation: unknown[] | ((tx: unknown) => unknown)) => {
+        if (Array.isArray(operation)) return Promise.all(operation);
+        throw new Error("throttle store down");
+      },
+    );
+
+    for (let i = 0; i < LOGIN_THROTTLE_DEGRADED_FREE_FAILURES; i += 1) {
+      expect((await changeAttempt()).status).toBe(400);
+    }
+    await expectThrottled(attempt(OFFICER_EMAIL, "right"));
+    expect((await changeAttempt("right")).status).toBe(429);
+    expect(member.update).not.toHaveBeenCalled();
+
+    advance(30_000);
+    expect((await changeAttempt("right")).status).toBe(200);
+    await expect(attempt(OFFICER_EMAIL, "wrong")).resolves.toBeNull();
+    expect(rows.size).toBe(0);
+  });
+
+  it("does not spend a password attempt before session and input validation", async () => {
+    mockAuth.mockResolvedValue(null);
+    expect((await changeAttempt()).status).toBe(401);
+    mockAuth.mockResolvedValue({ user: { id: "officer-1" } });
+    vi.mocked(requireActiveSessionUser).mockResolvedValue(
+      NextResponse.json({ error: "Forbidden" }, { status: 403 }),
+    );
+    expect((await changeAttempt()).status).toBe(403);
+    vi.mocked(requireActiveSessionUser).mockResolvedValue(null);
+    expect((await changePassword(new Request("http://localhost/api/auth/change-password", {
+      method: "POST",
+      body: JSON.stringify({ currentPassword: "wrong", newPassword: "short" }),
+    }) as NextRequest)).status).toBe(400);
+    expect(rows.size).toBe(0);
+    expect(mockBcryptCompare).not.toHaveBeenCalled();
   });
 });

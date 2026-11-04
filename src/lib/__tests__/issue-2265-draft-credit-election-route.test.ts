@@ -87,6 +87,17 @@ vi.mock("@/lib/booking-ledger-credit-sync", () => ({
   syncBookingLedgerCredits: vi.fn().mockResolvedValue(undefined),
 }));
 
+// #4660: the $0 settle's confirmation lines and R01 are proved against
+// PostgreSQL (credit-covered-confirmation.realdb.test.ts); here only the call.
+const confirmationLedger = vi.hoisted(() => ({
+  postStoredBookingConfirmationLedgerLines: vi.fn<(...args: unknown[]) => Promise<void>>(async () => {}),
+}));
+vi.mock("@/lib/booking-ledger-confirmation-sync", () => confirmationLedger);
+vi.mock("@/lib/member-money/doors", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/member-money/doors")),
+  resolveBookingMoneyPostingContext: vi.fn(async () => ({ journal: "context" })),
+}));
+
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     booking: { findUnique: vi.fn() },
@@ -413,6 +424,9 @@ describe("#2265 the pay step honours the election made when the draft was saved"
     expect(live.status).toBe("PAID");
     expect(appliedToBooking()).toBe(PRICE_CENTS);
     expect(memberBalance()).toBe(10_000);
+    // #4660: the PAID is the booking's confirmation, posted once from the route's context.
+    expect(confirmationLedger.postStoredBookingConfirmationLedgerLines).toHaveBeenCalledTimes(1);
+    expect(confirmationLedger.postStoredBookingConfirmationLedgerLines.mock.calls[0]![2]).toEqual({ journal: "context" });
 
     // $0 SUCCEEDED payment mirroring the credit, on the transaction handle.
     expect(tx.payment.upsert).toHaveBeenCalledWith(

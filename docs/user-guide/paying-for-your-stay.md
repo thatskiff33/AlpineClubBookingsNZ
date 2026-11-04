@@ -21,6 +21,8 @@ Payment** card (`/bookings/<id>`). The payment states are in
 
 ## Step-by-step
 
+![My Bookings showing stay statuses and amounts before opening a booking to pay](../images/public/member-bookings.png)
+
 ### Pay by card (Stripe)
 
 1. On the **Pay** step of the wizard, or the **Complete Payment** card on your
