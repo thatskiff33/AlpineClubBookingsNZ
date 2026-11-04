@@ -263,6 +263,12 @@ export async function POST(
       );
     }
 
+    // #4738: re-assert $0 under the lock. An edit after the outer check could
+    // have priced the draft; this route must never write PAID for a priced one.
+    if (freshBooking.finalPriceCents !== 0) {
+      throw new Error("Use the payment flow to complete non-zero bookings");
+    }
+
     const capacity = await checkCapacityForGuestRanges(
       bookingLodgeId,
       freshBooking.checkIn,

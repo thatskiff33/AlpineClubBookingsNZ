@@ -5,7 +5,7 @@ that same transaction, under the locks it already holds, with the journal
 context resolved before the transaction opens (INV-LOCK-004).
 
 file: src/app/api/bookings/[id]/confirm-draft/route.ts
-lines: 412
+lines: 418
 reason: the confirmation post sits beside the PAID write it confirms, inside
   the transaction that holds the draft's locks, and moving it out would
   separate the ledger post from the status change it belongs to.

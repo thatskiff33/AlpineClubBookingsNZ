@@ -307,6 +307,30 @@ describe("#2266 door 1 — confirm-draft refuses an unresolved review", () => {
   });
 });
 
+describe("#4738 — confirm-draft re-asserts $0 under the lock", () => {
+  it("refuses a draft priced between the outer check and the lock, writing and posting nothing", async () => {
+    const draft = flaggedDraft({ adminReviewStatus: "APPROVED" });
+    mocks.prismaBookingFindUnique.mockResolvedValue(draft);
+    // The member added a priced guest after the outer $0 check passed.
+    mocks.txBookingFindUnique.mockResolvedValue({
+      ...draft,
+      finalPriceCents: 12_000,
+      guests: [{ id: "g1", nights: [] }, { id: "g2", nights: [] }],
+    });
+
+    await expect(
+      confirmDraftRoute(confirmRequest(), {
+        params: Promise.resolve({ id: BOOKING_ID }),
+      }),
+    ).rejects.toThrow(/payment flow/i);
+
+    expect(mocks.prismaTransaction).toHaveBeenCalledTimes(1);
+    expect(mocks.txPaymentCreate).not.toHaveBeenCalled();
+    expect(mocks.txBookingUpdate).not.toHaveBeenCalled();
+    expect(confirmationLedger.postStoredBookingConfirmationLedgerLines).not.toHaveBeenCalled();
+  });
+});
+
 /**
  * #3603: the confirm route hands the hosting evaluator an actor role, and "ADMIN"
  * there is officer authority. It must be the role derived from access roles and
