@@ -736,7 +736,12 @@ export const AUDIT_CENSUS_TOTALS = {
   // 532 -> 533 (#4686): `xero.operation.late_partial_not_recorded`, the one row a Xero operation's
   // part-success writes when its attempt lost its claim and its Xero object was not recorded, an
   // awaited `createAuditLog` with a literal `xero` category. RE-MEASURED with `pnpm run audit:census`.
-  writeSites: 533,
+  // 533 -> 534 (triyder/AlpineClubBookingsNZ#97): `LODGE_CENTRAL_LINK_UPDATED` from the new
+  // `/api/admin/alpine-server/lodge-links` PUT, the setup page's link dialog. The
+  // Central lodge card's own site is unchanged; both pass their audit writer to the
+  // shared `saveCentralLodgeLinks`. Categorised `admin` at the site, like the card's.
+  // RE-MEASURED with `pnpm run audit:census`.
+  writeSites: 534,
   /**
    * Of those, sites whose event object carries no `category` key.
    *
@@ -959,7 +964,8 @@ export const AUDIT_CENSUS_TOTALS = {
     // 168 -> 169 (#4655): the late organiser adjustment note's row, above.
     // 169 -> 170 (#4680): the organiser adjustment run's stand-down row, above.
     // 170 -> 171 (#4686): the lost-claim part-success's row, above.
-    createAuditLog: { total: 171, uncategorised: 0 },
+    // 171 -> 172 (triyder/AlpineClubBookingsNZ#97): the link dialog's row, above.
+    createAuditLog: { total: 172, uncategorised: 0 },
     // 8 -> 9 (#2581 child 2 review): `recordAgeUpParentEmailHandoffAudit`
     // moved off its hand-built `prisma.auditLog.create`, the last one in `src/`.
     // Same row, same dedupe keys (`action` + `subjectMemberId` + `outcome`) —
@@ -1331,9 +1337,11 @@ export const AUDIT_CENSUS_TOTALS = {
     // booking officer's contact - and no member.
     // 110/107 -> 108 (hand sync of `main` f1ecdb5ff into epic #3789): #3819's
     // one and #52's two removals are disjoint. RE-MEASURED on the composed tree.
-    admin: 111, // 108/109 -> 110 (central-server lane, 20 Oct 2026): #62 and #58 are disjoint from upstream's. RE-MEASURED.
+    admin: 112, // 108/109 -> 110 (central-server lane, 20 Oct 2026): #62 and #58 are disjoint from upstream's. RE-MEASURED.
     // 110 -> 111 (#4457): `privacy.retention.settings_updated`. A deliberate +1 to the
     // support:view-only population: it records only retention settings, never a member.
+    // 111 -> 112 (triyder/AlpineClubBookingsNZ#97): the setup page's link dialog row,
+    // `LODGE_CENTRAL_LINK_UPDATED`, the Central lodge card's twin. RE-MEASURED.
     // 16 -> 19 (#2581 child 2): `member.password-reset-sent` and
     // `member.setup-invite-sent` (decision 3 — the affected domain is the
     // CREDENTIAL, not the mailing), plus the `member.bulk-set-role` branch

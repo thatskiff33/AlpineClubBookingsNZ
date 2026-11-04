@@ -482,7 +482,9 @@ this page already learnt about once, from the rotation runbook two sections up.
   vouch for the new one, unless the process dies between the stamp and the
   re-read. Verify-reset drops it whenever any Stripe credential is rewritten.
 - `servernz-push-registration` — the shared-post sync registered this install
-  for pushes and stored the secret the central server issued.
+  for pushes and stored the secret the central server issued. A registration
+  made straight after an administrator saves the API key names that
+  administrator instead.
 - `xero-token-refresh` — the Xero access token was near expiry, so the API
   client spent the refresh token under the shared refresh lease and stored the
   rotated pair (#3454). Connecting, disconnecting and the verify-reset each have

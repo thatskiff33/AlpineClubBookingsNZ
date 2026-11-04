@@ -1498,16 +1498,17 @@ const ROW_LOCK_SITE_INVENTORY: Record<string, number> = {
   // advisory lock; disjoint from booking/money writers. See
   // docs/CONCURRENCY_AND_LOCKING.md → "Member photo writer".
   "src/app/api/members/[id]/photo/route.ts": 2,
-  // Central lodge link writer (#62, #4262 review): the PUT takes the settings
-  // row (`lockServerNzSettings`, counted under servernz-settings.ts) and
-  // re-checks the owned list under it, then locks its own `Lodge` row
-  // (`SELECT 1 … FOR UPDATE`, the one statement counted here), re-reads the
-  // link it replaces, writes the new one and its `LODGE_CENTRAL_LINK_UPDATED`
-  // audit row on the same client. Settings -> Lodge is the Other lodges
-  // download's own order, so no inversion. No advisory key; disjoint from
-  // booking/money writers. See docs/CONCURRENCY_AND_LOCKING.md ->
-  // "Central lodge link writer".
-  "src/app/api/admin/lodges/[id]/central-lodge/route.ts": 1,
+  // Central lodge link writer (#62, #4262 review): `saveCentralLodgeLinks`,
+  // shared by the lodge's Central lodge card PUT and the setup page's link
+  // step, takes the settings row (`lockServerNzSettings`, counted under
+  // servernz-settings.ts) and re-checks the owned list under it, then locks
+  // each `Lodge` row it saves in id order (`SELECT 1 … FOR UPDATE`, the one
+  // statement counted here), re-reads the link it replaces, writes the new one
+  // and its `LODGE_CENTRAL_LINK_UPDATED` audit row on the same client.
+  // Settings -> Lodge is the Other lodges download's own order, so no
+  // inversion. No advisory key; disjoint from booking/money writers. See
+  // docs/CONCURRENCY_AND_LOCKING.md -> "Central lodge link writer".
+  "src/lib/central-lodge-link.ts": 1,
   // Alpine Central Server connection/recorder (#4366, #4436): `lockServerNzSettings`
   // locks the singleton settings row (`SELECT 1 … FOR UPDATE`) so
   // `recordServerVersionIfCurrent` re-reads the connection (address and API-key

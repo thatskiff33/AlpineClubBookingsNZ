@@ -1,5 +1,8 @@
 x-app-environment: &app-environment
   TZ: Pacific/Auckland
+  # The Alpine Central Server this deployment pairs with, offered on the setup
+  # page while no address is saved (#81). Empty = nothing offered.
+  SERVERNZ_DEFAULT_BASE_URL: ${SERVERNZ_DEFAULT_BASE_URL:-}
   # How long the Next.js server holds an idle keep-alive connection open, in ms
   # (#3293). It MUST outlive Caddy's upstream connection pool, which
   # `deploy/caddy/tacbookings-active.caddy` and `Caddyfile.staging` set to 30s.

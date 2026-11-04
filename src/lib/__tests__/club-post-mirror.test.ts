@@ -65,6 +65,15 @@ const mocks = vi.hoisted(() => ({
   loggerWarn: vi.fn(),
   loggerError: vi.fn(),
   checkServerVersion: vi.fn(),
+  FakeNotConfigured: class FakeNotConfigured extends Error {},
+  FakeApiError: class FakeApiError extends Error {
+    status: number;
+    constructor(status: number) {
+      super(`refused ${status}`);
+      this.status = status;
+      this.name = "ServerNzApiError";
+    }
+  },
 }));
 
 // #49: the version check runs before the comms claim. Matching by default so
@@ -105,6 +114,8 @@ vi.mock("@/lib/prisma", () => ({
 
 vi.mock("@/lib/servernz-api", () => ({
   ServerNzVersionMismatchError: mocks.FakeVersionError,
+  ServerNzApiError: mocks.FakeApiError,
+  ServerNzNotConfiguredError: mocks.FakeNotConfigured,
   pullSharedPostSync: mocks.pullSharedPostSync,
   fetchSharedPostImage: mocks.fetchSharedPostImage,
   registerPushTarget: mocks.registerPushTarget,
@@ -137,7 +148,7 @@ vi.mock("@/lib/post-image-storage", () => ({
 }));
 
 import { STALE_SYNC_CLAIM_MS, runMirrorSync } from "@/lib/club-post-mirror";
-import { ensurePushRegistration } from "@/lib/servernz-push-registration";
+import { ensurePushRegistration, registerAfterKeySave } from "@/lib/servernz-push-registration";
 
 const NOW = new Date("2026-07-01T00:00:00.000Z");
 const SERVER_IMAGE = "c".repeat(32);
@@ -1029,7 +1040,8 @@ describe("ensurePushRegistration stores the secret only for the connection it re
 
   it("stores nothing, says why, and lets the pass go on when the connection changed in flight", async () => {
     mocks.answerWriter.mockRejectedValue(new mocks.FakeConnectionChangedError());
-    await expect(ensurePushRegistration()).resolves.toBeUndefined();
+    // `failed`: the next pass registers on the connection now stored.
+    await expect(ensurePushRegistration()).resolves.toBe("failed");
     expect(mocks.setIntegrationCredential).not.toHaveBeenCalled();
     expect(mocks.invalidateProviderCredentialCache).toHaveBeenCalledWith("servernz");
     expect(mocks.loggerWarn).toHaveBeenCalledWith(expect.stringMatching(/connection changed while this install registered/));
@@ -1037,9 +1049,73 @@ describe("ensurePushRegistration stores the secret only for the connection it re
 
   it("registers nothing while a secret is stored", async () => {
     mocks.getIntegrationCredentialValue.mockResolvedValue("stored-secret");
-    await ensurePushRegistration();
+    await expect(ensurePushRegistration()).resolves.toBe("already-registered");
     expect(mocks.registerPushTarget).not.toHaveBeenCalled();
     expect(mocks.answerWriter).not.toHaveBeenCalled();
+  });
+});
+
+// The setup page shows what registering this site's address came to, straight
+// after a key save (triyder/AlpineClubBookingsNZ#97).
+describe("ensurePushRegistration outcome, and registerAfterKeySave", () => {
+  const SENT_ON = { baseUrl: "https://central.test", credentialVersion: "v-1" };
+
+  beforeEach(() => {
+    mocks.getIntegrationCredentialValue.mockResolvedValue(null);
+    process.env.NEXTAUTH_URL = "https://club.example.nz";
+  });
+  afterEach(() => {
+    delete process.env.NEXTAUTH_URL;
+  });
+
+  it("stays poll-only when this site's address is not https, or not set", async () => {
+    process.env.NEXTAUTH_URL = "http://club.example.nz";
+    await expect(ensurePushRegistration()).resolves.toBe("not-https");
+    delete process.env.NEXTAUTH_URL;
+    await expect(ensurePushRegistration()).resolves.toBe("not-https");
+    expect(mocks.registerPushTarget).not.toHaveBeenCalled();
+  });
+
+  it("registers this site's origin, read through getAppBaseUrl", async () => {
+    process.env.NEXTAUTH_URL = "https://club.example.nz/some/path";
+    mocks.registerPushTarget.mockResolvedValue({ secret: "s3cret", secretVersion: 2, sentOn: SENT_ON });
+    await expect(ensurePushRegistration()).resolves.toBe("registered");
+    expect(mocks.registerPushTarget).toHaveBeenCalledWith("https://club.example.nz/api/webhooks/servernz-posts");
+    expect(mocks.answerWriter).toHaveBeenCalledWith(SENT_ON, expect.any(Function));
+  });
+
+  it("says when there is no server address to register with", async () => {
+    mocks.registerPushTarget.mockRejectedValueOnce(new mocks.FakeNotConfigured("no address"));
+    await expect(ensurePushRegistration()).resolves.toBe("no-address");
+  });
+
+  it("reports a 403 as awaiting the server's approval, and anything else as failed", async () => {
+    mocks.registerPushTarget.mockRejectedValueOnce(new mocks.FakeApiError(403));
+    await expect(ensurePushRegistration()).resolves.toBe("awaiting-approval");
+    mocks.registerPushTarget.mockRejectedValueOnce(new mocks.FakeApiError(500));
+    await expect(ensurePushRegistration()).resolves.toBe("failed");
+    mocks.registerPushTarget.mockRejectedValueOnce(new Error("network"));
+    await expect(ensurePushRegistration()).resolves.toBe("failed");
+    expect(mocks.setIntegrationCredential).not.toHaveBeenCalled();
+  });
+
+  it("still lets a version pause reach the mirror pass", async () => {
+    mocks.registerPushTarget.mockRejectedValueOnce(new mocks.FakeVersionError());
+    await expect(ensurePushRegistration()).rejects.toBeInstanceOf(mocks.FakeVersionError);
+  });
+
+  it("never throws after a key save: a version pause and any other failure are outcomes", async () => {
+    mocks.registerPushTarget.mockRejectedValueOnce(new mocks.FakeVersionError());
+    await expect(registerAfterKeySave("admin-1")).resolves.toBe("server-version-mismatch");
+    mocks.getIntegrationCredentialValue.mockRejectedValueOnce(new Error("database down"));
+    await expect(registerAfterKeySave("admin-1")).resolves.toBe("failed");
+    mocks.registerPushTarget.mockResolvedValueOnce({ secret: "s", secretVersion: 1, sentOn: SENT_ON });
+    await expect(registerAfterKeySave("admin-1")).resolves.toBe("registered");
+    // The key-save's registration stores the secret in the administrator's
+    // name, not the mirror pass's system actor (#4720 review).
+    expect(mocks.setIntegrationCredential).toHaveBeenLastCalledWith(
+      expect.objectContaining({ key: "push_secret", actor: { kind: "admin", memberId: "admin-1" } }),
+    );
   });
 });
 

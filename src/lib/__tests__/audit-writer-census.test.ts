@@ -1488,7 +1488,9 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
     // RE-MEASURED with `pnpm run audit:census`.
     // 402 -> 403 unpinned (#4686): the lost-claim part-success's row, unpinned `xero`.
     // RE-MEASURED with `pnpm run audit:census`.
-    ).toEqual({ pinned: 130, unpinned: 403 });
+    // 403 -> 404 unpinned (triyder/AlpineClubBookingsNZ#97): the link dialog's `admin`
+    // row, on a finance-gated route, so outside the lodge-gated keep: unpinned.
+    ).toEqual({ pinned: 130, unpinned: 404 });
   });
 
   it("pins which classified writers a MEMBER can now see about themselves", () => {

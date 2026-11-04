@@ -55,8 +55,15 @@ import {
 export interface UploadSummary extends OtherLodgesUploadResult {
   /** Local rows considered for upload (changed since the last upload). */
   sent: number;
+  /**
+   * Of `sent`, the rows the server accepted, which the watermark moved past.
+   * An answer that does not line up with the rows sent accepts none of them.
+   */
+  accepted: number;
   /** Nothing was sent: the central server has not yet said which lodges are ours (#69). */
   ownedUnknown?: true;
+  /** Nothing was sent: the stored owned-lodge list cannot be read until the next download. */
+  ownedUnreadable?: true;
 }
 
 const NOTHING_UPLOADED: UploadSummary = {
@@ -66,6 +73,7 @@ const NOTHING_UPLOADED: UploadSummary = {
   skipped: 0,
   results: [],
   sent: 0,
+  accepted: 0,
 };
 
 // The columns that carry a lodge's data, plus its amenity list. The list itself
@@ -112,7 +120,7 @@ export async function uploadOtherClubsToServer(): Promise<UploadSummary> {
     logger.warn(
       "The stored owned-lodge list cannot be read; uploading nothing until the next download rewrites it",
     );
-    return { ...NOTHING_UPLOADED };
+    return { ...NOTHING_UPLOADED, ownedUnreadable: true };
   }
   const since = settings.otherLodgesLastUploadAt
     ? new Date(settings.otherLodgesLastUploadAt)
@@ -228,7 +236,7 @@ export async function uploadOtherClubsToServer(): Promise<UploadSummary> {
     }
   }
 
-  return { ...result, sent: lodges.length };
+  return { ...result, sent: lodges.length, accepted: accepted.length };
 }
 
 /**
