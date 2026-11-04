@@ -57,7 +57,7 @@ import {
 import { clearStaleCreditElection } from "@/lib/booking-credit-election";
 import { resolveOrganiserBillingForNet } from "@/lib/organiser-billing";
 import { writeEditOnPayment } from "@/lib/booking-primary-invoice-claim";
-import { changeFeeGoesOnAmountOwed } from "@/lib/change-fee-owed";
+import { changeFeeGoesOnAmountOwed, recordFeeOnNewPayment } from "@/lib/change-fee-owed";
 import {
   OrganiserChildRefundRefusedError,
   planOrganiserChildModificationRefund,
@@ -391,6 +391,10 @@ export async function applyPaymentAdjustments(
     });
   }
 
+  // #4735: a card booking edited before its pay step has no row to claim; the fee opens one.
+  if (feeAddedToAmountOwed && !booking.payment) {
+    await recordFeeOnNewPayment(tx, { bookingId: booking.id, changeFeeCents });
+  }
   // #3980 (`INV-PAY-136`): the fee, and the claim on an unlinked invoice (409 if it moved).
   const settledAgainstPrimaryInvoice = await writeEditOnPayment(tx, {
     payment: booking.payment,

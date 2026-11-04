@@ -27,5 +27,6 @@ describe("the unpaid edit change-fee proof stays wired into CI (#4661)", () => {
     expect(suite).toContain("before its invoice: the fee goes on the payment once");
     expect(suite).toContain("after its invoice: the fee goes on the payment once");
     expect(suite).toContain("through the date door: the fee goes on a card booking's payment once");
+    expect(suite).toContain("before a card booking's pay step: the edit opens a payment carrying the fee");
   });
 });

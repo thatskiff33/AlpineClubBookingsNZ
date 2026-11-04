@@ -19,6 +19,10 @@
  *  3. The date door (`modifyBookingDates`) on a card booking still to be paid:
  *     the fee is recorded the same way, and the open intent at the bare price
  *     is superseded, since it no longer pays what the booking owes.
+ *  4. #4735, a card booking edited before its pay step opened: with no payment
+ *     row, the edit opens one carrying only the fee, and the pay page that
+ *     opens next asks for price plus fee once, keeping the fee as it attaches
+ *     its intent.
  *
  * Ordinary Vitest runs skip the whole file. It reuses the guarded, disposable
  * loopback PostgreSQL `concurrency-lock-races.realdb.test.ts` provisions
@@ -63,6 +67,8 @@ let clubTimeServer: typeof import("@/lib/club-time/server");
 let confirmationSync: typeof import("@/lib/booking-ledger-confirmation-sync");
 let paidEffects: typeof import("@/lib/xero-inbound/invoice-paid-effects");
 let editSettlement: typeof import("@/lib/xero-booking-edit-settlement");
+let amountOwed: typeof import("@/lib/booking-amount-owed");
+let cardIntentAttach: typeof import("@/lib/card-intent-attach");
 const pendingXeroWork: Promise<unknown>[] = [];
 const queuedForThisBooking: Array<Parameters<typeof import("@/lib/xero-booking-edit-settlement").queueXeroBookingEditSettlement>[0]> = [];
 let restoreXeroQueue: (() => void) | undefined;
@@ -103,8 +109,9 @@ async function clean(): Promise<void> {
   await prisma.hostingCoverageReevaluation.deleteMany({ where: { memberId: OWNER_ID } });
   await prisma.hostingCoverageIncident.deleteMany({ where: { bookingId: BOOKING_ID } });
   await prisma.bedAllocation.deleteMany({ where: { bookingId: BOOKING_ID } });
-  await prisma.paymentTransaction.deleteMany({ where: { paymentId: PAYMENT_ID } });
-  await prisma.payment.deleteMany({ where: { id: PAYMENT_ID } });
+  // #4735: the row an edit opens has its own id.
+  await prisma.paymentTransaction.deleteMany({ where: { payment: { bookingId: BOOKING_ID } } });
+  await prisma.payment.deleteMany({ where: { bookingId: BOOKING_ID } });
   await prisma.bookingGuestNight.deleteMany({ where: { bookingGuest: { bookingId: BOOKING_ID } } });
   await prisma.bookingGuest.deleteMany({ where: { bookingId: BOOKING_ID } });
   await prisma.booking.deleteMany({ where: { id: BOOKING_ID } });
@@ -225,6 +232,8 @@ async function theEdit() {
     confirmationSync = await import("@/lib/booking-ledger-confirmation-sync");
     paidEffects = await import("@/lib/xero-inbound/invoice-paid-effects");
     editSettlement = await import("@/lib/xero-booking-edit-settlement");
+    amountOwed = await import("@/lib/booking-amount-owed");
+    cardIntentAttach = await import("@/lib/card-intent-attach");
     const queue = editSettlement.queueXeroBookingEditSettlement;
     // Pass-through: the harness imports every suite into one process.
     const spy = vi.spyOn(editSettlement, "queueXeroBookingEditSettlement").mockImplementation((input) => {
@@ -397,5 +406,50 @@ async function theEdit() {
         select: { paymentTransactionId: true, amountCents: true },
       }),
     ).toEqual([{ paymentTransactionId: PRIMARY_ID, amountCents: PRICE_CENTS }]);
+  }, 60_000);
+
+  it("before a card booking's pay step: the edit opens a payment carrying the fee, and the pay page collects it once", async () => {
+    // A card booking awaiting payment as `booking-create.ts` leaves it: no payment row until an intent is asked for.
+    await prisma.paymentTransaction.deleteMany({ where: { paymentId: PAYMENT_ID } });
+    await prisma.payment.delete({ where: { id: PAYMENT_ID } });
+    await prisma.booking.update({ where: { id: BOOKING_ID }, data: { status: "PAYMENT_PENDING" } });
+
+    await moveStay();
+
+    const edit = await theEdit();
+    expect(edit.changeFeeCents).toBe(FEE_CENTS);
+    expect(edit.newData).toMatchObject({ changeFeeAddedToAmountOwed: true });
+    const opened = await prisma.payment.findUniqueOrThrow({
+      where: { bookingId: BOOKING_ID },
+      select: { amountCents: true, changeFeeCents: true, source: true, status: true, stripePaymentIntentId: true },
+    });
+    expect(opened).toEqual({ amountCents: 0, changeFeeCents: FEE_CENTS, source: "STRIPE", status: "PENDING", stripePaymentIntentId: null });
+
+    // The pay page, as `create-payment-intent` does it: the one read, then the attach under lock(1).
+    const readOwed = async () =>
+      (await amountOwed.readBookingAmountOwed(
+        await prisma.booking.findUniqueOrThrow({
+          where: { id: BOOKING_ID },
+          select: { id: true, finalPriceCents: true, payment: { select: { changeFeeCents: true } } },
+        }),
+      )).owedCents;
+    const owedCents = await readOwed();
+    expect(owedCents).toBe(PRICE_CENTS + FEE_CENTS);
+    await expect(
+      cardIntentAttach.attachMintedCardIntent({
+        bookingId: BOOKING_ID,
+        paymentIntentId: "pi_race4735",
+        payableStatuses: ["PAYMENT_PENDING"],
+        paymentCreate: { amountCents: owedCents, creditAppliedCents: 0, stripeCustomerId: "cus_race4735" },
+        paymentUpdate: { amountCents: owedCents, creditAppliedCents: 0, stripeCustomerId: "cus_race4735" },
+        transaction: { amountCents: owedCents, reason: "primary_booking_payment", stripeCustomerId: "cus_race4735" },
+      }),
+    ).resolves.toBe("attached");
+
+    // The fee stays recorded once: a second opening of the page asks the same.
+    expect(
+      await prisma.payment.findUniqueOrThrow({ where: { bookingId: BOOKING_ID }, select: { amountCents: true, changeFeeCents: true } }),
+    ).toEqual({ amountCents: PRICE_CENTS + FEE_CENTS, changeFeeCents: FEE_CENTS });
+    expect(await readOwed()).toBe(PRICE_CENTS + FEE_CENTS);
   }, 60_000);
 });

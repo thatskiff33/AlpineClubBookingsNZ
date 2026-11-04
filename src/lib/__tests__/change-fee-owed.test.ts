@@ -27,8 +27,20 @@ describe("changeFeeGoesOnAmountOwed", () => {
     }
   });
 
-  it("is false with no payment row to record it on", () => {
-    expect(changeFeeGoesOnAmountOwed({ status: "PAYMENT_PENDING", organiserSettled: false, payment: null })).toBe(false);
+  it("is true for a card booking still at its pay step with no payment row yet (#4735)", () => {
+    for (const status of ["PENDING", "PAYMENT_PENDING"]) {
+      expect(changeFeeGoesOnAmountOwed({ status, organiserSettled: false, payment: null }), status).toBe(true);
+    }
+  });
+
+  it("is false with no payment row for any other status, an unpaid whole-lodge approval included", () => {
+    for (const status of ["CONFIRMED", "PAID", "COMPLETED", "CANCELLED", "DRAFT", "AWAITING_REVIEW"]) {
+      expect(changeFeeGoesOnAmountOwed({ status, organiserSettled: false, payment: null }), status).toBe(false);
+    }
+  });
+
+  it("is false for an organiser-settled joiner with no payment row", () => {
+    expect(changeFeeGoesOnAmountOwed({ status: "PAYMENT_PENDING", organiserSettled: true, payment: null })).toBe(false);
   });
 
   it("is false for a joiner the group organiser settles", () => {
