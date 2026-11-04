@@ -60,7 +60,7 @@ import {
 } from "@/lib/payment-recovery-contract";
 import { clubFormatValues } from "@/lib/club-format-server";
 import { resolveBookingMoneyPostingContext } from "@/lib/member-money/doors";
-import { chargeCurrencyRefusal, stripeChargeCurrency, UNSUPPORTED_CHARGE_CURRENCY_MEMBER_MESSAGE as CURRENCY_REFUSED, UnsupportedChargeCurrencyError } from "@/lib/stripe-charge-currency";
+import { BELOW_STRIPE_MINIMUM_MEMBER_BODY, BelowStripeMinimumError, chargeCurrencyRefusal, isLocalChargeRefusal, localChargeRefusal, stripeChargeCurrency, UNSUPPORTED_CHARGE_CURRENCY_MEMBER_MESSAGE as CURRENCY_REFUSED } from "@/lib/stripe-charge-currency";
 import { intentCurrencyDiffers } from "@/lib/additional-intent-currency";
 import { staleIntentAction } from "@/lib/stale-intent-action";
 
@@ -742,6 +742,8 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    // #99: below the card minimum, refused before the customer lookup or any mint.
+    if (localChargeRefusal(format, effectivePriceCents) instanceof BelowStripeMinimumError) return NextResponse.json({ ...BELOW_STRIPE_MINIMUM_MEMBER_BODY, creditElection }, { status: 409 });
     // Find or create Stripe customer
     // #3369: the Stripe customer is keyed on WHO OWNS the booking. A school's
     // is keyed on its organisation, which is what stops a second customer being
@@ -899,8 +901,8 @@ export async function POST(request: NextRequest) {
     // The $0 settlement lost its status-guarded claim: a concurrent cancel got
     // there first and the whole transaction rolled back (including the credit
     // application), so nothing was settled and nothing was spent.
-    // #3567: refused locally for the currency; nothing was charged.
-    if (error instanceof UnsupportedChargeCurrencyError) return NextResponse.json({ error: CURRENCY_REFUSED }, { status: 409 });
+    // #3567 (currency) and #99 (minimum): refused locally; nothing was charged.
+    if (isLocalChargeRefusal(error)) return NextResponse.json(error instanceof BelowStripeMinimumError ? BELOW_STRIPE_MINIMUM_MEMBER_BODY : { error: CURRENCY_REFUSED }, { status: 409 });
     if (error instanceof CreditCoveredSettlementConflictError) {
       return NextResponse.json(
         {

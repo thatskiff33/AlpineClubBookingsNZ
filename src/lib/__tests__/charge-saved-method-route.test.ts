@@ -247,7 +247,7 @@ import {
   HostingCoverageParticipantRetryError,
 } from "@/lib/adult-member-hosting-queue-participants";
 import { PAYMENT_RECEIVED_STATUS_UNCONFIRMED_BODY } from "@/lib/payment-recovery-contract";
-import { UNSUPPORTED_CHARGE_CURRENCY_ADMIN_MESSAGE } from "@/lib/stripe-charge-currency";
+import { BELOW_STRIPE_MINIMUM_ADMIN_BODY, BelowStripeMinimumError, UNSUPPORTED_CHARGE_CURRENCY_ADMIN_MESSAGE } from "@/lib/stripe-charge-currency";
 
 /** #3267: the id the attempt row is minted with; the Stripe key is built from it. */
 const ATTEMPT_ROW_ID = "txn_attempt_1";
@@ -503,6 +503,43 @@ describe("POST /api/payments/charge-saved-method", () => {
     expect(claimCall()).toBeUndefined();
     expect(mockPaymentTransactionCreate).not.toHaveBeenCalled();
     expect(mockChargePaymentMethod).not.toHaveBeenCalled();
+  });
+
+  describe("#101: an amount below the card minimum", () => {
+    it.each([1, 49])("refuses %i under the locks before any claim, attempt row, Stripe call or alert", async (cents) => {
+      primeBooking(makeBooking({ finalPriceCents: cents }));
+
+      const response = await POST(makeRequest());
+
+      expect(response.status).toBe(409);
+      await expect(response.json()).resolves.toEqual(BELOW_STRIPE_MINIMUM_ADMIN_BODY);
+      expect(mockExecuteRaw).toHaveBeenCalled(); // decided on the post-lock figure
+      expect(claimCall()).toBeUndefined();
+      expect(mockPaymentTransactionCreate).not.toHaveBeenCalled();
+      expect(mockChargePaymentMethod).not.toHaveBeenCalled();
+      expect(mockSendAdminPaymentFailureAlert).not.toHaveBeenCalled();
+    });
+
+    it("charges exactly the minimum as before", async () => {
+      primeBooking(makeBooking({ finalPriceCents: 50 }));
+      mockChargePaymentMethod.mockResolvedValue({ id: "pi_min_1", status: "succeeded", amount: 50 });
+
+      const response = await POST(makeRequest());
+
+      expect(response.status).toBe(200);
+      expect(mockChargePaymentMethod).toHaveBeenCalledWith(expect.objectContaining({ amountCents: 50 }));
+    });
+
+    it("maps a minimum refusal thrown by the charge to the same 409, releases the claim and sends no alert", async () => {
+      mockChargePaymentMethod.mockRejectedValue(new BelowStripeMinimumError("Amount is below the Stripe minimum"));
+
+      const response = await POST(makeRequest());
+
+      expect(response.status).toBe(409);
+      await expect(response.json()).resolves.toEqual(BELOW_STRIPE_MINIMUM_ADMIN_BODY);
+      expect(releaseCall()).toBeDefined();
+      expect(mockSendAdminPaymentFailureAlert).not.toHaveBeenCalled();
+    });
   });
 
   describe("the claim (#3267, the shape the cron and confirm-pending-guests already take)", () => {
