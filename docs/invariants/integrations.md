@@ -482,10 +482,10 @@ re-run, never offered for retry, never re-minted beside (owner decision,
 
 - **One predicate.** `isResolvedInXero` (`xero-operation-resolution.ts`); a
   `where` clause spells it on `manuallyResolvedAt`. The mark leaves the row
-  `FAILED`/`PARTIAL`, so status alone reads it as live; a late success lands
+  `FAILED`/`PARTIAL`, so status alone reads it live; a late success lands
   and alerts, except where `INV-INT-029` says.
 - **Retries refuse it.** `getXeroOperationRetryMeta` refuses first; retry and
-  requeue answer 409; the drain closes that queued row `CANCELLED`.
+  requeue answer 409; the drain cancels that queued row.
 - **Enqueues and the outbox respect it.** A resolved refund note covers its
   recorded amount, so later refunds still get notes, unless voided or deleted
   (#4250) or a refund request's (#4265); one sum
@@ -501,10 +501,10 @@ re-run, never offered for retry, never re-minted beside (owner decision,
 - **Applied-credit operations are retry-only.** The route refuses them, and a
   pre-release mark on one is void on the retry path.
 - **Done is not absent.** `getBlockingOperation` returns `retryable`, `blocked`
-  or `resolved`; a resolved row never outranks a live one and is never dropped.
-  `buildRetryAction` takes only `retryable`. Where a document, or a note's
-  allocation, is unrecorded, the repair tool reports
-  `RESOLVED_IN_XERO_BY_OFFICER` (info, no action), as does the booking page.
+  or `resolved`; a resolved row never outranks a live one, nor is dropped.
+  `buildRetryAction` takes only `retryable`. The repair tool and booking page
+  report `RESOLVED_IN_XERO_BY_OFFICER` (info, no action) where no document is
+  recorded; the tool also for a note allocated by hand.
 
 Pinned by `xero-operation-retry.test.ts`, `xero-operation-queue.test.ts`,
 `xero-operation-routes.test.ts`, `xero-operations-panel-failed-default.test.tsx`,

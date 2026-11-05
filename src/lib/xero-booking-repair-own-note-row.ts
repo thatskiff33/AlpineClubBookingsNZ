@@ -36,6 +36,8 @@ const WORDING: Record<
     unretryable: string;
     /** The document a resolved-by-officer finding names (`addResolvedInXeroFinding`). */
     resolvedDocument: string;
+    /** The note's own row resolved in Xero (#4763): the note is on record, its allocation finished by hand. */
+    resolvedOwnRow: string;
   }
 > = {
   modification: {
@@ -49,6 +51,8 @@ const WORDING: Record<
     unretryable:
       "A modification credit note's allocation did not complete and its operation cannot be retried here - allocate it by hand in Xero.",
     resolvedDocument: "credit-note allocation",
+    resolvedOwnRow:
+      "An officer marked this modification credit note's operation resolved in Xero: they finished its allocation by hand there, so it is treated as done and is never re-run. Any allocation of this note not linked here was made in Xero; if the resolve was a mistake, allocate the rest by hand in Xero.",
   },
   clearing: {
     failed:
@@ -63,6 +67,8 @@ const WORDING: Record<
     unretryable:
       "The invoice-clearing credit note's allocations did not all complete and its operation cannot be retried here - allocate the invoices left by hand in Xero so the cancelled unpaid booking's invoice closes.",
     resolvedDocument: "invoice-clearing allocation",
+    resolvedOwnRow:
+      "An officer marked this invoice-clearing credit note's operation resolved in Xero: they finished its allocations by hand there, so it is treated as done and is never re-run. Any allocation of this note not linked here was made in Xero; if the resolve was a mistake, allocate the invoices left by hand in Xero so the cancelled unpaid booking's invoice closes.",
   },
 };
 
@@ -104,16 +110,26 @@ export function addBlockedNoteAllocationFinding(
 
 /**
  * A note allocation an officer resolved in Xero (`INV-INT-025`): done, never
- * retried or queued beside, but reported - info, no action. One wording for an
- * allocation row the arm answers and the note's own resolved row (#4763).
+ * retried or queued beside, but reported - info, no action. For an allocation
+ * row the arm answers, or, given `ownRow`, the note's own row (#4763): the note
+ * is on record there, so its summary says the allocation was finished by hand
+ * rather than that the club holds no allocation - part of a clearing note's
+ * may be linked.
  */
 export function addResolvedNoteAllocationFinding(
   findings: MutableFinding[],
   arm: Pick<NoteAllocationArm, "kind" | "details">,
   operation: XeroOperationRecord,
-  extraDetails: Record<string, unknown> = {}
+  ownRow?: { creditNoteId: string }
 ) {
-  addResolvedInXeroFinding(findings, operation, WORDING[arm.kind].resolvedDocument, { ...arm.details, ...extraDetails });
+  const wording = WORDING[arm.kind];
+  addResolvedInXeroFinding(
+    findings,
+    operation,
+    wording.resolvedDocument,
+    { ...arm.details, ...ownRow },
+    ownRow ? wording.resolvedOwnRow : undefined
+  );
 }
 
 /**
@@ -269,8 +285,10 @@ export function dispatchOwnNoteRow(
       // offered, and a resolved row offers none, so none of them can change
       // the answer. Nor does a row beside it replace the report - that would
       // hide the officer's resolve: a separate live or failed allocation row
-      // is reported alongside it (Xero review F8), report-only, since a retry
-      // of it could allocate the note a second time.
+      // is reported alongside it (Xero review F8), report-only. A retry of one
+      // of this note's rows could allocate the note a second time, since the
+      // officer's hand allocation has no link here; any other row is reported
+      // the same way, left to a person.
       addResolvedNoteAllocationFinding(findings, arm, row.operation, { creditNoteId: arm.creditNoteId });
       const blocking = getBlockingOperation(operations, "ALLOCATION", "ALLOCATE");
       if (blocking && blocking.kind !== "resolved") addBlockedNoteAllocationFinding(findings, arm, blocking.operation);

@@ -1472,9 +1472,11 @@ done; otherwise the report asks you to allocate the planned invoices it
 lists as left by hand, and offers nothing.
 Since #4763, a note whose own operation was marked resolved in Xero is
 listed as an information-only "resolved in Xero by an officer" finding
-naming the note, with nothing offered; any other allocation operation still
-failed or pending beside it is reported too, never retried, because the note
-was allocated by hand.
+naming the note, with nothing offered. Any other allocation operation still
+failed or pending beside it is reported too, and not retried from this
+report: a retry of one of that note's own could allocate it a second time,
+since the allocation you made by hand is not linked in the app. Check such
+an operation in Xero, then retry or resolve it on the Xero operations panel.
 Since #1491, `LATE_CAPTURE_AFTER_CANCELLATION` is also never auto-applied:
 it now fires only when a cancelled booking retains captured value with NO
 recorded cancellation-refund decision (no cancellation credit, no

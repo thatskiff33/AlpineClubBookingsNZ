@@ -4456,7 +4456,8 @@ describe("runBookingXeroRepair", () => {
       expect(bookingReport.findings.filter((finding) => finding.code === "RESOLVED_IN_XERO_BY_OFFICER")).toEqual([
         expect.objectContaining({
           severity: "info",
-          summary: expect.stringContaining("credit-note allocation operation resolved in Xero"),
+          summary:
+            "An officer marked this modification credit note's operation resolved in Xero: they finished its allocation by hand there, so it is treated as done and is never re-run. Any allocation of this note not linked here was made in Xero; if the resolve was a mistake, allocate the rest by hand in Xero.",
           safeToAutoApply: false,
           details: expect.objectContaining({
             modificationId: "mod_3",
@@ -4569,7 +4570,16 @@ describe("runBookingXeroRepair", () => {
       ]);
 
       expect(actionsOf(bookingReport)).toEqual([]);
-      expect(bookingReport.findings.map((finding) => finding.code)).toContain("RESOLVED_IN_XERO_BY_OFFICER");
+      // An allocation row keeps the general wording; only the note's own row
+      // gets the finished-by-hand one (#4763).
+      expect(bookingReport.findings).toContainEqual(
+        expect.objectContaining({
+          code: "RESOLVED_IN_XERO_BY_OFFICER",
+          summary:
+            "An officer marked this booking's Xero credit-note allocation operation resolved in Xero, so it is treated as done and is never re-run. The club's records hold no Xero credit-note allocation for it; if the resolve was a mistake, raise it by hand in Xero.",
+          details: expect.objectContaining({ modificationId: "mod_3", operationId: "operation_resolved_allocation" }),
+        })
+      );
       expect(bookingReport.findings.map((finding) => finding.code)).not.toContain("MISSING_CREDIT_NOTE_ALLOCATION");
     });
 
@@ -9668,7 +9678,8 @@ describe("resolved in Xero is done on every repair retry arm (#3635)", () => {
       expect.objectContaining({
         code: "RESOLVED_IN_XERO_BY_OFFICER",
         severity: "info",
-        summary: expect.stringContaining("invoice-clearing allocation operation resolved in Xero"),
+        summary:
+          "An officer marked this invoice-clearing credit note's operation resolved in Xero: they finished its allocations by hand there, so it is treated as done and is never re-run. Any allocation of this note not linked here was made in Xero; if the resolve was a mistake, allocate the invoices left by hand in Xero so the cancelled unpaid booking's invoice closes.",
         safeToAutoApply: false,
         actions: [],
         details: expect.objectContaining({ creditNoteId: "cn_clear", operationId: "operation_resolved_partial_note" }),
