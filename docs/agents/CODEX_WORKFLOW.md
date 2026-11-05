@@ -229,7 +229,7 @@ work.
 ### 5. Split fast local evidence from full CI gates
 
 Before push: Prisma generation, lint, typecheck (with
-`NODE_OPTIONS=--max-old-space-size=8192`, as CI sets it), focused
+`NODE_OPTIONS=--max-old-space-size=12288`, as CI sets it), focused
 touched/adjacent tests, a mutation check per new guard, docs linkcheck for doc
 changes and knip for file/export changes. Then push a draft PR. GitHub Actions owns the full `pnpm test`, build,
 migration-drift, E2E, static/secret/dependency, and container gates. Run a full
