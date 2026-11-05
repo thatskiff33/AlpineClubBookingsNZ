@@ -1448,6 +1448,11 @@ also manual-review (not auto-queued) when the payment captured money and no
 stored evidence records the policy-limited settlement — the report tells you
 to size the credit note (or confirm the note's total) by hand from the
 cancellation-policy history before acting; `--apply` will not touch these.
+Since #4757, an edit's note whose own operation went PARTIAL (the note made,
+its allocation refused) reports `MISSING_CREDIT_NOTE_ALLOCATION` with that
+operation's retry, never a fresh allocation; while a retry is running on it,
+or where the retry is refused, the report says the allocation is blocked and
+offers nothing, and you check again later or allocate it by hand in Xero.
 Since #1491, `LATE_CAPTURE_AFTER_CANCELLATION` is also never auto-applied:
 it now fires only when a cancelled booking retains captured value with NO
 recorded cancellation-refund decision (no cancellation credit, no

@@ -1019,7 +1019,11 @@ note.
    repair reads its plan's allocation links under the claim, allocates the
    invoices still unlinked, and closes its row SUCCEEDED with the allocation
    fault cleared; before #4259 it had no claim and left a repaired row PARTIAL,
-   which one retry now closes with no Xero call. A throw gives the row back
+   which one retry now closes with no Xero call. The booking repair tool reads
+   that row first for an edit's note as for a clearing note
+   (`readOwnNoteRowState`, #4757): it offers the PARTIAL row's retry, reports a
+   RUNNING one, or one the retry refuses, with no action, and never queues a
+   fresh allocation beside either. A throw gives the row back
    PARTIAL with its payload and the run's error, guarded on the claim, never
    FAILED, whose error payload would replace what the repair reads.
 
