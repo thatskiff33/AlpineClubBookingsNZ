@@ -1802,6 +1802,45 @@ describe("runBookingXeroRepair", () => {
       );
     });
 
+    // #4767: the generic retry of the note's own attempts linked every planned
+    // invoice without the note's role. The note is whole, as its retry reads
+    // it (`linkAllocatesClearingTarget`), so neither its retry nor a fresh
+    // allocation is offered: the retry would send the same key to Xero again.
+    it("MUTATION: offers nothing once role-less links of the note's own attempts cover every planned invoice (#4767)", async () => {
+      const retried = (id: string, invoiceId: string, amountCents: number) =>
+        allocationRow(id, invoiceId, amountCents, {
+          status: "SUCCEEDED",
+          xeroObjectId: `alloc_${invoiceId}`,
+          createdAt: new Date("2026-05-04T00:00:00Z"),
+        });
+      const bookingReport = await classifyClearing(
+        [allocationLink("inv_primary", 6000, "CREDIT_NOTE_ALLOCATION"), allocationLink("inv_supp", 4000, "CREDIT_NOTE_ALLOCATION")],
+        [
+          allocationRow("operation_own_primary", "inv_primary", 6000),
+          retried("operation_own_primary_retried", "inv_primary", 6000),
+          allocationRow("operation_own_supp", "inv_supp", 4000),
+          retried("operation_own_supp_retried", "inv_supp", 4000),
+        ]
+      );
+
+      expect(actionsOf(bookingReport)).toEqual([]);
+      expect(bookingReport.findings.map((finding) => finding.code)).not.toContain("MISSING_CREDIT_NOTE_ALLOCATION");
+    });
+
+    it.each([
+      ["another credit note", { creditNoteId: "cn_other" }],
+      ["another amount", { amountCents: 4001 }],
+      ["no recorded amount", { amountCents: undefined }],
+    ])("MUTATION: still retries the note's row when the role-less link for its last invoice names %s (#4767)", async (_label, metadata) => {
+      const link = allocationLink("inv_supp", 4000, "CREDIT_NOTE_ALLOCATION");
+      expectNoteRetried(
+        await classifyClearing(
+          [allocationLink("inv_primary", 6000), { ...link, metadata: { ...(link.metadata as Record<string, unknown>), ...metadata } }],
+          []
+        )
+      );
+    });
+
     it("MUTATION: retries an evidence-sized allocation row, not the note's row, while nothing is allocated", async () => {
       expectOtherRowRetried(await classifyClearing([], [allocationRow("operation_other_allocation", "inv_primary", 10000)]));
     });
@@ -1903,6 +1942,10 @@ describe("runBookingXeroRepair", () => {
       ["nothing linked", [], [PRIMARY_LEFT, SUPP_LEFT]],
       ["the primary invoice linked", [allocationLink("inv_primary", 6000)], [SUPP_LEFT]],
       ["the supplementary invoice linked", [allocationLink("inv_supp", 4000)], [PRIMARY_LEFT]],
+      // #4767: read as the note's retry reads it - a role-less link counts for
+      // the same note, invoice and amount only.
+      ["the primary invoice linked without the note's role", [allocationLink("inv_primary", 6000, "CREDIT_NOTE_ALLOCATION")], [SUPP_LEFT]],
+      ["a role-less link at another amount", [allocationLink("inv_primary", 5999, "CREDIT_NOTE_ALLOCATION")], [PRIMARY_LEFT, SUPP_LEFT]],
     ])(
       "MUTATION: reports an unretryable partial clearing note blocked and queues nothing, with %s (#4762)",
       async (_label, links, unallocatedInvoices) => {

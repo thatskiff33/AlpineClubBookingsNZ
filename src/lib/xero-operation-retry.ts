@@ -78,6 +78,7 @@ export const MODIFICATION_NOTE_REPAIR_CLAIM_LOST_MESSAGE = "The credit note allo
 import { isRetryOfVoidedRefundRequestNote, mayRecordAsCanonicalRefundNote, VOIDED_REQUEST_NOTE_RETRY_REASON } from "@/lib/xero-refund-note-status";
 import type { CashRefundMethod } from "@/lib/xero-refund-method";
 import {
+  NOTE_ALLOCATION_ROLE,
   readBookingClearingNoteRetryInput,
   recordedClearingTargets,
   RedactedClearingPlanError,
@@ -1032,7 +1033,7 @@ function parseModificationCreditNoteRepairInput(
   return {
     creditNoteId: operation.xeroObjectId,
     targets,
-    allocationRole: "MODIFICATION_CREDIT_NOTE_ALLOCATION",
+    allocationRole: NOTE_ALLOCATION_ROLE,
   };
 }
 
@@ -1603,6 +1604,7 @@ export async function retryXeroSyncOperation(
       const [repair, local] = [modificationCreditNoteRepair, { localModel: operation.localModel, localId: operation.localId }];
       return runWithClaimedOriginal(operation.id, async (claim) => {
         // #4259: claimed like the sibling repairs, reading the plan's links under the claim; it closes its row (it stayed PARTIAL).
+        // #4767: a target the generic ALLOCATE retry linked without the note's role (same note, invoice and amount) counts as done - read only, never re-sent.
         const targets = await unallocatedClearingTargets({ ...repair, ...local });
         const lostMessage = (allocated: number) => (allocated > 0 ? MODIFICATION_NOTE_REPAIR_CLAIM_LOST_MESSAGE : REPAIR_RESET_NOT_CLOSED_MESSAGE);
         for (const [allocated, target] of targets.entries()) {
