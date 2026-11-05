@@ -16,6 +16,9 @@
 
 # testing
 /coverage
+/.vitest/
+/.stryker-tmp/
+/reports/mutation/
 /playwright-report/
 /test-results/
 /e2e/.auth/

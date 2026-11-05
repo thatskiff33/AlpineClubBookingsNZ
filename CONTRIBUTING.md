@@ -397,6 +397,14 @@ the owner's checklist for rebuilding it.
 | `Image security gate (Trivy CRITICAL)` | applied | `ci.yml` → `docker-image-security` | CRITICAL image vulnerabilities. HIGH stays advisory (#2686). On a pull request it builds and scans only when dependencies, `patches/`, the Dockerfile, a compose file, `.dockerignore`, `.trivyignore` or the workflow changed; every push scans (#4425, owner decision) |
 | `Dependency audit` | applied | `ci.yml` → `dependency-audit` | `pnpm audit --audit-level=high`. Split out of `verify` (#2946), where a failing audit skipped lint, the ratchet, `prisma generate`, typecheck, knip, `pnpm test` and the build on every branch (#2945) |
 
+**Two workflows report on the money modules and are not required** (#4459):
+`Money coverage ratchet` (`money-coverage.yml`, every pull request) goes red when
+money-module coverage falls below `scripts/ci/money-test-baseline.json`, and
+`Stryker on the money modules` (`money-mutation.yml`) runs nightly and on demand,
+never on a pull request. Neither belongs in `verify` or in branch protection;
+[`TESTING.md`](docs/TESTING.md#coverage-and-mutation-testing-of-the-money-modules)
+says how each reports.
+
 **A required job never skips by a job-level `if:` or `needs:`** (#4397, #4425):
 GitHub counts a skipped required check as passing. A job that may skip work
 decides in a step (`scripts/ci/change-scope.mjs`, `e2e-scope.mjs`) and skips its
