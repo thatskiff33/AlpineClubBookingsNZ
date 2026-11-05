@@ -1,4 +1,5 @@
 import * as Sentry from "@sentry/nextjs";
+import { isBreachedPasswordRangeUrl } from "@/lib/breached-password-endpoint";
 import {
   redactSensitiveJson,
   redactSensitiveQueryParams,
@@ -20,6 +21,13 @@ Sentry.init({
 
   // OBS-10: Performance tracing
   tracesSampleRate: process.env.NODE_ENV === "production" ? 0.2 : 1.0,
+
+  // #4610: the breached-password range request gets no span, no breadcrumb and
+  // no `sentry-trace`/`baggage` headers. Same name as the default NodeFetch
+  // integration, so this instance replaces it rather than adding a second.
+  integrations: [
+    Sentry.nativeNodeFetchIntegration({ ignoreOutgoingRequests: isBreachedPasswordRangeUrl }),
+  ],
 
   // Scrub sensitive data from Sentry payloads
   beforeSend(event) {

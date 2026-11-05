@@ -1,7 +1,11 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import * as Sentry from "@sentry/nextjs";
 import { describe, expect, it } from "vitest";
-import { BREACHED_PASSWORD_RANGE_URL } from "@/lib/breached-password-endpoint";
+import {
+  BREACHED_PASSWORD_RANGE_URL,
+  isBreachedPasswordRangeUrl,
+} from "@/lib/breached-password-endpoint";
 import {
   dropBreachedPasswordRangeBreadcrumb,
   scrubBreachedPasswordRange,
@@ -151,6 +155,28 @@ describe("Sentry never carries the breached-password range prefix (#4610)", () =
     expect(JSON.stringify({ ...scrubbed, self: undefined })).not.toContain(PREFIX);
     expect(scrubbed.message).toBe("unrelated");
     expect(() => scrubBreachedPasswordRangeDeep(Object.freeze({ list: Object.freeze([RANGE]) }))).not.toThrow();
+  });
+
+  it("ignores the range request in the Node fetch integration, and no other request", () => {
+    // The URL the integration passes: `getAbsoluteUrl(request.origin, request.path)`.
+    expect(isBreachedPasswordRangeUrl(RANGE)).toBe(true);
+    expect(isBreachedPasswordRangeUrl(BREACHED_PASSWORD_RANGE_URL)).toBe(true);
+    expect(isBreachedPasswordRangeUrl(`https://${host}/`)).toBe(false);
+    expect(isBreachedPasswordRangeUrl(`http://${host}/range/${PREFIX}`)).toBe(false);
+    expect(isBreachedPasswordRangeUrl(`https://example.test/range/${PREFIX}`)).toBe(false);
+    expect(isBreachedPasswordRangeUrl(`https://example.test/?next=${RANGE}`)).toBe(false);
+    expect(isBreachedPasswordRangeUrl("https://api.stripe.com/v1/charges")).toBe(false);
+  });
+
+  it("replaces the server init's default NodeFetch integration with the ignoring one", () => {
+    const source = readFileSync(path.join(ROOT, "sentry.server.config.ts"), "utf8");
+    expect(source).toMatch(
+      /integrations: \[\n\s*Sentry\.nativeNodeFetchIntegration\(\{ ignoreOutgoingRequests: isBreachedPasswordRangeUrl \}\),\n\s*\],/,
+    );
+    // One instance only: a second would be dropped or override this one.
+    expect(source.match(/nativeNodeFetchIntegration\(/g)).toHaveLength(1);
+    // The integration's name, so core's filterDuplicates swaps out the default.
+    expect(Sentry.nativeNodeFetchIntegration().name).toBe("NodeFetch");
   });
 
   it.each(INIT_FILES)("%s runs the breadcrumb and event filters", (file) => {

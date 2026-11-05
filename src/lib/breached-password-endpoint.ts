@@ -5,3 +5,12 @@
 
 /** The public range endpoint. The 5-character prefix is appended to it. */
 export const BREACHED_PASSWORD_RANGE_URL = "https://api.pwnedpasswords.com/range/";
+
+/**
+ * True for a request to the range endpoint. The server init's Node fetch
+ * integration takes it as `ignoreOutgoingRequests`, so that request gets no
+ * span, no breadcrumb and no `sentry-trace`/`baggage` headers.
+ */
+export function isBreachedPasswordRangeUrl(url: string): boolean {
+  return url.startsWith(BREACHED_PASSWORD_RANGE_URL);
+}

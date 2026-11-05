@@ -263,11 +263,15 @@ only its first five hex characters to
 method), with the `Add-Padding` header so every answer is a similar size. The
 service returns every listed hash suffix sharing that prefix, and the match is
 made on the server. No password, full hash, email or member id is sent, and no
-log line carries the prefix. Sentry instruments outgoing fetches, so the shared
-privacy options every `Sentry.init` spreads (`src/lib/sentry-privacy-options.ts`,
-keyed on the endpoint constant) drop any span naming the range URL, scrub the
-prefix from any span that still reaches `beforeSendSpan`, drop the fetch
-breadcrumb, and scrub it from every error event. Deployments that restrict outbound traffic must
+log line carries the prefix. Sentry instruments outgoing fetches, so the server
+init configures its Node fetch integration to ignore the range request
+(`ignoreOutgoingRequests`): it gets no span, no breadcrumb, and no
+`sentry-trace` or `baggage` header sent to the service. As a backstop, the
+shared privacy options every `Sentry.init` spreads
+(`src/lib/sentry-privacy-options.ts`, keyed on the endpoint constant) drop any
+span naming the range URL, scrub the prefix from any span that still reaches
+`beforeSendSpan`, drop the fetch breadcrumb, and scrub it from every error
+event. Deployments that restrict outbound traffic must
 allow HTTPS to `api.pwnedpasswords.com`
 ([`CONFIGURATION.md`](../CONFIGURATION.md#outbound-network-access)).
 
