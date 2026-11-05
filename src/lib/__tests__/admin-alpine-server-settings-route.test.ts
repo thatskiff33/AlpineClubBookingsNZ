@@ -6,9 +6,10 @@ const mocks = vi.hoisted(() => ({
   createAuditLog: vi.fn(),
   failDelete: false,
   failPushDelete: false,
+  failUrlDelete: false,
   failReset: false,
   locked: false,
-  stored: { baseUrl: "https://old.example.invalid", otherLodgesEnabled: true, apiKey: "old-key", pushSecret: "old-push-secret", serverVersion: "2.1", otherLodgesOwnedNames: ["Old lodge"] } as Record<string, unknown>,
+  stored: { baseUrl: "https://old.example.invalid", otherLodgesEnabled: true, apiKey: "old-key", pushSecret: "old-push-secret", pushRegisteredUrl: "https://club.example.invalid/api/webhooks/servernz-posts", serverVersion: "2.1", otherLodgesOwnedNames: ["Old lodge"] } as Record<string, unknown>,
   transaction: vi.fn(),
   invalidateProviderCredentialCache: vi.fn(),
   removedBy: undefined as unknown,
@@ -25,7 +26,7 @@ vi.mock("@/lib/prisma", () => ({ prisma: { $transaction: mocks.transaction } }))
 vi.mock("@/lib/integration-credentials", async (importOriginal) => ({
   ...((await importOriginal()) as typeof import("@/lib/integration-credentials")),
   deleteIntegrationCredentialInTransaction: async ({ tx, actor, provider, key }: {
-    tx: { removeKey: () => void; removePushSecret: () => void }; actor: unknown; provider: string; key: string;
+    tx: { removeKey: () => void; removePushSecret: () => void; removePushRegisteredUrl: () => void }; actor: unknown; provider: string; key: string;
   }) => {
     if (provider !== "servernz") throw new Error(`unexpected provider ${provider}`);
     if (key === "api_key") {
@@ -37,6 +38,7 @@ vi.mock("@/lib/integration-credentials", async (importOriginal) => ({
     } else if (key === "push_registered_url") {
       // The address the push secret was issued for, removed with it.
       mocks.pushRegisteredUrlRemovedBy = actor;
+      tx.removePushRegisteredUrl();
     } else {
       throw new Error(`unexpected key ${key}`);
     }
@@ -57,12 +59,13 @@ beforeEach(() => {
   mocks.requireActiveSessionUser.mockResolvedValue(null);
   mocks.failDelete = false;
   mocks.failPushDelete = false;
+  mocks.failUrlDelete = false;
   mocks.failReset = false;
   mocks.locked = false;
   mocks.removedBy = undefined;
   mocks.pushSecretRemovedBy = undefined;
   mocks.pushRegisteredUrlRemovedBy = undefined;
-  mocks.stored = { baseUrl: "https://old.example.invalid", otherLodgesEnabled: true, apiKey: "old-key", pushSecret: "old-push-secret", serverVersion: "2.1", otherLodgesOwnedNames: ["Old lodge"] };
+  mocks.stored = { baseUrl: "https://old.example.invalid", otherLodgesEnabled: true, apiKey: "old-key", pushSecret: "old-push-secret", pushRegisteredUrl: "https://club.example.invalid/api/webhooks/servernz-posts", serverVersion: "2.1", otherLodgesOwnedNames: ["Old lodge"] };
   mocks.transaction.mockImplementation(async (work) => {
     const staged = structuredClone(mocks.stored);
     const tx = {
@@ -86,6 +89,10 @@ beforeEach(() => {
       removePushSecret: () => {
         if (mocks.failPushDelete) throw new Error("push secret delete failed");
         staged.pushSecret = null;
+      },
+      removePushRegisteredUrl: () => {
+        if (mocks.failUrlDelete) throw new Error("push address delete failed");
+        staged.pushRegisteredUrl = null;
       },
     };
     const result = await work(tx);
@@ -112,6 +119,7 @@ describe("central-server settings replacement (#4436)", () => {
     expect((await POST(request({ baseUrl: "https://new.example.invalid" }))).status).toBe(200);
     expect(mocks.transaction).toHaveBeenCalledTimes(1);
     expect(mocks.stored.pushSecret).toBeNull();
+    expect(mocks.stored.pushRegisteredUrl).toBeNull();
     // Every sync position goes with it (the shared-feed and Other lodges cursors).
     expect(mocks.stored).toMatchObject({
       otherLodgesCursor: null, otherLodgesLastUploadAt: null, otherLodgesLastDownloadAt: null,
@@ -121,7 +129,7 @@ describe("central-server settings replacement (#4436)", () => {
     expect(mocks.pushRegisteredUrlRemovedBy).toEqual({ kind: "admin", memberId: "admin-4436" });
   });
 
-  it.each(["failDelete", "failPushDelete", "failReset"] as const)("rolls the address and key back when %s", async (failure) => {
+  it.each(["failDelete", "failPushDelete", "failUrlDelete", "failReset"] as const)("rolls the address and key back when %s", async (failure) => {
     const before = structuredClone(mocks.stored);
     mocks[failure] = true;
     await expect(POST(request({ baseUrl: "https://new.example.invalid" }))).rejects.toThrow(/failed/);
@@ -133,6 +141,7 @@ describe("central-server settings replacement (#4436)", () => {
     expect((await POST(request(body))).status).toBe(200);
     expect(mocks.stored.apiKey).toBe("old-key");
     expect(mocks.stored.pushSecret).toBe("old-push-secret");
+    expect(mocks.stored.pushRegisteredUrl).toBe("https://club.example.invalid/api/webhooks/servernz-posts");
     expect(mocks.stored.serverVersion).toBe("2.1");
     expect(mocks.stored.otherLodgesOwnedNames).toEqual(["Old lodge"]);
   });

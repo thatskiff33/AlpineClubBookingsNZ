@@ -403,7 +403,7 @@ providers, and fell four behind as the rest landed. Anything that turns on
   URL, opt-in flag, sync cursors, and the owned-lodge list) live in
   `ServerNzSettings`. Replacing the key keeps the address and flag but resets
   the connection's answers (owned list, version, every sync cursor) and
-  removes `push_secret` in the same transaction; moving the address does the
+  removes `push_secret` and `push_registered_url` in the same transaction; moving the address does the
   same and removes the key too (#4436, #4470). What the key authorises leaving the club is every column
   of the club's OWN `OtherLodge` rows plus their amenity lists (#50, #52):
   since the fourteen detail columns were added, that includes a site URL, a

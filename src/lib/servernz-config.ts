@@ -73,6 +73,20 @@ export const SERVERNZ_CREDENTIAL_KEYS = {
 } as const;
 
 /**
+ * What one push registration stores: the secret the server issued and the
+ * callback address it was issued for. `ensurePushRegistration` writes every
+ * field in one fenced write and `clearServerNzPushSecret` removes every key,
+ * both from this one map, so a fact added here is written and cleared alike.
+ */
+export const SERVERNZ_PUSH_REGISTRATION_KEYS = {
+  secret: SERVERNZ_CREDENTIAL_KEYS.pushSecret,
+  callbackUrl: SERVERNZ_CREDENTIAL_KEYS.pushRegisteredUrl,
+} as const;
+
+/** One registration's values; a field missing from a write does not compile. */
+export type ServerNzPushRegistration = Record<keyof typeof SERVERNZ_PUSH_REGISTRATION_KEYS, string>;
+
+/**
  * The write-capturable ServerNZ credential keys (setup form + API allowlist).
  * Typed as exactly the API key (#4436): the credentials route saves that key
  * through `setServerNzApiKey`'s connection fence, so a second writable key
@@ -238,7 +252,7 @@ export async function clearServerNzPushSecret(
   tx: ServerNzConnectionTx,
   request?: CredentialRequestContext,
 ): Promise<void> {
-  for (const key of [SERVERNZ_CREDENTIAL_KEYS.pushSecret, SERVERNZ_CREDENTIAL_KEYS.pushRegisteredUrl]) {
+  for (const key of Object.values(SERVERNZ_PUSH_REGISTRATION_KEYS)) {
     await deleteIntegrationCredentialInTransaction({
       tx,
       provider: SERVERNZ_PROVIDER,

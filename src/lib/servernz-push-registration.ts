@@ -15,7 +15,12 @@ import {
   registerPushTarget,
 } from "@/lib/servernz-api";
 import { SERVER_VERSION_MISMATCH_CODE } from "@/lib/servernz-api-version";
-import { SERVERNZ_CREDENTIAL_KEYS, SERVERNZ_PROVIDER } from "@/lib/servernz-config";
+import {
+  SERVERNZ_CREDENTIAL_KEYS,
+  SERVERNZ_PROVIDER,
+  SERVERNZ_PUSH_REGISTRATION_KEYS,
+  type ServerNzPushRegistration,
+} from "@/lib/servernz-config";
 import {
   ServerNzConnectionChangedError,
   serverNzAnswerWriter,
@@ -102,16 +107,14 @@ export async function ensurePushRegistration(
     try {
       // The secret and the address it was issued for, in ONE fenced write, so
       // a stored secret is never paired with another registration's address.
+      const registration: ServerNzPushRegistration = { secret: result.secret, callbackUrl: callback };
       await serverNzAnswerWriter(result.sentOn)(async (tx) => {
-        for (const [key, value] of [
-          [SERVERNZ_CREDENTIAL_KEYS.pushSecret, result.secret],
-          [SERVERNZ_CREDENTIAL_KEYS.pushRegisteredUrl, callback],
-        ] as const) {
+        for (const field of Object.keys(SERVERNZ_PUSH_REGISTRATION_KEYS) as (keyof ServerNzPushRegistration)[]) {
           await setIntegrationCredentialInTransaction({
             tx,
             provider: SERVERNZ_PROVIDER,
-            key,
-            value,
+            key: SERVERNZ_PUSH_REGISTRATION_KEYS[field],
+            value: registration[field],
             actor,
             // Declared last-writer-wins, and deliberately NOT create-only (#2723).
             // `registerPushTarget` is a PUT: the central server keeps the most

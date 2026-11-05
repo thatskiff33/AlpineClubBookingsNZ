@@ -129,6 +129,10 @@ vi.mock("@/lib/servernz-config", () => ({
     pushSecret: "push_secret",
     pushRegisteredUrl: "push_registered_url",
   },
+  SERVERNZ_PUSH_REGISTRATION_KEYS: {
+    secret: "push_secret",
+    callbackUrl: "push_registered_url",
+  },
 }));
 
 vi.mock("@/lib/integration-credentials", () => ({
