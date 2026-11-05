@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import logger from "@/lib/logger";
 import { loadLoginSecuritySettings } from "@/lib/login-security-settings";
 import type { LoginSecurityPolicy } from "@/lib/password-policy";
+import { BREACHED_PASSWORD_RANGE_URL } from "@/lib/breached-password-endpoint";
 
 // Breached-password check for a CHOSEN password (#4610, INV-AUTH-005).
 //
@@ -13,14 +14,15 @@ import type { LoginSecurityPolicy } from "@/lib/password-policy";
 // five hex characters of that hash are sent, and the service answers with every
 // listed hash suffix sharing that prefix (padded with zero-count decoys). The
 // match is made locally, so neither the password, the full hash nor anything
-// naming the member leaves the server, and nothing here logs the prefix.
+// naming the member leaves the server. Nothing here logs the prefix, and the
+// shared Sentry privacy options (`sentry-privacy-options.ts`) drop or scrub any
+// span, breadcrumb or event that would carry the range URL.
 //
 // It fails open: a slow (over three seconds), unreachable or malformed answer
 // accepts the password and logs the failure without the prefix. An outage
 // elsewhere must never stop members setting a password or finishing setup.
 
-/** The public range endpoint. The 5-character prefix is appended to it. */
-export const BREACHED_PASSWORD_RANGE_URL = "https://api.pwnedpasswords.com/range/";
+export { BREACHED_PASSWORD_RANGE_URL };
 export const BREACHED_PASSWORD_PREFIX_LENGTH = 5;
 export const BREACHED_PASSWORD_TIMEOUT_MS = 3_000;
 

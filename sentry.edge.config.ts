@@ -4,7 +4,11 @@ import {
   redactSensitiveQueryParams,
   redactSensitiveText,
 } from "@/lib/redact-sensitive-json";
-import { SENTRY_PRIVACY_INIT_OPTIONS } from "@/lib/sentry-privacy-options";
+import {
+  dropBreachedPasswordRangeBreadcrumb,
+  scrubBreachedPasswordRangeDeep,
+  SENTRY_PRIVACY_INIT_OPTIONS,
+} from "@/lib/sentry-privacy-options";
 
 Sentry.init({
   // Sentry 11's dataCollection defaults collect IPs, cookies and bodies; keep v10's.
@@ -57,11 +61,14 @@ Sentry.init({
       ) as typeof event.exception.values;
     }
 
-    return event;
+    // #4610: no event carries the breached-password range prefix.
+    return scrubBreachedPasswordRangeDeep(event);
   },
 
   beforeBreadcrumb(breadcrumb) {
-    return redactSensitiveJson(breadcrumb) as typeof breadcrumb;
+    // #4610: a fetch breadcrumb to the breached-password range is dropped.
+    const kept = dropBreachedPasswordRangeBreadcrumb(breadcrumb);
+    return kept && (redactSensitiveJson(kept) as typeof breadcrumb);
   },
 
   // Filter out noisy errors. `ignoreErrors` string patterns are SUBSTRING

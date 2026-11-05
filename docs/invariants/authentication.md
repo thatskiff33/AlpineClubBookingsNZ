@@ -95,7 +95,8 @@ This file holds only the rules.
   re-checked.
 - **Only a five-character prefix of the password's SHA-1 hash leaves the
   server.** The range answer is matched locally. No password, full hash or
-  member identifier is sent, and nothing logs the prefix.
+  member identifier is sent, and no log line, Sentry span, breadcrumb or event
+  carries the prefix (`sentry-privacy-options.ts` filters on the endpoint).
 - **It fails open.** No answer within three seconds, a network error, a non-200
   or a malformed body accepts the password and logs only the failure class.
 - **The check is a club setting, on by default**
