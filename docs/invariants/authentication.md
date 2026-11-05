@@ -138,7 +138,9 @@ This file holds only the rules.
   imports, erasure, the demo seed, SQL fixtures). An exempt writer's value
   must trace to random bytes, the erased-account sentinel or an inline
   literal; a stored parameter or copied hash, to the screened or generated
-  writer its `valueFrom` names. Only the local demo seed is untraced.
+  writer its `valueFrom` names. A copy is refused if its object is changed;
+  an alias or call that changes the screened object voids a screen. Only the
+  local demo seed is untraced.
 
 ## INV-AUTH-007
 

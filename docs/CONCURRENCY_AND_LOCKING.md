@@ -268,7 +268,7 @@ under the claim, allocates the rest (each allocation's own row and link, as
 before), each only after `holdsXeroOperationClaim` reads the claim still held
 (as #4680), and completes its row SUCCEEDED onto the claim; it used to leave
 the row PARTIAL. While it holds the claim the booking repair tool reports the
-clearing note's RUNNING row and queues no allocation beside it. Its claim and completion are single-row status-guarded writes:
+note's RUNNING row - a clearing note's, or an edit's (#4757) - and queues no allocation beside it; nor does it offer a PARTIAL row's retry beside an admissible ALLOCATE row in the arm's scope that is in flight, or that is not the note's own attempt (this note, a planned invoice and amount) and is unresolved, or resolved in Xero but naming this note - that row is reported, or retried, first (#4757). Its claim and completion are single-row status-guarded writes:
 no advisory key, no booking, capacity, settlement-money or credit-ledger row
 (`INV-LOCK-001`; no key or order, `INV-LOCK-002`; no new site, `INV-LOCK-003`).
 During a blue/green overlap the old version's stale reset sends a stuck repair
