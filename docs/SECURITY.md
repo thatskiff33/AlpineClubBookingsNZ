@@ -283,6 +283,10 @@ on each replica. The routes still answer; a store failure never blocks a request
   reached, never whether the account exists.
 - **In-memory fallback counts per process.** While the store is down, each
   replica counts on its own and a restart forgets the count.
+- **During a blue/green cutover the old slot has no per-account limit.** The
+  draining release never calls it, so requests routed to the old slot are
+  counted only by the per-address limiter. Protection is complete once the old
+  slot drains.
 
 ## Dietary/allergy information (special-category data)
 
