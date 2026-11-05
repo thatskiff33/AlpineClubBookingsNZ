@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { NextResponse } from "next/server";
 import logger from "@/lib/logger";
 import { loadLoginSecuritySettings } from "@/lib/login-security-settings";
 import type { LoginSecurityPolicy } from "@/lib/password-policy";
@@ -132,9 +133,20 @@ function logUnavailable(reason: UnavailableReason, status?: number) {
   );
 }
 
-export type ChosenPasswordScreen =
-  | { ok: true }
-  | { ok: false; error: string; code: typeof BREACHED_PASSWORD_CODE };
+export type ChosenPasswordRefusal = {
+  ok: false;
+  error: string;
+  code: typeof BREACHED_PASSWORD_CODE;
+};
+export type ChosenPasswordScreen = { ok: true } | ChosenPasswordRefusal;
+
+/**
+ * The one HTTP answer to a refused chosen password: 400 with the message and
+ * `PASSWORD_BREACHED`, so every route refuses it the same way (`INV-SSOT`).
+ */
+export function breachedPasswordRefusal(screen: ChosenPasswordRefusal): NextResponse {
+  return NextResponse.json({ error: screen.error, code: screen.code }, { status: 400 });
+}
 
 /**
  * Screen a password a person has just chosen, before it is hashed and stored.
