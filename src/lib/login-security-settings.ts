@@ -56,8 +56,9 @@ export async function loadLoginSecuritySettings(): Promise<LoginSecuritySettings
  * a stray stored value is clamped into 8..720. Read by the `jwt` callback in
  * `auth.ts` on every session refresh, so a change applies to existing sessions
  * on their next refresh. One column of the one-row table. A failed read
- * throws: the refresh then fails as it does for a failed member read, which
- * neither extends nor ends a session.
+ * throws, so the refresh fails closed: the session endpoint clears the
+ * cookie, as for a failed member read, and a bare `auth()` reads no session.
+ * It never extends a session.
  */
 export async function loadClubSessionMaxAgeHours(): Promise<number> {
   const record = await prisma.loginSecuritySetting.findUnique({

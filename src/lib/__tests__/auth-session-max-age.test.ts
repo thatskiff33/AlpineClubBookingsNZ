@@ -467,7 +467,7 @@ describe("nothing in the jwt callback extends the maximum session age (#4611)", 
     expect(signedIn.sessionInvalidated).toBe(false);
   });
 
-  it("propagates a failed settings read rather than ending or extending the session", async () => {
+  it("fails the refresh closed on a failed settings read, never extending the session", async () => {
     mockLoadEffectiveModuleFlags.mockResolvedValue({ twoFactor: false });
     mockFindUnique.mockResolvedValue(memberRow("ordinary"));
     mockSettingsFindUnique.mockRejectedValue(new Error("connection reset"));

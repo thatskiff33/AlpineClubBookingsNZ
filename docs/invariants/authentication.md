@@ -149,6 +149,11 @@ This file holds only the rules.
   [`auth.ts`](../../src/lib/auth.ts), which every session read passes through.
   At the limit the callback sets `sessionInvalidated`, ending the session as a
   revoked one ends.
+- **The decision is recomputed from the sign-in stamp on every read.** The flag
+  is saved only when the browser refreshes its session through the session
+  endpoint; a bare `auth()` never writes the cookie. So raising the setting, or
+  the account becoming the kiosk, re-admits a session past the old limit that
+  was never saved as invalidated.
 - **The age is measured from `sessionIssuedAt`, never `iat`**, which every
   refresh renews. Only the callback's sign-in branch mints the stamp; no
   refresh, role change or two-factor verification moves it. The rule judges
@@ -159,8 +164,8 @@ This file holds only the rules.
   `INV-CONFIG-001`): default 168 hours, accepted 8 to 720. The save route
   refuses a value outside that range; a stored stray value is clamped on read.
   It is read on every refresh, so a change reaches existing sessions on their
-  next one, and a failed read fails the refresh rather than ending or
-  extending anything.
+  next one. A failed read fails the refresh closed: the session endpoint
+  clears the cookie, as for a failed member read; it never extends a session.
 - **The lodge kiosk account keeps its own 30 days**, which the club setting
   never shortens or lengthens, judged on the fresh member row
   (`isKioskSessionMember`).

@@ -185,6 +185,15 @@ describe("PasswordPolicyCard (#2103)", () => {
       expect(sessionMaxAgeInput().value).toBe("168");
       expect(sessionMaxAgeInput().disabled).toBe(true);
       expect(screen.getByText(/currently 7 days/i)).toBeTruthy();
+      // The bounds, default and kiosk ceiling are derived from the shared
+      // constants, never typed out (INV-SSOT).
+      const hint = document.getElementById("session-max-age-hours-hint");
+      expect(hint?.textContent).toContain(
+        "Between 8 hours and 720 hours (30 days); the default is 168 hours (7 days).",
+      );
+      expect(hint?.textContent).toContain(
+        "The lodge kiosk account keeps its own 30 days.",
+      );
     });
 
     it.each(["7", "721", "0", ""])(

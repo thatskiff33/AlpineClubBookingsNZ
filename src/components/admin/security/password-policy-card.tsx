@@ -27,6 +27,7 @@ import {
   MIN_PASSWORD_LENGTH_FLOOR,
 } from "@/lib/password-policy";
 import {
+  KIOSK_SESSION_MAX_AGE_HOURS,
   SESSION_MAX_AGE_DEFAULT_HOURS,
   SESSION_MAX_AGE_MAX_HOURS,
   SESSION_MAX_AGE_MIN_HOURS,
@@ -359,9 +360,11 @@ export function PasswordPolicyCard() {
                 Everyone must sign in again this long after they last signed
                 in, however much they use the site. Between{" "}
                 {SESSION_MAX_AGE_MIN_HOURS} hours and {SESSION_MAX_AGE_MAX_HOURS}{" "}
-                hours (30 days); the default is {SESSION_MAX_AGE_DEFAULT_HOURS}{" "}
-                hours (7 days). A change applies to people already signed in.
-                The lodge kiosk account keeps its own 30 days.
+                hours ({describeHours(SESSION_MAX_AGE_MAX_HOURS)}); the default
+                is {SESSION_MAX_AGE_DEFAULT_HOURS} hours (
+                {describeHours(SESSION_MAX_AGE_DEFAULT_HOURS)}). A change applies
+                to people already signed in. The lodge kiosk account keeps its
+                own {describeHours(KIOSK_SESSION_MAX_AGE_HOURS)}.
               </p>
               {!sessionMaxAgeValid ? (
                 <p className="text-xs text-destructive">

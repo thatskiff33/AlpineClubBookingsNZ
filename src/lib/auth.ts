@@ -638,8 +638,11 @@ export const authConfig = {
               { kioskAccount, clubSessionMaxAgeHours },
               Date.now(),
             );
+          // Debug, not info: a bare auth() never saves the flag, so a past-cap
+          // cookie is judged again, and would log again, on every read until
+          // the session endpoint re-encodes it (#4611 review, R6).
           if (pastMaxAge) {
-            logger.info(
+            logger.debug(
               { memberId: token.id, kioskAccount },
               "Ending a session that has reached its maximum age (#4611)",
             );

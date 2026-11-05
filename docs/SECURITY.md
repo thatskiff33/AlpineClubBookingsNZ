@@ -481,8 +481,8 @@ nor a refresh moves it. The JWT's own `iat` is renewed on every refresh and is
 never used. On each refresh the callback asks `isSessionPastMaxAge`
 (`src/lib/session-max-age.ts`) whether the incoming stamp is at least the limit
 old; if so it sets `sessionInvalidated`, the same flag a revoked session
-carries, and `auth()` answers no session from then on. The setting is read on
-every refresh, so a change applies to people already signed in on their next
+carries, and `auth()` answers no session. The setting is read on every
+refresh, so a change applies to people already signed in on their next
 request.
 
 **What the person sees.** The same as any ended session: the next page load
@@ -500,11 +500,22 @@ tokens from before it, or ones not minted by the app.
   release signs in again, and the lodge kiosk tablet does if it was signed in
   more than 30 days before. Plan the release accordingly.
 - **The kiosk tablet must be signed in again every 30 days**, even in daily use.
-- **The cookie is not destroyed at the limit.** The session is a signed token
-  with no server-side session store; past the limit it is refused on every
-  read, so it grants nothing, and it lapses with its idle expiry.
-- **A failed settings read fails the request** rather than ending or
-  extending a session, as a failed member read already does.
+- **The decision is recomputed on every read, not stored on the server.** The
+  session is a signed token with no server-side session store. The
+  `sessionInvalidated` flag is saved into the cookie only when the browser
+  refreshes its session through `/api/auth/session`; a bare `auth()` (a page
+  render, a route handler) never writes the cookie, so a past-limit cookie
+  replayed without reaching that endpoint is judged afresh from its sign-in
+  stamp each time. It is refused while the limit stands, but raising the
+  setting, or the account becoming the kiosk, re-admits a session past the
+  old limit that was never saved as invalidated. No server-side state is
+  kept to prevent that.
+- **The cookie is not destroyed at the limit.** While a tab keeps fetching
+  `/api/auth/session` it is re-issued, still refused; otherwise it lapses
+  after the idle window.
+- **A failed settings read fails the refresh closed.** The session endpoint
+  clears the cookie, as for a failed member read, and a bare `auth()` reads no
+  session; it never extends a session.
 - **During a blue/green cutover the old slot does not apply the cap.** The
   migration only adds the setting column, and the draining release never reads
   it; the first request the new slot serves applies it.
