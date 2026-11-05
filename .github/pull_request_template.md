@@ -16,9 +16,9 @@
      docs/agents/ISSUE_WORKFLOW.md → "Plan deviation", goes to the owner first.
      Write `None` when the PR is built to the plan; otherwise one item per
      deviation, each linking the owner's answer: the comment URL, or the
-     `#<number>` of the issue whose body records the decision. `verify` warns
-     on a missing, empty or unlinked section; it becomes a failure after the
-     rollout (#4463). -->
+     `#<number>` of the issue whose body records the decision. `verify` fails
+     on a missing, empty or unlinked section. Only dependency manifests and the
+     lockfile may change for an exemption (#4633); the author does not matter. -->
 
 -
 
