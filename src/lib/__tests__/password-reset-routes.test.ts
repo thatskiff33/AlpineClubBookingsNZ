@@ -34,8 +34,14 @@ vi.mock("@/lib/rate-limit", () => ({
   applyRateLimit: vi.fn().mockReturnValue(null),
   rateLimiters: {
     forgotPassword: { id: "forgot-password", limit: 5, windowSeconds: 3600 },
+    forgotPasswordAccount: { id: "forgot-password-account", limit: 3, windowSeconds: 3600 },
     resetPassword: { id: "reset-password", limit: 5, windowSeconds: 3600 },
   },
+}));
+
+// #4613: proven against the real limiter in account-request-limit-routes.test.ts.
+vi.mock("@/lib/account-request-limit", () => ({
+  checkAccountRequestLimit: vi.fn().mockResolvedValue({ success: true }),
 }));
 
 vi.mock("@/lib/logger", () => ({
@@ -50,7 +56,8 @@ vi.mock("bcryptjs", () => ({
 const { mockClearPasswordAttempts } = vi.hoisted(() => ({
   mockClearPasswordAttempts: vi.fn().mockResolvedValue(undefined),
 }));
-vi.mock("@/lib/login-throttle", () => ({
+vi.mock("@/lib/login-throttle", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/login-throttle")),
   clearPasswordAttempts: mockClearPasswordAttempts,
 }));
 

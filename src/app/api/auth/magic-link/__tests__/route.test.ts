@@ -9,6 +9,7 @@ const h = vi.hoisted(() => ({
   deleteMany: vi.fn(),
   create: vi.fn(),
   applyRateLimit: vi.fn(),
+  checkAccountRequestLimit: vi.fn(),
   sendMagicLinkEmail: vi.fn(),
   loadEffectiveModuleFlags: vi.fn(),
   loadLoginSecuritySettings: vi.fn(),
@@ -22,7 +23,15 @@ vi.mock("@/lib/prisma", () => ({
 }));
 vi.mock("@/lib/rate-limit", () => ({
   applyRateLimit: h.applyRateLimit,
-  rateLimiters: { magicLinkRequest: { id: "magic-link-request" } },
+  rateLimiters: {
+    magicLinkRequest: { id: "magic-link-request" },
+    magicLinkRequestAccount: { id: "magic-link-request-account" },
+  },
+}));
+// The per-account limit's own behaviour is proven against the real limiter in
+// `account-request-limit-routes.test.ts` (#4613); here it allows by default.
+vi.mock("@/lib/account-request-limit", () => ({
+  checkAccountRequestLimit: h.checkAccountRequestLimit,
 }));
 vi.mock("@/lib/email", () => ({ sendMagicLinkEmail: h.sendMagicLinkEmail }));
 vi.mock("@/lib/module-settings", () => ({
@@ -55,6 +64,7 @@ const activeVerifiedMember = {
 beforeEach(() => {
   vi.clearAllMocks();
   h.applyRateLimit.mockResolvedValue(null);
+  h.checkAccountRequestLimit.mockResolvedValue({ success: true });
   h.deleteMany.mockResolvedValue({ count: 0 });
   h.create.mockResolvedValue({ id: "token-1" });
   h.sendMagicLinkEmail.mockResolvedValue(undefined);
@@ -182,6 +192,18 @@ describe("POST /api/auth/magic-link — guards", () => {
     );
     const res = await POST(req({ email: "member@example.com" }));
     expect(res.status).toBe(429);
+    expect(h.findFirst).not.toHaveBeenCalled();
+  });
+
+  it("an account over its per-account limit gets the accepted answer, before any lookup (#4613)", async () => {
+    h.checkAccountRequestLimit.mockResolvedValue({ success: false });
+    h.findFirst.mockResolvedValue(activeVerifiedMember);
+    await expectSilentNoOp({ email: "Member@Example.com" });
+    expect(h.checkAccountRequestLimit).toHaveBeenCalledWith(
+      { id: "magic-link-request-account" },
+      "Member@Example.com",
+    );
+    expect(h.loadEffectiveModuleFlags).not.toHaveBeenCalled();
     expect(h.findFirst).not.toHaveBeenCalled();
   });
 

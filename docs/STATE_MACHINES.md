@@ -5034,6 +5034,7 @@ primitive as password reset).
 
 ```text
 member requests link (POST /api/auth/magic-link) -> ALWAYS {success:true} (enumeration-safe)
+  over the per-account request limit (#4613, INV-AUTH-005) -> silent no-op, zero email, decided before the module flag or any Member read
   module off, unknown, canLogin=false, inactive, or unverified -> silent no-op, zero email
   module on + active + verified -> old tokens deleted, one fresh token minted, link emailed (magic-link-login, sensitive-log redacted)
 click /login/magic?token=… -> signIn("magic-link") verify provider:

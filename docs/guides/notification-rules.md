@@ -64,6 +64,7 @@ the list but the selector is disabled.
 | A template shows **Locked** | Its delivery is essential and fixed | Nothing to change — it is intentionally not editable |
 | "N stale delivery rules need database cleanup" | A stored rule references a removed template | Raise it with a developer; it is a data-cleanup task, not an operator setting |
 | An email still arrives after I set *Do not email* | A different template covers that event, or the change did not save | Confirm the row saved, and check the exact template name against [Email Messages](email-messages.md) |
+| A member asked for a password reset or sign-in link and got nothing | 3 requests for that email had already been made since the hour's count began, from any internet address. A request counts even when it sends nothing, and further requests that hour are answered normally but send nothing (#4613). It is a security limit, not a delivery rule | Ask them to wait an hour and request one again. See [SECURITY.md](../SECURITY.md#per-account-email-request-limits-4613) |
 
 ## Related links
 

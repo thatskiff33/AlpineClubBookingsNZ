@@ -1028,3 +1028,4 @@ headings the index keeps verbatim.
 | `INV-AUTH-002` | Throttle decides before any Member read; one answer for every account |
 | `INV-AUTH-003` | Claimed under row lock before the compare; password or reset clears it |
 | `INV-AUTH-004` | Fixed security floor, idle-hour reset, password only, per-process fallback |
+| `INV-AUTH-005` | Reset and sign-in-link requests limited per account, answered as accepted |
