@@ -348,7 +348,29 @@ describe("deployment image contracts", () => {
       expect(scan).not.toMatch(/grep -Eq '(\^\|)?ERR /);
       expect(scan).toContain('-e NO_COLOR=1');
       expect(scan).toContain("LEAK_EXIT=2");
-      expect(scan).toContain('args=(--exit-code="${LEAK_EXIT}" --redact)');
+      // #4766: a failed run must print where the finding is, and it must not
+      // print what it is. `--verbose` prints each finding; `--redact` is what
+      // makes the value read REDACTED in that output. They sit in one
+      // array and are never separated; a run with neither flag printed only
+      // `leaks found: N` while the error text claimed more.
+      expect(directivesOnly(scan)).toContain(
+        'args=(--exit-code="${LEAK_EXIT}" --redact --verbose)',
+      );
+      // The error line states what the log really holds: rule, file, line and,
+      // for a history scan, the commit. The old text said the file, commit and
+      // rule were NOT redacted "above" when nothing was printed above.
+      expect(scan).toContain(
+        "Each finding's rule id, file, line and (for a history scan) commit are printed above",
+      );
+      expect(scan).not.toContain("the file, commit and rule id are not");
+      // `GITLEAKS_SCAN_ROOT` is the self-test's seam. A workflow that set it
+      // would point the required gate at some other directory.
+      for (const file of [
+        ".github/workflows/ci.yml",
+        ".github/workflows/gitleaks-scheduled.yml",
+      ]) {
+        expect(readRepoFile(file)).not.toContain("GITLEAKS_SCAN_ROOT");
+      }
       // The clean path is the LAST branch, reached only after the findings
       // exit, the non-zero exit and the zero-commit check have each declined
       // it. Anchored on that ordering because an early `exit 0` is precisely
@@ -385,6 +407,15 @@ describe("deployment image contracts", () => {
       expect(selftest).toContain("acb-connection-string-password");
       expect(selftest).toContain("--diff-merges=first-parent main");
       expect(selftest).toContain("git merge --no-commit side");
+      // #4766: ...and it runs the gate's OWN script over a planted finding and
+      // reads the LOG, asserting the file, rule id and commit are named and the
+      // planted value is not. Named so deleting either direction is a failure.
+      expect(selftest).toContain('GITLEAKS_SCAN_ROOT="${WORK}/merge"');
+      expect(selftest).toContain('bash "${SCRIPT_DIR}/gitleaks-scan.sh" git');
+      expect(selftest).toContain("the log names the file that holds the finding");
+      expect(selftest).toContain("the log names the rule id");
+      expect(selftest).toContain("the log names the commit");
+      expect(selftest).toContain("the planted secret value appears in the gate's log");
       // ...and it must be able to fail. `exit 1` on a non-zero failure count is
       // the only line that makes any of the above load-bearing.
       expect(selftest).toMatch(/if \[ "\$failures" -ne 0 \]; then/);
