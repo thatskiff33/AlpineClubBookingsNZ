@@ -27,6 +27,10 @@ import ts from "typescript";
 // in a block that encloses the writer and come before it, so a screen in a
 // different handler, a callback or a sibling branch never counts. The `if`
 // condition is the bare `!name.ok` or a `||` chain holding it, nothing weaker.
+// When the screened reference has a property path (`b.pw`), the screen is void
+// if, after it and before the writer, an alias of its root is written through
+// (`const al = b; al.pw = x`) or a call receives the root or a part of the path
+// above the value (`Object.assign(b, ...)`, `log(b)`) (#4746).
 //
 // Each property writer also carries the SOURCE of the value it writes
 // (`traceWrittenValue`): the expression is followed back through `const`
@@ -53,7 +57,8 @@ export type PasswordHashWriterKind = "property" | "sql";
  * holes, placeholders or bind arguments. `parameter`: a parameter of the enclosing function (or a property of
  * one), so the caller decides. `copy`: the `passwordHash` of an object built in
  * the same function by a writer that is generated or screened
- * (`copiedWriters`).
+ * (`copiedWriters`), and never written, aliased and written, or handed to a
+ * call afterwards (#4746).
  * `unknown`: anything the trace cannot follow, a typed password included.
  */
 export type PasswordHashValueSource =
@@ -289,6 +294,25 @@ function testsNotOk(condition: ts.Expression, names: ReadonlySet<string>): boole
 }
 
 /**
+ * True when, after the screen, `hashed` (a property path under a `const` or
+ * parameter) is changed through an alias of its root or by a call that receives
+ * the root (#4746): `const al = b; al.pw = x`, `Object.assign(b, ...)`, `f(b)`.
+ * `isReassigned` already covers a write through the root's own name; a path-less
+ * reference (a plain string) cannot be changed from outside.
+ */
+function changedAfterScreen(
+  hashedInput: ts.Expression,
+  hashed: Reference,
+  window: { from: number; to: number },
+): boolean {
+  if (hashed.path.length === 0) return false;
+  const access = accessPath(hashedInput);
+  const declaration = access && findDeclaration(access.root.text, access.root);
+  if (declaration?.kind !== "const" && declaration?.kind !== "parameter") return true;
+  return objectChanged(hashed.id, declarationScope(declaration), hashed.path, window, false);
+}
+
+/**
  * True when the writer is guarded: in some block enclosing it (up to its
  * function boundary and beyond, so a transaction callback inherits its
  * handler's guard), a screen binding is followed by an `if (!x.ok)` that exits,
@@ -305,10 +329,19 @@ function guardedByScreen(writer: ts.Node, hashedInput: ts.Expression | null): bo
   for (let current = writer.parent; current; current = current.parent) {
     if (!ts.isBlock(current) && !ts.isSourceFile(current)) continue;
     const bound = new Set<string>();
+    let screenedAt = Infinity;
     for (const statement of current.statements) {
       if (statement.getEnd() > position) break;
-      for (const name of screenBinding(statement, hashed)) bound.add(name);
-      if (ts.isIfStatement(statement) && exits(statement.thenStatement) && testsNotOk(statement.expression, bound)) {
+      for (const name of screenBinding(statement, hashed)) {
+        bound.add(name);
+        screenedAt = Math.min(screenedAt, statement.getEnd());
+      }
+      if (
+        ts.isIfStatement(statement) &&
+        exits(statement.thenStatement) &&
+        testsNotOk(statement.expression, bound) &&
+        !changedAfterScreen(hashedInput as ts.Expression, hashed, { from: screenedAt, to: position })
+      ) {
         return true;
       }
     }
@@ -368,7 +401,7 @@ type Declaration =
   | { kind: "const"; id: ts.Identifier; declaration: ts.VariableDeclaration }
   | { kind: "parameter"; id: ts.Identifier; scope: ts.Node }
   | { kind: "loop"; id: ts.Identifier; statement: ts.ForStatement | ts.ForInStatement | ts.ForOfStatement }
-  | { kind: "other" }
+  | { kind: "other"; id: ts.Identifier }
   | null;
 
 function findDeclaration(name: string, from: ts.Node): Declaration {
@@ -390,7 +423,8 @@ function findDeclaration(name: string, from: ts.Node): Declaration {
       }
     }
     if (ts.isCatchClause(current) && current.variableDeclaration) {
-      if (bindingIdentifier(current.variableDeclaration.name, name)) return { kind: "other" };
+      const id = bindingIdentifier(current.variableDeclaration.name, name);
+      if (id) return { kind: "other", id };
     }
     if (!ts.isBlock(current) && !ts.isSourceFile(current)) continue;
     for (const statement of current.statements) {
@@ -399,7 +433,7 @@ function findDeclaration(name: string, from: ts.Node): Declaration {
       for (const declaration of list.declarations) {
         const id = bindingIdentifier(declaration.name, name);
         if (!id) continue;
-        return (list.flags & ts.NodeFlags.Const) !== 0 ? { kind: "const", id, declaration } : { kind: "other" };
+        return (list.flags & ts.NodeFlags.Const) !== 0 ? { kind: "const", id, declaration } : { kind: "other", id };
       }
     }
   }
@@ -492,6 +526,119 @@ function writtenPath(target: ts.Expression): { root: ts.Identifier; path: string
   return accessPath(value);
 }
 
+/** The declaration node `identifier` resolves to, or null (an import or a global). */
+function declarationId(identifier: ts.Identifier): ts.Identifier | null {
+  return findDeclaration(identifier.text, identifier)?.id ?? null;
+}
+
+/** Every identifier a binding name (plain or destructuring) declares. */
+function declaredIdentifiers(name: ts.BindingName): ts.Identifier[] {
+  if (ts.isIdentifier(name)) return [name];
+  return name.elements.flatMap((element) => (ts.isOmittedExpression(element) ? [] : declaredIdentifiers(element.name)));
+}
+
+/** Array methods that add, replace or reorder the elements they are called on. */
+const ELEMENT_WRITING_METHODS = new Set(["push", "unshift", "splice", "fill", "copyWithin"]);
+
+/**
+ * True when, within `window` of `scope`, something changes the object `id`
+ * declares, or hands it to code that could (#4746). Conservative by design: any
+ * of these counts, wherever the call goes.
+ *
+ * - a write through an alias of it (`const al = id`, a destructuring of it, or
+ *   `al = id`, followed to a fixpoint): `al.k = v` or `al[i] = v`;
+ * - a call or `new` that receives it, or an alias of it, as an argument, which
+ *   covers `Object.assign(id, ...)`. `watched` is the property path the caller
+ *   reads: an argument only counts when it is a strict prefix of it, so
+ *   `hash(id.pw)` for `watched = ["pw"]` is not a hand-over but `log(id)` is;
+ * - with `direct`, also a write through `id` itself (`id.k = v`, `id[i] = v`) and
+ *   an element-writing method on it (`id.push(...)`). Without it the caller
+ *   already sees those writes (`isReassigned`).
+ *
+ * `followed` are reads the caller itself traced through, which are not uses.
+ */
+function objectChanged(
+  id: ts.Identifier,
+  scope: ts.Node,
+  watched: readonly string[],
+  window: { from: number; to: number },
+  direct: boolean,
+  followed: ReadonlySet<ts.Node> = new Set(),
+): boolean {
+  const isPrefix = (path: readonly string[], strict: boolean) =>
+    (strict ? path.length < watched.length : path.length <= watched.length) &&
+    path.every((name, i) => name === watched[i]);
+  // `id` and everything bound to it, or to a part of it on the watched path,
+  // each with the path from `id` it stands for.
+  const sources = new Map<ts.Identifier, readonly string[]>([[id, []]]);
+  const rootOf = (node: ts.Expression) => {
+    const access = accessPath(node);
+    const source = access && declarationId(access.root);
+    const base = source && sources.get(source);
+    return access && source && base ? { source, path: [...base, ...access.path] } : null;
+  };
+  const noteAlias = (names: readonly ts.Identifier[], initializer: ts.Expression): boolean => {
+    const from = rootOf(initializer);
+    // Only a copy of a part the watched path reads through can reach it.
+    if (!from || !isPrefix(from.path, true)) return false;
+    const fresh = names.filter((name) => !sources.has(name));
+    for (const name of fresh) sources.set(name, from.path);
+    return fresh.length > 0;
+  };
+  const collectAliases = (node: ts.Node): boolean => {
+    let grew = false;
+    if (ts.isVariableDeclaration(node) && node.initializer) {
+      grew = noteAlias(declaredIdentifiers(node.name), node.initializer);
+    } else if (
+      ts.isBinaryExpression(node) &&
+      node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      ts.isIdentifier(unwrapParens(node.left))
+    ) {
+      const target = declarationId(unwrapParens(node.left) as ts.Identifier);
+      grew = target !== null && noteAlias([target], node.right);
+    }
+    ts.forEachChild(node, (child) => {
+      grew = collectAliases(child) || grew;
+    });
+    return grew;
+  };
+  while (collectAliases(scope));
+  let changed = false;
+  const visit = (node: ts.Node): void => {
+    if (changed) return;
+    const start = node.getStart();
+    if (start >= window.from && start < window.to) {
+      for (const target of assignmentTargets(node)) {
+        const write = writtenPath(target);
+        const source = write && declarationId(write.root);
+        if (write && source && sources.has(source) && write.path.length > 0 && (direct || source !== id)) {
+          changed = true;
+        }
+      }
+      if (ts.isCallExpression(node) || ts.isNewExpression(node)) {
+        for (const argument of node.arguments ?? []) {
+          const passed = ts.isSpreadElement(argument) ? argument.expression : argument;
+          const received = followed.has(unwrapValue(passed)) ? null : rootOf(passed);
+          if (received && isPrefix(received.path, true)) changed = true;
+        }
+        const callee = ts.isCallExpression(node) ? node.expression : null;
+        if (
+          direct &&
+          callee &&
+          ts.isPropertyAccessExpression(callee) &&
+          ELEMENT_WRITING_METHODS.has(callee.name.text) &&
+          rootOf(callee.expression)
+        ) {
+          changed = true;
+        }
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(scope);
+  return changed;
+}
+
 /**
  * True when anything in `scope` writes `reference` or a value on its path: the
  * declaration itself (a parameter), or a property its path reads through.
@@ -502,8 +649,7 @@ function isReassigned(reference: Reference, scope: ts.Node): boolean {
     if (written) return;
     for (const target of assignmentTargets(node)) {
       const write = writtenPath(target);
-      const declaration = write && findDeclaration(write.root.text, write.root);
-      if (!write || !declaration || !("id" in declaration) || declaration.id !== reference.id) continue;
+      if (!write || declarationId(write.root) !== reference.id) continue;
       // Writing the declaration, or any property its path reads through.
       if (
         write.path.length <= reference.path.length &&
@@ -518,6 +664,13 @@ function isReassigned(reference: Reference, scope: ts.Node): boolean {
   return written;
 }
 
+/** The block (or function) a `const` or parameter is visible in. */
+function declarationScope(
+  declaration: { kind: "const"; declaration: ts.VariableDeclaration } | { kind: "parameter"; scope: ts.Node },
+): ts.Node {
+  return declaration.kind === "parameter" ? declaration.scope : declaration.declaration.parent.parent.parent;
+}
+
 /**
  * The declaration and path `node` reads, when it is an identifier or a
  * property-access chain rooted in a `const` or a parameter that nothing in its
@@ -529,8 +682,7 @@ function referenceOf(node: ts.Expression): Reference | null {
   const declaration = findDeclaration(access.root.text, access.root);
   if (declaration?.kind !== "const" && declaration?.kind !== "parameter") return null;
   const reference = { id: declaration.id, path: access.path };
-  const scope = declaration.kind === "parameter" ? declaration.scope : declaration.declaration.parent.parent.parent;
-  return isReassigned(reference, scope) ? null : reference;
+  return isReassigned(reference, declarationScope(declaration)) ? null : reference;
 }
 
 const MAX_TRACE_DEPTH = 8;
@@ -633,22 +785,38 @@ function returnedExpressions(fn: ts.Node): ts.Expression[] | null {
   return bare || returned.length === 0 ? null : returned;
 }
 
+/** The `const`s `objectLiterals` followed, and the reads of them it followed through. */
+type LiteralTrace = {
+  consts: { id: ts.Identifier; declaration: ts.VariableDeclaration }[];
+  followed: Set<ts.Node>;
+};
+
 /**
  * The object literals `node` evaluates to; with `elements`, the literals each
  * element of the array it evaluates to is built from. Followed through `const`
  * bindings, array literals, `Promise.all(...)` and `.map(callback)`; anything
  * else is null.
  */
-function objectLiterals(node: ts.Expression, elements: boolean, depth = 0): ts.ObjectLiteralExpression[] | null {
+function objectLiterals(
+  node: ts.Expression,
+  elements: boolean,
+  trace: LiteralTrace,
+  depth = 0,
+): ts.ObjectLiteralExpression[] | null {
   const value = unwrapValue(node);
   if (depth > MAX_TRACE_DEPTH) return null;
   if (ts.isIdentifier(value)) {
-    const binding = resolveBinding(value.text, value);
-    return binding?.kind === "const" ? objectLiterals(binding.initializer, elements, depth + 1) : null;
+    const declaration = findDeclaration(value.text, value);
+    if (declaration?.kind !== "const" || !ts.isIdentifier(declaration.declaration.name)) return null;
+    const { initializer } = declaration.declaration;
+    if (!initializer) return null;
+    trace.consts.push(declaration);
+    trace.followed.add(value);
+    return objectLiterals(initializer, elements, trace, depth + 1);
   }
   if (!elements) return ts.isObjectLiteralExpression(value) ? [value] : null;
   const all = (parts: readonly ts.Expression[], each: boolean) => {
-    const found = parts.map((part) => objectLiterals(part, each, depth + 1));
+    const found = parts.map((part) => objectLiterals(part, each, trace, depth + 1));
     return found.every((literals) => literals !== null) ? found.flat() : null;
   };
   if (ts.isArrayLiteralExpression(value)) return all(value.elements, false);
@@ -676,17 +844,35 @@ function copiedWriters(copy: ts.PropertyAccessExpression): ts.Node[] | null {
   if (!ts.isIdentifier(root)) return null;
   const declaration = findDeclaration(root.text, root);
   let literals: ts.ObjectLiteralExpression[] | null = null;
+  const trace: LiteralTrace = { consts: [], followed: new Set() };
+  // The object, or the loop variable, and each array it came from, with where
+  // each is built.
+  const changeWindows: { id: ts.Identifier; scope: ts.Node; from: number }[] = [];
   if (declaration?.kind === "const" && ts.isIdentifier(declaration.declaration.name)) {
-    literals = declaration.declaration.initializer ? objectLiterals(declaration.declaration.initializer, false) : null;
+    changeWindows.push({ id: declaration.id, scope: declarationScope(declaration), from: declaration.declaration.getEnd() });
+    literals = declaration.declaration.initializer
+      ? objectLiterals(declaration.declaration.initializer, false, trace)
+      : null;
   } else if (
     declaration?.kind === "loop" &&
     ts.isForOfStatement(declaration.statement) &&
     declaration.id.parent === (declaration.statement.initializer as ts.VariableDeclarationList).declarations[0] &&
     (declaration.statement.initializer.flags & ts.NodeFlags.Const) !== 0
   ) {
-    literals = objectLiterals(declaration.statement.expression, true);
+    changeWindows.push({ id: declaration.id, scope: declaration.statement, from: declaration.statement.getStart() });
+    literals = objectLiterals(declaration.statement.expression, true, trace);
   }
   if (!literals) return null;
+  for (const followed of trace.consts) {
+    changeWindows.push({ id: followed.id, scope: declarationScope({ kind: "const", declaration: followed.declaration }), from: followed.declaration.getEnd() });
+  }
+  // #4746: a write after the build (`x.k = v`, `rows[0] = v`), an alias that
+  // writes, `Object.assign(x, ...)` or any call that receives the object or the
+  // array can replace the value the literal vetted, so the copy is refused.
+  const watched = ["passwordHash"];
+  for (const { id, scope, from } of changeWindows) {
+    if (objectChanged(id, scope, watched, { from, to: Infinity }, true, trace.followed)) return null;
+  }
   const writers: ts.Node[] = [];
   for (const literal of literals) {
     let writer: ts.Node | null = null;
