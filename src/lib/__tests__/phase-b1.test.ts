@@ -405,15 +405,56 @@ describe("#24: Lodge Auth Tier-Based Restrictions", () => {
 });
 
 // ---------------------------------------------------------------------------
-// #24: Auth.ts LODGE JWT Duration
+// #24: the lodge kiosk account's 30-day session
 // ---------------------------------------------------------------------------
 
-describe("#24: LODGE JWT 30-day expiry", () => {
-  it("auth.ts contains 30 * 24 * 60 * 60 for LODGE role", async () => {
-    // Read the auth file and verify the duration
-    const fs = await import("fs");
-    const content = fs.readFileSync("src/lib/auth.ts", "utf-8");
-    expect(content).toContain("30 * 24 * 60 * 60");
+// #4612 moved the kiosk window out of a dead `token.exp` line in auth.ts into
+// session-idle-expiry.ts, applied per request by buildRequestAuthConfig. The
+// end-to-end proof (real Auth.js, real JWT, frozen clock) is
+// auth-session-idle-expiry.test.ts; this keeps #24's own check on the rule and
+// on the wiring, since `@/lib/auth` is mocked in this file.
+describe("#24: lodge kiosk account 30-day session", () => {
+  it("gives the kiosk account, and only the kiosk account, a 30-day idle window", async () => {
+    const {
+      ACCOUNT_SESSION_IDLE_SECONDS,
+      KIOSK_ACCOUNT_SESSION_IDLE_SECONDS,
+      isKioskSessionMember,
+      sessionIdleSecondsForClaims,
+    } = (await vi.importActual(
+      "@/lib/session-idle-expiry",
+    )) as typeof import("@/lib/session-idle-expiry");
+    expect(KIOSK_ACCOUNT_SESSION_IDLE_SECONDS).toBe(30 * 24 * 60 * 60);
+    expect(ACCOUNT_SESSION_IDLE_SECONDS).toBe(8 * 60 * 60);
+    expect(sessionIdleSecondsForClaims({ kioskAccount: true })).toBe(
+      KIOSK_ACCOUNT_SESSION_IDLE_SECONDS,
+    );
+    expect(sessionIdleSecondsForClaims({ kioskAccount: false })).toBe(
+      ACCOUNT_SESSION_IDLE_SECONDS,
+    );
+    const kiosk = {
+      role: "USER",
+      canLogin: true,
+      financeAccessLevel: "NONE",
+      accessRoles: [{ role: "LODGE" }],
+    };
+    expect(isKioskSessionMember(kiosk)).toBe(true);
+    expect(
+      isKioskSessionMember({
+        ...kiosk,
+        accessRoles: [{ role: "ADMIN" }, { role: "LODGE" }],
+      }),
+    ).toBe(false);
+  });
+
+  it("auth.ts stamps the kiosk claim and applies the window per request", async () => {
+    const content = await readFile("src/lib/auth.ts", "utf-8");
+    expect(content).toContain("token.kioskAccount = isKioskSessionMember(member);");
+    const buildConfig = content.slice(
+      content.indexOf("export async function buildRequestAuthConfig("),
+    );
+    expect(buildConfig).toContain("resolveRequestSessionIdleSeconds(");
+    expect(buildConfig).toContain("session: { ...authConfig.session, maxAge }");
+    expect(content).toContain("NextAuth(buildRequestAuthConfig)");
   });
 });
 
