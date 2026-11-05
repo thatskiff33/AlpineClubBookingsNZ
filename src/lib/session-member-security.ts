@@ -2,6 +2,7 @@ import { MEMBER_PRIVILEGE_CHECK_SELECT } from "@/lib/access-role-definitions";
 import { isDeletedAccountRecord } from "@/lib/deleted-account";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
+import { readTokenSessionIssuedAtMs } from "@/lib/session-max-age";
 
 /**
  * The member fields the per-request token refresh in `src/lib/auth.ts` reads,
@@ -87,17 +88,18 @@ export function isLoginRevokedSession(
 /**
  * When the session a token carries began, in epoch milliseconds: the stamped
  * `sessionIssuedAt`, else the JWT's `iat`, else now. The revocation rules below
- * compare their stored times against it.
+ * compare their stored times against it. The maximum session age (#4611) does
+ * NOT use this reader: it takes the stamp alone (`readTokenSessionIssuedAtMs`),
+ * because `iat` is renewed on every refresh and a missing stamp must end the
+ * session rather than start its clock again.
  */
 export function getTokenSessionIssuedAtMs(token: {
   sessionIssuedAt?: unknown;
   iat?: unknown;
 }): number {
-  if (
-    typeof token.sessionIssuedAt === "number" &&
-    Number.isFinite(token.sessionIssuedAt)
-  ) {
-    return token.sessionIssuedAt;
+  const stamped = readTokenSessionIssuedAtMs(token);
+  if (stamped !== null) {
+    return stamped;
   }
 
   if (typeof token.iat === "number" && Number.isFinite(token.iat)) {
