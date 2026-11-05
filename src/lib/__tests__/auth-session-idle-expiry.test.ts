@@ -110,7 +110,7 @@ vi.mock("@/lib/google-oauth", () => ({
   linkGoogleAccount: vi.fn(),
 }));
 
-import { buildRequestAuthConfig, handlers } from "@/lib/auth";
+import { authConfig, buildRequestAuthConfig, handlers } from "@/lib/auth";
 import {
   ACCOUNT_SESSION_IDLE_SECONDS,
   KIOSK_ACCOUNT_SESSION_IDLE_SECONDS,
@@ -125,12 +125,46 @@ const PAST_TOLERANCE_S = 60;
 const PLAIN_COOKIE = "authjs.session-token";
 const SECURE_COOKIE = "__Secure-authjs.session-token";
 
-function memberRow(accessRole: "LODGE" | "USER") {
+/**
+ * The accounts this suite signs in, by their stored access-role rows. Only
+ * `kiosk` is the lodge kiosk account by the app's own classification
+ * (`isLodgeKioskAccount`); the officers and the custom-role holder merely also
+ * hold the `LODGE` checkbox, which must not buy them 30 days.
+ */
+const ACCOUNT_ROWS = {
+  kiosk: [{ role: "LODGE" }],
+  ordinary: [{ role: "USER" }],
+  "admin-lodge": [{ role: "USER" }, { role: "ADMIN" }, { role: "LODGE" }],
+  "bookings-officer-lodge": [
+    { role: "USER" },
+    { role: "ADMIN_BOOKINGS" },
+    { role: "LODGE" },
+  ],
+  "custom-role-lodge": [
+    { role: "USER" },
+    {
+      role: null,
+      roleDefinitionId: "role-def-hut-warden",
+      roleDefinition: {
+        id: "role-def-hut-warden",
+        key: "hut-warden",
+        systemRole: null,
+        label: "Hut warden",
+        lodgeLevel: "EDIT",
+      },
+    },
+    { role: "LODGE" },
+  ],
+} as const;
+type Account = keyof typeof ACCOUNT_ROWS;
+
+function memberRow(account: Account) {
   return {
-    role: "MEMBER",
+    role: "USER",
     canLogin: true,
-    accessRoles: [{ role: accessRole }],
-    email: `${accessRole.toLowerCase()}@example.test`,
+    financeAccessLevel: "NONE",
+    accessRoles: ACCOUNT_ROWS[account],
+    email: `${account}@example.test`,
     deletedAt: null,
     passwordHash: "hash",
     forcePasswordChange: false,
@@ -143,17 +177,27 @@ function memberRow(accessRole: "LODGE" | "USER") {
   };
 }
 
-/** A session token as the jwt callback leaves it after a refresh. */
+/**
+ * A session token as the jwt callback leaves it after a refresh: the role
+ * claim is the account's `LODGE`-bearing rows, and `kioskAccount` is what the
+ * callback stamps — or absent, for a token minted before the claim existed.
+ */
 async function mintToken(
-  accessRole: "LODGE" | "USER",
-  cookieName = PLAIN_COOKIE,
+  account: Account,
+  {
+    cookieName = PLAIN_COOKIE,
+    kioskAccount = account === "kiosk",
+  }: { cookieName?: string; kioskAccount?: boolean | null } = {},
 ): Promise<string> {
   return encode({
     token: {
-      id: `member-${accessRole}`,
+      id: `member-${account}`,
       role: "MEMBER",
-      accessRoles: [accessRole],
+      accessRoles: ACCOUNT_ROWS[account]
+        .map((row) => row.role)
+        .filter((role) => role !== null),
       canLogin: true,
+      ...(kioskAccount === null ? {} : { kioskAccount }),
       sessionIssuedAt: Date.now(),
       sessionInvalidated: false,
     },
@@ -210,19 +254,19 @@ describe("session idle expiry, end to end through the Auth.js handler (#4612)", 
   });
 
   it.each([
-    ["the lodge kiosk account", "LODGE", 30 * DAY_S],
-    ["an ordinary account", "USER", 8 * HOUR_S],
+    ["the lodge kiosk account", "kiosk", 30 * DAY_S],
+    ["an ordinary account", "ordinary", 8 * HOUR_S],
   ] as const)(
     "re-issues %s's session for its idle window: token exp and cookie Expires agree",
-    async (_label, accessRole, idleSeconds) => {
-      mockFindUnique.mockResolvedValue(memberRow(accessRole));
+    async (_label, account, idleSeconds) => {
+      mockFindUnique.mockResolvedValue(memberRow(account));
       const nowMs = Date.now();
 
       const { body, reissuedToken, cookieExpiresMs } = await refresh(
-        await mintToken(accessRole),
+        await mintToken(account),
       );
 
-      expect(body?.user?.id).toBe(`member-${accessRole}`);
+      expect(body?.user?.id).toBe(`member-${account}`);
       const claims = await decode({
         token: reissuedToken,
         secret: TEST_SECRET,
@@ -237,13 +281,13 @@ describe("session idle expiry, end to end through the Auth.js handler (#4612)", 
   );
 
   it.each([
-    ["the lodge kiosk account", "LODGE", 30 * DAY_S],
-    ["an ordinary account", "USER", 8 * HOUR_S],
+    ["the lodge kiosk account", "kiosk", 30 * DAY_S],
+    ["an ordinary account", "ordinary", 8 * HOUR_S],
   ] as const)(
     "%s stays signed in just inside its idle window and is signed out just past it",
-    async (_label, accessRole, idleSeconds) => {
-      mockFindUnique.mockResolvedValue(memberRow(accessRole));
-      const first = await refresh(await mintToken(accessRole));
+    async (_label, account, idleSeconds) => {
+      mockFindUnique.mockResolvedValue(memberRow(account));
+      const first = await refresh(await mintToken(account));
       expect(first.body?.user).toBeDefined();
       const issuedAtMs = Date.now();
 
@@ -252,7 +296,7 @@ describe("session idle expiry, end to end through the Auth.js handler (#4612)", 
       advanceSeconds(idleSeconds - PAST_TOLERANCE_S);
       expect(Date.now() - first.cookieExpiresMs!).toBeLessThan(0);
       const stillLive = await refresh(first.reissuedToken);
-      expect(stillLive.body?.user?.id).toBe(`member-${accessRole}`);
+      expect(stillLive.body?.user?.id).toBe(`member-${account}`);
 
       // Left alone past the window since that refresh: signed out.
       vi.setSystemTime(new Date(issuedAtMs));
@@ -262,6 +306,109 @@ describe("session idle expiry, end to end through the Auth.js handler (#4612)", 
       expect(expired.body).toBeNull();
     },
   );
+
+  it.each([
+    ["a Full Admin who also holds LODGE", "admin-lodge"],
+    ["a Booking Officer who also holds LODGE", "bookings-officer-lodge"],
+    ["a custom-role holder who also holds LODGE", "custom-role-lodge"],
+  ] as const)(
+    "keeps %s on the ordinary window, refresh after refresh: holding LODGE is not being the kiosk",
+    async (_label, account) => {
+      mockFindUnique.mockResolvedValue(memberRow(account));
+      const nowMs = Date.now();
+
+      // A token minted before the kioskAccount claim existed, so the first
+      // refresh stamps it from the row and the second one reads it back.
+      const first = await refresh(
+        await mintToken(account, { kioskAccount: null }),
+      );
+      expect(first.body?.user?.id).toBe(`member-${account}`);
+      const second = await refresh(first.reissuedToken);
+      expect(second.body?.user?.id).toBe(`member-${account}`);
+
+      const claims = await decode({
+        token: second.reissuedToken,
+        secret: TEST_SECRET,
+        salt: PLAIN_COOKIE,
+      });
+      // The role claim still carries LODGE: only the classification differs.
+      expect(claims?.accessRoles).toContain("LODGE");
+      expect(claims?.kioskAccount).toBe(false);
+      expect(claims?.exp).toBe(Math.floor(nowMs / 1000) + 8 * HOUR_S);
+      expect(second.cookieExpiresMs).toBe(
+        Math.floor(nowMs / 1000) * 1000 + 8 * HOUR_S * 1000,
+      );
+    },
+  );
+
+  it("gives a token minted before the kioskAccount claim the ordinary window once, then stamps it so the kiosk gets 30 days", async () => {
+    mockFindUnique.mockResolvedValue(memberRow("kiosk"));
+    const nowMs = Date.now();
+
+    const first = await refresh(await mintToken("kiosk", { kioskAccount: null }));
+    expect(first.body?.user?.id).toBe("member-kiosk");
+    expect(first.cookieExpiresMs).toBe(
+      Math.floor(nowMs / 1000) * 1000 + 8 * HOUR_S * 1000,
+    );
+
+    const second = await refresh(first.reissuedToken);
+    expect(second.cookieExpiresMs).toBe(
+      Math.floor(nowMs / 1000) * 1000 + 30 * DAY_S * 1000,
+    );
+  });
+});
+
+describe("the jwt callback stamps kioskAccount from the member row (#4612)", () => {
+  beforeEach(() => {
+    vi.setSystemTime(frozenTestNow());
+    mockFindUnique.mockReset();
+    mockLoadEffectiveModuleFlags.mockReset();
+    mockLoadEffectiveModuleFlags.mockResolvedValue({ twoFactor: false });
+  });
+
+  async function refreshedClaims(
+    row: ReturnType<typeof memberRow> | null,
+    staleClaim: boolean,
+  ) {
+    mockFindUnique.mockResolvedValue(row);
+    return (await authConfig.callbacks.jwt({
+      // A stale claim on the incoming token must never survive the refresh.
+      token: {
+        id: "member-1",
+        role: "MEMBER",
+        forcePasswordChange: false,
+        isEmailVerified: true,
+        sessionIssuedAt: Date.now(),
+        kioskAccount: staleClaim,
+      },
+    } as never)) as Record<string, unknown>;
+  }
+
+  it.each([
+    ["the kiosk account", true, memberRow("kiosk")],
+    ["an ordinary account", false, memberRow("ordinary")],
+    ["a Full Admin with LODGE", false, memberRow("admin-lodge")],
+    ["a Booking Officer with LODGE", false, memberRow("bookings-officer-lodge")],
+    ["a custom-role holder with LODGE", false, memberRow("custom-role-lodge")],
+    [
+      "LODGE with a finance access level",
+      false,
+      { ...memberRow("kiosk"), financeAccessLevel: "VIEWER" },
+    ],
+    [
+      "the kiosk with login switched off",
+      false,
+      { ...memberRow("kiosk"), canLogin: false },
+    ],
+  ] as const)("stamps %s as kioskAccount %s", async (_label, expected, row) => {
+    expect((await refreshedClaims(row, !expected)).kioskAccount).toBe(expected);
+  });
+
+  it("clears the claim when no live member resolves", async () => {
+    const claims = await refreshedClaims(null, true);
+    expect(claims.kioskAccount).toBe(false);
+    expect(claims.sessionInvalidated).toBe(true);
+  });
 });
 
 describe("buildRequestAuthConfig sets session.maxAge from the request's session (#4612)", () => {
@@ -277,7 +424,7 @@ describe("buildRequestAuthConfig sets session.maxAge from the request's session 
 
   it("uses the kiosk window for a kiosk session cookie", async () => {
     const config = await buildRequestAuthConfig(
-      sessionRequest(await mintToken("LODGE")),
+      sessionRequest(await mintToken("kiosk")),
     );
     expect(config.session?.maxAge).toBe(KIOSK_ACCOUNT_SESSION_IDLE_SECONDS);
   });
@@ -300,7 +447,7 @@ describe("buildRequestAuthConfig sets session.maxAge from the request's session 
   });
 
   it("gives every other Auth.js action the ordinary window, so a sign-in over the kiosk cookie is not a 30-day session", async () => {
-    const kioskCookie = `${PLAIN_COOKIE}=${await mintToken("LODGE")}`;
+    const kioskCookie = `${PLAIN_COOKIE}=${await mintToken("kiosk")}`;
     for (const path of [
       "/api/auth/callback/credentials",
       "/api/auth/callback/magic-link",
@@ -324,7 +471,7 @@ describe("buildRequestAuthConfig sets session.maxAge from the request's session 
 
   it("finds the session action under AUTH_URL's base path, as next-auth does", async () => {
     vi.stubEnv("AUTH_URL", "http://localhost:3000/auth");
-    const kioskCookie = `${PLAIN_COOKIE}=${await mintToken("LODGE")}`;
+    const kioskCookie = `${PLAIN_COOKIE}=${await mintToken("kiosk")}`;
     const at = (path: string) =>
       new NextRequest(`http://localhost:3000${path}`, {
         headers: { cookie: kioskCookie },
@@ -340,8 +487,8 @@ describe("buildRequestAuthConfig sets session.maxAge from the request's session 
   it("ignores a kiosk token sent as a Bearer header, which Auth.js's session read never uses", async () => {
     const request = new NextRequest("http://localhost:3000/api/auth/session", {
       headers: {
-        cookie: `${PLAIN_COOKIE}=${await mintToken("USER")}`,
-        authorization: `Bearer ${await mintToken("LODGE")}`,
+        cookie: `${PLAIN_COOKIE}=${await mintToken("ordinary")}`,
+        authorization: `Bearer ${await mintToken("kiosk")}`,
       },
     });
     expect((await buildRequestAuthConfig(request)).session?.maxAge).toBe(
@@ -350,7 +497,7 @@ describe("buildRequestAuthConfig sets session.maxAge from the request's session 
   });
 
   it("reads the __Secure- cookie over https, as Auth.js does, and only that one", async () => {
-    const secureKiosk = await mintToken("LODGE", SECURE_COOKIE);
+    const secureKiosk = await mintToken("kiosk", { cookieName: SECURE_COOKIE });
     const https = new NextRequest("https://club.example/api/auth/session", {
       headers: { cookie: `${SECURE_COOKIE}=${secureKiosk}` },
     });
@@ -372,7 +519,7 @@ describe("buildRequestAuthConfig sets session.maxAge from the request's session 
     vi.stubEnv("AUTH_URL", "https://club.example");
     const request = new NextRequest("http://internal:3000/api/auth/session", {
       headers: {
-        cookie: `${SECURE_COOKIE}=${await mintToken("LODGE", SECURE_COOKIE)}`,
+        cookie: `${SECURE_COOKIE}=${await mintToken("kiosk", { cookieName: SECURE_COOKIE })}`,
       },
     });
     expect((await buildRequestAuthConfig(request)).session?.maxAge).toBe(
@@ -382,32 +529,58 @@ describe("buildRequestAuthConfig sets session.maxAge from the request's session 
 });
 
 describe("sessionIdleSecondsForClaims (#4612)", () => {
-  it("is 30 days for the kiosk role and 8 hours otherwise", () => {
+  it("is 30 days only for an explicit kioskAccount claim, 8 hours otherwise", () => {
     expect(KIOSK_ACCOUNT_SESSION_IDLE_SECONDS).toBe(30 * DAY_S);
     expect(ACCOUNT_SESSION_IDLE_SECONDS).toBe(8 * HOUR_S);
-    expect(
-      sessionIdleSecondsForClaims({ accessRoles: ["LODGE"], canLogin: true }),
-    ).toBe(KIOSK_ACCOUNT_SESSION_IDLE_SECONDS);
-    expect(
-      sessionIdleSecondsForClaims({ accessRoles: ["USER"], canLogin: true }),
-    ).toBe(ACCOUNT_SESSION_IDLE_SECONDS);
-    expect(
-      sessionIdleSecondsForClaims({ accessRoles: ["ADMIN"], canLogin: true }),
-    ).toBe(ACCOUNT_SESSION_IDLE_SECONDS);
-  });
-
-  it("falls to the ordinary window for an invalidated, login-off or absent session", () => {
     expect(
       sessionIdleSecondsForClaims({
         accessRoles: ["LODGE"],
         canLogin: true,
+        kioskAccount: true,
+      }),
+    ).toBe(KIOSK_ACCOUNT_SESSION_IDLE_SECONDS);
+    expect(
+      sessionIdleSecondsForClaims({
+        accessRoles: ["USER"],
+        canLogin: true,
+        kioskAccount: false,
+      }),
+    ).toBe(ACCOUNT_SESSION_IDLE_SECONDS);
+  });
+
+  it.each([
+    ["ADMIN+LODGE", ["ADMIN", "LODGE"]],
+    ["ADMIN_BOOKINGS+LODGE", ["ADMIN_BOOKINGS", "LODGE"]],
+    ["a custom role+LODGE", ["USER", "LODGE"]],
+  ])(
+    "is 8 hours for %s, whose role claim carries LODGE but whose kioskAccount is false",
+    (_label, accessRoles) => {
+      expect(
+        sessionIdleSecondsForClaims({
+          accessRoles,
+          canLogin: true,
+          kioskAccount: false,
+        }),
+      ).toBe(ACCOUNT_SESSION_IDLE_SECONDS);
+    },
+  );
+
+  it("is 8 hours for a token with LODGE but no kioskAccount claim (minted before it existed)", () => {
+    expect(
+      sessionIdleSecondsForClaims({ accessRoles: ["LODGE"], canLogin: true }),
+    ).toBe(ACCOUNT_SESSION_IDLE_SECONDS);
+  });
+
+  it("falls to the ordinary window for an invalidated, non-boolean or absent claim", () => {
+    expect(
+      sessionIdleSecondsForClaims({
+        accessRoles: ["LODGE"],
+        canLogin: true,
+        kioskAccount: true,
         sessionInvalidated: true,
       }),
     ).toBe(ACCOUNT_SESSION_IDLE_SECONDS);
-    expect(
-      sessionIdleSecondsForClaims({ accessRoles: ["LODGE"], canLogin: false }),
-    ).toBe(ACCOUNT_SESSION_IDLE_SECONDS);
-    expect(sessionIdleSecondsForClaims({ accessRoles: ["LODGE"] })).toBe(
+    expect(sessionIdleSecondsForClaims({ kioskAccount: "true" })).toBe(
       ACCOUNT_SESSION_IDLE_SECONDS,
     );
     expect(sessionIdleSecondsForClaims(null)).toBe(ACCOUNT_SESSION_IDLE_SECONDS);

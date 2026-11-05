@@ -25,6 +25,10 @@ const SESSION_MEMBER_SECURITY_SELECT = {
   // Post-login landing preference (#2090), refreshed per request alongside the
   // security fields so a profile toggle change takes effect on the next request.
   postLoginLanding: true,
+  // #4612: with `role` and the access-role rows, the record's classification,
+  // which decides whether this is the lodge kiosk account and so its idle
+  // window (`isKioskSessionMember` in `session-idle-expiry.ts`).
+  financeAccessLevel: true,
   // `canLogin` with the joined definitions (#1367, #3603): the refresh computes
   // the merged admin-permission matrix over custom and club-edited
   // definition-backed roles, and clears it once login is off. The shared

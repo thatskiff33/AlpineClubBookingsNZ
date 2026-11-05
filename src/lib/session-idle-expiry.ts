@@ -3,10 +3,14 @@
  * that decides it.
  *
  * - Every ordinary account: 8 hours.
- * - The lodge kiosk account (the `LODGE` access role): 30 days, so the shared
- *   lodge tablet is not signed out after a quiet night (owner decision,
- *   2 Nov 2026). Hut-leader actions on that tablet stay behind the separate
- *   10-minute PIN session (`HUT_LEADER_PIN_SESSION_IDLE_SECONDS`).
+ * - The lodge kiosk account: 30 days, so the shared lodge tablet is not signed
+ *   out after a quiet night (owner decision, 2 Nov 2026). "The kiosk account"
+ *   is the app's own record class, `isLodgeKioskAccount` in `member-roles.ts`:
+ *   `LODGE` is the record's whole classification. Holding `LODGE` is not
+ *   enough — it is a freely tickable checkbox, so an officer or custom-role
+ *   holder who also has it is an ordinary account and keeps 8 hours.
+ *   Hut-leader actions on that tablet stay behind the separate 10-minute PIN
+ *   session (`HUT_LEADER_PIN_SESSION_IDLE_SECONDS`).
  *
  * This is the IDLE window only: each refresh of the session re-issues the
  * token and its cookie for another full window. The absolute ceiling measured
@@ -26,9 +30,11 @@
  * - A sign-in has no token yet, so the first cookie is the ordinary window; the
  *   kiosk's first `/api/auth/session` refresh (the page's `SessionProvider` makes
  *   one on load and on focus) re-issues it for 30 days.
- * - The decision reads the incoming token's role claim, which the `jwt` callback
- *   refreshed from the database on the previous request, so a role change takes
- *   effect one refresh later.
+ * - The decision reads the incoming token's `kioskAccount` claim, which the
+ *   `jwt` callback stamped from the database row on the previous request, so
+ *   a role change takes effect one refresh later.
+ * - A token minted before the `kioskAccount` claim existed carries none, so
+ *   it gets the ordinary window until its first refresh stamps the claim.
  * - Only the session endpoint (`/api/auth/session`, the refresh and the client
  *   `update()`) reads the incoming token. Every other Auth.js action gets the
  *   ordinary window: a sign-in on the kiosk tablet while its cookie is still
@@ -39,7 +45,10 @@
  * - An invalidated, unreadable or absent token gets the ordinary window.
  */
 import { getToken } from "next-auth/jwt";
-import { hasAccessRole } from "./access-roles";
+import {
+  isLodgeKioskAccount,
+  type AccountClassificationInput,
+} from "./member-roles";
 
 /** Idle window of an ordinary account's session, in seconds. */
 export const ACCOUNT_SESSION_IDLE_SECONDS = 8 * 60 * 60;
@@ -48,15 +57,33 @@ export const ACCOUNT_SESSION_IDLE_SECONDS = 8 * 60 * 60;
 export const KIOSK_ACCOUNT_SESSION_IDLE_SECONDS = 30 * 24 * 60 * 60;
 
 /**
- * A decoded session token. The decision reads `accessRoles`, `canLogin` and
- * `sessionInvalidated`, all stamped by `auth.ts`'s `jwt` callback.
+ * The `kioskAccount` claim the `jwt` callback stamps from the member row on
+ * every refresh: login on, and the record IS the kiosk by the app's own
+ * classification (`isLodgeKioskAccount`). Not "holds `LODGE`".
+ */
+export function isKioskSessionMember(
+  member: AccountClassificationInput & { canLogin: boolean | null | undefined },
+): boolean {
+  return (
+    member.canLogin === true &&
+    isLodgeKioskAccount(
+      member.role,
+      member.accessRoles,
+      member.financeAccessLevel,
+    )
+  );
+}
+
+/**
+ * A decoded session token. The decision reads `kioskAccount` and
+ * `sessionInvalidated`, both stamped by `auth.ts`'s `jwt` callback.
  */
 type SessionIdleClaims = Readonly<Record<string, unknown>>;
 
 /**
- * The idle window for a session carrying these claims. The kiosk predicate is
- * the same one the removed line used — `hasAccessRole(…, "LODGE")` — read from
- * the token's refreshed role claim, which is empty once login is switched off.
+ * The idle window for a session carrying these claims: the kiosk window only
+ * for an explicit `kioskAccount: true` on a live session. A missing claim (a
+ * token minted before the claim existed) reads as an ordinary account.
  */
 export function sessionIdleSecondsForClaims(
   claims: SessionIdleClaims | null | undefined,
@@ -64,14 +91,7 @@ export function sessionIdleSecondsForClaims(
   if (!claims || claims.sessionInvalidated === true) {
     return ACCOUNT_SESSION_IDLE_SECONDS;
   }
-  const accessRoles = Array.isArray(claims.accessRoles)
-    ? claims.accessRoles.filter((role): role is string => typeof role === "string")
-    : [];
-  const isKioskAccount = hasAccessRole(
-    { accessRoles, canLogin: claims.canLogin === true },
-    "LODGE",
-  );
-  return isKioskAccount
+  return claims.kioskAccount === true
     ? KIOSK_ACCOUNT_SESSION_IDLE_SECONDS
     : ACCOUNT_SESSION_IDLE_SECONDS;
 }

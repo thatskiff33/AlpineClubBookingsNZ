@@ -39,6 +39,7 @@ import {
 import { loadEffectiveModuleFlags } from "./module-settings";
 import {
   ACCOUNT_SESSION_IDLE_SECONDS,
+  isKioskSessionMember,
   resolveRequestSessionIdleSeconds,
 } from "./session-idle-expiry";
 import { consumeTwoFactorSessionChallenge } from "./two-factor";
@@ -611,6 +612,8 @@ export const authConfig = {
           // session through adminPermissionMatrix below (#1367).
           token.accessRoles = sessionAccessRoleClaim(member);
           token.canLogin = member.canLogin;
+          // #4612: the next refresh's idle window (session-idle-expiry.ts).
+          token.kioskAccount = isKioskSessionMember(member);
           // #1367: merged admin-permission matrix over the JOINED assignment
           // rows, so definition-backed custom roles and club-edited seeded
           // definitions grant correctly through every session.user-based
@@ -680,6 +683,7 @@ export const authConfig = {
           // left to propagate), so a connection blip never invalidates a live
           // session.
           token.sessionInvalidated = true;
+          token.kioskAccount = false;
         }
       }
 
@@ -738,10 +742,7 @@ export const authConfig = {
   },
   session: {
     strategy: "jwt",
-    // The ordinary idle window. Per request, buildRequestAuthConfig replaces it
-    // with the window for the session the request carries — 30 days for the
-    // lodge kiosk account (#4612, session-idle-expiry.ts).
-    maxAge: ACCOUNT_SESSION_IDLE_SECONDS,
+    maxAge: ACCOUNT_SESSION_IDLE_SECONDS, // set per request (#4612)
   },
 } satisfies NextAuthConfig;
 
@@ -770,9 +771,6 @@ const baseProviders = authConfig.providers.filter(
  * decrypt failure can only ever DROP Google, never break credentials/magic-link/
  * 2FA sign-in. Exported for tests (the fail-open acceptance test asserts the
  * base providers survive while the resolver throws).
- *
- * `session.maxAge` is per request too (#4612): the idle window of the session
- * the request's cookie carries, from `session-idle-expiry.ts`.
  */
 export async function buildRequestAuthConfig(
   request?: Request,
@@ -787,27 +785,21 @@ export async function buildRequestAuthConfig(
     );
     google = null;
   }
-  // #4612: the idle window for the session this request carries. Auth.js
-  // derives both the re-issued token's `exp` and the cookie's `Expires` from
-  // `session.maxAge`, so this one number is the session's real idle expiry.
-  const sessionIdleSeconds = await resolveRequestSessionIdleSeconds(
-    request,
-    authConfig,
-  );
+  // #4612: the idle window of the session this request carries.
+  const maxAge = await resolveRequestSessionIdleSeconds(request, authConfig);
   return {
     ...authConfig,
     providers: google
       ? [...baseProviders, buildGoogleProvider(google)]
       : baseProviders,
-    session: { ...authConfig.session, maxAge: sessionIdleSeconds },
+    session: { ...authConfig.session, maxAge },
   };
 }
 
 // v5 request-scoped function form: the config (hence the provider list) is
 // recomputed per request from live DB credential state. next-auth@5.0.0-beta.31
 // supports `NextAuth((request) => Awaitable<NextAuthConfig>)`. The request arg
-// (absent for server-component and server-action calls) supplies the session
-// cookie the idle window is read from (#4612).
+// (absent for server components and actions) carries the session cookie (#4612).
 const nextAuth = NextAuth(buildRequestAuthConfig);
 
 export const { handlers, signIn, signOut, unstable_update: updateSession } =

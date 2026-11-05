@@ -172,6 +172,9 @@ describe("auth session refresh", () => {
         twoFactorEnabled: true,
         twoFactorMethod: true,
         postLoginLanding: true,
+        // #4612: with role and the rows, the record's classification, which
+        // decides the lodge kiosk account's longer idle window.
+        financeAccessLevel: true,
       },
     });
     expect(refreshedToken).toEqual(
