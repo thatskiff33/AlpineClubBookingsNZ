@@ -29,6 +29,10 @@
  * - The decision reads the incoming token's role claim, which the `jwt` callback
  *   refreshed from the database on the previous request, so a role change takes
  *   effect one refresh later.
+ * - Only the session endpoint (`/api/auth/session`, the refresh and the client
+ *   `update()`) reads the incoming token. Every other Auth.js action gets the
+ *   ordinary window: a sign-in on the kiosk tablet while its cookie is still
+ *   present mints a DIFFERENT member's session, which must not inherit 30 days.
  * - A call with no request (`auth()` in a server component, a server-side
  *   session update) gets the ordinary window. `auth()` there never writes the
  *   cookie; an update is re-issued by the next refresh.
@@ -72,6 +76,33 @@ export function sessionIdleSecondsForClaims(
     : ACCOUNT_SESSION_IDLE_SECONDS;
 }
 
+/** The app's Auth.js URL, which `next-auth` puts in place of the request's. */
+function authEnvUrl(): URL | null {
+  const envUrl = process.env.AUTH_URL ?? process.env.NEXTAUTH_URL;
+  if (!envUrl) return null;
+  try {
+    return new URL(envUrl);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Is this request Auth.js's `session` action? Mirrors `next-auth`'s base path
+ * (`setEnvDefaults`: the `AUTH_URL`/`NEXTAUTH_URL` path when it is not `/`,
+ * else `/api/auth`). Any other action — above all a sign-in callback, which
+ * mints a new member's token — must not take its window from the old cookie.
+ */
+function isSessionAction(request: Request, basePath: string | undefined): boolean {
+  const envPath = authEnvUrl()?.pathname;
+  const base =
+    basePath ?? (envPath && envPath !== "/" ? envPath : "/api/auth");
+  return (
+    new URL(request.url).pathname.replace(/\/+$/, "") ===
+    `${base.replace(/\/+$/, "")}/session`
+  );
+}
+
 /**
  * The name Auth.js gives the session cookie for this request. Mirrors
  * `@auth/core`'s `init` (`useSecureCookies ?? url.protocol === "https:"`) over
@@ -84,23 +115,29 @@ function sessionCookieName(
   request: Request,
   useSecureCookies: boolean | undefined,
 ): string {
-  const envUrl = process.env.AUTH_URL ?? process.env.NEXTAUTH_URL;
-  const protocol = new URL(envUrl ?? request.url).protocol;
+  const protocol = (authEnvUrl() ?? new URL(request.url)).protocol;
   const secure = useSecureCookies ?? protocol === "https:";
   return `${secure ? "__Secure-" : ""}authjs.session-token`;
 }
 
 /**
  * The idle window for this request's session: `session.maxAge` for the config
- * Auth.js runs it with. Reads ONLY the session cookie — never an
- * `Authorization: Bearer` header, which Auth.js's own session read ignores —
- * and fails to the ordinary window on any doubt.
+ * Auth.js runs it with. Only the session action reads a token, and only from
+ * the session cookie — never an `Authorization: Bearer` header, which Auth.js's
+ * own session read ignores. Fails to the ordinary window on any doubt.
  */
 export async function resolveRequestSessionIdleSeconds(
   request: Request | undefined,
-  config: { secret?: string | string[]; useSecureCookies?: boolean },
+  config: {
+    secret?: string | string[];
+    useSecureCookies?: boolean;
+    basePath?: string;
+  },
 ): Promise<number> {
   if (!request || !config.secret) return ACCOUNT_SESSION_IDLE_SECONDS;
+  if (!isSessionAction(request, config.basePath)) {
+    return ACCOUNT_SESSION_IDLE_SECONDS;
+  }
   const cookie = request.headers.get("cookie");
   if (!cookie) return ACCOUNT_SESSION_IDLE_SECONDS;
   try {

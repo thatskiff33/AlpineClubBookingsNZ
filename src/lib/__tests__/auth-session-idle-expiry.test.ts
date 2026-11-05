@@ -299,6 +299,44 @@ describe("buildRequestAuthConfig sets session.maxAge from the request's session 
     ).toBe(ACCOUNT_SESSION_IDLE_SECONDS);
   });
 
+  it("gives every other Auth.js action the ordinary window, so a sign-in over the kiosk cookie is not a 30-day session", async () => {
+    const kioskCookie = `${PLAIN_COOKIE}=${await mintToken("LODGE")}`;
+    for (const path of [
+      "/api/auth/callback/credentials",
+      "/api/auth/callback/magic-link",
+      "/api/auth/callback/google",
+      "/api/auth/signin/google",
+      "/api/auth/signout",
+      "/api/auth/csrf",
+      "/api/auth/session/extra",
+      "/api/other/session",
+    ]) {
+      const request = new NextRequest(`http://localhost:3000${path}`, {
+        method: "POST",
+        headers: { cookie: kioskCookie },
+      });
+      expect(
+        (await buildRequestAuthConfig(request)).session?.maxAge,
+        path,
+      ).toBe(ACCOUNT_SESSION_IDLE_SECONDS);
+    }
+  });
+
+  it("finds the session action under AUTH_URL's base path, as next-auth does", async () => {
+    vi.stubEnv("AUTH_URL", "http://localhost:3000/auth");
+    const kioskCookie = `${PLAIN_COOKIE}=${await mintToken("LODGE")}`;
+    const at = (path: string) =>
+      new NextRequest(`http://localhost:3000${path}`, {
+        headers: { cookie: kioskCookie },
+      });
+    expect((await buildRequestAuthConfig(at("/auth/session"))).session?.maxAge).toBe(
+      KIOSK_ACCOUNT_SESSION_IDLE_SECONDS,
+    );
+    expect(
+      (await buildRequestAuthConfig(at("/api/auth/session"))).session?.maxAge,
+    ).toBe(ACCOUNT_SESSION_IDLE_SECONDS);
+  });
+
   it("ignores a kiosk token sent as a Bearer header, which Auth.js's session read never uses", async () => {
     const request = new NextRequest("http://localhost:3000/api/auth/session", {
       headers: {

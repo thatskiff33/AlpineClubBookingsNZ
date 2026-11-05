@@ -235,6 +235,43 @@ because of the failure itself.
   (its own lockout) and lodge PIN sign-in are separate, and forgot-password and
   sign-in-link request limits per account are #4613.
 
+## Session idle expiry and the lodge kiosk (#4612)
+
+Audience: Operator, Developer.
+
+A signed-in session ends after **8 hours without use**. The lodge kiosk account
+(the `LODGE` access role, signed in on the shared lodge tablet) is the one
+exception: **30 days without use**, so the tablet is not signed out after a
+quiet night (owner decision, 2 Nov 2026). "Use" is any refresh of the session;
+the kiosk page refreshes it when it loads and when it regains focus, and each
+refresh starts a full window again.
+
+**Where it is decided.** `src/lib/session-idle-expiry.ts` holds both windows
+and the rule. Auth.js stamps the token's `exp` and the cookie's `Expires` from
+one number, `session.maxAge`, each time it writes the cookie, and offers no
+per-token hook. So `buildRequestAuthConfig` in `src/lib/auth.ts` sets
+`session.maxAge` per request from the session cookie the request carries; the
+token and the cookie therefore always agree. The earlier per-token `exp` line
+in the `jwt` callback was overwritten by that re-encode and did nothing; it is
+gone. `auth-session-idle-expiry.test.ts` proves both windows end to end through
+the real Auth.js handler on the frozen clock.
+
+**Accepted limits.** Each fails towards the shorter window.
+
+- A sign-in starts with 8 hours; the kiosk page's first refresh, straight after
+  it loads, re-issues 30 days.
+- Only the session endpoint (`/api/auth/session`) reads the incoming token.
+  Signing in as another member on the kiosk tablet, while the kiosk cookie is
+  still there, gives that member the ordinary 8 hours.
+- The window follows the role on the incoming token, which the previous
+  refresh read from the database. An account that loses the `LODGE` role keeps
+  a 30-day cookie until its next refresh, which re-issues 8 hours; what it may
+  do is read afresh from the database on every request, as for any account.
+- The hut-leader PIN session on the same tablet is separate: 10 minutes idle,
+  12 hours in total (`lodge-pin-session-timing.ts`).
+- This is the idle window only. A ceiling on a session's total age, measured
+  from sign-in, is #4611.
+
 ## Dietary/allergy information (special-category data)
 
 Audience: Developer, Agent, Operator.
