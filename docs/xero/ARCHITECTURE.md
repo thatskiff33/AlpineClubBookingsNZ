@@ -1042,10 +1042,10 @@ note.
    A role-less link for another note, invoice or amount, or with no amount
    recorded (no writer of that role omits it), is not the allocation, so the
    retry sends it and a refusal leaves the row PARTIAL, visible. The retry
-   only reads such a link; it never re-roles it. Another unresolved row - another note, invoice or
-   amount, such as the old tool's evidence-sized allocation - is a second
-   key, so it is answered first, from the match the dispatcher returns:
-   retried or reported blocked. A row resolved in Xero is answered first,
+   only reads such a link; it never re-roles it. Another unresolved row -
+   another note, invoice or amount, such as the old tool's evidence-sized
+   allocation - is a second key, so it is answered first, from the match the
+   dispatcher returns: retried or reported blocked. A row resolved in Xero is answered first,
    reported done (`INV-INT-025`), only when it names this note; one naming
    another note (an applied-credit or other note's allocation on the same
    booking, fixed by hand) is that note's concern, and would otherwise hold

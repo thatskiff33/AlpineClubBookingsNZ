@@ -1472,10 +1472,10 @@ count an allocation an older version of this tool retried on its own
 note, invoice and amount, so the retry never sends it to Xero again; a
 note whose planned invoices are all covered that way is no longer reported.
 Its operation stays partial on the Xero operations screen until one retry
-closes it, which makes no Xero call. Invoices you allocated by hand through one of the
-note's own attempts are not listed: if none is left, the note is reported as
-done; otherwise the report asks you to allocate the planned invoices it
-lists as left by hand, and offers nothing.
+closes it, which makes no Xero call. Invoices you allocated by hand through
+one of the note's own attempts are not listed: if none is left, the note is
+reported as done; otherwise the report asks you to allocate the planned
+invoices it lists as left by hand, and offers nothing.
 Since #1491, `LATE_CAPTURE_AFTER_CANCELLATION` is also never auto-applied:
 it now fires only when a cancelled booking retains captured value with NO
 recorded cancellation-refund decision (no cancellation credit, no
