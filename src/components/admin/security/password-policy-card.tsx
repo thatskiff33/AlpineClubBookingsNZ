@@ -26,6 +26,12 @@ import {
   MIN_PASSWORD_LENGTH_CEILING,
   MIN_PASSWORD_LENGTH_FLOOR,
 } from "@/lib/password-policy";
+import {
+  KIOSK_SESSION_MAX_AGE_HOURS,
+  SESSION_MAX_AGE_DEFAULT_HOURS,
+  SESSION_MAX_AGE_MAX_HOURS,
+  SESSION_MAX_AGE_MIN_HOURS,
+} from "@/lib/session-max-age";
 import { apiErrorMessageFromBody } from "@/lib/api-error-message";
 
 // Self-contained password-policy card for the Login & Security page (epic #2030,
@@ -52,6 +58,8 @@ interface PolicyDraft {
   requireLowercase: boolean;
   requireDigit: boolean;
   requireSymbol: boolean;
+  breachedPasswordCheck: boolean;
+  sessionMaxAgeHours: number;
 }
 
 interface SettingsResponse {
@@ -67,7 +75,32 @@ function toDraft(policy: SettingsResponse["policy"]): PolicyDraft {
     requireLowercase: policy.requireLowercase,
     requireDigit: policy.requireDigit,
     requireSymbol: policy.requireSymbol,
+    breachedPasswordCheck: policy.breachedPasswordCheck,
+    sessionMaxAgeHours: policy.sessionMaxAgeHours,
   };
+}
+
+function isMinLengthValid(value: number): boolean {
+  return (
+    Number.isInteger(value) &&
+    value >= MIN_PASSWORD_LENGTH_FLOOR &&
+    value <= MIN_PASSWORD_LENGTH_CEILING
+  );
+}
+
+// #4611 (INV-AUTH-007): the same bounds the route refuses outside.
+function isSessionMaxAgeValid(value: number): boolean {
+  return (
+    Number.isInteger(value) &&
+    value >= SESSION_MAX_AGE_MIN_HOURS &&
+    value <= SESSION_MAX_AGE_MAX_HOURS
+  );
+}
+
+function describeHours(hours: number): string {
+  if (hours % 24 !== 0) return `${hours} hours`;
+  const days = hours / 24;
+  return days === 1 ? "1 day" : `${days} days`;
 }
 
 export function PasswordPolicyCard() {
@@ -103,14 +136,17 @@ export function PasswordPolicyCard() {
     saveErrorFallback: "Failed to save password policy",
     loadErrorFallback: "Failed to load password policy",
     isValid: (draft) =>
-      Number.isInteger(draft.minPasswordLength) &&
-      draft.minPasswordLength >= MIN_PASSWORD_LENGTH_FLOOR &&
-      draft.minPasswordLength <= MIN_PASSWORD_LENGTH_CEILING,
+      isMinLengthValid(draft.minPasswordLength) &&
+      isSessionMaxAgeValid(draft.sessionMaxAgeHours),
   });
 
   const { draft, loading, saving, editing, dirty, error } = section;
   const savedMessage = section.success;
-  const minLengthValid = section.valid;
+  const formValid = section.valid;
+  const minLengthValid = draft ? isMinLengthValid(draft.minPasswordLength) : true;
+  const sessionMaxAgeValid = draft
+    ? isSessionMaxAgeValid(draft.sessionMaxAgeHours)
+    : true;
 
   function cancelEditing() {
     section.cancelEditing();
@@ -120,6 +156,17 @@ export function PasswordPolicyCard() {
 
   function setClass(key: ClassField, value: boolean) {
     section.setDraft({ [key]: value } as Partial<PolicyDraft>);
+    section.setSuccess("");
+  }
+
+  function setBreachedPasswordCheck(value: boolean) {
+    section.setDraft({ breachedPasswordCheck: value });
+    section.setSuccess("");
+  }
+
+  function setSessionMaxAgeHours(raw: string) {
+    const parsed = Number.parseInt(raw, 10);
+    section.setDraft({ sessionMaxAgeHours: Number.isNaN(parsed) ? 0 : parsed });
     section.setSuccess("");
   }
 
@@ -158,7 +205,8 @@ export function PasswordPolicyCard() {
                 passwords. Rules apply the next time a member sets or changes their
                 password; existing passwords keep working. To force everyone onto
                 the new rules, use the &ldquo;require password change&rdquo; option
-                on the member record.
+                on the member record. You can also set how long anyone stays
+                signed in.
               </CardDescription>
             </div>
           </div>
@@ -250,6 +298,82 @@ export function PasswordPolicyCard() {
               })}
             </fieldset>
 
+            {/*
+              #4610 (INV-AUTH-006): the breached-password check. Staged with the
+              rest of the card and saved through the same PUT.
+            */}
+            <fieldset className="space-y-2">
+              <legend className="text-sm font-medium text-muted-foreground">
+                Breached passwords
+              </legend>
+              <div className="flex items-center gap-3">
+                <Checkbox
+                  id="password-breachedPasswordCheck"
+                  checked={draft.breachedPasswordCheck}
+                  onCheckedChange={(checked) => setBreachedPasswordCheck(checked === true)}
+                  disabled={!editing || saving}
+                  aria-describedby="password-breachedPasswordCheck-hint"
+                />
+                <Label htmlFor="password-breachedPasswordCheck" className="font-normal">
+                  Refuse passwords found in public data breaches
+                </Label>
+                <Badge variant={draft.breachedPasswordCheck ? "success" : "secondary"}>
+                  {draft.breachedPasswordCheck ? "On" : "Off"}
+                </Badge>
+              </div>
+              <p
+                id="password-breachedPasswordCheck-hint"
+                className="text-xs text-muted-foreground"
+              >
+                When someone sets a password, it is checked against a public
+                list of leaked passwords. Only the first 5 characters of a
+                one-way code made from the password are sent, never the password
+                itself. If the service does not answer within 3 seconds, the
+                password is accepted.
+              </p>
+            </fieldset>
+
+            {/*
+              #4611 (INV-AUTH-007): the maximum session age. Staged with the
+              rest of the card and saved through the same PUT.
+            */}
+            <div className="space-y-2">
+              <Label htmlFor="session-max-age-hours">
+                Sign members out after (hours)
+              </Label>
+              <Input
+                id="session-max-age-hours"
+                type="number"
+                inputMode="numeric"
+                min={SESSION_MAX_AGE_MIN_HOURS}
+                max={SESSION_MAX_AGE_MAX_HOURS}
+                value={draft.sessionMaxAgeHours}
+                onChange={(event) => setSessionMaxAgeHours(event.target.value)}
+                disabled={!editing || saving}
+                className="max-w-[8rem]"
+                aria-describedby="session-max-age-hours-hint"
+              />
+              <p id="session-max-age-hours-hint" className="text-xs text-muted-foreground">
+                {sessionMaxAgeValid
+                  ? `Currently ${describeHours(draft.sessionMaxAgeHours)}. `
+                  : null}
+                Everyone must sign in again this long after they last signed
+                in, however much they use the site. Between{" "}
+                {SESSION_MAX_AGE_MIN_HOURS} hours and {SESSION_MAX_AGE_MAX_HOURS}{" "}
+                hours ({describeHours(SESSION_MAX_AGE_MAX_HOURS)}); the default
+                is {SESSION_MAX_AGE_DEFAULT_HOURS} hours (
+                {describeHours(SESSION_MAX_AGE_DEFAULT_HOURS)}). A change applies
+                to people already signed in. The lodge kiosk account keeps its
+                own {describeHours(KIOSK_SESSION_MAX_AGE_HOURS)}.
+              </p>
+              {!sessionMaxAgeValid ? (
+                <p className="text-xs text-destructive">
+                  Enter a whole number of hours between {SESSION_MAX_AGE_MIN_HOURS}{" "}
+                  and {SESSION_MAX_AGE_MAX_HOURS}.
+                </p>
+              ) : null}
+            </div>
+
             {editing && dirty ? (
               <p className="text-sm text-warning-11" role="status">
                 You have unsaved changes.
@@ -264,7 +388,7 @@ export function PasswordPolicyCard() {
                     describeReason={false}
                     type="button"
                     onClick={() => void section.save()}
-                    disabled={!dirty || saving || !minLengthValid}
+                    disabled={!dirty || saving || !formValid}
                   >
                     {saving ? (
                       <Loader2 className="mr-2 h-4 w-4 animate-spin" />

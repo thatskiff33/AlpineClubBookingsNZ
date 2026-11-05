@@ -147,15 +147,17 @@ deeper reference for what each category contains and the import safety model.
 
   - **Portable club policy — now exported** (`LoginSecuritySetting`,
     `PublicContentSettings`, `MembershipSubscriptionBillingSettings`).
-    - `LoginSecuritySetting` — the password-complexity policy and the magic-link
-      token TTL. No secret/credential travels: the field-allowlist sweep passes
+    - `LoginSecuritySetting` — the password-complexity policy, the magic-link
+      token TTL, the breached-password check switch (#4610) and the maximum
+      session age (#4611). No secret/credential travels: the field-allowlist sweep passes
       (the password-length bound is a portable integer rule, not a secret — the
       `/password.../` forbidden pattern carves out `minPasswordLength` while still
       blocking `passwordHash` and every other credential field). Note that login
       policy travels **by ratified intent** (#2200): importing a source club whose
       password rules are *weaker* than the target's will weaken the target — this
       is surfaced in the dry-run diff for the admin to review before applying, and
-      is the expected behaviour of transferring policy, not a leak.
+      is the expected behaviour of transferring policy, not a leak. The same
+      holds for a longer maximum session age.
     - `PublicContentSettings` — the six double-opt-in embed visibility gates and
       whether the public "Book Now" button is shown. The button DESTINATION does
       **not** travel: `bookNowTarget` / `bookNowPageId` reference a specific

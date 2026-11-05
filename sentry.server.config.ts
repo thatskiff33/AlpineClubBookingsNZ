@@ -1,10 +1,15 @@
 import * as Sentry from "@sentry/nextjs";
+import { isBreachedPasswordRangeUrl } from "@/lib/breached-password-endpoint";
 import {
   redactSensitiveJson,
   redactSensitiveQueryParams,
   redactSensitiveText,
 } from "@/lib/redact-sensitive-json";
-import { SENTRY_PRIVACY_INIT_OPTIONS } from "@/lib/sentry-privacy-options";
+import {
+  dropBreachedPasswordRangeBreadcrumb,
+  scrubBreachedPasswordRangeDeep,
+  SENTRY_PRIVACY_INIT_OPTIONS,
+} from "@/lib/sentry-privacy-options";
 
 Sentry.init({
   // Sentry 11's dataCollection defaults collect IPs, cookies and bodies; keep v10's.
@@ -16,6 +21,13 @@ Sentry.init({
 
   // OBS-10: Performance tracing
   tracesSampleRate: process.env.NODE_ENV === "production" ? 0.2 : 1.0,
+
+  // #4610: the breached-password range request gets no span, no breadcrumb and
+  // no `sentry-trace`/`baggage` headers. Same name as the default NodeFetch
+  // integration, so this instance replaces it rather than adding a second.
+  integrations: [
+    Sentry.nativeNodeFetchIntegration({ ignoreOutgoingRequests: isBreachedPasswordRangeUrl }),
+  ],
 
   // Scrub sensitive data from Sentry payloads
   beforeSend(event) {
@@ -61,11 +73,15 @@ Sentry.init({
       ) as typeof event.exception.values;
     }
 
-    return event;
+    // #4610: no event carries the breached-password range prefix; one the
+    // scrub cannot vouch for comes back null and is dropped.
+    return scrubBreachedPasswordRangeDeep(event);
   },
 
   beforeBreadcrumb(breadcrumb) {
-    return redactSensitiveJson(breadcrumb) as typeof breadcrumb;
+    // #4610: a fetch breadcrumb to the breached-password range is dropped.
+    const kept = dropBreachedPasswordRangeBreadcrumb(breadcrumb);
+    return kept && (redactSensitiveJson(kept) as typeof breadcrumb);
   },
 
   // Filter out noisy errors. `ignoreErrors` string patterns are SUBSTRING

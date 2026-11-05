@@ -45,6 +45,21 @@ export function buildSeedAdminMemberData(params: {
   };
 }
 
+/**
+ * The policy the seed screens SEED_ADMIN_PASSWORD and SEED_LODGE_PASSWORD
+ * under (#4610, INV-AUTH-006). The seed runs before the club's login-security
+ * setting exists, so it applies the setting's default: on.
+ */
+export const SEED_PASSWORD_SCREEN_POLICY = { breachedPasswordCheck: true } as const;
+
+/** Why the seed stops when a seed password is on the public breach list. */
+export function seedPasswordBreachedMessage(
+  name: "SEED_ADMIN_PASSWORD" | "SEED_LODGE_PASSWORD",
+): string {
+  return `${name} has appeared in a public data breach, so attackers are likely to try it. ` +
+    "Choose a different password and run prisma/seed.ts again; nothing was seeded from it.";
+}
+
 /** Shared lodge kiosk account created from SEED_LODGE_PASSWORD. */
 export function buildSeedLodgeMemberData(params: {
   email: string;

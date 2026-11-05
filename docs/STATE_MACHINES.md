@@ -5092,6 +5092,10 @@ LOGIN (/login "Continue with Google", shown only when module on + creds present)
       is refused after login is switched back on too, whichever cookie is presented; a token
       once invalidated also stays invalidated (sign-in racing the switch-off, clock skew);
       the member signs in again for a new one
+    now >= sessionIssuedAt + the maximum session age (club setting, default 7 days, 8..720 h;
+      the lodge kiosk's own 30 days), or no readable sessionIssuedAt -> sessionInvalidated=true
+      (#4611, INV-AUTH-007). Only sign-in stamps sessionIssuedAt; no refresh, role change or
+      two-factor verification moves it
     -> auth() reads null everywhere -> single redirect to /login rendering the form
        (breaks the /dashboard<->/login loop for dangling sessions; #2229)
 ```
@@ -5103,6 +5107,8 @@ member-already-linked refusals; archived/dependent/forcePasswordChange refusals
 even when linked; the module kill-switch in both directions; that a linked
 2FA-enrolled member still lands on `/login/verify`; that a resolver throw or a
 dangling member id refuses/invalidates instead of minting a session (#2229);
+that a session ends at its maximum age on the frozen clock however often it
+refreshes (`auth-session-max-age.test.ts`, #4611);
 and that every refusal renders a visible friendly message via the
 `/login?error=…` wiring.
 
