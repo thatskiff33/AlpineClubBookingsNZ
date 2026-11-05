@@ -802,8 +802,11 @@ reduction edit, under the door's locks
   unpaid ask = the rows' live ask (a chain holding a review-raised request -> none)
              + each ask whose mint FAILED and whose CREATE_ADDITIONAL_PAYMENT_INTENT
                recovery will still run, sized as its replay would size it
-               ("retry nets it off", 9 Oct 2026); an increase's recovery a later
-               ask overtook, or a re-issue that wrote its own row -> already settled
+               ("retry nets it off", 9 Oct 2026); one that wrote its own row
+               -> already settled. A later ask never settles one (#4015): it was
+               sized off a Payment that never showed the failed mint, so the
+               replay carries it and supersedes it. Only a frozen figure (no
+               edit to re-derive from) keeps #3340's "a later ask overtook it"
        an officer's review-charge recovery -> left exactly as set (decision B)
   -> offset = min(reduction, unpaid ask)
   -> every unpaid ADDITIONAL row since the last paid one -> FAILED + withdrawnAt

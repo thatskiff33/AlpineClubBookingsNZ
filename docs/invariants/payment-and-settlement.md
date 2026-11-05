@@ -2809,10 +2809,10 @@ _Legacy: settles tasks raised before #4317._
   #4652, #4676) once its recovery ended without it. The runner's close
   is claim-fenced (#4675). One uncancellable is logged.
 - **A declined card stays live** (#4052).
-- **Asks awaiting a failed mint's retry** count, sized as the replay would. A
-  retry claimed within two minutes refuses the edit; an older claim is closed.
-  A later increase folds a waiting re-issue in, recording it so its replay
-  asks for it again. Both minters send one Stripe request
+- **Asks awaiting a failed mint's retry** count, sized as the replay would;
+  only its own row settles one, never a later ask (#4015). A claim under two
+  minutes old refuses the edit; older ones close. A later increase folds a
+  waiting re-issue in, whose two minters send one request
   (`planReissuedAskMint`).
 - **Only the member's price asks.** An officer's review charge is never set
   against. Nor is a financial review's settled refund share: paid as the
