@@ -49,6 +49,7 @@ import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
 import { logAudit } from "@/lib/audit";
 import { GET, POST, PUT } from "@/app/api/admin/lodge/route";
+import { isRevokedMemberSession } from "@/lib/session-member-security";
 import { stubBreachedPasswordService } from "@/lib/__tests__/helpers/breached-password-service";
 import {
   BREACHED_PASSWORD_CODE,
@@ -257,6 +258,42 @@ describe("admin lodge route", () => {
         targetId: "lodge-1",
       }),
     );
+  });
+
+  // #4742: rotating the kiosk password must end the tablet session already
+  // signed in under the old one. The row the route writes is fed to the same
+  // rule the `jwt` refresh in auth.ts applies.
+  it("signs out an existing kiosk session when the password changes, and only then", async () => {
+    mockedAuth.mockResolvedValue(adminSession({ id: "admin-1" }));
+    const kiosk = memberFactory({
+      id: "lodge-1",
+      email: "lodge@example.org",
+      role: "LODGE",
+      canLogin: true,
+      passwordChangedAt: null,
+      sessionsRevokedAt: null,
+    });
+    vi.mocked(prisma.member.findFirst).mockResolvedValue(kiosk);
+    vi.mocked(prisma.member.update).mockResolvedValue({
+      ...kiosk,
+      lodgeAccess: [],
+    } as never);
+    const tabletSignedInAt = Date.now() - 60 * 60 * 1000;
+    const rowAfter = () => ({
+      ...kiosk,
+      ...(vi.mocked(prisma.member.update).mock.calls.at(-1)?.[0].data as object),
+    });
+
+    expect((await PUT(makePutRequest({ id: "lodge-1", firstName: "Desk" }))).status).toBe(200);
+    expect(rowAfter()).not.toHaveProperty("passwordChangedAt", expect.any(Date));
+    expect(isRevokedMemberSession(rowAfter() as never, tabletSignedInAt, "lodge-1")).toBe(false);
+
+    expect(
+      (await PUT(makePutRequest({ id: "lodge-1", password: "a quiet ridge at first light 4742" }))).status,
+    ).toBe(200);
+    expect(isRevokedMemberSession(rowAfter() as never, tabletSignedInAt, "lodge-1")).toBe(true);
+    // A tablet signing in with the new password afterwards keeps its session.
+    expect(isRevokedMemberSession(rowAfter() as never, Date.now() + 1, "lodge-1")).toBe(false);
   });
 
   it("rebinds a kiosk account's lodge by replacing its STAFF grants", async () => {

@@ -520,6 +520,12 @@ tokens from before it, or ones not minted by the app.
   migration only adds the setting column, and the draining release never reads
   it; the first request the new slot serves applies it.
 
+**Rotating the kiosk password ends its sessions (#4742).** `PUT
+/api/admin/lodge` stamps `passwordChangedAt` with the new password hash, as the
+member change- and reset-password routes do, so `isRevokedMemberSession` ends
+every kiosk session issued before the rotation at its next refresh, whatever
+window it holds. `admin-lodge-route.test.ts` feeds the written row to that rule.
+
 ## Dietary/allergy information (special-category data)
 
 Audience: Developer, Agent, Operator.
