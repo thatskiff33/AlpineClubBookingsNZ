@@ -1,4 +1,5 @@
 import { CREDIT_NOTE_SPENT_OUTSIDE_APP_CODE } from "@/lib/xero-credit-note-spent-outside-app";
+import { escapeRegExp } from "@/lib/escape-regexp";
 
 interface XeroErrorHeaders {
   [key: string]: string | number | undefined;
@@ -6,9 +7,6 @@ interface XeroErrorHeaders {
 
 // Escape regex metacharacters so a header name can never form a pathological
 // pattern. All call sites pass fixed internal literals, so this is defensive.
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
 
 export interface XeroErrorShape {
   response?: {

@@ -1,5 +1,6 @@
 import type * as Sentry from "@sentry/nextjs";
 import { BREACHED_PASSWORD_RANGE_URL } from "@/lib/breached-password-endpoint";
+import { escapeRegExp } from "@/lib/escape-regexp";
 
 type SentryInitOptions = NonNullable<Parameters<typeof Sentry.init>[0]>;
 type SentryBreadcrumb = Parameters<NonNullable<SentryInitOptions["beforeBreadcrumb"]>>[0];
@@ -14,7 +15,6 @@ const DENIED_KEY_PARTS = ["forwarded", "-ip", "remote-", "via", "-user"];
 // `http.url`, a span name and free text all hit it.
 const RANGE_URL = new URL(BREACHED_PASSWORD_RANGE_URL);
 const RANGE_HOST_PATH = `${RANGE_URL.host}${RANGE_URL.pathname}`;
-const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const RANGE_SOURCE = escapeRegExp(RANGE_HOST_PATH);
 /** Anything naming the range endpoint. Not global, so `.test` keeps no state. */
 const RANGE_PATTERN = new RegExp(RANGE_SOURCE, "i");
