@@ -3761,8 +3761,11 @@ the door still returns the intent's id, so the increase's Xero leg parks its
 invoice on it rather than raising it unpaid; the reduction names the
 increase from the edit its mint stamped on the row
 (`PaymentTransaction.bookingModificationId`), so the repair pass never bills
-it again. An increase's recovery that folded re-issues in
-is settled only by its own row, so a later ask cannot overtake that money; and
+it again. A recovery is settled by its own row (`findOwnRecoveryRow`, #4015),
+and only a frozen one also by a later ask, so a later ask cannot overtake
+money the replay can size; the replay reads Stripe first, outside any
+transaction, and waits (attempt handed back, for up to seven days) while
+Stripe is taking money on the ask it would carry; and
 both minters of a re-issue resolve its Stripe customer one way
 (`resolveAskCustomerId`). A deadlock mapped to the 409 is logged and kept as its
 cause. Deploy window: the previous release's recovery runner, still draining,
@@ -5882,6 +5885,22 @@ wait for). It is imported into `concurrency-lock-races.realdb.test.ts`. The writ
 that change a lot's free balance (the allocation engine's plan, a cancel's restore,
 an admin adjustment) take the member key, so the mirror's free-credit and balance
 reads under that key are exact.
+
+### The early warning reads only, and adds no writer (#4220)
+
+`findCreditNotesSpentOutsideApp` (`xero-credit-note-spent-outside-flag.ts`) runs in
+the repair check's load and the Xero health snapshot. It holds no lock, opens no
+transaction and writes nothing. Its reads are not taken under the member key, so a
+mirror, converge or allocation that commits while it runs can make one answer stale
+by one change; it is advisory, and the next ask is fresh. The reading it judges is
+merged onto the note's existing links by `reconcileXeroCreditNote` through
+`upsertXeroObjectLink`: the same writer, the same links and the same top-level
+`mergeMetadata`, with one more key, after the reconcile's one Xero read. Each
+`upsertXeroObjectLink` runs in its own short transaction, never inside a caller's.
+Ingest reads the kept reading first and skips a reading of an older change; that read
+and the write are not locked together, because the reading is advisory and the
+note's next event settles a race. No new advisory key and no new participant in the
+lock inventory.
 
 ## A request for released credit: the recovery claim, and one global-key close (#4253)
 

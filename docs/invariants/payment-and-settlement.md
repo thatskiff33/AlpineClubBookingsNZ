@@ -2804,15 +2804,15 @@ _Legacy: settles tasks raised before #4317._
   deadlock between rolls the edit back (409); one after commit is
   refunded in full, announced once (#4690). It writes the re-issue's recovery
   and billed-offset note.
-  An orphaned Stripe intent (#4052) is cancelled, best-effort, unless a
-  row, recovery or live claim may own it; a lost or throwing hold's (#4631,
-  #4652, #4676) once its recovery ended without it. The runner's close
-  is claim-fenced (#4675). One uncancellable is logged.
+  An orphaned Stripe intent is cancelled, best-effort, once no row,
+  recovery or live claim may own it (#4052, #4631, #4652, #4676). The
+  runner's close is claim-fenced (#4675). One uncancellable is logged.
 - **A declined card stays live** (#4052).
-- **Asks awaiting a failed mint's retry** count, sized as the replay would. A
-  retry claimed within two minutes refuses the edit; an older claim is closed.
-  A later increase folds a waiting re-issue in, recording it so its replay
-  asks for it again. Both minters send one Stripe request
+- **Asks awaiting a failed mint's retry** count, sized as the replay would
+  (none if one's frozen). Only its own row settles one, bar a frozen one's
+  replay (#4015). A claim under two minutes refuses the edit;
+  older ones close. A later increase folds a waiting re-issue in, recorded
+  for its replay to ask; both its minters send one request
   (`planReissuedAskMint`).
 - **Only the member's price asks.** An officer's review charge is never set
   against. Nor is a financial review's settled refund share: paid as the

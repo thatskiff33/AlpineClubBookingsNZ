@@ -523,9 +523,9 @@ const OPTIONAL_OWNER_READ_SITES: readonly string[] = [
   // admin health snapshot that renders the address with its own `?? ""`.
   "src/lib/diagnostics/tools/packs/booking-evidence.ts:1432",
   "src/lib/member-guest-consent-service.ts:1355",
-  "src/lib/payment-recovery.ts:2743",
-  "src/lib/payment-recovery.ts:2795",
-  "src/lib/xero-admin-health.ts:396",
+  "src/lib/payment-recovery.ts:2739",
+  "src/lib/payment-recovery.ts:2791",
+  "src/lib/xero-admin-health.ts:399",
 ];
 
 /** Measured, not counted by hand. Re-measure by running this test. */
@@ -811,6 +811,6 @@ const UNROOTED_ORGANISATION_SELECTIONS: readonly string[] = [
   "src/lib/payment-link.ts:81",
   "src/lib/payment-reconciliation.ts:100",
   "src/lib/stuck-state-dashboard.ts:628",
-  "src/lib/xero-booking-repair-types.ts:242",
+  "src/lib/xero-booking-repair-types.ts:246",
   "src/lib/xero-inbound/settlement-conflicts.ts:155",
 ];

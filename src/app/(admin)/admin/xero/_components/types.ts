@@ -272,6 +272,7 @@ export interface XeroHealthSnapshot {
   missingInvoices: { count: number }
   contactGroupMismatches: { count: number; cacheReady: boolean }
   contactLinkMismatches: { count: number; cacheReady: boolean }
+  creditNotesSpentOutsideApp?: { count: number } // #4220; optional while an older server answers
   apiBudget: { status: "healthy" | "warning" | "critical" | "exhausted" | "unknown"; usagePercent: number | null; totalCalls: number | null; failedCalls: number | null }
 }
 
