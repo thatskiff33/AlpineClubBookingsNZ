@@ -26,17 +26,18 @@ SHA and branch it names before relying on it.
 
 **Owner decision, 27 Oct 2026 (#4464): what is running is a generated board, not
 a hand-kept issue.** `pnpm run status` prints, from open issues and pull
-requests alone, each open lane (the latest `CLAIM:` no `RELEASE:` or `HANDOVER:`
-ended), its last `LANE-SYNC:`, its linked pull requests with draft or ready
-state, CI on the exact head with the failing required check names, conflict
-state, and the stale claims. It replaces #3905's hand-edited reservation tables,
+requests alone, each open lane (the earliest `CLAIM:` since the last `RELEASE:` or
+`HANDOVER:`), its last `LANE-SYNC:`,
+its linked pull requests with draft or ready state, CI on the exact head with
+the failing required check names, merge state, and the stale claims. It replaces #3905's hand-edited reservation tables,
 whose remaining decisions live in their own issues.
 
 `.github/workflows/status-board.yml` runs it hourly with `GITHUB_TOKEN` alone and
 overwrites the body of the issue named by the repository variable
 `STATUS_BOARD_ISSUE`; while that is unset it exits with a notice and writes
-nothing. To start it the owner or a lane creates an empty "Status board" issue,
-pins it and sets the variable. Never edit the board or record a decision on it:
+nothing. To start it the owner or a lane creates an empty "Status board" issue and
+pins it; the owner sets `STATUS_BOARD_ISSUE` (the machine account lacks admin).
+It refuses any other body. Never edit the board or record a decision on it:
 the `CLAIM:` and the decision record are the record. It is data, not a required
 check.
 
@@ -127,7 +128,7 @@ capacity; record that decision on the issue it covers.
 
 These limits bind managed agents only; human contributors keep their normal
 rights ([CONTRIBUTING.md](../../CONTRIBUTING.md)). A lane over the baseline waits
-or asks the owner; it does not stop someone else's work.
+or asks the owner.
 
 ## Reservations, stale sessions and conflicts
 
@@ -140,8 +141,8 @@ owner reassigns it. None of these frees it:
 
 Never take over, push to, rebase, reset, stash in or delete another lane's
 branch or worktree, or open a replacement PR for its issue. If you need its work,
-post a `LANE-SYNC:` with the head SHA you read; if the holder does not answer and
-the work is blocked, ask the owner to reassign it.
+post a `LANE-SYNC:` with the head SHA you read; if the holder is silent and the
+work is blocked, ask the owner to reassign it.
 
 After 72 hours without a `LANE-SYNC:` checkpoint or a push to the reserved
 branch, the reservation is **released automatically** (owner decision, 28 Oct
@@ -154,30 +155,32 @@ release never touches the old lane's branch or worktree: its unpublished work is
 not taken over, and a new claim starts from `main`.
 
 `pnpm run lanes:stale` (optionally followed by `owner/repo`) lists open issues
-and PRs whose latest `CLAIM:` has been inactive for more than 72 hours, with the
-lane named in the claim, its last activity and the release to post; the status
-board shows the same rows from the same code
-([`lane-reservations.mjs`](../../scripts/lib/lane-reservations.mjs)). A later
-`LANE-SYNC:` or branch push restarts the timer; `RELEASE` or `HANDOVER` ends the
-claim. Push times come from GitHub push activity, force pushes included, not
+and PRs whose holding `CLAIM:` (the earliest since the last release) has been
+inactive for more than 72 hours, with the lane named in the claim, its last
+activity and the release to post; the status board shows the same rows from the
+same code ([`lane-reservations.mjs`](../../scripts/lib/lane-reservations.mjs)),
+which counts only comments from `thatskiff33`, `thatskiff33-agents` and
+`sekreton[bot]`. A later `LANE-SYNC:` or branch push restarts the timer;
+`RELEASE` or `HANDOVER` ends the claim. Push times come from GitHub push activity, force pushes included, not
 commit dates; an issue needs a branch named in the claim, and a missing branch is
 flagged for a manual push check. A failed read stops the report. It never posts
 or edits anything: the coordinator checks the thread and posts the `RELEASE:`.
 
 ## Handoffs and checkpoints
 
-A lane stopping before it finishes — end of session, usage limit, waiting on the
-owner — commits coherent work, pushes it if the branch is its own, and posts a
-`LANE-SYNC:` checkpoint: the head SHA, what is done, the next step, open findings
-and stated limits. Long-running implementors also keep a checkpoint outside the
-worktree, so a killed session leaves its state readable. Whoever resumes starts
-from that checkpoint and the thread, not from a summary.
+A lane stopping early — end of session, usage limit, waiting on the owner —
+commits coherent work, pushes it if the branch is its own, and posts a
+`LANE-SYNC:` checkpoint: head SHA, what is done, the next step, open findings and
+stated limits. Long-running implementors also keep a checkpoint outside the
+worktree. Whoever resumes starts from that checkpoint and the thread, not from a
+summary.
 
 ### When the pre-push checks cannot pass
 
 The pre-push checks (`AGENTS.md` → "Per-issue pipeline") are not skipped to save
 work, and a Stop hook reminds a lane once when its own directory differs from
-`origin/main` under `src/`. Never use `--no-verify`, a skipped check or a push of
+`origin/main` under `src/` (a lane editing another worktree by absolute path is
+not reminded). Never use `--no-verify`, a skipped check or a push of
 known-broken work to rescue it. Instead:
 
 1. Commit it locally on the lane's own branch, the message naming the failing
@@ -200,8 +203,8 @@ lane the owner assigns, resumes it.
 - An issue never grows on its own. A defect the PR introduces, or one that blocks
   its agreed behaviour, is fixed in the PR; anything else found is filed as a new
   linked issue and left there.
-- Research ends when it answers the question or another round stops adding
-  evidence. Report what is known, what is not, and the limit.
+- Research ends when it answers the question or stops adding evidence. Report
+  what is known, what is not, and the limit.
 - Two identical failures trip the circuit breaker (`AGENTS.md` → "Context, usage
   and failure control").
 
@@ -209,7 +212,7 @@ lane the owner assigns, resumes it.
 
 The lane always reviews its own diff. How many further lenses run, and which, is
 the lane's choice (owner decision 3, #3905), weighing risk, complexity,
-uncertainty and what validation already proves. There is no fixed count or floor;
+uncertainty and what validation proves. There is no fixed count or floor;
 zero further lenses is allowed when justified. Money, schema, auth, provider,
 capacity and membership-lifecycle changes usually justify independent lenses.
 Common lenses: correctness; concurrency; security; money; migrations; UX, docs
@@ -241,8 +244,8 @@ resolve, goes to the owner: a contradiction between the issue and the code, a
 tripped circuit breaker, being stuck at `xhigh`, a material scope change. Ask it
 as decision pop-ups in plain English, with the full detail needed to decide,
 each option's pros and cons and the recommendation first. Show a visual layout as
-an Artifact or mock-up, not prose. Before putting options to the owner, read
-every reply in the thread, fork maintainers' included.
+an Artifact, not prose. Before putting options to the owner, read every reply in
+the thread, fork maintainers' included.
 
 ## Decision provenance
 
@@ -258,8 +261,8 @@ Record what the owner decided exactly as it was given:
   session.
 
 A record never claims to be the owner's GitHub approval, and never quotes
-approval wording. Before you adopt a delegated decision, re-read the thread for a
-direct one, and say in your comment that you did.
+approval wording. Before adopting a delegated decision, re-read the thread for a direct
+one, and say so in your comment.
 
 ## Session hygiene (Claude Code)
 

@@ -2,7 +2,7 @@
 
 Generated 2026-07-01T00:00:00.000Z from the open issues and pull requests of `thatskiff33/AlpineClubBookingsNZ`. The scheduled job overwrites this body every run (#4464); edit nothing here. Claim text is shown as posted and is not verified.
 
-5 active claims (1 stale), 5 open pull requests (1 draft, 1 red, 1 conflicting).
+5 active claims (1 stale), 9 open pull requests (1 draft, 2 red, 1 conflicting).
 
 ## Lanes
 
@@ -16,13 +16,17 @@ Generated 2026-07-01T00:00:00.000Z from the open issues and pull requests of `th
 
 ## Open pull requests
 
-| Pull request | State | CI on head | Conflicts | Head | Lane |
+| Pull request | State | CI on head | Merge state | Head | Lane |
 | --- | --- | --- | --- | --- | --- |
-| [#201](https://github.com/thatskiff33/AlpineClubBookingsNZ/pull/201) feat(#101): flag-gated widget | ready | pass | clean | `aaaaaaa` | #101 |
-| [#202](https://github.com/thatskiff33/AlpineClubBookingsNZ/pull/202) refactor(#104): rate table module | ready | running: Playwright E2E | conflicts | `bbbbbbb` | #104 |
-| [#203](https://github.com/thatskiff33/AlpineClubBookingsNZ/pull/203) feat(#105): early-warning digest | ready | fail: verify (also failing, not required: Typecheck) | unstable | `ccccccc` | #105 |
-| [#204](https://github.com/thatskiff33/AlpineClubBookingsNZ/pull/204) docs(#106): handover guide | draft | running: Data migration verification, Dependency audit, E2E multi-lodge +6 | no conflicts | `ddddddd` | #106 |
+| [#201](https://github.com/thatskiff33/AlpineClubBookingsNZ/pull/201) feat(#&#8203;101): flag-gated widget | ready | pass | clean | `aaaaaaa` | #101 |
+| [#202](https://github.com/thatskiff33/AlpineClubBookingsNZ/pull/202) refactor(#&#8203;104): rate table module | ready | running: Playwright E2E | conflicts | `bbbbbbb` | #104 |
+| [#203](https://github.com/thatskiff33/AlpineClubBookingsNZ/pull/203) feat(#&#8203;105): early-warning digest | ready | fail: verify (also failing, not required: Typecheck) | unstable | `ccccccc` | #105 |
+| [#204](https://github.com/thatskiff33/AlpineClubBookingsNZ/pull/204) docs(#&#8203;106): handover guide | draft | running: Data migration verification, Dependency audit, E2E multi-lodge +6 | no conflicts | `ddddddd` | #106 |
 | [#205](https://github.com/thatskiff33/AlpineClubBookingsNZ/pull/205) fix: typo in the README (from a fork contributor \| with a p… | ready | pass | behind | `eeeeeee` | none |
+| [#206](https://github.com/thatskiff33/AlpineClubBookingsNZ/pull/206) fix: unrelated fork change on a same-named branch | ready | pass | clean | `fffffff` | none |
+| [#207](https://github.com/thatskiff33/AlpineClubBookingsNZ/pull/207) fix: change from a deleted fork | ready | pass | clean | `ggggggg` | none |
+| [#208](https://github.com/thatskiff33/AlpineClubBookingsNZ/pull/208) feat(#&#8203;4001): child of an exception epic | ready | pass | clean | `hhhhhhh` | none |
+| [#209](https://github.com/thatskiff33/AlpineClubBookingsNZ/pull/209) chore: into an epic branch whose protection is unreadable | ready | fail: Dependency audit | clean | `iiiiiii` | none |
 
 ## Stale claims
 

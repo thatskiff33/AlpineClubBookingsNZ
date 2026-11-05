@@ -45,11 +45,43 @@ describe("staleReservations", () => {
       .toBe("2026-06-27T12:00:00.000Z");
   });
 
-  it("uses the latest claim in unsorted input, ignoring earlier release and sync", () => {
+  it("holds the earliest claim since the last release in unsorted input, ignoring earlier claims and syncs", () => {
     const later = comment("CLAIM: Summit lane. Branch `feature/summit`.", "2026-06-27T00:00:00Z");
     const comments = [later, comment("RELEASE: old claim", "2026-06-26T12:00:00Z"), claim];
     expect(staleReservations([thread(comments)], now)[0].holder).toBe("Summit lane");
-    expect(staleReservations([thread([...comments, comment(later.body, "2026-06-30T00:00:00Z")])], now)).toEqual([]);
+    // A later claim (here a duplicate) never refreshes the holder; a LANE-SYNC does.
+    const withClaim = [...comments, comment(later.body, "2026-06-30T00:00:00Z")];
+    expect(staleReservations([thread(withClaim)], now)[0].lastActivity).toBe("2026-06-27T00:00:00.000Z");
+    expect(staleReservations([thread([...comments, comment("LANE-SYNC: checkpoint", "2026-06-30T00:00:00Z")])], now)).toEqual([]);
+  });
+
+  it("keeps the earlier claim as holder when a later claimant also posts a CLAIM", () => {
+    const rival = comment("CLAIM: Rival lane. Branch `feature/rival`.", "2026-06-30T12:00:00Z");
+    const rows = staleReservations([thread([rival, claim])], now);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ holder: "Alpine lane", lastActivity: "2026-06-26T00:00:00.000Z" });
+  });
+
+  it("lets a claim posted after a release start a new reservation", () => {
+    const comments = [claim, comment("RELEASE: stale", "2026-06-27T00:00:00Z"), comment("CLAIM: Summit lane", "2026-06-28T00:00:00Z")];
+    expect(staleReservations([thread(comments)], now)).toEqual([]);
+    expect(staleReservations([thread(comments)], Date.parse("2026-07-02T00:00:00Z"))[0].holder).toBe("Summit lane");
+  });
+
+  it.each(["thatskiff33", "thatskiff33-agents", "sekreton[bot]", "ThatSkiff33"])("counts lane events from %s", (login) => {
+    const mine = (body, at) => ({ ...comment(body, at), user: { login } });
+    expect(staleReservations([thread([mine("CLAIM: Own lane", "2026-06-26T00:00:00Z")])], now)[0].holder).toBe("Own lane");
+    expect(staleReservations([thread([claim, mine("RELEASE: done", "2026-06-27T00:00:00Z")])], now)).toEqual([]);
+  });
+
+  it("ignores CLAIM, RELEASE, HANDOVER and LANE-SYNC from any other account", () => {
+    const stranger = (body, at) => ({ ...comment(body, at), user: { login: "stranger" } });
+    expect(staleReservations([thread([stranger("CLAIM: Squatter", "2026-06-20T00:00:00Z")])], now)).toEqual([]);
+    expect(staleReservations([thread([claim, stranger("RELEASE: mine now", "2026-06-27T00:00:00Z")])], now)).toHaveLength(1);
+    expect(staleReservations([thread([claim, stranger("HANDOVER: mine now", "2026-06-27T00:00:00Z")])], now)).toHaveLength(1);
+    expect(staleReservations([thread([claim, stranger("LANE-SYNC: alive", "2026-06-30T00:00:00Z")])], now)).toHaveLength(1);
+    expect(staleReservations([thread([stranger("CLAIM: Squatter", "2026-06-20T00:00:00Z"), claim])], now)[0].holder).toBe("Alpine lane");
+    expect(staleReservations([thread([{ body: "CLAIM: No author", created_at: "2026-06-20T00:00:00Z" }])], now)).toEqual([]);
   });
 
   it("uses comment IDs to order claims created in the same second", () => {

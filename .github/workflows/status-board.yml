@@ -8,10 +8,11 @@ name: Status board
 #
 # THE TARGET ISSUE IS A REPOSITORY VARIABLE, NOT A NUMBER IN THIS FILE.
 # `STATUS_BOARD_ISSUE` (Settings -> Secrets and variables -> Actions ->
-# Variables) holds the issue number. Until somebody sets it the job exits
-# cleanly with a notice, so merging this file creates nothing and writes
-# nothing. The owner or a lane creates the issue, pins it and sets the
-# variable (docs/agents/COORDINATION.md -> "The status board").
+# Variables) holds the issue number. Until the owner sets it (the machine
+# account cannot) the job exits cleanly with a notice, so merging this file
+# creates nothing and writes nothing. The owner or a lane creates the issue and
+# pins it; the owner sets the variable (docs/agents/COORDINATION.md -> "The
+# status board", CONFIGURATION.md).
 #
 # NOT A REQUIRED CHECK, and it never will be: it has no `pull_request` or
 # `push` trigger, so it adds no status context to any pull request and branch
@@ -44,8 +45,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     # A manual run from another branch would run that branch's script with an
-    # `issues: write` token; only the default branch may.
-    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    # `issues: write` token, so only the default branch may. A scheduled run is
+    # always the default branch's, and its event payload carries no
+    # `github.event.repository`, which would compare `github.ref` with an empty
+    # string and skip every scheduled run: so a schedule passes on its own.
+    if: github.event_name == 'schedule' || github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
     permissions:
       contents: read
       issues: write
@@ -53,6 +57,9 @@ jobs:
       checks: read
     env:
       STATUS_BOARD_ISSUE: ${{ vars.STATUS_BOARD_ISSUE }}
+      # Pull requests are judged against this branch's required checks; the
+      # fallback covers an event payload with no repository.
+      DEFAULT_BRANCH: ${{ github.event.repository.default_branch || 'main' }}
     steps:
       - name: Find the board issue
         id: target
@@ -87,17 +94,21 @@ jobs:
         if: steps.target.outputs.run == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: node scripts/status-board.mjs "${GITHUB_REPOSITORY}" > "${RUNNER_TEMP}/status-board.md"
+        run: node scripts/status-board.mjs "${GITHUB_REPOSITORY}" --base "${DEFAULT_BRANCH}" > "${RUNNER_TEMP}/status-board.md"
 
       - name: Overwrite the issue body
         if: steps.target.outputs.run == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # The issues endpoint also serves pull requests; never overwrite one.
-          is_pull="$(gh api "repos/${GITHUB_REPOSITORY}/issues/${STATUS_BOARD_ISSUE}" --jq 'has("pull_request")')"
-          if [ "${is_pull}" != "false" ]; then
-            echo "::error title=Status board::STATUS_BOARD_ISSUE must name an issue, not a pull request."
+          # The issues endpoint also serves pull requests, and the variable could
+          # name any issue: overwrite only an empty body or an earlier board.
+          verdict="$(gh api "repos/${GITHUB_REPOSITORY}/issues/${STATUS_BOARD_ISSUE}" --jq '
+            if has("pull_request") then "pull request"
+            elif ((.body // "") == "" or ((.body // "") | startswith("# Status board"))) then "ok"
+            else "foreign body" end')"
+          if [ "${verdict}" != "ok" ]; then
+            echo "::error title=Status board::STATUS_BOARD_ISSUE names an issue that is not an empty board issue (${verdict}); nothing was written."
             exit 1
           fi
           gh api --method PATCH "repos/${GITHUB_REPOSITORY}/issues/${STATUS_BOARD_ISSUE}" \

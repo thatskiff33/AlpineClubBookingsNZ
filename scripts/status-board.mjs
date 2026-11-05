@@ -22,14 +22,21 @@ import {
 
 /** GitHub rejects an issue body past 65,536 characters; stay well inside it. */
 const MAX_BODY_CHARS = 60000;
-const FAILING_CONCLUSIONS = new Set(["failure", "timed_out", "action_required", "startup_failure"]);
+/** The heading the board opens with; the workflow refuses to overwrite an issue body that is neither empty nor this. */
+export const BOARD_HEADING = "# Status board";
+/** Only these conclusions pass. Cancelled, stale, timed out, action required and anything unknown do not. */
+const PASSING_CONCLUSIONS = new Set(["success", "neutral", "skipped"]);
+const failed = (run) => run.status === "completed" && !PASSING_CONCLUSIONS.has(run.conclusion);
 
-/** Issue numbers a pull request body closes (`Closes #1`, `fixes: #2`); comments and code are ignored. */
-export function closedIssues(body) {
+/**
+ * Issue numbers a pull request body closes in `repo` (`Closes #1`, `fixes: owner/repo#2`);
+ * comments, code and another repository's references are ignored.
+ */
+export function closedIssues(body, repo) {
   const text = (body ?? "").replace(/<!--[\s\S]*?-->/g, "").replace(/```[\s\S]*?```/g, "").replace(/`[^`\n]*`/g, "");
   const numbers = new Set();
-  for (const match of text.matchAll(/\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s*:?\s+(?:[\w.-]+\/[\w.-]+)?#(\d+)/gi)) {
-    numbers.add(Number(match[1]));
+  for (const match of text.matchAll(/\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s*:?\s+(?:([\w.-]+\/[\w.-]+))?#(\d+)/gi)) {
+    if (!match[1] || match[1].toLowerCase() === repo.toLowerCase()) numbers.add(Number(match[2]));
   }
   return [...numbers].sort((a, b) => a - b);
 }
@@ -47,11 +54,10 @@ export function ciState(checkRuns, required) {
   for (const name of names) {
     const run = byName.get(name);
     if (!run || run.status !== "completed") pending.push(name);
-    else if (FAILING_CONCLUSIONS.has(run.conclusion)) failing.push(name);
+    else if (failed(run)) failing.push(name);
   }
   const otherFailing = required
-    ? checkRuns.filter((run) => !required.includes(run.name) && run.status === "completed" && FAILING_CONCLUSIONS.has(run.conclusion))
-      .map((run) => run.name) : [];
+    ? checkRuns.filter((run) => !required.includes(run.name) && failed(run)).map((run) => run.name) : [];
   let state = "pass";
   if (!names.length) state = "none";
   else if (failing.length) state = "fail";
@@ -88,26 +94,49 @@ async function checkRuns(read, repo, sha) {
   }
 }
 
-/** Everything the board needs, read through the same GET-only boundary as `lanes:stale`. */
-export async function collectBoard(repo, read = readGithub, base = "main") {
-  const required = await requiredChecks(read, repo, base);
+const pause = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
+
+/**
+ * Everything the board needs, read through the same GET-only boundary as `lanes:stale`.
+ * `base` is the default branch; a pull request into another base (an exception
+ * epic's `epic/**` branch) is judged against that base's own required list where
+ * readable, otherwise `base`'s. GitHub computes `mergeable` lazily, so a `null`
+ * is read once more after `mergeRetryMs`.
+ */
+export async function collectBoard(repo, read = readGithub, base = "main", { mergeRetryMs = 2000 } = {}) {
+  const requiredByBase = new Map();
+  const requiredFor = async (name) => {
+    if (!requiredByBase.has(name)) requiredByBase.set(name, await requiredChecks(read, repo, name));
+    return requiredByBase.get(name);
+  };
+  const fallback = await requiredFor(base);
   const pulls = new Map();
   const readPull = async (number) => {
-    if (!pulls.has(number)) pulls.set(number, await read(`repos/${repo}/pulls/${number}`));
+    if (!pulls.has(number)) {
+      let pr = await read(`repos/${repo}/pulls/${number}`);
+      if (pr.mergeable === null) {
+        await pause(mergeRetryMs);
+        pr = await read(`repos/${repo}/pulls/${number}`);
+      }
+      pulls.set(number, pr);
+    }
     return pulls.get(number);
   };
   const threads = await collectReservations(repo, read, readPull);
   for (const thread of threads.filter((t) => t.pull_request)) {
     const pr = await readPull(thread.number);
     pr.checkRuns = await checkRuns(read, repo, pr.head.sha);
+    pr.required = (await requiredFor(pr.base?.ref ?? base)) ?? fallback;
   }
-  return { repo, threads, pulls, required };
+  return { repo, threads, pulls };
 }
 
-function linkedPulls(thread, claim, pulls) {
+/** A pull request is linked to a lane by being it, by closing it in this repository, or by its branch in this repository. */
+function linkedPulls(thread, claim, pulls, repo) {
   const branch = branchOf(claim);
   return [...pulls.values()].filter((pr) => pr.number === thread.number
-    || closedIssues(pr.body).includes(thread.number) || (branch && pr.head.ref === branch))
+    || closedIssues(pr.body, repo).includes(thread.number)
+    || (branch && pr.head.ref === branch && pr.head.repo?.full_name?.toLowerCase() === repo.toLowerCase()))
     .sort((a, b) => a.number - b.number);
 }
 
@@ -122,22 +151,28 @@ export function buildBoard(model, now) {
       number: thread.number, title: thread.title ?? "", url: thread.html_url, kind: thread.pull_request ? "PR" : "Issue",
       holder: holderOf(claim), claimedAt: claim.at, lastSyncAt: sync, lastPushAt: thread.pushedAt ? Date.parse(thread.pushedAt) : null,
       pushWarning: thread.pushWarning ?? null, stale: stale.has(thread.number),
-      pulls: linkedPulls(thread, claim, model.pulls).map((pr) => pr.number),
+      pulls: linkedPulls(thread, claim, model.pulls, model.repo).map((pr) => pr.number),
     };
   });
   const pulls = [...model.pulls.values()].sort((a, b) => a.number - b.number).map((pr) => ({
     number: pr.number, title: pr.title ?? "", url: pr.html_url, draft: Boolean(pr.draft), head: pr.head.sha.slice(0, 7),
-    ci: ciState(pr.checkRuns ?? [], model.required), merge: mergeLabel(pr),
+    ci: ciState(pr.checkRuns ?? [], pr.required ?? null), requiredKnown: Boolean(pr.required), merge: mergeLabel(pr),
     lanes: lanes.filter((lane) => lane.pulls.includes(pr.number)).map((lane) => lane.number),
   }));
-  return { repo: model.repo, requiredKnown: Boolean(model.required), lanes, pulls, stale: [...stale.values()].sort((a, b) => a.number - b.number) };
+  return { repo: model.repo, requiredKnown: pulls.every((pr) => pr.requiredKnown), lanes, pulls, stale: [...stale.values()].sort((a, b) => a.number - b.number) };
 }
 
-/** Keep text from untrusted titles and claims inert inside a table cell: no pipes, tags, newlines or mentions. */
+/**
+ * Keep text from untrusted titles and claims inert inside a table cell: no pipes,
+ * tags, newlines, mentions (`@`, or an entity that decodes to one: `&` is
+ * escaped in the same pass), `#123` cross-references or autolinks (`://` and
+ * `www.` are broken with a zero-width space).
+ */
 export function cell(text, max = 80) {
   const flat = String(text).replace(/\s+/g, " ").trim();
   const cut = flat.length > max ? `${flat.slice(0, max - 1)}…` : flat;
-  return cut.replace(/[<>|@`[\]]/g, (c) => ({ "<": "&lt;", ">": "&gt;", "|": "\\|", "@": "@&#8203;", "`": "'", "[": "(", "]": ")" })[c]);
+  const escaped = { "&": "&amp;", "<": "&lt;", ">": "&gt;", "|": "\\|", "@": "@&#8203;", "#": "#&#8203;", "`": "'", "[": "(", "]": ")" };
+  return cut.replace(/[&<>|@#`[\]]/g, (c) => escaped[c]).replace(/:\/\//g, ":&#8203;//").replace(/www\./gi, (m) => `${m.slice(0, 3)}&#8203;.`);
 }
 
 const when = (ms) => (ms === null ? "—" : `${new Date(ms).toISOString().slice(0, 16).replace("T", " ")}Z`);
@@ -162,7 +197,7 @@ export function renderBoard(board, now) {
   const conflicting = board.pulls.filter((pr) => pr.merge === "conflicts").length;
   const drafts = board.pulls.filter((pr) => pr.draft).length;
   const lines = [
-    "# Status board", "",
+    BOARD_HEADING, "",
     `Generated ${new Date(now).toISOString()} from the open issues and pull requests of \`${board.repo}\`. `
     + "The scheduled job overwrites this body every run (#4464); edit nothing here. "
     + "Claim text is shown as posted and is not verified.", "",
@@ -182,12 +217,12 @@ export function renderBoard(board, now) {
   lines.push("", "## Open pull requests", "");
   if (!board.pulls.length) lines.push("No open pull requests.");
   else {
-    lines.push(...table(["Pull request", "State", "CI on head", "Conflicts", "Head", "Lane"],
+    lines.push(...table(["Pull request", "State", "CI on head", "Merge state", "Head", "Lane"],
       board.pulls.map((pr) => [
         `[#${pr.number}](${pr.url}) ${cell(pr.title, 60)}`, pr.draft ? "draft" : "ready", ciText(pr.ci), pr.merge, `\`${pr.head}\``,
         pr.lanes.map((n) => `#${n}`).join(", ") || "none",
       ])));
-    if (!board.requiredKnown) lines.push("", "The base branch's required-check list was not readable, so CI counts every check on the head commit.");
+    if (!board.requiredKnown) lines.push("", "A base branch's required-check list was not readable for at least one pull request, so CI counts every check on those heads.");
   }
   lines.push("", "## Stale claims", "");
   if (!board.stale.length) lines.push("No stale claims.");
@@ -203,24 +238,28 @@ export function renderBoard(board, now) {
 }
 
 function parseArgs(argv) {
-  const usage = "Usage: pnpm run status [owner/repo] [--now <ISO-8601 time>]";
+  const usage = "Usage: pnpm run status [owner/repo] [--now <ISO-8601 time>] [--base <default branch>]";
   let repo = "thatskiff33/AlpineClubBookingsNZ";
   let now = Date.now();
+  let base = "main";
   const rest = [...argv];
   while (rest.length) {
     const arg = rest.shift();
     if (arg === "--now") {
       now = Date.parse(rest.shift() ?? "");
       if (Number.isNaN(now)) throw new Error(usage);
+    } else if (arg === "--base") {
+      base = rest.shift() ?? "";
+      if (!/^[\w.-]+(?:\/[\w.-]+)*$/.test(base)) throw new Error(usage);
     } else if (/^[\w.-]+\/[\w.-]+$/.test(arg)) repo = arg;
     else throw new Error(usage);
   }
-  return { repo, now };
+  return { repo, now, base };
 }
 
 async function main() {
-  const { repo, now } = parseArgs(process.argv.slice(2));
-  process.stdout.write(renderBoard(buildBoard(await collectBoard(repo), now), now));
+  const { repo, now, base } = parseArgs(process.argv.slice(2));
+  process.stdout.write(renderBoard(buildBoard(await collectBoard(repo, readGithub, base), now), now));
 }
 
 if (isMainModule(import.meta.url)) {

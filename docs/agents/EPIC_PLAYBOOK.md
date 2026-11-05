@@ -106,9 +106,10 @@ its own pull request to `main`, and each child is one of:
   (#2989) is the worked example: it recorded the club timezone while the old
   environment variable still drove every displayed time.
 
-The last child switches the outcome on — flips the default, wires the module
-in — and is the release. Downstream forks do see the half-built code on `main`;
-that is the accepted price, and it is why it must be inert or off.
+**Only the compose-and-review child (below) flips the switch** — the default, the
+module's wiring — and only after its review. That flip is the release; no other
+child makes it. Downstream forks do see the half-built code on `main`: that is
+the accepted price, and why it must be inert or off.
 
 **Schema.** Expand migrations are ordinary children, each old-code compatible
 against the deployed release ([`BLUE_GREEN_MIGRATION_POLICY.md`](../BLUE_GREEN_MIGRATION_POLICY.md)).
@@ -139,8 +140,8 @@ children only produce in combination goes unread. The child covers exactly:
    one problem in ways that now disagree.
 2. **Every census or contract suite that reads the tree from disk**, run by name
    with `pnpm run test:named`, selected per [`TESTING.md`](../TESTING.md) →
-   "Selecting the censuses a change can reach" over the epic's whole diff against
-   its base, never from memory. The module graph cannot reach that class, so
+   "Selecting the censuses a change can reach" over the epic's whole diff — against
+   the `main` commit before the first child merged — never from memory. The module graph cannot reach that class, so
    `vitest related` never selects it, and it is the class that catches a
    disarmed guard.
 3. **Every conflict resolution an orchestrator wrote**, with each sync's diff as
@@ -150,28 +151,31 @@ children only produce in combination goes unread. The child covers exactly:
 
 It is deliberately not a re-review of the epic diff: nobody reads a 751-file diff
 (MEP #2680), and a review claiming to have is worse than a scoped one that says
-what it covered. It runs after the last child merges and before the outcome is
-switched on. A review approves the commit it read (`AGENTS.md` → "Orchestration
+what it covered. It runs after the last other child merges, then flips the
+switch. A review approves the commit it read (`AGENTS.md` → "Orchestration
 Model"), so a later merge re-opens it over the delta only.
 
 The worked example is MEP #2680, which absorbed eleven syncs. On the fourth, the
 orchestrator resolved a conflict by assuming a provenance vector and a price
 vector are always the same length; no local gate caught it, and 22 tests then
 returned 400 instead of 200. The fifth sync's three money-path resolutions were
-still unreviewed when the epic was called ready, and were reviewed only because
-the owner asked.
+unreviewed when the epic was called ready, until the owner asked.
 
-## An epic reaches `main` as ONE merge, from an integration branch
+## The exception: an integration branch
 
-**The exception.** An epic may use an integration branch, `epic/<issue>-<slug>`,
-only where a schema **contract** step cannot be made inert: it changes or removes
-schema that code on `main` still depends on, so it cannot sit on `main` ahead of
-the switch-on. **The epic body must name
-that step and why it cannot be made inert, or the exception does not apply.** A
-related theme, shared files, a wish to hide work from forks, or convenience are
-not grounds: flags exist for those. Children then target that branch and it
-reaches `main` as a single merge once complete. Everything else in this playbook
-still applies to such an epic.
+An epic may use an integration branch, `epic/<issue>-<slug>`, only where a schema
+**contract** step cannot be made inert. That means a *contract* in the blue/green
+sense — it removes or tightens something the previously deployed release reads
+or writes — that the epic's switch-on depends on. A migration runs whether or not
+a flag is on, so it cannot reach production on `main` ahead of the switch-on. It
+is not the contract half of an expand/contract pair the epic itself introduced:
+that half still waits for a release after the epic merges (below), and every
+migration must be old-code compatible against the pre-epic release or be a
+windowed migration the policy allows. **The epic body must name the step and why
+it cannot be made inert, or the exception does not apply.** A related theme,
+shared files, hiding work from forks, or convenience are not grounds: flags exist
+for those. Children then target that branch and it reaches `main` as one merge
+once complete. Everything else in this playbook applies to such an epic.
 
 **Merge authority.** A child merging into the branch needs review and green CI,
 and the orchestrator may merge it: nothing has reached `main`. The `epic/…` →

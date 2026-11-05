@@ -15,8 +15,19 @@ import { ghJson } from "./github-cli.mjs";
 export const STALE_HOURS = 72;
 const STALE_MS = STALE_HOURS * 60 * 60 * 1000;
 
-/** Parse only a comment's opening workflow prefix, never quoted examples. */
+/**
+ * The accounts whose comments are lane events: the owner and the agent accounts
+ * `AGENTS.md` -> "Pre-authorisation and attributability" names. Anyone can
+ * comment on a public issue, so a `CLAIM:` or `RELEASE:` from another account
+ * must neither hold nor free a reservation (#4464). The one list; the status
+ * board's suite checks it against that section of `AGENTS.md`.
+ */
+export const TRUSTED_LANE_AUTHORS = ["thatskiff33", "thatskiff33-agents", "sekreton[bot]"];
+
+/** Parse only a trusted account's opening workflow prefix, never quoted examples. */
 export function event(comment) {
+  const login = comment.user?.login?.toLowerCase();
+  if (!login || !TRUSTED_LANE_AUTHORS.includes(login)) return null;
   const match = comment.body?.trimStart().match(/^(CLAIM|LANE-SYNC|RELEASE|HANDOVER)\b:?\s*([^\n]*)/);
   if (!match) return null;
   return { id: comment.id ?? 0, kind: match[1], text: match[2], at: Date.parse(comment.created_at), body: comment.body };
@@ -26,17 +37,17 @@ function compareEvents(a, b) {
   return a.at - b.at || a.id - b.id;
 }
 
-function latestClaim(comments) {
-  return comments.map(event).filter((e) => e?.kind === "CLAIM")
-    .sort((a, b) => compareEvents(b, a))[0];
-}
-
-/** The latest `CLAIM:` unless a later `RELEASE:` or `HANDOVER:` ended it. */
+/**
+ * The holder: the EARLIEST `CLAIM:` after the last `RELEASE:` or `HANDOVER:`.
+ * The earlier claim on GitHub holds (`COORDINATION.md` -> "Checking a claim
+ * held"); a later claimant withdraws, and its `CLAIM:` never moves the holder.
+ * Null when there is none or the last event ended it.
+ */
 export function activeClaim(comments) {
-  const claim = latestClaim(comments);
-  if (!claim || comments.map(event).some((e) => e && compareEvents(e, claim) > 0 &&
-    (e.kind === "RELEASE" || e.kind === "HANDOVER"))) return null;
-  return claim;
+  const events = comments.map(event).filter(Boolean);
+  const ends = events.filter((e) => e.kind === "RELEASE" || e.kind === "HANDOVER").sort((a, b) => compareEvents(b, a));
+  return events.filter((e) => e.kind === "CLAIM" && (!ends[0] || compareEvents(e, ends[0]) > 0))
+    .sort(compareEvents)[0] ?? null;
 }
 
 /** The time of the newest `LANE-SYNC:` after the claim, or null when there is none. */

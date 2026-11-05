@@ -2832,3 +2832,10 @@ straight after one.
 Public forks should keep live provider credentials out of GitHub Actions. Use
 Stripe test mode, Xero demo tenants, SES sandbox credentials, and non-production
 databases for validation.
+
+Repository variables (Settings, then Secrets and variables, then Actions) that
+workflows read as `vars.*`:
+
+| Variable | Description |
+| --- | --- |
+| `STATUS_BOARD_ISSUE` | Optional. The number of the issue whose body `.github/workflows/status-board.yml` overwrites hourly with the generated lane status board (#4464). Only the repository owner can set it. While it is unset the job exits with a notice and writes nothing; it also refuses an issue that is a pull request or whose body is neither empty nor an earlier board. |
