@@ -23,8 +23,7 @@
 export const MONEY_MODULE_GLOBS = [
   // The booking ledger and what is derived from it (INV-MONEY, design/booking-ledger.md).
   "src/lib/booking-ledger-*.ts",
-  "src/lib/booking-money-*.ts",
-  "src/lib/money-*.ts",
+  "src/lib/*money*.ts",
   "src/lib/member-money/**/*.ts",
   // Refunds, credits and settlement, whichever lifecycle raises them.
   "src/lib/*refund*.ts",

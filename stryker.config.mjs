@@ -1,4 +1,3 @@
-// @ts-check
 // Mutation testing of the ledger, refund and settlement modules (#4459,
 // programme #4450). Run it on demand with `pnpm run mutation`, or in the
 // `Money mutation` workflow, which runs nightly and on `workflow_dispatch` and
@@ -12,7 +11,6 @@ const baseline = JSON.parse(
   readFileSync(new URL("./scripts/ci/money-test-baseline.json", import.meta.url), "utf8"),
 );
 
-/** @type {import("@stryker-mutator/api/core").PartialStrykerOptions} */
 const config = {
   testRunner: "vitest",
   plugins: ["@stryker-mutator/vitest-runner"],

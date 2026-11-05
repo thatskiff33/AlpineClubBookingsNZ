@@ -130,7 +130,9 @@ const ALLOWED_PREFIXES = [
   "/.github/workflows/",
   "/.npmrc",
 ];
-const MAX_OWNED_OUTSIDE_SRC_LIB = 40;
+// #4459 raised this from 40 to 41: the two money-test workflows are CI
+// configuration the `/.github/workflows/` pattern already owns, not a widened glob.
+const MAX_OWNED_OUTSIDE_SRC_LIB = 41;
 
 /**
  * THE REVERSE CHECK: modules known to move money, which must stay owned. A

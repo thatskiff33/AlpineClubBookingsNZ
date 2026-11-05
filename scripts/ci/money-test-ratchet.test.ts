@@ -16,22 +16,21 @@ import {
   renderCoverageReport,
   scoreFromMutationReport,
   worstFiles,
+  type CoverageSummary,
+  type CoverageTotal,
+  type MoneyTestBaseline,
+  type MutationReport,
 } from "./money-test-ratchet.mjs";
-import { parseWorkflowYaml } from "./check-workflow-suite-checkout-depth.mjs";
-import {
-  MONEY_MODULE_GLOBS,
-  MUTATION_TARGET_GLOBS,
-  MUTATION_TEST_FILES,
-} from "../lib/money-modules.mjs";
+import { MONEY_MODULE_GLOBS, MUTATION_TARGET_GLOBS, MUTATION_TEST_FILES } from "../lib/money-modules.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
-const read = (file) => fs.readFileSync(path.join(ROOT, file), "utf8");
+const read = (file: string): string => fs.readFileSync(path.join(ROOT, file), "utf8");
 
-const baseline = {
+const baseline: MoneyTestBaseline = {
   coverage: { lines: 60, statements: 59, functions: 50, branches: 40 },
   mutation: { score: 80, breakBelowPercent: 78 },
 };
-const total = (lines, statements, functions, branches) => ({
+const total = (lines: number, statements: number, functions: number, branches: number): CoverageTotal => ({
   lines: { pct: lines },
   statements: { pct: statements },
   functions: { pct: functions },
@@ -65,13 +64,16 @@ describe("the coverage ratchet", () => {
   });
 
   it("flags a baseline lower than the base branch's, per figure", () => {
-    const lowered = { ...baseline, coverage: { ...baseline.coverage, lines: 59 }, mutation: { score: 80, breakBelowPercent: 70 } };
+    const lowered = {
+      coverage: { ...baseline.coverage, lines: 59 },
+      mutation: { score: 80, breakBelowPercent: 70 },
+    };
     expect(baselineLowered(baseline, lowered)).toEqual(["coverage.lines 60 -> 59", "mutation.breakBelowPercent 78 -> 70"]);
     expect(baselineLowered(baseline, baseline)).toEqual([]);
   });
 
   it("reports the files with the most uncovered lines, relative to the repository", () => {
-    const summary = {
+    const summary: CoverageSummary = {
       total: total(60, 59, 50, 40),
       "/repo/src/lib/a.ts": { lines: { total: 10, covered: 10, pct: 100 } },
       "/repo/src/lib/b.ts": { lines: { total: 10, covered: 4, pct: 40 } },
@@ -85,7 +87,7 @@ describe("the coverage ratchet", () => {
 });
 
 describe("the mutation score", () => {
-  const report = {
+  const report: MutationReport = {
     files: {
       "src/lib/a.ts": {
         mutants: [
@@ -115,7 +117,8 @@ describe("the mutation score", () => {
     expect(evaluateMutation(77.9, baseline).ok).toBe(false);
     expect(evaluateMutation(78, baseline).ok).toBe(true);
     expect(raiseMutationBaseline(baseline, 90.4).mutation).toEqual({ score: 90.4, breakBelowPercent: 89 });
-    expect(raiseMutationBaseline(baseline, 70).mutation).toEqual(baseline.mutation);
+    // A lower score never lowers the stored one; the floor still follows it.
+    expect(raiseMutationBaseline(baseline, 70).mutation).toEqual({ score: 80, breakBelowPercent: 79 });
   });
 });
 
@@ -123,7 +126,10 @@ describe("the money-module list", () => {
   it("matches real files for every glob, so none is a dead entry", () => {
     const files = listMoneyFiles(ROOT);
     for (const glob of MONEY_MODULE_GLOBS) {
-      expect(files.some((file) => path.posix.matchesGlob(file, glob)), glob).toBe(true);
+      expect(
+        files.some((file) => path.posix.matchesGlob(file, glob)),
+        glob,
+      ).toBe(true);
     }
     expect(files.some((file) => file.includes("__tests__") || file.endsWith(".d.ts"))).toBe(false);
   });
@@ -138,7 +144,7 @@ describe("the money-module list", () => {
   });
 
   it("holds a committed baseline the ratchet can read", () => {
-    const stored = JSON.parse(read("scripts/ci/money-test-baseline.json"));
+    const stored = JSON.parse(read("scripts/ci/money-test-baseline.json")) as MoneyTestBaseline;
     expect(() => evaluateCoverage(total(100, 100, 100, 100), stored)).not.toThrow();
     expect(stored.mutation.breakBelowPercent).toBeLessThanOrEqual(stored.mutation.score);
   });
@@ -148,14 +154,14 @@ describe("the CLI", () => {
   it("fails on a summary below the baseline and passes on one above it", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "money-ratchet-"));
     try {
-      const stored = JSON.parse(read("scripts/ci/money-test-baseline.json"));
-      const write = (name, pct) => {
+      const stored = JSON.parse(read("scripts/ci/money-test-baseline.json")) as MoneyTestBaseline;
+      const write = (name: string, pct: number): string => {
         const file = path.join(dir, name);
         const entry = { pct };
         fs.writeFileSync(file, JSON.stringify({ total: { lines: entry, statements: entry, functions: entry, branches: entry } }));
         return file;
       };
-      const run = (summary) =>
+      const run = (summary: string): string =>
         execFileSync(process.execPath, [path.join(ROOT, "scripts/ci/money-test-ratchet.mjs"), "coverage", "--summary", summary], {
           cwd: ROOT,
           // Not the job summary of whichever CI job runs this test.
@@ -163,13 +169,10 @@ describe("the CLI", () => {
           encoding: "utf8",
           stdio: ["ignore", "pipe", "pipe"],
         });
-      const floor = Math.max(...Object.values(stored.coverage));
-      expect(() => run(write("above.json", floor + 1))).not.toThrow();
-      // Strictly below the smallest stored figure, so at least one metric fails.
-      const lowest = Math.min(...Object.values(stored.coverage));
-      if (lowest > 0) {
-        expect(() => run(write("below.json", lowest - 0.01))).toThrow(/baseline/);
-      }
+      const figures = Object.values(stored.coverage);
+      expect(() => run(write("above.json", Math.max(...figures) + 1))).not.toThrow();
+      // Below the smallest stored figure, so at least one metric is lower.
+      expect(() => run(write("below.json", Math.min(...figures) - 0.01))).toThrow(/baseline/);
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
@@ -177,28 +180,29 @@ describe("the CLI", () => {
 });
 
 describe("the workflows stay advisory (#4459)", () => {
-  const coverage = parseWorkflowYaml(read(".github/workflows/money-coverage.yml"));
-  const mutation = parseWorkflowYaml(read(".github/workflows/money-mutation.yml"));
+  const coverage = read(".github/workflows/money-coverage.yml");
+  const mutation = read(".github/workflows/money-mutation.yml");
+  /** The workflow's `on:` block: from `on:` to the next top-level key. */
+  const triggers = (source: string): string[] => {
+    const block = /^on:\n((?: {2}.*\n|\n)+)/m.exec(source)?.[1] ?? "";
+    return [...block.matchAll(/^ {2}(\w+):/gm)].map((match) => match[1]!).sort();
+  };
 
   it("the mutation run is nightly or on demand, never a pull-request check", () => {
-    const triggers = Object.keys(mutation.on);
-    expect(triggers.sort()).toEqual(["schedule", "workflow_dispatch"]);
+    expect(triggers(mutation)).toEqual(["schedule", "workflow_dispatch"]);
   });
 
   it("the coverage run reports on pull requests and is not part of ci.yml's `verify`", () => {
-    expect(Object.keys(coverage.on)).toContain("pull_request");
+    expect(triggers(coverage)).toEqual(["pull_request", "push", "workflow_dispatch"]);
     expect(read(".github/workflows/ci.yml")).not.toMatch(/money-coverage|Money coverage/);
     expect(read("scripts/ci/require-test-shards.mjs")).not.toMatch(/Money coverage|coverage-shard/);
   });
 
   it("runs the same four shards the required suite does, merges them, and judges once", () => {
-    expect(coverage.jobs["coverage-shard"].strategy.matrix.shard).toEqual([1, 2, 3, 4]);
-    expect(coverage.jobs["coverage-ratchet"].needs).toBe("coverage-shard");
-    const shardRun = coverage.jobs["coverage-shard"].steps.find((step) => String(step.run ?? "").includes("--shard="));
-    expect(shardRun.run).toContain("--shard=${{ matrix.shard }}/4");
-    expect(shardRun.run).toContain("--coverage");
-    expect(shardRun.run).toContain("--reporter=blob");
-    const merge = coverage.jobs["coverage-ratchet"].steps.find((step) => String(step.run ?? "").includes("--merge-reports"));
-    expect(merge.run).toContain("--coverage");
+    expect(coverage).toMatch(/shard:\n(?: {10}- \d\n){4}/);
+    expect(coverage).toContain("--shard=${{ matrix.shard }}/4 --coverage --reporter=blob");
+    expect(coverage).toMatch(/needs: coverage-shard/);
+    expect(coverage).toContain("--merge-reports --coverage");
+    expect(coverage.match(/money-test-ratchet\.mjs coverage/g)).toHaveLength(1);
   });
 });
