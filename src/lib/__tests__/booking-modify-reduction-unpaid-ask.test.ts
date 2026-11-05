@@ -1221,17 +1221,29 @@ describe("#3954 retry nets it off: an ask whose mint failed and waits on its rec
   it.each([
     ["dead - no retry left", { nextRetryAt: null }],
     ["dead - attempts spent", { attempts: 5 }],
-    ["overtaken by a later ask", { createdAt: new Date("2026-06-19T00:00:00.000Z") }],
   ])("MUTATION: a recovery %s mints nothing, so nothing is netted against it", async (_label, overrides) => {
-    if ("createdAt" in overrides) {
-      state.rows = [askRow({ status: PaymentStatus.FAILED, withdrawnAt: new Date("2026-06-20T00:00:00.000Z") } as Partial<Row>)];
-    }
     state.recoveries = [recoveryRow(overrides)];
     const result = await adjust(awaitingRetryBooking(), -2_000);
 
     expect(result.unpaidAskOffsetCents).toBe(0);
     expect(result.refundAmountCents).toBe(2_000);
     expect(recoveryUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("MUTATION (#4015): a later edit's ask does not overtake the waiting $50 - it never carried it, so the reduction nets against both", async () => {
+    // A later edit's $20 ask, written after the $50 increase's mint failed and
+    // sized off a mirror that never showed that $50.
+    state.rows = [askRow({ amountCents: 2_000, createdAt: new Date("2026-06-22T00:00:00.000Z") })];
+    const booking = grownBooking();
+    Object.assign(booking.payment!, { additionalAmountCents: 2_000, additionalPaymentStatus: PaymentStatus.PENDING, additionalPaymentIntentId: ASK_INTENT });
+    const result = await adjust(booking, -2_000);
+
+    // $20 + $50 owed; the $20 reduction leaves a $50 re-issue, and nothing is refunded.
+    expect(result.unpaidAskOffsetCents).toBe(2_000);
+    expect(result.refundAmountCents).toBe(0);
+    expect(result.additionalAsk.amountCents).toBe(5_000);
+    // The waiting recovery is closed, so its retry cannot mint the old $50 beside the re-issue.
+    expect(recoveryUpdateMany).toHaveBeenCalledTimes(1);
   });
 
   it.each([
@@ -1469,8 +1481,9 @@ describe("#3954 retry nets it off: an ask whose mint failed and waits on its rec
   it("MUTATION (round 4): a claimed retry that already wrote its own row is not skipped as overtaken - its row is the ask, and the retry is still fenced", async () => {
     // The retry minted $50 and wrote its row (later than its recovery), then
     // stalled before completing; the row mirrors as the live ask.
+    // The replay stamps its intent on the recovery in the row's own transaction.
     state.rows = [askRow({ createdAt: new Date("2026-06-22T00:00:00.000Z") })];
-    state.recoveries = [recoveryRow({ status: "PROCESSING", attempts: 2, processingStartedAt: CLAIMED_MOMENTS_AGO })];
+    state.recoveries = [recoveryRow({ status: "PROCESSING", attempts: 2, processingStartedAt: CLAIMED_MOMENTS_AGO, paymentIntentId: ASK_INTENT })];
     // Within the window: refused, not netted beside a retry still finishing.
     await expect(adjust(grownBooking(), -2_000)).rejects.toBeInstanceOf(AdditionalAskChangedDuringReductionError);
     // Round 6: the waiting recovery is closed (or refuses) before any row is stamped.
@@ -1482,7 +1495,7 @@ describe("#3954 retry nets it off: an ask whose mint failed and waits on its rec
     recoveryUpdateMany.mockImplementation(async () => ({ count: 1 }));
     xeroUpdateMany.mockImplementation(async () => ({ count: 1 }));
     mocks.enqueueCancel.mockImplementation(async ({ paymentTransactionId }) => ({ id: `op_cancel_${paymentTransactionId}`, status: "PENDING" }));
-    state.recoveries = [recoveryRow({ status: "PROCESSING", attempts: 2, processingStartedAt: CLAIMED_LONG_AGO })];
+    state.recoveries = [recoveryRow({ status: "PROCESSING", attempts: 2, processingStartedAt: CLAIMED_LONG_AGO, paymentIntentId: ASK_INTENT })];
     const result = await adjust(grownBooking(), -2_000);
     expect(result.unpaidAskOffsetCents).toBe(2_000);
     expect(result.additionalAsk.amountCents).toBe(3_000);
@@ -1554,7 +1567,7 @@ describe("#3954: one sizing for a failed mint's replay and the reduction that ma
     expect(alone.kind !== "frozen" && alone.ask.amountCents).toBe(3_000);
   });
 
-  it("MUTATION (round 4): a re-issue is settled only by its own row; an increase by any later ask", () => {
+  it("MUTATION (round 4, #4015): a re-issue or an increase is settled only by its own row; only a frozen figure by any later ask", () => {
     const operation = { createdAt: new Date("2026-06-21T00:00:00.000Z"), paymentIntentId: "pi_own" };
     const later = { kind: "ADDITIONAL", createdAt: new Date("2026-06-22T00:00:00.000Z") };
     const reissue = sizeRecoveryReplayAsk({ frozenAmountCents: 3_000, modification: { priceDiffCents: -2_000, changeFeeCents: 0, newData: null }, payment: null });
@@ -1563,7 +1576,11 @@ describe("#3954: one sizing for a failed mint's replay and the reduction that ma
     const own = [{ ...later, stripePaymentIntentId: "pi_own" }];
     expect(isRecoveryReplaySettled(reissue, operation, foreign)).toBe(false);
     expect(isRecoveryReplaySettled(reissue, operation, own)).toBe(true);
-    expect(isRecoveryReplaySettled(increase, operation, foreign)).toBe(true);
+    // #4015: the later ask was sized off a Payment that never showed this increase.
+    expect(isRecoveryReplaySettled(increase, operation, foreign)).toBe(false);
+    expect(isRecoveryReplaySettled(increase, operation, own)).toBe(true);
+    const frozen = sizeRecoveryReplayAsk({ frozenAmountCents: 3_000, modification: null, payment: null });
+    expect(isRecoveryReplaySettled(frozen, operation, foreign)).toBe(true);
   });
 
   it("round 7 (F15): what a read's reduction leaves after the ask - one home, 0 for an increase", () => {

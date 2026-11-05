@@ -4526,6 +4526,8 @@ describe("payment recovery worker", () => {
           .filter((args) => args.data.status === PaymentRecoveryOperationStatus.SUCCEEDED);
 
       function settledByLaterAsk() {
+        // #4015: only a frozen figure (no modification to read) is still settled by a later ask.
+        mockBookingModificationFindUnique.mockResolvedValueOnce(null);
         mockPaymentFindUnique.mockResolvedValue({
           id: "payment-1",
           stripeCustomerId: "cus_123",
@@ -4600,11 +4602,13 @@ describe("payment recovery worker", () => {
       });
     });
 
-    it("completes without creating when a later edit already minted a newer additional intent", async () => {
-      primeQueue(additionalIntentOperation());
-      mockPaymentFindUnique.mockResolvedValue({
+    /** A payment whose live ask is a later edit's $45, written after the recovery was queued. */
+    function paymentWithLaterEditAsk() {
+      return {
         id: "payment-1",
         stripeCustomerId: "cus_123",
+        additionalAmountCents: 4500,
+        additionalPaymentStatus: PaymentStatus.PENDING,
         transactions: [
           {
             id: "txn-newer",
@@ -4613,7 +4617,7 @@ describe("payment recovery worker", () => {
             amountCents: 4500,
             refundedAmountCents: 0,
             status: PaymentStatus.PENDING,
-            // Created after the operation was enqueued: it superseded ours.
+            // Created after the operation was enqueued.
             createdAt: new Date("2026-06-02T00:00:00.000Z"),
           },
         ],
@@ -4627,7 +4631,36 @@ describe("payment recovery worker", () => {
             lastName: "Smith",
           },
         },
-      });
+      };
+    }
+
+    it("MUTATION (#4015): a later edit's ask does not overtake an increase's failed mint - the replay asks its own $30 plus that ask's unpaid $45, superseding it", async () => {
+      // The default modification: this edit raised the price by $30, nothing folded.
+      primeQueue(additionalIntentOperation());
+      mockPaymentFindUnique.mockResolvedValue(paymentWithLaterEditAsk());
+      mockPaymentTransactionFindMany.mockResolvedValueOnce([
+        { id: "txn-newer", stripePaymentIntentId: "pi_later_edit", amountCents: 4500 },
+      ]);
+
+      const result = await processPaymentRecoveryOperations({ limit: 1 });
+
+      expect(result.succeeded).toBe(1);
+      expect(mockCreatePaymentIntent).toHaveBeenCalledWith(
+        expect.objectContaining({ amountCents: 7500, idempotencyKey: "mod_guest_bk1_mod-9_7500" }),
+      );
+      expect(mockUpsertPaymentIntentTransaction).toHaveBeenCalledWith(
+        expect.objectContaining({ amountCents: 7500, carriedAskCents: 4500, bookingModificationId: "mod-9" }),
+      );
+      // Its own deferred supplementary invoice is raised on the replay's intent, for its own $30.
+      expect(mockCompleteDeferredSupplementaryInvoice).toHaveBeenCalledWith(
+        expect.objectContaining({ bookingModificationId: "mod-9", priceDiffCents: 3000 }),
+      );
+    });
+
+    it("a FROZEN figure (no modification to read) still completes without creating when a later edit minted a newer additional intent", async () => {
+      primeQueue(additionalIntentOperation());
+      mockBookingModificationFindUnique.mockResolvedValueOnce(null);
+      mockPaymentFindUnique.mockResolvedValue(paymentWithLaterEditAsk());
 
       const result = await processPaymentRecoveryOperations({ limit: 1 });
 
@@ -5085,12 +5118,14 @@ describe("payment recovery worker", () => {
       });
 
       /**
-       * CONTROL. A later edit repriced from current state and minted its own
-       * collectable, so this modification's ask is gone; billing for it would
-       * invoice money nobody is being asked to pay.
+       * CONTROL. A FROZEN replay (no modification to read) is still settled by a
+       * later edit's ask, so it mints nothing and bills nothing. An increase the
+       * replay can size is never settled that way (#4015): it mints and bills
+       * its own money, carrying the later ask (the #4015 test above).
        */
-      it("raises nothing when a later edit already superseded this one", async () => {
+      it("raises nothing when a later edit already superseded a frozen replay", async () => {
         primeQueue(additionalIntentOperation());
+        mockBookingModificationFindUnique.mockResolvedValueOnce(null);
         mockPaymentFindUnique.mockResolvedValue(
           paymentWithIssuedInvoice({
             transactions: [

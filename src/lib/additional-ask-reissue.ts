@@ -249,10 +249,9 @@ export const WAITING_REISSUE_FOLDED_BY_INCREASE_NOTE =
  * fenced exactly as a reduction closes one (`closeWaitingAskRecoveries`), so
  * one fresh ask asks for both. Returns what it folded, for `sizeAdditionalAsk`.
  *
- * Re-issues only. An increase's own failed mint keeps #3340's rule, under
- * which a later ask overtakes it - unless it folded re-issues in (review round
- * 7): then nothing else asks for that money, so its replay is settled only by
- * its own row and carries the later ask (`isRecoveryReplaySettled`).
+ * Re-issues only. An increase's own failed mint is not folded: a later ask
+ * never settles it (#4015), so its replay is settled only by its own row and
+ * carries the later ask, superseding it (`isRecoveryReplaySettled`).
  */
 export async function foldWaitingReissuedAsks(
   tx: UnpaidAskDb,

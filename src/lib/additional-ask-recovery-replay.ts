@@ -122,9 +122,10 @@ export function recoveryAskBeyondPaymentAskCents(
 }
 
 /**
- * A recovery whose edit was overtaken: an ADDITIONAL row written after the
- * recovery was queued means a later mint priced the booking, so the replay
- * completes without minting. The replay and a reduction read the same rule.
+ * #3340's recency rule: an ADDITIONAL row written after the recovery was
+ * queued. Since #4015 it settles only a `frozen` recovery
+ * (`isRecoveryReplaySettled`) - a figure with no provenance, which the replay
+ * cannot split into its own money and a balance it would carry.
  */
 export function isRecoveryOvertakenByLaterAsk(
   operation: { createdAt: Date },
@@ -139,37 +140,38 @@ export function isRecoveryOvertakenByLaterAsk(
 
 /**
  * WHETHER A RECOVERY HAS NOTHING LEFT TO MINT - the replay's rule and a price
- * reduction's, read from one place (#3954 review round 4).
+ * reduction's, read from one place (#3954 review round 4; #4015).
  *
- * An INCREASE's recovery is done once any later ask exists: that ask re-priced
- * the booking from the `Payment` as it stood (`isRecoveryOvertakenByLaterAsk`,
- * #3340's rule, unchanged).
+ * A recovery the replay can size - an INCREASE or a RE-ISSUE - is done only
+ * once it has written ITS OWN row: the row carrying the intent its replay
+ * recorded on the recovery (`holdAdditionalIntentRecoveryClaim`,
+ * `writeReissuedAskUnderRecovery`).
  *
- * A RE-ISSUE's is done only once it has written ITS OWN row - the row carrying
- * the intent its replay recorded on the recovery
- * (`holdAdditionalIntentRecoveryClaim`, `writeReissuedAskUnderRecovery`). A
- * later ask from a minter that did not fold the waiting re-issue in
- * (`foldWaitingReissuedAsks`) asked only for its own money, so treating it as
- * an overtake would drop the re-issue's whole figure; the replay instead
- * carries that later ask and supersedes it (`sizeRecoveryReplayAsk`).
+ * A LATER ASK NEVER SETTLES IT, because it never carries this money. A later
+ * ask is sized off the `Payment` (`sizeAdditionalAsk`), and a failed mint never
+ * reached the `Payment`; nor did the waiting re-issues an increase folded in,
+ * whose own recoveries the fold closed. Only an edit that folded THIS recovery
+ * in asked for it (`foldWaitingReissuedAsks`), and that fold closed it, so its
+ * replay never runs. #3340 read any later row as an overtake, and so lost the
+ * earlier increase whenever two increases' mints overlapped a Stripe failure
+ * (#4015 cases 1 and 2, and a folded increase's replay writing first). The
+ * replay instead mints its own money, what it folded and the later ask's unpaid
+ * balance, and supersedes that ask (`sizeRecoveryReplayAsk`): the one ask left
+ * is the booking's whole outstanding increase.
  *
- * So is an INCREASE THAT FOLDED RE-ISSUES IN (review round 7): the fold closed
- * their recoveries, and a later ask is sized off the `Payment`, which shows
- * neither the increase nor what it folded - so nothing else will ever ask for
- * that money. Its replay is settled only by its own row, and carries the later
- * ask's unpaid balance as any increase's does (`sizeAdditionalAsk`).
+ * A FROZEN figure keeps #3340's recency rule (`isRecoveryOvertakenByLaterAsk`).
+ * Nobody recorded what part of it was carried, so carrying a later ask on top
+ * of it could ask for that ask's money twice.
  */
 export function isRecoveryReplaySettled(
   replay: RecoveryReplayAsk,
   operation: { createdAt: Date; paymentIntentId: string },
   transactions: readonly { kind: string; createdAt: Date; stripePaymentIntentId: string | null }[],
 ): boolean {
-  if (replay.kind === "reissue" || (replay.kind === "increase" && replay.foldedCents > 0)) {
-    return transactions.some(
-      (transaction) =>
-        transaction.kind === "ADDITIONAL" &&
-        transaction.stripePaymentIntentId === operation.paymentIntentId,
-    );
-  }
-  return isRecoveryOvertakenByLaterAsk(operation, transactions);
+  if (replay.kind === "frozen") return isRecoveryOvertakenByLaterAsk(operation, transactions);
+  return transactions.some(
+    (transaction) =>
+      transaction.kind === "ADDITIONAL" &&
+      transaction.stripePaymentIntentId === operation.paymentIntentId,
+  );
 }

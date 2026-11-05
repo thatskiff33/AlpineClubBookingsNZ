@@ -3032,13 +3032,13 @@ async function processCreateAdditionalPaymentIntentOperation(
     return "done";
   }
 
-  // A later edit already created a fresh additional intent: it superseded
-  // this modification's collectable, so resurrecting ours would offer the
-  // member two instruments for overlapping money. The later edit repriced
-  // from current state, so its intent is the whole truth. A RE-ISSUED ask is
-  // the exception: it is settled only by its own row, and a later ask that did
-  // not fold it in is carried and superseded (`isRecoveryReplaySettled`, #3954).
-  // The rule a price reduction reads too, before it nets this recovery off.
+  // #4015: a later edit's ask never settles this one. It was sized off the
+  // Payment, which never showed this failed mint, so it carries none of this
+  // money. An ask this replay can size is settled only by its own row; the
+  // replay carries the later ask's unpaid balance and supersedes it, so the
+  // member still holds one instrument. Only a frozen figure keeps #3340's
+  // "a later ask overtook it" (`isRecoveryReplaySettled`). The rule a price
+  // reduction reads too, before it nets this recovery off.
   if (
     isRecoveryReplaySettled(replay, operation, payment.transactions) ||
     operation.amountCents <= 0
