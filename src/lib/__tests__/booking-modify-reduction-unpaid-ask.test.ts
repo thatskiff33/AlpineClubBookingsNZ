@@ -1568,8 +1568,8 @@ describe("#3954: one sizing for a failed mint's replay and the reduction that ma
   });
 
   it("MUTATION (round 4, #4015): a re-issue or an increase is settled only by its own row; only a frozen figure by any later ask", () => {
-    const operation = { createdAt: new Date("2026-06-21T00:00:00.000Z"), paymentIntentId: "pi_own" };
-    const later = { kind: "ADDITIONAL", createdAt: new Date("2026-06-22T00:00:00.000Z") };
+    const operation = { createdAt: new Date("2026-06-21T00:00:00.000Z"), paymentIntentId: "pi_own", idempotencyKey: buildAdditionalIntentRecoveryIdempotencyKey("mod-own") };
+    const later = { kind: "ADDITIONAL", createdAt: new Date("2026-06-22T00:00:00.000Z"), status: "PENDING", bookingModificationId: null, withdrawnAt: null };
     const reissue = sizeRecoveryReplayAsk({ frozenAmountCents: 3_000, modification: { priceDiffCents: -2_000, changeFeeCents: 0, newData: null }, payment: null });
     const increase = sizeRecoveryReplayAsk({ frozenAmountCents: 3_000, modification: { priceDiffCents: 3_000, changeFeeCents: 0, newData: null }, payment: null });
     const foreign = [{ ...later, stripePaymentIntentId: "pi_later_edit" }];
@@ -1591,8 +1591,8 @@ describe("#3954: one sizing for a failed mint's replay and the reduction that ma
   });
 
   it("MUTATION (round 7): an increase that folded re-issues in is settled only by its own row - a later ask never overtakes the money it folded", () => {
-    const operation = { createdAt: new Date("2026-06-21T00:00:00.000Z"), paymentIntentId: "pi_own" };
-    const later = { kind: "ADDITIONAL", createdAt: new Date("2026-06-22T00:00:00.000Z") };
+    const operation = { createdAt: new Date("2026-06-21T00:00:00.000Z"), paymentIntentId: "pi_own", idempotencyKey: buildAdditionalIntentRecoveryIdempotencyKey("mod-own") };
+    const later = { kind: "ADDITIONAL", createdAt: new Date("2026-06-22T00:00:00.000Z"), status: "PENDING", bookingModificationId: null, withdrawnAt: null };
     const folding = sizeRecoveryReplayAsk({
       frozenAmountCents: 4_000,
       modification: { priceDiffCents: 1_000, changeFeeCents: 0, newData: { foldedReissuedAskCents: 3_000 } },
