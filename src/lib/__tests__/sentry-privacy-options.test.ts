@@ -160,6 +160,27 @@ describe("Sentry never carries the breached-password range prefix (#4610)", () =
     expect(dropBreachedPasswordRangeBreadcrumb(breadcrumb)).toBeNull();
   });
 
+  it("skips binary views and caps a huge array by index, both quickly", () => {
+    const start = process.hrtime.bigint();
+    const buffer = { category: "console", data: { arguments: [new Uint8Array(20_000_000)] } };
+    expect(dropBreachedPasswordRangeBreadcrumb(buffer)).toBe(buffer);
+    const huge = new Array<number>(5_000_000).fill(0);
+    expect(dropBreachedPasswordRangeBreadcrumb({ category: "console", data: { arguments: [huge] } })).toBeNull();
+    // Object.keys on either would build millions of keys before the cap applied.
+    expect(realElapsedMs(start)).toBeLessThan(1000);
+  });
+
+  it("searches a shared node to full depth when it is reached shallower later", () => {
+    const shared = { req: { url: RANGE } };
+    let deep: Record<string, unknown> = { x: shared };
+    for (let i = 0; i < 8; i++) deep = { next: deep };
+    // From the root, `shared` is reached first at depth 11, where its children
+    // sit at the depth limit and are not entered, and then again at depth 2.
+    const breadcrumb = { category: "fetch", data: { a: deep, x: shared } };
+    expect(dropBreachedPasswordRangeBreadcrumb(breadcrumb)).toBeNull();
+    expect(scrubBreachedPasswordRangeDeep({ extra: { a: deep, x: shared } })?.extra.x.req.url).not.toContain(PREFIX);
+  });
+
   it("never invokes a getter while checking or scrubbing", () => {
     const getter = vi.fn(() => {
       throw new Error("getter ran");

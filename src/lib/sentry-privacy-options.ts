@@ -51,45 +51,62 @@ interface RangeWalk {
 }
 
 /**
- * The one walk both filters share (INV-SSOT). It enters each object once (a
- * cycle or a shared node is not re-entered), reads own data properties only
- * (an accessor is never invoked), and stops at MAX_WALK_DEPTH and
- * MAX_WALK_SLOTS. With `scrub`, each string naming the range is rewritten in
- * place where its slot is writable; without it, the walk stops at the first
- * such string.
+ * The one walk both filters share (INV-SSOT). It re-enters a node only when
+ * it reaches it shallower than before (a cycle is never re-entered, and a
+ * shared node first met deep is still searched to full depth), reads own data
+ * properties only (an accessor is never invoked), skips binary views (a Buffer
+ * or typed array holds no strings), counts an array's slots by index before
+ * building any key list, and stops at MAX_WALK_DEPTH and MAX_WALK_SLOTS. With
+ * `scrub`, each string naming the range is rewritten in place where its slot is
+ * writable; without it, the walk stops at the first such string.
  */
 function walkRangeStrings(root: object, scrub: boolean): RangeWalk {
   const result: RangeWalk = { found: false, left: false, capped: false };
-  const seen = new WeakSet<object>();
+  const shallowest = new WeakMap<object, number>();
   let slots = 0;
   const finished = () => result.capped || (result.found && !scrub);
+  const visitSlot = (node: object, key: string | number, depth: number): void => {
+    const descriptor = Object.getOwnPropertyDescriptor(node, key);
+    if (!descriptor || !("value" in descriptor)) return;
+    const child: unknown = descriptor.value;
+    if (typeof child === "string") {
+      if (!RANGE_PATTERN.test(child)) return;
+      result.found = true;
+      if (!scrub) return;
+      // A read-only slot (a frozen node's, or one defined non-writable) is
+      // never written, since strict mode would throw.
+      if (descriptor.writable) {
+        (node as Record<string | number, unknown>)[key] = scrubBreachedPasswordRange(child);
+      } else {
+        result.left = true;
+      }
+    } else if (child !== null && typeof child === "object") {
+      visit(child, depth + 1);
+    }
+  };
+  const countSlot = (): boolean => {
+    if (++slots > MAX_WALK_SLOTS) {
+      result.capped = true;
+      return false;
+    }
+    return true;
+  };
   const visit = (node: object, depth: number): void => {
-    if (depth >= MAX_WALK_DEPTH || seen.has(node)) return;
-    seen.add(node);
-    // Arrays and plain objects alike: an array's own keys are its indexes.
+    if (depth >= MAX_WALK_DEPTH || ArrayBuffer.isView(node)) return;
+    const before = shallowest.get(node);
+    if (before !== undefined && before <= depth) return;
+    shallowest.set(node, depth);
+    if (Array.isArray(node)) {
+      // By index, so the cap applies before a huge array builds a key list.
+      for (let i = 0; i < node.length; i++) {
+        if (finished() || !countSlot()) return;
+        visitSlot(node, i, depth);
+      }
+      return;
+    }
     for (const key of Object.keys(node)) {
-      if (finished()) return;
-      if (++slots > MAX_WALK_SLOTS) {
-        result.capped = true;
-        return;
-      }
-      const descriptor = Object.getOwnPropertyDescriptor(node, key);
-      if (!descriptor || !("value" in descriptor)) continue;
-      const child: unknown = descriptor.value;
-      if (typeof child === "string") {
-        if (!RANGE_PATTERN.test(child)) continue;
-        result.found = true;
-        if (!scrub) return;
-        // A read-only slot (a frozen node's, or one defined non-writable) is
-        // never written, since strict mode would throw.
-        if (descriptor.writable) {
-          (node as Record<string, unknown>)[key] = scrubBreachedPasswordRange(child);
-        } else {
-          result.left = true;
-        }
-      } else if (child !== null && typeof child === "object") {
-        visit(child, depth + 1);
-      }
+      if (finished() || !countSlot()) return;
+      visitSlot(node, key, depth);
     }
   };
   visit(root, 0);
