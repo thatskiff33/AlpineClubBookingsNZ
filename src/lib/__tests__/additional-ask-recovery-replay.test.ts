@@ -16,12 +16,13 @@ import type { AskRecoveryOperation } from "@/lib/additional-ask-pending-recoveri
 import { pendingAskRecoveries } from "@/lib/additional-ask-pending-recoveries";
 import type { AskTransaction } from "@/lib/additional-ask-reduction";
 import {
-  CarriedAskBeingPaidError,
+  CARRIED_ASK_PAYMENT_WAIT_MAX_MS,
+  CarriedAskPaymentWaitExpiredError,
+  carriedAskPaymentWait,
   findOwnRecoveryRow,
   isRecoveryOvertakenByLaterAsk,
   isRecoveryReplaySettled,
   recoveryAskBeyondPaymentAskCents,
-  refuseSupersedingAskBeingPaid,
   sizeRecoveryReplayAsk,
 } from "@/lib/additional-ask-recovery-replay";
 import {
@@ -43,10 +44,11 @@ const E1_RECOVERY = {
 function additionalRow(
   stripePaymentIntentId: string,
   createdAt: Date,
-  stamp: { bookingModificationId?: string; withdrawnAt?: Date } = {},
+  stamp: { bookingModificationId?: string; withdrawnAt?: Date; status?: string } = {},
 ) {
   return {
     kind: "ADDITIONAL",
+    status: stamp.status ?? "PENDING",
     createdAt,
     stripePaymentIntentId,
     bookingModificationId: stamp.bookingModificationId ?? null,
@@ -193,6 +195,25 @@ describe("findOwnRecoveryRow: one own-row rule for the replay's resume and the s
     expect(findOwnRecoveryRow({ ...E1_RECOVERY, paymentIntentId: "pi_e1_recovered" }, [withdrawn, live, recordedRow])).toBe(recordedRow);
   });
 
+  it("REVIEW 4: a currency re-issue left the old row FAILED, not withdrawn - the open re-issued row wins, so the invoice waits on the intent the member can pay", () => {
+    const stale = additionalRow("pi_e1_nzd_stale", EARLIER, { bookingModificationId: "mod-e1", status: "FAILED" });
+    const reissued = additionalRow("pi_e1_reissued", LATER, { bookingModificationId: "mod-e1", status: "PENDING" });
+    // Ledger order is oldest first, so the stale row comes first.
+    expect(findOwnRecoveryRow(E1_RECOVERY, [stale, reissued])).toBe(reissued);
+    // A captured stamped row also beats a dead one.
+    const captured = additionalRow("pi_e1_paid", EARLIER, { bookingModificationId: "mod-e1", status: "SUCCEEDED" });
+    expect(findOwnRecoveryRow(E1_RECOVERY, [captured, { ...stale, createdAt: LATER }])).toBe(captured);
+  });
+
+  it("REVIEW 4: with no open or captured stamped row, the newest live one, then the newest withdrawn", () => {
+    const older = additionalRow("pi_e1_a", EARLIER, { bookingModificationId: "mod-e1", status: "FAILED" });
+    const newer = additionalRow("pi_e1_b", LATER, { bookingModificationId: "mod-e1", status: "FAILED" });
+    expect(findOwnRecoveryRow(E1_RECOVERY, [older, newer])).toBe(newer);
+    const withdrawnOld = { ...older, withdrawnAt: LATER };
+    const withdrawnNew = { ...newer, withdrawnAt: LATER };
+    expect(findOwnRecoveryRow(E1_RECOVERY, [withdrawnOld, withdrawnNew])).toBe(withdrawnNew);
+  });
+
   it("an officer's review charge is never matched by the edit stamp, only by its recorded intent", () => {
     const review = { ...E1_RECOVERY, idempotencyKey: buildEditFinancialReviewAdditionalIntentRecoveryIdempotencyKey("mod-e1") };
     expect(findOwnRecoveryRow(review, [additionalRow("pi_e1_door", EARLIER, { bookingModificationId: "mod-e1" })])).toBeNull();
@@ -206,8 +227,10 @@ describe("findOwnRecoveryRow: one own-row rule for the replay's resume and the s
   });
 });
 
-describe("refuseSupersedingAskBeingPaid: a replay never supersedes an ask Stripe is taking (#4015 review C1)", () => {
+describe("carriedAskPaymentWait: a replay never supersedes an ask Stripe is taking money on (#4015 review C1, items 1-2)", () => {
   const livePayment = { additionalAmountCents: 2_000, additionalPaymentStatus: "PENDING", additionalPaymentIntentId: "pi_e2" };
+  const QUEUED = new Date("2026-06-29T00:00:00.000Z");
+  const NOW = new Date("2026-07-01T00:00:00.000Z");
   const answering = (status: string) => {
     const calls: string[] = [];
     return {
@@ -219,26 +242,41 @@ describe("refuseSupersedingAskBeingPaid: a replay never supersedes an ask Stripe
     };
   };
 
-  it.each(["succeeded", "processing", "requires_capture"])("backs off, retryably, when the carried ask is %s at Stripe", async (status) => {
-    const stripe = answering(status);
-    const refusal = refuseSupersedingAskBeingPaid(livePayment, stripe.retrieve);
-    await expect(refusal).rejects.toBeInstanceOf(CarriedAskBeingPaidError);
-    await expect(refusal).rejects.toMatchObject({ paymentIntentId: "pi_e2", status });
-    expect(stripe.calls).toEqual(["pi_e2"]);
-  });
-
-  it.each(["requires_payment_method", "requires_confirmation", "requires_action", "canceled"])(
-    "lets the replay supersede an ask that is %s",
+  it.each(["succeeded", "processing", "requires_capture", "some_future_status"])(
+    "waits - never supersedes - while the carried ask is %s (an unknown status fails safe)",
     async (status) => {
-      await expect(refuseSupersedingAskBeingPaid(livePayment, answering(status).retrieve)).resolves.toBeUndefined();
+      const stripe = answering(status);
+      const wait = await carriedAskPaymentWait(livePayment, stripe.retrieve, QUEUED, NOW);
+      expect(wait).toContain(`(pi_e2) is ${status} at Stripe`);
+      expect(wait).toContain("until that payment is recorded");
+      expect(stripe.calls).toEqual(["pi_e2"]);
     },
   );
+
+  it.each(["requires_payment_method", "requires_confirmation", "requires_action", "canceled"])(
+    "lets the replay supersede an ask that is %s (unpaid by `staleIntentAction`, or cancelled)",
+    async (status) => {
+      await expect(carriedAskPaymentWait(livePayment, answering(status).retrieve, QUEUED, NOW)).resolves.toBeNull();
+    },
+  );
+
+  it("stops for good once the recovery is older than the cap, naming the intent and its status", async () => {
+    const queuedLongAgo = new Date(NOW.getTime() - CARRIED_ASK_PAYMENT_WAIT_MAX_MS - 1);
+    const stopped = carriedAskPaymentWait(livePayment, answering("processing").retrieve, queuedLongAgo, NOW);
+    await expect(stopped).rejects.toBeInstanceOf(CarriedAskPaymentWaitExpiredError);
+    await expect(stopped).rejects.toMatchObject({ paymentIntentId: "pi_e2", status: "processing" });
+    // At the cap exactly it still waits.
+    const atCap = new Date(NOW.getTime() - CARRIED_ASK_PAYMENT_WAIT_MAX_MS);
+    await expect(carriedAskPaymentWait(livePayment, answering("processing").retrieve, atCap, NOW)).resolves.toContain("waiting");
+    // An unpaid ask past the cap is simply superseded.
+    await expect(carriedAskPaymentWait(livePayment, answering("requires_payment_method").retrieve, queuedLongAgo, NOW)).resolves.toBeNull();
+  });
 
   it("an intent Stripe has no record of is nothing being paid", async () => {
     const missing = async () => {
       throw Object.assign(new Error("No such payment_intent"), { code: "resource_missing" });
     };
-    await expect(refuseSupersedingAskBeingPaid(livePayment, missing)).resolves.toBeUndefined();
+    await expect(carriedAskPaymentWait(livePayment, missing, QUEUED, NOW)).resolves.toBeNull();
   });
 
   it("asks Stripe nothing when there is no unpaid ask to carry", async () => {
@@ -248,15 +286,15 @@ describe("refuseSupersedingAskBeingPaid: a replay never supersedes an ask Stripe
       { ...livePayment, additionalPaymentIntentId: null },
     ]) {
       const stripe = answering("succeeded");
-      await expect(refuseSupersedingAskBeingPaid(payment, stripe.retrieve)).resolves.toBeUndefined();
+      await expect(carriedAskPaymentWait(payment, stripe.retrieve, QUEUED, NOW)).resolves.toBeNull();
       expect(stripe.calls).toEqual([]);
     }
   });
 
-  it("any other Stripe read error propagates, so the replay retries rather than superseding blind", async () => {
+  it("any other Stripe read error (a timeout, an outage) propagates, so the replay retries rather than superseding blind", async () => {
     const outage = async () => {
-      throw new Error("Stripe is unavailable");
+      throw new Error("Request timed out");
     };
-    await expect(refuseSupersedingAskBeingPaid(livePayment, outage)).rejects.toThrow("Stripe is unavailable");
+    await expect(carriedAskPaymentWait(livePayment, outage, QUEUED, NOW)).rejects.toThrow("Request timed out");
   });
 });

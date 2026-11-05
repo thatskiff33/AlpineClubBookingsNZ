@@ -59,7 +59,7 @@ import {
   planReissuedAskMint,
   resolveAskCustomerId,
 } from "@/lib/reissued-ask-mint";
-import { findOwnRecoveryRow, isRecoveryReplaySettled, refuseSupersedingAskBeingPaid, sizeRecoveryReplayAsk } from "@/lib/additional-ask-recovery-replay";
+import { carriedAskPaymentWait, findOwnRecoveryRow, isRecoveryReplaySettled, sizeRecoveryReplayAsk } from "@/lib/additional-ask-recovery-replay";
 import { mintOrdinaryAskIntent, refuseAdoptedIntentOnLedger } from "@/lib/ordinary-ask-mint";
 import { unretryableRecoveryCause } from "@/lib/recovery-unretryable-cause";
 import { ORDINARY_ASK_RECOVERY_REASON, planOrdinaryAskMint } from "@/lib/ordinary-ask-request";
@@ -69,6 +69,7 @@ import { reportSupersededPaymentRefund, reportUnannouncedSupersededPaymentRefund
 import logger from "@/lib/logger";
 import { createAuditLog } from "@/lib/audit";
 import {
+  ABANDONED_INTENT_STRIPE_TIMEOUT_MS,
   heldPaymentRecoveryClaimWhere,
   MAX_PAYMENT_RECOVERY_ATTEMPTS,
   PAYMENT_RECOVERY_CLAIMABLE_LATER_WHERE,
@@ -2883,8 +2884,8 @@ async function processCreateAdditionalPaymentIntentOperation(
       })
     : null;
 
-  // #3954 review round 4: sized before the overtake check, because a
-  // re-issued ask's replay is settled by a different rule (below).
+  // #3954 review round 4: sized before the settled check, because a frozen
+  // figure is settled by a different rule (a later ask overtakes it, #4015).
   const replay = sizeRecoveryReplayAsk({
     frozenAmountCents: operation.amountCents,
     modification: modificationToBill,
@@ -3010,15 +3011,15 @@ async function processCreateAdditionalPaymentIntentOperation(
   // recovery threw - one rule with the settled check (`findOwnRecoveryRow`).
   const ownRow = findOwnRecoveryRow(operation, payment.transactions);
   if (ownRow?.stripePaymentIntentId) {
-    // A reduction that retired the ask while this recovery sat PENDING has
-    // already accounted for its money; an invoice parked on the withdrawn
+    // A reduction (or an officer's withdrawal) that retired the ask while this
+    // recovery sat PENDING has already accounted for its money; an invoice parked on the withdrawn
     // intent would only wait for the reaper, so finish as the lost claim does.
     // FAILED alone is not the test: a superseded row is FAILED with no
     // `withdrawnAt`, and its invoice correctly follows the carry.
     if (ownRow.withdrawnAt) {
       logger.warn(
         { operationId: operation.id, bookingId: operation.bookingId, paymentIntentId: ownRow.stripePaymentIntentId },
-        "Additional intent recovery found its own row already withdrawn by a price reduction (#4442); no supplementary invoice queued for it",
+        "Additional intent recovery found its own row already withdrawn (a price reduction, #4442, or an officer's withdrawal, #3528); no supplementary invoice queued for it",
       );
       await completePaymentRecoveryOperation(operation);
       return "done";
@@ -3042,8 +3043,9 @@ async function processCreateAdditionalPaymentIntentOperation(
     return "done";
   }
 
-  // #4015 review C1: never supersede a live ask Stripe is taking money on (a retry); no transaction open.
-  await refuseSupersedingAskBeingPaid(payment, (paymentIntentId) => getPaymentIntent(paymentIntentId));
+  // #4015 review: never supersede an ask Stripe is taking money on - wait, capped (`carriedAskPaymentWait`).
+  const carriedAskBeingPaid = await carriedAskPaymentWait(payment, (paymentIntentId) => getPaymentIntent(paymentIntentId, { timeoutMs: ABANDONED_INTENT_STRIPE_TIMEOUT_MS }), operation.createdAt);
+  if (carriedAskBeingPaid) return (await waitPaymentRecoveryOperation(operation, carriedAskBeingPaid, format), "waited");
 
   // #3954 round 7: one resolution, shared with the door's re-issue mint, so
   // the two minters of one key send one request (`resolveAskCustomerId`).

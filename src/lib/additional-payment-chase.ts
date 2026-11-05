@@ -285,15 +285,6 @@ const PROVIDER_CAPTURED_INTENT_STATUSES: readonly string[] = [
   "processing",
 ];
 
-/**
- * Whether Stripe has taken, or is taking, this intent's money: the pay door's
- * `captured-at-provider`, and the state in which a recovery replay never
- * supersedes the ask it would carry (#4015 review C1).
- */
-export function isProviderCapturedIntentStatus(status: string): boolean {
-  return PROVIDER_CAPTURED_INTENT_STATUSES.includes(status);
-}
-
 /** The pay door's three answers. */
 export type AdditionalPaymentDoorAnswer<Intent> =
   /** The member may pay this intent now: hand out its client secret; keep its invoice waiting. */
@@ -351,7 +342,7 @@ export async function resolveAdditionalPaymentDoor<
 
   const intent = await readOpenProviderIntent(paymentIntentId, retrieve);
   if (!intent) return { state: "closed" };
-  if (isProviderCapturedIntentStatus(intent.status)) {
+  if (PROVIDER_CAPTURED_INTENT_STATUSES.includes(intent.status)) {
     return { state: "captured-at-provider", intent };
   }
   return { state: "payable", intent };

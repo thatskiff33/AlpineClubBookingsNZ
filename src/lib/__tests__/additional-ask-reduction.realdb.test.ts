@@ -2358,20 +2358,27 @@ let webhookClient: PrismaClient;
         return intent;
       }
 
-      it("REVIEW C1: the later ask E1's replay would carry is being paid at Stripe - the replay backs off, superseding nothing, and once the capture lands asks only its own 5000", async () => {
+      it("REVIEW C1: the later ask E1's replay would carry is being paid at Stripe - the replay waits, attempt handed back, superseding nothing, and once the capture lands asks only its own 5000", async () => {
         const e1 = await e1WaitingOnRetry();
         const e2 = await increaseBy(2_000);
         const stripe = fakeStripe();
         const e2Intent = await doorAsk(stripe, e2.id, { amountCents: 2_000, carriedCents: 0 });
         // The member confirmed E2's ask; Stripe took the money, and the webhook is not in yet.
         e2Intent.status = "succeeded";
+        const before = await prisma.paymentRecoveryOperation.findUniqueOrThrow({ where: { id: e1 }, select: { attempts: true } });
 
-        expect(await replay(e1)).toBe("failed");
+        // The immediate runner reports any non-throwing attempt as run; the row says it waited.
+        expect(await replay(e1)).toBe("succeeded");
         expect(stripe.intents.size).toBe(1);
         expect(await cancellationFor(e2Intent.id)).toEqual([]);
-        const backedOff = await prisma.paymentRecoveryOperation.findUniqueOrThrow({ where: { id: e1 }, select: { status: true, lastError: true, nextRetryAt: true } });
-        expect(backedOff).toMatchObject({ status: "FAILED", lastError: expect.stringContaining(`(${e2Intent.id}) is succeeded at Stripe`) });
-        expect(backedOff.nextRetryAt).not.toBeNull();
+        const waiting = await prisma.paymentRecoveryOperation.findUniqueOrThrow({ where: { id: e1 }, select: { status: true, lastError: true, nextRetryAt: true, attempts: true } });
+        expect(waiting).toMatchObject({
+          status: "FAILED",
+          attempts: before.attempts,
+          lastError: expect.stringContaining(`(${e2Intent.id}) is succeeded at Stripe`),
+        });
+        expect(waiting.nextRetryAt).not.toBeNull();
+        expect(recoveryAlerts.sent).toEqual([]);
 
         // The capture's webhook lands; the retry carries nothing of E2's paid ask.
         const { upsertPaymentIntentTransaction } = await import("@/lib/payment-transactions");
@@ -2381,6 +2388,27 @@ let webhookClient: PrismaClient;
         expect(e1Intent.amount).toBe(5_000);
         expect(await liveAsks()).toEqual([expect.objectContaining({ stripePaymentIntentId: e1Intent.id, amountCents: 5_000, carriedAskCents: 0 })]);
         expect(await cancellationFor(e2Intent.id)).toEqual([]);
+        expect(await recoveryStatus(e1)).toBe("SUCCEEDED");
+      });
+
+      it("REVIEW item 1: a carried ask still processing once the recovery is past the wait cap - the recovery stops at once, one alert telling an officer what to do", async () => {
+        const e1 = await e1WaitingOnRetry();
+        // Queued a month before the frozen today: far past the cap.
+        await prisma.paymentRecoveryOperation.update({ where: { id: e1 }, data: { createdAt: new Date("2026-06-01T00:00:00.000Z") } });
+        const e2 = await increaseBy(2_000);
+        const stripe = fakeStripe();
+        const e2Intent = await doorAsk(stripe, e2.id, { amountCents: 2_000, carriedCents: 0 });
+        e2Intent.status = "processing";
+
+        expect(await replay(e1)).toBe("failed");
+        expect(stripe.intents.size).toBe(1);
+        expect(await cancellationFor(e2Intent.id)).toEqual([]);
+        const { MAX_PAYMENT_RECOVERY_ATTEMPTS } = await import("@/lib/payment-recovery-constants");
+        expect(await prisma.paymentRecoveryOperation.findUniqueOrThrow({ where: { id: e1 }, select: { status: true, nextRetryAt: true, attempts: true } }))
+          .toEqual({ status: "FAILED", nextRetryAt: null, attempts: MAX_PAYMENT_RECOVERY_ATTEMPTS });
+        expect(recoveryAlerts.sent).toEqual([
+          expect.objectContaining({ operationId: e1, errorMessage: expect.stringContaining(`earlier card request ${e2Intent.id} has been "processing" at Stripe`) }),
+        ]);
       });
 
       it("REVIEW L5: the door's write committed but its reply was lost - the recovery it kept finishes on the door's own row by its edit stamp, asking once", async () => {

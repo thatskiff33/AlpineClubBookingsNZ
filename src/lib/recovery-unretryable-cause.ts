@@ -7,7 +7,7 @@
  * the next attempt will meet again, which only burns the backoff before anyone
  * hears of it.
  *
- * Two such refusals today. The first: an edit's ask write that finds its intent already
+ * Three such refusals today. The first: an edit's ask write that finds its intent already
  * recorded for another edit (`AdditionalAskAttributionConflictError`,
  * `INV-MOD-060`). Edit X's recovery adopted edit Y's intent, Y's write was
  * refused, and Y's retry that re-derives the same figure (the frozen fallback,
@@ -18,6 +18,9 @@
  * (`IntentLedgerRowOnAnotherPaymentError`). The row write is pinned to its
  * payment, so every retry meets the same row and is refused again.
  *
+ * The third (#4015 review): a replay that has waited its longest on a carried
+ * ask Stripe is still taking money on (`CarriedAskPaymentWaitExpiredError`).
+ *
  * So the runner's failure path (`failPaymentRecoveryOperation`) ends the
  * recovery on the first such failure, through the one terminal transition
  * (`markPaymentRecoveryOperationFailed`, `INV-PAY-056`): FAILED with no retry,
@@ -27,6 +30,7 @@
  */
 import { PaymentRecoveryOperationType, type PaymentRecoveryOperation } from "@prisma/client";
 
+import { CarriedAskPaymentWaitExpiredError } from "@/lib/additional-ask-recovery-replay";
 import { bookingModificationTypeLabel } from "@/lib/booking-money-lines";
 import logger from "@/lib/logger";
 import {
@@ -46,6 +50,9 @@ export async function unretryableRecoveryCause(
 ): Promise<string | null> {
   if (operation.type !== PaymentRecoveryOperationType.CREATE_ADDITIONAL_PAYMENT_INTENT) {
     return null;
+  }
+  if (error instanceof CarriedAskPaymentWaitExpiredError) {
+    return `The card request for a change to this booking was not raised: the member's earlier card request ${error.paymentIntentId} has been "${error.status}" at Stripe for longer than the app waits, and the app will not cancel a request Stripe may be taking money on. Nothing was charged or cancelled by this recovery, and the money for this change is still owed: check card request ${error.paymentIntentId} in Stripe, record it if it was paid, and collect what is still owed for this change by hand.`;
   }
   if (error instanceof IntentLedgerRowOnAnotherPaymentError) {
     return `The card request ${error.paymentIntentId} for this booking could not be recorded: Stripe's record of it is already filed under a different payment. Retrying would be refused the same way, so the app stopped. The money for this change is still owed: check the card request in Stripe against the booking's payments and ask a developer to reconcile it.`;

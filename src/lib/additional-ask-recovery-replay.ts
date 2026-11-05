@@ -7,6 +7,8 @@
  * Pure, like the arithmetic it builds on (`additional-payment-ask.ts`): no
  * client, so the replay, the reduction and the tests all import it.
  */
+import type { PaymentStatus } from "@prisma/client";
+
 import {
   outstandingAdditionalAskCents,
   reissueUnpaidAdditionalAsk,
@@ -14,11 +16,13 @@ import {
   type AdditionalAsk,
   type AdditionalAskPayment,
 } from "@/lib/additional-payment-ask";
-import { isProviderCapturedIntentStatus, readOpenProviderIntent } from "@/lib/additional-payment-chase";
+import { readOpenProviderIntent } from "@/lib/additional-payment-chase";
 import {
   bookingModificationIdForAdditionalIntentRecoveryKey,
   isEditFinancialReviewAdditionalIntentRecoveryKey,
 } from "@/lib/payment-recovery-keys";
+import { isCapturedTransactionStatus, isOpenIntentTransactionStatus } from "@/lib/payment-transaction-status";
+import { staleIntentAction } from "@/lib/stale-intent-action";
 import { recordedFoldedReissuedAskCents } from "@/lib/unpaid-ask-offset-marker";
 
 /** The `BookingModification` figures a failed mint's recovery re-derives from. */
@@ -153,16 +157,23 @@ export type ReplayRecovery = {
 };
 
 /**
- * A ledger row, as the own-row rule reads it. `bookingModificationId` and
- * `withdrawnAt` are REQUIRED, so no reader can drop the second half of the rule.
+ * A ledger row, as the own-row rule reads it. `bookingModificationId`,
+ * `withdrawnAt` and `status` are REQUIRED, so no reader can drop the second
+ * half of the rule or its choice between stamped rows.
  */
 export type ReplayLedgerRow = {
   kind: string;
+  status: string;
   createdAt: Date;
   stripePaymentIntentId: string | null;
   bookingModificationId: string | null;
   withdrawnAt: Date | null;
 };
+
+/** The newest of `rows` (ledger order is oldest first, so a tie goes to the later one). */
+function newestRow<R extends { createdAt: Date }>(rows: readonly R[]): R | null {
+  return rows.reduce<R | null>((newest, row) => (newest && newest.createdAt > row.createdAt ? newest : row), null);
+}
 
 /**
  * THE RECOVERY'S OWN ROW - the one rule for the replay's resume
@@ -180,8 +191,12 @@ export type ReplayLedgerRow = {
  *   replay carried that row as a later ask and asked for the edit's money twice.
  *
  * Withdrawn or not, in both halves: a price reduction that retired the row has
- * already netted its money, and the replay finishes it as such (#4442). A live
- * row is preferred where both exist (a currency re-issue keeps the stamp).
+ * already netted its money, and the replay finishes it as such (#4442). Where
+ * several rows carry the stamp - a currency re-issue writes the edit's ask on a
+ * new intent and leaves the old row FAILED, not withdrawn
+ * (`additional-intent-currency.ts`) - the one still open or captured wins, then
+ * the newest not withdrawn, then the newest, so the edit's invoice waits on
+ * the intent the member can pay.
  *
  * Never by the edit stamp for an officer's review charge: its key names the
  * edit too, but its ask is not that edit's ordinary row, and it replays by its
@@ -198,7 +213,12 @@ export function findOwnRecoveryRow<R extends ReplayLedgerRow>(
   const bookingModificationId = bookingModificationIdForAdditionalIntentRecoveryKey(operation.idempotencyKey);
   if (!bookingModificationId) return null;
   const stamped = additional.filter((transaction) => transaction.bookingModificationId === bookingModificationId);
-  return stamped.find((transaction) => transaction.withdrawnAt === null) ?? stamped[0] ?? null;
+  const live = stamped.filter((transaction) => transaction.withdrawnAt === null);
+  const askable = live.filter(
+    (transaction) =>
+      isOpenIntentTransactionStatus(transaction.status) || isCapturedTransactionStatus(transaction.status as PaymentStatus),
+  );
+  return newestRow(askable) ?? newestRow(live) ?? newestRow(stamped);
 }
 
 /**
@@ -234,47 +254,68 @@ export function isRecoveryReplaySettled(
 }
 
 /**
- * #4015 review C1: the live ask a replay would carry and supersede is being paid
- * at Stripe right now (`isProviderCapturedIntentStatus`), and our rows have not
- * caught up. An ordinary, RETRYABLE failure: the replay backs off and, once the
- * capture's webhook lands, carries nothing of that ask.
+ * #4015 review: how long a replay waits on a carried ask Stripe is taking
+ * money on, counted from when its recovery was queued. Long enough for a
+ * webhook Stripe is still retrying (up to three days) or a bank debit that
+ * stays `processing` for several business days; after it the recovery stops
+ * and an officer is told (`CarriedAskPaymentWaitExpiredError`).
  */
-export class CarriedAskBeingPaidError extends Error {
+export const CARRIED_ASK_PAYMENT_WAIT_MAX_MS = 7 * 24 * 60 * 60 * 1000;
+
+/**
+ * The wait above ran out: the ask the replay would carry is still being paid,
+ * or in a state the replay does not recognise, at Stripe. Unretryable
+ * (`unretryableRecoveryCause` names it for the officers' alert).
+ */
+export class CarriedAskPaymentWaitExpiredError extends Error {
   constructor(
     readonly paymentIntentId: string,
     readonly status: string,
   ) {
     super(
-      `Additional intent recovery deferred: the unpaid ask it would carry (${paymentIntentId}) is ${status} at Stripe; retrying once that payment is recorded`,
+      `Additional intent recovery stopped: the unpaid ask it would carry (${paymentIntentId}) is still ${status} at Stripe after the longest wait (${CARRIED_ASK_PAYMENT_WAIT_MAX_MS / 86_400_000} days)`,
     );
-    this.name = "CarriedAskBeingPaidError";
+    this.name = "CarriedAskPaymentWaitExpiredError";
   }
 }
 
 /**
- * A REPLAY NEVER SUPERSEDES AN ASK THE MEMBER IS PAYING (#4015 review C1).
+ * A REPLAY NEVER SUPERSEDES AN ASK STRIPE IS TAKING MONEY ON (#4015 review C1).
  *
  * A replay mints the edit's money plus the unpaid balance of the `Payment`'s
  * live ask, then cancels that ask. Since #4015 a later edit's ask no longer
- * settles a waiting increase, so the replay can now carry an ask the member is
- * paying this minute: confirmed, or through 3DS, with the webhook not yet in.
- * Cancelling it then fails their confirmation, or refunds a capture
- * (`REFUND_SUPERSEDED_PAYMENT`) only to ask again. So, before the mint and
- * outside any transaction, Stripe's own state of that ask is read, and one that
- * is taking money throws `CarriedAskBeingPaidError`.
+ * settles a waiting increase, so the replay can now carry an ask the member has
+ * just paid, or is paying, with the webhook not yet in. Cancelling it then
+ * refunds a capture (`REFUND_SUPERSEDED_PAYMENT`) only to ask again. So, before
+ * the mint and outside any transaction, Stripe's own state of that ask is read
+ * through the one reading of whether an intent is unpaid (`staleIntentAction`):
+ *
+ * - unpaid (`reissue`, `requires_action` included), cancelled or unknown to
+ *   Stripe -> null: the replay carries and supersedes it. A member mid-3DS on
+ *   that ask has their confirmation fail and pays the replay's ask instead.
+ * - anything else (`succeeded`, `processing`, `requires_capture`, a status
+ *   this code does not know) -> the reason to WAIT, which the runner records
+ *   with the attempt handed back (`waitPaymentRecoveryOperation`). Once the
+ *   capture's webhook lands the retry carries none of that ask.
+ * - still so once the recovery is older than `CARRIED_ASK_PAYMENT_WAIT_MAX_MS`
+ *   -> throws `CarriedAskPaymentWaitExpiredError`.
  *
  * A window remains: a confirmation landing between this read and the hold's
- * cancel still takes the superseded-capture refund (`INV-PAY-120`).
- * `retrieve` is injected so this module stays pure.
+ * cancel still takes the superseded-capture refund (`docs/STATE_MACHINES.md`,
+ * "One ask at a time"). `retrieve` is injected so this module stays pure.
  */
-export async function refuseSupersedingAskBeingPaid(
+export async function carriedAskPaymentWait(
   payment: AdditionalAskPayment & { additionalPaymentIntentId: string | null },
   retrieve: (paymentIntentId: string) => Promise<{ status: string }>,
-): Promise<void> {
+  recoveryCreatedAt: Date,
+  now: Date = new Date(),
+): Promise<string | null> {
   const liveAsk = payment.additionalPaymentIntentId;
-  if (!liveAsk || outstandingAdditionalAskCents(payment) <= 0) return;
+  if (!liveAsk || outstandingAdditionalAskCents(payment) <= 0) return null;
   const intent = await readOpenProviderIntent(liveAsk, retrieve);
-  if (intent && isProviderCapturedIntentStatus(intent.status)) {
-    throw new CarriedAskBeingPaidError(liveAsk, intent.status);
+  if (!intent || staleIntentAction(intent) === "reissue") return null;
+  if (now.getTime() - recoveryCreatedAt.getTime() > CARRIED_ASK_PAYMENT_WAIT_MAX_MS) {
+    throw new CarriedAskPaymentWaitExpiredError(liveAsk, intent.status);
   }
+  return `Additional intent recovery waiting: the unpaid ask it would carry (${liveAsk}) is ${intent.status} at Stripe; it is checked again on the longest retry interval until that payment is recorded, for up to ${CARRIED_ASK_PAYMENT_WAIT_MAX_MS / 86_400_000} days from when this recovery was queued`;
 }
