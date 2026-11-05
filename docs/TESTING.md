@@ -277,11 +277,13 @@ stay owned that is not measured.
   it keeps the higher of each stored and measured figure and never lowers one.
   A pull request that lowers it turns the job red (`--base-ref`, the branch the
   pull request targets), so removing well-covered code is a visible decision.
-- **Measured** (MEASURED_DATE, MEASURED_FILES files): MEASURED_FIGURES. The floor
-  holds the whole-percent floor of each (FLOOR_FIGURES): it was measured on a
-  development machine rather than in CI, so it is deliberately a little loose
-  until a green `main` run's artifact tightens it with `--update`. The figure
-  counts only what the unit shards run. Real-database suites (`*.realdb.test.ts`) are skipped
+- **Measured** (5 Nov 2026, 498 files): lines 88.99%, statements 87.97%,
+  functions 89.29%, branches 82.01%. The floor holds 88, 87, 89 and 81: the
+  whole-percent floor of each, with a point more room on branches. It was
+  measured on a development machine rather than in CI, so it is deliberately a
+  little loose until a green `main` run's artifact tightens it with `--update`
+  (and the bar is `main`'s own figure whenever one exists). The figure counts
+  only what the unit shards run. Real-database suites (`*.realdb.test.ts`) are skipped
   there, so a module they alone exercise, such as `booking-ledger-back-post.ts`,
   reads 0% however well they cover it. The summary's worst-files list is the
   answer to "which money paths does no test reach".
@@ -295,7 +297,7 @@ stay owned that is not measured.
   ```
 
   This runs a large part of the suite (the disk-scanning censuses import money
-  modules too: 1,197 test files, about sixteen minutes on four cores) and a
+  modules too: 1,237 test files, about seventeen minutes on four cores) and a
   census with its own explicit timeout can still fail under the load; the longer
   `--testTimeout` covers the rest.
 
