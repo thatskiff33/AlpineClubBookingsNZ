@@ -50,6 +50,12 @@ function readCodeowners() {
  *   - anything else (a `.md`, a `.json`): unreadable, and returned as such.
  */
 function parseCodeownersSrcLib(source) {
+  /** `dir`, `dir/` and `dir/**` all name the directory `dir`. */
+  const directoryOf = (glob) => {
+    let dir = glob;
+    if (dir.endsWith("**")) dir = dir.slice(0, -2);
+    return dir.endsWith("/") ? dir.slice(0, -1) : dir;
+  };
   const globs = [];
   const unreadable = [];
   for (const line of source.split("\n")) {
@@ -60,7 +66,7 @@ function parseCodeownersSrcLib(source) {
     const glob = pattern.slice(1);
     if (/\.tsx?$/.test(glob)) globs.push(glob);
     else if (/\.[A-Za-z0-9]+$/.test(glob.split("/").at(-1) ?? "")) unreadable.push(pattern);
-    else globs.push(`${glob.replace(/\/\*\*$/, "").replace(/\/$/, "")}/**/*.ts`);
+    else globs.push(`${directoryOf(glob)}/**/*.ts`);
   }
   return { globs, unreadable };
 }
