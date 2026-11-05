@@ -69,6 +69,12 @@ import { ownRunningClaim, type XeroOperationClaim } from "@/lib/xero-operation-o
 
 export const PARTIAL_REPAIR_CLAIM_LOST_MESSAGE =
   "The payment was sent to Xero, but this operation was reset while it ran. Retry it once to close it.";
+/** #4259: a repair that sent Xero nothing, whose completion lost its claim. */
+export const REPAIR_RESET_NOT_CLOSED_MESSAGE =
+  "This operation was reset while the repair ran, so it was not closed. Retry it once to close it.";
+/** #4259: the modification note's allocation went to Xero; its completion lost its claim. */
+export const MODIFICATION_NOTE_REPAIR_CLAIM_LOST_MESSAGE =
+  "The credit note allocation was sent to Xero, but this operation was reset while it ran. Retry it once to close it.";
 import { isRetryOfVoidedRefundRequestNote, mayRecordAsCanonicalRefundNote, VOIDED_REQUEST_NOTE_RETRY_REASON } from "@/lib/xero-refund-note-status";
 import type { CashRefundMethod } from "@/lib/xero-refund-method";
 import {
@@ -1521,7 +1527,7 @@ export async function retryXeroSyncOperation(
             return close(
               { payment: null, paymentSkipped: true, paymentSkipReason: zeroCashRepair.skipReason },
               zeroCashRepair.message,
-              "This operation was reset while the repair ran, so it was not closed. Retry it once to close it.",
+              REPAIR_RESET_NOT_CLOSED_MESSAGE,
             );
           }
           // #4256: a payment an earlier run recorded (its link) is never sent
@@ -1599,25 +1605,38 @@ export async function retryXeroSyncOperation(
       operation.localModel &&
       operation.localId
     ) {
-      for (const target of await unallocatedClearingTargets({
-        ...modificationCreditNoteRepair,
-        localModel: operation.localModel,
-        localId: operation.localId,
-      })) {
-        await xero.allocateCreditNoteToInvoice(
-          modificationCreditNoteRepair.creditNoteId,
-          target.invoiceId,
-          target.amountCents,
-          {
-            localModel: operation.localModel,
-            localId: operation.localId,
-            role: modificationCreditNoteRepair.allocationRole,
-            createdByMemberId,
+      const repair = modificationCreditNoteRepair;
+      const local = { localModel: operation.localModel, localId: operation.localId };
+      // #4259: claimed like the sibling repairs, and it closes its own row,
+      // which used to stay PARTIAL. The plan's links are read under the claim.
+      return runWithClaimedOriginal(
+        operation.id,
+        async (claim) => {
+          const targets = await unallocatedClearingTargets({ ...repair, ...local });
+          for (const target of targets) {
+            await xero.allocateCreditNoteToInvoice(repair.creditNoteId, target.invoiceId, target.amountCents, {
+              ...local,
+              role: repair.allocationRole,
+              createdByMemberId,
+            });
           }
-        );
-      }
-
-      return { message: "Repaired Xero modification credit note allocation." };
+          const closed = await completeXeroSyncOperation(
+            claim,
+            {
+              status: "SUCCEEDED",
+              responsePayload: { ...(asRecord(operation.responsePayload) ?? {}), allocationError: null, repairedAllocations: targets },
+              xeroObjectType: "CREDIT_NOTE",
+              xeroObjectId: repair.creditNoteId,
+              xeroObjectNumber: operation.xeroObjectNumber ?? null,
+            },
+            { retryClaim: true },
+          );
+          if (closed) return { message: "Repaired Xero modification credit note allocation." };
+          logger.warn({ operationId: operation.id }, "Xero PARTIAL repair finished after its claim was reset; row left as the operator set it");
+          return { message: targets.length > 0 ? MODIFICATION_NOTE_REPAIR_CLAIM_LOST_MESSAGE : REPAIR_RESET_NOT_CLOSED_MESSAGE };
+        },
+        { from: "PARTIAL" },
+      );
     }
 
     throw new XeroOperationRetryError(
