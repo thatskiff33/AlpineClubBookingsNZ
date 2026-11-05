@@ -1049,8 +1049,16 @@ note.
    person is asked to allocate the invoices left, which the finding lists,
    and nothing is offered. While a retry runs on the note's row, no allocation
    row's retry is offered beside it. A PARTIAL row the retry refuses is
-   reported blocked for an edit's note; a clearing note's still falls through
-   to its arm's own allocation path (#4762). A throw gives the row back
+   reported blocked with the refusal reason and the planned invoices left,
+   and nothing is offered, for both arms: until #4762 a clearing note's fell
+   through to its arm's own allocation path, which could queue the whole note
+   against the primary invoice beside a spread plan. It is read as the retry
+   is: an allocation row in flight beside it is reported instead, another
+   row (not its own attempt, by the same rule) is answered first, and own
+   attempts resolved by hand count as done - with nothing left, the note is
+   reported done. With no readable plan (a redacted one) no row is its own
+   attempt, so a row resolved by hand never answers for the whole note, and
+   the invoices left are reported unknown (null). A throw gives the row back
    PARTIAL with its payload and the run's error, guarded on the claim, never
    FAILED, whose error payload would replace what the repair reads.
 
