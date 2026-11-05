@@ -75,7 +75,6 @@ type ParsedEmbedToken = {
   parameter: string | undefined;
 };
 
-
 // Both matchers are derived from src/lib/token-catalogue.ts (single source of
 // truth) and built once at module load. Matching behaviour is unchanged from
 // the previous hardcoded regexes: case-insensitive, whitespace tolerant,

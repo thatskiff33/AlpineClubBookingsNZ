@@ -5,9 +5,6 @@ interface XeroErrorHeaders {
   [key: string]: string | number | undefined;
 }
 
-// Escape regex metacharacters so a header name can never form a pathological
-// pattern. All call sites pass fixed internal literals, so this is defensive.
-
 export interface XeroErrorShape {
   response?: {
     statusCode?: number;
