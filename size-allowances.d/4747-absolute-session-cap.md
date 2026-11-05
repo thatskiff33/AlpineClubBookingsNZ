@@ -1,7 +1,7 @@
 # File-size allowances for #4611 (maximum session age)
 
 file: src/lib/auth.ts
-lines: 825
+lines: 828
 reason: the jwt callback is the one place every session refresh passes
   through, so the cap's call has to sit in it, beside the revocation rule
   whose sessionInvalidated flag it sets: the incoming-stamp capture before
