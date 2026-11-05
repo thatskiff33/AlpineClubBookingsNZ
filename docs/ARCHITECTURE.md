@@ -3161,7 +3161,9 @@ an officer, since a retry would meet the same row (#4081). No such write lowers
 a captured row's status (`INV-PAY-132`). A later edit's newer additional intent does not settle
 it (#4015): that ask was sized off a `Payment` that never showed this failed mint, so the replay
 carries its unpaid balance and supersedes it; only a frozen figure, with no edit to re-derive
-from, still skips itself. It settles the Xero half two ways: it points any
+from, still skips itself. Before minting it reads Stripe for that later ask, outside any
+transaction, and backs off (a retryable failure) while it is being paid, so a member mid-payment is
+never cancelled under. It settles the Xero half two ways: it points any
 supplementary invoice operation still WAITING_PAYMENT at the recovered intent,
 and it raises the supplementary invoice outright for the edits that queued none
 — the inline dispatch skips that queue while no intent exists, so those edits

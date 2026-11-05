@@ -772,6 +772,11 @@ and permanently ([INV-PAY-047]). The ask is the edit's net PLUS the unpaid
 balance of the ask it supersedes.
 
 ```text
+a failed mint's replay, before it mints (#4015 review C1, outside any transaction)
+  -> reads Stripe for the live ask it would carry and supersede
+       succeeded, processing or requires_capture -> retryable failure, nothing
+         minted or cancelled; once the webhook lands it carries none of it
+       a confirmation landing after that read -> the superseded-capture refund below
 edit raises an ask -> mint the replacement intent
   -> enqueue CANCEL_PAYMENT_INTENT for every other live or declined (#4422) ADDITIONAL intent
   -> cancel it SYNCHRONOUSLY, best-effort, BEFORE the new client secret returns
@@ -802,11 +807,15 @@ reduction edit, under the door's locks
   unpaid ask = the rows' live ask (a chain holding a review-raised request -> none)
              + each ask whose mint FAILED and whose CREATE_ADDITIONAL_PAYMENT_INTENT
                recovery will still run, sized as its replay would size it
-               ("retry nets it off", 9 Oct 2026); one that wrote its own row
-               -> already settled. A later ask never settles one (#4015): it was
-               sized off a Payment that never showed the failed mint, so the
-               replay carries it and supersedes it. Only a frozen figure (no
-               edit to re-derive from) keeps #3340's "a later ask overtook it"
+               ("retry nets it off", 9 Oct 2026); one whose own row exists
+               (`findOwnRecoveryRow`: its recorded intent, or a row stamped
+               with its edit, withdrawn or not) -> already settled. A later ask
+               never settles one (#4015): it was sized off a Payment that never
+               showed the failed mint, so the replay carries it and supersedes it
+       a waiting recovery with only a frozen figure (no edit to re-derive from)
+               -> cannot be sized: the reduction sets nothing against any ask
+               and settles as before. Only its replay still reads a later ask
+               as having overtaken it (#3340)
        an officer's review-charge recovery -> left exactly as set (decision B)
   -> offset = min(reduction, unpaid ask)
   -> every unpaid ADDITIONAL row since the last paid one -> FAILED + withdrawnAt

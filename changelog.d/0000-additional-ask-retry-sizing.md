@@ -6,5 +6,8 @@
   that amount. The retry now asks for its own increase plus whatever the later
   request still has unpaid, and replaces that request. The member is left with
   one card request for the full amount owed. A price reduction saved in the
-  meantime now sets itself against that waiting increase too. No operator
-  action is needed.
+  meantime now sets itself against that waiting increase too. If the member
+  is paying the later request at that moment, the retry waits until that
+  payment is recorded instead of cancelling it. A retry whose change already
+  has its card request on record finishes with that request rather than
+  asking a second time. No operator action is needed.
