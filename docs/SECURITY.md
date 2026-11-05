@@ -233,7 +233,60 @@ because of the failure itself.
   stored count; a restart forgets them.
 - Password sign-in and authenticated current-password checks only: emailed sign-in links, Google, two-factor code entry
   (its own lockout) and lodge PIN sign-in are separate, and forgot-password and
-  sign-in-link request limits per account are #4613.
+  sign-in-link requests have their own per-account limits
+  ([below](#per-account-email-request-limits-4613)).
+
+## Per-account email request limits (#4613)
+
+Audience: Operator, Developer.
+
+"Forgot password" and "email me a sign-in link" are each limited to 5 requests
+an hour from one internet address. That cannot see one account requested from
+many addresses, which could fill a member's inbox with emails they did not ask
+for, paid for from the club's sending quota and reputation. A second count, per
+account, closes that gap. The rule is `INV-AUTH-005` in
+[`invariants/authentication.md`](invariants/authentication.md#inv-auth-005).
+
+**What a member sees.** Each route sends at most **3 emails an hour to one
+account**, however many addresses ask; the two routes count separately. The
+fourth request in the hour gets the usual "check your email" answer and no
+email. The window is fixed, not sliding: the count resets an hour after that
+account's first counted request.
+
+**Enumeration parity.** The limit is decided from the account key alone, before
+any member record is read (and, for sign-in links, before the module setting is
+read). A limited request answers HTTP 200 `{ success: true }`, byte for byte the
+answer to an accepted request, a real account and an unknown email alike.
+Unknown emails are counted exactly as real ones.
+
+**What is stored.** The count lives in the shared `RateLimitCounter` table
+under `forgot-password-account:account:` or `magic-link-request-account:account:`
+followed by the account key the password throttle uses: an HMAC-SHA256 of the
+lower-cased email under `AUTH_SECRET` (`INV-AUTH-001`). No address is stored or
+logged, and rows go with the ordinary rate-limit cleanup
+([retention schedule](PRIVACY_RETENTION.md)). Without an auth secret the count
+stays in the process.
+
+**If the store fails.** The count falls back to the #1142 per-process budget,
+3 divided by 4 and rounded down to a floor of 1: one email per account per hour
+on each replica. The routes still answer; a store failure never blocks a request.
+
+**Stated limits.**
+
+- **Anyone can use up a member's hourly allowance.** A sender who knows a
+  member's email can request three emails each hour, after which the member's
+  own request that hour sends nothing. The member still has the emails already
+  sent, and the next hour's allowance. This trades a delay for the member
+  against an unbounded stream to their inbox.
+- **A limited request skips the database read**, so it can answer slightly
+  faster than an accepted one. That timing shows only that the limit was
+  reached, never whether the account exists.
+- **In-memory fallback counts per process.** While the store is down, each
+  replica counts on its own and a restart forgets the count.
+- **During a blue/green cutover the old slot has no per-account limit.** The
+  draining release never calls it, so requests routed to the old slot are
+  counted only by the per-address limiter. Protection is complete once the old
+  slot drains.
 
 ## Dietary/allergy information (special-category data)
 
