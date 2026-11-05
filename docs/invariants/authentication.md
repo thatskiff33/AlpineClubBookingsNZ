@@ -102,7 +102,9 @@ This file holds only the rules.
 - **The check is a club setting, on by default**
   (`LoginSecuritySetting.breachedPasswordCheck`, `INV-CONFIG-001`). Switched
   off, no request is made.
-- **Every `passwordHash` writer is classified.**
-  `password-hash-writer-census.test.ts` fails a new writer that neither screens
-  first nor is listed as exempt with its reason: a generated or deliberately
-  unusable hash (placeholders, imports, erasure, seeds).
+- **Every `passwordHash` writer is classified**, raw-SQL `INSERT`/`UPDATE`
+  literals included. `password-hash-writer-census.test.ts` fails a new writer
+  that is neither guarded — the awaited screen bound, then `if (!result.ok)`
+  returning, before the write in an enclosing block — nor listed as exempt with
+  its reason: a generated or deliberately unusable hash (placeholders, imports,
+  erasure, seeds, SQL fixtures).

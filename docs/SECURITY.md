@@ -281,10 +281,14 @@ elsewhere never stops a member setting a password or finishing setup.
 
 **Every place a password is written is counted.**
 `src/lib/__tests__/password-hash-writer-census.test.ts` parses every
-`passwordHash` writer under `src/`, `prisma/` and `scripts/`. A writer must
-either await `screenChosenPassword` before writing, or be listed as exempt with
-its reason (placeholders, imports, erasure and seeds store generated or
-unusable hashes). A new writer in neither list fails the build.
+`passwordHash` writer under `src/`, `prisma/` and `scripts/`: property writes,
+and raw-SQL `INSERT` or `UPDATE` literals naming the column. A writer must
+either be guarded — the awaited `screenChosenPassword` result bound to a name,
+then an `if (!result.ok)` that returns, both in a block enclosing the write and
+before it — or be listed as exempt with its reason (placeholders, imports,
+erasure, seeds and SQL fixtures store generated or unusable hashes). A new
+writer in neither list fails the build. It cannot see SQL assembled by
+concatenating separate literals or read from a `.sql` file at run time.
 
 **Stated limits.**
 

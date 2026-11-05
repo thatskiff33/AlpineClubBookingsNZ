@@ -5,6 +5,7 @@ import {
   passwordHashScanFiles,
   scanPasswordHashWriters,
   scanRepositoryPasswordHashWriters,
+  type PasswordHashWriterKind,
   type PasswordHashWriterSite,
 } from "./support/password-hash-writer-scan";
 
@@ -16,6 +17,8 @@ import {
 // stores a generated or deliberately unusable hash and is listed as exempt with
 // its reason. A new writer in neither list fails here, naming its file and
 // enclosing function; so does a "chosen" writer that stops screening first.
+// Raw-SQL writers (an INSERT or UPDATE literal naming the column) are counted
+// too, under `kind: "sql"`.
 //
 // The manifest enumerates file#scope pairs with their counts, not one total,
 // so two lanes adding writers conflict on these lines and a person classifies
@@ -27,10 +30,22 @@ type Classification = "chosen" | "exempt";
 type ReviewedWriter = {
   file: string;
   scope: string;
+  /** Defaults to "property"; raw-SQL writers say "sql". */
+  kind?: PasswordHashWriterKind;
   count: number;
   classification: Classification;
   reason: string;
 };
+
+// A directory whose raw-SQL writers are exempt as a class: every SQL site
+// under it is covered, and a property writer there still needs its own entry.
+const REVIEWED_SQL_WRITER_DIRECTORIES: readonly { prefix: string; reason: string }[] = [
+  {
+    prefix: "prisma/migration-verification/",
+    reason:
+      "Migration-verification fixtures: INSERT seeds with fixed literal hashes, run only against the scratch database the migration drift check builds.",
+  },
+];
 
 const GENERATED_PLACEHOLDER =
   "Hash of random bytes nobody knows; the person sets their own password later through /reset-password, which screens it.";
@@ -201,25 +216,42 @@ const REVIEWED_PASSWORD_HASH_WRITERS: readonly ReviewedWriter[] = [
     classification: "exempt",
     reason: "Local demo data with a published demo password; never a production account.",
   },
+  {
+    file: "scripts/audit-access-role-membership-cleanup.ts",
+    scope: "buildRepresentativeSeedSql",
+    kind: "sql",
+    count: 1,
+    classification: "exempt",
+    reason: "Audit rehearsal seed SQL for a scratch database; writes the fixed sentinel 'audit-hash', which no password matches.",
+  },
 ];
 
-function key(file: string, scope: string): string {
-  return `${file}#${scope}`;
+function key(file: string, scope: string, kind: PasswordHashWriterKind = "property"): string {
+  return kind === "property" ? `${file}#${scope}` : `${file}#${scope} (${kind})`;
+}
+
+function sqlDirectory(site: PasswordHashWriterSite) {
+  return site.kind === "sql"
+    ? REVIEWED_SQL_WRITER_DIRECTORIES.find((dir) => site.file.startsWith(dir.prefix))
+    : undefined;
 }
 
 function group(sites: readonly PasswordHashWriterSite[]) {
   const grouped = new Map<string, PasswordHashWriterSite[]>();
   for (const site of sites) {
-    const k = key(site.file, site.scope);
+    const k = key(site.file, site.scope, site.kind);
     grouped.set(k, [...(grouped.get(k) ?? []), site]);
   }
   return grouped;
 }
 
 describe("passwordHash writer census (#4610, INV-AUTH-005)", () => {
-  const sites = scanRepositoryPasswordHashWriters();
+  const allSites = scanRepositoryPasswordHashWriters();
+  const sites = allSites.filter((site) => !sqlDirectory(site));
   const measured = group(sites);
-  const reviewed = new Map(REVIEWED_PASSWORD_HASH_WRITERS.map((w) => [key(w.file, w.scope), w]));
+  const reviewed = new Map(
+    REVIEWED_PASSWORD_HASH_WRITERS.map((w) => [key(w.file, w.scope, w.kind), w]),
+  );
 
   it("walks every scan root and finds the known writers (no vacuous pass)", () => {
     const files = passwordHashScanFiles();
@@ -228,6 +260,14 @@ describe("passwordHash writer census (#4610, INV-AUTH-005)", () => {
     }
     expect(files).toContain("src/app/api/auth/change-password/route.ts");
     expect(sites.length).toBeGreaterThan(0);
+    expect(allSites.some((site) => site.kind === "sql")).toBe(true);
+  });
+
+  it("covers raw-SQL writers in each exempt directory, and nothing else there", () => {
+    for (const dir of REVIEWED_SQL_WRITER_DIRECTORIES) {
+      expect(allSites.some((site) => sqlDirectory(site) === dir), `${dir.prefix} is stale`).toBe(true);
+      expect(dir.reason.trim().length).toBeGreaterThan(20);
+    }
   });
 
   it("lists each manifest entry once", () => {
@@ -255,10 +295,11 @@ describe("passwordHash writer census (#4610, INV-AUTH-005)", () => {
 
   it("screens every chosen-password writer before it writes the hash", () => {
     for (const writer of REVIEWED_PASSWORD_HASH_WRITERS.filter((w) => w.classification === "chosen")) {
-      for (const site of measured.get(key(writer.file, writer.scope)) ?? []) {
+      for (const site of measured.get(key(writer.file, writer.scope, writer.kind)) ?? []) {
         expect(
           site.screenedBefore,
-          `${site.file}:${site.line} (${site.scope}) writes passwordHash without an awaited screenChosenPassword first`,
+          `${site.file}:${site.line} (${site.scope}) writes passwordHash without first binding an awaited ` +
+            "screenChosenPassword and returning on !result.ok",
         ).toBe(true);
       }
     }
@@ -266,7 +307,7 @@ describe("passwordHash writer census (#4610, INV-AUTH-005)", () => {
 
   it("gives every exempt writer a reason", () => {
     for (const writer of REVIEWED_PASSWORD_HASH_WRITERS) {
-      expect(writer.reason.trim().length, key(writer.file, writer.scope)).toBeGreaterThan(20);
+      expect(writer.reason.trim().length, key(writer.file, writer.scope, writer.kind)).toBeGreaterThan(20);
     }
   });
 });
@@ -302,25 +343,55 @@ describe("passwordHash writer scanner", () => {
     ).toEqual([]);
   });
 
-  it("names the enclosing function across arrow callbacks, and module scope", () => {
+  it("names the enclosing function across arrow callbacks, wrappers, and module scope", () => {
     const sites = scan(`
       export const PUT = async () => { await tx(async (t) => t.update({ data: { passwordHash: h } })); };
       class S { async reset() { this.data = { passwordHash: h }; } }
+      export const POST = withGuard(async () => save({ passwordHash: h }));
       const top = { passwordHash: h };
     `);
-    expect(sites.map((s) => s.scope)).toEqual(["PUT", "reset", "module"]);
+    expect(sites.map((s) => s.scope)).toEqual(["PUT", "reset", "POST", "module"]);
   });
 
-  it("counts a writer as screened only after an awaited screenChosenPassword in the same function", () => {
-    const [screened, notAwaited, after, otherFunction] = [
-      scan(`async function a(p) { const s = await screenChosenPassword(p); if (!s.ok) return; save({ passwordHash: h }); }`),
-      scan(`async function a(p) { screenChosenPassword(p); save({ passwordHash: h }); }`),
-      scan(`async function a(p) { save({ passwordHash: h }); await screenChosenPassword(p); }`),
-      scan(`async function b(p) { await screenChosenPassword(p); } async function a() { save({ passwordHash: h }); }`),
-    ];
-    expect(screened[0].screenedBefore).toBe(true);
-    expect(notAwaited[0].screenedBefore).toBe(false);
-    expect(after[0].screenedBefore).toBe(false);
-    expect(otherFunction[0].screenedBefore).toBe(false);
+  it("finds raw-SQL writers in string and template literals, and nothing else", () => {
+    const sites = scan(`
+      async function seed() {
+        await db.$executeRawUnsafe('UPDATE "Member" SET "passwordHash" = $1', h);
+        await db.$executeRaw\`INSERT INTO "Member" ("id", "passwordHash") VALUES (\${id}, \${h})\`;
+        const plain = \`update member set passwordHash = 'x'\`;
+        const read = 'SELECT "passwordHash" FROM "Member"';
+        const other = 'UPDATE "Member" SET "email" = $1';
+      }
+    `);
+    expect(sites.map((s) => [s.kind, s.scope])).toEqual([
+      ["sql", "seed"],
+      ["sql", "seed"],
+      ["sql", "seed"],
+    ]);
+  });
+
+  it("counts a writer as screened only when a bound, awaited screen's !ok branch exits first", () => {
+    const guarded = (source: string) => scan(source).map((s) => s.screenedBefore);
+    // Guarded: bound, awaited, `if (!x.ok)` exits, all before the writer.
+    expect(guarded(`async function a(p) { const s = await screenChosenPassword(p); if (!s.ok) return; save({ passwordHash: h }); }`)).toEqual([true]);
+    expect(guarded(`async function a(p) { const s = p ? await screenChosenPassword(p) : { ok: true }; if (!s.ok) { log(); return r(s); } save({ passwordHash: h }); }`)).toEqual([true]);
+    expect(guarded(`async function a(p) { const s = await screenChosenPassword(p); if (!s.ok) throw new E(); await tx(async (t) => t.save({ passwordHash: h })); }`)).toEqual([true]);
+    // Not guarded.
+    expect(guarded(`async function a(p) { screenChosenPassword(p); save({ passwordHash: h }); }`)).toEqual([false]);
+    expect(guarded(`async function a(p) { await screenChosenPassword(p); save({ passwordHash: h }); }`)).toEqual([false]);
+    expect(guarded(`async function a(p) { const s = await screenChosenPassword(p); save({ passwordHash: h }); }`)).toEqual([false]);
+    expect(guarded(`async function a(p) { const s = await screenChosenPassword(p); if (!s.ok) log(); save({ passwordHash: h }); }`)).toEqual([false]);
+    expect(guarded(`async function a(p) { const s = await screenChosenPassword(p); if (s.ok) return; save({ passwordHash: h }); }`)).toEqual([false]);
+    expect(guarded(`async function a(p) { const s = await screenChosenPassword(p); if (!other.ok) return; save({ passwordHash: h }); }`)).toEqual([false]);
+    expect(guarded(`async function a(p) { save({ passwordHash: h }); const s = await screenChosenPassword(p); if (!s.ok) return; }`)).toEqual([false]);
+    expect(guarded(`async function a(p) { if (p) { const s = await screenChosenPassword(p); if (!s.ok) return; } save({ passwordHash: h }); }`)).toEqual([false]);
+    expect(guarded(`async function b(p) { const s = await screenChosenPassword(p); if (!s.ok) return; } async function a() { save({ passwordHash: h }); }`)).toEqual([false]);
+    // A screen in another wrapped handler never satisfies this one.
+    expect(
+      guarded(`
+        export const POST = wrap(async (p) => { const s = await screenChosenPassword(p); if (!s.ok) return r; });
+        export const PUT = wrap(async () => save({ passwordHash: h }));
+      `),
+    ).toEqual([false]);
   });
 });
