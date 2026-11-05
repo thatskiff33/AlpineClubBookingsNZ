@@ -50,7 +50,9 @@ const OPTIONAL_READERS = {
   "src/lib/auth.ts": 1, // Auth.js accepts an optional secret.
   "src/lib/login-throttle.ts": 2, // Distinct throttle error and optional cleanup.
   "src/lib/lodge-pin-session.ts": 1, // Missing key returns null.
-  "src/lib/two-factor.ts": 1, // Distinct encryption-key error.
+  // #4456: the legacy data key and the ring parser's same-as-auth-secret
+  // refusal; a missing secret means no legacy key, never a signing failure.
+  "src/lib/data-encryption-keys.ts": 2,
   // Preview tokens: production uses requireAuthSecret; only the
   // non-production local fallback reads the optional secret.
   "src/lib/member-merge.ts": 1,

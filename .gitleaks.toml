@@ -208,6 +208,13 @@ regexes = ['''^race-4131-cancel-sibling$''']
 description = "The `idempotencyKey` of a fixture row that the #4110 real-PostgreSQL proof seeds (`src/lib/__tests__/membership-family-rebill.realdb.test.ts`), for a second live family charge in the disposable race database. It is a unique-column value for a throwaway row and authorises nothing. `generic-api-key` fires on the `idempotencyKey` identifier, not on the value. Only this exact literal is forgiven."
 regexes = ['''^race-4110-second-live-key$''']
 
+[[allowlists]]
+description = "Two fabricated values from PR #4765's (#4456) commits that history keeps. `race-4456-rotated-secret-0123456789abcdefghij` was the rotated AUTH_SECRET in `data-encryption-key-ring.realdb.test.ts` (commit cb7a3a280): a readable label that signs and decrypts nothing outside a throwaway race database; the test now builds its secrets at run time. `c9d614901e6bb357d95bdef8c2b3bd0a` is the GCM tag of the golden legacy credential vector in `data-encryption-legacy-golden.test.ts` (commit 614c225bb): a tag over a fixture plaintext under a fixture secret, which must stay literal for the vector to prove anything; `generic-api-key` read it because it followed the `authTag` field, and the file now names it `GOLDEN_GCM_TAG`. Only these exact literals are forgiven, NOT a path or a shape."
+regexes = [
+  '''^race-4456-rotated-secret-0123456789abcdefghij$''',
+  '''^c9d614901e6bb357d95bdef8c2b3bd0a$''',
+]
+
 # ---------------------------------------------------------------------------
 # Repository-owned rules
 # ---------------------------------------------------------------------------

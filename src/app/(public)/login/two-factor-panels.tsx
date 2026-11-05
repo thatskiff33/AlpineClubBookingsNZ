@@ -14,6 +14,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { apiErrorMessageFromResponse } from "@/lib/api-error-message";
+import { RetiredRecoveryCodesNotice } from "@/components/retired-recovery-codes-notice";
 
 type EnrollMethod = "TOTP" | "EMAIL";
 type VerifyMethod = "TOTP" | "EMAIL" | "RECOVERY";
@@ -285,9 +286,12 @@ export function TwoFactorEnrollPanel({ callbackUrl }: { callbackUrl: string }) {
 export function TwoFactorVerifyPanel({
   callbackUrl,
   enrolledMethod,
+  recoveryCodesRetired = false,
 }: {
   callbackUrl: string;
   enrolledMethod: "TOTP" | "EMAIL";
+  /** The member's saved recovery codes were retired by a key change (#4456). */
+  recoveryCodesRetired?: boolean;
 }) {
   const [method, setMethod] = useState<VerifyMethod>(enrolledMethod);
   const [code, setCode] = useState("");
@@ -348,6 +352,13 @@ export function TwoFactorVerifyPanel({
           <div className="rounded-md border border-destructive/20 bg-destructive/10 px-4 py-3 text-sm text-destructive">
             {error}
           </div>
+        ) : null}
+
+        {recoveryCodesRetired ? (
+          <RetiredRecoveryCodesNotice>
+            Sign in with your {enrolledMethod === "EMAIL" ? "email" : "app"} code, then
+            generate new recovery codes from your profile.
+          </RetiredRecoveryCodesNotice>
         ) : null}
 
         <div className="grid grid-cols-2 gap-2">
