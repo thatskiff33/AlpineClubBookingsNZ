@@ -1988,3 +1988,16 @@ many repaired or resolved failures are hidden; its **Show them** button (or
 is a credit note used in Xero outside the app carries a **Credit used outside
 the app** chip: the app could not close it itself, and any amount still owed is
 chased from Xero.
+
+### Xero Health Snapshot: credit used in Xero (#4220)
+
+The **Health Snapshot** in **Admin → Finance → Xero** has a **Credit used in Xero**
+tile. It counts the credit notes Xero shows used outside the app while a booking is
+still waiting for its credit to be allocated from them, so Xero would refuse that
+allocation, including a booking whose credit is not allocated at all yet. It shows
+**Review** above zero, **Clear** at zero, and **Unknown** when the server sends no
+count (an older build mid-deploy). It has no action
+and links nowhere: the treasurer checks the notes in Xero, and the booking repair
+check names the bookings (`APPLIED_CREDIT_NOTE_CONSUMED_EXTERNALLY`). The count is
+derived on each load from what Xero last sent, so it follows Xero by the webhook and
+sync delay.

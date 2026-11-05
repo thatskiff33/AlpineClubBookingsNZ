@@ -5886,6 +5886,22 @@ that change a lot's free balance (the allocation engine's plan, a cancel's resto
 an admin adjustment) take the member key, so the mirror's free-credit and balance
 reads under that key are exact.
 
+### The early warning reads only, and adds no writer (#4220)
+
+`findCreditNotesSpentOutsideApp` (`xero-credit-note-spent-outside-flag.ts`) runs in
+the repair check's load and the Xero health snapshot. It holds no lock, opens no
+transaction and writes nothing. Its reads are not taken under the member key, so a
+mirror, converge or allocation that commits while it runs can make one answer stale
+by one change; it is advisory, and the next ask is fresh. The reading it judges is
+merged onto the note's existing links by `reconcileXeroCreditNote` through
+`upsertXeroObjectLink`: the same writer, the same links and the same top-level
+`mergeMetadata`, with one more key, after the reconcile's one Xero read. Each
+`upsertXeroObjectLink` runs in its own short transaction, never inside a caller's.
+Ingest reads the kept reading first and skips a reading of an older change; that read
+and the write are not locked together, because the reading is advisory and the
+note's next event settles a race. No new advisory key and no new participant in the
+lock inventory.
+
 ## A request for released credit: the recovery claim, and one global-key close (#4253)
 
 The card request for credit released by `convergeCreditNoteSpentOutsideApp` is

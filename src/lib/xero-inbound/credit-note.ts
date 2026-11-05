@@ -2,6 +2,7 @@ import { bookingOwner } from "@/lib/booking-owner";
 import { prisma } from "@/lib/prisma";
 import logger from "@/lib/logger";
 import { creditNoteMirrorEvidenceFrom, mirrorCreditNoteOutsideSpend } from "@/lib/xero-credit-note-mirror";
+import { creditNoteSpendEvidenceMetadata, withCreditNoteSpendEvidence } from "@/lib/xero-credit-note-spend-evidence";
 import { buildXeroInvoiceUrl } from "@/lib/xero-links";
 import { callXeroApi, getAuthenticatedXeroClient } from "@/lib/xero-api-client";
 import { type XeroObjectLinkInput, upsertXeroObjectLink } from "@/lib/xero-sync";
@@ -141,8 +142,14 @@ export async function reconcileXeroCreditNote(creditNoteId: string) {
       ),
   ]);
 
+  // #4220: what Xero sent about the note's spend, kept with its links for the early warning.
+  // Advisory only: a failure leaves the previous reading (or none) and never fails the event.
+  const spendEvidence = await creditNoteSpendEvidenceMetadata(creditNote, prisma).catch((err: unknown) => {
+    logger.warn({ err, creditNoteId: creditNote.creditNoteID }, "Could not refresh a credit note's spend reading; its links keep the previous one until the note's next event");
+    return {};
+  });
   for (const link of creditNoteLinks) {
-    await upsertXeroObjectLink(link);
+    await upsertXeroObjectLink(withCreditNoteSpendEvidence(link, spendEvidence));
   }
 
   const linkedRefundPaymentIds = creditNoteLinks

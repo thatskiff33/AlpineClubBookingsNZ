@@ -57,6 +57,12 @@ tablet keeps signing out overnight, check the kiosk account has no role besides
 This is only the kiosk account's own sign-in. A hut leader's PIN unlock is
 separate and still closes after 10 minutes without use (below).
 
+**Changing the kiosk password signs the tablet out.** Saving a new password
+ends every session already signed in to that kiosk account the next time the
+tablet refreshes, so rotate it after a tablet is lost or someone who knew it
+leaves, then sign the tablet in again with the new password
+([#4742](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/4742)).
+
 ### Preview what the kiosk shows
 
 1. Click **Preview kiosk** to open the kiosk exactly as this login would see it — a
@@ -300,7 +306,7 @@ whom.
 | --- | --- | --- | --- |
 | First Name / Last Name | The kiosk account's name | seeded "Lodge Kiosk" | Editable |
 | Email | The kiosk sign-in email | seeded lodge email | Editable; this is a shared device login, not a personal one |
-| New Password | Sets a new kiosk password | — | Minimum 6 characters; leave blank to keep current |
+| New Password | Sets a new kiosk password | — | Minimum 6 characters; leave blank to keep current. Saving one signs out any tablet already signed in |
 | Operates lodge | Which lodge this kiosk serves | Default lodge | Multi-lodge only; an unbound account uses the club default lodge |
 | Preview kiosk | Opens the kiosk read-only as this account | — | No changes are saved |
 

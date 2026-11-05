@@ -9,6 +9,7 @@ import { getFailedXeroOperationOverview } from "@/lib/xero-admin-failures";
 import { getTodaysXeroUsageSummary } from "@/lib/xero-api-usage";
 import { readBookingInvoiceEvidenceForPayments } from "@/lib/xero-booking-invoice-evidence";
 import { getXeroContactLinkMismatchSnapshot } from "@/lib/xero-contact-link-mismatches";
+import { findCreditNotesSpentOutsideApp } from "@/lib/xero-credit-note-spent-outside-flag";
 import {
   findResolvedBookingInvoiceCreate,
   readResolvedRefundCreditNoteCoverage,
@@ -118,6 +119,8 @@ export interface XeroAdminHealthSnapshot {
     count: number;
     cacheReady: boolean;
   };
+  /** #4220: credit notes Xero shows spent outside the app while bookings wait to draw on them; derived, no Xero call. */
+  creditNotesSpentOutsideApp: { count: number };
   apiBudget: {
     status: "healthy" | "warning" | "critical" | "exhausted" | "unknown";
     usagePercent: number | null;
@@ -426,6 +429,7 @@ export async function getXeroAdminHealthSnapshot(): Promise<XeroAdminHealthSnaps
     refundsMissingCreditNotes,
     contactGroupMismatches,
     contactLinkMismatches,
+    creditNotesSpentOutside,
     usageSummaryResult,
   ] = await Promise.all([
     prisma.member.count({
@@ -464,6 +468,7 @@ export async function getXeroAdminHealthSnapshot(): Promise<XeroAdminHealthSnaps
     getRefundsMissingXeroCreditNotes({ limit: 1 }),
     getXeroMemberGroupingSnapshot({ limit: 1 }),
     getXeroContactLinkMismatchSnapshot({ limit: 1 }),
+    findCreditNotesSpentOutsideApp(prisma),
     getTodaysXeroUsageSummary()
       .then((summary) => ({
         status: summary.today.budgetStatus,
@@ -525,6 +530,7 @@ export async function getXeroAdminHealthSnapshot(): Promise<XeroAdminHealthSnaps
       count: contactLinkMismatches.count,
       cacheReady: contactLinkMismatches.cacheReady,
     },
+    creditNotesSpentOutsideApp: { count: creditNotesSpentOutside.length },
     apiBudget: usageSummaryResult,
   };
 }
