@@ -26,6 +26,7 @@ import {
 } from "@/lib/membership-types";
 import { type SetupDatabaseSnapshot } from "@/lib/setup-readiness";
 import { tallyDataKeyUsage, type DataKeyUsageSnapshot } from "@/lib/setup-readiness-data-keys";
+import { ringKeyedDataExists } from "@/lib/data-encryption-legacy-write-guard";
 import { codeHashKeyId, twoFactorSecretKeyId } from "@/lib/two-factor-key-format";
 import { collapseHutFeeColumns } from "@/lib/public-hut-fee-columns";
 import { getXeroTokenReadability } from "@/lib/xero-token-store";
@@ -618,14 +619,17 @@ export async function getSetupDatabaseSnapshot(): Promise<SetupDatabaseSnapshot>
  * values are read here (as the sign-in path reads them) to see their prefix.
  */
 async function readDataKeyUsage(): Promise<DataKeyUsageSnapshot> {
-  const [bySource, totpSecrets, recoveryCodes] = await Promise.all([
+  const [bySource, totpSecrets, recoveryCodes, ringKeyedDataPresent] = await Promise.all([
     prisma.integrationCredential.groupBy({ by: ["secretSource"], _count: { _all: true } }),
     prisma.member.findMany({ where: { totpSecret: { not: null } }, select: { totpSecret: true } }),
     prisma.twoFactorRecoveryCode.findMany({ where: { usedAt: null }, select: { codeHash: true } }),
+    // The writers' own definition of "the ring is missing" (#4456 review).
+    ringKeyedDataExists(prisma),
   ]);
   return tallyDataKeyUsage({
     credentialSources: bySource.map((row) => ({ secretSource: row.secretSource, count: row._count._all })),
     totpKeyIds: totpSecrets.map((row) => (row.totpSecret ? twoFactorSecretKeyId(row.totpSecret) : null)),
     recoveryCodeKeyIds: recoveryCodes.map((row) => codeHashKeyId(row.codeHash)),
+    ringKeyedDataPresent,
   });
 }

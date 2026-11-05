@@ -11,8 +11,9 @@
   under it, and the auth secret can later be rotated without losing them.
   The site runs unchanged until an operator sets it, but Admin → Setup has a
   new "Data Encryption Key" step saying what is still on the auth secret, and
-  on a club with anything stored that step is red, so the setup report shows
-  blocked and `pnpm run setup:check` exits 1 until a key is set.
+  on a club with a stored provider credential or authenticator-app secret that
+  step is red, so the setup report shows blocked and `pnpm run setup:check`
+  exits 1 until a key is set.
 
   **What to do:** read "Data-encryption keys" in `CONFIGURATION.md` and "Adding
   a data-encryption key" in `DEPLOYMENT.md`. Set the key only after every

@@ -36,7 +36,18 @@ const { state, mockPrisma } = vi.hoisted(() => {
             return state.credentialSources;
           };
         }
-        if (method === "count") return async () => 0;
+        // The guard's own question (#4456 review), answered from the rows above.
+        if (method === "count") {
+          return async (args?: { where?: { secretSource?: { startsWith?: string } } }) => {
+            // A LIKE prefix as `exactPrefix` writes it: drop its escapes to compare literally.
+            const prefix = args?.where?.secretSource?.startsWith?.replace(/\\(.)/g, "$1");
+            return prefix === undefined
+              ? 0
+              : state.credentialSources
+                  .filter((row) => row.secretSource.startsWith(prefix))
+                  .reduce((sum, row) => sum + row._count._all, 0);
+          };
+        }
         if (method === "findMany") return async () => [];
         return async () => null;
       },
@@ -50,14 +61,24 @@ const { state, mockPrisma } = vi.hoisted(() => {
           return async (args?: { where?: { totpSecret?: unknown } }) =>
             args?.where?.totpSecret ? state.totpSecrets : [];
         }
-        if (method === "count") return async () => 0;
+        if (method === "count") {
+          return async (args?: { where?: { totpSecret?: { startsWith?: string } } }) => {
+            const prefix = args?.where?.totpSecret?.startsWith;
+            return prefix === undefined
+              ? 0
+              : state.totpSecrets.filter((row) => row.totpSecret?.startsWith(prefix)).length;
+          };
+        }
         return async () => null;
       },
     },
   );
   const twoFactorRecoveryCode = {
     findMany: async () => state.recoveryHashes,
-    count: async () => 0,
+    count: async (args?: { where?: { codeHash?: { contains?: string } } }) => {
+      const part = args?.where?.codeHash?.contains;
+      return part === undefined ? 0 : state.recoveryHashes.filter((row) => row.codeHash.includes(part)).length;
+    },
   };
   const mockPrisma = new Proxy(
     {},
@@ -123,7 +144,37 @@ describe("getSetupDatabaseSnapshot — stored data per data key (#4456 review)",
       credentialRowsByKeyId: { "legacy-auth-secret": 3, k1: 4 },
       totpRowsByKeyId: { "legacy-auth-secret": 1, k1: 2 },
       recoveryCodesByKeyId: { "legacy-auth-secret": 1, k1: 1 },
+      ringKeyedDataPresent: true,
     });
+  });
+
+  it("reads the writers' own answer for ring data: recovery codes alone under a ring id name the missing ring (#4456 review)", async () => {
+    state.credentialSources = [{ secretSource: "AUTH_SECRET", _count: { _all: 1 } }];
+    state.totpSecrets = [{ totpSecret: "v1:iv:tag:ct" }];
+    state.recoveryHashes = [{ codeHash: "k1:ring-hash" }];
+
+    const snapshot = await getSetupDatabaseSnapshot();
+
+    expect(snapshot.dataKeyUsage?.ringKeyedDataPresent).toBe(true);
+    const check = buildDataEncryptionKeyCheck(undefined, snapshot.dataKeyUsage);
+    expect(check.status).toBe("blocked");
+    expect(check.message).toMatch(/DATA_ENCRYPTION_KEYS is not set, so it cannot be read/);
+    expect(check.details).toContain('1 unused recovery code under the data key "k1".');
+  });
+
+  it("finds no ring data in legacy rows and unknown formats, so never names a missing ring (#4456 review)", async () => {
+    state.credentialSources = [
+      { secretSource: "AUTH_SECRET", _count: { _all: 1 } },
+      { secretSource: "SOMETHING_ELSE", _count: { _all: 1 } },
+    ];
+    state.recoveryHashes = [{ codeHash: "bare-legacy-hash" }];
+
+    const snapshot = await getSetupDatabaseSnapshot();
+
+    expect(snapshot.dataKeyUsage?.ringKeyedDataPresent).toBe(false);
+    const check = buildDataEncryptionKeyCheck(undefined, snapshot.dataKeyUsage);
+    expect(check.message).not.toMatch(/data-encryption key, but/);
+    expect(check.details).toContain("1 provider credential in a format no release writes, so it cannot be read.");
   });
 
   it("omits the counts when they cannot be read, and the step then says not checked, never complete", async () => {

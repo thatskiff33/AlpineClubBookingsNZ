@@ -67,11 +67,13 @@ function writeKey(): DataKey {
 }
 
 /**
- * Refuse a two-factor write (an enrolment, replacement recovery codes, an email
- * code) that would fall back to the auth secret while stored data names a ring
- * key (#4456 review): the same rule, from the same place, as credential capture
+ * Refuse a durable two-factor write (an enrolment, replacement recovery codes)
+ * that would fall back to the auth secret while stored data names a ring key
+ * (#4456 review): the same rule, from the same place, as credential capture
  * (`data-encryption-legacy-write-guard.ts`). Throws `DataKeyRingMissingError`,
- * which the route reports as a server error. A ring write never asks.
+ * which the route reports as a server error. A ring write never asks. Email
+ * codes and session challenges are short-lived and exempt; see the note above
+ * `createTwoFactorEmailCode`.
  */
 async function assertTwoFactorWriteAllowed(
   db: Parameters<typeof assertLegacyWriteAllowed>[0],
@@ -268,10 +270,15 @@ export function verifyTotpCode(secretBase32: string, code: string) {
   }) !== null;
 }
 
+// Not refused while a ring is missing (#4456 review), unlike the durable writers
+// that call assertTwoFactorWriteAllowed, and nor is the session challenge below.
+// Both are short-lived — an email code ten minutes, a challenge two — so a legacy
+// hash leaves nothing depending on AUTH_SECRET once it expires. Refusing them
+// would lock out every email two-factor member, admins included, who then could
+// not reach Admin → Setup to see why.
 export async function createTwoFactorEmailCode(memberId: string) {
   const code = generateEmailOtpCode();
   const expiresAt = new Date(Date.now() + TWO_FACTOR_EMAIL_CODE_TTL_MS);
-  await assertTwoFactorWriteAllowed(prisma);
 
   await prisma.$transaction([
     prisma.twoFactorEmailCode.deleteMany({
@@ -316,12 +323,9 @@ export async function verifyTwoFactorEmailCode(memberId: string, code: string) {
 // by the jwt callback, so a client-forged POST to /api/auth/session can never
 // flip twoFactorVerified.
 //
-// Not refused while a ring is missing (#4456 review), unlike the writers that
-// call assertTwoFactorWriteAllowed. Those hand the member something checked
-// later, perhaps by another instance (codes, an authenticator). This token
-// never leaves the sign-in that mints it: it lives two minutes, follows a
-// factor already passed, and is consumed under the same key, so a legacy hash
-// here leaves nothing depending on AUTH_SECRET.
+// Not refused while a ring is missing (#4456 review): short-lived, like the email
+// code above. It never leaves the sign-in that mints it, lives two minutes and is
+// consumed under the same key.
 export async function createTwoFactorSessionChallenge(memberId: string) {
   const token = randomBytes(32).toString("hex");
   const expiresAt = new Date(Date.now() + TWO_FACTOR_SESSION_CHALLENGE_TTL_MS);

@@ -14,7 +14,13 @@ const K1 = testKey(1);
 const K2 = testKey(2);
 
 function usage(overrides: Partial<DataKeyUsageSnapshot> = {}): DataKeyUsageSnapshot {
-  return { credentialRowsByKeyId: {}, totpRowsByKeyId: {}, recoveryCodesByKeyId: {}, ...overrides };
+  return {
+    credentialRowsByKeyId: {},
+    totpRowsByKeyId: {},
+    recoveryCodesByKeyId: {},
+    ringKeyedDataPresent: false,
+    ...overrides,
+  };
 }
 const NOTHING_STORED = usage();
 const LEGACY_STORED = usage({
@@ -101,8 +107,9 @@ describe("setup readiness: the Data Encryption Key step (#4456)", () => {
 
   it("is red when the ring is unset but stored data is under a ring key (#4456 review)", () => {
     for (const stored of [
-      usage({ credentialRowsByKeyId: { k1: 1, "legacy-auth-secret": 2 } }),
-      usage({ totpRowsByKeyId: { k1: 1 } }),
+      usage({ credentialRowsByKeyId: { k1: 1, "legacy-auth-secret": 2 }, ringKeyedDataPresent: true }),
+      usage({ totpRowsByKeyId: { k1: 1 }, ringKeyedDataPresent: true }),
+      usage({ recoveryCodesByKeyId: { k1: 10 }, ringKeyedDataPresent: true }),
     ]) {
       const check = buildDataEncryptionKeyCheck(undefined, stored);
       expect(check.status).toBe("blocked");
@@ -112,14 +119,49 @@ describe("setup readiness: the Data Encryption Key step (#4456)", () => {
   });
 
   it("offers a new key as the way out when the old one cannot be put back (#4456 review)", () => {
-    const check = buildDataEncryptionKeyCheck(undefined, usage({ credentialRowsByKeyId: { k1: 1 } }));
+    const check = buildDataEncryptionKeyCheck(
+      undefined,
+      usage({ credentialRowsByKeyId: { k1: 1 }, ringKeyedDataPresent: true }),
+    );
     expect(check.message).toMatch(/Put the ring back as it was, or set a new key and re-enter the credentials/);
+  });
+
+  it("names the missing ring over recovery codes alone under a ring id (#4456 review)", () => {
+    const check = buildDataEncryptionKeyCheck(
+      undefined,
+      usage({ recoveryCodesByKeyId: { k1: 10 }, ringKeyedDataPresent: true }),
+    );
+    expect(check.status).toBe("blocked");
+    expect(check.message).toMatch(/DATA_ENCRYPTION_KEYS is not set, so it cannot be read/);
+    expect(check.details).toContain('10 unused recovery codes under the data key "k1".');
+  });
+
+  it("names rows in an unknown format with no ring, but never claims saves are refused (#4456 review)", () => {
+    const check = buildDataEncryptionKeyCheck(
+      undefined,
+      usage({ credentialRowsByKeyId: { "unrecognised:SOMETHING_ELSE": 1 }, totpRowsByKeyId: { "unrecognised:format": 1 } }),
+    );
+    expect(check.status).toBe("warning");
+    expect(check.message).not.toMatch(/cannot be saved|is saved under AUTH_SECRET alone|cannot be read/);
+    expect(check.details).toContain("1 provider credential in a format no release writes, so it cannot be read.");
+  });
+
+  it("is red over a credential or an authenticator on AUTH_SECRET alone, but not over recovery codes alone", () => {
+    expect(buildDataEncryptionKeyCheck(undefined, usage({ totpRowsByKeyId: { "legacy-auth-secret": 1 } })).status).toBe("blocked");
+    expect(
+      buildDataEncryptionKeyCheck(undefined, usage({ recoveryCodesByKeyId: { "legacy-auth-secret": 10 } })).status,
+    ).toBe("warning");
   });
 
   it("never lets a ring key id cover rows in a format no release writes (#4456 review)", () => {
     // `unrecognised` is a valid key id; the bucket is not, so the ring cannot match it.
     const RING = `unrecognised:${K1}`;
-    const stored = tallyDataKeyUsage({ credentialSources: [], totpKeyIds: [null, "unrecognised"], recoveryCodeKeyIds: [] });
+    const stored = tallyDataKeyUsage({
+      credentialSources: [],
+      totpKeyIds: [null, "unrecognised"],
+      recoveryCodeKeyIds: [],
+      ringKeyedDataPresent: true,
+    });
     const check = buildDataEncryptionKeyCheck(RING, stored);
     expect(check.status).toBe("blocked");
     expect(check.details).toContain("1 authenticator-app secret in a format no release writes, so it cannot be read.");
@@ -152,11 +194,13 @@ describe("setup readiness: the Data Encryption Key step (#4456)", () => {
         ],
         totpKeyIds: ["legacy-auth-secret", "k1", "k1", null],
         recoveryCodeKeyIds: ["legacy-auth-secret", "k2"],
+        ringKeyedDataPresent: true,
       }),
     ).toEqual({
       credentialRowsByKeyId: { "legacy-auth-secret": 3, k1: 4, "unrecognised:SOMETHING_ELSE": 1 },
       totpRowsByKeyId: { "legacy-auth-secret": 1, k1: 2, "unrecognised:format": 1 },
       recoveryCodesByKeyId: { "legacy-auth-secret": 1, k2: 1 },
+      ringKeyedDataPresent: true,
     });
   });
 

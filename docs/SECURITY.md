@@ -556,8 +556,9 @@ the code holds to are:
   authenticator secrets, code hashes), so no two uses share key material.
 - **With no ring set, nothing stored changes**: the auth secret is the current
   key and every format is byte-for-byte what it was. That is what makes the
-  release safe to deploy blue/green. Only the setup step differs: red while
-  anything is stored, so `setup:check` exits 1 until a key is set.
+  release safe to deploy blue/green. Only the setup step differs: red while a
+  credential or an authenticator secret is stored under the auth secret alone,
+  so `setup:check` exits 1 until a key is set.
 - **A bad ring fails closed.** Any malformed, short, single-byte, duplicate-id
   or duplicate entry makes the whole ring invalid, and so does a key that is
   the auth secret (its text, or its bytes as base64, hex or UTF-8) or one whose
@@ -567,9 +568,11 @@ the code holds to are:
   never its value.
 - **No write falls back to the auth secret over ring data.** While no ring is
   set but a credential, authenticator secret or recovery code names a ring key,
-  credential capture, the Xero refresh, two-factor enrolment, recovery-code
-  replacement and email codes refuse (`data-encryption-legacy-write-guard.ts`),
-  so a lost ring never quietly puts new secrets back under the auth secret.
+  credential capture, the Xero refresh, two-factor enrolment and recovery-code
+  replacement refuse (`data-encryption-legacy-write-guard.ts`), so a lost ring
+  never quietly puts new secrets back under the auth secret. The setup step's
+  "ring missing" verdict reads the same predicate. Email codes and sign-in
+  challenges live minutes and leave nothing behind, so they are still issued.
 - **No key material is logged.** Errors and readiness name an id or a position
   only, a key object prints as its id, and a spread copy of it carries no
   material.

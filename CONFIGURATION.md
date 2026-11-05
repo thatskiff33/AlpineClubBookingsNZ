@@ -1334,8 +1334,10 @@ capacity on its configuration page (#3407).
 The **Data Encryption Key** step (#4456) reports whether stored credentials,
 authenticator secrets and recovery codes are under a `DATA_ENCRYPTION_KEYS`
 ring key or still under `AUTH_SECRET` alone, counted per key. With no ring set
-and anything stored it is **blocked**, so the report is blocked and
-`setup:check` exits 1 until a key is set; the app itself runs unchanged and no
+it is **blocked** while a provider credential or an authenticator-app secret is
+stored under `AUTH_SECRET` alone, or while any credential, authenticator secret
+or recovery code names a ring key; the report is then blocked and `setup:check`
+exits 1 until a key is set or restored. The app itself runs unchanged and no
 deploy gates on it. See [Data-encryption keys](#data-encryption-keys-4456).
 
 After signing in as an administrator, open `/admin/setup` to review:
@@ -2347,10 +2349,14 @@ exposes both and rotating it destroys the stored data.
   printable ASCII** (a password, not random bytes). The release then fails
   `/api/health/ready`, credential capture refuses to save, and the setup step
   "Data Encryption Key" goes red naming why (never the value).
-- **Until it is set, the setup step is red** wherever anything is stored (a
-  credential, an authenticator, a recovery code): Admin → Setup shows the report
+- **Until it is set, the setup step is red** wherever a provider credential or
+  an authenticator-app secret is stored (recovery codes alone do not count:
+  they are retired at cut-over, not moved): Admin → Setup shows the report
   blocked and `pnpm run setup:check` exits 1. The app runs unchanged and no
-  deploy gates on it; it is a prompt to set a key, not a failure.
+  deploy gates on it; it is a prompt to set a key, not a failure. It is red
+  too, naming the missing ring, while any credential, authenticator secret or
+  recovery code names a ring key, which is the same test the refusals below
+  use.
 - **Rows written before the ring** stay readable under `AUTH_SECRET` until they
   are re-encrypted; the setup step counts them. Rotate `AUTH_SECRET` only once
   it reports nothing left on it. This release has no switch to stop reading
@@ -2369,9 +2375,11 @@ exposes both and rotating it destroys the stored data.
   that sets it, and rolling back to an older release, routing traffic back to a
   ring-less colour or unsetting the variable strands every ring-keyed
   credential, authenticator secret and recovery code. While the variable is
-  unset over ring-keyed data, nothing new is saved under `AUTH_SECRET`:
-  credential capture, two-factor enrolment, recovery-code regeneration and
-  email codes refuse. Put the ring back as it was, or, if the key is lost for
+  unset over ring-keyed data, nothing durable is saved under `AUTH_SECRET`:
+  credential capture, two-factor enrolment and recovery-code regeneration
+  refuse. (Email codes and the sign-in challenge last minutes and are still
+  issued, so email two-factor members, admins among them, can sign in and see
+  why.) Put the ring back as it was, or, if the key is lost for
   good, set a new key and re-enter the credentials and re-enrol the
   authenticators the old one held. If that deploy fails, keep the ring set and
   go forward. Steps, the safe sequence and the two-step for a newer key:

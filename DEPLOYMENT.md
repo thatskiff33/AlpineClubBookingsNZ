@@ -2067,9 +2067,9 @@ key. So:
 - rolling back to a release older than #4456, routing Caddy back to a colour
   started without the ring, or unsetting the variable strands every
   ring-keyed credential, authenticator secret and recovery code (the setup
-  step goes red and says so, and credential capture, two-factor enrolment,
-  recovery-code regeneration and email codes refuse rather than quietly saving
-  under `AUTH_SECRET`). The same instance accepts the recovery codes issued
+  step goes red and says so, and credential capture, two-factor enrolment and
+  recovery-code regeneration refuse rather than quietly saving under
+  `AUTH_SECRET`; short-lived email codes are still issued). The same instance accepts the recovery codes issued
   before the ring again, until the second part of #4456 retires them in the
   database. If the old key is lost for good, set a new one and re-enter the
   credentials and re-enrol the authenticators it held.

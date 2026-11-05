@@ -13,16 +13,22 @@
  *
  * The writers: credential capture and the Xero refresh pre-flight
  * (`integration-credentials.ts`, `xero-token-errors.ts`), and two-factor
- * enrolment, recovery-code replacement and email codes (`two-factor.ts`). The
- * evidence is the durable stores: credentials, authenticator secrets and
- * recovery codes. Email codes and session challenges live minutes, so they are
- * not evidence of a ring that was once set.
+ * enrolment and recovery-code replacement (`two-factor.ts`). The evidence is
+ * the durable stores: credentials, authenticator secrets and recovery codes.
+ * Email codes and session challenges live minutes, so they are neither evidence
+ * of a ring that was once set nor refused: a legacy one leaves nothing behind.
+ *
+ * `ringKeyedDataExists` is the ONE definition of "stored data names a ring
+ * key": the setup step's ring-unset verdict reads its answer too, through the
+ * snapshot (`setup-readiness-db.ts`), so the step and the writers never
+ * disagree about whether the ring is missing.
  */
 
 import type { Prisma } from "@prisma/client";
 
 import { DATA_ENCRYPTION_KEYS_ENV } from "@/lib/data-encryption-key-material";
 import { DATA_KEY_SOURCE_PREFIX, WeakAuthSecretError } from "@/lib/integration-crypto";
+import { exactContains, exactPrefix } from "@/lib/prisma-exact-prefix";
 import { RING_ENCRYPTION_VERSION } from "@/lib/two-factor-key-format";
 
 /**
@@ -34,7 +40,7 @@ import { RING_ENCRYPTION_VERSION } from "@/lib/two-factor-key-format";
 export class DataKeyRingMissingError extends WeakAuthSecretError {
   constructor() {
     super(
-      `Stored data is encrypted under a data-encryption key, but ${DATA_ENCRYPTION_KEYS_ENV} is not set. Set it back as it was, or set a new key and re-enter the credentials and re-enrol the authenticators the old one held; until then nothing is saved under AUTH_SECRET alone.`,
+      `Stored data is encrypted under a data-encryption key, but ${DATA_ENCRYPTION_KEYS_ENV} is not set. Set it back as it was, or set a new key and re-enter the credentials and re-enrol the authenticators the old one held; until then no credential, authenticator or recovery code is saved under AUTH_SECRET alone.`,
     );
     this.name = "DataKeyRingMissingError";
   }
@@ -48,16 +54,18 @@ type RingEvidenceReader = Pick<
 /**
  * Does any durable stored row name a ring key? Asked in order, stopping at the
  * first yes. A ring code hash is `<id>:<hex>` and a legacy one bare hex, so a
- * `:` is the ring's mark (`two-factor-key-format.ts`).
+ * `:` is the ring's mark (`two-factor-key-format.ts`). Every pattern is matched
+ * literally (`INV-SSOT-006`): the `_` in `DATA_ENCRYPTION_KEY:` is otherwise a
+ * `LIKE` wildcard.
  */
 export async function ringKeyedDataExists(db: RingEvidenceReader): Promise<boolean> {
-  if ((await db.integrationCredential.count({ where: { secretSource: { startsWith: DATA_KEY_SOURCE_PREFIX } } })) > 0) {
+  if ((await db.integrationCredential.count({ where: { secretSource: exactPrefix(DATA_KEY_SOURCE_PREFIX) } })) > 0) {
     return true;
   }
-  if ((await db.member.count({ where: { totpSecret: { startsWith: `${RING_ENCRYPTION_VERSION}:` } } })) > 0) {
+  if ((await db.member.count({ where: { totpSecret: exactPrefix(`${RING_ENCRYPTION_VERSION}:`) } })) > 0) {
     return true;
   }
-  return (await db.twoFactorRecoveryCode.count({ where: { codeHash: { contains: ":" } } })) > 0;
+  return (await db.twoFactorRecoveryCode.count({ where: { codeHash: exactContains(":") } })) > 0;
 }
 
 /**

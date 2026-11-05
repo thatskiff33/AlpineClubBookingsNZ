@@ -290,7 +290,8 @@ describe("no AUTH_SECRET write while ring-keyed credentials exist (#4456 review)
     mocks.tx.integrationCredential.count.mockResolvedValueOnce(2);
     await expect(write()).rejects.toThrow(/DATA_ENCRYPTION_KEYS is not set/);
     expect(mocks.tx.integrationCredential.count).toHaveBeenCalledWith({
-      where: { secretSource: { startsWith: "DATA_ENCRYPTION_KEY:" } },
+      // Matched literally (INV-SSOT-006): the `_` is escaped, never a wildcard.
+      where: { secretSource: { startsWith: "DATA\\_ENCRYPTION\\_KEY:" } },
     });
     expect(mocks.tx.integrationCredential.upsert).not.toHaveBeenCalled();
     expect(mocks.tx.auditLog.create).not.toHaveBeenCalled();

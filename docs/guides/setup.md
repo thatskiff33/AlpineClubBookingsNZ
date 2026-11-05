@@ -82,10 +82,11 @@ upgrade means the application has not restarted since the migration; restart it,
 or run `pnpm run config:self-heal`.
 
 The **Data Encryption Key** step is about the server, not a setting you can
-change here. It reads **blocked** on an existing club until whoever runs the
-server sets a data-encryption key, because stored provider credentials and
-authenticator-app secrets are still protected only by the server's sign-in
-secret. The site works normally meanwhile. The step counts what is still on the
+change here. It reads **blocked** until whoever runs the server sets a
+data-encryption key whenever a provider credential or an authenticator-app
+secret is stored, because those are still protected only by the server's
+sign-in secret. It also reads blocked if a key that was set has gone missing.
+The site works normally meanwhile. The step counts what is still on the
 old secret and, once a key is set, how to move it; the server steps are in
 [`CONFIGURATION.md` → Data-encryption keys](../../CONFIGURATION.md#data-encryption-keys-4456).
 

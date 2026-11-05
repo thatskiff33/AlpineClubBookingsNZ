@@ -234,7 +234,10 @@ const h = vi.hoisted(() => {
   const integrationCredential = {
     // #4456: rows already under a ring key, asked before an AUTH_SECRET write.
     count: vi.fn(async (args: { where: { secretSource: { startsWith: string } } }) =>
-      state.credential.filter((row) => String(row.secretSource).startsWith(args.where.secretSource.startsWith)).length,
+      // A LIKE prefix as `exactPrefix` writes it: drop its escapes to compare literally.
+      state.credential.filter((row) =>
+        String(row.secretSource).startsWith(args.where.secretSource.startsWith.replace(/\\(.)/g, "$1")),
+      ).length,
     ),
     findUnique: vi.fn(async (args: { where: Row }) =>
       clone(state.credential.find((row) => matches(row, args.where)) ?? null),

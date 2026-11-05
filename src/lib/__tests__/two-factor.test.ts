@@ -387,12 +387,10 @@ describe("no two-factor write under AUTH_SECRET while stored data names a ring k
       enrollTwoFactor({ memberId: "member-1", method: "TOTP", totpSecret: "BASE32SECRET", actor: MEMBER }),
     "an email enrolment": () => enrollTwoFactor({ memberId: "member-1", method: "EMAIL", actor: MEMBER }),
     "replacement recovery codes": () => replaceRecoveryCodes({ memberId: "member-1", actor: MEMBER }),
-    "an email code": () => createTwoFactorEmailCode("member-1"),
   };
   const wrote = () =>
     mockPrisma.member.update.mock.calls.length +
     mockPrisma.twoFactorRecoveryCode.createMany.mock.calls.length +
-    mockPrisma.twoFactorEmailCode.create.mock.calls.length +
     mockPrisma.auditLog.create.mock.calls.length;
 
   beforeEach(() => {
@@ -427,10 +425,30 @@ describe("no two-factor write under AUTH_SECRET while stored data names a ring k
     expect(mockPrisma.member.count).not.toHaveBeenCalled();
   });
 
-  it("still mints a session challenge: it never leaves the sign-in that minted it", async () => {
-    mockPrisma.integrationCredential.count.mockResolvedValue(1);
-    await expect(createTwoFactorSessionChallenge("member-1")).resolves.toMatch(/^[0-9a-f]{64}$/);
-    expect(mockPrisma.integrationCredential.count).not.toHaveBeenCalled();
-    mockPrisma.integrationCredential.count.mockResolvedValue(0);
+  it("still mints the short-lived ones, an email code and a session challenge, without asking", async () => {
+    // Ring data in every store, and no ring: the durable writers above refuse.
+    for (const store of [
+      mockPrisma.integrationCredential.count,
+      mockPrisma.member.count,
+      mockPrisma.twoFactorRecoveryCode.count,
+    ]) {
+      store.mockResolvedValue(1);
+    }
+    try {
+      await expect(createTwoFactorEmailCode("member-1")).resolves.toMatchObject({ code: expect.stringMatching(/^\d{6}$/) });
+      expect(mockPrisma.twoFactorEmailCode.create).toHaveBeenCalledOnce();
+      await expect(createTwoFactorSessionChallenge("member-1")).resolves.toMatch(/^[0-9a-f]{64}$/);
+      expect(mockPrisma.integrationCredential.count).not.toHaveBeenCalled();
+      expect(mockPrisma.member.count).not.toHaveBeenCalled();
+      expect(mockPrisma.twoFactorRecoveryCode.count).not.toHaveBeenCalled();
+    } finally {
+      for (const store of [
+        mockPrisma.integrationCredential.count,
+        mockPrisma.member.count,
+        mockPrisma.twoFactorRecoveryCode.count,
+      ]) {
+        store.mockResolvedValue(0);
+      }
+    }
   });
 });

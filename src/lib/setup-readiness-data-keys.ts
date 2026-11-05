@@ -37,6 +37,13 @@ export interface DataKeyUsageSnapshot {
   totpRowsByKeyId: CountsByKeyId;
   /** Unused recovery codes per key id (`legacy-auth-secret` for an unprefixed hash). */
   recoveryCodesByKeyId: CountsByKeyId;
+  /**
+   * Does any stored credential, authenticator secret or recovery code name a
+   * ring key? The writers' own answer (`ringKeyedDataExists`), read once by the
+   * snapshot, so the step's "the ring is missing" verdict and the writers'
+   * refusal are one definition (#4456 review).
+   */
+  ringKeyedDataPresent: boolean;
 }
 
 function countBy(ids: Iterable<string>): Record<string, number> {
@@ -55,6 +62,8 @@ export function tallyDataKeyUsage(input: {
   /** The key id each stored authenticator secret names, or null if unrecognised. */
   totpKeyIds: ReadonlyArray<string | null>;
   recoveryCodeKeyIds: ReadonlyArray<string>;
+  /** `ringKeyedDataExists`'s answer, passed through unchanged. */
+  ringKeyedDataPresent: boolean;
 }): DataKeyUsageSnapshot {
   const credentialRowsByKeyId: Record<string, number> = {};
   for (const { secretSource, count } of input.credentialSources) {
@@ -65,6 +74,7 @@ export function tallyDataKeyUsage(input: {
     credentialRowsByKeyId,
     totpRowsByKeyId: countBy(input.totpKeyIds.map((id) => id ?? `${UNRECOGNISED_PREFIX}format`)),
     recoveryCodesByKeyId: countBy(input.recoveryCodeKeyIds),
+    ringKeyedDataPresent: input.ringKeyedDataPresent,
   };
 }
 
@@ -92,14 +102,25 @@ function plural(count: number, noun: string): string {
 }
 
 const isLegacy = (id: string) => id === LEGACY_AUTH_SECRET_KEY_ID;
+const isUnrecognised = (id: string) => id.startsWith(UNRECOGNISED_PREFIX);
+const isRingKeyId = (id: string) => !isLegacy(id) && !isUnrecognised(id);
 
-/** Credential and authenticator rows under ids `keep` rejects, as sentences. */
-function rowsUnder(usage: DataKeyUsageSnapshot, keep: (id: string) => boolean): string[] {
+/**
+ * Rows under ids `keep` accepts, as sentences: credentials and authenticator
+ * secrets, and the unused recovery codes too when `withRecoveryCodes` is set.
+ */
+function rowsUnder(
+  usage: DataKeyUsageSnapshot,
+  keep: (id: string) => boolean,
+  withRecoveryCodes = false,
+): string[] {
   const lines: string[] = [];
-  for (const [counts, noun] of [
+  const stores: Array<readonly [CountsByKeyId, string]> = [
     [usage.credentialRowsByKeyId, "provider credential"],
     [usage.totpRowsByKeyId, "authenticator-app secret"],
-  ] as const) {
+  ];
+  if (withRecoveryCodes) stores.push([usage.recoveryCodesByKeyId, "unused recovery code"]);
+  for (const [counts, noun] of stores) {
     for (const [id, count] of Object.entries(counts)) {
       if (count > 0 && keep(id)) {
         lines.push(
@@ -150,15 +171,20 @@ export function buildDataEncryptionKeyCheck(
   }
 
   if (ring.status === "unset") {
-    const ringKeyed = usage ? rowsUnder(usage, (id) => !isLegacy(id)) : [];
-    if (ringKeyed.length > 0) {
+    // Unreadable rows in a format no release writes are named, but are not
+    // ring data: they never make the step say saves are refused.
+    const unreadable = usage ? rowsUnder(usage, isUnrecognised, true) : [];
+    // Red over ring data: the same answer the writers refuse on.
+    if (usage?.ringKeyedDataPresent) {
       return {
         ...base,
         status: "blocked",
-        message: `Stored data is encrypted under a data-encryption key, but ${DATA_ENCRYPTION_KEYS_ENV} is not set, so it cannot be read and new credentials cannot be saved. Put the ring back as it was, or set a new key and re-enter the credentials and re-enrol the authenticators the old one held.`,
-        details: [...ringKeyed, ...(usage ? retiredRecoveryCodes(usage, isLegacy) : []), ROLLOUT_HINT],
+        message: `Stored data is encrypted under a data-encryption key, but ${DATA_ENCRYPTION_KEYS_ENV} is not set, so it cannot be read and no credential, authenticator or recovery code is saved under AUTH_SECRET alone until it is. Put the ring back as it was, or set a new key and re-enter the credentials and re-enrol the authenticators the old one held.`,
+        details: [...rowsUnder(usage, isRingKeyId, true), ...unreadable, ROLLOUT_HINT],
       };
     }
+    // Red over a credential or an authenticator secret on AUTH_SECRET alone.
+    // Recovery codes do not count: they are retired at cut-over, not moved.
     const legacy = usage ? rowsUnder(usage, isLegacy) : [];
     return {
       ...base,
@@ -167,7 +193,7 @@ export function buildDataEncryptionKeyCheck(
         legacy.length > 0
           ? `${DATA_ENCRYPTION_KEYS_ENV} is not set, so stored data is encrypted under AUTH_SECRET alone: rotating that secret would make it unreadable, and leaking it exposes it.`
           : `${DATA_ENCRYPTION_KEYS_ENV} is not set. New credentials and authenticator secrets will be encrypted under AUTH_SECRET until it is.`,
-      details: [...legacy, ...(usage ? [] : ["Stored data was not checked."]), GENERATE_HINT, ROLLOUT_HINT],
+      details: [...legacy, ...unreadable, ...(usage ? [] : ["Stored data was not checked."]), GENERATE_HINT, ROLLOUT_HINT],
     };
   }
 

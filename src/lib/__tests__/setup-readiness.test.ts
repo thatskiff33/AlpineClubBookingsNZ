@@ -87,7 +87,7 @@ const baseEnv = {
 
 const completeDatabase: SetupDatabaseSnapshot = {
   // #4456: stored data checked, and nothing on AUTH_SECRET.
-  dataKeyUsage: { credentialRowsByKeyId: {}, totpRowsByKeyId: {}, recoveryCodesByKeyId: {} },
+  dataKeyUsage: { credentialRowsByKeyId: {}, totpRowsByKeyId: {}, recoveryCodesByKeyId: {}, ringKeyedDataPresent: false },
   adminCount: 1,
   adminModuleSettings: {
     kiosk: true,
