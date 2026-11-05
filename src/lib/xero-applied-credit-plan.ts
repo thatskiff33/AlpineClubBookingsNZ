@@ -141,6 +141,68 @@ export function planAppliedCreditAllocation(
 }
 
 // ---------------------------------------------------------------------------
+// The free credit of each lot (#1620, #4219, #4220)
+// ---------------------------------------------------------------------------
+
+/** A positive credit lot as the loader reads it, before its free credit is worked out. */
+export interface CreditLotRow {
+  id: string;
+  amountCents: number;
+  type: CreditType;
+  xeroCreditNoteId: string | null;
+}
+
+/**
+ * THE FREE CREDIT OF EACH LOT, in the order given (the loader's
+ * {@link CREDIT_LOT_USE_ORDER}): the lot's amount, less the slices already drawn
+ * from it, less its note's net write-down (#4219), which is taken once per note,
+ * oldest lot first, never from each lot stamped with the note. A lot with nothing
+ * free is dropped. The allocation engine's loader (`gatherAppliedCreditLots`) and
+ * the early warning's replay of its draw (#4220) both work it out here (`INV-SSOT`).
+ */
+export function freeCreditLots(
+  lots: readonly CreditLotRow[],
+  allocatedByLotId: ReadonlyMap<string, number>,
+  writtenDownByNote: ReadonlyMap<string, number>,
+): AppliedCreditLot[] {
+  const writtenDown = new Map(writtenDownByNote);
+  const free: AppliedCreditLot[] = [];
+  for (const lot of lots) {
+    const unallocated = lot.amountCents - (allocatedByLotId.get(lot.id) ?? 0);
+    // A note's write-down is taken once, oldest lot first, never from each lot stamped with the note.
+    const downCents = lot.xeroCreditNoteId ? Math.min(Math.max(unallocated, 0), writtenDown.get(lot.xeroCreditNoteId) ?? 0) : 0;
+    if (lot.xeroCreditNoteId && downCents > 0) writtenDown.set(lot.xeroCreditNoteId, (writtenDown.get(lot.xeroCreditNoteId) ?? 0) - downCents);
+    const remainingCents = unallocated - downCents;
+    if (remainingCents <= 0) {
+      continue;
+    }
+    free.push({
+      memberCreditId: lot.id,
+      creditType: lot.type,
+      xeroCreditNoteId: lot.xeroCreditNoteId,
+      remainingCents,
+    });
+  }
+  return free;
+}
+
+/**
+ * What {@link planAppliedCreditAllocation} takes from one lot when it fills
+ * `appliedCents` from `lots` in order: everything before the lot is used first,
+ * so the lot gives what is still outstanding when it is reached, up to its free
+ * credit. The planner's fill in closed form, for a reader that must not plan (it
+ * never throws on a shortfall); its tests check the two agree.
+ */
+export function plannedDrawFromLot(lots: readonly AppliedCreditLot[], appliedCents: number, memberCreditId: string): number {
+  let before = 0;
+  for (const lot of lots) {
+    if (lot.memberCreditId === memberCreditId) return Math.min(lot.remainingCents, Math.max(0, appliedCents - before));
+    before += lot.remainingCents;
+  }
+  return 0;
+}
+
+// ---------------------------------------------------------------------------
 // A retry keeps the slices it committed (INV-PAY-127, #4013)
 // ---------------------------------------------------------------------------
 

@@ -3,6 +3,14 @@ import { matchesWhere } from "@/lib/__tests__/support/prisma-where";
 
 vi.mock("@/lib/prisma", () => ({ prisma: {} }));
 
+// The outside-spend read, watched: a note Xero can still cover must never reach it (#4220 S3).
+const watched = vi.hoisted(() => ({ outsideSpendCents: vi.fn() }));
+vi.mock("@/lib/xero-credit-note-outside-spend", async (importOriginal) => {
+  const actual = (await importOriginal()) as typeof import("@/lib/xero-credit-note-outside-spend");
+  watched.outsideSpendCents.mockImplementation(actual.outsideSpendCents);
+  return { ...actual, outsideSpendCents: watched.outsideSpendCents };
+});
+
 import { findCreditNotesSpentOutsideApp } from "@/lib/xero-credit-note-spent-outside-flag";
 import { CREDIT_NOTE_SPEND_EVIDENCE_KEY, type StoredCreditNoteSpendEvidence } from "@/lib/xero-credit-note-spend-evidence";
 
@@ -36,11 +44,17 @@ function readOnlyDb(store: Store) {
       {},
       {
         get(_target, method: string) {
-          return async (args: { where?: Row; by?: string[]; _sum?: Row; _count?: Row } = {}) => {
+          return async (args: { where?: Row; by?: string[]; _sum?: Row; _count?: Row; orderBy?: Array<Record<string, "asc" | "desc">> } = {}) => {
             calls.push(`${name}.${method}`);
             seen.push({ call: `${name}.${method}`, where: args.where });
             if (!READS.has(method)) throw new Error(`write attempted: ${name}.${method}`);
             const rows = store[name].filter((row) => matchesWhere(row, args.where));
+            // `orderBy` as PostgreSQL answers it (the engine's lot order is one).
+            const keyOf = (value: unknown) => (value instanceof Date ? value.getTime() : (value as string | number));
+            for (const order of [...(args.orderBy ?? [])].reverse()) {
+              const [[key, direction]] = Object.entries(order) as Array<[string, "asc" | "desc"]>;
+              rows.sort((a, b) => (keyOf(a[key]) < keyOf(b[key]) ? -1 : keyOf(a[key]) > keyOf(b[key]) ? 1 : 0) * (direction === "asc" ? 1 : -1));
+            }
             if (method === "findFirst") return rows[0] ?? null;
             if (method === "count") return rows.length;
             if (method === "aggregate") return { _sum: { amountCents: rows.reduce((sum, row) => sum + (row.amountCents as number), 0) } };
@@ -75,6 +89,7 @@ function readOnlyDb(store: Store) {
 }
 
 const credit = (row: Row): Row => ({
+  createdAt: new Date("2026-01-01T00:00:00.000Z"),
   type: "CANCELLATION_REFUND",
   xeroCreditNoteId: null,
   outsideSpendConvergedAt: null,
@@ -96,6 +111,7 @@ const resolvedOp = (row: Row): Row => ({
   idempotencyKey: null,
   manuallyResolvedAt: new Date(SETTLED),
   manuallyResolvedReason: "Allocated by hand in Xero",
+  manuallyResolvedById: "officer_1",
   createdAt: new Date(SETTLED),
   updatedAt: new Date(SETTLED),
   ...row,
@@ -348,12 +364,62 @@ describe("the early warning: a credit note spent in Xero outside the app (#4220)
     expect(await find(partial)).toEqual([]);
   });
 
-  it("caps the unsliced draw at what the lot has left to give", async () => {
-    // Booking b3 applied 5,000 more, from a noteless 5,000 lot: the unsliced credit is 15,000, but N2's lot has only 10,000 to give.
-    const capped = early({ memberCredit: [credit({ id: "a3", memberId: "m2", amountCents: -5_000, type: "BOOKING_APPLIED", appliedToBookingId: "b3" }), credit({ id: "L0", memberId: "m2", amountCents: 5_000 })] });
-    capped.booking.push(booking("b3"));
-    const [flag] = await find(capped);
+  it("draws the uncovered credit as the engine does: older lots first, and only what lands on this lot counts", async () => {
+    // Booking b3 applied 5,000 more. A noteless 5,000 lot ties N2's lot in age and wins on id, so
+    // the engine takes 5,000 from it and the other 10,000 from N2's lot: all of N2's free credit.
+    const ordered = early({ memberCredit: [credit({ id: "a3", memberId: "m2", amountCents: -5_000, type: "BOOKING_APPLIED", appliedToBookingId: "b3" }), credit({ id: "L0", memberId: "m2", amountCents: 5_000 })] });
+    ordered.booking.push(booking("b3"));
+    const [flag] = await find(ordered);
     expect(flag).toMatchObject({ unslicedDrawCents: 10_000, pendingAllocationCents: 10_000, bookingIds: ["b2", "b3"] });
+  });
+
+  // Review S1: a debit that uses up no lot lowers the balance, but the engine ignores it.
+  // Lot LA on NA (older, untouched in Xero) and lot LB on NB (newer, refunded in cash in
+  // Xero and recorded as a -100.00 admin adjustment); booking X applies 100.00, no slice yet.
+  const olderLotCovers = (laCents: number): Store => {
+    const evidence = (overrides: Partial<StoredCreditNoteSpendEvidence>) => ({ [CREDIT_NOTE_SPEND_EVIDENCE_KEY]: reading({ remainingCents: 10_000, allocations: [], ...overrides }) });
+    return {
+      memberCredit: [
+        // Stored newest first, so only the engine's order puts LA ahead of LB.
+        credit({ id: "LB", memberId: "m", amountCents: 10_000, xeroCreditNoteId: "NB", createdAt: new Date("2026-02-01T00:00:00.000Z") }),
+        credit({ id: "LA", memberId: "m", amountCents: laCents, xeroCreditNoteId: "NA", createdAt: new Date("2026-01-01T00:00:00.000Z") }),
+        credit({ id: "dbt", memberId: "m", amountCents: -10_000, type: "ADMIN_ADJUSTMENT" }),
+        credit({ id: "aX", memberId: "m", amountCents: -10_000, type: "BOOKING_APPLIED", appliedToBookingId: "X" }),
+      ],
+      memberCreditNoteAllocation: [],
+      xeroObjectLink: [
+        { localModel: "Payment", localId: "pA", xeroObjectType: "CREDIT_NOTE", xeroObjectId: "NA", role: "ACCOUNT_CREDIT_NOTE", active: true, metadata: evidence({ totalCents: laCents, remainingCents: laCents }) },
+        { localModel: "Payment", localId: "pB", xeroObjectType: "CREDIT_NOTE", xeroObjectId: "NB", role: "ACCOUNT_CREDIT_NOTE", active: true, metadata: evidence({ remainingCents: 0, payments: [{ paymentId: "cash_refund", cents: 10_000 }] }) },
+      ],
+      payment: [{ id: "pay_X", xeroInvoiceId: null }],
+      booking: [booking("X")],
+      xeroSyncOperation: [],
+    };
+  };
+
+  it("does not flag a spent note the engine will not draw from: an older lot Xero still holds covers the booking", async () => {
+    expect(await find(olderLotCovers(10_000))).toEqual([]);
+  });
+
+  it("flags the spent note once the older lot is used up, so the booking's credit lands on it", async () => {
+    // The older lot holds only 4,000: the engine takes it, then 6,000 from NB, which Xero has spent.
+    const [flag, ...rest] = await find(olderLotCovers(4_000));
+    expect(rest).toEqual([]);
+    expect(flag).toMatchObject({ creditNoteId: "NB", unslicedDrawCents: 6_000, pendingAllocationCents: 6_000, xeroRemainingCents: 0, bookingIds: ["X"] });
+  });
+
+  it("never reaches the outside-spend read or the balance for a note Xero can still cover", async () => {
+    watched.outsideSpendCents.mockClear();
+    const { db, calls } = readOnlyDb(olderLotCovers(10_000));
+    expect(await findCreditNotesSpentOutsideApp(db, { now: NOW })).toEqual([]);
+    expect(watched.outsideSpendCents).not.toHaveBeenCalled();
+    expect(calls).not.toContain("memberCredit.aggregate");
+    // The flagged case does reach them, once each.
+    watched.outsideSpendCents.mockClear();
+    const flagged = readOnlyDb(olderLotCovers(4_000));
+    await findCreditNotesSpentOutsideApp(flagged.db, { now: NOW });
+    expect(watched.outsideSpendCents).toHaveBeenCalledTimes(1);
+    expect(flagged.calls.filter((call) => call === "memberCredit.aggregate")).toHaveLength(1);
   });
 
   it("leaves out a cancelled booking: the converge refuses one", async () => {
@@ -371,15 +437,29 @@ describe("the early warning: a credit note spent in Xero outside the app (#4220)
     expect((await find(early({ xeroSyncOperation: [op, live] }))).map((f) => f.creditNoteId)).toEqual(["N2"]);
   });
 
-  it("clears once the slice's own attempt was closed by the converge", async () => {
-    const s = store({
+  it("does not treat the converge's own close as an officer's resolve: the slice is judged as any other", async () => {
+    const closedByConverge = resolvedOp({
+      id: "op_s1",
+      localModel: "MemberCreditNoteAllocation",
+      localId: "s1",
+      manuallyResolvedById: null,
+      manuallyResolvedReason: "CREDIT_SPENT_OUTSIDE_APP: the credit note was used in Xero outside the app; the credit ledger was brought into line with Xero (#4219).",
+    });
+    // The ledger has not absorbed the spend here, so the warning stands and nothing is reported as resolved.
+    const [flag] = await find(store({ extra: { xeroSyncOperation: [closedByConverge] } }));
+    expect(flag).toMatchObject({ bookingIds: ["b1"], resolvedAllocations: [] });
+    // Once the converge's write-down is in the ledger, the flag clears on its own.
+    const absorbed = store({
       extra: {
-        xeroSyncOperation: [
-          resolvedOp({ id: "op_s1", localModel: "MemberCreditNoteAllocation", localId: "s1", manuallyResolvedReason: "CREDIT_SPENT_OUTSIDE_APP: the credit note was used in Xero outside the app" }),
-        ],
+        xeroSyncOperation: [closedByConverge],
+        memberCredit: [credit({ id: "wd", memberId: "m1", amountCents: -3_000, type: "ADMIN_ADJUSTMENT", xeroCreditNoteId: "N1", outsideSpendConvergedAt: new Date(SETTLED) })],
       },
     });
-    expect(await find(s)).toEqual([]);
+    expect(await find(absorbed)).toEqual([]);
+  });
+
+  it("an officer's resolve of the slice's own attempt clears it", async () => {
+    expect(await find(store({ extra: { xeroSyncOperation: [resolvedOp({ id: "op_s1", localModel: "MemberCreditNoteAllocation", localId: "s1" })] } }))).toEqual([]);
   });
 
   it("reports a resolved booking apart while another booking still waits on the same note", async () => {

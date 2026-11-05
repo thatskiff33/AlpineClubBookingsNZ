@@ -64,6 +64,10 @@ const LOT_USE_READERS: Record<string, string> = {
   "src/lib/xero-applied-credit-allocation.ts > gatherAppliedCreditLots":
     "the allocation engine's lot loader: the planner takes lots in the order " +
     "given, so this order decides which note is allocated and what is minted.",
+  "src/lib/xero-credit-note-spent-outside-flag.ts > memberCreditLots":
+    "#4220: the early warning replays the engine's draw (`freeCreditLots`, " +
+    "`plannedDrawFromLot`) to learn how much lands on a spent note's lot, so it " +
+    "must read the lots in the engine's order; it plans and writes nothing.",
 };
 
 /** Reads that order credit rows by `createdAt` for something other than using them. */

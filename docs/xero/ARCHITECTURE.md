@@ -4361,29 +4361,44 @@ write, no stored flag, no audit row, no email, and no Xero call.
     `leftForAllocationCents > 0`;
   - Xero's remaining credit is less than what the app still has to allocate from the
     note. That is the lot's slices on this note with no active completion link
-    (`slicesHeldInXero`), plus the member's applied credit no slice covers yet
-    (`unallocatedAppliedCreditCentsByBooking` less the booking's slices), capped at
-    what the lot has left to give.
+    (`slicesHeldInXero`), plus what the engine will draw from the lot for the member's
+    applied credit no slice covers yet (`unallocatedAppliedCreditCentsByBooking` less
+    each booking's slices). This comparison runs first, so a note Xero can still cover
+    never reaches the outside-spend read, the balance or the mirror's arithmetic.
 
-  The second term is an upper bound: the engine plans across the member's lots oldest
-  first, so an older lot may take some of it. It cannot raise an alarm alone, because
-  the mirror's arithmetic must still leave spend on booked credit.
+  The draw is the engine's own, replayed. The engine fills applied credit from the
+  member's lots oldest first (`CREDIT_LOT_USE_ORDER`). Each lot gives its free credit:
+  amount, less all slices, less its note's write-down (`freeCreditLots` in
+  `xero-applied-credit-plan.ts`, which the engine's loader also calls).
+  `plannedDrawFromLot` gives what lands on this lot; its tests check it against the
+  planner. Credit an older lot will take never counts against this note, even when a
+  debit that uses up no lot (an admin adjustment) has emptied the balance. The total
+  that lands on a lot does not depend on which booking the engine allocates first, but
+  which booking's credit lands there does. So every waiting booking with uncovered
+  credit is named when any of it lands on the lot: the conservative choice.
 
   A missing, malformed, inactive, unexplained or unsettled reading flags nothing, so an
   outage or a half-written list raises no false alarm. Left out, so the flag clears
   once the work is dealt with:
   - a cancelled booking (the converge refuses one);
-  - a booking whose applied-credit allocation was resolved in Xero by an officer, or
-    closed by the converge as credit spent outside the app (`getBlockingOperation`'s
-    resolved answer, on the queued allocation or the slice's own attempt). The repair
-    check reports that booking as `RESOLVED_IN_XERO_BY_OFFICER`, once, while the note
-    is flagged for another booking.
+  - a booking whose applied-credit allocation an officer resolved in Xero
+    (`getBlockingOperation`'s resolved answer, on the queued allocation or the slice's
+    own attempt). The repair check reports that booking as
+    `RESOLVED_IN_XERO_BY_OFFICER`, once, while the note is flagged for another booking.
+
+  The converge's own close (`isClosedByCreditSpentOutsideApp`, #4338) is not an
+  officer's resolve. It leaves what is left of the slice to a fresh attempt, and its
+  write-down is already in the ledger. So the slice is judged as any other, and the
+  flag clears once the mirror's arithmetic finds the spend absorbed. It is never
+  reported as resolved in Xero: the released credit is chased by card (#4253).
 - **Where it shows.** The repair check reports
   `APPLIED_CREDIT_NOTE_CONSUMED_EXTERNALLY` (warning, no action, never auto-applied)
   on each waiting booking: one with a slice Xero does not hold, or with applied credit
   no slice covers yet. The Health Snapshot's **Credit used in Xero** tile counts the
   flagged notes; it shows **Unknown**, not **Clear**, when the server sends no count.
-  The check reads only lots whose note has a reading, and only those lots' slices.
+  The check reads the slices of lots whose note has a reading, and those members'
+  lots once each for the draw; the balance is read once per member, and only past
+  the cheap comparison.
 - **Lag.** The reading is only as fresh as the note's last inbound event (webhook,
   cursor sync or sync-now), so a spend shows, and a reversal clears, after that
   event. A note with no event since this release has no reading and is not flagged.

@@ -42,6 +42,16 @@ export async function slicesHeldInXero(
 }
 
 /**
+ * THE CREDIT-LOT PREDICATE: a member's positive credit row (stamped with a note or
+ * not), never one the credit-note convergence wrote. The allocation engine uses
+ * these lots (`gatherAppliedCreditLots`) and the early warning (#4220) replays its
+ * draw over the same set.
+ */
+export function creditLotWhere(memberId: Prisma.MemberCreditWhereInput["memberId"]): Prisma.MemberCreditWhereInput {
+  return { memberId, amountCents: { gt: 0 }, ...NOT_A_CONVERGENCE_ROW };
+}
+
+/**
  * THE FUNDING-LOT PREDICATE: a positive credit row stamped with a Xero note (this
  * one, or any matching `xeroCreditNoteId` filter), never one the credit-note
  * convergence wrote. The lookup below, the inbound mirror, its sweep and the early

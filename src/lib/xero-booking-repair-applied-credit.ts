@@ -120,8 +120,10 @@ function addUnallocatedCardAppliedCreditFindings(
  * Xero call - the reading was kept at ingest and judged in the load
  * (`findCreditNotesSpentOutsideApp`). The converge (#4219) acts when Xero refuses
  * the allocation; until then an officer checks the note in Xero. A booking whose
- * allocation was resolved by hand, or closed by the converge, gets no warning: it
- * is reported as resolved in Xero, once (the card arm above may already have).
+ * allocation an officer resolved in Xero gets no warning: it is reported as resolved
+ * in Xero, once (the card arm above may already have). The converge's own close is
+ * not an officer's resolve and never reaches here (`resolvedAllocations` holds
+ * officers' marks only): it released the credit, which is chased by card (#4253).
  */
 export function addCreditNoteSpentOutsideFindings(findings: MutableFinding[], context: BookingClassificationContext): void {
   const bookingId = context.booking.id;
