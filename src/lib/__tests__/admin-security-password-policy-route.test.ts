@@ -157,4 +157,38 @@ describe("admin security password-policy route (#2033)", () => {
     expect(res.status).toBe(400);
     expect(mocks.upsert).not.toHaveBeenCalled();
   });
+
+  // #4610: the breached-password check switch (default on) is written here.
+  describe("breachedPasswordCheck", () => {
+    it("GET reports it on for an absent row", async () => {
+      const body = await (await GET()).json();
+      expect(body.policy.breachedPasswordCheck).toBe(true);
+    });
+
+    it("PUT writes it, audits before and after, and returns the stored value", async () => {
+      mocks.findUnique
+        .mockResolvedValueOnce({ ...validBody, breachedPasswordCheck: true }) // audit "before"
+        .mockResolvedValueOnce({ ...validBody, breachedPasswordCheck: false }); // reload
+      const res = await put({ ...validBody, breachedPasswordCheck: false });
+      expect(res.status).toBe(200);
+      expect(mocks.upsert.mock.calls[0][0].update).toMatchObject({ breachedPasswordCheck: false });
+      expect(mocks.upsert.mock.calls[0][0].create).toMatchObject({ breachedPasswordCheck: false });
+      const audit = mocks.auditCreate.mock.calls[0][0].data;
+      expect(audit.metadata.before).toMatchObject({ breachedPasswordCheck: true });
+      expect(audit.metadata.after).toMatchObject({ breachedPasswordCheck: false });
+      expect((await res.json()).policy.breachedPasswordCheck).toBe(false);
+    });
+
+    it("leaves it untouched when a body from an older page omits it", async () => {
+      expect((await put(validBody)).status).toBe(200);
+      const upsertArgs = mocks.upsert.mock.calls[0][0];
+      expect(upsertArgs.update.breachedPasswordCheck).toBeUndefined();
+      expect(upsertArgs.create.breachedPasswordCheck).toBeUndefined();
+    });
+
+    it("rejects a non-boolean value (no write)", async () => {
+      expect((await put({ ...validBody, breachedPasswordCheck: "off" })).status).toBe(400);
+      expect(mocks.upsert).not.toHaveBeenCalled();
+    });
+  });
 });

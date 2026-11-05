@@ -11,6 +11,7 @@ import {
 } from "@/lib/audit";
 import { loadLoginSecuritySettings } from "@/lib/login-security-settings";
 import { buildPasswordSchema } from "@/lib/password-policy";
+import { screenChosenPassword } from "@/lib/breached-password";
 import { claimPasswordAttempt, clearPasswordAttempts } from "@/lib/login-throttle";
 import { LOGIN_THROTTLED_CODE } from "@/lib/login-throttle-policy";
 
@@ -75,6 +76,16 @@ export async function POST(req: NextRequest) {
     );
   }
   await clearPasswordAttempts(member.email);
+
+  // #4610 (INV-AUTH-005): refuse a password on the public breach list. Only a
+  // 5-character hash prefix leaves the server; a slow or failed lookup accepts.
+  const screen = await screenChosenPassword(newPassword, policy);
+  if (!screen.ok) {
+    return NextResponse.json(
+      { error: screen.error, code: screen.code },
+      { status: 400 }
+    );
+  }
 
   const newHash = await bcrypt.hash(newPassword, PASSWORD_BCRYPT_COST);
 

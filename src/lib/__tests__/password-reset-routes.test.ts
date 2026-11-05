@@ -60,6 +60,7 @@ import { POST as forgotPassword } from "@/app/api/auth/forgot-password/route";
 import { POST as resetPassword } from "@/app/api/auth/reset-password/route";
 import { hashActionToken } from "@/lib/action-tokens";
 import { SELF_SERVICE_PASSWORD_RESET_TTL_MS } from "@/lib/password-reset";
+import { stubBreachedPasswordService } from "@/lib/__tests__/helpers/breached-password-service";
 
 const mockedFindMember = vi.mocked(prisma.member.findFirst);
 const mockedMemberUpdate = vi.mocked(prisma.member.update);
@@ -83,10 +84,14 @@ describe("password reset routes", () => {
     mockedUpdateToken.mockResolvedValue({ id: "tok1" } as never);
     mockedCreateAuditLog.mockResolvedValue({ id: "audit-1" } as never);
     mockedTransaction.mockResolvedValue([] as never);
+    // #4610: the chosen-password writers screen against the breached-password
+    // range service; tests never reach the real one.
+    stubBreachedPasswordService();
   });
 
   afterEach(() => {
     vi.useRealTimers();
+    vi.unstubAllGlobals();
   });
 
   it("uses a 1 hour expiry for self-service forgot password links", async () => {

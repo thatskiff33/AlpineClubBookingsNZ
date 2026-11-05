@@ -759,6 +759,10 @@ export const SINGLETONS: SingletonSpec[] = [
     fields: [
       "minPasswordLength", "requireUppercase", "requireLowercase",
       "requireDigit", "requireSymbol", "magicLinkTtlMinutes",
+      // #4610: the breached-password check switch is a portable club decision
+      // too. A bundle exported before it existed says nothing about it, which
+      // merge mode honours by leaving the target's own value alone.
+      "breachedPasswordCheck",
     ],
     // Every column is a non-null policy field: a present null fails the dry-run
     // (#2200). Range bounds are not enforced here because normalizeLoginSecurityPolicy
@@ -771,6 +775,7 @@ export const SINGLETONS: SingletonSpec[] = [
       requireDigit: { required: true },
       requireSymbol: { required: true },
       magicLinkTtlMinutes: { required: true },
+      breachedPasswordCheck: { required: true },
     },
     defaults: () => ({ ...DEFAULT_LOGIN_SECURITY_POLICY }),
   },

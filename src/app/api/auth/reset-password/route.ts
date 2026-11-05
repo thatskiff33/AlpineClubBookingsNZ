@@ -12,6 +12,7 @@ import {
 } from "@/lib/audit";
 import { loadLoginSecuritySettings } from "@/lib/login-security-settings";
 import { buildPasswordSchema } from "@/lib/password-policy";
+import { screenChosenPassword } from "@/lib/breached-password";
 import { clearPasswordAttempts } from "@/lib/login-throttle";
 
 // The password field is validated against the club's configured login-security
@@ -73,6 +74,17 @@ export async function POST(req: NextRequest) {
     if (resetToken.expiresAt < new Date()) {
       return NextResponse.json(
         { error: "This reset link has expired. Please request a new one." },
+        { status: 400 }
+      );
+    }
+
+    // #4610 (INV-AUTH-005): refuse a password on the public breach list, after
+    // the token is proven so an invalid link never causes an outbound request.
+    // The token stays unused, so the person can choose another password.
+    const screen = await screenChosenPassword(password, policy);
+    if (!screen.ok) {
+      return NextResponse.json(
+        { error: screen.error, code: screen.code },
         { status: 400 }
       );
     }

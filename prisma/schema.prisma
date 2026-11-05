@@ -5812,6 +5812,10 @@ model LoginSecuritySetting {
   requireDigit        Boolean  @default(false)
   requireSymbol       Boolean  @default(false)
   magicLinkTtlMinutes Int      @default(15)
+  // #4610: refuse a chosen password found by the public breached-password range
+  // service (k-anonymity: only a 5-character SHA-1 prefix leaves the server).
+  // Default on; an absent row also reads as on (DEFAULT_LOGIN_SECURITY_POLICY).
+  breachedPasswordCheck Boolean @default(true)
   updatedByMemberId   String?
   createdAt           DateTime @default(now())
   updatedAt           DateTime @default(now()) @updatedAt

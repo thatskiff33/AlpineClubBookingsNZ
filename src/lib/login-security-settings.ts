@@ -20,6 +20,7 @@ const SETTINGS_SELECT = {
   requireDigit: true,
   requireSymbol: true,
   magicLinkTtlMinutes: true,
+  breachedPasswordCheck: true,
   updatedAt: true,
   updatedByMemberId: true,
 } as const;
