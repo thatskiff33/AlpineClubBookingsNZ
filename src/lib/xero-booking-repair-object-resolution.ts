@@ -1,7 +1,7 @@
 // Xero object resolution across local fields, links, and past operations for
 // the booking-vs-Xero repair tool. Extracted verbatim from
 // xero-booking-repair.ts (#1208 item 2).
-import { XERO_ACTIVE_OPERATION_STATUSES } from "./xero-active-operation-statuses";
+import { XERO_ACTIVE_OPERATION_STATUSES, XERO_RERUNNABLE_OPERATION_STATUSES } from "./xero-active-operation-statuses";
 import { buildXeroInvoiceUrl } from "@/lib/xero-links";
 import { getXeroOperationRetryMeta } from "@/lib/xero-operation-retry";
 import { isResolvedInXero } from "@/lib/xero-operation-resolution";
@@ -179,6 +179,13 @@ export type OwnNoteRowState =
   | { kind: "retry"; operation: XeroOperationRecord; retry: RetryableOperationMatch }
   | { kind: "unretryable"; operation: XeroOperationRecord; reason: string | null };
 
+/** The allocation links a note's PARTIAL retry reads as done (`unallocatedClearingTargets`'s role). */
+export function noteAllocationLinks(links: XeroObjectLinkRecord[]): XeroObjectLinkRecord[] {
+  return links.filter(
+    (link) => link.xeroObjectType === "ALLOCATION" && link.role === "MODIFICATION_CREDIT_NOTE_ALLOCATION"
+  );
+}
+
 export function readOwnNoteRowState(
   operations: XeroOperationRecord[],
   links: XeroObjectLinkRecord[],
@@ -196,10 +203,7 @@ export function readOwnNoteRowState(
   if (partial && isResolvedInXero(partial)) return { kind: "resolved", operation: partial };
   const repairing = noteRow("RUNNING");
   if (repairing) return { kind: "repairing", operation: repairing };
-  const allocationLinks = links.filter(
-    (link) => link.xeroObjectType === "ALLOCATION" && link.role === "MODIFICATION_CREDIT_NOTE_ALLOCATION"
-  );
-  if (!partial || !partialClearingNoteIsIncomplete(partial.requestPayload, creditNoteId, allocationLinks)) {
+  if (!partial || !partialClearingNoteIsIncomplete(partial.requestPayload, creditNoteId, noteAllocationLinks(links))) {
     return null;
   }
   const retry = toRetryableOperationMatch(partial);
@@ -208,26 +212,39 @@ export function readOwnNoteRowState(
     : { kind: "unretryable", operation: partial, reason: getXeroOperationRetryMeta(partial).reason };
 }
 
+/**
+ * The rows of one kind that can stand in a repair's way: live (PENDING,
+ * RUNNING, WAITING_PAYMENT) or ended FAILED or PARTIAL, and admissible - the
+ * one population `getBlockingOperation` ranks and `getLiveOperation` reads
+ * (#4757, `INV-SSOT`). Rows resolved in Xero are kept; callers decide.
+ */
+export function blockingCandidates(
+  operations: XeroOperationRecord[],
+  entityType: string,
+  operationType: string,
+  options?: { payloadQueueType?: string }
+): XeroOperationRecord[] {
+  // WAITING_PAYMENT blocks like PENDING/RUNNING (#1356): a supplementary
+  // invoice legitimately parked on its additional Stripe payment must not be
+  // classified as "missing" — re-queueing it would mint a second operation
+  // (under a different correlation key when the amounts differ) whose default
+  // recordPayment books money before any capture exists.
+  return operations.filter(
+    (operation) =>
+      operation.entityType === entityType &&
+      operation.operationType === operationType &&
+      (XERO_RERUNNABLE_OPERATION_STATUSES as readonly string[]).includes(operation.status) &&
+      isAdmissibleRepairOperation(operation, options?.payloadQueueType)
+  );
+}
+
 export function getBlockingOperation(
   operations: XeroOperationRecord[],
   entityType: string,
   operationType: string,
   options?: { payloadQueueType?: string }
 ): BlockingOperationMatch | null {
-  // WAITING_PAYMENT blocks like PENDING/RUNNING (#1356): a supplementary
-  // invoice legitimately parked on its additional Stripe payment must not be
-  // classified as "missing" — re-queueing it would mint a second operation
-  // (under a different correlation key when the amounts differ) whose default
-  // recordPayment books money before any capture exists.
-  const relevant = operations.filter(
-    (operation) =>
-      operation.entityType === entityType &&
-      operation.operationType === operationType &&
-      ["FAILED", "PARTIAL", ...XERO_ACTIVE_OPERATION_STATUSES].includes(
-        operation.status
-      ) &&
-      isAdmissibleRepairOperation(operation, options?.payloadQueueType)
-  );
+  const relevant = blockingCandidates(operations, entityType, operationType, options);
 
   // #3635 (`INV-INT-025`): a row an officer resolved in Xero is done. It never
   // outranks a live row - an old resolved FAILED row picked ahead of a newer
@@ -270,12 +287,9 @@ export function getLiveOperation(
   operationType: string
 ): XeroOperationRecord | null {
   return (
-    operations.find(
+    blockingCandidates(operations, entityType, operationType).find(
       (operation) =>
-        operation.entityType === entityType &&
-        operation.operationType === operationType &&
         (XERO_ACTIVE_OPERATION_STATUSES as readonly string[]).includes(operation.status) &&
-        isAdmissibleRepairOperation(operation, undefined) &&
         !isResolvedInXero(operation)
     ) ?? null
   );
