@@ -12,5 +12,4 @@
   earlier: that one is retried or reported first. The note's own failed
   attempts are left to its retry, which covers them. Where you applied part
   of an invoice-clearing note by hand, the report lists the invoices still
-  to apply by hand and offers nothing. A clearing note whose operation
-  cannot be retried is handled as before (#4762).
+  to apply by hand and offers nothing.
