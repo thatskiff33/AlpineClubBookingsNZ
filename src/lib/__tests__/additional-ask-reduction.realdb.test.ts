@@ -1281,6 +1281,13 @@ let webhookClient: PrismaClient;
         complete: true,
       })) as never;
       stripeRaceHooks.cancel = (async (id: string) => ({ paymentIntent: { id, status: "canceled" }, canceled: true })) as never;
+      // #4015 review C1: a replay reads the live ask it would carry. An intent this
+      // fake never minted (a row a case wrote by hand) is one Stripe has no record of.
+      stripeRaceHooks.get = (async (id: string) => {
+        const intent = intents.get(id);
+        if (!intent) throw Object.assign(new Error(`No such payment_intent: '${id}'`), { code: "resource_missing" });
+        return intent;
+      }) as never;
       // #4693: the runner's stamp merges into the intent's metadata, as Stripe's update does.
       stripeRaceHooks.stamp = async (id, metadata) => {
         const intent = intents.get(id);
@@ -2112,33 +2119,68 @@ let webhookClient: PrismaClient;
         expect((await payment()).additionalAmountCents).toBe(7_000);
       });
 
-      it("CASE 1, RACE: both replays at once - the global key serialises their writes, the loser's sizing fence refuses, and its retry carries the winner's ask", async () => {
+      it("CASE 1, RACE: both replays mint before either writes - the global key serialises their writes, the loser's sizing fence refuses, and its retry carries the winner's ask", async () => {
         const e1 = await e1WaitingOnRetry();
         const e2 = await increaseBy(2_000);
         const e2Recovery = await failedMint(e2.id, 2_000, QUEUED_EARLY);
         const stripe = fakeStripe();
+        const cancelled: string[] = [];
+        stripeRaceHooks.cancel = (async (id: string) => {
+          cancelled.push(id);
+          const intent = stripe.intents.get(id);
+          if (intent) intent.status = "canceled";
+          return { paymentIntent: { id, status: "canceled" }, canceled: true };
+        }) as never;
 
+        // #4015 review C2: a barrier after each mint. Neither replay reaches its
+        // claim-held write until BOTH have sized and minted off the same Payment,
+        // so the two genuinely overlap and only the fence can tell them apart.
+        let minted = 0;
+        let bothMinted!: () => void;
+        const barrier = new Promise<void>((resolve) => {
+          bothMinted = resolve;
+        });
+        ordinaryAskMintHooks.afterMint = async () => {
+          minted += 1;
+          if (minted === 2) bothMinted();
+          await Promise.race([
+            barrier,
+            new Promise((_, reject) => setTimeout(() => reject(new Error("the other replay never minted")), 10_000)),
+          ]);
+        };
         const { runPaymentRecoveryOperationNow } = await import("@/lib/payment-recovery");
         const outcomes = await Promise.all([
           runPaymentRecoveryOperationNow(e1, CLUB_FORMAT_TEST),
           runPaymentRecoveryOperationNow(e2Recovery, CLUB_FORMAT_TEST),
         ]);
-        // Whichever lost re-plans: its retry finds the winner's row and carries it.
-        for (const [index, operationId] of [e1, e2Recovery].entries()) {
-          if (outcomes[index] !== "succeeded") expect(await replay(operationId)).toBe("succeeded");
-        }
+        ordinaryAskMintHooks.afterMint = null;
+        expect(minted).toBe(2);
+        // Exactly one wrote; the other's fence refused it (the queue's sizing moved).
+        expect([...outcomes].sort()).toEqual(["failed", "succeeded"]);
+        const loserIndex = outcomes.indexOf("failed");
+        const [winner, loser] = loserIndex === 0 ? [e2Recovery, e1] : [e1, e2Recovery];
+        const firstIntents = [...stripe.intents.values()];
+        expect(firstIntents.map((intent) => intent.amount).sort()).toEqual([2_000, 5_000]);
+        const winnerRow = (await liveAsks())[0]!;
+        const loserFirstIntent = firstIntents.find((intent) => intent.id !== winnerRow.stripePaymentIntentId)!;
+        // The loser's intent was never written or offered, and its recovery waits to retry.
+        expect(await prisma.paymentTransaction.findUnique({ where: { stripePaymentIntentId: loserFirstIntent.id } })).toBeNull();
+        expect(await prisma.paymentRecoveryOperation.findUniqueOrThrow({ where: { id: loser }, select: { status: true, lastError: true } }))
+          .toEqual({ status: "FAILED", lastError: expect.stringContaining("changed while its replacement was being minted") });
+        expect(await recoveryStatus(winner)).toBe("SUCCEEDED");
 
-        // One live ask for both increases' 7000, every other intent cancelled or never offered.
+        // The retry re-sizes over the winner's row and carries it.
+        expect(await replay(loser)).toBe("succeeded");
         const live = await liveAsks();
-        expect(live).toEqual([expect.objectContaining({ amountCents: 7_000 })]);
+        expect(live).toEqual([expect.objectContaining({ amountCents: 7_000, carriedAskCents: winnerRow.amountCents })]);
         expect([await recoveryStatus(e1), await recoveryStatus(e2Recovery)]).toEqual(["SUCCEEDED", "SUCCEEDED"]);
         expect((await payment()).additionalAmountCents).toBe(7_000);
-        const others = [...stripe.intents.keys()].filter((id) => id !== live[0]!.stripePaymentIntentId);
-        for (const id of others) {
-          const row = await prisma.paymentTransaction.findUnique({ where: { stripePaymentIntentId: id }, select: { status: true } });
-          // A written loser is superseded (FAILED); an unwritten one has no row and was never offered.
-          if (row) expect(row.status).toBe("FAILED");
-        }
+        // The loser's unwritten first intent is cleaned up at Stripe once its recovery closed without it (#4693).
+        expect(stripe.intents.get(loserFirstIntent.id)!.status).toBe("canceled");
+        expect(cancelled.filter((id) => id === loserFirstIntent.id)).toHaveLength(1);
+        // The winner's superseded ask is cancelled too; the one live ask is untouched.
+        expect(await cancellationFor(winnerRow.stripePaymentIntentId!)).toEqual([{ paymentIntentId: winnerRow.stripePaymentIntentId }]);
+        expect(stripe.intents.get(live[0]!.stripePaymentIntentId!)!.status).toBe("requires_payment_method");
       });
 
       it("CASE 2: E2's door mints while E1 waits - E1's replay asks its own 5000 plus E2's 2000, superseding E2's ask", async () => {
@@ -2193,7 +2235,25 @@ let webhookClient: PrismaClient;
         expect((await payment()).additionalAmountCents).toBe(4_500);
       });
 
-      it("CASE 3, negative: a fresh ask written after the retry's transaction is never in the set the retry cancels", async () => {
+      /** Sessions of this database waiting on a lock, the webhook connection's own excluded. */
+      async function lockWaiters(locktype?: "advisory") {
+        const rows = locktype
+          ? await prisma.$queryRaw<Array<{ count: number }>>`
+              SELECT COUNT(*)::int AS "count" FROM pg_locks WHERE locktype = 'advisory' AND NOT granted`
+          : await prisma.$queryRaw<Array<{ count: number }>>`
+              SELECT COUNT(*)::int AS "count" FROM pg_stat_activity
+              WHERE datname = current_database() AND wait_event_type = 'Lock' AND application_name <> 'race-3954-webhook'`;
+        return rows[0]?.count ?? 0;
+      }
+      async function untilLockWaiters(count: number, locktype?: "advisory") {
+        const startedAt = process.hrtime.bigint();
+        while ((await lockWaiters(locktype)) < count) {
+          if (realElapsedMs(startedAt) > 10_000) throw new Error(`never saw ${count} ${locktype ?? "lock"} waiter(s)`);
+          await new Promise((resolve) => setTimeout(resolve, 25));
+        }
+      }
+
+      it("CASE 3, negative: a re-issue's write started while the retry's hold is open blocks on the queue key, and its fresh ask is never in the set the retry cancels", async () => {
         const e1 = await e1WaitingOnRetry();
         const e2 = await increaseBy(2_000);
         const { upsertPaymentIntentTransaction } = await import("@/lib/payment-transactions");
@@ -2202,25 +2262,201 @@ let webhookClient: PrismaClient;
           carriedAskCents: 0, status: "PENDING", reason: "guest_add_price_increase",
           hadIssuedXeroInvoice: false, bookingModificationId: e2.id, store: prisma,
         });
+        // A reduction's smaller re-issue, waiting on its door's mint (the door holds its intent).
+        const { buildAdditionalIntentRecoveryIdempotencyKey } = await import("@/lib/payment-recovery-keys");
+        const reissue = await prisma.paymentRecoveryOperation.create({
+          data: {
+            type: "CREATE_ADDITIONAL_PAYMENT_INTENT", status: "PENDING", bookingId: BOOKING_ID, paymentId: PAYMENT_ID,
+            paymentIntentId: "mod_reissued_ask_race-4015-reduction", amountCents: 3_000,
+            idempotencyKey: buildAdditionalIntentRecoveryIdempotencyKey("race-4015-reduction"), attempts: 0,
+            nextRetryAt: new Date("2026-07-02T00:00:00.000Z"),
+          },
+        });
         fakeStripe();
-        // The retry's transaction has committed its row and its cancel set; while
-        // it cancels E2's superseded ask at Stripe, another minter writes a fresh ask.
-        const FRESH = "pi_race_4015_fresh_after_retry";
-        const cancel = stripeRaceHooks.cancel!;
-        stripeRaceHooks.cancel = (async (id: string) => {
-          if (id === "pi_race_4015_e2_door") {
-            await webhookClient.paymentTransaction.create({
-              data: { paymentId: PAYMENT_ID, kind: "ADDITIONAL", source: "STRIPE", stripePaymentIntentId: FRESH, status: "PENDING", amountCents: 3_000, reason: "guest_removal_reissued_ask" },
-            });
-          }
-          return (cancel as (id: string) => Promise<unknown>)(id);
-        }) as never;
+        const FRESH = "pi_race_4015_fresh_reissue";
+        const { writeReissuedAskUnderRecovery } = await import("@/lib/additional-ask-reissue");
+
+        // #4015 review C3: started from a hook BEFORE the retry's hold. The webhook
+        // connection holds the Payment row, so the hold takes the queue key and then
+        // waits on that row; the re-issue's write starts only then, and must wait on
+        // the queue key (`lockAdditionalAskQueue`) until the hold commits.
+        let release!: () => void;
+        const released = new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        let webhookHold: Promise<unknown> | null = null;
+        let reissueWrite: Promise<string | null> | null = null;
+        let writerWaitedOnQueueKey = false;
+        ordinaryAskMintHooks.afterMint = async () => {
+          ordinaryAskMintHooks.afterMint = null;
+          let paymentLocked!: () => void;
+          const locked = new Promise<void>((resolve) => {
+            paymentLocked = resolve;
+          });
+          webhookHold = webhookClient.$transaction(async (tx) => {
+            await tx.$queryRaw`SELECT id FROM "Payment" WHERE id = ${PAYMENT_ID} FOR UPDATE`;
+            paymentLocked();
+            await released;
+          }, { maxWait: 10_000, timeout: 30_000 });
+          await locked;
+          reissueWrite = (async () => {
+            let write: Promise<string | null> | null = null;
+            try {
+              // The hold: past the queue key, waiting on the Payment row.
+              await untilLockWaiters(1);
+              write = writeReissuedAskUnderRecovery(reissue, FRESH, async (store) => {
+                await store.paymentTransaction.create({
+                  data: { paymentId: PAYMENT_ID, kind: "ADDITIONAL", source: "STRIPE", stripePaymentIntentId: FRESH, status: "PENDING", amountCents: 3_000, reason: "guest_removal_reissued_ask" },
+                });
+                return "written";
+              });
+              await untilLockWaiters(1, "advisory");
+              writerWaitedOnQueueKey = true;
+            } finally {
+              release();
+            }
+            return write;
+          })();
+        };
 
         expect(await replay(e1)).toBe("succeeded");
+        await webhookHold;
+        expect(await reissueWrite).toBe("written");
+        expect(writerWaitedOnQueueKey).toBe(true);
+        // The retry's cancel set was chosen inside its hold: E2's ask, never the fresh re-issue.
         expect(await cancellationFor("pi_race_4015_e2_door")).toEqual([{ paymentIntentId: "pi_race_4015_e2_door" }]);
         expect(await cancellationFor(FRESH)).toEqual([]);
         expect(await prisma.paymentTransaction.findUniqueOrThrow({ where: { stripePaymentIntentId: FRESH }, select: { status: true, withdrawnAt: true } }))
           .toEqual({ status: "PENDING", withdrawnAt: null });
+        expect(await recoveryStatus(reissue.id)).toBe("SUCCEEDED");
+      });
+
+      /** The live asks no queued cancellation is retiring: what the member is still asked for. */
+      async function askedFor() {
+        const retiring = new Set((await cancellations()).map((row) => row.paymentIntentId));
+        return (await liveAsks()).filter((row) => !retiring.has(row.stripePaymentIntentId!));
+      }
+
+      /** E's door-minted ask: the intent (from the fake) and its row, written as the door writes it. */
+      async function doorAsk(
+        stripe: ReturnType<typeof fakeStripe>,
+        modificationId: string,
+        ask: { amountCents: number; carriedCents: number },
+        hadIssuedXeroInvoice = false,
+      ) {
+        const { upsertPaymentIntentTransaction } = await import("@/lib/payment-transactions");
+        const { queueSupersededAdditionalIntentCancellationRows } = await import("@/lib/booking-payment-cleanup");
+        const intent = await stripe.create({ amountCents: ask.amountCents, customerId: "cus_race_3954", idempotencyKey: `mod_guest_${BOOKING_ID}_${modificationId}` });
+        await prisma.$transaction(async (store) => {
+          await upsertPaymentIntentTransaction({
+            paymentId: PAYMENT_ID, kind: "ADDITIONAL", paymentIntentId: intent.id, amountCents: ask.amountCents,
+            carriedAskCents: ask.carriedCents, status: "PENDING", reason: "guest_add_price_increase",
+            hadIssuedXeroInvoice, bookingModificationId: modificationId, store,
+          });
+          await queueSupersededAdditionalIntentCancellationRows({ bookingId: BOOKING_ID, paymentId: PAYMENT_ID, newPaymentIntentId: intent.id, store });
+        });
+        return intent;
+      }
+
+      it("REVIEW C1: the later ask E1's replay would carry is being paid at Stripe - the replay backs off, superseding nothing, and once the capture lands asks only its own 5000", async () => {
+        const e1 = await e1WaitingOnRetry();
+        const e2 = await increaseBy(2_000);
+        const stripe = fakeStripe();
+        const e2Intent = await doorAsk(stripe, e2.id, { amountCents: 2_000, carriedCents: 0 });
+        // The member confirmed E2's ask; Stripe took the money, and the webhook is not in yet.
+        e2Intent.status = "succeeded";
+
+        expect(await replay(e1)).toBe("failed");
+        expect(stripe.intents.size).toBe(1);
+        expect(await cancellationFor(e2Intent.id)).toEqual([]);
+        const backedOff = await prisma.paymentRecoveryOperation.findUniqueOrThrow({ where: { id: e1 }, select: { status: true, lastError: true, nextRetryAt: true } });
+        expect(backedOff).toMatchObject({ status: "FAILED", lastError: expect.stringContaining(`(${e2Intent.id}) is succeeded at Stripe`) });
+        expect(backedOff.nextRetryAt).not.toBeNull();
+
+        // The capture's webhook lands; the retry carries nothing of E2's paid ask.
+        const { upsertPaymentIntentTransaction } = await import("@/lib/payment-transactions");
+        await upsertPaymentIntentTransaction({ paymentId: PAYMENT_ID, kind: "ADDITIONAL", paymentIntentId: e2Intent.id, amountCents: 2_000, status: "SUCCEEDED", store: prisma });
+        expect(await replay(e1)).toBe("succeeded");
+        const e1Intent = [...stripe.intents.values()].find((intent) => intent.id !== e2Intent.id)!;
+        expect(e1Intent.amount).toBe(5_000);
+        expect(await liveAsks()).toEqual([expect.objectContaining({ stripePaymentIntentId: e1Intent.id, amountCents: 5_000, carriedAskCents: 0 })]);
+        expect(await cancellationFor(e2Intent.id)).toEqual([]);
+      });
+
+      it("REVIEW L5: the door's write committed but its reply was lost - the recovery it kept finishes on the door's own row by its edit stamp, asking once", async () => {
+        // paid 10000; the $50 ask minted; E2 +1000 asks 6000, carrying it.
+        await grownBooking("card", 1_000, 100, "minted", "primary-before-increase");
+        const e2 = await increaseBy(1_000);
+        expect(e2.adjusted.additionalAsk.amountCents).toBe(6_000);
+        const stripe = fakeStripe();
+        const doorIntent = await doorAsk(stripe, e2.id, { amountCents: 6_000, carriedCents: 5_000 });
+        // The reply is lost, so the door keeps the debt (`keepTheDebt`): a recovery holding only the Stripe key.
+        const recovery = await failedMint(e2.id, 6_000, QUEUED_LATER);
+
+        expect(await replay(recovery)).toBe("succeeded");
+        // Read as a later ask, the replay sized 1000 + 6000 and asked 7000.
+        expect(stripe.intents.size).toBe(1);
+        expect(await askedFor()).toEqual([expect.objectContaining({ stripePaymentIntentId: doorIntent.id, amountCents: 6_000, carriedAskCents: 5_000 })]);
+        // The $50 ask the door's write superseded stays queued for its cancel, once.
+        expect(await cancellationFor(ASK_INTENT)).toEqual([{ paymentIntentId: ASK_INTENT }]);
+        expect((await payment()).additionalAmountCents).toBe(6_000);
+        expect(await recoveryStatus(recovery)).toBe("SUCCEEDED");
+        expect(await cancellationFor(doorIntent.id)).toEqual([]);
+      });
+
+      it("REVIEW L5: that door row withdrawn by a reduction while its recovery waits - the reduction netted it, so the replay finishes asking nothing", async () => {
+        await grownBooking("card", 1_000, 100, "minted", "primary-before-increase");
+        const e2 = await increaseBy(1_000);
+        const stripe = fakeStripe();
+        const doorIntent = await doorAsk(stripe, e2.id, { amountCents: 6_000, carriedCents: 5_000 });
+        const recovery = await failedMint(e2.id, 6_000, QUEUED_LATER);
+        // A -2000 reduction sets against the 6000 ask: the door's row is withdrawn
+        // and a 4000 re-issue waits. The recovery, settled by that row, is left alone.
+        await removeLeavingGuest();
+        expect(await prisma.paymentTransaction.findUniqueOrThrow({ where: { stripePaymentIntentId: doorIntent.id }, select: { withdrawnAt: true } }))
+          .toEqual({ withdrawnAt: expect.any(Date) });
+        expect(await recoveryStatus(recovery)).toBe("PENDING");
+
+        expect(await replay(recovery)).toBe("succeeded");
+        // Never E2's 1000 again beside the 4000 re-issue that already carries it.
+        expect(stripe.intents.size).toBe(1);
+        expect(await liveAsks()).toEqual([]);
+        expect(await recoveryStatus(recovery)).toBe("SUCCEEDED");
+      });
+
+      it("REVIEW L6 (INV-PAY-140): with the edit's invoice answer true, the superseded later ask's waiting invoice follows to the replay's intent, and the replay raises only E1's own", async () => {
+        const e1 = await e1WaitingOnRetry();
+        // Both edits saw the booking's primary invoice, so each bills through a supplementary one.
+        await prisma.payment.update({ where: { id: PAYMENT_ID }, data: { xeroInvoiceId: PRIMARY_INVOICE_ID } });
+        await prisma.paymentRecoveryOperation.update({ where: { id: e1 }, data: { hadIssuedXeroInvoice: true } });
+        const e2 = await increaseBy(2_000);
+        const stripe = fakeStripe();
+        const e2Intent = await doorAsk(stripe, e2.id, { amountCents: 2_000, carriedCents: 0 }, true);
+        // E2's door queued its own supplementary invoice, waiting on its intent.
+        await prisma.xeroSyncOperation.create({
+          data: {
+            direction: "OUTBOUND", entityType: "INVOICE", operationType: "CREATE", status: "WAITING_PAYMENT",
+            localModel: "BookingModification", localId: e2.id, queueType: "SUPPLEMENTARY_INVOICE",
+            requestPayload: { queueType: "SUPPLEMENTARY_INVOICE", bookingId: BOOKING_ID, paymentIntentId: e2Intent.id, priceDiffCents: 2_000, changeFeeCents: 0 },
+          },
+        });
+
+        expect(await replay(e1)).toBe("succeeded");
+        const replayIntent = [...stripe.intents.values()].find((intent) => intent.id !== e2Intent.id)!;
+        expect(replayIntent.amount).toBe(7_000);
+        const invoices = await prisma.xeroSyncOperation.findMany({
+          where: { localModel: "BookingModification", localId: { in: [INCREASE_MOD_ID, e2.id] }, entityType: "INVOICE", operationType: "CREATE" },
+          select: { localId: true, status: true, requestPayload: true },
+          orderBy: { localId: "asc" },
+        });
+        // One invoice per edit, each for its own money, both waiting on the one live ask.
+        expect(invoices).toHaveLength(2);
+        expect(invoices.find((row) => row.localId === e2.id)).toEqual(expect.objectContaining({
+          status: "WAITING_PAYMENT", requestPayload: expect.objectContaining({ paymentIntentId: replayIntent.id, priceDiffCents: 2_000 }),
+        }));
+        expect(invoices.find((row) => row.localId === INCREASE_MOD_ID)).toEqual(expect.objectContaining({
+          status: "WAITING_PAYMENT", requestPayload: expect.objectContaining({ paymentIntentId: replayIntent.id, priceDiffCents: 5_000 }),
+        }));
       });
     });
 
@@ -2544,59 +2780,66 @@ let webhookClient: PrismaClient;
       expect(after.nextRetryAt).not.toBeNull();
     });
 
-    // #4036 review: the refused replay finds the door's intent, and another
-    // ask records that same intent before the runner's claim-held write. The
-    // runner must not write over that row: its write rolls back. The other ask
-    // is a ledger row written AFTER this recovery's row, as production always
-    // writes it. #4015: a later row no longer settles the recovery - nothing
-    // shows that row carries this edit's money - so the retry fails closed
-    // too, and the debt stays open for the retry and the officers' alert
-    // rather than being closed unasked.
-    it("#4036, #4015: an adopted intent another ask recorded meanwhile is never written over - the replay fails, and its retry fails closed too, minting nothing and leaving the debt open", async () => {
+    // #4036 review: the refused replay finds the door's intent, and a row for
+    // that same intent lands before the runner's claim-held write. The runner
+    // must not write over that row: its write rolls back. #4015 review L1: the
+    // row is written as the only writer that holds the door's intent writes it -
+    // the door's own ask write, stamped with its edit, superseding the $50 ask
+    // in the same transaction and mirrored onto the Payment (the upsert
+    // reconciles). The retry then recognises it as its own by that stamp
+    // (`findOwnRecoveryRow`) and finishes on it. Read as a later ask, the retry
+    // would size this edit's 1000 plus the row's 6000 under a suffixed key and
+    // supersede the door's own intent, asking 7000 for a 6000 debt.
+    it("#4036, #4015: the door's own row for the adopted intent lands meanwhile - never written over, and the retry finishes on it as its own, asking 6000 once (never 7000)", async () => {
       const { stripe, recovery, doorIntent } = await increaseWhoseReplyIsLost();
       await prisma.payment.update({ where: { id: PAYMENT_ID }, data: { stripeCustomerId: "cus_race_4036_moved" } });
       stripeRaceHooks.create = stripe.create as never;
-      const OTHER_ROW = { reason: "date_change_price_increase", amountCents: 6_000 };
-      // One second after the recovery row (the frozen clock would stamp both
-      // the same instant, and the overtake rule is a strict `>`).
-      const OTHER_ROW_WRITTEN_AT = new Date("2026-07-01T00:00:01.000Z");
-      expect(recovery.createdAt.getTime()).toBeLessThan(OTHER_ROW_WRITTEN_AT.getTime());
+      const [{ upsertPaymentIntentTransaction }, { queueSupersededAdditionalIntentCancellationRows }, { bookingModificationIdForAdditionalIntentRecoveryKey }] = await Promise.all([
+        import("@/lib/payment-transactions"),
+        import("@/lib/booking-payment-cleanup"),
+        import("@/lib/payment-recovery-keys"),
+      ]);
+      const increaseId = bookingModificationIdForAdditionalIntentRecoveryKey(recovery.idempotencyKey)!;
+      const DOOR_ROW = { reason: "guest_add_price_increase", amountCents: 6_000, carriedAskCents: 5_000, bookingModificationId: increaseId };
       ordinaryAskMintHooks.afterMint = async ({ intent, adopted }) => {
         expect(adopted).toBe(true);
-        await webhookClient.paymentTransaction.create({
-          data: {
-            paymentId: PAYMENT_ID, kind: "ADDITIONAL", source: "STRIPE", stripePaymentIntentId: intent.id,
-            status: "PENDING", createdAt: OTHER_ROW_WRITTEN_AT, ...OTHER_ROW,
-          },
+        await webhookClient.$transaction(async (store) => {
+          await upsertPaymentIntentTransaction({
+            paymentId: PAYMENT_ID, kind: "ADDITIONAL", paymentIntentId: intent.id, status: "PENDING", hadIssuedXeroInvoice: false,
+            ...DOOR_ROW, store,
+          });
+          await queueSupersededAdditionalIntentCancellationRows({ bookingId: BOOKING_ID, paymentId: PAYMENT_ID, newPaymentIntentId: intent.id, store });
         });
       };
 
       const { runPaymentRecoveryOperationNow } = await import("@/lib/payment-recovery");
       expect(await runPaymentRecoveryOperationNow(recovery.id, CLUB_FORMAT_TEST)).toBe("failed");
 
-      const otherRow = () =>
+      const doorRow = () =>
         prisma.paymentTransaction.findUniqueOrThrow({
           where: { stripePaymentIntentId: doorIntent.id },
           select: { reason: true, amountCents: true, carriedAskCents: true, bookingModificationId: true },
         });
-      // The other ask's row is exactly as it wrote it.
-      expect(await otherRow()).toEqual({ ...OTHER_ROW, carriedAskCents: 0, bookingModificationId: null });
+      // The door's row is exactly as it wrote it, and the Payment mirrors it.
+      expect(await doorRow()).toEqual(DOOR_ROW);
+      expect(await payment()).toMatchObject({ additionalAmountCents: 6_000, additionalPaymentIntentId: doorIntent.id });
       const failed = await prisma.paymentRecoveryOperation.findUniqueOrThrow({ where: { id: recovery.id } });
       expect(failed).toMatchObject({ status: "FAILED", attempts: 1, paymentIntentId: recovery.paymentIntentId });
 
-      // The retry: another ask's row now stands on the ledger, written after
-      // this recovery's row. It does not settle this recovery (#4015), and the
-      // only intent matching this ask's key is that row's, so the retry fails
-      // closed: nothing is adopted, minted or written over, and the debt stays open.
+      // The retry finds the row stamped with its own edit and finishes on it:
+      // nothing minted, nothing written over, the debt asked for once.
       ordinaryAskMintHooks.afterMint = null;
       await prisma.paymentRecoveryOperation.update({ where: { id: recovery.id }, data: { nextRetryAt: new Date("2026-06-01T00:00:00.000Z") } });
-      expect(await runPaymentRecoveryOperationNow(recovery.id, CLUB_FORMAT_TEST)).toBe("failed");
-      expect(await otherRow()).toEqual({ ...OTHER_ROW, carriedAskCents: 0, bookingModificationId: null });
+      expect(await runPaymentRecoveryOperationNow(recovery.id, CLUB_FORMAT_TEST)).toBe("succeeded");
       expect(stripe.intents.size).toBe(1);
-      const retried = await prisma.paymentRecoveryOperation.findUniqueOrThrow({ where: { id: recovery.id } });
-      expect(retried).toMatchObject({ status: "FAILED", attempts: 2, paymentIntentId: recovery.paymentIntentId, succeededAt: null });
-      // The fail-closed path rethrows Stripe's refusal of the moved request (`failClosed`).
-      expect(retried.lastError).toContain("Keys for idempotent requests");
+      expect(await doorRow()).toEqual(DOOR_ROW);
+      expect((await liveAsks()).filter((row) => row.stripePaymentIntentId !== ASK_INTENT))
+        .toEqual([expect.objectContaining({ stripePaymentIntentId: doorIntent.id, amountCents: 6_000, carriedAskCents: 5_000 })]);
+      expect(await payment()).toMatchObject({ additionalAmountCents: 6_000, additionalPaymentIntentId: doorIntent.id });
+      expect(await prisma.paymentRecoveryOperation.findUniqueOrThrow({ where: { id: recovery.id }, select: { status: true, attempts: true } }))
+        .toEqual({ status: "SUCCEEDED", attempts: 2 });
+      // The $50 ask the door's write superseded is cancelled once; the door's intent never is.
+      expect((await cancellations()).map((row) => row.paymentIntentId)).toEqual([ASK_INTENT]);
     });
 
     it("#4036: a refused replay does not adopt an intent another edit's unfinished recovery could own (same door, same amount)", async () => {
