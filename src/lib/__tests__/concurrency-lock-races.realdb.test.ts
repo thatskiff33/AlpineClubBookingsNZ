@@ -563,6 +563,12 @@ import "./resolved-voided-refund-note-coverage.realdb.test";
 // failed write gives the row back PARTIAL. Skipped unless
 // RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own `race-4256-` fixtures.
 import "./xero-partial-repair-claim.realdb.test";
+// #4259 reuses it to prove the PARTIAL modification credit-note repair claims
+// its row the same way and closes it: a resolve or a mark committed while it
+// waits wins, two retries make one allocation and close the row once SUCCEEDED,
+// and a refused allocation gives the row back PARTIAL. Skipped unless
+// RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own `race-4259-` fixtures.
+import "./xero-modification-note-repair-claim.realdb.test";
 // #4356 reuses it to prove two callers sharing one ACTIVE Xero operation row
 // never let a failure overwrite a recorded success: the real
 // createXeroPaymentForInvoice twice onto one row, each Xero call held on a gate,

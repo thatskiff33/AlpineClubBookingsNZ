@@ -4275,12 +4275,17 @@ retry claims original FAILED/PARTIAL -> RUNNING -> handler completes it
   handler throws before completing -> original RUNNING -> FAILED with the
   run's error (guarded: still RUNNING, still this claim's startedAt) (#3462)
   queued retry (REQUEUE) -> FAILED, naming the original and its status
-PARTIAL invoice payment repair or refund-note repair claims PARTIAL -> RUNNING
-  with code PARTIAL_REPAIR_RUNNING (#4256) -> invoice repair records the
+PARTIAL invoice payment repair, refund-note repair or modification
+  credit-note repair claims PARTIAL -> RUNNING with code
+  PARTIAL_REPAIR_RUNNING (#4256, #4259) -> invoice repair records the
   payment -> SUCCEEDED, or PARTIAL while an invoice-email fault remains (its
   message says so; no repeated-failure alert); the refund-note leg completes
-  its own row. Every completion is guarded on the claim (still RUNNING, still
-  its startedAt), so it never lands over an officer's Mark failed
+  its own row; the modification note repair reads the plan's allocation links
+  under the claim, allocates the rest, re-reading its claim before each (lost
+  -> no further call, row left as the operator set it) -> SUCCEEDED
+  (allocationError cleared; before #4259 it never closed its row). Every completion is guarded on the
+  claim (still RUNNING, still its startedAt), so it never lands over an
+  officer's Mark failed
   handler throws first -> RUNNING -> PARTIAL, payload kept, with the run's
   error (guarded on the claim), so the row stays repairable
   process dies mid-repair -> stuck RUNNING -> Mark failed / Reset stale running
@@ -4292,7 +4297,8 @@ PARTIAL invoice payment repair or refund-note repair claims PARTIAL -> RUNNING
   completion lost its claim -> row stays as the operator set it; the retry says
   "Retry it once to close it", never "Repaired"
   Reset stale running reports FAILED and PARTIAL counts separately
-  rows repaired before #4256 stay PARTIAL; one retry closes them
+  rows repaired before #4256 stay PARTIAL; one retry closes them (a
+  modification note's every allocation already linked: no Xero call, #4259)
 FAILED refund-note repair claims FAILED only -> RUNNING, with code
   REFUND_NOTE_REPAIR_RUNNING (#4356); a lost claim -> "already claimed". A
   throw before completion, or a stale reset of a dead run -> FAILED; a
@@ -4440,7 +4446,8 @@ The claimed-original abandon and Mark failed are pinned by
 `xero-operation-retry.test.ts`, `xero-sync.test.ts`,
 `xero-operation-queue.test.ts` and `xero-operation-routes.test.ts` (#3462).
 The PARTIAL repair's claim is pinned by `xero-operation-retry.test.ts` and,
-against real PostgreSQL, `xero-partial-repair-claim.realdb.test.ts` (#4256).
+against real PostgreSQL, `xero-partial-repair-claim.realdb.test.ts` (#4256)
+and `xero-modification-note-repair-claim.realdb.test.ts` (#4259).
 The shared-row outcome guard is pinned by `xero-sync.test.ts` and, against real
 PostgreSQL, `xero-shared-operation-outcome.realdb.test.ts` (#4356).
 A change capture's receipt is pinned by `additional-capture-xero-receipt.test.ts`,
