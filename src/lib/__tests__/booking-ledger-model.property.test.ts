@@ -347,6 +347,9 @@ function assertLedger(model: Model, real: Real, previous: readonly StoredLine[])
   const reversed = new Map<string, StoredLine>();
   for (const line of lines) {
     expect(line.amountCents).toBe(ledgerLineAmountCents(line));
+    // Money that did not move posts no line (INV-PAY-007): a $0 capture, refund
+    // or credit row is not a settlement line. A $0 night is still a priced night.
+    if (line.side === "SETTLEMENT") expect(line.unitCents, `${line.kind} line moves money`).toBeGreaterThan(0);
     expect(keys.has(line.postingKey)).toBe(false);
     keys.add(line.postingKey);
     if (line.reversesLineId !== null) {
