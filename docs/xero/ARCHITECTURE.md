@@ -1053,7 +1053,8 @@ note.
    and nothing is offered, for both arms: until #4762 a clearing note's fell
    through to its arm's own allocation path, which could queue the whole note
    against the primary invoice beside a spread plan. It is read as the retry
-   is: an allocation row in flight beside it is reported instead, and own
+   is: an allocation row in flight beside it is reported instead, another
+   row (not its own attempt, by the same rule) is answered first, and own
    attempts resolved by hand count as done - with nothing left, the note is
    reported done. A throw gives the row back
    PARTIAL with its payload and the run's error, guarded on the claim, never

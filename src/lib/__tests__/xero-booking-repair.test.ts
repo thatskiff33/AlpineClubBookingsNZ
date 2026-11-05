@@ -1968,6 +1968,48 @@ describe("runBookingXeroRepair", () => {
       expect(bookingReport.findings.map((finding) => finding.code)).not.toContain("RESOLVED_IN_XERO_BY_OFFICER");
     });
 
+    // #4762 review round 3: another unresolved allocation row (the old tool's
+    // evidence-sized one) goes first, as beside the note's retry (#4757 S1) -
+    // an allocate-by-hand beside its later retry would allocate the credit twice.
+    it("MUTATION: retries another FAILED allocation row first beside an unretryable clearing note, not an allocate-by-hand (#4762)", async () => {
+      const bookingReport = await classifyClearing(
+        [],
+        [allocationRow("operation_other_allocation", "inv_primary", 10000)],
+        { replayable: false }
+      );
+
+      expectOtherRowRetried(bookingReport);
+      expect(bookingReport.findings.map((finding) => finding.summary)).not.toContain(UNRETRYABLE_CLEARING_SUMMARY);
+    });
+
+    // #4757 round 5: one resolved in Xero for another note is that note's concern.
+    it("MUTATION: an allocation row resolved for another note does not hold back an unretryable clearing note's report (#4762)", async () => {
+      const bookingReport = await classifyClearing(
+        [],
+        [
+          allocationRow("operation_other_note_allocation", "inv_primary", 6000, {
+            manuallyResolvedAt: new Date("2026-06-30T21:00:00.000Z"),
+            requestPayload: { creditNoteId: "cn_other", invoiceId: "inv_primary", amountCents: 6000 },
+          }),
+        ],
+        { replayable: false }
+      );
+
+      expect(actionsOf(bookingReport)).toEqual([]);
+      expect(bookingReport.findings).toContainEqual(
+        expect.objectContaining({
+          code: "BLOCKED_BY_XERO_OPERATION",
+          summary: UNRETRYABLE_CLEARING_SUMMARY,
+          details: {
+            operationId: "operation_partial_clearing",
+            operationStatus: "PARTIAL",
+            retryUnsupportedReason: "This operation is not marked replayable.",
+            unallocatedInvoices: [PRIMARY_LEFT, SUPP_LEFT],
+          },
+        })
+      );
+    });
+
     // #4762 review F2: an allocation in flight beside a note the retry refuses
     // is reported first (#4757 F1) - never an allocate-by-hand instruction
     // beside it, a second route to the same allocation.
@@ -4503,6 +4545,54 @@ describe("runBookingXeroRepair", () => {
       expect(actionsOf(bookingReport)).toEqual([]);
       expect(bookingReport.findings.map((finding) => finding.code)).toContain("RESOLVED_IN_XERO_BY_OFFICER");
       expect(bookingReport.findings.map((finding) => finding.summary)).not.toContain(UNRETRYABLE_EDIT_SUMMARY);
+    });
+
+    // #4762 review round 3: another unresolved allocation row goes first, as
+    // beside the note's retry (#4757 S1): retried, or reported if it cannot be.
+    it.each([
+      ["retried", {}, [["REQUEUE_XERO_OPERATION", true, { operationId: "operation_failed_allocation" }]], true],
+      ["reported blocked", { replayable: false }, [], false],
+    ])(
+      "MUTATION: another FAILED allocation row beside a PARTIAL row the retry refuses is %s first, not an allocate-by-hand (#4762)",
+      async (_label, overrides, actions, safeToAutoApply) => {
+        const bookingReport = await classify([
+          noteRow({ id: "operation_unreplayable_note", status: "PARTIAL", replayable: false }),
+          allocationRow({ id: "operation_failed_allocation", status: "FAILED", ...overrides }),
+        ]);
+
+        expect(actionsOf(bookingReport)).toEqual(actions);
+        expect(bookingReport.findings).toContainEqual(
+          expect.objectContaining({
+            code: "BLOCKED_BY_XERO_OPERATION",
+            safeToAutoApply,
+            details: { modificationId: "mod_3", operationId: "operation_failed_allocation", operationStatus: "FAILED" },
+          })
+        );
+        expect(bookingReport.findings.map((finding) => finding.summary)).not.toContain(UNRETRYABLE_EDIT_SUMMARY);
+      }
+    );
+
+    // #4757 round 5: one resolved in Xero for another note is that note's concern.
+    it("MUTATION: an allocation row resolved for another note does not hold back the report of a PARTIAL row the retry refuses (#4762)", async () => {
+      const bookingReport = await classify([
+        noteRow({ id: "operation_unreplayable_note", status: "PARTIAL", replayable: false }),
+        allocationRow({
+          id: "operation_other_note_allocation",
+          status: "FAILED",
+          manuallyResolvedAt: new Date("2026-06-30T21:00:00.000Z"),
+          requestPayload: { creditNoteId: "cn_other", invoiceId: "inv_primary", amountCents: 4000 },
+        }),
+      ]);
+
+      expect(actionsOf(bookingReport)).toEqual([]);
+      expect(bookingReport.findings).toContainEqual(
+        expect.objectContaining({
+          code: "BLOCKED_BY_XERO_OPERATION",
+          summary: UNRETRYABLE_EDIT_SUMMARY,
+          details: expect.objectContaining({ operationId: "operation_unreplayable_note", unallocatedInvoices: [{ invoiceId: "inv_primary", amountCents: 4000 }] }),
+        })
+      );
+      expect(bookingReport.findings.map((finding) => finding.code)).not.toContain("RESOLVED_IN_XERO_BY_OFFICER");
     });
 
     // #4762 review F2: an allocation in flight beside a PARTIAL row the retry

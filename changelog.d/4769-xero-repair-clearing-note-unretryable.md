@@ -11,4 +11,6 @@
   Xero, as for a booking change's note. Invoices you already applied by hand
   are not listed, and when none is left the note is reported as done. While
   another application of the note is still queued or running, the report
-  shows that instead: let it finish, then run the report again.
+  shows that instead: let it finish, then run the report again. A failed
+  application of a different size or invoice, such as one the tool queued
+  earlier, is retried or reported first, as it was before.

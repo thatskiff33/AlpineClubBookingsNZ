@@ -1457,8 +1457,10 @@ Since #4762 the same holds for an invoice-clearing note whose operation the
 retry refuses: reported blocked with the reason and the invoices left to
 allocate by hand, never a fresh allocation of the whole note against the
 primary invoice. For either note, an allocation still pending or running is
-reported instead, and invoices you already allocated by hand are not listed;
-if none is left, the note is reported as done. Nor is the note's retry offered
+reported instead, as is a failed one that is not the note's own attempt
+(retried, or reported if it cannot be; one resolved in Xero for another note
+is left to that note), and invoices you already allocated by hand are not
+listed; if none is left, the note is reported as done. Nor is the note's retry offered
 beside an allocation operation still pending or running (reported blocked:
 let it finish, then run the report again), or beside a failed one that is
 not the note's own attempt at a
