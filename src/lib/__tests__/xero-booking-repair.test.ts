@@ -1668,6 +1668,102 @@ describe("runBookingXeroRepair", () => {
     );
   });
 
+  // #4757 review round 3: a clearing note's PARTIAL retry is not offered beside
+  // a FAILED allocation row either: that row's own retry is, as the arm's
+  // no-allocation path gives it - also where one planned allocation has landed.
+  describe("a partial clearing note beside a FAILED allocation row (#4757)", () => {
+    const clearingLink = (overrides: Record<string, unknown>) => ({
+      localModel: "Booking",
+      localId: "booking_1",
+      xeroObjectNumber: null,
+      xeroObjectUrl: null,
+      active: true,
+      metadata: null,
+      createdAt: new Date("2026-05-03T00:00:00Z"),
+      updatedAt: new Date("2026-05-03T00:00:00Z"),
+      ...overrides,
+    });
+    const classifyClearing = async (allocationLinks: ReturnType<typeof clearingLink>[]) => {
+      const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
+        dependencies: createDependencies({
+          bookings: [makeBooking({ status: "CANCELLED", payment: { ...makeBooking().payment, status: "FAILED" } })],
+          links: [
+            clearingLink({ id: "l_note", xeroObjectType: "CREDIT_NOTE", xeroObjectId: "cn_clear", role: "MODIFICATION_CREDIT_NOTE" }),
+            ...allocationLinks,
+          ],
+          operations: [
+            makeOperation({
+              id: "operation_partial_clearing",
+              localModel: "Booking",
+              localId: "booking_1",
+              entityType: "CREDIT_NOTE",
+              operationType: "CREATE",
+              status: "PARTIAL",
+              xeroObjectType: "CREDIT_NOTE",
+              xeroObjectId: "cn_clear",
+              requestPayload: {
+                invoiceId: "inv_primary",
+                refundAmountCents: 10000,
+                clearsUnpaidInvoice: true,
+                allocations: [
+                  { invoiceId: "inv_primary", amountCents: 6000 },
+                  { invoiceId: "inv_supp", amountCents: 4000 },
+                ],
+              },
+            }),
+            makeOperation({
+              id: "operation_failed_allocation",
+              localModel: "Booking",
+              localId: "booking_1",
+              entityType: "ALLOCATION",
+              operationType: "ALLOCATE",
+              status: "FAILED",
+              xeroObjectType: "ALLOCATION",
+              xeroObjectId: null,
+              requestPayload: { creditNoteId: "cn_clear", invoiceId: "inv_supp", amountCents: 4000 },
+            }),
+          ],
+        }),
+        scope: { all: true },
+      });
+      return report.passes[0].bookings[0];
+    };
+    const expectAllocationRowRetried = (bookingReport: Awaited<ReturnType<typeof classifyClearing>>) => {
+      // The fixture's unrelated primary-invoice link backfill aside.
+      expect(
+        bookingReport.actions
+          .filter((action) => action.type !== "SYNC_PAYMENT_PRIMARY_INVOICE_LINK")
+          .map((action) => [action.type, action.safeToAutoApply, action.payload])
+      ).toEqual([["REQUEUE_XERO_OPERATION", true, { operationId: "operation_failed_allocation" }]]);
+      expect(bookingReport.findings).toContainEqual(
+        expect.objectContaining({
+          code: "BLOCKED_BY_XERO_OPERATION",
+          safeToAutoApply: true,
+          details: { operationId: "operation_failed_allocation", operationStatus: "FAILED" },
+        })
+      );
+      expect(bookingReport.findings.map((finding) => finding.code)).not.toContain("MISSING_CREDIT_NOTE_ALLOCATION");
+    };
+
+    it("MUTATION: retries the allocation row, not the note's row, while nothing is allocated", async () => {
+      expectAllocationRowRetried(await classifyClearing([]));
+    });
+
+    it("MUTATION: retries the allocation row, not the note's row, once one planned allocation has landed", async () => {
+      expectAllocationRowRetried(
+        await classifyClearing([
+          clearingLink({
+            id: "l_a1",
+            xeroObjectType: "ALLOCATION",
+            xeroObjectId: "alloc_1",
+            role: "MODIFICATION_CREDIT_NOTE_ALLOCATION",
+            metadata: { creditNoteId: "cn_clear", invoiceId: "inv_primary", amountCents: 6000 },
+          }),
+        ])
+      );
+    });
+  });
+
   // A characterisation, not an endorsement: a clearing note's PARTIAL row the
   // retry refuses is still left to the arm's own no-allocation path, as before
   // #4757 (the dispatcher's `unretryable: "fall-through"`). Whether it should be
@@ -4117,6 +4213,109 @@ describe("runBookingXeroRepair", () => {
         );
       }
     );
+
+    // #4757 review round 3: beside any other allocation row of the note's, the
+    // edit arm gives exactly main's answer for that row - its own retry, a
+    // blocked report, or the resolved report - and never the note's retry too,
+    // a second route to one allocation.
+    const allocationRow = (overrides: Record<string, unknown>) =>
+      makeOperation({
+        localId: "mod_3",
+        entityType: "ALLOCATION",
+        operationType: "ALLOCATE",
+        xeroObjectType: "ALLOCATION",
+        xeroObjectId: null,
+        requestPayload: { creditNoteId: "cn_mod_3", invoiceId: "inv_primary", amountCents: 3500 },
+        ...overrides,
+      });
+    // The fixture's unrelated primary-invoice link backfill aside.
+    const actionsOf = (bookingReport: Awaited<ReturnType<typeof classify>>) =>
+      bookingReport.actions
+        .filter((action) => action.type !== "SYNC_PAYMENT_PRIMARY_INVOICE_LINK")
+        .map((action) => [action.type, action.safeToAutoApply, action.payload]);
+
+    it("MUTATION: retries a FAILED allocation row beside a PARTIAL row, as main did, and not the PARTIAL row", async () => {
+      const bookingReport = await classify([
+        noteRow({ id: "operation_partial_note", status: "PARTIAL" }),
+        allocationRow({ id: "operation_failed_allocation", status: "FAILED" }),
+      ]);
+
+      expect(actionsOf(bookingReport)).toEqual([["REQUEUE_XERO_OPERATION", true, { operationId: "operation_failed_allocation" }]]);
+      expect(bookingReport.findings).toContainEqual(
+        expect.objectContaining({
+          code: "BLOCKED_BY_XERO_OPERATION",
+          safeToAutoApply: true,
+          details: { modificationId: "mod_3", operationId: "operation_failed_allocation", operationStatus: "FAILED" },
+        })
+      );
+      expect(bookingReport.findings.map((finding) => finding.code)).not.toContain("MISSING_CREDIT_NOTE_ALLOCATION");
+    });
+
+    it("MUTATION: reports an unretryable FAILED allocation row beside a PARTIAL row, as main did, and offers nothing", async () => {
+      const bookingReport = await classify([
+        noteRow({ id: "operation_partial_note", status: "PARTIAL" }),
+        allocationRow({ id: "operation_failed_allocation", status: "FAILED", replayable: false }),
+      ]);
+
+      expect(actionsOf(bookingReport)).toEqual([]);
+      expect(bookingReport.findings).toContainEqual(
+        expect.objectContaining({
+          code: "BLOCKED_BY_XERO_OPERATION",
+          summary: "A Xero credit-note allocation operation failed and cannot be auto-retried - resolve the operation manually.",
+          safeToAutoApply: false,
+          details: { modificationId: "mod_3", operationId: "operation_failed_allocation", operationStatus: "FAILED" },
+        })
+      );
+    });
+
+    it("MUTATION: offers no retry of a PARTIAL row beside an allocation row resolved in Xero, as main did (INV-INT-025)", async () => {
+      const bookingReport = await classify([
+        noteRow({ id: "operation_partial_note", status: "PARTIAL" }),
+        allocationRow({ id: "operation_resolved_allocation", status: "FAILED", manuallyResolvedAt: new Date("2026-06-30T21:00:00.000Z") }),
+      ]);
+
+      expect(actionsOf(bookingReport)).toEqual([]);
+      expect(bookingReport.findings.map((finding) => finding.code)).toContain("RESOLVED_IN_XERO_BY_OFFICER");
+      expect(bookingReport.findings.map((finding) => finding.code)).not.toContain("MISSING_CREDIT_NOTE_ALLOCATION");
+    });
+
+    // Stricter than main, which ranks the FAILED row first and would retry it
+    // beside the one in flight: a row in flight is reported, nothing offered.
+    it("MUTATION: offers no retry at all beside an allocation row in flight, even with a FAILED one too", async () => {
+      const bookingReport = await classify([
+        noteRow({ id: "operation_partial_note", status: "PARTIAL" }),
+        allocationRow({ id: "operation_failed_allocation", status: "FAILED" }),
+        allocationRow({ id: "operation_live_allocation", status: "PENDING", completedAt: null, createdAt: new Date("2026-07-01T00:00:00.000Z") }),
+      ]);
+
+      expect(actionsOf(bookingReport)).toEqual([]);
+      expect(bookingReport.findings).toContainEqual(
+        expect.objectContaining({
+          code: "BLOCKED_BY_XERO_OPERATION",
+          safeToAutoApply: false,
+          details: { modificationId: "mod_3", operationId: "operation_live_allocation", operationStatus: "PENDING" },
+        })
+      );
+    });
+
+    // Not main's answer, deliberately: while a retry runs on the note's row, a
+    // retry of the FAILED allocation row beside it is the same second route
+    // (#4259 review F1). Reported; offered once the repair ends.
+    it("MUTATION: offers no allocation row's retry beside a running repair of the note's row", async () => {
+      const bookingReport = await classify([
+        noteRow({ id: "operation_repairing_note", status: "RUNNING", lastErrorCode: XERO_PARTIAL_REPAIR_RUNNING_CODE, completedAt: null }),
+        allocationRow({ id: "operation_failed_allocation", status: "FAILED" }),
+      ]);
+
+      expect(actionsOf(bookingReport)).toEqual([]);
+      expect(bookingReport.findings).toContainEqual(
+        expect.objectContaining({
+          code: "BLOCKED_BY_XERO_OPERATION",
+          summary: "A retry is working on this modification credit note now; check again when it finishes.",
+          details: { modificationId: "mod_3", operationId: "operation_repairing_note", operationStatus: "RUNNING" },
+        })
+      );
+    });
 
     it("MUTATION: another note's rows do not stand in for this note's missing allocation", async () => {
       const bookingReport = await classify([

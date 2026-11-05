@@ -86,28 +86,48 @@ export function addBlockedNoteAllocationFinding(
 }
 
 /**
- * Acts on the note's own row. True when it did - the caller then queues
- * nothing for the note's allocation; false when the arm's own path decides.
- * `allocationOperations`: the rows the arm reads its note's ALLOCATE rows from.
+ * What the dispatcher did with the note's own row:
+ * - `handled`: reported, or the row's own retry offered - the caller queues
+ *   nothing for the note's allocation;
+ * - `arm-decides`: no own row says the note is unfinished, or the arm keeps
+ *   its own path for this state (#4762);
+ * - `allocation-row-first`: beside the note's retry, an ALLOCATE row not in
+ *   flight (FAILED, PARTIAL, or resolved in Xero) - the arm retries or
+ *   reports that row, as it did before #4757, even where the note already
+ *   has an allocation.
  */
+type OwnNoteRowOutcome = "handled" | "arm-decides" | "allocation-row-first";
+
+/** Acts on the note's own row. `allocationOperations`: the rows the arm reads its note's ALLOCATE rows from. */
 export function dispatchOwnNoteRow(
   findings: MutableFinding[],
   actionMap: Map<string, BookingXeroRepairAction>,
   row: OwnNoteRowState | null,
   allocationOperations: XeroOperationRecord[],
   arm: NoteAllocationArm
-): boolean {
-  if (row === null) return false;
-  // #4757 review F1: the retry's allocation key embeds the amount, so a retry
-  // beside an allocation row in flight (one the tool queued before #4757) can
-  // allocate the note twice. Report that row; offer nothing.
+): OwnNoteRowOutcome {
+  if (row === null) return "arm-decides";
+  // #4757 review F1: the retry's allocation key embeds the amount, so the
+  // note's retry beside an allocation row of the note's (one the tool queued
+  // before #4757) is a second route to one allocation, and the two can
+  // allocate it twice. One in flight is reported, nothing offered.
   if (row.kind === "retry" || row.kind === "repairing") {
     const liveAllocation = getLiveOperation(allocationOperations, "ALLOCATION", "ALLOCATE");
     if (liveAllocation) {
       addBlockedNoteAllocationFinding(findings, arm, liveAllocation);
-      return true;
+      return "handled";
     }
   }
+  // Any other allocation row goes back to the arm, as before #4757: FAILED or
+  // PARTIAL, the arm retries or reports it; resolved in Xero, the officer
+  // allocated by hand, so the note's retry would be minted beside it - the
+  // arm reports it and offers nothing (#3635, `INV-INT-025`).
+  if (row.kind === "retry" && getBlockingOperation(allocationOperations, "ALLOCATION", "ALLOCATE")) {
+    return "allocation-row-first";
+  }
+  // A RUNNING row stays reported below even beside a FAILED allocation row: a
+  // retry of that row beside the running repair is the same second route
+  // (#4259 review F1), so it waits until the repair ends.
   switch (row.kind) {
     case "resolved": {
       // Allocated by hand: nothing retried or queued, but a separate live
@@ -115,11 +135,11 @@ export function dispatchOwnNoteRow(
       // resolved-by-officer finding (`arm.resolved`, #4763).
       const blocking = getBlockingOperation(allocationOperations, "ALLOCATION", "ALLOCATE");
       if (blocking && blocking.kind !== "resolved") addBlockedNoteAllocationFinding(findings, arm, blocking.operation);
-      return true;
+      return "handled";
     }
     case "repairing":
       addBlockedNoteAllocationFinding(findings, arm, row.operation, WORDING[arm.kind].repairing);
-      return true;
+      return "handled";
     case "retry": {
       const action = addAction(actionMap, buildRetryAction(arm.bookingId, row.retry));
       addFinding(findings, {
@@ -130,14 +150,14 @@ export function dispatchOwnNoteRow(
         details: { ...arm.retryDetails, creditNoteId: arm.creditNoteId, operationId: row.operation.id },
         actionKeys: [action.key],
       });
-      return true;
+      return "handled";
     }
     case "unretryable":
-      if (arm.unretryable === "fall-through") return false;
+      if (arm.unretryable === "fall-through") return "arm-decides";
       addBlockedNoteAllocationFinding(findings, arm, row.operation, WORDING[arm.kind].unretryable, {
         retryUnsupportedReason: row.reason,
       });
-      return true;
+      return "handled";
     default: {
       const unhandled: never = row;
       throw new Error(`Unhandled own note row state: ${JSON.stringify(unhandled)}`);

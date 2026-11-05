@@ -1243,10 +1243,10 @@ export function classifyBookingContext(
           );
           // #4757: the note's own row first, as the invoice-clearing arm reads
           // it (`readOwnNoteRowState`); an edit's note has one target, so only
-          // while it has no allocation. None is queued beside, nor a retry
-          // offered beside a live allocation row.
+          // while it has no allocation. None is queued beside, nor the row's
+          // retry offered beside another allocation row (retried or reported first).
           const modificationArm = { kind: "modification", details: { modificationId: modification.id } } as const;
-          const ownNoteRowHandled = dispatchOwnNoteRow(
+          const ownNoteRow = dispatchOwnNoteRow(
             findings,
             actionMap,
             readOwnNoteRowState(noteOperations, noteLinks, modificationCreditNote.objectId),
@@ -1260,8 +1260,10 @@ export function classifyBookingContext(
               resolved: "live-allocation-only", // #4763
             }
           );
-          if (ownNoteRowHandled) {
+          if (ownNoteRow === "handled") {
             // Reported, or the row's own retry offered: nothing queued beside it.
+            // `allocation-row-first` needs nothing more here: inside `!allocation`
+            // the chain below retries or reports that row.
           } else if (blockingOperation?.kind === "retryable") {
             const action = addAction(
               actionMap,
@@ -1785,9 +1787,10 @@ export function classifyBookingContext(
         // - a fresh allocation sized here would be the note's whole amount
         // against the primary invoice alone. RUNNING, a retry is on it now;
         // resolved in Xero (`INV-INT-025`), an officer allocated by hand. None
-        // is queued beside, nor a retry offered beside a live allocation row.
+        // is queued beside, nor the row's retry offered beside another
+        // allocation row, which is retried or reported first.
         const clearingArm = { kind: "clearing", details: {} } as const;
-        const ownNoteRowHandled = dispatchOwnNoteRow(
+        const ownNoteRow = dispatchOwnNoteRow(
           findings,
           actionMap,
           readOwnNoteRowState(bookingOperations, bookingLinks, cancellationCreditNote.objectId),
@@ -1801,9 +1804,13 @@ export function classifyBookingContext(
             resolved: "live-allocation-only", // #4763
           }
         );
-        if (ownNoteRowHandled) {
+        if (ownNoteRow === "handled") {
           // Reported, or the row's own retry offered: nothing queued beside it.
-        } else if (!allocation) {
+        } else if (!allocation || ownNoteRow === "allocation-row-first") {
+          // `allocation-row-first`: a spread note with one allocation landed
+          // still has its other allocation row retried or reported below,
+          // never left silent; that row exists, so no branch below queues
+          // anything fresh.
           const blockingOperation = getBlockingOperation(
             bookingOperations,
             "ALLOCATION",
