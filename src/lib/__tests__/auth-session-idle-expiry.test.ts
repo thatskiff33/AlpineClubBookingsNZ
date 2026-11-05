@@ -430,6 +430,11 @@ describe("the jwt callback stamps kioskAccount from the member row (#4612)", () 
       memberRow("lodge-route-kiosk"),
     ],
     ["an ordinary account", false, memberRow("ordinary")],
+    [
+      "a record with only USER and LODGE, which classifies as the kiosk",
+      true,
+      { ...memberRow("ordinary"), accessRoles: [{ role: "USER" }, { role: "LODGE" }] },
+    ],
     ["a Full Admin with LODGE", false, memberRow("admin-lodge")],
     ["a Booking Officer with LODGE", false, memberRow("bookings-officer-lodge")],
     ["a custom-role holder with LODGE", false, memberRow("custom-role-lodge")],

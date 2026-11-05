@@ -251,7 +251,10 @@ again.
 whole classification, the User Type the member page shows as "Lodge (kiosk
 account)". Holding `LODGE` is not enough. It is a checkbox any officer can
 also have, so a Full Admin, a Booking Officer or a custom-role holder who also
-holds `LODGE` is an ordinary account and keeps 8 hours. The `jwt` callback
+holds `LODGE` is an ordinary account and keeps 8 hours. A record holding only
+`USER` and `LODGE` classifies as the kiosk (`member-roles.test.ts` pins this)
+and so gets 30 days: to keep a person who uses the lodge tools on 8 hours,
+give them a second role or untick Lodge. The `jwt` callback
 stamps a `kioskAccount` claim from the member row on every refresh. That claim
 only nominates a session for 30 days: before granting them, the refresh reads
 the member row again and confirms it is still the kiosk and still holds this
