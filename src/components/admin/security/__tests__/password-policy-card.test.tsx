@@ -24,7 +24,11 @@ import { PasswordPolicyCard } from "@/components/admin/security/password-policy-
 
 const NOTICE_RE = /can view login & security settings but cannot change them/i;
 
-function policyResponse(minPasswordLength = 12, breachedPasswordCheck = true) {
+function policyResponse(
+  minPasswordLength = 12,
+  breachedPasswordCheck = true,
+  sessionMaxAgeHours = 168,
+) {
   return new Response(
     JSON.stringify({
       policy: {
@@ -35,6 +39,7 @@ function policyResponse(minPasswordLength = 12, breachedPasswordCheck = true) {
         requireSymbol: false,
         magicLinkTtlMinutes: 15,
         breachedPasswordCheck,
+        sessionMaxAgeHours,
       },
       updatedAt: null,
       updatedByMemberId: null,
@@ -51,6 +56,10 @@ function breachCheckbox() {
   return screen.getByRole("checkbox", {
     name: /refuse passwords found in public data breaches/i,
   }) as HTMLInputElement;
+}
+
+function sessionMaxAgeInput() {
+  return screen.getByLabelText(/sign members out after/i) as HTMLInputElement;
 }
 
 function editButton() {
@@ -160,10 +169,74 @@ describe("PasswordPolicyCard (#2103)", () => {
       requireDigit: false,
       requireSymbol: false,
       breachedPasswordCheck: false,
+      sessionMaxAgeHours: 168,
     });
     // The saved snapshot is the server's answer, shown read-only again.
     expect(breachCheckbox().checked).toBe(false);
     expect(breachCheckbox().disabled).toBe(true);
+  });
+
+  // #4611 (INV-AUTH-007): the maximum session age stages with the card, is
+  // refused outside 8..720 hours before any request, and saves through the
+  // same PUT.
+  describe("maximum session age (#4611)", () => {
+    it("shows the stored value read-only, in hours and as days", async () => {
+      await renderLoaded();
+      expect(sessionMaxAgeInput().value).toBe("168");
+      expect(sessionMaxAgeInput().disabled).toBe(true);
+      expect(screen.getByText(/currently 7 days/i)).toBeTruthy();
+    });
+
+    it.each(["7", "721", "0", ""])(
+      "keeps Save disabled for %j hours and says why",
+      async (value) => {
+        const fetchMock = await renderLoaded();
+        fireEvent.click(editButton());
+        fireEvent.change(sessionMaxAgeInput(), { target: { value } });
+        const save = screen.getByRole("button", { name: "Save" }) as HTMLButtonElement;
+        expect(save.disabled).toBe(true);
+        expect(
+          screen.getByText(/whole number of hours between 8 and 720/i),
+        ).toBeTruthy();
+        fireEvent.click(save);
+        expect(
+          fetchMock.mock.calls.some(([, init]) => init?.method === "PUT"),
+        ).toBe(false);
+      },
+    );
+
+    it.each([
+      ["8", 8],
+      ["720", 720],
+    ])("saves the boundary value %s", async (value, expected) => {
+      const fetchMock = vi.fn(async (_url: string, init?: RequestInit) =>
+        init?.method === "PUT"
+          ? policyResponse(12, true, expected)
+          : policyResponse(12, true, 168),
+      );
+      await renderLoaded(fetchMock);
+      fireEvent.click(editButton());
+      fireEvent.change(sessionMaxAgeInput(), { target: { value } });
+      fireEvent.click(screen.getByRole("button", { name: "Save" }));
+      await waitFor(() =>
+        expect(screen.getByText(/password policy saved/i)).toBeTruthy(),
+      );
+      const putCall = fetchMock.mock.calls.find(([, init]) => init?.method === "PUT");
+      expect(putCall?.[0]).toBe("/api/admin/security/password-policy");
+      expect(JSON.parse(String(putCall?.[1]?.body)).sessionMaxAgeHours).toBe(
+        expected,
+      );
+      expect(sessionMaxAgeInput().value).toBe(String(expected));
+      expect(sessionMaxAgeInput().disabled).toBe(true);
+    });
+
+    it("Cancel reverts an edited value", async () => {
+      await renderLoaded();
+      fireEvent.click(editButton());
+      fireEvent.change(sessionMaxAgeInput(), { target: { value: "24" } });
+      fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+      expect(sessionMaxAgeInput().value).toBe("168");
+    });
   });
 
   it("surfaces the forbidden-save reason on a 403 from the PUT", async () => {

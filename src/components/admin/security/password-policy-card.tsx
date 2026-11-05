@@ -26,6 +26,11 @@ import {
   MIN_PASSWORD_LENGTH_CEILING,
   MIN_PASSWORD_LENGTH_FLOOR,
 } from "@/lib/password-policy";
+import {
+  SESSION_MAX_AGE_DEFAULT_HOURS,
+  SESSION_MAX_AGE_MAX_HOURS,
+  SESSION_MAX_AGE_MIN_HOURS,
+} from "@/lib/session-max-age";
 import { apiErrorMessageFromBody } from "@/lib/api-error-message";
 
 // Self-contained password-policy card for the Login & Security page (epic #2030,
@@ -53,6 +58,7 @@ interface PolicyDraft {
   requireDigit: boolean;
   requireSymbol: boolean;
   breachedPasswordCheck: boolean;
+  sessionMaxAgeHours: number;
 }
 
 interface SettingsResponse {
@@ -69,7 +75,31 @@ function toDraft(policy: SettingsResponse["policy"]): PolicyDraft {
     requireDigit: policy.requireDigit,
     requireSymbol: policy.requireSymbol,
     breachedPasswordCheck: policy.breachedPasswordCheck,
+    sessionMaxAgeHours: policy.sessionMaxAgeHours,
   };
+}
+
+function isMinLengthValid(value: number): boolean {
+  return (
+    Number.isInteger(value) &&
+    value >= MIN_PASSWORD_LENGTH_FLOOR &&
+    value <= MIN_PASSWORD_LENGTH_CEILING
+  );
+}
+
+// #4611 (INV-AUTH-007): the same bounds the route refuses outside.
+function isSessionMaxAgeValid(value: number): boolean {
+  return (
+    Number.isInteger(value) &&
+    value >= SESSION_MAX_AGE_MIN_HOURS &&
+    value <= SESSION_MAX_AGE_MAX_HOURS
+  );
+}
+
+function describeHours(hours: number): string {
+  if (hours % 24 !== 0) return `${hours} hours`;
+  const days = hours / 24;
+  return days === 1 ? "1 day" : `${days} days`;
 }
 
 export function PasswordPolicyCard() {
@@ -105,14 +135,17 @@ export function PasswordPolicyCard() {
     saveErrorFallback: "Failed to save password policy",
     loadErrorFallback: "Failed to load password policy",
     isValid: (draft) =>
-      Number.isInteger(draft.minPasswordLength) &&
-      draft.minPasswordLength >= MIN_PASSWORD_LENGTH_FLOOR &&
-      draft.minPasswordLength <= MIN_PASSWORD_LENGTH_CEILING,
+      isMinLengthValid(draft.minPasswordLength) &&
+      isSessionMaxAgeValid(draft.sessionMaxAgeHours),
   });
 
   const { draft, loading, saving, editing, dirty, error } = section;
   const savedMessage = section.success;
-  const minLengthValid = section.valid;
+  const formValid = section.valid;
+  const minLengthValid = draft ? isMinLengthValid(draft.minPasswordLength) : true;
+  const sessionMaxAgeValid = draft
+    ? isSessionMaxAgeValid(draft.sessionMaxAgeHours)
+    : true;
 
   function cancelEditing() {
     section.cancelEditing();
@@ -127,6 +160,12 @@ export function PasswordPolicyCard() {
 
   function setBreachedPasswordCheck(value: boolean) {
     section.setDraft({ breachedPasswordCheck: value });
+    section.setSuccess("");
+  }
+
+  function setSessionMaxAgeHours(raw: string) {
+    const parsed = Number.parseInt(raw, 10);
+    section.setDraft({ sessionMaxAgeHours: Number.isNaN(parsed) ? 0 : parsed });
     section.setSuccess("");
   }
 
@@ -165,7 +204,8 @@ export function PasswordPolicyCard() {
                 passwords. Rules apply the next time a member sets or changes their
                 password; existing passwords keep working. To force everyone onto
                 the new rules, use the &ldquo;require password change&rdquo; option
-                on the member record.
+                on the member record. You can also set how long anyone stays
+                signed in.
               </CardDescription>
             </div>
           </div>
@@ -292,6 +332,45 @@ export function PasswordPolicyCard() {
               </p>
             </fieldset>
 
+            {/*
+              #4611 (INV-AUTH-007): the maximum session age. Staged with the
+              rest of the card and saved through the same PUT.
+            */}
+            <div className="space-y-2">
+              <Label htmlFor="session-max-age-hours">
+                Sign members out after (hours)
+              </Label>
+              <Input
+                id="session-max-age-hours"
+                type="number"
+                inputMode="numeric"
+                min={SESSION_MAX_AGE_MIN_HOURS}
+                max={SESSION_MAX_AGE_MAX_HOURS}
+                value={draft.sessionMaxAgeHours}
+                onChange={(event) => setSessionMaxAgeHours(event.target.value)}
+                disabled={!editing || saving}
+                className="max-w-[8rem]"
+                aria-describedby="session-max-age-hours-hint"
+              />
+              <p id="session-max-age-hours-hint" className="text-xs text-muted-foreground">
+                {sessionMaxAgeValid
+                  ? `Currently ${describeHours(draft.sessionMaxAgeHours)}. `
+                  : null}
+                Everyone must sign in again this long after they last signed
+                in, however much they use the site. Between{" "}
+                {SESSION_MAX_AGE_MIN_HOURS} hours and {SESSION_MAX_AGE_MAX_HOURS}{" "}
+                hours (30 days); the default is {SESSION_MAX_AGE_DEFAULT_HOURS}{" "}
+                hours (7 days). A change applies to people already signed in.
+                The lodge kiosk account keeps its own 30 days.
+              </p>
+              {!sessionMaxAgeValid ? (
+                <p className="text-xs text-destructive">
+                  Enter a whole number of hours between {SESSION_MAX_AGE_MIN_HOURS}{" "}
+                  and {SESSION_MAX_AGE_MAX_HOURS}.
+                </p>
+              ) : null}
+            </div>
+
             {editing && dirty ? (
               <p className="text-sm text-warning-11" role="status">
                 You have unsaved changes.
@@ -306,7 +385,7 @@ export function PasswordPolicyCard() {
                     describeReason={false}
                     type="button"
                     onClick={() => void section.save()}
-                    disabled={!dirty || saving || !minLengthValid}
+                    disabled={!dirty || saving || !formValid}
                   >
                     {saving ? (
                       <Loader2 className="mr-2 h-4 w-4 animate-spin" />

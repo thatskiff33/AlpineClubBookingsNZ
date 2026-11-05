@@ -1070,6 +1070,7 @@ describe("#2200 portable singletons export/import and stay schema-bound", () => 
       requireSymbol: false,
       magicLinkTtlMinutes: 30,
       breachedPasswordCheck: false,
+      sessionMaxAgeHours: 24,
     };
     const { zip } = await buildConfigExport({
       db: stubDb({ loginSecuritySetting: saved }),

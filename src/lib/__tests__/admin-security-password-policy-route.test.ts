@@ -191,4 +191,47 @@ describe("admin security password-policy route (#2033)", () => {
       expect(mocks.upsert).not.toHaveBeenCalled();
     });
   });
+
+  // #4611 (INV-AUTH-007): the maximum session age in hours is written here,
+  // refused outside 8..720 with no write, and optional for an older page.
+  describe("sessionMaxAgeHours", () => {
+    it("GET reports 168 hours (7 days) for an absent row", async () => {
+      const body = await (await GET()).json();
+      expect(body.policy.sessionMaxAgeHours).toBe(168);
+    });
+
+    it.each([8, 720])("PUT writes the boundary value %i and audits it", async (hours) => {
+      mocks.findUnique
+        .mockResolvedValueOnce({ ...validBody, sessionMaxAgeHours: 168 }) // audit "before"
+        .mockResolvedValueOnce({ ...validBody, sessionMaxAgeHours: hours }); // reload
+      const res = await put({ ...validBody, sessionMaxAgeHours: hours });
+      expect(res.status).toBe(200);
+      const upsertArgs = mocks.upsert.mock.calls[0][0];
+      expect(upsertArgs.update).toMatchObject({ sessionMaxAgeHours: hours });
+      expect(upsertArgs.create).toMatchObject({ sessionMaxAgeHours: hours });
+      const audit = mocks.auditCreate.mock.calls[0][0].data;
+      expect(audit.action).toBe("LOGIN_SECURITY_PASSWORD_POLICY_UPDATED");
+      expect(audit.category).toBe("security");
+      expect(audit.metadata.before).toMatchObject({ sessionMaxAgeHours: 168 });
+      expect(audit.metadata.after).toMatchObject({ sessionMaxAgeHours: hours });
+      expect((await res.json()).policy.sessionMaxAgeHours).toBe(hours);
+    });
+
+    it.each([7, 721, 0, -1, 24.5, "168", null])(
+      "refuses %j with a 400 and writes nothing",
+      async (value) => {
+        const res = await put({ ...validBody, sessionMaxAgeHours: value });
+        expect(res.status).toBe(400);
+        expect(mocks.upsert).not.toHaveBeenCalled();
+        expect(mocks.auditCreate).not.toHaveBeenCalled();
+      },
+    );
+
+    it("leaves it untouched when a body from an older page omits it", async () => {
+      expect((await put(validBody)).status).toBe(200);
+      const upsertArgs = mocks.upsert.mock.calls[0][0];
+      expect(upsertArgs.update.sessionMaxAgeHours).toBeUndefined();
+      expect(upsertArgs.create.sessionMaxAgeHours).toBeUndefined();
+    });
+  });
 });
