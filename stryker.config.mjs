@@ -58,7 +58,9 @@ const config = {
   // as detected.
   timeoutMS: 20000,
   timeoutFactor: 2,
-  disableTypeChecks: true,
+  // Only the TypeScript sources are mutated; the default (every file) tries to
+  // parse the repository's HTML and warns.
+  disableTypeChecks: "src/**/*.ts",
 };
 
 export default config;

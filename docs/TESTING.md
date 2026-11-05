@@ -219,51 +219,69 @@ programme #4450). Neither is a required check, neither is part of `verify`, and
 neither may become one without the owner adding a context to branch protection
 ([`CONTRIBUTING.md`](../CONTRIBUTING.md#branch-protection)).
 
-**What counts as a money module** is one list, `MONEY_MODULE_GLOBS` in
-`scripts/lib/money-modules.mjs`: the `src/lib` booking-ledger, money, refund,
-credit, settlement and `xero-*` modules and the files that make a cent figure
-(prices, fees, `payment-settler`, the pricing and cancellation policies). It is
-by file-name family, so a new `xero-foo.ts` joins without an edit.
-`vitest.config.mts` (`test.coverage.include`), the ratchet script and the
-Stryker config all import it; do not spell the list a fourth time. A test in
-`scripts/ci/money-test-ratchet.test.mjs` fails a glob that matches no file.
+**What counts as a money module** is decided by `.github/CODEOWNERS`, the owner's
+own list of the `src/lib` modules that mint, charge, refund, credit, settle or
+size money, and `scripts/lib/money-modules.mjs` reads it: every `/src/lib/`
+pattern in CODEOWNERS is a coverage glob, so a module is measured the day it is
+owned. The same file adds what the issue names beyond that ownership: every Xero
+module (the inbound handlers in `xero-inbound/` included), the booking ledger,
+and the refund, credit, settlement and money-named helpers. `MONEY_MODULE_GLOBS`
+is the result. `vitest.config.mts` (`test.coverage.include`), the ratchet script
+and the Stryker config all import it; do not spell the list a fourth time.
+`scripts/ci/money-test-ratchet.test.ts` fails a glob that matches no file, a
+CODEOWNERS-owned `src/lib` file the set leaves out, and a module the
+[CODEOWNERS census](../src/lib/__tests__/codeowners-census.test.ts) says must
+stay owned that is not measured.
 
 ### Coverage
 
-- **Where it runs.** `.github/workflows/money-coverage.yml`, on every pull
-  request and on `main`. Four shard jobs run the unit suite exactly as the
+- **Where it runs.** `.github/workflows/money-coverage.yml`, on a pull request
+  or push to `main` that changes code, tests, scripts, the schema, dependencies,
+  the measurement's own configuration or CODEOWNERS (a docs-only change skips it
+  and leaves no check), and on demand. Four shard jobs run the unit suite exactly as the
   required shards do, with `--coverage --reporter=blob`; one job merges the four
   blobs with `vitest --merge-reports --coverage` and judges the result. It is a
   separate workflow because turning coverage on in the required shards would
   slow jobs `verify` depends on and let an instrumentation timeout redden a
-  required check. The cost is four more runners per pull request, in parallel
-  with the required ones, so the wait is about one shard plus a short merge.
+  required check. The cost is five more jobs per pull request (four shard
+  runners and the merge), in parallel with the required ones, so the wait is
+  about one shard plus a short merge.
   Coverage is off unless `--coverage` is passed, so `pnpm test` is unchanged. A
   test that fails under instrumentation (a disk-scanning census can time out)
   does not stop the report: the required shards own test failures, and the job
   warns.
-- **How it reports.** Open the `Money coverage ratchet` job's summary: baseline,
-  now and change for lines, statements, functions and branches, then the ten
-  files with the most uncovered lines. The job goes red when any figure is below
-  the baseline, or when the pull request lowers the baseline itself. Because it
-  is not a required check, red informs and does not block; the lane that owns
-  the pull request reads it and either adds the missing tests or says why not.
-- **The baseline** is `scripts/ci/money-test-baseline.json`. Judging a pull
-  request never writes it, so lanes do not collide on it (the
+- **How it reports.** Open the `Money coverage ratchet` job's summary: for lines,
+  statements, functions and branches, what the figure is compared with, the bar,
+  now and the change, then the ten files with the most uncovered lines. The job
+  goes red when a figure is lower than the bar, or when the pull request lowers
+  the committed floor. Because it is not a required check, red informs and
+  blocks nothing, and nothing else makes anyone read it, so a pull request that
+  touches money modules says `Money coverage ratchet: green` or `red` and why in
+  its ready comment (`agents/ISSUE_WORKFLOW.md`, "The ready comment"). The lane
+  either adds the missing tests or says why not.
+- **The bar** is the latest successful `main` run's own figure, read from that
+  run's `money-coverage-summary` artifact (kept 30 days), less 0.1 percentage
+  points for measurement noise (a flaky test, a timing-dependent branch). Figures
+  are compared to two decimals, so a pull request that moves lines from 87.96 to
+  87.01 fails, and one that moves them to 87.90 passes. With no such artifact
+  (a first run, or none within 30 days) the bar is the committed floor,
+  `scripts/ci/money-test-baseline.json`, and the summary says "committed floor".
+  The judge job needs `actions: read` to find and download the artifact.
+- **The floor** is `scripts/ci/money-test-baseline.json`. Judging a pull request
+  never writes it, so lanes do not collide on it (the
   [fragment-directory rule](../changelog.d/README.md) is for an artifact every
   lane adds to; this file is raised on purpose). To raise it after coverage
   improves, download the `money-coverage-summary` artifact from a green `main`
   run and run
   `node scripts/ci/money-test-ratchet.mjs coverage --update --summary <file>`:
   it keeps the higher of each stored and measured figure and never lowers one.
-  Lowering the baseline in a pull request is refused by the job (`--base-ref
-  origin/main`), so removing well-covered code is a visible decision.
-- **Measured** (5 Nov 2026, 401 files): lines 87.96%, statements 86.73%,
-  functions 89.67%, branches 80.4%. The baseline file holds the whole-percent
-  floor of each (87, 86, 89, 80): it was measured on a development machine
-  rather than in CI, so it is deliberately a little loose until the first green
-  `main` run's artifact tightens it with `--update`. The figure counts only what
-  the unit shards run. Real-database suites (`*.realdb.test.ts`) are skipped
+  A pull request that lowers it turns the job red (`--base-ref`, the branch the
+  pull request targets), so removing well-covered code is a visible decision.
+- **Measured** (MEASURED_DATE, MEASURED_FILES files): MEASURED_FIGURES. The floor
+  holds the whole-percent floor of each (FLOOR_FIGURES): it was measured on a
+  development machine rather than in CI, so it is deliberately a little loose
+  until a green `main` run's artifact tightens it with `--update`. The figure
+  counts only what the unit shards run. Real-database suites (`*.realdb.test.ts`) are skipped
   there, so a module they alone exercise, such as `booking-ledger-back-post.ts`,
   reads 0% however well they cover it. The summary's worst-files list is the
   answer to "which money paths does no test reach".
@@ -298,10 +316,13 @@ Stryker config all import it; do not spell the list a fourth time. A test in
 - **When it runs.** `.github/workflows/money-mutation.yml`: nightly at 14:30 UTC
   and on demand (`workflow_dispatch`), never on a pull request. It takes about
   eight minutes.
-- **Where the report is.** The `money-mutation-report` artifact of a run holds
-  `index.html` (open it: every mutant, in the source, with its status) and
-  `mutation.json`. The job summary lists the score and each survivor by file and
-  line.
+- **Where the report is.** Runs are listed at
+  <https://github.com/thatskiff33/AlpineClubBookingsNZ/actions/workflows/money-mutation.yml>;
+  the first nightly run after this merges produces the first report. Open a
+  run's `money-mutation-report` artifact (kept 30 days): `index.html` shows every
+  mutant in the source with its status, and `mutation.json` is the same data. The
+  job summary lists the score and each survivor by file and line. The recorded
+  score below is from a local run before the workflow existed.
 - **Locally.** `pnpm run mutation` runs the whole set;
   `pnpm exec stryker run --mutate src/lib/booking-ledger-balance.ts` runs one
   module (under a minute) and the report lands in `reports/mutation/`

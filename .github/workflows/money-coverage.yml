@@ -5,7 +5,8 @@ name: Money coverage
 # a required check, and none may become one: it has no part in `verify`, and
 # branch protection is untouched (CONTRIBUTING.md -> "Branch protection").
 #
-# HOW IT REPORTS. Every pull request gets a "Money-module coverage" table in
+# HOW IT REPORTS. Every pull request that can move the figure (see the path
+# filter below) gets a "Money-module coverage" table in
 # the job summary of `Money coverage ratchet` (baseline, now, change for lines,
 # statements, functions and branches, and the files with the most uncovered
 # lines). The job goes red when a figure is lower than the latest successful

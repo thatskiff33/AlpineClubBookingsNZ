@@ -294,6 +294,14 @@ describe("the base-ref guard reads the base's baseline or fails (review of #4459
     });
   });
 
+  it("throws on a git failure that is not a missing file (here, an unreadable object)", () => {
+    withRepo("{}", (dir) => {
+      const sha = execFileSync("git", ["rev-parse", `main:${BASELINE_PATH}`], { cwd: dir, encoding: "utf8" }).trim();
+      fs.rmSync(path.join(dir, ".git", "objects", sha.slice(0, 2), sha.slice(2)), { force: true });
+      expect(() => baselineAtRef("main", dir)).toThrow();
+    });
+  });
+
   it("throws on a baseline that is not JSON", () => {
     withRepo("{ not json", (dir) => {
       expect(() => baselineAtRef("main", dir)).toThrow(SyntaxError);
