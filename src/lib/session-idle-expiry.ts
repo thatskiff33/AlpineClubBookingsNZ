@@ -26,13 +26,22 @@
  * session token the request already carries. Both the new token's `exp` and the
  * cookie's `Expires` then come from that one number and can never disagree.
  *
- * Consequences, all failing towards the shorter window:
+ * Consequences. All but the role-change lag fail towards the shorter window:
  * - A sign-in has no token yet, so the first cookie is the ordinary window; the
  *   kiosk's first `/api/auth/session` refresh (the page's `SessionProvider` makes
  *   one on load and on focus) re-issues it for 30 days.
  * - The decision reads the incoming token's `kioskAccount` claim, which the
- *   `jwt` callback stamped from the database row on the previous request, so
- *   a role change takes effect one refresh later.
+ *   `jwt` callback stamped from the database row on the previous request.
+ *   `session.maxAge` is chosen before that callback re-reads the row, so a
+ *   role change takes effect one refresh later IN BOTH DIRECTIONS. Turning an
+ *   account into the kiosk costs it nothing; turning the kiosk into anything
+ *   else (or adding a second role to it) lets one more refresh re-issue the
+ *   cookie for 30 days, because that refresh still carries the old claim. The
+ *   refresh after it reads the new claim and re-issues 8 hours. This one
+ *   fails towards the LONGER window, for one refresh. It never widens what
+ *   the session may do: the role claims themselves are refreshed from the
+ *   database on that same request, and switching login off invalidates the
+ *   session outright.
  * - A token minted before the `kioskAccount` claim existed carries none, so
  *   it gets the ordinary window until its first refresh stamps the claim.
  * - Only the session endpoint (`/api/auth/session`, the refresh and the client

@@ -256,17 +256,23 @@ in the `jwt` callback was overwritten by that re-encode and did nothing; it is
 gone. `auth-session-idle-expiry.test.ts` proves both windows end to end through
 the real Auth.js handler on the frozen clock.
 
-**Accepted limits.** Each fails towards the shorter window.
+**Accepted limits.** All but the role-change lag fail towards the shorter
+window.
 
 - A sign-in starts with 8 hours; the kiosk page's first refresh, straight after
   it loads, re-issues 30 days.
 - Only the session endpoint (`/api/auth/session`) reads the incoming token.
   Signing in as another member on the kiosk tablet, while the kiosk cookie is
   still there, gives that member the ordinary 8 hours.
-- The window follows the role on the incoming token, which the previous
-  refresh read from the database. An account that loses the `LODGE` role keeps
-  a 30-day cookie until its next refresh, which re-issues 8 hours; what it may
-  do is read afresh from the database on every request, as for any account.
+- The window follows the `kioskAccount` claim on the incoming token, which the
+  previous refresh stamped from the database; the window is chosen before the
+  `jwt` callback re-reads the row. So a role change takes effect one refresh
+  late, and in one direction that is the longer window: when the kiosk account
+  stops being the kiosk (its `LODGE` role removed, or a second role added), the
+  next refresh still re-issues a 30-day cookie, and only the refresh after it
+  re-issues 8 hours. What the account may do is read afresh from the database
+  on every request, as for any account, and switching its login off ends the
+  session outright.
 - The hut-leader PIN session on the same tablet is separate: 10 minutes idle,
   12 hours in total (`lodge-pin-session-timing.ts`).
 - This is the idle window only. A ceiling on a session's total age, measured
