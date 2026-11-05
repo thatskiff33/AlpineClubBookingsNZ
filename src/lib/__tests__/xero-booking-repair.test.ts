@@ -18,6 +18,7 @@ import {
   type KeptChangeCaptureRepairEvidence,
 } from "@/lib/xero-booking-repair-additional-capture";
 import { CREDIT_RELEASE_ASK_REASON } from "@/lib/credit-release-ask-keys";
+import { XERO_PARTIAL_REPAIR_RUNNING_CODE } from "@/lib/xero-stale-operations";
 import * as gapAnchors from "@/lib/xero-primary-invoice-gap-anchors";
 
 // #4324 Codex re-review: the primary invoice's stored figures and its gap
@@ -1524,6 +1525,124 @@ describe("runBookingXeroRepair", () => {
         JSON.stringify(action.payload).includes("operation_partial_clearing")
       )
     ).toBe(true);
+  });
+
+  // #4259 review F1: while a retry holds the note's PARTIAL repair claim the row
+  // is RUNNING. The arm must report it, never queue the note's whole amount
+  // against the primary invoice beside the repair's own allocations.
+  it("MUTATION: reports a clearing note whose PARTIAL repair is running, and queues no allocation beside it (#4259)", async () => {
+    const booking = makeBooking({
+      status: "CANCELLED",
+      payment: { ...makeBooking().payment, status: "FAILED" },
+    });
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
+      dependencies: createDependencies({
+        bookings: [booking],
+        links: [
+          {
+            id: "link_clearing_note",
+            localModel: "Booking",
+            localId: "booking_1",
+            xeroObjectType: "CREDIT_NOTE",
+            xeroObjectId: "cn_clear",
+            xeroObjectNumber: "CN-9",
+            xeroObjectUrl: null,
+            role: "MODIFICATION_CREDIT_NOTE",
+            active: true,
+            metadata: null,
+            createdAt: new Date("2026-05-03T00:00:00Z"),
+            updatedAt: new Date("2026-05-03T00:00:00Z"),
+          },
+        ],
+        operations: [
+          makeOperation({
+            id: "operation_repairing_clearing",
+            localModel: "Booking",
+            localId: "booking_1",
+            entityType: "CREDIT_NOTE",
+            operationType: "CREATE",
+            status: "RUNNING",
+            lastErrorCode: XERO_PARTIAL_REPAIR_RUNNING_CODE,
+            completedAt: null,
+            xeroObjectType: "CREDIT_NOTE",
+            xeroObjectId: "cn_clear",
+            requestPayload: {
+              invoiceId: "inv_primary",
+              refundAmountCents: 10000,
+              clearsUnpaidInvoice: true,
+              allocations: [{ invoiceId: "inv_primary", amountCents: 10000 }],
+            },
+          }),
+        ],
+      }),
+      scope: { all: true },
+    });
+
+    const bookingReport = report.passes[0].bookings[0];
+    // The fixture's unrelated primary-invoice link backfill aside, nothing touches the note.
+    expect(bookingReport.actions.map((action) => action.type)).toEqual(["SYNC_PAYMENT_PRIMARY_INVOICE_LINK"]);
+    expect(bookingReport.findings).toContainEqual(
+      expect.objectContaining({
+        code: "BLOCKED_BY_XERO_OPERATION",
+        summary: "A retry is working on this invoice-clearing credit note now; check again when it finishes.",
+        safeToAutoApply: false,
+        details: { operationId: "operation_repairing_clearing", operationStatus: "RUNNING" },
+        actions: [],
+      })
+    );
+  });
+
+  it("MUTATION: another note's running row does not stand in for this PARTIAL note's retry (#4259)", async () => {
+    const booking = makeBooking({
+      status: "CANCELLED",
+      payment: { ...makeBooking().payment, status: "FAILED" },
+    });
+    const clearingRow = (overrides: Record<string, unknown>) =>
+      makeOperation({
+        localModel: "Booking",
+        localId: "booking_1",
+        entityType: "CREDIT_NOTE",
+        operationType: "CREATE",
+        xeroObjectType: "CREDIT_NOTE",
+        requestPayload: {
+          invoiceId: "inv_primary",
+          refundAmountCents: 10000,
+          clearsUnpaidInvoice: true,
+          allocations: [{ invoiceId: "inv_primary", amountCents: 10000 }],
+        },
+        ...overrides,
+      });
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
+      dependencies: createDependencies({
+        bookings: [booking],
+        links: [
+          {
+            id: "link_clearing_note",
+            localModel: "Booking",
+            localId: "booking_1",
+            xeroObjectType: "CREDIT_NOTE",
+            xeroObjectId: "cn_clear",
+            xeroObjectNumber: "CN-9",
+            xeroObjectUrl: null,
+            role: "MODIFICATION_CREDIT_NOTE",
+            active: true,
+            metadata: null,
+            createdAt: new Date("2026-05-03T00:00:00Z"),
+            updatedAt: new Date("2026-05-03T00:00:00Z"),
+          },
+        ],
+        operations: [
+          clearingRow({ id: "operation_partial_clearing", status: "PARTIAL", xeroObjectId: "cn_clear" }),
+          clearingRow({ id: "operation_other_note", status: "RUNNING", lastErrorCode: XERO_PARTIAL_REPAIR_RUNNING_CODE, xeroObjectId: "cn_other" }),
+        ],
+      }),
+      scope: { all: true },
+    });
+
+    const bookingReport = report.passes[0].bookings[0];
+    expect(bookingReport.findings).toContainEqual(
+      expect.objectContaining({ code: "MISSING_CREDIT_NOTE_ALLOCATION", safeToAutoApply: true })
+    );
   });
 
   // #3535 delta D1: a PARTIAL clearing row stays PARTIAL after its repair, so

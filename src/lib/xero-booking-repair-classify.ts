@@ -131,16 +131,17 @@ function isOutstandingClearingNoteCreate(operation: XeroOperationRecord): boolea
 /** A live clearing allocation: reported, never retried here or queued beside. */
 function addBlockedClearingAllocationFinding(
   findings: MutableFinding[],
-  operation: XeroOperationRecord
+  operation: XeroOperationRecord,
+  summary?: string // #4259: the clearing note's own row, held by a retry's repair claim
 ) {
   addFinding(findings, {
     code: "BLOCKED_BY_XERO_OPERATION",
     severity: "warning",
-    summary: ["FAILED", "PARTIAL"].includes(operation.status)
+    summary: summary ?? (["FAILED", "PARTIAL"].includes(operation.status)
       ? "A Xero invoice-clearing allocation operation failed and is not retried here - resolve it by hand so the cancelled unpaid booking's invoice closes."
       : isStuckOperation(operation)
         ? "A pending or running Xero invoice-clearing allocation operation looks stuck."
-        : "A Xero invoice-clearing allocation operation is already pending or running.",
+        : "A Xero invoice-clearing allocation operation is already pending or running."),
     safeToAutoApply: false,
     details: { operationId: operation.id, operationStatus: operation.status },
     actionKeys: [],
@@ -1777,6 +1778,9 @@ export function classifyBookingContext(
             operation.status === "PARTIAL" &&
             operation.xeroObjectId === cancellationCreditNote.objectId
         );
+        // #4259: a RUNNING row naming this note is working on it now (a PARTIAL repair's claim): reported, never queued beside.
+        const repairingNoteOperation = bookingOperations.find((operation) => operation.entityType === "CREDIT_NOTE" &&
+          operation.operationType === "CREATE" && operation.status === "RUNNING" && operation.xeroObjectId === cancellationCreditNote.objectId);
         // #3635 (`INV-INT-025`): an officer who resolved the PARTIAL note in
         // Xero finished its allocations by hand. That is done: no retry, and no
         // fresh allocation queued below, which would be a second one beside
@@ -1846,6 +1850,8 @@ export function classifyBookingContext(
           if (liveAllocation && liveAllocation.kind !== "resolved") {
             addBlockedClearingAllocationFinding(findings, liveAllocation.operation);
           }
+        } else if (repairingNoteOperation) {
+          addBlockedClearingAllocationFinding(findings, repairingNoteOperation, "A retry is working on this invoice-clearing credit note now; check again when it finishes.");
         } else if (partialNoteOperation && partialNoteRetry) {
           const action = addAction(
             actionMap,

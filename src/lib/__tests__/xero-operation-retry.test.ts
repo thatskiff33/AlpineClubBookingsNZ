@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
   // through these.
   getAccountMapping: vi.fn(),
   getResolvedAccountMapping: vi.fn(),
+  holdsXeroOperationClaim: vi.fn(),
   findUniqueOperation: vi.fn(),
   updateManyOperation: vi.fn(),
   findUniqueSubscriptionCharge: vi.fn(),
@@ -58,6 +59,13 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("@/lib/credit-release-xero-payment", () => ({
   skipPartialGapRepairPayment: async (...args: unknown[]) => (await mocks.skipPartialGapRepairPayment(...args)) ?? null,
+}));
+
+// #4259 review F2: the modification note repair re-checks its claim before each
+// allocation. Held unless a test says it was lost.
+vi.mock("@/lib/xero-operation-claim", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/xero-operation-claim")),
+  holdsXeroOperationClaim: async (...args: unknown[]) => (await mocks.holdsXeroOperationClaim(...args)) ?? true,
 }));
 
 vi.mock("@/lib/additional-capture-receipt-gate", async (importOriginal) => ({
@@ -4227,7 +4235,8 @@ describe("PARTIAL repairs claim the original before they write or call Xero (#42
           xeroObjectId: "cn_mod",
           xeroObjectNumber: "CN-0099",
         },
-        { retryClaim: true },
+        // Review N1: the shared close; `alert: false` is moot on a SUCCEEDED close.
+        { retryClaim: true, alert: false },
       );
       expect(mocks.allocateCreditNoteToInvoice.mock.invocationCallOrder[0]).toBeLessThan(
         mocks.completeXeroSyncOperation.mock.invocationCallOrder[0],
@@ -4290,6 +4299,55 @@ describe("PARTIAL repairs claim the original before they write or call Xero (#42
       mocks.completeXeroSyncOperation.mockResolvedValue(null);
 
       await expect(retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST)).resolves.toEqual({ message });
+    });
+
+    // Review F2 (as #4680): a clearing note spread over two invoices re-checks
+    // its claim before each allocation, so one reset mid-run sends no more.
+    const twoTargetNote = () =>
+      makeOperation({
+        ...partialModificationNote(),
+        localModel: "Booking",
+        localId: "booking_7",
+        requestPayload: {
+          invoiceId: "inv_primary",
+          refundAmountCents: 41000,
+          clearsUnpaidInvoice: true,
+          allocations: [
+            { invoiceId: "inv_primary", amountCents: 30000 },
+            { invoiceId: "inv_supp", amountCents: 11000 },
+          ],
+        },
+      });
+
+    it.each([
+      ["after the first allocation", [true, false], ["inv_primary"], MODIFICATION_NOTE_REPAIR_CLAIM_LOST_MESSAGE],
+      ["before any allocation", [false], [] as string[], REPAIR_RESET_NOT_CLOSED_MESSAGE],
+    ])("MUTATION: a claim lost %s makes no further Xero call and never closes the row", async (_label, holds, allocatedInvoices, message) => {
+      mocks.findUniqueOperation.mockResolvedValue(twoTargetNote());
+      for (const held of holds) mocks.holdsXeroOperationClaim.mockResolvedValueOnce(held);
+
+      await expect(retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST)).resolves.toEqual({ message });
+
+      expect(mocks.allocateCreditNoteToInvoice.mock.calls.map((call) => call[1])).toEqual(allocatedInvoices);
+      expect(mocks.completeXeroSyncOperation).not.toHaveBeenCalled();
+      const claimedAt = mocks.updateManyOperation.mock.calls[0][0].data.startedAt;
+      expect(mocks.holdsXeroOperationClaim).toHaveBeenCalledTimes(holds.length);
+      for (const call of mocks.holdsXeroOperationClaim.mock.calls) expect(call[0]).toEqual({ id: "op_123", startedAt: claimedAt });
+    });
+
+    it("checks its claim before every allocation, and closes the row once both have gone", async () => {
+      mocks.findUniqueOperation.mockResolvedValue(twoTargetNote());
+
+      await expect(retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST)).resolves.toEqual({
+        message: "Repaired Xero modification credit note allocation.",
+      });
+      expect(mocks.allocateCreditNoteToInvoice.mock.calls.map((call) => call[1])).toEqual(["inv_primary", "inv_supp"]);
+      const [check1, check2] = mocks.holdsXeroOperationClaim.mock.invocationCallOrder;
+      const [allocate1, allocate2] = mocks.allocateCreditNoteToInvoice.mock.invocationCallOrder;
+      expect(check1).toBeLessThan(allocate1);
+      expect(allocate1).toBeLessThan(check2);
+      expect(check2).toBeLessThan(allocate2);
+      expect(mocks.completeXeroSyncOperation).toHaveBeenCalledTimes(1);
     });
   });
 });

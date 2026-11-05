@@ -54,7 +54,9 @@ import {
   buildXeroIdempotencyKey,
   completeXeroSyncOperation,
   failXeroSyncOperation,
+  type XeroSyncOperationCompletion,
 } from "@/lib/xero-sync";
+import { holdsXeroOperationClaim } from "@/lib/xero-operation-claim";
 import logger from "@/lib/logger";
 import { CLUB_NAME } from "@/config/club-identity";
 import {
@@ -69,7 +71,8 @@ import { ownRunningClaim, type XeroOperationClaim } from "@/lib/xero-operation-o
 
 export const PARTIAL_REPAIR_CLAIM_LOST_MESSAGE =
   "The payment was sent to Xero, but this operation was reset while it ran. Retry it once to close it.";
-// #4259: a repair's completion lost its claim, having sent Xero nothing, or a credit note allocation.
+// #4259: a repair that lost its claim, having sent Xero nothing (a zero-cash repair, or a note whose planned
+// allocations were all already linked) - or, below, a credit note allocation.
 export const REPAIR_RESET_NOT_CLOSED_MESSAGE = "This operation was reset while the repair ran, so it was not closed. Retry it once to close it.";
 export const MODIFICATION_NOTE_REPAIR_CLAIM_LOST_MESSAGE = "The credit note allocation was sent to Xero, but this operation was reset while it ran. Retry it once to close it.";
 import { isRetryOfVoidedRefundRequestNote, mayRecordAsCanonicalRefundNote, VOIDED_REQUEST_NOTE_RETRY_REASON } from "@/lib/xero-refund-note-status";
@@ -436,6 +439,14 @@ async function runWithClaimedOriginal<T>(
     }
     throw error;
   }
+}
+
+// #4256, #4259: a PARTIAL repair's close, onto its own claim only; lost (an operator reset the row) it says `lostMessage`.
+// `alert: false`: a repair left PARTIAL raises no repeated-failure alert (a SUCCEEDED close raises none anyway).
+async function closeRepairOnClaim(claim: XeroOperationClaim, completion: XeroSyncOperationCompletion, message: string, lostMessage: string) {
+  if (await completeXeroSyncOperation(claim, completion, { retryClaim: true, alert: false })) return { message };
+  logger.warn({ operationId: claim.id }, "Xero PARTIAL repair finished after its claim was reset; row left as the operator set it");
+  return { message: lostMessage };
 }
 
 export interface XeroOperationRetryMeta {
@@ -1504,21 +1515,8 @@ export async function retryXeroSyncOperation(
         operation.id,
         async (claim) => {
           const repair = partialInvoiceRepair;
-          // Completes onto this claim only; null when an operator reset the row meanwhile.
-          const close = async (
-            paymentOutcome: Record<string, unknown>,
-            message: string,
-            lostMessage = PARTIAL_REPAIR_CLAIM_LOST_MESSAGE,
-          ) => {
-            const closed = await completeXeroSyncOperation(
-              claim,
-              repairedPartialInvoiceCompletion(operation, repair.invoiceId, paymentOutcome),
-              { retryClaim: true, alert: false },
-            );
-            if (closed) return { message };
-            logger.warn({ operationId: operation.id }, "Xero PARTIAL repair finished after its claim was reset; row left as the operator set it");
-            return { message: lostMessage };
-          };
+          const close = (paymentOutcome: Record<string, unknown>, message: string, lostMessage = PARTIAL_REPAIR_CLAIM_LOST_MESSAGE) =>
+            closeRepairOnClaim(claim, repairedPartialInvoiceCompletion(operation, repair.invoiceId, paymentOutcome), message, lostMessage);
           if (repair.amountCents === 0) {
             const zeroCashRepair = zeroCashRepairOutcome(repair);
             return close(
@@ -1606,17 +1604,17 @@ export async function retryXeroSyncOperation(
       return runWithClaimedOriginal(operation.id, async (claim) => {
         // #4259: claimed like the sibling repairs, reading the plan's links under the claim; it closes its row (it stayed PARTIAL).
         const targets = await unallocatedClearingTargets({ ...repair, ...local });
-        for (const target of targets) {
+        const lostMessage = (allocated: number) => (allocated > 0 ? MODIFICATION_NOTE_REPAIR_CLAIM_LOST_MESSAGE : REPAIR_RESET_NOT_CLOSED_MESSAGE);
+        for (const [allocated, target] of targets.entries()) {
+          // #4259 review F2 (as #4680): each allocation goes only while this run still holds its claim.
+          if (!(await holdsXeroOperationClaim(claim))) return { message: lostMessage(allocated) };
           await xero.allocateCreditNoteToInvoice(repair.creditNoteId, target.invoiceId, target.amountCents, { ...local, role: repair.allocationRole, createdByMemberId });
         }
-        const closed = await completeXeroSyncOperation(claim, {
+        return closeRepairOnClaim(claim, {
           status: "SUCCEEDED",
           responsePayload: { ...(asRecord(operation.responsePayload) ?? {}), allocationError: null, repairedAllocations: targets },
           xeroObjectType: "CREDIT_NOTE", xeroObjectId: repair.creditNoteId, xeroObjectNumber: operation.xeroObjectNumber ?? null,
-        }, { retryClaim: true });
-        if (closed) return { message: "Repaired Xero modification credit note allocation." };
-        logger.warn({ operationId: operation.id }, "Xero PARTIAL repair finished after its claim was reset; row left as the operator set it");
-        return { message: targets.length > 0 ? MODIFICATION_NOTE_REPAIR_CLAIM_LOST_MESSAGE : REPAIR_RESET_NOT_CLOSED_MESSAGE };
+        }, "Repaired Xero modification credit note allocation.", lostMessage(targets.length));
       }, { from: "PARTIAL" });
     }
 

@@ -4281,8 +4281,9 @@ PARTIAL invoice payment repair, refund-note repair or modification
   payment -> SUCCEEDED, or PARTIAL while an invoice-email fault remains (its
   message says so; no repeated-failure alert); the refund-note leg completes
   its own row; the modification note repair reads the plan's allocation links
-  under the claim, allocates the rest -> SUCCEEDED (allocationError cleared;
-  before #4259 it never closed its row). Every completion is guarded on the
+  under the claim, allocates the rest, re-reading its claim before each (lost
+  -> no further call, row left as the operator set it) -> SUCCEEDED
+  (allocationError cleared; before #4259 it never closed its row). Every completion is guarded on the
   claim (still RUNNING, still its startedAt), so it never lands over an
   officer's Mark failed
   handler throws first -> RUNNING -> PARTIAL, payload kept, with the run's
