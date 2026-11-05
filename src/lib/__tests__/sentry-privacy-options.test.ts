@@ -192,26 +192,45 @@ describe("Sentry never carries the breached-password range prefix (#4610)", () =
     };
     event.self = event;
     const scrubbed = scrubBreachedPasswordRangeDeep(event);
-    expect(JSON.stringify({ ...scrubbed, self: undefined })).not.toContain(PREFIX);
-    expect(scrubbed.message).toBe("unrelated");
-    expect(() => scrubBreachedPasswordRangeDeep(Object.freeze({ list: Object.freeze([RANGE]) }))).not.toThrow();
+    expect(scrubbed).toBe(event);
+    expect(JSON.stringify({ ...event, self: undefined })).not.toContain(PREFIX);
+    expect(event.message).toBe("unrelated");
   });
 
   it("walks into the children of a frozen node, and scrubs the writable ones", () => {
     const inner = { value: `fetch failed for ${RANGE}` };
     const list = [`see ${RANGE}`];
-    const event = Object.freeze({ extra: inner, exception: Object.freeze([list]), frozenText: RANGE });
-    expect(() => scrubBreachedPasswordRangeDeep(event)).not.toThrow();
+    const event = Object.freeze({ extra: inner, exception: Object.freeze([list]), note: "unrelated" });
+    expect(scrubBreachedPasswordRangeDeep(event)).toBe(event);
     expect(inner.value).not.toContain(PREFIX);
     expect(list[0]).not.toContain(PREFIX);
-    // A frozen node's own string slot cannot be rewritten, and is left as it is.
-    expect(event.frozenText).toBe(RANGE);
   });
 
-  it("skips a read-only array index without throwing, and scrubs the rest of the array", () => {
+  // #4740 review: a string naming the range in a slot the scrub cannot write
+  // would reach Sentry, so beforeSend drops the whole event instead.
+  it.each([
+    ["a frozen object", () => Object.freeze({ frozenText: RANGE })],
+    ["a frozen array", () => ({ list: Object.freeze([`see ${RANGE}`]) })],
+    [
+      "a non-writable property",
+      () => Object.defineProperty({}, "value", { value: RANGE, writable: false, enumerable: true }),
+    ],
+  ])("returns null for an event with the range in %s", (_label, build) => {
+    expect(scrubBreachedPasswordRangeDeep({ extra: build() })).toBeNull();
+  });
+
+  it("returns null for an event too large to scrub in full", () => {
+    const wide = Array.from({ length: 30_000 }, (_, i) => `line ${i}`);
+    expect(scrubBreachedPasswordRangeDeep({ extra: { wide } })).toBeNull();
+    // A frozen node with nothing naming the range is fine.
+    const frozen = { extra: Object.freeze({ list: Object.freeze(["unrelated"]) }) };
+    expect(scrubBreachedPasswordRangeDeep(frozen)).toBe(frozen);
+  });
+
+  it("never writes a read-only array index, scrubs the rest, and drops the event", () => {
     const list: unknown[] = [RANGE, `see ${RANGE}`, { value: RANGE }];
     Object.defineProperty(list, 0, { value: RANGE, writable: false, enumerable: true, configurable: false });
-    expect(() => scrubBreachedPasswordRangeDeep({ list })).not.toThrow();
+    expect(scrubBreachedPasswordRangeDeep({ list })).toBeNull();
     expect(list[0]).toBe(RANGE);
     expect(list[1]).not.toContain(PREFIX);
     expect(JSON.stringify(list[2])).not.toContain(PREFIX);

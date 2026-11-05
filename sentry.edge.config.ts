@@ -61,7 +61,8 @@ Sentry.init({
       ) as typeof event.exception.values;
     }
 
-    // #4610: no event carries the breached-password range prefix.
+    // #4610: no event carries the breached-password range prefix; one the
+    // scrub cannot vouch for comes back null and is dropped.
     return scrubBreachedPasswordRangeDeep(event);
   },
 

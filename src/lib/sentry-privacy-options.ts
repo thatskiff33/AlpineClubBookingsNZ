@@ -98,13 +98,16 @@ function walkRangeStrings(root: object, scrub: boolean): RangeWalk {
 
 /**
  * Scrubs the range prefix from every string in `value`, in place, and returns
- * it. Used on events in `beforeSend`, which may hold the URL in an exception
- * message, `extra` or a breadcrumb added before this filter existed.
+ * it; or returns null, so `beforeSend` drops the event, when it cannot vouch
+ * for the result: a string naming the range sits in a read-only slot, or the
+ * walk hit its size cap. Used on events, which may hold the URL in an
+ * exception message, `extra` or a breadcrumb added before this filter existed.
  */
-export function scrubBreachedPasswordRangeDeep<T>(value: T): T {
+export function scrubBreachedPasswordRangeDeep<T>(value: T): T | null {
   if (typeof value === "string") return scrubBreachedPasswordRange(value) as T;
-  if (value !== null && typeof value === "object") walkRangeStrings(value, true);
-  return value;
+  if (value === null || typeof value !== "object") return value;
+  const walk = walkRangeStrings(value, true);
+  return walk.left || walk.capped ? null : value;
 }
 
 /**
