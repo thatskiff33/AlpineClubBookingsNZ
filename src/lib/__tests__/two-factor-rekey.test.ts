@@ -51,8 +51,9 @@ function codeMatches(row: CodeRow, where: CodeWhere): boolean {
 vi.mock("@/lib/prisma", () => {
   const client = {
     member: {
-      updateMany: vi.fn(async ({ where, data }: { where: { id: string; totpSecret: string }; data: { totpSecret: string } }) => {
-        if (db.members.get(where.id) !== where.totpSecret) return { count: 0 };
+      updateMany: vi.fn(async ({ where, data }: { where: { id: string; totpSecret?: string }; data: { totpSecret: string } }) => {
+        if (!db.members.has(where.id)) return { count: 0 };
+        if (where.totpSecret !== undefined && db.members.get(where.id) !== where.totpSecret) return { count: 0 };
         db.members.set(where.id, data.totpSecret);
         return { count: 1 };
       }),
