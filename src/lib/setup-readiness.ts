@@ -44,6 +44,7 @@ import {
   detectLegacyProviderEnv,
 } from "@/lib/xero-config";
 import { authSecretWeaknessReason } from "@/lib/integration-crypto";
+import { DATA_ENCRYPTION_KEYS_ENV } from "@/lib/data-encryption-key-material";
 import { buildDataEncryptionKeyCheck, type DataKeyUsageSnapshot } from "@/lib/setup-readiness-data-keys";
 
 export const SETUP_STEP_IDS = [
@@ -2163,7 +2164,7 @@ export function buildSetupReadiness(
       buildEnvironmentRoleCheck(input.database, progress),
       buildRuntimeEnvCheck(env, progress),
       buildAuthSecretStrengthCheck(env, progress),
-      applyProgress(buildDataEncryptionKeyCheck(readEnv(env, "DATA_ENCRYPTION_KEYS"), input.database?.dataKeyUsage, readEnv(env, "AUTH_SECRET") ?? readEnv(env, "NEXTAUTH_SECRET")), progress),
+      applyProgress(buildDataEncryptionKeyCheck(readEnv(env, DATA_ENCRYPTION_KEYS_ENV), input.database?.dataKeyUsage, readEnv(env, "AUTH_SECRET") ?? readEnv(env, "NEXTAUTH_SECRET")), progress),
       buildSeedAdminCheck(input.database, progress),
       buildFeatureFlagCheck(input.database, progress),
     ],

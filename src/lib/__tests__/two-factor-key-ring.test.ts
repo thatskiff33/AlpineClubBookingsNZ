@@ -145,6 +145,23 @@ describe("which key a stored secret or hash names, for the readiness counts (#44
       expect(twoFactorSecretKeyId(unrecognised)).toBeNull();
     }
   });
+
+  it("the count and the decrypt agree on every shape: one parser (#4456 review)", () => {
+    process.env.DATA_ENCRYPTION_KEYS = `k2:${K2},k1:${K1}`;
+    const shapes = [
+      "v1:a::c", "v1::b:c", "v1:a:b:", "v2:k1::b:c", "v2::a:b:c", "v2:legacy-auth-secret:a:b:c",
+      "v3:x:a:b:c", "v1:a:b", "v2:k1:a:b", "plaintext", "",
+    ];
+    for (const shape of shapes) {
+      // Unrecognised by the count, and refused as a format by the decrypt.
+      expect(twoFactorSecretKeyId(shape), shape).toBeNull();
+      expect(() => decryptTwoFactorSecret(shape), shape).toThrow(/Invalid encrypted two-factor secret format/);
+    }
+    // A well-formed envelope is counted under the key the decrypt then uses.
+    const stored = encryptTwoFactorSecret("RING");
+    expect(twoFactorSecretKeyId(stored)).toBe("k2");
+    expect(decryptTwoFactorSecret(stored)).toBe("RING");
+  });
 });
 
 describe("code hashes under the ring (#4456)", () => {

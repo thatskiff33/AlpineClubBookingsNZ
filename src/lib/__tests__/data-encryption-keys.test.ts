@@ -182,6 +182,20 @@ describe("no key material reaches a log, an error or a report (#4456)", () => {
     expect(inspect(key)).toBe("DataKey(k1)");
   });
 
+  it("a spread copy of a ring key or the legacy key carries no material (#4456 review)", () => {
+    process.env.DATA_ENCRYPTION_KEYS = `k1:${K1}`;
+    for (const key of [currentDataKey()!, dataKeyById(LEGACY_AUTH_SECRET_KEY_ID)!]) {
+      const copy = { ...key };
+      expect(Object.getOwnPropertySymbols(copy)).toEqual([]);
+      for (const view of [inspect(copy), JSON.stringify(copy), inspect(Object.assign({}, key))]) {
+        expect(view).not.toContain(K1);
+        expect(view).not.toContain(Buffer.from(K1, "base64").toString("hex"));
+        expect(view).not.toContain(AUTH);
+        expect(view).not.toMatch(/Buffer|data-key-material/);
+      }
+    }
+  });
+
   it("every path a ring or a credential takes emits nothing holding a key or the auth secret", () => {
     const thrown: unknown[] = [];
     const capture = (work: () => unknown) => {

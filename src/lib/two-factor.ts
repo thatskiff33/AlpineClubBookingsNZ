@@ -2,7 +2,6 @@ import {
   createCipheriv,
   createDecipheriv,
   createHash,
-  createHmac,
   randomBytes,
   randomInt,
 } from "crypto";
@@ -21,11 +20,15 @@ import {
   currentDataKey,
   dataKeyById,
 } from "@/lib/data-encryption-keys";
+import { assertLegacyWriteAllowed } from "@/lib/data-encryption-legacy-write-guard";
 import { prisma } from "@/lib/prisma";
 import {
   LEGACY_ENCRYPTION_VERSION,
   RING_ENCRYPTION_VERSION,
   codeHashKeyId,
+  keyedCodeHash,
+  parseTwoFactorSecret,
+  type TwoFactorSecretEnvelope,
 } from "@/lib/two-factor-key-format";
 import {
   assertTwoFactorActorMayAct,
@@ -38,9 +41,8 @@ import {
 const ENCRYPTION_ALGORITHM = "aes-256-gcm";
 const IV_LENGTH = 16;
 const AUTH_TAG_LENGTH = 16;
-/** HKDF purposes of the ring sub-keys; the legacy labels below stay frozen. */
+/** HKDF purpose of the authenticator ring sub-key; the legacy label below stays frozen. */
 const TOTP_SECRET_RING_PURPOSE = "two-factor-secret:v2";
-const CODE_HASH_RING_PURPOSE = "two-factor-code:v2";
 const NO_KEY_MESSAGE =
   "AUTH_SECRET or NEXTAUTH_SECRET is required for two-factor authentication";
 
@@ -64,6 +66,19 @@ function writeKey(): DataKey {
   return key;
 }
 
+/**
+ * Refuse a two-factor write (an enrolment, replacement recovery codes, an email
+ * code) that would fall back to the auth secret while stored data names a ring
+ * key (#4456 review): the same rule, from the same place, as credential capture
+ * (`data-encryption-legacy-write-guard.ts`). Throws `DataKeyRingMissingError`,
+ * which the route reports as a server error. A ring write never asks.
+ */
+async function assertTwoFactorWriteAllowed(
+  db: Parameters<typeof assertLegacyWriteAllowed>[0],
+): Promise<void> {
+  if (writeKey().legacy) await assertLegacyWriteAllowed(db);
+}
+
 /** The AES key for an authenticator secret: frozen legacy formula, or ring sub-key. */
 function totpEncryptionKey(key: DataKey): Buffer {
   if (!key.legacy) return deriveDataSubkey(key, TOTP_SECRET_RING_PURPOSE);
@@ -71,21 +86,6 @@ function totpEncryptionKey(key: DataKey): Buffer {
     .update(legacySecretOf(key))
     .update(":two-factor-secret:v1")
     .digest();
-}
-
-/** A code's keyed hash under one key; a ring hash carries its key id. */
-function keyedCodeHash(key: DataKey, value: string): string {
-  if (!key.legacy) {
-    const digest = createHmac("sha256", deriveDataSubkey(key, CODE_HASH_RING_PURPOSE))
-      .update(value)
-      .digest("hex");
-    return `${key.id}:${digest}`;
-  }
-  const legacyHashKey = createHash("sha256")
-    .update(legacySecretOf(key))
-    .update(":two-factor-code:v1")
-    .digest();
-  return createHmac("sha256", legacyHashKey).update(value).digest("hex");
 }
 
 // test seam
@@ -108,35 +108,29 @@ export function encryptTwoFactorSecret(plaintext: string): string {
 
 /**
  * The key a stored authenticator secret names — `v1` the legacy key, `v2` its
- * ring id — and that key alone; never the others in turn.
+ * ring id — and that key alone; never the others in turn. The envelope is read
+ * by `parseTwoFactorSecret`, the same parser the setup count uses.
  */
-function totpKeyFor(parts: string[]): { key: DataKey; rest: string[] } {
-  const [version, ...rest] = parts;
-  let id: string | undefined;
-  if (version === LEGACY_ENCRYPTION_VERSION && rest.length === 3) {
-    id = LEGACY_AUTH_SECRET_KEY_ID;
-  } else if (version === RING_ENCRYPTION_VERSION && rest.length === 4) {
-    id = rest.shift();
-    if (id === LEGACY_AUTH_SECRET_KEY_ID) id = undefined;
-  }
-  if (!id || rest.some((part) => !part)) {
+function totpKeyFor(stored: string): { key: DataKey; envelope: TwoFactorSecretEnvelope } {
+  const envelope = parseTwoFactorSecret(stored);
+  if (!envelope) {
     throw new Error("Invalid encrypted two-factor secret format");
   }
-  const key = dataKeyById(id);
+  const key = dataKeyById(envelope.keyId);
   if (!key) {
     throw new Error(
-      id === LEGACY_AUTH_SECRET_KEY_ID
+      envelope.keyId === LEGACY_AUTH_SECRET_KEY_ID
         ? NO_KEY_MESSAGE
-        : `The data-encryption key "${id}" this two-factor secret was written under is not in DATA_ENCRYPTION_KEYS`,
+        : `The data-encryption key "${envelope.keyId}" this two-factor secret was written under is not in DATA_ENCRYPTION_KEYS`,
     );
   }
-  return { key, rest };
+  return { key, envelope };
 }
 
 // test seam
 export function decryptTwoFactorSecret(encrypted: string): string {
-  const { key, rest } = totpKeyFor(encrypted.split(":"));
-  const [ivHex, authTagHex, ciphertext] = rest as [string, string, string];
+  const { key, envelope } = totpKeyFor(encrypted);
+  const { ivHex, authTagHex, ciphertextHex: ciphertext } = envelope;
   const authTag = Buffer.from(authTagHex, "hex");
   if (authTag.length !== AUTH_TAG_LENGTH) {
     throw new Error("Invalid encrypted two-factor secret authentication tag length");
@@ -277,6 +271,7 @@ export function verifyTotpCode(secretBase32: string, code: string) {
 export async function createTwoFactorEmailCode(memberId: string) {
   const code = generateEmailOtpCode();
   const expiresAt = new Date(Date.now() + TWO_FACTOR_EMAIL_CODE_TTL_MS);
+  await assertTwoFactorWriteAllowed(prisma);
 
   await prisma.$transaction([
     prisma.twoFactorEmailCode.deleteMany({
@@ -320,6 +315,13 @@ export async function verifyTwoFactorEmailCode(memberId: string, code: string) {
 // through the Auth.js session update within the same request and is consumed
 // by the jwt callback, so a client-forged POST to /api/auth/session can never
 // flip twoFactorVerified.
+//
+// Not refused while a ring is missing (#4456 review), unlike the writers that
+// call assertTwoFactorWriteAllowed. Those hand the member something checked
+// later, perhaps by another instance (codes, an authenticator). This token
+// never leaves the sign-in that mints it: it lives two minutes, follows a
+// factor already passed, and is consumed under the same key, so a legacy hash
+// here leaves nothing depending on AUTH_SECRET.
 export async function createTwoFactorSessionChallenge(memberId: string) {
   const token = randomBytes(32).toString("hex");
   const expiresAt = new Date(Date.now() + TWO_FACTOR_SESSION_CHALLENGE_TTL_MS);
@@ -451,6 +453,7 @@ export async function replaceRecoveryCodes(params: {
   // or neither does (#3454): replacing them invalidates every unused code, the
   // same class of credential change as an enrolment.
   await prisma.$transaction(async (tx) => {
+    await assertTwoFactorWriteAllowed(tx);
     await tx.twoFactorRecoveryCode.deleteMany({ where: { memberId } });
     await tx.twoFactorRecoveryCode.createMany({
       data: recoveryCodes.map((code) => ({
@@ -493,6 +496,7 @@ export async function enrollTwoFactor(params: {
   // or neither does (#3454). It was an array transaction, which cannot write a
   // row through `createAuditLog`.
   await prisma.$transaction(async (tx) => {
+    await assertTwoFactorWriteAllowed(tx);
     await tx.member.update({
       where: { id: params.memberId },
       data: {

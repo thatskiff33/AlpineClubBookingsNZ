@@ -42,10 +42,16 @@ const mocks = vi.hoisted(() => {
   const tx = {
     integrationCredential: credentialDelegate(),
     auditLog: { create: vi.fn() },
+    // #4456 review: the other stores asked before an AUTH_SECRET write.
+    member: { count: vi.fn(async () => 0) },
+    twoFactorRecoveryCode: { count: vi.fn(async () => 0) },
   };
   const prisma = {
     integrationCredential: credentialDelegate(),
     auditLog: { create: vi.fn() },
+    // #4456 review: the other stores asked before an AUTH_SECRET write.
+    member: { count: vi.fn(async () => 0) },
+    twoFactorRecoveryCode: { count: vi.fn(async () => 0) },
     $transaction: vi.fn(),
   };
   prisma.$transaction.mockImplementation(

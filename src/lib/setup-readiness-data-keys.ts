@@ -7,9 +7,11 @@
  * read by `setup-readiness-db.ts`. It never names or prints a key's value.
  *
  * Not a boot failure in this release (plan assumption 6): an existing club keeps
- * running until its operator adds a key. Red here means "this is unsafe now",
- * never "the app will not start", and the step is not a required blocker. (An
- * INVALID ring is different: `runtime-config.ts` fails readiness for it.)
+ * running unchanged until its operator adds a key. Red here means "this is
+ * unsafe now", never "the app will not start", and no deploy gates on it. But
+ * red is red: with no ring set and anything stored, Admin → Setup shows the
+ * overall report blocked and `pnpm run setup:check` exits 1 until a key is set.
+ * (An INVALID ring is different: `runtime-config.ts` fails readiness for it.)
  */
 
 import {
@@ -20,6 +22,12 @@ import {
 import { wrappingKeyIdOf } from "@/lib/integration-crypto";
 
 type CountsByKeyId = Readonly<Record<string, number>>;
+
+/**
+ * The bucket for a stored format no write produces. It holds a `:`, which no
+ * ring key id may (`KEY_ID_PATTERN`), so no ring can ever appear to cover it.
+ */
+const UNRECOGNISED_PREFIX = "unrecognised:";
 
 /** What the database holds, by the key each row names. Never a value. */
 export interface DataKeyUsageSnapshot {
@@ -50,12 +58,12 @@ export function tallyDataKeyUsage(input: {
 }): DataKeyUsageSnapshot {
   const credentialRowsByKeyId: Record<string, number> = {};
   for (const { secretSource, count } of input.credentialSources) {
-    const id = wrappingKeyIdOf(secretSource) ?? `unrecognised:${secretSource}`;
+    const id = wrappingKeyIdOf(secretSource) ?? `${UNRECOGNISED_PREFIX}${secretSource}`;
     credentialRowsByKeyId[id] = (credentialRowsByKeyId[id] ?? 0) + count;
   }
   return {
     credentialRowsByKeyId,
-    totpRowsByKeyId: countBy(input.totpKeyIds.map((id) => id ?? "unrecognised")),
+    totpRowsByKeyId: countBy(input.totpKeyIds.map((id) => id ?? `${UNRECOGNISED_PREFIX}format`)),
     recoveryCodesByKeyId: countBy(input.recoveryCodeKeyIds),
   };
 }
@@ -97,7 +105,9 @@ function rowsUnder(usage: DataKeyUsageSnapshot, keep: (id: string) => boolean): 
         lines.push(
           isLegacy(id)
             ? `${plural(count, noun)} encrypted under AUTH_SECRET.`
-            : `${plural(count, noun)} under the data key "${id}".`,
+            : id.startsWith(UNRECOGNISED_PREFIX)
+              ? `${plural(count, noun)} in a format no release writes, so it cannot be read.`
+              : `${plural(count, noun)} under the data key "${id}".`,
         );
       }
     }
@@ -145,7 +155,7 @@ export function buildDataEncryptionKeyCheck(
       return {
         ...base,
         status: "blocked",
-        message: `Stored data is encrypted under a data-encryption key, but ${DATA_ENCRYPTION_KEYS_ENV} is not set, so it cannot be read and new credentials cannot be saved. Put the ring back as it was.`,
+        message: `Stored data is encrypted under a data-encryption key, but ${DATA_ENCRYPTION_KEYS_ENV} is not set, so it cannot be read and new credentials cannot be saved. Put the ring back as it was, or set a new key and re-enter the credentials and re-enrol the authenticators the old one held.`,
         details: [...ringKeyed, ...(usage ? retiredRecoveryCodes(usage, isLegacy) : []), ROLLOUT_HINT],
       };
     }

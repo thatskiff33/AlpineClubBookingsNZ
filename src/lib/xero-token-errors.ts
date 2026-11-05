@@ -7,8 +7,12 @@
  * part every caller still relies on.
  */
 
-import { assertLegacyCaptureAllowed } from "@/lib/integration-credentials";
-import { requireCredentialCaptureKey } from "@/lib/integration-crypto";
+import { readDataKeyRing } from "@/lib/data-encryption-keys";
+import {
+  DataKeyRingMissingError,
+  assertLegacyWriteAllowed,
+} from "@/lib/data-encryption-legacy-write-guard";
+import { WeakAuthSecretError, requireCredentialCaptureKey } from "@/lib/integration-crypto";
 import { prisma } from "@/lib/prisma";
 
 /**
@@ -32,16 +36,68 @@ export class XeroTokenDecryptError extends Error {
 }
 
 /**
+ * Why a refreshed token pair could not be stored right now (#4456 review):
+ *   - `auth-secret-weak`: no ring is set and the auth secret fails the strength
+ *     check, so capture refuses it;
+ *   - `data-key-ring-invalid`: `DATA_ENCRYPTION_KEYS` is set but cannot be used;
+ *   - `data-key-ring-missing`: no ring is set, but stored data names a ring key
+ *     (`data-encryption-legacy-write-guard.ts`).
+ * None is fixed by a Xero reconnect: each needs the server's configuration.
+ */
+export type XeroTokenSaveRefusal =
+  | "auth-secret-weak"
+  | "data-key-ring-invalid"
+  | "data-key-ring-missing";
+
+/**
  * Thrown BEFORE a refresh token is spent, when the rotated pair could not then
- * be stored (#3454 review). Carries no value; the reason is a fixed sentence.
+ * be stored (#3454 review). Carries the refusal's reason and its plain-English
+ * message, which never holds a secret.
  */
 export class XeroTokenSaveUnavailableError extends Error {
-  constructor() {
+  readonly reason: XeroTokenSaveRefusal;
+  constructor(refusal: { reason: XeroTokenSaveRefusal; message: string }) {
     super(
-      "The auth secret does not pass the strength check, so refreshed Xero tokens could not be stored; the refresh token was not spent.",
+      `${refusal.message} Refreshed Xero tokens could not be stored, so the refresh token was not spent.`,
     );
     this.name = "XeroTokenSaveUnavailableError";
+    this.reason = refusal.reason;
   }
+}
+
+/**
+ * Could a refreshed token pair be stored right now? Null when it could, else
+ * why not. The ONE predicate behind both the refresh pre-flight below and the
+ * admin connection status (`getXeroConnectionStatus`), so "Connected" never sits
+ * over tokens no refresh could store (#4456 review). Asks exactly what the
+ * credential store's write asks: the capture key, then, for a write that would
+ * fall back to the auth secret, whether stored data already names a ring key.
+ * A database error propagates as itself: it is not a verdict on any key.
+ */
+export async function xeroTokenSaveRefusal(): Promise<{
+  reason: XeroTokenSaveRefusal;
+  message: string;
+} | null> {
+  let legacy: boolean;
+  try {
+    legacy = requireCredentialCaptureKey().key.legacy;
+  } catch (error) {
+    if (!(error instanceof WeakAuthSecretError)) throw error;
+    return {
+      reason: readDataKeyRing().status === "invalid" ? "data-key-ring-invalid" : "auth-secret-weak",
+      message: error.message,
+    };
+  }
+  if (!legacy) return null;
+  try {
+    await assertLegacyWriteAllowed(prisma);
+  } catch (error) {
+    if (error instanceof DataKeyRingMissingError) {
+      return { reason: "data-key-ring-missing", message: error.message };
+    }
+    throw error;
+  }
+  return null;
 }
 
 /**
@@ -57,11 +113,6 @@ export class XeroTokenSaveUnavailableError extends Error {
  * possible; that is a stated limit.
  */
 export async function assertXeroTokensCanBeStored(): Promise<void> {
-  try {
-    // The store also refuses the AUTH_SECRET fallback while ring-keyed rows
-    // exist (#4456), so ask that here too, before the token is spent.
-    if (requireCredentialCaptureKey().key.legacy) await assertLegacyCaptureAllowed(prisma);
-  } catch {
-    throw new XeroTokenSaveUnavailableError();
-  }
+  const refusal = await xeroTokenSaveRefusal();
+  if (refusal) throw new XeroTokenSaveUnavailableError(refusal);
 }

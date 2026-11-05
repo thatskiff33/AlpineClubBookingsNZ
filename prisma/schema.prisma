@@ -4292,12 +4292,14 @@ model IntegrationCredential {
   ciphertext   String
   iv           String
   authTag      String
-  // Which auth-secret env var the wrapping key was derived from at write time
-  // (AUTH_SECRET | NEXTAUTH_SECRET) — a silent fallback flip stays diagnosable
-  // without ever exposing the value.
+  // What wrapped the row at write time, never a value: the auth-secret env var
+  // its key was derived from (AUTH_SECRET | NEXTAUTH_SECRET, so a silent
+  // fallback flip stays diagnosable), or "DATA_ENCRYPTION_KEY:<id>" for a row
+  // under that DATA_ENCRYPTION_KEYS ring key (#4456).
   secretSource String
   // HKDF info-label version used to derive the wrapping key, e.g.
-  // "integration-credential:v1" / "xero-token-key:v1".
+  // "integration-credential:v1" (auth secret), "integration-credential:v2"
+  // (a ring key, #4456) / "xero-token-key:v1" (retired).
   labelVersion String
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt

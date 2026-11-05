@@ -34,6 +34,11 @@ const mockPrisma = vi.hoisted(() => ({
     createMany: vi.fn().mockResolvedValue({ count: 10 }),
     findFirst: vi.fn(),
     updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+    // #4456 review: stored data under a ring key, asked before a legacy write.
+    count: vi.fn().mockResolvedValue(0),
+  },
+  integrationCredential: {
+    count: vi.fn().mockResolvedValue(0),
   },
   twoFactorSessionChallenge: {
     deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
@@ -42,6 +47,7 @@ const mockPrisma = vi.hoisted(() => ({
   member: {
     findUnique: vi.fn(),
     update: vi.fn().mockResolvedValue({ id: "member-1" }),
+    count: vi.fn().mockResolvedValue(0),
   },
 }));
 
@@ -65,6 +71,7 @@ import {
   verifyTwoFactorEmailCode,
   TWO_FACTOR_MAX_FAILED_ATTEMPTS,
 } from "@/lib/two-factor";
+import { DataKeyRingMissingError } from "@/lib/data-encryption-legacy-write-guard";
 
 describe("two-factor helpers", () => {
   beforeEach(() => {
@@ -366,5 +373,64 @@ describe("two-factor helpers", () => {
         twoFactorLockedUntil: lockedUntil,
       },
     });
+  });
+});
+
+describe("no two-factor write under AUTH_SECRET while stored data names a ring key (#4456 review)", () => {
+  const MEMBER = { kind: "member", memberId: "member-1" } as const;
+  // A 32-byte ring key derived at run time, so no key literal sits in the source.
+  const RING_KEY = Buffer.from(
+    Array.from({ length: 32 }, (_, index) => (index * 37 + 11) % 256),
+  ).toString("base64");
+  const writers = {
+    "a TOTP enrolment": () =>
+      enrollTwoFactor({ memberId: "member-1", method: "TOTP", totpSecret: "BASE32SECRET", actor: MEMBER }),
+    "an email enrolment": () => enrollTwoFactor({ memberId: "member-1", method: "EMAIL", actor: MEMBER }),
+    "replacement recovery codes": () => replaceRecoveryCodes({ memberId: "member-1", actor: MEMBER }),
+    "an email code": () => createTwoFactorEmailCode("member-1"),
+  };
+  const wrote = () =>
+    mockPrisma.member.update.mock.calls.length +
+    mockPrisma.twoFactorRecoveryCode.createMany.mock.calls.length +
+    mockPrisma.twoFactorEmailCode.create.mock.calls.length +
+    mockPrisma.auditLog.create.mock.calls.length;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.stubEnv("AUTH_SECRET", "test-auth-secret-for-two-factor");
+    vi.stubEnv("DATA_ENCRYPTION_KEYS", "");
+  });
+
+  it.each(Object.entries(writers))("refuses %s, writing nothing, for each kind of ring-keyed row", async (_label, write) => {
+    for (const store of [
+      mockPrisma.integrationCredential.count,
+      mockPrisma.member.count,
+      mockPrisma.twoFactorRecoveryCode.count,
+    ]) {
+      store.mockResolvedValueOnce(1);
+      await expect(write()).rejects.toBeInstanceOf(DataKeyRingMissingError);
+      expect(wrote()).toBe(0);
+    }
+    expect(mockPrisma.member.count).toHaveBeenCalledWith({ where: { totpSecret: { startsWith: "v2:" } } });
+    expect(mockPrisma.twoFactorRecoveryCode.count).toHaveBeenCalledWith({ where: { codeHash: { contains: ":" } } });
+  });
+
+  it.each(Object.entries(writers))("writes %s under AUTH_SECRET as before when nothing names a ring key", async (_label, write) => {
+    await expect(write()).resolves.toBeDefined();
+    expect(wrote()).toBeGreaterThan(0);
+  });
+
+  it.each(Object.entries(writers))("never asks for %s when the write is under the ring", async (_label, write) => {
+    vi.stubEnv("DATA_ENCRYPTION_KEYS", `k1:${RING_KEY}`);
+    await expect(write()).resolves.toBeDefined();
+    expect(mockPrisma.integrationCredential.count).not.toHaveBeenCalled();
+    expect(mockPrisma.member.count).not.toHaveBeenCalled();
+  });
+
+  it("still mints a session challenge: it never leaves the sign-in that minted it", async () => {
+    mockPrisma.integrationCredential.count.mockResolvedValue(1);
+    await expect(createTwoFactorSessionChallenge("member-1")).resolves.toMatch(/^[0-9a-f]{64}$/);
+    expect(mockPrisma.integrationCredential.count).not.toHaveBeenCalled();
+    mockPrisma.integrationCredential.count.mockResolvedValue(0);
   });
 });

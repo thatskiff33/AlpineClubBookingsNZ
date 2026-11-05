@@ -111,6 +111,20 @@ describe("setup readiness: the Data Encryption Key step (#4456)", () => {
     }
   });
 
+  it("offers a new key as the way out when the old one cannot be put back (#4456 review)", () => {
+    const check = buildDataEncryptionKeyCheck(undefined, usage({ credentialRowsByKeyId: { k1: 1 } }));
+    expect(check.message).toMatch(/Put the ring back as it was, or set a new key and re-enter the credentials/);
+  });
+
+  it("never lets a ring key id cover rows in a format no release writes (#4456 review)", () => {
+    // `unrecognised` is a valid key id; the bucket is not, so the ring cannot match it.
+    const RING = `unrecognised:${K1}`;
+    const stored = tallyDataKeyUsage({ credentialSources: [], totpKeyIds: [null, "unrecognised"], recoveryCodeKeyIds: [] });
+    const check = buildDataEncryptionKeyCheck(RING, stored);
+    expect(check.status).toBe("blocked");
+    expect(check.details).toContain("1 authenticator-app secret in a format no release writes, so it cannot be read.");
+  });
+
   it("reports recovery codes no lookup can match as information, never as red", () => {
     const check = buildDataEncryptionKeyCheck(
       `k2:${K2}`,
@@ -141,7 +155,7 @@ describe("setup readiness: the Data Encryption Key step (#4456)", () => {
       }),
     ).toEqual({
       credentialRowsByKeyId: { "legacy-auth-secret": 3, k1: 4, "unrecognised:SOMETHING_ELSE": 1 },
-      totpRowsByKeyId: { "legacy-auth-secret": 1, k1: 2, unrecognised: 1 },
+      totpRowsByKeyId: { "legacy-auth-secret": 1, k1: 2, "unrecognised:format": 1 },
       recoveryCodesByKeyId: { "legacy-auth-secret": 1, k2: 1 },
     });
   });

@@ -18,10 +18,16 @@ const mocks = vi.hoisted(() => {
   const tx = {
     integrationCredential: delegate(),
     auditLog: { create: vi.fn() },
+    // #4456 review: the other stores asked before an AUTH_SECRET write.
+    member: { count: vi.fn(async () => 0) },
+    twoFactorRecoveryCode: { count: vi.fn(async () => 0) },
   };
   const prisma = {
     integrationCredential: delegate(),
     auditLog: { create: vi.fn() },
+    // #4456 review: the other stores asked before an AUTH_SECRET write.
+    member: { count: vi.fn(async () => 0) },
+    twoFactorRecoveryCode: { count: vi.fn(async () => 0) },
     $transaction: vi.fn(),
   };
   prisma.$transaction.mockImplementation(
@@ -288,6 +294,14 @@ describe("no AUTH_SECRET write while ring-keyed credentials exist (#4456 review)
     });
     expect(mocks.tx.integrationCredential.upsert).not.toHaveBeenCalled();
     expect(mocks.tx.auditLog.create).not.toHaveBeenCalled();
+  });
+
+  it("refuses too when only an authenticator secret or a recovery code names a ring key (one rule, #4456 review)", async () => {
+    for (const store of [mocks.tx.member.count, mocks.tx.twoFactorRecoveryCode.count]) {
+      store.mockResolvedValueOnce(1);
+      await expect(write()).rejects.toThrow(/Set it back as it was, or set a new key and re-enter the credentials/);
+    }
+    expect(mocks.tx.integrationCredential.upsert).not.toHaveBeenCalled();
   });
 
   it("writes under AUTH_SECRET as before when nothing is under a ring key", async () => {

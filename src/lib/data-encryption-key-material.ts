@@ -6,8 +6,8 @@
  * reasons for each rule are in that module's header.
  *
  * NOTHING HERE PRINTS KEY MATERIAL. Error messages name an entry's position or
- * its id, never its value, and `DataKey` keeps its material out of `toJSON` and
- * `util.inspect`, so a stray log line shows the id alone.
+ * its id, never its value, and `DataKey` keeps its material out of `toJSON`,
+ * `util.inspect` and any spread copy, so a stray log line shows the id alone.
  */
 
 import { hkdfSync } from "node:crypto";
@@ -47,14 +47,17 @@ export interface DataKey {
 }
 
 function makeKey(id: string, legacy: boolean, material: Buffer | string): DataKey {
-  const key = { id, legacy, [MATERIAL]: material };
+  const key = { id, legacy };
+  // The material is non-enumerable (#4456 review), so a spread copy or
+  // Object.assign drops it rather than carrying it past the guards below.
+  Object.defineProperty(key, MATERIAL, { value: material, enumerable: false });
   // A key that reaches a logger or JSON.stringify shows its id and nothing else.
   Object.defineProperty(key, "toJSON", { value: () => ({ id, legacy }), enumerable: false });
   Object.defineProperty(key, Symbol.for("nodejs.util.inspect.custom"), {
     value: () => `DataKey(${id})`,
     enumerable: false,
   });
-  return Object.freeze(key);
+  return Object.freeze(key) as DataKey;
 }
 
 export type DataKeyRingState =
