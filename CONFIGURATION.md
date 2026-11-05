@@ -2128,6 +2128,7 @@ the `security` category.
 | Require a number | off | on/off | `0–9` |
 | Require a symbol | off | on/off | any non-alphanumeric character |
 | Magic-link TTL (minutes) | 15 | 5–60 | Read by the magic-link sign-in flow (#2034). Shown on the Login & Security page's Email sign-in link card; editing the value from that page is a planned follow-up, so it is read-only there for now. |
+| Refuse passwords found in public data breaches | on | on/off | `breachedPasswordCheck` (#4610). Checks a newly chosen password against a public breached-password list; see [below](#breached-password-check-and-outbound-access). |
 
 The policy governs only the paths where a member **chooses** a password —
 `/change-password` and the reset/setup-invite redemption at `/reset-password`.
@@ -2144,6 +2145,25 @@ A public, unauthenticated endpoint (`GET /api/auth/password-policy`) discloses
 the active rules so the reset and change-password forms can show live hints and
 validate length client-side; disclosing the policy is standard and the server
 enforces it regardless.
+
+### Breached-password check and outbound access
+
+With **Refuse passwords found in public data breaches** on (the default), the
+same set-time paths, plus an officer setting a kiosk password under Lodge
+settings, refuse a password that a public breached-password service lists
+(#4610, `INV-AUTH-005`). Only the first five characters of the password's
+SHA-1 hash are sent; the match is made on the server.
+
+#### Outbound network access
+
+The check makes an HTTPS `GET` from the app server to
+`https://api.pwnedpasswords.com/range/<5 hex characters>`. No key or
+environment variable is needed. A deployment whose firewall or proxy restricts
+outbound traffic must allow HTTPS to `api.pwnedpasswords.com`, or switch the
+setting off. If the host cannot be reached, or does not answer within three
+seconds, the password is accepted and a warning is logged, so a blocked host
+weakens the check without stopping anyone setting a password. Details and
+stated limits: [`docs/SECURITY.md`](docs/SECURITY.md#breached-password-check-4610).
 
 ## Two-Factor Authentication
 

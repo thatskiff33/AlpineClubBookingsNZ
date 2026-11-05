@@ -235,6 +235,67 @@ because of the failure itself.
   (its own lockout) and lodge PIN sign-in are separate, and forgot-password and
   sign-in-link request limits per account are #4613.
 
+## Breached-password check (#4610)
+
+Audience: Operator, Developer.
+
+A password reused from a breached site passes any length or character rule,
+and it is the first thing an attacker tries. So when a person chooses a
+password, the app asks a public breached-password service whether it has been
+seen in a breach, and refuses it if so. The rules are `INV-AUTH-005` in
+[`invariants/authentication.md`](invariants/authentication.md); this section
+holds the behaviour and the limits.
+
+**Where it runs.** Changing a password, choosing one from a reset or
+account-setup link, and an officer setting a kiosk password (Lodge settings).
+Registration and the other ways an account is created store a random
+placeholder, so the person's first real password is chosen through the
+reset or setup link and screened there. A refused password answers HTTP 400
+with code `PASSWORD_BREACHED` and a plain message asking for another; a reset
+or setup link stays usable, so the person can try again. Sign-in never runs
+the check, and passwords already set are not re-checked.
+
+**What leaves the server.** The app makes the password's SHA-1 hash and sends
+only its first five hex characters to
+`https://api.pwnedpasswords.com/range/<prefix>` (the k-anonymity "range"
+method), with the `Add-Padding` header so every answer is a similar size. The
+service returns every listed hash suffix sharing that prefix, and the match is
+made on the server. No password, full hash, email or member id is sent, and no
+log line carries the prefix. Deployments that restrict outbound traffic must
+allow HTTPS to `api.pwnedpasswords.com`
+([`CONFIGURATION.md`](../CONFIGURATION.md#outbound-network-access)).
+
+**Club setting.** On by default. A Support & System editor can switch it off
+under **Admin → Login & Security → Password policy** ("Refuse passwords found
+in public data breaches"); it is saved and audited with the rest of the card
+and travels in a configuration export. Switched off, no request is made.
+
+**If the service is slow or down.** It fails open: with no answer within three
+seconds, a network error, a non-200 or a malformed answer, the password is
+accepted and a warning naming only the failure class is logged. An outage
+elsewhere never stops a member setting a password or finishing setup.
+
+**Every place a password is written is counted.**
+`src/lib/__tests__/password-hash-writer-census.test.ts` parses every
+`passwordHash` writer under `src/`, `prisma/` and `scripts/`. A writer must
+either await `screenChosenPassword` before writing, or be listed as exempt with
+its reason (placeholders, imports, erasure and seeds store generated or
+unusable hashes). A new writer in neither list fails the build.
+
+**Stated limits.**
+
+- **Fail-open means an outage lets a breached password through.** That was
+  chosen over blocking members (#4610); the warning in the log is how an
+  operator sees it happening.
+- **The prefix narrows the password to one of several hundred listed hashes.**
+  That is the method's design: the service learns a bucket, not the password,
+  and nothing ties the request to a member beyond the server's own address.
+- **During a blue/green cutover the old slot does not check.** The migration
+  only adds the setting column, and the draining release never reads it.
+- **Install-time seeds are not screened.** `SEED_ADMIN_PASSWORD` and
+  `SEED_LODGE_PASSWORD` are set by the operator before the setting exists; the
+  seed admin must change password on first sign-in, which is screened.
+
 ## Dietary/allergy information (special-category data)
 
 Audience: Developer, Agent, Operator.

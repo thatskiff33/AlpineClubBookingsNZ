@@ -3,11 +3,13 @@
 Audience: Developer, Agent.
 
 Prefix defined in this file: **`INV-AUTH`** — how the app decides whether a
-sign-in attempt may proceed, without telling anyone which accounts exist.
+sign-in attempt may proceed, without telling anyone which accounts exist, and
+which passwords it lets a person choose.
 
 Read this file when you are changing password sign-in, the per-account
-password throttle, what a refused or throttled sign-in answers, or anything
-that keys a limit on an account rather than an internet address.
+password throttle, what a refused or throttled sign-in answers, anything
+that keys a limit on an account rather than an internet address, or any code
+that writes `passwordHash`.
 
 Index: [`docs/DOMAIN_INVARIANTS.md`](../DOMAIN_INVARIANTS.md) — every `INV-*` ID
 with a one-line description of what it covers. ID scheme and allocation rules:
@@ -17,7 +19,8 @@ Every heading below whose whole text is an `INV-*` ID defines that invariant. ID
 are permanent: never renumbered, never reused.
 
 The threat, the fallback and the stated limits are in
-[`SECURITY.md`](../SECURITY.md#per-account-password-throttle-4609); the row
+[`SECURITY.md`](../SECURITY.md#per-account-password-throttle-4609) and
+[`SECURITY.md`](../SECURITY.md#breached-password-check-4610); the row
 lock is in
 [`CONCURRENCY_AND_LOCKING.md`](../CONCURRENCY_AND_LOCKING.md#narrow-row--and-table-lock-protocols).
 This file holds only the rules.
@@ -79,3 +82,26 @@ This file holds only the rules.
 - **A store failure never becomes a sign-in outage.** The claim falls back to a
   bounded per-process count at the budget divided as the auth-sensitive
   limiters divide theirs (#1142).
+
+## INV-AUTH-005
+
+- **A password a person chooses is screened against the public breach list
+  before it is hashed.** Every place a person chooses a password — change,
+  reset and account-setup links, and an officer setting a kiosk password —
+  awaits `screenChosenPassword` in
+  [`breached-password.ts`](../../src/lib/breached-password.ts) first, and a
+  listed password is refused with `PASSWORD_BREACHED`. It is the one helper
+  (`INV-SSOT`); sign-in never calls it, and passwords already set are not
+  re-checked.
+- **Only a five-character prefix of the password's SHA-1 hash leaves the
+  server.** The range answer is matched locally. No password, full hash or
+  member identifier is sent, and nothing logs the prefix.
+- **It fails open.** No answer within three seconds, a network error, a non-200
+  or a malformed body accepts the password and logs only the failure class.
+- **The check is a club setting, on by default**
+  (`LoginSecuritySetting.breachedPasswordCheck`, `INV-CONFIG-001`). Switched
+  off, no request is made.
+- **Every `passwordHash` writer is classified.**
+  `password-hash-writer-census.test.ts` fails a new writer that neither screens
+  first nor is listed as exempt with its reason: a generated or deliberately
+  unusable hash (placeholders, imports, erasure, seeds).

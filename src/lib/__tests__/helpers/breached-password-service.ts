@@ -31,14 +31,16 @@ export function rangeBody(prefix: string, breached: readonly string[]): string {
 
 /** Stub `fetch` with a range service that lists exactly `breached`. */
 export function stubBreachedPasswordService(breached: readonly string[] = []) {
-  const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
-    const url = input instanceof Request ? input.url : String(input);
-    if (!url.startsWith(BREACHED_PASSWORD_RANGE_URL)) {
-      throw new Error(`Unexpected outbound fetch in a test: ${url}`);
-    }
-    const prefix = url.slice(BREACHED_PASSWORD_RANGE_URL.length);
-    return new Response(rangeBody(prefix, breached), { status: 200 });
-  });
+  const fetchMock = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(
+    async (input) => {
+      const url = input instanceof Request ? input.url : String(input);
+      if (!url.startsWith(BREACHED_PASSWORD_RANGE_URL)) {
+        throw new Error(`Unexpected outbound fetch in a test: ${url}`);
+      }
+      const prefix = url.slice(BREACHED_PASSWORD_RANGE_URL.length);
+      return new Response(rangeBody(prefix, breached), { status: 200 });
+    },
+  );
   vi.stubGlobal("fetch", fetchMock);
   return fetchMock;
 }
