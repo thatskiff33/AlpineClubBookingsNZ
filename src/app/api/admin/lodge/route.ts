@@ -331,6 +331,10 @@ export async function PUT(request: NextRequest) {
   }
   if (password) {
     updateData.passwordHash = await bcrypt.hash(password, PASSWORD_BCRYPT_COST);
+    // #4742: the `jwt` refresh ends any session issued before this
+    // (`isRevokedMemberSession`), so rotating the password signs out a tablet
+    // still on the old one, as the member change- and reset-password routes do.
+    updateData.passwordChangedAt = new Date();
     changes.push("password changed");
   }
   if (firstName) {

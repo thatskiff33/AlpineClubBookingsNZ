@@ -454,6 +454,12 @@ the real Auth.js handler on the frozen clock.
 - This is the idle window only. A ceiling on a session's total age, measured
   from sign-in, is #4611.
 
+**Rotating the kiosk password ends its sessions (#4742).** `PUT
+/api/admin/lodge` stamps `passwordChangedAt` with the new password hash, as the
+member change- and reset-password routes do, so `isRevokedMemberSession` ends
+every kiosk session issued before the rotation at its next refresh, whatever
+window it holds. `admin-lodge-route.test.ts` feeds the written row to that rule.
+
 ## Dietary/allergy information (special-category data)
 
 Audience: Developer, Agent, Operator.
