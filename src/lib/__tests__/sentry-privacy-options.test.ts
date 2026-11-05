@@ -157,6 +157,26 @@ describe("Sentry never carries the breached-password range prefix (#4610)", () =
     expect(() => scrubBreachedPasswordRangeDeep(Object.freeze({ list: Object.freeze([RANGE]) }))).not.toThrow();
   });
 
+  it("walks into the children of a frozen node, and scrubs the writable ones", () => {
+    const inner = { value: `fetch failed for ${RANGE}` };
+    const list = [`see ${RANGE}`];
+    const event = Object.freeze({ extra: inner, exception: Object.freeze([list]), frozenText: RANGE });
+    expect(() => scrubBreachedPasswordRangeDeep(event)).not.toThrow();
+    expect(inner.value).not.toContain(PREFIX);
+    expect(list[0]).not.toContain(PREFIX);
+    // A frozen node's own string slot cannot be rewritten, and is left as it is.
+    expect(event.frozenText).toBe(RANGE);
+  });
+
+  it("skips a read-only array index without throwing, and scrubs the rest of the array", () => {
+    const list: unknown[] = [RANGE, `see ${RANGE}`, { value: RANGE }];
+    Object.defineProperty(list, 0, { value: RANGE, writable: false, enumerable: true, configurable: false });
+    expect(() => scrubBreachedPasswordRangeDeep({ list })).not.toThrow();
+    expect(list[0]).toBe(RANGE);
+    expect(list[1]).not.toContain(PREFIX);
+    expect(JSON.stringify(list[2])).not.toContain(PREFIX);
+  });
+
   it("ignores the range request in the Node fetch integration, and no other request", () => {
     // The URL the integration passes: `getAbsoluteUrl(request.origin, request.path)`.
     expect(isBreachedPasswordRangeUrl(RANGE)).toBe(true);

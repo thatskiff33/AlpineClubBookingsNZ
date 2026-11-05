@@ -48,20 +48,19 @@ export function scrubBreachedPasswordRangeDeep<T>(value: T): T {
   const walk = (node: unknown, depth: number): unknown => {
     if (typeof node === "string") return scrubBreachedPasswordRange(node);
     if (depth >= MAX_SCRUB_DEPTH || node === null || typeof node !== "object") return node;
-    // A frozen node cannot be written in place; strict mode would throw.
-    if (seen.has(node) || Object.isFrozen(node)) return node;
+    if (seen.has(node)) return node;
     seen.add(node);
-    if (Array.isArray(node)) {
-      node.forEach((child, index) => {
-        node[index] = walk(child, depth + 1);
-      });
-      return node;
-    }
-    const record = node as Record<string, unknown>;
-    for (const key of Object.keys(record)) {
-      const descriptor = Object.getOwnPropertyDescriptor(record, key);
-      if (descriptor && "value" in descriptor && descriptor.writable) {
-        record[key] = walk(record[key], depth + 1);
+    // Arrays and plain objects alike: an array's own keys are its indexes.
+    for (const key of Object.keys(node)) {
+      const descriptor = Object.getOwnPropertyDescriptor(node, key);
+      // An accessor is never invoked.
+      if (!descriptor || !("value" in descriptor)) continue;
+      const scrubbed = walk(descriptor.value, depth + 1);
+      // A read-only slot (a frozen node's, or one defined non-writable) keeps
+      // its value, since strict mode would throw; an object in it was still
+      // walked, and scrubbed in place, above.
+      if (scrubbed !== descriptor.value && descriptor.writable) {
+        (node as Record<string, unknown>)[key] = scrubbed;
       }
     }
     return node;
