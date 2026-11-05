@@ -150,6 +150,7 @@ The **Privacy & Data** section gives you two rights:
 | You lost your authenticator app | 2FA cannot generate a code | Use a saved **recovery code** to sign in, then regenerate codes; if you have none, contact the club office |
 | You do not see "Email me a sign-in link" or "Continue with Google" | Your club has not enabled that method | Sign in with your password; ask the club if you expected it |
 | "Trouble signing in? Reference: XXXXXXXX" on the login page | A server-side session failure bounced you back | Quote that reference code to an admin so they can find the recorded cause |
+| You are asked to sign in again although you were using the site | For security, every sign-in lasts a fixed time set by your club (7 days unless it chose otherwise), however much you use the site | Sign in again; your bookings and settings are unchanged |
 | Google sign-in is refused | No linked Google account, or the account is ineligible | Link Google first from **Profile → Security → Connected accounts**, then retry |
 
 ## Related links

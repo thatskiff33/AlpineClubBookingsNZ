@@ -3,6 +3,11 @@ import {
   MAGIC_LINK_TTL_MAX_MINUTES,
   MAGIC_LINK_TTL_MIN_MINUTES,
 } from "@/lib/magic-link";
+import {
+  SESSION_MAX_AGE_DEFAULT_HOURS,
+  SESSION_MAX_AGE_MAX_HOURS,
+  SESSION_MAX_AGE_MIN_HOURS,
+} from "@/lib/session-max-age";
 
 // Shared password-policy validator + hints (epic #2030, child #2033).
 //
@@ -33,6 +38,12 @@ export interface LoginSecurityPolicy {
    * schema below, because it needs a network call.
    */
   breachedPasswordCheck: boolean;
+  /**
+   * #4611: the most hours a signed-in session lasts from sign-in, however
+   * active (INV-AUTH-007). Club setting, default 7 days, 8 hours to 30 days;
+   * the lodge kiosk account keeps its own ceiling (`@/lib/session-max-age`).
+   */
+  sessionMaxAgeHours: number;
 }
 
 /**
@@ -48,6 +59,7 @@ export const DEFAULT_LOGIN_SECURITY_POLICY: LoginSecurityPolicy = {
   requireSymbol: false,
   magicLinkTtlMinutes: 15,
   breachedPasswordCheck: true,
+  sessionMaxAgeHours: SESSION_MAX_AGE_DEFAULT_HOURS,
 };
 
 // Configurable minimum-length bounds (owner-locked on the epic): admins may set
@@ -72,8 +84,9 @@ function clampInt(value: number, min: number, max: number, fallback: number): nu
 /**
  * Coerce a partial/absent record (or out-of-range persisted values) into a safe
  * effective policy. Missing fields fall back to the code default; the minimum
- * length is clamped to [8, 64] and the magic-link TTL to [5, 60] so a stray
- * value can never widen or break the validator.
+ * length is clamped to [8, 64], the magic-link TTL to [5, 60] and the session
+ * maximum age to [8, 720] hours, so a stray value can never widen or break the
+ * validator or the session cap.
  */
 export function normalizeLoginSecurityPolicy(
   record?: Partial<LoginSecurityPolicy> | null,
@@ -100,6 +113,12 @@ export function normalizeLoginSecurityPolicy(
     ),
     breachedPasswordCheck:
       record?.breachedPasswordCheck ?? DEFAULT_LOGIN_SECURITY_POLICY.breachedPasswordCheck,
+    sessionMaxAgeHours: clampInt(
+      record?.sessionMaxAgeHours ?? DEFAULT_LOGIN_SECURITY_POLICY.sessionMaxAgeHours,
+      SESSION_MAX_AGE_MIN_HOURS,
+      SESSION_MAX_AGE_MAX_HOURS,
+      DEFAULT_LOGIN_SECURITY_POLICY.sessionMaxAgeHours,
+    ),
   };
 }
 
