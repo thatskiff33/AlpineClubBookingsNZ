@@ -35,6 +35,8 @@ describe("closedIssues", () => {
     expect(closedIssues("Closes #4\nfixes: #2 and Resolved #9\nSee #7", "o/r")).toEqual([2, 4, 9]);
     expect(closedIssues("<!-- Closes #1 -->\n`Closes #2`\n```\nFixes #3\n```\nCloses o/r#5", "o/r")).toEqual([5]);
     expect(closedIssues(null, "o/r")).toEqual([]);
+    // A comment whose removal would splice a new one together is stripped too.
+    expect(closedIssues("<!<!-- x -->-- Closes #8 -->\nCloses #9", "o/r")).toEqual([9]);
   });
 
   it("accepts a bare number or this repository's, never another repository's", () => {
@@ -250,6 +252,8 @@ describe("the board built from REST-shaped responses", () => {
   });
 
   it("escapes entity-encoded mentions, cross-references and autolinks", () => {
+    // A backslash is escaped too, so it cannot pair with the pipe escape and split a cell.
+    expect(cell("a\\|b")).toBe("a\\\\\\|b");
     expect(cell("&#64;user and &commat;user and &#x40;user")).toBe("&amp;#&#8203;64;user and &amp;commat;user and &amp;#&#8203;x40;user");
     expect(cell("see #123 and o/r#4")).toBe("see #&#8203;123 and o/r#&#8203;4");
     expect(cell("https://evil.example/x www.evil.example ftp://h")).toBe("https:&#8203;//evil.example/x www&#8203;.evil.example ftp:&#8203;//h");
