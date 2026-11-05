@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { describe, expect, it } from "vitest";
 
@@ -10,6 +10,7 @@ import {
   COVERAGE_TOLERANCE_PP,
   baselineAtRef,
   baselineLowered,
+  comparesWithMain,
   evaluateCoverage,
   evaluateMutation,
   latestMainRunId,
@@ -30,6 +31,7 @@ import {
   MUTATION_TARGET_GLOBS,
   MUTATION_TEST_FILES,
   codeownersSrcLibGlobs,
+  codeownersUnreadableSrcLibPatterns,
 } from "../lib/money-modules.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -76,6 +78,28 @@ describe("the coverage ratchet", () => {
       expect(result.rows.filter((row) => !row.ok).map((row) => `${row.metric} bar ${row.bar}`)).toEqual(["lines bar 87.86"]);
     });
 
+    it("never lets the bar fall below the committed floor, however far main has drifted", () => {
+      // floor 88, main at 70.1: main less the tolerance is 70.0, but the bar is 88.
+      const drifted = total(70.1, 70.1, 70.1, 70.1);
+      const high: MoneyTestBaseline = { ...baseline, coverage: { lines: 88, statements: 88, functions: 88, branches: 88 } };
+      const result = evaluateCoverage(total(70.05, 70.05, 70.05, 70.05), high, drifted);
+      expect(result.ok).toBe(false);
+      expect(result.rows.map((row) => row.bar)).toEqual([88, 88, 88, 88]);
+      expect(evaluateCoverage(total(88, 88, 88, 88), high, drifted).ok).toBe(true);
+      // Above the floor, main less the tolerance still decides.
+      expect(evaluateCoverage(total(90, 90, 90, 90), high, total(95, 95, 95, 95)).ok).toBe(false);
+    });
+
+    it("holds a pull request into any other branch to the floor, and says why", () => {
+      expect(comparesWithMain("main")).toBe(true);
+      expect(comparesWithMain(null)).toBe(true);
+      expect(comparesWithMain("")).toBe(true);
+      expect(comparesWithMain("epic/4000-x")).toBe(false);
+      const text = renderCoverageReport(evaluateCoverage(main, floor, null), { total: main }, { floorReason: "this pull request targets `epic/4000-x`, not `main`." });
+      expect(text).toContain("targets `epic/4000-x`, not `main`");
+      expect(text).not.toContain("none yet");
+    });
+
     it("passes equal and higher figures", () => {
       expect(evaluateCoverage(main, floor, main).ok).toBe(true);
       expect(evaluateCoverage(total(88.5, 87, 90, 81), floor, main).ok).toBe(true);
@@ -104,7 +128,8 @@ describe("the coverage ratchet", () => {
 
     it("renders which bar it used, with the tolerance", () => {
       const text = renderCoverageReport(evaluateCoverage(main, floor, main), { total: main });
-      expect(text).toContain("latest successful `main` run, allowing 0.1 percentage points");
+      expect(text).toContain("allowing 0.1 percentage points");
+      expect(text).toContain("never below the committed floor");
       expect(text).toContain("| lines | main 87.96% | 87.86% | 87.96% | 0 | ok |");
     });
   });
@@ -215,7 +240,10 @@ describe("the money-module list", () => {
       "CODEOWNERS owns these src/lib files and the coverage set leaves them out",
     ).toEqual([]);
 
-    // The census's own reverse list is read from its source, so it is not spelled twice.
+    // A DELIBERATE SECOND WITNESS, kept on purpose: the line above checks the set
+    // against CODEOWNERS' patterns, which is also how the set is made. This one
+    // checks it against a list a person wrote by hand as "these must stay owned",
+    // read from the census's source so it is not spelled twice.
     const census = read("src/lib/__tests__/codeowners-census.test.ts");
     const block = /const MUST_BE_OWNED = \[([\s\S]*?)\];/.exec(census)?.[1] ?? "";
     const mustBeOwned = [...block.matchAll(/"(src\/lib\/[^"]+\.ts)"/g)].map((match) => match[1]!);
@@ -226,18 +254,62 @@ describe("the money-module list", () => {
     ).toEqual([]);
   });
 
-  it("reads CODEOWNERS' src/lib patterns: directories and files, never the owned tests, and refuses what it cannot read", () => {
+  it("reads CODEOWNERS' src/lib patterns: files, and a directory spelled three ways, never the owned tests", () => {
     const source = [
       "# a comment",
       "/src/lib/*credit*.ts @o",
       "/src/lib/xero-inbound/ @o",
+      "/src/lib/xero-inbound/** @o",
+      "/src/lib/xero-inbound @o",
       "/src/lib/__tests__/*settlement* @o",
       "/src/app/api/pay/*/route.ts @o",
       "/docs/invariants/money.md @o",
     ].join("\n");
-    expect(codeownersSrcLibGlobs(source)).toEqual(["src/lib/*credit*.ts", "src/lib/xero-inbound/**/*.ts"]);
-    expect(() => codeownersSrcLibGlobs("/src/lib/notes.md @o")).toThrow(/neither a directory nor a .ts glob/);
-    expect(() => codeownersSrcLibGlobs("/docs/x.md @o")).toThrow(/names no \/src\/lib\/ pattern/);
+    expect(codeownersSrcLibGlobs(source)).toEqual([
+      "src/lib/*credit*.ts",
+      "src/lib/xero-inbound/**/*.ts",
+      "src/lib/xero-inbound/**/*.ts",
+      "src/lib/xero-inbound/**/*.ts",
+    ]);
+    expect(codeownersSrcLibGlobs("/src/lib/xero-inbound/** @o")).toEqual(["src/lib/xero-inbound/**/*.ts"]);
+    expect(codeownersSrcLibGlobs("/src/lib/xero-inbound @o")).toEqual(["src/lib/xero-inbound/**/*.ts"]);
+    expect(codeownersUnreadableSrcLibPatterns(source)).toEqual([]);
+  });
+
+  it("reports a pattern it cannot read as data, and never throws on odd or empty input", () => {
+    expect(codeownersSrcLibGlobs("/src/lib/notes.md @o")).toEqual([]);
+    expect(codeownersUnreadableSrcLibPatterns("/src/lib/notes.md @o\n/src/lib/a.ts @o")).toEqual(["/src/lib/notes.md"]);
+    expect(codeownersSrcLibGlobs("")).toEqual([]);
+    expect(codeownersSrcLibGlobs("/docs/x.md @o")).toEqual([]);
+  });
+
+  it("is a census of CODEOWNERS itself: every src/lib pattern is readable and the owned set is not empty", () => {
+    expect(codeownersUnreadableSrcLibPatterns(read(".github/CODEOWNERS"))).toEqual([]);
+    expect(codeownersSrcLibGlobs(read(".github/CODEOWNERS")).length).toBeGreaterThan(40);
+  });
+
+  it("loads without throwing whatever CODEOWNERS holds or lacks, because vitest.config.mts imports it", () => {
+    for (const codeowners of ["/src/lib/notes.md @o\n/src/lib/odd{[ @o\n", "", null]) {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), "money-modules-import-"));
+      try {
+        fs.mkdirSync(path.join(dir, "scripts", "lib"), { recursive: true });
+        fs.copyFileSync(path.join(ROOT, "scripts/lib/money-modules.mjs"), path.join(dir, "scripts/lib/money-modules.mjs"));
+        if (codeowners !== null) {
+          fs.mkdirSync(path.join(dir, ".github"));
+          fs.writeFileSync(path.join(dir, ".github/CODEOWNERS"), codeowners);
+        }
+        const target = pathToFileURL(path.join(dir, "scripts/lib/money-modules.mjs")).href;
+        const out = execFileSync(
+          process.execPath,
+          ["--input-type=module", "-e", `import("${target}").then((m) => process.stdout.write(String(m.MONEY_MODULE_GLOBS.length)))`],
+          { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+        );
+        // The extras still stand, so a bad CODEOWNERS narrows the set and never breaks the load.
+        expect(Number(out)).toBeGreaterThan(5);
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    }
   });
 
   it("holds a committed baseline the ratchet can read", () => {
@@ -361,6 +433,32 @@ describe("the CLI", () => {
       fs.rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  it("holds a pull request into main to main's figure, and one into an epic branch to the floor", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "money-ratchet-"));
+    try {
+      const stored = JSON.parse(read("scripts/ci/money-test-baseline.json")) as MoneyTestBaseline;
+      const write = (name: string, pct: number): string => {
+        const file = path.join(dir, name);
+        const entry = { pct };
+        fs.writeFileSync(file, JSON.stringify({ total: { lines: entry, statements: entry, functions: entry, branches: entry } }));
+        return file;
+      };
+      const run = (...extra: string[]): string =>
+        execFileSync(
+          process.execPath,
+          [path.join(ROOT, "scripts/ci/money-test-ratchet.mjs"), "coverage", "--summary", write("pr.json", Math.max(...Object.values(stored.coverage)) + 1), "--base-summary", write("main.json", 99), ...extra],
+          { cwd: ROOT, env: { ...process.env, GITHUB_STEP_SUMMARY: "" }, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+        );
+      // main measured 99; the pull request measures a point over the floor.
+      expect(() => run("--base-branch", "main")).toThrow(/lower than the latest main run/);
+      const epic = run("--base-branch", "epic/4000-x");
+      expect(epic).toContain("targets `epic/4000-x`, not `main`");
+      expect(epic).toContain("committed floor");
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("the workflows stay advisory (#4459)", () => {
@@ -408,6 +506,20 @@ describe("the workflows stay advisory (#4459)", () => {
     expect(run).toContain('"+refs/heads/${BASE_REF}:refs/remotes/origin/${BASE_REF}"');
     const ratchet = parseWorkflowYaml(coverage).jobs["coverage-ratchet"]!;
     expect(ratchet.permissions).toEqual({ contents: "read", actions: "read" });
+  });
+
+  it("records without failing on a push to main, and holds only a pull request into main to main's figure", () => {
+    const judge = coverage.slice(coverage.indexOf("- name: Judge the money modules against the base"));
+    const header = judge.slice(0, judge.indexOf("run: |"));
+    // From the event, as a step property: never interpolated into a shell command.
+    expect(header).toContain("continue-on-error: ${{ github.event_name == 'push' }}");
+    for (const line of coverage.split("\n").filter((l) => /^\s+(?:run:|node |git fetch|pnpm )/.test(l))) {
+      expect(line, "no expression inside a run line").not.toContain("${{ github.event_name");
+    }
+    expect(judge).toContain('--base-branch "${BASE_REF}"');
+    // The `main` lookup is for a pull request into main (or a push) only.
+    const find = coverage.slice(coverage.indexOf("- name: Find the latest successful main run"));
+    expect(find.slice(0, find.indexOf("run:"))).toContain("if: ${{ github.base_ref == '' || github.base_ref == 'main' }}");
   });
 
   it("skips a docs-only change: the path filter names what can move the figure, on both triggers", () => {

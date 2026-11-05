@@ -207,8 +207,12 @@ jobs:
       # What to hold the figure to: the latest successful `main` run's summary.
       # Finding it is not fatal (a first run, an expired artifact, an API
       # error): the judge then uses the committed floor and says so.
+      # Only for a pull request into `main` (or a push): `main`'s figures do not
+      # describe an epic branch, which is held to the floor (the judge step also
+      # ignores the summary for any other base).
       - name: Find the latest successful main run
         id: base
+        if: ${{ github.base_ref == '' || github.base_ref == 'main' }}
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: node scripts/ci/money-test-ratchet.mjs find-main-run
@@ -225,12 +229,19 @@ jobs:
 
       # The branch the pull request targets, fetched by name so the floor-lowered
       # guard compares with it (`main` on a push or a manual run).
+      #
+      # ON A PUSH TO `main` THE JUDGE RECORDS AND DOES NOT FAIL (`continue-on-error`,
+      # set from the event, never interpolated into `run:`). Whatever merged is
+      # `main`'s figure now, and the next pull request is held to it: a deliberate
+      # drop that was accepted at review cannot leave `main` red for ever. The
+      # table is still written to the summary, and the artifact still uploads.
       - name: Judge the money modules against the base
+        continue-on-error: ${{ github.event_name == 'push' }}
         env:
           BASE_REF: ${{ github.base_ref || 'main' }}
         run: |
           git fetch --no-tags origin "+refs/heads/${BASE_REF}:refs/remotes/origin/${BASE_REF}"
-          node scripts/ci/money-test-ratchet.mjs coverage --base-ref "origin/${BASE_REF}" --base-summary base-summary/coverage-summary.json
+          node scripts/ci/money-test-ratchet.mjs coverage --base-ref "origin/${BASE_REF}" --base-branch "${BASE_REF}" --base-summary base-summary/coverage-summary.json
 
       - name: Keep the merged summary
         if: ${{ !cancelled() }}

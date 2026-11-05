@@ -2,7 +2,7 @@
 /**
  * The money-module test ratchet (#4459, programme #4450).
  *
- *   node scripts/ci/money-test-ratchet.mjs coverage [--summary <file>] [--base-summary <file>] [--base-ref <ref>]
+ *   node scripts/ci/money-test-ratchet.mjs coverage [--summary <file>] [--base-summary <file> --base-branch <name>] [--base-ref <ref>]
  *   node scripts/ci/money-test-ratchet.mjs coverage --update  [--summary <file>]
  *   node scripts/ci/money-test-ratchet.mjs mutation [--report <file>] [--base-ref <ref>]
  *   node scripts/ci/money-test-ratchet.mjs mutation --update  [--report <file>]
@@ -69,7 +69,7 @@ function pct(entry) {
 /**
  * Judge the summary's `total`. The bar for each figure is the base summary's
  * figure less `COVERAGE_TOLERANCE_PP` (`base`, a `main` run's `total`) where it
- * has one, else the committed floor. A metric the summary has no figure for (no
+ * has one, but never below the committed floor; with none it is the floor. A metric the summary has no figure for (no
  * branches in the measured files) cannot regress and passes.
  *
  * @returns {{ ok: boolean, against: "main" | "floor", rows: Array<{ metric: string, against: "main" | "floor", reference: number, bar: number, current: number | null, delta: number | null, ok: boolean }> }}
@@ -81,7 +81,9 @@ export function evaluateCoverage(total, baseline, base = null) {
     const mainPct = base ? pct(base[metric]) : null;
     const against = mainPct === null ? "floor" : "main";
     const reference = mainPct ?? floor;
-    const bar = mainPct === null ? floor : round2(mainPct - COVERAGE_TOLERANCE_PP);
+    // Never below the committed floor: main's own figure less the tolerance would
+    // otherwise let each merged pull request take 0.09 points off it for ever.
+    const bar = mainPct === null ? floor : Math.max(floor, round2(mainPct - COVERAGE_TOLERANCE_PP));
     const current = pct(total?.[metric]);
     const delta = current === null ? null : round2(current - reference);
     return { metric, against, reference, bar, current, delta, ok: current === null || current >= bar };
@@ -103,13 +105,13 @@ export function worstFiles(summary, limit = 10, cwd = process.cwd()) {
     .slice(0, limit);
 }
 
-export function renderCoverageReport(result, summary, extra = []) {
+export function renderCoverageReport(result, summary, { extra = [], floorReason = null } = {}) {
   const lines = [
     `### Money-module coverage: ${result.ok ? "holds the bar" : "BELOW THE BAR"}`,
     "",
     result.against === "main"
-      ? `Compared with the latest successful \`main\` run, allowing ${COVERAGE_TOLERANCE_PP} percentage points of measurement noise.`
-      : "Compared with the committed floor in `scripts/ci/money-test-baseline.json`: no summary from a successful `main` run was available (none yet, or its artifact expired).",
+      ? `Compared with the latest successful \`main\` run (and never below the committed floor), allowing ${COVERAGE_TOLERANCE_PP} percentage points of measurement noise.`
+      : `Compared with the committed floor in \`scripts/ci/money-test-baseline.json\`: ${floorReason ?? "no summary from a successful `main` run was available (none yet, or its artifact expired)."}`,
     "",
     "| Metric | Compared with | Bar | Now | Change | |",
     "| --- | --- | ---: | ---: | ---: | --- |",
@@ -264,6 +266,11 @@ export async function latestMainRunId({ repository, token, fetchImpl = fetch }) 
   return typeof id === "number" ? id : null;
 }
 
+/** Is a pull request into `baseBranch` held to `main`'s figure? Only one into `main` (or no branch named: a push). */
+export function comparesWithMain(baseBranch) {
+  return baseBranch === null || baseBranch === undefined || baseBranch === "" || baseBranch === "main";
+}
+
 function parseArgs(argv) {
   const [command, ...rest] = argv;
   const options = {
@@ -271,6 +278,7 @@ function parseArgs(argv) {
     update: false,
     summary: DEFAULT_COVERAGE_SUMMARY,
     baseSummary: null,
+    baseBranch: null,
     report: DEFAULT_MUTATION_REPORT,
     baseRef: null,
   };
@@ -279,6 +287,7 @@ function parseArgs(argv) {
     if (arg === "--update") options.update = true;
     else if (arg === "--summary") options.summary = rest[++i];
     else if (arg === "--base-summary") options.baseSummary = rest[++i];
+    else if (arg === "--base-branch") options.baseBranch = rest[++i];
     else if (arg === "--report") options.report = rest[++i];
     else if (arg === "--base-ref") options.baseRef = rest[++i];
     else throw new Error(`Unknown argument: ${arg}`);
@@ -334,9 +343,16 @@ export async function main(argv) {
       process.stdout.write(`Raised ${BASELINE_PATH} to the measured coverage (never lowered).\n`);
       return 0;
     }
-    const base = options.baseSummary && fs.existsSync(options.baseSummary) ? readJson(options.baseSummary).total : null;
+    // `main`'s figures describe `main`, not an epic branch with its own history,
+    // so a pull request into any other branch is held to the floor.
+    const againstMain = comparesWithMain(options.baseBranch);
+    const base = againstMain && options.baseSummary && fs.existsSync(options.baseSummary) ? readJson(options.baseSummary).total : null;
     const result = evaluateCoverage(summary.total, baseline, base);
-    emit(renderCoverageReport(result, summary));
+    emit(
+      renderCoverageReport(result, summary, {
+        floorReason: againstMain ? null : `this pull request targets \`${options.baseBranch}\`, not \`main\`, and \`main\`'s figures do not describe that branch.`,
+      }),
+    );
     if (!result.ok) problems.push(`money-module coverage is lower than the ${result.against === "main" ? "latest main run" : "committed floor"}`);
   } else {
     const scored = scoreFromMutationReport(readJson(options.report));

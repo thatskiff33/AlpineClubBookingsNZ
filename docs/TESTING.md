@@ -226,8 +226,12 @@ pattern in CODEOWNERS is a coverage glob, so a module is measured the day it is
 owned. The same file adds what the issue names beyond that ownership: every Xero
 module (the inbound handlers in `xero-inbound/` included), the booking ledger,
 and the refund, credit, settlement and money-named helpers. `MONEY_MODULE_GLOBS`
-is the result. `vitest.config.mts` (`test.coverage.include`), the ratchet script
-and the Stryker config all import it; do not spell the list a fourth time.
+is the result. `vitest.config.mts` (`test.coverage.include`) and the ratchet
+script read it; the Stryker config reads `MUTATION_TARGET_GLOBS`, the narrower
+set it mutates, and `vitest.stryker.config.mts` reads `MUTATION_TEST_FILES`. Do
+not spell the list again. The module never throws on import (`vitest.config.mts`
+loads it, so one odd CODEOWNERS line must not stop every test run); a pattern it
+cannot read is reported as data and the ratchet test fails on it.
 `scripts/ci/money-test-ratchet.test.ts` fails a glob that matches no file, a
 CODEOWNERS-owned `src/lib` file the set leaves out, and a module the
 [CODEOWNERS census](../src/lib/__tests__/codeowners-census.test.ts) says must
@@ -261,12 +265,25 @@ stay owned that is not measured.
   either adds the missing tests or says why not.
 - **The bar** is the latest successful `main` run's own figure, read from that
   run's `money-coverage-summary` artifact (kept 30 days), less 0.1 percentage
-  points for measurement noise (a flaky test, a timing-dependent branch). Figures
-  are compared to two decimals, so a pull request that moves lines from 87.96 to
-  87.01 fails, and one that moves them to 87.90 passes. With no such artifact
-  (a first run, or none within 30 days) the bar is the committed floor,
-  `scripts/ci/money-test-baseline.json`, and the summary says "committed floor".
-  The judge job needs `actions: read` to find and download the artifact.
+  points for measurement noise (a flaky test, a timing-dependent branch), and
+  never below the committed floor. Figures are compared to two decimals, so a
+  pull request that moves lines from 87.96 to 87.01 fails, and one that moves
+  them to 87.90 passes; because of the floor, `main` cannot drift down 0.09
+  points a pull request for ever. With no such artifact (a first run, or none
+  within 30 days) the bar is the floor, `scripts/ci/money-test-baseline.json`,
+  and the summary says "committed floor". A pull request into a branch other
+  than `main` (an `epic/**` branch) is held to the floor too, and the summary
+  says so, because `main`'s figures do not describe that branch. The judge job
+  needs `actions: read` to find and download the artifact.
+- **Recovering from a red `main`.** On a push to `main` the judge records and
+  does not fail (its step is `continue-on-error` for the `push` event), so a drop
+  that was accepted at review becomes `main`'s figure and the next pull request
+  is held to that. The summary still shows the table. If a drop is real but
+  accepted, nothing more is needed, unless it takes `main` below the committed
+  floor: then lower the floor in the same pull request that accepts it, say why
+  in the PR, and expect the job on that PR to go red (a lowered
+  floor turns it red). Re-run `coverage --update` from a later green `main` artifact to
+  tighten the floor again.
 - **The floor** is `scripts/ci/money-test-baseline.json`. Judging a pull request
   never writes it, so lanes do not collide on it (the
   [fragment-directory rule](../changelog.d/README.md) is for an artifact every
@@ -278,8 +295,10 @@ stay owned that is not measured.
   A pull request that lowers it turns the job red (`--base-ref`, the branch the
   pull request targets), so removing well-covered code is a visible decision.
 - **Measured** (5 Nov 2026, 498 files): lines 88.99%, statements 87.97%,
-  functions 89.29%, branches 82.01%. The floor holds 88, 87, 89 and 81: the
-  whole-percent floor of each, with a point more room on branches. It was
+  functions 89.29%, branches 82.01%. The floor holds 88, 87, 88 and 81: the
+  whole-percent floor of each, with a point more room on functions and branches,
+  where the margin to a whole number was under half a point (a CI reading 0.3
+  lower would otherwise sit under the floor). It was
   measured on a development machine rather than in CI, so it is deliberately a
   little loose until a green `main` run's artifact tightens it with `--update`
   (and the bar is `main`'s own figure whenever one exists). The figure counts
