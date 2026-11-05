@@ -36,6 +36,7 @@ import { loadPublicFirstYearCosts } from "@/lib/public-first-year-costs";
 import { resolveFeeTokenParameters } from "@/lib/token-parameters";
 import { clubFormatValues } from "@/lib/club-format-server";
 import type { ClubFormat } from "@/lib/club-format";
+import { escapeRegExp } from "@/lib/escape-regexp";
 
 export type PhotoGalleryImage = {
   src: string;
@@ -73,10 +74,6 @@ type ParsedEmbedToken = {
   token: string;
   parameter: string | undefined;
 };
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
 
 // Both matchers are derived from src/lib/token-catalogue.ts (single source of
 // truth) and built once at module load. Matching behaviour is unchanged from

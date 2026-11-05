@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { logAudit } from "@/lib/audit";
 import bcrypt from "bcryptjs";
 import { PASSWORD_BCRYPT_COST } from "@/lib/password-hashing";
+import { breachedPasswordRefusal, screenChosenPassword } from "@/lib/breached-password";
 import crypto from "crypto";
 import { z } from "zod";
 import { nameField } from "@/lib/zod-helpers";
@@ -317,6 +318,10 @@ export async function PUT(request: NextRequest) {
     }
   }
 
+  // #4610 (INV-AUTH-006): an officer-chosen kiosk password is screened first.
+  const screen = password ? await screenChosenPassword(password) : { ok: true as const };
+  if (!screen.ok) return breachedPasswordRefusal(screen);
+
   const updateData: Record<string, unknown> = {};
   const changes: string[] = [];
 
@@ -424,6 +429,10 @@ export async function POST(request: NextRequest) {
       { status: 400 },
     );
   }
+
+  // #4610 (INV-AUTH-006): screen the officer-chosen kiosk password first.
+  const screen = await screenChosenPassword(parsed.data.password);
+  if (!screen.ok) return breachedPasswordRefusal(screen);
 
   const passwordHash = await bcrypt.hash(parsed.data.password, PASSWORD_BCRYPT_COST);
   const created = await prisma.$transaction(async (tx) => {

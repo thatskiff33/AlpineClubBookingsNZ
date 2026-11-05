@@ -3,12 +3,14 @@
 Audience: Developer, Agent.
 
 Prefix defined in this file: **`INV-AUTH`** — how the app decides whether a
-sign-in attempt may proceed, without telling anyone which accounts exist.
+sign-in attempt may proceed, without telling anyone which accounts exist, and
+which passwords it lets a person choose.
 
 Read this file when you are changing password sign-in, the per-account
 password throttle, what a refused or throttled sign-in answers, the
-per-account limits on password-reset and sign-in-link requests, or anything
-that keys a limit on an account rather than an internet address.
+per-account limits on password-reset and sign-in-link requests, anything that
+keys a limit on an account rather than an internet address, or any code that
+writes `passwordHash`.
 
 Index: [`docs/DOMAIN_INVARIANTS.md`](../DOMAIN_INVARIANTS.md) — every `INV-*` ID
 with a one-line description of what it covers. ID scheme and allocation rules:
@@ -18,9 +20,10 @@ Every heading below whose whole text is an `INV-*` ID defines that invariant. ID
 are permanent: never renumbered, never reused.
 
 The threat, the fallback and the stated limits are in
-[`SECURITY.md`](../SECURITY.md#per-account-password-throttle-4609) and, for
-the request limits,
-[`SECURITY.md`](../SECURITY.md#per-account-email-request-limits-4613); the row
+[`SECURITY.md`](../SECURITY.md#per-account-password-throttle-4609), for
+the request limits
+[`SECURITY.md`](../SECURITY.md#per-account-email-request-limits-4613), and
+[`SECURITY.md`](../SECURITY.md#breached-password-check-4610); the row
 lock is in
 [`CONCURRENCY_AND_LOCKING.md`](../CONCURRENCY_AND_LOCKING.md#narrow-row--and-table-lock-protocols).
 This file holds only the rules.
@@ -102,3 +105,34 @@ This file holds only the rules.
   unknown email look the same.
 - **A store failure never blocks a request.** The count falls back to the
   #1142 per-process budget, as every auth-sensitive limiter's does.
+
+## INV-AUTH-006
+
+- **A password a person chooses is screened against the public breach list
+  before it is hashed.** Every place a person chooses a password — change,
+  reset and account-setup links, an officer setting a kiosk password, and the
+  install seed's two passwords —
+  awaits `screenChosenPassword` in
+  [`breached-password.ts`](../../src/lib/breached-password.ts) first, and a
+  listed password is refused with `PASSWORD_BREACHED`. It is the one helper
+  (`INV-SSOT`); sign-in never calls it, and passwords already set are not
+  re-checked.
+- **Only a five-character prefix of the password's SHA-1 hash leaves the
+  server.** The range answer is matched locally. No password, full hash or
+  member identifier is sent, and no log line, Sentry span, breadcrumb or event
+  carries the prefix (`sentry-privacy-options.ts` filters on the endpoint).
+- **It fails open.** No answer within three seconds, a network error, a non-200
+  or a malformed body accepts the password and logs only the failure class.
+- **The check is a club setting, on by default**
+  (`LoginSecuritySetting.breachedPasswordCheck`, `INV-CONFIG-001`). Switched
+  off, no request is made.
+- **Every `passwordHash` writer is classified**, raw-SQL `INSERT`/`UPDATE`
+  literals included. `password-hash-writer-census.test.ts` fails a new writer
+  that is neither guarded — a `const` bound to the awaited screen of the same
+  unreassigned `const` or parameter it hashes, then `if (!result.ok)`
+  returning, before the write in an enclosing block — nor listed as exempt
+  with its reason: a generated or deliberately unusable hash (placeholders,
+  imports, erasure, the demo seed, SQL fixtures). An exempt writer's value
+  must trace to random bytes, the erased-account sentinel or an inline
+  literal; a stored parameter or copied hash, to the screened or generated
+  writer its `valueFrom` names. Only the local demo seed is untraced.

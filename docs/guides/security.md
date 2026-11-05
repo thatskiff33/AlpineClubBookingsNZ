@@ -38,7 +38,11 @@ configure the `magicLink` and `googleLogin` modules you enable on
    note appears.
 
 2. In **Password policy**, click **Edit**, set the strength requirements that
-   apply to every member and admin password, then **Save**.
+   apply to every member and admin password, then **Save**. **Refuse passwords
+   found in public data breaches** (on by default) checks each newly chosen
+   password against a public list of leaked passwords; only the first five
+   characters of a one-way code made from the password are sent, and if the
+   service does not answer within three seconds the password is accepted.
 3. In **Email sign-in link**, click **Edit**, confirm the enable toggle is on,
    set the link's expiry (a whole number of minutes between 5 and 60; default
    15), then **Save**. For **Google sign-in**, first set up and verify the
@@ -51,6 +55,7 @@ configure the `magicLink` and `googleLogin` modules you enable on
 | Setting | What it controls | Notes / constraints |
 | --- | --- | --- |
 | Password policy | Minimum strength requirements for all passwords | Applies club-wide, across members and admins |
+| Refuse passwords found in public data breaches | Whether a newly chosen password is checked against a public breach list | Default on; applies when a password is set, never at login; needs outbound HTTPS to `api.pwnedpasswords.com` ([details](../SECURITY.md#breached-password-check-4610)) |
 | Email sign-in link (magic link) | Passwordless single-use email sign-in | Requires the `magicLink` module and configured transactional email; additive to password login, never a replacement, for existing verified members only |
 | Magic-link expiry | How long a sign-in link stays valid | Default 15 minutes |
 | Google sign-in | Sign in with a linked Google account | Requires the `googleLogin` module **and** Google OAuth credentials entered + verified in-app (Admin → Integrations → Google — encrypted at rest, no env vars); the module can't be enabled until verification passes; a member links their own Google account from their profile; no account is ever created from Google |

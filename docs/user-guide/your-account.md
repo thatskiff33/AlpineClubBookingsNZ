@@ -40,8 +40,10 @@ decides whether you book at member rates.
 
 In the **Security** section, click **Change Password**. New passwords must meet
 the club's current password policy (a minimum length and, optionally, required
-character types), which the change form shows as live hints. The policy applies
-when you set a password, never at login.
+character types), which the change form shows as live hints. Unless your club
+has switched it off, a password that has appeared in a public data breach is
+also refused, and you are asked to choose another. The policy applies when you
+set a password, never at login.
 
 ### Change your email
 
@@ -143,6 +145,7 @@ The **Privacy & Data** section gives you two rights:
 | Symptom | Why it happens | What to do |
 | --- | --- | --- |
 | Your new password is rejected | It does not meet the club's password policy | Read the live hints on the change form and try a stronger password |
+| Your new password is rejected as found in a data breach | That exact password is on a public list of leaked passwords, so attackers are likely to try it | Choose a different password you have not used on another site |
 | Your email change did not take effect | You have not clicked the verification link on the **new** address | Check the new inbox (and spam) and click the link |
 | You lost your authenticator app | 2FA cannot generate a code | Use a saved **recovery code** to sign in, then regenerate codes; if you have none, contact the club office |
 | You do not see "Email me a sign-in link" or "Continue with Google" | Your club has not enabled that method | Sign in with your password; ask the club if you expected it |

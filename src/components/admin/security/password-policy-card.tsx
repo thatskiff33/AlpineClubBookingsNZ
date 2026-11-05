@@ -52,6 +52,7 @@ interface PolicyDraft {
   requireLowercase: boolean;
   requireDigit: boolean;
   requireSymbol: boolean;
+  breachedPasswordCheck: boolean;
 }
 
 interface SettingsResponse {
@@ -67,6 +68,7 @@ function toDraft(policy: SettingsResponse["policy"]): PolicyDraft {
     requireLowercase: policy.requireLowercase,
     requireDigit: policy.requireDigit,
     requireSymbol: policy.requireSymbol,
+    breachedPasswordCheck: policy.breachedPasswordCheck,
   };
 }
 
@@ -120,6 +122,11 @@ export function PasswordPolicyCard() {
 
   function setClass(key: ClassField, value: boolean) {
     section.setDraft({ [key]: value } as Partial<PolicyDraft>);
+    section.setSuccess("");
+  }
+
+  function setBreachedPasswordCheck(value: boolean) {
+    section.setDraft({ breachedPasswordCheck: value });
     section.setSuccess("");
   }
 
@@ -248,6 +255,41 @@ export function PasswordPolicyCard() {
                   </div>
                 );
               })}
+            </fieldset>
+
+            {/*
+              #4610 (INV-AUTH-006): the breached-password check. Staged with the
+              rest of the card and saved through the same PUT.
+            */}
+            <fieldset className="space-y-2">
+              <legend className="text-sm font-medium text-muted-foreground">
+                Breached passwords
+              </legend>
+              <div className="flex items-center gap-3">
+                <Checkbox
+                  id="password-breachedPasswordCheck"
+                  checked={draft.breachedPasswordCheck}
+                  onCheckedChange={(checked) => setBreachedPasswordCheck(checked === true)}
+                  disabled={!editing || saving}
+                  aria-describedby="password-breachedPasswordCheck-hint"
+                />
+                <Label htmlFor="password-breachedPasswordCheck" className="font-normal">
+                  Refuse passwords found in public data breaches
+                </Label>
+                <Badge variant={draft.breachedPasswordCheck ? "success" : "secondary"}>
+                  {draft.breachedPasswordCheck ? "On" : "Off"}
+                </Badge>
+              </div>
+              <p
+                id="password-breachedPasswordCheck-hint"
+                className="text-xs text-muted-foreground"
+              >
+                When someone sets a password, it is checked against a public
+                list of leaked passwords. Only the first 5 characters of a
+                one-way code made from the password are sent, never the password
+                itself. If the service does not answer within 3 seconds, the
+                password is accepted.
+              </p>
             </fieldset>
 
             {editing && dirty ? (

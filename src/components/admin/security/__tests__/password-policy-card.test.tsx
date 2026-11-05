@@ -24,7 +24,7 @@ import { PasswordPolicyCard } from "@/components/admin/security/password-policy-
 
 const NOTICE_RE = /can view login & security settings but cannot change them/i;
 
-function policyResponse(minPasswordLength = 12) {
+function policyResponse(minPasswordLength = 12, breachedPasswordCheck = true) {
   return new Response(
     JSON.stringify({
       policy: {
@@ -34,6 +34,7 @@ function policyResponse(minPasswordLength = 12) {
         requireDigit: false,
         requireSymbol: false,
         magicLinkTtlMinutes: 15,
+        breachedPasswordCheck,
       },
       updatedAt: null,
       updatedByMemberId: null,
@@ -44,6 +45,12 @@ function policyResponse(minPasswordLength = 12) {
 
 function minLengthInput() {
   return screen.getByLabelText(/minimum password length/i) as HTMLInputElement;
+}
+
+function breachCheckbox() {
+  return screen.getByRole("checkbox", {
+    name: /refuse passwords found in public data breaches/i,
+  }) as HTMLInputElement;
 }
 
 function editButton() {
@@ -121,6 +128,42 @@ describe("PasswordPolicyCard (#2103)", () => {
     // Exited edit mode.
     expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
     expect(minLengthInput().disabled).toBe(true);
+  });
+
+  // #4610: the breached-password switch stages with the card and round-trips
+  // through the same PUT; Cancel reverts it like every other control.
+  it("stages the breached-password switch behind Edit, saves it, and reloads it", async () => {
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) =>
+      init?.method === "PUT" ? policyResponse(12, false) : policyResponse(12, true),
+    );
+    await renderLoaded(fetchMock);
+    expect(breachCheckbox().checked).toBe(true);
+    expect(breachCheckbox().disabled).toBe(true);
+
+    fireEvent.click(editButton());
+    fireEvent.click(breachCheckbox());
+    expect(breachCheckbox().checked).toBe(false);
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(breachCheckbox().checked).toBe(true);
+
+    fireEvent.click(editButton());
+    fireEvent.click(breachCheckbox());
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() =>
+      expect(screen.getByText(/password policy saved/i)).toBeTruthy(),
+    );
+    const putCall = fetchMock.mock.calls.find(([, init]) => init?.method === "PUT");
+    expect(JSON.parse(String(putCall?.[1]?.body))).toEqual({
+      minPasswordLength: 12,
+      requireUppercase: false,
+      requireLowercase: false,
+      requireDigit: false,
+      requireSymbol: false,
+      breachedPasswordCheck: false,
+    });
+    // The saved snapshot is the server's answer, shown read-only again.
+    expect(breachCheckbox().checked).toBe(false);
+    expect(breachCheckbox().disabled).toBe(true);
   });
 
   it("surfaces the forbidden-save reason on a 403 from the PUT", async () => {

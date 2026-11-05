@@ -67,6 +67,16 @@ describe("config-transfer registry — forbidden field guard", () => {
     expect(isForbiddenField("forcePasswordChange")).toBe(true);
   });
 
+  // #4610: the breached-password check switch is a portable on/off rule; the
+  // exemption is the whole word "check", so a token- or hash-bearing name that
+  // merely starts with it stays blocked.
+  it("allows the breached-password check switch but nothing longer", () => {
+    expect(isForbiddenField("breachedPasswordCheck")).toBe(false);
+    expect(isForbiddenField("passwordCheckToken")).toBe(true);
+    expect(isForbiddenField("passwordChecksum")).toBe(true);
+    expect(isForbiddenField("passwordCheckHash")).toBe(true);
+  });
+
   it("treats door codes as sensitive opt-in, not forbidden", () => {
     expect(isSensitiveOptInField("doorCode")).toBe(true);
     expect(isForbiddenField("doorCode")).toBe(false);

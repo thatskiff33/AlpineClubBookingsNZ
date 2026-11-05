@@ -26,6 +26,13 @@ export interface LoginSecurityPolicy {
   requireDigit: boolean;
   requireSymbol: boolean;
   magicLinkTtlMinutes: number;
+  /**
+   * #4610: refuse a chosen password that the public breached-password range
+   * service already lists. Club setting, default on (INV-AUTH-006). Applied by
+   * `screenChosenPassword` in `@/lib/breached-password`, never by the zod
+   * schema below, because it needs a network call.
+   */
+  breachedPasswordCheck: boolean;
 }
 
 /**
@@ -40,6 +47,7 @@ export const DEFAULT_LOGIN_SECURITY_POLICY: LoginSecurityPolicy = {
   requireDigit: false,
   requireSymbol: false,
   magicLinkTtlMinutes: 15,
+  breachedPasswordCheck: true,
 };
 
 // Configurable minimum-length bounds (owner-locked on the epic): admins may set
@@ -90,6 +98,8 @@ export function normalizeLoginSecurityPolicy(
       MAGIC_LINK_TTL_MAX_MINUTES,
       DEFAULT_LOGIN_SECURITY_POLICY.magicLinkTtlMinutes,
     ),
+    breachedPasswordCheck:
+      record?.breachedPasswordCheck ?? DEFAULT_LOGIN_SECURITY_POLICY.breachedPasswordCheck,
   };
 }
 
