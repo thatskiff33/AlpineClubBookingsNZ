@@ -6,8 +6,12 @@
   that amount. The retry now asks for its own increase plus whatever the later
   request still has unpaid, and replaces that request. The member is left with
   one card request for the full amount owed. A price reduction saved in the
-  meantime now sets itself against that waiting increase too. If the member
-  is paying the later request at that moment, the retry waits until that
-  payment is recorded instead of cancelling it. A retry whose change already
+  meantime now sets itself against that waiting increase too. If Stripe shows
+  the later request as paid or still processing, the retry waits for that
+  payment to be recorded rather than cancelling it, for up to seven days. If
+  it is still not recorded by then, the retry stops and officers are alerted
+  to check the payment in Stripe and collect the change by hand. A member
+  part-way through a card security check on the later request when the retry
+  runs is asked to pay the new request instead. A retry whose change already
   has its card request on record finishes with that request rather than
-  asking a second time. No operator action is needed.
+  asking a second time. Otherwise no operator action is needed.

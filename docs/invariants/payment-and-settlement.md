@@ -2809,8 +2809,8 @@ _Legacy: settles tasks raised before #4317._
   runner's close is claim-fenced (#4675). One uncancellable is logged.
 - **A declined card stays live** (#4052).
 - **Asks awaiting a failed mint's retry** count, sized as the replay would
-  (none if one's frozen). Only its own row settles one, never a later ask, bar
-  a frozen one's replay (#4015). A claim under two minutes refuses the edit;
+  (none if one's frozen). Only its own row settles one, bar a frozen one's
+  replay (#4015). A claim under two minutes refuses the edit;
   older ones close. A later increase folds a waiting re-issue in, recorded
   for its replay to ask; both its minters send one request
   (`planReissuedAskMint`).
@@ -2822,7 +2822,8 @@ _Legacy: settles tasks raised before #4317._
   supplementary invoice for what the retired asks' invoices left after the
   offset. The rest of the offset, where evidence shows the primary invoice
   billed it (`unpaidAskBillingEvidence`), takes a scoped invoice-correction
-  note, raised after the edit's own note; otherwise the repair pass reports it.
+  note, raised after the edit's own note; otherwise the repair pass reports it
+  for a person.
 
 ## INV-PAY-121
 

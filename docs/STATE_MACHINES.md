@@ -772,10 +772,18 @@ and permanently ([INV-PAY-047]). The ask is the edit's net PLUS the unpaid
 balance of the ask it supersedes.
 
 ```text
-a failed mint's replay, before it mints (#4015 review C1, outside any transaction)
-  -> reads Stripe for the live ask it would carry and supersede
-       succeeded, processing or requires_capture -> retryable failure, nothing
-         minted or cancelled; once the webhook lands it carries none of it
+a failed mint's replay, before it mints (#4015 review, outside any transaction)
+  -> reads Stripe for the live ask it would carry and supersede (bounded read;
+       a timeout is an ordinary retry), through `staleIntentAction`
+       unpaid (requires_action / 3DS included), cancelled or unknown to Stripe
+         -> carried and superseded; a 3DS confirmation in progress then fails
+       succeeded, processing, requires_capture or an unrecognised status
+         -> WAIT: nothing minted or cancelled, the attempt handed back, checked
+            again on the longest retry interval; once the webhook lands it
+            carries none of that ask
+         -> still so once the recovery is 7 days old (CARRIED_ASK_PAYMENT_WAIT_MAX_MS)
+            -> FAILED for good at once, officers alerted with the cause
+               (check that request in Stripe, record it, collect this change by hand)
        a confirmation landing after that read -> the superseded-capture refund below
 edit raises an ask -> mint the replacement intent
   -> enqueue CANCEL_PAYMENT_INTENT for every other live or declined (#4422) ADDITIONAL intent

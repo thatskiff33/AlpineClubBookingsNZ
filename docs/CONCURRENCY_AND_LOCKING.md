@@ -3764,7 +3764,8 @@ increase from the edit its mint stamped on the row
 it again. A recovery is settled by its own row (`findOwnRecoveryRow`, #4015),
 and only a frozen one also by a later ask, so a later ask cannot overtake
 money the replay can size; the replay reads Stripe first, outside any
-transaction, and backs off while the ask it would carry is being paid; and
+transaction, and waits (attempt handed back, for up to seven days) while
+Stripe is taking money on the ask it would carry; and
 both minters of a re-issue resolve its Stripe customer one way
 (`resolveAskCustomerId`). A deadlock mapped to the 409 is logged and kept as its
 cause. Deploy window: the previous release's recovery runner, still draining,

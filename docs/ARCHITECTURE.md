@@ -3162,8 +3162,11 @@ a captured row's status (`INV-PAY-132`). A later edit's newer additional intent 
 it (#4015): that ask was sized off a `Payment` that never showed this failed mint, so the replay
 carries its unpaid balance and supersedes it; only a frozen figure, with no edit to re-derive
 from, still skips itself. Before minting it reads Stripe for that later ask, outside any
-transaction, and backs off (a retryable failure) while it is being paid, so a member mid-payment is
-never cancelled under. It settles the Xero half two ways: it points any
+transaction. While Stripe is taking money on it (succeeded, processing, or a status this code does
+not recognise) the replay waits with its attempt handed back, for up to seven days from when it was
+queued, then stops and alerts an officer. An ask still unpaid at Stripe, one mid-3DS included, is
+superseded, and a confirmation landing after the read takes the superseded-capture refund
+(`docs/STATE_MACHINES.md`, "One ask at a time"). It settles the Xero half two ways: it points any
 supplementary invoice operation still WAITING_PAYMENT at the recovered intent,
 and it raises the supplementary invoice outright for the edits that queued none
 — the inline dispatch skips that queue while no intent exists, so those edits
