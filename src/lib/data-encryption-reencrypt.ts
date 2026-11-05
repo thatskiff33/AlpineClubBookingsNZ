@@ -40,10 +40,7 @@ import {
   type DataKey,
 } from "@/lib/data-encryption-key-material";
 import { readDataKeyRing } from "@/lib/data-encryption-keys";
-import {
-  StaleCredentialWriteError,
-  type CredentialActor,
-} from "@/lib/integration-credential-actor";
+import { StaleCredentialWriteError } from "@/lib/integration-credential-actor";
 import {
   readIntegrationCredentialRow,
   setIntegrationCredentialInTransaction,
@@ -61,8 +58,6 @@ import {
 } from "@/lib/two-factor-rekey";
 import { decryptTwoFactorSecret } from "@/lib/two-factor";
 import { fenceXeroTokenSetRewrite, XERO_OAUTH_TOKEN_PROVIDER } from "@/lib/xero-token-store";
-
-const REENCRYPT_ACTOR: CredentialActor = { kind: "system", actor: DATA_KEY_REENCRYPT_JOB_NAME };
 
 /** Passes before what still loses its claim is reported rather than retried. */
 export const DEFAULT_MAX_PASSES = 3;
@@ -193,7 +188,7 @@ async function moveCredential(row: CredentialRow, target: DataKey, options: Reen
         provider: row.provider,
         key: row.key,
         value: stored.value,
-        actor: REENCRYPT_ACTOR,
+        actor: { kind: "system", actor: DATA_KEY_REENCRYPT_JOB_NAME },
         expect: { expect: "version", version: stored.version },
         cause: { kind: "data-key-reencrypt" },
       });

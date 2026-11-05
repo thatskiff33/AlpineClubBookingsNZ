@@ -410,7 +410,15 @@ describe("no two-factor write under AUTH_SECRET while stored data names a ring k
       expect(wrote()).toBe(0);
     }
     expect(mockPrisma.member.count).toHaveBeenCalledWith({ where: { totpSecret: { startsWith: "v2:" } } });
-    expect(mockPrisma.twoFactorRecoveryCode.count).toHaveBeenCalledWith({ where: { codeHash: { contains: ":" } } });
+    // A `:` marks a ring hash, except on a code the re-encrypt retired (#4456 PR 2).
+    expect(mockPrisma.twoFactorRecoveryCode.count).toHaveBeenCalledWith({
+      where: {
+        AND: [
+          { codeHash: { contains: ":" } },
+          { NOT: { codeHash: { startsWith: "retired.legacy-auth-secret:" } } },
+        ],
+      },
+    });
   });
 
   it.each(Object.entries(writers))("writes %s under AUTH_SECRET as before when nothing names a ring key", async (_label, write) => {

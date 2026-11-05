@@ -85,9 +85,8 @@ describe("setup readiness: the Data Encryption Key step (#4456)", () => {
     expect(check.status).toBe("warning");
     expect(check.message).toMatch(/data key "k1"/);
     expect(check.message).toMatch(/rotating it now would make that data unreadable/);
-    // The manual routes, until the re-encrypt command ships (#4456 PR 2).
-    expect(check.details.join(" ")).toMatch(/re-enter each provider credential in Admin → Integrations/);
-    expect(check.details.join(" ")).toMatch(/re-enrol/);
+    // The re-encrypt command (#4456 PR 2), dry run first.
+    expect(check.details.join(" ")).toMatch(/run pnpm run data-keys:reencrypt \(try --dry-run first\)/);
   });
 
   it("is complete when a ring is set and nothing depends on AUTH_SECRET", () => {
@@ -210,5 +209,37 @@ describe("setup readiness: the Data Encryption Key step (#4456)", () => {
     const check = foundation?.checks.find((candidate) => candidate.id === "data-encryption-keys");
     expect(check?.status).toBe("blocked");
     expect(check?.progress).toBe("open");
+  });
+});
+
+describe("setup readiness: the legacy-read switch, DATA_ENCRYPTION_LEGACY_KEY (#4456 PR 2)", () => {
+  const MOVED = usage({ credentialRowsByKeyId: { k1: 2 }, totpRowsByKeyId: { k1: 1 } });
+
+  it("is red when the switch retires AUTH_SECRET reads while rows are still under it, and says how to recover", () => {
+    const check = buildDataEncryptionKeyCheck(`k1:${K1}`, LEGACY_STORED, undefined, "retired");
+    expect(check.status).toBe("blocked");
+    expect(check.message).toMatch(/DATA_ENCRYPTION_LEGACY_KEY=retired stops reading anything under AUTH_SECRET/);
+    expect(check.details).toContain("3 provider credentials encrypted under AUTH_SECRET.");
+    expect(check.details.join(" ")).toMatch(/Unset DATA_ENCRYPTION_LEGACY_KEY and restart, run pnpm run data-keys:reencrypt/);
+  });
+
+  it("is complete once nothing is under AUTH_SECRET, and offers the switch until it is set", () => {
+    const offered = buildDataEncryptionKeyCheck(`k1:${K1}`, MOVED);
+    expect(offered.status).toBe("complete");
+    expect(offered.details.join(" ")).toMatch(/set DATA_ENCRYPTION_LEGACY_KEY=retired and restart/);
+
+    const set = buildDataEncryptionKeyCheck(`k1:${K1}`, MOVED, undefined, "retired");
+    expect(set.status).toBe("complete");
+    expect(set.details.join(" ")).toMatch(/nothing is read under it \(DATA_ENCRYPTION_LEGACY_KEY=retired\)/);
+  });
+
+  it("is red, naming the switch, when it is set without a ring or to anything but retired", () => {
+    const withoutRing = buildDataEncryptionKeyCheck(undefined, NOTHING_STORED, undefined, "retired");
+    expect(withoutRing.status).toBe("blocked");
+    expect(withoutRing.details[0]).toMatch(/DATA_ENCRYPTION_LEGACY_KEY=retired needs DATA_ENCRYPTION_KEYS/);
+
+    const typo = buildDataEncryptionKeyCheck(`k1:${K1}`, MOVED, undefined, "retire");
+    expect(typo.status).toBe("blocked");
+    expect(typo.details[0]).toMatch(/DATA_ENCRYPTION_LEGACY_KEY: the only accepted value is "retired"/);
   });
 });
