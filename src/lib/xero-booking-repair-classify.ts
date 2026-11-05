@@ -85,6 +85,7 @@ import {
   withoutScopedSideNotes,
 } from "@/lib/xero-booking-repair-side-notes";
 import { addAppliedCreditFindings, waitForAppliedCreditWorkBeforeClearing } from "./xero-booking-repair-applied-credit";
+import { addBlockedNoteAllocationFinding, dispatchOwnNoteRow } from "./xero-booking-repair-own-note-row";
 import { addKeptLateCaptureRefundByHandFinding, addLateCaptureCardRefundByHandFindings, addPaidAnotherWayReceiptFinding } from "./xero-booking-repair-paid-another-way";
 import { addKeptChangeCaptureFinding, addUnrecordedAdditionalCaptureFindings, keptInvoiceBillsChange } from "./xero-booking-repair-additional-capture";
 import { addRefundRequestNoteNotQueuedFindings, paidBackRefundRequestCents } from "./xero-booking-repair-request-notes";
@@ -123,48 +124,6 @@ function isOutstandingClearingNoteCreate(operation: XeroOperationRecord): boolea
     operation.status !== "CANCELLED" &&
     !isResolvedInXero(operation)
   );
-}
-
-/** A live clearing allocation: reported, never retried here or queued beside. */
-function addBlockedClearingAllocationFinding(
-  findings: MutableFinding[],
-  operation: XeroOperationRecord,
-  summary?: string // #4259: the clearing note's own row, held by a retry's repair claim
-) {
-  addFinding(findings, {
-    code: "BLOCKED_BY_XERO_OPERATION",
-    severity: "warning",
-    summary: summary ?? (["FAILED", "PARTIAL"].includes(operation.status)
-      ? "A Xero invoice-clearing allocation operation failed and is not retried here - resolve it by hand so the cancelled unpaid booking's invoice closes."
-      : isStuckOperation(operation)
-        ? "A pending or running Xero invoice-clearing allocation operation looks stuck."
-        : "A Xero invoice-clearing allocation operation is already pending or running."),
-    safeToAutoApply: false,
-    details: { operationId: operation.id, operationStatus: operation.status },
-    actionKeys: [],
-  });
-}
-
-/** #1427, #4757: an edit's note allocation held by a live or unretryable row: reported, never queued beside. */
-function addBlockedModificationAllocationFinding(
-  findings: MutableFinding[],
-  modificationId: string,
-  operation: XeroOperationRecord,
-  summary?: string,
-  extraDetails: Record<string, unknown> = {}
-) {
-  addFinding(findings, {
-    code: "BLOCKED_BY_XERO_OPERATION",
-    severity: "warning",
-    summary: summary ?? (["FAILED", "PARTIAL"].includes(operation.status)
-      ? "A Xero credit-note allocation operation failed and cannot be auto-retried - resolve the operation manually."
-      : isStuckOperation(operation)
-        ? "A pending or running Xero credit-note allocation operation looks stuck."
-        : "A Xero credit-note allocation operation is already pending or running."),
-    safeToAutoApply: false,
-    details: { modificationId, operationId: operation.id, operationStatus: operation.status, ...extraDetails },
-    actionKeys: [],
-  });
 }
 
 export function classifyBookingContext(
@@ -1285,26 +1244,23 @@ export function classifyBookingContext(
           // #4757: the note's own row first, as the invoice-clearing arm reads
           // it (`readOwnNoteRowState`); an edit's note has one target, so only
           // while it has no allocation. None is queued beside.
-          const ownNoteRow = readOwnNoteRowState(noteOperations, noteLinks, modificationCreditNote.objectId);
-          if (ownNoteRow?.kind === "repairing") {
-            addBlockedModificationAllocationFinding(findings, modification.id, ownNoteRow.operation, "A retry is working on this modification credit note now; check again when it finishes.");
-          } else if (ownNoteRow?.kind === "retry") {
-            const action = addAction(actionMap, buildRetryAction(booking.id, ownNoteRow.retry));
-            addFinding(findings, {
-              code: "MISSING_CREDIT_NOTE_ALLOCATION",
-              severity: "critical",
-              summary: "A modification credit note exists, but its allocation did not complete; retrying replays it.",
-              safeToAutoApply: true,
-              details: { modificationId: modification.id, creditNoteId: modificationCreditNote.objectId, operationId: ownNoteRow.operation.id },
-              actionKeys: [action.key],
-            });
-          } else if (ownNoteRow?.kind === "unretryable") {
-            addBlockedModificationAllocationFinding(findings, modification.id, ownNoteRow.operation, "A modification credit note's allocation did not complete and its operation cannot be retried here - allocate it by hand in Xero.", { retryUnsupportedReason: ownNoteRow.reason });
-          } else if (ownNoteRow?.kind === "resolved") {
-            // Allocated by hand (`INV-INT-025`); a live allocation row is still seen, report-only.
-            if (blockingOperation && blockingOperation.kind !== "resolved") {
-              addBlockedModificationAllocationFinding(findings, modification.id, blockingOperation.operation);
+          const modificationArm = { kind: "modification", details: { modificationId: modification.id } } as const;
+          const ownNoteRowHandled = dispatchOwnNoteRow(
+            findings,
+            actionMap,
+            readOwnNoteRowState(noteOperations, noteLinks, modificationCreditNote.objectId),
+            noteOperations,
+            {
+              ...modificationArm,
+              bookingId: booking.id,
+              creditNoteId: modificationCreditNote.objectId,
+              retryDetails: modificationArm.details,
+              unretryable: "report",
+              resolved: "live-allocation-only", // #4763
             }
+          );
+          if (ownNoteRowHandled) {
+            // Reported, or the row's own retry offered: nothing queued beside it.
           } else if (blockingOperation?.kind === "retryable") {
             const action = addAction(
               actionMap,
@@ -1395,7 +1351,7 @@ export function classifyBookingContext(
             // amounts can differ from the pending op's, so the
             // amount-embedding correlation key no longer dedups a re-queue
             // the way identical abs(net) amounts once did.
-            addBlockedModificationAllocationFinding(findings, modification.id, blockingOperation.operation);
+            addBlockedNoteAllocationFinding(findings, modificationArm, blockingOperation.operation);
           }
         } else {
           addXeroAmountMismatchFinding({
@@ -1790,13 +1746,6 @@ export function classifyBookingContext(
           });
         }
       } else {
-        // #3535, #4259: the note's own row (`readOwnNoteRowState`). PARTIAL, its
-        // retry replays the recorded plan (one invoice, or the primary and
-        // supplementary invoices a clearing note is spread across) - a fresh
-        // allocation sized here would be the note's whole amount against the
-        // primary invoice alone. RUNNING, a retry is on it now; resolved in
-        // Xero (`INV-INT-025`), an officer allocated by hand. None is queued beside.
-        const ownNoteRow = readOwnNoteRowState(bookingOperations, bookingLinks, cancellationCreditNote.objectId);
         // The note's own amount, as its create recorded it (#3643): the cancel
         // wrote a recognised booking's rest - Xero's amount due at the read -
         // as the note's `refundAmountCents`, so the allocation reads back that
@@ -1829,40 +1778,30 @@ export function classifyBookingContext(
           entityType: "ALLOCATION",
           operationType: "ALLOCATE",
         });
-        if (ownNoteRow?.kind === "resolved") {
-          // Done by hand in Xero: nothing retried or queued. The note itself
-          // exists, so there is no missing document to report - but a separate
-          // live allocation row is still seen (Xero review F8): a resolved row
-          // never outranks a live one. Report-only, because the officer
-          // allocated by hand and a retry could allocate twice.
-          const liveAllocation = getBlockingOperation(
-            bookingOperations,
-            "ALLOCATION",
-            "ALLOCATE"
-          );
-          if (liveAllocation && liveAllocation.kind !== "resolved") {
-            addBlockedClearingAllocationFinding(findings, liveAllocation.operation);
+        // #3535, #4259, #4757: the note's own row (`readOwnNoteRowState`).
+        // PARTIAL, its retry replays the recorded plan (one invoice, or the
+        // primary and supplementary invoices a clearing note is spread across)
+        // - a fresh allocation sized here would be the note's whole amount
+        // against the primary invoice alone. RUNNING, a retry is on it now;
+        // resolved in Xero (`INV-INT-025`), an officer allocated by hand. None
+        // is queued beside, nor a retry offered beside a live allocation row.
+        const clearingArm = { kind: "clearing", details: {} } as const;
+        const ownNoteRowHandled = dispatchOwnNoteRow(
+          findings,
+          actionMap,
+          readOwnNoteRowState(bookingOperations, bookingLinks, cancellationCreditNote.objectId),
+          bookingOperations,
+          {
+            ...clearingArm,
+            bookingId: booking.id,
+            creditNoteId: cancellationCreditNote.objectId,
+            retryDetails: { bookingId: booking.id },
+            unretryable: "fall-through", // #4762
+            resolved: "live-allocation-only", // #4763
           }
-        } else if (ownNoteRow?.kind === "repairing") {
-          addBlockedClearingAllocationFinding(findings, ownNoteRow.operation, "A retry is working on this invoice-clearing credit note now; check again when it finishes.");
-        } else if (ownNoteRow?.kind === "retry") {
-          const action = addAction(
-            actionMap,
-            buildRetryAction(booking.id, ownNoteRow.retry)
-          );
-          addFinding(findings, {
-            code: "MISSING_CREDIT_NOTE_ALLOCATION",
-            severity: "critical",
-            summary:
-              "The invoice-clearing credit note exists, but its allocations did not all complete; retrying replays the recorded plan.",
-            safeToAutoApply: true,
-            details: {
-              bookingId: booking.id,
-              creditNoteId: cancellationCreditNote.objectId,
-              operationId: ownNoteRow.operation.id,
-            },
-            actionKeys: [action.key],
-          });
+        );
+        if (ownNoteRowHandled) {
+          // Reported, or the row's own retry offered: nothing queued beside it.
         } else if (!allocation) {
           const blockingOperation = getBlockingOperation(
             bookingOperations,
@@ -1894,7 +1833,7 @@ export function classifyBookingContext(
             // #3635: a live allocation (pending, running, or failed and not
             // retryable) is reported, never queued beside - the #1356/#1427
             // third-arm rule the modification allocation arm follows.
-            addBlockedClearingAllocationFinding(findings, blockingOperation.operation);
+            addBlockedNoteAllocationFinding(findings, clearingArm, blockingOperation.operation);
           } else if (allocationAmountCents === null) {
             // #3643: a recognised booking's note covers only the rest, and no
             // stored figure says how much - a full-size allocation would

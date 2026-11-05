@@ -259,6 +259,28 @@ export function getBlockingOperation(
   );
 }
 
+/**
+ * #4757: a row of this kind in flight now (PENDING, RUNNING or WAITING_PAYMENT),
+ * read directly: `getBlockingOperation` ranks a failed row ahead of a live one,
+ * so a caller that must never act beside work in flight asks this instead.
+ */
+export function getLiveOperation(
+  operations: XeroOperationRecord[],
+  entityType: string,
+  operationType: string
+): XeroOperationRecord | null {
+  return (
+    operations.find(
+      (operation) =>
+        operation.entityType === entityType &&
+        operation.operationType === operationType &&
+        (XERO_ACTIVE_OPERATION_STATUSES as readonly string[]).includes(operation.status) &&
+        isAdmissibleRepairOperation(operation, undefined) &&
+        !isResolvedInXero(operation)
+    ) ?? null
+  );
+}
+
 export function isStuckOperation(operation: XeroOperationRecord) {
   if (!["PENDING", "RUNNING"].includes(operation.status)) {
     return false;
