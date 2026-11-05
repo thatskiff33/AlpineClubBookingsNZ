@@ -33,7 +33,8 @@ import {
   type AdminPermissionMatrix,
 } from "./admin-permissions";
 import {
-  isLoginRevokedSession,
+  getTokenSessionIssuedAtMs,
+  isRevokedMemberSession,
   loadSessionMemberSecurity,
 } from "./session-member-security";
 import { loadEffectiveModuleFlags } from "./module-settings";
@@ -132,24 +133,6 @@ declare module "next-auth" {
     twoFactorEnabled: boolean;
     twoFactorMethod: "TOTP" | "EMAIL" | null;
   }
-}
-
-function getTokenSessionIssuedAtMs(token: {
-  sessionIssuedAt?: unknown;
-  iat?: unknown;
-}) {
-  if (
-    typeof token.sessionIssuedAt === "number" &&
-    Number.isFinite(token.sessionIssuedAt)
-  ) {
-    return token.sessionIssuedAt;
-  }
-
-  if (typeof token.iat === "number" && Number.isFinite(token.iat)) {
-    return token.iat * 1000;
-  }
-
-  return Date.now();
 }
 
 /**
@@ -627,30 +610,14 @@ export const authConfig = {
           token.forcePasswordChange = member.forcePasswordChange;
           token.postLoginLanding = member.postLoginLanding ?? null;
           token.isEmailVerified = member.emailVerified;
-          // #2620: an account an approved deletion request has anonymised holds
-          // no session, full stop — whatever `active` currently says. This is the
-          // defence-in-depth backstop behind the provider refusals above: it
-          // covers a session minted BEFORE the deletion (which also switches
-          // login off, so the login rule below refuses it too) and a session
-          // minted after someone flipped `active` back directly in the
-          // database. Same kill-switch as a revoking password change: auth()
-          // nulls any session carrying it, so every server touch reads as
-          // logged-out.
-          const deletedAccountSession = isDeletedAccountRecord(member);
-          if (deletedAccountSession) {
-            logger.warn(
-              { memberId: token.id },
-              "Invalidating session for a deleted account (#2620)",
-            );
-          }
-          // #3603: login off, or switched off after this session began; a
-          // token once invalidated stays so (see session-member-security.ts).
+          // #2620 deleted account, #3603 login off or switched off, or a newer
+          // password: the defence-in-depth backstop behind the provider
+          // refusals above. auth() nulls any session carrying the flag, so every
+          // server touch reads as logged-out; a token once invalidated stays so
+          // (see session-member-security.ts).
           token.sessionInvalidated =
             token.sessionInvalidated === true ||
-            deletedAccountSession ||
-            isLoginRevokedSession(member, sessionIssuedAt, token.id) ||
-            (member.passwordChangedAt instanceof Date &&
-              member.passwordChangedAt.getTime() > sessionIssuedAt);
+            isRevokedMemberSession(member, sessionIssuedAt, token.id);
           token.twoFactorRequired = twoFactorRequired;
           token.twoFactorEnrolled = member.twoFactorEnabled;
           token.twoFactorMethod = member.twoFactorMethod ?? null;

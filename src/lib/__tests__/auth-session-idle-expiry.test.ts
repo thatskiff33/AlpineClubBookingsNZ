@@ -416,6 +416,9 @@ describe("buildRequestAuthConfig sets session.maxAge from the request's session 
     vi.setSystemTime(frozenTestNow());
     vi.stubEnv("AUTH_URL", undefined);
     vi.stubEnv("NEXTAUTH_URL", undefined);
+    // A kiosk claim is confirmed against the member row before 30 days.
+    mockFindUnique.mockReset();
+    mockFindUnique.mockResolvedValue(memberRow("kiosk"));
   });
 
   afterEach(() => {

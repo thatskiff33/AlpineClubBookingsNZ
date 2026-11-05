@@ -26,24 +26,30 @@
  * session token the request already carries. Both the new token's `exp` and the
  * cookie's `Expires` then come from that one number and can never disagree.
  *
- * Consequences. All but the role-change lag fail towards the shorter window:
+ * Consequences. Every decision on doubt fails towards the shorter window:
  * - A sign-in has no token yet, so the first cookie is the ordinary window; the
  *   kiosk's first `/api/auth/session` refresh (the page's `SessionProvider` makes
  *   one on load and on focus) re-issues it for 30 days.
- * - The decision reads the incoming token's `kioskAccount` claim, which the
- *   `jwt` callback stamped from the database row on the previous request.
- *   `session.maxAge` is chosen before that callback re-reads the row, so a
- *   role change takes effect one refresh later IN BOTH DIRECTIONS. Turning an
- *   account into the kiosk costs it nothing; turning the kiosk into anything
- *   else (or adding a second role to it) lets one more refresh re-issue the
- *   cookie for 30 days, because that refresh still carries the old claim. The
- *   refresh after it reads the new claim and re-issues 8 hours. This one
- *   fails towards the LONGER window, for one refresh. It never widens what
- *   the session may do: the role claims themselves are refreshed from the
- *   database on that same request, and switching login off invalidates the
- *   session outright.
+ * - The incoming token's `kioskAccount` claim, which the `jwt` callback stamped
+ *   from the database row on the previous request, only nominates a session
+ *   for the kiosk window. `session.maxAge` is chosen before that callback
+ *   re-reads the row, so a nominated session's row is read here too, with the
+ *   callback's own loader and rules: 30 days only if the row is still the kiosk
+ *   (`isKioskSessionMember`) and still holds this session
+ *   (`isRevokedMemberSession`). Turning the kiosk into anything else, adding a
+ *   second role to it or switching its login off therefore takes effect on the
+ *   very next refresh. It costs one query, on kiosk refreshes only. Turning an
+ *   account INTO the kiosk takes one refresh longer, since its incoming claim
+ *   is still `false`: it keeps 8 hours until the next refresh. Two things no
+ *   per-request choice can reach: a cookie already issued keeps its expiry
+ *   until a refresh re-issues it (the kiosk page refreshes on load and focus),
+ *   and a role change landing between this read and the callback's, within
+ *   one request, is seen on the next refresh. Neither widens what the session
+ *   may do: the callback refreshes the role claims from the row on every
+ *   request, and switching login off invalidates the session outright.
  * - A token minted before the `kioskAccount` claim existed carries none, so
  *   it gets the ordinary window until its first refresh stamps the claim.
+ * - A failed or missing row read gives the ordinary window.
  * - Only the session endpoint (`/api/auth/session`, the refresh and the client
  *   `update()`) reads the incoming token. Every other Auth.js action gets the
  *   ordinary window: a sign-in on the kiosk tablet while its cookie is still
@@ -58,6 +64,11 @@ import {
   isLodgeKioskAccount,
   type AccountClassificationInput,
 } from "./member-roles";
+import {
+  getTokenSessionIssuedAtMs,
+  isRevokedMemberSession,
+  loadSessionMemberSecurity,
+} from "./session-member-security";
 
 /** Idle window of an ordinary account's session, in seconds. */
 export const ACCOUNT_SESSION_IDLE_SECONDS = 8 * 60 * 60;
@@ -90,9 +101,11 @@ export function isKioskSessionMember(
 type SessionIdleClaims = Readonly<Record<string, unknown>>;
 
 /**
- * The idle window for a session carrying these claims: the kiosk window only
- * for an explicit `kioskAccount: true` on a live session. A missing claim (a
- * token minted before the claim existed) reads as an ordinary account.
+ * The idle window these claims alone allow: the kiosk window only for an
+ * explicit `kioskAccount: true` on a live session. A missing claim (a token
+ * minted before the claim existed) reads as an ordinary account. A ceiling,
+ * not the decision: `resolveRequestSessionIdleSeconds` confirms a kiosk claim
+ * against the member row before granting it.
  */
 export function sessionIdleSecondsForClaims(
   claims: SessionIdleClaims | null | undefined,
@@ -153,10 +166,32 @@ function sessionCookieName(
 }
 
 /**
+ * The kiosk window for a token whose claims nominate it, only while the member
+ * row still agrees: the same loader, kiosk test and revocation rules as the
+ * `jwt` callback. A missing row, or any other row, gives the ordinary window;
+ * a failed read throws to the caller, which gives the ordinary window too.
+ */
+async function confirmedKioskIdleSeconds(
+  claims: SessionIdleClaims,
+): Promise<number> {
+  if (typeof claims.id !== "string") return ACCOUNT_SESSION_IDLE_SECONDS;
+  const member = await loadSessionMemberSecurity(claims.id);
+  if (
+    !member ||
+    !isKioskSessionMember(member) ||
+    isRevokedMemberSession(member, getTokenSessionIssuedAtMs(claims), claims.id)
+  ) {
+    return ACCOUNT_SESSION_IDLE_SECONDS;
+  }
+  return KIOSK_ACCOUNT_SESSION_IDLE_SECONDS;
+}
+
+/**
  * The idle window for this request's session: `session.maxAge` for the config
  * Auth.js runs it with. Only the session action reads a token, and only from
  * the session cookie — never an `Authorization: Bearer` header, which Auth.js's
- * own session read ignores. Fails to the ordinary window on any doubt.
+ * own session read ignores. A kiosk claim is confirmed against the member row.
+ * Fails to the ordinary window on any doubt.
  */
 export async function resolveRequestSessionIdleSeconds(
   request: Request | undefined,
@@ -180,7 +215,13 @@ export async function resolveRequestSessionIdleSeconds(
       cookieName,
       salt: cookieName,
     });
-    return sessionIdleSecondsForClaims(claims);
+    if (
+      !claims ||
+      sessionIdleSecondsForClaims(claims) !== KIOSK_ACCOUNT_SESSION_IDLE_SECONDS
+    ) {
+      return ACCOUNT_SESSION_IDLE_SECONDS;
+    }
+    return await confirmedKioskIdleSeconds(claims);
   } catch {
     return ACCOUNT_SESSION_IDLE_SECONDS;
   }

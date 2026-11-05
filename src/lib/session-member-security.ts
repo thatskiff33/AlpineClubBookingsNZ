@@ -1,4 +1,5 @@
 import { MEMBER_PRIVILEGE_CHECK_SELECT } from "@/lib/access-role-definitions";
+import { isDeletedAccountRecord } from "@/lib/deleted-account";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 
@@ -81,4 +82,57 @@ export function isLoginRevokedSession(
     );
   }
   return revoked;
+}
+
+/**
+ * When the session a token carries began, in epoch milliseconds: the stamped
+ * `sessionIssuedAt`, else the JWT's `iat`, else now. The revocation rules below
+ * compare their stored times against it.
+ */
+export function getTokenSessionIssuedAtMs(token: {
+  sessionIssuedAt?: unknown;
+  iat?: unknown;
+}): number {
+  if (
+    typeof token.sessionIssuedAt === "number" &&
+    Number.isFinite(token.sessionIssuedAt)
+  ) {
+    return token.sessionIssuedAt;
+  }
+
+  if (typeof token.iat === "number" && Number.isFinite(token.iat)) {
+    return token.iat * 1000;
+  }
+
+  return Date.now();
+}
+
+/**
+ * Whether the member row ends a session that began at `sessionIssuedAt`: the
+ * account was deleted (#2620), its login is off or was switched off after the
+ * session began (#3603, `isLoginRevokedSession`), or its password changed after
+ * the session began. The one rule the `jwt` callback in `auth.ts` invalidates a
+ * token by, and the one the kiosk idle window re-checks (#4612,
+ * `session-idle-expiry.ts`).
+ */
+export function isRevokedMemberSession(
+  member: NonNullable<Awaited<ReturnType<typeof loadSessionMemberSecurity>>>,
+  sessionIssuedAt: number,
+  memberId: string,
+): boolean {
+  // #2620: an account an approved deletion request has anonymised holds no
+  // session, whatever `active` says: a session minted before the deletion, or
+  // after someone flipped `active` back directly in the database.
+  if (isDeletedAccountRecord(member)) {
+    logger.warn(
+      { memberId },
+      "Invalidating session for a deleted account (#2620)",
+    );
+    return true;
+  }
+  return (
+    isLoginRevokedSession(member, sessionIssuedAt, memberId) ||
+    (member.passwordChangedAt instanceof Date &&
+      member.passwordChangedAt.getTime() > sessionIssuedAt)
+  );
 }

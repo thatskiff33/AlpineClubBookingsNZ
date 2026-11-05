@@ -252,8 +252,10 @@ whole classification, the User Type the member page shows as "Lodge (kiosk
 account)". Holding `LODGE` is not enough. It is a checkbox any officer can
 also have, so a Full Admin, a Booking Officer or a custom-role holder who also
 holds `LODGE` is an ordinary account and keeps 8 hours. The `jwt` callback
-stamps a `kioskAccount` claim from the member row on every refresh, and the
-window reads only that claim.
+stamps a `kioskAccount` claim from the member row on every refresh. That claim
+only nominates a session for 30 days: before granting them, the refresh reads
+the member row again and confirms it is still the kiosk and still holds this
+session.
 
 **Where it is decided.** `src/lib/session-idle-expiry.ts` holds both windows
 and the rule. Auth.js stamps the token's `exp` and the cookie's `Expires` from
@@ -265,23 +267,32 @@ in the `jwt` callback was overwritten by that re-encode and did nothing; it is
 gone. `auth-session-idle-expiry.test.ts` proves both windows end to end through
 the real Auth.js handler on the frozen clock.
 
-**Accepted limits.** All but the role-change lag fail towards the shorter
-window.
+**Accepted limits.** Every decision on doubt fails towards the shorter window.
 
 - A sign-in starts with 8 hours; the kiosk page's first refresh, straight after
   it loads, re-issues 30 days.
 - Only the session endpoint (`/api/auth/session`) reads the incoming token.
   Signing in as another member on the kiosk tablet, while the kiosk cookie is
   still there, gives that member the ordinary 8 hours.
-- The window follows the `kioskAccount` claim on the incoming token, which the
-  previous refresh stamped from the database; the window is chosen before the
-  `jwt` callback re-reads the row. So a role change takes effect one refresh
-  late, and in one direction that is the longer window: when the kiosk account
-  stops being the kiosk (its `LODGE` role removed, or a second role added), the
-  next refresh still re-issues a 30-day cookie, and only the refresh after it
-  re-issues 8 hours. What the account may do is read afresh from the database
-  on every request, as for any account, and switching its login off ends the
-  session outright.
+- The window is chosen before the `jwt` callback re-reads the member row, so
+  a session whose incoming `kioskAccount` claim is `true` has its row read
+  first, with the callback's own loader (`loadSessionMemberSecurity`), kiosk
+  test (`isKioskSessionMember`) and revocation rules (`isRevokedMemberSession`
+  in `src/lib/session-member-security.ts`). It gets 30 days only if the row is
+  still the kiosk and the session is not revoked; a missing row, any other row
+  or a failed read gives 8 hours. So when the kiosk stops being the kiosk (its
+  `LODGE` role removed, or a second role added) or its login is switched off,
+  the very next refresh re-issues 8 hours. This costs one query, on kiosk
+  refreshes only.
+- Turning an account into the kiosk takes one refresh longer: its incoming
+  claim is still `false`, so that refresh re-issues 8 hours and stamps the
+  claim for the next.
+- A cookie already issued keeps its expiry until a refresh re-issues it; the
+  kiosk page refreshes on load and on focus. A role change that lands between
+  the window's row read and the callback's, inside one request, is seen on the
+  next refresh. Neither widens what the session may do: what the account may
+  do is read afresh from the database on every request, as for any account,
+  and switching its login off ends the session outright.
 - A token issued before the `kioskAccount` claim existed carries none, so it
   gets 8 hours; its first refresh stamps the claim.
 - The hut-leader PIN session on the same tablet is separate: 10 minutes idle,
