@@ -1074,9 +1074,10 @@ describe("ensurePushRegistration stores the secret only for the connection it re
   });
 });
 
-// A site whose own address (NEXTAUTH_URL) changes on the same host registers
-// the new one; a registration made for another host is never taken over by the
-// pass, so a staging or restored copy cannot steal production's (#4771 review).
+// A stored address that differs only in how it is written registers again; a
+// registration made for another origin (host name or port) is never taken over
+// by the pass, so a staging or restored copy cannot steal production's (#4771
+// review).
 describe("ensurePushRegistration registers again when this site's address moves", () => {
   const SENT_ON = { baseUrl: "https://central.test", credentialVersion: "v-1" };
   const CALLBACK = "https://club.example.nz/api/webhooks/servernz-posts";
@@ -1097,10 +1098,11 @@ describe("ensurePushRegistration registers again when this site's address moves"
     delete process.env.NEXTAUTH_URL;
   });
 
-  it("registers again, storing the pair together, when the address moved on the same host", async () => {
+  it("registers again, storing the pair together, when the stored address differs only in how it is written", async () => {
     stored({
       push_secret: "old-secret",
-      push_registered_url: "https://club.example.nz:8443/api/webhooks/servernz-posts",
+      // The same origin: URL drops a default port, so the callback never spells it.
+      push_registered_url: "https://club.example.nz:443/api/webhooks/servernz-posts",
     });
     mocks.registerPushTarget.mockResolvedValue({ secret: "rotated", secretVersion: 3, sentOn: SENT_ON });
     await expect(ensurePushRegistration()).resolves.toBe("registered");
@@ -1144,6 +1146,14 @@ describe("ensurePushRegistration registers again when this site's address moves"
     );
   });
 
+  it("does not take over a registration on the same host name but another port", async () => {
+    stored({ push_secret: "production-secret", push_registered_url: CALLBACK });
+    process.env.NEXTAUTH_URL = "https://club.example.nz:8443";
+    await expect(ensurePushRegistration()).resolves.toBe("registered-elsewhere");
+    expect(mocks.registerPushTarget).not.toHaveBeenCalled();
+    expect(mocks.setIntegrationCredential).not.toHaveBeenCalled();
+  });
+
   it("leaves a site that really moved host to a key save, which clears the pair and registers it", async () => {
     stored({
       push_secret: "old-secret",
@@ -1166,7 +1176,7 @@ describe("ensurePushRegistration registers again when this site's address moves"
   it("keeps the stored pair when a re-registration is refused", async () => {
     stored({
       push_secret: "old-secret",
-      push_registered_url: "https://club.example.nz:8443/api/webhooks/servernz-posts",
+      push_registered_url: "https://club.example.nz:443/api/webhooks/servernz-posts",
     });
     mocks.registerPushTarget.mockRejectedValueOnce(new mocks.FakeApiError(403));
     await expect(ensurePushRegistration()).resolves.toBe("awaiting-approval");

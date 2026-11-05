@@ -10,6 +10,6 @@
   again under **Admin → Integrations → Alpine Central Server** registers the
   new name. The pass does not move the registration itself, because a staging
   or restored copy of the database looks the same as a moved site and must not
-  take over production's. A change on the same host (a port, say) is
-  registered by the next pass. Sites that registered before this change keep
-  their registration as it is; the address is kept from their next key save.
+  take over production's; a new port counts as a new address too. Sites that
+  registered before this change keep their registration as it is; the address
+  is kept from their next key save.

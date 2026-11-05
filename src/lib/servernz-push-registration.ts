@@ -38,7 +38,7 @@ import {
  * One registration's outcome. `awaiting-approval` is the server's 403 for a
  * pending or suspended club. It, `no-address` and `failed` (a connection
  * replaced in flight included) are retried by the next mirror pass.
- * `registered-elsewhere` is a stored registration made for another host,
+ * `registered-elsewhere` is a stored registration made for another origin,
  * which the pass will not take over: a key save registers this site.
  */
 export type PushRegistrationOutcome =
@@ -53,10 +53,14 @@ export type PushRegistrationOutcome =
 /** Who stores the secret when the mirror pass registers. */
 const MIRROR_PASS_ACTOR: CredentialActor = { kind: "system", actor: "servernz-push-registration" };
 
-/** A callback URL's hostname, or null for one that does not parse. */
-function hostnameOf(url: string): string | null {
+/**
+ * A callback URL's origin (scheme, host name AND port), or null for one that
+ * does not parse. The port counts: a copy on `club.example.nz:8443` is not
+ * production at `club.example.nz` (#4771 review).
+ */
+function originOf(url: string): string | null {
   try {
-    return new URL(url).hostname;
+    return new URL(url).origin;
   } catch {
     return null;
   }
@@ -69,13 +73,13 @@ function hostnameOf(url: string): string | null {
  * stored secret was issued for this site's CURRENT callback address. The
  * callback URL is derived from this install's own address (`getAppBaseUrl`,
  * which reads NEXTAUTH_URL), so there is no second base-URL setting to drift.
- * When that address changes on the same host (a port, say), the stored one no
- * longer matches and the site registers again. Registering again is safe:
+ * When the stored address differs from it only in how it is written (a
+ * default `:443` spelled out, say) the site registers again. Registering again is safe:
  * the server keeps the same secret for a repeat of the same URL and rotates it
  * only when the URL changes, and either way the secret it returns is stored.
  * An address that is not https never replaces a working registration.
  *
- * A registration made for ANOTHER host is never taken over by the pass
+ * A registration made for ANOTHER origin (host name or port) is never taken over by the pass
  * (#4771 review). The stored pair cannot tell a site that moved from a staging
  * or restored copy of its database running beside it: the copy would take the
  * registration, and production, still matching its own stored address, would
@@ -118,10 +122,10 @@ export async function ensurePushRegistration(
     );
     // No address kept beside the secret: registered before addresses were kept.
     if (!registeredUrl || registeredUrl === callback) return "already-registered";
-    if (hostnameOf(registeredUrl) !== hostnameOf(callback)) {
+    if (originOf(registeredUrl) !== originOf(callback)) {
       logger.warn(
         { callback, registered: registeredUrl },
-        "This site's push registration was made for another host; not taking it over. If this site really moved, save the Alpine Central Server key again to register this address",
+        "This site's push registration was made for another address; not taking it over. If this site really moved, save the Alpine Central Server key again to register this address",
       );
       return "registered-elsewhere";
     }

@@ -402,9 +402,9 @@ providers, and fell four behind as the rest landed. Anything that turns on
   Central Server. The same namespace holds `push_secret`, the secret the
   central server issued when this install registered for pushes; it verifies
   the posts and free-beds webhooks, and `push_registered_url`, the callback
-  address that secret was issued for (a `NEXTAUTH_URL` moved on the same host registers again; one on another
-  host never takes the registration over without a key save, so a restored
-  copy cannot divert production's pushes);
+  address that secret was issued for (a `NEXTAUTH_URL` on another origin, host name or port, never takes the
+  registration over without a key save, so a restored copy cannot divert
+  production's pushes);
   both are system-written and removed together. The non-secret connection settings (base
   URL, opt-in flag, sync cursors, and the owned-lodge list) live in
   `ServerNzSettings`. Replacing the key keeps the address and flag but resets
