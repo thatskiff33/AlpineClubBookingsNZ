@@ -752,14 +752,23 @@ const SQL_PLACEHOLDER = /\$\d+|(?:^|[\s(,=])\?(?=[\s,);]|$)/m;
 
 /**
  * Where a raw-SQL writer's value comes from: a fixed literal only when the
- * whole statement is one literal with no template holes, no bind placeholders
- * and no bind arguments beside it, so the value is written inline.
+ * whole statement is one literal with no template holes, no bind placeholders,
+ * no string joined to it and no bind arguments beside it, so the value is
+ * written inline.
  */
 function sqlValueSource(node: ts.Node): PasswordHashValueSource {
   if (ts.isTemplateExpression(node)) return "unknown";
   if (SQL_PLACEHOLDER.test(literalText(node) ?? "")) return "unknown";
   let current: ts.Node = node;
   while (ts.isParenthesizedExpression(current.parent) || ts.isAsExpression(current.parent)) current = current.parent;
+  // Joined to another string (`'... = \'' + h + '\''`), the value is built at run time.
+  if (
+    ts.isBinaryExpression(current.parent) &&
+    (current.parent.operatorToken.kind === ts.SyntaxKind.PlusToken ||
+      current.parent.operatorToken.kind === ts.SyntaxKind.PlusEqualsToken)
+  ) {
+    return "unknown";
+  }
   const call = current.parent;
   return ts.isCallExpression(call) && call.arguments.length > 1 && call.arguments.includes(current as ts.Expression)
     ? "unknown"

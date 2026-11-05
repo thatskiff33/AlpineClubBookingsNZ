@@ -548,6 +548,9 @@ describe("passwordHash writer scanner", () => {
     // The value inline, with nothing beside it, is a fixed literal.
     expect(sqlSources(`async function a() { await db.$executeRawUnsafe('UPDATE "Member" SET "passwordHash" = \\'x\\' WHERE "id" = \\'y\\''); }`)).toEqual(["literal"]);
     expect(sqlSources("const q = `INSERT INTO \"Member\" (\"passwordHash\") VALUES ('audit-hash')`;")).toEqual(["literal"]);
+    // A statement joined to a run-time value with `+` is not a fixed literal.
+    expect(sqlSources(`async function a() { const h = await hash(b.pw, 12); await db.$executeRawUnsafe('UPDATE "Member" SET "passwordHash" = \\'' + h + '\\''); }`)).toEqual(["unknown"]);
+    expect(sqlSources(`async function a() { let q = ""; q += ('UPDATE "Member" SET "passwordHash" = ' as string); q += h; await db.$executeRawUnsafe(q); }`)).toEqual(["unknown"]);
   });
 
   it("counts a writer as screened only when a bound, awaited screen's !ok branch exits first", () => {
