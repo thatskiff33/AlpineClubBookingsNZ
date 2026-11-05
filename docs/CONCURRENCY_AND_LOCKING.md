@@ -3761,8 +3761,11 @@ the door still returns the intent's id, so the increase's Xero leg parks its
 invoice on it rather than raising it unpaid; the reduction names the
 increase from the edit its mint stamped on the row
 (`PaymentTransaction.bookingModificationId`), so the repair pass never bills
-it again. An increase's recovery that folded re-issues in
-is settled only by its own row, so a later ask cannot overtake that money; and
+it again. A recovery is settled by its own row (`findOwnRecoveryRow`, #4015),
+and only a frozen one also by a later ask, so a later ask cannot overtake
+money the replay can size; the replay reads Stripe first, outside any
+transaction, and waits (attempt handed back, for up to seven days) while
+Stripe is taking money on the ask it would carry; and
 both minters of a re-issue resolve its Stripe customer one way
 (`resolveAskCustomerId`). A deadlock mapped to the 409 is logged and kept as its
 cause. Deploy window: the previous release's recovery runner, still draining,

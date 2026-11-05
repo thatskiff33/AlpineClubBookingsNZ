@@ -25,10 +25,7 @@ import { clubFormatValues } from "@/lib/club-format-server";
 import { loadPersistedClubFormatSettings } from "@/lib/club-format-settings";
 import { chargeCurrencyRefusal } from "@/lib/stripe-charge-currency";
 import { prisma } from "@/lib/prisma";
-import {
-  cancelPaymentIntentIfCancellableWithResult,
-  processRefund,
-} from "@/lib/stripe";
+import { cancelPaymentIntentIfCancellableWithResult, getPaymentIntent, processRefund } from "@/lib/stripe";
 import { isPaymentIntentCancelConfirmed } from "@/lib/card-intent-retirement";
 import {
   findPaymentTransactionByIntentId,
@@ -62,9 +59,9 @@ import {
   planReissuedAskMint,
   resolveAskCustomerId,
 } from "@/lib/reissued-ask-mint";
-import { isRecoveryReplaySettled, sizeRecoveryReplayAsk } from "@/lib/additional-ask-recovery-replay";
+import { CARRIED_ASK_STRIPE_READ, carriedAskPaymentWait, findOwnRecoveryRow, isRecoveryReplaySettled, sizeRecoveryReplayAsk } from "@/lib/additional-ask-recovery-replay";
 import { mintOrdinaryAskIntent, refuseAdoptedIntentOnLedger } from "@/lib/ordinary-ask-mint";
-import { unretryableRecoveryCause } from "@/lib/recovery-unretryable-cause";
+import { recoveryFailureAlertMessage, unretryableRecoveryCause } from "@/lib/recovery-unretryable-cause";
 import { ORDINARY_ASK_RECOVERY_REASON, planOrdinaryAskMint } from "@/lib/ordinary-ask-request";
 import { sendAdminPaymentFailureAlert } from "@/lib/email";
 import { closeCancellationRefundAfterReplay, closeCapacityRaceRefundRecordingEvent, recordDuplicateCaptureRefundEvent } from "@/lib/booking-events";
@@ -1210,7 +1207,7 @@ async function alertPaymentRecoveryFailure(operation: PaymentRecoveryOperation, 
     bookingId: operation.bookingId,
     operationId: operation.id,
     amountCents: await cardRefundStillOwedCents(operation), // #4117: read after the final attempt
-    errorMessage: `Stripe payment recovery ${operation.type} failed after ${operation.attempts} attempt${operation.attempts === 1 ? "" : "s"}: ${message}`,
+    errorMessage: recoveryFailureAlertMessage(operation, message), // #4015 review L-3: the one wording
     paymentIntentId: operation.paymentIntentId,
   }, format);
 }
@@ -1663,9 +1660,10 @@ async function failPaymentRecoveryOperation(
 
 /**
  * #4253 release 2 (`INV-ADDPAY-045`): a row that must WAIT, not fail - a released-credit request
- * blocked by an unpaid edit request. Back to a non-terminal retry at the longest interval with its
- * claim's attempt handed back, so it never runs out of attempts, goes terminal or alerts. Through
- * the one chokepoint, fenced on this worker's own attempt.
+ * blocked by an unpaid edit request, or (#4015) a replay whose carried ask Stripe is taking money on.
+ * Back to a non-terminal retry at the longest interval with its claim's attempt handed back, so a
+ * wait never runs out of attempts, goes terminal or alerts by itself; the carried-ask wait's caller
+ * caps it and then fails for good (`carriedAskPaymentWait`). One chokepoint, fenced on this attempt.
  */
 async function waitPaymentRecoveryOperation(operation: PaymentRecoveryOperation, message: string, format: ClubFormat) {
   return markPaymentRecoveryOperationFailed({
@@ -2391,13 +2389,11 @@ type DeferredSupplementaryInvoiceAttempt =
  *
  * BEST-EFFORT, AND NOT A RETRY, which is the one thing here that is not obvious.
  * Throwing would hand the row to `failPaymentRecoveryOperation` and buy a retry -
- * except that on the ordinary fork the retry cannot work: the replay has by then
- * written this edit's `ADDITIONAL` PaymentTransaction, and the processor's own
- * "a LATER edit superseded this one" check tests for an additional transaction
- * created after the operation, which that row now is. Before #4442 a second
- * pass found its own transaction, read it as a supersession, and completed
+ * except that on the ordinary fork the retry used not to work: the replay has
+ * by then written this edit's `ADDITIONAL` PaymentTransaction, and before #4442
+ * a second pass read that row as a later edit's supersession and completed
  * having done nothing at all. A retry now recognises its own row and resumes
- * these steps (`ownRow` in the replay), but a throw would still mark the
+ * these steps (`findOwnRecoveryRow`, #4015), but a throw would still mark the
  * recovery FAILED for a failure this function already records and alerts, so
  * it stays best-effort.
  *
@@ -2481,9 +2477,9 @@ async function raiseDeferredSupplementaryInvoiceForRecoveredIntent(params: {
  * Re-create a booking edit's additional PaymentIntent whose original
  * post-transaction creation failed (#1096). Idempotent: the stored Stripe
  * idempotency key (`mod_*_{bookingModificationId}`) makes Stripe answer a
- * retry with the same intent, the ADDITIONAL transaction row is an upsert,
- * and an additional intent minted by a *later* edit supersedes this one — in
- * that case the operation completes without creating anything.
+ * retry with the same intent, and the ADDITIONAL transaction row is an upsert.
+ * A *later* edit's intent never settles it (#4015) - the replay carries and
+ * supersedes it - unless its figure is frozen (`isRecoveryReplaySettled`).
  *
  * #3954 ("retry nets it off", owner decision 9 Oct 2026; `INV-PAY-120`): a price
  * reduction saved while this waits re-checks what the booking owes before the
@@ -2888,8 +2884,8 @@ async function processCreateAdditionalPaymentIntentOperation(
       })
     : null;
 
-  // #3954 review round 4: sized before the overtake check, because a
-  // re-issued ask's replay is settled by a different rule (below).
+  // #3954 review round 4: sized before the settled check, because a frozen
+  // figure is settled by a different rule (a later ask overtakes it, #4015).
   const replay = sizeRecoveryReplayAsk({
     frozenAmountCents: operation.amountCents,
     modification: modificationToBill,
@@ -3010,20 +3006,20 @@ async function processCreateAdditionalPaymentIntentOperation(
   // #4442 review C-F1: THIS recovery's own row, written by an earlier attempt
   // that then failed before the steps above (its re-stamp timed out behind a
   // long holder, say). It is not an overtake: completing here would collect the
-  // ask with no invoice behind it, so the steps run now.
-  const ownRow = payment.transactions.find(
-    (row) => row.kind === PaymentTransactionKind.ADDITIONAL && row.stripePaymentIntentId === operation.paymentIntentId,
-  );
+  // ask with no invoice behind it, so the steps run now. #4015 (L5): or the
+  // door's own row for this edit, written before the step that enqueued this
+  // recovery threw - one rule with the settled check (`findOwnRecoveryRow`).
+  const ownRow = findOwnRecoveryRow(operation, payment.transactions);
   if (ownRow?.stripePaymentIntentId) {
-    // A reduction that retired the ask while this recovery sat PENDING has
-    // already accounted for its money; an invoice parked on the withdrawn
+    // A reduction (or an officer's withdrawal) that retired the ask while this
+    // recovery sat PENDING has already accounted for its money; an invoice parked on the withdrawn
     // intent would only wait for the reaper, so finish as the lost claim does.
     // FAILED alone is not the test: a superseded row is FAILED with no
     // `withdrawnAt`, and its invoice correctly follows the carry.
     if (ownRow.withdrawnAt) {
       logger.warn(
         { operationId: operation.id, bookingId: operation.bookingId, paymentIntentId: ownRow.stripePaymentIntentId },
-        "Additional intent recovery found its own row already withdrawn by a price reduction (#4442); no supplementary invoice queued for it",
+        "Additional intent recovery found its own row already withdrawn (a price reduction, #4442, or an officer's withdrawal, #3528); no supplementary invoice queued for it",
       );
       await completePaymentRecoveryOperation(operation);
       return "done";
@@ -3032,13 +3028,13 @@ async function processCreateAdditionalPaymentIntentOperation(
     return "done";
   }
 
-  // A later edit already created a fresh additional intent: it superseded
-  // this modification's collectable, so resurrecting ours would offer the
-  // member two instruments for overlapping money. The later edit repriced
-  // from current state, so its intent is the whole truth. A RE-ISSUED ask is
-  // the exception: it is settled only by its own row, and a later ask that did
-  // not fold it in is carried and superseded (`isRecoveryReplaySettled`, #3954).
-  // The rule a price reduction reads too, before it nets this recovery off.
+  // #4015: a later edit's ask never settles this one. It was sized off the
+  // Payment, which never showed this failed mint, so it carries none of this
+  // money. An ask this replay can size is settled only by its own row; the
+  // replay carries the later ask's unpaid balance and supersedes it, so the
+  // member still holds one instrument. Only a frozen figure keeps #3340's
+  // "a later ask overtook it" (`isRecoveryReplaySettled`). The rule a price
+  // reduction reads too, before it nets this recovery off.
   if (
     isRecoveryReplaySettled(replay, operation, payment.transactions) ||
     operation.amountCents <= 0
@@ -3046,6 +3042,10 @@ async function processCreateAdditionalPaymentIntentOperation(
     await completePaymentRecoveryOperation(operation);
     return "done";
   }
+
+  // #4015 review: never supersede an ask Stripe is taking money on - wait, capped (`carriedAskPaymentWait`).
+  const carriedAskBeingPaid = await carriedAskPaymentWait(payment, (paymentIntentId) => getPaymentIntent(paymentIntentId, CARRIED_ASK_STRIPE_READ), operation.createdAt);
+  if (carriedAskBeingPaid) return (await waitPaymentRecoveryOperation(operation, carriedAskBeingPaid, format), "waited");
 
   // #3954 round 7: one resolution, shared with the door's re-issue mint, so
   // the two minters of one key send one request (`resolveAskCustomerId`).
@@ -3208,7 +3208,7 @@ async function processCreateAdditionalPaymentIntentOperation(
       store,
     });
     // #3954: the row names this attempt's intent from the moment it exists, so
-    // a retry after a later failure recognises its own row (`ownRecoveryRow`).
+    // a retry after a later failure recognises its own row (`findOwnRecoveryRow`).
     await store.paymentRecoveryOperation.update({
       where: { id: operation.id },
       data: { paymentIntentId: pi.id },

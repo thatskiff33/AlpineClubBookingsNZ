@@ -772,6 +772,23 @@ and permanently ([INV-PAY-047]). The ask is the edit's net PLUS the unpaid
 balance of the ask it supersedes.
 
 ```text
+a failed mint's replay, before it mints (#4015 review, outside any transaction)
+  -> reads Stripe for the live ask it would carry and supersede (bounded read;
+       a timeout is an ordinary retry), through `staleIntentAction`
+       unpaid (requires_action / 3DS included), cancelled or unknown to Stripe
+         -> carried and superseded; a 3DS confirmation in progress then fails
+       succeeded, processing, requires_capture or an unrecognised status
+         -> WAIT: nothing minted or cancelled, the attempt handed back, checked
+            again on the longest retry interval; once the webhook lands it
+            carries none of that ask
+         -> still so 7 days (CARRIED_ASK_PAYMENT_WAIT_MAX_MS) after the LATER of
+            when Stripe began taking that payment (its charge, else the intent's
+            creation) and when the recovery was queued - so a recovery that aged
+            on its own still waits for a payment that has just begun
+            -> FAILED for good at once, officers alerted ("stopped", not an
+               attempt count) to check that request in Stripe, record it, and
+               collect this change by hand
+       a confirmation landing after that read -> the superseded-capture refund below
 edit raises an ask -> mint the replacement intent
   -> enqueue CANCEL_PAYMENT_INTENT for every other live or declined (#4422) ADDITIONAL intent
   -> cancel it SYNCHRONOUSLY, best-effort, BEFORE the new client secret returns
@@ -802,8 +819,15 @@ reduction edit, under the door's locks
   unpaid ask = the rows' live ask (a chain holding a review-raised request -> none)
              + each ask whose mint FAILED and whose CREATE_ADDITIONAL_PAYMENT_INTENT
                recovery will still run, sized as its replay would size it
-               ("retry nets it off", 9 Oct 2026); an increase's recovery a later
-               ask overtook, or a re-issue that wrote its own row -> already settled
+               ("retry nets it off", 9 Oct 2026); one whose own row exists
+               (`findOwnRecoveryRow`: its recorded intent, or a row stamped
+               with its edit, withdrawn or not) -> already settled. A later ask
+               never settles one (#4015): it was sized off a Payment that never
+               showed the failed mint, so the replay carries it and supersedes it
+       a waiting recovery with only a frozen figure (no edit to re-derive from)
+               -> cannot be sized: the reduction sets nothing against any ask
+               and settles as before. Only its replay still reads a later ask
+               as having overtaken it (#3340)
        an officer's review-charge recovery -> left exactly as set (decision B)
   -> offset = min(reduction, unpaid ask)
   -> every unpaid ADDITIONAL row since the last paid one -> FAILED + withdrawnAt
