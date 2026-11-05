@@ -28,9 +28,12 @@ import ts from "typescript";
 // different handler, a callback or a sibling branch never counts. The `if`
 // condition is the bare `!name.ok` or a `||` chain holding it, nothing weaker.
 // When the screened reference has a property path (`b.pw`), the screen is void
-// if, after it and before the writer, an alias of its root is written through
-// (`const al = b; al.pw = x`) or a call receives the root or a part of the path
-// above the value (`Object.assign(b, ...)`, `log(b)`) (#4746).
+// if, from the start of its arguments to the writer, an alias of its root is
+// written through (`const al = b; al.pw = x`), or a call, a tagged template or a
+// method call receives the root or a part of the path above the value
+// (`Object.assign(b, ...)`, `log({ b })`, `b.reset()`), or a function nested in
+// the scope does either (#4746). One definition of that change test serves the
+// copy rule below (`objectChanged`).
 //
 // Each property writer also carries the SOURCE of the value it writes
 // (`traceWrittenValue`): the expression is followed back through `const`
@@ -225,38 +228,42 @@ function switchesCheckOff(options: ts.Expression | undefined): boolean {
   );
 }
 
-/** True when `node` is `await screenChosenPassword(x, ...)` screening `hashed`. */
-function awaitsScreenOf(node: ts.Expression, hashed: Reference): boolean {
+/** The call in `node` when it is `await screenChosenPassword(x, ...)` screening `hashed`, else null. */
+function screenCallOf(node: ts.Expression, hashed: Reference): ts.CallExpression | null {
   const value = unwrapParens(node);
-  if (!ts.isAwaitExpression(value)) return false;
+  if (!ts.isAwaitExpression(value)) return null;
   const call = unwrapParens(value.expression);
-  if (!ts.isCallExpression(call) || !ts.isIdentifier(call.expression)) return false;
-  if (call.expression.text !== SCREEN_HELPER || switchesCheckOff(call.arguments[1])) return false;
+  if (!ts.isCallExpression(call) || !ts.isIdentifier(call.expression)) return null;
+  if (call.expression.text !== SCREEN_HELPER || switchesCheckOff(call.arguments[1])) return null;
   const screened = call.arguments[0] ? referenceOf(call.arguments[0]) : null;
-  return screened !== null && sameReference(screened, hashed);
+  return screened !== null && sameReference(screened, hashed) ? call : null;
 }
 
 /**
- * The names `statement` binds to an awaited screen of `hashed`: a `const`
- * whose initializer is `await screenChosenPassword(x, ...)` itself, or a
- * conditional with that await as one branch and a test that does not rule the
- * branch out. Any other shape (a `let`, an object literal or comma expression
- * that discards the result) binds nothing.
+ * The names `statement` binds to an awaited screen of `hashed`, and where the
+ * screen starts (its first argument): a `const` whose initializer is
+ * `await screenChosenPassword(x, ...)` itself, or a conditional with that await
+ * as one branch and a test that does not rule the branch out. Any other shape
+ * (a `let`, an object literal or comma expression that discards the result)
+ * binds nothing.
  */
-function screenBinding(statement: ts.Statement, hashed: Reference): string[] {
-  if (!ts.isVariableStatement(statement)) return [];
-  if ((statement.declarationList.flags & ts.NodeFlags.Const) === 0) return [];
-  const names: string[] = [];
+function screenBinding(statement: ts.Statement, hashed: Reference): { names: string[]; from: number } {
+  const bound = { names: [] as string[], from: Infinity };
+  if (!ts.isVariableStatement(statement)) return bound;
+  if ((statement.declarationList.flags & ts.NodeFlags.Const) === 0) return bound;
   for (const declaration of statement.declarationList.declarations) {
     if (!ts.isIdentifier(declaration.name) || !declaration.initializer) continue;
     const initializer = unwrapParens(declaration.initializer);
-    const bound = ts.isConditionalExpression(initializer)
-      ? (awaitsScreenOf(initializer.whenTrue, hashed) && !isConstantTest(initializer.condition, false)) ||
-        (awaitsScreenOf(initializer.whenFalse, hashed) && !isConstantTest(initializer.condition, true))
-      : awaitsScreenOf(initializer, hashed);
-    if (bound) names.push(declaration.name.text);
+    const call = ts.isConditionalExpression(initializer)
+      ? (!isConstantTest(initializer.condition, false) && screenCallOf(initializer.whenTrue, hashed)) ||
+        (!isConstantTest(initializer.condition, true) && screenCallOf(initializer.whenFalse, hashed)) ||
+        null
+      : screenCallOf(initializer, hashed);
+    if (!call) continue;
+    bound.names.push(declaration.name.text);
+    bound.from = Math.min(bound.from, call.arguments[0].getStart());
   }
-  return names;
+  return bound;
 }
 
 /** True when `statement` leaves the function on every path through it. */
@@ -296,9 +303,9 @@ function testsNotOk(condition: ts.Expression, names: ReadonlySet<string>): boole
 /**
  * True when, after the screen, `hashed` (a property path under a `const` or
  * parameter) is changed through an alias of its root or by a call that receives
- * the root (#4746): `const al = b; al.pw = x`, `Object.assign(b, ...)`, `f(b)`.
- * `isReassigned` already covers a write through the root's own name; a path-less
- * reference (a plain string) cannot be changed from outside.
+ * the root (#4746): `const al = b; al.pw = x`, `Object.assign(b, ...)`, `f(b)`,
+ * `b.reset()`. `isReassigned` already covers a write through the root's own
+ * name; a path-less reference (a plain string) cannot be changed from outside.
  */
 function changedAfterScreen(
   hashedInput: ts.Expression,
@@ -316,7 +323,8 @@ function changedAfterScreen(
  * True when the writer is guarded: in some block enclosing it (up to its
  * function boundary and beyond, so a transaction callback inherits its
  * handler's guard), a screen binding is followed by an `if (!x.ok)` that exits,
- * both before the writer. The screen's first argument must resolve to the same
+ * both before the writer, and nothing changes the screened object between the
+ * start of the screen's arguments and the writer. The screen's first argument must resolve to the same
  * declaration and property path as the input of the `bcrypt.hash(...)` that
  * produced the written value (`hashedInput`), so screening one password and
  * hashing another (or a shadowing callback parameter of the same name) does
@@ -332,10 +340,9 @@ function guardedByScreen(writer: ts.Node, hashedInput: ts.Expression | null): bo
     let screenedAt = Infinity;
     for (const statement of current.statements) {
       if (statement.getEnd() > position) break;
-      for (const name of screenBinding(statement, hashed)) {
-        bound.add(name);
-        screenedAt = Math.min(screenedAt, statement.getEnd());
-      }
+      const screen = screenBinding(statement, hashed);
+      for (const name of screen.names) bound.add(name);
+      screenedAt = Math.min(screenedAt, screen.from);
       if (
         ts.isIfStatement(statement) &&
         exits(statement.thenStatement) &&
@@ -376,17 +383,24 @@ function unwrapValue(node: ts.Expression): ts.Expression {
   }
 }
 
-type Binding = { kind: "const"; initializer: ts.Expression } | { kind: "parameter" } | null;
+/** A `const` with a plain identifier name and an initializer: the one kind of constant we follow. */
+type FollowedConst = {
+  kind: "const";
+  id: ts.Identifier;
+  declaration: ts.VariableDeclaration;
+  initializer: ts.Expression;
+};
+type Binding = FollowedConst | { kind: "parameter" } | null;
+
+/** Every identifier a binding name (plain or destructuring) declares. */
+function declaredIdentifiers(name: ts.BindingName): ts.Identifier[] {
+  if (ts.isIdentifier(name)) return [name];
+  return name.elements.flatMap((element) => (ts.isOmittedExpression(element) ? [] : declaredIdentifiers(element.name)));
+}
 
 /** The identifier in `name` (a plain or destructuring binding) that binds `wanted`. */
 function bindingIdentifier(name: ts.BindingName, wanted: string): ts.Identifier | null {
-  if (ts.isIdentifier(name)) return name.text === wanted ? name : null;
-  for (const element of name.elements) {
-    if (ts.isOmittedExpression(element)) continue;
-    const found = bindingIdentifier(element.name, wanted);
-    if (found) return found;
-  }
-  return null;
+  return declaredIdentifiers(name).find((identifier) => identifier.text === wanted) ?? null;
 }
 
 /**
@@ -442,28 +456,44 @@ function findDeclaration(name: string, from: ts.Node): Declaration {
 
 /**
  * What `name` is bound to where `from` reads it. A `const` with a plain
- * identifier gives its initializer; a parameter (destructured or not) says the
- * caller decides; `let`, a destructured `const`, a loop or `catch` variable or
- * an import is not followed, and an inner one shadows an outer `const`.
+ * identifier gives its declaration and initializer; a parameter (destructured
+ * or not) says the caller decides; `let`, a destructured `const`, a loop or
+ * `catch` variable or an import is not followed, and an inner one shadows an
+ * outer `const`. The one definition of a constant the scanner follows.
  */
 function resolveBinding(name: string, from: ts.Node): Binding {
   const declaration = findDeclaration(name, from);
   if (declaration?.kind === "parameter") return { kind: "parameter" };
   if (declaration?.kind !== "const") return null;
   const { declaration: node } = declaration;
-  return ts.isIdentifier(node.name) && node.initializer ? { kind: "const", initializer: node.initializer } : null;
+  return ts.isIdentifier(node.name) && node.initializer
+    ? { kind: "const", id: declaration.id, declaration: node, initializer: node.initializer }
+    : null;
 }
 
 /** A read of a `const` or parameter declaration, and the property path after it. */
 type Reference = { id: ts.Identifier; path: readonly string[] };
 
-/** The identifier and property names of an identifier or a property-access chain. */
+/** Stands for a computed key (`a[k]`) in a path: it matches any name. */
+const ANY_KEY = "*";
+
+/** The key an element access names: its string literal, else any key (`a[0]`, `a[k]`). */
+function elementKey(argument: ts.Expression): string {
+  return ts.isStringLiteral(argument) || ts.isNoSubstitutionTemplateLiteral(argument) ? argument.text : ANY_KEY;
+}
+
+/**
+ * The identifier and key names of an identifier or a chain of property and
+ * element accesses: `a.b[0]["c"]` is `a` with `b`, `*` (a number or a computed
+ * key) and `c`.
+ */
 function accessPath(node: ts.Expression): { root: ts.Identifier; path: string[] } | null {
   const value = unwrapValue(node);
   if (ts.isIdentifier(value)) return { root: value, path: [] };
-  if (!ts.isPropertyAccessExpression(value)) return null;
+  if (!ts.isPropertyAccessExpression(value) && !ts.isElementAccessExpression(value)) return null;
   const receiver = accessPath(value.expression);
-  return receiver && { root: receiver.root, path: [...receiver.path, value.name.text] };
+  const key = ts.isPropertyAccessExpression(value) ? value.name.text : elementKey(value.argumentExpression);
+  return receiver && { root: receiver.root, path: [...receiver.path, key] };
 }
 
 function sameReference(a: Reference, b: Reference): boolean {
@@ -510,50 +540,78 @@ function assignmentTargets(node: ts.Node): ts.Expression[] {
   return [];
 }
 
-/** Stands for a computed key (`a[k]`) in a written path: it matches any name. */
-const ANY_KEY = "*";
-
-/**
- * The slot an assignment target writes, as a root and a property path:
- * `a.b.c = x` writes `b.c` under `a`, and `a.b[k] = x` writes `b.*`.
- */
-function writtenPath(target: ts.Expression): { root: ts.Identifier; path: string[] } | null {
-  const value = unwrapValue(target);
-  if (ts.isElementAccessExpression(value)) {
-    const receiver = writtenPath(value.expression);
-    return receiver && { root: receiver.root, path: [...receiver.path, nameText(value.argumentExpression) ?? ANY_KEY] };
-  }
-  return accessPath(value);
-}
-
 /** The declaration node `identifier` resolves to, or null (an import or a global). */
 function declarationId(identifier: ts.Identifier): ts.Identifier | null {
   return findDeclaration(identifier.text, identifier)?.id ?? null;
 }
 
-/** Every identifier a binding name (plain or destructuring) declares. */
-function declaredIdentifiers(name: ts.BindingName): ts.Identifier[] {
-  if (ts.isIdentifier(name)) return [name];
-  return name.elements.flatMap((element) => (ts.isOmittedExpression(element) ? [] : declaredIdentifiers(element.name)));
-}
 
-/** Array methods that add, replace or reorder the elements they are called on. */
-const ELEMENT_WRITING_METHODS = new Set(["push", "unshift", "splice", "fill", "copyWithin"]);
+/** An object the scan follows: the path from the root a name stands for, and whether it only holds it. */
+type Alias = { path: readonly string[]; container: boolean };
+
+/** A read in an expression of a followed object, or of a part of it on the watched path. */
+type Reach = { path: readonly string[]; container: boolean; node: ts.Expression };
+
+/**
+ * Methods that only read the object or array they are called on, so calling
+ * one on it is not a hand-over. Any other method may change it, and a method
+ * that returns an element (`at`, `find`, `slice`) hands an element out.
+ */
+const READ_ONLY_METHODS = new Set([
+  "some",
+  "every",
+  "map",
+  "forEach",
+  "includes",
+  "indexOf",
+  "join",
+  "hasOwnProperty",
+  "toString",
+]);
+
+const ALIASING_ASSIGNMENTS = new Set([
+  ts.SyntaxKind.EqualsToken,
+  ts.SyntaxKind.BarBarEqualsToken,
+  ts.SyntaxKind.QuestionQuestionEqualsToken,
+  ts.SyntaxKind.AmpersandAmpersandEqualsToken,
+]);
+
+/** The expressions a call, `new` or tagged template hands its callee. */
+function callArguments(node: ts.Node): ts.Expression[] {
+  if (ts.isCallExpression(node) || ts.isNewExpression(node)) {
+    return (node.arguments ?? []).map((argument) => (ts.isSpreadElement(argument) ? argument.expression : argument));
+  }
+  if (ts.isTaggedTemplateExpression(node) && ts.isTemplateExpression(node.template)) {
+    return node.template.templateSpans.map((span) => span.expression);
+  }
+  return [];
+}
 
 /**
  * True when, within `window` of `scope`, something changes the object `id`
  * declares, or hands it to code that could (#4746). Conservative by design: any
  * of these counts, wherever the call goes.
  *
- * - a write through an alias of it (`const al = id`, a destructuring of it, or
- *   `al = id`, followed to a fixpoint): `al.k = v` or `al[i] = v`;
- * - a call or `new` that receives it, or an alias of it, as an argument, which
- *   covers `Object.assign(id, ...)`. `watched` is the property path the caller
- *   reads: an argument only counts when it is a strict prefix of it, so
- *   `hash(id.pw)` for `watched = ["pw"]` is not a hand-over but `log(id)` is;
- * - with `direct`, also a write through `id` itself (`id.k = v`, `id[i] = v`) and
- *   an element-writing method on it (`id.push(...)`). Without it the caller
- *   already sees those writes (`isReassigned`).
+ * `watched` is the path under `id` the caller reads; `*` in it is any element
+ * of an array. Only a part that path reads through (a strict prefix of it) can
+ * be changed in a way that matters, so `hash(id.pw)` for `watched = ["pw"]` is
+ * not a hand-over but `log(id)` is.
+ *
+ * - an alias of the object, to a fixpoint: `const al = id`, a destructuring or
+ *   `al = id`, `al ||= id`, either branch of `c ? id : x`, an operand of `||`,
+ *   `??` or `&&`, a literal that holds it (`{ id }`, `[id]`), the variable of a
+ *   `for…of` over an array of it, or the parameter of a callback given to one
+ *   of its methods;
+ * - a write through an alias (`al.k = v`, `al[i] = v`);
+ * - a call, `new` or tagged template that receives the object or an alias
+ *   (also inside a literal or a conditional), which covers `Object.assign(id, ...)`;
+ * - a call of a method on it, unless it is in `READ_ONLY_METHODS`;
+ * - with `direct`, also a write through `id` itself (`id.k = v`, `id[i] = v`).
+ *   Without it the caller already sees those writes (`isReassigned`).
+ *
+ * A change inside a function nested in `scope` counts wherever it sits, since
+ * it can run at any time (a hoisted declaration, or a closure called later),
+ * unless the function holds the whole window.
  *
  * `followed` are reads the caller itself traced through, which are not uses.
  */
@@ -565,37 +623,84 @@ function objectChanged(
   direct: boolean,
   followed: ReadonlySet<ts.Node> = new Set(),
 ): boolean {
-  const isPrefix = (path: readonly string[], strict: boolean) =>
-    (strict ? path.length < watched.length : path.length <= watched.length) &&
-    path.every((name, i) => name === watched[i]);
-  // `id` and everything bound to it, or to a part of it on the watched path,
-  // each with the path from `id` it stands for.
-  const sources = new Map<ts.Identifier, readonly string[]>([[id, []]]);
+  const matches = (name: string, wanted: string) =>
+    name === wanted || name === ANY_KEY || (wanted === ANY_KEY && /^\d+$/.test(name));
+  const isPrefix = (path: readonly string[]) =>
+    path.length < watched.length && path.every((name, i) => matches(name, watched[i]));
+  // `id` and everything bound to it, or to a part of it on the watched path.
+  const sources = new Map<ts.Identifier, Alias>([[id, { path: [], container: false }]]);
+  // A container alias stands for the object wherever it is read: `h.d` for
+  // `const h = { d: id }` is `id`.
   const rootOf = (node: ts.Expression) => {
     const access = accessPath(node);
     const source = access && declarationId(access.root);
-    const base = source && sources.get(source);
-    return access && source && base ? { source, path: [...base, ...access.path] } : null;
+    const alias = source && sources.get(source);
+    if (!access || !source || !alias) return null;
+    return { source, path: alias.container ? alias.path : [...alias.path, ...access.path], container: alias.container };
   };
-  const noteAlias = (names: readonly ts.Identifier[], initializer: ts.Expression): boolean => {
-    const from = rootOf(initializer);
-    // Only a copy of a part the watched path reads through can reach it.
-    if (!from || !isPrefix(from.path, true)) return false;
-    const fresh = names.filter((name) => !sources.has(name));
-    for (const name of fresh) sources.set(name, from.path);
-    return fresh.length > 0;
+  // The followed objects an expression can evaluate to or hold.
+  const reach = (expression: ts.Expression, container = false): Reach[] => {
+    const value = unwrapValue(expression);
+    if (ts.isConditionalExpression(value)) {
+      return [...reach(value.whenTrue, container), ...reach(value.whenFalse, container)];
+    }
+    if (ts.isBinaryExpression(value)) {
+      const kind = value.operatorToken.kind;
+      if (kind === ts.SyntaxKind.CommaToken) return reach(value.right, container);
+      return kind === ts.SyntaxKind.QuestionQuestionToken ||
+        kind === ts.SyntaxKind.BarBarToken ||
+        kind === ts.SyntaxKind.AmpersandAmpersandToken
+        ? [...reach(value.left, container), ...reach(value.right, container)]
+        : [];
+    }
+    if (ts.isObjectLiteralExpression(value)) {
+      return value.properties.flatMap((property) => {
+        if (ts.isPropertyAssignment(property)) return reach(property.initializer, true);
+        if (ts.isShorthandPropertyAssignment(property)) return reach(property.name, true);
+        return ts.isSpreadAssignment(property) ? reach(property.expression, true) : [];
+      });
+    }
+    if (ts.isArrayLiteralExpression(value)) {
+      return value.elements.flatMap((element) => reach(ts.isSpreadElement(element) ? element.expression : element, true));
+    }
+    const found = rootOf(value);
+    return found ? [{ path: found.path, container: container || found.container, node: value }] : [];
+  };
+  const noteAlias = (names: readonly ts.Identifier[], candidates: readonly Reach[], element = false): boolean => {
+    let grew = false;
+    for (const candidate of candidates) {
+      const path = element ? [...candidate.path, ANY_KEY] : candidate.path;
+      if (!isPrefix(path)) continue;
+      for (const name of names) {
+        if (sources.has(name)) continue;
+        sources.set(name, { path, container: candidate.container });
+        grew = true;
+      }
+    }
+    return grew;
   };
   const collectAliases = (node: ts.Node): boolean => {
     let grew = false;
     if (ts.isVariableDeclaration(node) && node.initializer) {
-      grew = noteAlias(declaredIdentifiers(node.name), node.initializer);
-    } else if (
-      ts.isBinaryExpression(node) &&
-      node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-      ts.isIdentifier(unwrapParens(node.left))
-    ) {
-      const target = declarationId(unwrapParens(node.left) as ts.Identifier);
-      grew = target !== null && noteAlias([target], node.right);
+      grew = noteAlias(declaredIdentifiers(node.name), reach(node.initializer));
+    } else if (ts.isBinaryExpression(node) && ALIASING_ASSIGNMENTS.has(node.operatorToken.kind)) {
+      const names = assignmentTargets(node).flatMap((target) => {
+        const declared = ts.isIdentifier(target) ? declarationId(target) : null;
+        return declared ? [declared] : [];
+      });
+      grew = noteAlias(names, reach(node.right));
+    } else if (ts.isForOfStatement(node)) {
+      const names = ts.isVariableDeclarationList(node.initializer)
+        ? node.initializer.declarations.flatMap((declaration) => declaredIdentifiers(declaration.name))
+        : assignmentTargets(node).flatMap((target) => {
+            const declared = ts.isIdentifier(target) ? declarationId(target) : null;
+            return declared ? [declared] : [];
+          });
+      grew = noteAlias(names, reach(node.expression), true);
+    } else if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)) {
+      const callback = node.arguments[0] && unwrapValue(node.arguments[0]);
+      const parameter = callback && (ts.isArrowFunction(callback) || ts.isFunctionExpression(callback)) ? callback.parameters[0] : null;
+      if (parameter) grew = noteAlias(declaredIdentifiers(parameter.name), reach(node.expression.expression), true);
     }
     ts.forEachChild(node, (child) => {
       grew = collectAliases(child) || grew;
@@ -603,39 +708,40 @@ function objectChanged(
     return grew;
   };
   while (collectAliases(scope));
+  // Whether a function nested in `scope` can run inside the window, which it
+  // does anywhere unless it holds the whole of it.
+  const holdsWindow = (fn: ts.Node) =>
+    fn.getStart() <= window.from && fn.getEnd() >= Math.min(window.to, scope.getEnd());
+  const canRun = (fn: ts.Node) =>
+    !holdsWindow(fn) && (ts.isFunctionDeclaration(fn) || fn.getStart() < window.to);
   let changed = false;
-  const visit = (node: ts.Node): void => {
+  const visit = (node: ts.Node, inClosure: boolean): void => {
     if (changed) return;
+    const closure = inClosure || (node !== scope && isFunctionLike(node) && canRun(node));
     const start = node.getStart();
-    if (start >= window.from && start < window.to) {
+    if (closure || (start >= window.from && start < window.to)) {
       for (const target of assignmentTargets(node)) {
-        const write = writtenPath(target);
+        const write = accessPath(target);
         const source = write && declarationId(write.root);
         if (write && source && sources.has(source) && write.path.length > 0 && (direct || source !== id)) {
           changed = true;
         }
       }
-      if (ts.isCallExpression(node) || ts.isNewExpression(node)) {
-        for (const argument of node.arguments ?? []) {
-          const passed = ts.isSpreadElement(argument) ? argument.expression : argument;
-          const received = followed.has(unwrapValue(passed)) ? null : rootOf(passed);
-          if (received && isPrefix(received.path, true)) changed = true;
-        }
-        const callee = ts.isCallExpression(node) ? node.expression : null;
-        if (
-          direct &&
-          callee &&
-          ts.isPropertyAccessExpression(callee) &&
-          ELEMENT_WRITING_METHODS.has(callee.name.text) &&
-          rootOf(callee.expression)
-        ) {
+      for (const argument of callArguments(node)) {
+        if (reach(argument).some((received) => !followed.has(received.node) && isPrefix(received.path))) {
           changed = true;
         }
       }
+      const callee = ts.isCallExpression(node) ? unwrapValue(node.expression) : null;
+      if (callee && (ts.isPropertyAccessExpression(callee) || ts.isElementAccessExpression(callee))) {
+        const method = ts.isPropertyAccessExpression(callee) ? callee.name.text : elementKey(callee.argumentExpression);
+        const receiver = rootOf(callee.expression);
+        if (receiver && isPrefix(receiver.path) && !READ_ONLY_METHODS.has(method)) changed = true;
+      }
     }
-    ts.forEachChild(node, visit);
+    ts.forEachChild(node, (child) => visit(child, closure));
   };
-  visit(scope);
+  visit(scope, false);
   return changed;
 }
 
@@ -648,7 +754,7 @@ function isReassigned(reference: Reference, scope: ts.Node): boolean {
   const visit = (node: ts.Node): void => {
     if (written) return;
     for (const target of assignmentTargets(node)) {
-      const write = writtenPath(target);
+      const write = accessPath(target);
       if (!write || declarationId(write.root) !== reference.id) continue;
       // Writing the declaration, or any property its path reads through.
       if (
@@ -672,8 +778,8 @@ function declarationScope(
 }
 
 /**
- * The declaration and path `node` reads, when it is an identifier or a
- * property-access chain rooted in a `const` or a parameter that nothing in its
+ * The declaration and path `node` reads, when it is an identifier or a chain of
+ * property accesses and literal-key element accesses rooted in a `const` or a parameter that nothing in its
  * scope reassigns; otherwise null.
  */
 function referenceOf(node: ts.Expression): Reference | null {
@@ -681,6 +787,8 @@ function referenceOf(node: ts.Expression): Reference | null {
   if (!access) return null;
   const declaration = findDeclaration(access.root.text, access.root);
   if (declaration?.kind !== "const" && declaration?.kind !== "parameter") return null;
+  // A computed key names no one property, so two reads of `b[k]` need not match.
+  if (access.path.includes(ANY_KEY)) return null;
   const reference = { id: declaration.id, path: access.path };
   return isReassigned(reference, declarationScope(declaration)) ? null : reference;
 }
@@ -785,9 +893,12 @@ function returnedExpressions(fn: ts.Node): ts.Expression[] | null {
   return bare || returned.length === 0 ? null : returned;
 }
 
-/** The `const`s `objectLiterals` followed, and the reads of them it followed through. */
+/**
+ * The `const`s `objectLiterals` followed (each with whether it holds an array
+ * of the objects or one object), and the reads of them it followed through.
+ */
 type LiteralTrace = {
-  consts: { id: ts.Identifier; declaration: ts.VariableDeclaration }[];
+  consts: { binding: FollowedConst; elements: boolean }[];
   followed: Set<ts.Node>;
 };
 
@@ -806,13 +917,11 @@ function objectLiterals(
   const value = unwrapValue(node);
   if (depth > MAX_TRACE_DEPTH) return null;
   if (ts.isIdentifier(value)) {
-    const declaration = findDeclaration(value.text, value);
-    if (declaration?.kind !== "const" || !ts.isIdentifier(declaration.declaration.name)) return null;
-    const { initializer } = declaration.declaration;
-    if (!initializer) return null;
-    trace.consts.push(declaration);
+    const binding = resolveBinding(value.text, value);
+    if (binding?.kind !== "const") return null;
+    trace.consts.push({ binding, elements });
     trace.followed.add(value);
-    return objectLiterals(initializer, elements, trace, depth + 1);
+    return objectLiterals(binding.initializer, elements, trace, depth + 1);
   }
   if (!elements) return ts.isObjectLiteralExpression(value) ? [value] : null;
   const all = (parts: readonly ts.Expression[], each: boolean) => {
@@ -842,35 +951,50 @@ function objectLiterals(
 function copiedWriters(copy: ts.PropertyAccessExpression): ts.Node[] | null {
   const root = unwrapValue(copy.expression);
   if (!ts.isIdentifier(root)) return null;
-  const declaration = findDeclaration(root.text, root);
+  const binding = resolveBinding(root.text, root);
+  const declaration = binding ? null : findDeclaration(root.text, root);
   let literals: ts.ObjectLiteralExpression[] | null = null;
   const trace: LiteralTrace = { consts: [], followed: new Set() };
   // The object, or the loop variable, and each array it came from, with where
-  // each is built.
-  const changeWindows: { id: ts.Identifier; scope: ts.Node; from: number }[] = [];
-  if (declaration?.kind === "const" && ts.isIdentifier(declaration.declaration.name)) {
-    changeWindows.push({ id: declaration.id, scope: declarationScope(declaration), from: declaration.declaration.getEnd() });
-    literals = declaration.declaration.initializer
-      ? objectLiterals(declaration.declaration.initializer, false, trace)
-      : null;
+  // each is built and the path of the value a copy reads.
+  const changeWindows: { id: ts.Identifier; scope: ts.Node; from: number; watched: readonly string[] }[] = [];
+  const objectPath = ["passwordHash"];
+  if (binding?.kind === "const") {
+    changeWindows.push({
+      id: binding.id,
+      scope: declarationScope(binding),
+      from: binding.declaration.getEnd(),
+      watched: objectPath,
+    });
+    literals = objectLiterals(binding.initializer, false, trace);
   } else if (
     declaration?.kind === "loop" &&
     ts.isForOfStatement(declaration.statement) &&
     declaration.id.parent === (declaration.statement.initializer as ts.VariableDeclarationList).declarations[0] &&
     (declaration.statement.initializer.flags & ts.NodeFlags.Const) !== 0
   ) {
-    changeWindows.push({ id: declaration.id, scope: declaration.statement, from: declaration.statement.getStart() });
+    changeWindows.push({
+      id: declaration.id,
+      scope: declaration.statement,
+      from: declaration.statement.getStart(),
+      watched: objectPath,
+    });
     literals = objectLiterals(declaration.statement.expression, true, trace);
   }
   if (!literals) return null;
-  for (const followed of trace.consts) {
-    changeWindows.push({ id: followed.id, scope: declarationScope({ kind: "const", declaration: followed.declaration }), from: followed.declaration.getEnd() });
+  for (const { binding: followed, elements } of trace.consts) {
+    changeWindows.push({
+      id: followed.id,
+      scope: declarationScope(followed),
+      from: followed.declaration.getEnd(),
+      watched: elements ? [ANY_KEY, ...objectPath] : objectPath,
+    });
   }
   // #4746: a write after the build (`x.k = v`, `rows[0] = v`), an alias that
-  // writes, `Object.assign(x, ...)` or any call that receives the object or the
-  // array can replace the value the literal vetted, so the copy is refused.
-  const watched = ["passwordHash"];
-  for (const { id, scope, from } of changeWindows) {
+  // writes, `Object.assign(x, ...)` or any call that receives the object, an
+  // element of the array or the array can replace the value the literal
+  // vetted, so the copy is refused.
+  for (const { id, scope, from, watched } of changeWindows) {
     if (objectChanged(id, scope, watched, { from, to: Infinity }, true, trace.followed)) return null;
   }
   const writers: ts.Node[] = [];
