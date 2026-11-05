@@ -83,6 +83,13 @@ const REVIEWED_PASSWORD_HASH_WRITERS: readonly ReviewedWriter[] = [
     classification: "chosen",
     reason: "An officer chooses the password for a new kiosk account.",
   },
+  {
+    file: "prisma/seed.ts",
+    scope: "main",
+    count: 2,
+    classification: "chosen",
+    reason: "The operator chooses SEED_ADMIN_PASSWORD and SEED_LODGE_PASSWORD; the install-time seed screens each and stops on a breached one.",
+  },
   // Generated or unusable hashes: nobody chooses these.
   {
     file: "src/app/api/admin/lodge/route.ts",
@@ -182,15 +189,7 @@ const REVIEWED_PASSWORD_HASH_WRITERS: readonly ReviewedWriter[] = [
     classification: "exempt",
     reason: `Placeholder non-member contact. ${GENERATED_PLACEHOLDER}`,
   },
-  // Development seeds and the operator's install-time bootstrap: run from the
-  // command line, outside any request, before the club setting exists.
-  {
-    file: "prisma/seed.ts",
-    scope: "main",
-    count: 2,
-    classification: "exempt",
-    reason: "Install-time bootstrap from SEED_ADMIN_PASSWORD and SEED_LODGE_PASSWORD; the admin is forced through the screened /change-password on first sign-in; nothing forces the kiosk's (forcePasswordChange is false), but it can be replaced through the screened lodge PUT.",
-  },
+  // Development seeds: run from the command line, outside any request.
   {
     file: "prisma/seed-data.ts",
     scope: "buildSeedAdminMemberData",

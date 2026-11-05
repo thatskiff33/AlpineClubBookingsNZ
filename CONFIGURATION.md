@@ -1265,7 +1265,10 @@ test/demo mode or disabled:
 
 `prisma/seed.ts` fails before seeding if `SEED_ADMIN_EMAIL` or
 `SEED_ADMIN_PASSWORD` is unset, and fails before creating the lodge kiosk
-account if `SEED_LODGE_PASSWORD` is unset. The seeded admin is created with
+account if `SEED_LODGE_PASSWORD` is unset. Before creating either account it
+checks that password against the public breached-password service and stops
+if the password is listed (#4610); if the service cannot be reached, the
+password is accepted unchecked. The seeded admin is created with
 `role: ADMIN`, `canLogin: true`, `emailVerified: true`, and a `NOT_REQUIRED`
 membership subscription for the current season, and is forced through
 `/change-password` on first login. The seed also writes the normalized

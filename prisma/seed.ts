@@ -4,6 +4,7 @@
 import { type AgeTier, PrismaClient } from "@prisma/client";
 import bcrypt from "bcryptjs";
 import { PASSWORD_BCRYPT_COST } from "../src/lib/password-hashing";
+import { screenChosenPassword } from "../src/lib/breached-password";
 import { clubConfig } from "../src/config/club";
 import {
   CLUB_CONTACT_EMAIL,
@@ -35,6 +36,8 @@ import {
   buildSeedChoreTemplates,
   buildSeedCommitteeRoles,
   buildSeedLodgeMemberData,
+  SEED_PASSWORD_SCREEN_POLICY,
+  seedPasswordBreachedMessage,
 } from "./seed-data";
 import { starterPageContent } from "./starter-page-content";
 import { starterSiteContent } from "./starter-site-content";
@@ -495,6 +498,11 @@ async function main() {
   });
 
   if (!existingAdmin) {
+    // #4610 (INV-AUTH-006): an operator chose this password, so it is screened
+    // like any other. A breached one stops the seed; an unreachable service
+    // accepts it (fail open).
+    const adminScreen = await screenChosenPassword(seedAdminPassword, SEED_PASSWORD_SCREEN_POLICY);
+    if (!adminScreen.ok) throw new Error(seedPasswordBreachedMessage("SEED_ADMIN_PASSWORD"));
     const passwordHash = await bcrypt.hash(seedAdminPassword, PASSWORD_BCRYPT_COST);
     const admin = await prisma.member.create({
       data: buildSeedAdminMemberData({
@@ -535,10 +543,12 @@ async function main() {
   });
 
   if (!existingLodge) {
-    const lodgePasswordHash = await bcrypt.hash(
-      requireSeedEnv("SEED_LODGE_PASSWORD"),
-      PASSWORD_BCRYPT_COST,
-    );
+    // #4610 (INV-AUTH-006): screened as the admin password is above. The kiosk
+    // signs in with it and is not forced to change it.
+    const lodgePassword = requireSeedEnv("SEED_LODGE_PASSWORD");
+    const lodgeScreen = await screenChosenPassword(lodgePassword, SEED_PASSWORD_SCREEN_POLICY);
+    if (!lodgeScreen.ok) throw new Error(seedPasswordBreachedMessage("SEED_LODGE_PASSWORD"));
+    const lodgePasswordHash = await bcrypt.hash(lodgePassword, PASSWORD_BCRYPT_COST);
     const lodge = await prisma.member.create({
       data: buildSeedLodgeMemberData({
         email: lodgeAccountEmail,

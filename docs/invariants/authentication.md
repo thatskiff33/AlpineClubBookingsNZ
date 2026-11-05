@@ -110,7 +110,8 @@ This file holds only the rules.
 
 - **A password a person chooses is screened against the public breach list
   before it is hashed.** Every place a person chooses a password — change,
-  reset and account-setup links, and an officer setting a kiosk password —
+  reset and account-setup links, an officer setting a kiosk password, and the
+  install seed's two passwords —
   awaits `screenChosenPassword` in
   [`breached-password.ts`](../../src/lib/breached-password.ts) first, and a
   listed password is refused with `PASSWORD_BREACHED`. It is the one helper
@@ -130,4 +131,4 @@ This file holds only the rules.
   that is neither guarded — the awaited screen bound, then `if (!result.ok)`
   returning, before the write in an enclosing block — nor listed as exempt with
   its reason: a generated or deliberately unusable hash (placeholders, imports,
-  erasure, seeds, SQL fixtures).
+  erasure, the demo seed, SQL fixtures).

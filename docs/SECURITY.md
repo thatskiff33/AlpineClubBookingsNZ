@@ -300,7 +300,11 @@ seen in a breach, and refuses it if so. The rules are `INV-AUTH-006` in
 holds the behaviour and the limits.
 
 **Where it runs.** Changing a password, choosing one from a reset or
-account-setup link, and an officer setting a kiosk password (Lodge settings).
+account-setup link, an officer setting a kiosk password (Lodge settings), and
+the install-time seed's `SEED_ADMIN_PASSWORD` and `SEED_LODGE_PASSWORD`, each
+checked just before its account is created. The seed runs before the club
+setting exists, so it always checks, and a breached password stops it with a
+message naming the variable.
 Self-registration is retired (`/api/auth/register` answers 410), and the
 other ways an account is created (admin creation, imports, approved
 applications, placeholder contacts) store a random placeholder, so the
@@ -345,7 +349,8 @@ and raw-SQL `INSERT` or `UPDATE` literals naming the column. A writer must
 either be guarded — the awaited `screenChosenPassword` result bound to a name,
 then an `if (!result.ok)` that returns, both in a block enclosing the write and
 before it — or be listed as exempt with its reason (placeholders, imports,
-erasure, seeds and SQL fixtures store generated or unusable hashes). A new
+erasure, the local demo seed and SQL fixtures store generated or unusable
+hashes). A new
 writer in neither list fails the build. It cannot see SQL assembled by
 concatenating separate literals or read from a `.sql` file at run time.
 
@@ -359,11 +364,15 @@ concatenating separate literals or read from a `.sql` file at run time.
   and nothing ties the request to a member beyond the server's own address.
 - **During a blue/green cutover the old slot does not check.** The migration
   only adds the setting column, and the draining release never reads it.
-- **Install-time seeds are not screened.** `SEED_ADMIN_PASSWORD` and
-  `SEED_LODGE_PASSWORD` are set by the operator before the setting exists; the
-  seed admin must change password on first sign-in, which is screened. Nothing
-  forces the seed kiosk's password to change; an officer can replace it
-  through Lodge settings, which is screened.
+- **The install-time seed fails open too.** If the seed host cannot reach
+  the service, `SEED_ADMIN_PASSWORD` and `SEED_LODGE_PASSWORD` are accepted
+  unchecked, as any chosen password would be. The seed admin must still change
+  password on first sign-in, which is screened; nothing forces the seed
+  kiosk's password to change.
+- **The local demo seed is not screened.** `pnpm run db:seed:demo` hashes
+  `DEMO_SEED_PASSWORD` (or its published default) for local demo accounts; it
+  refuses to run without `ALLOW_DEMO_SEED=1` and never seeds a production
+  account.
 
 ## Dietary/allergy information (special-category data)
 

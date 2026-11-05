@@ -28,6 +28,12 @@ import {
   sha1Upper,
   stubBreachedPasswordService,
 } from "@/lib/__tests__/helpers/breached-password-service";
+import {
+  SEED_PASSWORD_SCREEN_POLICY,
+  seedPasswordBreachedMessage,
+} from "../../../prisma/seed-data";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 
 const BREACHED = "Password1234";
 const CLEAN = "a quiet ridge at first light 4610";
@@ -195,5 +201,41 @@ describe("fails open", () => {
       { reason: "malformed" },
       { reason: "malformed" },
     ]);
+  });
+});
+
+// prisma/seed.ts stores SEED_ADMIN_PASSWORD and SEED_LODGE_PASSWORD, which an
+// operator chose, so it screens them with the same helper before hashing.
+describe("the seed screens its operator-chosen passwords", () => {
+  const seedSource = readFileSync(path.resolve(__dirname, "../../../prisma/seed.ts"), "utf8");
+
+  it("stops on a listed password, naming the variable, without reading the club setting", async () => {
+    stubBreachedPasswordService([BREACHED]);
+    await expect(screenChosenPassword(BREACHED, SEED_PASSWORD_SCREEN_POLICY)).resolves.toMatchObject({ ok: false });
+    expect(mocks.findUnique).not.toHaveBeenCalled();
+    expect(seedPasswordBreachedMessage("SEED_LODGE_PASSWORD")).toMatch(/^SEED_LODGE_PASSWORD has appeared in a public data breach/);
+  });
+
+  it("accepts a clean password, and fails open when the service is unreachable", async () => {
+    stubBreachedPasswordService([BREACHED]);
+    await expect(screenChosenPassword(CLEAN, SEED_PASSWORD_SCREEN_POLICY)).resolves.toEqual({ ok: true });
+    vi.stubGlobal("fetch", vi.fn(async () => { throw new TypeError("fetch failed"); }));
+    await expect(screenChosenPassword(BREACHED, SEED_PASSWORD_SCREEN_POLICY)).resolves.toEqual({ ok: true });
+  });
+
+  it.each([
+    ["SEED_ADMIN_PASSWORD", "seedAdminPassword", "adminScreen"],
+    ["SEED_LODGE_PASSWORD", "lodgePassword", "lodgeScreen"],
+  ])("screens %s before hashing it, and throws on a refusal", (name, variable, screen) => {
+    const screenAt = seedSource.indexOf(
+      `const ${screen} = await screenChosenPassword(${variable}, SEED_PASSWORD_SCREEN_POLICY);`,
+    );
+    const refuseAt = seedSource.indexOf(
+      `if (!${screen}.ok) throw new Error(seedPasswordBreachedMessage("${name}"));`,
+    );
+    const hashAt = seedSource.indexOf(`await bcrypt.hash(${variable}, PASSWORD_BCRYPT_COST)`);
+    expect(screenAt).toBeGreaterThan(-1);
+    expect(refuseAt).toBeGreaterThan(screenAt);
+    expect(hashAt).toBeGreaterThan(refuseAt);
   });
 });
