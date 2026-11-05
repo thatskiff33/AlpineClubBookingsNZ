@@ -150,6 +150,7 @@ describe("Sentry never carries the breached-password range prefix (#4610)", () =
     const scrubbed = scrubBreachedPasswordRangeDeep(event);
     expect(JSON.stringify({ ...scrubbed, self: undefined })).not.toContain(PREFIX);
     expect(scrubbed.message).toBe("unrelated");
+    expect(() => scrubBreachedPasswordRangeDeep(Object.freeze({ list: Object.freeze([RANGE]) }))).not.toThrow();
   });
 
   it.each(INIT_FILES)("%s runs the breadcrumb and event filters", (file) => {

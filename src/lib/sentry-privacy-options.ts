@@ -48,7 +48,8 @@ export function scrubBreachedPasswordRangeDeep<T>(value: T): T {
   const walk = (node: unknown, depth: number): unknown => {
     if (typeof node === "string") return scrubBreachedPasswordRange(node);
     if (depth >= MAX_SCRUB_DEPTH || node === null || typeof node !== "object") return node;
-    if (seen.has(node)) return node;
+    // A frozen node cannot be written in place; strict mode would throw.
+    if (seen.has(node) || Object.isFrozen(node)) return node;
     seen.add(node);
     if (Array.isArray(node)) {
       node.forEach((child, index) => {
