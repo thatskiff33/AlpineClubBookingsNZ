@@ -2833,8 +2833,8 @@ Public forks should keep live provider credentials out of GitHub Actions. Use
 Stripe test mode, Xero demo tenants, SES sandbox credentials, and non-production
 databases for validation.
 
-Repository variables (Settings, then Secrets and variables, then Actions) that
-workflows read as `vars.*`:
+The status board reads one repository variable (Settings, then Secrets and
+variables, then Actions):
 
 | Variable | Description |
 | --- | --- |

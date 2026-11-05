@@ -37,17 +37,32 @@ function compareEvents(a, b) {
   return a.at - b.at || a.id - b.id;
 }
 
+/** Every `CLAIM:` (a `CLAIM UPDATE:` included) after the last `RELEASE:` or `HANDOVER:`, earliest first. */
+export function claimsSinceRelease(comments) {
+  const events = comments.map(event).filter(Boolean);
+  const ends = events.filter((e) => e.kind === "RELEASE" || e.kind === "HANDOVER").sort((a, b) => compareEvents(b, a));
+  return events.filter((e) => e.kind === "CLAIM" && (!ends[0] || compareEvents(e, ends[0]) > 0)).sort(compareEvents);
+}
+
 /**
  * The holder: the EARLIEST `CLAIM:` after the last `RELEASE:` or `HANDOVER:`.
  * The earlier claim on GitHub holds (`COORDINATION.md` -> "Checking a claim
  * held"); a later claimant withdraws, and its `CLAIM:` never moves the holder.
- * Null when there is none or the last event ended it.
+ * A later claim by the holder is an update: it counts as activity
+ * (`lastActivityAt`) and may name the branch (`claimBranch`). Null when there
+ * is none or the last event ended it.
  */
 export function activeClaim(comments) {
-  const events = comments.map(event).filter(Boolean);
-  const ends = events.filter((e) => e.kind === "RELEASE" || e.kind === "HANDOVER").sort((a, b) => compareEvents(b, a));
-  return events.filter((e) => e.kind === "CLAIM" && (!ends[0] || compareEvents(e, ends[0]) > 0))
-    .sort(compareEvents)[0] ?? null;
+  return claimsSinceRelease(comments)[0] ?? null;
+}
+
+/** The branch to read push activity for: the one the LATEST claim naming a branch gives (an update may add it). */
+export function claimBranch(comments) {
+  for (const claim of claimsSinceRelease(comments).reverse()) {
+    const branch = branchOf(claim);
+    if (branch) return branch;
+  }
+  return undefined;
 }
 
 /** The time of the newest `LANE-SYNC:` after the claim, or null when there is none. */
@@ -68,10 +83,11 @@ export function holderOf(claim) {
   return claim.text.split(/\s+Branch\b|\s+Scope:/i)[0].trim().replace(/[.,;:]+$/, "") || "Unnamed lane (inspect CLAIM)";
 }
 
-/** Latest of the claim, its later `LANE-SYNC:` comments and the branch's last push. */
+/** Latest of every claim since the last release, the later `LANE-SYNC:` comments and the branch's last push. */
 export function lastActivityAt(thread, claim) {
   const sync = lastLaneSyncAt(thread.comments, claim);
-  return Math.max(claim.at, ...(sync === null ? [] : [sync]), thread.pushedAt ? Date.parse(thread.pushedAt) : claim.at);
+  return Math.max(claim.at, ...claimsSinceRelease(thread.comments).map((c) => c.at), ...(sync === null ? [] : [sync]),
+    thread.pushedAt ? Date.parse(thread.pushedAt) : claim.at);
 }
 
 /**
@@ -129,7 +145,7 @@ export async function collectReservations(repo, read = readGithub, readPull = (n
     thread.comments = await allPages(read, `${root}/issues/${thread.number}/comments`);
     const claim = activeClaim(thread.comments);
     if (!claim) continue;
-    let branch = branchOf(claim);
+    let branch = claimBranch(thread.comments);
     let branchRepo = repo;
     if (thread.pull_request) {
       const pr = await readPull(thread.number);

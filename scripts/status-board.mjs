@@ -2,9 +2,10 @@
 /**
  * The generated status board (#4464): what is running, from GitHub alone.
  *
- * Read-only. It lists every open lane (the latest `CLAIM:` on an open issue or
- * pull request that no later `RELEASE:` or `HANDOVER:` ended), its last
- * `LANE-SYNC:`, the pull requests linked to it with draft or ready state, CI on
+ * Read-only. It lists every open lane (the EARLIEST `CLAIM:` since the last
+ * `RELEASE:` or `HANDOVER:` on an open issue or pull request, from the owner and
+ * agent accounts only; the holder's later claim updates count as activity), its
+ * last `LANE-SYNC:`, the pull requests linked to it with draft or ready state, CI on
  * the exact head commit and conflict state, and the claims the `lanes:stale`
  * rule calls stale. It prints markdown; `.github/workflows/status-board.yml`
  * overwrites one issue's body with it. It replaces the hand-kept ownership
@@ -17,7 +18,7 @@
 
 import { isMainModule } from "./lib/is-main-module.mjs";
 import {
-  STALE_HOURS, activeClaim, branchOf, collectReservations, holderOf, lastLaneSyncAt, readGithub, staleReservations,
+  STALE_HOURS, activeClaim, claimBranch, collectReservations, holderOf, lastLaneSyncAt, readGithub, staleReservations,
 } from "./lib/lane-reservations.mjs";
 
 /** GitHub rejects an issue body past 65,536 characters; stay well inside it. */
@@ -73,15 +74,18 @@ export function mergeLabel(pr) {
   return "unknown";
 }
 
-/** `required_status_checks` of the base branch, or null when the token cannot see it. */
+/**
+ * `required_status_checks` of a base branch: `names` is null when it has none or
+ * the read failed, and `failed` says which.
+ */
 async function requiredChecks(read, repo, base) {
   try {
     const branch = await read(`repos/${repo}/branches/${encodeURIComponent(base)}`);
     const status = branch?.protection?.required_status_checks;
     const names = [...(status?.contexts ?? []), ...(status?.checks ?? []).map((check) => check.context)];
-    return names.length ? [...new Set(names)].sort() : null;
+    return { names: names.length ? [...new Set(names)].sort() : null, failed: false };
   } catch {
-    return null;
+    return { names: null, failed: true };
   }
 }
 
@@ -98,9 +102,11 @@ const pause = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
 
 /**
  * Everything the board needs, read through the same GET-only boundary as `lanes:stale`.
- * `base` is the default branch; a pull request into another base (an exception
- * epic's `epic/**` branch) is judged against that base's own required list where
- * readable, otherwise `base`'s. GitHub computes `mergeable` lazily, so a `null`
+ * `base` is the default branch. A pull request into an `epic/**` base is judged
+ * against that branch's own required list where it has one, else `base`'s (CI
+ * runs on `epic/**` pull requests); so is one whose protection could not be
+ * read. A pull request into any other base (a stacked one) has no CI at all, and
+ * is marked so rather than shown "running" for ever. GitHub computes `mergeable` lazily, so a `null`
  * is read once more after `mergeRetryMs`.
  */
 export async function collectBoard(repo, read = readGithub, base = "main", { mergeRetryMs = 2000 } = {}) {
@@ -109,7 +115,7 @@ export async function collectBoard(repo, read = readGithub, base = "main", { mer
     if (!requiredByBase.has(name)) requiredByBase.set(name, await requiredChecks(read, repo, name));
     return requiredByBase.get(name);
   };
-  const fallback = await requiredFor(base);
+  const fallback = (await requiredFor(base)).names;
   const pulls = new Map();
   const readPull = async (number) => {
     if (!pulls.has(number)) {
@@ -126,14 +132,21 @@ export async function collectBoard(repo, read = readGithub, base = "main", { mer
   for (const thread of threads.filter((t) => t.pull_request)) {
     const pr = await readPull(thread.number);
     pr.checkRuns = await checkRuns(read, repo, pr.head.sha);
-    pr.required = (await requiredFor(pr.base?.ref ?? base)) ?? fallback;
+    const baseRef = pr.base?.ref ?? base;
+    pr.noCi = false;
+    pr.required = fallback;
+    if (baseRef !== base) {
+      const own = await requiredFor(baseRef);
+      if (own.names) pr.required = own.names;
+      else if (!own.failed && !baseRef.startsWith("epic/")) { pr.required = null; pr.noCi = true; }
+    }
   }
   return { repo, threads, pulls };
 }
 
 /** A pull request is linked to a lane by being it, by closing it in this repository, or by its branch in this repository. */
-function linkedPulls(thread, claim, pulls, repo) {
-  const branch = branchOf(claim);
+function linkedPulls(thread, pulls, repo) {
+  const branch = claimBranch(thread.comments);
   return [...pulls.values()].filter((pr) => pr.number === thread.number
     || closedIssues(pr.body, repo).includes(thread.number)
     || (branch && pr.head.ref === branch && pr.head.repo?.full_name?.toLowerCase() === repo.toLowerCase()))
@@ -151,12 +164,13 @@ export function buildBoard(model, now) {
       number: thread.number, title: thread.title ?? "", url: thread.html_url, kind: thread.pull_request ? "PR" : "Issue",
       holder: holderOf(claim), claimedAt: claim.at, lastSyncAt: sync, lastPushAt: thread.pushedAt ? Date.parse(thread.pushedAt) : null,
       pushWarning: thread.pushWarning ?? null, stale: stale.has(thread.number),
-      pulls: linkedPulls(thread, claim, model.pulls, model.repo).map((pr) => pr.number),
+      pulls: linkedPulls(thread, model.pulls, model.repo).map((pr) => pr.number),
     };
   });
   const pulls = [...model.pulls.values()].sort((a, b) => a.number - b.number).map((pr) => ({
     number: pr.number, title: pr.title ?? "", url: pr.html_url, draft: Boolean(pr.draft), head: pr.head.sha.slice(0, 7),
-    ci: ciState(pr.checkRuns ?? [], pr.required ?? null), requiredKnown: Boolean(pr.required), merge: mergeLabel(pr),
+    ci: pr.noCi ? { state: "no-ci", failing: [], pending: [], otherFailing: [] } : ciState(pr.checkRuns ?? [], pr.required ?? null),
+    requiredKnown: Boolean(pr.noCi || pr.required), merge: mergeLabel(pr),
     lanes: lanes.filter((lane) => lane.pulls.includes(pr.number)).map((lane) => lane.number),
   }));
   return { repo: model.repo, requiredKnown: pulls.every((pr) => pr.requiredKnown), lanes, pulls, stale: [...stale.values()].sort((a, b) => a.number - b.number) };
@@ -178,6 +192,7 @@ export function cell(text, max = 80) {
 const when = (ms) => (ms === null ? "—" : `${new Date(ms).toISOString().slice(0, 16).replace("T", " ")}Z`);
 
 function ciText(ci) {
+  if (ci.state === "no-ci") return "no CI on this base";
   if (ci.state === "fail") return `fail: ${ci.failing.map((name) => cell(name)).join(", ")}${ci.otherFailing.length ? ` (also failing, not required: ${ci.otherFailing.map((name) => cell(name)).join(", ")})` : ""}`;
   if (ci.state === "running") return `running${ci.pending.length ? `: ${ci.pending.slice(0, 3).map((name) => cell(name)).join(", ")}${ci.pending.length > 3 ? ` +${ci.pending.length - 3}` : ""}` : ""}`;
   return ci.state;

@@ -2,7 +2,7 @@
 
 Generated 2026-07-01T00:00:00.000Z from the open issues and pull requests of `thatskiff33/AlpineClubBookingsNZ`. The scheduled job overwrites this body every run (#4464); edit nothing here. Claim text is shown as posted and is not verified.
 
-5 active claims (1 stale), 9 open pull requests (1 draft, 2 red, 1 conflicting).
+5 active claims (1 stale), 10 open pull requests (1 draft, 2 red, 1 conflicting).
 
 ## Lanes
 
@@ -27,6 +27,7 @@ Generated 2026-07-01T00:00:00.000Z from the open issues and pull requests of `th
 | [#207](https://github.com/thatskiff33/AlpineClubBookingsNZ/pull/207) fix: change from a deleted fork | ready | pass | clean | `ggggggg` | none |
 | [#208](https://github.com/thatskiff33/AlpineClubBookingsNZ/pull/208) feat(#&#8203;4001): child of an exception epic | ready | pass | clean | `hhhhhhh` | none |
 | [#209](https://github.com/thatskiff33/AlpineClubBookingsNZ/pull/209) chore: into an epic branch whose protection is unreadable | ready | fail: Dependency audit | clean | `iiiiiii` | none |
+| [#210](https://github.com/thatskiff33/AlpineClubBookingsNZ/pull/210) feat(#&#8203;101): stacked on the widget branch | ready | no CI on this base | clean | `jjjjjjj` | none |
 
 ## Stale claims
 

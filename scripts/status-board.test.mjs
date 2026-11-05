@@ -128,8 +128,8 @@ describe("the board built from REST-shaped responses", () => {
   it("links a pull request to its lane by closing keyword in this repository, and not by a fork's same-named branch", async () => {
     const built = await board();
     expect(built.lanes.map((lane) => lane.pulls)).toEqual([[201], [], [202], [203], [204]]);
-    expect(built.pulls.map((pr) => pr.number)).toEqual([201, 202, 203, 204, 205, 206, 207, 208, 209]);
-    expect(built.pulls.map((pr) => pr.lanes)).toEqual([[101], [104], [105], [106], [], [], [], [], []]);
+    expect(built.pulls.map((pr) => pr.number)).toEqual([201, 202, 203, 204, 205, 206, 207, 208, 209, 210]);
+    expect(built.pulls.map((pr) => pr.lanes)).toEqual([[101], [104], [105], [106], [], [], [], [], [], []]);
   });
 
   it("links by branch only when the head repository is this one, and survives a deleted fork", async () => {
@@ -178,6 +178,22 @@ describe("the board built from REST-shaped responses", () => {
     expect(built.pulls.find((p) => p.number === 208)).toMatchObject({ ci: { state: "pass" }, requiredKnown: true });
     // 209's branch protection is unreadable, so it falls back to the default branch's list (and still fails on Dependency audit).
     expect(built.pulls.find((p) => p.number === 209)).toMatchObject({ requiredKnown: true });
+  });
+
+  it("marks a stacked pull request, into a base that gets no CI, instead of showing it running for ever", async () => {
+    const built = await board();
+    expect(built.pulls.find((p) => p.number === 210)).toMatchObject({ ci: { state: "no-ci" }, requiredKnown: true });
+    expect(renderBoard(built, now)).toContain("no CI on this base");
+  });
+
+  it("falls back to the default branch's list for an unprotected epic branch, or when the protection read errored", async () => {
+    const rebased = (number, ref) => ({ ...fixtures, [`repos/${repo}/pulls/${number}`]: {
+      ...fixtures[`repos/${repo}/pulls/${number}`], base: { ...fixtures[`repos/${repo}/pulls/${number}`].base, ref } } });
+    // An epic branch with no protection: CI runs there, so the default branch's list applies (nothing has reported: running).
+    const epic = { ...rebased(210, "epic/5-unprotected"), [`repos/${repo}/branches/epic%2F5-unprotected`]: { name: "epic/5-unprotected", protected: false } };
+    expect((await board(epic)).pulls.find((p) => p.number === 210).ci.state).toBe("running");
+    // A stacked base whose protection could not be read is not assumed CI-less.
+    expect((await board(rebased(210, "feat/unreadable"))).pulls.find((p) => p.number === 210).ci.state).toBe("running");
   });
 
   it("reads CI on each pull request's exact head commit, and each pull request once", async () => {
@@ -320,7 +336,8 @@ describe("the scheduled workflow", () => {
     expect(workflow).toContain('has("pull_request")');
   });
 
-  it("passes the default branch as the base, so pull requests are judged against its required checks", () => {
+  it("passes the default branch as the base, falling back to the ref a scheduled run uses", () => {
     expect(workflow).toContain('--base "${DEFAULT_BRANCH}"');
+    expect(workflow).toContain("DEFAULT_BRANCH: ${{ github.event.repository.default_branch || github.ref_name }}");
   });
 });

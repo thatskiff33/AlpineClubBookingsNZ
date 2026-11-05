@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { collectReservations, staleReservations } from "./lanes-stale.mjs";
+import { activeClaim, claimBranch } from "./lib/lane-reservations.mjs";
 
 import { ghJson } from "./lib/github-cli.mjs";
 
@@ -49,17 +50,20 @@ describe("staleReservations", () => {
     const later = comment("CLAIM: Summit lane. Branch `feature/summit`.", "2026-06-27T00:00:00Z");
     const comments = [later, comment("RELEASE: old claim", "2026-06-26T12:00:00Z"), claim];
     expect(staleReservations([thread(comments)], now)[0].holder).toBe("Summit lane");
-    // A later claim (here a duplicate) never refreshes the holder; a LANE-SYNC does.
+    // A later claim (here a duplicate) is an update by the holder: it counts as activity, as a LANE-SYNC does.
     const withClaim = [...comments, comment(later.body, "2026-06-30T00:00:00Z")];
-    expect(staleReservations([thread(withClaim)], now)[0].lastActivity).toBe("2026-06-27T00:00:00.000Z");
+    expect(staleReservations([thread(withClaim)], now)).toEqual([]);
+    expect(staleReservations([thread(withClaim)], Date.parse("2026-07-04T00:00:00Z"))[0]).toMatchObject({ holder: "Summit lane", lastActivity: "2026-06-30T00:00:00.000Z" });
     expect(staleReservations([thread([...comments, comment("LANE-SYNC: checkpoint", "2026-06-30T00:00:00Z")])], now)).toEqual([]);
   });
 
   it("keeps the earlier claim as holder when a later claimant also posts a CLAIM", () => {
     const rival = comment("CLAIM: Rival lane. Branch `feature/rival`.", "2026-06-30T12:00:00Z");
-    const rows = staleReservations([thread([rival, claim])], now);
+    const rows = staleReservations([thread([rival, claim])], Date.parse("2026-07-05T00:00:00Z"));
     expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({ holder: "Alpine lane", lastActivity: "2026-06-26T00:00:00.000Z" });
+    expect(rows[0].holder).toBe("Alpine lane");
+    // Without the rival's claim the holder's own last activity is the earlier time.
+    expect(staleReservations([thread([claim])], now)[0].lastActivity).toBe("2026-06-26T00:00:00.000Z");
   });
 
   it("lets a claim posted after a release start a new reservation", () => {
@@ -106,6 +110,45 @@ describe("staleReservations", () => {
 
   it("identifies PR reservations and handles threads without claims", () => {
     expect(staleReservations([thread([], { number: 1 }), thread([claim], { pull_request: {} })], now)[0].kind).toBe("PR");
+  });
+});
+
+describe("a claim update that names the branch (#4069)", () => {
+  const readOnly = { ...comment("CLAIM: Review lane. Scope: read-only review.", "2026-10-12T00:00:00Z"), id: 1 };
+  const update = { ...comment("CLAIM UPDATE: Review lane. Branch `feat/4069-review`.", "2026-10-13T22:00:00Z"), id: 2 };
+  const at = (value) => Date.parse(value);
+  const serve = (pushedAt) => vi.fn(async (path) => {
+    if (path.includes("/issues?")) return [{ number: 4069 }];
+    if (path.includes("/comments?")) return [readOnly, update];
+    if (path === "repos/o/r/activity?ref=refs%2Fheads%2Ffeat%2F4069-review&activity_type=push&per_page=1") return pushedAt ? [{ timestamp: pushedAt }] : [];
+    if (path === "repos/o/r/activity?ref=refs%2Fheads%2Ffeat%2F4069-review&activity_type=force_push&per_page=1") return [];
+    throw new Error(`Unexpected request ${path}`);
+  });
+
+  it("stays the earliest claim's lane but counts the update as activity, and reads pushes from the named branch", async () => {
+    const read = serve(null);
+    const threads = await collectReservations("o/r", read);
+    expect(activeClaim(threads[0].comments).id).toBe(1);
+    expect(threads[0].pushWarning).toBeUndefined();
+    expect(read.mock.calls.map(([path]) => path)).toContain(
+      "repos/o/r/activity?ref=refs%2Fheads%2Ffeat%2F4069-review&activity_type=push&per_page=1");
+    expect(staleReservations(threads, at("2026-10-15T20:00:00Z"))).toEqual([]);
+    expect(staleReservations(threads, at("2026-10-17T00:00:00Z"))[0]).toMatchObject({
+      holder: "Review lane", lastActivity: "2026-10-13T22:00:00.000Z" });
+  });
+
+  it("is kept active by a push on the branch the update names", async () => {
+    const threads = await collectReservations("o/r", serve("2026-10-16T12:00:00Z"));
+    expect(staleReservations(threads, at("2026-10-17T00:00:00Z"))).toEqual([]);
+    expect(threads[0].pushedAt).toBe("2026-10-16T12:00:00Z");
+  });
+
+  it("uses the latest claim that names a branch when several do", () => {
+    const first = comment("CLAIM: Lane. Branch `feat/a`.", "2026-10-12T00:00:00Z");
+    const second = comment("CLAIM UPDATE: Lane. Branch `feat/b`.", "2026-10-13T00:00:00Z");
+    const third = comment("CLAIM UPDATE: Lane. Still working.", "2026-10-14T00:00:00Z");
+    expect(claimBranch([third, second, first])).toBe("feat/b");
+    expect(claimBranch([comment("CLAIM: Lane. Read-only.")])).toBeUndefined();
   });
 });
 

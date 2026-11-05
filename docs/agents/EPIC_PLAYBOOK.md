@@ -133,17 +133,18 @@ orchestrator judgement, which is what produced the gap.
 Nothing else reviews the epic: every lens read one child's diff, so what the
 children only produce in combination goes unread. The child covers exactly:
 
-1. **The composition**, read on `main` rather than in any one child: a guard an
+1. **The composition**, read on `main` (for an exception epic, the integration
+   branch) rather than in any one child: a guard an
    early child added that a later move or rename disarmed (still green, matching
    nothing); a tree-wide census figure several children re-measured; an ordering
    the epic declared binding; an `INV-*` id minted twice; two children solving
    one problem in ways that now disagree.
 2. **Every census or contract suite that reads the tree from disk**, run by name
    with `pnpm run test:named`, selected per [`TESTING.md`](../TESTING.md) →
-   "Selecting the censuses a change can reach" over the epic's whole diff — against
-   the `main` commit before the first child merged — never from memory. The module graph cannot reach that class, so
-   `vitest related` never selects it, and it is the class that catches a
-   disarmed guard.
+   "Selecting the censuses a change can reach" over the epic's whole diff — against the `main` commit
+   before the first child merged (an exception epic: its branch point) — never
+   from memory. The module graph cannot reach that class, so `vitest related`
+   never selects it, and it is the class that catches a disarmed guard.
 3. **Every conflict resolution an orchestrator wrote**, with each sync's diff as
    evidence and a differential proof wherever a resolution changed
    behaviour-bearing code. This applies only to an epic on an integration
@@ -164,15 +165,15 @@ unreviewed when the epic was called ready, until the owner asked.
 ## The exception: an integration branch
 
 An epic may use an integration branch, `epic/<issue>-<slug>`, only where a schema
-**contract** step cannot be made inert. That means a *contract* in the blue/green
-sense — it removes or tightens something the previously deployed release reads
-or writes — that the epic's switch-on depends on. A migration runs whether or not
-a flag is on, so it cannot reach production on `main` ahead of the switch-on. It
-is not the contract half of an expand/contract pair the epic itself introduced:
-that half still waits for a release after the epic merges (below), and every
-migration must be old-code compatible against the pre-epic release or be a
-windowed migration the policy allows. **The epic body must name the step and why
-it cannot be made inert, or the exception does not apply.** A related theme,
+**contract** step cannot be made inert: a contract the epic's switch-on needs
+while the deployed release still reads it. A migration runs whether or not a flag
+is on, so it cannot sit on `main` ahead of the switch-on. Under
+[`BLUE_GREEN_MIGRATION_POLICY.md`](../BLUE_GREEN_MIGRATION_POLICY.md#old_code_compatible-the-three-values)
+it can only ship as a `windowed` migration: an owner-chosen window,
+`rollback.sql`, the override and, if paired with its own expand in one release,
+the [same-release acknowledgement](../BLUE_GREEN_MIGRATION_POLICY.md#the-expandcontract-half-is-enforced-not-merely-written-here).
+**The epic body must name the step and why it cannot be made inert, or the
+exception does not apply.** A related theme,
 shared files, hiding work from forks, or convenience are not grounds: flags exist
 for those. Children then target that branch and it reaches `main` as one merge
 once complete. Everything else in this playbook applies to such an epic.

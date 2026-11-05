@@ -347,6 +347,29 @@
    }
   },
   {
+   "url": "https://api.github.com/repos/thatskiff33/AlpineClubBookingsNZ/issues/210",
+   "html_url": "https://github.com/thatskiff33/AlpineClubBookingsNZ/pull/210",
+   "number": 210,
+   "state": "open",
+   "title": "feat(#101): stacked on the widget branch",
+   "user": {
+    "login": "thatskiff33-agents",
+    "type": "User",
+    "site_admin": false
+   },
+   "labels": [],
+   "locked": false,
+   "comments": 1,
+   "created_at": "2026-06-20T09:00:00Z",
+   "updated_at": "2026-06-30T12:00:00Z",
+   "body": "Stacked on #201.",
+   "draft": false,
+   "pull_request": {
+    "url": "https://api.github.com/repos/thatskiff33/AlpineClubBookingsNZ/pulls/210",
+    "html_url": "https://github.com/thatskiff33/AlpineClubBookingsNZ/pull/210"
+   }
+  },
+  {
    "url": "https://api.github.com/repos/thatskiff33/AlpineClubBookingsNZ/issues/300",
    "html_url": "https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/300",
    "number": 300,
@@ -503,6 +526,46 @@
  "repos/thatskiff33/AlpineClubBookingsNZ/issues/204/comments?per_page=100&page=1": [],
  "repos/thatskiff33/AlpineClubBookingsNZ/issues/205/comments?per_page=100&page=1": [],
  "repos/thatskiff33/AlpineClubBookingsNZ/issues/300/comments?per_page=100&page=1": [],
+ "repos/thatskiff33/AlpineClubBookingsNZ/issues/210/comments?per_page=100&page=1": [],
+ "repos/thatskiff33/AlpineClubBookingsNZ/branches/feat%2F101-widget": {
+  "name": "feat/101-widget",
+  "protected": false
+ },
+ "repos/thatskiff33/AlpineClubBookingsNZ/pulls/210": {
+  "url": "https://api.github.com/repos/thatskiff33/AlpineClubBookingsNZ/pulls/210",
+  "html_url": "https://github.com/thatskiff33/AlpineClubBookingsNZ/pull/210",
+  "number": 210,
+  "state": "open",
+  "title": "feat(#101): stacked on the widget branch",
+  "body": "Stacked on #201.",
+  "draft": false,
+  "merged": false,
+  "mergeable": true,
+  "mergeable_state": "clean",
+  "user": {
+   "login": "thatskiff33-agents",
+   "type": "User",
+   "site_admin": false
+  },
+  "head": {
+   "ref": "feat/101-widget-part-2",
+   "sha": "jjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjj",
+   "repo": {
+    "full_name": "thatskiff33/AlpineClubBookingsNZ"
+   }
+  },
+  "base": {
+   "ref": "feat/101-widget",
+   "sha": "1328be5020000000000000000000000000000000",
+   "repo": {
+    "full_name": "thatskiff33/AlpineClubBookingsNZ"
+   }
+  }
+ },
+ "repos/thatskiff33/AlpineClubBookingsNZ/commits/jjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjj/check-runs?filter=latest&per_page=100&page=1": {
+  "total_count": 0,
+  "check_runs": []
+ },
  "repos/thatskiff33/AlpineClubBookingsNZ/issues/206/comments?per_page=100&page=1": [],
  "repos/thatskiff33/AlpineClubBookingsNZ/issues/207/comments?per_page=100&page=1": [],
  "repos/thatskiff33/AlpineClubBookingsNZ/issues/208/comments?per_page=100&page=1": [],

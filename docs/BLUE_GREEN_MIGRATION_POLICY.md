@@ -210,8 +210,8 @@ and `migration-drift`'s is populated by the time that job runs. Plus a step-leve
 condition on whether the diff adds a migration. That is a reasonable thing to
 build later; it is not a reason to skip the rehearsal now.
 
-The full model, including merge authority and the narrow inert-child exception,
-is [`agents/EPIC_PLAYBOOK.md`](agents/EPIC_PLAYBOOK.md) → "The exception: an
+The full model, including merge authority and when the integration-branch
+exception applies, is [`agents/EPIC_PLAYBOOK.md`](agents/EPIC_PLAYBOOK.md) → "The exception: an
 integration branch".
 
 ## The lock timeout a `lock_impact_plan` may name

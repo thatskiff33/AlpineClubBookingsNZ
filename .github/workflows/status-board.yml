@@ -10,8 +10,10 @@ name: Status board
 # `STATUS_BOARD_ISSUE` (Settings -> Secrets and variables -> Actions ->
 # Variables) holds the issue number. Until the owner sets it (the machine
 # account cannot) the job exits cleanly with a notice, so merging this file
-# creates nothing and writes nothing. The owner or a lane creates the issue and
-# pins it; the owner sets the variable (docs/agents/COORDINATION.md -> "The
+# creates nothing and writes nothing. The owner or a lane creates the issue with
+# an EMPTY body (blank issues are disabled, so `gh issue create --title "Status
+# board" --body ""`, or clear a template-filled body) and pins it; the owner
+# sets the variable (docs/agents/COORDINATION.md -> "The
 # status board", CONFIGURATION.md).
 #
 # NOT A REQUIRED CHECK, and it never will be: it has no `pull_request` or
@@ -57,9 +59,10 @@ jobs:
       checks: read
     env:
       STATUS_BOARD_ISSUE: ${{ vars.STATUS_BOARD_ISSUE }}
-      # Pull requests are judged against this branch's required checks; the
-      # fallback covers an event payload with no repository.
-      DEFAULT_BRANCH: ${{ github.event.repository.default_branch || 'main' }}
+      # Pull requests are judged against this branch's required checks. A
+      # scheduled run's ref is the default branch, so the fallback covers an
+      # event payload with no repository.
+      DEFAULT_BRANCH: ${{ github.event.repository.default_branch || github.ref_name }}
     steps:
       - name: Find the board issue
         id: target

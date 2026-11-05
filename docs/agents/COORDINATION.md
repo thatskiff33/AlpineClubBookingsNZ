@@ -25,21 +25,22 @@ SHA and branch it names before relying on it.
 ### The status board
 
 **Owner decision, 27 Oct 2026 (#4464): what is running is a generated board, not
-a hand-kept issue.** `pnpm run status` prints, from open issues and pull
-requests alone, each open lane (the earliest `CLAIM:` since the last `RELEASE:` or
-`HANDOVER:`), its last `LANE-SYNC:`,
-its linked pull requests with draft or ready state, CI on the exact head with
-the failing required check names, merge state, and the stale claims. It replaces #3905's hand-edited reservation tables,
-whose remaining decisions live in their own issues.
+a hand-kept issue.** `pnpm run status` prints, from open issues and pull requests
+alone, each open lane (the earliest `CLAIM:` since the last `RELEASE:` or
+`HANDOVER:`), its last `LANE-SYNC:`, its linked pull requests with draft or ready
+state, CI on the exact head with the failing required check names, merge state,
+and the stale claims. It replaces #3905's hand-edited reservation tables, whose
+remaining decisions live in their own issues.
 
 `.github/workflows/status-board.yml` runs it hourly with `GITHUB_TOKEN` alone and
 overwrites the body of the issue named by the repository variable
 `STATUS_BOARD_ISSUE`; while that is unset it exits with a notice and writes
-nothing. To start it the owner or a lane creates an empty "Status board" issue and
-pins it; the owner sets `STATUS_BOARD_ISSUE` (the machine account lacks admin).
-It refuses any other body. Never edit the board or record a decision on it:
-the `CLAIM:` and the decision record are the record. It is data, not a required
-check.
+nothing. The owner or a lane creates the issue with an empty body (blank issues
+are disabled: `gh issue create --title "Status board" --body ""`, or clear a
+template-filled body) and pins it; the owner sets the variable (the machine
+account lacks admin). Never edit the board or
+record a decision on it: the `CLAIM:` and decision record are the record. It is
+data, not a required check.
 
 ## When a coordinator runs
 
@@ -87,9 +88,8 @@ authority beyond the owner decisions it cites, read at source (`AGENTS.md` →
 
 Multi-step work is built on `main` behind flags or inert modules, one normal
 issue and PR per step; an integration branch is kept only where a schema
-contract step can't be made inert (owner decision, 27 Oct 2026, #4464). Lanes
-touching the same files are sequenced, naming who rebases, not given a shared
-branch ([`EPIC_PLAYBOOK.md`](EPIC_PLAYBOOK.md)).
+contract step can't be made inert (owner decision, 27 Oct 2026, #4464;
+[`EPIC_PLAYBOOK.md`](EPIC_PLAYBOOK.md)).
 
 ### Checking a claim held
 
@@ -128,7 +128,7 @@ capacity; record that decision on the issue it covers.
 
 These limits bind managed agents only; human contributors keep their normal
 rights ([CONTRIBUTING.md](../../CONTRIBUTING.md)). A lane over the baseline waits
-or asks the owner.
+or asks the owner; it does not stop someone else's work.
 
 ## Reservations, stale sessions and conflicts
 
@@ -155,16 +155,17 @@ release never touches the old lane's branch or worktree: its unpublished work is
 not taken over, and a new claim starts from `main`.
 
 `pnpm run lanes:stale` (optionally followed by `owner/repo`) lists open issues
-and PRs whose holding `CLAIM:` (the earliest since the last release) has been
-inactive for more than 72 hours, with the lane named in the claim, its last
-activity and the release to post; the status board shows the same rows from the
-same code ([`lane-reservations.mjs`](../../scripts/lib/lane-reservations.mjs)),
-which counts only comments from `thatskiff33`, `thatskiff33-agents` and
-`sekreton[bot]`. A later `LANE-SYNC:` or branch push restarts the timer;
-`RELEASE` or `HANDOVER` ends the claim. Push times come from GitHub push activity, force pushes included, not
-commit dates; an issue needs a branch named in the claim, and a missing branch is
-flagged for a manual push check. A failed read stops the report. It never posts
-or edits anything: the coordinator checks the thread and posts the `RELEASE:`.
+and PRs whose holding `CLAIM:` (the earliest since the last release) has had no
+activity for over 72 hours, with the lane named in the claim and the release to
+post; the status board shows the same rows from the same code
+([`lane-reservations.mjs`](../../scripts/lib/lane-reservations.mjs)), counting
+only the owner and agent accounts `AGENTS.md` names (`TRUSTED_LANE_AUTHORS`). A
+later `CLAIM:` update, `LANE-SYNC:` or branch push restarts the timer; `RELEASE`
+or `HANDOVER` ends the claim. Push times come from GitHub push activity (force
+pushes included), read for the branch the latest claim naming one gives (a PR
+falls back to its head branch); none is flagged for a manual push check. A failed
+read stops the report. It never posts or edits anything: the coordinator checks
+the thread and posts the `RELEASE:`.
 
 ## Handoffs and checkpoints
 
@@ -244,7 +245,7 @@ resolve, goes to the owner: a contradiction between the issue and the code, a
 tripped circuit breaker, being stuck at `xhigh`, a material scope change. Ask it
 as decision pop-ups in plain English, with the full detail needed to decide,
 each option's pros and cons and the recommendation first. Show a visual layout as
-an Artifact, not prose. Before putting options to the owner, read every reply in
+an Artifact or mock-up, not prose. Before putting options to the owner, read every reply in
 the thread, fork maintainers' included.
 
 ## Decision provenance
