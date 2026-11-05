@@ -21,6 +21,7 @@ import {
   isXeroPartialSuccessRecovery,
 } from "@/lib/xero-partial-success"
 import { fetchJson, postJson } from "./api"
+import { CreditUsedInXeroCard } from "./credit-used-in-xero-card"
 import {
   BudgetStatusChip,
   HealthStatCard,
@@ -358,6 +359,7 @@ export function HealthAndDiagnosticsPanels({
                 badge={!health.contactLinkMismatches.cacheReady ? <ToneChip tone="neutral" icon={Circle}>Cache needed</ToneChip> : health.contactLinkMismatches.count > 0 ? <ToneChip tone="warning" icon={AlertTriangle}>Review</ToneChip> : <ToneChip tone="success" icon={CheckCircle2}>Clear</ToneChip>}
                 onClick={() => scrollToSection("contactLinkMismatches")}
               />
+              <CreditUsedInXeroCard count={health.creditNotesSpentOutsideApp?.count ?? 0} />
               <HealthStatCard
                 label="API budget"
                 value={health.apiBudget.usagePercent != null ? `${Math.round(health.apiBudget.usagePercent * 100)}%` : "Unknown"}

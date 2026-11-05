@@ -52,8 +52,10 @@ import {
 } from "./xero-operation-outbox-payload";
 import { findFundingLotsForNote } from "./xero-applied-credit-slice-lookup";
 import {
+  CREDIT_NOTE_MIRROR_SETTLE_MS,
+  creditNoteSettlesAt,
+  judgeOutsideSpendEvidence,
   outsideSpendCents,
-  spendIsExplained,
   xeroAllocationsOf,
   xeroPaymentsOf,
 } from "./xero-credit-note-outside-spend";
@@ -66,8 +68,8 @@ import {
   writtenDownCentsByCreditNote,
 } from "./xero-credit-note-write-down";
 
-/** A note changed more recently than this is left for a later look (owner decision, 24 Oct 2026). */
-export const CREDIT_NOTE_MIRROR_SETTLE_MS = 2 * 60 * 1000;
+// The evidence gates and the settle window live with the comparator, so the early warning (#4220) asks the same ones.
+export { CREDIT_NOTE_MIRROR_SETTLE_MS };
 
 /** `CronJobRun.jobName` of the backstop sweep, and the `XeroSyncCursor` rows the mirror keeps. */
 export const CREDIT_NOTE_MIRROR_JOB_NAME = "xero-credit-note-outside-spend-mirror";
@@ -201,8 +203,6 @@ export async function clearCreditNoteMirrorRecheck(db: typeof prisma, creditNote
   });
 }
 
-const ACTIVE_NOTE_STATUSES = ["AUTHORISED", "PAID"];
-
 export async function mirrorCreditNoteOutsideSpend(
   evidence: CreditNoteMirrorEvidence,
   deps: CreditNoteMirrorDeps = {},
@@ -225,19 +225,20 @@ export async function mirrorCreditNoteOutsideSpend(
   }
   const memberId = firstLot.memberId;
 
-  if (!evidence.status || !ACTIVE_NOTE_STATUSES.includes(evidence.status)) {
+  const gate = judgeOutsideSpendEvidence(evidence, now);
+  if (gate === "note-not-active") {
     // Voided or deleted in Xero is a different class of change from credit spent: the ledger
     // may owe the member something that no rule here knows, so an officer is told.
     const log = evidence.status === "VOIDED" || evidence.status === "DELETED" ? logger.error : logger.warn;
     log.call(logger, { creditNoteId, status: evidence.status }, "A credit note funding a member's credit is not active in Xero; the credit ledger was not changed");
     return { acted: false, reason: "note-not-active" };
   }
-  if (!spendIsExplained(evidence)) {
+  if (gate === "unexplained-spend") {
     logger.warn({ creditNoteId }, "Xero's list for a credit note does not add up to what it has lost; not mirrored");
     return { acted: false, reason: "unexplained-spend" };
   }
-  const settledAt = evidence.updatedAt ? new Date(evidence.updatedAt.getTime() + CREDIT_NOTE_MIRROR_SETTLE_MS) : null;
-  if (!settledAt || settledAt.getTime() > now.getTime()) {
+  if (gate === "unsettled") {
+    const settledAt = creditNoteSettlesAt(evidence.updatedAt);
     await scheduleRecheck(db, creditNoteId, settledAt ?? new Date(now.getTime() + CREDIT_NOTE_MIRROR_SETTLE_MS));
     return { acted: false, reason: "unsettled" };
   }

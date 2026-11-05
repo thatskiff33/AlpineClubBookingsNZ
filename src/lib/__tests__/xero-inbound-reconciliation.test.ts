@@ -6459,6 +6459,54 @@ describe("processStoredXeroInboundEvents", () => {
     );
   });
 
+  // #4220: the evidence question is the one findFirst shaped `{ xeroCreditNoteId, amountCents: { gt: 0 } }`.
+  function answerFundingLot(answer: () => Promise<{ id: string } | null>) {
+    const table = mocks.memberCreditFindFirst.getMockImplementation()!;
+    mocks.memberCreditFindFirst.mockImplementation((async (args: { where: { amountCents?: { gt?: number } } }) =>
+      args.where.amountCents?.gt === 0 ? answer() : table(args as never)) as never);
+  }
+  const accountCreditLinkWrites = () =>
+    mocks.upsertXeroObjectLink.mock.calls
+      .map(([link]) => link as { role: string; xeroObjectType: string; metadata: Record<string, unknown> })
+      .filter((link) => link.xeroObjectType === "CREDIT_NOTE" && link.role === "ACCOUNT_CREDIT_NOTE");
+
+  it("#4220: keeps the note's spend reading with its link when the note funds a lot, beside the status snapshot", async () => {
+    mockAccountCreditNoteEvent();
+    memberCreditTable([{ id: "credit_1", createdAt: "2026-06-01", xeroCreditNoteId: "cn_credit_1" }]);
+    answerFundingLot(async () => ({ id: "credit_1" }));
+
+    await expect(processStoredXeroInboundEvents()).resolves.toMatchObject({ succeeded: 1, failed: 0 });
+
+    // The link's first write carries the reading; every later write of it merges, so none removes it.
+    const [first, ...later] = accountCreditLinkWrites();
+    expect(first).toMatchObject({ mergeMetadata: true, metadata: { remainingCredit: 72 } });
+    expect(first!.metadata.spendEvidence).toEqual({
+      status: null,
+      totalCents: 9700,
+      remainingCents: 7200,
+      allocations: [],
+      payments: [],
+      noteUpdatedAt: null,
+      observedAt: expect.any(String),
+    });
+    for (const link of later) expect(link).toMatchObject({ mergeMetadata: true });
+  });
+
+  it("#4220: keeps no reading for a note that funds no lot, and a failed read never fails the event", async () => {
+    for (const answer of [async () => null, async () => Promise.reject(new Error("db blip"))]) {
+      vi.clearAllMocks();
+      mockAccountCreditNoteEvent();
+      memberCreditTable([{ id: "credit_1", createdAt: "2026-06-01", xeroCreditNoteId: "cn_credit_1" }]);
+      answerFundingLot(answer);
+
+      await expect(processStoredXeroInboundEvents()).resolves.toMatchObject({ succeeded: 1, failed: 0 });
+
+      const writes = accountCreditLinkWrites();
+      expect(writes.length).toBeGreaterThan(0);
+      for (const link of writes) expect(link.metadata).not.toHaveProperty("spendEvidence");
+    }
+  });
+
   it("MUTATION #4705: an inbound account-credit note on a booking with two equal credits stamps one only, the oldest", async () => {
     mockAccountCreditNoteEvent();
     // Two credits agreeing on member, booking, amount and description: the old

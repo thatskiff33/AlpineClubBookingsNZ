@@ -694,7 +694,7 @@ Journey: Open the linked calendar event and join or manage its video meeting.
 
 Screen: `/admin/xero`.
 
-Shows: Connection setup, accounting operations and failure details.
+Shows: Connection setup, the health snapshot (including credit used in Xero outside the app), accounting operations and failure details.
 
 Journey: Inspect connection and operations status; open a failed item to follow its documented recovery.
 

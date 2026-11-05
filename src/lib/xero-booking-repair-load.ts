@@ -23,6 +23,7 @@ import { loadFailedLaterOwedCents } from "./xero-booking-repair-failed-later";
 import { readPaidBackRefundRequests } from "@/lib/xero-inbound/refund-request-paid-back";
 import { groupOpenIntentRecoveriesByBooking, intentRecoveryKeyMaps } from "./xero-booking-repair-intent-recoveries";
 import { unallocatedAppliedCreditCentsByBooking } from "@/lib/xero-applied-credit-ledger-state";
+import { findCreditNotesSpentOutsideApp } from "@/lib/xero-credit-note-spent-outside-flag";
 import {
   editReviewChargeShareTaskSelect,
   editReviewChargeShareTaskWhere,
@@ -434,6 +435,8 @@ export async function loadAuditData(
   // #4215 (`INV-PAY-118`): the one reader the inbound recount uses too.
   const paidBackRefundRequests = await readPaidBackRefundRequests(paymentIds, deps.prisma);
   const unallocatedAppliedCreditByBookingId = await unallocatedAppliedCreditCentsByBooking(bookingIds, deps.prisma);
+  // #4220: the reading kept at ingest, judged now; database reads only, no Xero call.
+  const creditNotesSpentOutside = await findCreditNotesSpentOutsideApp(deps.prisma, { bookingIds });
   const allocatedAppliedCreditByBookingId = new Map(
     appliedCreditAllocations.map((row) => [
       row.appliedToBookingId,
@@ -673,6 +676,7 @@ export async function loadAuditData(
     xeroAllocatedAppliedCreditCents:
       allocatedAppliedCreditByBookingId.get(booking.id) ?? 0,
     unallocatedAppliedCreditCents: unallocatedAppliedCreditByBookingId.get(booking.id) ?? 0,
+    creditNotesSpentOutsideApp: creditNotesSpentOutside.filter((note) => note.bookingIds.includes(booking.id)),
     openEditReviewChargeIntentRecoveryModificationIds:
       openIntentRecoveries.review.get(booking.id) ?? new Set<string>(),
     openAdditionalIntentRecoveryModificationIds:

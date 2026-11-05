@@ -32,6 +32,12 @@ vi.mock("@/lib/xero-primary-invoice-gap-anchors", async (importOriginal) => {
   };
 });
 
+// #4220: the early warning's own reads are tested in `xero-credit-note-spent-outside-flag.test.ts`;
+// here it answers directly, so these tests see only how the repair reports it.
+const spentOutside = vi.hoisted(() => ({ find: vi.fn() }));
+vi.mock("@/lib/xero-credit-note-spent-outside-flag", () => ({ findCreditNotesSpentOutsideApp: spentOutside.find }));
+beforeEach(() => spentOutside.find.mockResolvedValue([]));
+
 function makeBooking(overrides: Record<string, unknown> = {}) {
   return {
     id: "booking_1",
@@ -2593,6 +2599,54 @@ describe("runBookingXeroRepair", () => {
       id: "op_applied_allocation", localModel: "Payment", localId: "payment_1", entityType: "ALLOCATION", operationType: "ALLOCATE",
       xeroObjectType: null, xeroObjectId: null, requestPayload: { queueType: "APPLIED_CREDIT_ALLOCATION", bookingId: "booking_1" }, ...overrides,
     });
+
+  it("#4220: reports a credit note the booking still has to draw on that Xero shows spent outside the app, and offers nothing", async () => {
+    const note = {
+      creditNoteId: "cn_spent",
+      memberId: "member_1",
+      lotId: "lot_1",
+      xeroRemainingCents: 3000,
+      pendingAllocationCents: 6000,
+      outsideSpendCents: 3000,
+      leftForAllocationCents: 3000,
+      bookingIds: ["booking_1"],
+      observedAt: new Date("2026-06-30T20:00:00.000Z"),
+    };
+    spentOutside.find.mockResolvedValue([note, { ...note, creditNoteId: "cn_other", bookingIds: ["booking_9"] }]);
+    const deps = createDependencies({ bookings: [makeBooking()], operations: [makePrimaryInvoiceCreateOperation()] });
+
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, { dependencies: deps, scope: { all: true } });
+
+    expect(spentOutside.find).toHaveBeenCalledWith(deps.prisma, { bookingIds: ["booking_1"] });
+    const bookingReport = report.passes[0].bookings[0];
+    const findings = bookingReport.findings.filter((finding) => finding.code === "APPLIED_CREDIT_NOTE_CONSUMED_EXTERNALLY");
+    expect(findings).toEqual([
+      expect.objectContaining({
+        severity: "warning",
+        safeToAutoApply: false,
+        actions: [],
+        details: {
+          creditNoteId: "cn_spent",
+          memberCreditId: "lot_1",
+          xeroRemainingCents: 3000,
+          pendingAllocationCents: 6000,
+          outsideSpendCents: 3000,
+          leftForAllocationCents: 3000,
+          observedAt: "2026-06-30T20:00:00.000Z",
+        },
+      }),
+    ]);
+    // It plans nothing of its own: the actions are exactly those of the same run with no flag.
+    spentOutside.find.mockResolvedValue([]);
+    const unflagged = await runBookingXeroRepair(CLUB_FORMAT_TEST, { dependencies: createDependencies({ bookings: [makeBooking()], operations: [makePrimaryInvoiceCreateOperation()] }), scope: { all: true } });
+    expect(bookingReport.actions).toEqual(unflagged.passes[0].bookings[0].actions);
+  });
+
+  it("#4220: reports nothing when no credit note the booking draws on is flagged", async () => {
+    const deps = createDependencies({ bookings: [makeBooking()], operations: [makePrimaryInvoiceCreateOperation()] });
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, { dependencies: deps, scope: { all: true } });
+    expect(report.passes[0].bookings[0].findings.map((finding) => finding.code)).not.toContain("APPLIED_CREDIT_NOTE_CONSUMED_EXTERNALLY");
+  });
 
   it("MUTATION (#3836): queues the applied-credit allocation for a credit-only card invoice, and --apply queues it once", async () => {
     const deps = createDependencies({ bookings: [creditOnlyCardBooking()], operations: [makePrimaryInvoiceCreateOperation()], ...unallocated });

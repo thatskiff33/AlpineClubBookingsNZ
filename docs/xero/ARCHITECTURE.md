@@ -4262,8 +4262,10 @@ Oct 2026).
 - **One comparator.** `xero-credit-note-outside-spend.ts` holds the evidence parsers
   (`xeroAllocationsOf`, `xeroPaymentsOf`), the explained-shortfall rail
   (`spendIsExplained`: the list must equal the note's total less its remaining
-  credit) and `outsideSpendCents`. The converge, the mirror and the Failures view
-  share it, so they cannot disagree about what counts as outside.
+  credit) and `outsideSpendCents`, and the gates a reading must pass before it is
+  judged (`judgeOutsideSpendEvidence`: active, explained, settled). The converge, the
+  mirror and the early warning (next section) share it, so they cannot disagree about
+  what counts as outside.
 - **Target state, not a delta.** With `O` the outside spend, `W` the net written down
   for the note (write-downs less restores), `D = min(O, lot)` and `delta = D - W`
   (`xero-credit-note-mirror-plan.ts`): a positive delta writes down at most the
@@ -4328,6 +4330,47 @@ Oct 2026).
   restores the credit. Never offset a wrong write-down with a manual credit
   adjustment: it is a spendable credit with no note, so a fresh Xero note would be
   raised for it while the original still holds the credit.
+
+## Early warning: a booking's credit note spent outside the app (#4220)
+
+The mirror leaves credit already drawn onto a booking to the converge, which acts only
+when Xero refuses that booking's allocation. Before then, an officer is warned (owner
+decision, 24 Oct 2026): a finding in the booking repair check and a count on the Xero
+Health Snapshot. It is **read-only and derived on every ask**: no ledger row, no Xero
+write, no stored flag, no audit row, no email, and no Xero call.
+
+- **Evidence, kept at ingest.** `reconcileXeroCreditNote` already holds the whole note.
+  When the note funds a credit lot it merges one key, `spendEvidence`, onto the note's
+  non-refund-note links: status, total, remaining credit, the allocation and payment
+  lists in exact cents, Xero's change time and when it was read
+  (`xero-credit-note-spend-evidence.ts`). It goes through the link funnel's top-level
+  merge, so the key is replaced whole and the outbound keys beside it are kept. The
+  reading, not a verdict, is stored, because whether a spend is the app's own depends
+  on local links that can land later. A failure to build it is logged and never fails
+  the event. Refund notes never carry it.
+- **The check** (`findCreditNotesSpentOutsideApp`, `xero-credit-note-spent-outside-flag.ts`).
+  A note is flagged only when all of these hold:
+  - it funds exactly one lot, and a slice of that lot has no active completion link
+    (`slicesHeldInXero`): credit the app still has to allocate;
+  - its newest stored reading passes the mirror's gates;
+  - the mirror's arithmetic, fed the outside spend from current local links, leaves
+    `leftForAllocationCents > 0`;
+  - Xero's remaining credit is less than the credit the app still has to allocate
+    from the note, so the allocation will be refused.
+
+  A missing, malformed, inactive, unexplained or unsettled reading flags nothing, so an
+  outage or a half-written list raises no false alarm.
+- **Where it shows.** The repair check reports
+  `APPLIED_CREDIT_NOTE_CONSUMED_EXTERNALLY` (warning, no action, never auto-applied)
+  on each booking whose slice is waiting. The Health Snapshot's **Credit used in
+  Xero** tile counts the flagged notes.
+- **Lag.** The reading is only as fresh as the note's last inbound event (webhook,
+  cursor sync or sync-now), so a spend shows, and a reversal clears, after that
+  event. A note with no event since this release has no reading and is not flagged.
+  The converge, not the flag, protects an allocation.
+- **Deploy.** No migration. The previous colour ignores the new key; the new reader
+  treats an absent key as no reading. Rollback is a revert, and the stored keys stay
+  inert.
 
 ## Card payment for credit released after an outside spend (#4253)
 
