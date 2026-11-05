@@ -1,0 +1,1713 @@
+{
+ "repos/thatskiff33/AlpineClubBookingsNZ/branches/main": {
+  "name": "main",
+  "protected": true,
+  "protection": {
+   "enabled": true,
+   "required_status_checks": {
+    "enforcement_level": "everyone",
+    "contexts": [
+     "verify",
+     "Migration drift check",
+     "Data migration verification",
+     "Static analysis gate",
+     "Playwright E2E",
+     "E2E multi-lodge",
+     "Secret scan (gitleaks)",
+     "Image security gate (Trivy CRITICAL)",
+     "Dependency audit"
+    ],
+    "checks": [
+     {
+      "context": "verify",
+      "app_id": 15368
+     },
+     {
+      "context": "Playwright E2E",
+      "app_id": 15368
+     }
+    ]
+   }
+  }
+ },
+ "repos/thatskiff33/AlpineClubBookingsNZ/issues?state=open&per_page=100&page=1": [
+  {
+   "url": "https://api.github.com/repos/thatskiff33/AlpineClubBookingsNZ/issues/101",
+   "html_url": "https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/101",
+   "number": 101,
+   "state": "open",
+   "title": "Add the flag-gated widget",
+   "user": {
+    "login": "thatskiff33-agents",
+    "type": "User",
+    "site_admin": false
+   },
+   "labels": [],
+   "locked": false,
+   "comments": 1,
+   "created_at": "2026-06-20T09:00:00Z",
+   "updated_at": "2026-06-30T12:00:00Z",
+   "body": "Part of programme #100."
+  },
+  {
+   "url": "https://api.github.com/repos/thatskiff33/AlpineClubBookingsNZ/issues/102",
+   "html_url": "https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/102",
+   "number": 102,
+   "state": "open",
+   "title": "Retire the legacy export",
+   "user": {
+    "login": "thatskiff33-agents",
+    "type": "User",
+    "site_admin": false
+   },
+   "labels": [],
+   "locked": false,
+   "comments": 1,
+   "created_at": "2026-06-20T09:00:00Z",
+   "updated_at": "2026-06-30T12:00:00Z",
+   "body": "Abandoned mid-way."
+  },
+  {
+   "url": "https://api.github.com/repos/thatskiff33/AlpineClubBookingsNZ/issues/103",
+   "html_url": "https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/103",
+   "number": 103,
+   "state": "open",
+   "title": "Tidy the settings copy",
+   "user": {
+    "login": "thatskiff33-agents",
+    "type": "User",
+    "site_admin": false
+   },
+   "labels": [],
+   "locked": false,
+   "comments": 1,
+   "created_at": "2026-06-20T09:00:00Z",
+   "updated_at": "2026-06-30T12:00:00Z",
+   "body": ""
+  },
+  {
+   "url": "https://api.github.com/repos/thatskiff33/AlpineClubBookingsNZ/issues/104",
+   "html_url": "https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/104",
+   "number": 104,
+   "state": "open",
+   "title": "Move the rate table to a module",
+   "user": {
+    "login": "thatskiff33-agents",
+    "type": "User",
+    "site_admin": false
+   },
+   "labels": [],
+   "locked": false,
+   "comments": 1,
+   "created_at": "2026-06-20T09:00:00Z",
+   "updated_at": "2026-06-30T12:00:00Z",
+   "body": ""
+  },
+  {
+   "url": "https://api.github.com/repos/thatskiff33/AlpineClubBookingsNZ/issues/105",
+   "html_url": "https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/105",
+   "number": 105,
+   "state": "open",
+   "title": "Wire the early-warning digest",
+   "user": {
+    "login": "thatskiff33-agents",
+    "type": "User",
+    "site_admin": false
+   },
+   "labels": [],
+   "locked": false,
+   "comments": 1,
+   "created_at": "2026-06-20T09:00:00Z",
+   "updated_at": "2026-06-30T12:00:00Z",
+   "body": ""
+  },
+  {
+   "url": "https://api.github.com/repos/thatskiff33/AlpineClubBookingsNZ/issues/106",
+   "html_url": "https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/106",
+   "number": 106,
+   "state": "open",
+   "title": "Draft the lodge handover guide",
+   "user": {
+    "login": "thatskiff33-agents",
+    "type": "User",
+    "site_admin": false
+   },
+   "labels": [],
+   "locked": false,
+   "comments": 1,
+   "created_at": "2026-06-20T09:00:00Z",
+   "updated_at": "2026-06-30T12:00:00Z",
+   "body": ""
+  },
+  {
+   "url": "https://api.github.com/repos/thatskiff33/AlpineClubBookingsNZ/issues/201",
+   "html_url": "https://github.com/thatskiff33/AlpineClubBookingsNZ/pull/201",
+   "number": 201,
+   "state": "open",
+   "title": "feat(#101): flag-gated widget",
+   "user": {
+    "login": "thatskiff33-agents",
+    "type": "User",
+    "site_admin": false
+   },
+   "labels": [],
+   "locked": false,
+   "comments": 1,
+   "created_at": "2026-06-20T09:00:00Z",
+   "updated_at": "2026-06-30T12:00:00Z",
+   "body": "## Summary\n<!-- Closes or relates to: Closes #999 in a comment must be ignored -->\nCloses #101\n",
+   "draft": false,
+   "pull_request": {
+    "url": "https://api.github.com/repos/thatskiff33/AlpineClubBookingsNZ/pulls/201",
+    "html_url": "https://github.com/thatskiff33/AlpineClubBookingsNZ/pull/201"
+   }
+  },
+  {
+   "url": "https://api.github.com/repos/thatskiff33/AlpineClubBookingsNZ/issues/202",
+   "html_url": "https://github.com/thatskiff33/AlpineClubBookingsNZ/pull/202",
+   "number": 202,
+   "state": "open",
+   "title": "refactor(#104): rate table module",
+   "user": {
+    "login": "thatskiff33-agents",
+    "type": "User",
+    "site_admin": false
+   },
+   "labels": [],
+   "locked": false,
+   "comments": 1,
+   "created_at": "2026-06-20T09:00:00Z",
+   "updated_at": "2026-06-30T12:00:00Z",
+   "body": "Fixes #104",
+   "draft": false,
+   "pull_request": {
+    "url": "https://api.github.com/repos/thatskiff33/AlpineClubBookingsNZ/pulls/202",
+    "html_url": "https://github.com/thatskiff33/AlpineClubBookingsNZ/pull/202"
+   }
+  },
+  {
+   "url": "https://api.github.com/repos/thatskiff33/AlpineClubBookingsNZ/issues/203",
+   "html_url": "https://github.com/thatskiff33/AlpineClubBookingsNZ/pull/203",
+   "number": 203,
+   "state": "open",
+   "title": "feat(#105): early-warning digest",
+   "user": {
+    "login": "thatskiff33-agents",
+    "type": "User",
+    "site_admin": false
+   },
+   "labels": [],
+   "locked": false,
+   "comments": 1,
+   "created_at": "2026-06-20T09:00:00Z",
+   "updated_at": "2026-06-30T12:00:00Z",
+   "body": "Resolves #105",
+   "draft": false,
+   "pull_request": {
+    "url": "https://api.github.com/repos/thatskiff33/AlpineClubBookingsNZ/pulls/203",
+    "html_url": "https://github.com/thatskiff33/AlpineClubBookingsNZ/pull/203"
+   }
+  },
+  {
+   "url": "https://api.github.com/repos/thatskiff33/AlpineClubBookingsNZ/issues/204",
+   "html_url": "https://github.com/thatskiff33/AlpineClubBookingsNZ/pull/204",
+   "number": 204,
+   "state": "open",
+   "title": "docs(#106): handover guide",
+   "user": {
+    "login": "thatskiff33-agents",
+    "type": "User",
+    "site_admin": false
+   },
+   "labels": [],
+   "locked": false,
+   "comments": 1,
+   "created_at": "2026-06-20T09:00:00Z",
+   "updated_at": "2026-06-30T12:00:00Z",
+   "body": "Closes #106",
+   "draft": false,
+   "pull_request": {
+    "url": "https://api.github.com/repos/thatskiff33/AlpineClubBookingsNZ/pulls/204",
+    "html_url": "https://github.com/thatskiff33/AlpineClubBookingsNZ/pull/204"
+   }
+  },
+  {
+   "url": "https://api.github.com/repos/thatskiff33/AlpineClubBookingsNZ/issues/205",
+   "html_url": "https://github.com/thatskiff33/AlpineClubBookingsNZ/pull/205",
+   "number": 205,
+   "state": "open",
+   "title": "fix: typo in the README (from a fork contributor | with a pipe)",
+   "user": {
+    "login": "thatskiff33-agents",
+    "type": "User",
+    "site_admin": false
+   },
+   "labels": [],
+   "locked": false,
+   "comments": 1,
+   "created_at": "2026-06-20T09:00:00Z",
+   "updated_at": "2026-06-30T12:00:00Z",
+   "body": "Closes #1 @someone",
+   "draft": false,
+   "pull_request": {
+    "url": "https://api.github.com/repos/thatskiff33/AlpineClubBookingsNZ/pulls/205",
+    "html_url": "https://github.com/thatskiff33/AlpineClubBookingsNZ/pull/205"
+   }
+  },
+  {
+   "url": "https://api.github.com/repos/thatskiff33/AlpineClubBookingsNZ/issues/206",
+   "html_url": "https://github.com/thatskiff33/AlpineClubBookingsNZ/pull/206",
+   "number": 206,
+   "state": "open",
+   "title": "fix: unrelated fork change on a same-named branch",
+   "user": {
+    "login": "thatskiff33-agents",
+    "type": "User",
+    "site_admin": false
+   },
+   "labels": [],
+   "locked": false,
+   "comments": 1,
+   "created_at": "2026-06-20T09:00:00Z",
+   "updated_at": "2026-06-30T12:00:00Z",
+   "body": "No closing keyword.",
+   "draft": false,
+   "pull_request": {
+    "url": "https://api.github.com/repos/thatskiff33/AlpineClubBookingsNZ/pulls/206",
+    "html_url": "https://github.com/thatskiff33/AlpineClubBookingsNZ/pull/206"
+   }
+  },
+  {
+   "url": "https://api.github.com/repos/thatskiff33/AlpineClubBookingsNZ/issues/207",
+   "html_url": "https://github.com/thatskiff33/AlpineClubBookingsNZ/pull/207",
+   "number": 207,
+   "state": "open",
+   "title": "fix: change from a deleted fork",
+   "user": {
+    "login": "thatskiff33-agents",
+    "type": "User",
+    "site_admin": false
+   },
+   "labels": [],
+   "locked": false,
+   "comments": 1,
+   "created_at": "2026-06-20T09:00:00Z",
+   "updated_at": "2026-06-30T12:00:00Z",
+   "body": "Closes someone-else/other#101",
+   "draft": false,
+   "pull_request": {
+    "url": "https://api.github.com/repos/thatskiff33/AlpineClubBookingsNZ/pulls/207",
+    "html_url": "https://github.com/thatskiff33/AlpineClubBookingsNZ/pull/207"
+   }
+  },
+  {
+   "url": "https://api.github.com/repos/thatskiff33/AlpineClubBookingsNZ/issues/208",
+   "html_url": "https://github.com/thatskiff33/AlpineClubBookingsNZ/pull/208",
+   "number": 208,
+   "state": "open",
+   "title": "feat(#4001): child of an exception epic",
+   "user": {
+    "login": "thatskiff33-agents",
+    "type": "User",
+    "site_admin": false
+   },
+   "labels": [],
+   "locked": false,
+   "comments": 1,
+   "created_at": "2026-06-20T09:00:00Z",
+   "updated_at": "2026-06-30T12:00:00Z",
+   "body": "Part of #4001.",
+   "draft": false,
+   "pull_request": {
+    "url": "https://api.github.com/repos/thatskiff33/AlpineClubBookingsNZ/pulls/208",
+    "html_url": "https://github.com/thatskiff33/AlpineClubBookingsNZ/pull/208"
+   }
+  },
+  {
+   "url": "https://api.github.com/repos/thatskiff33/AlpineClubBookingsNZ/issues/209",
+   "html_url": "https://github.com/thatskiff33/AlpineClubBookingsNZ/pull/209",
+   "number": 209,
+   "state": "open",
+   "title": "chore: into an epic branch whose protection is unreadable",
+   "user": {
+    "login": "thatskiff33-agents",
+    "type": "User",
+    "site_admin": false
+   },
+   "labels": [],
+   "locked": false,
+   "comments": 1,
+   "created_at": "2026-06-20T09:00:00Z",
+   "updated_at": "2026-06-30T12:00:00Z",
+   "body": "Nothing.",
+   "draft": false,
+   "pull_request": {
+    "url": "https://api.github.com/repos/thatskiff33/AlpineClubBookingsNZ/pulls/209",
+    "html_url": "https://github.com/thatskiff33/AlpineClubBookingsNZ/pull/209"
+   }
+  },
+  {
+   "url": "https://api.github.com/repos/thatskiff33/AlpineClubBookingsNZ/issues/210",
+   "html_url": "https://github.com/thatskiff33/AlpineClubBookingsNZ/pull/210",
+   "number": 210,
+   "state": "open",
+   "title": "feat(#101): stacked on the widget branch",
+   "user": {
+    "login": "thatskiff33-agents",
+    "type": "User",
+    "site_admin": false
+   },
+   "labels": [],
+   "locked": false,
+   "comments": 1,
+   "created_at": "2026-06-20T09:00:00Z",
+   "updated_at": "2026-06-30T12:00:00Z",
+   "body": "Stacked on #201.",
+   "draft": false,
+   "pull_request": {
+    "url": "https://api.github.com/repos/thatskiff33/AlpineClubBookingsNZ/pulls/210",
+    "html_url": "https://github.com/thatskiff33/AlpineClubBookingsNZ/pull/210"
+   }
+  },
+  {
+   "url": "https://api.github.com/repos/thatskiff33/AlpineClubBookingsNZ/issues/300",
+   "html_url": "https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/300",
+   "number": 300,
+   "state": "open",
+   "title": "Status board",
+   "user": {
+    "login": "thatskiff33-agents",
+    "type": "User",
+    "site_admin": false
+   },
+   "labels": [],
+   "locked": false,
+   "comments": 1,
+   "created_at": "2026-06-20T09:00:00Z",
+   "updated_at": "2026-06-30T12:00:00Z",
+   "body": "# Status board\n\nold generated body"
+  }
+ ],
+ "repos/thatskiff33/AlpineClubBookingsNZ/issues/101/comments?per_page=100&page=1": [
+  {
+   "id": 1011,
+   "body": "CLAIM: Alpine lane. Branch `feat/101-widget`. Scope: the issue's acceptance criteria.",
+   "created_at": "2026-06-29T22:00:00Z",
+   "updated_at": "2026-06-29T22:00:00Z",
+   "user": {
+    "login": "thatskiff33-agents",
+    "type": "User",
+    "site_admin": false
+   },
+   "author_association": "OWNER"
+  },
+  {
+   "id": 1012,
+   "body": "LANE-SYNC: checkpoint, head aaaaaaa, tests green.",
+   "created_at": "2026-06-30T20:00:00Z",
+   "updated_at": "2026-06-30T20:00:00Z",
+   "user": {
+    "login": "thatskiff33-agents",
+    "type": "User",
+    "site_admin": false
+   },
+   "author_association": "OWNER"
+  }
+ ],
+ "repos/thatskiff33/AlpineClubBookingsNZ/issues/102/comments?per_page=100&page=1": [
+  {
+   "id": 1021,
+   "body": "CLAIM: Summit lane. Branch `feat/102-export`. Scope: the issue's acceptance criteria.",
+   "created_at": "2026-06-20T01:00:00Z",
+   "updated_at": "2026-06-20T01:00:00Z",
+   "user": {
+    "login": "thatskiff33-agents",
+    "type": "User",
+    "site_admin": false
+   },
+   "author_association": "OWNER"
+  },
+  {
+   "id": 1022,
+   "body": "Ordinary discussion, not a checkpoint.",
+   "created_at": "2026-06-29T01:00:00Z",
+   "updated_at": "2026-06-29T01:00:00Z",
+   "user": {
+    "login": "thatskiff33-agents",
+    "type": "User",
+    "site_admin": false
+   },
+   "author_association": "OWNER"
+  }
+ ],
+ "repos/thatskiff33/AlpineClubBookingsNZ/issues/103/comments?per_page=100&page=1": [
+  {
+   "id": 1031,
+   "body": "CLAIM: Tarn lane. Branch `feat/103-copy`. Scope: the issue's acceptance criteria.",
+   "created_at": "2026-06-15T01:00:00Z",
+   "updated_at": "2026-06-15T01:00:00Z",
+   "user": {
+    "login": "thatskiff33-agents",
+    "type": "User",
+    "site_admin": false
+   },
+   "author_association": "OWNER"
+  },
+  {
+   "id": 1032,
+   "body": "RELEASE: #4452 inactive for 72 hours.",
+   "created_at": "2026-06-25T01:00:00Z",
+   "updated_at": "2026-06-25T01:00:00Z",
+   "user": {
+    "login": "thatskiff33-agents",
+    "type": "User",
+    "site_admin": false
+   },
+   "author_association": "OWNER"
+  }
+ ],
+ "repos/thatskiff33/AlpineClubBookingsNZ/issues/104/comments?per_page=100&page=1": [
+  {
+   "id": 1041,
+   "body": "CLAIM: Ridge lane. Branch `feat/104-rates`. Scope: the issue's acceptance criteria.",
+   "created_at": "2026-06-30T01:00:00Z",
+   "updated_at": "2026-06-30T01:00:00Z",
+   "user": {
+    "login": "thatskiff33-agents",
+    "type": "User",
+    "site_admin": false
+   },
+   "author_association": "OWNER"
+  },
+  {
+   "id": 1042,
+   "body": "LANE-SYNC: PR open, resolving the conflict with main next.",
+   "created_at": "2026-06-30T23:00:00Z",
+   "updated_at": "2026-06-30T23:00:00Z",
+   "user": {
+    "login": "thatskiff33-agents",
+    "type": "User",
+    "site_admin": false
+   },
+   "author_association": "OWNER"
+  }
+ ],
+ "repos/thatskiff33/AlpineClubBookingsNZ/issues/105/comments?per_page=100&page=1": [
+  {
+   "id": 1051,
+   "body": "CLAIM: Col lane. Branch `feat/105-digest`. Scope: the issue's acceptance criteria.",
+   "created_at": "2026-06-30T02:00:00Z",
+   "updated_at": "2026-06-30T02:00:00Z",
+   "user": {
+    "login": "thatskiff33-agents",
+    "type": "User",
+    "site_admin": false
+   },
+   "author_association": "OWNER"
+  }
+ ],
+ "repos/thatskiff33/AlpineClubBookingsNZ/issues/106/comments?per_page=100&page=1": [
+  {
+   "id": 1061,
+   "body": "CLAIM: Moraine | lane @owner. Branch `feat/106-guide`. Scope: the issue's acceptance criteria.",
+   "created_at": "2026-06-30T03:00:00Z",
+   "updated_at": "2026-06-30T03:00:00Z",
+   "user": {
+    "login": "thatskiff33-agents",
+    "type": "User",
+    "site_admin": false
+   },
+   "author_association": "OWNER"
+  }
+ ],
+ "repos/thatskiff33/AlpineClubBookingsNZ/issues/201/comments?per_page=100&page=1": [],
+ "repos/thatskiff33/AlpineClubBookingsNZ/issues/202/comments?per_page=100&page=1": [],
+ "repos/thatskiff33/AlpineClubBookingsNZ/issues/203/comments?per_page=100&page=1": [],
+ "repos/thatskiff33/AlpineClubBookingsNZ/issues/204/comments?per_page=100&page=1": [],
+ "repos/thatskiff33/AlpineClubBookingsNZ/issues/205/comments?per_page=100&page=1": [],
+ "repos/thatskiff33/AlpineClubBookingsNZ/issues/300/comments?per_page=100&page=1": [],
+ "repos/thatskiff33/AlpineClubBookingsNZ/issues/210/comments?per_page=100&page=1": [],
+ "repos/thatskiff33/AlpineClubBookingsNZ/branches/feat%2F101-widget": {
+  "name": "feat/101-widget",
+  "protected": false
+ },
+ "repos/thatskiff33/AlpineClubBookingsNZ/pulls/210": {
+  "url": "https://api.github.com/repos/thatskiff33/AlpineClubBookingsNZ/pulls/210",
+  "html_url": "https://github.com/thatskiff33/AlpineClubBookingsNZ/pull/210",
+  "number": 210,
+  "state": "open",
+  "title": "feat(#101): stacked on the widget branch",
+  "body": "Stacked on #201.",
+  "draft": false,
+  "merged": false,
+  "mergeable": true,
+  "mergeable_state": "clean",
+  "user": {
+   "login": "thatskiff33-agents",
+   "type": "User",
+   "site_admin": false
+  },
+  "head": {
+   "ref": "feat/101-widget-part-2",
+   "sha": "jjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjj",
+   "repo": {
+    "full_name": "thatskiff33/AlpineClubBookingsNZ"
+   }
+  },
+  "base": {
+   "ref": "feat/101-widget",
+   "sha": "1328be5020000000000000000000000000000000",
+   "repo": {
+    "full_name": "thatskiff33/AlpineClubBookingsNZ"
+   }
+  }
+ },
+ "repos/thatskiff33/AlpineClubBookingsNZ/commits/jjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjj/check-runs?filter=latest&per_page=100&page=1": {
+  "total_count": 0,
+  "check_runs": []
+ },
+ "repos/thatskiff33/AlpineClubBookingsNZ/issues/206/comments?per_page=100&page=1": [],
+ "repos/thatskiff33/AlpineClubBookingsNZ/issues/207/comments?per_page=100&page=1": [],
+ "repos/thatskiff33/AlpineClubBookingsNZ/issues/208/comments?per_page=100&page=1": [],
+ "repos/thatskiff33/AlpineClubBookingsNZ/issues/209/comments?per_page=100&page=1": [],
+ "repos/thatskiff33/AlpineClubBookingsNZ/branches/epic%2F4001-example": {
+  "name": "epic/4001-example",
+  "protected": true,
+  "protection": {
+   "enabled": true,
+   "required_status_checks": {
+    "enforcement_level": "non_admins",
+    "contexts": [
+     "verify",
+     "Lint"
+    ],
+    "checks": []
+   }
+  }
+ },
+ "repos/thatskiff33/AlpineClubBookingsNZ/pulls/206": {
+  "url": "https://api.github.com/repos/thatskiff33/AlpineClubBookingsNZ/pulls/206",
+  "html_url": "https://github.com/thatskiff33/AlpineClubBookingsNZ/pull/206",
+  "number": 206,
+  "state": "open",
+  "title": "fix: unrelated fork change on a same-named branch",
+  "body": "No closing keyword.",
+  "draft": false,
+  "merged": false,
+  "mergeable": true,
+  "mergeable_state": "clean",
+  "user": {
+   "login": "thatskiff33-agents",
+   "type": "User",
+   "site_admin": false
+  },
+  "head": {
+   "ref": "feat/101-widget",
+   "sha": "ffffffffffffffffffffffffffffffffffffffff",
+   "repo": {
+    "full_name": "some-fork/AlpineClubBookingsNZ"
+   }
+  },
+  "base": {
+   "ref": "main",
+   "sha": "1328be5020000000000000000000000000000000",
+   "repo": {
+    "full_name": "thatskiff33/AlpineClubBookingsNZ"
+   }
+  }
+ },
+ "repos/thatskiff33/AlpineClubBookingsNZ/pulls/207": {
+  "url": "https://api.github.com/repos/thatskiff33/AlpineClubBookingsNZ/pulls/207",
+  "html_url": "https://github.com/thatskiff33/AlpineClubBookingsNZ/pull/207",
+  "number": 207,
+  "state": "open",
+  "title": "fix: change from a deleted fork",
+  "body": "Closes someone-else/other#101",
+  "draft": false,
+  "merged": false,
+  "mergeable": true,
+  "mergeable_state": "clean",
+  "user": {
+   "login": "thatskiff33-agents",
+   "type": "User",
+   "site_admin": false
+  },
+  "head": {
+   "ref": "feat/101-widget",
+   "sha": "gggggggggggggggggggggggggggggggggggggggg",
+   "repo": null
+  },
+  "base": {
+   "ref": "main",
+   "sha": "1328be5020000000000000000000000000000000",
+   "repo": {
+    "full_name": "thatskiff33/AlpineClubBookingsNZ"
+   }
+  }
+ },
+ "repos/thatskiff33/AlpineClubBookingsNZ/pulls/208": {
+  "url": "https://api.github.com/repos/thatskiff33/AlpineClubBookingsNZ/pulls/208",
+  "html_url": "https://github.com/thatskiff33/AlpineClubBookingsNZ/pull/208",
+  "number": 208,
+  "state": "open",
+  "title": "feat(#4001): child of an exception epic",
+  "body": "Part of #4001.",
+  "draft": false,
+  "merged": false,
+  "mergeable": true,
+  "mergeable_state": "clean",
+  "user": {
+   "login": "thatskiff33-agents",
+   "type": "User",
+   "site_admin": false
+  },
+  "head": {
+   "ref": "feat/4001-child",
+   "sha": "hhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh",
+   "repo": {
+    "full_name": "thatskiff33/AlpineClubBookingsNZ"
+   }
+  },
+  "base": {
+   "ref": "epic/4001-example",
+   "sha": "1328be5020000000000000000000000000000000",
+   "repo": {
+    "full_name": "thatskiff33/AlpineClubBookingsNZ"
+   }
+  }
+ },
+ "repos/thatskiff33/AlpineClubBookingsNZ/pulls/209": {
+  "url": "https://api.github.com/repos/thatskiff33/AlpineClubBookingsNZ/pulls/209",
+  "html_url": "https://github.com/thatskiff33/AlpineClubBookingsNZ/pull/209",
+  "number": 209,
+  "state": "open",
+  "title": "chore: into an epic branch whose protection is unreadable",
+  "body": "Nothing.",
+  "draft": false,
+  "merged": false,
+  "mergeable": true,
+  "mergeable_state": "clean",
+  "user": {
+   "login": "thatskiff33-agents",
+   "type": "User",
+   "site_admin": false
+  },
+  "head": {
+   "ref": "chore/x",
+   "sha": "iiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiii",
+   "repo": {
+    "full_name": "thatskiff33/AlpineClubBookingsNZ"
+   }
+  },
+  "base": {
+   "ref": "epic/9-unreadable",
+   "sha": "1328be5020000000000000000000000000000000",
+   "repo": {
+    "full_name": "thatskiff33/AlpineClubBookingsNZ"
+   }
+  }
+ },
+ "repos/thatskiff33/AlpineClubBookingsNZ/commits/ffffffffffffffffffffffffffffffffffffffff/check-runs?filter=latest&per_page=100&page=1": {
+  "total_count": 11,
+  "check_runs": [
+   {
+    "id": 5001,
+    "name": "verify",
+    "status": "completed",
+    "conclusion": "success",
+    "app": {
+     "slug": "github-actions"
+    }
+   },
+   {
+    "id": 5002,
+    "name": "Migration drift check",
+    "status": "completed",
+    "conclusion": "success",
+    "app": {
+     "slug": "github-actions"
+    }
+   },
+   {
+    "id": 5003,
+    "name": "Data migration verification",
+    "status": "completed",
+    "conclusion": "success",
+    "app": {
+     "slug": "github-actions"
+    }
+   },
+   {
+    "id": 5004,
+    "name": "Static analysis gate",
+    "status": "completed",
+    "conclusion": "success",
+    "app": {
+     "slug": "github-actions"
+    }
+   },
+   {
+    "id": 5005,
+    "name": "Playwright E2E",
+    "status": "completed",
+    "conclusion": "success",
+    "app": {
+     "slug": "github-actions"
+    }
+   },
+   {
+    "id": 5006,
+    "name": "E2E multi-lodge",
+    "status": "completed",
+    "conclusion": "success",
+    "app": {
+     "slug": "github-actions"
+    }
+   },
+   {
+    "id": 5007,
+    "name": "Secret scan (gitleaks)",
+    "status": "completed",
+    "conclusion": "success",
+    "app": {
+     "slug": "github-actions"
+    }
+   },
+   {
+    "id": 5008,
+    "name": "Image security gate (Trivy CRITICAL)",
+    "status": "completed",
+    "conclusion": "success",
+    "app": {
+     "slug": "github-actions"
+    }
+   },
+   {
+    "id": 5009,
+    "name": "Dependency audit",
+    "status": "completed",
+    "conclusion": "success",
+    "app": {
+     "slug": "github-actions"
+    }
+   },
+   {
+    "id": 5010,
+    "name": "Typecheck",
+    "status": "completed",
+    "conclusion": "success",
+    "app": {
+     "slug": "github-actions"
+    }
+   },
+   {
+    "id": 5011,
+    "name": "Lint",
+    "status": "completed",
+    "conclusion": "success",
+    "app": {
+     "slug": "github-actions"
+    }
+   }
+  ]
+ },
+ "repos/thatskiff33/AlpineClubBookingsNZ/commits/gggggggggggggggggggggggggggggggggggggggg/check-runs?filter=latest&per_page=100&page=1": {
+  "total_count": 11,
+  "check_runs": [
+   {
+    "id": 5012,
+    "name": "verify",
+    "status": "completed",
+    "conclusion": "success",
+    "app": {
+     "slug": "github-actions"
+    }
+   },
+   {
+    "id": 5013,
+    "name": "Migration drift check",
+    "status": "completed",
+    "conclusion": "success",
+    "app": {
+     "slug": "github-actions"
+    }
+   },
+   {
+    "id": 5014,
+    "name": "Data migration verification",
+    "status": "completed",
+    "conclusion": "success",
+    "app": {
+     "slug": "github-actions"
+    }
+   },
+   {
+    "id": 5015,
+    "name": "Static analysis gate",
+    "status": "completed",
+    "conclusion": "success",
+    "app": {
+     "slug": "github-actions"
+    }
+   },
+   {
+    "id": 5016,
+    "name": "Playwright E2E",
+    "status": "completed",
+    "conclusion": "success",
+    "app": {
+     "slug": "github-actions"
+    }
+   },
+   {
+    "id": 5017,
+    "name": "E2E multi-lodge",
+    "status": "completed",
+    "conclusion": "success",
+    "app": {
+     "slug": "github-actions"
+    }
+   },
+   {
+    "id": 5018,
+    "name": "Secret scan (gitleaks)",
+    "status": "completed",
+    "conclusion": "success",
+    "app": {
+     "slug": "github-actions"
+    }
+   },
+   {
+    "id": 5019,
+    "name": "Image security gate (Trivy CRITICAL)",
+    "status": "completed",
+    "conclusion": "success",
+    "app": {
+     "slug": "github-actions"
+    }
+   },
+   {
+    "id": 5020,
+    "name": "Dependency audit",
+    "status": "completed",
+    "conclusion": "success",
+    "app": {
+     "slug": "github-actions"
+    }
+   },
+   {
+    "id": 5021,
+    "name": "Typecheck",
+    "status": "completed",
+    "conclusion": "success",
+    "app": {
+     "slug": "github-actions"
+    }
+   },
+   {
+    "id": 5022,
+    "name": "Lint",
+    "status": "completed",
+    "conclusion": "cancelled",
+    "app": {
+     "slug": "github-actions"
+    }
+   }
+  ]
+ },
+ "repos/thatskiff33/AlpineClubBookingsNZ/commits/hhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh/check-runs?filter=latest&per_page=100&page=1": {
+  "total_count": 3,
+  "check_runs": [
+   {
+    "id": 5023,
+    "name": "verify",
+    "status": "completed",
+    "conclusion": "success",
+    "app": {
+     "slug": "github-actions"
+    }
+   },
+   {
+    "id": 5024,
+    "name": "Lint",
+    "status": "completed",
+    "conclusion": "success",
+    "app": {
+     "slug": "github-actions"
+    }
+   },
+   {
+    "id": 5025,
+    "name": "Playwright E2E",
+    "status": "in_progress",
+    "conclusion": null,
+    "app": {
+     "slug": "github-actions"
+    }
+   }
+  ]
+ },
+ "repos/thatskiff33/AlpineClubBookingsNZ/commits/iiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiii/check-runs?filter=latest&per_page=100&page=1": {
+  "total_count": 11,
+  "check_runs": [
+   {
+    "id": 5026,
+    "name": "verify",
+    "status": "completed",
+    "conclusion": "success",
+    "app": {
+     "slug": "github-actions"
+    }
+   },
+   {
+    "id": 5027,
+    "name": "Migration drift check",
+    "status": "completed",
+    "conclusion": "success",
+    "app": {
+     "slug": "github-actions"
+    }
+   },
+   {
+    "id": 5028,
+    "name": "Data migration verification",
+    "status": "completed",
+    "conclusion": "success",
+    "app": {
+     "slug": "github-actions"
+    }
+   },
+   {
+    "id": 5029,
+    "name": "Static analysis gate",
+    "status": "completed",
+    "conclusion": "success",
+    "app": {
+     "slug": "github-actions"
+    }
+   },
+   {
+    "id": 5030,
+    "name": "Playwright E2E",
+    "status": "completed",
+    "conclusion": "success",
+    "app": {
+     "slug": "github-actions"
+    }
+   },
+   {
+    "id": 5031,
+    "name": "E2E multi-lodge",
+    "status": "completed",
+    "conclusion": "success",
+    "app": {
+     "slug": "github-actions"
+    }
+   },
+   {
+    "id": 5032,
+    "name": "Secret scan (gitleaks)",
+    "status": "completed",
+    "conclusion": "success",
+    "app": {
+     "slug": "github-actions"
+    }
+   },
+   {
+    "id": 5033,
+    "name": "Image security gate (Trivy CRITICAL)",
+    "status": "completed",
+    "conclusion": "success",
+    "app": {
+     "slug": "github-actions"
+    }
+   },
+   {
+    "id": 5034,
+    "name": "Dependency audit",
+    "status": "completed",
+    "conclusion": "stale",
+    "app": {
+     "slug": "github-actions"
+    }
+   },
+   {
+    "id": 5035,
+    "name": "Typecheck",
+    "status": "completed",
+    "conclusion": "success",
+    "app": {
+     "slug": "github-actions"
+    }
+   },
+   {
+    "id": 5036,
+    "name": "Lint",
+    "status": "completed",
+    "conclusion": "success",
+    "app": {
+     "slug": "github-actions"
+    }
+   }
+  ]
+ },
+ "repos/thatskiff33/AlpineClubBookingsNZ/pulls/201": {
+  "url": "https://api.github.com/repos/thatskiff33/AlpineClubBookingsNZ/pulls/201",
+  "html_url": "https://github.com/thatskiff33/AlpineClubBookingsNZ/pull/201",
+  "number": 201,
+  "state": "open",
+  "title": "feat(#101): flag-gated widget",
+  "body": "Closes #101",
+  "draft": false,
+  "merged": false,
+  "mergeable": true,
+  "mergeable_state": "clean",
+  "user": {
+   "login": "thatskiff33-agents",
+   "type": "User",
+   "site_admin": false
+  },
+  "head": {
+   "ref": "feat/101-widget",
+   "sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "repo": {
+    "full_name": "thatskiff33/AlpineClubBookingsNZ"
+   }
+  },
+  "base": {
+   "ref": "main",
+   "sha": "1328be5020000000000000000000000000000000",
+   "repo": {
+    "full_name": "thatskiff33/AlpineClubBookingsNZ"
+   }
+  }
+ },
+ "repos/thatskiff33/AlpineClubBookingsNZ/pulls/202": {
+  "url": "https://api.github.com/repos/thatskiff33/AlpineClubBookingsNZ/pulls/202",
+  "html_url": "https://github.com/thatskiff33/AlpineClubBookingsNZ/pull/202",
+  "number": 202,
+  "state": "open",
+  "title": "refactor(#104): rate table module",
+  "body": "Fixes #104",
+  "draft": false,
+  "merged": false,
+  "mergeable": false,
+  "mergeable_state": "dirty",
+  "user": {
+   "login": "thatskiff33-agents",
+   "type": "User",
+   "site_admin": false
+  },
+  "head": {
+   "ref": "feat/104-rates",
+   "sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+   "repo": {
+    "full_name": "thatskiff33/AlpineClubBookingsNZ"
+   }
+  },
+  "base": {
+   "ref": "main",
+   "sha": "1328be5020000000000000000000000000000000",
+   "repo": {
+    "full_name": "thatskiff33/AlpineClubBookingsNZ"
+   }
+  }
+ },
+ "repos/thatskiff33/AlpineClubBookingsNZ/pulls/203": {
+  "url": "https://api.github.com/repos/thatskiff33/AlpineClubBookingsNZ/pulls/203",
+  "html_url": "https://github.com/thatskiff33/AlpineClubBookingsNZ/pull/203",
+  "number": 203,
+  "state": "open",
+  "title": "feat(#105): early-warning digest",
+  "body": "Resolves #105",
+  "draft": false,
+  "merged": false,
+  "mergeable": true,
+  "mergeable_state": "unstable",
+  "user": {
+   "login": "thatskiff33-agents",
+   "type": "User",
+   "site_admin": false
+  },
+  "head": {
+   "ref": "feat/105-digest",
+   "sha": "cccccccccccccccccccccccccccccccccccccccc",
+   "repo": {
+    "full_name": "thatskiff33/AlpineClubBookingsNZ"
+   }
+  },
+  "base": {
+   "ref": "main",
+   "sha": "1328be5020000000000000000000000000000000",
+   "repo": {
+    "full_name": "thatskiff33/AlpineClubBookingsNZ"
+   }
+  }
+ },
+ "repos/thatskiff33/AlpineClubBookingsNZ/pulls/204": {
+  "url": "https://api.github.com/repos/thatskiff33/AlpineClubBookingsNZ/pulls/204",
+  "html_url": "https://github.com/thatskiff33/AlpineClubBookingsNZ/pull/204",
+  "number": 204,
+  "state": "open",
+  "title": "docs(#106): handover guide",
+  "body": "Closes #106",
+  "draft": true,
+  "merged": false,
+  "mergeable": true,
+  "mergeable_state": "draft",
+  "user": {
+   "login": "thatskiff33-agents",
+   "type": "User",
+   "site_admin": false
+  },
+  "head": {
+   "ref": "feat/106-guide",
+   "sha": "dddddddddddddddddddddddddddddddddddddddd",
+   "repo": {
+    "full_name": "thatskiff33/AlpineClubBookingsNZ"
+   }
+  },
+  "base": {
+   "ref": "main",
+   "sha": "1328be5020000000000000000000000000000000",
+   "repo": {
+    "full_name": "thatskiff33/AlpineClubBookingsNZ"
+   }
+  }
+ },
+ "repos/thatskiff33/AlpineClubBookingsNZ/pulls/205": {
+  "url": "https://api.github.com/repos/thatskiff33/AlpineClubBookingsNZ/pulls/205",
+  "html_url": "https://github.com/thatskiff33/AlpineClubBookingsNZ/pull/205",
+  "number": 205,
+  "state": "open",
+  "title": "fix: typo in the README (from a fork contributor | with a pipe)",
+  "body": "Closes #1 @someone",
+  "draft": false,
+  "merged": false,
+  "mergeable": true,
+  "mergeable_state": "behind",
+  "user": {
+   "login": "thatskiff33-agents",
+   "type": "User",
+   "site_admin": false
+  },
+  "head": {
+   "ref": "fix/readme-typo",
+   "sha": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+   "repo": {
+    "full_name": "thatskiff33/AlpineClubBookingsNZ"
+   }
+  },
+  "base": {
+   "ref": "main",
+   "sha": "1328be5020000000000000000000000000000000",
+   "repo": {
+    "full_name": "thatskiff33/AlpineClubBookingsNZ"
+   }
+  }
+ },
+ "repos/thatskiff33/AlpineClubBookingsNZ/commits/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/check-runs?filter=latest&per_page=100&page=1": {
+  "total_count": 11,
+  "check_runs": [
+   {
+    "id": 5037,
+    "name": "verify",
+    "status": "completed",
+    "conclusion": "success",
+    "app": {
+     "slug": "github-actions"
+    }
+   },
+   {
+    "id": 5038,
+    "name": "Migration drift check",
+    "status": "completed",
+    "conclusion": "success",
+    "app": {
+     "slug": "github-actions"
+    }
+   },
+   {
+    "id": 5039,
+    "name": "Data migration verification",
+    "status": "completed",
+    "conclusion": "success",
+    "app": {
+     "slug": "github-actions"
+    }
+   },
+   {
+    "id": 5040,
+    "name": "Static analysis gate",
+    "status": "completed",
+    "conclusion": "success",
+    "app": {
+     "slug": "github-actions"
+    }
+   },
+   {
+    "id": 5041,
+    "name": "Playwright E2E",
+    "status": "completed",
+    "conclusion": "success",
+    "app": {
+     "slug": "github-actions"
+    }
+   },
+   {
+    "id": 5042,
+    "name": "E2E multi-lodge",
+    "status": "completed",
+    "conclusion": "success",
+    "app": {
+     "slug": "github-actions"
+    }
+   },
+   {
+    "id": 5043,
+    "name": "Secret scan (gitleaks)",
+    "status": "completed",
+    "conclusion": "success",
+    "app": {
+     "slug": "github-actions"
+    }
+   },
+   {
+    "id": 5044,
+    "name": "Image security gate (Trivy CRITICAL)",
+    "status": "completed",
+    "conclusion": "success",
+    "app": {
+     "slug": "github-actions"
+    }
+   },
+   {
+    "id": 5045,
+    "name": "Dependency audit",
+    "status": "completed",
+    "conclusion": "success",
+    "app": {
+     "slug": "github-actions"
+    }
+   },
+   {
+    "id": 5046,
+    "name": "Typecheck",
+    "status": "completed",
+    "conclusion": "success",
+    "app": {
+     "slug": "github-actions"
+    }
+   },
+   {
+    "id": 5047,
+    "name": "Lint",
+    "status": "completed",
+    "conclusion": "success",
+    "app": {
+     "slug": "github-actions"
+    }
+   }
+  ]
+ },
+ "repos/thatskiff33/AlpineClubBookingsNZ/commits/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/check-runs?filter=latest&per_page=100&page=1": {
+  "total_count": 11,
+  "check_runs": [
+   {
+    "id": 5048,
+    "name": "verify",
+    "status": "completed",
+    "conclusion": "success",
+    "app": {
+     "slug": "github-actions"
+    }
+   },
+   {
+    "id": 5049,
+    "name": "Migration drift check",
+    "status": "completed",
+    "conclusion": "success",
+    "app": {
+     "slug": "github-actions"
+    }
+   },
+   {
+    "id": 5050,
+    "name": "Data migration verification",
+    "status": "completed",
+    "conclusion": "success",
+    "app": {
+     "slug": "github-actions"
+    }
+   },
+   {
+    "id": 5051,
+    "name": "Static analysis gate",
+    "status": "completed",
+    "conclusion": "success",
+    "app": {
+     "slug": "github-actions"
+    }
+   },
+   {
+    "id": 5052,
+    "name": "Playwright E2E",
+    "status": "in_progress",
+    "conclusion": null,
+    "app": {
+     "slug": "github-actions"
+    }
+   },
+   {
+    "id": 5053,
+    "name": "E2E multi-lodge",
+    "status": "completed",
+    "conclusion": "success",
+    "app": {
+     "slug": "github-actions"
+    }
+   },
+   {
+    "id": 5054,
+    "name": "Secret scan (gitleaks)",
+    "status": "completed",
+    "conclusion": "success",
+    "app": {
+     "slug": "github-actions"
+    }
+   },
+   {
+    "id": 5055,
+    "name": "Image security gate (Trivy CRITICAL)",
+    "status": "completed",
+    "conclusion": "success",
+    "app": {
+     "slug": "github-actions"
+    }
+   },
+   {
+    "id": 5056,
+    "name": "Dependency audit",
+    "status": "completed",
+    "conclusion": "success",
+    "app": {
+     "slug": "github-actions"
+    }
+   },
+   {
+    "id": 5057,
+    "name": "Typecheck",
+    "status": "completed",
+    "conclusion": "success",
+    "app": {
+     "slug": "github-actions"
+    }
+   },
+   {
+    "id": 5058,
+    "name": "Lint",
+    "status": "completed",
+    "conclusion": "success",
+    "app": {
+     "slug": "github-actions"
+    }
+   }
+  ]
+ },
+ "repos/thatskiff33/AlpineClubBookingsNZ/commits/cccccccccccccccccccccccccccccccccccccccc/check-runs?filter=latest&per_page=100&page=1": {
+  "total_count": 11,
+  "check_runs": [
+   {
+    "id": 5059,
+    "name": "verify",
+    "status": "completed",
+    "conclusion": "failure",
+    "app": {
+     "slug": "github-actions"
+    }
+   },
+   {
+    "id": 5060,
+    "name": "Migration drift check",
+    "status": "completed",
+    "conclusion": "success",
+    "app": {
+     "slug": "github-actions"
+    }
+   },
+   {
+    "id": 5061,
+    "name": "Data migration verification",
+    "status": "completed",
+    "conclusion": "success",
+    "app": {
+     "slug": "github-actions"
+    }
+   },
+   {
+    "id": 5062,
+    "name": "Static analysis gate",
+    "status": "queued",
+    "conclusion": null,
+    "app": {
+     "slug": "github-actions"
+    }
+   },
+   {
+    "id": 5063,
+    "name": "Playwright E2E",
+    "status": "in_progress",
+    "conclusion": null,
+    "app": {
+     "slug": "github-actions"
+    }
+   },
+   {
+    "id": 5064,
+    "name": "E2E multi-lodge",
+    "status": "completed",
+    "conclusion": "success",
+    "app": {
+     "slug": "github-actions"
+    }
+   },
+   {
+    "id": 5065,
+    "name": "Secret scan (gitleaks)",
+    "status": "completed",
+    "conclusion": "success",
+    "app": {
+     "slug": "github-actions"
+    }
+   },
+   {
+    "id": 5066,
+    "name": "Image security gate (Trivy CRITICAL)",
+    "status": "completed",
+    "conclusion": "success",
+    "app": {
+     "slug": "github-actions"
+    }
+   },
+   {
+    "id": 5067,
+    "name": "Dependency audit",
+    "status": "completed",
+    "conclusion": "success",
+    "app": {
+     "slug": "github-actions"
+    }
+   },
+   {
+    "id": 5068,
+    "name": "Typecheck",
+    "status": "completed",
+    "conclusion": "failure",
+    "app": {
+     "slug": "github-actions"
+    }
+   },
+   {
+    "id": 5069,
+    "name": "Lint",
+    "status": "completed",
+    "conclusion": "success",
+    "app": {
+     "slug": "github-actions"
+    }
+   }
+  ]
+ },
+ "repos/thatskiff33/AlpineClubBookingsNZ/commits/dddddddddddddddddddddddddddddddddddddddd/check-runs?filter=latest&per_page=100&page=1": {
+  "total_count": 2,
+  "check_runs": [
+   {
+    "id": 5070,
+    "name": "verify",
+    "status": "in_progress",
+    "conclusion": null,
+    "app": {
+     "slug": "github-actions"
+    }
+   },
+   {
+    "id": 5071,
+    "name": "Lint",
+    "status": "queued",
+    "conclusion": null,
+    "app": {
+     "slug": "github-actions"
+    }
+   }
+  ]
+ },
+ "repos/thatskiff33/AlpineClubBookingsNZ/commits/eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee/check-runs?filter=latest&per_page=100&page=1": {
+  "total_count": 11,
+  "check_runs": [
+   {
+    "id": 5072,
+    "name": "verify",
+    "status": "completed",
+    "conclusion": "success",
+    "app": {
+     "slug": "github-actions"
+    }
+   },
+   {
+    "id": 5073,
+    "name": "Migration drift check",
+    "status": "completed",
+    "conclusion": "success",
+    "app": {
+     "slug": "github-actions"
+    }
+   },
+   {
+    "id": 5074,
+    "name": "Data migration verification",
+    "status": "completed",
+    "conclusion": "success",
+    "app": {
+     "slug": "github-actions"
+    }
+   },
+   {
+    "id": 5075,
+    "name": "Static analysis gate",
+    "status": "completed",
+    "conclusion": "success",
+    "app": {
+     "slug": "github-actions"
+    }
+   },
+   {
+    "id": 5076,
+    "name": "Playwright E2E",
+    "status": "completed",
+    "conclusion": "success",
+    "app": {
+     "slug": "github-actions"
+    }
+   },
+   {
+    "id": 5077,
+    "name": "E2E multi-lodge",
+    "status": "completed",
+    "conclusion": "success",
+    "app": {
+     "slug": "github-actions"
+    }
+   },
+   {
+    "id": 5078,
+    "name": "Secret scan (gitleaks)",
+    "status": "completed",
+    "conclusion": "success",
+    "app": {
+     "slug": "github-actions"
+    }
+   },
+   {
+    "id": 5079,
+    "name": "Image security gate (Trivy CRITICAL)",
+    "status": "completed",
+    "conclusion": "success",
+    "app": {
+     "slug": "github-actions"
+    }
+   },
+   {
+    "id": 5080,
+    "name": "Dependency audit",
+    "status": "completed",
+    "conclusion": "success",
+    "app": {
+     "slug": "github-actions"
+    }
+   },
+   {
+    "id": 5081,
+    "name": "Typecheck",
+    "status": "completed",
+    "conclusion": "success",
+    "app": {
+     "slug": "github-actions"
+    }
+   },
+   {
+    "id": 5082,
+    "name": "Lint",
+    "status": "completed",
+    "conclusion": "success",
+    "app": {
+     "slug": "github-actions"
+    }
+   }
+  ]
+ },
+ "repos/thatskiff33/AlpineClubBookingsNZ/activity?ref=refs%2Fheads%2Ffeat%2F101-widget&activity_type=push&per_page=1": [
+  {
+   "id": 1,
+   "activity_type": "push",
+   "timestamp": "2026-06-30T21:00:00Z",
+   "actor": {
+    "login": "thatskiff33-agents",
+    "type": "User",
+    "site_admin": false
+   }
+  }
+ ],
+ "repos/thatskiff33/AlpineClubBookingsNZ/activity?ref=refs%2Fheads%2Ffeat%2F101-widget&activity_type=force_push&per_page=1": [],
+ "repos/thatskiff33/AlpineClubBookingsNZ/activity?ref=refs%2Fheads%2Ffeat%2F102-export&activity_type=push&per_page=1": [
+  {
+   "id": 1,
+   "activity_type": "push",
+   "timestamp": "2026-06-21T12:00:00Z",
+   "actor": {
+    "login": "thatskiff33-agents",
+    "type": "User",
+    "site_admin": false
+   }
+  }
+ ],
+ "repos/thatskiff33/AlpineClubBookingsNZ/activity?ref=refs%2Fheads%2Ffeat%2F102-export&activity_type=force_push&per_page=1": [],
+ "repos/thatskiff33/AlpineClubBookingsNZ/activity?ref=refs%2Fheads%2Ffeat%2F104-rates&activity_type=push&per_page=1": [
+  {
+   "id": 1,
+   "activity_type": "push",
+   "timestamp": "2026-06-30T22:30:00Z",
+   "actor": {
+    "login": "thatskiff33-agents",
+    "type": "User",
+    "site_admin": false
+   }
+  }
+ ],
+ "repos/thatskiff33/AlpineClubBookingsNZ/activity?ref=refs%2Fheads%2Ffeat%2F104-rates&activity_type=force_push&per_page=1": [],
+ "repos/thatskiff33/AlpineClubBookingsNZ/activity?ref=refs%2Fheads%2Ffeat%2F105-digest&activity_type=push&per_page=1": [
+  {
+   "id": 1,
+   "activity_type": "push",
+   "timestamp": "2026-06-30T10:00:00Z",
+   "actor": {
+    "login": "thatskiff33-agents",
+    "type": "User",
+    "site_admin": false
+   }
+  }
+ ],
+ "repos/thatskiff33/AlpineClubBookingsNZ/activity?ref=refs%2Fheads%2Ffeat%2F105-digest&activity_type=force_push&per_page=1": [],
+ "repos/thatskiff33/AlpineClubBookingsNZ/activity?ref=refs%2Fheads%2Ffeat%2F106-guide&activity_type=push&per_page=1": [
+  {
+   "id": 1,
+   "activity_type": "push",
+   "timestamp": "2026-06-30T11:00:00Z",
+   "actor": {
+    "login": "thatskiff33-agents",
+    "type": "User",
+    "site_admin": false
+   }
+  }
+ ],
+ "repos/thatskiff33/AlpineClubBookingsNZ/activity?ref=refs%2Fheads%2Ffeat%2F106-guide&activity_type=force_push&per_page=1": []
+}

@@ -85,7 +85,7 @@ the same standard.
 ## Epics
 
 Whether work is an epic at all (the four-question test — the standalone issue
-is the default), and how a genuine epic ships through its integration branch,
+is the default), and how multi-step work ships on `main` behind flags,
 are in [`EPIC_PLAYBOOK.md`](EPIC_PLAYBOOK.md). Run that test before applying
 the `epic` label.
 

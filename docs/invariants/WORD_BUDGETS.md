@@ -186,9 +186,9 @@ row per page:
 | --- | ---: |
 | `docs/agents/CODEX_PROMPTS.md` | 1050 |
 | `docs/agents/CODEX_WORKFLOW.md` | 2450 |
-| `docs/agents/COORDINATION.md` | 2350 |
+| `docs/agents/COORDINATION.md` | 2300 |
 | `docs/agents/DATASET_RESET_INVENTORY.md` | 750 |
-| `docs/agents/EPIC_PLAYBOOK.md` | 4450 |
+| `docs/agents/EPIC_PLAYBOOK.md` | 3150 |
 | `docs/agents/ISSUE_WORKFLOW.md` | 3400 |
 | `docs/agents/MODELS.md` | 850 |
 | `docs/agents/PROFILE_GUIDE.md` | 200 |

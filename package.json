@@ -37,6 +37,7 @@
     "agent:context": "tsx scripts/agent-context.ts",
     "issue": "node scripts/issue-thread.mjs",
     "lanes:stale": "node scripts/lanes-stale.mjs",
+    "status": "node scripts/status-board.mjs",
     "stale-containers": "node scripts/stale-containers.mjs",
     "worktree:remove": "node scripts/remove-worktree.mjs",
     "pr:check": "node scripts/ci/check-pr-body.mjs",
