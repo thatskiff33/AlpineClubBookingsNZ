@@ -2370,7 +2370,9 @@ mispricing a booking.
   write, `push_registered_url` write, audit), so a registration in flight
   across a move stores nothing and the next pass registers with the new
   server. It also registers again when this site's own address no longer
-  matches the stored one. The credentials route also runs it
+  matches the stored one on the same host; a registration stored for another
+  host is never taken over by the pass (a restored or staging copy would
+  otherwise steal production's), only by a key save. The credentials route also runs it
   (`registerAfterKeySave`, triyder/AlpineClubBookingsNZ#97) after the key
   save's fenced transaction has committed, never inside it: the same fenced
   store, no new lock, and its provider call outside every transaction. The message-board mirror (`runMirrorSync`)

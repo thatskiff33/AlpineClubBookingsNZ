@@ -335,11 +335,15 @@ Alpine Central Server**, for you to check its bookings and **Hide** it.
    until it is approved, so come back afterwards); no server address is saved
    yet; syncing is paused because the server runs a different software
    version; or it could not be reached (tried again every 3 hours).
-   If this site's own address (`NEXTAUTH_URL`) later changes, the next 3-hourly
-   pass registers the new one, so the central server stops pushing to, and
-   asking free beds of, the old name. That is also why a staging or restored
-   copy must not keep production's key: on its own address it would take the
-   registration over. Remove the key on the copy before its first sync.
+   If this site moves to a new name (`NEXTAUTH_URL` on another host), **save
+   the API key again** on this page: that registers the new name, so the
+   central server stops pushing to, and asking free beds of, the old one. The
+   3-hourly pass does not do this by itself, because a staging or restored
+   copy of the database looks the same as a moved site and must not take over
+   production's registration; it logs a warning instead. A change on the same
+   host (a port, say) is registered by the next pass. A site connected before
+   this check existed has no address kept to compare: save the key again after
+   moving it too.
 5. With **Other Clubs details** enabled, the same save then downloads the
    distributed set — which also tells this site which lodge is yours and turns
    on **Edit my Lodge** in the Other lodges panel — and links your lodges to

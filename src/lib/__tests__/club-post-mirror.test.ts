@@ -1074,8 +1074,9 @@ describe("ensurePushRegistration stores the secret only for the connection it re
   });
 });
 
-// A site whose own address (NEXTAUTH_URL) moves registers the new one, or the
-// central server keeps pushing to, and asking free beds of, the old name.
+// A site whose own address (NEXTAUTH_URL) changes on the same host registers
+// the new one; a registration made for another host is never taken over by the
+// pass, so a staging or restored copy cannot steal production's (#4771 review).
 describe("ensurePushRegistration registers again when this site's address moves", () => {
   const SENT_ON = { baseUrl: "https://central.test", credentialVersion: "v-1" };
   const CALLBACK = "https://club.example.nz/api/webhooks/servernz-posts";
@@ -1096,10 +1097,10 @@ describe("ensurePushRegistration registers again when this site's address moves"
     delete process.env.NEXTAUTH_URL;
   });
 
-  it("registers again, storing the pair together, when the address moved since it registered", async () => {
+  it("registers again, storing the pair together, when the address moved on the same host", async () => {
     stored({
       push_secret: "old-secret",
-      push_registered_url: "https://new.club.example.nz/api/webhooks/servernz-posts",
+      push_registered_url: "https://club.example.nz:8443/api/webhooks/servernz-posts",
     });
     mocks.registerPushTarget.mockResolvedValue({ secret: "rotated", secretVersion: 3, sentOn: SENT_ON });
     await expect(ensurePushRegistration()).resolves.toBe("registered");
@@ -1111,18 +1112,13 @@ describe("ensurePushRegistration registers again when this site's address moves"
     ]);
   });
 
-  it("registers once more when a secret was stored before its address was, then asks nothing", async () => {
+  it("leaves a secret stored before addresses were kept as it is: a restored old backup is no different", async () => {
     stored({ push_secret: "secret" });
-    mocks.registerPushTarget.mockResolvedValue({ secret: "secret", secretVersion: 2, sentOn: SENT_ON });
-    await expect(ensurePushRegistration()).resolves.toBe("registered");
-    expect(storedKeys()).toEqual([
-      ["push_secret", "secret"],
-      ["push_registered_url", CALLBACK],
-    ]);
-
-    stored({ push_secret: "secret", push_registered_url: CALLBACK });
     await expect(ensurePushRegistration()).resolves.toBe("already-registered");
-    expect(mocks.registerPushTarget).toHaveBeenCalledTimes(1);
+    process.env.NEXTAUTH_URL = "https://staging.club.example.nz";
+    await expect(ensurePushRegistration()).resolves.toBe("already-registered");
+    expect(mocks.registerPushTarget).not.toHaveBeenCalled();
+    expect(mocks.setIntegrationCredential).not.toHaveBeenCalled();
   });
 
   it("keeps a working registration when this site's address is no longer https", async () => {
@@ -1132,10 +1128,45 @@ describe("ensurePushRegistration registers again when this site's address moves"
     expect(mocks.registerPushTarget).not.toHaveBeenCalled();
   });
 
-  it("keeps the stored pair when a re-registration is refused", async () => {
+  it("does not take over a registration made for another host: a restored or staging copy", async () => {
+    // Production registered https://club.example.nz; this copy of its database
+    // runs as staging.club.example.nz.
+    stored({ push_secret: "production-secret", push_registered_url: CALLBACK });
+    process.env.NEXTAUTH_URL = "https://staging.club.example.nz";
+    await expect(ensurePushRegistration()).resolves.toBe("registered-elsewhere");
+    expect(mocks.registerPushTarget).not.toHaveBeenCalled();
+    expect(mocks.setIntegrationCredential).not.toHaveBeenCalled();
+    expect(mocks.answerWriter).not.toHaveBeenCalled();
+    // Not silent: the warning names both addresses and the way to move it.
+    expect(mocks.loggerWarn).toHaveBeenCalledWith(
+      { callback: "https://staging.club.example.nz/api/webhooks/servernz-posts", registered: CALLBACK },
+      expect.stringContaining("save the Alpine Central Server key again"),
+    );
+  });
+
+  it("leaves a site that really moved host to a key save, which clears the pair and registers it", async () => {
     stored({
       push_secret: "old-secret",
       push_registered_url: "https://new.club.example.nz/api/webhooks/servernz-posts",
+    });
+    await expect(ensurePushRegistration()).resolves.toBe("registered-elsewhere");
+    expect(mocks.registerPushTarget).not.toHaveBeenCalled();
+
+    // The key save's transaction removed both rows (clearServerNzPushSecret).
+    stored({});
+    mocks.registerPushTarget.mockResolvedValue({ secret: "moved", secretVersion: 4, sentOn: SENT_ON });
+    await expect(registerAfterKeySave("admin-1")).resolves.toBe("registered");
+    expect(mocks.registerPushTarget).toHaveBeenCalledWith(CALLBACK);
+    expect(storedKeys()).toEqual([
+      ["push_secret", "moved"],
+      ["push_registered_url", CALLBACK],
+    ]);
+  });
+
+  it("keeps the stored pair when a re-registration is refused", async () => {
+    stored({
+      push_secret: "old-secret",
+      push_registered_url: "https://club.example.nz:8443/api/webhooks/servernz-posts",
     });
     mocks.registerPushTarget.mockRejectedValueOnce(new mocks.FakeApiError(403));
     await expect(ensurePushRegistration()).resolves.toBe("awaiting-approval");
