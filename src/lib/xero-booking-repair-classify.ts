@@ -84,11 +84,7 @@ import {
   withoutScopedSideNotes,
 } from "@/lib/xero-booking-repair-side-notes";
 import { addAppliedCreditFindings, waitForAppliedCreditWorkBeforeClearing } from "./xero-booking-repair-applied-credit";
-import {
-  addBlockedNoteAllocationFinding,
-  addResolvedNoteAllocationFinding,
-  dispatchOwnNoteRow,
-} from "./xero-booking-repair-own-note-row";
+import { addBlockedNoteAllocationFinding, addResolvedNoteAllocationFinding, dispatchOwnNoteRow } from "./xero-booking-repair-own-note-row";
 import { addKeptLateCaptureRefundByHandFinding, addLateCaptureCardRefundByHandFindings, addPaidAnotherWayReceiptFinding } from "./xero-booking-repair-paid-another-way";
 import { addKeptChangeCaptureFinding, addUnrecordedAdditionalCaptureFindings, keptInvoiceBillsChange } from "./xero-booking-repair-additional-capture";
 import { addRefundRequestNoteNotQueuedFindings, paidBackRefundRequestCents } from "./xero-booking-repair-request-notes";
