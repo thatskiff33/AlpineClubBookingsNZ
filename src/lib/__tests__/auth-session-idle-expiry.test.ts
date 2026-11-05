@@ -127,7 +127,7 @@ const SECURE_COOKIE = "__Secure-authjs.session-token";
 
 /**
  * The accounts this suite signs in, by their stored access-role rows. Only
- * `kiosk` and `lodge-route-kiosk` are the lodge kiosk account by the app's own
+ * `kiosk`, `lodge-route-kiosk` and `user-lodge` are the lodge kiosk account by the app's own
  * classification (`isLodgeKioskAccount`); the officers and the custom-role
  * holder merely also hold the `LODGE` checkbox, which must not buy them 30
  * days. `lodge-route-kiosk` is the shape `POST /api/admin/lodge` creates:
@@ -137,6 +137,7 @@ const ACCOUNT_ROWS = {
   kiosk: [{ role: "LODGE" }],
   "lodge-route-kiosk": [],
   ordinary: [{ role: "USER" }],
+  "user-lodge": [{ role: "USER" }, { role: "LODGE" }],
   "admin-lodge": [{ role: "USER" }, { role: "ADMIN" }, { role: "LODGE" }],
   "bookings-officer-lodge": [
     { role: "USER" },
@@ -163,6 +164,7 @@ type Account = keyof typeof ACCOUNT_ROWS;
 const KIOSK_ACCOUNTS: ReadonlySet<Account> = new Set([
   "kiosk",
   "lodge-route-kiosk",
+  "user-lodge",
 ]);
 
 function memberRow(account: Account) {
@@ -433,7 +435,7 @@ describe("the jwt callback stamps kioskAccount from the member row (#4612)", () 
     [
       "a record with only USER and LODGE, which classifies as the kiosk",
       true,
-      { ...memberRow("ordinary"), accessRoles: [{ role: "USER" }, { role: "LODGE" }] },
+      memberRow("user-lodge"),
     ],
     ["a Full Admin with LODGE", false, memberRow("admin-lodge")],
     ["a Booking Officer with LODGE", false, memberRow("bookings-officer-lodge")],
