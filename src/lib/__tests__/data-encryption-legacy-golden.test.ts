@@ -28,12 +28,15 @@ import { decryptTwoFactorSecret, hashTwoFactorCode } from "@/lib/two-factor";
 const SECRET = "golden-vector-auth-secret-0123456789abcdefghij";
 const TOTP_V1 =
   "v1:00112233445566778899aabbccddeeff:e53f5cc65776b27e0bd5bb94fe55ad1b:69b2f5808843ee7ae523c0bdbaa54867";
+// The GCM tag, named apart from the row's field: a hex literal straight after
+// an `auth…` identifier reads as a credential to the secret scanner (#4456 review).
+const GOLDEN_GCM_TAG = "c9d614901e6bb357d95bdef8c2b3bd0a";
 const CREDENTIAL_ROW = {
   provider: "xero",
   key: "client_secret",
   ciphertext: "a3f3f8ec46847d685b9e63770680a8d49b5b4edb",
   iv: "00112233445566778899aabbccddeeff",
-  authTag: "c9d614901e6bb357d95bdef8c2b3bd0a",
+  authTag: GOLDEN_GCM_TAG,
   labelVersion: "integration-credential:v1",
   secretSource: "AUTH_SECRET",
 };

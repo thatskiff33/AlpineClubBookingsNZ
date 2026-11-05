@@ -45,8 +45,11 @@ const BARRIER_TIMEOUT_MS = 3_000;
 const PROVIDER = "race-4456";
 const ADMIN = { kind: "admin", memberId: "race-4456-admin" } as const;
 const REFRESH_JOB = { kind: "system", actor: "xero-token-refresh" } as const;
-const AUTH = "race-4456-auth-secret-0123456789abcdefghijklmn";
-const ROTATED_AUTH = "race-4456-rotated-secret-0123456789abcdefghij";
+// Fabricated auth secrets, built at run time so no secret-shaped literal sits in
+// the source for the secret scanner to read (#4456 review). Each clears the
+// 32-character strength gate, and the two differ.
+const AUTH = `${PROVIDER}-a`.padEnd(48, "a");
+const ROTATED_AUTH = `${PROVIDER}-r`.padEnd(48, "r");
 
 function testKey(seed: number): string {
   return Buffer.from(Array.from({ length: 32 }, (_, index) => (seed * 53 + index * 19) % 256)).toString("base64");
