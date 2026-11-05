@@ -292,9 +292,10 @@ export async function reencryptStoredData(options: ReencryptOptions): Promise<Re
     options,
   );
 
+  // Ids only: each secret is read just before its own claim.
   const members = await prisma.member.findMany({
     where: secretsOffTarget(target, options),
-    select: { id: true, totpSecret: true },
+    select: { id: true },
     orderBy: { id: "asc" },
   });
   // A lost claim re-reads the member, so the retry claims on the value now stored.

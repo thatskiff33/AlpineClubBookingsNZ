@@ -2122,7 +2122,9 @@ pnpm run data-keys:reencrypt --retire-legacy-recovery-codes   # move, and retire
   a credential, a member re-enrolling) wins; the re-encrypt changes nothing for
   that row and retries it on its next pass. A Xero token set is never moved
   while a refresh holds its lease, so a refresh that has already spent its
-  refresh token always gets to save the new one.
+  refresh token always gets to save the new one. An administrator with a
+  credential form open while it runs may be told the value changed and asked
+  to reload the form; the value itself is the same.
 - **Run it only once no container runs without the ring.** A colour started
   without it cannot read what this writes.
 - **The report** gives, per table, how many rows moved, lost their claim or were

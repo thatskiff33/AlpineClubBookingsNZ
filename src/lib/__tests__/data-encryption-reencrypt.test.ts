@@ -258,6 +258,7 @@ describe("moving authenticator secrets (#4456 PR 2)", () => {
 
     const report = await run();
 
+    expect(mocks.prisma.member.findMany.mock.calls[0]![0].select).toEqual({ id: true });
     const where = mocks.prisma.member.findMany.mock.calls[0]![0].where;
     expect(where).toEqual({
       AND: [{ totpSecret: { not: null } }, { NOT: { totpSecret: { startsWith: "v2:k\\_2:" } } }],
