@@ -33,7 +33,10 @@ import ts from "typescript";
 // method call receives the root or a part of the path above the value
 // (`Object.assign(b, ...)`, `log({ b })`, `b.reset()`), or a function nested in
 // the scope does either (#4746). One definition of that change test serves the
-// copy rule below (`objectChanged`).
+// copy rule below (`objectChanged`). These rules are a best-effort guard against
+// accidental changes, not a defence against a determined author: deliberately
+// contrived forms (getters, functions that return the object or a closure over
+// it, generators, access to an inline literal such as `[b][0]`) are out of scope.
 //
 // Each property writer also carries the SOURCE of the value it writes
 // (`traceWrittenValue`): the expression is followed back through `const`
@@ -569,6 +572,33 @@ const READ_ONLY_METHODS = new Set([
   "toString",
 ]);
 
+/** Read-only methods that call back with the elements: only an inline function is vetted. */
+const CALLBACK_METHODS = new Set(["some", "every", "map", "forEach"]);
+
+/** The arrow or function expression a method call is given as its first argument, if inline. */
+function inlineCallback(call: ts.CallExpression): ts.ArrowFunction | ts.FunctionExpression | null {
+  const callback = call.arguments[0] && unwrapValue(call.arguments[0]);
+  return callback && (ts.isArrowFunction(callback) || ts.isFunctionExpression(callback)) ? callback : null;
+}
+
+/** True when `node` or anything inside it names `arguments`. */
+function usesArguments(node: ts.Node): boolean {
+  return (ts.isIdentifier(node) && node.text === "arguments") || ts.forEachChild(node, (child) => usesArguments(child) || undefined) === true;
+}
+
+/**
+ * True when calling `method` on a followed object only reads it: the method is
+ * in `READ_ONLY_METHODS`, and one that calls back with the elements has an inline
+ * function that does not use `arguments` (a named one gets the elements to
+ * change, and an inline one is covered by the aliases of its parameters).
+ */
+function onlyReads(call: ts.CallExpression, method: string): boolean {
+  if (!READ_ONLY_METHODS.has(method)) return false;
+  if (!CALLBACK_METHODS.has(method)) return true;
+  const callback = inlineCallback(call);
+  return callback !== null && !usesArguments(callback);
+}
+
 const ALIASING_ASSIGNMENTS = new Set([
   ts.SyntaxKind.EqualsToken,
   ts.SyntaxKind.BarBarEqualsToken,
@@ -600,12 +630,15 @@ function callArguments(node: ts.Node): ts.Expression[] {
  * - an alias of the object, to a fixpoint: `const al = id`, a destructuring or
  *   `al = id`, `al ||= id`, either branch of `c ? id : x`, an operand of `||`,
  *   `??` or `&&`, a literal that holds it (`{ id }`, `[id]`), the variable of a
- *   `for…of` over an array of it, or the parameter of a callback given to one
- *   of its methods;
+ *   `for…of` over an array of it, every parameter of an inline callback given to
+ *   one of its methods, or the root of a property that stores it (`h.d = id`);
+ *   an assignment used as an expression evaluates to what it assigned;
  * - a write through an alias (`al.k = v`, `al[i] = v`);
  * - a call, `new` or tagged template that receives the object or an alias
  *   (also inside a literal or a conditional), which covers `Object.assign(id, ...)`;
- * - a call of a method on it, unless it is in `READ_ONLY_METHODS`;
+ * - a call of a method on it (or on a literal that holds it), unless it is in
+ *   `READ_ONLY_METHODS` and, when it calls back with the elements, is given an
+ *   inline function that does not use `arguments` (`onlyReads`);
  * - with `direct`, also a write through `id` itself (`id.k = v`, `id[i] = v`).
  *   Without it the caller already sees those writes (`isReassigned`).
  *
@@ -647,6 +680,13 @@ function objectChanged(
     if (ts.isBinaryExpression(value)) {
       const kind = value.operatorToken.kind;
       if (kind === ts.SyntaxKind.CommaToken) return reach(value.right, container);
+      // An assignment used as an expression evaluates to what it assigned; the
+      // logical forms may also give back the target they left alone.
+      if (ALIASING_ASSIGNMENTS.has(kind)) {
+        return kind === ts.SyntaxKind.EqualsToken
+          ? reach(value.right, container)
+          : [...reach(value.left, container), ...reach(value.right, container)];
+      }
       return kind === ts.SyntaxKind.QuestionQuestionToken ||
         kind === ts.SyntaxKind.BarBarToken ||
         kind === ts.SyntaxKind.AmpersandAmpersandToken
@@ -669,7 +709,9 @@ function objectChanged(
   const noteAlias = (names: readonly ts.Identifier[], candidates: readonly Reach[], element = false): boolean => {
     let grew = false;
     for (const candidate of candidates) {
-      const path = element ? [...candidate.path, ANY_KEY] : candidate.path;
+      // An element of an array that holds the object is the object itself, so a
+      // container keeps its path; an element of an array of objects is a part of it.
+      const path = element && !candidate.container ? [...candidate.path, ANY_KEY] : candidate.path;
       if (!isPrefix(path)) continue;
       for (const name of names) {
         if (sources.has(name)) continue;
@@ -689,6 +731,14 @@ function objectChanged(
         return declared ? [declared] : [];
       });
       grew = noteAlias(names, reach(node.right));
+      // Storing it in a property (`h.d = id`, `h[0] = id`) makes the root of the
+      // target a container of it.
+      const holders = assignmentTargets(node).flatMap((target) => {
+        const access = ts.isIdentifier(unwrapParens(target)) ? null : accessPath(target);
+        const declared = access && declarationId(access.root);
+        return declared ? [declared] : [];
+      });
+      grew = noteAlias(holders, reach(node.right).map((found) => ({ ...found, container: true }))) || grew;
     } else if (ts.isForOfStatement(node)) {
       const names = ts.isVariableDeclarationList(node.initializer)
         ? node.initializer.declarations.flatMap((declaration) => declaredIdentifiers(declaration.name))
@@ -698,9 +748,19 @@ function objectChanged(
           });
       grew = noteAlias(names, reach(node.expression), true);
     } else if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)) {
-      const callback = node.arguments[0] && unwrapValue(node.arguments[0]);
-      const parameter = callback && (ts.isArrowFunction(callback) || ts.isFunctionExpression(callback)) ? callback.parameters[0] : null;
-      if (parameter) grew = noteAlias(declaredIdentifiers(parameter.name), reach(node.expression.expression), true);
+      // Every parameter of an inline callback can hold what the method gives it:
+      // the first an element, the third the array, and a rest any of them. The
+      // second is the index, a number.
+      const callback = inlineCallback(node);
+      const receivers = reach(node.expression.expression);
+      callback?.parameters.forEach((parameter, index) => {
+        const names = declaredIdentifiers(parameter.name);
+        if (parameter.dotDotDotToken) {
+          grew = noteAlias(names, receivers.map((found) => ({ ...found, container: true }))) || grew;
+        } else if (index !== 1) {
+          grew = noteAlias(names, receivers, index === 0) || grew;
+        }
+      });
     }
     ts.forEachChild(node, (child) => {
       grew = collectAliases(child) || grew;
@@ -732,11 +792,13 @@ function objectChanged(
           changed = true;
         }
       }
-      const callee = ts.isCallExpression(node) ? unwrapValue(node.expression) : null;
-      if (callee && (ts.isPropertyAccessExpression(callee) || ts.isElementAccessExpression(callee))) {
+      const call = ts.isCallExpression(node) ? node : null;
+      const callee = call ? unwrapValue(call.expression) : null;
+      if (call && callee && (ts.isPropertyAccessExpression(callee) || ts.isElementAccessExpression(callee))) {
         const method = ts.isPropertyAccessExpression(callee) ? callee.name.text : elementKey(callee.argumentExpression);
-        const receiver = rootOf(callee.expression);
-        if (receiver && isPrefix(receiver.path) && !READ_ONLY_METHODS.has(method)) changed = true;
+        // A literal receiver (`[id].forEach(...)`) holds the object as well.
+        const receivers = reach(callee.expression);
+        if (receivers.some((receiver) => isPrefix(receiver.path)) && !onlyReads(call, method)) changed = true;
       }
     }
     ts.forEachChild(node, (child) => visit(child, closure));
