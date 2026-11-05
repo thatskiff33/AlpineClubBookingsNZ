@@ -422,6 +422,34 @@ fences against real row locks, including against the previous release's own
 claim statement, and forces both of the trigger's interleavings with a queued
 table lock.
 
+### The data-key re-encrypt joins the row claims and takes no advisory key (#4456)
+
+`pnpm run data-keys:reencrypt` (`data-encryption-reencrypt.ts`) rewrites stored
+secrets under the current data key while the app runs. It composes no booking,
+capacity, membership or money mutation, so it takes **no advisory lock**
+(`INV-LOCK-001`: neither tier applies) and adds no key (`INV-LOCK-002`,
+`INV-LOCK-003`: nothing to order or register). Each row is one short
+transaction with no provider call, joined to the claim its existing writers
+already use:
+
+| Row | Its other writers | How the re-encrypt claims it |
+| --- | --- | --- |
+| `IntegrationCredential` | admin saves and deletes, verify-resets, the Xero connect, refresh and disconnect | `withCredentialTransaction`, the row read on that transaction, then `expect: version`: the `(ciphertext, iv, authTag)` compare-and-set. A writer that commits first makes it lose (`StaleCredentialWriteError`) |
+| the Xero token set (`xero-oauth`/`token-set`) | as above, plus the refresh lease | first `fenceXeroTokenSetRewrite`: the lease rows in the order above, `XeroToken` then `XeroConnection`, each with the claim's own lease-free guard. A held lease makes it lose; holding both row locks, it makes a new claim queue and then read the moved row |
+| `Member.totpSecret` | enrolment, the erasure and retention clears | `updateMany` guarded on the exact value read |
+| `TwoFactorRecoveryCode` (retiring a legacy code) | sign-in's use of a code, replacement, enrolment, erasure | `updateMany` guarded on the hash read and `usedAt: null` |
+
+A loser writes nothing and records no audit row, and the row is retried on the
+next pass (three passes, two seconds apart). **Why the Xero fence is needed:** a
+refresh reads the version its save compares on, spends the refresh token at
+Xero, then saves. A re-encrypt committing in between would make that save
+lose with the new token already issued and the old one spent, so the
+re-encrypt must not move the row while the lease is held. An EXPIRED lease is
+taken over, exactly as a new claim takes it over.
+`data-encryption-key-ring.realdb.test.ts` proves it: with the lease held the
+re-encrypt loses and the refresh saves; queued behind a held `XeroToken` row
+lock in each order, the refresh's save wins and no refresh token is lost.
+
 ## The lock families
 
 All keys below are the argument(s) to `pg_advisory_xact_lock`. Two-argument keys

@@ -81,6 +81,9 @@ x-app-environment: &app-environment
   # authenticator secrets are encrypted under its first key. Unset, they stay
   # under AUTH_SECRET as before. See CONFIGURATION.md before setting it.
   DATA_ENCRYPTION_KEYS: ${DATA_ENCRYPTION_KEYS:-}
+  # "retired" stops reading stored data under AUTH_SECRET (#4456); set it only
+  # once the re-encrypt reports nothing left on it. See CONFIGURATION.md.
+  DATA_ENCRYPTION_LEGACY_KEY: ${DATA_ENCRYPTION_LEGACY_KEY:-}
   AUTH_TRUST_HOST: ${AUTH_TRUST_HOST:-true}
   # Stripe credentials are DB-only (#2082): the secret key, publishable key, and
   # webhook signing secret are captured in-app and stored encrypted — no STRIPE_*

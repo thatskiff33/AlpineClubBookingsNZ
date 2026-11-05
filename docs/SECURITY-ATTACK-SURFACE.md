@@ -497,9 +497,9 @@ this page already learnt about once, from the rotation runbook two sections up.
   Never a real deployment.
 - `data-key-reencrypt` — an operator ran `pnpm run data-keys:reencrypt`
   (#4456), which re-encrypted the credential, unchanged, under the current
-  data-encryption key, claimed on the version it read (`cause:
-  data-key-reencrypt`). No member is signed in to the run, so no member id is
-  recorded; the operator's shell history and the deploy log say who ran it.
+  data-encryption key, claimed on the version it read
+  (`cause: data-key-reencrypt`). No member is signed in to the run, so no
+  member id is recorded; the operator's own records say who ran it.
 
 **A verify-RESET is not on this list, deliberately.** Dropping a verified marker
 because a credential changed is part of the administrator's write, so those

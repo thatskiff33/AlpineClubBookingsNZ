@@ -1251,6 +1251,7 @@ test/demo mode or disabled:
 | `AUTH_SECRET`           | Auth.js session secret — use a strong value (>= 32 chars). Until `DATA_ENCRYPTION_KEYS` is set it is also the key 2FA secrets and in-app provider credentials are encrypted under (#2079), which makes rotating it a planned maintenance event (see `DEPLOYMENT.md`). |
 | `NEXTAUTH_SECRET`       | Legacy Auth.js secret fallback; keep aligned with `AUTH_SECRET`. |
 | `DATA_ENCRYPTION_KEYS`  | Optional, recommended (#4456). The data-encryption key ring: comma-separated `<id>:<base64 key>` entries, each exactly 32 random bytes (`openssl rand -base64 32`), the **first** used for new data. Once set, stored provider credentials and authenticator secrets no longer depend on `AUTH_SECRET`. Read [Data-encryption keys](#data-encryption-keys-4456) before setting it. |
+| `DATA_ENCRYPTION_LEGACY_KEY` | Optional (#4456). `retired` stops reading stored data under `AUTH_SECRET` once `pnpm run data-keys:reencrypt` reports nothing left on it. Unset keeps reading it. Any other value, or `retired` with no `DATA_ENCRYPTION_KEYS`, fails readiness. See [Data-encryption keys](#data-encryption-keys-4456). |
 | `NEXTAUTH_URL`          | Exact app origin, for example `http://localhost:3000`.           |
 | `SERVERNZ_DEFAULT_BASE_URL` | The Alpine Central Server this deployment pairs with, for example `https://central.example.org`; empty by default. Offered only: the setup page pre-fills its address field from it while no address is saved, and an administrator's Save stores it; the sync and the Request a Connection link read the saved address alone. Must be `https` on a public host, or it is ignored as if unset (triyder/AlpineClubBookingsNZ#81). |
 | `AUTH_TRUST_HOST`       | Set `true` behind trusted proxies/Compose.                       |
@@ -2358,16 +2359,24 @@ exposes both and rotating it destroys the stored data.
   recovery code names a ring key, which is the same test the refusals below
   use.
 - **Rows written before the ring** stay readable under `AUTH_SECRET` until they
-  are re-encrypted; the setup step counts them. Rotate `AUTH_SECRET` only once
-  it reports nothing left on it. This release has no switch to stop reading
-  them under the auth secret; the second part of #4456 adds one with the
-  re-encrypt.
+  are re-encrypted with `pnpm run data-keys:reencrypt`
+  ([`DEPLOYMENT.md` → Moving stored data to the current key](DEPLOYMENT.md#moving-stored-data-to-the-current-key-4456));
+  the setup step and the command's report count them. Rotate `AUTH_SECRET` only
+  once nothing is left on it.
+- **`DATA_ENCRYPTION_LEGACY_KEY=retired`** then stops reading anything under
+  `AUTH_SECRET`, so it no longer protects stored data in any way. Any other
+  value, or `retired` without a ring, is refused like a bad ring (readiness
+  fails, writes refuse). A row still under `AUTH_SECRET` reads as "needs
+  re-entry" while it is set, and the setup step goes red. Unset it to roll
+  back ([`DEPLOYMENT.md` → Retiring the legacy key](DEPLOYMENT.md#retiring-the-legacy-key-4456)).
 - **Recovery codes are the exception** (owner decision on #4456): codes issued
   before a ring was set stop working the moment it is set, because a hash cannot
   be re-keyed. A member holding them is told, on the sign-in challenge and on
-  their profile, to generate a new set. They are refused, not yet deleted: on
-  an instance without the ring they work again, until the second part of #4456
-  retires them in the database. Email codes last ten minutes and simply expire.
+  their profile, to generate a new set. On an instance without the ring they
+  work again until `pnpm run data-keys:reencrypt --retire-legacy-recovery-codes`
+  retires them in the database; after that no instance accepts them, and the
+  member is still told to generate a new set. Email codes last ten minutes and
+  simply expire.
 - **Rollout, and no way back.** Set it only once every running container is on
   a release that understands it: an older release cannot read data written
   under a data key. Once rows are written under it, the previous colour of the

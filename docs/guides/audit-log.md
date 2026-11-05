@@ -795,6 +795,9 @@ for a change that did not happen, and a change cannot happen without its entry.
 | `security.two_factor.enrolled` | A member turns on two-factor sign-in | The member themself |
 | `security.two_factor.recovery_codes_replaced` | A member replaces their recovery codes, which invalidates every unused one | The member themself |
 | `security.two_factor.cleared` | An account erasure, or the former-member retention job (#4457), clears a member's second factor | The administrator who approved the erasure, or **System** with `systemActor: former-member-anonymisation` |
+| `security.two_factor.secret_rewrapped` | `pnpm run data-keys:reencrypt` re-encrypts the member's authenticator secret, unchanged, under the current data-encryption key (#4456); their app keeps working | **System** with `systemActor: data-key-reencrypt` |
+| `security.two_factor.recovery_codes_retired` | The same command, with `--retire-legacy-recovery-codes`, retires the member's unused recovery codes issued before the data-encryption key (#4456); `recoveryCodesRetired` is the count | **System** with `systemActor: data-key-reencrypt` |
+| `integration.credential.set` with `cause: data-key-reencrypt` | The same command re-encrypts a stored credential, unchanged, under the current data-encryption key (#4456) | **System** with `systemActor: data-key-reencrypt` |
 
 **Finding out why the Xero connection broke.** A verify-reset entry carries
 `causedByCredential` (for example `xero:client_secret`). It shares a request ID
