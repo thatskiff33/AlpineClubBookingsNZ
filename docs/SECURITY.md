@@ -364,8 +364,9 @@ be screened or traced to a generated value; a copy counts only when its object
 was built by a generated or screened writer and nothing changes that object
 afterwards (a write, an alias that writes, or any call that receives it or one
 of its elements; a read-only array method that calls back with the elements is
-exempt only when given an inline function, whose parameters are followed as
-aliases, and a named one is a hand-over). A screen likewise stops counting
+exempt only when given an inline function that does not read `arguments`,
+whose element and array parameters are followed as aliases; a named one is a
+hand-over). A screen likewise stops counting
 when, after it, an alias or a call changes the screened object. Only the local
 demo seed is listed as untraced. A new
 writer in neither list fails the build. It cannot see SQL assembled by

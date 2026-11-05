@@ -715,7 +715,8 @@ function objectChanged(
       if (!isPrefix(path)) continue;
       for (const name of names) {
         if (sources.has(name)) continue;
-        sources.set(name, { path, container: candidate.container });
+        // The element of a holder is the object itself, not another holder.
+        sources.set(name, { path, container: element ? false : candidate.container });
         grew = true;
       }
     }

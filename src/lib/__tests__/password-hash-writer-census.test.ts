@@ -720,6 +720,11 @@ describe("passwordHash writer scanner", () => {
     expect(sources(`async function a(body) { ${built} const h = { d: data.passwordHash }; Object.assign(h, body); mutate({ x: data.other }); ${copy} }`)).toEqual(["random", "copy"]);
     expect(sources(`async function a(body) { ${built} const t = f ? other : {}; Object.assign(t, body); ${copy} } `)).toEqual(["random", "copy"]);
     expect(sources(`async function a(body) { function f() { Object.assign(other, body); } ${built} f(); ${copy} }`)).toEqual(["random", "copy"]);
+    // An element of a holder is the object itself: reading its fields is not a change,
+    // but writing them still is.
+    expect(sources(`async function a() { ${built} for (const x of [data]) log(x.id); ${copy} }`)).toEqual(["random", "copy"]);
+    expect(sources(`async function a() { ${built} [data].forEach((x) => log(x.id)); ${copy} }`)).toEqual(["random", "copy"]);
+    expect(sources(`async function a(body) { ${built} for (const x of [data]) x.k = body; ${copy} }`)).toEqual(["random", "unknown"]);
     // Another function's object of the same name is not this one.
     expect(sources(`async function a() { ${built} ${copy} } function b(data) { data.k = 1; log(data); }`)).toEqual(["random", "copy"]);
   });
@@ -803,6 +808,10 @@ describe("passwordHash writer scanner", () => {
     expect(guarded(`async function a(b) { const f = () => mutate(other); ${screen} f(); const al = c ? b.other : {}; al.pw = typed; ${write} }`)).toEqual([true]);
     expect(guarded(`async function a(b) { ${screen} ${write} const g = () => mutate(b); }`)).toEqual([true]);
     expect(guarded(`async function a(b) { const s = await screenChosenPassword(b.pw, { userInputs: [b] }); if (!s.ok) return; ${write} }`)).toEqual([true]);
+    // An element of a holder is the screened object: a read keeps the screen, a write voids it.
+    expect(guarded(`async function a(b) { ${screen} [b].forEach((x) => log(x.id)); ${write} }`)).toEqual([true]);
+    expect(guarded(`async function a(b) { ${screen} for (const x of [b]) log(x.id); ${write} }`)).toEqual([true]);
+    expect(guarded(`async function a(b) { ${screen} for (const x of [b]) x.pw = typed; ${write} }`)).toEqual([false]);
     // A plain string cannot be changed from outside.
     expect(guarded(`async function a(p) { const s = await screenChosenPassword(p); if (!s.ok) return; log(p); const al = p; ${`save({ passwordHash: await hash(p, 12) });`} }`)).toEqual([true]);
     // A const root works like a parameter.
