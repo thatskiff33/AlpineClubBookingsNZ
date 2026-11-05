@@ -93,7 +93,10 @@ function authEnvUrl(): URL | null {
  * else `/api/auth`). Any other action — above all a sign-in callback, which
  * mints a new member's token — must not take its window from the old cookie.
  */
-function isSessionAction(request: Request, basePath: string | undefined): boolean {
+function isSessionAction(
+  request: Request,
+  basePath: string | undefined,
+): boolean {
   const envPath = authEnvUrl()?.pathname;
   const base =
     basePath ?? (envPath && envPath !== "/" ? envPath : "/api/auth");
