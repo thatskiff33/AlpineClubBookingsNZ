@@ -30,27 +30,34 @@
  *
  * THE DRAW IS THE ENGINE'S OWN. The engine fills a booking's applied credit from the
  * member's lots oldest first (`CREDIT_LOT_USE_ORDER`), each lot giving its free
- * credit (`freeCreditLots`: amount, less all slices, less its note's write-down).
- * Replaying that fill for the member's total uncovered credit
- * (`plannedDrawFromLot`) says how much lands on this lot; credit an older lot will
- * take never counts against this note. The total that lands on a lot does not
- * depend on which booking the engine allocates first, but which booking's credit
- * lands there does, so every waiting booking with uncovered credit is named when
- * any of it lands on the lot (the conservative choice).
+ * credit (amount, less all slices, less its note's write-down). The flag reads the
+ * lots through the engine's own loader (`loadFreeCreditLots`) and replays its fill
+ * (`fillLotsInOrder`) for the member's total uncovered credit, so credit an older
+ * lot will take never counts against this note. The total that lands on a lot does
+ * not depend on which booking the engine allocates first, but which booking's
+ * credit lands there does, so every waiting booking with uncovered credit is named
+ * when any of it lands on the lot (the conservative choice).
+ *
+ * A CANCELLED BOOKING COUNTS while the engine still works for it. A cancel with
+ * nothing captured settles the booking's applied credit (`appliedCreditSettledByCancel`,
+ * #3836): its invoice is cleared by a note sized net of the slices already committed,
+ * so the engine plans nothing new for it, though it still sends those slices. A
+ * cancel after capture settles nothing: the engine plans and allocates as for a live
+ * booking. So a cancelled booking's unheld slices always count, and its uncovered
+ * credit counts unless the cancel settled it. It is named like any other booking:
+ * the converge refuses a cancelled booking, so only an officer can act on it.
  *
  * The cheap comparison runs first: a note Xero can still cover never reaches the
  * outside-spend read, the balance or the mirror's arithmetic.
  *
- * LEFT OUT, so the flag clears once the work is dealt with: a cancelled booking (the
- * converge refuses one, and its invoice is cleared by a note instead), and a booking
- * whose applied-credit allocation an officer resolved in Xero
- * (`getBlockingOperation`'s "resolved" answer, on the booking's queued allocation or
- * on the slice's own attempt). Those officer-resolved bookings are returned apart
- * (`resolvedAllocations`) for the repair check's resolved-in-Xero report. A close the
- * converge made itself (`isClosedByCreditSpentOutsideApp`, #4338) is not an
- * officer's resolve: it leaves the work to a fresh attempt, and its write-down is
- * already in the ledger, so the slice is judged as any other and is never reported
- * as resolved.
+ * LEFT OUT, so the flag clears once the work is dealt with: a booking whose
+ * applied-credit allocation an officer resolved in Xero (`getBlockingOperation`'s
+ * "resolved" answer, on the booking's queued allocation or on the slice's own
+ * attempt). Those bookings are returned apart (`resolvedAllocations`) for the
+ * repair check's resolved-in-Xero report. A close the converge made itself
+ * (`isClosedByCreditSpentOutsideApp`, #4338) is not an officer's resolve: it leaves
+ * the work to a fresh attempt, and its write-down is already in the ledger, so the
+ * slice is judged as any other and is never reported as resolved.
  *
  * The flag lags Xero by the webhook and cursor-sync delay (read-after-write lag): a
  * spend shows when the note's next event is reconciled, and a reversal clears the
@@ -58,15 +65,15 @@
  */
 import { CreditType, type Prisma } from "@prisma/client";
 import { getMemberCreditBalance } from "@/lib/member-credit";
-import { unallocatedAppliedCreditCentsByBooking } from "@/lib/xero-applied-credit-ledger-state";
-import { CREDIT_LOT_USE_ORDER, freeCreditLots, plannedDrawFromLot, type AppliedCreditLot } from "@/lib/xero-applied-credit-plan";
-import { creditLotWhere, fundingLotWhere, slicesHeldInXero } from "@/lib/xero-applied-credit-slice-lookup";
+import { bookingsAppliedCreditSettledByCancel, unallocatedAppliedCreditCentsByBooking } from "@/lib/xero-applied-credit-ledger-state";
+import { loadFreeCreditLots } from "@/lib/xero-applied-credit-lots";
+import { fillLotsInOrder } from "@/lib/xero-applied-credit-plan";
+import { fundingLotWhere, slicesHeldInXero } from "@/lib/xero-applied-credit-slice-lookup";
 import { getBlockingOperation } from "@/lib/xero-booking-repair-object-resolution";
 import { xeroOperationSelect, type XeroOperationRecord } from "@/lib/xero-booking-repair-types";
 import { planOutsideSpendMirror } from "@/lib/xero-credit-note-mirror-plan";
 import { judgeOutsideSpendEvidence, outsideSpendCents } from "@/lib/xero-credit-note-outside-spend";
 import { newestSpendReadings } from "@/lib/xero-credit-note-spend-evidence";
-import { writtenDownCentsByCreditNote } from "@/lib/xero-credit-note-write-down";
 import { XERO_OUTBOX_APPLIED_CREDIT_ALLOCATION_TYPE } from "@/lib/xero-operation-outbox-payload";
 import { isClosedByCreditSpentOutsideApp } from "@/lib/xero-operation-resolution";
 
@@ -151,12 +158,11 @@ function officerResolved(match: ReturnType<typeof getBlockingOperation>): XeroOp
   return isClosedByCreditSpentOutsideApp(operation) ? null : operation;
 }
 
-/** Of these bookings, the cancelled ones and those whose queued allocation an officer resolved (by booking). */
+/** Of these bookings, those whose queued allocation an officer resolved (by booking). */
 async function bookingStates(db: Prisma.TransactionClient, bookingIds: string[]) {
   const bookings = bookingIds.length
-    ? await db.booking.findMany({ where: { id: { in: bookingIds } }, select: { id: true, status: true, payment: { select: { id: true } } } })
+    ? await db.booking.findMany({ where: { id: { in: bookingIds } }, select: { id: true, payment: { select: { id: true } } } })
     : [];
-  const cancelled = new Set(bookings.filter((b) => b.status === "CANCELLED").map((b) => b.id));
   const paymentIds = bookings.flatMap((b) => (b.payment ? [b.payment.id] : []));
   const operations = paymentIds.length
     ? await db.xeroSyncOperation.findMany({
@@ -172,7 +178,7 @@ async function bookingStates(db: Prisma.TransactionClient, bookingIds: string[])
     const operation = officerResolved(getBlockingOperation(ops, "ALLOCATION", "ALLOCATE", { payloadQueueType: XERO_OUTBOX_APPLIED_CREDIT_ALLOCATION_TYPE }));
     if (operation) resolved.set(booking.id, operation);
   }
-  return { cancelled, resolved };
+  return resolved;
 }
 
 /** Of these slices, those whose own allocation attempt an officer resolved. */
@@ -189,34 +195,6 @@ async function resolvedSlices(db: Prisma.TransactionClient, sliceIds: string[]):
     if (operation) resolved.set(sliceId, operation);
   }
   return resolved;
-}
-
-/**
- * Per member, the lots the engine fills applied credit from, as its loader works
- * them out (`gatherAppliedCreditLots`): every positive lot in `CREDIT_LOT_USE_ORDER`,
- * each with its free credit (`freeCreditLots`). Here no booking's own slices are set
- * aside, because the credit replayed is what no slice covers yet. Also each member's
- * net write-down per note, which the mirror's arithmetic reads too.
- */
-async function memberCreditLots(db: Prisma.TransactionClient, memberIds: string[]) {
-  const lots = await db.memberCredit.findMany({
-    where: creditLotWhere({ in: memberIds }),
-    select: { id: true, memberId: true, amountCents: true, type: true, xeroCreditNoteId: true },
-    orderBy: [...CREDIT_LOT_USE_ORDER],
-  });
-  const allocated = lots.length
-    ? await db.memberCreditNoteAllocation.groupBy({ by: ["memberCreditId"], where: { memberCreditId: { in: lots.map((lot) => lot.id) } }, _sum: { amountCents: true } })
-    : [];
-  const allocatedById = new Map(allocated.map((row) => [row.memberCreditId, row._sum.amountCents ?? 0]));
-  const byMember = new Map<string, { free: AppliedCreditLot[]; writtenDown: Map<string, number> }>();
-  await Promise.all(
-    memberIds.map(async (memberId) => {
-      const own = lots.filter((lot) => lot.memberId === memberId);
-      const writtenDown = await writtenDownCentsByCreditNote(db, memberId, [...new Set(own.flatMap((lot) => (lot.xeroCreditNoteId ? [lot.xeroCreditNoteId] : [])))]);
-      byMember.set(memberId, { free: freeCreditLots(own, allocatedById, writtenDown), writtenDown });
-    }),
-  );
-  return byMember;
 }
 
 /**
@@ -266,10 +244,12 @@ export async function findCreditNotesSpentOutsideApp(
   const held = await slicesHeldInXero(db, slices.map((slice) => slice.id));
   const unheld = slices.filter((slice) => !held.has(slice.id));
   const memberIds = [...new Set(candidates.map((lot) => lot.memberId))];
-  const [unsliced, creditLots] = await Promise.all([unslicedAppliedByMember(db, memberIds), memberCreditLots(db, memberIds)]);
+  const [unsliced, creditLots] = await Promise.all([unslicedAppliedByMember(db, memberIds), loadFreeCreditLots(db, memberIds)]);
   const waitingBookingIds = [...new Set([...unheld.map((s) => s.appliedToBookingId), ...[...unsliced.values()].flatMap((m) => [...m.keys()])])];
-  const [{ cancelled, resolved: resolvedBookings }, resolvedSliceOps] = await Promise.all([
+  const uncoveredBookingIds = [...unsliced.values()].flatMap((m) => [...m.keys()]);
+  const [resolvedBookings, settledByCancel, resolvedSliceOps] = await Promise.all([
     bookingStates(db, waitingBookingIds),
+    bookingsAppliedCreditSettledByCancel(uncoveredBookingIds, db),
     resolvedSlices(db, unheld.map((slice) => slice.id)),
   ]);
   // Read once per member, and only for a member whose note gets past the cheap comparison.
@@ -293,7 +273,8 @@ export async function findCreditNotesSpentOutsideApp(
     let pendingSliceCents = 0;
     for (const slice of lotSlices) {
       // Only this note's slices: the flag asks what Xero must still take from THIS note.
-      if (held.has(slice.id) || slice.xeroCreditNoteId !== noteId || cancelled.has(slice.appliedToBookingId)) continue;
+      // A cancelled booking's slice counts too: the engine still sends committed slices.
+      if (held.has(slice.id) || slice.xeroCreditNoteId !== noteId) continue;
       const operation = resolvedOf(slice.appliedToBookingId, slice.id);
       if (operation) {
         resolvedAllocations.set(slice.appliedToBookingId, operation);
@@ -304,13 +285,15 @@ export async function findCreditNotesSpentOutsideApp(
     }
 
     // The engine's own draw from this lot for the credit no slice covers yet.
-    const member = creditLots.get(lot.memberId) ?? { free: [], writtenDown: new Map<string, number>() };
-    const uncovered = [...(unsliced.get(lot.memberId) ?? new Map<string, number>())].filter(([bookingId]) => !cancelled.has(bookingId));
+    const member = creditLots.get(lot.memberId) ?? { lots: [], writtenDownByNote: new Map<string, number>() };
+    // A cancel that settled the booking's credit leaves the engine nothing new to plan for it.
+    const uncovered = [...(unsliced.get(lot.memberId) ?? new Map<string, number>())].filter(([bookingId]) => !settledByCancel.has(bookingId));
+    const drawnHere = (cents: number) => fillLotsInOrder(member.lots, cents).slices.find((slice) => slice.lot.memberCreditId === lot.id)?.amountCents ?? 0;
     const live = uncovered.filter(([bookingId]) => !resolvedOf(bookingId));
     const sumOf = (entries: Array<[string, number]>) => entries.reduce((sum, [, cents]) => sum + cents, 0);
-    const unslicedDrawCents = plannedDrawFromLot(member.free, sumOf(live), lot.id);
+    const unslicedDrawCents = drawnHere(sumOf(live));
     if (unslicedDrawCents > 0) for (const [bookingId] of live) waiting.add(bookingId);
-    if (plannedDrawFromLot(member.free, sumOf(uncovered), lot.id) > 0) {
+    if (drawnHere(sumOf(uncovered)) > 0) {
       for (const [bookingId] of uncovered) {
         const operation = resolvedOf(bookingId);
         if (operation) resolvedAllocations.set(bookingId, operation);
@@ -328,7 +311,7 @@ export async function findCreditNotesSpentOutsideApp(
       lotCents: lot.amountCents,
       // The mirror's own figure: every slice drawn from the lot (#4270), whichever note carries it.
       sliceCents: lotSlices.reduce((sum, slice) => sum + slice.amountCents, 0),
-      writtenDownCents: member.writtenDown.get(noteId) ?? 0,
+      writtenDownCents: member.writtenDownByNote.get(noteId) ?? 0,
       outsideSpendCents: spentCents,
       balanceCents: await balanceOf(lot.memberId),
     });

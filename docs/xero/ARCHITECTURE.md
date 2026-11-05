@@ -4368,10 +4368,10 @@ write, no stored flag, no audit row, no email, and no Xero call.
 
   The draw is the engine's own, replayed. The engine fills applied credit from the
   member's lots oldest first (`CREDIT_LOT_USE_ORDER`). Each lot gives its free credit:
-  amount, less all slices, less its note's write-down (`freeCreditLots` in
-  `xero-applied-credit-plan.ts`, which the engine's loader also calls).
-  `plannedDrawFromLot` gives what lands on this lot; its tests check it against the
-  planner. Credit an older lot will take never counts against this note, even when a
+  amount, less all slices, less its note's write-down. Both read the lots through one
+  loader (`loadFreeCreditLots` in `xero-applied-credit-lots.ts`) and fill them with one
+  function (`fillLotsInOrder`, which the planner wraps and which never throws on a
+  shortfall). Credit an older lot will take never counts against this note, even when a
   debit that uses up no lot (an admin adjustment) has emptied the balance. The total
   that lands on a lot does not depend on which booking the engine allocates first, but
   which booking's credit lands there does. So every waiting booking with uncovered
@@ -4379,12 +4379,20 @@ write, no stored flag, no audit row, no email, and no Xero call.
 
   A missing, malformed, inactive, unexplained or unsettled reading flags nothing, so an
   outage or a half-written list raises no false alarm. Left out, so the flag clears
-  once the work is dealt with:
-  - a cancelled booking (the converge refuses one);
-  - a booking whose applied-credit allocation an officer resolved in Xero
-    (`getBlockingOperation`'s resolved answer, on the queued allocation or the slice's
-    own attempt). The repair check reports that booking as
-    `RESOLVED_IN_XERO_BY_OFFICER`, once, while the note is flagged for another booking.
+  once the work is dealt with: a booking whose applied-credit allocation an officer
+  resolved in Xero (`getBlockingOperation`'s resolved answer, on the queued allocation
+  or the slice's own attempt). The repair check reports that booking as
+  `RESOLVED_IN_XERO_BY_OFFICER`, once, while the note is flagged for another booking.
+
+  A cancelled booking counts while the engine still works for it. A cancel with
+  nothing captured settles the booking's applied credit (`appliedCreditSettledByCancel`,
+  #3836): its invoice is cleared by a note sized net of the slices already committed,
+  so the engine plans nothing new for it, but still sends those slices. A cancel after
+  capture settles nothing, and the engine plans as for a live booking. So a cancelled
+  booking's unsent slices always count, and its uncovered credit counts unless the
+  cancel settled it (`bookingsAppliedCreditSettledByCancel`, the same rule over many
+  bookings). It is named like any other booking, because the converge refuses a
+  cancelled booking and only an officer can act.
 
   The converge's own close (`isClosedByCreditSpentOutsideApp`, #4338) is not an
   officer's resolve. It leaves what is left of the slice to a fresh attempt, and its

@@ -63,15 +63,44 @@ export async function appliedCreditSettledByCancel(
   const [booking, restore] = await Promise.all([
     db.booking.findUnique({
       where: { id: bookingId },
-      select: {
-        status: true,
-        payment: {
-          select: { id: true, bookingId: true, source: true, status: true, amountCents: true, refundedAmountCents: true, transactions: { select: { status: true } }, booking: { select: { organiserSettled: true, parentBookingId: true } } }, // #3949
-        },
-      },
+      select: SETTLED_BY_CANCEL_BOOKING_SELECT,
     }),
     db.memberCredit.findUnique({ where: { restoredFromBookingId: bookingId }, select: { id: true } }),
   ]);
-  const cancelled = booking?.status === BookingStatus.CANCELLED || restore !== null;
+  return settledByCancel(booking, restore !== null);
+}
+
+/** What the rule reads of a booking: its status and its payment's capture evidence. */
+const SETTLED_BY_CANCEL_BOOKING_SELECT = {
+  status: true,
+  payment: {
+    select: { id: true, bookingId: true, source: true, status: true, amountCents: true, refundedAmountCents: true, transactions: { select: { status: true } }, booking: { select: { organiserSettled: true, parentBookingId: true } } }, // #3949
+  },
+} as const satisfies Prisma.BookingSelect;
+
+type SettledByCancelBooking = Prisma.BookingGetPayload<{ select: typeof SETTLED_BY_CANCEL_BOOKING_SELECT }>;
+
+/** THE RULE of {@link appliedCreditSettledByCancel}, over what it read. */
+function settledByCancel(booking: SettledByCancelBooking | null, restored: boolean): boolean {
+  const cancelled = booking?.status === BookingStatus.CANCELLED || restored;
   return cancelled && !(booking?.payment && paymentHasCaptureEvidence(booking.payment));
+}
+
+/**
+ * {@link appliedCreditSettledByCancel} for many bookings in two reads: the ids of
+ * those whose applied credit the cancel settled. The early warning (#4220) asks it,
+ * because the engine plans nothing new for such a booking.
+ */
+export async function bookingsAppliedCreditSettledByCancel(
+  bookingIds: readonly string[],
+  db: Prisma.TransactionClient | typeof prisma,
+): Promise<Set<string>> {
+  if (bookingIds.length === 0) return new Set();
+  const [bookings, restores] = await Promise.all([
+    db.booking.findMany({ where: { id: { in: [...bookingIds] } }, select: { id: true, ...SETTLED_BY_CANCEL_BOOKING_SELECT } }),
+    db.memberCredit.findMany({ where: { restoredFromBookingId: { in: [...bookingIds] } }, select: { restoredFromBookingId: true } }),
+  ]);
+  const byId = new Map(bookings.map((booking) => [booking.id, booking]));
+  const restored = new Set(restores.map((row) => row.restoredFromBookingId));
+  return new Set(bookingIds.filter((id) => settledByCancel(byId.get(id) ?? null, restored.has(id))));
 }

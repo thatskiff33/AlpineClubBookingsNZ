@@ -99,16 +99,9 @@ export function planAppliedCreditAllocation(
 ): AppliedCreditPlan {
   const noteAllocations: PlannedNoteAllocation[] = [];
   const mintSlices: PlannedMintSlice[] = [];
-  let outstanding = appliedCents;
+  const { slices, outstanding } = fillLotsInOrder(lots, appliedCents);
 
-  for (const lot of lots) {
-    if (outstanding <= 0) {
-      break;
-    }
-    const slice = Math.min(lot.remainingCents, outstanding);
-    if (slice <= 0) {
-      continue;
-    }
+  for (const { lot, amountCents: slice } of slices) {
     if (lot.xeroCreditNoteId) {
       noteAllocations.push({
         memberCreditId: lot.memberCreditId,
@@ -122,7 +115,6 @@ export function planAppliedCreditAllocation(
         amountCents: slice,
       });
     }
-    outstanding -= slice;
   }
 
   if (outstanding > 0) {
@@ -140,12 +132,39 @@ export function planAppliedCreditAllocation(
   };
 }
 
+/**
+ * THE FILL (#1620, `INV-SSOT`): `appliedCents` taken from the lots in the order
+ * given, each giving what is still outstanding up to its free credit, until
+ * nothing is outstanding. It never throws: what the lots could not cover is
+ * `outstanding`. {@link planAppliedCreditAllocation} refuses a shortfall; the
+ * early warning (#4220) reads how much lands on one lot, shortfall or not.
+ */
+export function fillLotsInOrder(
+  lots: readonly AppliedCreditLot[],
+  appliedCents: number,
+): { slices: Array<{ lot: AppliedCreditLot; amountCents: number }>; outstanding: number } {
+  const slices: Array<{ lot: AppliedCreditLot; amountCents: number }> = [];
+  let outstanding = appliedCents;
+  for (const lot of lots) {
+    if (outstanding <= 0) {
+      break;
+    }
+    const slice = Math.min(lot.remainingCents, outstanding);
+    if (slice <= 0) {
+      continue;
+    }
+    slices.push({ lot, amountCents: slice });
+    outstanding -= slice;
+  }
+  return { slices, outstanding };
+}
+
 // ---------------------------------------------------------------------------
 // The free credit of each lot (#1620, #4219, #4220)
 // ---------------------------------------------------------------------------
 
 /** A positive credit lot as the loader reads it, before its free credit is worked out. */
-export interface CreditLotRow {
+interface CreditLotRow {
   id: string;
   amountCents: number;
   type: CreditType;
@@ -157,8 +176,8 @@ export interface CreditLotRow {
  * {@link CREDIT_LOT_USE_ORDER}): the lot's amount, less the slices already drawn
  * from it, less its note's net write-down (#4219), which is taken once per note,
  * oldest lot first, never from each lot stamped with the note. A lot with nothing
- * free is dropped. The allocation engine's loader (`gatherAppliedCreditLots`) and
- * the early warning's replay of its draw (#4220) both work it out here (`INV-SSOT`).
+ * free is dropped. The one loader, `loadFreeCreditLots`, works it out here for the
+ * allocation engine and for the early warning's replay of its draw (#4220, `INV-SSOT`).
  */
 export function freeCreditLots(
   lots: readonly CreditLotRow[],
@@ -184,22 +203,6 @@ export function freeCreditLots(
     });
   }
   return free;
-}
-
-/**
- * What {@link planAppliedCreditAllocation} takes from one lot when it fills
- * `appliedCents` from `lots` in order: everything before the lot is used first,
- * so the lot gives what is still outstanding when it is reached, up to its free
- * credit. The planner's fill in closed form, for a reader that must not plan (it
- * never throws on a shortfall); its tests check the two agree.
- */
-export function plannedDrawFromLot(lots: readonly AppliedCreditLot[], appliedCents: number, memberCreditId: string): number {
-  let before = 0;
-  for (const lot of lots) {
-    if (lot.memberCreditId === memberCreditId) return Math.min(lot.remainingCents, Math.max(0, appliedCents - before));
-    before += lot.remainingCents;
-  }
-  return 0;
 }
 
 // ---------------------------------------------------------------------------

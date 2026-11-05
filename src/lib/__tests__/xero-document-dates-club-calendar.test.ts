@@ -668,8 +668,9 @@ describe.each(CLUB_DAY_CASES)(
       mocks.memberCreditAggregate.mockResolvedValue({
         _sum: { amountCents: -3000 },
       });
+      // #4220: the one lot loader groups the rows it reads by member.
       mocks.memberCreditFindMany.mockResolvedValue([
-        { id: "lot_1", amountCents: 5000, xeroCreditNoteId: null },
+        { id: "lot_1", memberId: "mem_1", amountCents: 5000, xeroCreditNoteId: null },
       ]);
       mocks.creditNoteAllocationGroupBy.mockResolvedValue([]);
       mocks.transaction.mockImplementation(async (run: (tx: unknown) => unknown) =>

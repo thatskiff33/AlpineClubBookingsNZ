@@ -53,9 +53,11 @@ const h = vi.hoisted(() => {
         where.appliedToBookingId.in.map((appliedToBookingId) => ({ appliedToBookingId, _sum: { amountCents: -state.appliedCents } })),
       findUnique: async () => null,
       aggregate: async () => ({ _sum: { amountCents: -state.appliedCents } }),
+      // #4220: the one lot loader groups the rows it reads by member (the booking's, m1).
       findMany: async () =>
         state.lots.map((l) => ({
           id: l.id,
+          memberId: "m1",
           amountCents: l.amountCents,
           type: l.type,
           xeroCreditNoteId: l.xeroCreditNoteId,

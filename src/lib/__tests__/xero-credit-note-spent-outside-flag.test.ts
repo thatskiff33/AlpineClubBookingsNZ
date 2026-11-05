@@ -59,11 +59,15 @@ function readOnlyDb(store: Store) {
             if (method === "count") return rows.length;
             if (method === "aggregate") return { _sum: { amountCents: rows.reduce((sum, row) => sum + (row.amountCents as number), 0) } };
             if (method === "groupBy") {
-              const key = args.by![0]!;
-              const groups = new Map<unknown, Row[]>();
-              for (const row of rows) groups.set(row[key], [...(groups.get(row[key]) ?? []), row]);
-              return [...groups].map(([value, grouped]) => ({
-                [key]: value,
+              // Grouped by every `by` column, as PostgreSQL's GROUP BY does.
+              const keys = args.by!;
+              const groups = new Map<string, Row[]>();
+              for (const row of rows) {
+                const group = JSON.stringify(keys.map((key) => row[key]));
+                groups.set(group, [...(groups.get(group) ?? []), row]);
+              }
+              return [...groups.values()].map((grouped) => ({
+                ...Object.fromEntries(keys.map((key) => [key, grouped[0]![key]])),
                 _count: { _all: grouped.length },
                 _sum: { amountCents: grouped.reduce((sum, row) => sum + (row.amountCents as number), 0) },
               }));
@@ -90,6 +94,7 @@ function readOnlyDb(store: Store) {
 
 const credit = (row: Row): Row => ({
   createdAt: new Date("2026-01-01T00:00:00.000Z"),
+  restoredFromBookingId: null,
   type: "CANCELLATION_REFUND",
   xeroCreditNoteId: null,
   outsideSpendConvergedAt: null,
@@ -97,7 +102,21 @@ const credit = (row: Row): Row => ({
   ...row,
 });
 
-const booking = (id: string, status = "CONFIRMED"): Row => ({ id, status, payment: { id: `pay_${id}` } });
+/** A booking and its payment as the settled-by-cancel rule reads them: captured, or nothing captured yet. */
+const booking = (id: string, status = "CONFIRMED", captured = false): Row => ({
+  id,
+  status,
+  payment: {
+    id: `pay_${id}`,
+    bookingId: id,
+    source: "STRIPE",
+    status: captured ? "SUCCEEDED" : "PENDING",
+    amountCents: 10_000,
+    refundedAmountCents: 0,
+    transactions: captured ? [{ status: "SUCCEEDED" }] : [],
+    booking: { organiserSettled: false, parentBookingId: null },
+  },
+});
 
 /** An allocation attempt an officer resolved in Xero, or the converge closed (`manuallyResolvedAt` set). */
 const resolvedOp = (row: Row): Row => ({
@@ -422,11 +441,51 @@ describe("the early warning: a credit note spent in Xero outside the app (#4220)
     expect(flagged.calls.filter((call) => call === "memberCredit.aggregate")).toHaveLength(1);
   });
 
-  it("leaves out a cancelled booking: the converge refuses one", async () => {
+  it("plans nothing new for a booking whose cancel settled its credit (nothing captured)", async () => {
     expect(await find({ ...early(), booking: [booking("b2", "CANCELLED")] })).toEqual([]);
+    // A restore row naming the booking settles it the same way, whatever its status says.
+    // (The restore gives the credit back as a noteless lot; it sorts after N2's lot, so without the rule the draw would land on N2.)
+    const restored = early({ memberCredit: [credit({ id: "rst", memberId: "m2", amountCents: 10_000, restoredFromBookingId: "b2" })] });
+    expect(await find(restored)).toEqual([]);
+  });
+
+  it("still counts a cancelled booking's unsent slice: the engine finishes committed slices", async () => {
     const s = store();
     s.booking = [booking("b0"), booking("b1", "CANCELLED")];
-    expect(await find(s)).toEqual([]);
+    expect((await find(s)).map((f) => [f.creditNoteId, f.bookingIds])).toEqual([["N1", ["b1"]]]);
+  });
+
+  // Review F1: a cancel after capture settles nothing, so the engine still draws for it.
+  // LA (older, 100.00 on NA, untouched) and LB (100.00 on NB, spent outside: Xero shows 0).
+  // C, cancelled after capture, and X, live, each applied 100.00 with no slice; the balance is nil.
+  const capturedCancel = (cCaptured: boolean): Store => {
+    const evidence = (overrides: Partial<StoredCreditNoteSpendEvidence>) => ({ [CREDIT_NOTE_SPEND_EVIDENCE_KEY]: reading({ remainingCents: 10_000, allocations: [], ...overrides }) });
+    return {
+      memberCredit: [
+        credit({ id: "LB", memberId: "m", amountCents: 10_000, xeroCreditNoteId: "NB", createdAt: new Date("2026-02-01T00:00:00.000Z") }),
+        credit({ id: "LA", memberId: "m", amountCents: 10_000, xeroCreditNoteId: "NA", createdAt: new Date("2026-01-01T00:00:00.000Z") }),
+        credit({ id: "aC", memberId: "m", amountCents: -10_000, type: "BOOKING_APPLIED", appliedToBookingId: "C" }),
+        credit({ id: "aX", memberId: "m", amountCents: -10_000, type: "BOOKING_APPLIED", appliedToBookingId: "X" }),
+      ],
+      memberCreditNoteAllocation: [],
+      xeroObjectLink: [
+        { localModel: "Payment", localId: "pA", xeroObjectType: "CREDIT_NOTE", xeroObjectId: "NA", role: "ACCOUNT_CREDIT_NOTE", active: true, metadata: evidence({}) },
+        { localModel: "Payment", localId: "pB", xeroObjectType: "CREDIT_NOTE", xeroObjectId: "NB", role: "ACCOUNT_CREDIT_NOTE", active: true, metadata: evidence({ remainingCents: 0, payments: [{ paymentId: "cash_refund", cents: 10_000 }] }) },
+      ],
+      payment: [],
+      booking: [booking("C", "CANCELLED", cCaptured), booking("X")],
+      xeroSyncOperation: [],
+    };
+  };
+
+  it("counts a booking cancelled after capture: the engine still draws 200.00, so 100.00 lands on the spent note", async () => {
+    const [flag, ...rest] = await find(capturedCancel(true));
+    expect(rest).toEqual([]);
+    expect(flag).toMatchObject({ creditNoteId: "NB", unslicedDrawCents: 10_000, pendingAllocationCents: 10_000, xeroRemainingCents: 0, bookingIds: ["C", "X"] });
+  });
+
+  it("does not count the same booking when its cancel captured nothing: the older lot covers X alone", async () => {
+    expect(await find(capturedCancel(false))).toEqual([]);
   });
 
   it("clears once the booking's queued allocation is resolved in Xero by an officer", async () => {

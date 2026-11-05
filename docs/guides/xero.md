@@ -306,9 +306,11 @@ all yet. The booking repair check
 in Xero, and undo the use there if it was a mistake. The count follows Xero by the
 webhook and sync delay, so a use shows, and an undo clears, after the note's next
 update reaches the app. A note Xero has not sent the app since this change, or one
-whose figures do not add up, is not counted. A cancelled booking is not counted, and
-neither is one whose allocation was resolved in Xero: the repair check reports that
-one as resolved instead. If the tile shows **Unknown**, the server did not report the
+whose figures do not add up, is not counted. A booking whose allocation was resolved
+in Xero is not counted: the repair check reports it as resolved instead. A cancelled
+booking is counted while the app still has its credit to allocate: always for a slice
+it has not sent, and for the rest only if the booking was cancelled after its payment
+was taken. If the tile shows **Unknown**, the server did not report the
 count; reload once the update has finished.
 
 Each change has an audit entry (`xero.credit_note.outside_spend_mirrored` or
