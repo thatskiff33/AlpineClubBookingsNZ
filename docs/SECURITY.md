@@ -248,9 +248,11 @@ holds the behaviour and the limits.
 
 **Where it runs.** Changing a password, choosing one from a reset or
 account-setup link, and an officer setting a kiosk password (Lodge settings).
-Registration and the other ways an account is created store a random
-placeholder, so the person's first real password is chosen through the
-reset or setup link and screened there. A refused password answers HTTP 400
+Self-registration is retired (`/api/auth/register` answers 410), and the
+other ways an account is created (admin creation, imports, approved
+applications, placeholder contacts) store a random placeholder, so the
+person's first real password is chosen through the reset or setup link and
+screened there. A refused password answers HTTP 400
 with code `PASSWORD_BREACHED` and a plain message asking for another; a reset
 or setup link stays usable, so the person can try again. Sign-in never runs
 the check, and passwords already set are not re-checked.
@@ -302,7 +304,9 @@ concatenating separate literals or read from a `.sql` file at run time.
   only adds the setting column, and the draining release never reads it.
 - **Install-time seeds are not screened.** `SEED_ADMIN_PASSWORD` and
   `SEED_LODGE_PASSWORD` are set by the operator before the setting exists; the
-  seed admin must change password on first sign-in, which is screened.
+  seed admin must change password on first sign-in, which is screened. Nothing
+  forces the seed kiosk's password to change; an officer can replace it
+  through Lodge settings, which is screened.
 
 ## Dietary/allergy information (special-category data)
 

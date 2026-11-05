@@ -186,7 +186,7 @@ const REVIEWED_PASSWORD_HASH_WRITERS: readonly ReviewedWriter[] = [
     scope: "main",
     count: 2,
     classification: "exempt",
-    reason: "Install-time bootstrap from SEED_ADMIN_PASSWORD and SEED_LODGE_PASSWORD; the admin is forced through the screened /change-password on first sign-in, and the kiosk password is replaced through the screened lodge PUT.",
+    reason: "Install-time bootstrap from SEED_ADMIN_PASSWORD and SEED_LODGE_PASSWORD; the admin is forced through the screened /change-password on first sign-in; nothing forces the kiosk's (forcePasswordChange is false), but it can be replaced through the screened lodge PUT.",
   },
   {
     file: "prisma/seed-data.ts",
