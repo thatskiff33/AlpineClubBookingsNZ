@@ -178,11 +178,17 @@ export function dispatchOwnNoteRow(
     // of another note's on the booking is that note's concern, and would hold
     // this retry back for good. The same for a row the retry refuses (#4762):
     // an allocate-by-hand beside another row's later retry would allocate the
-    // credit twice.
+    // credit twice - except that with no readable plan (redacted, say) none of
+    // its rows is known as its own attempt, so one resolved by hand could be
+    // part of the note only: it never answers for the whole, and the blocked
+    // report below stands.
+    const planKnown = plan.length > 0;
     const others = candidates.filter(
       (operation) =>
         !own.includes(operation) &&
-        (!isResolvedInXero(operation) || readJsonRecord(operation.requestPayload)?.creditNoteId === arm.creditNoteId)
+        (!isResolvedInXero(operation) ||
+          (readJsonRecord(operation.requestPayload)?.creditNoteId === arm.creditNoteId &&
+            (row.kind === "retry" || planKnown)))
     );
     const blocking = getBlockingOperation(others, "ALLOCATION", "ALLOCATE");
     if (blocking) return { outcome: "allocation-row-first", blocking };
@@ -200,13 +206,15 @@ export function dispatchOwnNoteRow(
       return { outcome: "allocation-row-first", blocking: { kind: "resolved", resolvedOperation: firstHandMade } };
     }
     if (row.kind === "unretryable") {
-      // #4762: reported blocked for both arms, the invoices left listed. A
-      // clearing note's fell through to its arm's own path before, which could
-      // queue a fresh allocation of the whole note against the primary invoice
-      // beside it - for a spread plan, the #3535 hazard.
+      // #4762: reported blocked for both arms, the invoices left listed - or
+      // null, meaning unknown, when the plan cannot be read: an empty list
+      // would say nothing is left. A clearing note's fell through to its arm's
+      // own path before, which could queue a fresh allocation of the whole
+      // note against the primary invoice beside it - for a spread plan, the
+      // #3535 hazard.
       addBlockedNoteAllocationFinding(findings, arm, row.operation, WORDING[arm.kind].unretryable, {
         retryUnsupportedReason: row.reason,
-        unallocatedInvoices: left,
+        unallocatedInvoices: planKnown ? left : null,
       });
       return HANDLED;
     }

@@ -1056,7 +1056,9 @@ note.
    is: an allocation row in flight beside it is reported instead, another
    row (not its own attempt, by the same rule) is answered first, and own
    attempts resolved by hand count as done - with nothing left, the note is
-   reported done. A throw gives the row back
+   reported done. With no readable plan (a redacted one) no row is its own
+   attempt, so a row resolved by hand never answers for the whole note, and
+   the invoices left are reported unknown (null). A throw gives the row back
    PARTIAL with its payload and the run's error, guarded on the claim, never
    FAILED, whose error payload would replace what the repair reads.
 

@@ -13,4 +13,11 @@
   another application of the note is still queued or running, the report
   shows that instead: let it finish, then run the report again. A failed
   application of a different size or invoice, such as one the tool queued
-  earlier, is retried or reported first, as it was before.
+  earlier, is retried or reported first. Where the note's recorded plan was
+  redacted, the report says the invoices left are unknown.
+
+  A booking change's note whose operation cannot be retried now gets the same
+  treatment: the report shows an application still queued or running
+  instead, retries or reports another failed application first, reports the
+  note as done when you applied it by hand in Xero, and lists the invoice
+  left.

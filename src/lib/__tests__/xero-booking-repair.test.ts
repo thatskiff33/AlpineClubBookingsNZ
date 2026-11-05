@@ -19,6 +19,8 @@ import {
 } from "@/lib/xero-booking-repair-additional-capture";
 import { CREDIT_RELEASE_ASK_REASON } from "@/lib/credit-release-ask-keys";
 import { XERO_PARTIAL_REPAIR_RUNNING_CODE } from "@/lib/xero-stale-operations";
+import { REDACTED_SECRET } from "@/lib/redact-sensitive-json";
+import { RedactedClearingPlanError } from "@/lib/xero-clearing-allocations";
 import * as gapAnchors from "@/lib/xero-primary-invoice-gap-anchors";
 
 // #4324 Codex re-review: the primary invoice's stored figures and its gap
@@ -2008,6 +2010,54 @@ describe("runBookingXeroRepair", () => {
           },
         })
       );
+    });
+
+    // #4762 review round 4: a redacted plan names no own attempt, so a row
+    // resolved by hand for this note may be part of it only - it never answers
+    // for the whole note - and the invoices left are unknown (null), never an
+    // empty list that would read as none left.
+    const redactedPlan = {
+      requestPayload: {
+        invoiceId: "inv_primary",
+        refundAmountCents: 10000,
+        clearsUnpaidInvoice: true,
+        allocations: [
+          { invoiceId: REDACTED_SECRET, amountCents: 6000 },
+          { invoiceId: "inv_supp", amountCents: 4000 },
+        ],
+      },
+    };
+    const expectRedactedNoteBlocked = (bookingReport: Awaited<ReturnType<typeof classifyClearing>>) => {
+      expect(actionsOf(bookingReport)).toEqual([]);
+      expect(bookingReport.findings).toContainEqual(
+        expect.objectContaining({
+          code: "BLOCKED_BY_XERO_OPERATION",
+          summary: UNRETRYABLE_CLEARING_SUMMARY,
+          safeToAutoApply: false,
+          details: {
+            operationId: "operation_partial_clearing",
+            operationStatus: "PARTIAL",
+            retryUnsupportedReason: new RedactedClearingPlanError().message,
+            unallocatedInvoices: null,
+          },
+          actions: [],
+        })
+      );
+    };
+
+    it("MUTATION: reports a redacted-plan clearing note blocked, the invoices left unknown (#4762 round 4)", async () => {
+      expectRedactedNoteBlocked(await classifyClearing([], [], redactedPlan));
+    });
+
+    it("MUTATION: a row resolved by hand does not answer for a redacted-plan clearing note (#4762 round 4)", async () => {
+      const bookingReport = await classifyClearing(
+        [],
+        [allocationRow("operation_hand_supp", "inv_supp", 4000, { manuallyResolvedAt: new Date("2026-06-30T21:00:00.000Z") })],
+        redactedPlan
+      );
+
+      expectRedactedNoteBlocked(bookingReport);
+      expect(bookingReport.findings.map((finding) => finding.code)).not.toContain("RESOLVED_IN_XERO_BY_OFFICER");
     });
 
     // #4762 review F2: an allocation in flight beside a note the retry refuses
