@@ -21,6 +21,7 @@ const SETTINGS_SELECT = {
   requireSymbol: true,
   magicLinkTtlMinutes: true,
   breachedPasswordCheck: true,
+  sessionMaxAgeHours: true,
   updatedAt: true,
   updatedByMemberId: true,
 } as const;
@@ -47,4 +48,22 @@ export async function loadLoginSecuritySettings(): Promise<LoginSecuritySettings
     updatedAt: record?.updatedAt?.toISOString() ?? null,
     updatedByMemberId: record?.updatedByMemberId ?? null,
   };
+}
+
+/**
+ * The club's maximum session age in hours (#4611, `INV-AUTH-007`), normalised
+ * exactly as the full policy is: an absent row reads as the 7-day default and
+ * a stray stored value is clamped into 8..720. Read by the `jwt` callback in
+ * `auth.ts` on every session refresh, so a change applies to existing sessions
+ * on their next refresh. One column of the one-row table. A failed read
+ * throws, so the refresh fails closed: the session endpoint clears the
+ * cookie, as for a failed member read, and a bare `auth()` reads no session.
+ * It never extends a session.
+ */
+export async function loadClubSessionMaxAgeHours(): Promise<number> {
+  const record = await prisma.loginSecuritySetting.findUnique({
+    where: { id: LOGIN_SECURITY_SETTINGS_ID },
+    select: { sessionMaxAgeHours: true },
+  });
+  return normalizeLoginSecurityPolicy(record).sessionMaxAgeHours;
 }

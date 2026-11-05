@@ -3,14 +3,16 @@
 Audience: Developer, Agent.
 
 Prefix defined in this file: **`INV-AUTH`** — how the app decides whether a
-sign-in attempt may proceed, without telling anyone which accounts exist, and
-which passwords it lets a person choose.
+sign-in attempt may proceed, without telling anyone which accounts exist,
+which passwords it lets a person choose, and how long a signed-in session
+lasts.
 
 Read this file when you are changing password sign-in, the per-account
 password throttle, what a refused or throttled sign-in answers, the
 per-account limits on password-reset and sign-in-link requests, anything that
-keys a limit on an account rather than an internet address, or any code that
-writes `passwordHash`.
+keys a limit on an account rather than an internet address, any code that
+writes `passwordHash`, or the session token's `jwt` callback and
+`sessionIssuedAt`.
 
 Index: [`docs/DOMAIN_INVARIANTS.md`](../DOMAIN_INVARIANTS.md) — every `INV-*` ID
 with a one-line description of what it covers. ID scheme and allocation rules:
@@ -23,7 +25,8 @@ The threat, the fallback and the stated limits are in
 [`SECURITY.md`](../SECURITY.md#per-account-password-throttle-4609), for
 the request limits
 [`SECURITY.md`](../SECURITY.md#per-account-email-request-limits-4613), and
-[`SECURITY.md`](../SECURITY.md#breached-password-check-4610); the row
+[`SECURITY.md`](../SECURITY.md#breached-password-check-4610), for the session
+cap [`SECURITY.md`](../SECURITY.md#maximum-session-age-4611); the row
 lock is in
 [`CONCURRENCY_AND_LOCKING.md`](../CONCURRENCY_AND_LOCKING.md#narrow-row--and-table-lock-protocols).
 This file holds only the rules.
@@ -136,3 +139,33 @@ This file holds only the rules.
   must trace to random bytes, the erased-account sentinel or an inline
   literal; a stored parameter or copied hash, to the screened or generated
   writer its `valueFrom` names. Only the local demo seed is untraced.
+
+## INV-AUTH-007
+
+- **Every signed-in session ends at a fixed age counted from sign-in, however
+  active it is.** `isSessionPastMaxAge` in
+  [`session-max-age.ts`](../../src/lib/session-max-age.ts) is the one rule
+  (`INV-SSOT`); its one caller is the `jwt` callback in
+  [`auth.ts`](../../src/lib/auth.ts), which every session read passes through.
+  At the limit the callback sets `sessionInvalidated`, ending the session as a
+  revoked one ends.
+- **The decision is recomputed from the sign-in stamp on every read.** The flag
+  is saved only when the browser refreshes its session through the session
+  endpoint; a bare `auth()` never writes the cookie. So raising the setting, or
+  the account becoming the kiosk, re-admits a session past the old limit that
+  was never saved as invalidated.
+- **The age is measured from `sessionIssuedAt`, never `iat`**, which every
+  refresh renews. Only the callback's sign-in branch mints the stamp; no
+  refresh, role change or two-factor verification moves it. The rule judges
+  the stamp the token arrived with, before the callback back-fills a missing
+  one.
+- **A token with no readable `sessionIssuedAt` is expired**, never unlimited.
+- **The limit is a club setting** (`LoginSecuritySetting.sessionMaxAgeHours`,
+  `INV-CONFIG-001`): default 168 hours, accepted 8 to 720. The save route
+  refuses a value outside that range; a stored stray value is clamped on read.
+  It is read on every refresh, so a change reaches existing sessions on their
+  next one. A failed read fails the refresh closed: the session endpoint
+  clears the cookie, as for a failed member read; it never extends a session.
+- **The lodge kiosk account keeps its own 30 days**, which the club setting
+  never shortens or lengthens, judged on the fresh member row
+  (`isKioskSessionMember`).

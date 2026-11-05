@@ -5816,6 +5816,10 @@ model LoginSecuritySetting {
   // service (k-anonymity: only a 5-character SHA-1 prefix leaves the server).
   // Default on; an absent row also reads as on (DEFAULT_LOGIN_SECURITY_POLICY).
   breachedPasswordCheck Boolean @default(true)
+  // #4611: the most hours a signed-in session lasts from sign-in, however active
+  // (INV-AUTH-007). Default 7 days; the app clamps it to 8..720 hours
+  // (normalizeLoginSecurityPolicy). The lodge kiosk keeps its own 30 days.
+  sessionMaxAgeHours  Int      @default(168)
   updatedByMemberId   String?
   createdAt           DateTime @default(now())
   updatedAt           DateTime @default(now()) @updatedAt
