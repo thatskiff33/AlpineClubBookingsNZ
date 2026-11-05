@@ -1785,8 +1785,8 @@ export function classifyBookingContext(
           partialNoteOperation && isResolvedInXero(partialNoteOperation)
         );
         // Only while a planned invoice still has no allocation link from this
-        // note: a repaired PARTIAL row stays PARTIAL, so its status alone
-        // would report a whole note as broken forever.
+        // note: a row repaired before #4259 stays PARTIAL until a retry closes
+        // it, so its status alone would report a whole note as broken forever.
         const partialNoteRetry =
           partialNoteOperation &&
           partialClearingNoteIsIncomplete(

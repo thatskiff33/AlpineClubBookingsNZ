@@ -244,8 +244,9 @@ export function recordedClearingTargets(
 
 /**
  * Does a PARTIAL note still have a planned invoice with no allocation link from
- * it? The repair tool's PARTIAL check; a repaired row stays PARTIAL, so status
- * alone would report a whole note as broken forever. An unreadable (or
+ * it? The repair tool's PARTIAL check; a row repaired before #4259, or whose
+ * allocations were linked another way, stays PARTIAL until a retry closes it,
+ * so status alone would report a whole note as broken forever. An unreadable (or
  * redacted) plan counts as incomplete; the retry meta then decides whether it
  * can be replayed.
  */

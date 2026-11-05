@@ -240,11 +240,11 @@ refuses a stamped row, so a stamp landing after its read is never
 overwritten. Proven against real PostgreSQL by
 `xero-unrecorded-refund-note-fence.realdb.test.ts`.
 
-### A Xero retry claims the original row it writes (#2262 H3, #3462, #4256)
+### A Xero retry claims the original row it writes (#2262 H3, #3462, #4256, #4259)
 
 A retry that writes the original operation row - the booking invoice replay,
-the PARTIAL invoice payment repair, and the PARTIAL and FAILED refund-note
-repairs - first claims it with a status-guarded `updateMany`
+the PARTIAL invoice payment repair, the PARTIAL and FAILED refund-note
+repairs, and the PARTIAL modification credit-note repair (#4259) - first claims it with a status-guarded `updateMany`
 (`runWithClaimedOriginal`, `xero-operation-retry.ts`): FAILED/PARTIAL
 (PARTIAL only for a PARTIAL repair) -> RUNNING, unresolved and replayable. The
 resolve route refuses a RUNNING row, and the mark non-replayable route writes
@@ -263,9 +263,16 @@ replay hands its claim to `createXeroInvoiceForBooking`, whose completion is
 written under it (#4373). A repair whose process died after its payment was recorded is
 closed by the next retry from the payment's link (live, this invoice, this
 amount), with no second Xero call.
+The modification credit-note repair reads its plan's allocation links only
+under the claim, allocates the rest (each allocation's own row and link, as
+before) and completes its row SUCCEEDED onto the claim; it used to leave the
+row PARTIAL. Its claim and completion are single-row status-guarded writes:
+no advisory key, no booking, capacity, settlement-money or credit-ledger row
+(`INV-LOCK-001`; no key or order, `INV-LOCK-002`; no new site, `INV-LOCK-003`).
 During a blue/green overlap the old version's stale reset sends a stuck repair
 to FAILED, which then needs Resolve in Xero or a by-hand payment check. Proven against real PostgreSQL by
-`xero-partial-repair-claim.realdb.test.ts`.
+`xero-partial-repair-claim.realdb.test.ts` and
+`xero-modification-note-repair-claim.realdb.test.ts`.
 
 ### Two callers on one Xero operation row: guarded outcomes (#4356)
 
