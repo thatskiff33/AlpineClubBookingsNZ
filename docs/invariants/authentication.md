@@ -6,7 +6,8 @@ Prefix defined in this file: **`INV-AUTH`** — how the app decides whether a
 sign-in attempt may proceed, without telling anyone which accounts exist.
 
 Read this file when you are changing password sign-in, the per-account
-password throttle, what a refused or throttled sign-in answers, or anything
+password throttle, what a refused or throttled sign-in answers, the
+per-account limits on password-reset and sign-in-link requests, or anything
 that keys a limit on an account rather than an internet address.
 
 Index: [`docs/DOMAIN_INVARIANTS.md`](../DOMAIN_INVARIANTS.md) — every `INV-*` ID
@@ -17,7 +18,9 @@ Every heading below whose whole text is an `INV-*` ID defines that invariant. ID
 are permanent: never renumbered, never reused.
 
 The threat, the fallback and the stated limits are in
-[`SECURITY.md`](../SECURITY.md#per-account-password-throttle-4609); the row
+[`SECURITY.md`](../SECURITY.md#per-account-password-throttle-4609) and, for
+the request limits,
+[`SECURITY.md`](../SECURITY.md#per-account-email-request-limits-4613); the row
 lock is in
 [`CONCURRENCY_AND_LOCKING.md`](../CONCURRENCY_AND_LOCKING.md#narrow-row--and-table-lock-protocols).
 This file holds only the rules.
@@ -79,3 +82,23 @@ This file holds only the rules.
 - **A store failure never becomes a sign-in outage.** The claim falls back to a
   bounded per-process count at the budget divided as the auth-sensitive
   limiters divide theirs (#1142).
+
+## INV-AUTH-005
+
+- **Password-reset and sign-in-link requests are also limited per account**
+  (#4613), beside each route's per-address limiter: `forgotPasswordAccount`
+  and `magicLinkRequestAccount` in
+  [`rate-limit.ts`](../../src/lib/rate-limit.ts), counted by
+  `checkAccountRequestLimit` in
+  [`account-request-limit.ts`](../../src/lib/account-request-limit.ts).
+- **The counter key is the `INV-AUTH-001` account key**, under an `account:`
+  prefix in the shared `RateLimitCounter` table: no second keying, no new
+  store, no address. Without an auth secret the count stays in the process and
+  never reaches the table.
+- **The limit decides from the key alone, before any Member read** (and, for
+  sign-in links, before the module flag), **and a limited request gets the
+  accepted answer**: HTTP 200 `{ success: true }` and no email. Unknown emails
+  are counted exactly as real ones, so a limited real account and a limited
+  unknown email look the same.
+- **A store failure never blocks a request.** The count falls back to the
+  #1142 per-process budget, as every auth-sensitive limiter's does.
