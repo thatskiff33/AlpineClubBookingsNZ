@@ -2391,15 +2391,23 @@ let webhookClient: PrismaClient;
         expect(await recoveryStatus(e1)).toBe("SUCCEEDED");
       });
 
-      it("REVIEW item 1: a carried ask still processing once the recovery is past the wait cap - the recovery stops at once, one alert telling an officer what to do", async () => {
+      it("REVIEW items 1, L-2: an old recovery waits for a payment that has just begun, and stops - one alert telling an officer what to do - once that payment too is past the cap", async () => {
         const e1 = await e1WaitingOnRetry();
-        // Queued a month before the frozen today: far past the cap.
+        // Queued a month before the frozen today: far past the cap on its own.
         await prisma.paymentRecoveryOperation.update({ where: { id: e1 }, data: { createdAt: new Date("2026-06-01T00:00:00.000Z") } });
         const e2 = await increaseBy(2_000);
         const stripe = fakeStripe();
         const e2Intent = await doorAsk(stripe, e2.id, { amountCents: 2_000, carriedCents: 0 });
         e2Intent.status = "processing";
 
+        // The payment began just now: the old recovery still waits (L-2).
+        expect(await replay(e1)).toBe("succeeded");
+        expect(await prisma.paymentRecoveryOperation.findUniqueOrThrow({ where: { id: e1 }, select: { status: true, lastError: true } }))
+          .toEqual({ status: "FAILED", lastError: expect.stringContaining(`(${e2Intent.id}) is processing at Stripe`) });
+        expect(recoveryAlerts.sent).toEqual([]);
+
+        // The same payment, begun a month ago too: the wait is spent, and the recovery stops for good.
+        e2Intent.created = Math.floor(new Date("2026-06-01T00:00:00.000Z").getTime() / 1000);
         expect(await replay(e1)).toBe("failed");
         expect(stripe.intents.size).toBe(1);
         expect(await cancellationFor(e2Intent.id)).toEqual([]);
@@ -2407,7 +2415,10 @@ let webhookClient: PrismaClient;
         expect(await prisma.paymentRecoveryOperation.findUniqueOrThrow({ where: { id: e1 }, select: { status: true, nextRetryAt: true, attempts: true } }))
           .toEqual({ status: "FAILED", nextRetryAt: null, attempts: MAX_PAYMENT_RECOVERY_ATTEMPTS });
         expect(recoveryAlerts.sent).toEqual([
-          expect.objectContaining({ operationId: e1, errorMessage: expect.stringContaining(`earlier card request ${e2Intent.id} has been "processing" at Stripe`) }),
+          expect.objectContaining({
+            operationId: e1,
+            errorMessage: expect.stringMatching(new RegExp(`^Stripe payment recovery CREATE_ADDITIONAL_PAYMENT_INTENT stopped: .*existing card request ${e2Intent.id} is still "processing" at Stripe`)),
+          }),
         ]);
       });
 

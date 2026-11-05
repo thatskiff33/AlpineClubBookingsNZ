@@ -192,11 +192,14 @@ function newestRow<R extends { createdAt: Date }>(rows: readonly R[]): R | null 
  *
  * Withdrawn or not, in both halves: a price reduction that retired the row has
  * already netted its money, and the replay finishes it as such (#4442). Where
- * several rows carry the stamp - a currency re-issue writes the edit's ask on a
- * new intent and leaves the old row FAILED, not withdrawn
- * (`additional-intent-currency.ts`) - the one still open or captured wins, then
- * the newest not withdrawn, then the newest, so the edit's invoice waits on
- * the intent the member can pay.
+ * several rows are its own - a currency re-issue writes the edit's ask on a new
+ * intent with the same stamp and leaves the old row FAILED, not withdrawn
+ * (`additional-intent-currency.ts`) - the recorded intent's row wins while it
+ * is live and open or captured; then the newest such stamped row, even over the
+ * recorded intent's dead one; then the recorded intent's row; then the NEWEST
+ * stamped row, withdrawn or not, whose `withdrawnAt` then decides. So the edit's invoice waits on the intent
+ * the member can pay, and a stale FAILED predecessor never outranks the
+ * re-issue a reduction withdrew after it (#4015 review L-1).
  *
  * Never by the edit stamp for an officer's review charge: its key names the
  * edit too, but its ask is not that edit's ordinary row, and it replays by its
@@ -207,18 +210,18 @@ export function findOwnRecoveryRow<R extends ReplayLedgerRow>(
   transactions: readonly R[],
 ): R | null {
   const additional = transactions.filter((transaction) => transaction.kind === "ADDITIONAL");
-  const byIntent = additional.find((transaction) => transaction.stripePaymentIntentId === operation.paymentIntentId);
-  if (byIntent) return byIntent;
-  if (isEditFinancialReviewAdditionalIntentRecoveryKey(operation.idempotencyKey)) return null;
-  const bookingModificationId = bookingModificationIdForAdditionalIntentRecoveryKey(operation.idempotencyKey);
-  if (!bookingModificationId) return null;
-  const stamped = additional.filter((transaction) => transaction.bookingModificationId === bookingModificationId);
-  const live = stamped.filter((transaction) => transaction.withdrawnAt === null);
-  const askable = live.filter(
-    (transaction) =>
-      isOpenIntentTransactionStatus(transaction.status) || isCapturedTransactionStatus(transaction.status as PaymentStatus),
-  );
-  return newestRow(askable) ?? newestRow(live) ?? newestRow(stamped);
+  const byIntent = additional.find((transaction) => transaction.stripePaymentIntentId === operation.paymentIntentId) ?? null;
+  const bookingModificationId = isEditFinancialReviewAdditionalIntentRecoveryKey(operation.idempotencyKey)
+    ? null
+    : bookingModificationIdForAdditionalIntentRecoveryKey(operation.idempotencyKey);
+  const stamped = bookingModificationId
+    ? additional.filter((transaction) => transaction.bookingModificationId === bookingModificationId)
+    : [];
+  const askable = (transaction: R) =>
+    transaction.withdrawnAt === null &&
+    (isOpenIntentTransactionStatus(transaction.status) || isCapturedTransactionStatus(transaction.status as PaymentStatus));
+  if (byIntent && askable(byIntent)) return byIntent;
+  return newestRow(stamped.filter(askable)) ?? byIntent ?? newestRow(stamped);
 }
 
 /**
@@ -255,12 +258,40 @@ export function isRecoveryReplaySettled(
 
 /**
  * #4015 review: how long a replay waits on a carried ask Stripe is taking
- * money on, counted from when its recovery was queued. Long enough for a
- * webhook Stripe is still retrying (up to three days) or a bank debit that
- * stays `processing` for several business days; after it the recovery stops
- * and an officer is told (`CarriedAskPaymentWaitExpiredError`).
+ * money on, counted from the later of when its recovery was queued and when
+ * that payment began (`carriedAskPaymentWait`). Long enough for a webhook
+ * Stripe is still retrying (up to three days) or a bank debit that stays
+ * `processing` for several business days; after it the recovery stops and an
+ * officer is told (`CarriedAskPaymentWaitExpiredError`).
  */
 export const CARRIED_ASK_PAYMENT_WAIT_MAX_MS = 7 * 24 * 60 * 60 * 1000;
+
+/**
+ * #4015 review (I-2): the replay's read of the carried ask - bounded like the
+ * runner's other Stripe reads (5s, no retries; a timeout is an ordinary
+ * retry), and with the charge expanded so the wait knows when the payment
+ * began. Its own constant: what it reads is not an abandoned-intent cleanup.
+ */
+export const CARRIED_ASK_STRIPE_READ: { timeoutMs: number; expand: string[] } = {
+  timeoutMs: 5_000,
+  expand: ["latest_charge"],
+};
+
+/** The carried ask as Stripe answers `CARRIED_ASK_STRIPE_READ`. */
+export type CarriedAskIntent = {
+  status: string;
+  /** Unix seconds. */
+  created: number;
+  /** Expanded by the read; an id or nothing when Stripe has no charge yet. */
+  latest_charge?: string | { created: number } | null;
+};
+
+/** When Stripe began taking money on the intent: its charge, else the intent itself (ms; 0 if unreadable, so the recovery's own age decides). */
+function paymentBeganAtMs(intent: CarriedAskIntent): number {
+  const charge = intent.latest_charge;
+  const seconds = charge && typeof charge === "object" ? charge.created : intent.created;
+  return Number.isFinite(seconds) ? seconds * 1000 : 0;
+}
 
 /**
  * The wait above ran out: the ask the replay would carry is still being paid,
@@ -273,7 +304,7 @@ export class CarriedAskPaymentWaitExpiredError extends Error {
     readonly status: string,
   ) {
     super(
-      `Additional intent recovery stopped: the unpaid ask it would carry (${paymentIntentId}) is still ${status} at Stripe after the longest wait (${CARRIED_ASK_PAYMENT_WAIT_MAX_MS / 86_400_000} days)`,
+      `Additional intent recovery stopped: the unpaid ask it would carry (${paymentIntentId}) is still ${status} at Stripe after the longest wait (${CARRIED_ASK_PAYMENT_WAIT_MAX_MS / 86_400_000} days from when that payment began or this recovery was queued, whichever is later)`,
     );
     this.name = "CarriedAskPaymentWaitExpiredError";
   }
@@ -297,8 +328,12 @@ export class CarriedAskPaymentWaitExpiredError extends Error {
  *   this code does not know) -> the reason to WAIT, which the runner records
  *   with the attempt handed back (`waitPaymentRecoveryOperation`). Once the
  *   capture's webhook lands the retry carries none of that ask.
- * - still so once the recovery is older than `CARRIED_ASK_PAYMENT_WAIT_MAX_MS`
- *   -> throws `CarriedAskPaymentWaitExpiredError`.
+ * - still so `CARRIED_ASK_PAYMENT_WAIT_MAX_MS` after the LATER of when this
+ *   recovery was queued and when Stripe began taking that payment (its charge,
+ *   else the intent's creation) -> throws `CarriedAskPaymentWaitExpiredError`.
+ *   Counting from the payment too means a recovery that aged on its own (a
+ *   currency refusal, #3567; one queued before this release) still waits for a
+ *   payment that has only just begun, and never stops on its first sight of it.
  *
  * A window remains: a confirmation landing between this read and the hold's
  * cancel still takes the superseded-capture refund (`docs/STATE_MACHINES.md`,
@@ -306,7 +341,7 @@ export class CarriedAskPaymentWaitExpiredError extends Error {
  */
 export async function carriedAskPaymentWait(
   payment: AdditionalAskPayment & { additionalPaymentIntentId: string | null },
-  retrieve: (paymentIntentId: string) => Promise<{ status: string }>,
+  retrieve: (paymentIntentId: string) => Promise<CarriedAskIntent>,
   recoveryCreatedAt: Date,
   now: Date = new Date(),
 ): Promise<string | null> {
@@ -314,8 +349,9 @@ export async function carriedAskPaymentWait(
   if (!liveAsk || outstandingAdditionalAskCents(payment) <= 0) return null;
   const intent = await readOpenProviderIntent(liveAsk, retrieve);
   if (!intent || staleIntentAction(intent) === "reissue") return null;
-  if (now.getTime() - recoveryCreatedAt.getTime() > CARRIED_ASK_PAYMENT_WAIT_MAX_MS) {
+  const waitingSinceMs = Math.max(recoveryCreatedAt.getTime(), paymentBeganAtMs(intent));
+  if (now.getTime() - waitingSinceMs > CARRIED_ASK_PAYMENT_WAIT_MAX_MS) {
     throw new CarriedAskPaymentWaitExpiredError(liveAsk, intent.status);
   }
-  return `Additional intent recovery waiting: the unpaid ask it would carry (${liveAsk}) is ${intent.status} at Stripe; it is checked again on the longest retry interval until that payment is recorded, for up to ${CARRIED_ASK_PAYMENT_WAIT_MAX_MS / 86_400_000} days from when this recovery was queued`;
+  return `Additional intent recovery waiting: the unpaid ask it would carry (${liveAsk}) is ${intent.status} at Stripe; it is checked again on the longest retry interval until that payment is recorded, for up to ${CARRIED_ASK_PAYMENT_WAIT_MAX_MS / 86_400_000} days from when that payment began or this recovery was queued, whichever is later`;
 }

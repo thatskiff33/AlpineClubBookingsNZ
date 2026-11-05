@@ -59,9 +59,9 @@ import {
   planReissuedAskMint,
   resolveAskCustomerId,
 } from "@/lib/reissued-ask-mint";
-import { carriedAskPaymentWait, findOwnRecoveryRow, isRecoveryReplaySettled, sizeRecoveryReplayAsk } from "@/lib/additional-ask-recovery-replay";
+import { CARRIED_ASK_STRIPE_READ, carriedAskPaymentWait, findOwnRecoveryRow, isRecoveryReplaySettled, sizeRecoveryReplayAsk } from "@/lib/additional-ask-recovery-replay";
 import { mintOrdinaryAskIntent, refuseAdoptedIntentOnLedger } from "@/lib/ordinary-ask-mint";
-import { unretryableRecoveryCause } from "@/lib/recovery-unretryable-cause";
+import { recoveryFailureAlertMessage, unretryableRecoveryCause } from "@/lib/recovery-unretryable-cause";
 import { ORDINARY_ASK_RECOVERY_REASON, planOrdinaryAskMint } from "@/lib/ordinary-ask-request";
 import { sendAdminPaymentFailureAlert } from "@/lib/email";
 import { closeCancellationRefundAfterReplay, closeCapacityRaceRefundRecordingEvent, recordDuplicateCaptureRefundEvent } from "@/lib/booking-events";
@@ -69,7 +69,6 @@ import { reportSupersededPaymentRefund, reportUnannouncedSupersededPaymentRefund
 import logger from "@/lib/logger";
 import { createAuditLog } from "@/lib/audit";
 import {
-  ABANDONED_INTENT_STRIPE_TIMEOUT_MS,
   heldPaymentRecoveryClaimWhere,
   MAX_PAYMENT_RECOVERY_ATTEMPTS,
   PAYMENT_RECOVERY_CLAIMABLE_LATER_WHERE,
@@ -1208,7 +1207,7 @@ async function alertPaymentRecoveryFailure(operation: PaymentRecoveryOperation, 
     bookingId: operation.bookingId,
     operationId: operation.id,
     amountCents: await cardRefundStillOwedCents(operation), // #4117: read after the final attempt
-    errorMessage: `Stripe payment recovery ${operation.type} failed after ${operation.attempts} attempt${operation.attempts === 1 ? "" : "s"}: ${message}`,
+    errorMessage: recoveryFailureAlertMessage(operation, message), // #4015 review L-3: the one wording
     paymentIntentId: operation.paymentIntentId,
   }, format);
 }
@@ -1661,9 +1660,10 @@ async function failPaymentRecoveryOperation(
 
 /**
  * #4253 release 2 (`INV-ADDPAY-045`): a row that must WAIT, not fail - a released-credit request
- * blocked by an unpaid edit request. Back to a non-terminal retry at the longest interval with its
- * claim's attempt handed back, so it never runs out of attempts, goes terminal or alerts. Through
- * the one chokepoint, fenced on this worker's own attempt.
+ * blocked by an unpaid edit request, or (#4015) a replay whose carried ask Stripe is taking money on.
+ * Back to a non-terminal retry at the longest interval with its claim's attempt handed back, so a
+ * wait never runs out of attempts, goes terminal or alerts by itself; the carried-ask wait's caller
+ * caps it and then fails for good (`carriedAskPaymentWait`). One chokepoint, fenced on this attempt.
  */
 async function waitPaymentRecoveryOperation(operation: PaymentRecoveryOperation, message: string, format: ClubFormat) {
   return markPaymentRecoveryOperationFailed({
@@ -3044,7 +3044,7 @@ async function processCreateAdditionalPaymentIntentOperation(
   }
 
   // #4015 review: never supersede an ask Stripe is taking money on - wait, capped (`carriedAskPaymentWait`).
-  const carriedAskBeingPaid = await carriedAskPaymentWait(payment, (paymentIntentId) => getPaymentIntent(paymentIntentId, { timeoutMs: ABANDONED_INTENT_STRIPE_TIMEOUT_MS }), operation.createdAt);
+  const carriedAskBeingPaid = await carriedAskPaymentWait(payment, (paymentIntentId) => getPaymentIntent(paymentIntentId, CARRIED_ASK_STRIPE_READ), operation.createdAt);
   if (carriedAskBeingPaid) return (await waitPaymentRecoveryOperation(operation, carriedAskBeingPaid, format), "waited");
 
   // #3954 round 7: one resolution, shared with the door's re-issue mint, so

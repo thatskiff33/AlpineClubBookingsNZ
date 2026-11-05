@@ -4670,7 +4670,9 @@ describe("payment recovery worker", () => {
       async (status) => {
         primeQueue(additionalIntentOperation({ ...RECENTLY_QUEUED, attempts: 2 }));
         mockPaymentFindUnique.mockResolvedValue(paymentWithLaterEditAsk());
-        mockGetPaymentIntent.mockResolvedValueOnce({ id: "pi_later_edit", status });
+        // Charged the day the recovery was queued: inside the cap.
+        const began = Math.floor(RECENTLY_QUEUED.createdAt.getTime() / 1000);
+        mockGetPaymentIntent.mockResolvedValueOnce({ id: "pi_later_edit", status, created: began, latest_charge: { created: began } });
 
         const result = await processPaymentRecoveryOperations({ limit: 1 });
 
@@ -4693,11 +4695,31 @@ describe("payment recovery worker", () => {
       },
     );
 
-    it("#4015 review item 1: still being paid once the recovery is older than the cap - it stops at once, one alert naming what an officer must do", async () => {
-      // The fixture's recovery was queued 2026-06-01, a month before the frozen today.
+    it("#4015 review L-2: an OLD recovery meeting a payment that began yesterday waits, attempt handed back - it does not stop on its first sight of it", async () => {
+      // Queued 2026-06-01 (a month old: charges refused meanwhile, say); the later ask's debit began yesterday.
+      primeQueue(additionalIntentOperation({ attempts: 2 }));
+      mockPaymentFindUnique.mockResolvedValue(paymentWithLaterEditAsk());
+      const intentCreated = Math.floor(new Date("2026-06-02T00:00:00.000Z").getTime() / 1000);
+      const charged = Math.floor(new Date("2026-06-30T00:00:00.000Z").getTime() / 1000);
+      mockGetPaymentIntent.mockResolvedValueOnce({ id: "pi_later_edit", status: "processing", created: intentCreated, latest_charge: { created: charged } });
+
+      const result = await processPaymentRecoveryOperations({ limit: 1 });
+
+      expect(result).toMatchObject({ succeeded: 0, retried: 1, failed: 0 });
+      expect(mockCreatePaymentIntent).not.toHaveBeenCalled();
+      expect(mockSendAdminPaymentFailureAlert).not.toHaveBeenCalledWith(
+        expect.objectContaining({ errorMessage: expect.stringContaining("CREATE_ADDITIONAL_PAYMENT_INTENT") }),
+        expect.anything(),
+      );
+    });
+
+    it("#4015 review items 1, L-3: still being paid long past the cap - it stops at once, one alert saying it stopped and what an officer must do", async () => {
+      // The fixture's recovery was queued 2026-06-01, a month before the frozen today,
+      // and the later ask's charge began the same day.
       primeQueue(additionalIntentOperation({ attempts: 1 }));
       mockPaymentFindUnique.mockResolvedValue(paymentWithLaterEditAsk());
-      mockGetPaymentIntent.mockResolvedValueOnce({ id: "pi_later_edit", status: "processing" });
+      const longAgo = Math.floor(new Date("2026-06-01T00:00:00.000Z").getTime() / 1000);
+      mockGetPaymentIntent.mockResolvedValueOnce({ id: "pi_later_edit", status: "processing", created: longAgo, latest_charge: { created: longAgo } });
 
       const result = await processPaymentRecoveryOperations({ limit: 1 });
 
@@ -4709,10 +4731,15 @@ describe("payment recovery worker", () => {
         .filter((args) => args.data?.status === PaymentRecoveryOperationStatus.FAILED);
       expect(failureWrites).toHaveLength(1);
       expect(failureWrites[0]!.data).toMatchObject({ nextRetryAt: null, attempts: MAX_PAYMENT_RECOVERY_ATTEMPTS });
-      expect(recoveryFailureAlerts()).toEqual([
-        expect.stringMatching(/earlier card request pi_later_edit has been "processing" at Stripe for longer than the app waits.*check card request pi_later_edit in Stripe, record it if it was paid, and collect what is still owed for this change by hand/),
+      // Its own wording: "stopped", never an attempt count a wait handed back.
+      expect(recoveryFailureAlerts()).toEqual([]);
+      const stopped = mockSendAdminPaymentFailureAlert.mock.calls
+        .map(([alert]) => (alert as { errorMessage: string }).errorMessage)
+        .filter((message) => message.startsWith("Stripe payment recovery CREATE_ADDITIONAL_PAYMENT_INTENT stopped: "));
+      expect(stopped).toEqual([
+        expect.stringMatching(/existing card request pi_later_edit is still "processing" at Stripe 7 days after that payment began.*check card request pi_later_edit in Stripe, record it if it was paid, and collect what is still owed for this change by hand/),
       ]);
-      expect(recoveryFailureAlerts()[0]).not.toMatch(/retrying/i);
+      expect(stopped[0]).not.toMatch(/retrying|earlier card request|Nothing was charged or cancelled/i);
     });
 
     it("#4015 review: the read is bounded and runs with no transaction open, before the mint; a mid-3DS ask is superseded", async () => {
@@ -4731,7 +4758,7 @@ describe("payment recovery worker", () => {
 
       expect(result.succeeded).toBe(1);
       expect(openAtRead).toEqual([0]);
-      expect(mockGetPaymentIntent).toHaveBeenCalledWith("pi_later_edit", { timeoutMs: 5_000 });
+      expect(mockGetPaymentIntent).toHaveBeenCalledWith("pi_later_edit", { timeoutMs: 5_000, expand: ["latest_charge"] });
       expect(mockGetPaymentIntent.mock.invocationCallOrder[0]!).toBeLessThan(mockCreatePaymentIntent.mock.invocationCallOrder[0]!);
     });
 

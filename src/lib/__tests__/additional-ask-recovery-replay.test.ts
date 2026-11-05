@@ -15,6 +15,8 @@ import { describe, expect, it } from "vitest";
 import type { AskRecoveryOperation } from "@/lib/additional-ask-pending-recoveries";
 import { pendingAskRecoveries } from "@/lib/additional-ask-pending-recoveries";
 import type { AskTransaction } from "@/lib/additional-ask-reduction";
+import { ADDITIONAL_PAYABLE_BOOKING_STATUSES, resolveAdditionalPaymentDoor } from "@/lib/additional-payment-chase";
+import { staleIntentAction } from "@/lib/stale-intent-action";
 import {
   CARRIED_ASK_PAYMENT_WAIT_MAX_MS,
   CarriedAskPaymentWaitExpiredError,
@@ -205,7 +207,31 @@ describe("findOwnRecoveryRow: one own-row rule for the replay's resume and the s
     expect(findOwnRecoveryRow(E1_RECOVERY, [captured, { ...stale, createdAt: LATER }])).toBe(captured);
   });
 
-  it("REVIEW 4: with no open or captured stamped row, the newest live one, then the newest withdrawn", () => {
+  it("REVIEW L-1(a): a stale FAILED predecessor never outranks the newer re-issue a reduction withdrew - the newest stamped row decides, and it is withdrawn", () => {
+    // E1's door wrote pi_old (a later step threw, so R1 was queued); a currency
+    // re-issue wrote pi_new with the same stamp and left pi_old FAILED; a reduction withdrew pi_new.
+    const old = additionalRow("pi_old", EARLIER, { bookingModificationId: "mod-e1", status: "FAILED" });
+    const withdrawnNew = additionalRow("pi_new", LATER, { bookingModificationId: "mod-e1", status: "FAILED", withdrawnAt: LATER });
+    expect(findOwnRecoveryRow(E1_RECOVERY, [old, withdrawnNew])).toBe(withdrawnNew);
+    // Still settled: the reduction netted it, and the replay finishes without an invoice.
+    const payment = { additionalAmountCents: 0, additionalPaymentStatus: null };
+    expect(isRecoveryReplaySettled(sizeRecoveryReplayAsk({ frozenAmountCents: 5_000, modification: E1, payment }), E1_RECOVERY, [old, withdrawnNew])).toBe(true);
+  });
+
+  it("REVIEW L-1(b): the recorded intent's row is dead and an open row carries the same stamp - the open one wins; a live recorded intent still wins outright", () => {
+    const recorded = { ...E1_RECOVERY, paymentIntentId: "pi_e1_recovered" };
+    const deadRecorded = additionalRow("pi_e1_recovered", EARLIER, { bookingModificationId: "mod-e1", status: "FAILED" });
+    const reissued = additionalRow("pi_e1_reissued", LATER, { bookingModificationId: "mod-e1", status: "PENDING" });
+    expect(findOwnRecoveryRow(recorded, [deadRecorded, reissued])).toBe(reissued);
+    // With no open or captured stamped row, the recorded intent's own row (superseded, withdrawn or not).
+    const deadStamped = { ...reissued, status: "FAILED" };
+    expect(findOwnRecoveryRow(recorded, [deadRecorded, deadStamped])).toBe(deadRecorded);
+    // A live recorded intent beats a newer open stamped row.
+    const liveRecorded = { ...deadRecorded, status: "PENDING" };
+    expect(findOwnRecoveryRow(recorded, [liveRecorded, reissued])).toBe(liveRecorded);
+  });
+
+  it("REVIEW 4: with no open or captured stamped row, the newest stamped row, live or withdrawn", () => {
     const older = additionalRow("pi_e1_a", EARLIER, { bookingModificationId: "mod-e1", status: "FAILED" });
     const newer = additionalRow("pi_e1_b", LATER, { bookingModificationId: "mod-e1", status: "FAILED" });
     expect(findOwnRecoveryRow(E1_RECOVERY, [older, newer])).toBe(newer);
@@ -231,13 +257,16 @@ describe("carriedAskPaymentWait: a replay never supersedes an ask Stripe is taki
   const livePayment = { additionalAmountCents: 2_000, additionalPaymentStatus: "PENDING", additionalPaymentIntentId: "pi_e2" };
   const QUEUED = new Date("2026-06-29T00:00:00.000Z");
   const NOW = new Date("2026-07-01T00:00:00.000Z");
-  const answering = (status: string) => {
+  /** Stripe's answer: the intent created and charged the day the recovery was queued, unless a test says. */
+  const answering = (status: string, began: { created?: Date; charged?: Date | null } = {}) => {
     const calls: string[] = [];
+    const seconds = (at: Date) => Math.floor(at.getTime() / 1000);
     return {
       calls,
       retrieve: async (id: string) => {
         calls.push(id);
-        return { status };
+        const charged = began.charged === undefined ? QUEUED : began.charged;
+        return { status, created: seconds(began.created ?? QUEUED), latest_charge: charged ? { created: seconds(charged) } : null };
       },
     };
   };
@@ -260,16 +289,30 @@ describe("carriedAskPaymentWait: a replay never supersedes an ask Stripe is taki
     },
   );
 
-  it("stops for good once the recovery is older than the cap, naming the intent and its status", async () => {
-    const queuedLongAgo = new Date(NOW.getTime() - CARRIED_ASK_PAYMENT_WAIT_MAX_MS - 1);
-    const stopped = carriedAskPaymentWait(livePayment, answering("processing").retrieve, queuedLongAgo, NOW);
+  it("stops for good once both the recovery and the payment are older than the cap, naming the intent and its status", async () => {
+    const longAgo = new Date(NOW.getTime() - CARRIED_ASK_PAYMENT_WAIT_MAX_MS - 1000);
+    const old = { created: longAgo, charged: longAgo };
+    const stopped = carriedAskPaymentWait(livePayment, answering("processing", old).retrieve, longAgo, NOW);
     await expect(stopped).rejects.toBeInstanceOf(CarriedAskPaymentWaitExpiredError);
     await expect(stopped).rejects.toMatchObject({ paymentIntentId: "pi_e2", status: "processing" });
     // At the cap exactly it still waits.
     const atCap = new Date(NOW.getTime() - CARRIED_ASK_PAYMENT_WAIT_MAX_MS);
-    await expect(carriedAskPaymentWait(livePayment, answering("processing").retrieve, atCap, NOW)).resolves.toContain("waiting");
+    await expect(carriedAskPaymentWait(livePayment, answering("processing", { created: atCap, charged: atCap }).retrieve, atCap, NOW)).resolves.toContain("waiting");
     // An unpaid ask past the cap is simply superseded.
-    await expect(carriedAskPaymentWait(livePayment, answering("requires_payment_method").retrieve, queuedLongAgo, NOW)).resolves.toBeNull();
+    await expect(carriedAskPaymentWait(livePayment, answering("requires_payment_method", old).retrieve, longAgo, NOW)).resolves.toBeNull();
+  });
+
+  it("REVIEW L-2: an OLD recovery meeting a payment that has just begun waits - the clock starts at the later of the two", async () => {
+    const longAgo = new Date(NOW.getTime() - 30 * 86_400_000);
+    // An old intent whose charge (a bank debit) began yesterday.
+    const freshCharge = answering("processing", { created: longAgo, charged: new Date(NOW.getTime() - 86_400_000) });
+    await expect(carriedAskPaymentWait(livePayment, freshCharge.retrieve, longAgo, NOW)).resolves.toContain("(pi_e2) is processing at Stripe");
+    // No charge yet (an unknown status, say): the intent's own creation is the start.
+    const freshIntent = answering("some_future_status", { created: new Date(NOW.getTime() - 86_400_000), charged: null });
+    await expect(carriedAskPaymentWait(livePayment, freshIntent.retrieve, longAgo, NOW)).resolves.toContain("waiting");
+    // A charge that began past the cap, on an old recovery, stops.
+    const staleCharge = answering("processing", { created: longAgo, charged: longAgo });
+    await expect(carriedAskPaymentWait(livePayment, staleCharge.retrieve, longAgo, NOW)).rejects.toBeInstanceOf(CarriedAskPaymentWaitExpiredError);
   });
 
   it("an intent Stripe has no record of is nothing being paid", async () => {
@@ -296,5 +339,39 @@ describe("carriedAskPaymentWait: a replay never supersedes an ask Stripe is taki
       throw new Error("Request timed out");
     };
     await expect(carriedAskPaymentWait(livePayment, outage, QUEUED, NOW)).rejects.toThrow("Request timed out");
+  });
+});
+
+describe("REVIEW I-1: the pay door and `staleIntentAction` agree on every status Stripe documents", () => {
+  const door = (status: string) =>
+    resolveAdditionalPaymentDoor(
+      {
+        bookingStatus: ADDITIONAL_PAYABLE_BOOKING_STATUSES[0],
+        bookingDeletedAt: null,
+        payment: { additionalPaymentIntentId: "pi_x", additionalPaymentStatus: "PENDING" },
+      },
+      async () => ({ status }),
+    );
+
+  it.each([
+    "requires_payment_method",
+    "requires_confirmation",
+    "requires_action",
+    "processing",
+    "requires_capture",
+    "succeeded",
+  ])("%s: the door refuses a second form exactly when the replay would not supersede", async (status) => {
+    const answer = await door(status);
+    expect(answer.state === "captured-at-provider").toBe(staleIntentAction({ status }) !== "reissue");
+    expect(answer.state).not.toBe("closed");
+  });
+
+  it("canceled closes the door, and is never waited on by the replay", async () => {
+    expect((await door("canceled")).state).toBe("closed");
+  });
+
+  it("the one deliberate difference: an unknown status stays payable at the door, while the replay fails safe and waits", async () => {
+    expect((await door("some_future_status")).state).toBe("payable");
+    expect(staleIntentAction({ status: "some_future_status" })).not.toBe("reissue");
   });
 });
