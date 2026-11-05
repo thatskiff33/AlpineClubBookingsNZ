@@ -170,23 +170,32 @@ export function dispatchOwnNoteRow(
   if (row.kind === "retry") {
     // #4757 review S1: the note's own attempts never stand in its retry's way
     // (it covers them, and the later targets a refused first one never
-    // reached); any other row goes to the arm first - two keys never both retried.
-    // Resolved in Xero, such a row was allocated by hand (#3635, `INV-INT-025`).
+    // reached); any other unresolved row goes to the arm first - two keys never
+    // both retried. A row resolved in Xero was allocated by hand (#3635,
+    // `INV-INT-025`): it goes first only when it names this note (round 5) - one
+    // of another note's on the booking is that note's concern, and would hold
+    // this retry back for good.
     const plan = readPlan(row.operation.requestPayload);
     const candidates = blockingCandidates(operations, "ALLOCATION", "ALLOCATE");
     const own = candidates.filter((operation) => isOwnAttempt(operation, arm.creditNoteId, plan));
-    const blocking = getBlockingOperation(candidates.filter((operation) => !own.includes(operation)), "ALLOCATION", "ALLOCATE");
+    const others = candidates.filter(
+      (operation) =>
+        !own.includes(operation) &&
+        (!isResolvedInXero(operation) || readJsonRecord(operation.requestPayload)?.creditNoteId === arm.creditNoteId)
+    );
+    const blocking = getBlockingOperation(others, "ALLOCATION", "ALLOCATE");
     if (blocking) return { outcome: "allocation-row-first", blocking };
     // #4757 review S2: an own attempt resolved by hand has no link, so the
     // retry would allocate it again. Whole by hand: the resolved report; else a
     // person allocates the planned invoices left, listed, and nothing is offered.
     const handMade = own.filter((operation) => isResolvedInXero(operation));
-    if (handMade.length > 0) {
+    const [firstHandMade] = handMade;
+    if (firstHandMade !== undefined) {
       const byHand = new Set(handMade.map((operation) => readJsonRecord(operation.requestPayload)?.invoiceId));
       const left = targetsWithoutAllocation(plan, arm.creditNoteId, noteAllocationLinks(links)).filter(
         (target) => !byHand.has(target.invoiceId)
       );
-      if (left.length === 0) return { outcome: "allocation-row-first", blocking: { kind: "resolved", resolvedOperation: handMade[0] } };
+      if (left.length === 0) return { outcome: "allocation-row-first", blocking: { kind: "resolved", resolvedOperation: firstHandMade } };
       addFinding(findings, {
         code: "MANUAL_REVIEW_REQUIRED",
         severity: "manual_review",

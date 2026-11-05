@@ -1817,6 +1817,34 @@ describe("runBookingXeroRepair", () => {
       );
     });
 
+    // Round 5: a row resolved in Xero holds the note's retry back only when it
+    // names this note; another note's hand-fixed allocation on the booking would
+    // hold it back for good (main offered the retry beside it).
+    it("MUTATION: retries the note's row beside a resolved allocation row naming another credit note", async () => {
+      expectNoteRetried(
+        await classifyClearing(
+          [],
+          [
+            allocationRow("operation_other_note_resolved", "inv_primary", 2500, {
+              manuallyResolvedAt: new Date("2026-06-30T21:00:00.000Z"),
+              requestPayload: { creditNoteId: "cn_applied_credit", invoiceId: "inv_primary", amountCents: 2500 },
+            }),
+          ]
+        )
+      );
+    });
+
+    it("MUTATION: answers a resolved row naming this note at another invoice first, and offers nothing", async () => {
+      const bookingReport = await classifyClearing(
+        [],
+        [allocationRow("operation_resolved_other_invoice", "inv_elsewhere", 6000, { manuallyResolvedAt: new Date("2026-06-30T21:00:00.000Z") })]
+      );
+
+      expect(actionsOf(bookingReport)).toEqual([]);
+      expect(bookingReport.findings.map((finding) => finding.code)).toContain("RESOLVED_IN_XERO_BY_OFFICER");
+      expect(bookingReport.findings.map((finding) => finding.code)).not.toContain("MISSING_CREDIT_NOTE_ALLOCATION");
+    });
+
     it("MUTATION: answers the other row, not the own attempt listed ahead of it, from the dispatcher's match", async () => {
       expectOtherRowRetried(
         await classifyClearing(

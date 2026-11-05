@@ -1029,14 +1029,19 @@ note.
    WAITING_PAYMENT is reported blocked and nothing is offered. Otherwise each
    row is the note's own attempt or another: own when it names this note and
    a planned invoice AND amount, Xero's allocation key. The note's retry
-   allocates without a sync row, so a refused allocation leaves such a FAILED
-   row, and the retry covers it: it skips a target already linked and links
+   claims no allocation row up front, so each allocation it makes creates its
+   own row and a refused one leaves that row FAILED; the retry covers it: it
+   skips a target already linked and links
    with the note's role, so own attempts never stand in its way (offering
    their generic retry instead would link without that role, and the note
-   would never close). Another row - another note, invoice or amount, such
-   as the old tool's evidence-sized allocation - is a second key, so it is
-   answered first, from the match the dispatcher returns: retried, reported
-   blocked, or reported done when resolved in Xero (`INV-INT-025`). For an
+   would never close). Another unresolved row - another note, invoice or
+   amount, such as the old tool's evidence-sized allocation - is a second
+   key, so it is answered first, from the match the dispatcher returns:
+   retried or reported blocked. A row resolved in Xero is answered first,
+   reported done (`INV-INT-025`), only when it names this note; one naming
+   another note (an applied-credit or other note's allocation on the same
+   booking, fixed by hand) is that note's concern, and would otherwise hold
+   the retry back for good. For an
    edit's note that is what the arm did before #4757; for a clearing note it
    is deliberately new - before, its retry was offered beside any row. An own
    attempt resolved by hand has no link, so the retry would allocate it again:

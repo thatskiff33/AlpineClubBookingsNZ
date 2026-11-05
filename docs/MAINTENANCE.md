@@ -1459,7 +1459,9 @@ again), or beside a failed one that is not the note's own attempt at a
 planned invoice and amount - such as an older, differently sized allocation
 the tool once queued. The report reads the edit's own operations, or for an
 invoice-clearing note the whole booking's. That operation is retried first,
-or reported if it cannot be, or reported as done if resolved in Xero; the
+or reported if it cannot be, or reported as done if resolved in Xero and
+it names the same credit note (one resolved for another note is left to that
+note's own report); the
 note's own failed attempts are covered by its retry. If you resolved one of
 the note's own attempts by hand, the report asks you to allocate the planned
 invoices it lists as left by hand too, and offers nothing.
