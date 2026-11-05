@@ -1466,7 +1466,13 @@ reported if it cannot be, or reported as done if resolved in Xero and it
 names the same credit note (one resolved for another note is left to that
 note's own report). The report reads the edit's own operations, or for an
 invoice-clearing note the whole booking's. The note's own failed attempts
-are covered by its retry. Invoices you allocated by hand through one of the
+are covered by its retry. Since #4767 that retry, and the report, also
+count an allocation an older version of this tool retried on its own
+(linked as `CREDIT_NOTE_ALLOCATION`) as done when it names the same credit
+note, invoice and amount, so the retry never sends it to Xero again; a
+note whose planned invoices are all covered that way is no longer reported.
+Its operation stays partial on the Xero operations screen until one retry
+closes it, which makes no Xero call. Invoices you allocated by hand through one of the
 note's own attempts are not listed: if none is left, the note is reported as
 done; otherwise the report asks you to allocate the planned invoices it
 lists as left by hand, and offers nothing.
