@@ -348,7 +348,8 @@ elsewhere never stops a member setting a password or finishing setup.
 and raw-SQL `INSERT` or `UPDATE` literals naming the column. A writer must
 either be guarded — the awaited `screenChosenPassword` result bound to a name,
 then an `if (!result.ok)` that returns, both in a block enclosing the write and
-before it — or be listed as exempt with its reason (placeholders, imports,
+before it, where the screened argument is the same identifier or property
+access the written hash's `bcrypt.hash` was given — or be listed as exempt with its reason (placeholders, imports,
 erasure, the local demo seed and SQL fixtures store generated or unusable
 hashes). For an exempt writer the census also traces the value it writes,
 through `const` bindings and the `bcrypt.hash` input, and requires random

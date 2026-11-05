@@ -128,8 +128,9 @@ This file holds only the rules.
   off, no request is made.
 - **Every `passwordHash` writer is classified**, raw-SQL `INSERT`/`UPDATE`
   literals included. `password-hash-writer-census.test.ts` fails a new writer
-  that is neither guarded — the awaited screen bound, then `if (!result.ok)`
-  returning, before the write in an enclosing block — nor listed as exempt with
+  that is neither guarded — the awaited screen of the password it hashes
+  bound, then `if (!result.ok)` returning, before the write in an enclosing
+  block — nor listed as exempt with
   its reason: a generated or deliberately unusable hash (placeholders, imports,
   erasure, the demo seed, SQL fixtures). An exempt writer's value must trace to
   random bytes, the erased-account sentinel or a fixed literal.

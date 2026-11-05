@@ -332,7 +332,8 @@ describe("passwordHash writer census (#4610, INV-AUTH-006)", () => {
         expect(
           site.screenedBefore,
           `${site.file}:${site.line} (${site.scope}) writes passwordHash without first binding an awaited ` +
-            "screenChosenPassword and returning on !result.ok",
+            "screenChosenPassword of the same password it hashes (bcrypt.hash's first argument) and " +
+            "returning on !result.ok",
         ).toBe(true);
       }
     }
@@ -497,32 +498,38 @@ describe("passwordHash writer scanner", () => {
   it("counts a writer as screened only when a bound, awaited screen's !ok branch exits first", () => {
     const guarded = (source: string) => scan(source).map((s) => s.screenedBefore);
     // Guarded: bound, awaited, `if (!x.ok)` exits, all before the writer.
-    expect(guarded(`async function a(p) { const s = await screenChosenPassword(p); if (!s.ok) return; save({ passwordHash: h }); }`)).toEqual([true]);
-    expect(guarded(`async function a(p) { const s = p ? await screenChosenPassword(p) : { ok: true }; if (!s.ok) { log(); return r(s); } save({ passwordHash: h }); }`)).toEqual([true]);
-    expect(guarded(`async function a(p) { const s = await screenChosenPassword(p); if (!s.ok) throw new E(); await tx(async (t) => t.save({ passwordHash: h })); }`)).toEqual([true]);
+    expect(guarded(`async function a(p) { const s = await screenChosenPassword(p); if (!s.ok) return; save({ passwordHash: await hash(p, 12) }); }`)).toEqual([true]);
+    expect(guarded(`async function a(p) { const s = p ? await screenChosenPassword(p) : { ok: true }; if (!s.ok) { log(); return r(s); } save({ passwordHash: await hash(p, 12) }); }`)).toEqual([true]);
+    expect(guarded(`async function a(p) { const s = await screenChosenPassword(p); if (!s.ok) throw new E(); await tx(async (t) => t.save({ passwordHash: await hash(p, 12) })); }`)).toEqual([true]);
     // A `||` chain still enters the branch whenever the screen failed.
-    expect(guarded(`async function a(p) { const s = await screenChosenPassword(p); if (bad || !s.ok) return; save({ passwordHash: h }); }`)).toEqual([true]);
-    expect(guarded(`async function a(p) { const s = await screenChosenPassword(p); if ((!s.ok) || bad) return; save({ passwordHash: h }); }`)).toEqual([true]);
+    expect(guarded(`async function a(p) { const s = await screenChosenPassword(p); if (bad || !s.ok) return; save({ passwordHash: await hash(p, 12) }); }`)).toEqual([true]);
+    expect(guarded(`async function a(p) { const s = await screenChosenPassword(p); if ((!s.ok) || bad) return; save({ passwordHash: await hash(p, 12) }); }`)).toEqual([true]);
     // Not guarded.
-    expect(guarded(`async function a(p) { screenChosenPassword(p); save({ passwordHash: h }); }`)).toEqual([false]);
-    expect(guarded(`async function a(p) { await screenChosenPassword(p); save({ passwordHash: h }); }`)).toEqual([false]);
-    expect(guarded(`async function a(p) { const s = await screenChosenPassword(p); save({ passwordHash: h }); }`)).toEqual([false]);
-    expect(guarded(`async function a(p) { const s = await screenChosenPassword(p); if (!s.ok) log(); save({ passwordHash: h }); }`)).toEqual([false]);
-    expect(guarded(`async function a(p) { const s = await screenChosenPassword(p); if (s.ok) return; save({ passwordHash: h }); }`)).toEqual([false]);
-    expect(guarded(`async function a(p) { const s = await screenChosenPassword(p); if (!other.ok) return; save({ passwordHash: h }); }`)).toEqual([false]);
-    expect(guarded(`async function a(p) { save({ passwordHash: h }); const s = await screenChosenPassword(p); if (!s.ok) return; }`)).toEqual([false]);
+    expect(guarded(`async function a(p) { screenChosenPassword(p); save({ passwordHash: await hash(p, 12) }); }`)).toEqual([false]);
+    expect(guarded(`async function a(p) { await screenChosenPassword(p); save({ passwordHash: await hash(p, 12) }); }`)).toEqual([false]);
+    expect(guarded(`async function a(p) { const s = await screenChosenPassword(p); save({ passwordHash: await hash(p, 12) }); }`)).toEqual([false]);
+    expect(guarded(`async function a(p) { const s = await screenChosenPassword(p); if (!s.ok) log(); save({ passwordHash: await hash(p, 12) }); }`)).toEqual([false]);
+    expect(guarded(`async function a(p) { const s = await screenChosenPassword(p); if (s.ok) return; save({ passwordHash: await hash(p, 12) }); }`)).toEqual([false]);
+    expect(guarded(`async function a(p) { const s = await screenChosenPassword(p); if (!other.ok) return; save({ passwordHash: await hash(p, 12) }); }`)).toEqual([false]);
+    expect(guarded(`async function a(p) { save({ passwordHash: await hash(p, 12) }); const s = await screenChosenPassword(p); if (!s.ok) return; }`)).toEqual([false]);
     // A conditional or doubly negated test can let a failed screen through.
-    expect(guarded(`async function a(p) { const s = await screenChosenPassword(p); if (flag && !s.ok) return; save({ passwordHash: h }); }`)).toEqual([false]);
-    expect(guarded(`async function a(p) { const s = await screenChosenPassword(p); if (!!s.ok) return; save({ passwordHash: h }); }`)).toEqual([false]);
-    expect(guarded(`async function a(p) { const s = await screenChosenPassword(p); if (f(!s.ok)) return; save({ passwordHash: h }); }`)).toEqual([false]);
-    expect(guarded(`async function a(p) { const s = await screenChosenPassword(p); if (bad || (flag && !s.ok)) return; save({ passwordHash: h }); }`)).toEqual([false]);
-    expect(guarded(`async function a(p) { if (p) { const s = await screenChosenPassword(p); if (!s.ok) return; } save({ passwordHash: h }); }`)).toEqual([false]);
-    expect(guarded(`async function b(p) { const s = await screenChosenPassword(p); if (!s.ok) return; } async function a() { save({ passwordHash: h }); }`)).toEqual([false]);
+    expect(guarded(`async function a(p) { const s = await screenChosenPassword(p); if (flag && !s.ok) return; save({ passwordHash: await hash(p, 12) }); }`)).toEqual([false]);
+    expect(guarded(`async function a(p) { const s = await screenChosenPassword(p); if (!!s.ok) return; save({ passwordHash: await hash(p, 12) }); }`)).toEqual([false]);
+    expect(guarded(`async function a(p) { const s = await screenChosenPassword(p); if (f(!s.ok)) return; save({ passwordHash: await hash(p, 12) }); }`)).toEqual([false]);
+    expect(guarded(`async function a(p) { const s = await screenChosenPassword(p); if (bad || (flag && !s.ok)) return; save({ passwordHash: await hash(p, 12) }); }`)).toEqual([false]);
+    expect(guarded(`async function a(p) { if (p) { const s = await screenChosenPassword(p); if (!s.ok) return; } save({ passwordHash: await hash(p, 12) }); }`)).toEqual([false]);
+    expect(guarded(`async function b(p) { const s = await screenChosenPassword(p); if (!s.ok) return; } async function a() { save({ passwordHash: await hash(p, 12) }); }`)).toEqual([false]);
+    // The screened password must be the one hashed: same identifier or property access.
+    expect(guarded(`async function a(b) { const s = await screenChosenPassword(b.newPassword); if (!s.ok) return; const h = await bcrypt.hash(b.newPassword, 12); save({ passwordHash: h }); }`)).toEqual([true]);
+    expect(guarded(`async function a(cur, next) { const s = await screenChosenPassword(cur); if (!s.ok) return; save({ passwordHash: await hash(next, 12) }); }`)).toEqual([false]);
+    expect(guarded(`async function a(b) { const s = await screenChosenPassword(b.currentPassword); if (!s.ok) return; save({ passwordHash: await hash(b.newPassword, 12) }); }`)).toEqual([false]);
+    expect(guarded(`async function a(p) { const s = await screenChosenPassword(p); if (!s.ok) return; save({ passwordHash: await hash(p.trim(), 12) }); }`)).toEqual([false]);
+    expect(guarded(`async function a(p) { const s = await screenChosenPassword(p); if (!s.ok) return; save({ passwordHash: h }); }`)).toEqual([false]);
     // A screen in another wrapped handler never satisfies this one.
     expect(
       guarded(`
         export const POST = wrap(async (p) => { const s = await screenChosenPassword(p); if (!s.ok) return r; });
-        export const PUT = wrap(async () => save({ passwordHash: h }));
+        export const PUT = wrap(async () => save({ passwordHash: await hash(p, 12) }));
       `),
     ).toEqual([false]);
   });

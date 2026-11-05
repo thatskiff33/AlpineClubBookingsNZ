@@ -17,7 +17,9 @@ import ts from "typescript";
 //
 // Each writer is reported with its enclosing named function ("scope", see
 // `scopeName`) and whether it is GUARDED by the screen: an awaited
-// `screenChosenPassword(...)` whose result is bound to a name, followed by an
+// `screenChosenPassword(x, ...)` whose result is bound to a name, where `x` is
+// the same identifier or property access the written hash was made from
+// (`bcrypt.hash(x, ...)`, traced as below), followed by an
 // `if` that tests `!name.ok` and returns (or throws). Both statements must sit
 // in a block that encloses the writer and come before it, so a screen in a
 // different handler, a callback or a sibling branch never counts. The `if`
@@ -182,8 +184,14 @@ function isWriterNode(node: ts.Node): boolean {
   return false;
 }
 
-/** `name` when `statement` is `const name = await screenChosenPassword(...)` (or `cond ? await ... : ...`). */
-function screenBinding(statement: ts.Statement): string[] {
+/**
+ * The names `statement` binds to an awaited screen of `screened`:
+ * `const name = await screenChosenPassword(screened, ...)` (or
+ * `cond ? await ... : ...`). `screened` is the source text of the screen's
+ * first argument, an identifier or a property-access chain; a screen of
+ * anything else binds nothing.
+ */
+function screenBinding(statement: ts.Statement, screened: string): string[] {
   if (!ts.isVariableStatement(statement)) return [];
   const names: string[] = [];
   for (const declaration of statement.declarationList.declarations) {
@@ -197,7 +205,8 @@ function screenBinding(statement: ts.Statement): string[] {
         ts.isIdentifier(node.expression.expression) &&
         node.expression.expression.text === SCREEN_HELPER
       ) {
-        awaitsScreen = true;
+        const argument = node.expression.arguments[0];
+        if (argument && referenceText(argument) === screened) awaitsScreen = true;
         return;
       }
       ts.forEachChild(node, visit);
@@ -246,16 +255,20 @@ function testsNotOk(condition: ts.Expression, names: ReadonlySet<string>): boole
  * True when the writer is guarded: in some block enclosing it (up to its
  * function boundary and beyond, so a transaction callback inherits its
  * handler's guard), a screen binding is followed by an `if (!x.ok)` that exits,
- * both before the writer.
+ * both before the writer. The screen's first argument must be the same
+ * identifier or property access as the input of the `bcrypt.hash(...)` that
+ * produced the written value (`hashedInput`), so screening one password and
+ * hashing another does not count; with no traced hash input, nothing does.
  */
-function guardedByScreen(writer: ts.Node): boolean {
+function guardedByScreen(writer: ts.Node, hashedInput: string | null): boolean {
+  if (hashedInput === null) return false;
   const position = writer.getStart();
   for (let current = writer.parent; current; current = current.parent) {
     if (!ts.isBlock(current) && !ts.isSourceFile(current)) continue;
     const bound = new Set<string>();
     for (const statement of current.statements) {
       if (statement.getEnd() > position) break;
-      for (const name of screenBinding(statement)) bound.add(name);
+      for (const name of screenBinding(statement, hashedInput)) bound.add(name);
       if (ts.isIfStatement(statement) && exits(statement.thenStatement) && testsNotOk(statement.expression, bound)) {
         return true;
       }
@@ -465,7 +478,7 @@ export function scanPasswordHashWriters(file: string, source: string): PasswordH
         scope: scopeName(node),
         kind: writerKind,
         line: sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile)).line + 1,
-        screenedBefore: guardedByScreen(node),
+        screenedBefore: guardedByScreen(node, traced.hashedInput),
         ...traced,
       });
     }
