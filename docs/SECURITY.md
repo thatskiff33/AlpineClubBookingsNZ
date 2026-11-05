@@ -350,7 +350,11 @@ either be guarded — the awaited `screenChosenPassword` result bound to a name,
 then an `if (!result.ok)` that returns, both in a block enclosing the write and
 before it — or be listed as exempt with its reason (placeholders, imports,
 erasure, the local demo seed and SQL fixtures store generated or unusable
-hashes). A new
+hashes). For an exempt writer the census also traces the value it writes,
+through `const` bindings and the `bcrypt.hash` input, and requires random
+bytes, the erased-account sentinel or a fixed literal, so an exemption cannot
+come to cover a typed password; only the local demo seed is listed as
+untraced. A new
 writer in neither list fails the build. It cannot see SQL assembled by
 concatenating separate literals or read from a `.sql` file at run time.
 

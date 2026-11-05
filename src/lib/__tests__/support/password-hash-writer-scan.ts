@@ -23,6 +23,14 @@ import ts from "typescript";
 // different handler, a callback or a sibling branch never counts. The `if`
 // condition is the bare `!name.ok` or a `||` chain holding it, nothing weaker.
 //
+// Each property writer also carries the SOURCE of the value it writes
+// (`traceWrittenValue`): the expression is followed back through `const`
+// bindings in the enclosing scopes and through a `bcrypt.hash(...)` call to the
+// hash's input. An exempt writer must trace to random bytes, the erased-account
+// sentinel or a fixed literal, so swapping a placeholder's input for a typed
+// password fails the census. A raw-SQL writer is a fixed literal only when the
+// literal has no template holes.
+//
 // Stated limits: SQL assembled by concatenating separate literals, or read
 // from a `.sql` file at run time, is not seen (no writer here does either;
 // `prisma/migrations` is schema, not a runtime writer, and is the one directory
@@ -32,6 +40,22 @@ export const SCREEN_HELPER = "screenChosenPassword";
 
 export type PasswordHashWriterKind = "property" | "sql";
 
+/**
+ * Where a written value comes from. `random`: a hash of `randomBytes` or
+ * `randomUUID` output. `deleted-sentinel`: `DELETED_ACCOUNT_PASSWORD_HASH`.
+ * `literal`: a fixed string, or the hash of one, or a raw-SQL literal with no
+ * holes. `parameter`: a parameter of the enclosing function (or a property of
+ * one), so the caller decides. `copy`: another object's `passwordHash`.
+ * `unknown`: anything the trace cannot follow, a typed password included.
+ */
+export type PasswordHashValueSource =
+  | "random"
+  | "deleted-sentinel"
+  | "literal"
+  | "parameter"
+  | "copy"
+  | "unknown";
+
 export type PasswordHashWriterSite = {
   file: string;
   scope: string;
@@ -39,6 +63,14 @@ export type PasswordHashWriterSite = {
   line: number;
   /** Guarded by a bound, awaited screen whose `!x.ok` branch exits first. */
   screenedBefore: boolean;
+  /** Where the written value comes from (`traceWrittenValue`). */
+  source: PasswordHashValueSource;
+  /**
+   * The first argument of the `bcrypt.hash(...)` that produced the written
+   * value, as source text, when it is an identifier or a property-access chain
+   * (`newPassword`, `parsed.data.password`); otherwise null.
+   */
+  hashedInput: string | null;
 };
 
 const REPO_ROOT = process.cwd();
@@ -232,6 +264,170 @@ function guardedByScreen(writer: ts.Node): boolean {
   return false;
 }
 
+/** The value a property writer stores, or null for a raw-SQL writer. */
+function writtenValue(node: ts.Node): ts.Expression | null {
+  if (ts.isPropertyAssignment(node)) return node.initializer;
+  if (ts.isShorthandPropertyAssignment(node)) return node.name;
+  if (ts.isBinaryExpression(node)) return node.right;
+  return null;
+}
+
+/** `node` without parentheses, `await`, `!` or type assertions around it. */
+function unwrapValue(node: ts.Expression): ts.Expression {
+  let current = node;
+  for (;;) {
+    if (
+      ts.isParenthesizedExpression(current) ||
+      ts.isAwaitExpression(current) ||
+      ts.isAsExpression(current) ||
+      ts.isSatisfiesExpression(current) ||
+      ts.isNonNullExpression(current) ||
+      ts.isTypeAssertionExpression(current)
+    ) {
+      current = current.expression;
+    } else {
+      return current;
+    }
+  }
+}
+
+type Binding = { kind: "const"; initializer: ts.Expression } | { kind: "parameter" } | null;
+
+function bindsName(name: ts.BindingName, wanted: string): boolean {
+  if (ts.isIdentifier(name)) return name.text === wanted;
+  return name.elements.some(
+    (element) => !ts.isOmittedExpression(element) && bindsName(element.name, wanted),
+  );
+}
+
+/**
+ * What `name` is bound to where `from` reads it: the nearest enclosing scope
+ * wins, from the innermost callback out to the module. A `const` with a plain
+ * identifier gives its initializer; a parameter (destructured or not) says the
+ * caller decides; `let`, a destructured `const`, a loop variable or an import
+ * is not followed.
+ */
+function resolveBinding(name: string, from: ts.Node): Binding {
+  for (let current: ts.Node | undefined = from.parent; current; current = current.parent) {
+    if (isFunctionLike(current) && current.parameters.some((p) => bindsName(p.name, name))) {
+      return { kind: "parameter" };
+    }
+    if (!ts.isBlock(current) && !ts.isSourceFile(current)) continue;
+    for (const statement of current.statements) {
+      if (!ts.isVariableStatement(statement)) continue;
+      const list = statement.declarationList;
+      for (const declaration of list.declarations) {
+        if (!bindsName(declaration.name, name)) continue;
+        const isConst = (list.flags & ts.NodeFlags.Const) !== 0;
+        return isConst && ts.isIdentifier(declaration.name) && declaration.initializer
+          ? { kind: "const", initializer: declaration.initializer }
+          : null;
+      }
+    }
+  }
+  return null;
+}
+
+const MAX_TRACE_DEPTH = 8;
+const HASH_FUNCTIONS = new Set(["hash", "hashSync"]);
+const HASH_MODULES = new Set(["bcrypt", "bcryptjs"]);
+const RANDOM_FUNCTIONS = new Set(["randomBytes", "randomUUID"]);
+
+/** True for `hash(...)`, `hashSync(...)`, `bcrypt.hash(...)` or `bcryptjs.hashSync(...)`. */
+function isHashCall(node: ts.Expression): node is ts.CallExpression {
+  if (!ts.isCallExpression(node)) return false;
+  const callee = node.expression;
+  if (ts.isIdentifier(callee)) return HASH_FUNCTIONS.has(callee.text);
+  return (
+    ts.isPropertyAccessExpression(callee) &&
+    HASH_FUNCTIONS.has(callee.name.text) &&
+    ts.isIdentifier(callee.expression) &&
+    HASH_MODULES.has(callee.expression.text)
+  );
+}
+
+/** True when a call in `node`'s receiver chain is `randomBytes(...)` or `randomUUID()` (bare or `crypto.`). */
+function callsRandom(node: ts.Expression): boolean {
+  let current: ts.Expression = unwrapValue(node);
+  for (;;) {
+    if (ts.isCallExpression(current)) {
+      const callee = current.expression;
+      const name = ts.isIdentifier(callee)
+        ? callee.text
+        : ts.isPropertyAccessExpression(callee)
+          ? callee.name.text
+          : null;
+      if (name && RANDOM_FUNCTIONS.has(name)) return true;
+      current = callee;
+    } else if (ts.isPropertyAccessExpression(current)) {
+      current = current.expression;
+    } else {
+      return false;
+    }
+  }
+}
+
+/** Source text of an identifier or a property-access chain of identifiers. */
+function referenceText(node: ts.Expression): string | null {
+  const value = unwrapValue(node);
+  if (ts.isIdentifier(value)) return value.text;
+  if (ts.isPropertyAccessExpression(value)) {
+    const receiver = referenceText(value.expression);
+    return receiver === null ? null : `${receiver}.${value.name.text}`;
+  }
+  return null;
+}
+
+/** The leftmost identifier of a property-access chain. */
+function rootIdentifier(node: ts.Expression): ts.Identifier | null {
+  const value = unwrapValue(node);
+  if (ts.isIdentifier(value)) return value;
+  return ts.isPropertyAccessExpression(value) ? rootIdentifier(value.expression) : null;
+}
+
+/** Where the INPUT to a hash call comes from. */
+function traceHashInput(node: ts.Expression, depth: number): PasswordHashValueSource {
+  const value = unwrapValue(node);
+  if (depth > MAX_TRACE_DEPTH) return "unknown";
+  if (ts.isStringLiteral(value) || ts.isNoSubstitutionTemplateLiteral(value)) return "literal";
+  if (callsRandom(value)) return "random";
+  if (ts.isIdentifier(value)) {
+    const binding = resolveBinding(value.text, value);
+    if (binding?.kind === "const") return traceHashInput(binding.initializer, depth + 1);
+    return binding?.kind === "parameter" ? "parameter" : "unknown";
+  }
+  return "unknown";
+}
+
+type TracedValue = { source: PasswordHashValueSource; hashedInput: string | null };
+
+/** Where a WRITTEN `passwordHash` value comes from, and the hash call's input. */
+function traceWrittenValue(node: ts.Expression, depth = 0): TracedValue {
+  const value = unwrapValue(node);
+  if (depth > MAX_TRACE_DEPTH) return { source: "unknown", hashedInput: null };
+  if (ts.isStringLiteral(value) || ts.isNoSubstitutionTemplateLiteral(value)) {
+    return { source: "literal", hashedInput: null };
+  }
+  if (isHashCall(value)) {
+    const input = value.arguments[0];
+    return input
+      ? { source: traceHashInput(input, depth + 1), hashedInput: referenceText(input) }
+      : { source: "unknown", hashedInput: null };
+  }
+  if (ts.isIdentifier(value)) {
+    if (value.text === "DELETED_ACCOUNT_PASSWORD_HASH") return { source: "deleted-sentinel", hashedInput: null };
+    const binding = resolveBinding(value.text, value);
+    if (binding?.kind === "const") return traceWrittenValue(binding.initializer, depth + 1);
+    return { source: binding?.kind === "parameter" ? "parameter" : "unknown", hashedInput: null };
+  }
+  if (ts.isPropertyAccessExpression(value) && value.name.text === "passwordHash") {
+    const root = rootIdentifier(value);
+    const parameter = root !== null && resolveBinding(root.text, root)?.kind === "parameter";
+    return { source: parameter ? "parameter" : "copy", hashedInput: null };
+  }
+  return { source: "unknown", hashedInput: null };
+}
+
 const SQL_WRITE = /\b(?:INSERT|UPDATE)\b/i;
 const SQL_PASSWORD_HASH_COLUMN = /"passwordHash"|\bpasswordHash\b/;
 
@@ -260,12 +456,17 @@ export function scanPasswordHashWriters(file: string, source: string): PasswordH
   const visit = (node: ts.Node): void => {
     const writerKind = isWriterNode(node) ? "property" : isSqlWriterNode(node) ? "sql" : null;
     if (writerKind) {
+      const value = writtenValue(node);
+      const traced: TracedValue = value
+        ? traceWrittenValue(value)
+        : { source: ts.isTemplateExpression(node) ? "unknown" : "literal", hashedInput: null };
       sites.push({
         file,
         scope: scopeName(node),
         kind: writerKind,
         line: sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile)).line + 1,
         screenedBefore: guardedByScreen(node),
+        ...traced,
       });
     }
     ts.forEachChild(node, visit);

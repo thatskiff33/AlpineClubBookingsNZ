@@ -131,4 +131,5 @@ This file holds only the rules.
   that is neither guarded — the awaited screen bound, then `if (!result.ok)`
   returning, before the write in an enclosing block — nor listed as exempt with
   its reason: a generated or deliberately unusable hash (placeholders, imports,
-  erasure, the demo seed, SQL fixtures).
+  erasure, the demo seed, SQL fixtures). An exempt writer's value must trace to
+  random bytes, the erased-account sentinel or a fixed literal.

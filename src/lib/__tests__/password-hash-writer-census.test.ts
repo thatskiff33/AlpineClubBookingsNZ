@@ -8,6 +8,7 @@ import {
   passwordHashScanFiles,
   scanPasswordHashWriters,
   scanRepositoryPasswordHashWriters,
+  type PasswordHashValueSource,
   type PasswordHashWriterKind,
   type PasswordHashWriterSite,
 } from "./support/password-hash-writer-scan";
@@ -18,7 +19,9 @@ import {
 // (src/lib/breached-password.ts) before the hash is written, so a password on
 // the public breach list is refused wherever it is chosen. Every other writer
 // stores a generated or deliberately unusable hash and is listed as exempt with
-// its reason. A new writer in neither list fails here, naming its file and
+// its reason, and the scanner traces what it writes: random bytes, the erased-
+// account sentinel or a fixed literal. An exempt writer that starts hashing
+// anything else fails, so an exemption cannot quietly cover a typed password. A new writer in neither list fails here, naming its file and
 // enclosing function; so does a "chosen" writer that stops screening first.
 // Raw-SQL writers (an INSERT or UPDATE literal naming the column) are counted
 // too, under `kind: "sql"`.
@@ -38,7 +41,28 @@ type ReviewedWriter = {
   count: number;
   classification: Classification;
   reason: string;
+  /**
+   * For an exempt writer that stores a parameter or copies another object's
+   * `passwordHash`: the manifest key of the writer that produced the value.
+   * That writer must itself be screened, or exempt and traced.
+   */
+  valueFrom?: string;
+  /**
+   * An exempt writer whose value the scanner cannot trace, with why that is
+   * acceptable. Only the keys in UNTRACED_EXEMPT_WRITERS may carry one.
+   */
+  untracedValue?: string;
 };
+
+/** What an exempt writer may store with no further reason: nobody chose it. */
+const GENERATED_SOURCES: ReadonlySet<PasswordHashValueSource> = new Set([
+  "random",
+  "deleted-sentinel",
+  "literal",
+]);
+
+/** The only exempt writers allowed an untraced value: local demo data. */
+const UNTRACED_EXEMPT_WRITERS = ["prisma/demo-seed.ts#makeMember", "prisma/demo-seed.ts#main"];
 
 // A directory whose raw-SQL writers are exempt as a class: every SQL site
 // under it is covered, and a property writer there still needs its own entry.
@@ -118,6 +142,7 @@ const REVIEWED_PASSWORD_HASH_WRITERS: readonly ReviewedWriter[] = [
     count: 2,
     classification: "exempt",
     reason: `CSV import: a random-bytes hash computed per row, then copied into the create. ${GENERATED_PLACEHOLDER}`,
+    valueFrom: "src/app/api/admin/members/import/route.ts#POST",
   },
   {
     file: "src/app/api/admin/xero/import-member-contact/route.ts",
@@ -196,6 +221,7 @@ const REVIEWED_PASSWORD_HASH_WRITERS: readonly ReviewedWriter[] = [
     count: 1,
     classification: "exempt",
     reason: "Copies the hash prisma/seed.ts computed into the seed admin row.",
+    valueFrom: "prisma/seed.ts#main",
   },
   {
     file: "prisma/seed-data.ts",
@@ -203,6 +229,7 @@ const REVIEWED_PASSWORD_HASH_WRITERS: readonly ReviewedWriter[] = [
     count: 1,
     classification: "exempt",
     reason: "Copies the hash prisma/seed.ts computed into the seed kiosk row.",
+    valueFrom: "prisma/seed.ts#main",
   },
   {
     file: "prisma/demo-seed.ts",
@@ -210,6 +237,8 @@ const REVIEWED_PASSWORD_HASH_WRITERS: readonly ReviewedWriter[] = [
     count: 1,
     classification: "exempt",
     reason: "Local demo data with a published demo password; never a production account.",
+
+    untracedValue: "DEMO_SEED_PASSWORD or its published default; the demo seed refuses to run without ALLOW_DEMO_SEED=1.",
   },
   {
     file: "prisma/demo-seed.ts",
@@ -217,6 +246,8 @@ const REVIEWED_PASSWORD_HASH_WRITERS: readonly ReviewedWriter[] = [
     count: 3,
     classification: "exempt",
     reason: "Local demo data with a published demo password; never a production account.",
+
+    untracedValue: "DEMO_SEED_PASSWORD or its published default; the demo seed refuses to run without ALLOW_DEMO_SEED=1.",
   },
   {
     file: "scripts/audit-access-role-membership-cleanup.ts",
@@ -307,6 +338,56 @@ describe("passwordHash writer census (#4610, INV-AUTH-006)", () => {
     }
   });
 
+  it("ties every exempt writer to a generated, sentinel or fixed value", () => {
+    const failures: string[] = [];
+    for (const writer of REVIEWED_PASSWORD_HASH_WRITERS.filter((w) => w.classification === "exempt")) {
+      const k = key(writer.file, writer.scope, writer.kind);
+      if (writer.untracedValue) continue;
+      for (const site of measured.get(k) ?? []) {
+        if (GENERATED_SOURCES.has(site.source)) continue;
+        if ((site.source === "parameter" || site.source === "copy") && writer.valueFrom) continue;
+        failures.push(
+          `${site.file}:${site.line} (${site.scope}) is exempt but writes a value traced to "${site.source}". ` +
+            "An exempt writer must hash randomBytes/randomUUID output, or write DELETED_ACCOUNT_PASSWORD_HASH " +
+            "or a fixed literal; a password a person chose is screened and classified \"chosen\".",
+        );
+      }
+    }
+    expect(failures).toEqual([]);
+  });
+
+  it("traces a parameter or copied value to a screened or generated writer that supplies it", () => {
+    for (const writer of REVIEWED_PASSWORD_HASH_WRITERS.filter((w) => w.valueFrom)) {
+      const k = key(writer.file, writer.scope, writer.kind);
+      const from = reviewed.get(writer.valueFrom ?? "");
+      expect(from, `${k}: valueFrom ${writer.valueFrom} is not a manifest entry`).toBeDefined();
+      if (!from) continue;
+      const fromSites = measured.get(key(from.file, from.scope, from.kind)) ?? [];
+      if (from.classification === "chosen") {
+        expect(fromSites.every((site) => site.screenedBefore), `${k}: ${writer.valueFrom} is not screened`).toBe(true);
+      } else {
+        expect(
+          fromSites.some((site) => GENERATED_SOURCES.has(site.source)) &&
+            fromSites.every((site) => site.source !== "unknown"),
+          `${k}: ${writer.valueFrom} does not trace to a generated value`,
+        ).toBe(true);
+      }
+      // A different file must actually hand the value over: it calls this scope.
+      if (from.file !== writer.file) {
+        expect(fs.readFileSync(from.file, "utf8"), `${from.file} never calls ${writer.scope}`).toContain(
+          `${writer.scope}(`,
+        );
+      }
+    }
+  });
+
+  it("allows an untraced exempt value only for the local demo seed", () => {
+    const untraced = REVIEWED_PASSWORD_HASH_WRITERS.filter((w) => w.untracedValue).map((w) =>
+      key(w.file, w.scope, w.kind),
+    );
+    expect(untraced.sort()).toEqual([...UNTRACED_EXEMPT_WRITERS].sort());
+  });
+
   it("gives every exempt writer a reason", () => {
     for (const writer of REVIEWED_PASSWORD_HASH_WRITERS) {
       expect(writer.reason.trim().length, key(writer.file, writer.scope, writer.kind)).toBeGreaterThan(20);
@@ -383,6 +464,34 @@ describe("passwordHash writer scanner", () => {
       ["sql", "seed"],
       ["sql", "seed"],
     ]);
+  });
+
+  it("traces a written value to random bytes, the sentinel, a literal, a parameter or a copy", () => {
+    const sources = (source: string) => scan(source).map((s) => [s.source, s.hashedInput]);
+    // Generated or unusable: what an exemption may store.
+    expect(sources(`async function a() { const h = await hash(randomBytes(32).toString("hex"), 12); await tx(async (t) => t.save({ passwordHash: h })); }`)).toEqual([["random", null]]);
+    expect(sources(`async function a() { const pw = crypto.randomBytes(24).toString("base64url"); const passwordHash = await bcrypt.hash(pw, 12); save({ passwordHash }); }`)).toEqual([["random", "pw"]]);
+    expect(sources(`async function a() { row.passwordHash = await bcrypt.hash(crypto.randomUUID(), 12); }`)).toEqual([["random", null]]);
+    expect(sources(`function a() { save({ passwordHash: DELETED_ACCOUNT_PASSWORD_HASH }); }`)).toEqual([["deleted-sentinel", null]]);
+    expect(sources(`function a() { save({ passwordHash: "!unusable" }); }`)).toEqual([["literal", null]]);
+    expect(sources(`const PW = "demo"; const H = bcrypt.hashSync(PW, 12); function a() { save({ passwordHash: H }); }`)).toEqual([["literal", "PW"]]);
+    // The caller decides, or another object's hash is copied.
+    expect(sources(`function a(params) { return { passwordHash: params.passwordHash }; }`)).toEqual([["parameter", null]]);
+    expect(sources(`async function a(password) { save({ passwordHash: await hash(password, 12) }); }`)).toEqual([["parameter", "password"]]);
+    expect(sources(`function a() { for (const row of rows) save({ passwordHash: row.passwordHash }); }`)).toEqual([["copy", null]]);
+    // A typed password, or anything the trace cannot follow.
+    expect(sources(`async function a(input) { const h = await hash(input.password, 12); save({ passwordHash: h }); }`)).toEqual([["unknown", "input.password"]]);
+    expect(sources(`async function a() { const pw = body.newPassword; save({ passwordHash: await hash(pw, 12) }); }`)).toEqual([["unknown", "pw"]]);
+    expect(sources(`async function a() { let h = await hash(randomBytes(8).toString("hex"), 12); h = typed; save({ passwordHash: h }); }`)).toEqual([["unknown", null]]);
+    expect(sources(`async function a() { save({ passwordHash: await hash(String(Date.now()), 12) }); }`)).toEqual([["unknown", null]]);
+    expect(sources(`async function a() { save({ passwordHash: await other(randomBytes(8)) }); }`)).toEqual([["unknown", null]]);
+    // A callback's own parameter shadows an outer constant of the same name.
+    expect(sources(`async function a() { const h = await hash(randomBytes(8).toString("hex"), 12); list.map((h) => save({ passwordHash: h })); }`)).toEqual([["parameter", null]]);
+  });
+
+  it("calls a raw-SQL writer a fixed literal only when it has no template holes", () => {
+    expect(scan(`const q = 'UPDATE "Member" SET "passwordHash" = \\'x\\'';`).map((s) => s.source)).toEqual(["literal"]);
+    expect(scan("const q = `UPDATE \"Member\" SET \"passwordHash\" = ${h}`;").map((s) => s.source)).toEqual(["unknown"]);
   });
 
   it("counts a writer as screened only when a bound, awaited screen's !ok branch exits first", () => {
