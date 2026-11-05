@@ -1,0 +1,104 @@
+name: Status board
+
+# Regenerates the lane status board and overwrites ONE issue's body with it
+# (#4464, owner decision 27 Oct 2026). It replaces the hand-kept reservation
+# tables of #3905: what is running is read from the open claims, pull requests,
+# CI and conflict state on GitHub, never from a board somebody has to remember
+# to edit. The board itself is `pnpm run status` (`scripts/status-board.mjs`).
+#
+# THE TARGET ISSUE IS A REPOSITORY VARIABLE, NOT A NUMBER IN THIS FILE.
+# `STATUS_BOARD_ISSUE` (Settings -> Secrets and variables -> Actions ->
+# Variables) holds the issue number. Until somebody sets it the job exits
+# cleanly with a notice, so merging this file creates nothing and writes
+# nothing. The owner or a lane creates the issue, pins it and sets the
+# variable (docs/agents/COORDINATION.md -> "The status board").
+#
+# NOT A REQUIRED CHECK, and it never will be: it has no `pull_request` or
+# `push` trigger, so it adds no status context to any pull request and branch
+# protection is untouched.
+#
+# LEAST PRIVILEGE. Only `GITHUB_TOKEN`, with `issues: write` for the one body
+# edit and read access to what the board reads (pull requests, check runs,
+# push activity). The only third-party code is the pinned actions below, and
+# nothing from a pull request is checked out or run: a scheduled run always
+# uses the default branch, and the job refuses to run from any other ref.
+# The variable reaches the shell as an environment variable, never inside the
+# script text.
+
+on:
+  schedule:
+    # Hourly, at an off-the-hour minute: GitHub delays jobs queued on the hour.
+    - cron: "17 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: status-board
+  cancel-in-progress: false
+
+jobs:
+  board:
+    name: Overwrite the status board issue
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # A manual run from another branch would run that branch's script with an
+    # `issues: write` token; only the default branch may.
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: read
+      checks: read
+    env:
+      STATUS_BOARD_ISSUE: ${{ vars.STATUS_BOARD_ISSUE }}
+    steps:
+      - name: Find the board issue
+        id: target
+        run: |
+          if [ -z "${STATUS_BOARD_ISSUE}" ]; then
+            echo "::notice title=Status board::The repository variable STATUS_BOARD_ISSUE is not set, so nothing was written. Create the board issue, then set the variable to its number."
+            echo "run=false" >> "${GITHUB_OUTPUT}"
+          elif printf '%s' "${STATUS_BOARD_ISSUE}" | grep -Eq '^[1-9][0-9]{0,8}$'; then
+            echo "run=true" >> "${GITHUB_OUTPUT}"
+          else
+            echo "::error title=Status board::STATUS_BOARD_ISSUE must be an issue number."
+            exit 1
+          fi
+
+      # Only the tool is needed: the board reads GitHub, not the application.
+      - name: Check out the board script
+        if: steps.target.outputs.run == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          sparse-checkout: scripts
+          persist-credentials: false
+
+      - name: Set up Node.js
+        if: steps.target.outputs.run == 'true'
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+
+      # A failed read exits non-zero before anything is written, so a bad hour
+      # leaves the previous board in place rather than an empty one.
+      - name: Build the board
+        if: steps.target.outputs.run == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node scripts/status-board.mjs "${GITHUB_REPOSITORY}" > "${RUNNER_TEMP}/status-board.md"
+
+      - name: Overwrite the issue body
+        if: steps.target.outputs.run == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # The issues endpoint also serves pull requests; never overwrite one.
+          is_pull="$(gh api "repos/${GITHUB_REPOSITORY}/issues/${STATUS_BOARD_ISSUE}" --jq 'has("pull_request")')"
+          if [ "${is_pull}" != "false" ]; then
+            echo "::error title=Status board::STATUS_BOARD_ISSUE must name an issue, not a pull request."
+            exit 1
+          fi
+          gh api --method PATCH "repos/${GITHUB_REPOSITORY}/issues/${STATUS_BOARD_ISSUE}" \
+            --field "body=@${RUNNER_TEMP}/status-board.md" --silent

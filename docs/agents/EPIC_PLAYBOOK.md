@@ -4,20 +4,18 @@
 running an epic or any multi-issue wave. The always-read rules — roles,
 reviews, the per-issue pipeline and the merge gate — are in
 [`AGENTS.md`](../../AGENTS.md) and are not restated here. Reading, claiming and
-writing issues is [`ISSUE_WORKFLOW.md`](ISSUE_WORKFLOW.md).
+writing issues is [`ISSUE_WORKFLOW.md`](ISSUE_WORKFLOW.md); what is running
+right now is on the generated status board
+([`COORDINATION.md`](COORDINATION.md#the-status-board)).
 
 ## What qualifies as an epic
 
-"An epic reaches `main` as ONE merge, from an integration branch" below governs
-**how** an epic ships. This section governs **whether the work is an epic at
-all** — the question that gets skipped, because by the time anybody reads the
-shipping rule the label has already been applied.
-
-It is worth getting right in one direction more than the other. An epic that
-should have been three issues holds finished, independently useful work off
-`main` behind unrelated work, and hands downstream forks nothing at all until
-the whole bundle lands. Three issues that should have been an epic cost a
-sequencing mistake, which is visible and fixable.
+This section governs **whether the work is an epic at all** — the question that
+gets skipped, because by the time anybody reads the shipping rule the label is
+already applied. Getting it wrong costs more in one direction: an epic that
+should have been three issues holds finished, useful work behind unrelated
+work, while three issues that should have been an epic cost a sequencing
+mistake, which is visible and fixable.
 
 **An epic is one atomic release outcome**: a coherent thing a club gets, whose
 intermediate states should not reach a downstream installation on their own. It
@@ -25,7 +23,7 @@ is not a folder, a theme, or somewhere to put everything one walkthrough found.
 
 ### The four questions
 
-Before creating an epic — or keeping one that already exists — answer all four:
+Before creating an epic — or keeping one that exists — answer all four:
 
 1. **Could a downstream club upgrade after this epic and sensibly remain
    there?**
@@ -36,420 +34,289 @@ Before creating an epic — or keeping one that already exists — answer all fo
 4. **Will another planned epic soon need to materially change the data model or
    behaviour this one establishes?**
 
-**How to read the answers.** One and two are the positive test and both have to
-be yes. An epic that leaves a club somewhere they would not want to sit, or
-whose release note can only promise a later one, is a stage of something bigger
-rather than a release outcome of its own. Three and four are the negative test
-and both have to be no. A yes to three means the boundary is drawn in the wrong
-place, because part of the outcome is on the other side of it. A yes to four
-means the epic would establish a contract that is already planned to be broken,
-so the honest unit is either the whole of it or a smaller piece that survives
-the change.
-
-A no on one or two is not automatically an instruction to make the epic bigger.
-Ask first whether the pieces are independently shippable, because then the
-answer is not an epic at all.
+One and two are the positive test and both must be yes: an epic that leaves a
+club somewhere they would not want to sit, or whose release note can only
+promise a later one, is a stage of something bigger. Three and four are the
+negative test and both must be no: a yes to three means the boundary is in the
+wrong place, and a yes to four means the epic would establish a contract
+already planned to be broken, so the honest unit is the whole of it or a
+smaller piece that survives the change. A no on one or two is not automatically
+an instruction to make the epic bigger: first ask whether the pieces are
+independently shippable, because then the answer is not an epic.
 
 Write the answers into the epic body — the "why this must ship atomically" part
-of the issue order in [`ISSUE_WORKFLOW.md`](ISSUE_WORKFLOW.md#writing-an-issue-the-human-explanation-then-the-execution-contract) exists for exactly that. An epic body that cannot
-answer these four is the clearest signal available that the work is a
-programme. Once it has passed, the child list that body carries ends with the
-final compose-and-review child, created alongside the rest — see "The final
-compose-and-review child" under the shipping rule below.
+of the issue order in [`ISSUE_WORKFLOW.md`](ISSUE_WORKFLOW.md#writing-an-issue-the-human-explanation-then-the-execution-contract).
+A body that cannot answer them is a programme.
 
 ### What does not make an epic
 
-None of the following, alone or in combination, is evidence that work belongs in
-one atomic epic:
+None of these, alone or together, is evidence that work belongs in one atomic
+epic:
 
-- **Related subject matter.** Two changes being about the same feature is a
-  reason to read them together. It is not a reason to ship them together.
-- **A dependency.** B needing A is an ordering fact. If A is complete and safe
-  on its own, A ships and B follows it.
+- **Related subject matter.** Reading changes together is not shipping them
+  together.
+- **A dependency.** B needing A is an ordering fact; if A is complete and safe
+  alone, A ships and B follows.
 - **Touching the same files.** That is a merge-conflict question, answered by
-  sequencing the lanes and naming who rebases — not by a shared branch.
+  sequencing the lanes and naming who rebases, not by a shared branch.
 - **Having been found in the same audit, walkthrough or review round.** How work
-  was discovered says nothing about how it should be delivered. This is the one
-  that produces wrapper epics, because a review round naturally hands you a list
-  and a list looks like a plan.
-- **Sharing a technical or domain theme.** "The Xero work" or "the timezone
-  work" is a portfolio grouping. Put it in a Project.
+  was discovered says nothing about how it should be delivered; this is what
+  produces wrapper epics.
+- **Sharing a technical or domain theme.** "The Xero work" is a portfolio
+  grouping: put it in a Project.
 
 **If an issue is independently complete and safe to release, prefer a normal
-issue and a normal pull request to `main`** — even when it is related to, or
-strictly prior to, other planned work. The standalone issue is the default; an
-epic is the exception, and it is the exception that has to argue for itself.
+issue and a normal pull request to `main`**, even when it is related to, or
+strictly prior to, other planned work.
 
 ### Epic, programme, standalone issue, GitHub Project
 
 | Unit | What it is | How it ships |
 | --- | --- | --- |
-| **Epic** | One atomic release outcome. Its intermediate child states should not reach downstream installations independently. | Children target `epic/<issue>-<slug>`; that branch reaches `main` as one gated merge. |
+| **Epic** | One atomic release outcome. Its intermediate child states should not reach downstream installations independently. | Children merge to `main` behind a flag or as inert modules; the last child switches the outcome on ("How multi-step work ships"). |
 | **Programme** | Related or ordered work whose stages can each be released safely on their own. | Each stage is a normal issue with its own pull request to `main`, in order. The programme is the plan, not a branch. |
 | **Standalone issue** | An independently useful, independently correct fix or feature. | One issue, one branch, one pull request to `main`. |
-| **GitHub Project** | A portfolio view: active epics, planned epics, programmes, standalone fixes, blocked work, and work owned by a particular maintainer or lane. | It ships nothing. It is not a release boundary. |
+| **GitHub Project** | A portfolio view of epics, programmes, standalone fixes, blocked work and ownership. | It ships nothing and is not a release boundary. |
 
-**A programme is the right answer far more often than an epic**, and it costs
-nothing to choose: the ordering and the shared plan get written down without
-holding finished work back. Write it as a tracking issue that lists its stages
-in order and says in as many words that each stage ships on its own — otherwise
-the next reader sees a parent issue with children and reaches for the epic
-machinery.
+**A programme is the right answer far more often than an epic.** Write it as a
+tracking issue that lists its stages in order and says in as many words that
+each ships on its own; otherwise the next reader sees a parent with children and
+reaches for epic machinery. **Project membership is a visibility fact only** and
+is never evidence that items should share an integration branch, a migration
+batch, an atomic release or one final pull request: two items in one column were
+grouped by whoever was looking that morning.
 
-### GitHub Projects group work; they do not bound a release
+## How multi-step work ships: on `main`, behind a flag or inert
 
-A GitHub Project is the recommended place to see the portfolio: active epics,
-epics that are planned but not started, programmes and their stages, standalone
-fixes, work that is blocked and on what, and work owned by a particular
-maintainer or agent lane. Grouping there is cheap, reversible, and touches no
-branch.
+**Owner decision, 27 Oct 2026 (#4464): multi-step work is built on `main`
+behind flags or inert modules by default. Integration branches are kept only by
+exception, below.** It replaces the 23 Aug 2026 rule that every epic child
+targets an `epic/**` branch. The cost of that rule was measured: 212 "Sync main
+into epic" pull requests in one month (16% of October's merges), and a money bug
+introduced while resolving a sync conflict.
 
-**Project membership is a planning and visibility fact only. It is never
-evidence that items should share:**
+Every child of an epic, and every stage of a programme, is a normal issue with
+its own pull request to `main`, and each child is one of:
 
-- an integration branch,
-- a migration batch,
-- an atomic release,
-- or one final pull request.
+- **Behind a flag.** The behaviour is switched off by a module, setting or seed
+  default (`AGENTS.md` → "Generic product"), so a club or fork that pulls `main`
+  sees no change. Test the off state, so "off" is proven rather than assumed.
+- **An inert module.** It changes nothing a member or operator sees, and nothing
+  reads it yet. Inert means *measurably* inert, not "small". Epic #2988's CT-1
+  (#2989) is the worked example: it recorded the club timezone while the old
+  environment variable still drove every displayed time.
 
-Two items sitting in the same Project column were grouped by whoever was looking
-at the board that morning. That was not a release decision, and reading one out
-of it is how a portfolio tidy-up turns into a branch nobody can land.
+The last child switches the outcome on — flips the default, wires the module
+in — and is the release. Downstream forks do see the half-built code on `main`;
+that is the accepted price, and it is why it must be inert or off.
 
-## An epic reaches `main` as ONE merge, from an integration branch
+**Schema.** Expand migrations are ordinary children, each old-code compatible
+against the deployed release ([`BLUE_GREEN_MIGRATION_POLICY.md`](../BLUE_GREEN_MIGRATION_POLICY.md)).
+A contract step ships when that policy allows it, in a release after the one that
+drained its readers; one that cannot be made inert is the exception below.
 
-**This applies only once the work has passed the four-question test above.** The
-default remains one issue, one branch, one pull request to `main`; everything in
-this section is the extra machinery a genuine atomic epic needs, and putting
-work that did not qualify onto an integration branch buys all of the cost below
-and none of the reason for it.
-
-**A child of an epic does not open its pull request against `main`.** Each epic
-gets an integration branch, `epic/<issue>-<slug>`; its children target that
-branch; and the branch reaches `main` as a single merge once the epic is
-complete. Owner decision, 23 Aug 2026.
-
-The reason is downstream forks. They pull `main` rather than upgrading
-tag-to-tag as [`UPGRADING.md`](../UPGRADING.md) asks, so a half-built epic on
-`main` reaches them mid-build — and an epic is the one unit of work whose
-intermediate states are routinely incoherent to a user, because a later child
-is what switches the product onto what an earlier one built.
-
-**The narrow exception, which must be written in the epic body or it does not
-apply:** a child that is genuinely *inert* — it changes nothing a member or
-operator sees, and later children depend on its API — may merge to `main`
-directly. Epic #2988's CT-1 (#2989) is the worked example: it recorded the club
-timezone while the previous environment variable still drove every displayed
-time, so a fork pulling `main` got a dormant subsystem and no behaviour change.
-Inert means *measurably* inert, not "small".
-
-**Merge authority.** A child merging into the integration branch needs review
-and green CI, and the orchestrator may merge it: nothing has reached `main`, a
-fork or production. The **`epic/… ` → `main`** pull request is the single
-integration merge. It follows the merge gate in
-`AGENTS.md` → "Completion and Merge" (the one statement of that rule; since #3959 an agent merges it once it is
-complete, green, reviewed and carries a clean Ready-to-Merge comment), applied to
-the union of the epic, not to each child separately.
-
-**That last pull request is an INTEGRATION review, not a re-review.** Each child
-was already reviewed into the branch by the normal adversarial lenses at its own
-small size. The epic pull request carries the migration sequencing, the deploy
-rehearsal below, a link to each child's review evidence, and the findings of the
-final compose-and-review child — the one review that reads what the children
-only produce in combination. What that child covers, and when it runs, is the
-next subsection; it is stated there once.
+**The epic body** lists the children in merge order, the flag or module each one
+hides behind, reserved migration prefixes, cross-lane watchpoints (files two
+issues touch, and who rebases) and frozen contracts (such as "do not change this
+Xero reference string"). It ends with the compose-and-review child below.
 
 ### The final compose-and-review child — mandatory, and created with the others
 
-**Every epic carries one last child issue: compose, then review, then open the
-epic's pull request.** It is the final entry in the child list, it is created
-when the other children are created rather than remembered at the end, and the
-epic does not go to `main` without it. Owner decision, 13 Sep 2026 (#3374).
-Declined: a checklist line in the epic pull-request template, which has no
-acceptance criteria, no state and no evidence trail; and leaving it to
+**Every epic carries one last child issue: compose, then review, then switch the
+outcome on.** It is the final entry in the child list, created with the others
+rather than remembered at the end, and the epic is not complete without it.
+Owner decision, 13 Sep 2026 (#3374). Declined: a pull-request-template checklist
+line, which has no acceptance criteria or evidence trail; and leaving it to
 orchestrator judgement, which is what produced the gap.
 
-The reason is that nothing else reviews the epic. Every lens that ran read one
-child's diff, so two things reach the gated merge unread:
+Nothing else reviews the epic: every lens read one child's diff, so what the
+children only produce in combination goes unread. The child covers exactly:
 
-- **the composition** — a guard an early child added that a later child's move
-  or rename silently disarmed (still green, matching nothing); a tree-wide
-  census figure that several children and every `main` sync each re-measured;
-  an ordering the epic declared binding; an `INV-*` id an epic minted while
-  `main` was minting the same one; and two children solving one problem in ways
-  that now disagree;
-- **the orchestrator's own conflict resolutions**, across every `main` sync the
-  epic absorbed — the only code on the branch written by the same party that
-  decides what gets reviewed, often in lines neither side's author would
-  recognise.
+1. **The composition**, read on `main` rather than in any one child: a guard an
+   early child added that a later move or rename disarmed (still green, matching
+   nothing); a tree-wide census figure several children re-measured; an ordering
+   the epic declared binding; an `INV-*` id minted twice; two children solving
+   one problem in ways that now disagree.
+2. **Every census or contract suite that reads the tree from disk**, run by name
+   with `pnpm run test:named`, selected per [`TESTING.md`](../TESTING.md) →
+   "Selecting the censuses a change can reach" over the epic's whole diff against
+   its base, never from memory. The module graph cannot reach that class, so
+   `vitest related` never selects it, and it is the class that catches a
+   disarmed guard.
+3. **Every conflict resolution an orchestrator wrote**, with each sync's diff as
+   evidence and a differential proof wherever a resolution changed
+   behaviour-bearing code. This applies only to an epic on an integration
+   branch.
 
-So the child covers exactly those, and nothing else:
-
-1. **The composition**, as listed above, read on the composed branch rather than
-   in any one child.
-2. **Every conflict resolution the orchestrator wrote**, with each sync's diff as
-   the evidence and a differential proof wherever a resolution changed
-   behaviour-bearing code rather than only its shape.
-3. **Every census or contract suite that reads the tree from disk, run by
-   name with `pnpm run test:named`.** Select them per
-   [`TESTING.md`](../TESTING.md) → "Selecting the censuses a change can reach",
-   over the epic's whole diff against `main`, never from memory: that is the
-   class the module graph cannot reach — so `vitest related` never selects
-   it — and the class that catches a disarmed guard.
-
-**It is deliberately not a re-review of the epic diff.** Nobody reads a
-751-file diff — MEP #2680's size — and a review that claims to have is worse
-than a scoped one that says what it covered.
-
-**Timing is part of the contract.** It runs *after* the final `main` sync and
-*before* the epic's pull request is marked ready. A review approves the commit
-it read (`AGENTS.md` → "Orchestration Model"): a sync landing
-afterwards re-opens the child over the delta only — the
-new sync's resolutions and any census the sync re-measured — never a fresh pass
-over the whole branch.
+It is deliberately not a re-review of the epic diff: nobody reads a 751-file diff
+(MEP #2680), and a review claiming to have is worse than a scoped one that says
+what it covered. It runs after the last child merges and before the outcome is
+switched on. A review approves the commit it read (`AGENTS.md` → "Orchestration
+Model"), so a later merge re-opens it over the delta only.
 
 The worked example is MEP #2680, which absorbed eleven syncs. On the fourth, the
 orchestrator resolved a conflict by assuming a provenance vector and a price
-vector are always the same length; no local gate caught it, and it surfaced as
-22 tests returning 400 instead of 200. The lens dispatched at that resolution
-after the fact found the corrected version sound by differential probe and a
-second defect beside it — and the fifth sync's three money-path resolutions were
-still unreviewed when the epic was called ready. They were reviewed only because
+vector are always the same length; no local gate caught it, and 22 tests then
+returned 400 instead of 200. The fifth sync's three money-path resolutions were
+still unreviewed when the epic was called ready, and were reviewed only because
 the owner asked.
 
-### What this costs, and what to do about each
+## An epic reaches `main` as ONE merge, from an integration branch
 
-Written down here once, because every one of these has to be handled by whoever
-runs the next epic.
+**The exception.** An epic may use an integration branch, `epic/<issue>-<slug>`,
+only where a schema **contract** step cannot be made inert: it changes or removes
+schema that code on `main` still depends on, so it cannot sit on `main` ahead of
+the switch-on. **The epic body must name
+that step and why it cannot be made inert, or the exception does not apply.** A
+related theme, shared files, a wish to hide work from forks, or convenience are
+not grounds: flags exist for those. Children then target that branch and it
+reaches `main` as a single merge once complete. Everything else in this playbook
+still applies to such an epic.
 
-- **CI.** `ci.yml` and `e2e.yml` trigger on `epic/**` as well as `main`, for both
-  `pull_request` and `push`, so a child gets the real nine checks on the commit
-  that will actually merge, and the integration branch is re-checked after each
-  child lands. Before that trigger existed the workaround was a throwaway draft
-  probe pull request of the same commit against `main` — keep that in mind for a
-  fork whose workflows predate it, and note why it was only ever second best: a
-  probe tests the commit *outside* its stack, so it can pass while the stacked
-  integration is broken.
-- **Drift.** Merge `origin/main` into the integration branch regularly — a merge
-  commit, never a force-push. A branch that only reconciles at the end reconciles
-  once, badly; this repository has twice shipped a *wrong* value out of a
-  hand-resolved long-lived conflict (#2979's ceiling, and the `CHANGELOG.md`
-  churn that #2452 ended).
+**Merge authority.** A child merging into the branch needs review and green CI,
+and the orchestrator may merge it: nothing has reached `main`. The `epic/…` →
+`main` pull request follows the merge gate in
+`AGENTS.md` → "Completion and Merge" (the one statement of that rule), applied to
+the union of the epic. It is an **integration review**, not a re-review: it
+carries the migration sequencing, the deploy rehearsal below, each child's review
+evidence and the compose-and-review child's findings.
 
-  `.github/workflows/epic-branch-sync.yml` does this for you every six hours
-  (00:20, 06:20, 12:20 and 18:20 UTC):
-  one long-lived `main` → `epic/**` pull request per live integration branch,
-  merged immediately when its composed-tree check passes and GitHub reports
-  `CLEAN`; other states wait for the next check or a human conflict resolution.
+What the branch costs, each handled by whoever runs it:
 
-  **A sync lands only after a cheap check of the composed tree** (#3513,
-  owner decision "Cheap narrow check", 6 Oct 2026). A clean sync used to merge
-  seconds after it opened, before any of its checks had started, so the merge
-  of `main` and the epic was first tested on the epic's next push. The workflow
-  now merges `origin/main` into each epic branch locally, never pushing it, and
-  runs `pnpm run ci:fast-censuses --base <exact-epic-sha>` there: the tree-wide
-  censuses that two sides, each green against its own base, can compose into a
-  stale count. Only a pass on
-  exactly that pair of commits lets the sync land. The workflow re-reads the
-  epic tip just before acting and pins the merge to the tested `main` commit. A
-  pull request that is `CLEAN` is merged at once; other states stay unarmed for
-  the next scheduled check. Prior auto-merge is disabled before acting. GitHub
-  has no base pin, so a child landing in the seconds between the remote epic-tip
-  read and the immediate merge can still ride along; epic push CI catches it. A
-  failure leaves the pull request unarmed with a comment naming the failing
-  checks — hand-sync it (below), run the same command on your merge branch, and
-  re-derive each count ([`TESTING.md`](../TESTING.md) → "Census tests and the
-  merge hazard"). If `main` or the epic moved while the check ran, it re-checks
-  once in the same run and otherwise waits for the next one. The result is a
-  correctness signal from the composed tree's own censuses, not a security
-  verdict on its code. This is deliberately not the full nine checks.
-
-  **A red sync pull request is the branch
-  telling you `main` and the epic no longer compose**, so read it rather than
-  re-running it. Resolve a conflict by hand on a merge branch, opened as a
-  hand sync (below), never by force-pushing a shared branch and never by
-  letting a merge tool pick a side unread.
-
-  The description that workflow writes carries a complete
-  `## Concurrency And Lock Impact` section, and says in its own words that the
-  workflow wrote it. That is not ceremony: the gate is the FIRST step of
-  `verify`, a sync diff always holds concurrency-sensitive paths, and while the
-  section was missing every sync pull request failed in under half a minute with
-  lint, typecheck, knip, the suite and the build all skipped — so the sync
-  measured nothing at all (#3142). What it does **not** cover is the one lock
-  question a merge really raises: `main` taking lock A then B while the epic
-  takes B then A. That belongs to the `epic/…` → `main` pull request, where a
-  person writes a real declaration over the epic's real diff.
-
-  **A sync you open by hand gets the same description from a command.** Because
-  `epic/**` takes no direct push, a hand sync is a merge branch: make it from
-  `origin/epic/…`, run `git merge origin/main`, resolve and commit, run
-  `pnpm run ci:fast-censuses --base origin/epic/<n>-<slug>` and fix what it
-  reports, then run
+- **CI.** `ci.yml` and `e2e.yml` trigger on `epic/**` for `pull_request` and
+  `push`, so a child gets the real checks on the commit that will merge. A
+  throwaway probe pull request against `main` tests a commit outside its stack
+  and can pass while the stacked integration is broken.
+- **Drift.** Merge `origin/main` into the branch regularly — a merge commit,
+  never a force-push; a branch that reconciles only at the end reconciles once,
+  badly (#2979's ceiling, and the `CHANGELOG.md` churn #2452 ended).
+  `.github/workflows/epic-branch-sync.yml` runs every six hours (00:20, 06:20,
+  12:20, 18:20 UTC): one long-lived `main` → `epic/**` pull request per branch,
+  merged at once when `pnpm run ci:fast-censuses --base <exact-epic-sha>` passes
+  on the locally composed tree and GitHub reports `CLEAN` (#3513, owner decision
+  "Cheap narrow check", 6 Oct 2026). Other states wait for the next run or a
+  human. The result is a correctness signal from the tree's own censuses, not a
+  security verdict, and deliberately not the full nine checks. **A red sync pull
+  request is the branch telling you `main` and the epic no longer compose**:
+  read it, resolve by hand on a merge branch, never force-push a shared branch
+  and never let a merge tool pick a side unread. Its description carries a
+  complete `## Concurrency And Lock Impact` section that says the workflow wrote
+  it (#3142); it does not cover `main` taking lock A then B while the epic takes
+  B then A, which belongs to the `epic/…` → `main` pull request.
+- **A hand sync.** `epic/**` takes no direct push, so make a merge branch from
+  `origin/epic/…`, run `git merge origin/main`, resolve, run
+  `pnpm run ci:fast-censuses --base origin/epic/<n>-<slug>`, then
   `pnpm run epic:sync-body -- --branch epic/<n>-<slug> --out body.md`, check it
-  with `pnpm run pr:check body.md --base origin/epic/<n>-<slug>`, and open the
-  pull request with `--body-file body.md`. The command reads the merge commit
-  rather than your account of it. It names both parents, lists every file git
-  reported as conflicted or that differs from its automatic merge, and refuses
-  when one of those is concurrency-sensitive. In that case you write the declaration yourself.
-  Hand-typing the description is how #3718 failed the gate in 23 seconds (#3721).
-- **Every migration in the epic lands in ONE deploy.** So **no child may pair an
-  expand with its own contract.** A contract half waits for a release *after* the
-  epic merges, because `previous_expand_release` has to name something that has
-  actually drained. Each migration still needs its own ledger row, and each must
-  be old-code compatible against the **pre-epic** release rather than merely
-  against its sibling. See
-  [`BLUE_GREEN_MIGRATION_POLICY.md`](../BLUE_GREEN_MIGRATION_POLICY.md).
-- **Rehearse the deploy on the epic pull request, and paste the transcript into
-  it.** `pnpm run db:rehearse-epic --database-url <throwaway>` applies the base
-  ref's migrations, then the epic's, then reads every model with a client
-  generated from the **base ref's** schema. That is how the two `windowed` drops
-  were verified rather than asserted, and with a whole epic's migrations arriving
-  at once it is the only way to prove the claim. The transcript is part of the
-  epic pull request's evidence, alongside the per-child review links — an
-  unrehearsed epic merge is asserting old-code compatibility for a set of
-  migrations no one has run together. What a green run does *not* prove is in
-  [`BLUE_GREEN_MIGRATION_POLICY.md`](../BLUE_GREEN_MIGRATION_POLICY.md) →
-  "Rehearsing an epic's deploy"; read it before quoting the result.
-  The expand/contract half of this rule is enforced by
-  `check-migration-safety-coverage.sh` rather than left to care.
-- **Migration prefixes.** Reserve one per child in the epic body up front, so
-  queued children cannot collide, and re-run the duplicate-prefix check on every
-  merge into the branch rather than only at pull-request time.
-- **The child list ends with the compose-and-review child.** Create it in the
-  same sitting as the other children and write it into the epic body as the
-  last entry in the merge order, per the subsection above. A step that depends
-  on somebody remembering it at the end is a step that is sometimes skipped,
-  and the epic merge is the worst place for that.
-- **Branch protection does not reach an integration branch** unless somebody with
-  admin adds it. An agent session cannot: the machine account holds `push`, not
-  `admin`, and that endpoint's 404 means "not permitted", never "not protected".
-- **`pnpm run pr:check` needs `--base`, and silently misjudges a child without
-  it.** It defaults to `origin/main`, so on a child of an epic it sees every
-  earlier child's diff as well: CT-2 (#3004) was judged against 101 changed files
-  rather than its own 35, and refused for want of a concurrency declaration
-  covering a schema and a migration it never touched. Run
-  `pnpm run pr:check <body-file> --base origin/epic/<issue>-<slug>`. Both gates
-  decide what they ask for from the diff, so the wrong base asks the wrong
-  question — and it fails in the safe direction only by luck.
-- **Nothing in the epic ships until all of it ships.** Inherent, not an
-  oversight. The levers are keeping epics small and using the inert-child
-  exception for foundations.
+  with `pnpm run pr:check body.md --base origin/epic/<n>-<slug>` and open the
+  pull request with `--body-file body.md`. The command reads the merge commit,
+  names both parents, lists every conflicted or differing file, and refuses when
+  one is concurrency-sensitive; then you write that declaration yourself.
+  Hand-typing it is how #3718 failed the gate in 23 seconds (#3721).
+- **Every migration lands in ONE deploy**, so no child may pair an expand with its
+  own contract: the contract half waits for a release after the epic merges,
+  because `previous_expand_release` must name something that has drained. Each
+  migration needs its own ledger row and must be old-code compatible against the
+  **pre-epic** release, not just its sibling
+  ([`BLUE_GREEN_MIGRATION_POLICY.md`](../BLUE_GREEN_MIGRATION_POLICY.md)).
+  `check-migration-safety-coverage.sh` enforces the expand/contract half.
+- **Rehearse the deploy on the epic pull request and paste the transcript.**
+  `pnpm run db:rehearse-epic --database-url <throwaway>` applies the base ref's
+  migrations, then the epic's, then reads every model with a client generated
+  from the **base ref's** schema. What a green run does *not* prove is in the
+  policy's "Rehearsing an epic's deploy"; read it before quoting the result.
+- **Migration prefixes** are reserved per child in the epic body, and the
+  duplicate-prefix check re-runs on every merge into the branch.
+- **`pnpm run pr:check` needs `--base`** (`--base origin/epic/<issue>-<slug>`). It
+  defaults to `origin/main`, so on a child it sees every earlier child's diff:
+  CT-2 (#3004) was judged against 101 changed files rather than its own 35 and
+  refused for a concurrency declaration about a schema it never touched.
+- **Nothing in the epic ships until all of it ships.** Inherent; the levers are
+  small epics and the flag-or-inert default.
 
 ### Protecting an integration branch — one-off setup, and the order matters
 
-An `epic/**` branch is **not** covered by `main`'s protection. Somebody with
-`admin` adds it once and it covers every future epic. An agent session cannot:
-the machine account holds `push`, and that endpoint's `404` means "not
-permitted", never "not protected" — confirm by asking it about `main`, which *is*
-protected and returns the identical `404` to a non-admin.
+`epic/**` is **not** covered by `main`'s protection. Somebody with `admin` adds
+it once and it covers every future epic; an agent session cannot (the machine
+account holds `push`, and that endpoint's `404` means "not permitted", never
+"not protected"). **Do it AFTER the workflow triggers include `epic/**`**:
+required checks that never reported on a branch wait on "Expected" forever. That
+is [`CONTRIBUTING.md`](../../CONTRIBUTING.md#branch-protection)'s three-step
+order for any new required context.
 
-**Do it AFTER the workflow triggers include `epic/**`, never before.** Required
-checks that have never reported on a branch sit on *"Expected — waiting for
-status"* forever, so protecting first blocks every epic pull request until the
-trigger change lands. This is the same three-step order [`CONTRIBUTING.md`](../../CONTRIBUTING.md#branch-protection) gives for adding any required context: merge the workflow change, then
-add the protection, then rebase anything already open.
-
-Use **classic branch protection**, not a ruleset. Rulesets never appear at the
-branch-protection endpoint, so one can be edited to no effect while appearing to
-work — this repository already carries a disabled ruleset that does nothing, and
-`main` is protected the classic way, so matching it keeps both readable from the
-same command.
-
-Pattern `epic/**`, as applied on 23 Aug 2026: the same required checks as
-`main` — the list in [`CONTRIBUTING.md`](../../CONTRIBUTING.md#required-checks-applied-today),
-which is their one home — plus:
-
-- `strict: false` — requiring up-to-date branches serialises every child;
-- `enforce_admins: false` — matches `main`; an owner can unblock themselves;
-- deletions allowed — or the branch cannot be deleted after the epic merges;
-- force pushes blocked.
-
-Verify with `gh api repos/<owner>/<repo>/branches/epic%2F<branch>/protection`
-(note the `%2F`), and check `rules/branches/<branch>` returns `[]` to confirm no
-ruleset is quietly involved. A non-admin can still confirm the *pattern* matches
-with `gh api repos/<owner>/<repo>/branches/epic%2F<branch> --jq .protected`,
-which needs only read access — that is the check most worth running, because a
-mismatched pattern is the likeliest mistake and it reports `false`.
-
-**Two consequences of that configuration, both load-bearing.** Required status
-checks gate **pushes**, not only merges, so nothing lands on an integration branch
-without the required checks — which is why the sync opens a pull request from
-`main` rather than pushing a merge commit it has just created. And
-`required_pull_request_reviews` is deliberately absent (`main` has it with a count
-of `0`; the code-owner rule applied on 2 Oct 2026 was retired on 7 Oct 2026,
-#3959); on an integration branch the pull request arrives from the workflow model
-rather than from enforcement, and the integration gate is the `epic → main` merge.
+Use **classic branch protection**, not a ruleset (rulesets never appear at the
+branch-protection endpoint, and this repository carries a disabled one). Pattern
+`epic/**`: the same required checks as `main` — the list in
+[`CONTRIBUTING.md`](../../CONTRIBUTING.md#required-checks-applied-today) — plus
+`strict: false` (up-to-date branches serialise every child), `enforce_admins:
+false`, deletions allowed and force pushes blocked. Verify with `gh api
+repos/<owner>/<repo>/branches/epic%2F<branch>/protection` (note the `%2F`), check
+`rules/branches/<branch>` returns `[]`, and confirm the pattern with `--jq
+.protected` on the branch, which needs only read access; a mismatched pattern is
+the likeliest mistake. Required checks gate **pushes**, which is why the sync
+opens a pull request rather than pushing a merge commit. There are no required
+reviews on an integration branch (the code-owner rule was retired 7 Oct 2026,
+#3959); its integration gate is the `epic → main` merge.
 
 ## Running a wave
 
-A wave is several issues — an epic's children or a programme's stages — run
-in parallel lanes and left for owner review. It codifies the model that
-produced epic #1926.
+A wave is several issues — an epic's children or a programme's stages — run in
+parallel lanes and left for owner review. It codifies the model that produced
+epic #1926.
 
 ### Plan first: the epic and its children are the source of truth
 
-- **First check the epic is an epic** — the four-question test above. A review
-  round hands you a list, and a list looks like a plan; independently shippable
-  items are a programme of normal issues, run as a wave by this same playbook.
+- **First check the epic is an epic** (the four questions). Independently
+  shippable items are a programme of normal issues, run as a wave by this same
+  playbook.
 - Break the work into **topic-sized child issues, one issue = one branch = one
-  PR**. Each child issue body follows the human-first order in `ISSUE_WORKFLOW.md`, then scope,
-  acceptance criteria, risks, and **re-verified `file:line` anchors**.
-- Run an adversarial **cross-review of the plan itself** before coding: have
-  reviewers attack each issue's scope against the current `main`, integrate the
-  findings back into the issue bodies, and record binding **owner decisions**
-  (label them, e.g. `D-R1..D-Rn`) in the epic body. The refreshed issue bodies
-  then supersede any earlier plan document.
-- The epic body carries: the source items, the owner decisions, the child list
-  grouped into **lanes** with an explicit **morning merge order** ending in the
-  compose-and-review child (above), cross-lane
-  **watchpoints** (files touched by more than one issue, and who rebases), and
-  any frozen contracts (e.g. "do not change this Xero reference string").
+  PR**. Each body follows the human-first order in `ISSUE_WORKFLOW.md`, then
+  scope, acceptance criteria, risks and **re-verified `file:line` anchors**.
+- Run an adversarial **cross-review of the plan itself** before coding: reviewers
+  attack each issue's scope against current `main`, the findings go back into the
+  issue bodies, and binding **owner decisions** are recorded in the epic body
+  (labelled, e.g. `D-R1..D-Rn`). The refreshed bodies supersede any earlier plan.
+- The epic body carries the source items, the owner decisions, the child list
+  grouped into **lanes** with an explicit **merge order** ending in the
+  compose-and-review child, the watchpoints and frozen contracts above.
 
 ### Lanes, worktrees and stacking
 
 - Run up to ~4 **parallel lanes**, each in its own **git worktree** (never share
-  a checkout — parallel branches entangle HEAD). One lane per group of issues
+  a checkout — parallel branches entangle HEAD), one lane per group of issues
   whose code surfaces do not clash.
 - Each lane keeps a physical, isolated `node_modules`; sharing only pnpm's store
-  lets installs reuse downloaded packages without sharing generated Prisma
-  state. Run the runtime/dependency preflight in
-  [`CODEX_WORKFLOW.md`](CODEX_WORKFLOW.md) before delegating validation.
-- Epic children target `epic/<issue>-<slug>`; it reaches `main` as one merge, so
-  no fork pulling `main` catches an epic half-built. Rule, merge authority, costs
-  and the inert-child exception (which the epic body must claim) are in "An epic
-  reaches `main` as ONE merge" above. CI runs on `epic/**`.
-- Non-epic issues branch off `main`. Within a lane, stack dependent issues on the
-  parent branch and state the base + merge order in the PR body.
-- Before removing a merged worktree, inspect its `node_modules` entry. A legacy
-  junction must be verified and unlinked non-recursively before `git worktree
-  remove`; otherwise Windows cleanup can traverse the junction and erase its
-  shared target. A pnpm worktree is removed with `pnpm run worktree:remove
-  <path>` from outside it, because `git worktree remove` alone fails half-way on
-  pnpm's junctions and follows any other link it meets (#3673). Follow the fail-closed cleanup in `CODEX_WORKFLOW.md`.
+  lets installs reuse downloads without sharing generated Prisma state. Run the
+  preflight in [`CODEX_WORKFLOW.md`](CODEX_WORKFLOW.md) before delegating
+  validation.
+- Children branch off `main` and target `main` (an exception epic's children
+  target its `epic/<issue>-<slug>` branch). Within a lane, stack dependent issues
+  on the parent branch and state the base and merge order in the PR body.
+- Before removing a merged worktree, inspect its `node_modules` entry: a legacy
+  junction must be verified and unlinked non-recursively first. Remove a pnpm
+  worktree with `pnpm run worktree:remove <path>` from outside it, because
+  `git worktree remove` alone fails half-way on pnpm's junctions and follows any
+  other link it meets (#3673). Follow the fail-closed cleanup in
+  `CODEX_WORKFLOW.md`.
 
 ### Price the delay
 
-Every hour a PR sits unready, `main` moves under it. The changelog no longer contributes (#2452, #2451).
-What is left still costs — a shared doc, test matrix or workflow hunk two
-lanes both edited, and on a schema lane a migration-timestamp collision that
-fails `Migration drift check` and `verify` together, each costing a re-resolve
-plus a full CI cycle. Optimise
-**time-to-ready**, and get sibling PRs ready in the same window rather than
-serially, since each merge re-conflicts every branch still open behind it.
-
+Every hour a PR sits unready, `main` moves under it: a shared doc, test matrix or
+workflow hunk two lanes both edited, or on a schema lane a migration-timestamp
+collision that fails `Migration drift check` and `verify` together, each costing
+a re-resolve plus a full CI cycle. Optimise **time-to-ready**, and get sibling
+PRs ready in the same window, since each merge re-conflicts every branch still
+open behind it.
 
 ### Priorities if time runs short
 
 Finish **whole lanes** to their last CI-green PR rather than starting everything
-and leaving broken stubs. A lane's later issues are worthless half-done. If a
-deployment-coupled lane must stop early, say so prominently in the handoff so the
-owner can decide on any shim. Drop the newest/lowest-value additions first.
+and leaving broken stubs. If a deployment-coupled lane must stop early, say so
+prominently in the handoff so the owner can decide on any shim. Drop the
+newest or lowest-value additions first.
 
 ### Morning handoff
 
 End the run with a summary comment on the epic and a final message to the owner:
 per-lane PR list in merge order, CI status of each, **owner decisions needed**
-(flag the gated ones explicitly), anything unfinished and why, and exact
-merge-order instructions (merge-commit only; GitHub retargets stacked PRs as
-parents merge and branches delete).
+(flag the gated ones), anything unfinished and why, and exact merge-order
+instructions (merge-commit only).

@@ -66,8 +66,8 @@ body:
       options:
         - Standalone issue — independently useful, ships on its own
         - Programme stage — ordered work, but this stage ships alone
-        - Epic — one atomic release outcome, children on an epic branch
-        - Child of an existing epic — targets its integration branch
+        - Epic — one atomic release outcome, built on main behind a flag or inert module
+        - Child of an existing epic — merges to main (its integration branch only by exception)
     validations:
       required: true
   - type: textarea
