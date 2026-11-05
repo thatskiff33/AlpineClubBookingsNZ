@@ -69,7 +69,17 @@ pass() { echo "  ok: $*"; }
 # Random material, from the kernel rather than from a literal in this file.
 rand() {
   # $1 = length, $2 = character class for `tr -dc`
-  LC_ALL=C tr -dc "$2" </dev/urandom | head -c "$1"
+  # `head` closing the pipe makes `tr` exit on SIGPIPE, which `pipefail` reports
+  # as a failure. That is expected, so the pipeline's status is ignored and the
+  # LENGTH is checked instead: a short or empty value still fails loudly.
+  # (Assigned at top level, `x="$(rand …)"` would otherwise trip `set -e`, #4766.)
+  local value
+  value="$(LC_ALL=C tr -dc "$2" </dev/urandom 2>/dev/null | head -c "$1" || true)"
+  if [ "${#value}" -ne "$1" ]; then
+    echo "FAIL: rand produced ${#value} of $1 characters" >&2
+    exit 1
+  fi
+  printf '%s' "${value}"
 }
 
 scan_dir() {
