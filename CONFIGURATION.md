@@ -1331,6 +1331,13 @@ for bookings (no capacity and no active beds, through the same resolver every
 booking path reads), and lists those lodges by name so each can be given a
 capacity on its configuration page (#3407).
 
+The **Data Encryption Key** step (#4456) reports whether stored credentials,
+authenticator secrets and recovery codes are under a `DATA_ENCRYPTION_KEYS`
+ring key or still under `AUTH_SECRET` alone, counted per key. With no ring set
+and anything stored it is **blocked**, so the report is blocked and
+`setup:check` exits 1 until a key is set; the app itself runs unchanged and no
+deploy gates on it. See [Data-encryption keys](#data-encryption-keys-4456).
+
 After signing in as an administrator, open `/admin/setup` to review:
 
 - readiness KPIs, blockers, setup hub cards, club config, and module controls
@@ -2334,25 +2341,40 @@ exposes both and rotating it destroys the stored data.
   two-factor code hash uses it. The other keys stay readable: each stored row
   names the key it was written under and is read with that key only.
 - **A bad value is refused whole**, never used in part: a malformed entry, a
-  key that is not 32 bytes, a key repeating one byte, a duplicate id or a
-  duplicate key. Credential capture then refuses to save, and the setup step
+  key that is not 32 bytes, a key repeating one byte, a duplicate id, a
+  duplicate key, a key that **is the auth secret** (its text, or the bytes it
+  decodes to as base64, hex or UTF-8), or a key whose 32 bytes are **all
+  printable ASCII** (a password, not random bytes). The release then fails
+  `/api/health/ready`, credential capture refuses to save, and the setup step
   "Data Encryption Key" goes red naming why (never the value).
+- **Until it is set, the setup step is red** wherever anything is stored (a
+  credential, an authenticator, a recovery code): Admin → Setup shows the report
+  blocked and `pnpm run setup:check` exits 1. The app runs unchanged and no
+  deploy gates on it; it is a prompt to set a key, not a failure.
 - **Rows written before the ring** stay readable under `AUTH_SECRET` until they
   are re-encrypted; the setup step counts them. Rotate `AUTH_SECRET` only once
-  it reports nothing left on it.
+  it reports nothing left on it. This release has no switch to stop reading
+  them under the auth secret; the second part of #4456 adds one with the
+  re-encrypt.
 - **Recovery codes are the exception** (owner decision on #4456): codes issued
   before a ring was set stop working the moment it is set, because a hash cannot
   be re-keyed. A member holding them is told, on the sign-in challenge and on
-  their profile, to generate a new set. Email codes last ten minutes and simply
-  expire.
+  their profile, to generate a new set. They are refused, not yet deleted: on
+  an instance without the ring they work again, until the second part of #4456
+  retires them in the database. Email codes last ten minutes and simply expire.
 - **Rollout, and no way back.** Set it only once every running container is on
   a release that understands it: an older release cannot read data written
   under a data key. Once rows are written under it, the previous colour of the
   same release (started without the ring) cannot read them during the redeploy
   that sets it, and rolling back to an older release, routing traffic back to a
   ring-less colour or unsetting the variable strands every ring-keyed
-  credential, authenticator secret and recovery code. If that deploy fails,
-  keep the ring set and go forward. Steps and the safe sequence:
+  credential, authenticator secret and recovery code. While the variable is
+  unset over ring-keyed data, nothing new is saved under `AUTH_SECRET`:
+  credential capture, two-factor enrolment, recovery-code regeneration and
+  email codes refuse. Put the ring back as it was, or, if the key is lost for
+  good, set a new key and re-enter the credentials and re-enrol the
+  authenticators the old one held. If that deploy fails, keep the ring set and
+  go forward. Steps, the safe sequence and the two-step for a newer key:
   [`DEPLOYMENT.md` → Adding a data-encryption key](DEPLOYMENT.md#adding-a-data-encryption-key-4456).
 - **Removing a key** strands every row still naming it ("needs re-entry" for a
   credential; an authenticator that no longer verifies; recovery codes that no

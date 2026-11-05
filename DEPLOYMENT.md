@@ -1772,11 +1772,14 @@ shows a "no longer used — re-enter in-app, then remove from the environment"
 warning) and then removes the variables from the environment.
 
 **Encryption-key coupling:** backup credentials are wrapped with a key derived
-from `AUTH_SECRET`/`NEXTAUTH_SECRET` (HKDF-SHA256). Rotating that secret makes
-stored credentials undecryptable, so the nightly backup fails **loudly** — it
-records a `FAILURE` cron run and an error Sentry check-in (never a silent skip),
-and the Backups page shows a "re-enter credentials" banner. Re-enter the S3
-credentials in-app after any auth-secret rotation.
+from `AUTH_SECRET`/`NEXTAUTH_SECRET` (HKDF-SHA256), or, once
+`DATA_ENCRYPTION_KEYS` is set and they are re-saved, from that ring key instead
+([Adding a data-encryption key](#adding-a-data-encryption-key-4456)). Losing
+the key they are under (rotating the auth secret while they are still on it,
+or removing or unsetting their ring key) makes them undecryptable, so the
+nightly backup fails **loudly** — it records a `FAILURE` cron run and an error
+Sentry check-in (never a silent skip), and the Backups page shows a "re-enter
+credentials" banner. Re-enter the S3 credentials in-app after that.
 
 Do not treat local backup files as durable. The production Docker service runs
 with `read_only: true` and mounts `/tmp` as tmpfs, but `/tmp/tacbookings-backups`
@@ -2037,7 +2040,11 @@ Production operator steps are the owner's.
 4. **Tell members about recovery codes.** Recovery codes issued before this step
    stop working now (owner decision on #4456). Members holding them see a
    notice on the sign-in challenge and their profile telling them to generate a
-   new set; an admin should regenerate their own straight away.
+   new set; an admin should regenerate their own straight away. They are
+   refused, not yet deleted: until the second part of #4456 retires them in the
+   database, they **work again on any instance without the ring** (the previous
+   colour during this redeploy, or anywhere the variable is unset). Tell members
+   to discard them once they have a new set.
 5. **Move what is still on `AUTH_SECRET`.** Admin → Setup → "Data Encryption
    Key" counts the provider credentials and authenticator secrets still
    encrypted under it. Re-entering a credential in Admin → Integrations writes
@@ -2060,8 +2067,12 @@ key. So:
 - rolling back to a release older than #4456, routing Caddy back to a colour
   started without the ring, or unsetting the variable strands every
   ring-keyed credential, authenticator secret and recovery code (the setup
-  step goes red and says so, and credential capture refuses rather than
-  quietly saving under `AUTH_SECRET`).
+  step goes red and says so, and credential capture, two-factor enrolment,
+  recovery-code regeneration and email codes refuse rather than quietly saving
+  under `AUTH_SECRET`). The same instance accepts the recovery codes issued
+  before the ring again, until the second part of #4456 retires them in the
+  database. If the old key is lost for good, set a new one and re-enter the
+  credentials and re-enrol the authenticators it held.
 
 **The safe sequence if that deploy fails:** once the engine has recreated the
 cron leader with the ring (it does so before the step-16 warm-up gate), keep
@@ -2070,9 +2081,18 @@ with it; never route traffic back to a colour without it. If you must roll
 back to an older release, restore the ring-less state from the pre-deploy
 backup instead, as an owner-approved data operation.
 
-**Adding a newer key later:** put it **first** (`DATA_ENCRYPTION_KEYS=k2027:<new>,k2026:<old>`),
-redeploy, move the rows still on the old key, and only then remove the old
-entry. Removing a key any earlier strands every row that names it.
+**Adding a newer key later: two redeploys, never one.** A colour reads only the
+keys its own ring lists, so putting the new key first in one step repeats the
+first cut-over's overlap: during that redeploy the previous colour (ring
+`k2026` alone) cannot read what the new colour writes under `k2027`. Instead:
+
+1. Add the new key **second**: `DATA_ENCRYPTION_KEYS=k2026:<old>,k2027:<new>`,
+   and redeploy. Writes stay on `k2026`; both colours read everything.
+2. Once no container runs without `k2027`, promote it:
+   `DATA_ENCRYPTION_KEYS=k2027:<new>,k2026:<old>`, and redeploy. New writes use
+   `k2027`; the previous colour already holds it, so it reads them.
+3. Move the rows still on the old key, and only then remove the old entry.
+   Removing a key any earlier strands every row that names it.
 
 ### Auth-secret rotation runbook
 

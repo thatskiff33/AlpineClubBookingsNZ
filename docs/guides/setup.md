@@ -81,6 +81,14 @@ act on this one if the club is not in New Zealand. Still **blocked** after an
 upgrade means the application has not restarted since the migration; restart it,
 or run `pnpm run config:self-heal`.
 
+The **Data Encryption Key** step is about the server, not a setting you can
+change here. It reads **blocked** on an existing club until whoever runs the
+server sets a data-encryption key, because stored provider credentials and
+authenticator-app secrets are still protected only by the server's sign-in
+secret. The site works normally meanwhile. The step counts what is still on the
+old secret and, once a key is set, how to move it; the server steps are in
+[`CONFIGURATION.md` → Data-encryption keys](../../CONFIGURATION.md#data-encryption-keys-4456).
+
 ## Troubleshooting
 
 | Symptom | Likely cause | Fix |
@@ -90,6 +98,7 @@ or run `pnpm run config:self-heal`.
 | A check stays "blocked" | A required dependency isn't in place | Open the linked area and resolve the named requirement |
 | **Club Time Zone** stays blocked right after an upgrade | The application has not restarted since the migration, so the zone has not been recorded yet. The zone in use is still the right one | Restart the application, or run `pnpm run config:self-heal`. See the [Club Time Zone guide](club-time.md) |
 | **Club Time Zone** shows a warning about confirming the zone | The server's `TZ` named no actual place, so `Pacific/Auckland` was recorded rather than guessed at from a value that names no location | If the club is in New Zealand, acknowledge the step. If not, set the real zone at [`/admin/club-time`](club-time.md) — this is the case that would otherwise put a non-NZ club's times out by hours |
+| **Data Encryption Key** is blocked | No data-encryption key is set on the server yet, or one that was set is now missing or invalid (the step says which) | Ask whoever runs the server to set or restore `DATA_ENCRYPTION_KEYS`, per [`DEPLOYMENT.md`](../../DEPLOYMENT.md#adding-a-data-encryption-key-4456) |
 | Setup shows incomplete after go-live | Optional checks were left unskipped | Mark genuinely-skipped checks as skipped so the summary reflects reality |
 
 ## Related links

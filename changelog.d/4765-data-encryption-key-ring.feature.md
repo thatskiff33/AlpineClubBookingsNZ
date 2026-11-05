@@ -9,12 +9,16 @@
   list of them, the first used for new data). Once it is set, new and re-saved
   credentials, authenticator enrolments and Xero token refreshes are encrypted
   under it, and the auth secret can later be rotated without losing them.
-  Nothing changes until an operator sets it, and Admin → Setup has a new "Data
-  Encryption Key" step saying what is still on the auth secret.
+  The site runs unchanged until an operator sets it, but Admin → Setup has a
+  new "Data Encryption Key" step saying what is still on the auth secret, and
+  on a club with anything stored that step is red, so the setup report shows
+  blocked and `pnpm run setup:check` exits 1 until a key is set.
 
   **What to do:** read "Data-encryption keys" in `CONFIGURATION.md` and "Adding
   a data-encryption key" in `DEPLOYMENT.md`. Set the key only after every
   container runs this release. **Recovery codes issued before the key is set
   stop working when it is set**; affected members see a notice at sign-in and
   on their profile asking them to generate new ones, and admins should
-  regenerate their own straight away.
+  regenerate their own straight away. Until a later release deletes them, the
+  old codes work again on any server without the key. Add a newer key later in
+  two redeploys, as `DEPLOYMENT.md` describes.

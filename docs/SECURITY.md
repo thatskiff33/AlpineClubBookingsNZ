@@ -554,15 +554,25 @@ the code holds to are:
   guess or a crash.
 - **Each use has its own HKDF-SHA256 sub-key** of a ring key (credentials,
   authenticator secrets, code hashes), so no two uses share key material.
-- **With no ring set, nothing changes**: the auth secret is the current key and
-  every format is byte-for-byte what it was. That is what makes the release
-  safe to deploy blue/green.
+- **With no ring set, nothing stored changes**: the auth secret is the current
+  key and every format is byte-for-byte what it was. That is what makes the
+  release safe to deploy blue/green. Only the setup step differs: red while
+  anything is stored, so `setup:check` exits 1 until a key is set.
 - **A bad ring fails closed.** Any malformed, short, single-byte, duplicate-id
-  or duplicate entry makes the whole ring invalid: capture refuses, ring rows
-  report "cannot be read", rows still on the auth secret stay readable, and
-  setup readiness goes red naming the entry — never its value.
+  or duplicate entry makes the whole ring invalid, and so does a key that is
+  the auth secret (its text, or its bytes as base64, hex or UTF-8) or one whose
+  bytes are all printable ASCII (a password). Readiness (`/api/health/ready`)
+  fails, capture refuses, ring rows report "cannot be read", rows still on the
+  auth secret stay readable, and setup readiness goes red naming the entry —
+  never its value.
+- **No write falls back to the auth secret over ring data.** While no ring is
+  set but a credential, authenticator secret or recovery code names a ring key,
+  credential capture, the Xero refresh, two-factor enrolment, recovery-code
+  replacement and email codes refuse (`data-encryption-legacy-write-guard.ts`),
+  so a lost ring never quietly puts new secrets back under the auth secret.
 - **No key material is logged.** Errors and readiness name an id or a position
-  only, and a key object prints as its id.
+  only, a key object prints as its id, and a spread copy of it carries no
+  material.
 
 **Recovery codes at cut-over.** A keyed hash cannot be re-keyed, so recovery
 codes issued under the auth secret stop working the moment a ring is set. The
@@ -576,7 +586,11 @@ profile to generate a new set.
 - Rows written before the ring stay readable under `AUTH_SECRET` until they are
   re-encrypted, so until setup readiness reports nothing left on it, the old
   coupling remains for those rows. The in-place re-encrypt command is the second
-  part of #4456.
+  part of #4456, and so is a switch to stop reading rows under the auth secret
+  once none remain; until then the current auth secret always reads them.
+- Recovery codes issued before the ring are refused, not deleted: an instance
+  started without the ring accepts them again. The second part of #4456
+  retires them in the database.
 - An older release cannot read ring rows, so the variable must not be set until
   the previous release has drained (the runbook's first step).
 - The keys live in the environment of each app container, like `AUTH_SECRET`;

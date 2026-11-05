@@ -1884,7 +1884,9 @@ rows as an owner-approved data operation (see below).
   re-pointing Caddy to a colour started without the ring, rolling back to a
   release older than #4456, or unsetting the variable leaves those rows
   unreadable (credentials need re-entry, authenticators stop verifying,
-  recovery codes stop matching). Keep the ring set and go forward
+  recovery codes stop matching), and makes the recovery codes issued before the
+  ring work again there until the second part of #4456 retires them. Keep the
+  ring set and go forward
   ([`DEPLOYMENT.md` → Adding a data-encryption key](../DEPLOYMENT.md#adding-a-data-encryption-key-4456));
   the pre-deploy backup is the only route back to a ring-less state.
 

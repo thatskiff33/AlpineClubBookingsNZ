@@ -616,7 +616,9 @@ writer" would be a stronger claim than the instrument makes.
   still on it — none once setup readiness's "Data Encryption Key" step is green,
   and otherwise the credentials of
   **every** provider in the list above — all seven namespaces, not just the two an
-  operator is likely to be thinking about — on top of dropping sessions and all 2FA enrolments/recovery codes. See the
+  operator is likely to be thinking about — on top of dropping sessions and the
+  2FA enrolments and recovery codes still on it (every one, until that step is
+  green). See the
   auth-secret rotation runbook in `DEPLOYMENT.md`, which sequences the re-entry
   and points back here for what has to be re-entered.
 - **Decrypt-before-verify on webhook paths.** Both the Xero webhook route
