@@ -486,6 +486,15 @@ describe("passwordHash writer scanner", () => {
     expect(sources(`async function a() { let h = await hash(randomBytes(8).toString("hex"), 12); h = typed; save({ passwordHash: h }); }`)).toEqual([["unknown", null]]);
     expect(sources(`async function a() { save({ passwordHash: await hash(String(Date.now()), 12) }); }`)).toEqual([["unknown", null]]);
     expect(sources(`async function a() { save({ passwordHash: await other(randomBytes(8)) }); }`)).toEqual([["unknown", null]]);
+    // A loop or catch variable shadows an outer constant too, and is not followed.
+    const h = `const h = await hash(randomBytes(8).toString("hex"), 12);`;
+    expect(sources(`async function a() { ${h} for (const h of typed) save({ passwordHash: h }); }`)).toEqual([["unknown", null]]);
+    expect(sources(`async function a() { ${h} for (const h in typed) save({ passwordHash: h }); }`)).toEqual([["unknown", null]]);
+    expect(sources(`async function a() { ${h} for (let h = typed; ; ) save({ passwordHash: h }); }`)).toEqual([["unknown", null]]);
+    expect(sources(`async function a() { ${h} for (const [h] of typed) { save({ passwordHash: h }); } }`)).toEqual([["unknown", null]]);
+    expect(sources(`async function a() { ${h} try { x(); } catch (h) { save({ passwordHash: h }); } }`)).toEqual([["unknown", null]]);
+    expect(sources(`async function a() { ${h} try { x(); } catch ({ h }) { save({ passwordHash: h }); } }`)).toEqual([["unknown", null]]);
+    expect(sources(`async function a() { ${h} for (const x of list) save({ passwordHash: h }); }`)).toEqual([["random", null]]);
     // A callback's own parameter shadows an outer constant of the same name.
     expect(sources(`async function a() { const h = await hash(randomBytes(8).toString("hex"), 12); list.map((h) => save({ passwordHash: h })); }`)).toEqual([["parameter", null]]);
   });
@@ -540,6 +549,8 @@ describe("passwordHash writer scanner", () => {
     expect(guarded(`async function a(b) { const s = await screenChosenPassword(b.data.pw); if (!s.ok) return; b["data"] = typed; save({ passwordHash: await hash(b.data.pw, 12) }); }`)).toEqual([false]);
     expect(guarded(`async function a(body) { let pw = body.pw; const s = await screenChosenPassword(pw); if (!s.ok) return; save({ passwordHash: await hash(pw, 12) }); }`)).toEqual([false]);
     expect(guarded(`async function a(p, list) { const s = await screenChosenPassword(p); if (!s.ok) return; list.forEach(async (p) => save({ passwordHash: await hash(p, 12) })); }`)).toEqual([false]);
+    expect(guarded(`async function a(p, list) { const s = await screenChosenPassword(p); if (!s.ok) return; for (const p of list) save({ passwordHash: await hash(p, 12) }); }`)).toEqual([false]);
+    expect(guarded(`async function a(p) { const s = await screenChosenPassword(p); if (!s.ok) return; try { x(); } catch (p) { save({ passwordHash: await hash(p, 12) }); } }`)).toEqual([false]);
     // A write deeper than the path, or to another property, reassigns nothing.
     expect(guarded(`async function a(b) { const s = await screenChosenPassword(b.pw); if (!s.ok) return; b.other = 1; save({ passwordHash: await hash(b.pw, 12) }); }`)).toEqual([true]);
     // A screen in another wrapped handler never satisfies this one.

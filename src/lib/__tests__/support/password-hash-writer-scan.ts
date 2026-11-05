@@ -348,12 +348,14 @@ function bindingIdentifier(name: ts.BindingName, wanted: string): ts.Identifier 
  * The declaration `name` resolves to where `from` reads it: the nearest
  * enclosing scope wins, from the innermost callback out to the module. `id` is
  * the binding identifier itself, so two reads resolve to the same declaration
- * exactly when their `id`s are the same node. `other` is a `let` or `var`; an
- * import or a global is not found (null).
+ * exactly when their `id`s are the same node. `loop` is a `for`, `for…in` or
+ * `for…of` initializer's variable; `other` is a `let`, a `var` or a `catch`
+ * variable; an import or a global is not found (null).
  */
 type Declaration =
   | { kind: "const"; id: ts.Identifier; declaration: ts.VariableDeclaration }
   | { kind: "parameter"; id: ts.Identifier; scope: ts.Node }
+  | { kind: "loop"; id: ts.Identifier; statement: ts.ForStatement | ts.ForInStatement | ts.ForOfStatement }
   | { kind: "other" }
   | null;
 
@@ -364,6 +366,19 @@ function findDeclaration(name: string, from: ts.Node): Declaration {
         const id = bindingIdentifier(parameter.name, name);
         if (id) return { kind: "parameter", id, scope: current };
       }
+    }
+    if (
+      (ts.isForStatement(current) || ts.isForInStatement(current) || ts.isForOfStatement(current)) &&
+      current.initializer &&
+      ts.isVariableDeclarationList(current.initializer)
+    ) {
+      for (const declaration of current.initializer.declarations) {
+        const id = bindingIdentifier(declaration.name, name);
+        if (id) return { kind: "loop", id, statement: current };
+      }
+    }
+    if (ts.isCatchClause(current) && current.variableDeclaration) {
+      if (bindingIdentifier(current.variableDeclaration.name, name)) return { kind: "other" };
     }
     if (!ts.isBlock(current) && !ts.isSourceFile(current)) continue;
     for (const statement of current.statements) {
@@ -382,8 +397,8 @@ function findDeclaration(name: string, from: ts.Node): Declaration {
 /**
  * What `name` is bound to where `from` reads it. A `const` with a plain
  * identifier gives its initializer; a parameter (destructured or not) says the
- * caller decides; `let`, a destructured `const`, a loop variable or an import
- * is not followed.
+ * caller decides; `let`, a destructured `const`, a loop or `catch` variable or
+ * an import is not followed, and an inner one shadows an outer `const`.
  */
 function resolveBinding(name: string, from: ts.Node): Binding {
   const declaration = findDeclaration(name, from);
@@ -476,7 +491,7 @@ function isReassigned(reference: Reference, scope: ts.Node): boolean {
     for (const target of assignmentTargets(node)) {
       const write = writtenPath(target);
       const declaration = write && findDeclaration(write.root.text, write.root);
-      if (!write || !declaration || declaration.kind === "other" || declaration.id !== reference.id) continue;
+      if (!write || !declaration || !("id" in declaration) || declaration.id !== reference.id) continue;
       // Writing the declaration, or any property its path reads through.
       if (
         write.path.length <= reference.path.length &&
