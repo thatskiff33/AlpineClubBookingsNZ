@@ -7,7 +7,7 @@
  * `login-throttle.realdb.test.ts`. Each attempt arrives from a different
  * internet address to show the count belongs to the account, not the address.
  */
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { rows, mockPrisma, mockBcryptCompare, mockLoadEffectiveModuleFlags, mockAuth, REAL_HASH } =
   vi.hoisted(() => {
@@ -136,6 +136,7 @@ import {
 } from "@/lib/login-throttle";
 import { DUMMY_PASSWORD_HASH } from "@/lib/password-hashing";
 import { LOGIN_THROTTLED_CODE } from "@/lib/login-throttle-policy";
+import { stubBreachedPasswordService } from "@/lib/__tests__/helpers/breached-password-service";
 
 type Authorize = (credentials: Record<string, string>, request?: Request) => Promise<unknown>;
 const passwordProvider = authConfig.providers[0] as unknown as { authorize: Authorize };
@@ -220,6 +221,13 @@ beforeEach(() => {
     where.email === OFFICER_EMAIL ? officer() : null,
   );
   mockLoadEffectiveModuleFlags.mockResolvedValue({ magicLink: true, googleLogin: true });
+  // #4610: the chosen-password writers screen against the breached-password
+  // range service; tests never reach the real one.
+  stubBreachedPasswordService();
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
 });
 
 describe("per-account password throttle through authorize (#4609)", () => {

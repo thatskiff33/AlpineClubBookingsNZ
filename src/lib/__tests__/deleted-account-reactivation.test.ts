@@ -60,6 +60,9 @@ vi.mock("@/lib/prisma", () => ({
       updateMany: vi.fn(),
     },
     magicLinkToken: { findUnique: vi.fn(), updateMany: vi.fn() },
+    // #4611: the maximum session age is read on every refresh; no row, so the
+    // 7-day default applies.
+    loginSecuritySetting: { findUnique: vi.fn().mockResolvedValue(null) },
     // #2597 introduced the durable PENDING -> APPROVAL_IN_PROGRESS claim, which
     // is taken through `updateMany` on the outer client before the first
     // cancellation commits; the count decides whether this caller owns it.

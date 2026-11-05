@@ -1,5 +1,6 @@
 import { PaymentSource, type Prisma } from "@prisma/client";
 
+import { escapeRegExp } from "@/lib/escape-regexp";
 import logger from "@/lib/logger";
 import { readMigrationFinishedAt } from "@/lib/migration-finished-at";
 import { buildRefundRequestRefundMetadata } from "@/lib/payment-recovery-keys";
@@ -102,8 +103,9 @@ function cardRefundKeyTagPattern(): RegExp {
   const marker = "\u0000";
   const [before, after] = cardRefundNoteKeyTag(marker).split(marker);
   if (!before || !after) throw new Error("cardRefundNoteKeyTag must put text either side of the refund id");
-  const escape = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return (keyTagPatternCache = new RegExp(`${escape(before)}((?:(?!${escape(after)}).)+)${escape(after)}`));
+  return (keyTagPatternCache = new RegExp(
+    `${escapeRegExp(before)}((?:(?!${escapeRegExp(after)}).)+)${escapeRegExp(after)}`,
+  ));
 }
 
 /**

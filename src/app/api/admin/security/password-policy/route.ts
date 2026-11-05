@@ -14,6 +14,10 @@ import {
 } from "@/lib/password-policy";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
+import {
+  SESSION_MAX_AGE_MAX_HOURS,
+  SESSION_MAX_AGE_MIN_HOURS,
+} from "@/lib/session-max-age";
 
 // Admin API for the club password-complexity policy (epic #2030, child #2033).
 // The Login & Security page's password-policy card reads GET and writes PUT.
@@ -23,6 +27,14 @@ import { requireAdmin } from "@/lib/session-guards";
 // password rules ONLY; magicLinkTtlMinutes is owned by the sibling magic-link
 // route (PUT /api/admin/security/magic-link, wired in #2103) and is deliberately
 // not writable here — the strict schema below rejects it.
+//
+// #4610: the breached-password check switch (INV-AUTH-006) is written here too,
+// beside the rules it extends. It is optional in the body so a page loaded
+// before the upgrade (which never sends it) still saves and leaves it as it was.
+//
+// #4611: so is the maximum session age in hours (INV-AUTH-007), on the same
+// terms: optional for an older page, and a whole number from 8 to 720 hours or
+// the save is refused with no write.
 
 const AREA = "support" as const;
 
@@ -37,6 +49,13 @@ const policyInputSchema = z
     requireLowercase: z.boolean(),
     requireDigit: z.boolean(),
     requireSymbol: z.boolean(),
+    breachedPasswordCheck: z.boolean().optional(),
+    sessionMaxAgeHours: z
+      .number()
+      .int()
+      .min(SESSION_MAX_AGE_MIN_HOURS)
+      .max(SESSION_MAX_AGE_MAX_HOURS)
+      .optional(),
   })
   .strict();
 
@@ -78,6 +97,8 @@ export async function PUT(request: Request) {
         requireLowercase: true,
         requireDigit: true,
         requireSymbol: true,
+        breachedPasswordCheck: true,
+        sessionMaxAgeHours: true,
       },
     });
     await tx.loginSecuritySetting.upsert({

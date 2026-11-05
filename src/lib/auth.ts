@@ -38,6 +38,8 @@ import {
   loadSessionMemberSecurity,
 } from "./session-member-security";
 import { loadEffectiveModuleFlags } from "./module-settings";
+import { loadClubSessionMaxAgeHours } from "./login-security-settings";
+import { isSessionPastMaxAge } from "./session-max-age";
 import {
   ACCOUNT_SESSION_IDLE_SECONDS,
   isKioskSessionMember,
@@ -577,6 +579,12 @@ export const authConfig = {
         }
       }
 
+      // #4611 (INV-AUTH-007): the maximum session age is judged on the stamp
+      // the token ARRIVED with, before the line below back-fills a missing one
+      // from `iat` or now: a token with no readable stamp is expired, never
+      // given a fresh clock. Only the sign-in branch above mints a stamp.
+      const incomingSessionStamp = { sessionIssuedAt: token.sessionIssuedAt };
+
       const sessionIssuedAt = getTokenSessionIssuedAtMs(token);
       token.sessionIssuedAt = sessionIssuedAt;
 
@@ -586,8 +594,14 @@ export const authConfig = {
         const member = await loadSessionMemberSecurity(token.id);
 
         if (member) {
-          const modules = await loadEffectiveModuleFlags();
+          const [modules, clubSessionMaxAgeHours] = await Promise.all([
+            loadEffectiveModuleFlags(),
+            // #4611: read on every refresh, so a changed setting reaches
+            // existing sessions on their next one.
+            loadClubSessionMaxAgeHours(),
+          ]);
           const twoFactorRequired = modules.twoFactor === true;
+          const kioskAccount = isKioskSessionMember(member);
 
           token.role = member.canLogin === false ? "USER" : member.role;
           // role is null for definition-backed custom-role rows, so the
@@ -596,7 +610,7 @@ export const authConfig = {
           token.accessRoles = sessionAccessRoleClaim(member);
           token.canLogin = member.canLogin;
           // #4612: the next refresh's idle window (session-idle-expiry.ts).
-          token.kioskAccount = isKioskSessionMember(member);
+          token.kioskAccount = kioskAccount;
           // #1367: merged admin-permission matrix over the JOINED assignment
           // rows, so definition-backed custom roles and club-edited seeded
           // definitions grant correctly through every session.user-based
@@ -614,10 +628,29 @@ export const authConfig = {
           // password: the defence-in-depth backstop behind the provider
           // refusals above. auth() nulls any session carrying the flag, so every
           // server touch reads as logged-out; a token once invalidated stays so
-          // (see session-member-security.ts).
+          // (see session-member-security.ts). #4611 (INV-AUTH-007): so is a
+          // session past its maximum age, counted from sign-in: the club's
+          // setting, or the lodge kiosk's own 30 days. Nothing here extends it.
+          const pastMaxAge =
+            token.sessionInvalidated !== true &&
+            isSessionPastMaxAge(
+              incomingSessionStamp,
+              { kioskAccount, clubSessionMaxAgeHours },
+              Date.now(),
+            );
+          // Debug, not info: a bare auth() never saves the flag, so a past-cap
+          // cookie is judged again, and would log again, on every read until
+          // the session endpoint re-encodes it (#4611 review, R6).
+          if (pastMaxAge) {
+            logger.debug(
+              { memberId: token.id, kioskAccount },
+              "Ending a session that has reached its maximum age (#4611)",
+            );
+          }
           token.sessionInvalidated =
             token.sessionInvalidated === true ||
-            isRevokedMemberSession(member, sessionIssuedAt, token.id);
+            isRevokedMemberSession(member, sessionIssuedAt, token.id) ||
+            pastMaxAge;
           token.twoFactorRequired = twoFactorRequired;
           token.twoFactorEnrolled = member.twoFactorEnabled;
           token.twoFactorMethod = member.twoFactorMethod ?? null;

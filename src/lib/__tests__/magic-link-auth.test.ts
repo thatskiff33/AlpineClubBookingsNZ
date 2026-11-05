@@ -36,6 +36,9 @@ vi.mock("@/lib/prisma", () => ({
       findUnique: mockTokenFindUnique,
       updateMany: mockTokenUpdateMany,
     },
+    // #4611: the maximum session age is read on every refresh; no row, so the
+    // 7-day default applies.
+    loginSecuritySetting: { findUnique: vi.fn().mockResolvedValue(null) },
   },
 }));
 

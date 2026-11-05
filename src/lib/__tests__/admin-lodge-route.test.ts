@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
@@ -23,6 +23,10 @@ vi.mock("@/lib/prisma", () => ({
       findFirst: vi.fn(),
       findUnique: vi.fn(),
     },
+    // #4610: read by screenChosenPassword; null is the code default (check on).
+    loginSecuritySetting: {
+      findUnique: vi.fn(async () => null),
+    },
     $transaction: vi.fn(),
   },
 }));
@@ -45,6 +49,11 @@ import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
 import { logAudit } from "@/lib/audit";
 import { GET, POST, PUT } from "@/app/api/admin/lodge/route";
+import { stubBreachedPasswordService } from "@/lib/__tests__/helpers/breached-password-service";
+import {
+  BREACHED_PASSWORD_CODE,
+  BREACHED_PASSWORD_MESSAGE,
+} from "@/lib/breached-password";
 import {
   adminSession,
   jsonRequest,
@@ -88,6 +97,13 @@ function stubGetWithGrants(
 describe("admin lodge route", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // #4610: the chosen-password writers screen against the breached-password
+    // range service; tests never reach the real one.
+    stubBreachedPasswordService();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
   });
 
   it("creates a missing lodge account with a normalized LODGE access role", async () => {
@@ -415,5 +431,81 @@ describe("admin lodge route", () => {
     // Byte-identical to the pre-#1587 shape: no ambiguity fields added.
     expect(account).not.toHaveProperty("binding");
     expect(account).not.toHaveProperty("assignedLodgeCount");
+  });
+});
+
+// #4610 (INV-AUTH-006): an officer choosing a kiosk password is screened
+// against the breached-password range service before it is hashed.
+describe("admin lodge route: breached-password check", () => {
+  const BREACHED = "kiosk-pass";
+  const CLEAN = "a quiet ridge at first light 4610";
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(prisma.loginSecuritySetting.findUnique).mockResolvedValue(null);
+    mockedAuth.mockResolvedValue(adminSession({ id: "admin-1" }));
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  function postKiosk(password: string) {
+    return POST(
+      jsonRequest(
+        "/api/admin/lodge",
+        { email: "new-kiosk@example.org", password },
+        { method: "POST" },
+      ),
+    );
+  }
+
+  function stubKioskUpdate() {
+    vi.mocked(prisma.member.findFirst).mockResolvedValue(
+      memberFactory({ id: "lodge-1", email: "lodge@example.org", role: "LODGE" }),
+    );
+    vi.mocked(prisma.member.update).mockResolvedValue({
+      ...memberFactory({ id: "lodge-1", email: "lodge@example.org", role: "LODGE" }),
+      lodgeAccess: [],
+    } as never);
+  }
+
+  it("refuses a listed password on create and on update, storing nothing", async () => {
+    stubBreachedPasswordService([BREACHED]);
+    vi.mocked(prisma.member.findFirst).mockResolvedValueOnce(null); // POST: email free
+    const created = await postKiosk(BREACHED);
+    expect(created.status).toBe(400);
+    await expect(created.json()).resolves.toEqual({
+      error: BREACHED_PASSWORD_MESSAGE,
+      code: BREACHED_PASSWORD_CODE,
+    });
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+
+    stubKioskUpdate();
+    const updated = await PUT(makePutRequest({ id: "lodge-1", password: BREACHED }));
+    expect(updated.status).toBe(400);
+    await expect(updated.json()).resolves.toMatchObject({ code: BREACHED_PASSWORD_CODE });
+    expect(prisma.member.update).not.toHaveBeenCalled();
+  });
+
+  it("accepts an unlisted password on update, and makes no request without a password", async () => {
+    const fetchMock = stubBreachedPasswordService([BREACHED]);
+    stubKioskUpdate();
+
+    expect((await PUT(makePutRequest({ id: "lodge-1", password: CLEAN }))).status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect((await PUT(makePutRequest({ id: "lodge-1", firstName: "Desk" }))).status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("makes no outbound request when the club has switched the check off", async () => {
+    vi.mocked(prisma.loginSecuritySetting.findUnique).mockResolvedValue({
+      breachedPasswordCheck: false,
+    } as never);
+    const fetchMock = stubBreachedPasswordService([BREACHED]);
+    stubKioskUpdate();
+
+    expect((await PUT(makePutRequest({ id: "lodge-1", password: BREACHED }))).status).toBe(200);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

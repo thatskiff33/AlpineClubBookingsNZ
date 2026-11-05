@@ -125,6 +125,7 @@ vi.mock("@sentry/nextjs", () => ({
   captureCheckIn: vi.fn(() => "check-in-id"),
   captureException: vi.fn(),
   init: vi.fn(),
+  nativeNodeFetchIntegration: vi.fn(() => ({ name: "NodeFetch" })),
 }));
 
 // Mock logger

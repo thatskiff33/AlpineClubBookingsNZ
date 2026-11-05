@@ -288,6 +288,104 @@ on each replica. The routes still answer; a store failure never blocks a request
   counted only by the per-address limiter. Protection is complete once the old
   slot drains.
 
+## Breached-password check (#4610)
+
+Audience: Operator, Developer.
+
+A password reused from a breached site passes any length or character rule,
+and it is the first thing an attacker tries. So when a person chooses a
+password, the app asks a public breached-password service whether it has been
+seen in a breach, and refuses it if so. The rules are `INV-AUTH-006` in
+[`invariants/authentication.md`](invariants/authentication.md#inv-auth-006); this section
+holds the behaviour and the limits.
+
+**Where it runs.** Changing a password, choosing one from a reset or
+account-setup link, an officer setting a kiosk password (Lodge settings), and
+the install-time seed's `SEED_ADMIN_PASSWORD` and `SEED_LODGE_PASSWORD`, each
+checked only when its account is missing, and both before the seed writes
+anything. The seed runs before the club setting exists, so it always checks,
+and a breached password stops it, with nothing written, and a message naming
+the variable.
+Self-registration is retired (`/api/auth/register` answers 410), and the
+other ways an account is created (admin creation, imports, approved
+applications, placeholder contacts) store a random placeholder, so the
+person's first real password is chosen through the reset or setup link and
+screened there. A refused password answers HTTP 400
+with code `PASSWORD_BREACHED` and a plain message asking for another; a reset
+or setup link stays usable, so the person can try again. Sign-in never runs
+the check, and passwords already set are not re-checked.
+
+**What leaves the server.** The app makes the password's SHA-1 hash and sends
+only its first five hex characters to
+`https://api.pwnedpasswords.com/range/<prefix>` (the k-anonymity "range"
+method), with the `Add-Padding` header so every answer is a similar size. The
+service returns every listed hash suffix sharing that prefix, and the match is
+made on the server. No password, full hash, email or member id is sent, and no
+log line carries the prefix. Sentry instruments outgoing fetches, so the server
+init configures its Node fetch integration to ignore the range request
+(`ignoreOutgoingRequests`): it gets no span, no breadcrumb, and no
+`sentry-trace` or `baggage` header sent to the service. As a backstop, the
+shared privacy options every `Sentry.init` spreads
+(`src/lib/sentry-privacy-options.ts`, keyed on the endpoint constant) drop any
+span naming the range URL, scrub the prefix from any span that still reaches
+`beforeSendSpan`, drop the fetch breadcrumb, and scrub it from every error
+event. Deployments that restrict outbound traffic must
+allow HTTPS to `api.pwnedpasswords.com`
+([`CONFIGURATION.md`](../CONFIGURATION.md#outbound-network-access)).
+
+**Club setting.** On by default. A Support & System editor can switch it off
+under **Admin → Login & Security → Password policy** ("Refuse passwords found
+in public data breaches"); it is saved and audited with the rest of the card
+and travels in a configuration export. Switched off, no request is made.
+
+**If the service is slow or down.** It fails open: with no answer within three
+seconds, a network error, a non-200 or a malformed answer, the password is
+accepted and a warning naming only the failure class is logged. An outage
+elsewhere never stops a member setting a password or finishing setup.
+
+**Every place a password is written is counted.**
+`src/lib/__tests__/password-hash-writer-census.test.ts` parses every
+`passwordHash` writer under `src/`, `prisma/` and `scripts/`: property writes,
+and raw-SQL `INSERT` or `UPDATE` literals naming the column. A writer must
+either be guarded — a `const` bound to the awaited `screenChosenPassword`
+result, then an `if (!result.ok)` that returns, both in a block enclosing the
+write and before it, where the screened argument and the written hash's
+`bcrypt.hash` input resolve to the same unreassigned `const` or parameter, and
+the call does not switch the check off — or be listed as exempt with its reason (placeholders, imports,
+erasure, the local demo seed and SQL fixtures store generated or unusable
+hashes). For an exempt writer the census also traces the value it writes,
+through `const` bindings and the `bcrypt.hash` input, and requires random
+bytes, the erased-account sentinel or a fixed literal (for raw SQL, the value
+written inline: no template holes, bind placeholders or bind arguments), so an
+exemption cannot come to cover a typed password. A writer that stores a
+parameter, or copies the `passwordHash` of an object built in the same
+function, names the writer that produced the value (`valueFrom`), which must
+be screened or traced to a generated value; a copy counts only when its object
+was built by a generated or screened writer. Only the local demo seed is
+listed as untraced. A new
+writer in neither list fails the build. It cannot see SQL assembled by
+concatenating separate literals or read from a `.sql` file at run time.
+
+**Stated limits.**
+
+- **Fail-open means an outage lets a breached password through.** That was
+  chosen over blocking members (#4610); the warning in the log is how an
+  operator sees it happening.
+- **The prefix narrows the password to one of several hundred listed hashes.**
+  That is the method's design: the service learns a bucket, not the password,
+  and nothing ties the request to a member beyond the server's own address.
+- **During a blue/green cutover the old slot does not check.** The migration
+  only adds the setting column, and the draining release never reads it.
+- **The install-time seed fails open too.** If the seed host cannot reach
+  the service, `SEED_ADMIN_PASSWORD` and `SEED_LODGE_PASSWORD` are accepted
+  unchecked, as any chosen password would be. The seed admin must still change
+  password on first sign-in, which is screened; nothing forces the seed
+  kiosk's password to change.
+- **The local demo seed is not screened.** `pnpm run db:seed:demo` hashes
+  `DEMO_SEED_PASSWORD` (or its published default) for local demo accounts; it
+  refuses to run without `ALLOW_DEMO_SEED=1` and never seeds a production
+  account.
+
 ## Session idle expiry and the lodge kiosk (#4612)
 
 Audience: Operator, Developer.
@@ -353,8 +451,74 @@ the real Auth.js handler on the frozen clock.
   gets 8 hours; its first refresh stamps the claim.
 - The hut-leader PIN session on the same tablet is separate: 10 minutes idle,
   12 hours in total (`lodge-pin-session-timing.ts`).
-- This is the idle window only. A ceiling on a session's total age, measured
-  from sign-in, is #4611.
+- This is the idle window only. The ceiling on a session's total age, measured
+  from sign-in, is the next section.
+
+## Maximum session age (#4611)
+
+Audience: Operator, Developer.
+
+The idle window above ends a session nobody uses, but every refresh slides it
+forward, so a browser in daily use, or a stolen session cookie replayed every
+few hours, would otherwise stay signed in for ever. So every session also ends
+a fixed time **after sign-in**, however active it is. The rules are
+`INV-AUTH-007` in
+[`invariants/authentication.md`](invariants/authentication.md#inv-auth-007);
+this section holds the behaviour and the limits.
+
+**The limit.** A club setting, **7 days** by default, any whole number of hours
+from 8 to 720 (30 days). A Support & System editor sets it under **Admin →
+Login & Security → Password policy** ("Sign members out after (hours)"); it is
+saved and audited with the rest of the card, travels in a configuration export,
+and a value outside the range is refused on save. The lodge kiosk account (the
+classification in the section above) keeps its own **30 days**, which the club
+setting never shortens or lengthens.
+
+**How it is measured.** Signing in stamps the token's `sessionIssuedAt` once.
+Every later refresh re-runs the `jwt` callback in `src/lib/auth.ts` without
+re-stamping it, so neither activity, a role change, a two-factor verification
+nor a refresh moves it. The JWT's own `iat` is renewed on every refresh and is
+never used. On each refresh the callback asks `isSessionPastMaxAge`
+(`src/lib/session-max-age.ts`) whether the incoming stamp is at least the limit
+old; if so it sets `sessionInvalidated`, the same flag a revoked session
+carries, and `auth()` answers no session. The setting is read on every
+refresh, so a change applies to people already signed in on their next
+request.
+
+**What the person sees.** The same as any ended session: the next page load
+goes to sign-in with the page as the return path, and an API call answers 401.
+Signing in again starts a new clock.
+
+**A token without a readable stamp is expired.** Every token minted since
+`sessionIssuedAt` was introduced carries one, so in practice this ends only
+tokens from before it, or ones not minted by the app.
+
+**Stated limits.**
+
+- **Upgrading ends every session already older than the limit**, on its next
+  request: with the default, anyone who signed in more than 7 days before the
+  release signs in again, and the lodge kiosk tablet does if it was signed in
+  more than 30 days before. Plan the release accordingly.
+- **The kiosk tablet must be signed in again every 30 days**, even in daily use.
+- **The decision is recomputed on every read, not stored on the server.** The
+  session is a signed token with no server-side session store. The
+  `sessionInvalidated` flag is saved into the cookie only when the browser
+  refreshes its session through `/api/auth/session`; a bare `auth()` (a page
+  render, a route handler) never writes the cookie, so a past-limit cookie
+  replayed without reaching that endpoint is judged afresh from its sign-in
+  stamp each time. It is refused while the limit stands, but raising the
+  setting, or the account becoming the kiosk, re-admits a session past the
+  old limit that was never saved as invalidated. No server-side state is
+  kept to prevent that.
+- **The cookie is not destroyed at the limit.** While a tab keeps fetching
+  `/api/auth/session` it is re-issued, still refused; otherwise it lapses
+  after the idle window.
+- **A failed settings read fails the refresh closed.** The session endpoint
+  clears the cookie, as for a failed member read, and a bare `auth()` reads no
+  session; it never extends a session.
+- **During a blue/green cutover the old slot does not apply the cap.** The
+  migration only adds the setting column, and the draining release never reads
+  it; the first request the new slot serves applies it.
 
 ## Dietary/allergy information (special-category data)
 
