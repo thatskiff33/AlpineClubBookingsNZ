@@ -48,7 +48,7 @@ import {
 } from "@/lib/integration-credentials";
 import { DATA_KEY_SOURCE_PREFIX } from "@/lib/integration-crypto";
 import { prisma } from "@/lib/prisma";
-import { exactPrefix } from "@/lib/prisma-exact-prefix";
+import { exactContains, exactPrefix } from "@/lib/prisma-exact-prefix";
 import { RETIRED_RECOVERY_CODE_KEY_ID, RING_ENCRYPTION_VERSION } from "@/lib/two-factor-key-format";
 import {
   LEGACY_RECOVERY_CODE_WHERE,
@@ -164,6 +164,22 @@ function secretsOffTarget(target: DataKey, options: ReencryptOptions): Prisma.Me
     AND: [
       { totpSecret: { not: null } },
       { NOT: { totpSecret: exactPrefix(`${RING_ENCRYPTION_VERSION}:${target.id}:`) } },
+    ],
+  };
+}
+
+/**
+ * Unused recovery codes under a ring key other than `target`: a `:` (so not
+ * legacy), and neither the current key's prefix nor the retired marker.
+ */
+function olderRingKeyCodes(target: DataKey, options: ReencryptOptions): Prisma.TwoFactorRecoveryCodeWhereInput {
+  return {
+    ...scopeWhere(options).code,
+    usedAt: null,
+    codeHash: exactContains(":"),
+    NOT: [
+      { codeHash: exactPrefix(`${target.id}:`) },
+      { codeHash: exactPrefix(`${RETIRED_RECOVERY_CODE_KEY_ID}:`) },
     ],
   };
 }
@@ -316,17 +332,7 @@ export async function reencryptStoredData(options: ReencryptOptions): Promise<Re
     prisma.integrationCredential.count({ where: credentialsOffTarget(target, options) }),
     prisma.member.count({ where: secretsOffTarget(target, options) }),
     prisma.twoFactorRecoveryCode.count({ where: legacyCodes }),
-    prisma.twoFactorRecoveryCode.count({
-      where: {
-        ...scope.code,
-        usedAt: null,
-        NOT: [
-          LEGACY_RECOVERY_CODE_WHERE.NOT,
-          { codeHash: exactPrefix(`${target.id}:`) },
-          { codeHash: exactPrefix(`${RETIRED_RECOVERY_CODE_KEY_ID}:`) },
-        ],
-      },
-    }),
+    prisma.twoFactorRecoveryCode.count({ where: olderRingKeyCodes(target, options) }),
   ]);
 
   return {

@@ -92,8 +92,8 @@ beforeEach(() => {
   );
   mocks.prisma.member.count.mockImplementation(async () => mocks.counts.secrets);
   mocks.prisma.twoFactorRecoveryCode.findMany.mockImplementation(async () => mocks.legacyHolders);
-  mocks.prisma.twoFactorRecoveryCode.count.mockImplementation(async ({ where }: { where: { NOT: unknown } }) =>
-    Array.isArray(where.NOT) ? mocks.counts.olderCodes : mocks.counts.legacyCodes,
+  mocks.prisma.twoFactorRecoveryCode.count.mockImplementation(async ({ where }: { where: { codeHash?: unknown } }) =>
+    where.codeHash === undefined ? mocks.counts.legacyCodes : mocks.counts.olderCodes,
   );
   mocks.withCredentialTransaction.mockImplementation(async (_providers: string[], work: (tx: unknown) => Promise<unknown>) =>
     work(TX),
@@ -316,6 +316,20 @@ describe("legacy recovery codes (#4456 PR 2, owner decision of 1 Nov 2026)", () 
     mocks.counts.olderCodes = 4;
     const report = await run();
     expect(report.recoveryCodes.olderRingKeyUnused).toBe(4);
+    // Ring codes only (a `:`), minus the current key's and the retired ones, matched literally.
+    expect(mocks.prisma.twoFactorRecoveryCode.count).toHaveBeenCalledWith({
+      where: {
+        usedAt: null,
+        codeHash: { contains: ":" },
+        NOT: [
+          { codeHash: { startsWith: "k\\_2:" } },
+          { codeHash: { startsWith: "retired.legacy-auth-secret:" } },
+        ],
+      },
+    });
+    expect(mocks.prisma.twoFactorRecoveryCode.count).toHaveBeenCalledWith({
+      where: { usedAt: null, NOT: { codeHash: { contains: ":" } } },
+    });
     expect(formatReencryptReport(report).join("\n")).toMatch(/Keep each older key in the ring/);
   });
 });
