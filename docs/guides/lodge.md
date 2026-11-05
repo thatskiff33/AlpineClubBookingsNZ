@@ -36,6 +36,27 @@ module is on.
    blank to keep the current one; minimum 6 characters), then **Save Changes**.
    Sign in once on the kiosk device with these details.
 
+#### How long the kiosk stays signed in
+
+The kiosk account stays signed in for **30 days without use**, so the tablet is
+not signed out after a quiet night (owner decision, 2 Nov 2026,
+[#4612](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/4612)). Each
+time the kiosk page loads or comes back into focus, the 30 days start again.
+Every other account, including an admin signing in on the same tablet, keeps the
+ordinary 8 hours.
+
+Only an account whose **User Type** is "Lodge (kiosk account)" gets the 30 days:
+one with no role besides **User** and **Lodge**. A person who has the **Lodge**
+box ticked as well as an admin, officer, finance or custom role is not the
+kiosk, and is signed out after 8 hours like everyone else. A person's record
+with only **User** and **Lodge** ticked does count as the kiosk and gets the 30
+days, so give that person a second role or untick **Lodge**. If the kiosk
+tablet keeps signing out overnight, check the kiosk account has no role besides
+**User** and **Lodge**.
+
+This is only the kiosk account's own sign-in. A hut leader's PIN unlock is
+separate and still closes after 10 minutes without use (below).
+
 ### Preview what the kiosk shows
 
 1. Click **Preview kiosk** to open the kiosk exactly as this login would see it — a
@@ -293,6 +314,7 @@ whom.
 | A kiosk account is flagged **Ambiguous** | It has staff access at more than one lodge | Set **Operates lodge** to a single lodge and save |
 | A kiosk falls back to the wrong lodge | The account is not bound to a lodge | Bind it to its lodge under **Operates lodge** (multi-lodge) |
 | **Mark Arrived** answers "this guest is not booked in for this night" | The page has been open since an earlier night, so its buttons are stale | Reload the day. The guest's booking has a gap over the night on screen — they went home — and the refreshed list shows who is actually staying |
+| The kiosk tablet asks for its password again | It went more than 30 days without the kiosk page being opened, or the account it is signed in with is not the kiosk account (it holds a role besides **User** and **Lodge**, so it gets 8 hours) | Sign in again with the kiosk account's details from **Lodge Account Settings**. If it keeps happening overnight, check that account's **User Type** is "Lodge (kiosk account)" |
 | The kiosk tablet's clock or time zone is set wrong | The device clock is separate from the club's calendar | Nothing to change for the kiosk: it takes "today" from the club's New Zealand day, so the week strip, the **Today** button and the night it opens on stay correct — and a kiosk left sitting on the week strip rolls onto the new day at the club's midnight without a reload (an open day list stays put; press **Today**). Fix the device clock only if people read the time off the tablet itself |
 
 ## Related links

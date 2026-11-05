@@ -288,6 +288,74 @@ on each replica. The routes still answer; a store failure never blocks a request
   counted only by the per-address limiter. Protection is complete once the old
   slot drains.
 
+## Session idle expiry and the lodge kiosk (#4612)
+
+Audience: Operator, Developer.
+
+A signed-in session ends after **8 hours without use**. The lodge kiosk account,
+signed in on the shared lodge tablet, is the one exception: **30 days without
+use**, so the tablet is not signed out after a quiet night (owner decision,
+2 Nov 2026). "Use" is any refresh of the session; the kiosk page refreshes it
+when it loads and when it regains focus, and each refresh starts a full window
+again.
+
+**Which account is the kiosk.** The app's own record class,
+`isLodgeKioskAccount` in `src/lib/member-roles.ts`: `LODGE` is the record's
+whole classification, the User Type the member page shows as "Lodge (kiosk
+account)". Holding `LODGE` is not enough. It is a checkbox any officer can
+also have, so a Full Admin, a Booking Officer or a custom-role holder who also
+holds `LODGE` is an ordinary account and keeps 8 hours. A record holding only
+`USER` and `LODGE` classifies as the kiosk (`member-roles.test.ts` pins this)
+and so gets 30 days: to keep a person who uses the lodge tools on 8 hours,
+give them a second role or untick Lodge. The `jwt` callback
+stamps a `kioskAccount` claim from the member row on every refresh. That claim
+only nominates a session for 30 days: before granting them, the refresh reads
+the member row again and confirms it is still the kiosk and still holds this
+session.
+
+**Where it is decided.** `src/lib/session-idle-expiry.ts` holds both windows
+and the rule. Auth.js stamps the token's `exp` and the cookie's `Expires` from
+one number, `session.maxAge`, each time it writes the cookie, and offers no
+per-token hook. So `buildRequestAuthConfig` in `src/lib/auth.ts` sets
+`session.maxAge` per request from the session cookie the request carries; the
+token and the cookie therefore always agree. The earlier per-token `exp` line
+in the `jwt` callback was overwritten by that re-encode and did nothing; it is
+gone. `auth-session-idle-expiry.test.ts` proves both windows end to end through
+the real Auth.js handler on the frozen clock.
+
+**Accepted limits.** Every decision on doubt fails towards the shorter window.
+
+- A sign-in starts with 8 hours; the kiosk page's first refresh, straight after
+  it loads, re-issues 30 days.
+- Only the session endpoint (`/api/auth/session`) reads the incoming token.
+  Signing in as another member on the kiosk tablet, while the kiosk cookie is
+  still there, gives that member the ordinary 8 hours.
+- The window is chosen before the `jwt` callback re-reads the member row, so
+  a session whose incoming `kioskAccount` claim is `true` has its row read
+  first, with the callback's own loader (`loadSessionMemberSecurity`), kiosk
+  test (`isKioskSessionMember`) and revocation rules (`isRevokedMemberSession`
+  in `src/lib/session-member-security.ts`). It gets 30 days only if the row is
+  still the kiosk and the session is not revoked; a missing row, any other row
+  or a failed read gives 8 hours. So when the kiosk stops being the kiosk (its
+  `LODGE` role removed, or a second role added) or its login is switched off,
+  the very next refresh re-issues 8 hours. This costs one query, on kiosk
+  refreshes only.
+- Turning an account into the kiosk takes one refresh longer: its incoming
+  claim is still `false`, so that refresh re-issues 8 hours and stamps the
+  claim for the next.
+- A cookie already issued keeps its expiry until a refresh re-issues it; the
+  kiosk page refreshes on load and on focus. A role change that lands between
+  the window's row read and the callback's, inside one request, is seen on the
+  next refresh. Neither widens what the session may do: what the account may
+  do is read afresh from the database on every request, as for any account,
+  and switching its login off ends the session outright.
+- A token issued before the `kioskAccount` claim existed carries none, so it
+  gets 8 hours; its first refresh stamps the claim.
+- The hut-leader PIN session on the same tablet is separate: 10 minutes idle,
+  12 hours in total (`lodge-pin-session-timing.ts`).
+- This is the idle window only. A ceiling on a session's total age, measured
+  from sign-in, is #4611.
+
 ## Dietary/allergy information (special-category data)
 
 Audience: Developer, Agent, Operator.
