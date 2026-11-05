@@ -610,4 +610,212 @@ describe("passwordHash writer scanner", () => {
       `),
     ).toEqual([false]);
   });
+
+  it("refuses a copy whose object is changed after it is built (#4746)", () => {
+    const sources = (source: string) => scan(source).map((s) => s.source);
+    const built = `const data = { passwordHash: await hash(randomUUID(), 12) };`;
+    const copy = `save({ passwordHash: data.passwordHash });`;
+    const made = `await Promise.all(list.map(async (r) => ({ ...r, passwordHash: await hash(randomBytes(16).toString("hex"), 12) })))`;
+    const loop = `for (const row of rows) save({ passwordHash: row.passwordHash });`;
+    // No false positives: the plain vetted copy, and reads, still pass.
+    expect(sources(`async function a() { ${built} ${copy} }`)).toEqual(["random", "copy"]);
+    expect(sources(`async function a(list) { const rows = ${made}; ${loop} }`)).toEqual(["random", "copy"]);
+    expect(sources(`async function a() { ${built} log(data.passwordHash, data.other); const al = data; use(al.other); save({ passwordHash: data.passwordHash, x: data.x }); }`)).toEqual(["random", "copy"]);
+    expect(sources(`async function a(list) { const rows = ${made}; rows.some((r) => r.ok); rows.map((r) => r.id); ${loop} }`)).toEqual(["random", "copy"]);
+    // A chain of arrays: the call that builds the next one is not a hand-over.
+    expect(sources(`async function a(list) { const pending = await Promise.all(list.map(async (r) => ({ ...r, passwordHash: await hash(randomBytes(16).toString("hex"), 12) }))); const rows = await Promise.all(pending); ${loop} }`)).toEqual(["random", "copy"]);
+    // The issue's examples: a later assign, or an element written.
+    expect(sources(`async function a(body) { ${built} Object.assign(data, body); ${copy} }`)).toEqual(["random", "unknown"]);
+    expect(sources(`async function a(list, body) { const rows = ${made}; rows[0] = body; ${loop} }`)).toEqual(["random", "unknown"]);
+    // Any write to the object, a computed key, or a write through an alias.
+    expect(sources(`async function a() { ${built} data.k = 1; ${copy} }`)).toEqual(["random", "unknown"]);
+    expect(sources(`async function a(k) { ${built} data[k] = 1; ${copy} }`)).toEqual(["random", "unknown"]);
+    expect(sources(`async function a() { ${built} const al = data; al.k = 1; ${copy} }`)).toEqual(["random", "unknown"]);
+    expect(sources(`async function a() { ${built} const al = data; const al2 = al; al2["k"] = 1; ${copy} }`)).toEqual(["random", "unknown"]);
+    expect(sources(`async function a() { ${built} let al; al = data; al.k = 1; ${copy} }`)).toEqual(["random", "unknown"]);
+    // Handed to a call, a constructor or a spread argument.
+    expect(sources(`async function a() { ${built} log(data); ${copy} }`)).toEqual(["random", "unknown"]);
+    expect(sources(`async function a(body) { ${built} Object.assign(data, ...body); ${copy} }`)).toEqual(["random", "unknown"]);
+    expect(sources(`async function a() { ${built} new Thing(data); ${copy} }`)).toEqual(["random", "unknown"]);
+    expect(sources(`async function a() { ${built} const al = data; mutate(al); ${copy} }`)).toEqual(["random", "unknown"]);
+    // An array of objects: handed on, an element added, or the loop variable written.
+    expect(sources(`async function a(list) { const rows = ${made}; mutate(rows); ${loop} }`)).toEqual(["random", "unknown"]);
+    expect(sources(`async function a(list, body) { const rows = ${made}; rows.push(body); ${loop} }`)).toEqual(["random", "unknown"]);
+    expect(sources(`async function a(list, body) { const rows = ${made}; rows.splice(0, 1, body); ${loop} }`)).toEqual(["random", "unknown"]);
+    expect(sources(`async function a(list) { const rows = ${made}; for (const row of rows) { row.k = 1; save({ passwordHash: row.passwordHash }); } }`)).toEqual(["random", "unknown"]);
+    expect(sources(`async function a(list) { const rows = ${made}; for (const row of rows) { mutate(row); save({ passwordHash: row.passwordHash }); } }`)).toEqual(["random", "unknown"]);
+    expect(sources(`async function a(list, body) { const pending = await Promise.all(list.map(async (r) => ({ ...r, passwordHash: await hash(randomBytes(16).toString("hex"), 12) }))); pending[0] = body; const rows = await Promise.all(pending); ${loop} }`)).toEqual(["random", "unknown"]);
+    // A change in a nested callback counts too.
+    expect(sources(`async function a(list, body) { ${built} list.forEach((x) => { data.k = x; }); ${copy} }`)).toEqual(["random", "unknown"]);
+    // An element of the copied array, changed through a call or an alias (#4746 review).
+    const inRows = (change: string) => sources(`async function a(list, body) { const rows = ${made}; ${change} ${loop} }`);
+    expect(inRows(`Object.assign(rows[0], body);`)).toEqual(["random", "unknown"]);
+    expect(inRows(`const r = rows[0]; Object.assign(r, body);`)).toEqual(["random", "unknown"]);
+    expect(inRows(`Object.assign(rows.at(0), body);`)).toEqual(["random", "unknown"]);
+    expect(inRows(`rows[0].k = 1;`)).toEqual(["random", "unknown"]);
+    expect(inRows(`rows["0"]["k"] = 1;`)).toEqual(["random", "unknown"]);
+    expect(inRows(`Object.assign(rows["0"], body);`)).toEqual(["random", "unknown"]);
+    expect(inRows(`const k = 0; rows[k].x = 1;`)).toEqual(["random", "unknown"]);
+    // Elements changed through iteration.
+    expect(inRows(`for (const r of rows) Object.assign(r, body);`)).toEqual(["random", "unknown"]);
+    expect(inRows(`rows.forEach((r) => Object.assign(r, body));`)).toEqual(["random", "unknown"]);
+    expect(inRows(`let r; for (r of rows) Object.assign(r, body);`)).toEqual(["random", "unknown"]);
+    expect(inRows(`rows.map((r) => Object.assign(r, body));`)).toEqual(["random", "unknown"]);
+    expect(inRows(`rows.forEach((r) => { r.k = 1; });`)).toEqual(["random", "unknown"]);
+    // The object or array handed to a call inside a literal, or an alias built from one.
+    expect(sources(`async function a(body) { ${built} mutate({ data }); ${copy} }`)).toEqual(["random", "unknown"]);
+    expect(sources(`async function a(body) { ${built} mutate([data]); ${copy} }`)).toEqual(["random", "unknown"]);
+    expect(sources(`async function a(body) { ${built} const h = { d: data }; Object.assign(h.d, body); ${copy} }`)).toEqual(["random", "unknown"]);
+    expect(sources(`async function a(body) { ${built} mutate(f ? data : {}); ${copy} }`)).toEqual(["random", "unknown"]);
+    // An alias made through a conditional, a logical operator or a logical assignment.
+    expect(sources(`async function a(body) { ${built} const t = f ? data : {}; Object.assign(t, body); ${copy} }`)).toEqual(["random", "unknown"]);
+    expect(sources(`async function a(body) { ${built} let al; al ||= data; Object.assign(al, body); ${copy} }`)).toEqual(["random", "unknown"]);
+    expect(sources(`async function a(body) { ${built} let al; al ??= data; Object.assign(al, body); ${copy} }`)).toEqual(["random", "unknown"]);
+    expect(sources(`async function a(body) { ${built} const t = other || data; Object.assign(t, body); ${copy} }`)).toEqual(["random", "unknown"]);
+    expect(sources(`async function a(body) { ${built} const t = f ? {} : data; Object.assign(t, body); ${copy} }`)).toEqual(["random", "unknown"]);
+    expect(sources(`async function a(body) { ${built} const t = (x, data); Object.assign(t, body); ${copy} }`)).toEqual(["random", "unknown"]);
+    // A closure defined before the object, called after it.
+    expect(sources(`async function a(body) { function f() { Object.assign(data, body); } ${built} f(); ${copy} }`)).toEqual(["random", "unknown"]);
+    expect(sources(`async function a(body) { const f = () => Object.assign(data, body); ${built} f(); ${copy} }`)).toEqual(["random", "unknown"]);
+    // A method call on the object or array: only a small read-only list is allowed.
+    expect(sources(`async function a(body) { ${built} data.reset(body); ${copy} }`)).toEqual(["random", "unknown"]);
+    expect(sources(`async function a(body) { ${built} data["reset"](body); ${copy} }`)).toEqual(["random", "unknown"]);
+    expect(sources(`async function a(list) { const rows = ${made}; rows.sort(); ${loop} }`)).toEqual(["random", "unknown"]);
+    expect(sources(`async function a(body) { ${built} tag\`${"${data}"}\`; ${copy} }`)).toEqual(["random", "unknown"]);
+    // A transaction callback holds the build and the copy: a hand-over inside it still counts, nothing outside it does.
+    expect(sources(`async function a(body) { await tx(async () => { ${built} mutate(data); ${copy} }); }`)).toEqual(["random", "unknown"]);
+    expect(sources(`async function a(body) { await tx(async () => { ${built} ${copy} }); mutate(other); }`)).toEqual(["random", "copy"]);
+    // The elements of an array literal or of a container alias are the object itself (#4746 round 3).
+    const inData = (change: string) => sources(`async function a(body, list, f, other) { ${built} ${change} ${copy} }`);
+    expect(inData(`[data].forEach((x) => Object.assign(x, body));`)).toEqual(["random", "unknown"]);
+    expect(inData(`for (const x of [data]) Object.assign(x, body);`)).toEqual(["random", "unknown"]);
+    expect(inData(`const h = [data]; for (const x of h) Object.assign(x, body);`)).toEqual(["random", "unknown"]);
+    expect(inData(`const h = [data]; h.forEach((x) => Object.assign(x, body));`)).toEqual(["random", "unknown"]);
+    // A callback method is read-only only with an inline function: a named one receives the elements.
+    expect(inRows(`rows.forEach(mutate);`)).toEqual(["random", "unknown"]);
+    expect(inRows(`rows.map(mutate);`)).toEqual(["random", "unknown"]);
+    expect(inRows(`rows.some(mutate);`)).toEqual(["random", "unknown"]);
+    expect(inRows(`rows.every(...fns);`)).toEqual(["random", "unknown"]);
+    expect(inData(`[data].forEach(mutate);`)).toEqual(["random", "unknown"]);
+    // Every parameter of an inline callback holds the elements or the array; `arguments` is refused.
+    expect(inRows(`rows.forEach((r, i, arr) => { arr[0] = body; });`)).toEqual(["random", "unknown"]);
+    expect(inRows(`rows.forEach((...args) => Object.assign(args[0], body));`)).toEqual(["random", "unknown"]);
+    expect(inRows(`rows.forEach(function () { Object.assign(arguments[0], body); });`)).toEqual(["random", "unknown"]);
+    // An alias made by writing to a property of an object or array.
+    expect(inData(`const h = {}; h.d = data; Object.assign(h.d, body);`)).toEqual(["random", "unknown"]);
+    expect(inData(`const h = []; h[0] = data; Object.assign(h[0], body);`)).toEqual(["random", "unknown"]);
+    // An assignment used as an expression hands over what it assigns.
+    expect(inData(`let x; Object.assign(x = data, body);`)).toEqual(["random", "unknown"]);
+    expect(inData(`let x; Object.assign(x ||= data, body);`)).toEqual(["random", "unknown"]);
+    expect(inData(`let x = data; Object.assign(x ??= other, body);`)).toEqual(["random", "unknown"]);
+    expect(inData(`let x = data; Object.assign(x &&= other, body);`)).toEqual(["random", "unknown"]);
+    // No false positive for the same shapes over other values, or inline read-only callbacks.
+    expect(inData(`const h = [data.passwordHash]; for (const x of h) log(x);`)).toEqual(["random", "copy"]);
+    expect(inRows(`rows.forEach((r, i, arr) => log(r.id, i, arr.length)); rows.map((...a) => a.length);`)).toEqual(["random", "copy"]);
+    expect(inData(`const h = {}; h.d = other; let x; log(x = other);`)).toEqual(["random", "copy"]);
+    // No false positive: reads, literals of other parts, read-only methods, an unrelated alias.
+    expect(inRows(`const n = rows.length; const ids = rows.map((r) => r.id); log({ n, ids, first: rows[0].id });`)).toEqual(["random", "copy"]);
+    expect(inRows(`for (const r of rows) log(r.id, { id: r.id });`)).toEqual(["random", "copy"]);
+    expect(inRows(`rows.forEach((r) => log(r.passwordHash)); rows.some((r) => r.ok); rows.every((r) => r.ok);`)).toEqual(["random", "copy"]);
+    expect(sources(`async function a(body) { ${built} const h = { d: data.passwordHash }; Object.assign(h, body); mutate({ x: data.other }); ${copy} }`)).toEqual(["random", "copy"]);
+    expect(sources(`async function a(body) { ${built} const t = f ? other : {}; Object.assign(t, body); ${copy} } `)).toEqual(["random", "copy"]);
+    expect(sources(`async function a(body) { function f() { Object.assign(other, body); } ${built} f(); ${copy} }`)).toEqual(["random", "copy"]);
+    // An element of a holder is the object itself: reading its fields is not a change,
+    // but writing them still is.
+    expect(sources(`async function a() { ${built} for (const x of [data]) log(x.id); ${copy} }`)).toEqual(["random", "copy"]);
+    expect(sources(`async function a() { ${built} [data].forEach((x) => log(x.id)); ${copy} }`)).toEqual(["random", "copy"]);
+    expect(sources(`async function a(body) { ${built} for (const x of [data]) x.k = body; ${copy} }`)).toEqual(["random", "unknown"]);
+    // Another function's object of the same name is not this one.
+    expect(sources(`async function a() { ${built} ${copy} } function b(data) { data.k = 1; log(data); }`)).toEqual(["random", "copy"]);
+  });
+
+  it("voids a screen when the screened object is changed through an alias or a call (#4746)", () => {
+    const guarded = (source: string) => scan(source).map((s) => s.screenedBefore);
+    const screen = `const s = await screenChosenPassword(b.pw); if (!s.ok) return;`;
+    const write = `save({ passwordHash: await hash(b.pw, 12) });`;
+    // The issue's examples.
+    expect(guarded(`async function a(b) { ${screen} const al = b; al.pw = b.other; ${write} }`)).toEqual([false]);
+    expect(guarded(`async function a(b) { ${screen} Object.assign(b, { pw: b.other }); ${write} }`)).toEqual([false]);
+    // An alias of the root: plain, chained, assigned later, destructured, written by key.
+    expect(guarded(`async function a(b) { ${screen} const al = b; const al2 = al; al2.pw = typed; ${write} }`)).toEqual([false]);
+    expect(guarded(`async function a(b) { ${screen} let al; al = b; al["pw"] = typed; ${write} }`)).toEqual([false]);
+    expect(guarded(`async function a(b) { ${screen} const al = b; al[k] = typed; ${write} }`)).toEqual([false]);
+    expect(guarded(`async function a(b) { ${screen} const { data } = b; data.pw = typed; ${write} }`)).toEqual([false]);
+    expect(guarded(`async function a(b) { const al = b; ${screen} al.pw = typed; ${write} }`)).toEqual([false]);
+    // Any call that receives the root, or a part of the path above the value.
+    expect(guarded(`async function a(b) { ${screen} mutate(b); ${write} }`)).toEqual([false]);
+    expect(guarded(`async function a(b) { ${screen} new Thing(b); ${write} }`)).toEqual([false]);
+    expect(guarded(`async function a(b) { ${screen} mutate(...b); ${write} }`)).toEqual([false]);
+    expect(guarded(`async function a(b) { ${screen} const al = b; mutate(al); ${write} }`)).toEqual([false]);
+    expect(guarded(`async function a(b) { const s = await screenChosenPassword(b.data.pw); if (!s.ok) return; mutate(b.data); save({ passwordHash: await hash(b.data.pw, 12) }); }`)).toEqual([false]);
+    // No false positives: the plain screened write, other paths, a call or
+    // alias before the screen, an unused alias, a value passed on.
+    expect(guarded(`async function a(b) { ${screen} ${write} }`)).toEqual([true]);
+    expect(guarded(`async function a(b) { ${screen} const al = b; log(al.other); ${write} }`)).toEqual([true]);
+    expect(guarded(`async function a(b) { ${screen} const al = b; ${write} }`)).toEqual([true]);
+    expect(guarded(`async function a(b) { ${screen} log(b.other, b.pw); ${write} }`)).toEqual([true]);
+    expect(guarded(`async function a(b) { validate(b); ${screen} ${write} }`)).toEqual([true]);
+    expect(guarded(`async function a(b) { const al = b; al.pw = typed; ${screen} ${write} }`)).toEqual([true]);
+    expect(guarded(`async function a(b) { ${screen} const al = b.other; al.pw = typed; mutate(b.other); ${write} }`)).toEqual([true]);
+    expect(guarded(`async function a(b) { ${screen} mutate(b); } async function c(b) { ${screen} ${write} }`)).toEqual([true]);
+    expect(guarded(`async function a(b) { const s = await screenChosenPassword(b.data.pw); if (!s.ok) return; mutate(b.other); save({ passwordHash: await hash(b.data.pw, 12) }); }`)).toEqual([true]);
+    // An object or array handed to a call inside a literal, or an alias built from one (#4746 review).
+    expect(guarded(`async function a(b) { ${screen} mutate({ b }); ${write} }`)).toEqual([false]);
+    expect(guarded(`async function a(b) { ${screen} mutate([b]); ${write} }`)).toEqual([false]);
+    expect(guarded(`async function a(b) { ${screen} const h = { b }; h.b.pw = typed; ${write} }`)).toEqual([false]);
+    expect(guarded(`async function a(b) { ${screen} const h = [b]; h[0].pw = typed; ${write} }`)).toEqual([false]);
+    // An alias made through a conditional, a logical operator, a destructuring assignment or a logical assignment.
+    expect(guarded(`async function a(b) { ${screen} const al = c ? b : {}; al.pw = typed; ${write} }`)).toEqual([false]);
+    expect(guarded(`async function a(b) { ${screen} const al = c || b; al.pw = typed; ${write} }`)).toEqual([false]);
+    expect(guarded(`async function a(b) { ${screen} const al = c ?? b; al.pw = typed; ${write} }`)).toEqual([false]);
+    expect(guarded(`async function a(b) { ${screen} const al = (x, b); al.pw = typed; ${write} }`)).toEqual([false]);
+    expect(guarded(`async function a(b) { let al; ({ x: al } = { x: b }); ${screen} al.pw = typed; ${write} }`)).toEqual([false]);
+    expect(guarded(`async function a(b) { let al; ${screen} ({ x: al } = { x: b }); al.pw = typed; ${write} }`)).toEqual([false]);
+    expect(guarded(`async function a(b) { let al; ${screen} al ||= b; al.pw = typed; ${write} }`)).toEqual([false]);
+    expect(guarded(`async function a(b) { let al; ${screen} al ??= b; al.pw = typed; ${write} }`)).toEqual([false]);
+    // A closure defined before the screen, called after it.
+    expect(guarded(`async function a(b) { const f = () => Object.assign(b, { pw: typed }); ${screen} f(); ${write} }`)).toEqual([false]);
+    expect(guarded(`async function a(b) { function f() { b.pw = typed; } ${screen} f(); ${write} }`)).toEqual([false]);
+    expect(guarded(`async function a(b) { const f = () => mutate(b); ${screen} f(); ${write} }`)).toEqual([false]);
+    // A method call on the root, a change inside the screen statement itself, a tagged template.
+    expect(guarded(`async function a(b) { ${screen} b.reset(typed); ${write} }`)).toEqual([false]);
+    expect(guarded(`async function a(b) { ${screen} b["reset"](typed); ${write} }`)).toEqual([false]);
+    expect(guarded(`async function a(b) { const s = await screenChosenPassword(b.pw, Object.assign(b, { pw: typed }) && undefined); if (!s.ok) return; ${write} }`)).toEqual([false]);
+    expect(guarded(`async function a(b) { ${screen} tag\`${"${b}"}\`; ${write} }`)).toEqual([false]);
+    // A transaction callback holds the screen and the write: only what runs inside it, after the screen, counts.
+    expect(guarded(`async function a(b) { await tx(async () => { validate(b); ${screen} ${write} }); }`)).toEqual([true]);
+    expect(guarded(`async function a(b) { await tx(async () => { ${screen} mutate(b); ${write} }); }`)).toEqual([false]);
+    // The elements of an array literal, a named callback, a property alias and an assignment expression (#4746 round 3).
+    const after = (change: string) => guarded(`async function a(b, typed, mutate) { ${screen} ${change} ${write} }`);
+    expect(after(`for (const x of [b]) x.pw = typed;`)).toEqual([false]);
+    expect(after(`[b].forEach((x) => { x.pw = typed; });`)).toEqual([false]);
+    expect(after(`[b].forEach(mutate);`)).toEqual([false]);
+    expect(after(`const h = {}; h.b = b; h.b.pw = typed;`)).toEqual([false]);
+    expect(after(`let al; Object.assign(al = b, { pw: typed });`)).toEqual([false]);
+    expect(after(`[b.other].forEach((x) => log(x)); let al; log(al = b.other);`)).toEqual([true]);
+    // A computed key may name any part of the path.
+    expect(guarded(`async function a(b, k) { const s = await screenChosenPassword(b.data.pw); if (!s.ok) return; mutate(b[k]); save({ passwordHash: await hash(b.data.pw, 12) }); }`)).toEqual([false]);
+    // A write through an element access on the path (the root's own name, or an alias).
+    expect(guarded(`async function a(b) { const s = await screenChosenPassword(b.data.pw); if (!s.ok) return; b["data"].pw = typed; save({ passwordHash: await hash(b.data.pw, 12) }); }`)).toEqual([false]);
+    expect(guarded(`async function a(b) { const s = await screenChosenPassword(b.data.pw); if (!s.ok) return; const al = b; al["data"].pw = typed; save({ passwordHash: await hash(b.data.pw, 12) }); }`)).toEqual([false]);
+    expect(guarded(`async function a(b) { const s = await screenChosenPassword(b.data.pw); if (!s.ok) return; b["data"]["pw"] = typed; save({ passwordHash: await hash(b.data.pw, 12) }); }`)).toEqual([false]);
+    expect(guarded(`async function a(b, k) { const s = await screenChosenPassword(b.pw); if (!s.ok) return; b[k] = typed; save({ passwordHash: await hash(b.pw, 12) }); }`)).toEqual([false]);
+    // The screened and the hashed value may be named by literal keys, but never by a computed one.
+    expect(guarded(`async function a(b) { const s = await screenChosenPassword(b["pw"]); if (!s.ok) return; save({ passwordHash: await hash(b.pw, 12) }); }`)).toEqual([true]);
+    expect(guarded(`async function a(b, k, j) { const s = await screenChosenPassword(b[k]); if (!s.ok) return; save({ passwordHash: await hash(b[j], 12) }); }`)).toEqual([false]);
+    // No false positive: read-only methods on the value, literals of other parts, a closure unrelated to it.
+    expect(guarded(`async function a(b) { ${screen} log({ x: b.other }, [b.other]); b.pw.trim(); b.other.reset(); ${write} }`)).toEqual([true]);
+    expect(guarded(`async function a(b) { const f = () => mutate(other); ${screen} f(); const al = c ? b.other : {}; al.pw = typed; ${write} }`)).toEqual([true]);
+    expect(guarded(`async function a(b) { ${screen} ${write} const g = () => mutate(b); }`)).toEqual([true]);
+    expect(guarded(`async function a(b) { const s = await screenChosenPassword(b.pw, { userInputs: [b] }); if (!s.ok) return; ${write} }`)).toEqual([true]);
+    // An element of a holder is the screened object: a read keeps the screen, a write voids it.
+    expect(guarded(`async function a(b) { ${screen} [b].forEach((x) => log(x.id)); ${write} }`)).toEqual([true]);
+    expect(guarded(`async function a(b) { ${screen} for (const x of [b]) log(x.id); ${write} }`)).toEqual([true]);
+    expect(guarded(`async function a(b) { ${screen} for (const x of [b]) x.pw = typed; ${write} }`)).toEqual([false]);
+    // A plain string cannot be changed from outside.
+    expect(guarded(`async function a(p) { const s = await screenChosenPassword(p); if (!s.ok) return; log(p); const al = p; ${`save({ passwordHash: await hash(p, 12) });`} }`)).toEqual([true]);
+    // A const root works like a parameter.
+    expect(guarded(`async function a(req) { const b = await req.json(); ${screen} const al = b; al.pw = typed; ${write} }`)).toEqual([false]);
+    expect(guarded(`async function a(req) { const b = await req.json(); ${screen} ${write} }`)).toEqual([true]);
+  });
 });
