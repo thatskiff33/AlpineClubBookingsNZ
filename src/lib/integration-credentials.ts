@@ -628,10 +628,21 @@ export type ProviderCredentialState =
  * a `not_configured` provider is simply not "needing re-entry".
  */
 export async function providerNeedsReentry(provider: string): Promise<boolean> {
+  return (await providerUnreadableKeys(provider)).length > 0;
+}
+
+/**
+ * The stored keys of a provider that fail to decrypt, so a wizard can ask for
+ * each one on the step that captures it (#98): an unreadable webhook secret
+ * must not block the earlier keys step that cannot replace it. Empty when
+ * nothing is stored or everything reads. Propagates a DB error.
+ */
+export async function providerUnreadableKeys(provider: string): Promise<string[]> {
   const rows = await loadProviderRows(provider);
-  if (rows.size === 0) return false;
+  if (rows.size === 0) return [];
   // Each row is tried under the key IT names; a key this deployment lacks is a
   // CredentialDecryptError like any other, so it needs no special case here.
+  const unreadable: string[] = [];
   for (const row of rows.values()) {
     try {
       decryptCredential({
@@ -644,11 +655,11 @@ export async function providerNeedsReentry(provider: string): Promise<boolean> {
         secretSource: row.secretSource,
       });
     } catch (error) {
-      if (error instanceof CredentialDecryptError) return true;
-      throw error;
+      if (error instanceof CredentialDecryptError) unreadable.push(row.key);
+      else throw error;
     }
   }
-  return false;
+  return unreadable;
 }
 
 /**

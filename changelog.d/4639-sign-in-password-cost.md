@@ -1,0 +1,1 @@
+- **Sign-in checks use the same password hashing cost for unknown accounts and new passwords (#4639).** This closes a timing difference that could reveal an account exists. Existing passwords keep their original hashing cost until replaced.

@@ -125,6 +125,9 @@ const JAVASCRIPT_VITEST_TESTS = [
   "scripts/remove-worktree.test.mjs",
   "scripts/run-named-tests.test.mjs",
   "scripts/stale-containers.test.mjs",
+  // #4464: the generated status board is a read-only `.mjs` tool run with bare
+  // node by a scheduled workflow; its suite stays JavaScript like lanes-stale's.
+  "scripts/status-board.test.mjs",
 ];
 
 /**

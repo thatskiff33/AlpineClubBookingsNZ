@@ -42,6 +42,7 @@ vi.mock("next/headers", () => ({
 
 vi.mock("@/lib/runtime-config", () => ({
   getAuthSecret: vi.fn(() => "test-secret-value"),
+  requireAuthSecret: vi.fn(() => "test-secret-value"),
 }));
 
 // #2087: googleCredentialsConfigured is now resolver-backed (DB-only), so mock

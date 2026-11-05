@@ -35,7 +35,9 @@ import {
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
 import { isSafeHttpUrl } from "@/lib/http-url";
+import type { UploadAfterSave } from "@/lib/servernz-upload-after-save";
 import { OtherLodgeSiteUrlNote, SITE_URL_NOTE_ID } from "./other-lodge-site-url-note";
+import { uploadAfterSaveNotice } from "./other-lodge-upload-notice";
 import {
   AMENITIES_PER_LODGE_MAX,
   OTHER_LODGE_BOUNDS,
@@ -90,6 +92,8 @@ export function OtherLodgesPanel({
   const [syncPaused, setSyncPaused] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // What uploading the saved lodge to the central server came to (B4).
+  const [uploadNotice, setUploadNotice] = useState<ReturnType<typeof uploadAfterSaveNotice>>(null);
   const [saving, setSaving] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState<OtherLodgeFormState>(emptyForm);
@@ -140,6 +144,7 @@ export function OtherLodgesPanel({
 
   function startEdit(lodge: OtherLodgeRecord, opener: HTMLElement) {
     hiding.clearMessage();
+    setUploadNotice(null);
     openerRef.current = opener;
     setEditingId(lodge.id);
     setForm(formFromLodge(lodge));
@@ -192,6 +197,7 @@ export function OtherLodgesPanel({
         error?: string;
         code?: string;
         otherLodge?: OtherLodgeRecord;
+        upload?: UploadAfterSave;
       } | null;
       if (response.status === 403) {
         // Two different refusals share the status: the administrator's role
@@ -211,6 +217,7 @@ export function OtherLodgesPanel({
       // Edit click on the old row cannot overwrite this save) while the
       // refresh below is still on its way.
       if (data?.otherLodge) applySaved(data.otherLodge);
+      setUploadNotice(uploadAfterSaveNotice(data?.upload));
       saved = true;
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to save lodge");
@@ -262,6 +269,11 @@ export function OtherLodgesPanel({
           fails). This one is for everything outside it: a list that could not
           load. A Hide reports in its own line, announced, below it (#58). */}
       <p role="status" className={`text-sm ${hiding.message?.kind === "ok" ? "text-success-11" : "text-destructive"}`}>{hiding.message?.text}</p>
+      {uploadNotice && !showForm ? (
+        <p role="status" data-testid="other-lodge-upload-notice" className={`text-sm ${uploadNotice.kind === "ok" ? "text-success-11" : "text-warning-11"}`}>
+          {uploadNotice.text}
+        </p>
+      ) : null}
       {error && !showForm ? (
         <p className="text-sm text-destructive" role="alert">
           {error}

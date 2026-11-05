@@ -278,6 +278,15 @@ export function payableAdditionalPaymentIntentId(
 /**
  * Stripe statuses in which the intent's money has been taken or is being taken,
  * so no second confirmation may be offered.
+ *
+ * #4015 review (I-1): `staleIntentAction` (`stale-intent-action.ts`) reads the
+ * same question for the replay and the currency re-issue. On every status
+ * Stripe documents the two agree (this list is exactly what that rule does not
+ * call `reissue`, `canceled` aside, which this door closes on first;
+ * `additional-ask-recovery-replay.test.ts` proves it). They differ only on a
+ * status neither knows: this door stays payable, so a member is never refused
+ * a form, while the replay waits rather than cancel a request that might be
+ * taking money. Kept apart on purpose for that one case.
  */
 const PROVIDER_CAPTURED_INTENT_STATUSES: readonly string[] = [
   "succeeded",

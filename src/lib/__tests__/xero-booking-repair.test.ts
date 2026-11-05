@@ -18,6 +18,7 @@ import {
   type KeptChangeCaptureRepairEvidence,
 } from "@/lib/xero-booking-repair-additional-capture";
 import { CREDIT_RELEASE_ASK_REASON } from "@/lib/credit-release-ask-keys";
+import { XERO_PARTIAL_REPAIR_RUNNING_CODE } from "@/lib/xero-stale-operations";
 import * as gapAnchors from "@/lib/xero-primary-invoice-gap-anchors";
 
 // #4324 Codex re-review: the primary invoice's stored figures and its gap
@@ -31,6 +32,12 @@ vi.mock("@/lib/xero-primary-invoice-gap-anchors", async (importOriginal) => {
     findPrimaryInvoiceGapInvoice: vi.fn(actual.findPrimaryInvoiceGapInvoice),
   };
 });
+
+// #4220: the early warning's own reads are tested in `xero-credit-note-spent-outside-flag.test.ts`;
+// here it answers directly, so these tests see only how the repair reports it.
+const spentOutside = vi.hoisted(() => ({ find: vi.fn() }));
+vi.mock("@/lib/xero-credit-note-spent-outside-flag", () => ({ findCreditNotesSpentOutsideApp: spentOutside.find }));
+beforeEach(() => spentOutside.find.mockResolvedValue([]));
 
 function makeBooking(overrides: Record<string, unknown> = {}) {
   return {
@@ -993,6 +1000,31 @@ describe("runBookingXeroRepair", () => {
     });
   });
 
+  describe("#4685: the missing account-credit note names its credit", () => {
+    const credit = (id: string, amountCents: number) => ({
+      id, amountCents, type: "CANCELLATION_REFUND", description: "Cancellation refund for booking booking_",
+      xeroCreditNoteId: null, createdAt: new Date("2026-05-03T00:00:00Z"),
+    });
+    const queueAccountCreditNote = async (credits: ReturnType<typeof credit>[]) => {
+      const deps = createDependencies({ bookings: [{ ...makeBooking({ status: "CANCELLED" }), creditsFromCancellation: credits }] });
+      const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, { dependencies: deps, scope: { all: true }, apply: true });
+      const action = report.passes[0].bookings[0].actions.find((candidate) => candidate.type === "QUEUE_ACCOUNT_CREDIT_NOTE");
+      return { deps, action };
+    };
+
+    it("MUTATION: one cancellation credit is the whole sum - the action and the enqueue name it", async () => {
+      const { deps, action } = await queueAccountCreditNote([credit("credit_cancel", 5000)]);
+      expect(action?.payload).toEqual({ paymentId: "payment_1", refundAmountCents: 5000, memberCreditId: "credit_cancel" });
+      expect(deps.enqueueXeroAccountCreditNoteOperation).toHaveBeenCalledWith("payment_1", 5000, { memberCreditId: "credit_cancel" });
+    });
+
+    it("two cancellation credits make the sum - no credit is named, and the stamp falls back to its amount match", async () => {
+      const { deps, action } = await queueAccountCreditNote([credit("credit_a", 2500), credit("credit_b", 2500)]);
+      expect(action?.payload).toEqual({ paymentId: "payment_1", refundAmountCents: 5000 });
+      expect(deps.enqueueXeroAccountCreditNoteOperation).toHaveBeenCalledWith("payment_1", 5000, undefined);
+    });
+  });
+
   it("#4299 F5: an organiser-paid bank place keeps its ordinary findings beside its organiser billing finding", async () => {
     const booking = makeBooking({
       status: "CANCELLED",
@@ -1493,6 +1525,124 @@ describe("runBookingXeroRepair", () => {
         JSON.stringify(action.payload).includes("operation_partial_clearing")
       )
     ).toBe(true);
+  });
+
+  // #4259 review F1: while a retry holds the note's PARTIAL repair claim the row
+  // is RUNNING. The arm must report it, never queue the note's whole amount
+  // against the primary invoice beside the repair's own allocations.
+  it("MUTATION: reports a clearing note whose PARTIAL repair is running, and queues no allocation beside it (#4259)", async () => {
+    const booking = makeBooking({
+      status: "CANCELLED",
+      payment: { ...makeBooking().payment, status: "FAILED" },
+    });
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
+      dependencies: createDependencies({
+        bookings: [booking],
+        links: [
+          {
+            id: "link_clearing_note",
+            localModel: "Booking",
+            localId: "booking_1",
+            xeroObjectType: "CREDIT_NOTE",
+            xeroObjectId: "cn_clear",
+            xeroObjectNumber: "CN-9",
+            xeroObjectUrl: null,
+            role: "MODIFICATION_CREDIT_NOTE",
+            active: true,
+            metadata: null,
+            createdAt: new Date("2026-05-03T00:00:00Z"),
+            updatedAt: new Date("2026-05-03T00:00:00Z"),
+          },
+        ],
+        operations: [
+          makeOperation({
+            id: "operation_repairing_clearing",
+            localModel: "Booking",
+            localId: "booking_1",
+            entityType: "CREDIT_NOTE",
+            operationType: "CREATE",
+            status: "RUNNING",
+            lastErrorCode: XERO_PARTIAL_REPAIR_RUNNING_CODE,
+            completedAt: null,
+            xeroObjectType: "CREDIT_NOTE",
+            xeroObjectId: "cn_clear",
+            requestPayload: {
+              invoiceId: "inv_primary",
+              refundAmountCents: 10000,
+              clearsUnpaidInvoice: true,
+              allocations: [{ invoiceId: "inv_primary", amountCents: 10000 }],
+            },
+          }),
+        ],
+      }),
+      scope: { all: true },
+    });
+
+    const bookingReport = report.passes[0].bookings[0];
+    // The fixture's unrelated primary-invoice link backfill aside, nothing touches the note.
+    expect(bookingReport.actions.map((action) => action.type)).toEqual(["SYNC_PAYMENT_PRIMARY_INVOICE_LINK"]);
+    expect(bookingReport.findings).toContainEqual(
+      expect.objectContaining({
+        code: "BLOCKED_BY_XERO_OPERATION",
+        summary: "A retry is working on this invoice-clearing credit note now; check again when it finishes.",
+        safeToAutoApply: false,
+        details: { operationId: "operation_repairing_clearing", operationStatus: "RUNNING" },
+        actions: [],
+      })
+    );
+  });
+
+  it("MUTATION: another note's running row does not stand in for this PARTIAL note's retry (#4259)", async () => {
+    const booking = makeBooking({
+      status: "CANCELLED",
+      payment: { ...makeBooking().payment, status: "FAILED" },
+    });
+    const clearingRow = (overrides: Record<string, unknown>) =>
+      makeOperation({
+        localModel: "Booking",
+        localId: "booking_1",
+        entityType: "CREDIT_NOTE",
+        operationType: "CREATE",
+        xeroObjectType: "CREDIT_NOTE",
+        requestPayload: {
+          invoiceId: "inv_primary",
+          refundAmountCents: 10000,
+          clearsUnpaidInvoice: true,
+          allocations: [{ invoiceId: "inv_primary", amountCents: 10000 }],
+        },
+        ...overrides,
+      });
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
+      dependencies: createDependencies({
+        bookings: [booking],
+        links: [
+          {
+            id: "link_clearing_note",
+            localModel: "Booking",
+            localId: "booking_1",
+            xeroObjectType: "CREDIT_NOTE",
+            xeroObjectId: "cn_clear",
+            xeroObjectNumber: "CN-9",
+            xeroObjectUrl: null,
+            role: "MODIFICATION_CREDIT_NOTE",
+            active: true,
+            metadata: null,
+            createdAt: new Date("2026-05-03T00:00:00Z"),
+            updatedAt: new Date("2026-05-03T00:00:00Z"),
+          },
+        ],
+        operations: [
+          clearingRow({ id: "operation_partial_clearing", status: "PARTIAL", xeroObjectId: "cn_clear" }),
+          clearingRow({ id: "operation_other_note", status: "RUNNING", lastErrorCode: XERO_PARTIAL_REPAIR_RUNNING_CODE, xeroObjectId: "cn_other" }),
+        ],
+      }),
+      scope: { all: true },
+    });
+
+    const bookingReport = report.passes[0].bookings[0];
+    expect(bookingReport.findings).toContainEqual(
+      expect.objectContaining({ code: "MISSING_CREDIT_NOTE_ALLOCATION", safeToAutoApply: true })
+    );
   });
 
   // #3535 delta D1: a PARTIAL clearing row stays PARTIAL after its repair, so
@@ -2568,6 +2718,101 @@ describe("runBookingXeroRepair", () => {
       id: "op_applied_allocation", localModel: "Payment", localId: "payment_1", entityType: "ALLOCATION", operationType: "ALLOCATE",
       xeroObjectType: null, xeroObjectId: null, requestPayload: { queueType: "APPLIED_CREDIT_ALLOCATION", bookingId: "booking_1" }, ...overrides,
     });
+
+  it("#4220: reports a credit note the booking still has to draw on that Xero shows spent outside the app, and offers nothing", async () => {
+    const note = {
+      creditNoteId: "cn_spent",
+      memberId: "member_1",
+      lotId: "lot_1",
+      xeroRemainingCents: 3000,
+      pendingAllocationCents: 6000,
+      pendingSliceCents: 6000,
+      unslicedDrawCents: 0,
+      outsideSpendCents: 3000,
+      leftForAllocationCents: 3000,
+      bookingIds: ["booking_1"],
+      resolvedAllocations: [],
+      observedAt: new Date("2026-06-30T20:00:00.000Z"),
+    };
+    spentOutside.find.mockResolvedValue([note, { ...note, creditNoteId: "cn_other", bookingIds: ["booking_9"] }]);
+    const deps = createDependencies({ bookings: [makeBooking()], operations: [makePrimaryInvoiceCreateOperation()] });
+
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, { dependencies: deps, scope: { all: true } });
+
+    expect(spentOutside.find).toHaveBeenCalledWith(deps.prisma, { bookingIds: ["booking_1"] });
+    const bookingReport = report.passes[0].bookings[0];
+    const findings = bookingReport.findings.filter((finding) => finding.code === "APPLIED_CREDIT_NOTE_CONSUMED_EXTERNALLY");
+    expect(findings).toEqual([
+      expect.objectContaining({
+        severity: "warning",
+        safeToAutoApply: false,
+        actions: [],
+        details: {
+          creditNoteId: "cn_spent",
+          memberCreditId: "lot_1",
+          xeroRemainingCents: 3000,
+          pendingAllocationCents: 6000,
+          pendingSliceCents: 6000,
+          unslicedDrawCents: 0,
+          outsideSpendCents: 3000,
+          leftForAllocationCents: 3000,
+          observedAt: "2026-06-30T20:00:00.000Z",
+        },
+      }),
+    ]);
+    // It plans nothing of its own: the actions are exactly those of the same run with no flag.
+    spentOutside.find.mockResolvedValue([]);
+    const unflagged = await runBookingXeroRepair(CLUB_FORMAT_TEST, { dependencies: createDependencies({ bookings: [makeBooking()], operations: [makePrimaryInvoiceCreateOperation()] }), scope: { all: true } });
+    expect(bookingReport.actions).toEqual(unflagged.passes[0].bookings[0].actions);
+  });
+
+  it("#4220: a booking whose allocation was resolved in Xero gets the resolved report, once, and no warning", async () => {
+    const resolved = {
+      ...makePrimaryInvoiceCreateOperation(),
+      id: "op_alloc_resolved",
+      entityType: "ALLOCATION",
+      operationType: "ALLOCATE",
+      status: "FAILED",
+      manuallyResolvedAt: new Date("2026-06-30T21:00:00.000Z"),
+      manuallyResolvedReason: "Allocated by hand in Xero",
+    };
+    const note = {
+      creditNoteId: "cn_spent",
+      memberId: "member_1",
+      lotId: "lot_1",
+      xeroRemainingCents: 0,
+      pendingAllocationCents: 6000,
+      pendingSliceCents: 0,
+      unslicedDrawCents: 6000,
+      outsideSpendCents: 10000,
+      leftForAllocationCents: 6000,
+      bookingIds: ["booking_9"],
+      resolvedAllocations: [{ bookingId: "booking_1", operation: resolved }],
+      observedAt: new Date("2026-06-30T20:00:00.000Z"),
+    };
+    // Two flagged notes resolve through the same operation: it is reported once.
+    spentOutside.find.mockResolvedValue([note, { ...note, creditNoteId: "cn_other" }]);
+    const deps = createDependencies({ bookings: [makeBooking()], operations: [makePrimaryInvoiceCreateOperation()] });
+
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, { dependencies: deps, scope: { all: true } });
+
+    const codes = report.passes[0].bookings[0].findings.map((finding) => finding.code);
+    expect(codes).not.toContain("APPLIED_CREDIT_NOTE_CONSUMED_EXTERNALLY");
+    const reported = report.passes[0].bookings[0].findings.filter((finding) => finding.code === "RESOLVED_IN_XERO_BY_OFFICER");
+    expect(reported).toEqual([
+      expect.objectContaining({
+        severity: "info",
+        actions: [],
+        details: expect.objectContaining({ creditNoteId: "cn_spent", operationId: "op_alloc_resolved", unslicedDrawCents: 6000 }),
+      }),
+    ]);
+  });
+
+  it("#4220: reports nothing when no credit note the booking draws on is flagged", async () => {
+    const deps = createDependencies({ bookings: [makeBooking()], operations: [makePrimaryInvoiceCreateOperation()] });
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, { dependencies: deps, scope: { all: true } });
+    expect(report.passes[0].bookings[0].findings.map((finding) => finding.code)).not.toContain("APPLIED_CREDIT_NOTE_CONSUMED_EXTERNALLY");
+  });
 
   it("MUTATION (#3836): queues the applied-credit allocation for a credit-only card invoice, and --apply queues it once", async () => {
     const deps = createDependencies({ bookings: [creditOnlyCardBooking()], operations: [makePrimaryInvoiceCreateOperation()], ...unallocated });

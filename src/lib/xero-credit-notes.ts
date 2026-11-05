@@ -10,15 +10,14 @@
  * - `allocateCreditNoteToInvoice` (apply an unapplied credit note against
  *   an invoice via Xero allocation)
  *
- * Also exposes the shared `backfillCancellationCreditXeroNote` helper
- * that keeps the local `MemberCredit` rows in step with the canonical
- * Xero credit-note IDs.
+ * The account-credit note's stamp onto the member's credit lives in
+ * `xero-account-credit-note-stamp.ts` (#4685).
  */
 
 import { reviewTaskKeyParts } from "@/lib/xero-review-task-key";
-import { assertNoRefundCreditNoteInFlight } from "@/lib/xero-refund-note-in-flight";
-import { recordCreatedRefundNote } from "@/lib/xero-refund-note-record";
-import { assertFreshRefundNoteFromCreate, mayRecordAsCanonicalRefundNote, readCanonicalRefundNoteField, refundNoteKeyAfterVoidParts, refundRequestOwnNotes, type RefundNoteKeyScope } from "@/lib/xero-refund-note-status";
+import { assertNoRefundCreditNoteInFlight, passUnrecordedRefundNoteFence } from "@/lib/xero-refund-note-in-flight";
+import { recordCreatedRefundNote, RefundNoteNotRecordedError } from "@/lib/xero-refund-note-record";
+import { mayRecordAsCanonicalRefundNote, readCanonicalRefundNoteField, refundNoteKeyAfterVoidParts, refundRequestOwnNotes, type RefundNoteKeyScope } from "@/lib/xero-refund-note-status";
 import {
   XERO_OUTBOX_ACCOUNT_CREDIT_NOTE_TYPE,
   XERO_OUTBOX_MODIFICATION_ACCOUNT_CREDIT_NOTE_TYPE,
@@ -33,7 +32,7 @@ import {
   sumRefundCreditNoteCoverageCents,
 } from "@/lib/xero-resolved-in-xero-fences";
 import { CreditNote, LineAmountTypes, type LineItem } from "xero-node";
-import { CreditType, PaymentSource } from "@prisma/client";
+import { PaymentSource } from "@prisma/client";
 import { prisma } from "./prisma";
 import { bookingOwner } from "@/lib/booking-owner";
 import logger from "@/lib/logger";
@@ -81,7 +80,7 @@ import {
 } from "@/lib/xero-refund-method";
 import type { RefundNoteWording } from "@/lib/xero-refund-method";
 import type { ClubFormat } from "@/lib/club-format";
-import { cancellationCreditDescription } from "@/lib/cancellation-settled-money";
+import { stampBookingModificationCreditXeroNote, stampCancellationCreditXeroNote } from "@/lib/xero-account-credit-note-stamp";
 import { REFUND_REQUEST_CREDIT_NOTE_ROLE } from "@/lib/refund-request-credit-note";
 import type { XeroOperationClaim } from "@/lib/xero-operation-outcome-guard";
 
@@ -182,6 +181,8 @@ export interface CreateXeroUnappliedCreditNoteOptions
    * since a sibling review's note on the same edit is a different document.
    */
   reviewTaskId?: string;
+  /** #4685: the cancellation credit the note is for, stamped by id; absent on older rows. */
+  memberCreditId?: string;
 }
 
 export async function createXeroCreditNote(
@@ -319,6 +320,7 @@ export async function createXeroCreditNote(
     }
   }
 
+  if ((await passUnrecordedRefundNoteFence(paymentId, queuedOperation)) === "closed") return ""; // #4688, #4692 (`INV-INT-035`)
   let existingCreditNoteId: string | null = null;
   let existingCreditNoteNumber: string | null = null;
   // F4 (#1354): in delta mode the amounts billed to Xero are derived from
@@ -782,10 +784,9 @@ export async function createXeroCreditNote(
     };
     const createdNoteId = createdNote.creditNoteID;
     const createdNoteNumber = createdNote.creditNoteNumber ?? null;
-    await assertFreshRefundNoteFromCreate(paymentId, operationId!, { creditNoteID: createdNoteId, status: createdNote.status }, prisma);
-    // #4426 (`INV-INT-029`): never recorded over a note a resolve by hand
-    // recorded while Xero answered; that row keeps the officer's note, and this
-    // one is audited and alerted, not linked, settled or completed.
+    // #4426, #4656 (`INV-INT-029`): checked fresh and recorded under the Payment row. A note kept out (a resolve
+    // recorded one) or recorded nowhere (no locks in time) is audited and alerted, never settled, completed or
+    // failed - and never reported as a success: the throw below skips this function's failure path.
     const record = await recordCreatedRefundNote({
       paymentId,
       bookingId: payment.booking.id,
@@ -793,13 +794,17 @@ export async function createXeroCreditNote(
       creditNoteId: createdNoteId,
       creditNoteNumber: createdNoteNumber,
       amountCents: effectiveRefundAmountCents,
+      xeroStatus: createdNote.status,
       // #3827 (D-3813-8): a request's own note never takes the pointer, nor
       // does a per-refund note (#3880 F1).
       writesPointer: refundRequestId === null && !perRefundNote,
       linkRole: noteLinkRole,
       linkMetadata: noteLinkMetadata,
+      claimStartedAt: operationClaim!.startedAt,
     });
-    if (record === "resolved-by-hand") return "";
+    if (record !== "recorded") {
+      throw new RefundNoteNotRecordedError(record, { operationId: operationId!, creditNoteId: createdNoteId, creditNoteNumber: createdNoteNumber });
+    }
 
     // The first attempt's settlement and completion, shared with the retry
     // that finishes an interrupted attempt (#3548): one path, one payload.
@@ -831,65 +836,13 @@ export async function createXeroCreditNote(
 
     return createdNote.creditNoteID;
   } catch (error) {
+    // #4656: a note the record did not write leaves the row as the record left it.
+    if (error instanceof RefundNoteNotRecordedError) throw error;
     await failXeroSyncOperation(operationClaim!, error);
     throw error;
   }
 }
 
-
-async function backfillCancellationCreditXeroNote(params: {
-  memberId: string;
-  bookingId: string;
-  refundAmountCents: number;
-  creditNoteId: string;
-}) {
-  const bookingLabel = params.bookingId.slice(0, 8);
-  await prisma.memberCredit.updateMany({
-    where: {
-      memberId: params.memberId,
-      sourceBookingId: params.bookingId,
-      amountCents: params.refundAmountCents,
-      type: CreditType.CANCELLATION_REFUND,
-      // Every credit this pipeline mints must link back to its Xero note: the
-      // cancellation-flow literal plus the two Internet Banking payment-credit
-      // literals (late capacity failure, and a payment landing on an
-      // already-cancelled booking, #1357).
-      description: {
-        in: [
-          cancellationCreditDescription(params.bookingId),
-          `Internet Banking payment credit for booking ${bookingLabel}`,
-          `Internet Banking payment credit for cancelled booking ${bookingLabel}`,
-        ],
-      },
-      xeroCreditNoteId: null,
-    },
-    data: {
-      xeroCreditNoteId: params.creditNoteId,
-    },
-  });
-}
-
-async function backfillBookingModificationCreditXeroNote(params: {
-  memberId: string;
-  bookingId: string;
-  bookingModificationId: string;
-  refundAmountCents: number;
-  creditNoteId: string;
-}) {
-  await prisma.memberCredit.updateMany({
-    where: {
-      memberId: params.memberId,
-      sourceBookingId: params.bookingId,
-      sourceBookingModificationId: params.bookingModificationId,
-      amountCents: params.refundAmountCents,
-      type: CreditType.BOOKING_MODIFICATION_REFUND,
-      xeroCreditNoteId: null,
-    },
-    data: {
-      xeroCreditNoteId: params.creditNoteId,
-    },
-  });
-}
 
 /**
  * Create an UNAPPLIED Xero credit note for account credit refunds.
@@ -920,6 +873,7 @@ export async function createUnappliedXeroCreditNote(
   const queuedOperation = options?.syncOperation ?? null;
   const queuedOperationId = queuedOperation?.id ?? null;
   const bookingModificationId = options?.bookingModificationId ?? null;
+  const memberCreditId = options?.memberCreditId;
   const linkLocalModel = bookingModificationId ? "BookingModification" : "Payment";
   const linkLocalId = bookingModificationId ?? paymentId;
   const linkRole = bookingModificationId
@@ -950,7 +904,7 @@ export async function createUnappliedXeroCreditNote(
     // way; only the local link is member-scoped.
     const creditMemberId = bookingOwner(payment.booking).memberId;
     if (creditMemberId && bookingModificationId) {
-      await backfillBookingModificationCreditXeroNote({
+      await stampBookingModificationCreditXeroNote({
         memberId: creditMemberId,
         bookingId: payment.booking.id,
         bookingModificationId,
@@ -958,11 +912,12 @@ export async function createUnappliedXeroCreditNote(
         creditNoteId: existingLink.xeroObjectId,
       });
     } else if (creditMemberId) {
-      await backfillCancellationCreditXeroNote({
+      await stampCancellationCreditXeroNote({
         memberId: creditMemberId,
         bookingId: payment.booking.id,
         refundAmountCents,
         creditNoteId: existingLink.xeroObjectId,
+        memberCreditId,
       });
     }
 
@@ -1086,6 +1041,8 @@ export async function createUnappliedXeroCreditNote(
         : { queueType: XERO_OUTBOX_ACCOUNT_CREDIT_NOTE_TYPE }
       : {}),
     ...(reviewTaskId ? { reviewTaskId } : {}),
+    // #4685: kept on the executed shape too, so a retry stamps the same credit.
+    ...(memberCreditId ? { memberCreditId } : {}),
   };
   const requestPayload = {
     creditNotes: [buildCreditNote(contactId)],
@@ -1162,7 +1119,7 @@ export async function createUnappliedXeroCreditNote(
     // way; only the local link is member-scoped.
     const creditMemberId = bookingOwner(payment.booking).memberId;
     if (creditMemberId && bookingModificationId) {
-      await backfillBookingModificationCreditXeroNote({
+      await stampBookingModificationCreditXeroNote({
         memberId: creditMemberId,
         bookingId: payment.booking.id,
         bookingModificationId,
@@ -1170,11 +1127,12 @@ export async function createUnappliedXeroCreditNote(
         creditNoteId: createdNote.creditNoteID,
       });
     } else if (creditMemberId) {
-      await backfillCancellationCreditXeroNote({
+      await stampCancellationCreditXeroNote({
         memberId: creditMemberId,
         bookingId: payment.booking.id,
         refundAmountCents,
         creditNoteId: createdNote.creditNoteID,
+        memberCreditId,
       });
     }
 

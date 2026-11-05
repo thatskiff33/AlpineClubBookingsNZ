@@ -584,9 +584,9 @@ land.
 manifest moving with it. The numbers this page was written against:
 
 ```
-row-producing sites:  530
+row-producing sites:  534
 uncategorised:        0
-category values: admin 111, booking 109, xero 48, family 35, payment 67,
+category values: admin 112, booking 109, xero 51, family 35, payment 67,
                  lodge 68, account 19, security 25, privacy 22,
                  communication 21, system 4
 ```
@@ -883,6 +883,33 @@ request was left to the officers, filed `payment` with the rest.
 `pnpm run audit:census`): `xero.credit_note.outside_spend_mirrored` and
 `xero.credit_note.outside_spend_restored`, the inbound credit-note mirror's rows, filed
 `xero` beside the converge's.
+
+#4686 then added one (`xero` 50 -> 51, 532 -> 533, MEASURED with
+`pnpm run audit:census`): `xero.operation.late_partial_not_recorded`, the row a Xero
+operation's part-success writes when its attempt stalled, lost its claim (Reset stale
+running, then a Retry, a withdrawal or another attempt) and came back having made a Xero
+object the app did not record over the queued or closed row, so the object has a durable
+trace. Filed `xero` beside the other Xero rows; nobody's readership changes.
+
+The one-step central-server connection (triyder/AlpineClubBookingsNZ#97) then added
+one (`admin` 111 -> 112, 533 -> 534, MEASURED with `pnpm run audit:census`):
+`LODGE_CENTRAL_LINK_UPDATED` from the setup page's Link your lodges dialog
+(`/api/admin/alpine-server/lodge-links`), the Central lodge card's twin and filed
+`admin` like it; the readership of that event does not change.
+
+#4680 then added one (`xero` 49 -> 50, 531 -> 532, MEASURED with
+`pnpm run audit:census`): `xero.organiser_adjustment_note.run_stood_down`, the row an
+organiser adjustment run writes when, after recording its credit note, it finds before a
+money-moving Xero call that a stale reset took its claim, and stops without allocating or
+paying out, so the stand-down has a durable trace. Filed `xero` beside the other Xero
+rows; nobody's readership changes.
+
+#4655 then added one (`xero` 48 -> 49, 530 -> 531, MEASURED with
+`pnpm run audit:census`): `xero.organiser_adjustment_note.late_note_not_recorded`, the
+row an organiser adjustment's credit-note create writes when Xero answers after its job
+was reset and the job may no longer take the note (resolved by hand, run again or
+closed), so the late note it did not record has a durable trace. Filed `xero` beside the
+other Xero rows; nobody's readership changes.
 
 #4426 then added one (`xero` 47 -> 48, 529 -> 530, MEASURED with
 `pnpm run audit:census`): `xero.refund_credit_note.late_note_not_recorded`, the row a

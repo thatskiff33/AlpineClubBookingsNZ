@@ -47,7 +47,7 @@ import {
 import { hasAdminAccess } from "@/lib/access-roles";
 import { PAYMENT_RECEIVED_STATUS_UNCONFIRMED_BODY, SUPERSEDED_CHARGE_NOT_SETTLED_BODY } from "@/lib/payment-recovery-contract";
 import { clubFormatValues } from "@/lib/club-format-server";
-import { chargeCurrencyRefusal, UNSUPPORTED_CHARGE_CURRENCY_ADMIN_MESSAGE as CURRENCY_REFUSED } from "@/lib/stripe-charge-currency";
+import { BELOW_STRIPE_MINIMUM_ADMIN_BODY, BelowStripeMinimumError, chargeCurrencyRefusal, isLocalChargeRefusal, localChargeRefusal, UNSUPPORTED_CHARGE_CURRENCY_ADMIN_MESSAGE as CURRENCY_REFUSED } from "@/lib/stripe-charge-currency";
 
 const ChargeSavedMethodSchema = z.object({
   bookingId: z.string().min(1),
@@ -214,6 +214,8 @@ export async function POST(request: NextRequest) {
         if (savedCardChargeCents(locked) === 0) {
           return { error: "This booking has nothing to charge - confirm it with Confirm pending guests, or wait for its hold deadline." as const, status: 409 };
         }
+        // #101: below the card minimum, refused on the post-lock figure before the claim or attempt row.
+        if (localChargeRefusal(format, savedCardChargeCents(locked)) instanceof BelowStripeMinimumError) return { refusal: BELOW_STRIPE_MINIMUM_ADMIN_BODY, status: 409 };
         const capacity = await checkCapacityForGuestRanges(
           lodgeId,
           locked.checkIn,
@@ -322,6 +324,7 @@ export async function POST(request: NextRequest) {
       throw claimErr;
     }
 
+    if ("refusal" in claim) return NextResponse.json(claim.refusal, { status: claim.status });
     if ("error" in claim) {
       return NextResponse.json({ error: claim.error }, { status: claim.status });
     }
@@ -583,7 +586,8 @@ export async function POST(request: NextRequest) {
     // Stripe's own words when Stripe spoke (INV-INT-004). The attempt row has
     // already been ended for a definite refusal, or left for the next attempt
     // to ask about.
-    if (chargeAttempted && !paymentSucceeded && attemptAlertContext) {
+    // #101: a local refusal never reached Stripe, so there is no failure to alert on.
+    if (chargeAttempted && !paymentSucceeded && attemptAlertContext && !isLocalChargeRefusal(error)) {
       sendAdminPaymentFailureAlert({
         memberName: attemptAlertContext.memberName,
         checkIn: attemptAlertContext.checkIn,
@@ -643,6 +647,9 @@ export async function POST(request: NextRequest) {
         status: 409,
       });
     }
+
+    // #3567 (currency) and #101 (minimum): refused locally, after the claim was handed back; nothing was charged.
+    if (!paymentSucceeded && isLocalChargeRefusal(error)) return NextResponse.json(error instanceof BelowStripeMinimumError ? BELOW_STRIPE_MINIMUM_ADMIN_BODY : { error: CURRENCY_REFUSED }, { status: 409 });
 
     if (!paymentSucceeded) {
       logAudit({

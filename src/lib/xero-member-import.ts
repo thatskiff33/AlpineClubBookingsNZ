@@ -31,6 +31,7 @@
 
 import { randomBytes } from "crypto";
 import { hash } from "bcryptjs";
+import { PASSWORD_BCRYPT_COST } from "@/lib/password-hashing";
 import type { AgeTier } from "@prisma/client";
 import { prisma } from "./prisma";
 import { validateInheritEmailSource } from "@/lib/member-email-inheritance";
@@ -436,7 +437,7 @@ export async function importMembersFromXeroGroups(
   }
 
   // Hash a random UUID — unguessable placeholder password
-  const placeholderHash = await hash(randomBytes(32).toString("hex"), 13);
+  const placeholderHash = await hash(randomBytes(32).toString("hex"), PASSWORD_BCRYPT_COST);
   const groupCacheCursor = await getXeroSyncCursor(
     CONTACT_GROUP_CACHE_CURSOR_RESOURCE,
     DEFAULT_XERO_SYNC_SCOPE

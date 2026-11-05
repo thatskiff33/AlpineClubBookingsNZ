@@ -10,6 +10,17 @@ export function getAuthSecret(): string | undefined {
   return readEnv("AUTH_SECRET") ?? readEnv("NEXTAUTH_SECRET");
 }
 
+/** Resolve the auth secret at call time, or fail closed with the caller's error. */
+export function requireAuthSecret(
+  errorMessage = "AUTH_SECRET or NEXTAUTH_SECRET is required",
+): string {
+  const secret = getAuthSecret();
+  if (!secret) {
+    throw new Error(errorMessage);
+  }
+  return secret;
+}
+
 export function getAuthTrustHost(): boolean {
   const raw = readEnv("AUTH_TRUST_HOST");
   return raw === "true";

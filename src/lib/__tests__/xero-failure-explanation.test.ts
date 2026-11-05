@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { CREDIT_NOTE_SPENT_OUTSIDE_APP_CODE } from "@/lib/xero-credit-note-spent-outside-app";
 import { explainXeroFailure, type XeroFailureKind } from "@/lib/xero-failure-explanation";
 import { XERO_ORPHANED_STALE_RUNNING_ERROR_CODE } from "@/lib/xero-stale-operations";
+import { XERO_REFUND_NOTE_UNRECORDED_ERROR_CODE } from "@/lib/xero-operation-error-codes";
 
 function xeroBody(message: string): string {
   return JSON.stringify({
@@ -168,6 +169,15 @@ describe("explainXeroFailure: codes the app names itself", () => {
     const result = explainXeroFailure({ code: XERO_ORPHANED_STALE_RUNNING_ERROR_CODE, message: null, entityType: "INVOICE" });
     expect(result.kind).toBe("LOST_TRACK");
     expect(result.nextStep).toContain("invoice");
+  });
+
+  it("explains an unrecorded refund note, never advising a retry, after Mark failed too (#4688)", () => {
+    for (const message of [null, "Operation was stuck RUNNING past the staleness threshold and was marked FAILED by an operator."]) {
+      const result = explainXeroFailure({ code: XERO_REFUND_NOTE_UNRECORDED_ERROR_CODE, message, entityType: "CREDIT_NOTE" });
+      expect(result.kind).toBe("NOTE_NOT_RECORDED");
+      expect(result.nextStep).toContain("Do not retry");
+      expect(result.nextStep).toContain("Resolve by hand");
+    }
   });
 });
 

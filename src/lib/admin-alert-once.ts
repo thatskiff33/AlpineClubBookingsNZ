@@ -23,32 +23,102 @@ import { prisma } from "@/lib/prisma";
  *   every recipient suppressed): the claim is held for a day, then the next
  *   run tries again;
  * - the send threw before reaching anyone: the claim is given back, so the
- *   next run retries.
+ *   next run retries;
+ * - the claim call threw: nothing is sent, and the stamp it tried to write is
+ *   given back (#4696) if the database answers one of two immediate tries: the
+ *   write may have committed before the throw (#4679). A no-op when nothing
+ *   landed; the next run claims afresh and sends. The claim stays held, and
+ *   the alert is lost, when both tries fail on the same outage (logged "Failed
+ *   to give back the uncertain ... claim"), or when the write commits only
+ *   after the give-back ran (the client dropped while the server was still
+ *   inserting; only the failed claim is logged).
  * Never throws; returns whether the claim was kept. `context` is logged with
  * every failure, `label` names the alert in those lines.
  */
-export async function sendAdminAlertOnceEver({
-  key,
-  label,
-  context,
-  send,
-}: {
+export async function sendAdminAlertOnceEver(args: OnceEverAlertArgs): Promise<boolean> {
+  const claim = await sendAdminAlertOnceEverClaim(args);
+  if (claim.claimUncertain && claim.claimedAt) {
+    await giveBackOwnOnceEverClaim({ ...args, claim: { claimedAt: claim.claimedAt, claimUncertain: true } });
+  }
+  return claim.kept;
+}
+
+/*
+ * #4696 CENSUS, checked against the real callers by
+ * `admin-alert-once-census.test.ts`: every `sendAdminAlertOnceEver` caller in
+ * `src/lib`, grouped by whether anything sends its alert again once an
+ * uncertain claim is given back. Each caller's own docblock says how it runs.
+ * A give-back cannot make a sibling send twice: it deletes only a row under
+ * this call's own stamp, this call sent nothing, and a sibling that read that
+ * row held sent nothing. Limits: two claims for one key in the same millisecond
+ * share a stamp (at worst a duplicate); and the two cases above where the claim
+ * stays held, for good here, since these callers have no takeover
+ * (`admin-alert-once-takeover.ts` has, and gives back its own claims).
+ *
+ * Retried by its next run (cron, or a webhook or request then cron):
+ * - internet-banking-payment-cron.ts
+ * - xero-waiting-invoice-reaper.ts
+ * - group-settlement-invoice-alerts.ts
+ * - group-late-joiner.ts
+ * - late-capture-refund-hold.ts
+ * - late-capture-unrecorded-refunds.ts
+ * - cancelled-booking-late-capture.ts
+ * Retried only by a later event on the same subject, on no schedule:
+ * - card-refund-cap-overflow.ts
+ * - superseded-ask-invoice-return.ts
+ * - xero-success-after-resolution-alert.ts
+ * Cannot retry (nothing calls again; the logged error is the trace):
+ * - pre-persisted-refund-close.ts
+ * - capacity-race-refund-shortfall.ts
+ */
+
+type OnceEverAlertArgs = {
   key: string;
   label: string;
   context: Record<string, unknown>;
   send: () => Promise<AdminAlertSendResult>;
-}): Promise<boolean> {
+};
+
+/**
+ * What one `sendAdminAlertOnceEver` call did with the claim (#4670): `kept`
+ * as that function returns it, and `claimedAt`, the exact stamp this call
+ * wrote when it took the claim, or null when another holder had it. Not kept
+ * with a stamp means this call's send failed: a claim still held under that
+ * exact stamp is its own, left by a release that failed, never a sibling's,
+ * and `releaseAlertCooldown` with it gives back that claim and no other.
+ *
+ * #4679: `claimUncertain` means the claim call itself threw, so nothing was
+ * sent, yet the write may have committed (the connection dropped before the
+ * reply). `claimedAt` is then the stamp it tried to write: a claim held under
+ * it is this call's own, and giving it back changes nothing when the write
+ * never landed. This variant gives nothing back: its caller does
+ * (`giveBackOwnOnceEverClaim`), as the boolean wrapper does for its own (#4696).
+ */
+export type OnceEverAlertClaim = { kept: boolean; claimedAt: Date | null; claimUncertain: boolean };
+
+/** `sendAdminAlertOnceEver`, reporting the claim's stamp as well (#4670). Same rule, but an uncertain claim is the caller's to give back; never throws. */
+export async function sendAdminAlertOnceEverClaim({
+  key,
+  label,
+  context,
+  send,
+}: OnceEverAlertArgs): Promise<OnceEverAlertClaim> {
   const claimedAt = new Date();
-  let claimed = false;
+  let claimed: boolean;
   try {
     claimed = await claimAlertCooldown({
       key,
       windowMs: ALERT_ONCE_EVER_WINDOW_MS,
       now: claimedAt,
     });
-    if (!claimed) return false;
+  } catch (err) {
+    logger.error({ ...context, err }, `Failed to claim the ${label}; nothing was sent`);
+    return { kept: false, claimedAt, claimUncertain: true };
+  }
+  if (!claimed) return { kept: false, claimedAt: null, claimUncertain: false };
+  try {
     const result = await send();
-    if (adminAlertIsDeliveredOrQueued(result)) return true;
+    if (adminAlertIsDeliveredOrQueued(result)) return { kept: true, claimedAt, claimUncertain: false };
     logger.error(
       { ...context, result },
       `No admin can receive the ${label}; it will be retried in a day`
@@ -61,16 +131,42 @@ export async function sendAdminAlertOnceEver({
     }).catch((err) =>
       logger.error({ ...context, err }, `Failed to defer the ${label} claim`)
     );
-    return false;
+    return { kept: false, claimedAt, claimUncertain: false };
   } catch (err) {
     logger.error({ ...context, err }, `Failed to send the ${label}; it will be retried`);
   }
-  if (claimed) {
-    await releaseAlertCooldown({ key, claimedAt }).catch((err) =>
-      logger.error({ ...context, err }, `Failed to release the ${label} claim`)
-    );
+  await releaseAlertCooldown({ key, claimedAt }).catch((err) =>
+    logger.error({ ...context, err }, `Failed to release the ${label} claim`)
+  );
+  return { kept: false, claimedAt, claimUncertain: false };
+}
+
+/**
+ * Give back a once-ever claim this call took and could not use, under the exact
+ * stamp it wrote, so a newer claim is never touched (#4670). An uncertain claim
+ * (its write threw, #4679) gets two tries; a failed send's one more, after the
+ * claim helper's own. Never throws.
+ */
+export async function giveBackOwnOnceEverClaim({
+  key,
+  label,
+  context,
+  claim,
+}: {
+  key: string;
+  label: string;
+  context: Record<string, unknown>;
+  claim: Pick<OnceEverAlertClaim, "claimUncertain"> & { claimedAt: Date };
+}): Promise<void> {
+  const failed = claim.claimUncertain ? "Failed to give back the uncertain" : "Failed again to release the";
+  for (let attempt = 1; attempt <= (claim.claimUncertain ? 2 : 1); attempt += 1) {
+    try {
+      await releaseAlertCooldown({ key, claimedAt: claim.claimedAt });
+      return;
+    } catch (err) {
+      logger.error({ ...context, err, attempt }, `${failed} ${label} claim`);
+    }
   }
-  return false;
 }
 
 /**

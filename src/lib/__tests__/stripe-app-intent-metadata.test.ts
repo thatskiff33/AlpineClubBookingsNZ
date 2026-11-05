@@ -4,9 +4,10 @@ import { describe, expect, it } from "vitest";
 import type * as StripeModule from "@/lib/stripe";
 import { relativeSource, sourceFiles } from "@/lib/__tests__/support/booking-guest-night-writer-scan";
 import { stripCommentsAndStrings } from "@/lib/__tests__/support/strip-comments";
-import { buildSavedCardChargeMetadata } from "@/lib/saved-card-charge-attempt";
+import { buildSavedCardChargeMetadata, mintedSavedCardChargeKey, savedCardChargeIdempotencyKey } from "@/lib/saved-card-charge-key";
 import {
   GROUP_SETTLEMENT_INTENT_TYPE,
+  appPaymentIntentRoute,
   assertAppPaymentIntentMetadata,
   isAppCreatedPaymentIntent,
   type AppPaymentIntentMetadata,
@@ -28,9 +29,13 @@ describe("isAppCreatedPaymentIntent (#4532)", () => {
       { bookingId: "bk_1", type: "additional_modification", reason: "r", reissuedAskKey: "k" },
       // group organiser settlement
       { type: GROUP_SETTLEMENT_INTENT_TYPE, groupBookingId: "g_1", organiserMemberId: "m_1" },
-      // saved-card off-session charges, from the real builder
-      buildSavedCardChargeMetadata("bk_1", "m_1"),
-      buildSavedCardChargeMetadata("bk_1", null),
+      // saved-card off-session charges, from the real builder: the original key
+      // this release mints sends no attempt id, member-owned or not; a `_v2`
+      // key (minted from #4682) also names its row (#4646)
+      buildSavedCardChargeMetadata("bk_1", "m_1", { attemptRowId: "txn_1", idempotencyKey: mintedSavedCardChargeKey("bk_1", "txn_1") }),
+      buildSavedCardChargeMetadata("bk_1", null, { attemptRowId: "txn_1", idempotencyKey: mintedSavedCardChargeKey("bk_1", "txn_1") }),
+      buildSavedCardChargeMetadata("bk_1", "m_1", { attemptRowId: "txn_1", idempotencyKey: savedCardChargeIdempotencyKey("bk_1", "txn_1") }),
+      buildSavedCardChargeMetadata("bk_1", null, { attemptRowId: "txn_1", idempotencyKey: savedCardChargeIdempotencyKey("bk_1", "txn_1") }),
     ];
     for (const metadata of shapes) expect(isAppCreatedPaymentIntent(metadata), JSON.stringify(metadata)).toBe(true);
   });
@@ -60,6 +65,23 @@ describe("isAppCreatedPaymentIntent (#4532)", () => {
     // @ts-expect-error - the group type needs its group
     const group: CreateMetadata = { type: GROUP_SETTLEMENT_INTENT_TYPE };
     expect([create, charge, group]).toHaveLength(3);
+  });
+
+  // #4647: the dispatcher routes on this reading, so a recognised booking
+  // intent always arrives with its booking id and none without one is possible.
+  it("routes a recognised intent with the booking it names, a group settlement as such, and anything else nowhere", () => {
+    expect(appPaymentIntentRoute({ bookingId: "bk_1", memberId: "m_1" })).toEqual({ kind: "booking", bookingId: "bk_1" });
+    expect(appPaymentIntentRoute({ bookingId: "bk_1", type: "additional_modification" })).toEqual({
+      kind: "booking",
+      bookingId: "bk_1",
+    });
+    expect(appPaymentIntentRoute({ type: GROUP_SETTLEMENT_INTENT_TYPE, groupBookingId: "g_1" })).toEqual({
+      kind: "group_settlement",
+    });
+    for (const metadata of [null, undefined, {}, { bookingId: "" }, { type: "donation" }, { memberId: "m_1" }]) {
+      expect(appPaymentIntentRoute(metadata), JSON.stringify(metadata)).toBeNull();
+      expect(isAppCreatedPaymentIntent(metadata), JSON.stringify(metadata)).toBe(false);
+    }
   });
 
   it("refuses an empty bookingId before Stripe is called", () => {

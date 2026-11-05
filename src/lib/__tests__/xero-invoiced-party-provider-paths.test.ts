@@ -81,6 +81,8 @@ vi.mock("@/lib/prisma", () => ({
       update: mocks.xeroSyncOperationUpdate,
       findFirst: mocks.xeroSyncOperationFindFirst,
       findUnique: mocks.xeroSyncOperationFindUnique,
+      // #4688: no unrecorded refund note fences these payments.
+      findMany: async () => [],
     },
     memberCredit: { updateMany: mocks.memberCreditUpdateMany },
   },

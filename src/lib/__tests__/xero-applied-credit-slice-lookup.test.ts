@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { findFundingLotsForNote, sliceHeldInXero } from "@/lib/xero-applied-credit-slice-lookup";
+import { findFundingLotsForNote, sliceHeldInXero, slicesHeldInXero } from "@/lib/xero-applied-credit-slice-lookup";
 import { writtenDownCentsByCreditNote } from "@/lib/xero-credit-note-write-down";
 
 /**
@@ -43,6 +43,29 @@ describe("sliceHeldInXero", () => {
       select: { id: true },
     });
     await expect(sliceHeldInXero(db(null) as never, "slice-1")).resolves.toBe(false);
+  });
+});
+
+describe("slicesHeldInXero (#4220)", () => {
+  it("asks the same completion-link question of many slices at once", async () => {
+    const findMany = vi.fn().mockResolvedValue([{ localId: "slice-2" }]);
+    await expect(slicesHeldInXero({ xeroObjectLink: { findMany } } as never, ["slice-1", "slice-2"])).resolves.toEqual(new Set(["slice-2"]));
+    expect(findMany).toHaveBeenCalledWith({
+      where: {
+        localModel: "MemberCreditNoteAllocation",
+        localId: { in: ["slice-1", "slice-2"] },
+        xeroObjectType: "ALLOCATION",
+        role: "APPLIED_CREDIT_ALLOCATION",
+        active: true,
+      },
+      select: { localId: true },
+    });
+  });
+
+  it("asks nothing for no slices", async () => {
+    const findMany = vi.fn();
+    await expect(slicesHeldInXero({ xeroObjectLink: { findMany } } as never, [])).resolves.toEqual(new Set());
+    expect(findMany).not.toHaveBeenCalled();
   });
 });
 

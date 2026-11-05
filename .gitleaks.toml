@@ -120,6 +120,10 @@ description = "A fabricated idempotency key from ANOTHER subsystem (the late-can
 regexes = ['''^late_cancel_refund_bk_1_pi_x$''']
 
 [[allowlists]]
+description = "An original-shape saved-card attempt key (no `_v2` suffix), once written out in `stripe-app-intent-metadata.test.ts` in a commit of #4681 that history keeps; the file now builds it with `mintedSavedCardChargeKey`. A test's own label for a fabricated row: readable snake_case, no credential, and it names no real intent or booking. The same class as `pending_charge_b1` above (#4646)."
+regexes = ['''^pending_charge_bk_1_txn_1$''']
+
+[[allowlists]]
 description = "A readable fixture idempotency key from the booking ledger's real-PostgreSQL proof (#3595), in a commit this pull request cannot rewrite: `generic-api-key` matched it because the field is called `postingKey`. Not a credential — a test's own label for a line it posted and deleted. The file now uses plain words below the rule's length floor; this literal is forgiven only because history keeps it. Same class as `pending_charge_b1` above."
 regexes = ['''^k-3595-contrast$''']
 

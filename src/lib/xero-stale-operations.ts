@@ -1,6 +1,9 @@
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
-import { XERO_ORPHANED_STALE_RUNNING_ERROR_CODE } from "@/lib/xero-operation-error-codes";
+import {
+  XERO_ORPHANED_STALE_RUNNING_ERROR_CODE,
+  XERO_REFUND_NOTE_UNRECORDED_ERROR_CODE,
+} from "@/lib/xero-operation-error-codes";
 
 // #4278: re-exported so existing importers keep one name; the definition is in the client-safe module.
 export { XERO_ORPHANED_STALE_RUNNING_ERROR_CODE };
@@ -143,21 +146,37 @@ type StaleResetWriter = Pick<Prisma.TransactionClient, "xeroSyncOperation">;
  * writes their audit row. #4256: a stuck PARTIAL repair
  * (`XERO_PARTIAL_REPAIR_RUNNING_CODE`) goes back to PARTIAL, not FAILED. The
  * bulk reset writes both; Mark failed, which read the row's code under the same
- * `startedAt` guard, passes `only` for the one write that row needs.
+ * `startedAt` guard, passes `only` for the one write that row needs. #4688: a
+ * row holding an unrecorded refund note (`XERO_REFUND_NOTE_UNRECORDED_ERROR_CODE`)
+ * goes to FAILED keeping that code (`only: "UNRECORDED"` for Mark failed), so
+ * the fence on its payment's refund notes stays up until Resolve by hand; the
+ * plain FAILED write never matches it, even under `only`, so a stamp landing
+ * after Mark failed's read is never overwritten (that Mark failed then answers
+ * "not stale", and a second press keeps the code).
  */
 export async function writeStaleRunningXeroOperationReset(
   where: Prisma.XeroSyncOperationWhereInput,
   now: Date,
   lastErrorMessage: string,
   db: StaleResetWriter,
-  only?: "FAILED" | "PARTIAL",
+  only?: "FAILED" | "PARTIAL" | "UNRECORDED",
 ): Promise<{ failed: number; partial: number }> {
   const count = { failed: 0, partial: 0 };
-  if (only !== "PARTIAL") {
+  if (only === undefined || only === "FAILED") {
     const failed = await db.xeroSyncOperation.updateMany({
-      where: only
-        ? where
-        : { ...where, OR: [{ lastErrorCode: null }, { lastErrorCode: { not: XERO_PARTIAL_REPAIR_RUNNING_CODE } }] },
+      where: {
+        ...where,
+        OR: [
+          { lastErrorCode: null },
+          {
+            lastErrorCode: {
+              notIn: only
+                ? [XERO_REFUND_NOTE_UNRECORDED_ERROR_CODE]
+                : [XERO_PARTIAL_REPAIR_RUNNING_CODE, XERO_REFUND_NOTE_UNRECORDED_ERROR_CODE],
+            },
+          },
+        ],
+      },
       data: {
         status: "FAILED",
         lastErrorCode: XERO_ORPHANED_STALE_RUNNING_ERROR_CODE,
@@ -167,7 +186,21 @@ export async function writeStaleRunningXeroOperationReset(
     });
     count.failed = failed.count;
   }
-  if (only !== "FAILED") {
+  if (only === undefined || only === "UNRECORDED") {
+    // #4688: the unrecorded note's code stays on the row; only the status and completion move.
+    // The message names the note: Mark failed's carries it forward (`carriedStaleRunningCause`),
+    // and the bulk reset's generic one is not written over it (#4692 review).
+    const unrecorded = await db.xeroSyncOperation.updateMany({
+      where: { ...where, lastErrorCode: XERO_REFUND_NOTE_UNRECORDED_ERROR_CODE },
+      data: {
+        status: "FAILED",
+        lastErrorMessage: only === "UNRECORDED" ? lastErrorMessage : undefined,
+        completedAt: now,
+      },
+    });
+    count.failed += unrecorded.count;
+  }
+  if (only === undefined || only === "PARTIAL") {
     const repairs = await db.xeroSyncOperation.updateMany({
       where: { ...where, lastErrorCode: XERO_PARTIAL_REPAIR_RUNNING_CODE },
       data: {
@@ -261,6 +294,8 @@ export async function markStaleRunningXeroOperationFailed(
     previousErrorMessage: row.lastErrorMessage,
   };
   const returnedTo = row.lastErrorCode === XERO_PARTIAL_REPAIR_RUNNING_CODE ? "PARTIAL" : "FAILED";
+  // #4688: a row holding an unrecorded refund note goes to FAILED keeping its code (the payment's fence).
+  const write = returnedTo === "PARTIAL" ? "PARTIAL" : row.lastErrorCode === XERO_REFUND_NOTE_UNRECORDED_ERROR_CODE ? "UNRECORDED" : "FAILED";
   const marked = await prisma.$transaction(async (tx) => {
     const reset = await writeStaleRunningXeroOperationReset(
       {
@@ -271,7 +306,7 @@ export async function markStaleRunningXeroOperationFailed(
       now,
       message,
       tx,
-      returnedTo,
+      write,
     );
     if (reset.failed + reset.partial !== 1) return false;
     await recordAudit(tx, operation);

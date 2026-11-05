@@ -37,7 +37,7 @@ description, so you can find the right file without opening more than one.
 | [`operations.md`](invariants/operations.md) | `INV-OPS`, `INV-LOCK` | raw SQL, advisory or row locking, which lock tier a writer takes, deployment, dropping a column, changing what a value already stored in a column means (an audit `category`, a status string) so the rows already written no longer match the code, what may be used as test input, mocking a money seam in a test that asserts money |
 | [`product-configuration.md`](invariants/product-configuration.md) | `INV-CONFIG` | adding a value or feature a club could answer differently, a new setting existing deployments will not have, or a default an upgrade must fall back to |
 | [`single-source-of-truth.md`](invariants/single-source-of-truth.md) | `INV-SSOT` | adding a constant, helper, formatter, type, validation rule or config value a second place will need; comparing two values; putting a default on a parameter that resolves an environment or configuration authority; or writing a guard, census or ratchet that claims to cross-check another one |
-| [`authentication.md`](invariants/authentication.md) | `INV-AUTH` | password sign-in, the per-account password throttle, what a refused or throttled sign-in answers |
+| [`authentication.md`](invariants/authentication.md) | `INV-AUTH` | password sign-in, the per-account password throttle, what a refused or throttled sign-in answers, the breach-list check on a chosen password, the maximum session age |
 
 Three supporting files sit beside them: the full id scheme in
 [`SCHEME.md`](invariants/SCHEME.md); the word-budget register of approved
@@ -262,7 +262,7 @@ Prefix `INV-PAY`.
 | `INV-PAY-086` | Captured money on any PRIMARY row refuses a new attempt; INV-PAY-054 ordering |
 | `INV-PAY-087` | The refusal alert is capped and anchored; an expected INV-PAY-053 card copy |
 | `INV-PAY-088` | Stripe's answer is recorded on the attempt row, forward only |
-| `INV-PAY-089` | A key is only re-sent inside Stripe's window, or recovered by it |
+| `INV-PAY-089` | A key is only re-sent in Stripe's window; lost answers adopted exactly |
 | `INV-PAY-090` | The pre-charge sweep excludes attempt rows by the key prefix |
 | `INV-PAY-056` | A payment recovery becomes terminally failed in exactly one place |
 | `INV-PAY-091` | Terminality is an argument, not a re-derivation; the write is fenced |
@@ -938,6 +938,9 @@ File: [`invariants/integrations.md`](invariants/integrations.md). Prefix
 | `INV-INT-031` | A Xero payment link retires only on confirmed DELETED, never absence |
 | `INV-INT-032` | Stripe payments the app did not create: recorded and alerted once |
 | `INV-INT-033` | App booking payments no payment row settles: recorded, alerted once |
+| `INV-INT-034` | An organiser note created after a reset: recorded, or alerted once |
+| `INV-INT-035` | An unrecorded refund note holds its payment's refund notes until recorded |
+| `INV-INT-036` | An account-credit note stamps the one member credit it was raised for |
 
 ## Operations
 
@@ -1014,7 +1017,8 @@ ten pre-split domain headings the index keeps verbatim.
 ## Authentication
 
 How the app decides whether a sign-in attempt may proceed, without telling
-anyone which accounts exist.
+anyone which accounts exist, which passwords it lets a person choose, and how
+long a signed-in session lasts.
 File: [`invariants/authentication.md`](invariants/authentication.md).
 Prefix `INV-AUTH`. Added by #4609; it is not one of the ten pre-split domain
 headings the index keeps verbatim.
@@ -1025,3 +1029,6 @@ headings the index keeps verbatim.
 | `INV-AUTH-002` | Throttle decides before any Member read; one answer for every account |
 | `INV-AUTH-003` | Claimed under row lock before the compare; password or reset clears it |
 | `INV-AUTH-004` | Fixed security floor, idle-hour reset, password only, per-process fallback |
+| `INV-AUTH-005` | Reset and sign-in-link requests limited per account, answered as accepted |
+| `INV-AUTH-006` | Chosen passwords screened by prefix-only breach lookup; fails open |
+| `INV-AUTH-007` | Sessions end a fixed time after sign-in; missing stamp is expired |

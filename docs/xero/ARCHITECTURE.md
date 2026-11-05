@@ -704,6 +704,7 @@ this (#1208). Shared JSON-guard micro-helpers (`asRecord`/`readString`/
 | `xero-hardening` | Historical `XeroObjectLink` backfill, stale canonical-link cleanup, the emailed reconciliation report, repeated-failure alerting. Split into cohesive `xero-hardening-*` sub-modules (#1208 item 5, entry re-exports the public surface); see refactor item 5 for the module map. Cleanup and the report's drift classifications are source-aware for Stripe per-delta refund notes (#2901): see "Repairing Stripe refund-note links" under Flow 3. |
 | `xero-refund-note-link-repair` | Dry-run-first operator repair for Stripe per-delta `REFUND_CREDIT_NOTE` links damaged by the pre-#2901 cleanup loop: unconditionally deactivates local mirrors of notes VOIDED/DELETED in Xero, reactivates wrongly deactivated links (recorded-status only, never past the note-eligible cash — `resolveRefundNoteEligibleCash`, #2902/INV-PAY-050 less late captures Xero never received, #3635 — with notes resolved in Xero counted as coverage; landing short is applied honestly and the self-heal reissues the remainder), refuses payments with a still-executable credit-note operation (queued/running/awaiting-payment, failed-but-retryable, or a queued retry of one). No provider calls; `--apply` is bound to reviewed payment ids. CLI entry: `scripts/xero-refund-note-link-repair.ts`. Runbook: "Repairing Stripe refund-note links (#2901)" under Flow 3. |
 | `xero-deleted-payment-link-backfill` | `INV-INT-031`'s one-off backfill. Dry run (the default, changes no link) pages Xero's DELETED payments, or asks about each `--payment` id directly, and lists every active local payment link that points at one; `--apply` confirms each listed candidate again and retires through the inbound reconcile's own guarded write (`xero-inbound/deleted-payment-links.ts`). Read-only at Xero. CLI entry: `scripts/xero-deleted-payment-link-backfill.ts`. See "A payment deleted in Xero (#4531)" under Flow 2. |
+| `xero-applied-credit-account-note-link-repair` | #4712's one-off repair. Before #4712 the inbound credit-note reconcile's #1925 local provenance wrote an `ACCOUNT_CREDIT_NOTE` link on every payment of a booking an applied credit was spent on; that link blocked the booking's own cancellation note and counted the note as refunded on the payment. Dry run (the default) lists each active such link as stale (applied there by a slice or `BOOKING_APPLIED` row, raised for it by neither the outbox's account-credit create, `accountCreditNoteRaisedFor`, nor a cancellation credit), conflicting (both: the outbox may have completed the booking's own note with it) or unexplained; only stale links are ever retired. `--apply` is bound to reviewed payment ids and runs one payment at a time: classifies again, retires each stale link with a guarded write, audits it, recounts the payment's refunded total (#4095), and names the bookings whose missing cancellation note the booking repair then raises. No Xero calls. CLI entry: `scripts/xero-applied-credit-account-note-link-repair.ts`. Runbook: `docs/MAINTENANCE.md`. |
 | `xero-refund-note-status-recorder` | Read-only provider GETs that record each linked refund credit note's live Xero status onto ALL of its local links, active or not (`--record-statuses`; run automatically before `--apply`). Exists because inbound reconciliation structurally cannot stamp a status onto an inactive link, and the repair never reactivates an unknown-status note. |
 | `xero-refund-note-status` | The one home for "does this credit-note status still count as refund coverage?" (`VOIDED`/`DELETED` do not) and for reading a link's recorded status — shared by the inbound contribution math, `sumCoveredRefundCreditNoteCents`, cleanup, the drift report and the operator repair so no path can disagree (#2901). Also "does this create row count toward coverage?" (`countsTowardRefundNoteCoverage`, #4265): only its own note, never a refund request's. |
 | `xero-resolve-refund-note` | "Resolve by hand" on a FAILED payment refund-note create that names no note (#4421, `INV-INT-028`): which rows ask for the Xero note's number (`refundNoteResolveShape`, `resolveCreditNotePrompt`), the note's check (reusing `verifyHandMadeRefundNote`), the `lock(1)`-then-Payment-row claim that records it on the row and as the payment's link (`writeHandMadeRefundNoteLink`), refusing a retry that ran or a note any other create row or link records, and the withdrawal that retires both (alerting if it fails). It also carries the resolve route's refund-note half (`resolveRecordingRefundNote`, `withdrawRecordedNoteOrAlert`, `answerExistingResolveMark`), and `xero-operation-resolve-guards.ts` its other pre-mark checks and plain mark writes, so the route stays a thin handler. Its words live in `bank-refund-void-follow-up-copy.ts`; the operator reason bounds in `xero-operation-resolution.ts`. |
@@ -1004,16 +1005,21 @@ note.
    it gets "is FAILED; fix the cause, then requeue it". A REQUEUE row is never
    replayable itself, because replaying a replay compounds the state.
 
-   **A PARTIAL repair claims its row too (#4256).** The PARTIAL invoice
-   payment repair and the PARTIAL refund-note repair run through the same
-   helper in its PARTIAL-only mode. The claim needs the row PARTIAL,
+   **A PARTIAL repair claims its row too (#4256, #4259).** The PARTIAL invoice
+   payment repair, the PARTIAL refund-note repair and the PARTIAL
+   modification credit-note repair run through the same helper in its
+   PARTIAL-only mode. The claim needs the row PARTIAL,
    unresolved and replayable, so an officer's resolve or mark non-replayable,
    or a second retry, landing after the retry's read makes it lose: nothing is
    written and Xero is not called. Before this, the zero-cash repair completed
    the row SUCCEEDED over such a mark, and two retries both reached Xero,
    stopped only by the payment's idempotency key. The invoice repair now closes
    its row: SUCCEEDED, or PARTIAL while an invoice-email fault remains, which
-   the retry fence then refuses as a payment repair. A throw gives the row back
+   the retry fence then refuses as a payment repair. The modification note
+   repair reads its plan's allocation links under the claim, allocates the
+   invoices still unlinked, and closes its row SUCCEEDED with the allocation
+   fault cleared; before #4259 it had no claim and left a repaired row PARTIAL,
+   which one retry now closes with no Xero call. A throw gives the row back
    PARTIAL with its payload and the run's error, guarded on the claim, never
    FAILED, whose error payload would replace what the repair reads.
 
@@ -1035,7 +1041,35 @@ note.
    but SUCCEEDED lands on the row (`INV-INT-029`). And since #4373 no outcome
    at all lands on a RUNNING row another claim stamped: every complete and
    fail carries the claim (`startedAt`) it was made under, so a stale-reset
-   or failed attempt's late outcome never lands on the retry's claim. Mark non-replayable writes only onto a FAILED or
+   or failed attempt's late outcome never lands on the retry's claim. Since
+   #4673 and #4686 a FAILED, CANCELLED or PARTIAL outcome lands only on its own
+   claim's RUNNING or FAILED row (a PARTIAL also on its own PARTIAL), so a
+   stalled attempt's late outcome never undoes an officer's in-place Retry
+   (PENDING) or a withdrawal. A late PARTIAL so refused made a Xero object no
+   row records: it is not linked, since the queued run's same keyed call
+   normally answers with it and records it, and a link would answer that
+   run's own checks (a credit note's counts toward refund coverage). It is
+   warned, given one audit row per refused delivery
+   (`xero.operation.late_partial_not_recorded`, `xero`,
+   `xero-late-partial-trace.ts`) and alerted once per object (the
+   `XERO_SUCCESS_AFTER_RESOLUTION` alert, key
+   `xero-success-after-resolution:<operation id>:<object id>`); both name what
+   the attempt did not finish (`partialFaultSummary`: its payment, refund
+   payment, refund payment, allocation or email error, or a stray subscription
+   invoice to void, each redacted on its own), since the queued run may not
+   redo it. The trace's re-read, audit, alert skeleton is the late credit
+   notes' own (`traceLateXeroObject`, `INV-SSOT`). A part-success naming an
+   unfinished step is traced even when a SUCCEEDED row already records its
+   object (the queued run closed on it first) or a later claim holds the row
+   RUNNING (its links still recorded, review F1, and the alert says so): that
+   run may not have redone the step - a bound group invoice is not emailed
+   again, while a subscription run emails one not yet sent - so the alert and
+   audit row tell officers to check in Xero whether it is done before doing it
+   by hand. A PARTIAL row on the same object ends the trace: its own outcome
+   shows the step. Only a PARTIAL is handed over; a full success left nothing
+   unfinished (PR #4708 rounds 2-3). A queued group invoice
+   whose settlement already points at an invoice raises nothing and closes its
+   claimed row SUCCEEDED on that invoice (#4710), never left RUNNING. Mark non-replayable writes only onto a FAILED or
    PARTIAL row, so a retry that claimed it after the officer's read gets the
    409 "a retry is running"; a queued retry of a row marked not replayable is
    closed as skipped. Rows repaired before this release stay partly
@@ -1093,7 +1127,7 @@ or a dashboard charge on the club's account reaches `payment_intent.succeeded`
 with none of the app's metadata, so `handlePaymentIntentSucceeded`
 (`stripe-webhook-service.ts`) never routes it to a booking and **nothing is
 queued to the outbox**. Since #4532 it is not dropped: the first branch,
-`!isAppCreatedPaymentIntent(metadata)`, hands it to
+an intent `appPaymentIntentRoute(metadata)` does not route, hands it to
 `recordUnrecognisedStripePayment` (`unrecognised-stripe-payment.ts`), which
 writes one `UnrecognisedStripePayment` row (unique on the PaymentIntent id) and
 raises one unmuteable `admin-unrecognised-stripe-payment` alert, claimed once
@@ -1844,8 +1878,9 @@ on `manuallyResolvedAt`.
     `xero-success-after-resolution-alert.test.ts` pins the callers, and fails
     on an options argument it cannot read as text.
   - **Limit: no retry of its own.** If the send throws before reaching
-    anyone, or nobody can receive it, `sendAdminAlertOnceEver` gives the claim
-    back or defers it, but nothing calls again unless another success lands
+    anyone, its claim write throws, or nobody can receive it,
+    `sendAdminAlertOnceEver` gives the claim back (#4696) or defers it, but
+    nothing calls again unless another success lands
     on the row. The logged warning is then the only trace.
 - **A refund note resolved by hand names its note (#4421, owner decision
   26 Oct 2026, `INV-INT-028`).** On a FAILED payment refund-note create that
@@ -1898,9 +1933,10 @@ on `manuallyResolvedAt`.
   threshold, be marked failed, and be resolved by hand recording the note the
   officer made while its own call is still waiting. When Xero then answers,
   the create records its note through `recordCreatedRefundNote`
-  (`xero-refund-note-record.ts`): one transaction writing the payment's
-  pointer (only when the note takes it), then a status-guarded `updateMany`
-  claiming the row and writing its note, then the link. The claim refuses only
+  (`xero-refund-note-record.ts`): one transaction taking the Payment row
+  (#4656), then a status-guarded `updateMany` claiming the row and writing its
+  note, then the freshness check (#4656, below), the payment's pointer (only
+  when the note takes it) and the link. The claim refuses only
   a row whose resolve RECORDED a note (`manuallyResolvedAt` set and
   `xeroObjectId` set); a lost claim rolls the whole record back, so the row
   keeps the officer's note, no link names the late one and the pointer is
@@ -1937,6 +1973,183 @@ on `manuallyResolvedAt`.
   that reaches nobody is not sent again (the audit row and the log remain); a
   process that dies between the rollback and the audit row leaves only the
   warning in the log.
+- **The record checks its note under its locks, and outwaits the Payment row's
+  holders (#4656, `INV-INT-028`, `INV-ADDPAY-041`).** Three gaps the #4426
+  reviews found by reading the code, each checked against it:
+  - **Freshness, confirmed and fixed.** `assertFreshRefundNoteFromCreate`
+    refuses a note another create row on the payment already records. It ran
+    before the record's transaction, under no lock. Two writers record a note
+    on a payment's create row: the create's record and "Resolve by hand"
+    (`claimResolveRecordingRefundNote`); the completion only repeats the note
+    its own record wrote, and the covered-by-an-existing-note branch names a
+    note already linked. Two creates answered with one note - a stalled run and
+    the retry that sent Xero the same key - could each pass the check before
+    the other committed, so both rows named the note and both settled against
+    it; a note taking no pointer locked no shared row at all. Now the record
+    takes the Payment row first for every note (`lockPaymentForRefundedTotal`),
+    claims its own row, and only then asks, on its own transaction: a second
+    record of the note queues on the Payment row, reads the first's commit and
+    is refused, failing its own row as before. The resolve takes `lock(1)` then
+    the same Payment row, so a resolve and a record serialise too, whichever
+    commits first. The claim now comes before the check, so a refusal never
+    fails a row an officer resolved recording a note: that row's late note is
+    traced as #4426 says.
+  - **The 5s default, confirmed and fixed.** The record ran on Prisma's
+    interactive defaults (2s `maxWait`, 5s `timeout`), while the Payment row's
+    longest documented holder runs a 30s transaction: the nightly bank-refund
+    void follow-up (`followUpVoidedBankRefundNote`, `{ timeout: 30_000 }`). A
+    timeout reached the create's catch, which failed the row -
+    and the note Xero had made was recorded nowhere, with no alert. The record
+    now runs on `PAYMENT_ROW_WAIT_TRANSACTION_OPTIONS` (`maxWait` 10s, `timeout`
+    30s, `payment-transactions.ts`), shared with the inbound recount's claim
+    (#4288), which waits on the same row for the same reason. If the record
+    still cannot get its locks in time (`isRecordWaitLost`: P2028, P2034 or
+    SQLSTATE 40P01 - a deadlock - or 55P03), nothing was written, and the
+    create neither settles, completes nor fails the row: it stays RUNNING under
+    this run's claim (or FAILED, if Mark failed reached it first), the note is
+    logged first, audited once (the same
+    `xero.refund_credit_note.late_note_not_recorded` action, `reason:
+    "record-wait-lost"`) and alerted once through #4374's alert
+    (`traceUnrecordedLateNote`, its log line saying why), naming the note, its
+    amount and the booking. A FAILED row written over it would have read as
+    "nothing made". The alert and the audit row ask the officer to resolve by
+    hand with this note's number - once the row shows as stuck running, Mark
+    failed, then Resolve by hand - and not to retry it, nor raise another
+    note. A retry is not safe here: in delta mode its Xero key follows the
+    watermark and the after-void parts read at run time, and its amount the
+    cents still uncovered, which include this unrecorded note. Another note
+    recorded on the payment, or a void, before the retry changes that key, and
+    Xero raises a second note; how long Xero honours a key is not checked in
+    code either.
+  - **Never reported as a success.** Whenever this run did not record the
+    note, the create throws `RefundNoteNotRecordedError`
+    (`xero-refund-note-record.ts`) past its own failure path, so the row stays
+    as the record left it. Its outcome says why, and its message says only
+    what is true: `record-wait-lost` (recorded nowhere), `resolved-by-hand` (a
+    resolve recorded another note), `resolved-with-this-note` (a resolve
+    recorded this very note - #4426's commonest case, nothing to do) or
+    `recorded-by-another-claim` (another run's RUNNING claim records it and
+    finishes it; unreachable today, as a refund-note CREATE row is never
+    claimed again in place). The outbox counts the run skipped - never
+    succeeded, since this run completed nothing - logging at warn, or at info
+    for the two outcomes where the row already records the note. A queued
+    retry - which runs the create inline, on a row of its own - fails its
+    REQUEUE row on `record-wait-lost` with a message naming the note and the
+    row to resolve, never the usual "requeue it" (`describeQueuedRetryFailure`);
+    on the other outcomes it closes the REQUEUE row CANCELLED with
+    `skipped: "resolved-in-xero-after-run"` (never `"resolved-in-xero"`, which
+    says nothing ran), the outcome, and the note under a key that says what it
+    is (`resolvedWithCreditNoteId`, `recordedCreditNoteId` or
+    `unrecordedCreditNoteId`). Before this, the create returned `""` and the
+    REQUEUE row closed SUCCEEDED ("Retried Xero refund credit note creation").
+    The inline row still stays RUNNING, as before; while it is younger than
+    the stale threshold (`STALE_RUNNING_XERO_OPERATION_MINUTES`, 15 minutes)
+    it counts as in flight and holds back every other refund note on the
+    payment (`assertNoRefundCreditNoteInFlight`); after that, #4688's stamp
+    holds them back (below).
+  - **A commit whose answer was lost.** A transaction can commit and still
+    answer P2028. The trace's re-read then finds this very note on the row: on
+    this run's own claim (not resolved by hand, not RUNNING under another
+    claim) the record is its own, and the create settles and completes as for
+    any record; on a resolve recording the same note, nothing is alerted and
+    nothing settled.
+  - **The note is not written to the row, by choice.** Writing the
+    unrecorded note's id onto the row alone (no Payment lock) would let the
+    #3548 retry leg finish on it instead of minting again, but that leg was
+    built for a note the full record wrote: it would link the note with no
+    metadata (amount, watermark, per-refund flag, which coverage and the
+    one-canonical-note rule read), make it the payment's note without the
+    per-refund check, and skip the freshness check above; the trace's re-read
+    would also read it as recorded and send no alert. A marker in
+    `responsePayload` would need a recovery path of its own. The officer's
+    resolve by hand records the note, its link and its amount, checked
+    (`INV-INT-028`). #4688's fence keeps this: it stamps a code
+    (`lastErrorCode`), never the note, so `xeroObjectId` stays null, the
+    repair leg never reads the row as its own note, and the re-read still
+    alerts.
+  - Limits: a queue of holders longer than 30s in total still runs the wait
+    out, and is traced, not recorded; Resolve by hand refuses the RUNNING row
+    until Mark failed or Reset stale running clears it; an alert that reaches
+    nobody is not sent again.
+  - **Later refund notes wait for the resolve (#4688, `INV-INT-035`).** Past
+    the stale threshold the row no longer counts as in flight
+    (`liveRunningXeroOperationFilter`), and every coverage read leaves the
+    unrecorded note out, so a later create - a later Stripe refund's delta, the
+    nightly self-heal, Retry all requeueing the original row a retry ran for -
+    would size and key itself as if the note did not exist, and Xero could hold
+    an extra note before anyone acted. So the record that loses its wait first
+    stamps its own row `REFUND_NOTE_UNRECORDED` (`fenceUnrecordedNote`, a
+    row-only `updateMany` guarded on this run's claim: its RUNNING claim, or
+    the FAILED row Mark failed left under it; never a row resolved by hand or
+    one naming a note), naming the note's Xero id in its response payload
+    (`unrecordedNoteStampPayload`), then traces the note. While the payment has
+    such a row unresolved (`findUnrecordedRefundNoteOperation`, whatever the
+    row's status or age) and no live or voided link on the payment records
+    that note:
+    - every refund-note create, in any mode, waits before it sizes or mints
+      (`assertNoUnrecordedRefundNote` in `createXeroCreditNote`; the busy error
+      sends an outbox row, or a queued retry's REQUEUE row, back to PENDING
+      under `REFUND_NOTE_AWAITING_RESOLVE`, which the outbox scan and the retry
+      drain leave out for five minutes at a time
+      (`scanSpacesRefundNotesAwaitingResolve`, #4692), so a wait that lasts
+      days never takes the head of every oldest-first scan);
+    - Retry, Requeue and Retry all refuse the row (`getXeroOperationRetryMeta`)
+      and any other refund-note create on the payment that would mint
+      (`unrecordedRefundNoteRetryRefusal`, 409 with the row to resolve); Retry
+      all lists each as skipped with that reason;
+    - the nightly self-heal queues no note for the payment, a close's or a card
+      one, and logs why; the payment stays in its alert;
+    - Mark failed and Reset stale running take the row to FAILED keeping the
+      code and the message naming the note (`writeStaleRunningXeroOperationReset`),
+      and the operations panel explains it as a note made in Xero but not
+      recorded: resolve by hand, never retry.
+
+    Resolve by hand lifts it: its claim sets `manuallyResolvedAt` (and, with a
+    number, the note and its link, under `lock(1)`, then the Payment row, in
+    one commit). A PENDING copy of the same document (re-queued after Mark
+    failed) does not refuse that resolve (`findQueuedLiveCopy`): the fence
+    keeps it from minting, and the outbox closes it CANCELLED at its next claim
+    (`findResolvedSiblingSince`) - or, when that check ran before the mark
+    landed, the create does once the fence reads lifted
+    (`passUnrecordedRefundNoteFence`); a copy RUNNING still refuses. So does
+    the note being recorded through another row - the original a retry ran for,
+    resolved with this note, or a retry that recorded it. The stamped row is
+    then resolved with that same note's number: recorded on the row with no
+    second link (`stampedUnrecordedNoteId`), so its resolved coverage counts
+    nothing twice.
+    The waiting notes then run, sized with the resolved note counted. A
+    withdrawn resolve restores the fence. The alert and the audit row
+    (`laterNotesHeld`) say whether the fence is up. Limits: before the stamp
+    lands, the row holds others back only while its claim is live; a stamp that
+    fails is logged and the alert then gives #4656's warning (later notes are
+    sized without this one); a resolve with no number lifts the fence with the
+    note still unrecorded, as for any plain resolve.
+  - **The account-credit note's `MemberCredit` stamp, not confirmed: a
+    stated limit.** `createUnappliedXeroCreditNote` stamps the note on the
+    member's credit (`xero-account-credit-note-stamp.ts`) before its
+    claim-guarded completion (#4372), and the stamp carries no claim. It
+    cannot stamp a second note: it writes only the credit the row names, by
+    id, else one by the old match, and only while it names none
+    (`xeroCreditNoteId: null`, `INV-INT-036`, #4685). The inbound
+    credit-note reconcile stamps through the same module, and only a note no
+    lot or applied slice records yet, through a payment whose own outbox row
+    raised it as an account-credit note (`isAccountCreditNotePayload`): the
+    credit that row named, else the old match one credit at a time. A link
+    alone - one #1925's local provenance wrote before #4712, or a note made by
+    hand in Xero - stamps nothing (#4705). After a manual resolve - a plain
+    one, since the numbered resolve
+    (`INV-INT-028`) is for refund notes only and an account-credit row records
+    no note - the late note is the only one the app knows, and its completion
+    lands on the resolved row too (`INV-INT-029`: a success lands on any row
+    no claim holds) and raises #4374's alert, so the credit and the row name
+    the same note. The stamp would outrun a refused completion only on a row
+    another claim holds RUNNING, and no claim re-takes an account-credit
+    create row: its retry runs inline on a row of its own, with the same Xero
+    key, so Xero answers it with the same note. What stays: if Xero ever
+    answered that retry with a different note (its key no longer honoured),
+    the credit keeps whichever note stamped first while both rows record
+    theirs - Xero then holds two notes, which the stamp neither causes nor
+    could prevent.
 - **The outbox.** After it claims a row and before any Xero call, the outbox
   asks `findResolvedSiblingSince`: was a sibling for the same document (same
   correlation key) resolved after this copy was queued? If so the copy is
@@ -4054,8 +4267,10 @@ Oct 2026).
 - **One comparator.** `xero-credit-note-outside-spend.ts` holds the evidence parsers
   (`xeroAllocationsOf`, `xeroPaymentsOf`), the explained-shortfall rail
   (`spendIsExplained`: the list must equal the note's total less its remaining
-  credit) and `outsideSpendCents`. The converge, the mirror and the Failures view
-  share it, so they cannot disagree about what counts as outside.
+  credit) and `outsideSpendCents`, and the gates a reading must pass before it is
+  judged (`judgeOutsideSpendEvidence`: active, explained, settled). The converge, the
+  mirror and the early warning (next section) share it, so they cannot disagree about
+  what counts as outside.
 - **Target state, not a delta.** With `O` the outside spend, `W` the net written down
   for the note (write-downs less restores), `D = min(O, lot)` and `delta = D - W`
   (`xero-credit-note-mirror-plan.ts`): a positive delta writes down at most the
@@ -4120,6 +4335,92 @@ Oct 2026).
   restores the credit. Never offset a wrong write-down with a manual credit
   adjustment: it is a spendable credit with no note, so a fresh Xero note would be
   raised for it while the original still holds the credit.
+
+## Early warning: a booking's credit note spent outside the app (#4220)
+
+The mirror leaves credit already drawn onto a booking to the converge, which acts only
+when Xero refuses that booking's allocation. Before then, an officer is warned (owner
+decision, 24 Oct 2026): a finding in the booking repair check and a count on the Xero
+Health Snapshot. It is **read-only and derived on every ask**: no ledger row, no Xero
+write, no stored flag, no audit row, no email, and no Xero call.
+
+- **Evidence, kept at ingest.** `reconcileXeroCreditNote` already holds the whole note.
+  When the note funds a credit lot it merges one key, `spendEvidence`, onto the note's
+  non-refund-note links: status, total, remaining credit, the allocation and payment
+  lists in exact cents, Xero's change time and when it was read
+  (`xero-credit-note-spend-evidence.ts`). It goes through the link funnel's top-level
+  merge, so the key is replaced whole and the outbound keys beside it are kept. The
+  reading, not a verdict, is stored, because whether a spend is the app's own depends
+  on local links that can land later. A failure to build it is logged and never fails
+  the event. Refund notes never carry it.
+- **The check** (`findCreditNotesSpentOutsideApp`, `xero-credit-note-spent-outside-flag.ts`).
+  The candidates are every funding lot whose note has a stored reading, so a booking
+  is warned about before the allocation engine's first attempt. Slices exist only once
+  the engine has run, and a card booking allocates only at invoice or capture. A note
+  is flagged only when all of these hold:
+  - it funds exactly one lot;
+  - its newest stored reading passes the mirror's gates. Readings are ordered by
+    Xero's change time, then by when they were read (`compareSpendReadings`). Ingest
+    does not write a reading over a kept one of a later change;
+  - the mirror's arithmetic, fed the outside spend from current local links, leaves
+    `leftForAllocationCents > 0`;
+  - Xero's remaining credit is less than what the app still has to allocate from the
+    note. That is the lot's slices on this note with no active completion link
+    (`slicesHeldInXero`), plus what the engine will draw from the lot for the member's
+    applied credit no slice covers yet (`unallocatedAppliedCreditCentsByBooking` less
+    each booking's slices). This comparison runs first, so a note Xero can still cover
+    never reaches the outside-spend read, the balance or the mirror's arithmetic.
+
+  The draw is the engine's own, replayed. The engine fills applied credit from the
+  member's lots oldest first (`CREDIT_LOT_USE_ORDER`). Each lot gives its free credit:
+  amount, less all slices, less its note's write-down. Both read the lots through one
+  loader (`loadFreeCreditLots` in `xero-applied-credit-lots.ts`) and fill them with one
+  function (`fillLotsInOrder`, which the planner wraps and which never throws on a
+  shortfall). Credit an older lot will take never counts against this note, even when a
+  debit that uses up no lot (an admin adjustment) has emptied the balance. The total
+  that lands on a lot does not depend on which booking the engine allocates first, but
+  which booking's credit lands there does. So every waiting booking with uncovered
+  credit is named when any of it lands on the lot: the conservative choice.
+
+  A missing, malformed, inactive, unexplained or unsettled reading flags nothing, so an
+  outage or a half-written list raises no false alarm. Left out, so the flag clears
+  once the work is dealt with: a booking whose applied-credit allocation an officer
+  resolved in Xero (`getBlockingOperation`'s resolved answer, on the queued allocation
+  or the slice's own attempt). The repair check reports that booking as
+  `RESOLVED_IN_XERO_BY_OFFICER`, once, while the note is flagged for another booking.
+
+  A cancelled booking counts while the engine still works for it. A cancel with
+  nothing captured settles the booking's applied credit (`appliedCreditSettledByCancel`,
+  #3836): its invoice is cleared by a note sized net of the slices already committed,
+  so the engine plans nothing new for it, but still sends those slices. A cancel after
+  capture settles nothing, and the engine plans as for a live booking. So a cancelled
+  booking's unsent slices always count, and its uncovered credit counts unless the
+  cancel settled it (`bookingsAppliedCreditSettledByCancel`, the same rule over many
+  bookings). It is named like any other booking, because the converge refuses a
+  cancelled booking and only an officer can act.
+
+  The converge's own close (`isClosedByCreditSpentOutsideApp`, #4338) is not an
+  officer's resolve. It leaves what is left of the slice to a fresh attempt, and its
+  write-down is already in the ledger. So the slice is judged as any other, and the
+  flag clears once the mirror's arithmetic finds the spend absorbed. It is never
+  reported as resolved in Xero: the released credit is chased by card (#4253).
+- **Where it shows.** The repair check reports
+  `APPLIED_CREDIT_NOTE_CONSUMED_EXTERNALLY` (warning, no action, never auto-applied)
+  on each waiting booking: one with a slice Xero does not hold, or with applied credit
+  no slice covers yet. The Health Snapshot's **Credit used in Xero** tile counts the
+  flagged notes; it shows **Unknown**, not **Clear**, when the server sends no count.
+  The check reads the slices of lots whose note has a reading, and those members'
+  lots once each for the draw; the balance is read once per member, and only past
+  the cheap comparison.
+- **Lag.** The reading is only as fresh as the note's last inbound event (webhook,
+  cursor sync or sync-now), so a spend shows, and a reversal clears, after that
+  event. A note with no event since this release has no reading and is not flagged.
+  A note that funds a lot but has no active credit-note link never gets a reading,
+  because the reading rides on that link, so it is never flagged (a stated limit).
+  The converge, not the flag, protects an allocation.
+- **Deploy.** No migration. The previous colour ignores the new key; the new reader
+  treats an absent key as no reading. Rollback is a revert, and the stored keys stay
+  inert.
 
 ## Card payment for credit released after an outside spend (#4253)
 
@@ -4247,6 +4548,47 @@ invoice to have nothing due; a delayed waiver keeps payout pending. A settled in
 note is settled through the existing refund-note settlement helper. The worker
 re-reads invoice amounts after creating or recovering the waiver note, before
 allocation, to recognise cash that raced the provider call and shrink the note.
+The created note is written on the operation row before any allocation or
+payout (`recordCreatedOrganiserNote`, #4655, `INV-INT-034`). A create can stall
+in Xero past the stale threshold and be reset while its call still waits; the
+organiser adjustment's Retry runs on that same row (handed back to PENDING in
+place), and a run that finds a note there continues from it. So the note lands
+where a success may (`INV-INT-029`) and no other note is recorded: the run's
+own claim; a row a reset left FAILED, which the same write takes back RUNNING
+under a fresh claim (#4672) that this run then allocates or pays out and
+completes or fails under, the outbox following that claim, while Resolve and
+Retry refuse the RUNNING row; or a row a Retry queued, where this run stops
+(counted skipped) and the queued run finishes from the note, never raising a
+second. A row resolved by hand, held
+by a retry's claim, recording another note or closed takes nothing: the run
+returns without failing it, and the note is warned, audited once
+(`xero.organiser_adjustment_note.late_note_not_recorded`, `xero`) and sent
+through #4374's **Xero Sync Error** alert once per note
+(`xero-success-after-resolution:<operation id>:<note id>`), by the trace #4426's
+refund note uses (`traceUnrecordedLateNote`). A resolved row is kept out by
+choice: nothing retries it, so landing would only add an allocation or refund
+payment after an officer took the adjustment over. Limits: a retry running when
+the note returns may record that same note through Xero's idempotency key, so
+the alert asks for a comparison before voiding; a process dying before the
+audit row leaves the warning only.
+A run that recorded its note on its own claim can still stall in a later Xero
+call past the stale threshold, be reset, and have its row resolved or queued
+again by an officer, or taken by a later claim (#4680, `INV-INT-034`). So
+immediately before each money-moving call after the record - the waiver's
+resize and allocation, the refund note's settlement and, inside it
+(`beforePayment`), its refund payment, and a completion with nothing left to
+allocate or a settlement that returned before its payment (Xero already shows
+the note settled, perhaps by an officer's hand; #4703 review) - the run reads its row status-guarded on its claim
+(`holdsXeroOperationClaim`: RUNNING under the claim's `startedAt`). A run that
+lost it calls nothing, writes no outcome (the outbox counts it skipped) and
+is traced (`traceOrganiserRunStoodDown`): a warning, one `xero` audit row
+(`xero.organiser_adjustment_note.run_stood_down`), and, only on a row resolved
+by hand, #4374's alert once per note; elsewhere the row still records the note
+and its Retry, queued run or later claim finishes from it. The window narrows
+to the one call in flight; it cannot close. A call that completes in Xero
+after the claim is lost is a real success, so its completion lands as
+`INV-INT-029` lands any success on a row no claim holds, alerted on a resolved
+row, rather than being dropped.
 Inbound extra receipts retain the original paid share and add actual cash once;
 a reversal of cash already partly refunded records nothing and raises one
 non-replayable review row in Xero Operations instead of failing the event. Once

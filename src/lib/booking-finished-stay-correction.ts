@@ -26,6 +26,7 @@
 import type { BookingGuestNightPriceSource } from "@prisma/client";
 
 import { ApiError } from "@/lib/api-error";
+import { CHANGE_FEE_ADDED_TO_AMOUNT_OWED_PATH, recordFeeOnNewPayment } from "@/lib/change-fee-owed";
 import type { PrismaTransactionClient } from "@/lib/db-transaction";
 import { valueEditStrand } from "@/lib/edit-night-valuation";
 import {
@@ -288,9 +289,7 @@ export async function recordFinishedStayFeeOwed(
   },
 ): Promise<void> {
   if (!input.payment) {
-    await tx.payment.create({
-      data: { bookingId: input.bookingId, amountCents: 0, changeFeeCents: input.changeFeeCents },
-    });
+    await recordFeeOnNewPayment(tx, { bookingId: input.bookingId, changeFeeCents: input.changeFeeCents });
     return;
   }
   const recorded = await tx.payment.updateMany({
@@ -302,7 +301,11 @@ export async function recordFinishedStayFeeOwed(
   }
 }
 
-/** The fees a finished-stay correction added to this booking's amount owed. */
+/**
+ * The fees edits added to this booking's amount owed: a finished-stay
+ * correction's (#3750), or an ordinary edit's on a booking still to be paid
+ * (#4661, `changeFeeGoesOnAmountOwed`).
+ */
 export async function loadFeesAddedToAmountOwed(
   db: PrismaTransactionClient,
   bookingId: string,
@@ -311,7 +314,10 @@ export async function loadFeesAddedToAmountOwed(
     where: {
       bookingId,
       changeFeeCents: { gt: 0 },
-      newData: { path: FEE_ADDED_TO_AMOUNT_OWED_PATH, equals: true },
+      OR: [
+        { newData: { path: FEE_ADDED_TO_AMOUNT_OWED_PATH, equals: true } },
+        { newData: { path: [...CHANGE_FEE_ADDED_TO_AMOUNT_OWED_PATH], equals: true } },
+      ],
     },
     select: { id: true, changeFeeCents: true },
     orderBy: { createdAt: "asc" },

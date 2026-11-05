@@ -249,10 +249,9 @@ export const WAITING_REISSUE_FOLDED_BY_INCREASE_NOTE =
  * fenced exactly as a reduction closes one (`closeWaitingAskRecoveries`), so
  * one fresh ask asks for both. Returns what it folded, for `sizeAdditionalAsk`.
  *
- * Re-issues only. An increase's own failed mint keeps #3340's rule, under
- * which a later ask overtakes it - unless it folded re-issues in (review round
- * 7): then nothing else asks for that money, so its replay is settled only by
- * its own row and carries the later ask (`isRecoveryReplaySettled`).
+ * Re-issues only. An increase's own failed mint is not folded: a later ask
+ * never settles it (#4015), so its replay is settled only by its own row and
+ * carries the later ask, superseding it (`isRecoveryReplaySettled`).
  */
 export async function foldWaitingReissuedAsks(
   tx: UnpaidAskDb,
@@ -266,7 +265,8 @@ export async function foldWaitingReissuedAsks(
   const [transactions, modifications] = await Promise.all([
     tx.paymentTransaction.findMany({
       where: { paymentId: payment.id, kind: PaymentTransactionKind.ADDITIONAL },
-      select: { kind: true, createdAt: true, stripePaymentIntentId: true },
+      // #4015: the own-row rule reads the edit stamp, the withdrawal and the status too (`findOwnRecoveryRow`).
+      select: { kind: true, status: true, createdAt: true, stripePaymentIntentId: true, bookingModificationId: true, withdrawnAt: true },
     }),
     tx.bookingModification.findMany({
       where: { bookingId: booking.id },

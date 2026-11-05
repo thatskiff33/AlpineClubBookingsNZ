@@ -81,11 +81,13 @@ const h = vi.hoisted(() => {
         const sum = rows.reduce((s, r) => s + r.amountCents, 0);
         return { _sum: { amountCents: rows.length ? sum : null } };
       },
-      findMany: async ({ where }: { where: { memberId: string } }) =>
+      // #4220: the one lot loader reads members by `{ in }` and groups the rows by `memberId`.
+      findMany: async ({ where }: { where: { memberId: string | { in: string[] } } }) =>
         state.lots
-          .filter((l) => l.memberId === where.memberId && l.amountCents > 0)
+          .filter((l) => (typeof where.memberId === "string" ? l.memberId === where.memberId : where.memberId.in.includes(l.memberId)) && l.amountCents > 0)
           .map((l) => ({
             id: l.id,
+            memberId: l.memberId,
             amountCents: l.amountCents,
             xeroCreditNoteId: l.xeroCreditNoteId,
           })),
@@ -615,7 +617,7 @@ describe("allocateAppliedCreditForBooking (#1620 handler retry idempotency)", ()
     );
     expect(groupByCalls).toContainEqual(
       expect.objectContaining({
-        where: expect.objectContaining({ memberId: "m1", type: "ADMIN_ADJUSTMENT", outsideSpendConvergedAt: { not: null }, xeroCreditNoteId: { in: ["cn1"] } }),
+        where: expect.objectContaining({ memberId: { in: ["m1"] }, type: "ADMIN_ADJUSTMENT", outsideSpendConvergedAt: { not: null }, xeroCreditNoteId: { in: ["cn1"] } }),
       }),
     );
   });
@@ -630,7 +632,7 @@ describe("allocateAppliedCreditForBooking (#1620 handler retry idempotency)", ()
     vi.mocked(allocateCreditNoteToInvoice).mockResolvedValue(undefined);
     const realGroupBy = h.prismaStub.memberCredit.groupBy;
     const groupBy = vi.spyOn(h.prismaStub.memberCredit, "groupBy").mockImplementation(((args: { where: { outsideSpendConvergedAt?: unknown } }) =>
-      args.where.outsideSpendConvergedAt ? [{ xeroCreditNoteId: "cn1", _sum: { amountCents: -1000 } }] : realGroupBy(args as never)) as never);
+      args.where.outsideSpendConvergedAt ? [{ memberId: "m1", xeroCreditNoteId: "cn1", _sum: { amountCents: -1000 } }] : realGroupBy(args as never)) as never);
     try {
       await allocateAppliedCreditForBooking("b1", { syncOperation: xeroClaim("op1") });
     } finally {
@@ -650,7 +652,7 @@ describe("allocateAppliedCreditForBooking (#1620 handler retry idempotency)", ()
     vi.mocked(allocateCreditNoteToInvoice).mockResolvedValue(undefined);
     const realGroupBy = h.prismaStub.memberCredit.groupBy;
     const groupBy = vi.spyOn(h.prismaStub.memberCredit, "groupBy").mockImplementation(((args: { where: { outsideSpendConvergedAt?: unknown } }) =>
-      args.where.outsideSpendConvergedAt ? [{ xeroCreditNoteId: "cn1", _sum: { amountCents: -1000 } }] : realGroupBy(args as never)) as never);
+      args.where.outsideSpendConvergedAt ? [{ memberId: "m1", xeroCreditNoteId: "cn1", _sum: { amountCents: -1000 } }] : realGroupBy(args as never)) as never);
     try {
       // 3000 is applied but only 2500 of the note is left after the write-down: it cannot be covered.
       h.state.appliedRows = [{ appliedToBookingId: "b1", type: "BOOKING_APPLIED", amountCents: -3000, xeroCreditNoteId: null }];
@@ -668,7 +670,7 @@ describe("allocateAppliedCreditForBooking (#1620 handler retry idempotency)", ()
   it("does not plan credit that was written down: the lot's remaining balance falls by it (#4219)", async () => {
     const realGroupBy = h.prismaStub.memberCredit.groupBy;
     const groupBy = vi.spyOn(h.prismaStub.memberCredit, "groupBy").mockImplementation(((args: { where: { outsideSpendConvergedAt?: unknown } }) =>
-      args.where.outsideSpendConvergedAt ? [{ xeroCreditNoteId: "cn1", _sum: { amountCents: -1000 } }] : realGroupBy(args as never)) as never);
+      args.where.outsideSpendConvergedAt ? [{ memberId: "m1", xeroCreditNoteId: "cn1", _sum: { amountCents: -1000 } }] : realGroupBy(args as never)) as never);
     try {
       // The lot holds 3000 and 1000 of it was written down, so 3000 of applied credit cannot be covered.
       await expect(allocateAppliedCreditForBooking("b1", { syncOperation: xeroClaim("op1") })).rejects.toThrow(/ledger inconsistency/);

@@ -59,12 +59,15 @@ import {
   processQueuedXeroOperationRetries,
 } from "@/lib/xero-operation-queue";
 import { XERO_REQUEUE_OPERATION_TYPE } from "@/lib/xero-hardening-shared";
-import { XeroRefundCreditNoteInFlightError } from "@/lib/xero-applied-credit-operation-serialization";
+import { XeroRefundCreditNoteInFlightError, XeroRefundCreditNoteUnrecordedError } from "@/lib/xero-applied-credit-operation-serialization";
+import { RefundNoteNotRecordedError } from "@/lib/xero-refund-note-record";
 import {
   XeroOperationNotReplayableError,
   XeroOperationResolvedInXeroError,
 } from "@/lib/xero-operation-retry";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
+import { matchesWhere } from "./support/prisma-where";
+import { XERO_REFUND_NOTE_AWAITING_RESOLVE_CODE } from "@/lib/xero-operation-error-codes";
 
 function makeOperation(overrides: Record<string, unknown> = {}) {
   return {
@@ -160,6 +163,52 @@ describe("enqueueXeroSyncOperationRetry", () => {
     });
 
     expect(mocks.startXeroSyncOperation).not.toHaveBeenCalled();
+  });
+
+  describe("#4688: never while Xero holds an unrecorded refund note on the payment", () => {
+    const refundNoteRow = (overrides: Record<string, unknown> = {}) =>
+      makeOperation({
+        entityType: "CREDIT_NOTE",
+        queueType: "REFUND_CREDIT_NOTE",
+        requestPayload: { queueType: "REFUND_CREDIT_NOTE", refundAmountCents: 5_000, watermarkCents: 5_000 },
+        xeroObjectId: null,
+        ...overrides,
+      });
+    /** The fence's read answers the unrecorded row (its stamp naming no note); the duplicate-retry read answers none. */
+    const unrecordedOn = (id: string) => {
+      mocks.findFirstQueued.mockResolvedValue(null);
+      mocks.findManyQueued.mockImplementation(async ({ where }: { where: Record<string, unknown> }) =>
+        where.lastErrorCode === "REFUND_NOTE_UNRECORDED" ? [{ id, responsePayload: null }] : [],
+      );
+    };
+
+    it("MUTATION: refuses with 409 the original a retry ran for (Retry all skips it with this reason), and queues nothing", async () => {
+      mocks.findUniqueOperation.mockResolvedValue(refundNoteRow());
+      unrecordedOn("op_inline");
+      await expect(enqueueXeroSyncOperationRetry("op_123", { createdByMemberId: "admin_1" })).rejects.toMatchObject({
+        name: "XeroOperationRetryError",
+        status: 409,
+        message: expect.stringContaining("resolve operation op_inline by hand"),
+      });
+      expect(mocks.startXeroSyncOperation).not.toHaveBeenCalled();
+    });
+
+    it("MUTATION: refuses the row whose own note is unrecorded, never advising a retry", async () => {
+      mocks.findUniqueOperation.mockResolvedValue(refundNoteRow({ id: "op_inline", queueType: null }));
+      unrecordedOn("op_inline");
+      await expect(enqueueXeroSyncOperationRetry("op_inline")).rejects.toMatchObject({
+        status: 409,
+        message: expect.stringContaining("Do not retry"),
+      });
+      expect(mocks.startXeroSyncOperation).not.toHaveBeenCalled();
+    });
+
+    it("queues the retry once the payment holds no unrecorded note (the officer resolved it)", async () => {
+      mocks.findUniqueOperation.mockResolvedValue(refundNoteRow());
+      mocks.findFirstQueued.mockResolvedValue(null);
+      mocks.findManyQueued.mockResolvedValue([]);
+      await expect(enqueueXeroSyncOperationRetry("op_123")).resolves.toMatchObject({ queueOperationId: "queue_1" });
+    });
   });
 
   it("queues a retry of an applied-credit row resolved before this release (#3635 N2)", async () => {
@@ -298,6 +347,40 @@ describe("processQueuedXeroOperationRetries", () => {
     expect(mocks.failXeroSyncOperation).not.toHaveBeenCalled();
   });
 
+  it("MUTATION (#4688): a retry queued before its payment's note went unrecorded waits in PENDING at the create, nothing failed", async () => {
+    mocks.findManyQueued.mockResolvedValue([makeQueuedOperation()]);
+    mocks.retryXeroSyncOperation.mockRejectedValue(new XeroRefundCreditNoteUnrecordedError("payment_1", "op_unrecorded"));
+
+    await expect(processQueuedXeroOperationRetries({ limit: 5 }, CLUB_FORMAT_TEST)).resolves.toMatchObject({ failed: 0, skipped: 1 });
+    expect(mocks.updateManyOperation).toHaveBeenLastCalledWith({
+      where: { id: "queue_1", status: "RUNNING", startedAt: expect.any(Date) },
+      // #4692 review (finding 1): under the wait code the drain's scan spaces out.
+      data: { status: "PENDING", startedAt: null, lastErrorCode: XERO_REFUND_NOTE_AWAITING_RESOLVE_CODE, lastErrorMessage: expect.stringContaining("resolves op_unrecorded by hand") },
+    });
+    expect(mocks.failXeroSyncOperation).not.toHaveBeenCalled();
+  });
+
+  it("MUTATION (#4692 review, finding 1): ten retries held by an unrecorded note never take a limit-1 drain's slot from a retry queued after them", async () => {
+    const now = Date.now();
+    const held = Array.from({ length: 10 }, (_, i) => ({
+      id: `queue_held_${i}`,
+      status: "PENDING",
+      operationType: "REQUEUE",
+      lastErrorCode: XERO_REFUND_NOTE_AWAITING_RESOLVE_CODE,
+      updatedAt: new Date(now - 1_000),
+      createdAt: new Date(now - 86_400_000 + i),
+    }));
+    const fresh = { id: "queue_fresh", status: "PENDING", operationType: "REQUEUE", lastErrorCode: null, updatedAt: new Date(now), createdAt: new Date(now) };
+    const scanned: string[][] = [];
+    mocks.findManyQueued.mockImplementation(async (args: { where: Record<string, unknown>; take: number }) => {
+      scanned.push([...held, fresh].filter((row) => matchesWhere(row, args.where)).slice(0, args.take).map((row) => row.id));
+      return [];
+    });
+
+    await processQueuedXeroOperationRetries({ limit: 1 }, CLUB_FORMAT_TEST);
+    expect(scanned).toEqual([["queue_fresh"]]);
+  });
+
   it("fails queued retries with malformed payloads", async () => {
     mocks.findManyQueued.mockResolvedValue([
       makeQueuedOperation({
@@ -387,6 +470,64 @@ describe("processQueuedXeroOperationRetries", () => {
     expect(mocks.failXeroSyncOperation.mock.calls[0][3].lastErrorMessage).toBe(
       "Retry of Xero operation op_123 failed: boom. The original operation could not be read; find it in the operations list before requeueing.",
     );
+  });
+
+  describe("#4656: a retry whose refund note Xero made but the app did not record", () => {
+    const note = { operationId: "op_inline", creditNoteId: "cn-x", creditNoteNumber: "CN-X" };
+
+    it("MUTATION: a record that could not get its locks fails the REQUEUE row naming the note, never SUCCEEDED and never advising a retry", async () => {
+      mocks.findManyQueued.mockResolvedValue([makeQueuedOperation()]);
+      mocks.retryXeroSyncOperation.mockRejectedValue(new RefundNoteNotRecordedError("record-wait-lost", note));
+
+      await expect(processQueuedXeroOperationRetries({ limit: 5 }, CLUB_FORMAT_TEST)).resolves.toEqual({
+        found: 1,
+        processed: 1,
+        succeeded: 0,
+        failed: 1,
+        skipped: 0,
+      });
+
+      expect(mocks.completeXeroSyncOperation).not.toHaveBeenCalled();
+      expect(mocks.failXeroSyncOperation).toHaveBeenCalledTimes(1);
+      const [claim, , , overrides] = mocks.failXeroSyncOperation.mock.calls[0]!;
+      expect(claim).toMatchObject({ id: "queue_1" });
+      const message = (overrides as { lastErrorMessage: string }).lastErrorMessage;
+      expect(message).toContain("Retry of Xero operation op_123 ran, but did not finish");
+      expect(message).toContain("refund credit note CN-X (Xero id cn-x)");
+      expect(message).toContain("resolve operation op_inline by hand with this note's number");
+      expect(message).toContain("Do not retry");
+      // Never the generic requeue advice (`describeQueuedRetryFailure`): a retry could make a second note.
+      expect(message).not.toMatch(/requeue|retry it again|fix the cause/i);
+    });
+
+    it("MUTATION: a note kept out by a resolve recording another note closes the REQUEUE row CANCELLED, saying the retry ran and naming the unrecorded note", async () => {
+      mocks.findManyQueued.mockResolvedValue([makeQueuedOperation()]);
+      mocks.retryXeroSyncOperation.mockRejectedValue(new RefundNoteNotRecordedError("resolved-by-hand", note));
+
+      await expect(processQueuedXeroOperationRetries({ limit: 5 }, CLUB_FORMAT_TEST)).resolves.toMatchObject({
+        succeeded: 0,
+        failed: 0,
+        skipped: 1,
+      });
+
+      expect(mocks.failXeroSyncOperation).not.toHaveBeenCalled();
+      expect(mocks.completeXeroSyncOperation).toHaveBeenCalledTimes(1);
+      const [claim, completion] = mocks.completeXeroSyncOperation.mock.calls[0]!;
+      expect(claim).toMatchObject({ id: "queue_1" });
+      expect(completion).toEqual({
+        status: "CANCELLED",
+        responsePayload: expect.objectContaining({
+          originalOperationId: "op_123",
+          retriedOperationId: "op_inline",
+          // Never "resolved-in-xero": that tag says nothing ran (#4656 re-lens N3).
+          skipped: "resolved-in-xero-after-run",
+          outcome: "resolved-by-hand",
+          unrecordedCreditNoteId: "cn-x",
+          reason: expect.stringContaining("Do not retry"),
+          note: expect.stringContaining("The retry ran"),
+        }),
+      });
+    });
   });
 
   it("skips a retry queued before an officer resolved the operation in Xero (#3635)", async () => {

@@ -43,6 +43,7 @@ const {
   mockBookingEventCreate,
   mockBookingEventFindMany,
   mockReportSupersededPaymentRefund,
+  mockReportUnannouncedSupersededPaymentRefund,
   mockSyncEditFinancialReviewChargeRequest,
   mockBookingModificationFindUnique,
   mockCompleteDeferredSupplementaryInvoice,
@@ -113,6 +114,8 @@ const {
   // member email, one admin alert. Mocked so a REPLAY can be asked whether it
   // spoke a second time.
   mockReportSupersededPaymentRefund: vi.fn().mockResolvedValue(undefined),
+  // #4690: the next claim's half - a refund of the row's own nobody announced.
+  mockReportUnannouncedSupersededPaymentRefund: vi.fn().mockResolvedValue(undefined),
   mockSyncEditFinancialReviewChargeRequest: vi.fn(),
   // #3181: the edit whose additional payment is being recovered, read back for
   // the SIGNED components its deferred supplementary invoice bills.
@@ -207,11 +210,21 @@ vi.mock("@/lib/stripe", () => ({
     mockCancelPaymentIntentIfCancellableWithResult(...args),
   processRefund: (...args: unknown[]) => mockProcessRefund(...args),
   createPaymentIntent: (...args: unknown[]) => mockCreatePaymentIntent(...args),
+  // #4015 review C1: the replay reads the live ask it would carry; unpaid unless a test says.
+  getPaymentIntent: async (...args: unknown[]) =>
+    (await mockGetPaymentIntent(...args)) ?? { id: args[0], status: "requires_payment_method" },
   findRecentPaymentIntentByMetadata: (...args: unknown[]) => mockFindRecentPaymentIntentByMetadata(...args),
   findOrCreateCustomer: (...args: unknown[]) =>
     mockFindOrCreateCustomer(...args),
+  // #4693: the runner's stamp, and the close-time sweep's bounded list (nothing listed unless a test says).
+  stampPaymentIntentMetadata: (...args: unknown[]) => mockStampPaymentIntentMetadata(...args),
+  listRecentPaymentIntentsMatching: async (...args: unknown[]) =>
+    (await mockListRecentPaymentIntentsMatching(...args)) ?? { intents: [], complete: true },
 }));
 const mockFindRecentPaymentIntentByMetadata = vi.fn();
+const mockGetPaymentIntent = vi.fn();
+const mockStampPaymentIntentMetadata = vi.fn();
+const mockListRecentPaymentIntentsMatching = vi.fn();
 
 vi.mock("@/lib/group-cancel", () => ({
   executeGroupSettlementRefundPlan: (...args: unknown[]) =>
@@ -356,6 +369,8 @@ vi.mock("@/lib/payment-transactions", async (importOriginal) => ({
   planStripeRefundAllocation: mockPlanStripeRefundAllocation,
   // #4359: the preflight's no-plan fallback and the executor share this pure filter.
   capturedStripeTransactions: ((await importOriginal()) as typeof import("@/lib/payment-transactions")).capturedStripeTransactions,
+  // #4699 review: the superseded refund is sized through this pure headroom fold.
+  refundHeadroomIncrementCents: ((await importOriginal()) as typeof import("@/lib/payment-transactions")).refundHeadroomIncrementCents,
   // #4217: the runner's claim hold locks the Payment row before the recovery row.
   lockPaymentForRefundedTotal: (...args: unknown[]) => mockLockPaymentForRefundedTotal(...args),
   markPaymentIntentTransactionFailed: (...args: unknown[]) => mock4316.markFailed(...args),
@@ -388,6 +403,10 @@ vi.mock("@/lib/booking-events", async (importOriginal) => ({
 vi.mock("@/lib/superseded-additional-refund", () => ({
   reportSupersededPaymentRefund: (...args: unknown[]) =>
     mockReportSupersededPaymentRefund(...args),
+  reportUnannouncedSupersededPaymentRefund: (...args: unknown[]) =>
+    mockReportUnannouncedSupersededPaymentRefund(...args),
+  // A stand-in: the runner records whatever the module names, verbatim.
+  SUPERSEDED_REFUND_REPORT_IN_FLIGHT_MESSAGE: "waiting on another attempt's notice",
 }));
 
 // #4253 release 2: the released-credit branch, reduced to the one call these tests need - a release
@@ -483,6 +502,15 @@ import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 beforeEach(() => {
   clubFormatMock.mockResolvedValue(CLUB_FORMAT_TEST);
 });
+
+/**
+ * #4675: the runner's SUCCEEDED close is fenced on the claim it holds - still
+ * PROCESSING, with the `attempts` and `processingStartedAt` its claim read back
+ * (`makeOperation`'s, unless a test says otherwise).
+ */
+function heldClaimWhere(id: string, attempts = 1, processingStartedAt = new Date("2026-05-23T00:00:00.000Z")) {
+  return { id, status: PaymentRecoveryOperationStatus.PROCESSING, attempts, processingStartedAt };
+}
 
 function makeOperation(overrides: Record<string, unknown> = {}) {
   return {
@@ -673,10 +701,7 @@ describe("payment recovery worker", () => {
     // #2262 H2: the terminal close is a STATUS-FENCED updateMany, so a row a
     // manual mark-paid reversal deleted can never be resurrected (P2025-free).
     expect(mockPaymentRecoveryUpdateMany).toHaveBeenCalledWith({
-      where: {
-        id: "recovery-1",
-        status: { not: PaymentRecoveryOperationStatus.SUCCEEDED },
-      },
+      where: heldClaimWhere("recovery-1"),
       data: expect.objectContaining({
         status: PaymentRecoveryOperationStatus.SUCCEEDED,
         nextRetryAt: null,
@@ -735,10 +760,7 @@ describe("payment recovery worker", () => {
     expect(mockFollowSupersededAskInvoices).toHaveBeenCalledWith({ paymentId: "payment-1" });
     expect(mockPaymentTransactionUpdateMany).toHaveBeenCalled();
     expect(mockPaymentRecoveryUpdateMany).toHaveBeenCalledWith({
-      where: {
-        id: "recovery-1",
-        status: { not: PaymentRecoveryOperationStatus.SUCCEEDED },
-      },
+      where: heldClaimWhere("recovery-1"),
       data: expect.objectContaining({
         status: PaymentRecoveryOperationStatus.SUCCEEDED,
       }),
@@ -1171,22 +1193,18 @@ describe("payment recovery worker", () => {
   });
 
   /*
-    #3340 fix round (concurrency lens F4) - THE EPILOGUE SPEAKS ONCE.
+    #3340 fix round (concurrency lens F4), #4690 - THE EPILOGUE SPEAKS ONCE.
 
-    `outstandingCents <= 0` is not an idempotence gate. It only becomes true
-    after the transaction row's `refundedAmountCents` has been written, so a
-    failure between the ledger entry and that write re-enters with the refund
-    already made: Stripe answers the replay with the same refund under the same
-    key and the ledger dedupes on the refund id, so the MONEY is safe - but the
-    epilogue used to run again, sending a second "we have refunded you" email and
-    a second admin alert on a change whose whole point is not confusing members
-    about card movement.
-
-    The fence is `completePaymentRecoveryOperation`'s own `updateMany`, which is
-    already scoped to `status != SUCCEEDED`: exactly one attempt can win it, and
-    that attempt is the one that speaks.
+    `outstandingCents <= 0` is not an idempotence gate: a failure between the
+    Stripe refund and the ledger write re-enters with the refund made. Until
+    #4690 the close was the fence - only the attempt that won it spoke - so an
+    attempt the reaper handed back (#4675) made the refund, lost its close, and
+    nobody announced it. The report now carries its own once-only key, the row
+    id (`superseded-additional-refund.test.ts` proves it), and runs BEFORE the
+    close: every attempt that made the refund may call it, and a report that is
+    not settled throws, so the row stays open for its retry.
   */
-  describe("the supersede-refund epilogue is fenced on the completion claim", () => {
+  describe("the supersede-refund notice is keyed on its row and sent before the close (#4690)", () => {
     beforeEach(() => {
       mockPaymentRecoveryFindUnique.mockResolvedValue(
         makeOperation({
@@ -1209,22 +1227,29 @@ describe("payment recovery worker", () => {
         payment_intent: "pi_superseded",
       });
     });
+    const closeCallOrder = () => {
+      const index = mockPaymentRecoveryUpdateMany.mock.calls.findIndex(
+        ([args]) => (args as { data?: { status?: string } })?.data?.status === "SUCCEEDED",
+      );
+      return index < 0 ? null : mockPaymentRecoveryUpdateMany.mock.invocationCallOrder[index]!;
+    };
 
-    it("reports the refund on the attempt that closes the operation", async () => {
+    it("reports the refund under the row's id, before the close", async () => {
       await processPaymentRecoveryOperations({ limit: 1 });
 
       expect(mockReportSupersededPaymentRefund).toHaveBeenCalledWith({
         format: CLUB_FORMAT_TEST,
+        operationId: "recovery-1",
         bookingId: "booking-1",
         paymentId: "payment-1",
         paymentIntentId: "pi_superseded",
         refundedAmountCents: 6000,
       });
+      expect(mockReportSupersededPaymentRefund.mock.invocationCallOrder[0]).toBeLessThan(closeCallOrder()!);
+      expect(mockReportUnannouncedSupersededPaymentRefund).not.toHaveBeenCalled();
     });
 
-    it("says nothing on a replay whose completion claim was already won", async () => {
-      // The completion `updateMany` matches nothing: another attempt closed this
-      // operation, and with it sent the notices.
+    it("MUTATION: an attempt whose close then loses (#4675) has still reported - the report's key, not the close, makes it once", async () => {
       mockPaymentRecoveryUpdateMany.mockImplementation(
         (args: { data?: { status?: string } }) =>
           Promise.resolve({
@@ -1234,7 +1259,148 @@ describe("payment recovery worker", () => {
 
       await processPaymentRecoveryOperations({ limit: 1 });
 
+      expect(mockReportSupersededPaymentRefund).toHaveBeenCalledTimes(1);
+    });
+
+    it("MUTATION: a notice not settled (the report throws) leaves the row open for its retry", async () => {
+      mockReportSupersededPaymentRefund.mockRejectedValueOnce(new Error("the admin alert was not sent"));
+
+      const result = await processPaymentRecoveryOperations({ limit: 1 });
+
+      expect(result).toMatchObject({ succeeded: 0, retried: 1 });
+      expect(closeCallOrder()).toBeNull();
+    });
+
+    /*
+      #4700 review (S1): another attempt still sending the admin alert is a WAIT, not a failure. A
+      thrown "not settled" on the final attempt went terminal and quoted its text to officers;
+      waiting hands the claim's attempt back, never goes terminal and alerts nobody.
+    */
+    it.each([
+      ["the attempt that refunded", 0, () => mockReportSupersededPaymentRefund],
+      ["the next claim, finding the refund made", 6000, () => mockReportUnannouncedSupersededPaymentRefund],
+    ])("MUTATION: %s, with another attempt still sending the alert, waits on the final attempt - attempt handed back, not closed, not terminal, no alert", async (_label, refunded, report) => {
+      mockPaymentRecoveryFindUnique.mockResolvedValue(
+        makeOperation({ type: PaymentRecoveryOperationType.REFUND_SUPERSEDED_PAYMENT, attempts: MAX_PAYMENT_RECOVERY_ATTEMPTS }),
+      );
+      mockPaymentTransactionFindUnique.mockResolvedValue({
+        id: "txn-1",
+        paymentId: "payment-1",
+        stripePaymentIntentId: "pi_superseded",
+        amountCents: 6000,
+        refundedAmountCents: refunded,
+        status: PaymentStatus.SUCCEEDED,
+      });
+      report().mockResolvedValueOnce("in-flight");
+
+      const result = await processPaymentRecoveryOperations({ limit: 1 });
+
+      expect(result).toMatchObject({ succeeded: 0, retried: 1 });
+      expect(closeCallOrder()).toBeNull();
+      const waited = mockPaymentRecoveryUpdateMany.mock.calls
+        .map(([args]) => args as { data: Record<string, unknown> })
+        .find((args) => args.data.status === PaymentRecoveryOperationStatus.FAILED);
+      expect(waited?.data).toMatchObject({
+        attempts: MAX_PAYMENT_RECOVERY_ATTEMPTS - 1,
+        lastError: "waiting on another attempt's notice",
+        nextRetryAt: expect.any(Date),
+      });
+      expect(mockSendAdminPaymentFailureAlert).not.toHaveBeenCalled();
+    });
+
+    it("MUTATION: the next claim, finding the refund made, asks for the unannounced notice before it closes, and refunds nothing", async () => {
+      mockPaymentTransactionFindUnique.mockResolvedValue({
+        id: "txn-1",
+        paymentId: "payment-1",
+        stripePaymentIntentId: "pi_superseded",
+        amountCents: 6000,
+        refundedAmountCents: 6000,
+        status: PaymentStatus.SUCCEEDED,
+      });
+
+      await processPaymentRecoveryOperations({ limit: 1 });
+
+      expect(mockProcessRefund).not.toHaveBeenCalled();
       expect(mockReportSupersededPaymentRefund).not.toHaveBeenCalled();
+      expect(mockReportUnannouncedSupersededPaymentRefund).toHaveBeenCalledWith(
+        expect.objectContaining({ id: "recovery-1", type: PaymentRecoveryOperationType.REFUND_SUPERSEDED_PAYMENT }),
+        CLUB_FORMAT_TEST,
+      );
+      expect(mockReportUnannouncedSupersededPaymentRefund.mock.invocationCallOrder[0]).toBeLessThan(closeCallOrder()!);
+    });
+  });
+
+  /*
+    #4699: THE REFUND IS SIZED ON THE LEDGER AS THE PREFLIGHT LEFT IT. The resend
+    preflight (`INV-PAY-145`) records every refund Stripe lists on the charge. A
+    cancellation's refund listed there but not yet recorded used to be invisible to
+    the sizing, read before it: the attempt asked Stripe for the whole ask, more
+    than the charge still held, and Stripe's refusal spent one of the row's
+    attempts. The ledger here moves only when the (mocked) one refund writer
+    records a refund, as the real writer does.
+  */
+  describe("sizes the superseded-payment refund after the preflight records what Stripe lists (#4699)", () => {
+    const cancellationRefund = (amount: number) => ({
+      id: "re_cancellation",
+      amount,
+      currency: "nzd",
+      status: "succeeded",
+      payment_intent: "pi_superseded",
+      created: Math.floor(new Date("2026-05-24T00:00:00.000Z").getTime() / 1000),
+      metadata: buildBookingCancellationRefundMetadata("booking-1"),
+    });
+    let ledgerRefundedCents = 0;
+    beforeEach(() => {
+      ledgerRefundedCents = 0;
+      mockPaymentRecoveryFindUnique.mockResolvedValue(
+        makeOperation({ type: PaymentRecoveryOperationType.REFUND_SUPERSEDED_PAYMENT }),
+      );
+      mockPaymentTransactionFindUnique.mockImplementation(async () => ({
+        id: "txn-1",
+        paymentId: "payment-1",
+        stripePaymentIntentId: "pi_superseded",
+        amountCents: 6000,
+        refundedAmountCents: ledgerRefundedCents,
+        status: PaymentStatus.SUCCEEDED,
+      }));
+      mockRecordStripeRefundsAgainstTransaction.mockImplementation(async ({ refunds }: { refunds: Array<{ amount: number }> }) => {
+        ledgerRefundedCents += refunds.reduce((sum, refund) => sum + refund.amount, 0);
+        return { readAsRefused: [], payment: { id: "payment-1", source: "STRIPE" }, appliedCents: 0, newlyCountedRefundIds: [] };
+      });
+      mockProcessRefund.mockImplementation(async ({ amountCents }: { amountCents: number }) => {
+        // Stripe's own answer: never more than the charge still holds.
+        if (amountCents > 6000 - ledgerRefundedCents) throw new Error("Refund amount is greater than unrefunded amount on charge");
+        return { id: "re_superseded", amount: amountCents, currency: "nzd", status: "succeeded", payment_intent: "pi_superseded" };
+      });
+    });
+
+    it("MUTATION: asks Stripe only for what the charge holds after another door's listed refund, and announces that", async () => {
+      mockListRefundsForPaymentIntent.mockResolvedValue([cancellationRefund(2000)]);
+
+      const result = await processPaymentRecoveryOperations({ limit: 1 });
+
+      expect(result).toMatchObject({ succeeded: 1, failed: 0, retried: 0 });
+      expect(mockProcessRefund).toHaveBeenCalledTimes(1);
+      expect(mockProcessRefund).toHaveBeenCalledWith(expect.objectContaining({ paymentIntentId: "pi_superseded", amountCents: 4000 }));
+      expect(mockReportSupersededPaymentRefund).toHaveBeenCalledWith(expect.objectContaining({ operationId: "recovery-1", refundedAmountCents: 4000 }));
+      expect(mockReportUnannouncedSupersededPaymentRefund).not.toHaveBeenCalled();
+    });
+
+    it("MUTATION: another door's listed refund that leaves nothing closes through the nothing-outstanding path, refunding nothing", async () => {
+      mockListRefundsForPaymentIntent.mockResolvedValue([cancellationRefund(6000)]);
+
+      const result = await processPaymentRecoveryOperations({ limit: 1 });
+
+      expect(result).toMatchObject({ succeeded: 1, failed: 0, retried: 0 });
+      expect(mockProcessRefund).not.toHaveBeenCalled();
+      expect(mockReportSupersededPaymentRefund).not.toHaveBeenCalled();
+      expect(mockReportUnannouncedSupersededPaymentRefund).toHaveBeenCalledWith(
+        expect.objectContaining({ id: "recovery-1", type: PaymentRecoveryOperationType.REFUND_SUPERSEDED_PAYMENT }),
+        CLUB_FORMAT_TEST,
+      );
+      expect(mockPaymentRecoveryUpdateMany).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ status: PaymentRecoveryOperationStatus.SUCCEEDED }) }),
+      );
     });
   });
 
@@ -1557,6 +1723,89 @@ describe("payment recovery worker", () => {
     expect(data.allocationPlan).toEqual([slice]);
   });
 
+  it.each([2000, 6000])("sizes an unplanned modification refund after recording another door's %i-cent refund (#4713)", async (listedCents) => {
+    mockPaymentRecoveryFindUnique.mockResolvedValue(makeOperation({
+      type: PaymentRecoveryOperationType.REFUND_BOOKING_MODIFICATION,
+      amountCents: 6000,
+      allocationPlan: null,
+      paymentTransactionId: null,
+    }));
+    let recordedCents = 0;
+    mockPaymentFindUnique.mockImplementation(async () => ({
+      id: "payment-1",
+      transactions: [{
+        id: "txn-1", source: PaymentSource.STRIPE,
+        stripePaymentIntentId: "pi_original", amountCents: 6000,
+        refundedAmountCents: recordedCents, status: PaymentStatus.SUCCEEDED,
+        createdAt: new Date("2026-05-01T00:00:00.000Z"),
+      }],
+    }));
+    mockListRefundsForPaymentIntent.mockResolvedValue([{
+      id: "re_cancellation", amount: listedCents, currency: "nzd", status: "succeeded",
+      payment_intent: "pi_original",
+      created: Math.floor(new Date("2026-05-24T00:00:00.000Z").getTime() / 1000),
+      metadata: buildBookingCancellationRefundMetadata("booking-1"),
+    }]);
+    mockRecordStripeRefundsAgainstTransaction.mockImplementation(async () => {
+      recordedCents = listedCents;
+      return { readAsRefused: [], payment: { id: "payment-1", source: "STRIPE" }, appliedCents: 0, newlyCountedRefundIds: [] };
+    });
+    mockRefundPaymentTransactions.mockImplementation(async ({ amountCents }: { amountCents: number }) => {
+      if (amountCents > 6000 - recordedCents) throw new Error("Refund amount exceeds the charge's remaining balance");
+      return { refunds: [{ paymentIntentId: "pi_original", refundId: "re_modification", amountCents }], totalRefundedAmountCents: amountCents };
+    });
+
+    const result = await processPaymentRecoveryOperations({ limit: 1 });
+
+    expect(result).toMatchObject({ succeeded: 1, failed: 0, retried: 0 });
+    expect(recordedCents).toBe(listedCents);
+    if (listedCents === 6000) {
+      expect(mockRefundPaymentTransactions).not.toHaveBeenCalled();
+      expect(mockPaymentRecoveryUpdate).not.toHaveBeenCalled();
+    } else {
+      const allocation = [{ paymentTransactionId: "txn-1", amountCents: 4000 }];
+      expect(mockRefundPaymentTransactions).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ amountCents: 4000, allocation }));
+      expect(mockPaymentRecoveryUpdate).toHaveBeenCalledWith(expect.objectContaining({ data: { allocationPlan: allocation } }));
+    }
+  });
+
+  it.each(["new", "pending"])("retries before freezing a plan when a %s charge becomes refundable during preflight (#4713)", async (initialState) => {
+    mockPaymentRecoveryFindUnique.mockResolvedValue(makeOperation({
+      type: PaymentRecoveryOperationType.REFUND_BOOKING_MODIFICATION,
+      amountCents: 6000,
+      allocationPlan: null,
+      paymentTransactionId: null,
+    }));
+    const original = {
+      id: "txn-1", source: PaymentSource.STRIPE,
+      stripePaymentIntentId: "pi_original", amountCents: 6000,
+      refundedAmountCents: 0, status: PaymentStatus.SUCCEEDED,
+      createdAt: new Date("2026-05-01T00:00:00.000Z"),
+    };
+    const arriving = {
+      ...original, id: "txn-new", stripePaymentIntentId: "pi_new",
+      createdAt: new Date("2026-05-02T00:00:00.000Z"),
+    };
+    let captured = false;
+    mockPaymentFindUnique.mockImplementation(async () => ({
+      id: "payment-1",
+      transactions: captured
+        ? [original, arriving]
+        : [original, ...(initialState === "pending" ? [{ ...arriving, status: PaymentStatus.PENDING }] : [])],
+    }));
+    mockListRefundsForPaymentIntent.mockImplementation(async () => {
+      captured = true;
+      return [];
+    });
+
+    const result = await processPaymentRecoveryOperations({ limit: 1 });
+
+    expect(result).toMatchObject({ succeeded: 0, retried: 1 });
+    expect(mockListRefundsForPaymentIntent).toHaveBeenCalledExactlyOnceWith("pi_original", expect.anything());
+    expect(mockRefundPaymentTransactions).not.toHaveBeenCalled();
+    expect(mockPaymentRecoveryUpdate).not.toHaveBeenCalled();
+  });
+
   it("processes a booking modification refund recovery by replaying refundPaymentTransactions", async () => {
     mockPaymentRecoveryFindUnique.mockResolvedValue(
       makeOperation({
@@ -1616,10 +1865,7 @@ describe("payment recovery worker", () => {
     );
     expect(mockPaymentRecoveryUpdateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: {
-          id: "recovery-mod-refund",
-          status: { not: PaymentRecoveryOperationStatus.SUCCEEDED },
-        },
+        where: heldClaimWhere("recovery-mod-refund"),
         data: expect.objectContaining({
           status: PaymentRecoveryOperationStatus.SUCCEEDED,
         }),
@@ -1881,7 +2127,7 @@ describe("payment recovery worker", () => {
 
     expect(mockQueueLateCaptureRefundCreditNote).not.toHaveBeenCalled();
     // #4125: the inline door can close it first, so losing that race is expected - debug, not a warning.
-    const lostClose = ([, message]: unknown[]) => typeof message === "string" && message.includes("completion matched no live operation");
+    const lostClose = ([, message]: unknown[]) => typeof message === "string" && message.includes("completion matched no live claim");
     expect(vi.mocked(logger.warn).mock.calls.filter(lostClose)).toHaveLength(0);
     expect(vi.mocked(logger.debug).mock.calls.filter(lostClose)).toHaveLength(1);
   });
@@ -2312,10 +2558,7 @@ describe("payment recovery worker", () => {
     // Replayed to completion.
     expect(mockPaymentRecoveryUpdateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: {
-          id: "recovery-cancel-crash",
-          status: { not: PaymentRecoveryOperationStatus.SUCCEEDED },
-        },
+        where: heldClaimWhere("recovery-cancel-crash"),
         data: expect.objectContaining({
           status: PaymentRecoveryOperationStatus.SUCCEEDED,
         }),
@@ -2415,10 +2658,7 @@ describe("payment recovery worker", () => {
     });
     expect(mockPaymentRecoveryUpdateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: {
-          id: "recovery-capacity",
-          status: { not: PaymentRecoveryOperationStatus.SUCCEEDED },
-        },
+        where: heldClaimWhere("recovery-capacity"),
         data: expect.objectContaining({
           status: PaymentRecoveryOperationStatus.SUCCEEDED,
         }),
@@ -2456,10 +2696,7 @@ describe("payment recovery worker", () => {
     expect(mockRefundPaymentTransactions).not.toHaveBeenCalled();
     expect(mockPaymentRecoveryUpdateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: {
-          id: "recovery-group-settlement",
-          status: { not: PaymentRecoveryOperationStatus.SUCCEEDED },
-        },
+        where: heldClaimWhere("recovery-group-settlement"),
         data: expect.objectContaining({
           status: PaymentRecoveryOperationStatus.SUCCEEDED,
         }),
@@ -3879,14 +4116,17 @@ describe("payment recovery worker", () => {
 
     /**
      * #4631: the hold lost, so the intent the runner minted is written nowhere.
-     * When a net-off or a fold closed the recovery and nothing names the intent,
-     * it is cancelled at Stripe as abandoned - after the hold's transaction has
+     * When the recovery ended without it - a net-off, a fold, or (#4652) a stale
+     * reclaim's runner that closed it with another intent or none - and nothing
+     * names the intent, it is cancelled at Stripe as abandoned - after the hold's transaction has
      * ended, on #4052's proof re-read just before the cancel. The proof itself
      * is `reissued-ask-abandoned-intent.test.ts`'s; the real-PostgreSQL races
      * are `additional-ask-reduction.realdb.test.ts`'s.
      */
     describe("#4631: a lost claim hold cancels the runner's own unwritten intent", () => {
-      const CLOSED_READ = { status: true, lastError: true };
+      const CLOSED_READ = { status: true, lastError: true, paymentIntentId: true, attempts: true };
+      /** The Stripe key the recovery names until a hold writes an intent over it. */
+      const KEY = "mod_guest_bk1_mod-9";
       const transactionsOpenAtCancel: number[] = [];
       // `clearAllMocks` keeps implementations; this one has no `beforeEach` default to restore it.
       afterEach(() => {
@@ -3894,7 +4134,7 @@ describe("payment recovery worker", () => {
         ordinaryAskMint4631.adopted = false;
       });
 
-      function loseHoldTo(moved: { status: string; lastError: string | null }, owners: { row?: { id: string } | null; recovery?: { id: string } | null } = {}) {
+      function loseHoldTo(moved: { status: string; lastError: string | null; paymentIntentId?: string }, owners: { row?: { id: string } | null; recovery?: { id: string } | null } = {}) {
         const operation = additionalIntentOperation({ status: "PROCESSING", attempts: 1, processingStartedAt: new Date("2026-06-30T23:00:00.000Z") });
         primeQueue(operation);
         // The claim succeeds; the hold, re-asserting it before the row is written, finds it gone.
@@ -3902,7 +4142,7 @@ describe("payment recovery worker", () => {
           args.data?.status === "PROCESSING" ? { count: 1 } : { count: 0 },
         );
         mockPaymentRecoveryFindUnique.mockImplementation(async (args: { select?: unknown }) =>
-          JSON.stringify(args?.select) === JSON.stringify(CLOSED_READ) ? moved : operation,
+          JSON.stringify(args?.select) === JSON.stringify(CLOSED_READ) ? { paymentIntentId: KEY, ...moved } : operation,
         );
         const defaultRow = mockPaymentTransactionFindUnique.getMockImplementation();
         mockPaymentTransactionFindUnique.mockImplementation(async (args: { where?: { stripePaymentIntentId?: string } }) =>
@@ -3927,16 +4167,19 @@ describe("payment recovery worker", () => {
       }
 
       it.each([
-        ["netted off by a price reduction", PENDING_ASK_NETTED_BY_REDUCTION_NOTE],
-        ["folded into a later increase's ask", WAITING_REISSUE_FOLDED_BY_INCREASE_NOTE],
-      ])("MUTATION: a recovery %s has the runner's intent cancelled as abandoned, outside every transaction, and the run ends cleanly", async (_label, lastError) => {
-        loseHoldTo({ status: "SUCCEEDED", lastError });
+        ["netted off by a price reduction", PENDING_ASK_NETTED_BY_REDUCTION_NOTE, KEY],
+        ["folded into a later increase's ask", WAITING_REISSUE_FOLDED_BY_INCREASE_NOTE, KEY],
+        // #4652: a stale reclaim's runner closed it with another (amount-suffixed) intent, or with none.
+        ["closed by a reclaiming runner with ANOTHER intent", null, "pi_reclaimer"],
+        ["closed by a reclaiming runner with no intent", null, KEY],
+      ])("MUTATION: a recovery %s has the runner's intent cancelled as abandoned, outside every transaction, and the run ends cleanly", async (_label, lastError, paymentIntentId) => {
+        loseHoldTo({ status: "SUCCEEDED", lastError, paymentIntentId });
 
         const result = await processPaymentRecoveryOperations({ limit: 1 });
 
         expectReachedLostHold();
         expect(mockCancelPaymentIntentIfCancellableWithResult).toHaveBeenCalledTimes(1);
-        expect(mockCancelPaymentIntentIfCancellableWithResult).toHaveBeenCalledWith("pi_recovered", { cancellationReason: "abandoned" });
+        expect(mockCancelPaymentIntentIfCancellableWithResult).toHaveBeenCalledWith("pi_recovered", { cancellationReason: "abandoned", timeoutMs: 5_000 });
         // The pin: never inside a transaction - the hold's had ended.
         expect(transactionsOpenAtCancel).toEqual([0]);
         const holdIndex = mockPaymentRecoveryUpdateMany.mock.calls.findIndex(([args]) => {
@@ -3998,7 +4241,11 @@ describe("payment recovery worker", () => {
       it.each([
         ["reset for a retry (PENDING)", { status: "PENDING", lastError: null }],
         ["reclaimed by another runner (PROCESSING)", { status: "PROCESSING", lastError: null }],
-      ])("a recovery %s may yet record the intent - nothing cancelled", async (_label, moved) => {
+        // #4652: stated limits - a live claim that already wrote another intent, and the
+        // reclaiming runner's own write of THIS intent (Stripe answered its key with it).
+        ["reclaimed by a runner that already wrote ANOTHER intent (PROCESSING)", { status: "PROCESSING", lastError: null, paymentIntentId: "pi_reclaimer" }],
+        ["closed naming THIS intent", { status: "SUCCEEDED", lastError: null, paymentIntentId: "pi_recovered" }],
+      ])("MUTATION: a recovery %s may yet record the intent, or has - nothing cancelled", async (_label, moved) => {
         loseHoldTo(moved);
         await processPaymentRecoveryOperations({ limit: 1 });
         expectReachedLostHold();
@@ -4013,6 +4260,233 @@ describe("payment recovery worker", () => {
 
         expect(mockCancelPaymentIntentIfCancellableWithResult).toHaveBeenCalledTimes(1);
         expect(result).toMatchObject({ processed: 1, succeeded: 1, failed: 0 });
+      });
+    });
+
+    /**
+     * #4676 (`INV-PAY-120`): the hold held its claim, then its write THREW (the sizing moved
+     * under the lock), so its transaction rolled back and the runner's intent is written
+     * nowhere. The lost hold's proof runs before the error goes on to the retry: cancelled
+     * only once the recovery has since closed without it. A row still this attempt's proves
+     * nothing - the retry may size the same figure, mint under the same key and be answered
+     * with this very intent.
+     */
+    describe("#4676: a claim hold that throws cancels the runner's intent only on the lost hold's proof, then rethrows", () => {
+      const CLOSED_READ = { status: true, lastError: true, paymentIntentId: true, attempts: true };
+      const KEY = "mod_guest_bk1_mod-9";
+      const transactionsOpenAtCancel: number[] = [];
+      afterEach(() => {
+        mockPaymentRecoveryFindFirst.mockReset();
+        ordinaryAskMint4631.adopted = false;
+      });
+
+      function throwHoldThenRead(moved: { status: string; lastError: string | null; paymentIntentId?: string }, owners: { row?: { id: string } | null } = {}) {
+        const operation = additionalIntentOperation({ status: "PROCESSING", attempts: 1, processingStartedAt: new Date("2026-06-30T23:00:00.000Z") });
+        primeQueue(operation);
+        // The claim and the hold both match; the write under the hold then throws.
+        mockPaymentRecoveryUpdateMany.mockResolvedValue({ count: 1 });
+        mockUpsertPaymentIntentTransaction.mockRejectedValueOnce(new Error("The booking's payment changed while the ask was being written; retrying"));
+        mockPaymentRecoveryFindUnique.mockImplementation(async (args: { select?: unknown }) =>
+          JSON.stringify(args?.select) === JSON.stringify(CLOSED_READ) ? { paymentIntentId: KEY, ...moved } : operation,
+        );
+        const defaultRow = mockPaymentTransactionFindUnique.getMockImplementation();
+        mockPaymentTransactionFindUnique.mockImplementation(async (args: { where?: { stripePaymentIntentId?: string } }) =>
+          args?.where?.stripePaymentIntentId === "pi_recovered" ? (owners.row ?? null) : defaultRow?.(args),
+        );
+        mockPaymentRecoveryFindFirst.mockResolvedValue(null);
+        transactionsOpenAtCancel.length = 0;
+        mockCancelPaymentIntentIfCancellableWithResult.mockReset();
+        mockCancelPaymentIntentIfCancellableWithResult.mockImplementation(async (id: string) => {
+          transactionsOpenAtCancel.push(openTransactions.count);
+          return { canceled: true, paymentIntent: { id, status: "canceled" } };
+        });
+      }
+
+      /** Not vacuous: the run minted, its write under the hold threw, and the recovery was re-read for the proof. */
+      function expectReachedThrownHold() {
+        expect(mockCreatePaymentIntent).toHaveBeenCalledTimes(1);
+        expect(mockUpsertPaymentIntentTransaction).toHaveBeenCalledTimes(1);
+        expect(mockPaymentRecoveryUpdate).not.toHaveBeenCalled();
+        expect(mockPaymentRecoveryFindUnique).toHaveBeenCalledWith({ where: { id: "recovery-additional" }, select: CLOSED_READ });
+        // Rethrown: the hold's own error is what the retry records.
+        expect(mockPaymentRecoveryUpdateMany).toHaveBeenCalledWith(
+          expect.objectContaining({ data: expect.objectContaining({ lastError: expect.stringContaining("payment changed while") }) }),
+        );
+      }
+
+      it.each([
+        ["netted off by a price reduction", PENDING_ASK_NETTED_BY_REDUCTION_NOTE, KEY],
+        ["closed by a reclaiming runner with ANOTHER intent", null, "pi_reclaimer"],
+      ])("MUTATION: a recovery since %s has the intent cancelled once, outside every transaction, and the run still retries", async (_label, lastError, paymentIntentId) => {
+        throwHoldThenRead({ status: "SUCCEEDED", lastError, paymentIntentId });
+
+        const result = await processPaymentRecoveryOperations({ limit: 1 });
+
+        expectReachedThrownHold();
+        expect(mockCancelPaymentIntentIfCancellableWithResult).toHaveBeenCalledTimes(1);
+        expect(mockCancelPaymentIntentIfCancellableWithResult).toHaveBeenCalledWith("pi_recovered", { cancellationReason: "abandoned", timeoutMs: 5_000 });
+        expect(transactionsOpenAtCancel).toEqual([0]);
+        expect(result).toMatchObject({ processed: 1, succeeded: 0, retried: 1, failed: 0 });
+      });
+
+      it.each([
+        ["still this attempt's, naming the key it minted under (PROCESSING)", { status: "PROCESSING", lastError: null }],
+        ["reset for a retry (PENDING)", { status: "PENDING", lastError: null }],
+        ["closed naming THIS intent", { status: "SUCCEEDED", lastError: null, paymentIntentId: "pi_recovered" }],
+      ])("MUTATION: a recovery %s is no proof - nothing cancelled, the intent logged as left open, and the run retries", async (_label, moved) => {
+        throwHoldThenRead(moved);
+
+        const result = await processPaymentRecoveryOperations({ limit: 1 });
+
+        expectReachedThrownHold();
+        expect(mockCancelPaymentIntentIfCancellableWithResult).not.toHaveBeenCalled();
+        expect(logger.warn).toHaveBeenCalledWith(
+          expect.objectContaining({ event: "reissued-ask.abandoned-intent-cleanup", outcome: "left-open", paymentIntentId: "pi_recovered", holdThrew: true }),
+          expect.any(String),
+        );
+        expect(result).toMatchObject({ processed: 1, succeeded: 0, retried: 1, failed: 0 });
+      });
+
+      it("MUTATION: an intent a payment row names is never cancelled, even on the proof", async () => {
+        throwHoldThenRead({ status: "SUCCEEDED", lastError: PENDING_ASK_NETTED_BY_REDUCTION_NOTE }, { row: { id: "txn_recorded" } });
+        await processPaymentRecoveryOperations({ limit: 1 });
+        expectReachedThrownHold();
+        expect(mockPaymentTransactionFindUnique).toHaveBeenCalledWith({ where: { stripePaymentIntentId: "pi_recovered" }, select: { id: true } });
+        expect(mockCancelPaymentIntentIfCancellableWithResult).not.toHaveBeenCalled();
+      });
+
+      it("MUTATION: an ADOPTED intent (#4036) is never cancelled, even on the proof", async () => {
+        throwHoldThenRead({ status: "SUCCEEDED", lastError: PENDING_ASK_NETTED_BY_REDUCTION_NOTE });
+        ordinaryAskMint4631.adopted = true;
+        await processPaymentRecoveryOperations({ limit: 1 });
+        expectReachedThrownHold();
+        expect(mockCancelPaymentIntentIfCancellableWithResult).not.toHaveBeenCalled();
+      });
+
+      it("MUTATION (#4676 review): an ADOPTED intent on a row still this attempt's is logged as adopted, never left open - another edit's ask may hold it", async () => {
+        throwHoldThenRead({ status: "PROCESSING", lastError: null });
+        ordinaryAskMint4631.adopted = true;
+        const result = await processPaymentRecoveryOperations({ limit: 1 });
+        expectReachedThrownHold();
+        expect(mockCancelPaymentIntentIfCancellableWithResult).not.toHaveBeenCalled();
+        expect(logger.warn).toHaveBeenCalledWith(
+          expect.objectContaining({ event: "reissued-ask.abandoned-intent-cleanup", outcome: "adopted", paymentIntentId: "pi_recovered", holdThrew: true }),
+          expect.stringContaining("never to be cancelled by hand"),
+        );
+        expect(logger.warn).not.toHaveBeenCalledWith(expect.objectContaining({ outcome: "left-open" }), expect.any(String));
+        expect(result).toMatchObject({ processed: 1, succeeded: 0, retried: 1, failed: 0 });
+      });
+    });
+
+    /**
+     * #4693 (`INV-PAY-120`): an earlier attempt's hold threw (#4676) and left its stamped intent
+     * open while the row was still its own. The row then ENDS - a later attempt records another
+     * intent and closes it, or the throw came on the final attempt - and the sweep finds that
+     * intent by the row's stamp and cancels it once, outside every transaction. The row's own
+     * recorded intent, and any other recovery's, are left alone.
+     */
+    describe("#4693: an ended row is swept for the intents an attempt minted and never wrote", () => {
+      const KEY = "mod_guest_bk1_mod-9";
+      const SETTLE_READ = { status: true, lastError: true, paymentIntentId: true, attempts: true };
+      const openAt = { list: [] as number[], cancel: [] as number[] };
+      const stampedBy = (id: string, operationId = "recovery-additional") => ({
+        id,
+        amount: 3000,
+        status: "requires_payment_method",
+        metadata: { bookingId: "booking-1", type: "modification_additional", reason: "guest_add_price_increase", askRecoveryId: operationId },
+      });
+      afterEach(() => {
+        mockListRecentPaymentIntentsMatching.mockReset();
+        mockPaymentRecoveryFindFirst.mockReset();
+      });
+
+      /** Stripe holds `intents`; the sweep's re-read of the row (it selects the payment) sees `ended`. */
+      function stripeAndRow(operation: ReturnType<typeof additionalIntentOperation>, ended: Record<string, unknown>, intents: ReturnType<typeof stampedBy>[]) {
+        primeQueue(operation);
+        mockPaymentRecoveryFindUnique.mockImplementation(async (args: { select?: Record<string, unknown> }) => {
+          if (args?.select && "payment" in args.select) return { ...operation, ...ended, payment: { stripeCustomerId: "cus_123" } };
+          if (JSON.stringify(args?.select) === JSON.stringify(SETTLE_READ)) return { ...operation, paymentIntentId: KEY };
+          return operation;
+        });
+        mockPaymentRecoveryFindFirst.mockResolvedValue(null);
+        // The swept intents are on no ledger row; everything else reads as before.
+        const defaultRow = mockPaymentTransactionFindUnique.getMockImplementation();
+        mockPaymentTransactionFindUnique.mockImplementation(async (args: { where?: { stripePaymentIntentId?: string } }) =>
+          intents.some((pi) => pi.id === args?.where?.stripePaymentIntentId) ? null : defaultRow?.(args),
+        );
+        openAt.list.length = 0;
+        openAt.cancel.length = 0;
+        mockListRecentPaymentIntentsMatching.mockImplementation(async ({ matches }: { matches: (pi: unknown) => boolean }) => {
+          openAt.list.push(openTransactions.count);
+          return { intents: intents.filter((pi) => matches(pi)), complete: true };
+        });
+        mockCancelPaymentIntentIfCancellableWithResult.mockReset();
+        mockCancelPaymentIntentIfCancellableWithResult.mockImplementation(async (id: string) => {
+          openAt.cancel.push(openTransactions.count);
+          return { canceled: true, paymentIntent: { id, status: "canceled" } };
+        });
+      }
+
+      it("MUTATION: a later attempt that records its own intent and closes the row cancels the earlier attempt's, once, outside every transaction", async () => {
+        const operation = additionalIntentOperation({ status: "PROCESSING", attempts: 2, processingStartedAt: new Date("2026-06-30T23:00:00.000Z") });
+        stripeAndRow(operation, { status: "SUCCEEDED", lastError: null, paymentIntentId: "pi_recovered" }, [
+          stampedBy("pi_first_attempt"),
+          stampedBy("pi_recovered"),
+          stampedBy("pi_other_edit", "recovery-other"),
+        ]);
+
+        const result = await processPaymentRecoveryOperations({ limit: 1 });
+
+        expect(result).toMatchObject({ processed: 1, succeeded: 1, failed: 0 });
+        // This attempt's own intent was stamped with the row before its hold ran.
+        expect(mockStampPaymentIntentMetadata).toHaveBeenCalledWith("pi_recovered", { askRecoveryId: "recovery-additional" }, { timeoutMs: 5_000 });
+        expect(mockUpsertPaymentIntentTransaction).toHaveBeenCalledWith(expect.objectContaining({ paymentIntentId: "pi_recovered" }));
+        expect(mockListRecentPaymentIntentsMatching).toHaveBeenCalledWith(
+          expect.objectContaining({ customerId: "cus_123", createdSince: new Date(new Date("2026-06-01T00:00:00.000Z").getTime() - 5 * 60 * 1000) }),
+        );
+        expect(mockCancelPaymentIntentIfCancellableWithResult).toHaveBeenCalledTimes(1);
+        expect(mockCancelPaymentIntentIfCancellableWithResult).toHaveBeenCalledWith("pi_first_attempt", { cancellationReason: "abandoned", timeoutMs: 5_000 });
+        expect(openAt).toEqual({ list: [0], cancel: [0] });
+      });
+
+      it("MUTATION: the row's first attempt sweeps nothing - no earlier attempt minted", async () => {
+        const operation = additionalIntentOperation({ status: "PROCESSING", attempts: 1, processingStartedAt: new Date("2026-06-30T23:00:00.000Z") });
+        stripeAndRow(operation, { status: "SUCCEEDED", lastError: null, paymentIntentId: "pi_recovered" }, [stampedBy("pi_first_attempt")]);
+        await processPaymentRecoveryOperations({ limit: 1 });
+        expect(mockListRecentPaymentIntentsMatching).not.toHaveBeenCalled();
+        expect(mockCancelPaymentIntentIfCancellableWithResult).not.toHaveBeenCalled();
+      });
+
+      it("MUTATION: a throw on the FINAL attempt fails the row for good and sweeps it: this attempt's intent and an earlier one are cancelled", async () => {
+        const operation = additionalIntentOperation({ status: "PROCESSING", attempts: 5, processingStartedAt: new Date("2026-06-30T23:00:00.000Z") });
+        stripeAndRow(operation, { status: "FAILED", attempts: 5, nextRetryAt: null, lastError: "payment changed", paymentIntentId: KEY }, [
+          stampedBy("pi_first_attempt"),
+          stampedBy("pi_recovered"),
+        ]);
+        mockPaymentRecoveryUpdateMany.mockResolvedValue({ count: 1 });
+        mockUpsertPaymentIntentTransaction.mockRejectedValueOnce(new Error("The booking's payment changed while the ask was being written; retrying"));
+
+        const result = await processPaymentRecoveryOperations({ limit: 1 });
+
+        expect(result).toMatchObject({ processed: 1, succeeded: 0, failed: 1 });
+        // The settle before the rethrow saw the row still this attempt's: left open, then.
+        expect(logger.warn).toHaveBeenCalledWith(expect.objectContaining({ outcome: "left-open", paymentIntentId: "pi_recovered" }), expect.any(String));
+        expect(mockCancelPaymentIntentIfCancellableWithResult.mock.calls.map(([id]) => id).sort()).toEqual(["pi_first_attempt", "pi_recovered"]);
+        expect(logger.info).toHaveBeenCalledWith(expect.objectContaining({ outcome: "cancelled", closedBy: "failed-for-good", paymentIntentId: "pi_recovered" }), expect.any(String));
+        expect(openAt.cancel.every((open) => open === 0)).toBe(true);
+      });
+
+      it("MUTATION: a failure with attempts left keeps every intent - the retry may still record one", async () => {
+        const operation = additionalIntentOperation({ status: "PROCESSING", attempts: 2, processingStartedAt: new Date("2026-06-30T23:00:00.000Z") });
+        stripeAndRow(operation, { status: "FAILED", attempts: 2, nextRetryAt: new Date("2026-07-01T01:00:00.000Z"), lastError: "payment changed", paymentIntentId: KEY }, [
+          stampedBy("pi_first_attempt"),
+        ]);
+        mockPaymentRecoveryUpdateMany.mockResolvedValue({ count: 1 });
+        mockUpsertPaymentIntentTransaction.mockRejectedValueOnce(new Error("The booking's payment changed while the ask was being written; retrying"));
+        const result = await processPaymentRecoveryOperations({ limit: 1 });
+        expect(result).toMatchObject({ retried: 1, failed: 0 });
+        expect(mockListRecentPaymentIntentsMatching).not.toHaveBeenCalled();
+        expect(mockCancelPaymentIntentIfCancellableWithResult).not.toHaveBeenCalled();
       });
     });
 
@@ -4043,11 +4517,103 @@ describe("payment recovery worker", () => {
       expect(mockCompleteDeferredSupplementaryInvoice).not.toHaveBeenCalled();
     });
 
-    it("completes without creating when a later edit already minted a newer additional intent", async () => {
-      primeQueue(additionalIntentOperation());
-      mockPaymentFindUnique.mockResolvedValue({
+    /**
+     * #4675 (`INV-PAY-120`): the runner's SUCCEEDED close is fenced on the claim
+     * this attempt holds. A stale attempt that read "nothing owed" (a later ask
+     * settled it) wakes after the reaper handed its row to another runner; its
+     * close matches nothing, and it writes, mints and sends nothing more.
+     */
+    describe("#4675: a close is fenced on the claim the attempt holds", () => {
+      const SUCCEEDED_CLOSES = () =>
+        mockPaymentRecoveryUpdateMany.mock.calls
+          .map(([args]) => args as { where: Record<string, unknown>; data: Record<string, unknown> })
+          .filter((args) => args.data.status === PaymentRecoveryOperationStatus.SUCCEEDED);
+
+      function settledByLaterAsk() {
+        // #4015: only a frozen figure (no modification to read) is still settled by a later ask.
+        mockBookingModificationFindUnique.mockResolvedValueOnce(null);
+        mockPaymentFindUnique.mockResolvedValue({
+          id: "payment-1",
+          stripeCustomerId: "cus_123",
+          transactions: [
+            {
+              id: "txn-newer",
+              kind: "ADDITIONAL",
+              stripePaymentIntentId: "pi_later_edit",
+              amountCents: 4500,
+              refundedAmountCents: 0,
+              status: PaymentStatus.PENDING,
+              createdAt: new Date("2026-06-02T00:00:00.000Z"),
+            },
+          ],
+          booking: { id: "booking-1", memberId: "m1", member: { id: "m1", email: "alice@test.com", firstName: "Alice", lastName: "Smith" } },
+        });
+      }
+
+      it("MUTATION: a stale attempt's 'nothing owed' close is fenced on its own attempts and claim time, and on losing does nothing more", async () => {
+        const claimedAt = new Date("2026-06-30T23:00:00.000Z");
+        primeQueue(additionalIntentOperation({ attempts: 2, processingStartedAt: claimedAt }));
+        settledByLaterAsk();
+        // The reaper handed the row back and another runner reclaimed it: this close loses.
+        mockPaymentRecoveryUpdateMany.mockImplementation(async (args: { where?: { id?: string }; data?: { status?: unknown } }) =>
+          ({ count: args.data?.status === PaymentRecoveryOperationStatus.SUCCEEDED ? 0 : args.where?.id ? 1 : 0 }));
+
+        await processPaymentRecoveryOperations({ limit: 1 });
+
+        expect(SUCCEEDED_CLOSES().map((close) => close.where)).toEqual([heldClaimWhere("recovery-additional", 2, claimedAt)]);
+        expect(mockCreatePaymentIntent).not.toHaveBeenCalled();
+        expect(mockUpsertPaymentIntentTransaction).not.toHaveBeenCalled();
+        expect(mockAttachRecoveredIntent).not.toHaveBeenCalled();
+        expect(mockCompleteDeferredSupplementaryInvoice).not.toHaveBeenCalled();
+        const lostClose = ([, message]: unknown[]) => typeof message === "string" && message.includes("completion matched no live claim");
+        expect(vi.mocked(logger.warn).mock.calls.filter(lostClose)).toEqual([
+          [{ operationId: "recovery-additional", attempts: 2, processingStartedAt: claimedAt }, expect.any(String)],
+        ]);
+      });
+
+      it("MUTATION: the close after a mint is fenced on the claim time the last hold re-stamped, not the one the run was handed", async () => {
+        const claimedAt = new Date("2026-06-30T23:00:00.000Z");
+        primeQueue(additionalIntentOperation({ attempts: 1, processingStartedAt: claimedAt }));
+        // The clock is frozen, so each hold would stamp the same instant and a close on an
+        // earlier claim would pass unseen. A minute passes after every re-stamp instead.
+        const frozen = new Date();
+        const isHold = (args: { where?: { status?: unknown }; data?: Record<string, unknown> }) =>
+          args.where?.status === "PROCESSING" && args.data !== undefined && "processingStartedAt" in args.data && !("status" in args.data);
+        const counted = mockPaymentRecoveryUpdateMany.getMockImplementation()!;
+        mockPaymentRecoveryUpdateMany.mockImplementation(async (args: { where?: { status?: unknown }; data?: Record<string, unknown> }) => {
+          const answer = await counted(args);
+          if (isHold(args)) vi.setSystemTime(new Date(Date.now() + 60_000));
+          return answer;
+        });
+
+        try {
+          await processPaymentRecoveryOperations({ limit: 1 });
+        } finally {
+          vi.setSystemTime(frozen);
+        }
+
+        const holds = mockPaymentRecoveryUpdateMany.mock.calls
+          .map(([args]) => args as { where: Record<string, unknown>; data: Record<string, unknown> })
+          .filter(isHold);
+        expect(holds).toHaveLength(2);
+        const [first, second] = holds.map((hold) => hold.data.processingStartedAt as Date);
+        // The second hold re-asserts the first's re-stamped claim, and stamps a later one.
+        expect(holds[1]!.where.processingStartedAt).toEqual(first);
+        expect(second!.getTime()).toBeGreaterThan(first!.getTime());
+        expect(first).not.toEqual(claimedAt);
+        // The close is fenced on the LAST hold's claim, not the first's or the run's own.
+        expect(SUCCEEDED_CLOSES().map((close) => close.where)).toEqual([heldClaimWhere("recovery-additional", 1, second)]);
+      });
+    });
+
+    /** A payment whose live ask is a later edit's $45, written after the recovery was queued. */
+    function paymentWithLaterEditAsk() {
+      return {
         id: "payment-1",
         stripeCustomerId: "cus_123",
+        additionalAmountCents: 4500,
+        additionalPaymentStatus: PaymentStatus.PENDING,
+        additionalPaymentIntentId: "pi_later_edit",
         transactions: [
           {
             id: "txn-newer",
@@ -4056,7 +4622,7 @@ describe("payment recovery worker", () => {
             amountCents: 4500,
             refundedAmountCents: 0,
             status: PaymentStatus.PENDING,
-            // Created after the operation was enqueued: it superseded ours.
+            // Created after the operation was enqueued.
             createdAt: new Date("2026-06-02T00:00:00.000Z"),
           },
         ],
@@ -4070,7 +4636,136 @@ describe("payment recovery worker", () => {
             lastName: "Smith",
           },
         },
+      };
+    }
+
+    it("MUTATION (#4015): a later edit's ask does not overtake an increase's failed mint - the replay asks its own $30 plus that ask's unpaid $45, superseding it", async () => {
+      // The default modification: this edit raised the price by $30, nothing folded.
+      primeQueue(additionalIntentOperation());
+      mockPaymentFindUnique.mockResolvedValue(paymentWithLaterEditAsk());
+      mockPaymentTransactionFindMany.mockResolvedValueOnce([
+        { id: "txn-newer", stripePaymentIntentId: "pi_later_edit", amountCents: 4500 },
+      ]);
+
+      const result = await processPaymentRecoveryOperations({ limit: 1 });
+
+      expect(result.succeeded).toBe(1);
+      expect(mockCreatePaymentIntent).toHaveBeenCalledWith(
+        expect.objectContaining({ amountCents: 7500, idempotencyKey: "mod_guest_bk1_mod-9_7500" }),
+      );
+      expect(mockUpsertPaymentIntentTransaction).toHaveBeenCalledWith(
+        expect.objectContaining({ amountCents: 7500, carriedAskCents: 4500, bookingModificationId: "mod-9" }),
+      );
+      // Its own deferred supplementary invoice is raised on the replay's intent, for its own $30.
+      expect(mockCompleteDeferredSupplementaryInvoice).toHaveBeenCalledWith(
+        expect.objectContaining({ bookingModificationId: "mod-9", priceDiffCents: 3000 }),
+      );
+    });
+
+    /** Queued two days before the frozen today: well inside the carried-ask wait cap. */
+    const RECENTLY_QUEUED = { createdAt: new Date("2026-06-29T00:00:00.000Z") };
+
+    it.each(["succeeded", "processing", "requires_capture", "some_future_status"])(
+      "MUTATION (#4015 review items 1-2): the later ask it would carry is %s at Stripe - the replay WAITS, attempt handed back, minting and superseding nothing",
+      async (status) => {
+        primeQueue(additionalIntentOperation({ ...RECENTLY_QUEUED, attempts: 2 }));
+        mockPaymentFindUnique.mockResolvedValue(paymentWithLaterEditAsk());
+        // Charged the day the recovery was queued: inside the cap.
+        const began = Math.floor(RECENTLY_QUEUED.createdAt.getTime() / 1000);
+        mockGetPaymentIntent.mockResolvedValueOnce({ id: "pi_later_edit", status, created: began, latest_charge: { created: began } });
+
+        const result = await processPaymentRecoveryOperations({ limit: 1 });
+
+        expect(result).toMatchObject({ succeeded: 0, retried: 1, failed: 0 });
+        expect(mockCreatePaymentIntent).not.toHaveBeenCalled();
+        expect(mockUpsertPaymentIntentTransaction).not.toHaveBeenCalled();
+        expect(mockCancelPaymentIntentIfCancellableWithResult).not.toHaveBeenCalled();
+        const failureWrites = mockPaymentRecoveryUpdateMany.mock.calls
+          .map(([args]) => args as { where: Record<string, unknown>; data: Record<string, unknown> })
+          .filter((args) => args.data?.status === PaymentRecoveryOperationStatus.FAILED);
+        expect(failureWrites).toHaveLength(1);
+        expect(failureWrites[0]!.data).toMatchObject({
+          lastError: expect.stringContaining(`(pi_later_edit) is ${status} at Stripe`),
+          // The wait hands its attempt back, so it never runs the recovery out of attempts.
+          attempts: 1,
+          nextRetryAt: expect.any(Date),
+        });
+        expect(failureWrites[0]!.data.lastError).toContain("until that payment is recorded");
+        expect(recoveryFailureAlerts()).toEqual([]);
+      },
+    );
+
+    it("#4015 review L-2: an OLD recovery meeting a payment that began yesterday waits, attempt handed back - it does not stop on its first sight of it", async () => {
+      // Queued 2026-06-01 (a month old: charges refused meanwhile, say); the later ask's debit began yesterday.
+      primeQueue(additionalIntentOperation({ attempts: 2 }));
+      mockPaymentFindUnique.mockResolvedValue(paymentWithLaterEditAsk());
+      const intentCreated = Math.floor(new Date("2026-06-02T00:00:00.000Z").getTime() / 1000);
+      const charged = Math.floor(new Date("2026-06-30T00:00:00.000Z").getTime() / 1000);
+      mockGetPaymentIntent.mockResolvedValueOnce({ id: "pi_later_edit", status: "processing", created: intentCreated, latest_charge: { created: charged } });
+
+      const result = await processPaymentRecoveryOperations({ limit: 1 });
+
+      expect(result).toMatchObject({ succeeded: 0, retried: 1, failed: 0 });
+      expect(mockCreatePaymentIntent).not.toHaveBeenCalled();
+      expect(mockSendAdminPaymentFailureAlert).not.toHaveBeenCalledWith(
+        expect.objectContaining({ errorMessage: expect.stringContaining("CREATE_ADDITIONAL_PAYMENT_INTENT") }),
+        expect.anything(),
+      );
+    });
+
+    it("#4015 review items 1, L-3: still being paid long past the cap - it stops at once, one alert saying it stopped and what an officer must do", async () => {
+      // The fixture's recovery was queued 2026-06-01, a month before the frozen today,
+      // and the later ask's charge began the same day.
+      primeQueue(additionalIntentOperation({ attempts: 1 }));
+      mockPaymentFindUnique.mockResolvedValue(paymentWithLaterEditAsk());
+      const longAgo = Math.floor(new Date("2026-06-01T00:00:00.000Z").getTime() / 1000);
+      mockGetPaymentIntent.mockResolvedValueOnce({ id: "pi_later_edit", status: "processing", created: longAgo, latest_charge: { created: longAgo } });
+
+      const result = await processPaymentRecoveryOperations({ limit: 1 });
+
+      expect(result).toMatchObject({ processed: 1, failed: 1, retried: 0, succeeded: 0 });
+      expect(mockCreatePaymentIntent).not.toHaveBeenCalled();
+      expect(mockCancelPaymentIntentIfCancellableWithResult).not.toHaveBeenCalled();
+      const failureWrites = mockPaymentRecoveryUpdateMany.mock.calls
+        .map(([args]) => args as { data: Record<string, unknown> })
+        .filter((args) => args.data?.status === PaymentRecoveryOperationStatus.FAILED);
+      expect(failureWrites).toHaveLength(1);
+      expect(failureWrites[0]!.data).toMatchObject({ nextRetryAt: null, attempts: MAX_PAYMENT_RECOVERY_ATTEMPTS });
+      // Its own wording: "stopped", never an attempt count a wait handed back.
+      expect(recoveryFailureAlerts()).toEqual([]);
+      const stopped = mockSendAdminPaymentFailureAlert.mock.calls
+        .map(([alert]) => (alert as { errorMessage: string }).errorMessage)
+        .filter((message) => message.startsWith("Stripe payment recovery CREATE_ADDITIONAL_PAYMENT_INTENT stopped: "));
+      expect(stopped).toEqual([
+        expect.stringMatching(/existing card request pi_later_edit is still "processing" at Stripe 7 days after that payment began.*check card request pi_later_edit in Stripe, record it if it was paid, and collect what is still owed for this change by hand/),
+      ]);
+      expect(stopped[0]).not.toMatch(/retrying|earlier card request|Nothing was charged or cancelled/i);
+    });
+
+    it("#4015 review: the read is bounded and runs with no transaction open, before the mint; a mid-3DS ask is superseded", async () => {
+      primeQueue(additionalIntentOperation());
+      mockPaymentFindUnique.mockResolvedValue(paymentWithLaterEditAsk());
+      mockPaymentTransactionFindMany.mockResolvedValueOnce([
+        { id: "txn-newer", stripePaymentIntentId: "pi_later_edit", amountCents: 4500 },
+      ]);
+      const openAtRead: number[] = [];
+      mockGetPaymentIntent.mockImplementationOnce(async (id: unknown) => {
+        openAtRead.push(openTransactions.count);
+        return { id, status: "requires_action" };
       });
+
+      const result = await processPaymentRecoveryOperations({ limit: 1 });
+
+      expect(result.succeeded).toBe(1);
+      expect(openAtRead).toEqual([0]);
+      expect(mockGetPaymentIntent).toHaveBeenCalledWith("pi_later_edit", { timeoutMs: 5_000, expand: ["latest_charge"] });
+      expect(mockGetPaymentIntent.mock.invocationCallOrder[0]!).toBeLessThan(mockCreatePaymentIntent.mock.invocationCallOrder[0]!);
+    });
+
+    it("a FROZEN figure (no modification to read) still completes without creating when a later edit minted a newer additional intent", async () => {
+      primeQueue(additionalIntentOperation());
+      mockBookingModificationFindUnique.mockResolvedValueOnce(null);
+      mockPaymentFindUnique.mockResolvedValue(paymentWithLaterEditAsk());
 
       const result = await processPaymentRecoveryOperations({ limit: 1 });
 
@@ -4528,12 +5223,14 @@ describe("payment recovery worker", () => {
       });
 
       /**
-       * CONTROL. A later edit repriced from current state and minted its own
-       * collectable, so this modification's ask is gone; billing for it would
-       * invoice money nobody is being asked to pay.
+       * CONTROL. A FROZEN replay (no modification to read) is still settled by a
+       * later edit's ask, so it mints nothing and bills nothing. An increase the
+       * replay can size is never settled that way (#4015): it mints and bills
+       * its own money, carrying the later ask (the #4015 test above).
        */
-      it("raises nothing when a later edit already superseded this one", async () => {
+      it("raises nothing when a later edit already superseded a frozen replay", async () => {
         primeQueue(additionalIntentOperation());
+        mockBookingModificationFindUnique.mockResolvedValueOnce(null);
         mockPaymentFindUnique.mockResolvedValue(
           paymentWithIssuedInvoice({
             transactions: [
@@ -4817,12 +5514,11 @@ describe("payment recovery worker", () => {
       );
       mockPaymentRecoveryFindUnique.mockResolvedValue(dupOp);
       // The claim updateMany (status IN [PENDING,FAILED]) still flips, but the
-      // duplicate-capture terminal transition (status: { not: SUCCEEDED }) finds
-      // the row already SUCCEEDED — the inline path won the race and recorded it.
+      // duplicate-capture terminal transition (fenced on the held claim, #4675)
+      // finds the row already SUCCEEDED — the inline path won the race and recorded it.
       mockPaymentRecoveryUpdateMany.mockImplementation(
-        (args: { where?: { status?: unknown; id?: string } }) => {
-          const status = args.where?.status;
-          if (status && typeof status === "object" && "not" in status) {
+        (args: { where?: { id?: string }; data?: { status?: unknown } }) => {
+          if (args.data?.status === PaymentRecoveryOperationStatus.SUCCEEDED) {
             return Promise.resolve({ count: 0 });
           }
           return Promise.resolve({ count: args.where?.id ? 1 : 0 });
@@ -4834,9 +5530,12 @@ describe("payment recovery worker", () => {
       expect(result.succeeded).toBe(1);
       expect(mockRecordDuplicateCaptureRefundEvent).not.toHaveBeenCalled();
       // #4125: losing to the inline close is expected here, so it is no warning.
-      const lostClose = ([, message]: unknown[]) => typeof message === "string" && message.includes("completion matched no live operation");
+      const lostClose = ([, message]: unknown[]) => typeof message === "string" && message.includes("completion matched no live claim");
       expect(vi.mocked(logger.warn).mock.calls.filter(lostClose)).toHaveLength(0);
-      expect(vi.mocked(logger.debug).mock.calls.filter(lostClose)).toHaveLength(1);
+      // #4675: the debug line still names the claim the lost close held.
+      expect(vi.mocked(logger.debug).mock.calls.filter(lostClose)).toEqual([
+        [expect.objectContaining({ attempts: expect.any(Number), processingStartedAt: expect.any(Date) }), expect.any(String)],
+      ]);
     });
   });
 
@@ -4885,9 +5584,9 @@ describe("payment recovery worker", () => {
 
     it("records nothing when the row was already closed - the inline close recorded it (count 0)", async () => {
       queue(makeCapacityOp());
-      mockPaymentRecoveryUpdateMany.mockImplementation((args: { where?: { status?: unknown; id?: string } }) => {
-        const status = args.where?.status;
-        if (status && typeof status === "object" && "not" in status) return Promise.resolve({ count: 0 });
+      // #4675: the close (data SUCCEEDED, fenced on the held claim) loses; the claim still flips.
+      mockPaymentRecoveryUpdateMany.mockImplementation((args: { where?: { id?: string }; data?: { status?: unknown } }) => {
+        if (args.data?.status === PaymentRecoveryOperationStatus.SUCCEEDED) return Promise.resolve({ count: 0 });
         return Promise.resolve({ count: args.where?.id ? 1 : 0 });
       });
 
@@ -5007,9 +5706,9 @@ describe("payment recovery worker", () => {
 
     it("records nothing when the row was already closed - the inline close recorded it (count 0), and that is no warning", async () => {
       queue(makeCancelOp());
-      mockPaymentRecoveryUpdateMany.mockImplementation((args: { where?: { status?: unknown; id?: string } }) => {
-        const status = args.where?.status;
-        if (status && typeof status === "object" && "not" in status) return Promise.resolve({ count: 0 });
+      // #4675: the close (data SUCCEEDED, fenced on the held claim) loses; the claim still flips.
+      mockPaymentRecoveryUpdateMany.mockImplementation((args: { where?: { id?: string }; data?: { status?: unknown } }) => {
+        if (args.data?.status === PaymentRecoveryOperationStatus.SUCCEEDED) return Promise.resolve({ count: 0 });
         return Promise.resolve({ count: args.where?.id ? 1 : 0 });
       });
 
@@ -5017,7 +5716,7 @@ describe("payment recovery worker", () => {
 
       expect(result.succeeded).toBe(1);
       expect(mockBookingEventCreate).not.toHaveBeenCalled();
-      const lostClose = ([, message]: unknown[]) => typeof message === "string" && message.includes("completion matched no live operation");
+      const lostClose = ([, message]: unknown[]) => typeof message === "string" && message.includes("completion matched no live claim");
       expect(vi.mocked(logger.warn).mock.calls.filter(lostClose)).toHaveLength(0);
     });
 
@@ -5178,6 +5877,49 @@ describe("#2262 — deleted-operation coherence (H1/H2)", () => {
       .find((args) => args.data.status === PaymentRecoveryOperationStatus.PROCESSING && !("attempts" in args.where));
     expect(workerHandOff).toBeDefined();
     expect(workerHandOff?.data).not.toHaveProperty("attempts");
+  });
+
+  /**
+   * #4675: a hand-off holds the claim its own write took - read back under that
+   * write's row lock - and closes only while it still holds it. The webhook's
+   * close of a cancel Stripe reports cancelled holds no claim, and is fenced off
+   * SUCCEEDED alone.
+   */
+  it("#4675 — a hand-off's close is fenced on the claim its own write took, read back under the row lock", async () => {
+    const op = makeOperation({ status: PaymentRecoveryOperationStatus.PENDING, attempts: 2 });
+    mockPaymentRecoveryFindFirst.mockResolvedValue(op);
+    const handedAt = new Date("2026-07-01T00:00:00.000Z");
+    mockPaymentRecoveryFindUnique.mockResolvedValue({ id: op.id, attempts: 3, processingStartedAt: handedAt });
+
+    await expect(queueSupersededPaymentIntentRefundRecovery({ id: "pi_superseded", amount: 6000, payment_method: "pm_1" })).resolves.toBe(true);
+
+    expect(mockPaymentRecoveryFindUnique).toHaveBeenCalledWith({ where: { id: op.id }, select: { id: true, attempts: true, processingStartedAt: true } });
+    const closes = mockPaymentRecoveryUpdateMany.mock.calls
+      .map(([args]) => args as { where: Record<string, unknown>; data: Record<string, unknown> })
+      .filter((args) => args.data.status === PaymentRecoveryOperationStatus.SUCCEEDED);
+    expect(closes.map((close) => close.where)).toEqual([heldClaimWhere(op.id, 3, handedAt)]);
+  });
+
+  it("#4675 — the webhook's close that matches nothing (already closed, or deleted) says so at warn", async () => {
+    mockPaymentRecoveryFindFirst.mockResolvedValueOnce(makeOperation({ status: PaymentRecoveryOperationStatus.FAILED }));
+    mockPaymentRecoveryUpdateMany.mockImplementation(async (args: { data?: { status?: unknown } }) =>
+      ({ count: args.data?.status === PaymentRecoveryOperationStatus.SUCCEEDED ? 0 : 1 }));
+
+    await completeCanceledSupersededPaymentIntentRecovery({ paymentIntentId: "pi_superseded" });
+
+    const lostClose = ([, message]: unknown[]) => typeof message === "string" && message.includes("cancellation close matched no live operation");
+    expect(vi.mocked(logger.warn).mock.calls.filter(lostClose)).toEqual([[{ operationId: "recovery-1" }, expect.any(String)]]);
+  });
+
+  it("#4675 — the webhook's close of a cancelled superseded intent holds no claim: fenced off SUCCEEDED only", async () => {
+    mockPaymentRecoveryFindFirst.mockResolvedValueOnce(makeOperation({ status: PaymentRecoveryOperationStatus.FAILED }));
+
+    await expect(completeCanceledSupersededPaymentIntentRecovery({ paymentIntentId: "pi_superseded" })).resolves.toBe(true);
+
+    const closes = mockPaymentRecoveryUpdateMany.mock.calls
+      .map(([args]) => args as { where: Record<string, unknown>; data: Record<string, unknown> })
+      .filter((args) => args.data.status === PaymentRecoveryOperationStatus.SUCCEEDED);
+    expect(closes.map((close) => close.where)).toEqual([{ id: "recovery-1", status: { not: PaymentRecoveryOperationStatus.SUCCEEDED } }]);
   });
 
   it("#3639 — a hand-off the club holds for a treasurer moves no money: no superseded refund, the cancel op completes", async () => {

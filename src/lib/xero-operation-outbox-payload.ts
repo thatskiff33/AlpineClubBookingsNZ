@@ -103,6 +103,13 @@ interface QueuedRefundCreditNoteOutboxPayload {
 interface QueuedAccountCreditNoteOutboxPayload {
   queueType: typeof XERO_OUTBOX_ACCOUNT_CREDIT_NOTE_TYPE;
   refundAmountCents: number;
+  memberCreditId?: string; // #4685: the credit the note is for; absent on rows queued before it
+}
+
+/** #4685: the account-credit note's own credit, read the same way from the queued and executed shapes. */
+export function readAccountCreditNoteCredit(payload: Record<string, unknown>): { memberCreditId?: string } {
+  const memberCreditId = readString(payload.memberCreditId);
+  return memberCreditId ? { memberCreditId } : {};
 }
 
 interface QueuedSupplementaryInvoiceOutboxPayload {
@@ -352,14 +359,7 @@ export function readQueuedOutboxPayload(
 
   if (queueType === XERO_OUTBOX_ACCOUNT_CREDIT_NOTE_TYPE) {
     const refundAmountCents = readNumber(payload.refundAmountCents);
-    if (refundAmountCents === null) {
-      return null;
-    }
-
-    return {
-      queueType,
-      refundAmountCents,
-    };
+    return refundAmountCents === null ? null : { queueType, refundAmountCents, ...readAccountCreditNoteCredit(payload) };
   }
 
   if (queueType === XERO_OUTBOX_SUPPLEMENTARY_INVOICE_TYPE) {

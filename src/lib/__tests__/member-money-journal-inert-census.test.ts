@@ -110,6 +110,15 @@ const CONTEXT_RESOLVERS: readonly string[] = [
   "src/lib/booking-create-types.ts",
   // #4659 review: an EACH_PAYS_OWN group join can pay by internet banking.
   "src/lib/group-booking.ts",
+  // #4660: a $0 or credit-covered PAID posts its confirmation's R01 from the caller's context.
+  "src/app/api/payments/create-payment-intent/route.ts",
+  "src/lib/booking-credit-election.ts",
+  "src/lib/waitlist-cross-lodge.ts",
+  // #4738: the zero-price confirm doors post their confirmation's R01 likewise.
+  "src/app/api/admin/bookings/[id]/confirm-pending-guests/route.ts",
+  "src/app/api/admin/bookings/[id]/force-confirm/route.ts",
+  "src/app/api/bookings/[id]/confirm-draft/route.ts",
+  "src/app/api/bookings/[id]/waitlist-confirm/route.ts",
 ];
 /** Anything a context resolver may say about the journal: the `./doors` entry, the resolvers and the context type. */
 const RESOLVER_VOCABULARY = /["']@\/lib\/member-money\/doors["']|\bresolveBookingMoneyPostingContext\b|\bresolveBookingDoorClock\b|\bMemberMoneyPostingContext\b|\bBookingJournalContext\b/g;

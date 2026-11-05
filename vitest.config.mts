@@ -9,6 +9,8 @@ import path from "node:path";
 
 import { defineConfig, configDefaults } from "vitest/config";
 
+import { MONEY_MODULE_EXCLUDE_GLOBS, MONEY_MODULE_GLOBS } from "./scripts/lib/money-modules.mjs";
+
 export default defineConfig({
   test: {
     globals: true,
@@ -39,7 +41,24 @@ export default defineConfig({
     // stale snapshots of the repo whose test files would otherwise be collected
     // and run against the main source via the "@" alias. e2e/ holds Playwright
     // specs that Vitest's default include pattern would otherwise collect.
-    exclude: [...configDefaults.exclude, "**/.claude/**", "e2e/**"],
+    // A Stryker sandbox (.stryker-tmp, #4459) is a mutated copy of the tree, so
+    // it is excluded for the same reason.
+    exclude: [...configDefaults.exclude, "**/.claude/**", "**/.stryker-tmp/**", "e2e/**"],
+    // Coverage is OFF unless a run passes `--coverage`, so the unit shards that
+    // `verify` requires are unchanged (#4459). The `Money coverage` workflow
+    // passes it, and measures only the money modules: `include` also reports a
+    // module no test reaches (at 0%), which a measure over loaded files alone
+    // would leave out. The list lives in one place, `scripts/lib/money-modules.mjs`.
+    coverage: {
+      provider: "v8",
+      include: [...MONEY_MODULE_GLOBS],
+      exclude: [...MONEY_MODULE_EXCLUDE_GLOBS],
+      // A failed test does not suppress the report: the figure is still the
+      // coverage of what ran, and the coverage workflow judges it.
+      reportOnFailure: true,
+      reporter: ["text-summary", "json-summary"],
+      reportsDirectory: "coverage",
+    },
     sequence: {
       // Load-bearing for the frozen test clock (#2481), not a style preference.
       // "list" evaluates setupFiles in the order listed above. Vitest's own

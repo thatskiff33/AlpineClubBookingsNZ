@@ -277,6 +277,12 @@ export function recordedFoldedReissuedAskModificationIds(newData: unknown): stri
   return Array.isArray(ids) ? ids.filter((id): id is string => typeof id === "string") : [];
 }
 
+/** The edits whose unpaid asks a reduction's history says it retired (#3954 round 8), or none. */
+export function recordedRetiredAskModificationIds(newData: unknown): string[] {
+  const ids = historyRecord(newData)?.[RETIRED_PENDING_ASKS_KEY];
+  return Array.isArray(ids) ? ids.filter((id): id is string => typeof id === "string") : [];
+}
+
 /** The increase whose history says it folded this reduction's waiting re-issue in, or null. */
 export function foldingIncreaseFor<M extends { id: string; newData: unknown }>(
   modificationId: string,
@@ -301,10 +307,9 @@ export function retiringReductionFor<M extends { id: string; newData: unknown }>
   modifications: readonly M[],
 ): M | null {
   return (
-    modifications.find((modification) => {
-      const ids = historyRecord(modification.newData)?.[RETIRED_PENDING_ASKS_KEY];
-      return Array.isArray(ids) && ids.includes(modificationId);
-    }) ?? null
+    modifications.find((modification) =>
+      recordedRetiredAskModificationIds(modification.newData).includes(modificationId),
+    ) ?? null
   );
 }
 

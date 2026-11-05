@@ -433,8 +433,8 @@ describe("the removed portion a correction is charged on (#3955 F3/F4/F5)", () =
 describe("recordFinishedStayFeeOwed (#3955 X4)", () => {
   const txWith = (count: number) => {
     const updateMany = vi.fn().mockResolvedValue({ count });
-    const create = vi.fn().mockResolvedValue({});
-    return { tx: { payment: { updateMany, create } } as never, updateMany, create };
+    const upsert = vi.fn().mockResolvedValue({});
+    return { tx: { payment: { updateMany, upsert } } as never, updateMany, upsert };
   };
 
   it("increments the fee only while the payment still has the invoice link the edit read", async () => {
@@ -462,9 +462,13 @@ describe("recordFinishedStayFeeOwed (#3955 X4)", () => {
   });
 
   it("creates a fee-only payment row for a booking that never reached its pay step", async () => {
-    const { tx, create, updateMany } = txWith(1);
+    const { tx, upsert, updateMany } = txWith(1);
     await recordFinishedStayFeeOwed(tx, { bookingId: "bk_1", payment: null, changeFeeCents: 2_500 });
-    expect(create).toHaveBeenCalledWith({ data: { bookingId: "bk_1", amountCents: 0, changeFeeCents: 2_500 } });
+    expect(upsert).toHaveBeenCalledWith({
+      where: { bookingId: "bk_1" },
+      create: { bookingId: "bk_1", amountCents: 0, changeFeeCents: 2_500 },
+      update: { changeFeeCents: { increment: 2_500 } },
+    });
     expect(updateMany).not.toHaveBeenCalled();
   });
 });

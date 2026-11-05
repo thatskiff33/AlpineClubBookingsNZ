@@ -13,6 +13,7 @@ import { findOrphanedAppliedCredits } from "@/lib/orphaned-applied-credit-backfi
 import { queueWaitingPaidAnotherWayNotesForPayment } from "@/lib/paid-another-way-receipt-note";
 import { recoverLostLateCaptureRecordsForPayment } from "@/lib/late-capture-record-recovery";
 import { findPaymentsWithUnrecordedLateCaptures } from "@/lib/late-capture-unrecorded-refunds";
+import { findUnrecordedRefundNoteOperation } from "@/lib/xero-refund-note-in-flight";
 import {
   enqueueXeroRefundCreditNoteOperation,
   kickQueuedXeroOutboxOperationsIfConnected,
@@ -88,11 +89,25 @@ export async function reconcileCreditBalances(): Promise<{
     // refund out of the note-eligible cash, and the card ask is re-read from
     // the gap after it; a payment whose late captures cannot be checked
     // tonight gets no card note.
+    //
+    // #4688 (`INV-INT-035`): nor does a payment on which Xero holds a refund
+    // note the app could not record (its record lost its wait). The gap read
+    // above leaves that note out, so it may BE the gap: no note is queued for
+    // the payment, a close's or a card one, until an officer resolves it by
+    // hand. It stays in the alert below.
     let reEnqueued = 0;
     for (const missing of refundsMissingCreditNotes.payments) {
       const lostRecords =
         lateCaptureLostRecordChecks.get(missing.paymentId) ??
         (await recoverLostLateCaptureRecordsForPayment(missing.paymentId));
+      const unrecordedNote = await findUnrecordedRefundNoteOperation(missing.paymentId);
+      if (unrecordedNote) {
+        logger.warn(
+          { paymentId: missing.paymentId, unrecordedOperationId: unrecordedNote.id },
+          "Self-heal queued no refund credit note: Xero holds a note on this payment the app could not record; resolve its operation by hand first (#4688)"
+        );
+        continue;
+      }
       if (missing.paidAnotherWayUncoveredCents > 0) {
         try {
           reEnqueued += await queueWaitingPaidAnotherWayNotesForPayment(missing.paymentId);

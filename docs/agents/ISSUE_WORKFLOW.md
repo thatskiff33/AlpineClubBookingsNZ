@@ -85,7 +85,7 @@ the same standard.
 ## Epics
 
 Whether work is an epic at all (the four-question test — the standalone issue
-is the default), and how a genuine epic ships through its integration branch,
+is the default), and how multi-step work ships on `main` behind flags,
 are in [`EPIC_PLAYBOOK.md`](EPIC_PLAYBOOK.md). Run that test before applying
 the `epic` label.
 
@@ -396,6 +396,7 @@ finding is fixed and CI is green. It is the only post-PR evidence comment:
 - which review lenses ran, why each was chosen (or why none was needed), the
   head SHA each read, what they found, and how each finding was fixed;
 - validation run, validation not run and why, manual checks, and stated limits;
+- a PR touching money modules: `Money coverage ratchet: green` or `red`, why;
 - confirmation that no production credentials, production data, live providers
   or live webhooks were used;
 - residual risks (none open) and carry-forward issues, filed and linked. Once it
@@ -403,6 +404,5 @@ finding is fixed and CI is green. It is the only post-PR evidence comment:
   Merge" merge gate (#3959); no owner Approve is needed, and `.github/CODEOWNERS`
   gates nothing. Name any open owner decision that holds it instead.
 
-With the CLAIM comment it makes the issue thread a full audit trail that reads
-cold, because whoever picks the work up next may be a session that never saw
-yours.
+With the CLAIM comment it makes the thread an audit trail that reads cold: the
+next session never saw yours.

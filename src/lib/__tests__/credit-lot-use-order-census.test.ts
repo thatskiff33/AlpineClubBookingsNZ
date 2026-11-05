@@ -59,11 +59,33 @@ const LOT_LOADER = "gatherAppliedCreditLots";
 /** The planner's one caller, by `file > function`. */
 const PLANNER_CALLER = "src/lib/xero-applied-credit-allocation.ts > allocateAppliedCreditForBooking";
 
-/** Reads that hand lots to the allocation planner, by `file > function`. */
+/**
+ * Reads that hand lots to the allocation planner, or to a reader that replays the
+ * planner's fill, by `file > function`: their order decides which lot gives what.
+ */
 const LOT_USE_READERS: Record<string, string> = {
-  "src/lib/xero-applied-credit-allocation.ts > gatherAppliedCreditLots":
-    "the allocation engine's lot loader: the planner takes lots in the order " +
-    "given, so this order decides which note is allocated and what is minted.",
+  "src/lib/xero-applied-credit-lots.ts > loadFreeCreditLots":
+    "the one lot loader: the allocation engine plans from it (`gatherAppliedCreditLots`), and the " +
+    "early warning (#4220) replays the engine's fill from it, so this order decides which note is " +
+    "allocated, what is minted, and which spent note a booking's credit lands on.",
+};
+
+/**
+ * #4220: the functions whose answer depends on the order of the lots they are
+ * given, and every call of each, by `consumer @ file > function`, with why the
+ * caller's lots are in `CREDIT_LOT_USE_ORDER`. A new caller fails until declared,
+ * so lots from an unordered read cannot reach one unseen.
+ */
+const LOT_ORDER_CONSUMERS = ["planAppliedCreditAllocation", "fillLotsInOrder", "freeCreditLots"] as const;
+const LOT_ORDER_CONSUMER_CALLS: Record<string, string> = {
+  "planAppliedCreditAllocation @ src/lib/xero-applied-credit-allocation.ts > allocateAppliedCreditForBooking":
+    "the engine's one plan, fed by gatherAppliedCreditLots (checked below), which reads through loadFreeCreditLots.",
+  "fillLotsInOrder @ src/lib/xero-applied-credit-plan.ts > planAppliedCreditAllocation":
+    "the planner's own fill: it receives the planner's lots, in the order the planner was given them.",
+  "fillLotsInOrder @ src/lib/xero-credit-note-spent-outside-flag.ts > drawnHere":
+    "the early warning's replay of the engine's fill, over lots from loadFreeCreditLots for the same member.",
+  "freeCreditLots @ src/lib/xero-applied-credit-lots.ts > loadFreeCreditLots":
+    "the loader's own free-credit step, over the rows it just read in CREDIT_LOT_USE_ORDER.",
 };
 
 /** Reads that order credit rows by `createdAt` for something other than using them. */
@@ -76,6 +98,10 @@ const NOT_A_USE_ORDER: Record<string, string> = {
   "src/lib/credit-release-ask-sweep.ts > enqueueCreditReleaseAsks":
     "lists the released-credit rows waiting for a request, oldest first, to enqueue one durable row " +
     "each (keyed by the release's own id); no lot is used or allocated from it.",
+  "src/lib/xero-account-credit-note-stamp.ts > stampCancellationCreditXeroNote":
+    "#4685/#4705: picks which equal cancellation credit an account-credit note is recorded on, oldest " +
+    "first, when nothing names its credit - a row queued before #4685, or an inbound note no outbox " +
+    "row ties to a credit; it links a note, and no lot is used, allocated or minted from it.",
   "src/lib/edit-financial-review-account-credit.ts > creditSliceStillOwedAfterCancellation":
     "reads at most two cancellation-restore rows and refuses when there are " +
     "two, so which row comes first cannot change the answer.",
@@ -145,14 +171,16 @@ function classify(call: ts.CallExpression, source: ts.SourceFile): Site["order"]
 }
 
 type PlannerCall = { key: string; fedByLoader: boolean };
+const CONSUMERS: ReadonlySet<string> = new Set(LOT_ORDER_CONSUMERS);
 
-function scanTree(): { sites: Site[]; plannerCalls: PlannerCall[] } {
+function scanTree(): { sites: Site[]; plannerCalls: PlannerCall[]; consumerCalls: string[] } {
   const sites: Site[] = [];
   const plannerCalls: PlannerCall[] = [];
+  const consumerCalls: string[] = [];
   for (const file of sourceFiles()) {
     const code = readFileSync(file, "utf8");
     const readsCredit = code.includes("memberCredit");
-    const callsPlanner = code.includes(PLANNER);
+    const callsPlanner = LOT_ORDER_CONSUMERS.some((consumer) => code.includes(consumer));
     if (!readsCredit && !callsPlanner) continue;
     const source = ts.createSourceFile(file, code, ts.ScriptTarget.Latest, true);
     const walk = (node: ts.Node) => {
@@ -167,6 +195,9 @@ function scanTree(): { sites: Site[]; plannerCalls: PlannerCall[] } {
           const order = classify(node, source);
           if (order) sites.push({ key: `${relativeSource(file)} > ${enclosingFunctionName(node)}`, order });
         }
+        if (ts.isIdentifier(callee) && CONSUMERS.has(callee.text)) {
+          consumerCalls.push(`${callee.text} @ ${relativeSource(file)} > ${enclosingFunctionName(node)}`);
+        }
         if (ts.isIdentifier(callee) && callee.text === PLANNER) {
           plannerCalls.push({ key: `${relativeSource(file)} > ${enclosingFunctionName(node)}`, fedByLoader: fedByLoader(node, source) });
         }
@@ -178,6 +209,7 @@ function scanTree(): { sites: Site[]; plannerCalls: PlannerCall[] } {
   return {
     sites: sites.sort((a, b) => a.key.localeCompare(b.key)),
     plannerCalls: plannerCalls.sort((a, b) => a.key.localeCompare(b.key)),
+    consumerCalls: consumerCalls.sort(),
   };
 }
 
@@ -214,7 +246,7 @@ function rawSqlOrdersWithoutTieBreak(): string[] {
 }
 
 describe("every credit-lot read ordered by createdAt is classified (#4013, INV-PAY-127)", () => {
-  const { sites, plannerCalls } = scanTree();
+  const { sites, plannerCalls, consumerCalls } = scanTree();
 
   it("reaches the engine, so an empty or truncated walk fails rather than passes", () => {
     expect(
@@ -256,8 +288,35 @@ describe("every credit-lot read ordered by createdAt is classified (#4013, INV-P
     ).toEqual([{ key: PLANNER_CALLER, fedByLoader: true }]);
   });
 
+  it("keeps the engine's lot loader on the shared loader, with no lot read of its own (#4220)", () => {
+    // The early warning replays the engine's fill from loadFreeCreditLots, so the
+    // engine must read its lots there too: an inline or unordered read in
+    // gatherAppliedCreditLots would let the two draw from different lots unseen.
+    const file = "src/lib/xero-applied-credit-allocation.ts";
+    const source = ts.createSourceFile(file, readFileSync(file, "utf8"), ts.ScriptTarget.Latest, true);
+    let body: string | null = null;
+    const visit = (node: ts.Node): void => {
+      if (ts.isFunctionDeclaration(node) && node.name?.text === LOT_LOADER && node.body) {
+        body = node.body.getText(source);
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(source);
+    expect(body, `${LOT_LOADER} not found in ${file}`).not.toBeNull();
+    expect(body as unknown as string).toMatch(/\bloadFreeCreditLots\s*\(/);
+    expect(body as unknown as string).not.toMatch(/\bmemberCredit(?:NoteAllocation)?\s*\.\s*(?:findMany|findFirst|findFirstOrThrow|groupBy|aggregate)\b/);
+  });
+
+  it("finds exactly the declared callers of every lot-order-sensitive function (#4220)", () => {
+    expect(
+      consumerCalls,
+      `INV-PAY-127: ${LOT_ORDER_CONSUMERS.join(", ")} answer by the order of the lots given. Call one only ` +
+        "with lots from loadFreeCreditLots (CREDIT_LOT_USE_ORDER), and declare the call in LOT_ORDER_CONSUMER_CALLS with why.",
+    ).toEqual(Object.keys(LOT_ORDER_CONSUMER_CALLS).sort());
+  });
+
   it("keeps a reason against every entry", () => {
-    for (const [key, reason] of Object.entries({ ...LOT_USE_READERS, ...NOT_A_USE_ORDER, ...RAW_SQL_WITHOUT_TIE_BREAK })) {
+    for (const [key, reason] of Object.entries({ ...LOT_USE_READERS, ...LOT_ORDER_CONSUMER_CALLS, ...NOT_A_USE_ORDER, ...RAW_SQL_WITHOUT_TIE_BREAK })) {
       expect(reason.length, `INV-PAY-127: ${key} needs a stated reason`).toBeGreaterThan(40);
     }
   });

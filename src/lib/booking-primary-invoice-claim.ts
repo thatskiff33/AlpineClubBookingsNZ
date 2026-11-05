@@ -148,7 +148,9 @@ export async function claimPrimaryInvoiceStillUnlinked(
  * after its arms: read no invoice link, the claim, carrying the fee the edit
  * records (`changeFeeCents`, 0 for none); read one, the fee alone, as every
  * edit recorded it before #3980. Returns whether the edit settled against the
- * primary invoice, which the door writes to its history row.
+ * primary invoice, which the door writes to its history row. With no row
+ * there is nothing to write: `applyPaymentAdjustments` opens one for a fee
+ * first (`recordFeeOnNewPayment`, #4735), so this leaf stays import-free.
  */
 export async function writeEditOnPayment(
   tx: Pick<Prisma.TransactionClient, "payment">,

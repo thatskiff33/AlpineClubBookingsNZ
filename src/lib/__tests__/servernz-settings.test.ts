@@ -24,6 +24,7 @@ import {
   clearServerVersionCheck,
   forgetServerConnectionAnswers,
   loadServerNzSettings,
+  serverNzDefaultBaseUrl,
   loadOwnedOtherLodges,
   readOwnedOtherLodges,
   recordOtherLodgesDownload,
@@ -83,6 +84,29 @@ describe("normalizeBaseUrl", () => {
   });
 });
 
+describe("serverNzDefaultBaseUrl (triyder/AlpineClubBookingsNZ#81)", () => {
+  const saved = process.env.SERVERNZ_DEFAULT_BASE_URL;
+  afterEach(() => {
+    if (saved === undefined) delete process.env.SERVERNZ_DEFAULT_BASE_URL;
+    else process.env.SERVERNZ_DEFAULT_BASE_URL = saved;
+  });
+
+  it("offers a public https address, normalised, and nothing when unset or blank", () => {
+    process.env.SERVERNZ_DEFAULT_BASE_URL = " https://alpine-server.example.nz/ ";
+    expect(serverNzDefaultBaseUrl()).toBe("https://alpine-server.example.nz");
+    delete process.env.SERVERNZ_DEFAULT_BASE_URL;
+    expect(serverNzDefaultBaseUrl()).toBeNull();
+    process.env.SERVERNZ_DEFAULT_BASE_URL = "   ";
+    expect(serverNzDefaultBaseUrl()).toBeNull();
+  });
+
+  it("ignores an address the page would refuse to save, so a bad .env pre-fills nothing", () => {
+    process.env.SERVERNZ_DEFAULT_BASE_URL = "http://alpine-server.example.nz";
+    expect(serverNzDefaultBaseUrl()).toBeNull();
+    process.env.SERVERNZ_DEFAULT_BASE_URL = "https://192.168.1.111";
+    expect(serverNzDefaultBaseUrl()).toBeNull();
+  });
+});
 describe("validateCentralServerBaseUrl", () => {
   it("accepts an ordinary public https URL", () => {
     const result = validateCentralServerBaseUrl("https://central.alpineclub.nz");

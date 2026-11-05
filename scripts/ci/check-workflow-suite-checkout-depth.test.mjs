@@ -453,8 +453,10 @@ describe("this repository", () => {
     // checkout depth and partition, so neither path can quietly lose coverage.
     // The advisory realdb-all job (#4458) is the second: it passes its file list
     // as a shell array the gate cannot read, so the gate counts it as a whole
-    // suite and holds it to fetch-depth: 0, which it has.
-    expect(fullSuiteJobs).toBe(2);
+    // suite and holds it to fetch-depth: 0, which it has. The money-coverage
+    // workflow's shards (#4459) are the third: they run the suite under
+    // `--coverage` and check out in full, like the required shards.
+    expect(fullSuiteJobs).toBe(3);
   });
 
   it("runs the file-size ratchet as verify's actual final step", () => {

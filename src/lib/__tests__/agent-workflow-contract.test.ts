@@ -299,7 +299,7 @@ describe("repository agent workflow contract", () => {
     expect(n).toContain("carries the full Ready-to-Merge comment");
     expect(n).toContain("No owner Approve or approval comment is needed");
     expect(n).toContain("still waits for the owner, and production operations stay owner-only");
-    expect(n).toContain("Epic children merge into their `epic/**` branch on the same terms");
+    expect(n).toContain("An exception epic's children merge into their `epic/**` branch on the same terms");
     for (const path of ["docs/agents/PROMPT_INJECTION_GUIDE.md", "docs/agents/EPIC_PLAYBOOK.md"]) {
       expect(readRepoFile(path)).toContain("Completion and Merge");
     }

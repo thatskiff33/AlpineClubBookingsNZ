@@ -5,6 +5,7 @@ import {
   XERO_OUTBOX_APPLIED_CREDIT_DEALLOCATION_TYPE,
 } from "./xero-operation-outbox-payload";
 import { asRecord, readString } from "./xero-json";
+import { XERO_REFUND_NOTE_AWAITING_RESOLVE_CODE } from "./xero-operation-error-codes";
 
 /**
  * #3635 (orchestrator decision 1, `INV-INT-025`): an applied-credit allocation
@@ -54,7 +55,8 @@ export class XeroAppliedCreditOperationBusyError extends Error {
   /**
    * #3954 round 8: the `lastErrorCode` the outbox records as it returns the
    * row to PENDING, where the wait is one its scan should space out
-   * (`BILLED_OFFSET_AWAITING_OWN_NOTE_CODE`); null for every other wait.
+   * (`BILLED_OFFSET_AWAITING_OWN_NOTE_CODE`, the waiting receipt's, and
+   * `XERO_REFUND_NOTE_AWAITING_RESOLVE_CODE`); null for every other wait.
    */
   readonly waitCode: string | null;
 
@@ -96,11 +98,29 @@ export class XeroAppliedCreditDeallocationEventualConsistencyError extends XeroA
  * reason kept, and the next scan raises it once the other has recorded.
  */
 export class XeroRefundCreditNoteInFlightError extends XeroAppliedCreditOperationBusyError {
-  constructor(paymentId: string, inFlightOperationId: string) {
+  constructor(paymentId: string, inFlightOperationId: string, waitCode: string | null = null) {
     super(
-      `Refund credit note operation ${inFlightOperationId} on payment ${paymentId} is still running; this note waits for it to record before sizing`
+      `Refund credit note operation ${inFlightOperationId} on payment ${paymentId} is still running; this note waits for it to record before sizing`,
+      null,
+      waitCode,
     );
     this.name = "XeroRefundCreditNoteInFlightError";
+  }
+}
+
+/**
+ * #4688 (`INV-INT-035`): Xero holds a refund note on this payment that the
+ * app never recorded (its create's record lost its wait), so any note sized
+ * now would leave it out. A subclass of the in-flight error, so the outbox and
+ * the retry queue hold the row in PENDING the same way, until an officer
+ * resolves the unrecorded note's operation by hand.
+ */
+export class XeroRefundCreditNoteUnrecordedError extends XeroRefundCreditNoteInFlightError {
+  constructor(paymentId: string, unrecordedOperationId: string) {
+    // #4692 review: a wait the scans space out, since it can last days.
+    super(paymentId, unrecordedOperationId, XERO_REFUND_NOTE_AWAITING_RESOLVE_CODE);
+    this.message = `Xero made a refund credit note on payment ${paymentId} that operation ${unrecordedOperationId} could not record; this note waits until an officer resolves ${unrecordedOperationId} by hand with that note's number`;
+    this.name = "XeroRefundCreditNoteUnrecordedError";
   }
 }
 

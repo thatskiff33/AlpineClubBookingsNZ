@@ -1873,6 +1873,7 @@ async function performBookingCancellation(
       refundAmountCents,
     });
     let manualRefundTaskId: string | null = null;
+    let cancellationCreditId: string | undefined;
     // #3949 review round 4: the organiser it is repaid to, named in the task's reason and the admins' alert.
     const organiserName = branch === "manual" && organiserByHand && fresh.parentBookingId
       ? bookingOwnerName(await tx.booking.findUniqueOrThrow({ where: { id: fresh.parentBookingId }, select: BOOKING_OWNER_NAME_SELECT })) : null;
@@ -1916,13 +1917,8 @@ async function performBookingCancellation(
           "A booking owned by an organisation cannot be refunded as member credit (#3369).",
         );
       }
-      await createCancellationCredit(
-        creditRecipientMemberId,
-        refundAmountCents,
-        bookingId,
-        undefined,
-        tx
-      );
+      // #4685: the credit's id rides the account-credit note's row, whose stamp writes it by id.
+      cancellationCreditId = await createCancellationCredit(creditRecipientMemberId, refundAmountCents, bookingId, undefined, tx);
     }
 
     // Card-path refund debt, ATOMIC with the claim (F2, #1349): persist the
@@ -2037,7 +2033,7 @@ async function performBookingCancellation(
       cardRefundPlan,
       plannedCardRefundCents,
       cardShortfall,
-      manualRefundTaskId,
+      manualRefundTaskId, cancellationCreditId,
       organiserName,
       clearingOperationId,
       branch,
@@ -2071,7 +2067,7 @@ async function performBookingCancellation(
     cardRefundPlan,
     plannedCardRefundCents,
     cardShortfall,
-    manualRefundTaskId,
+    manualRefundTaskId, cancellationCreditId,
     organiserName,
     clearingOperationId,
     branch,
@@ -2226,9 +2222,7 @@ async function performBookingCancellation(
       const queuedCreditNote = await enqueueXeroAccountCreditNoteOperation(
         paymentId,
         refundAmountCents,
-        {
-          createdByMemberId: sessionUserId,
-        }
+        { createdByMemberId: sessionUserId, memberCreditId: cancellationCreditId },
       );
 
       if (queuedCreditNote.queueOperationId && (await isXeroConnected())) {

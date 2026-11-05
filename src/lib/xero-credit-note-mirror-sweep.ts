@@ -34,7 +34,8 @@ import {
   type CreditNoteMirrorEvidence,
   type CreditNoteMirrorResult,
 } from "./xero-credit-note-mirror";
-import { NOT_A_CONVERGENCE_ROW, writtenDownCentsByCreditNote } from "./xero-credit-note-write-down";
+import { writtenDownCentsByCreditNote } from "./xero-credit-note-write-down";
+import { fundingLotWhere } from "./xero-applied-credit-slice-lookup";
 
 /**
  * A complete pass throttles the next full one; deferred rechecks are not throttled. The
@@ -93,7 +94,7 @@ async function readCreditNoteLive(creditNoteId: string): Promise<CreditNoteMirro
  */
 async function candidateCreditNoteIds(db: typeof prisma): Promise<string[]> {
   const lots = await db.memberCredit.findMany({
-    where: { xeroCreditNoteId: { not: null }, amountCents: { gt: 0 }, ...NOT_A_CONVERGENCE_ROW },
+    where: fundingLotWhere({ not: null }),
     select: { id: true, memberId: true, amountCents: true, xeroCreditNoteId: true },
   });
   if (lots.length === 0) return [];

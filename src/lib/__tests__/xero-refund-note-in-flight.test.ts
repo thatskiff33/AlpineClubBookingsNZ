@@ -1,13 +1,40 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const mocks = vi.hoisted(() => ({ findFirst: vi.fn() }));
+const mocks = vi.hoisted(() => ({ findFirst: vi.fn(), findMany: vi.fn(), findUnique: vi.fn(), linkFindMany: vi.fn(), complete: vi.fn() }));
 
 vi.mock("@/lib/prisma", () => ({
-  prisma: { xeroSyncOperation: { findFirst: (...a: unknown[]) => mocks.findFirst(...a) } },
+  prisma: {
+    xeroSyncOperation: {
+      findFirst: (...a: unknown[]) => mocks.findFirst(...a),
+      findMany: (...a: unknown[]) => mocks.findMany(...a),
+      findUnique: (...a: unknown[]) => mocks.findUnique(...a),
+    },
+    xeroObjectLink: { findMany: (...a: unknown[]) => mocks.linkFindMany(...a) },
+  },
 }));
 
-import { XeroRefundCreditNoteInFlightError, isXeroAppliedCreditOperationBusyError } from "@/lib/xero-applied-credit-operation-serialization";
-import { assertNoRefundCreditNoteInFlight } from "@/lib/xero-refund-note-in-flight";
+vi.mock("@/lib/xero-sync", () => ({ completeXeroSyncOperation: (...a: unknown[]) => mocks.complete(...a) }));
+
+import {
+  XeroRefundCreditNoteInFlightError,
+  XeroRefundCreditNoteUnrecordedError,
+  isXeroAppliedCreditOperationBusyError,
+} from "@/lib/xero-applied-credit-operation-serialization";
+import {
+  assertNoRefundCreditNoteInFlight,
+  assertNoUnrecordedRefundNote,
+  findUnrecordedRefundNoteOperation,
+  holdsUnrecordedRefundNote,
+  passUnrecordedRefundNoteFence,
+  REFUND_NOTE_AWAITING_RESOLVE_RECHECK_MS,
+  stampedUnrecordedNoteId,
+  scanSpacesRefundNotesAwaitingResolve,
+  unrecordedNoteStampPayload,
+  unrecordedRefundNoteRetryRefusal,
+  UNRECORDED_REFUND_NOTE_RETRY_REASON,
+} from "@/lib/xero-refund-note-in-flight";
+import { XERO_REFUND_NOTE_AWAITING_RESOLVE_CODE, XERO_REFUND_NOTE_UNRECORDED_ERROR_CODE } from "@/lib/xero-operation-error-codes";
+import { matchesWhere } from "./support/prisma-where";
 import { STALE_RUNNING_XERO_OPERATION_MINUTES } from "@/lib/xero-stale-operations";
 
 describe("#3880 assertNoRefundCreditNoteInFlight", () => {
@@ -55,5 +82,224 @@ describe("#3880 assertNoRefundCreditNoteInFlight", () => {
     await assertNoRefundCreditNoteInFlight("payment_1", [null, undefined]);
     const { where } = mocks.findFirst.mock.calls[0]![0] as { where: Record<string, unknown> };
     expect(where).not.toHaveProperty("id");
+  });
+});
+
+describe("#4688 the unrecorded-note fence", () => {
+  beforeEach(() => {
+    mocks.findMany.mockReset();
+    mocks.linkFindMany.mockReset();
+    mocks.linkFindMany.mockResolvedValue([]);
+  });
+
+  /** A payment refund-note create row, as the record stamps it when its wait is lost. */
+  const stamped = (overrides: Record<string, unknown> = {}) => ({
+    id: "op_unrecorded",
+    direction: "OUTBOUND",
+    entityType: "CREDIT_NOTE",
+    operationType: "CREATE",
+    localModel: "Payment",
+    localId: "payment_1",
+    queueType: "REFUND_CREDIT_NOTE",
+    requestPayload: { queueType: "REFUND_CREDIT_NOTE", refundAmountCents: 5_000, watermarkCents: 5_000 },
+    responsePayload: unrecordedNoteStampPayload("cn_a"),
+    status: "RUNNING",
+    startedAt: new Date("2026-06-01T00:00:00.000Z"),
+    lastErrorCode: XERO_REFUND_NOTE_UNRECORDED_ERROR_CODE,
+    manuallyResolvedAt: null,
+    xeroObjectId: null,
+    ...overrides,
+  });
+  const whereOf = (call = 0) => (mocks.findMany.mock.calls[call]![0] as { where: Record<string, unknown> }).where;
+
+  it("MUTATION: fences on a stamped, unresolved row naming no note, whatever its status or age - and nothing else", async () => {
+    mocks.findMany.mockResolvedValue([]);
+    await assertNoUnrecordedRefundNote("payment_1");
+    const where = whereOf();
+    // No stale-threshold floor, and no status: a row past 15 minutes, or FAILED by Mark failed, still fences.
+    expect(where).not.toHaveProperty("startedAt");
+    expect(where).not.toHaveProperty("status");
+    for (const row of [stamped(), stamped({ status: "FAILED" }), stamped({ queueType: null }), stamped({ startedAt: new Date("2020-01-01T00:00:00.000Z") })]) {
+      expect(matchesWhere(row, where)).toBe(true);
+      // The one-row reading agrees with the database's.
+      expect(holdsUnrecordedRefundNote(row)).toBe(true);
+    }
+    for (const row of [
+      stamped({ manuallyResolvedAt: new Date("2026-07-01T00:00:00.000Z") }), // Resolve by hand lifts it
+      stamped({ xeroObjectId: "cn_recorded" }), // the row records a note after all
+      stamped({ lastErrorCode: "ORPHANED_STALE_RUNNING" }),
+      stamped({ lastErrorCode: null }),
+      stamped({ localId: "payment_2" }),
+      stamped({ queueType: "ACCOUNT_CREDIT_NOTE" }),
+      stamped({ operationType: "REQUEUE" }),
+    ]) {
+      expect(matchesWhere(row, where)).toBe(false);
+    }
+  });
+
+  it("MUTATION: throws the outbox's busy error (an in-flight subclass, so the retry queue waits too), naming the row to resolve, under a wait code the scans space out", async () => {
+    mocks.findMany.mockResolvedValue([stamped()]);
+    const error = await assertNoUnrecordedRefundNote("payment_1").then(() => null, (e: unknown) => e);
+    expect(error).toBeInstanceOf(XeroRefundCreditNoteUnrecordedError);
+    expect(error).toBeInstanceOf(XeroRefundCreditNoteInFlightError);
+    expect(isXeroAppliedCreditOperationBusyError(error)).toBe(true);
+    expect((error as Error).message).toContain("until an officer resolves op_unrecorded by hand");
+    // #4692 review (finding 1): the wait can last days, so it names itself for the scans.
+    expect((error as XeroRefundCreditNoteUnrecordedError).waitCode).toBe(XERO_REFUND_NOTE_AWAITING_RESOLVE_CODE);
+    // The plain in-flight wait (#3880) is short, and keeps no code.
+    expect(new XeroRefundCreditNoteInFlightError("payment_1", "op_running").waitCode).toBeNull();
+  });
+
+  describe("#4692 review (finding 3): lifted once the stamped row's note is recorded on the payment some other way", () => {
+    it("MUTATION: a live link on the payment naming the row's note lifts it - another row resolved with it, or a retry recorded it", async () => {
+      mocks.findMany.mockResolvedValue([stamped()]);
+      mocks.linkFindMany.mockResolvedValue([{ active: true, metadata: { status: "AUTHORISED" } }]);
+      await expect(findUnrecordedRefundNoteOperation("payment_1")).resolves.toBeNull();
+      expect((mocks.linkFindMany.mock.calls[0]![0] as { where: unknown }).where).toEqual({
+        localModel: "Payment", localId: "payment_1", xeroObjectType: "CREDIT_NOTE", xeroObjectId: "cn_a",
+      });
+    });
+
+    it("a link recording the note as voided in Xero lifts it too: nothing is left out of coverage", async () => {
+      mocks.findMany.mockResolvedValue([stamped()]);
+      mocks.linkFindMany.mockResolvedValue([{ active: false, metadata: { status: "VOIDED" } }]);
+      await expect(findUnrecordedRefundNoteOperation("payment_1")).resolves.toBeNull();
+    });
+
+    it.each([
+      ["no link names the note", [], stamped()],
+      ["only a link a withdrawn resolve retired", [{ active: false, metadata: { status: "AUTHORISED", resolvedOperationId: "op_x" } }], stamped()],
+      ["the stamp named no note", [{ active: true, metadata: {} }], stamped({ responsePayload: null })],
+    ])("MUTATION: the fence stays up when %s", async (_label, links, row) => {
+      mocks.findMany.mockResolvedValue([row]);
+      mocks.linkFindMany.mockResolvedValue(links);
+      await expect(findUnrecordedRefundNoteOperation("payment_1")).resolves.toEqual({ id: "op_unrecorded" });
+    });
+
+    it("a lifted row does not hide a second stamped row behind it", async () => {
+      mocks.findMany.mockResolvedValue([stamped(), stamped({ id: "op_second", responsePayload: unrecordedNoteStampPayload("cn_b") })]);
+      mocks.linkFindMany.mockImplementation(async ({ where }: { where: { xeroObjectId: string } }) =>
+        where.xeroObjectId === "cn_a" ? [{ active: true, metadata: {} }] : []);
+      await expect(findUnrecordedRefundNoteOperation("payment_1")).resolves.toEqual({ id: "op_second" });
+    });
+  });
+
+  describe("#4692 review (F2): passUnrecordedRefundNoteFence", () => {
+    const claim = { id: "op_copy", startedAt: new Date("2026-07-01T00:00:00.000Z") };
+    const copy = { id: "op_copy", correlationKey: "payment:payment_1:refund-request-credit-note:rr_1", entityType: "CREDIT_NOTE", operationType: "CREATE", createdAt: new Date("2026-06-30T00:00:00.000Z") };
+    /** The fence's read finds no unresolved stamp; the payment's resolved stamped row is `resolved`. */
+    const stampsOnPayment = (resolved: Array<{ id: string }>) =>
+      mocks.findMany.mockImplementation(async ({ where }: { where: { manuallyResolvedAt: unknown } }) => (where.manuallyResolvedAt === null ? [] : resolved));
+    beforeEach(() => {
+      mocks.findFirst.mockReset();
+      mocks.findUnique.mockReset();
+      mocks.complete.mockReset();
+      stampsOnPayment([{ id: "op_unrecorded" }]);
+      mocks.findUnique.mockResolvedValue(copy);
+    });
+
+    it("MUTATION: reads nothing more where no resolved row ever held the payment's fence - the common create", async () => {
+      stampsOnPayment([]);
+      await expect(passUnrecordedRefundNoteFence("payment_1", claim)).resolves.toBe("open");
+      expect((mocks.findMany.mock.calls[1]![0] as { where: Record<string, unknown> }).where).toMatchObject({
+        localId: "payment_1", lastErrorCode: XERO_REFUND_NOTE_UNRECORDED_ERROR_CODE, manuallyResolvedAt: { not: null }, id: { not: "op_copy" },
+      });
+      expect(mocks.findUnique).not.toHaveBeenCalled();
+      expect(mocks.findFirst).not.toHaveBeenCalled();
+    });
+
+    it("MUTATION: closes CANCELLED, before any sizing, a copy queued before the resolve that lifted the fence - the outbox's own check ran before the mark landed", async () => {
+      mocks.findFirst.mockResolvedValue({ id: "op_unrecorded", manuallyResolvedAt: new Date("2026-07-01T00:00:00.000Z") });
+      await expect(passUnrecordedRefundNoteFence("payment_1", claim)).resolves.toBe("closed");
+      expect((mocks.findFirst.mock.calls[0]![0] as { where: unknown }).where).toEqual({
+        id: { not: "op_copy" },
+        correlationKey: copy.correlationKey,
+        entityType: "CREDIT_NOTE",
+        operationType: "CREATE",
+        manuallyResolvedAt: { gt: copy.createdAt },
+      });
+      expect(mocks.complete).toHaveBeenCalledWith(claim, {
+        status: "CANCELLED",
+        responsePayload: expect.objectContaining({ skipped: "resolved-in-xero", resolvedOperationId: "op_unrecorded" }),
+      });
+    });
+
+    it("lets the create go ahead when no sibling was resolved since the copy was queued", async () => {
+      mocks.findFirst.mockResolvedValue(null);
+      await expect(passUnrecordedRefundNoteFence("payment_1", claim)).resolves.toBe("open");
+      expect(mocks.complete).not.toHaveBeenCalled();
+    });
+
+    it("asks nothing more of a create with no queued row", async () => {
+      await expect(passUnrecordedRefundNoteFence("payment_1", null)).resolves.toBe("open");
+      expect(mocks.findUnique).not.toHaveBeenCalled();
+    });
+
+    it("reads the fence first: while it stands the copy waits, and nothing is closed", async () => {
+      mocks.findMany.mockReset();
+      mocks.findMany.mockResolvedValue([stamped()]);
+      await expect(passUnrecordedRefundNoteFence("payment_1", claim)).rejects.toBeInstanceOf(XeroRefundCreditNoteUnrecordedError);
+      expect(mocks.findUnique).not.toHaveBeenCalled();
+      expect(mocks.complete).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("#4692 review (F4): stampedUnrecordedNoteId", () => {
+    it("names the stamp's note only while the row holds it", () => {
+      expect(stampedUnrecordedNoteId(stamped())).toBe("cn_a");
+      expect(stampedUnrecordedNoteId(stamped({ manuallyResolvedAt: new Date("2026-07-01T00:00:00.000Z") }))).toBeNull();
+      expect(stampedUnrecordedNoteId(stamped({ lastErrorCode: "500" }))).toBeNull();
+      expect(stampedUnrecordedNoteId(stamped({ responsePayload: null }))).toBeNull();
+    });
+  });
+
+  it("holdsUnrecordedRefundNote reads one row the way the fence does", () => {
+    expect(holdsUnrecordedRefundNote(stamped())).toBe(true);
+    expect(holdsUnrecordedRefundNote(stamped({ manuallyResolvedAt: new Date("2026-07-01T00:00:00.000Z") }))).toBe(false);
+    expect(holdsUnrecordedRefundNote(stamped({ xeroObjectId: "cn_recorded" }))).toBe(false);
+    expect(holdsUnrecordedRefundNote(stamped({ lastErrorCode: undefined }))).toBe(false);
+  });
+
+  it("MUTATION (#4692 review, finding 1): the scans leave a note waiting on the fence out until its recheck is due, and every other row in", () => {
+    const now = new Date("2026-07-01T00:00:00.000Z");
+    const filter = scanSpacesRefundNotesAwaitingResolve(now);
+    const waiting = (ageMs: number) => ({ lastErrorCode: XERO_REFUND_NOTE_AWAITING_RESOLVE_CODE, updatedAt: new Date(now.getTime() - ageMs) });
+    expect(matchesWhere(waiting(60_000), filter)).toBe(false);
+    expect(matchesWhere(waiting(REFUND_NOTE_AWAITING_RESOLVE_RECHECK_MS), filter)).toBe(true);
+    expect(matchesWhere({ lastErrorCode: null, updatedAt: now }, filter)).toBe(true);
+    expect(matchesWhere({ lastErrorCode: "SOMETHING_ELSE", updatedAt: now }, filter)).toBe(true);
+  });
+
+  describe("unrecordedRefundNoteRetryRefusal", () => {
+    it("MUTATION: refuses the stamped row itself, never advising a retry", async () => {
+      mocks.findMany.mockResolvedValue([stamped()]);
+      await expect(unrecordedRefundNoteRetryRefusal(stamped({ status: "FAILED" }) as never)).resolves.toBe(UNRECORDED_REFUND_NOTE_RETRY_REASON);
+      expect(whereOf()).toMatchObject({ localId: "payment_1", lastErrorCode: XERO_REFUND_NOTE_UNRECORDED_ERROR_CODE });
+    });
+
+    it("MUTATION: refuses any other refund-note create on the payment - the original a retry ran for - naming the row to resolve", async () => {
+      mocks.findMany.mockResolvedValue([stamped()]);
+      const refusal = await unrecordedRefundNoteRetryRefusal(stamped({ id: "op_original", status: "FAILED", lastErrorCode: "500" }) as never);
+      expect(refusal).toContain("resolve operation op_unrecorded by hand");
+      expect(refusal).toContain("then retry this one");
+    });
+
+    it("lets the retry go ahead when the payment holds no unrecorded note", async () => {
+      mocks.findMany.mockResolvedValue([]);
+      await expect(unrecordedRefundNoteRetryRefusal(stamped({ id: "op_original", status: "FAILED" }) as never)).resolves.toBeNull();
+    });
+
+    it.each([
+      ["a row that records its note (the #3548 repair leg raises none)", { xeroObjectId: "cn_recorded" }],
+      ["an account-credit note", { queueType: "ACCOUNT_CREDIT_NOTE" }],
+      // #4692 review (finding 5): an inline account-credit row has a null queue type too.
+      ["an inline account-credit row (null queue type)", { queueType: null, requestPayload: { creditNotes: [{ lineItems: [{ unitAmount: 50 }] }] } }],
+      ["a booking's clearing note", { localModel: "Booking" }],
+      ["an invoice", { entityType: "INVOICE" }],
+    ])("never reads the fence for %s", async (_label, overrides) => {
+      mocks.findMany.mockResolvedValue([stamped()]);
+      await expect(unrecordedRefundNoteRetryRefusal(stamped({ id: "op_other", ...overrides }) as never)).resolves.toBeNull();
+      expect(mocks.findMany).not.toHaveBeenCalled();
+    });
   });
 });
