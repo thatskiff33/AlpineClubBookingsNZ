@@ -24,18 +24,76 @@ const RANGE_FILTERED = `${RANGE_HOST_PATH}[Filtered]`;
 const RANGE_HOST_PATTERN = new RegExp(`^${escapeRegExp(RANGE_URL.hostname)}$`, "i");
 /** A bare path attribute (`url.path`) on a span already known to target the host. */
 const RANGE_PATH_WITH_PREFIX = new RegExp(`^${escapeRegExp(RANGE_URL.pathname)}[^?#]*`, "i");
-const MAX_SCRUB_DEPTH = 12;
+/**
+ * Deeper than Sentry ever sends: it cuts event and breadcrumb data to depth 3
+ * (`normalizeDepth`), before `beforeSend` and after `beforeBreadcrumb`.
+ */
+const MAX_WALK_DEPTH = 12;
+/**
+ * Property slots one walk reads at most. A console breadcrumb carries the raw
+ * arguments, which can be a DOM node with React fibre properties or an error
+ * holding a whole HTTP response, so the walk needs a hard bound (#4740 review).
+ */
+const MAX_WALK_SLOTS = 20_000;
 
 /** `text` with every breached-password range prefix replaced by `[Filtered]`. */
 export function scrubBreachedPasswordRange(text: string): string {
   return RANGE_PATTERN.test(text) ? text.replace(RANGE_WITH_PREFIX(), RANGE_FILTERED) : text;
 }
 
-function mentionsRange(value: unknown, depth: number): boolean {
-  if (typeof value === "string") return RANGE_PATTERN.test(value);
-  if (depth >= MAX_SCRUB_DEPTH || value === null || typeof value !== "object") return false;
-  const children = Array.isArray(value) ? value : Object.values(value);
-  return children.some((child) => mentionsRange(child, depth + 1));
+interface RangeWalk {
+  /** A string naming the range endpoint was found. */
+  found: boolean;
+  /** Such a string is still in place: it sat in a read-only slot. */
+  left: boolean;
+  /** The walk stopped at MAX_WALK_SLOTS, so it cannot say what the rest holds. */
+  capped: boolean;
+}
+
+/**
+ * The one walk both filters share (INV-SSOT). It enters each object once (a
+ * cycle or a shared node is not re-entered), reads own data properties only
+ * (an accessor is never invoked), and stops at MAX_WALK_DEPTH and
+ * MAX_WALK_SLOTS. With `scrub`, each string naming the range is rewritten in
+ * place where its slot is writable; without it, the walk stops at the first
+ * such string.
+ */
+function walkRangeStrings(root: object, scrub: boolean): RangeWalk {
+  const result: RangeWalk = { found: false, left: false, capped: false };
+  const seen = new WeakSet<object>();
+  let slots = 0;
+  const finished = () => result.capped || (result.found && !scrub);
+  const visit = (node: object, depth: number): void => {
+    if (depth >= MAX_WALK_DEPTH || seen.has(node)) return;
+    seen.add(node);
+    // Arrays and plain objects alike: an array's own keys are its indexes.
+    for (const key of Object.keys(node)) {
+      if (finished()) return;
+      if (++slots > MAX_WALK_SLOTS) {
+        result.capped = true;
+        return;
+      }
+      const descriptor = Object.getOwnPropertyDescriptor(node, key);
+      if (!descriptor || !("value" in descriptor)) continue;
+      const child: unknown = descriptor.value;
+      if (typeof child === "string") {
+        if (!RANGE_PATTERN.test(child)) continue;
+        result.found = true;
+        if (!scrub) return;
+        // A read-only slot (a frozen node's, or one defined non-writable) is
+        // never written, since strict mode would throw.
+        if (descriptor.writable) {
+          (node as Record<string, unknown>)[key] = scrubBreachedPasswordRange(child);
+        } else {
+          result.left = true;
+        }
+      } else if (child !== null && typeof child === "object") {
+        visit(child, depth + 1);
+      }
+    }
+  };
+  visit(root, 0);
+  return result;
 }
 
 /**
@@ -44,39 +102,22 @@ function mentionsRange(value: unknown, depth: number): boolean {
  * message, `extra` or a breadcrumb added before this filter existed.
  */
 export function scrubBreachedPasswordRangeDeep<T>(value: T): T {
-  const seen = new WeakSet<object>();
-  const walk = (node: unknown, depth: number): unknown => {
-    if (typeof node === "string") return scrubBreachedPasswordRange(node);
-    if (depth >= MAX_SCRUB_DEPTH || node === null || typeof node !== "object") return node;
-    if (seen.has(node)) return node;
-    seen.add(node);
-    // Arrays and plain objects alike: an array's own keys are its indexes.
-    for (const key of Object.keys(node)) {
-      const descriptor = Object.getOwnPropertyDescriptor(node, key);
-      // An accessor is never invoked.
-      if (!descriptor || !("value" in descriptor)) continue;
-      const scrubbed = walk(descriptor.value, depth + 1);
-      // A read-only slot (a frozen node's, or one defined non-writable) keeps
-      // its value, since strict mode would throw; an object in it was still
-      // walked, and scrubbed in place, above.
-      if (scrubbed !== descriptor.value && descriptor.writable) {
-        (node as Record<string, unknown>)[key] = scrubbed;
-      }
-    }
-    return node;
-  };
-  return walk(value, 0) as T;
+  if (typeof value === "string") return scrubBreachedPasswordRange(value) as T;
+  if (value !== null && typeof value === "object") walkRangeStrings(value, true);
+  return value;
 }
 
 /**
  * `beforeBreadcrumb` filter every init calls first: a breadcrumb naming the
  * range endpoint (the fetch breadcrumb's `data.url`, or anywhere else) is
- * dropped; every other breadcrumb is returned unchanged.
+ * dropped, and so is one too large to check in full (fail closed); every other
+ * breadcrumb is returned unchanged.
  */
 export function dropBreachedPasswordRangeBreadcrumb(
   breadcrumb: SentryBreadcrumb,
 ): SentryBreadcrumb | null {
-  return mentionsRange(breadcrumb, 0) ? null : breadcrumb;
+  const walk = walkRangeStrings(breadcrumb, false);
+  return walk.found || walk.capped ? null : breadcrumb;
 }
 
 /**

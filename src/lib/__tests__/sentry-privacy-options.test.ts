@@ -1,7 +1,8 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import * as Sentry from "@sentry/nextjs";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { realElapsedMs } from "@/lib/__tests__/helpers/clock";
 import {
   BREACHED_PASSWORD_RANGE_URL,
   isBreachedPasswordRangeUrl,
@@ -142,6 +143,45 @@ describe("Sentry never carries the breached-password range prefix (#4610)", () =
     expect(dropBreachedPasswordRangeBreadcrumb({ category: "console", message: `fetch failed ${RANGE}` })).toBeNull();
     const other = { category: "http", type: "http", data: { method: "GET", url: "https://api.stripe.com/v1" } };
     expect(dropBreachedPasswordRangeBreadcrumb(other)).toBe(other);
+  });
+
+  // #4740 review: console breadcrumbs carry raw arguments, so the walk is
+  // bounded, visits each node once and never runs an accessor.
+  it("checks a cyclic, many-key breadcrumb in one pass over each node", () => {
+    const node: Record<string, unknown> = {};
+    for (let i = 0; i < 12; i++) node[`k${i}`] = node;
+    const start = process.hrtime.bigint();
+    const breadcrumb = { category: "console", data: { arguments: [node, { inner: node }] } };
+    expect(dropBreachedPasswordRangeBreadcrumb(breadcrumb)).toBe(breadcrumb);
+    expect(scrubBreachedPasswordRangeDeep({ extra: node })).toEqual({ extra: node });
+    // Without a visited set this is 12^11 slot reads.
+    expect(realElapsedMs(start)).toBeLessThan(1000);
+    node.text = `fetch failed for ${RANGE}`;
+    expect(dropBreachedPasswordRangeBreadcrumb(breadcrumb)).toBeNull();
+  });
+
+  it("never invokes a getter while checking or scrubbing", () => {
+    const getter = vi.fn(() => {
+      throw new Error("getter ran");
+    });
+    const withGetter = () => Object.defineProperty({ plain: "ok" }, "url", { get: getter, enumerable: true });
+    const breadcrumb = { category: "console", data: { arguments: [withGetter()] } };
+    expect(dropBreachedPasswordRangeBreadcrumb(breadcrumb)).toBe(breadcrumb);
+    expect(() => scrubBreachedPasswordRangeDeep({ extra: withGetter() })).not.toThrow();
+    expect(getter).not.toHaveBeenCalled();
+  });
+
+  it("drops a breadcrumb too large to check in full (fail closed)", () => {
+    const wide = Array.from({ length: 30_000 }, (_, i) => `line ${i}`);
+    expect(dropBreachedPasswordRangeBreadcrumb({ category: "console", data: { arguments: [wide] } })).toBeNull();
+    const nested: Record<string, unknown> = {};
+    for (let i = 0; i < 200; i++) {
+      nested[`n${i}`] = Object.fromEntries(Array.from({ length: 200 }, (_, j) => [`v${j}`, j]));
+    }
+    expect(dropBreachedPasswordRangeBreadcrumb({ category: "console", data: { arguments: [nested] } })).toBeNull();
+    // Below the cap, the same shape passes.
+    const small = { category: "console", data: { arguments: [wide.slice(0, 100)] } };
+    expect(dropBreachedPasswordRangeBreadcrumb(small)).toBe(small);
   });
 
   it("scrubs an event deep, cycles included, and leaves other strings alone", () => {
