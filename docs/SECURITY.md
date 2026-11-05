@@ -239,12 +239,21 @@ because of the failure itself.
 
 Audience: Operator, Developer.
 
-A signed-in session ends after **8 hours without use**. The lodge kiosk account
-(the `LODGE` access role, signed in on the shared lodge tablet) is the one
-exception: **30 days without use**, so the tablet is not signed out after a
-quiet night (owner decision, 2 Nov 2026). "Use" is any refresh of the session;
-the kiosk page refreshes it when it loads and when it regains focus, and each
-refresh starts a full window again.
+A signed-in session ends after **8 hours without use**. The lodge kiosk account,
+signed in on the shared lodge tablet, is the one exception: **30 days without
+use**, so the tablet is not signed out after a quiet night (owner decision,
+2 Nov 2026). "Use" is any refresh of the session; the kiosk page refreshes it
+when it loads and when it regains focus, and each refresh starts a full window
+again.
+
+**Which account is the kiosk.** The app's own record class,
+`isLodgeKioskAccount` in `src/lib/member-roles.ts`: `LODGE` is the record's
+whole classification, the User Type the member page shows as "Lodge (kiosk
+account)". Holding `LODGE` is not enough. It is a checkbox any officer can
+also have, so a Full Admin, a Booking Officer or a custom-role holder who also
+holds `LODGE` is an ordinary account and keeps 8 hours. The `jwt` callback
+stamps a `kioskAccount` claim from the member row on every refresh, and the
+window reads only that claim.
 
 **Where it is decided.** `src/lib/session-idle-expiry.ts` holds both windows
 and the rule. Auth.js stamps the token's `exp` and the cookie's `Expires` from
@@ -273,6 +282,8 @@ window.
   re-issues 8 hours. What the account may do is read afresh from the database
   on every request, as for any account, and switching its login off ends the
   session outright.
+- A token issued before the `kioskAccount` claim existed carries none, so it
+  gets 8 hours; its first refresh stamps the claim.
 - The hut-leader PIN session on the same tablet is separate: 10 minutes idle,
   12 hours in total (`lodge-pin-session-timing.ts`).
 - This is the idle window only. A ceiling on a session's total age, measured
