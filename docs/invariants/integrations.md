@@ -502,9 +502,9 @@ re-run, never offered for retry, never re-minted beside (owner decision,
   pre-release mark on one is void on the retry path.
 - **Done is not absent.** `getBlockingOperation` returns `retryable`, `blocked`
   or `resolved`; a resolved row never outranks a live one and is never dropped.
-  `buildRetryAction` takes only `retryable`. Where no document is recorded, the
-  repair tool reports `RESOLVED_IN_XERO_BY_OFFICER` (info, no action), as does
-  the booking page.
+  `buildRetryAction` takes only `retryable`. Where a document, or a note's
+  allocation, is unrecorded, the repair tool reports
+  `RESOLVED_IN_XERO_BY_OFFICER` (info, no action), as does the booking page.
 
 Pinned by `xero-operation-retry.test.ts`, `xero-operation-queue.test.ts`,
 `xero-operation-routes.test.ts`, `xero-operations-panel-failed-default.test.tsx`,

@@ -11,7 +11,7 @@ import type {
   XeroObjectLinkRecord,
   XeroOperationRecord,
 } from "./xero-booking-repair-types";
-import { addAction, addFinding, buildRetryAction } from "./xero-booking-repair-findings";
+import { addAction, addFinding, addResolvedInXeroFinding, buildRetryAction } from "./xero-booking-repair-findings";
 import {
   blockingCandidates,
   getBlockingOperation,
@@ -26,7 +26,17 @@ type NoteAllocationKind = "modification" | "clearing";
 
 const WORDING: Record<
   NoteAllocationKind,
-  { failed: string; stuck: string; live: string; repairing: string; retry: string; handMade: string; unretryable: string }
+  {
+    failed: string;
+    stuck: string;
+    live: string;
+    repairing: string;
+    retry: string;
+    handMade: string;
+    unretryable: string;
+    /** The document a resolved-by-officer finding names (`addResolvedInXeroFinding`). */
+    resolvedDocument: string;
+  }
 > = {
   modification: {
     failed: "A Xero credit-note allocation operation failed and cannot be auto-retried - resolve the operation manually.",
@@ -38,6 +48,7 @@ const WORDING: Record<
       "Part of this modification credit note's allocation was resolved by hand in Xero, and a retry would allocate that part again - allocate the rest by hand in Xero.",
     unretryable:
       "A modification credit note's allocation did not complete and its operation cannot be retried here - allocate it by hand in Xero.",
+    resolvedDocument: "credit-note allocation",
   },
   clearing: {
     failed:
@@ -51,10 +62,11 @@ const WORDING: Record<
       "Part of this invoice-clearing credit note's allocations was resolved by hand in Xero, and a retry would allocate that part again - allocate the invoices left by hand in Xero.",
     unretryable:
       "The invoice-clearing credit note's allocations did not all complete and its operation cannot be retried here - allocate the invoices left by hand in Xero so the cancelled unpaid booking's invoice closes.",
+    resolvedDocument: "invoice-clearing allocation",
   },
 };
 
-/** The arm that would allocate the note, and one behaviour from main both arms keep, as an explicit option. */
+/** The arm that would allocate the note. */
 type NoteAllocationArm = {
   kind: NoteAllocationKind;
   bookingId: string;
@@ -63,12 +75,6 @@ type NoteAllocationArm = {
   details: Record<string, unknown>;
   /** Carried on the retry finding beside `creditNoteId` and `operationId`. */
   retryDetails: Record<string, unknown>;
-  /**
-   * A row an officer resolved in Xero (`INV-INT-025`): neither arm reports a
-   * resolved-by-officer finding for it, only a live allocation row beside it.
-   * Whether it should is #4763, not decided here.
-   */
-  resolved: "live-allocation-only";
 };
 
 /** A note allocation held by a live, failed or unretryable row: reported, never retried or queued beside. */
@@ -94,6 +100,20 @@ export function addBlockedNoteAllocationFinding(
     details: { ...arm.details, operationId: operation.id, operationStatus: operation.status, ...extraDetails },
     actionKeys: [],
   });
+}
+
+/**
+ * A note allocation an officer resolved in Xero (`INV-INT-025`): done, never
+ * retried or queued beside, but reported - info, no action. One wording for an
+ * allocation row the arm answers and the note's own resolved row (#4763).
+ */
+export function addResolvedNoteAllocationFinding(
+  findings: MutableFinding[],
+  arm: Pick<NoteAllocationArm, "kind" | "details">,
+  operation: XeroOperationRecord,
+  extraDetails: Record<string, unknown> = {}
+) {
+  addResolvedInXeroFinding(findings, operation, WORDING[arm.kind].resolvedDocument, { ...arm.details, ...extraDetails });
 }
 
 /**
@@ -241,9 +261,17 @@ export function dispatchOwnNoteRow(
   // (#4259 review F1), so it waits until the repair ends.
   switch (row.kind) {
     case "resolved": {
-      // Allocated by hand: nothing retried or queued, but a separate live
-      // allocation row is still seen (Xero review F8), report-only. No
-      // resolved-by-officer finding (`arm.resolved`, #4763).
+      // Allocated by hand (`INV-INT-025`): nothing retried or queued, but the
+      // row is still reported (#4763), naming the note. It is answered ahead of
+      // the in-flight check, others-first and the by-hand count above (and
+      // `readOwnNoteRowState` reads it ahead of a running repair, which cannot
+      // claim a resolved row): those decide whether the note's retry may be
+      // offered, and a resolved row offers none, so none of them can change
+      // the answer. Nor does a row beside it replace the report - that would
+      // hide the officer's resolve: a separate live or failed allocation row
+      // is reported alongside it (Xero review F8), report-only, since a retry
+      // of it could allocate the note a second time.
+      addResolvedNoteAllocationFinding(findings, arm, row.operation, { creditNoteId: arm.creditNoteId });
       const blocking = getBlockingOperation(operations, "ALLOCATION", "ALLOCATE");
       if (blocking && blocking.kind !== "resolved") addBlockedNoteAllocationFinding(findings, arm, blocking.operation);
       return HANDLED;

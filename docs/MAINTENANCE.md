@@ -1470,6 +1470,11 @@ are covered by its retry. Invoices you allocated by hand through one of the
 note's own attempts are not listed: if none is left, the note is reported as
 done; otherwise the report asks you to allocate the planned invoices it
 lists as left by hand, and offers nothing.
+Since #4763, a note whose own operation was marked resolved in Xero is
+listed as an information-only "resolved in Xero by an officer" finding
+naming the note, with nothing offered; any other allocation operation still
+failed or pending beside it is reported too, never retried, because the note
+was allocated by hand.
 Since #1491, `LATE_CAPTURE_AFTER_CANCELLATION` is also never auto-applied:
 it now fires only when a cancelled booking retains captured value with NO
 recorded cancellation-refund decision (no cancellation credit, no
