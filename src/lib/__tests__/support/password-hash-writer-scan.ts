@@ -16,11 +16,14 @@ import ts from "typescript";
 //    `passwordHash` column (quoted or bare) together with `INSERT` or `UPDATE`.
 //
 // Each writer is reported with its enclosing named function ("scope", see
-// `scopeName`) and whether it is GUARDED by the screen: an awaited
-// `screenChosenPassword(x, ...)` whose result is bound to a name, where `x` is
-// the same identifier or property access the written hash was made from
-// (`bcrypt.hash(x, ...)`, traced as below), followed by an
-// `if` that tests `!name.ok` and returns (or throws). Both statements must sit
+// `scopeName`) and whether it is GUARDED by the screen: a `const` bound to
+// `await screenChosenPassword(x, ...)` (or a conditional with that await as a
+// branch the test does not rule out), where `x` and the input of the
+// `bcrypt.hash(x, ...)` that made the written value (traced as below) resolve
+// to the SAME `const` or parameter declaration, with the same property path,
+// and nothing reassigns it; followed by an `if` that tests `!name.ok` and
+// returns (or throws). A second argument that switches the check off
+// (`{ breachedPasswordCheck: false }`) never counts. Both statements must sit
 // in a block that encloses the writer and come before it, so a screen in a
 // different handler, a callback or a sibling branch never counts. The `if`
 // condition is the bare `!name.ok` or a `||` chain holding it, nothing weaker.
@@ -184,35 +187,57 @@ function isWriterNode(node: ts.Node): boolean {
   return false;
 }
 
+/** True for `false`, or `true` when `negated`: a test that rules a branch out. */
+function isConstantTest(test: ts.Expression, negated: boolean): boolean {
+  const kind = unwrapParens(test).kind;
+  return kind === (negated ? ts.SyntaxKind.TrueKeyword : ts.SyntaxKind.FalseKeyword);
+}
+
+/** True when a screen's options argument is a literal switching the check off. */
+function switchesCheckOff(options: ts.Expression | undefined): boolean {
+  if (!options) return false;
+  const value = unwrapValue(options);
+  return (
+    ts.isObjectLiteralExpression(value) &&
+    value.properties.some(
+      (property) =>
+        ts.isPropertyAssignment(property) &&
+        nameText(property.name) === "breachedPasswordCheck" &&
+        unwrapParens(property.initializer).kind === ts.SyntaxKind.FalseKeyword,
+    )
+  );
+}
+
+/** True when `node` is `await screenChosenPassword(x, ...)` screening `hashed`. */
+function awaitsScreenOf(node: ts.Expression, hashed: Reference): boolean {
+  const value = unwrapParens(node);
+  if (!ts.isAwaitExpression(value)) return false;
+  const call = unwrapParens(value.expression);
+  if (!ts.isCallExpression(call) || !ts.isIdentifier(call.expression)) return false;
+  if (call.expression.text !== SCREEN_HELPER || switchesCheckOff(call.arguments[1])) return false;
+  const screened = call.arguments[0] ? referenceOf(call.arguments[0]) : null;
+  return screened !== null && sameReference(screened, hashed);
+}
+
 /**
- * The names `statement` binds to an awaited screen of `screened`:
- * `const name = await screenChosenPassword(screened, ...)` (or
- * `cond ? await ... : ...`). `screened` is the source text of the screen's
- * first argument, an identifier or a property-access chain; a screen of
- * anything else binds nothing.
+ * The names `statement` binds to an awaited screen of `hashed`: a `const`
+ * whose initializer is `await screenChosenPassword(x, ...)` itself, or a
+ * conditional with that await as one branch and a test that does not rule the
+ * branch out. Any other shape (a `let`, an object literal or comma expression
+ * that discards the result) binds nothing.
  */
-function screenBinding(statement: ts.Statement, screened: string): string[] {
+function screenBinding(statement: ts.Statement, hashed: Reference): string[] {
   if (!ts.isVariableStatement(statement)) return [];
+  if ((statement.declarationList.flags & ts.NodeFlags.Const) === 0) return [];
   const names: string[] = [];
   for (const declaration of statement.declarationList.declarations) {
     if (!ts.isIdentifier(declaration.name) || !declaration.initializer) continue;
-    let awaitsScreen = false;
-    const visit = (node: ts.Node): void => {
-      if (awaitsScreen || isFunctionLike(node)) return;
-      if (
-        ts.isAwaitExpression(node) &&
-        ts.isCallExpression(node.expression) &&
-        ts.isIdentifier(node.expression.expression) &&
-        node.expression.expression.text === SCREEN_HELPER
-      ) {
-        const argument = node.expression.arguments[0];
-        if (argument && referenceText(argument) === screened) awaitsScreen = true;
-        return;
-      }
-      ts.forEachChild(node, visit);
-    };
-    visit(declaration.initializer);
-    if (awaitsScreen) names.push(declaration.name.text);
+    const initializer = unwrapParens(declaration.initializer);
+    const bound = ts.isConditionalExpression(initializer)
+      ? (awaitsScreenOf(initializer.whenTrue, hashed) && !isConstantTest(initializer.condition, false)) ||
+        (awaitsScreenOf(initializer.whenFalse, hashed) && !isConstantTest(initializer.condition, true))
+      : awaitsScreenOf(initializer, hashed);
+    if (bound) names.push(declaration.name.text);
   }
   return names;
 }
@@ -255,20 +280,22 @@ function testsNotOk(condition: ts.Expression, names: ReadonlySet<string>): boole
  * True when the writer is guarded: in some block enclosing it (up to its
  * function boundary and beyond, so a transaction callback inherits its
  * handler's guard), a screen binding is followed by an `if (!x.ok)` that exits,
- * both before the writer. The screen's first argument must be the same
- * identifier or property access as the input of the `bcrypt.hash(...)` that
+ * both before the writer. The screen's first argument must resolve to the same
+ * declaration and property path as the input of the `bcrypt.hash(...)` that
  * produced the written value (`hashedInput`), so screening one password and
- * hashing another does not count; with no traced hash input, nothing does.
+ * hashing another (or a shadowing callback parameter of the same name) does
+ * not count; with no traced, unreassigned hash input, nothing does.
  */
-function guardedByScreen(writer: ts.Node, hashedInput: string | null): boolean {
-  if (hashedInput === null) return false;
+function guardedByScreen(writer: ts.Node, hashedInput: ts.Expression | null): boolean {
+  const hashed = hashedInput ? referenceOf(hashedInput) : null;
+  if (hashed === null) return false;
   const position = writer.getStart();
   for (let current = writer.parent; current; current = current.parent) {
     if (!ts.isBlock(current) && !ts.isSourceFile(current)) continue;
     const bound = new Set<string>();
     for (const statement of current.statements) {
       if (statement.getEnd() > position) break;
-      for (const name of screenBinding(statement, hashedInput)) bound.add(name);
+      for (const name of screenBinding(statement, hashed)) bound.add(name);
       if (ts.isIfStatement(statement) && exits(statement.thenStatement) && testsNotOk(statement.expression, bound)) {
         return true;
       }
@@ -306,39 +333,177 @@ function unwrapValue(node: ts.Expression): ts.Expression {
 
 type Binding = { kind: "const"; initializer: ts.Expression } | { kind: "parameter" } | null;
 
-function bindsName(name: ts.BindingName, wanted: string): boolean {
-  if (ts.isIdentifier(name)) return name.text === wanted;
-  return name.elements.some(
-    (element) => !ts.isOmittedExpression(element) && bindsName(element.name, wanted),
-  );
+/** The identifier in `name` (a plain or destructuring binding) that binds `wanted`. */
+function bindingIdentifier(name: ts.BindingName, wanted: string): ts.Identifier | null {
+  if (ts.isIdentifier(name)) return name.text === wanted ? name : null;
+  for (const element of name.elements) {
+    if (ts.isOmittedExpression(element)) continue;
+    const found = bindingIdentifier(element.name, wanted);
+    if (found) return found;
+  }
+  return null;
 }
 
 /**
- * What `name` is bound to where `from` reads it: the nearest enclosing scope
- * wins, from the innermost callback out to the module. A `const` with a plain
- * identifier gives its initializer; a parameter (destructured or not) says the
- * caller decides; `let`, a destructured `const`, a loop variable or an import
- * is not followed.
+ * The declaration `name` resolves to where `from` reads it: the nearest
+ * enclosing scope wins, from the innermost callback out to the module. `id` is
+ * the binding identifier itself, so two reads resolve to the same declaration
+ * exactly when their `id`s are the same node. `other` is a `let` or `var`; an
+ * import or a global is not found (null).
  */
-function resolveBinding(name: string, from: ts.Node): Binding {
+type Declaration =
+  | { kind: "const"; id: ts.Identifier; declaration: ts.VariableDeclaration }
+  | { kind: "parameter"; id: ts.Identifier; scope: ts.Node }
+  | { kind: "other" }
+  | null;
+
+function findDeclaration(name: string, from: ts.Node): Declaration {
   for (let current: ts.Node | undefined = from.parent; current; current = current.parent) {
-    if (isFunctionLike(current) && current.parameters.some((p) => bindsName(p.name, name))) {
-      return { kind: "parameter" };
+    if (isFunctionLike(current)) {
+      for (const parameter of current.parameters) {
+        const id = bindingIdentifier(parameter.name, name);
+        if (id) return { kind: "parameter", id, scope: current };
+      }
     }
     if (!ts.isBlock(current) && !ts.isSourceFile(current)) continue;
     for (const statement of current.statements) {
       if (!ts.isVariableStatement(statement)) continue;
       const list = statement.declarationList;
       for (const declaration of list.declarations) {
-        if (!bindsName(declaration.name, name)) continue;
-        const isConst = (list.flags & ts.NodeFlags.Const) !== 0;
-        return isConst && ts.isIdentifier(declaration.name) && declaration.initializer
-          ? { kind: "const", initializer: declaration.initializer }
-          : null;
+        const id = bindingIdentifier(declaration.name, name);
+        if (!id) continue;
+        return (list.flags & ts.NodeFlags.Const) !== 0 ? { kind: "const", id, declaration } : { kind: "other" };
       }
     }
   }
   return null;
+}
+
+/**
+ * What `name` is bound to where `from` reads it. A `const` with a plain
+ * identifier gives its initializer; a parameter (destructured or not) says the
+ * caller decides; `let`, a destructured `const`, a loop variable or an import
+ * is not followed.
+ */
+function resolveBinding(name: string, from: ts.Node): Binding {
+  const declaration = findDeclaration(name, from);
+  if (declaration?.kind === "parameter") return { kind: "parameter" };
+  if (declaration?.kind !== "const") return null;
+  const { declaration: node } = declaration;
+  return ts.isIdentifier(node.name) && node.initializer ? { kind: "const", initializer: node.initializer } : null;
+}
+
+/** A read of a `const` or parameter declaration, and the property path after it. */
+type Reference = { id: ts.Identifier; path: readonly string[] };
+
+/** The identifier and property names of an identifier or a property-access chain. */
+function accessPath(node: ts.Expression): { root: ts.Identifier; path: string[] } | null {
+  const value = unwrapValue(node);
+  if (ts.isIdentifier(value)) return { root: value, path: [] };
+  if (!ts.isPropertyAccessExpression(value)) return null;
+  const receiver = accessPath(value.expression);
+  return receiver && { root: receiver.root, path: [...receiver.path, value.name.text] };
+}
+
+function sameReference(a: Reference, b: Reference): boolean {
+  return a.id === b.id && a.path.length === b.path.length && a.path.every((name, i) => name === b.path[i]);
+}
+
+/** The targets an assignment or `++`/`--` writes, destructuring included. */
+function assignmentTargets(node: ts.Node): ts.Expression[] {
+  const fromPattern = (target: ts.Expression): ts.Expression[] => {
+    const value = unwrapParens(target);
+    if (ts.isArrayLiteralExpression(value)) {
+      return value.elements.flatMap((element) =>
+        fromPattern(ts.isSpreadElement(element) ? element.expression : element),
+      );
+    }
+    if (ts.isObjectLiteralExpression(value)) {
+      return value.properties.flatMap((property) => {
+        if (ts.isShorthandPropertyAssignment(property)) return [property.name];
+        if (ts.isPropertyAssignment(property)) return fromPattern(property.initializer);
+        return ts.isSpreadAssignment(property) ? fromPattern(property.expression) : [];
+      });
+    }
+    if (ts.isBinaryExpression(value) && value.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
+      return fromPattern(value.left); // a default inside a pattern
+    }
+    return [value];
+  };
+  if (
+    ts.isBinaryExpression(node) &&
+    node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+    node.operatorToken.kind <= ts.SyntaxKind.LastAssignment
+  ) {
+    return fromPattern(node.left);
+  }
+  if (
+    (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) &&
+    (node.operator === ts.SyntaxKind.PlusPlusToken || node.operator === ts.SyntaxKind.MinusMinusToken)
+  ) {
+    return [node.operand];
+  }
+  if ((ts.isForOfStatement(node) || ts.isForInStatement(node)) && !ts.isVariableDeclarationList(node.initializer)) {
+    return fromPattern(node.initializer);
+  }
+  return [];
+}
+
+/** Stands for a computed key (`a[k]`) in a written path: it matches any name. */
+const ANY_KEY = "*";
+
+/**
+ * The slot an assignment target writes, as a root and a property path:
+ * `a.b.c = x` writes `b.c` under `a`, and `a.b[k] = x` writes `b.*`.
+ */
+function writtenPath(target: ts.Expression): { root: ts.Identifier; path: string[] } | null {
+  const value = unwrapValue(target);
+  if (ts.isElementAccessExpression(value)) {
+    const receiver = writtenPath(value.expression);
+    return receiver && { root: receiver.root, path: [...receiver.path, nameText(value.argumentExpression) ?? ANY_KEY] };
+  }
+  return accessPath(value);
+}
+
+/**
+ * True when anything in `scope` writes `reference` or a value on its path: the
+ * declaration itself (a parameter), or a property its path reads through.
+ */
+function isReassigned(reference: Reference, scope: ts.Node): boolean {
+  let written = false;
+  const visit = (node: ts.Node): void => {
+    if (written) return;
+    for (const target of assignmentTargets(node)) {
+      const write = writtenPath(target);
+      const declaration = write && findDeclaration(write.root.text, write.root);
+      if (!write || !declaration || declaration.kind === "other" || declaration.id !== reference.id) continue;
+      // Writing the declaration, or any property its path reads through.
+      if (
+        write.path.length <= reference.path.length &&
+        write.path.every((name, i) => name === ANY_KEY || name === reference.path[i])
+      ) {
+        written = true;
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(scope);
+  return written;
+}
+
+/**
+ * The declaration and path `node` reads, when it is an identifier or a
+ * property-access chain rooted in a `const` or a parameter that nothing in its
+ * scope reassigns; otherwise null.
+ */
+function referenceOf(node: ts.Expression): Reference | null {
+  const access = accessPath(node);
+  if (!access) return null;
+  const declaration = findDeclaration(access.root.text, access.root);
+  if (declaration?.kind !== "const" && declaration?.kind !== "parameter") return null;
+  const reference = { id: declaration.id, path: access.path };
+  const scope = declaration.kind === "parameter" ? declaration.scope : declaration.declaration.parent.parent.parent;
+  return isReassigned(reference, scope) ? null : reference;
 }
 
 const MAX_TRACE_DEPTH = 8;
@@ -412,33 +577,40 @@ function traceHashInput(node: ts.Expression, depth: number): PasswordHashValueSo
   return "unknown";
 }
 
-type TracedValue = { source: PasswordHashValueSource; hashedInput: string | null };
+type TracedValue = {
+  source: PasswordHashValueSource;
+  hashedInput: string | null;
+  /** The `bcrypt.hash(...)` input node behind `hashedInput`. */
+  hashedInputNode: ts.Expression | null;
+};
+
+const UNTRACED: TracedValue = { source: "unknown", hashedInput: null, hashedInputNode: null };
 
 /** Where a WRITTEN `passwordHash` value comes from, and the hash call's input. */
 function traceWrittenValue(node: ts.Expression, depth = 0): TracedValue {
   const value = unwrapValue(node);
-  if (depth > MAX_TRACE_DEPTH) return { source: "unknown", hashedInput: null };
+  if (depth > MAX_TRACE_DEPTH) return UNTRACED;
   if (ts.isStringLiteral(value) || ts.isNoSubstitutionTemplateLiteral(value)) {
-    return { source: "literal", hashedInput: null };
+    return { ...UNTRACED, source: "literal" };
   }
   if (isHashCall(value)) {
     const input = value.arguments[0];
     return input
-      ? { source: traceHashInput(input, depth + 1), hashedInput: referenceText(input) }
-      : { source: "unknown", hashedInput: null };
+      ? { source: traceHashInput(input, depth + 1), hashedInput: referenceText(input), hashedInputNode: input }
+      : UNTRACED;
   }
   if (ts.isIdentifier(value)) {
-    if (value.text === "DELETED_ACCOUNT_PASSWORD_HASH") return { source: "deleted-sentinel", hashedInput: null };
+    if (value.text === "DELETED_ACCOUNT_PASSWORD_HASH") return { ...UNTRACED, source: "deleted-sentinel" };
     const binding = resolveBinding(value.text, value);
     if (binding?.kind === "const") return traceWrittenValue(binding.initializer, depth + 1);
-    return { source: binding?.kind === "parameter" ? "parameter" : "unknown", hashedInput: null };
+    return binding?.kind === "parameter" ? { ...UNTRACED, source: "parameter" } : UNTRACED;
   }
   if (ts.isPropertyAccessExpression(value) && value.name.text === "passwordHash") {
     const root = rootIdentifier(value);
     const parameter = root !== null && resolveBinding(root.text, root)?.kind === "parameter";
-    return { source: parameter ? "parameter" : "copy", hashedInput: null };
+    return { ...UNTRACED, source: parameter ? "parameter" : "copy" };
   }
-  return { source: "unknown", hashedInput: null };
+  return UNTRACED;
 }
 
 const SQL_WRITE = /\b(?:INSERT|UPDATE)\b/i;
@@ -472,14 +644,15 @@ export function scanPasswordHashWriters(file: string, source: string): PasswordH
       const value = writtenValue(node);
       const traced: TracedValue = value
         ? traceWrittenValue(value)
-        : { source: ts.isTemplateExpression(node) ? "unknown" : "literal", hashedInput: null };
+        : { ...UNTRACED, source: ts.isTemplateExpression(node) ? "unknown" : "literal" };
       sites.push({
         file,
         scope: scopeName(node),
         kind: writerKind,
         line: sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile)).line + 1,
-        screenedBefore: guardedByScreen(node, traced.hashedInput),
-        ...traced,
+        screenedBefore: guardedByScreen(node, traced.hashedInputNode),
+        source: traced.source,
+        hashedInput: traced.hashedInput,
       });
     }
     ts.forEachChild(node, visit);

@@ -346,10 +346,11 @@ elsewhere never stops a member setting a password or finishing setup.
 `src/lib/__tests__/password-hash-writer-census.test.ts` parses every
 `passwordHash` writer under `src/`, `prisma/` and `scripts/`: property writes,
 and raw-SQL `INSERT` or `UPDATE` literals naming the column. A writer must
-either be guarded — the awaited `screenChosenPassword` result bound to a name,
-then an `if (!result.ok)` that returns, both in a block enclosing the write and
-before it, where the screened argument is the same identifier or property
-access the written hash's `bcrypt.hash` was given — or be listed as exempt with its reason (placeholders, imports,
+either be guarded — a `const` bound to the awaited `screenChosenPassword`
+result, then an `if (!result.ok)` that returns, both in a block enclosing the
+write and before it, where the screened argument and the written hash's
+`bcrypt.hash` input resolve to the same unreassigned `const` or parameter, and
+the call does not switch the check off — or be listed as exempt with its reason (placeholders, imports,
 erasure, the local demo seed and SQL fixtures store generated or unusable
 hashes). For an exempt writer the census also traces the value it writes,
 through `const` bindings and the `bcrypt.hash` input, and requires random

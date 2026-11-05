@@ -525,6 +525,23 @@ describe("passwordHash writer scanner", () => {
     expect(guarded(`async function a(b) { const s = await screenChosenPassword(b.currentPassword); if (!s.ok) return; save({ passwordHash: await hash(b.newPassword, 12) }); }`)).toEqual([false]);
     expect(guarded(`async function a(p) { const s = await screenChosenPassword(p); if (!s.ok) return; save({ passwordHash: await hash(p.trim(), 12) }); }`)).toEqual([false]);
     expect(guarded(`async function a(p) { const s = await screenChosenPassword(p); if (!s.ok) return; save({ passwordHash: h }); }`)).toEqual([false]);
+    // #4740 review: the result is a `const` bound to the awaited screen itself.
+    expect(guarded(`async function a(body) { const { pw } = body; const s = await screenChosenPassword(pw, policy); if (!s.ok) return; save({ passwordHash: await hash(pw, 12) }); }`)).toEqual([true]);
+    expect(guarded(`async function a(p) { const s = { ok: true, r: await screenChosenPassword(p) }; if (!s.ok) return; save({ passwordHash: await hash(p, 12) }); }`)).toEqual([false]);
+    expect(guarded(`async function a(p) { const s = (await screenChosenPassword(p), { ok: true }); if (!s.ok) return; save({ passwordHash: await hash(p, 12) }); }`)).toEqual([false]);
+    expect(guarded(`async function a(p) { const s = false ? await screenChosenPassword(p) : { ok: true }; if (!s.ok) return; save({ passwordHash: await hash(p, 12) }); }`)).toEqual([false]);
+    expect(guarded(`async function a(p) { const s = (true) ? { ok: true } : await screenChosenPassword(p); if (!s.ok) return; save({ passwordHash: await hash(p, 12) }); }`)).toEqual([false]);
+    expect(guarded(`async function a(p) { let s = await screenChosenPassword(p); s = { ok: true }; if (!s.ok) return; save({ passwordHash: await hash(p, 12) }); }`)).toEqual([false]);
+    expect(guarded(`async function a(p) { const s = await screenChosenPassword(p, { breachedPasswordCheck: false }); if (!s.ok) return; save({ passwordHash: await hash(p, 12) }); }`)).toEqual([false]);
+    // ...of the same declaration the hash reads, which nothing reassigns.
+    expect(guarded(`async function a(p) { const s = await screenChosenPassword(p); if (!s.ok) return; p = typed; save({ passwordHash: await hash(p, 12) }); }`)).toEqual([false]);
+    expect(guarded(`async function a(p) { const s = await screenChosenPassword(p); if (!s.ok) return; [p] = typed; save({ passwordHash: await hash(p, 12) }); }`)).toEqual([false]);
+    expect(guarded(`async function a(b) { const s = await screenChosenPassword(b.pw); if (!s.ok) return; b.pw = typed; save({ passwordHash: await hash(b.pw, 12) }); }`)).toEqual([false]);
+    expect(guarded(`async function a(b) { const s = await screenChosenPassword(b.data.pw); if (!s.ok) return; b["data"] = typed; save({ passwordHash: await hash(b.data.pw, 12) }); }`)).toEqual([false]);
+    expect(guarded(`async function a(body) { let pw = body.pw; const s = await screenChosenPassword(pw); if (!s.ok) return; save({ passwordHash: await hash(pw, 12) }); }`)).toEqual([false]);
+    expect(guarded(`async function a(p, list) { const s = await screenChosenPassword(p); if (!s.ok) return; list.forEach(async (p) => save({ passwordHash: await hash(p, 12) })); }`)).toEqual([false]);
+    // A write deeper than the path, or to another property, reassigns nothing.
+    expect(guarded(`async function a(b) { const s = await screenChosenPassword(b.pw); if (!s.ok) return; b.other = 1; save({ passwordHash: await hash(b.pw, 12) }); }`)).toEqual([true]);
     // A screen in another wrapped handler never satisfies this one.
     expect(
       guarded(`
