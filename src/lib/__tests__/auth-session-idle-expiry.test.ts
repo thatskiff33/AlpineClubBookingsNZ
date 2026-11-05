@@ -127,12 +127,15 @@ const SECURE_COOKIE = "__Secure-authjs.session-token";
 
 /**
  * The accounts this suite signs in, by their stored access-role rows. Only
- * `kiosk` is the lodge kiosk account by the app's own classification
- * (`isLodgeKioskAccount`); the officers and the custom-role holder merely also
- * hold the `LODGE` checkbox, which must not buy them 30 days.
+ * `kiosk` and `lodge-route-kiosk` are the lodge kiosk account by the app's own
+ * classification (`isLodgeKioskAccount`); the officers and the custom-role
+ * holder merely also hold the `LODGE` checkbox, which must not buy them 30
+ * days. `lodge-route-kiosk` is the shape `POST /api/admin/lodge` creates:
+ * legacy `role: "LODGE"` and no access-role rows.
  */
 const ACCOUNT_ROWS = {
   kiosk: [{ role: "LODGE" }],
+  "lodge-route-kiosk": [],
   ordinary: [{ role: "USER" }],
   "admin-lodge": [{ role: "USER" }, { role: "ADMIN" }, { role: "LODGE" }],
   "bookings-officer-lodge": [
@@ -157,10 +160,14 @@ const ACCOUNT_ROWS = {
   ],
 } as const;
 type Account = keyof typeof ACCOUNT_ROWS;
+const KIOSK_ACCOUNTS: ReadonlySet<Account> = new Set([
+  "kiosk",
+  "lodge-route-kiosk",
+]);
 
 function memberRow(account: Account) {
   return {
-    role: "USER",
+    role: account === "lodge-route-kiosk" ? "LODGE" : "USER",
     canLogin: true,
     financeAccessLevel: "NONE",
     accessRoles: ACCOUNT_ROWS[account],
@@ -186,14 +193,14 @@ async function mintToken(
   account: Account,
   {
     cookieName = PLAIN_COOKIE,
-    kioskAccount = account === "kiosk",
+    kioskAccount = KIOSK_ACCOUNTS.has(account),
   }: { cookieName?: string; kioskAccount?: boolean | null } = {},
 ): Promise<string> {
   return encode({
     token: {
       id: `member-${account}`,
       role: "MEMBER",
-      accessRoles: ACCOUNT_ROWS[account]
+      accessRoles: (ACCOUNT_ROWS[account] as ReadonlyArray<{ role: string | null }>)
         .map((row) => row.role)
         .filter((role) => role !== null),
       canLogin: true,
@@ -255,6 +262,11 @@ describe("session idle expiry, end to end through the Auth.js handler (#4612)", 
 
   it.each([
     ["the lodge kiosk account", "kiosk", 30 * DAY_S],
+    [
+      "the kiosk as the lodge route creates it (role LODGE, no rows)",
+      "lodge-route-kiosk",
+      30 * DAY_S,
+    ],
     ["an ordinary account", "ordinary", 8 * HOUR_S],
   ] as const)(
     "re-issues %s's session for its idle window: token exp and cookie Expires agree",
@@ -356,6 +368,32 @@ describe("session idle expiry, end to end through the Auth.js handler (#4612)", 
       Math.floor(nowMs / 1000) * 1000 + 30 * DAY_S * 1000,
     );
   });
+
+  it("re-issues 8 hours on the very first refresh after the kiosk gains a second role, whatever its stale claim says", async () => {
+    // The tablet's token was stamped kioskAccount: true while the record was
+    // the kiosk; since then an officer has given it Full Admin.
+    const staleToken = await mintToken("kiosk", { kioskAccount: true });
+    mockFindUnique.mockResolvedValue({
+      ...memberRow("kiosk"),
+      accessRoles: [{ role: "LODGE" }, { role: "ADMIN" }],
+    });
+    const nowMs = Date.now();
+
+    const first = await refresh(staleToken);
+
+    expect(first.body?.user?.id).toBe("member-kiosk");
+    const claims = await decode({
+      token: first.reissuedToken,
+      secret: TEST_SECRET,
+      salt: PLAIN_COOKIE,
+    });
+    expect(claims?.accessRoles).toContain("ADMIN");
+    expect(claims?.kioskAccount).toBe(false);
+    expect(claims?.exp).toBe(Math.floor(nowMs / 1000) + 8 * HOUR_S);
+    expect(first.cookieExpiresMs).toBe(
+      Math.floor(nowMs / 1000) * 1000 + 8 * HOUR_S * 1000,
+    );
+  });
 });
 
 describe("the jwt callback stamps kioskAccount from the member row (#4612)", () => {
@@ -386,6 +424,11 @@ describe("the jwt callback stamps kioskAccount from the member row (#4612)", () 
 
   it.each([
     ["the kiosk account", true, memberRow("kiosk")],
+    [
+      "the kiosk as the lodge route creates it (role LODGE, no rows)",
+      true,
+      memberRow("lodge-route-kiosk"),
+    ],
     ["an ordinary account", false, memberRow("ordinary")],
     ["a Full Admin with LODGE", false, memberRow("admin-lodge")],
     ["a Booking Officer with LODGE", false, memberRow("bookings-officer-lodge")],
@@ -425,11 +468,64 @@ describe("buildRequestAuthConfig sets session.maxAge from the request's session 
     vi.unstubAllEnvs();
   });
 
-  it("uses the kiosk window for a kiosk session cookie", async () => {
+  it("uses the kiosk window for a kiosk session cookie whose member row is still the kiosk", async () => {
     const config = await buildRequestAuthConfig(
       sessionRequest(await mintToken("kiosk")),
     );
     expect(config.session?.maxAge).toBe(KIOSK_ACCOUNT_SESSION_IDLE_SECONDS);
+    expect(mockFindUnique).toHaveBeenCalledTimes(1);
+  });
+
+  // The token below is minted on the frozen clock; these stamps land after it.
+  const afterSessionBegan = new Date(frozenTestNow().getTime() + 1000);
+
+  it.each([
+    ["the row is gone", null],
+    [
+      "the row now has a second role",
+      {
+        ...memberRow("kiosk"),
+        accessRoles: [{ role: "LODGE" }, { role: "ADMIN_BOOKINGS" }],
+      },
+    ],
+    ["the row's login is off", { ...memberRow("kiosk"), canLogin: false }],
+    [
+      "login was switched off and on again since the session began",
+      { ...memberRow("kiosk"), sessionsRevokedAt: afterSessionBegan },
+    ],
+    [
+      "the password changed since the session began",
+      { ...memberRow("kiosk"), passwordChangedAt: afterSessionBegan },
+    ],
+    [
+      "the account was deleted",
+      { ...memberRow("kiosk"), deletedAt: afterSessionBegan },
+    ],
+  ] as const)(
+    "gives a kiosk claim the ordinary window when %s",
+    async (_label, row) => {
+      mockFindUnique.mockResolvedValue(row);
+      const config = await buildRequestAuthConfig(
+        sessionRequest(await mintToken("kiosk")),
+      );
+      expect(config.session?.maxAge).toBe(ACCOUNT_SESSION_IDLE_SECONDS);
+    },
+  );
+
+  it("gives a kiosk claim the ordinary window when the member read fails", async () => {
+    mockFindUnique.mockRejectedValue(new Error("connection reset"));
+    const config = await buildRequestAuthConfig(
+      sessionRequest(await mintToken("kiosk")),
+    );
+    expect(config.session?.maxAge).toBe(ACCOUNT_SESSION_IDLE_SECONDS);
+  });
+
+  it("reads the member row only for a kiosk claim", async () => {
+    await buildRequestAuthConfig(sessionRequest(await mintToken("ordinary")));
+    await buildRequestAuthConfig(
+      sessionRequest(await mintToken("kiosk", { kioskAccount: null })),
+    );
+    expect(mockFindUnique).not.toHaveBeenCalled();
   });
 
   it("uses the ordinary window with no request, no cookie, or an unreadable cookie", async () => {
