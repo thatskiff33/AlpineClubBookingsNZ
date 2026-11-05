@@ -1832,13 +1832,14 @@ describe("runBookingXeroRepair", () => {
       ["another amount", { amountCents: 4001 }],
       ["no recorded amount", { amountCents: undefined }],
     ])("MUTATION: still retries the note's row when the role-less link for its last invoice names %s (#4767)", async (_label, metadata) => {
-      const link = allocationLink("inv_supp", 4000, "CREDIT_NOTE_ALLOCATION");
-      expectNoteRetried(
-        await classifyClearing(
-          [allocationLink("inv_primary", 6000), { ...link, metadata: { ...(link.metadata as Record<string, unknown>), ...metadata } }],
-          []
-        )
-      );
+      const rolelessSupp = clearingLink({
+        id: "l_inv_supp_roleless",
+        xeroObjectType: "ALLOCATION",
+        xeroObjectId: "alloc_inv_supp",
+        role: "CREDIT_NOTE_ALLOCATION",
+        metadata: { creditNoteId: "cn_clear", invoiceId: "inv_supp", amountCents: 4000, ...metadata },
+      });
+      expectNoteRetried(await classifyClearing([allocationLink("inv_primary", 6000), rolelessSupp], []));
     });
 
     it("MUTATION: retries an evidence-sized allocation row, not the note's row, while nothing is allocated", async () => {
