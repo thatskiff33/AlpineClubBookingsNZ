@@ -51,7 +51,9 @@ export type PasswordHashWriterKind = "property" | "sql";
  * `randomUUID` output. `deleted-sentinel`: `DELETED_ACCOUNT_PASSWORD_HASH`.
  * `literal`: a fixed string, or the hash of one, or a raw-SQL literal with no
  * holes, placeholders or bind arguments. `parameter`: a parameter of the enclosing function (or a property of
- * one), so the caller decides. `copy`: another object's `passwordHash`.
+ * one), so the caller decides. `copy`: the `passwordHash` of an object built in
+ * the same function by a writer that is generated or screened
+ * (`copiedWriters`).
  * `unknown`: anything the trace cannot follow, a typed password included.
  */
 export type PasswordHashValueSource =
@@ -61,6 +63,13 @@ export type PasswordHashValueSource =
   | "parameter"
   | "copy"
   | "unknown";
+
+/** What a writer may store with no further reason: nobody chose it. */
+export const GENERATED_PASSWORD_HASH_SOURCES: ReadonlySet<PasswordHashValueSource> = new Set([
+  "random",
+  "deleted-sentinel",
+  "literal",
+]);
 
 export type PasswordHashWriterSite = {
   file: string;
@@ -77,6 +86,8 @@ export type PasswordHashWriterSite = {
    * (`newPassword`, `parsed.data.password`); otherwise null.
    */
   hashedInput: string | null;
+  /** For a `copy`: the lines of the writers that built the copied object. */
+  copiedFromLines: number[];
 };
 
 const REPO_ROOT = process.cwd();
@@ -598,9 +609,96 @@ type TracedValue = {
   hashedInput: string | null;
   /** The `bcrypt.hash(...)` input node behind `hashedInput`. */
   hashedInputNode: ts.Expression | null;
+  /** For a `copy`: the `passwordHash` writers of the copied object. */
+  copiedFrom: ts.Node[];
 };
 
-const UNTRACED: TracedValue = { source: "unknown", hashedInput: null, hashedInputNode: null };
+const UNTRACED: TracedValue = { source: "unknown", hashedInput: null, hashedInputNode: null, copiedFrom: [] };
+
+/** The expressions a callback returns, or null if any path returns nothing. */
+function returnedExpressions(fn: ts.Node): ts.Expression[] | null {
+  if (!ts.isArrowFunction(fn) && !ts.isFunctionExpression(fn)) return null;
+  if (!ts.isBlock(fn.body)) return [fn.body];
+  const returned: ts.Expression[] = [];
+  let bare = false;
+  const visit = (node: ts.Node): void => {
+    if (isFunctionLike(node)) return;
+    if (ts.isReturnStatement(node)) {
+      if (node.expression) returned.push(node.expression);
+      else bare = true;
+    }
+    ts.forEachChild(node, visit);
+  };
+  ts.forEachChild(fn.body, visit);
+  return bare || returned.length === 0 ? null : returned;
+}
+
+/**
+ * The object literals `node` evaluates to; with `elements`, the literals each
+ * element of the array it evaluates to is built from. Followed through `const`
+ * bindings, array literals, `Promise.all(...)` and `.map(callback)`; anything
+ * else is null.
+ */
+function objectLiterals(node: ts.Expression, elements: boolean, depth = 0): ts.ObjectLiteralExpression[] | null {
+  const value = unwrapValue(node);
+  if (depth > MAX_TRACE_DEPTH) return null;
+  if (ts.isIdentifier(value)) {
+    const binding = resolveBinding(value.text, value);
+    return binding?.kind === "const" ? objectLiterals(binding.initializer, elements, depth + 1) : null;
+  }
+  if (!elements) return ts.isObjectLiteralExpression(value) ? [value] : null;
+  const all = (parts: readonly ts.Expression[], each: boolean) => {
+    const found = parts.map((part) => objectLiterals(part, each, depth + 1));
+    return found.every((literals) => literals !== null) ? found.flat() : null;
+  };
+  if (ts.isArrayLiteralExpression(value)) return all(value.elements, false);
+  if (!ts.isCallExpression(value) || !ts.isPropertyAccessExpression(value.expression)) return null;
+  const callee = value.expression;
+  const [argument] = value.arguments;
+  if (callee.name.text === "all" && ts.isIdentifier(callee.expression) && callee.expression.text === "Promise") {
+    return value.arguments.length === 1 ? all([argument], true) : null;
+  }
+  if (callee.name.text === "map" && argument) {
+    const returned = returnedExpressions(argument);
+    return returned && all(returned, false);
+  }
+  return null;
+}
+
+/**
+ * The `passwordHash` writers of the object `copy.passwordHash` reads: `copy`
+ * must be a plain `const` or a `const` `for…of` variable, built (through
+ * `objectLiterals`) from object literals that each set `passwordHash` after
+ * any spread. Anything else is null, so `parsedBody.passwordHash` never counts.
+ */
+function copiedWriters(copy: ts.PropertyAccessExpression): ts.Node[] | null {
+  const root = unwrapValue(copy.expression);
+  if (!ts.isIdentifier(root)) return null;
+  const declaration = findDeclaration(root.text, root);
+  let literals: ts.ObjectLiteralExpression[] | null = null;
+  if (declaration?.kind === "const" && ts.isIdentifier(declaration.declaration.name)) {
+    literals = declaration.declaration.initializer ? objectLiterals(declaration.declaration.initializer, false) : null;
+  } else if (
+    declaration?.kind === "loop" &&
+    ts.isForOfStatement(declaration.statement) &&
+    declaration.id.parent === (declaration.statement.initializer as ts.VariableDeclarationList).declarations[0] &&
+    (declaration.statement.initializer.flags & ts.NodeFlags.Const) !== 0
+  ) {
+    literals = objectLiterals(declaration.statement.expression, true);
+  }
+  if (!literals) return null;
+  const writers: ts.Node[] = [];
+  for (const literal of literals) {
+    let writer: ts.Node | null = null;
+    for (const property of literal.properties) {
+      if (isWriterNode(property)) writer = property;
+      else if (ts.isSpreadAssignment(property)) writer = null; // a later spread may override it
+    }
+    if (!writer) return null;
+    writers.push(writer);
+  }
+  return writers;
+}
 
 /** Where a WRITTEN `passwordHash` value comes from, and the hash call's input. */
 function traceWrittenValue(node: ts.Expression, depth = 0): TracedValue {
@@ -612,7 +710,7 @@ function traceWrittenValue(node: ts.Expression, depth = 0): TracedValue {
   if (isHashCall(value)) {
     const input = value.arguments[0];
     return input
-      ? { source: traceHashInput(input, depth + 1), hashedInput: referenceText(input), hashedInputNode: input }
+      ? { ...UNTRACED, source: traceHashInput(input, depth + 1), hashedInput: referenceText(input), hashedInputNode: input }
       : UNTRACED;
   }
   if (ts.isIdentifier(value)) {
@@ -623,8 +721,11 @@ function traceWrittenValue(node: ts.Expression, depth = 0): TracedValue {
   }
   if (ts.isPropertyAccessExpression(value) && value.name.text === "passwordHash") {
     const root = rootIdentifier(value);
-    const parameter = root !== null && resolveBinding(root.text, root)?.kind === "parameter";
-    return { ...UNTRACED, source: parameter ? "parameter" : "copy" };
+    if (root !== null && resolveBinding(root.text, root)?.kind === "parameter") {
+      return { ...UNTRACED, source: "parameter" };
+    }
+    const copiedFrom = copiedWriters(value);
+    return copiedFrom ? { ...UNTRACED, source: "copy", copiedFrom } : UNTRACED;
   }
   return UNTRACED;
 }
@@ -673,21 +774,32 @@ export function scanPasswordHashWriters(file: string, source: string): PasswordH
       : ts.ScriptKind.TS;
   const sourceFile = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, kind);
   const sites: PasswordHashWriterSite[] = [];
+  const lineOf = (node: ts.Node) => sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile)).line + 1;
+  // A copy counts only from a writer in the same function that is generated
+  // or screened; otherwise the copied value is unknown.
+  const copiesVettedValue = (copy: ts.Node, origin: ts.Node): boolean => {
+    const value = writtenValue(origin);
+    if (!value || scopeName(origin) !== scopeName(copy)) return false;
+    const traced = traceWrittenValue(value);
+    return GENERATED_PASSWORD_HASH_SOURCES.has(traced.source) || guardedByScreen(origin, traced.hashedInputNode);
+  };
   const visit = (node: ts.Node): void => {
     const writerKind = isWriterNode(node) ? "property" : isSqlWriterNode(node) ? "sql" : null;
     if (writerKind) {
       const value = writtenValue(node);
-      const traced: TracedValue = value
-        ? traceWrittenValue(value)
-        : { ...UNTRACED, source: sqlValueSource(node) };
+      let traced: TracedValue = value ? traceWrittenValue(value) : { ...UNTRACED, source: sqlValueSource(node) };
+      if (traced.source === "copy" && !traced.copiedFrom.every((origin) => copiesVettedValue(node, origin))) {
+        traced = UNTRACED;
+      }
       sites.push({
         file,
         scope: scopeName(node),
         kind: writerKind,
-        line: sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile)).line + 1,
+        line: lineOf(node),
         screenedBefore: guardedByScreen(node, traced.hashedInputNode),
         source: traced.source,
         hashedInput: traced.hashedInput,
+        copiedFromLines: traced.copiedFrom.map(lineOf),
       });
     }
     ts.forEachChild(node, visit);

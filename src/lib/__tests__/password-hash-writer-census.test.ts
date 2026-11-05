@@ -4,11 +4,11 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import {
+  GENERATED_PASSWORD_HASH_SOURCES as GENERATED_SOURCES,
   PASSWORD_HASH_SCAN_ROOTS,
   passwordHashScanFiles,
   scanPasswordHashWriters,
   scanRepositoryPasswordHashWriters,
-  type PasswordHashValueSource,
   type PasswordHashWriterKind,
   type PasswordHashWriterSite,
 } from "./support/password-hash-writer-scan";
@@ -53,13 +53,6 @@ type ReviewedWriter = {
    */
   untracedValue?: string;
 };
-
-/** What an exempt writer may store with no further reason: nobody chose it. */
-const GENERATED_SOURCES: ReadonlySet<PasswordHashValueSource> = new Set([
-  "random",
-  "deleted-sentinel",
-  "literal",
-]);
 
 /** The only exempt writers allowed an untraced value: local demo data. */
 const UNTRACED_EXEMPT_WRITERS = ["prisma/demo-seed.ts#makeMember", "prisma/demo-seed.ts#main"];
@@ -373,6 +366,16 @@ describe("passwordHash writer census (#4610, INV-AUTH-006)", () => {
           `${k}: ${writer.valueFrom} does not trace to a generated value`,
         ).toBe(true);
       }
+      // A copy names the writers that built the object it copies; they are
+      // this entry's valueFrom sites, so the copy is of the vetted value.
+      const fromLines = new Set(fromSites.map((site) => site.line));
+      for (const site of measured.get(k) ?? []) {
+        if (site.source !== "copy") continue;
+        expect(
+          site.copiedFromLines.length > 0 && site.copiedFromLines.every((line) => fromLines.has(line)),
+          `${site.file}:${site.line} copies a passwordHash not written by ${writer.valueFrom}`,
+        ).toBe(true);
+      }
       // A different file must actually hand the value over: it calls this scope.
       if (from.file !== writer.file) {
         expect(fs.readFileSync(from.file, "utf8"), `${from.file} never calls ${writer.scope}`).toContain(
@@ -380,6 +383,24 @@ describe("passwordHash writer census (#4610, INV-AUTH-006)", () => {
         );
       }
     }
+  });
+
+  it("ties the members import's copied hash to its random per-row hash", () => {
+    const file = "src/app/api/admin/members/import/route.ts";
+    const source = fs.readFileSync(file, "utf8");
+    const importSites = scanPasswordHashWriters(file, source);
+    const random = importSites.filter((site) => site.source === "random");
+    const copies = importSites.filter((site) => site.source === "copy");
+    expect(random).toHaveLength(1);
+    expect(copies.map((site) => site.copiedFromLines)).toEqual([[random[0].line]]);
+    // The same copy from the request body traces to nothing.
+    expect(source).toContain("passwordHash: row.passwordHash,");
+    const fromBody = scanPasswordHashWriters(
+      file,
+      source.replace("passwordHash: row.passwordHash,", "passwordHash: parsedBody.passwordHash,"),
+    );
+    expect(fromBody.filter((site) => site.source === "copy")).toEqual([]);
+    expect(fromBody.filter((site) => site.source === "unknown")).toHaveLength(1);
   });
 
   it("allows an untraced exempt value only for the local demo seed", () => {
@@ -479,7 +500,22 @@ describe("passwordHash writer scanner", () => {
     // The caller decides, or another object's hash is copied.
     expect(sources(`function a(params) { return { passwordHash: params.passwordHash }; }`)).toEqual([["parameter", null]]);
     expect(sources(`async function a(password) { save({ passwordHash: await hash(password, 12) }); }`)).toEqual([["parameter", "password"]]);
-    expect(sources(`function a() { for (const row of rows) save({ passwordHash: row.passwordHash }); }`)).toEqual([["copy", null]]);
+    // #4740 review: a copy's object must be built in the same function by a
+    // generated or screened writer.
+    const made = `await Promise.all(list.map(async (r) => ({ ...r, passwordHash: await hash(randomBytes(16).toString("hex"), 12) })))`;
+    expect(sources(`async function a(list) { const rows = ${made}; for (const row of rows) save({ passwordHash: row.passwordHash }); }`)).toEqual([["random", null], ["copy", null]]);
+    expect(sources(`async function a() { const data = { passwordHash: await hash(randomUUID(), 12) }; save({ passwordHash: data.passwordHash }); }`)).toEqual([["random", null], ["copy", null]]);
+    expect(sources(`async function a(p) { const s = await screenChosenPassword(p); if (!s.ok) return; const data = { passwordHash: await hash(p, 12) }; save({ passwordHash: data.passwordHash }); }`)).toEqual([["parameter", "p"], ["copy", null]]);
+    expect(scan(`async function a(list) { const rows = ${made}; for (const row of rows) save({ passwordHash: row.passwordHash }); }`)[1].copiedFromLines).toEqual([1]);
+    // A request body, an unknown array, a loop over something else, an
+    // override by a later spread, a typed origin or another function's object.
+    expect(sources(`async function a(req) { const parsedBody = await req.json(); save({ passwordHash: parsedBody.passwordHash }); }`)).toEqual([["unknown", null]]);
+    expect(sources(`function a() { for (const row of rows) save({ passwordHash: row.passwordHash }); }`)).toEqual([["unknown", null]]);
+    expect(sources(`async function a(list) { const rows = ${made}; for (const row of other) save({ passwordHash: row.passwordHash }); }`)).toEqual([["random", null], ["unknown", null]]);
+    expect(sources(`async function a(list) { const rows = ${made}; for (let row of rows) { row = typed; save({ passwordHash: row.passwordHash }); } }`)).toEqual([["random", null], ["unknown", null]]);
+    expect(sources(`async function a(b) { const data = { passwordHash: await hash(randomUUID(), 12), ...b }; save({ passwordHash: data.passwordHash }); }`)).toEqual([["random", null], ["unknown", null]]);
+    expect(sources(`async function a(b) { const data = { passwordHash: await hash(b.pw, 12) }; save({ passwordHash: data.passwordHash }); }`)).toEqual([["unknown", "b.pw"], ["unknown", null]]);
+    expect(sources(`const DATA = { passwordHash: "!x" }; function a() { save({ passwordHash: DATA.passwordHash }); }`)).toEqual([["literal", null], ["unknown", null]]);
     // A typed password, or anything the trace cannot follow.
     expect(sources(`async function a(input) { const h = await hash(input.password, 12); save({ passwordHash: h }); }`)).toEqual([["unknown", "input.password"]]);
     expect(sources(`async function a() { const pw = body.newPassword; save({ passwordHash: await hash(pw, 12) }); }`)).toEqual([["unknown", "pw"]]);

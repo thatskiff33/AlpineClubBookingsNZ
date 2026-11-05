@@ -356,8 +356,12 @@ hashes). For an exempt writer the census also traces the value it writes,
 through `const` bindings and the `bcrypt.hash` input, and requires random
 bytes, the erased-account sentinel or a fixed literal (for raw SQL, the value
 written inline: no template holes, bind placeholders or bind arguments), so an
-exemption cannot come to cover a typed password; only the local demo seed is listed as
-untraced. A new
+exemption cannot come to cover a typed password. A writer that stores a
+parameter, or copies the `passwordHash` of an object built in the same
+function, names the writer that produced the value (`valueFrom`), which must
+be screened or traced to a generated value; a copy counts only when its object
+was built by a generated or screened writer. Only the local demo seed is
+listed as untraced. A new
 writer in neither list fails the build. It cannot see SQL assembled by
 concatenating separate literals or read from a `.sql` file at run time.
 
