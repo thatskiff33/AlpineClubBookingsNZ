@@ -1,3 +1,6 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -315,6 +318,19 @@ describe("passwordHash writer census (#4610, INV-AUTH-005)", () => {
 // The scanner proven against shapes, so a quiet tree cannot hide a blind spot.
 describe("passwordHash writer scanner", () => {
   const scan = (source: string) => scanPasswordHashWriters("src/example.ts", source);
+
+  it("skips prisma/migrations by path, and still reads any other migrations directory", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "password-hash-scan-"));
+    try {
+      for (const file of ["prisma/migrations/0001/seed.ts", "src/lib/migrations/run.ts", "scripts/migrations/fix.ts"]) {
+        fs.mkdirSync(path.join(root, path.dirname(file)), { recursive: true });
+        fs.writeFileSync(path.join(root, file), "export {};\n");
+      }
+      expect(passwordHashScanFiles(root).sort()).toEqual(["scripts/migrations/fix.ts", "src/lib/migrations/run.ts"]);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
 
   it("finds property, quoted, shorthand and assignment writers", () => {
     const sites = scan(`

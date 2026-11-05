@@ -24,9 +24,9 @@ import ts from "typescript";
 // condition is the bare `!name.ok` or a `||` chain holding it, nothing weaker.
 //
 // Stated limits: SQL assembled by concatenating separate literals, or read
-// from a `.sql` file at run time, is not seen (no writer here does either; the
-// `migrations` directories are schema, not runtime writers). Only `.ts`/`.js`
-// sources under the scan roots are read.
+// from a `.sql` file at run time, is not seen (no writer here does either;
+// `prisma/migrations` is schema, not a runtime writer, and is the one directory
+// skipped by path). Only `.ts`/`.js` sources under the scan roots are read.
 
 export const SCREEN_HELPER = "screenChosenPassword";
 
@@ -44,24 +44,27 @@ export type PasswordHashWriterSite = {
 const REPO_ROOT = process.cwd();
 export const PASSWORD_HASH_SCAN_ROOTS = ["src", "prisma", "scripts"] as const;
 
-function walk(relative: string): string[] {
-  const absolute = path.join(REPO_ROOT, relative);
+function walk(root: string, relative: string): string[] {
+  const absolute = path.join(root, relative);
   if (!fs.existsSync(absolute)) return [];
   return fs.readdirSync(absolute, { withFileTypes: true }).flatMap((entry) => {
     const child = path.join(relative, entry.name).replaceAll("\\", "/");
     if (entry.isDirectory()) {
-      if (entry.name === "node_modules" || entry.name === ".next" || entry.name === "migrations") {
+      if (entry.name === "node_modules" || entry.name === ".next" || child === "prisma/migrations") {
         return [];
       }
-      return walk(child);
+      return walk(root, child);
     }
     return /\.(?:[cm]?tsx?|[cm]?js)$/.test(entry.name) ? [child] : [];
   });
 }
 
-/** Every non-test source file under the scan roots, relative and `/`-separated. */
-export function passwordHashScanFiles(): string[] {
-  return PASSWORD_HASH_SCAN_ROOTS.flatMap(walk).filter(
+/**
+ * Every non-test source file under the scan roots, relative to `root` (the
+ * repository by default) and `/`-separated.
+ */
+export function passwordHashScanFiles(root: string = REPO_ROOT): string[] {
+  return PASSWORD_HASH_SCAN_ROOTS.flatMap((scanRoot) => walk(root, scanRoot)).filter(
     (file) =>
       !file.includes("/__tests__/") &&
       !/\.(?:test|spec)\.[cm]?[jt]sx?$/.test(file) &&
