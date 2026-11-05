@@ -1020,10 +1020,15 @@ note.
    invoices still unlinked, and closes its row SUCCEEDED with the allocation
    fault cleared; before #4259 it had no claim and left a repaired row PARTIAL,
    which one retry now closes with no Xero call. The booking repair tool reads
-   that row first for an edit's note as for a clearing note
-   (`readOwnNoteRowState`, #4757): it offers the PARTIAL row's retry, reports a
-   RUNNING one, or one the retry refuses, with no action, and never queues a
-   fresh allocation beside either. A throw gives the row back
+   that row first for an edit's note as for a clearing note, through one
+   dispatcher (`readOwnNoteRowState`, `dispatchOwnNoteRow`, #4757): it offers
+   the PARTIAL row's retry, reports a RUNNING one with no action, and never
+   queues a fresh allocation beside either. It never offers that retry beside
+   an allocation row still PENDING, RUNNING or WAITING_PAYMENT, whose key
+   embeds the amount, so the two could allocate the note twice: it reports
+   that row blocked instead. A PARTIAL row the retry refuses is reported
+   blocked for an edit's note; a clearing note's still falls through to its
+   arm's own allocation path (#4762). A throw gives the row back
    PARTIAL with its payload and the run's error, guarded on the claim, never
    FAILED, whose error payload would replace what the repair reads.
 
