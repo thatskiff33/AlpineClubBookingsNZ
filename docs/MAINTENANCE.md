@@ -1453,10 +1453,12 @@ its allocation refused) reports `MISSING_CREDIT_NOTE_ALLOCATION` with that
 operation's retry, never a fresh allocation; while a retry is running on it,
 or where the retry is refused, the report says the allocation is blocked and
 offers nothing, and you check again later or allocate it by hand in Xero.
-Nor is the retry offered while another allocation of the note is still
-pending or running, for an edit's note or an invoice-clearing one: the
-report names that operation as blocked; let it finish, then run the report
-again.
+Nor is the note's retry offered beside any other allocation operation of
+the note that is not done, for an edit's note or an invoice-clearing one:
+that operation is retried or reported first - one still pending or running
+is reported blocked (let it finish, then run the report again), a failed one
+is retried, or reported if it cannot be, and one resolved in Xero is
+reported as done.
 Since #1491, `LATE_CAPTURE_AFTER_CANCELLATION` is also never auto-applied:
 it now fires only when a cancelled booking retains captured value with NO
 recorded cancellation-refund decision (no cancellation credit, no
