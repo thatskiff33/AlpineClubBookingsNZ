@@ -33,7 +33,10 @@
     // Transpiled by the `theme:vendor-transpile` script, never imported. knip
     // traced it through that script while it was `npx -y esbuild@… <file>`,
     // but it does not parse `pnpm dlx` (#3673), so it needs saying here.
-    "scripts/theme/vendor/generate-radix-colors.tsx"
+    "scripts/theme/vendor/generate-radix-colors.tsx",
+    // Named by `vitest.configFile` in stryker.config.mjs (#4459), a string in a
+    // config knip's Stryker plugin does not follow, so nothing imports it.
+    "vitest.stryker.config.mts"
     // NOTE: the five documented operator CLIs listed here until #2850 —
     // xero-booking-repair, xero-refund-note-link-repair,
     // backfill-orphaned-applied-credits, audit-ib-hold-clearing and

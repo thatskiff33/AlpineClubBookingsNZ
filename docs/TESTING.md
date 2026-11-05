@@ -192,8 +192,9 @@ duplicate, skipped, cancelled, failed or timed-out shards, API errors and a
 bounded wait all fail `verify`; a job that never reported cannot silently pass.
 Re-run the whole workflow rather than only a failed job if a partial re-run
 leaves successful shards absent from the new attempt. This does not add a
-branch-protection context. Coverage collection and thresholds were absent
-before sharding and remain absent; adding them is a separate project.
+branch-protection context. The required shards do not collect coverage: the
+money modules' coverage and mutation score are measured by two separate,
+non-required workflows ([below](#coverage-and-mutation-testing-of-the-money-modules)).
 
 `scripts/ci/require-test-shards.test.mjs` checks the gate and exercises Vitest
 5's actual run sequencer against the discovered file set. `vitest list --shard`
@@ -209,6 +210,184 @@ the seeded ledger-history database derives its URL from that same endpoint.
 Missing or unsafe endpoint metadata fails the job. Port-range exhaustion or
 service startup failure also stays a failure; neither skips nor passes the
 real database checks.
+
+## Coverage and mutation testing of the money modules
+
+Two separate measures, both advisory, answer "which money paths does no test
+reach" and "which tests would still pass if the code were wrong" (#4459,
+programme #4450). Neither is a required check, neither is part of `verify`, and
+neither may become one without the owner adding a context to branch protection
+([`CONTRIBUTING.md`](../CONTRIBUTING.md#branch-protection)).
+
+**What counts as a money module** is decided by `.github/CODEOWNERS`, the owner's
+own list of the `src/lib` modules that mint, charge, refund, credit, settle or
+size money, and `scripts/lib/money-modules.mjs` reads it: every `/src/lib/`
+pattern in CODEOWNERS is a coverage glob, so a module is measured the day it is
+owned. The same file adds what the issue names beyond that ownership: every Xero
+module (the inbound handlers in `xero-inbound/` included), the booking ledger,
+and the refund, credit, settlement and money-named helpers. `MONEY_MODULE_GLOBS`
+is the result. `vitest.config.mts` (`test.coverage.include`) and the ratchet
+script read it; the Stryker config reads `MUTATION_TARGET_GLOBS`, the narrower
+set it mutates, and `vitest.stryker.config.mts` reads `MUTATION_TEST_FILES`. Do
+not spell the list again. The module never throws on import (`vitest.config.mts`
+loads it, so one odd CODEOWNERS line must not stop every test run); a pattern it
+cannot read is reported as data and the ratchet test fails on it.
+`scripts/ci/money-test-ratchet.test.ts` fails a glob that matches no file, a
+CODEOWNERS-owned `src/lib` file the set leaves out, and a module the
+[CODEOWNERS census](../src/lib/__tests__/codeowners-census.test.ts) says must
+stay owned that is not measured.
+
+### Coverage
+
+- **Where it runs.** `.github/workflows/money-coverage.yml`, on a pull request
+  or push to `main` that changes code, tests, scripts, the schema, dependencies,
+  the measurement's own configuration or CODEOWNERS (a docs-only change skips it
+  and leaves no check), and on demand. Four shard jobs run the unit suite exactly as the
+  required shards do, with `--coverage --reporter=blob`; one job merges the four
+  blobs with `vitest --merge-reports --coverage` and judges the result. It is a
+  separate workflow because turning coverage on in the required shards would
+  slow jobs `verify` depends on and let an instrumentation timeout redden a
+  required check. The cost is five more jobs per pull request (four shard
+  runners and the merge), in parallel with the required ones, so the wait is
+  about one shard plus a short merge.
+  Coverage is off unless `--coverage` is passed, so `pnpm test` is unchanged. A
+  test that fails under instrumentation (a disk-scanning census can time out)
+  does not stop the report: the required shards own test failures, and the job
+  warns.
+- **How it reports.** Open the `Money coverage ratchet` job's summary: for lines,
+  statements, functions and branches, what the figure is compared with, the bar,
+  now and the change, then the ten files with the most uncovered lines. The job
+  goes red when a figure is lower than the bar, or when the pull request lowers
+  the committed floor. Because it is not a required check, red informs and
+  blocks nothing, and nothing else makes anyone read it, so a pull request that
+  touches money modules says `Money coverage ratchet: green` or `red` and why in
+  its ready comment (`agents/ISSUE_WORKFLOW.md`, "The ready comment"). The lane
+  either adds the missing tests or says why not.
+- **The bar** is the latest successful `main` run's own figure, read from that
+  run's `money-coverage-summary` artifact (kept 30 days), less 0.1 percentage
+  points for measurement noise (a flaky test, a timing-dependent branch), and
+  never below the committed floor. Figures are compared to two decimals, so a
+  pull request that moves lines from 87.96 to 87.01 fails, and one that moves
+  them to 87.90 passes; because of the floor, `main` cannot drift down 0.09
+  points a pull request for ever. With no such artifact (a first run, or none
+  within 30 days) the bar is the floor, `scripts/ci/money-test-baseline.json`,
+  and the summary says "committed floor". A pull request into a branch other
+  than `main` (an `epic/**` branch) is held to the floor too, and the summary
+  says so, because `main`'s figures do not describe that branch. The judge job
+  needs `actions: read` to find and download the artifact.
+- **Recovering from a red `main`.** On a push to `main` the judge records and
+  does not fail (its step is `continue-on-error` for the `push` event), so a drop
+  that was accepted at review becomes `main`'s figure and the next pull request
+  is held to that. The summary still shows the table. If a drop is real but
+  accepted, nothing more is needed, unless it takes `main` below the committed
+  floor: then lower the floor in the same pull request that accepts it, say why
+  in the PR, and expect the job on that PR to go red (a lowered
+  floor turns it red). Re-run `coverage --update` from a later green `main` artifact to
+  tighten the floor again.
+- **The floor** is `scripts/ci/money-test-baseline.json`. Judging a pull request
+  never writes it, so lanes do not collide on it (the
+  [fragment-directory rule](../changelog.d/README.md) is for an artifact every
+  lane adds to; this file is raised on purpose). To raise it after coverage
+  improves, download the `money-coverage-summary` artifact from a green `main`
+  run and run
+  `node scripts/ci/money-test-ratchet.mjs coverage --update --summary <file>`:
+  it keeps the higher of each stored and measured figure and never lowers one.
+  A pull request that lowers it turns the job red (`--base-ref`, the branch the
+  pull request targets), so removing well-covered code is a visible decision.
+- **Measured** (5 Nov 2026, 498 files): lines 88.99%, statements 87.97%,
+  functions 89.29%, branches 82.01%. The floor holds 88, 87, 88 and 81: the
+  whole-percent floor of each, with a point more room on functions and branches,
+  where the margin to a whole number was under half a point (a CI reading 0.3
+  lower would otherwise sit under the floor). It was
+  measured on a development machine rather than in CI, so it is deliberately a
+  little loose until a green `main` run's artifact tightens it with `--update`
+  (and the bar is `main`'s own figure whenever one exists). The figure counts
+  only what the unit shards run. Real-database suites (`*.realdb.test.ts`) are skipped
+  there, so a module they alone exercise, such as `booking-ledger-back-post.ts`,
+  reads 0% however well they cover it. The summary's worst-files list is the
+  answer to "which money paths does no test reach".
+- **Locally**, without running the whole suite: coverage of a file only comes
+  from tests that import it, so `vitest related` over the money files measures
+  the same figure as the full run.
+
+  ```sh
+  pnpm exec vitest related --run --coverage --testTimeout=60000 $(node scripts/ci/money-test-ratchet.mjs list-files)
+  node scripts/ci/money-test-ratchet.mjs coverage
+  ```
+
+  This runs a large part of the suite (the disk-scanning censuses import money
+  modules too: 1,237 test files, about seventeen minutes on four cores) and a
+  census with its own explicit timeout can still fail under the load; the longer
+  `--testTimeout` covers the rest.
+
+### Mutation testing
+
+- **What it does.** [Stryker](https://stryker-mutator.io) changes the code a
+  little (flips a sign, drops a guard, moves a boundary) and runs the unit tests
+  against each change. A mutant the tests catch is *killed*; one they miss
+  *survived*, which is a place the code could be wrong with the suite still
+  green. `MUTATION_TARGET_GLOBS` in `scripts/lib/money-modules.mjs` names the
+  modules: the pure ledger planners (confirmation, edit, cancellation,
+  settlement, credit), the balance and posting-key helpers, the write door's
+  validators, and the cancellation, refund-method and edit-refund hand-back
+  arithmetic. They are the ones a fast unit test can kill; the Prisma-facing
+  `*-sync.ts` modules are exercised by real-database suites a mutation run has
+  no database for. `MUTATION_TEST_FILES` names the suites it runs, through
+  `vitest.stryker.config.mts`.
+- **When it runs.** `.github/workflows/money-mutation.yml`: nightly at 14:30 UTC
+  and on demand (`workflow_dispatch`), never on a pull request. It takes about
+  eight minutes.
+- **Where the report is.** Runs are listed at
+  <https://github.com/thatskiff33/AlpineClubBookingsNZ/actions/workflows/money-mutation.yml>;
+  the first nightly run after this merges produces the first report. Open a
+  run's `money-mutation-report` artifact (kept 30 days): `index.html` shows every
+  mutant in the source with its status, and `mutation.json` is the same data. The
+  job summary lists the score and each survivor by file and line. The recorded
+  score below is from a local run before the workflow existed.
+- **Locally.** `pnpm run mutation` runs the whole set;
+  `pnpm exec stryker run --mutate src/lib/booking-ledger-balance.ts` runs one
+  module (under a minute) and the report lands in `reports/mutation/`
+  (gitignored). Then `node scripts/ci/money-test-ratchet.mjs mutation` prints the
+  score and the survivors.
+- **The score is recorded and ratcheted** in the same baseline file:
+  `mutation.score` is the last recorded figure and `mutation.breakBelowPercent`
+  (one point under it) is Stryker's `thresholds.break`, so a run below it fails.
+  Raise both with
+  `node scripts/ci/money-test-ratchet.mjs mutation --update` after a run that
+  improved the score.
+- **Recorded score** (5 Nov 2026, 938 mutants): **78.04%**. 731 killed, 1 timed
+  out, 122 survived, 84 not covered by any test. By module: `booking-ledger-balance`,
+  `cancel-refund-method` 100%; `booking-ledger-cancellation-posting` 98.3%;
+  `-confirmation-posting` 92.5%; `-modification-posting` 92.4%;
+  `-settlement-posting` 86.6%; `-credit-posting` 86.8%; `-write` 85.5%;
+  `-posting-keys` 83.8%; `paid-cancellation-money` 76.7%;
+  `booking-ledger-charge-line` 55.2% (the survivors are narration strings and
+  the promotion line, which only the edit and cancellation suites reach);
+  `edit-refund-hand-back` 27.3%, 75 of its mutants reached by no test.
+
+### A model-based test of the ledger
+
+`src/lib/__tests__/booking-ledger-model.property.test.ts` drives the five pure
+ledger planners (confirmation, edit, cancellation, settlement, credit) with
+`fast-check`'s `commands` through random histories of booking, edit, payment,
+refund, credit and cancellation events, against an in-memory store that behaves
+like the write door. After **every** step it asserts the ledger identities
+against a model that holds only the events' own sums: `charged` is the stay as it
+stands (or what the club kept once cancelled), `settled` is captures less
+recorded refunds plus credit consumed less credit issued, per method, and
+`owed = charged + adjusted - settled`. It also asserts the structural rules the
+sums lean on (append-only, a reversal mirrors exactly the line it names and a
+line is reversed once, charge lines that still stand add up to `charged`) and
+that running every sync again, and re-posting every line ever posted, changes
+nothing. The seed is fixed (4459, as the provider round trips pin 4460 and 4461),
+nothing reads the clock, and it runs in about a second.
+
+Write a new event as a `Cmd` class with a `check` precondition and a `run` that
+goes through `step()`, so no command can skip the identities. A shrunk
+counterexample prints as the command list, for example
+`confirm(0 cents, promo -1),replay()`. The model is the specification: when a
+planner changes on purpose, change the model's sum, never the assertion to match
+the code.
 
 ## Shared setup
 
