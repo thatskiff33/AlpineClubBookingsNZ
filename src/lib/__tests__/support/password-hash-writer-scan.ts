@@ -20,7 +20,8 @@ import ts from "typescript";
 // `screenChosenPassword(...)` whose result is bound to a name, followed by an
 // `if` that tests `!name.ok` and returns (or throws). Both statements must sit
 // in a block that encloses the writer and come before it, so a screen in a
-// different handler, a callback or a sibling branch never counts.
+// different handler, a callback or a sibling branch never counts. The `if`
+// condition is the bare `!name.ok` or a `||` chain holding it, nothing weaker.
 //
 // Stated limits: SQL assembled by concatenating separate literals, or read
 // from a `.sql` file at run time, is not seen (no writer here does either; the
@@ -178,26 +179,32 @@ function exits(statement: ts.Statement): boolean {
   return ts.isBlock(statement) && statement.statements.some(exits);
 }
 
-/** True when `condition` contains `!name.ok` for one of `names`. */
+/** `node` without any parentheses around it. */
+function unwrapParens(node: ts.Expression): ts.Expression {
+  return ts.isParenthesizedExpression(node) ? unwrapParens(node.expression) : node;
+}
+
+/**
+ * True when `condition` is `!name.ok` for one of `names`, or a `||` chain with
+ * it as one operand: either way a failed screen enters the branch. A guard
+ * under `&&` (`flag && !s.ok`), a double negation (`!!s.ok`) or any other
+ * wrapper can let a failed screen through, so it does not count.
+ */
 function testsNotOk(condition: ts.Expression, names: ReadonlySet<string>): boolean {
-  let found = false;
-  const visit = (node: ts.Node): void => {
-    if (found || isFunctionLike(node)) return;
-    if (
-      ts.isPrefixUnaryExpression(node) &&
-      node.operator === ts.SyntaxKind.ExclamationToken &&
-      ts.isPropertyAccessExpression(node.operand) &&
-      node.operand.name.text === "ok" &&
-      ts.isIdentifier(node.operand.expression) &&
-      names.has(node.operand.expression.text)
-    ) {
-      found = true;
-      return;
-    }
-    ts.forEachChild(node, visit);
-  };
-  visit(condition);
-  return found;
+  const node = unwrapParens(condition);
+  if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.BarBarToken) {
+    return testsNotOk(node.left, names) || testsNotOk(node.right, names);
+  }
+  if (!ts.isPrefixUnaryExpression(node) || node.operator !== ts.SyntaxKind.ExclamationToken) {
+    return false;
+  }
+  const operand = unwrapParens(node.operand);
+  return (
+    ts.isPropertyAccessExpression(operand) &&
+    operand.name.text === "ok" &&
+    ts.isIdentifier(operand.expression) &&
+    names.has(operand.expression.text)
+  );
 }
 
 /**

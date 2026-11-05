@@ -376,6 +376,9 @@ describe("passwordHash writer scanner", () => {
     expect(guarded(`async function a(p) { const s = await screenChosenPassword(p); if (!s.ok) return; save({ passwordHash: h }); }`)).toEqual([true]);
     expect(guarded(`async function a(p) { const s = p ? await screenChosenPassword(p) : { ok: true }; if (!s.ok) { log(); return r(s); } save({ passwordHash: h }); }`)).toEqual([true]);
     expect(guarded(`async function a(p) { const s = await screenChosenPassword(p); if (!s.ok) throw new E(); await tx(async (t) => t.save({ passwordHash: h })); }`)).toEqual([true]);
+    // A `||` chain still enters the branch whenever the screen failed.
+    expect(guarded(`async function a(p) { const s = await screenChosenPassword(p); if (bad || !s.ok) return; save({ passwordHash: h }); }`)).toEqual([true]);
+    expect(guarded(`async function a(p) { const s = await screenChosenPassword(p); if ((!s.ok) || bad) return; save({ passwordHash: h }); }`)).toEqual([true]);
     // Not guarded.
     expect(guarded(`async function a(p) { screenChosenPassword(p); save({ passwordHash: h }); }`)).toEqual([false]);
     expect(guarded(`async function a(p) { await screenChosenPassword(p); save({ passwordHash: h }); }`)).toEqual([false]);
@@ -384,6 +387,11 @@ describe("passwordHash writer scanner", () => {
     expect(guarded(`async function a(p) { const s = await screenChosenPassword(p); if (s.ok) return; save({ passwordHash: h }); }`)).toEqual([false]);
     expect(guarded(`async function a(p) { const s = await screenChosenPassword(p); if (!other.ok) return; save({ passwordHash: h }); }`)).toEqual([false]);
     expect(guarded(`async function a(p) { save({ passwordHash: h }); const s = await screenChosenPassword(p); if (!s.ok) return; }`)).toEqual([false]);
+    // A conditional or doubly negated test can let a failed screen through.
+    expect(guarded(`async function a(p) { const s = await screenChosenPassword(p); if (flag && !s.ok) return; save({ passwordHash: h }); }`)).toEqual([false]);
+    expect(guarded(`async function a(p) { const s = await screenChosenPassword(p); if (!!s.ok) return; save({ passwordHash: h }); }`)).toEqual([false]);
+    expect(guarded(`async function a(p) { const s = await screenChosenPassword(p); if (f(!s.ok)) return; save({ passwordHash: h }); }`)).toEqual([false]);
+    expect(guarded(`async function a(p) { const s = await screenChosenPassword(p); if (bad || (flag && !s.ok)) return; save({ passwordHash: h }); }`)).toEqual([false]);
     expect(guarded(`async function a(p) { if (p) { const s = await screenChosenPassword(p); if (!s.ok) return; } save({ passwordHash: h }); }`)).toEqual([false]);
     expect(guarded(`async function b(p) { const s = await screenChosenPassword(p); if (!s.ok) return; } async function a() { save({ passwordHash: h }); }`)).toEqual([false]);
     // A screen in another wrapped handler never satisfies this one.
