@@ -3,6 +3,8 @@ import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { sendMagicLinkEmail } from "@/lib/email";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
+import { checkAccountRequestLimit } from "@/lib/account-request-limit";
+import { normaliseSignInEmail } from "@/lib/login-throttle";
 import logger from "@/lib/logger";
 import { issueActionToken } from "@/lib/action-tokens";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
@@ -20,6 +22,13 @@ const magicLinkSchema = z.object({
 // serves unverified members so first-time setup works; magic link must never
 // be an email-verification bypass (owner decision, #2030), so unverified
 // members get the identical silent response and zero email.
+// So does an account over its per-account limit (#4613, INV-AUTH-005).
+
+/** The one answer for every valid request, sent or not. */
+function accepted() {
+  return NextResponse.json({ success: true });
+}
+
 export async function POST(req: NextRequest) {
   const rateLimited = await applyRateLimit(rateLimiters.magicLinkRequest, req);
   if (rateLimited) return rateLimited;
@@ -46,11 +55,23 @@ export async function POST(req: NextRequest) {
 
     const { email } = parsed.data;
 
+    // Per-account limit (#4613): decided from the email alone, before the
+    // module flag or any Member read, so real and unknown accounts — and the
+    // module's state — are counted and answered alike.
+    const account = await checkAccountRequestLimit(rateLimiters.magicLinkRequestAccount, email);
+    if (!account.success) {
+      logger.info(
+        { limiterId: rateLimiters.magicLinkRequestAccount.id },
+        "Per-account request limit reached; no sign-in link email sent",
+      );
+      return accepted();
+    }
+
     const modules = await loadEffectiveModuleFlags();
 
     // Always return success to avoid leaking which emails are registered.
     const member = await prisma.member.findFirst({
-      where: { email: email.toLowerCase(), canLogin: true },
+      where: { email: normaliseSignInEmail(email), canLogin: true },
     });
 
     // Send only when the module is enabled AND the member is active AND their
@@ -86,7 +107,7 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    return NextResponse.json({ success: true });
+    return accepted();
   } catch (err) {
     logger.error({ err }, "Unexpected error in magic-link request");
     return NextResponse.json(

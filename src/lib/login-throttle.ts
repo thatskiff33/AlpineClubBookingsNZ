@@ -96,9 +96,10 @@ export function loginAccountKey(email: string): string {
 /**
  * The fallback map's key. Without a secret NextAuth cannot sign anyone in
  * anyway; the unkeyed digest only keeps the map working, and it is never
- * stored or logged.
+ * stored or logged. #4613's per-account request limits key their per-process
+ * fallback on it for the same reason.
  */
-function memoryKeyFor(email: string): string {
+export function loginAccountMemoryKey(email: string): string {
   try {
     return loginAccountKey(email);
   } catch {
@@ -261,7 +262,7 @@ export async function claimPasswordAttempt(email: string): Promise<{ allowed: bo
     if (isPostgresLockNotAvailable(err)) return { allowed: false };
     const now = new Date();
     noteStoreFailure(err, now);
-    return { allowed: claimInMemory(memoryKeyFor(email), now) };
+    return { allowed: claimInMemory(loginAccountMemoryKey(email), now) };
   }
 }
 
@@ -272,7 +273,7 @@ export async function claimPasswordAttempt(email: string): Promise<{ allowed: bo
  */
 export async function clearPasswordAttempts(email: string): Promise<void> {
   try {
-    const key = memoryKeyFor(email);
+    const key = loginAccountMemoryKey(email);
     memoryStore.delete(key);
     if (!getAuthSecret()) return;
     await prisma.loginThrottle.deleteMany({ where: { id: key } });
