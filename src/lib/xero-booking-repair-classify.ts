@@ -1243,7 +1243,8 @@ export function classifyBookingContext(
           );
           // #4757: the note's own row first, as the invoice-clearing arm reads
           // it (`readOwnNoteRowState`); an edit's note has one target, so only
-          // while it has no allocation. None is queued beside.
+          // while it has no allocation. None is queued beside, nor a retry
+          // offered beside a live allocation row.
           const modificationArm = { kind: "modification", details: { modificationId: modification.id } } as const;
           const ownNoteRowHandled = dispatchOwnNoteRow(
             findings,
