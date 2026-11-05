@@ -29,15 +29,16 @@ export function getAuthTrustHost(): boolean {
 // test seam
 export function getRuntimeConfigIssues(): string[] {
   const issues: string[] = [];
+  const authSecret = getAuthSecret();
 
-  if (!getAuthSecret()) {
+  if (!authSecret) {
     issues.push("AUTH_SECRET or NEXTAUTH_SECRET is required");
   }
 
   // #4456: an invalid data-encryption key ring makes credential capture and
   // every two-factor code throw, so the release is not ready: readiness fails
   // and blue/green never switches traffic to it. An UNSET ring is valid.
-  const ring = parseDataEncryptionKeys(readEnv(DATA_ENCRYPTION_KEYS_ENV), getAuthSecret());
+  const ring = parseDataEncryptionKeys(readEnv(DATA_ENCRYPTION_KEYS_ENV), authSecret);
   if (ring.status === "invalid") {
     issues.push(ring.reason);
   }

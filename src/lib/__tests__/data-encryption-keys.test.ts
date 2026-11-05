@@ -97,7 +97,7 @@ describe("a ring key may not be the auth secret (#4456 review)", () => {
     const state = parseDataEncryptionKeys(`k1:${ringKey}`, authSecret);
     expect(state.status).toBe("invalid");
     if (state.status === "invalid") {
-      // Printable text is refused first for the last case; both say "weak".
+      // The auth-secret check runs first; the last case is also printable text. Both say "weak".
       expect(state.reason).toMatch(/the key for "k1" is weak/);
       expect(state.reason).not.toContain(ringKey);
     }
