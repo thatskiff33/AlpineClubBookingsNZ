@@ -5,6 +5,7 @@ import { XERO_ACTIVE_OPERATION_STATUSES } from "./xero-active-operation-statuses
 import { buildXeroInvoiceUrl } from "@/lib/xero-links";
 import { getXeroOperationRetryMeta } from "@/lib/xero-operation-retry";
 import { isResolvedInXero } from "@/lib/xero-operation-resolution";
+import { partialClearingNoteIsIncomplete } from "@/lib/xero-clearing-allocations";
 import {
   isAdmissibleRepairOperation,
   isSuccessfulXeroOperation,
@@ -154,6 +155,57 @@ export function toRetryableOperationMatch(
   return retryMeta.supported
     ? { kind: "retryable", operation, retryMeta: { ...retryMeta, supported: true } }
     : null;
+}
+
+/**
+ * A credit note's own create row, as the arm that would allocate the note reads
+ * it (#3535, #4259, #4757). The worker that made the note also allocates it; a
+ * refused allocation leaves that row PARTIAL, and its retry replays the
+ * recorded plan, so a fresh allocation sized by the repair tool would be a
+ * second one. In order:
+ *
+ * - `resolved`: an officer resolved the PARTIAL row in Xero and allocated by
+ *   hand (`INV-INT-025`) - nothing retried or queued;
+ * - `repairing`: a RUNNING row naming the note - a retry holds its PARTIAL
+ *   repair claim - reported, never queued beside;
+ * - `retry` / `unretryable`: a PARTIAL row with a planned invoice still
+ *   unallocated, by `partialClearingNoteIsIncomplete`, so a row repaired
+ *   before #4259 that stays PARTIAL stops counting once it is whole.
+ *
+ * Null when no row of the note's says it is unfinished.
+ */
+export type OwnNoteRowState =
+  | { kind: "resolved" | "repairing"; operation: XeroOperationRecord }
+  | { kind: "retry"; operation: XeroOperationRecord; retry: RetryableOperationMatch }
+  | { kind: "unretryable"; operation: XeroOperationRecord; reason: string | null };
+
+export function readOwnNoteRowState(
+  operations: XeroOperationRecord[],
+  links: XeroObjectLinkRecord[],
+  creditNoteId: string
+): OwnNoteRowState | null {
+  const noteRow = (status: string) =>
+    operations.find(
+      (operation) =>
+        operation.entityType === "CREDIT_NOTE" &&
+        operation.operationType === "CREATE" &&
+        operation.status === status &&
+        operation.xeroObjectId === creditNoteId
+    );
+  const partial = noteRow("PARTIAL");
+  if (partial && isResolvedInXero(partial)) return { kind: "resolved", operation: partial };
+  const repairing = noteRow("RUNNING");
+  if (repairing) return { kind: "repairing", operation: repairing };
+  const allocationLinks = links.filter(
+    (link) => link.xeroObjectType === "ALLOCATION" && link.role === "MODIFICATION_CREDIT_NOTE_ALLOCATION"
+  );
+  if (!partial || !partialClearingNoteIsIncomplete(partial.requestPayload, creditNoteId, allocationLinks)) {
+    return null;
+  }
+  const retry = toRetryableOperationMatch(partial);
+  return retry
+    ? { kind: "retry", operation: partial, retry }
+    : { kind: "unretryable", operation: partial, reason: getXeroOperationRetryMeta(partial).reason };
 }
 
 export function getBlockingOperation(
