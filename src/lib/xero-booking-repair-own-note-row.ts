@@ -52,7 +52,7 @@ const WORDING: Record<
   },
 };
 
-/** The arm that would allocate the note, and two options each arm states as it stood before #4757. */
+/** The arm that would allocate the note, and two behaviours from main each arm keeps, as explicit options. */
 type NoteAllocationArm = {
   kind: NoteAllocationKind;
   bookingId: string;

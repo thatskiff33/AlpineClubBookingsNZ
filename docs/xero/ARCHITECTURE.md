@@ -1023,16 +1023,29 @@ note.
    that row first for an edit's note as for a clearing note, through one
    dispatcher (`readOwnNoteRowState`, `dispatchOwnNoteRow`, #4757): it offers
    the PARTIAL row's retry, reports a RUNNING one with no action, and never
-   queues a fresh allocation beside either. It never offers that retry beside
-   any other allocation row of the note's, whose key embeds the amount, so
-   the two could allocate the note twice: that row is retried or reported
-   first, as before #4757 - one still PENDING, RUNNING or WAITING_PAYMENT
-   reported blocked, a FAILED or PARTIAL one retried or reported, one
-   resolved in Xero reported as done (`INV-INT-025`) - and while a retry runs
-   on the note's row no allocation row's retry is offered beside it. A
-   PARTIAL row the retry refuses is reported
-   blocked for an edit's note; a clearing note's still falls through to its
-   arm's own allocation path (#4762). A throw gives the row back
+   queues a fresh allocation beside either. It reads the admissible ALLOCATE
+   rows in the arm's scope - the whole booking's for a clearing note, the
+   note's own for an edit's note. One still PENDING, RUNNING or
+   WAITING_PAYMENT is reported blocked and nothing is offered. Otherwise each
+   row is the note's own attempt or another: own when it names this note and
+   a planned invoice AND amount, Xero's allocation key. The note's retry
+   allocates without a sync row, so a refused allocation leaves such a FAILED
+   row, and the retry covers it: it skips a target already linked and links
+   with the note's role, so own attempts never stand in its way (offering
+   their generic retry instead would link without that role, and the note
+   would never close). Another row - another note, invoice or amount, such
+   as the old tool's evidence-sized allocation - is a second key, so it is
+   answered first, from the match the dispatcher returns: retried, reported
+   blocked, or reported done when resolved in Xero (`INV-INT-025`). For an
+   edit's note that is what the arm did before #4757; for a clearing note it
+   is deliberately new - before, its retry was offered beside any row. An own
+   attempt resolved by hand has no link, so the retry would allocate it again:
+   with every other planned invoice linked it is reported done, otherwise a
+   person is asked to allocate the invoices left, which the finding lists,
+   and nothing is offered. While a retry runs on the note's row, no allocation
+   row's retry is offered beside it. A PARTIAL row the retry refuses is
+   reported blocked for an edit's note; a clearing note's still falls through
+   to its arm's own allocation path (#4762). A throw gives the row back
    PARTIAL with its payload and the run's error, guarded on the claim, never
    FAILED, whose error payload would replace what the repair reads.
 
