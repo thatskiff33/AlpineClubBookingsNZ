@@ -587,13 +587,16 @@ jobs:
 
       # Type errors in the app, test and e2e projects (`next build` reads only
       # the first, #2875). tsc's heap crossed the Node default
-      # (~4 GB) when the AID-6B pack landed (#2679) — the same run needs 8 GB
-      # locally — so the ceiling is raised here rather than letting the gate
-      # die of OOM (exit 134) instead of reporting type errors.
+      # (~4 GB) when the AID-6B pack landed (#2679), so the ceiling is raised
+      # here rather than letting the gate die of OOM (exit 134) instead of
+      # reporting type errors. #4752: the test project then outgrew 8 GB
+      # (`tsc -p tsconfig.test.json --extendedDiagnostics` reported 9.0 GB on
+      # main at 230200bc4), so the gate failed or passed by chance. 12 GB leaves
+      # headroom on the 16 GB hosted runner.
       - name: Typecheck
         run: pnpm run typecheck
         env:
-          NODE_OPTIONS: --max-old-space-size=8192
+          NODE_OPTIONS: --max-old-space-size=12288
 
   lint:
     name: Lint

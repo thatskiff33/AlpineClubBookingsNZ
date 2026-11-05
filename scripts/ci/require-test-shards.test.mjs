@@ -142,6 +142,14 @@ describe("verify's typecheck, lint and build jobs (#4425)", () => {
     expect(workflow.jobs.verify.steps.some((item) => item.run === command)).toBe(false);
   });
 
+  // #4752: the test project's tsc program measured 9.0 GB on main, so an 8 GB
+  // ceiling made the required gate fail by chance (OOM, exit 134). Keep 12 GB.
+  it("gives the typecheck step at least a 12 GB heap", () => {
+    const step = workflow.jobs.typecheck.steps.find((item) => item.run === "pnpm run typecheck");
+    const heapMb = Number(/--max-old-space-size=(\d+)/.exec(step.env?.NODE_OPTIONS ?? "")?.[1]);
+    expect(heapMb).toBeGreaterThanOrEqual(12288);
+  });
+
   it("keeps the build's output proofs after the build, in the build job, unconditional", () => {
     const steps = workflow.jobs.build.steps;
     const at = (needle) => steps.findIndex((step) => step.run?.includes(needle));
