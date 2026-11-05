@@ -38,7 +38,9 @@ export function closedIssues(body, repo) {
   let text = body ?? "";
   for (let previous = null; previous !== text; ) {
     previous = text;
-    text = text.replace(/<!--[\s\S]*?-->/g, "");
+    // \x3c and \x3e spell the angle brackets: an HTML comment opener written out
+    // literally reads as a legacy comment to some JS parsers, Semgrep's included.
+    text = text.replace(/\x3c!--[\s\S]*?--\x3e/g, "");
   }
   text = text.replace(/\x60{3}[\s\S]*?\x60{3}/g, "").replace(/\x60[^\x60\n]*\x60/g, "");
   const numbers = new Set();
