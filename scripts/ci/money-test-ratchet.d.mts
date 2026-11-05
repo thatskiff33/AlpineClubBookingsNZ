@@ -10,12 +10,14 @@ export type CoverageTotal = Record<string, CoverageFigure | undefined>;
 export type CoverageSummary = Record<string, Record<string, CoverageFigure | undefined>>;
 export type CoverageRow = {
   metric: string;
-  baseline: number;
+  against: "main" | "floor";
+  reference: number;
+  bar: number;
   current: number | null;
   delta: number | null;
   ok: boolean;
 };
-export type CoverageResult = { ok: boolean; rows: CoverageRow[] };
+export type CoverageResult = { ok: boolean; against: "main" | "floor"; rows: CoverageRow[] };
 export type MutationReport = {
   files?: Record<
     string,
@@ -34,7 +36,9 @@ export const DEFAULT_COVERAGE_SUMMARY: string;
 export const DEFAULT_MUTATION_REPORT: string;
 export const COVERAGE_METRICS: readonly string[];
 export const MUTATION_BREAK_MARGIN: number;
-export function evaluateCoverage(total: CoverageTotal | undefined, baseline: Partial<MoneyTestBaseline>): CoverageResult;
+export const COVERAGE_TOLERANCE_PP: number;
+export const COVERAGE_WORKFLOW_FILE: string;
+export function evaluateCoverage(total: CoverageTotal | undefined, baseline: Partial<MoneyTestBaseline>, base?: CoverageTotal | null): CoverageResult;
 export function worstFiles(summary: CoverageSummary, limit?: number, cwd?: string): Array<{ file: string; uncovered: number; pct: number | null }>;
 export function renderCoverageReport(result: CoverageResult, summary: CoverageSummary, extra?: string[]): string;
 export function scoreFromMutationReport(report: MutationReport): ScoredMutation;
@@ -44,4 +48,10 @@ export function raiseCoverageBaseline(baseline: MoneyTestBaseline, total: Covera
 export function raiseMutationBaseline(baseline: MoneyTestBaseline, score: number): MoneyTestBaseline;
 export function baselineLowered(base: Partial<MoneyTestBaseline>, current: Partial<MoneyTestBaseline>): string[];
 export function listMoneyFiles(root?: string): string[];
-export function main(argv: string[]): number;
+export function baselineAtRef(ref: string, cwd?: string): MoneyTestBaseline | null;
+export function latestMainRunId(options: {
+  repository: string;
+  token: string;
+  fetchImpl?: (url: string, init?: unknown) => Promise<{ ok: boolean; status: number; json(): Promise<unknown> }>;
+}): Promise<number | null>;
+export function main(argv: string[]): Promise<number>;

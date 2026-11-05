@@ -46,6 +46,9 @@ jobs:
       DATABASE_URL: postgresql://postgres:postgres@localhost:5432/tacbookings
       STRIPE_SECRET_KEY: sk_test_fake
       NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: pk_test_fake
+      XERO_ENABLE_DAILY_MEMBERSHIP_REFRESH: "false"
+      XERO_ENABLE_LIVE_MEMBER_GROUP_LOOKUPS: "false"
+      XERO_ENABLE_AUTOLOAD_XERO_CONTACT_GROUPS: "false"
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7

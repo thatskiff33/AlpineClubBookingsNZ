@@ -8,9 +8,12 @@ name: Money coverage
 # HOW IT REPORTS. Every pull request gets a "Money-module coverage" table in
 # the job summary of `Money coverage ratchet` (baseline, now, change for lines,
 # statements, functions and branches, and the files with the most uncovered
-# lines). The job goes red when a figure is below the committed baseline,
-# `scripts/ci/money-test-baseline.json`, or when a pull request LOWERS that
-# baseline; as it is not required, a red job informs and does not block.
+# lines). The job goes red when a figure is lower than the latest successful
+# `main` run's by more than 0.1 percentage points (that run's
+# `money-coverage-summary` artifact; the committed floor in
+# `scripts/ci/money-test-baseline.json` stands in when there is none, and the
+# summary says which was used), or when a pull request LOWERS that floor; as it
+# is not required, a red job informs and does not block.
 #
 # WHY A SEPARATE WORKFLOW, AND WHY SHARDS THAT MERGE. The unit suite already
 # runs in four required shards in `ci.yml`. Switching coverage on there would
@@ -26,14 +29,39 @@ name: Money coverage
 # one list of money modules, `scripts/lib/money-modules.mjs`; it only applies
 # when `--coverage` is passed, so the required shards are unchanged.
 
+# The path filter keeps a docs-only pull request from spending four runners: only
+# a change to code, tests, scripts, the schema, the dependencies, this
+# measurement's own configuration or the CODEOWNERS list that defines the money
+# modules can move the figure. A filtered-out run leaves no check at all, which
+# is right for a check that is not required.
 on:
   pull_request:
     branches:
       - main
       - "epic/**"
+    paths:
+      - "src/**"
+      - "scripts/**"
+      - "prisma/**"
+      - "vitest*.mts"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "stryker.config.mjs"
+      - ".github/CODEOWNERS"
+      - ".github/workflows/money-coverage.yml"
   push:
     branches:
       - main
+    paths:
+      - "src/**"
+      - "scripts/**"
+      - "prisma/**"
+      - "vitest*.mts"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "stryker.config.mjs"
+      - ".github/CODEOWNERS"
+      - ".github/workflows/money-coverage.yml"
   workflow_dispatch:
 
 permissions:
@@ -125,6 +153,10 @@ jobs:
     # A failed shard is reported by the required unit shards; judging a merge
     # of three would call every file the fourth covered "lower".
     needs: coverage-shard
+    permissions:
+      contents: read
+      # Reads the artifact of the latest successful `main` run (below).
+      actions: read
     env:
       AUTH_SECRET: ci-auth-secret
       NEXTAUTH_SECRET: ci-auth-secret
@@ -134,6 +166,9 @@ jobs:
       DATABASE_URL: postgresql://postgres:postgres@localhost:5432/tacbookings
       STRIPE_SECRET_KEY: sk_test_fake
       NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: pk_test_fake
+      XERO_ENABLE_DAILY_MEMBERSHIP_REFRESH: "false"
+      XERO_ENABLE_LIVE_MEMBER_GROUP_LOOKUPS: "false"
+      XERO_ENABLE_AUTOLOAD_XERO_CONTACT_GROUPS: "false"
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -168,8 +203,33 @@ jobs:
       - name: Merge the shards into one coverage summary
         run: pnpm exec vitest --merge-reports --coverage --coverage.reportOnFailure=true || echo "::warning::The merge exited non-zero (a failed test in a blob, or a merge error); the judging step reads the summary it wrote."
 
-      - name: Judge the money modules against the baseline
-        run: node scripts/ci/money-test-ratchet.mjs coverage --base-ref origin/main
+      # What to hold the figure to: the latest successful `main` run's summary.
+      # Finding it is not fatal (a first run, an expired artifact, an API
+      # error): the judge then uses the committed floor and says so.
+      - name: Find the latest successful main run
+        id: base
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/ci/money-test-ratchet.mjs find-main-run
+
+      - name: Download that run's coverage summary
+        if: ${{ steps.base.outputs.run_id != '' }}
+        continue-on-error: true
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: money-coverage-summary
+          path: base-summary/
+          run-id: ${{ steps.base.outputs.run_id }}
+          github-token: ${{ github.token }}
+
+      # The branch the pull request targets, fetched by name so the floor-lowered
+      # guard compares with it (`main` on a push or a manual run).
+      - name: Judge the money modules against the base
+        env:
+          BASE_REF: ${{ github.base_ref || 'main' }}
+        run: |
+          git fetch --no-tags origin "+refs/heads/${BASE_REF}:refs/remotes/origin/${BASE_REF}"
+          node scripts/ci/money-test-ratchet.mjs coverage --base-ref "origin/${BASE_REF}" --base-summary base-summary/coverage-summary.json
 
       - name: Keep the merged summary
         if: ${{ !cancelled() }}

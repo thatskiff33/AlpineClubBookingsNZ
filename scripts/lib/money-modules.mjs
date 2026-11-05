@@ -6,21 +6,47 @@
  *
  *   - `vitest.config.mts` (`test.coverage.include`), so a coverage run reports
  *     exactly these files, including the ones no test reaches;
- *   - `scripts/ci/money-coverage-ratchet.mjs`, which reads the per-file summary
- *     and judges the aggregate against the committed baseline;
+ *   - `scripts/ci/money-test-ratchet.mjs`, which reads the per-file summary
+ *     and judges the aggregate against the baseline;
  *   - `stryker.config.mjs`, which mutates the narrower `MUTATION_TARGET_GLOBS`.
  *
- * "Money" here follows `AGENTS.md`'s routing row: anything holding cents, and
- * the ledger, refund, credit, settlement and Xero modules that move them. The
- * globs are by file-name family rather than a hand-kept file list, so a new
- * module such as `xero-foo.ts` or `foo-refund.ts` joins the ratchet without an
- * edit here; `money-modules.test.ts` proves the list still matches files.
+ * WHAT COUNTS AS MONEY IS DECIDED IN `.github/CODEOWNERS`, not here (review of
+ * #4459): the owner's own list of the `src/lib` modules that mint, charge,
+ * refund, credit, settle or size money, which `codeowners-census.test.ts`
+ * already keeps from rotting. Every `/src/lib/...` pattern in it is a money
+ * glob, read from the file each time, so a new owned module is measured the
+ * day it is owned and a second hand-kept list cannot drift from the first.
+ * `EXTRA_MONEY_MODULE_GLOBS` adds only what the issue names beyond that
+ * ownership: every Xero module (the inbound handlers in `xero-inbound/`
+ * included), the booking ledger and the money-named helpers.
+ * `money-test-ratchet.test.ts` proves every owned `src/lib` file is listed.
  *
  * Plain `.mjs`, Node built-ins only: a CI script runs it before any build.
  */
+import { readFileSync } from "node:fs";
 
-/** Source files whose coverage is ratcheted. Globs are repository-relative. */
-export const MONEY_MODULE_GLOBS = [
+/** The `src/lib` patterns CODEOWNERS owns, as repository-relative globs. */
+export function codeownersSrcLibGlobs(
+  source = readFileSync(new URL("../../.github/CODEOWNERS", import.meta.url), "utf8"),
+) {
+  const globs = [];
+  for (const line of source.split("\n")) {
+    const text = line.trim();
+    if (text === "" || text.startsWith("#")) continue;
+    const [pattern] = text.split(/\s+/);
+    // Owned tests (the guards that enforce the gate) are not modules to measure.
+    if (!pattern.startsWith("/src/lib/") || pattern.includes("/__tests__/")) continue;
+    const glob = pattern.slice(1);
+    if (glob.endsWith("/")) globs.push(`${glob}**/*.ts`);
+    else if (/\.tsx?$/.test(glob)) globs.push(glob);
+    else throw new Error(`CODEOWNERS pattern ${pattern} is neither a directory nor a .ts glob; teach money-modules.mjs to read it`);
+  }
+  if (globs.length === 0) throw new Error("CODEOWNERS names no /src/lib/ pattern, so the money module list would be empty");
+  return globs;
+}
+
+/** What the issue asks to measure beyond what CODEOWNERS owns. */
+export const EXTRA_MONEY_MODULE_GLOBS = [
   // The booking ledger and what is derived from it (INV-MONEY, design/booking-ledger.md).
   "src/lib/booking-ledger-*.ts",
   "src/lib/*money*.ts",
@@ -29,25 +55,18 @@ export const MONEY_MODULE_GLOBS = [
   "src/lib/*refund*.ts",
   "src/lib/*credit*.ts",
   "src/lib/*settle*.ts",
-  // Everything that talks to Xero about money.
+  // Everything that talks to Xero, the inbound handlers included.
   "src/lib/xero-*.ts",
-  // Where a cent figure is made: prices, fees and the payment rows.
-  "src/lib/pricing.ts",
-  "src/lib/authoritative-fees.ts",
-  "src/lib/booking-final-price.ts",
-  "src/lib/required-price-cents.ts",
-  "src/lib/change-fee*.ts",
+  "src/lib/xero-inbound/**/*.ts",
+  // Where a cent figure is made.
   "src/lib/joining-fee*.ts",
-  "src/lib/payment-settler.ts",
-  "src/lib/payment-transactions.ts",
-  "src/lib/payment-transaction-status.ts",
-  "src/lib/payment-ledger-order.ts",
-  "src/lib/payment-net-collected.ts",
-  "src/lib/policies/pricing.ts",
   "src/lib/policies/cancellation.ts",
   "src/lib/policies/change-fee.ts",
   "src/lib/policies/member-credit.ts",
 ];
+
+/** Source files whose coverage is ratcheted. Globs are repository-relative. */
+export const MONEY_MODULE_GLOBS = [...new Set([...codeownersSrcLibGlobs(), ...EXTRA_MONEY_MODULE_GLOBS])];
 
 /** Never counted, whichever glob matched them. */
 export const MONEY_MODULE_EXCLUDE_GLOBS = ["**/__tests__/**", "**/*.test.*", "**/*.d.ts"];

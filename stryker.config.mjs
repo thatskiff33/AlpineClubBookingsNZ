@@ -27,6 +27,29 @@ const config = {
   jsonReporter: { fileName: "reports/mutation/mutation.json" },
   tempDirName: ".stryker-tmp",
   cleanTempDir: true,
+  // The sandbox is a copy of the working tree, so without this a local run
+  // copies agent worktrees, deployment secrets and build output into it. Only
+  // what is large, generated or private is listed: `src/generated/prisma` and
+  // `.github/CODEOWNERS` (which `money-modules.mjs` reads) are needed there.
+  ignorePatterns: [
+    ".claude",
+    ".artifacts",
+    ".next",
+    "out",
+    "build",
+    "coverage",
+    ".vitest",
+    "reports",
+    "playwright-report",
+    "test-results",
+    "e2e/.auth",
+    "logs",
+    "seeds",
+    "config/club.json",
+    ".env*",
+    "*.pem",
+    ".vercel",
+  ],
   // `break` is the ratchet: a run scoring below the committed baseline fails.
   // It is read from the one baseline file, so raising it is that file's edit.
   thresholds: { high: 85, low: 70, break: baseline.mutation.breakBelowPercent },
