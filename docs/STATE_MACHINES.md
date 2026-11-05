@@ -781,9 +781,13 @@ a failed mint's replay, before it mints (#4015 review, outside any transaction)
          -> WAIT: nothing minted or cancelled, the attempt handed back, checked
             again on the longest retry interval; once the webhook lands it
             carries none of that ask
-         -> still so once the recovery is 7 days old (CARRIED_ASK_PAYMENT_WAIT_MAX_MS)
-            -> FAILED for good at once, officers alerted with the cause
-               (check that request in Stripe, record it, collect this change by hand)
+         -> still so 7 days (CARRIED_ASK_PAYMENT_WAIT_MAX_MS) after the LATER of
+            when Stripe began taking that payment (its charge, else the intent's
+            creation) and when the recovery was queued - so a recovery that aged
+            on its own still waits for a payment that has just begun
+            -> FAILED for good at once, officers alerted ("stopped", not an
+               attempt count) to check that request in Stripe, record it, and
+               collect this change by hand
        a confirmation landing after that read -> the superseded-capture refund below
 edit raises an ask -> mint the replacement intent
   -> enqueue CANCEL_PAYMENT_INTENT for every other live or declined (#4422) ADDITIONAL intent

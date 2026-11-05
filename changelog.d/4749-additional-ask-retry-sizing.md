@@ -8,8 +8,9 @@
   one card request for the full amount owed. A price reduction saved in the
   meantime now sets itself against that waiting increase too. If Stripe shows
   the later request as paid or still processing, the retry waits for that
-  payment to be recorded rather than cancelling it, for up to seven days. If
-  it is still not recorded by then, the retry stops and officers are alerted
+  payment to be recorded rather than cancelling it, for up to seven days
+  after that payment began. If it is still not recorded by then, the retry
+  stops and officers are alerted
   to check the payment in Stripe and collect the change by hand. A member
   part-way through a card security check on the later request when the retry
   runs is asked to pay the new request instead. A retry whose change already

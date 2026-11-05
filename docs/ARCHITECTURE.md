@@ -3163,8 +3163,8 @@ it (#4015): that ask was sized off a `Payment` that never showed this failed min
 carries its unpaid balance and supersedes it; only a frozen figure, with no edit to re-derive
 from, still skips itself. Before minting it reads Stripe for that later ask, outside any
 transaction. While Stripe is taking money on it (succeeded, processing, or a status this code does
-not recognise) the replay waits with its attempt handed back, for up to seven days from when it was
-queued, then stops and alerts an officer. An ask still unpaid at Stripe, one mid-3DS included, is
+not recognise) the replay waits with its attempt handed back, for up to seven days from when that
+payment began or the recovery was queued, whichever is later, then stops and alerts an officer. An ask still unpaid at Stripe, one mid-3DS included, is
 superseded, and a confirmation landing after the read takes the superseded-capture refund
 (`docs/STATE_MACHINES.md`, "One ask at a time"). It settles the Xero half two ways: it points any
 supplementary invoice operation still WAITING_PAYMENT at the recovered intent,
