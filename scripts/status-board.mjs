@@ -34,7 +34,7 @@ const failed = (run) => run.status === "completed" && !PASSING_CONCLUSIONS.has(r
  * comments, code and another repository's references are ignored.
  */
 export function closedIssues(body, repo) {
-  const text = (body ?? "").replace(/<!--[\s\S]*?-->/g, "").replace(/```[\s\S]*?```/g, "").replace(/`[^`\n]*`/g, "");
+  const text = (body ?? "").replace(/<!--[\s\S]*?-->/g, "").replace(/\x60{3}[\s\S]*?\x60{3}/g, "").replace(/\x60[^\x60\n]*\x60/g, "");
   const numbers = new Set();
   for (const match of text.matchAll(/\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s*:?\s+(?:([\w.-]+\/[\w.-]+))?#(\d+)/gi)) {
     if (!match[1] || match[1].toLowerCase() === repo.toLowerCase()) numbers.add(Number(match[2]));
@@ -185,8 +185,8 @@ export function buildBoard(model, now) {
 export function cell(text, max = 80) {
   const flat = String(text).replace(/\s+/g, " ").trim();
   const cut = flat.length > max ? `${flat.slice(0, max - 1)}…` : flat;
-  const escaped = { "&": "&amp;", "<": "&lt;", ">": "&gt;", "|": "\\|", "@": "@&#8203;", "#": "#&#8203;", "`": "'", "[": "(", "]": ")" };
-  return cut.replace(/[&<>|@#`[\]]/g, (c) => escaped[c]).replace(/:\/\//g, ":&#8203;//").replace(/www\./gi, (m) => `${m.slice(0, 3)}&#8203;.`);
+  const escaped = { "&": "&amp;", "<": "&lt;", ">": "&gt;", "|": "\\|", "@": "@&#8203;", "#": "#&#8203;", "\x60": "'", "[": "(", "]": ")" };
+  return cut.replace(/[&<>|@#\x60\[\]]/g, (c) => escaped[c]).replace(/:\/\//g, ":&#8203;//").replace(/www\./gi, (m) => `${m.slice(0, 3)}&#8203;.`);
 }
 
 const when = (ms) => (ms === null ? "—" : `${new Date(ms).toISOString().slice(0, 16).replace("T", " ")}Z`);
