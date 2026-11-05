@@ -532,6 +532,82 @@ member change- and reset-password routes do, so `isRevokedMemberSession` ends
 every kiosk session issued before the rotation at its next refresh, whatever
 window it holds. `admin-lodge-route.test.ts` feeds the written row to that rule.
 
+## Data-encryption key ring (#4456)
+
+Audience: Operator, Developer.
+
+**The threat.** `AUTH_SECRET` signs every session. Before #4456 it was also the
+root of every key protecting data at rest — the integration credentials (Xero,
+Stripe, Google, backup, AI and Alpine Central Server keys, the Xero token set),
+members' authenticator-app secrets and the two-factor code hashes. One leaked
+value therefore let someone forge an admin session **and** decrypt every
+stored credential from a backup, and the secret could not be rotated after a
+leak without destroying all of that data.
+
+**The design.** `DATA_ENCRYPTION_KEYS` holds a ring of 32-byte keys, one module
+(`src/lib/data-encryption-keys.ts`) is the only source of them, and sessions
+keep `AUTH_SECRET`. The operator view is in
+[`CONFIGURATION.md`](../CONFIGURATION.md#data-encryption-keys-4456); the rules
+the code holds to are:
+
+- **A write uses the current (first) key**, recorded on the row: a
+  credential's `secretSource` becomes `DATA_ENCRYPTION_KEY:<id>` (label
+  `integration-credential:v2`), an authenticator secret is `v2:<id>:…`, a code
+  hash is `<id>:<hex>`. No schema change; nothing old is rewritten.
+- **A read uses the key its row names and no other.** Keys are never tried in
+  turn, so there is one deterministic answer, and a row naming a key the
+  deployment no longer holds is the existing "needs re-entry" state, not a
+  guess or a crash.
+- **Each use has its own HKDF-SHA256 sub-key** of a ring key (credentials,
+  authenticator secrets, code hashes), so no two uses share key material.
+- **With no ring set, nothing stored changes**: the auth secret is the current
+  key and every format is byte-for-byte what it was. That is what makes the
+  release safe to deploy blue/green. Only the setup step differs: red while a
+  credential or an authenticator secret is stored under the auth secret alone,
+  so `setup:check` exits 1 until a key is set.
+- **A bad ring fails closed.** Any malformed, short, single-byte, duplicate-id
+  or duplicate entry makes the whole ring invalid, and so does a key that is
+  the auth secret (its text, or its bytes as base64, hex or UTF-8) or one whose
+  bytes are all printable ASCII (a password). Readiness (`/api/health/ready`)
+  fails, capture refuses, ring rows report "cannot be read", rows still on the
+  auth secret stay readable, and setup readiness goes red naming the entry —
+  never its value.
+- **No write falls back to the auth secret over ring data.** While no ring is
+  set but a credential, authenticator secret or recovery code names a ring key,
+  credential capture, the Xero refresh, two-factor enrolment and recovery-code
+  replacement refuse (`data-encryption-legacy-write-guard.ts`), so a lost ring
+  never quietly puts new secrets back under the auth secret. The setup step's
+  "ring missing" verdict reads the same predicate. Email codes and sign-in
+  challenges live minutes and leave nothing behind, so they are still issued.
+- **No key material is logged.** Errors and readiness name an id or a position
+  only, a key object prints as its id, and a spread copy of it carries no
+  material.
+
+**Recovery codes at cut-over.** A keyed hash cannot be re-keyed, so recovery
+codes issued under the auth secret stop working the moment a ring is set. The
+owner chose this over keeping the auth secret in the ring for them (decision
+of 1 Nov 2026 on #4456): it lets the auth secret leave the data path entirely.
+A member still holding such codes is told on the sign-in challenge and on their
+profile to generate a new set.
+
+**Stated limits.**
+
+- Rows written before the ring stay readable under `AUTH_SECRET` until they are
+  re-encrypted, so until setup readiness reports nothing left on it, the old
+  coupling remains for those rows. The in-place re-encrypt command is the second
+  part of #4456, and so is a switch to stop reading rows under the auth secret
+  once none remain; until then the current auth secret always reads them.
+- Recovery codes issued before the ring are refused, not deleted: an instance
+  started without the ring accepts them again. The second part of #4456
+  retires them in the database.
+- An older release cannot read ring rows, so the variable must not be set until
+  the previous release has drained (the runbook's first step).
+- The keys live in the environment of each app container, like `AUTH_SECRET`;
+  a host compromise exposes them. A cloud KMS was rejected as the default
+  because clubs self-host on one server; the ring leaves room for one later.
+- Authenticator secrets carry no row binding (no GCM associated data), as
+  before; credentials keep theirs (`provider:key:label`).
+
 ## Dietary/allergy information (special-category data)
 
 Audience: Developer, Agent, Operator.

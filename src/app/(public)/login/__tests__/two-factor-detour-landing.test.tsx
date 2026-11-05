@@ -15,10 +15,16 @@ import {
 // involved, so the detour never bakes a stale /dashboard default (the alice/bob
 // asymmetry this suite guards against).
 
-const { mockAuth, mockRedirect, mockReadReturnCookie } = vi.hoisted(() => ({
+const { mockAuth, mockRedirect, mockReadReturnCookie, mockRetiredCodes } = vi.hoisted(() => ({
   mockAuth: vi.fn(),
   mockRedirect: vi.fn(),
   mockReadReturnCookie: vi.fn<() => Promise<string | null>>(),
+  mockRetiredCodes: vi.fn<(memberId: string) => Promise<boolean>>(async () => false),
+}));
+
+// #4456: the verify page asks whether the member's recovery codes were retired.
+vi.mock("@/lib/two-factor", () => ({
+  memberHoldsRetiredRecoveryCodes: (memberId: string) => mockRetiredCodes(memberId),
 }));
 
 // #2827: both detour pages read the family-invite return address from an
@@ -204,6 +210,20 @@ describe("/login/verify post-detour landing (#2090)", () => {
     const element = (await runVerify()) as unknown as { props: { callbackUrl: string } };
     expect(element.props.callbackUrl).toBe("/dashboard");
   });
+
+  it.each([true, false])(
+    "tells the panel whether this member's recovery codes were retired (%s) (#4456)",
+    async (retired) => {
+      mockAuth.mockResolvedValue(sessionUser(enrolled));
+      mockRetiredCodes.mockResolvedValueOnce(retired);
+
+      const element = (await runVerify()) as unknown as {
+        props: { recoveryCodesRetired: boolean };
+      };
+      expect(mockRetiredCodes).toHaveBeenCalledExactlyOnceWith("member-1");
+      expect(element.props.recoveryCodesRetired).toBe(retired);
+    },
+  );
 
   it("redirects an unenrolled session to /login/enroll with no baked landing", async () => {
     mockAuth.mockResolvedValue(

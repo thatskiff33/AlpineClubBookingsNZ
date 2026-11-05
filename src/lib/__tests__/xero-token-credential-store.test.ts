@@ -232,6 +232,13 @@ const h = vi.hoisted(() => {
   };
 
   const integrationCredential = {
+    // #4456: rows already under a ring key, asked before an AUTH_SECRET write.
+    count: vi.fn(async (args: { where: { secretSource: { startsWith: string } } }) =>
+      // A LIKE prefix as `exactPrefix` writes it: drop its escapes to compare literally.
+      state.credential.filter((row) =>
+        String(row.secretSource).startsWith(args.where.secretSource.startsWith.replace(/\\(.)/g, "$1")),
+      ).length,
+    ),
     findUnique: vi.fn(async (args: { where: Row }) =>
       clone(state.credential.find((row) => matches(row, args.where)) ?? null),
     ),
@@ -298,7 +305,7 @@ const h = vi.hoisted(() => {
    * later did — so the double records it, and every test asserts there were
    * none. Without this, passing `prisma` where `tx` belongs is invisible here.
    */
-  const READS = new Set(["findFirst", "findUnique", "findMany"]);
+  const READS = new Set(["findFirst", "findUnique", "findMany", "count"]);
   function moduleClient<T extends Record<string, (...args: never[]) => unknown>>(
     table: string,
     delegate: T,
@@ -315,13 +322,18 @@ const h = vi.hoisted(() => {
     return guarded as T;
   }
 
-  const tx = { xeroToken, xeroConnection, integrationCredential, auditLog };
+  // #4456 review: the other stores asked before an AUTH_SECRET write; none here.
+  const member = { count: vi.fn(async () => 0) };
+  const twoFactorRecoveryCode = { count: vi.fn(async () => 0) };
+  const tx = { xeroToken, xeroConnection, integrationCredential, auditLog, member, twoFactorRecoveryCode };
 
   const db = {
     xeroToken: moduleClient("xeroToken", xeroToken),
     xeroConnection: moduleClient("xeroConnection", xeroConnection),
     integrationCredential: moduleClient("integrationCredential", integrationCredential),
     auditLog: moduleClient("auditLog", auditLog),
+    member: moduleClient("member", member),
+    twoFactorRecoveryCode: moduleClient("twoFactorRecoveryCode", twoFactorRecoveryCode),
     // A rolled-back transaction leaves every table as it found it.
     $transaction: vi.fn(async (work: (tx: unknown) => Promise<unknown>) => {
       const snapshot = clone({
@@ -955,6 +967,53 @@ describe("a refresh refuses before spending the token when its save could not su
     await expect(assertXeroTokensCanBeStored()).rejects.toBeInstanceOf(
       XeroTokenSaveUnavailableError,
     );
+    // #4456 review: the reason and the gate's own message travel with it.
+    await expect(assertXeroTokensCanBeStored()).rejects.toMatchObject({
+      reason: "auth-secret-weak",
+      message: expect.stringMatching(/auth secret.*the refresh token was not spent/i),
+    });
+  });
+
+  it("names an invalid ring as itself, never as a weak auth secret (#4456 review)", async () => {
+    process.env.DATA_ENCRYPTION_KEYS = "k1:not-a-key";
+    try {
+      await expect(assertXeroTokensCanBeStored()).rejects.toMatchObject({
+        reason: "data-key-ring-invalid",
+        message: expect.stringMatching(/^DATA_ENCRYPTION_KEYS: .*the refresh token was not spent\.$/),
+      });
+    } finally {
+      delete process.env.DATA_ENCRYPTION_KEYS;
+    }
+  });
+
+  it("lets a database error from its question propagate as itself, spending nothing (#4456 review)", async () => {
+    h.raw.integrationCredential.count.mockRejectedValueOnce(new Error("database unavailable"));
+    const refusal = assertXeroTokensCanBeStored();
+    await expect(refusal).rejects.toThrow("database unavailable");
+    await expect(refusal).rejects.not.toBeInstanceOf(XeroTokenSaveUnavailableError);
+  });
+
+  it("refuses before spending the token when the ring is unset but a credential is under a ring key (#4456)", async () => {
+    delete process.env.DATA_ENCRYPTION_KEYS;
+    h.state.credential.push({
+      id: "ic-ring",
+      provider: "stripe",
+      key: "secret_key",
+      ciphertext: "00",
+      iv: "00",
+      authTag: "00",
+      secretSource: "DATA_ENCRYPTION_KEY:k1",
+      labelVersion: "integration-credential:v2",
+      updatedByUserId: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+    await expect(assertXeroTokensCanBeStored()).rejects.toBeInstanceOf(XeroTokenSaveUnavailableError);
+    // Its own reason, so the alert says to restore the key, not to change AUTH_SECRET.
+    await expect(assertXeroTokensCanBeStored()).rejects.toMatchObject({
+      reason: "data-key-ring-missing",
+      message: expect.stringMatching(/DATA_ENCRYPTION_KEYS is not set\. Set it back as it was, or set a new key/),
+    });
   });
 
   it("passes when the save would succeed, and writes nothing", async () => {

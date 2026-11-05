@@ -123,13 +123,13 @@ function latch() {
 
   beforeEach(async () => {
     await clean();
-    const { encryptCredential, INTEGRATION_CREDENTIAL_LABEL } = await import("@/lib/integration-crypto");
+    const { encryptCredential } = await import("@/lib/integration-crypto");
     await prisma.serverNzSettings.create({ data: {
       id: "default", baseUrl: OLD_URL, serverVersion: SERVERNZ_EXPECTED_SERVER_VERSION, otherLodgesOwnedNames: ["Old lodge"],
     } });
     await prisma.integrationCredential.create({ data: {
       provider: "servernz", key: "api_key",
-      ...encryptCredential({ provider: "servernz", key: "api_key", plaintext: OLD_KEY, label: INTEGRATION_CREDENTIAL_LABEL }),
+      ...encryptCredential({ provider: "servernz", key: "api_key", plaintext: OLD_KEY }),
     } });
     const { resetIntegrationCredentialCacheForTests, resolveIntegrationCredential } = await import("@/lib/integration-credentials");
     resetIntegrationCredentialCacheForTests();
@@ -417,10 +417,10 @@ function latch() {
     }
 
     async function seedPushSecret(value: string) {
-      const { encryptCredential, INTEGRATION_CREDENTIAL_LABEL } = await import("@/lib/integration-crypto");
+      const { encryptCredential } = await import("@/lib/integration-crypto");
       await prisma.integrationCredential.create({ data: {
         provider: "servernz", key: "push_secret",
-        ...encryptCredential({ provider: "servernz", key: "push_secret", plaintext: value, label: INTEGRATION_CREDENTIAL_LABEL }),
+        ...encryptCredential({ provider: "servernz", key: "push_secret", plaintext: value }),
       } });
     }
 

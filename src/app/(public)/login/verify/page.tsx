@@ -7,6 +7,7 @@ import {
   getFamilyInviteReturnNonce,
 } from "@/lib/family-invite-return-address";
 import { resolvePostLoginLandingPath } from "@/lib/post-login-landing";
+import { memberHoldsRetiredRecoveryCodes } from "@/lib/two-factor";
 import { TwoFactorVerifyPanel } from "../two-factor-panels";
 
 function singleSearchParam(value?: string | string[]) {
@@ -85,10 +86,14 @@ export default async function TwoFactorVerifyPage({
     redirect(`/login/enroll${suffix}`);
   }
 
+  // #4456: recovery codes issued under a retired key no longer sign anyone in;
+  // the member is told here, at sign-in, rather than discovering it when they
+  // have lost their authenticator.
   return (
     <TwoFactorVerifyPanel
       callbackUrl={landing}
       enrolledMethod={session.user.twoFactorMethod}
+      recoveryCodesRetired={await memberHoldsRetiredRecoveryCodes(session.user.id)}
     />
   );
 }

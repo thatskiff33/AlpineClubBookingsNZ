@@ -12,14 +12,22 @@ const mocks = vi.hoisted(() => {
     create: vi.fn(),
     updateMany: vi.fn(),
     deleteMany: vi.fn(),
+    // #4456: rows already under a ring key, asked before an AUTH_SECRET write.
+    count: vi.fn(async () => 0),
   });
   const tx = {
     integrationCredential: delegate(),
     auditLog: { create: vi.fn() },
+    // #4456 review: the other stores asked before an AUTH_SECRET write.
+    member: { count: vi.fn(async () => 0) },
+    twoFactorRecoveryCode: { count: vi.fn(async () => 0) },
   };
   const prisma = {
     integrationCredential: delegate(),
     auditLog: { create: vi.fn() },
+    // #4456 review: the other stores asked before an AUTH_SECRET write.
+    member: { count: vi.fn(async () => 0) },
+    twoFactorRecoveryCode: { count: vi.fn(async () => 0) },
     $transaction: vi.fn(),
   };
   prisma.$transaction.mockImplementation(
@@ -30,7 +38,7 @@ const mocks = vi.hoisted(() => {
 
 vi.mock("@/lib/prisma", () => ({ prisma: mocks.prisma }));
 
-import { encryptCredential, INTEGRATION_CREDENTIAL_LABEL } from "@/lib/integration-crypto";
+import { WeakAuthSecretError, encryptCredential } from "@/lib/integration-crypto";
 import { credentialVersionOf, type CredentialActor } from "@/lib/integration-credential-actor";
 import {
   CACHE_TTL_MS,
@@ -55,7 +63,6 @@ function storedRow(provider: string, key: string, value: string) {
     provider,
     key,
     plaintext: value,
-    label: INTEGRATION_CREDENTIAL_LABEL,
   });
   return {
     id: `${provider}-${key}`,
@@ -266,3 +273,48 @@ describe("integration-credentials: uncached row re-read (#4366)", () => {
     ).resolves.toEqual({ status: "not_configured" });
   });
 });
+
+describe("no AUTH_SECRET write while ring-keyed credentials exist (#4456 review)", () => {
+  const RING_KEY = Buffer.from(Array.from({ length: 32 }, (_, index) => (index * 23 + 5) % 256)).toString("base64");
+  const write = () =>
+    setIntegrationCredential({ provider: "xero", key: "client_id", value: "v", actor: ADMIN, expect: { expect: "any" } });
+
+  beforeEach(() => {
+    delete process.env.DATA_ENCRYPTION_KEYS;
+    mocks.tx.integrationCredential.upsert.mockResolvedValue({ provider: "xero", key: "client_id", updatedAt: new Date() });
+  });
+
+  it("refuses, writing and auditing nothing, when the ring is unset but a row is under a ring key", async () => {
+    mocks.tx.integrationCredential.count.mockResolvedValueOnce(2);
+    await expect(write()).rejects.toThrow(WeakAuthSecretError);
+    mocks.tx.integrationCredential.count.mockResolvedValueOnce(2);
+    await expect(write()).rejects.toThrow(/DATA_ENCRYPTION_KEYS is not set/);
+    expect(mocks.tx.integrationCredential.count).toHaveBeenCalledWith({
+      // Matched literally (INV-SSOT-006): the `_` is escaped, never a wildcard.
+      where: { secretSource: { startsWith: "DATA\\_ENCRYPTION\\_KEY:" } },
+    });
+    expect(mocks.tx.integrationCredential.upsert).not.toHaveBeenCalled();
+    expect(mocks.tx.auditLog.create).not.toHaveBeenCalled();
+  });
+
+  it("refuses too when only an authenticator secret or a recovery code names a ring key (one rule, #4456 review)", async () => {
+    for (const store of [mocks.tx.member.count, mocks.tx.twoFactorRecoveryCode.count]) {
+      store.mockResolvedValueOnce(1);
+      await expect(write()).rejects.toThrow(/Set it back as it was, or set a new key and re-enter the credentials/);
+    }
+    expect(mocks.tx.integrationCredential.upsert).not.toHaveBeenCalled();
+  });
+
+  it("writes under AUTH_SECRET as before when nothing is under a ring key", async () => {
+    await write();
+    expect(mocks.tx.integrationCredential.upsert).toHaveBeenCalledOnce();
+  });
+
+  it("never asks when the write is under the ring", async () => {
+    process.env.DATA_ENCRYPTION_KEYS = `k1:${RING_KEY}`;
+    await write();
+    expect(mocks.tx.integrationCredential.count).not.toHaveBeenCalled();
+    expect(mocks.tx.integrationCredential.upsert).toHaveBeenCalledOnce();
+  });
+});
+

@@ -751,6 +751,12 @@ import "./xero-account-credit-note-stamp.realdb.test";
 // line under the edit at the settle. Skipped unless RUN_CONCURRENCY_RACE_TESTS=1;
 // it owns and cleans its own `race-4661-` fixtures.
 import "./unpaid-edit-change-fee-owed.realdb.test";
+// #4456 reuses it to prove a credential written under a data-encryption ring key
+// survives an AUTH_SECRET rotation and goes through the store's version-guarded
+// claim like any other: a re-key of a legacy row, a write that lost to a row
+// changed underneath it (no side effect, retried), and two writers forced to meet
+// at the claim. It owns and cleans its own `race-4456` credential rows.
+import "./data-encryption-key-ring.realdb.test";
 // #2374 (AID-5) deliberately is NOT imported here, unlike the two suites above.
 // `ai-diagnostics-select-only-role.realdb.test.ts` provisions and drops a cluster
 // ROLE and revokes `TEMPORARY ... FROM PUBLIC` on the shared throwaway database

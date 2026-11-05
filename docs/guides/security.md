@@ -76,7 +76,7 @@ the `twoFactor` module on [Modules](modules.md).
 | The email sign-in card is inert | The `magicLink` module is off, or email delivery isn't configured | Enable it on [Modules](modules.md); configure transactional email in [`CONFIGURATION.md`](../../CONFIGURATION.md) |
 | No Google button appears for members | The `googleLogin` module is off, or the credentials aren't set up / verified | Set up and verify Google at Admin → Integrations → Google sign-in, then enable the module on Login & Security |
 | Can't turn on Google sign-in (toggle locked) | Google hasn't been verified yet, or a credential was replaced (re-locks) | Run the Verify step in the Google sign-in setup wizard |
-| Stored Google credentials stopped working after an `AUTH_SECRET` rotation | Encrypted credentials can no longer be decrypted | Re-enter and re-verify them in the Google sign-in setup wizard |
+| Stored Google credentials stopped working after an `AUTH_SECRET` rotation, or a data-encryption key was removed or unset | Encrypted credentials can no longer be decrypted (see [`DEPLOYMENT.md`](../../DEPLOYMENT.md#adding-a-data-encryption-key-4456)) | Re-enter and re-verify them in the Google sign-in setup wizard |
 | A member can't sign in with Google | Their Google account isn't linked | They link it from their own profile while signed in; unlinked accounts are refused |
 | Settings won't save | Your role lacks support edit access | Ask a full admin for support edit access |
 | Members (or the lodge tablet) are asked to sign in again although they were using the site | The maximum session age was reached; it counts from sign-in, not from the last use | Expected. Lengthen **Sign members out after (hours)** if the club prefers; the kiosk's 30 days is fixed |
