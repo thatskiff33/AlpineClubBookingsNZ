@@ -48,10 +48,17 @@ const MIRROR_PASS_ACTOR: CredentialActor = { kind: "system", actor: "servernz-pu
 /**
  * Make sure the central server knows where to push for this install.
  *
- * Idempotent and cheap to call from the sync pass: it does nothing when a
- * secret is already stored. The callback URL is derived from this install's
- * own address (`getAppBaseUrl`, which reads NEXTAUTH_URL), so there is no
- * second base-URL setting to drift.
+ * Idempotent and cheap to call from the sync pass: it does nothing while the
+ * stored secret was issued for this site's CURRENT callback address. The
+ * callback URL is derived from this install's own address (`getAppBaseUrl`,
+ * which reads NEXTAUTH_URL), so there is no second base-URL setting to drift.
+ * When that address moves, the stored one no longer matches and the site
+ * registers again; otherwise the server would keep pushing to, and asking free
+ * beds of, a host that no longer answers. A secret stored before its address
+ * was kept beside it registers once more. Registering again is safe: the
+ * server keeps the same secret for a repeat of the same URL and rotates it
+ * only when the URL changes, and either way the secret it returns is stored.
+ * An address that is not https never replaces a working registration.
  *
  * A server address move removes the stored secret (#4470), so the next pass
  * registers with the new server. The secret is stored through the connection
@@ -65,37 +72,57 @@ const MIRROR_PASS_ACTOR: CredentialActor = { kind: "system", actor: "servernz-pu
 export async function ensurePushRegistration(
   actor: CredentialActor = MIRROR_PASS_ACTOR,
 ): Promise<PushRegistrationOutcome> {
+  const base = getAppBaseUrl();
+  // Push needs a URL the central server can reach over https; a localhost dev
+  // install simply stays poll-only, which loses nothing but latency.
+  const callback = base.startsWith("https://")
+    ? new URL("/api/webhooks/servernz-posts", base).toString()
+    : null;
+
   const existing = await getIntegrationCredentialValue(
     SERVERNZ_PROVIDER,
     SERVERNZ_CREDENTIAL_KEYS.pushSecret,
   );
-  if (existing) return "already-registered";
+  if (existing) {
+    if (callback === null) return "already-registered";
+    const registeredUrl = await getIntegrationCredentialValue(
+      SERVERNZ_PROVIDER,
+      SERVERNZ_CREDENTIAL_KEYS.pushRegisteredUrl,
+    );
+    if (registeredUrl === callback) return "already-registered";
+    logger.info(
+      { callback, previous: registeredUrl ?? null },
+      "This site's push address changed since it registered; registering again",
+    );
+  }
+  if (callback === null) return "not-https";
 
-  const base = getAppBaseUrl();
-  // Push needs a URL the central server can reach over https; a localhost dev
-  // install simply stays poll-only, which loses nothing but latency.
-  if (!base.startsWith("https://")) return "not-https";
-
-  const callback = new URL("/api/webhooks/servernz-posts", base).toString();
   try {
     const result = await registerPushTarget(callback);
     try {
-      await serverNzAnswerWriter(result.sentOn)((tx) =>
-        setIntegrationCredentialInTransaction({
-          tx,
-          provider: SERVERNZ_PROVIDER,
-          key: SERVERNZ_CREDENTIAL_KEYS.pushSecret,
-          value: result.secret,
-          actor,
-          // Declared last-writer-wins, and deliberately NOT create-only (#2723).
-          // `registerPushTarget` is a PUT: the central server keeps the most
-          // recent registration and issues it a new secret version. So if two
-          // containers both register, the secret worth storing is the LAST one
-          // issued — refusing to overwrite would leave this install holding a
-          // superseded secret and rejecting every push the server signs.
-          expect: { expect: "any" },
-        }),
-      );
+      // The secret and the address it was issued for, in ONE fenced write, so
+      // a stored secret is never paired with another registration's address.
+      await serverNzAnswerWriter(result.sentOn)(async (tx) => {
+        for (const [key, value] of [
+          [SERVERNZ_CREDENTIAL_KEYS.pushSecret, result.secret],
+          [SERVERNZ_CREDENTIAL_KEYS.pushRegisteredUrl, callback],
+        ] as const) {
+          await setIntegrationCredentialInTransaction({
+            tx,
+            provider: SERVERNZ_PROVIDER,
+            key,
+            value,
+            actor,
+            // Declared last-writer-wins, and deliberately NOT create-only (#2723).
+            // `registerPushTarget` is a PUT: the central server keeps the most
+            // recent registration and issues it a new secret version. So if two
+            // containers both register, the pair worth storing is the LAST one
+            // issued — refusing to overwrite would leave this install holding a
+            // superseded secret and rejecting every push the server signs.
+            expect: { expect: "any" },
+          });
+        }
+      });
     } finally {
       // The fenced transaction is not the store's own, so this process's
       // cached copy is dropped here, after it has ended either way.

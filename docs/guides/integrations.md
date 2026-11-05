@@ -335,6 +335,9 @@ Alpine Central Server**, for you to check its bookings and **Hide** it.
    until it is approved, so come back afterwards); no server address is saved
    yet; syncing is paused because the server runs a different software
    version; or it could not be reached (tried again every 3 hours).
+   If this site's own address (`NEXTAUTH_URL`) later changes, the next 3-hourly
+   pass registers the new one, so the central server stops pushing to, and
+   asking free beds of, the old name.
 5. With **Other Clubs details** enabled, the same save then downloads the
    distributed set — which also tells this site which lodge is yours and turns
    on **Edit my Lodge** in the Other lodges panel — and links your lodges to

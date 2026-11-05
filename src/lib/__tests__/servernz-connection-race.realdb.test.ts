@@ -57,7 +57,7 @@ function latch() {
     await prisma.lodge.deleteMany({ where: { id: { startsWith: "race-4262-" } } });
     await prisma.clubPost.deleteMany({ where: { serverPostId: { startsWith: "race-4470-" } } });
     await prisma.otherLodge.deleteMany({ where: { id: { startsWith: "race-4262-" } } });
-    await prisma.integrationCredential.deleteMany({ where: { provider: "servernz", key: { in: ["api_key", "push_secret"] } } });
+    await prisma.integrationCredential.deleteMany({ where: { provider: "servernz", key: { in: ["api_key", "push_secret", "push_registered_url"] } } });
     await prisma.serverNzSettings.deleteMany({ where: { id: "default" } });
   }
 
@@ -470,6 +470,11 @@ function latch() {
       })));
       await ensurePushRegistration();
       expect(await storedPushSecret()).toBe(STANDING_SECRET);
+      // The address it was issued for is stored beside it, in the same write.
+      const { readIntegrationCredentialRow } = await import("@/lib/integration-credentials");
+      const registered = await readIntegrationCredentialRow(prisma, "servernz", "push_registered_url");
+      expect(registered.status === "configured" ? registered.value : null)
+        .toBe("https://club.race-4470.example.invalid/api/webhooks/servernz-posts");
     });
   });
 

@@ -62,6 +62,14 @@ export const SERVERNZ_CREDENTIAL_KEYS = {
    * the server it was registered with, so an address move removes it (#4470).
    */
   pushSecret: "push_secret",
+  /**
+   * The callback URL the push secret was issued for, written with it. The
+   * server pushes to, and asks free beds of, that address; when this site's
+   * own address (`NEXTAUTH_URL`) moves, `ensurePushRegistration` sees the
+   * difference and registers again. System-written, never admin-writable, and
+   * removed with the secret.
+   */
+  pushRegisteredUrl: "push_registered_url",
 } as const;
 
 /**
@@ -215,7 +223,8 @@ export async function clearServerNzApiKey(
 }
 
 /**
- * Remove the push-verification secret the old connection registered (#4470).
+ * Remove the push-verification secret the old connection registered (#4470),
+ * with the callback address it was issued for.
  * Its callers are the address move (`saveServerNzConnectionSettings`) and the
  * key replacement (`setServerNzApiKey`), each in its own fenced transaction:
  * with the secret gone, pushes signed with it stop verifying (in another
@@ -229,14 +238,16 @@ export async function clearServerNzPushSecret(
   tx: ServerNzConnectionTx,
   request?: CredentialRequestContext,
 ): Promise<void> {
-  await deleteIntegrationCredentialInTransaction({
-    tx,
-    provider: SERVERNZ_PROVIDER,
-    key: SERVERNZ_CREDENTIAL_KEYS.pushSecret,
-    actor,
-    expect: { expect: "any" },
-    request,
-  });
+  for (const key of [SERVERNZ_CREDENTIAL_KEYS.pushSecret, SERVERNZ_CREDENTIAL_KEYS.pushRegisteredUrl]) {
+    await deleteIntegrationCredentialInTransaction({
+      tx,
+      provider: SERVERNZ_PROVIDER,
+      key,
+      actor,
+      expect: { expect: "any" },
+      request,
+    });
+  }
 }
 
 /**

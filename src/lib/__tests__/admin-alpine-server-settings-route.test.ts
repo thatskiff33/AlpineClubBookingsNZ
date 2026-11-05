@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   invalidateProviderCredentialCache: vi.fn(),
   removedBy: undefined as unknown,
   pushSecretRemovedBy: undefined as unknown,
+  pushRegisteredUrlRemovedBy: undefined as unknown,
 }));
 vi.mock("@/lib/auth", () => ({ auth: mocks.auth }));
 vi.mock("@/lib/session-guards", async () => ({
@@ -33,6 +34,9 @@ vi.mock("@/lib/integration-credentials", async (importOriginal) => ({
     } else if (key === "push_secret") {
       mocks.pushSecretRemovedBy = actor;
       tx.removePushSecret();
+    } else if (key === "push_registered_url") {
+      // The address the push secret was issued for, removed with it.
+      mocks.pushRegisteredUrlRemovedBy = actor;
     } else {
       throw new Error(`unexpected key ${key}`);
     }
@@ -57,6 +61,7 @@ beforeEach(() => {
   mocks.locked = false;
   mocks.removedBy = undefined;
   mocks.pushSecretRemovedBy = undefined;
+  mocks.pushRegisteredUrlRemovedBy = undefined;
   mocks.stored = { baseUrl: "https://old.example.invalid", otherLodgesEnabled: true, apiKey: "old-key", pushSecret: "old-push-secret", serverVersion: "2.1", otherLodgesOwnedNames: ["Old lodge"] };
   mocks.transaction.mockImplementation(async (work) => {
     const staged = structuredClone(mocks.stored);
@@ -113,6 +118,7 @@ describe("central-server settings replacement (#4436)", () => {
       commsCursorSince: null, commsCursorSinceId: null, commsLastSyncAt: null,
     });
     expect(mocks.pushSecretRemovedBy).toEqual({ kind: "admin", memberId: "admin-4436" });
+    expect(mocks.pushRegisteredUrlRemovedBy).toEqual({ kind: "admin", memberId: "admin-4436" });
   });
 
   it.each(["failDelete", "failPushDelete", "failReset"] as const)("rolls the address and key back when %s", async (failure) => {

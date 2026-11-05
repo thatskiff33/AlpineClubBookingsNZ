@@ -2359,14 +2359,18 @@ mispricing a booking.
   (the credentials route's 409), having written nothing, when another save
   moved it, so a key issued by the old server never lands beside the new
   address. A key saved first is removed by the move queued behind it.
-  Address replacement also deletes the old server's `push_secret` in its
-  transaction, after the API key (settings row, `api_key` row,
-  `push_secret` row, audit); key replacement deletes it after the new key
-  (settings row, `api_key` row, `push_secret` row, answer reset, audit). `ensurePushRegistration` stores a newly issued
-  secret through `serverNzAnswerWriter` for the identity its registration
-  was sent on (settings row, credential read, `push_secret` write, audit),
-  so a registration in flight across a move stores nothing and the next pass
-  registers with the new server. The credentials route also runs it
+  Address replacement also deletes the old server's `push_secret`, and the
+  `push_registered_url` it was issued for, in its transaction, after the API
+  key (settings row, `api_key` row, `push_secret` row, `push_registered_url`
+  row, audit); key replacement deletes them after the new key (settings row,
+  `api_key` row, `push_secret` row, `push_registered_url` row, answer reset,
+  audit). `ensurePushRegistration` stores a newly issued secret and its
+  callback address through `serverNzAnswerWriter` for the identity its
+  registration was sent on (settings row, credential read, `push_secret`
+  write, `push_registered_url` write, audit), so a registration in flight
+  across a move stores nothing and the next pass registers with the new
+  server. It also registers again when this site's own address no longer
+  matches the stored one. The credentials route also runs it
   (`registerAfterKeySave`, triyder/AlpineClubBookingsNZ#97) after the key
   save's fenced transaction has committed, never inside it: the same fenced
   store, no new lock, and its provider call outside every transaction. The message-board mirror (`runMirrorSync`)

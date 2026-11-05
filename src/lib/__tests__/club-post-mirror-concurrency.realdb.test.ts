@@ -94,7 +94,7 @@ type Latch = ReturnType<typeof latch>;
       { id: { startsWith: "race-4590-" } }, { serverPostId: { startsWith: "race-4590-" } },
     ] } });
     await prisma.member.deleteMany({ where: { id: MEMBER_ID } });
-    await prisma.integrationCredential.deleteMany({ where: { provider: "servernz", key: { in: ["api_key", "push_secret"] } } });
+    await prisma.integrationCredential.deleteMany({ where: { provider: "servernz", key: { in: ["api_key", "push_secret", "push_registered_url"] } } });
     await prisma.serverNzSettings.deleteMany({ where: { id: "default" } });
   }
 

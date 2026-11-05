@@ -397,7 +397,9 @@ providers, and fell four behind as the rest landed. Anything that turns on
   download) until an admin re-enters it under Admin → Integrations → Alpine
   Central Server. The same namespace holds `push_secret`, the secret the
   central server issued when this install registered for pushes; it verifies
-  the posts and free-beds webhooks. The non-secret connection settings (base
+  the posts and free-beds webhooks, and `push_registered_url`, the callback
+  address that secret was issued for (a moved `NEXTAUTH_URL` registers again);
+  both are system-written and removed together. The non-secret connection settings (base
   URL, opt-in flag, sync cursors, and the owned-lodge list) live in
   `ServerNzSettings`. Replacing the key keeps the address and flag but resets
   the connection's answers (owned list, version, every sync cursor) and
