@@ -177,7 +177,7 @@ describe("password routes honour the configured login-security policy (#2033)", 
     });
   });
 
-  // #4610 (INV-AUTH-005): both routes screen the chosen password against the
+  // #4610 (INV-AUTH-006): both routes screen the chosen password against the
   // breached-password range service before hashing it.
   describe("breached-password check", () => {
     const BREACHED = "correct horse battery staple";

@@ -2151,7 +2151,7 @@ enforces it regardless.
 With **Refuse passwords found in public data breaches** on (the default), the
 same set-time paths, plus an officer setting a kiosk password under Lodge
 settings, refuse a password that a public breached-password service lists
-(#4610, `INV-AUTH-005`). Only the first five characters of the password's
+(#4610, `INV-AUTH-006`). Only the first five characters of the password's
 SHA-1 hash are sent; the match is made on the server.
 
 #### Outbound network access

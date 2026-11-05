@@ -434,7 +434,7 @@ describe("admin lodge route", () => {
   });
 });
 
-// #4610 (INV-AUTH-005): an officer choosing a kiosk password is screened
+// #4610 (INV-AUTH-006): an officer choosing a kiosk password is screened
 // against the breached-password range service before it is hashed.
 describe("admin lodge route: breached-password check", () => {
   const BREACHED = "kiosk-pass";

@@ -5,7 +5,7 @@ import { loadLoginSecuritySettings } from "@/lib/login-security-settings";
 import type { LoginSecurityPolicy } from "@/lib/password-policy";
 import { BREACHED_PASSWORD_RANGE_URL } from "@/lib/breached-password-endpoint";
 
-// Breached-password check for a CHOSEN password (#4610, INV-AUTH-005).
+// Breached-password check for a CHOSEN password (#4610, INV-AUTH-006).
 //
 // The one helper every place a person chooses a password calls before hashing
 // it; `password-hash-writer-census.test.ts` fails a `passwordHash` writer that

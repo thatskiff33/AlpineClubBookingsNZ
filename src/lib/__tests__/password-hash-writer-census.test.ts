@@ -12,7 +12,7 @@ import {
   type PasswordHashWriterSite,
 } from "./support/password-hash-writer-scan";
 
-// Census of every `passwordHash` writer (#4610, INV-AUTH-005).
+// Census of every `passwordHash` writer (#4610, INV-AUTH-006).
 //
 // Every place a PERSON chooses a password must call `screenChosenPassword`
 // (src/lib/breached-password.ts) before the hash is written, so a password on
@@ -248,7 +248,7 @@ function group(sites: readonly PasswordHashWriterSite[]) {
   return grouped;
 }
 
-describe("passwordHash writer census (#4610, INV-AUTH-005)", () => {
+describe("passwordHash writer census (#4610, INV-AUTH-006)", () => {
   const allSites = scanRepositoryPasswordHashWriters();
   const sites = allSites.filter((site) => !sqlDirectory(site));
   const measured = group(sites);

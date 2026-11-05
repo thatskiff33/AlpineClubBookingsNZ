@@ -78,7 +78,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // #4610 (INV-AUTH-005): refuse a password on the public breach list, after
+    // #4610 (INV-AUTH-006): refuse a password on the public breach list, after
     // the token is proven so an invalid link never causes an outbound request.
     // The token stays unused, so the person can choose another password.
     const screen = await screenChosenPassword(password, policy);

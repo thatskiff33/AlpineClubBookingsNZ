@@ -8,7 +8,7 @@ type SentryStreamedSpan = Parameters<NonNullable<SentryInitOptions["beforeSendSp
 
 const DENIED_KEY_PARTS = ["forwarded", "-ip", "remote-", "via", "-user"];
 
-// The breached-password range path (#4610, INV-AUTH-005). Sentry instruments
+// The breached-password range path (#4610, INV-AUTH-006). Sentry instruments
 // native fetch, so its outgoing-request span and fetch breadcrumb would carry
 // `https://api.pwnedpasswords.com/range/<prefix>`: five characters of the SHA-1
 // of a password someone just chose. Matched without the scheme so `url.full`,

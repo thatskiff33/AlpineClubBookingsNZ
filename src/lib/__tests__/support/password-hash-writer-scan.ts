@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import ts from "typescript";
 
-// Scanner for the `passwordHash` writer census (#4610, INV-AUTH-005).
+// Scanner for the `passwordHash` writer census (#4610, INV-AUTH-006).
 //
 // Two passes over the TypeScript AST, so comments never count:
 //

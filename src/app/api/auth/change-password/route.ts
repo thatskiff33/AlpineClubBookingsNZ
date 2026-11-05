@@ -77,7 +77,7 @@ export async function POST(req: NextRequest) {
   }
   await clearPasswordAttempts(member.email);
 
-  // #4610 (INV-AUTH-005): refuse a password on the public breach list. Only a
+  // #4610 (INV-AUTH-006): refuse a password on the public breach list. Only a
   // 5-character hash prefix leaves the server; a slow or failed lookup accepts.
   const screen = await screenChosenPassword(newPassword, policy);
   if (!screen.ok) return breachedPasswordRefusal(screen);

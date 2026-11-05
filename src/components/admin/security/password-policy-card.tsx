@@ -258,7 +258,7 @@ export function PasswordPolicyCard() {
             </fieldset>
 
             {/*
-              #4610 (INV-AUTH-005): the breached-password check. Staged with the
+              #4610 (INV-AUTH-006): the breached-password check. Staged with the
               rest of the card and saved through the same PUT.
             */}
             <fieldset className="space-y-2">

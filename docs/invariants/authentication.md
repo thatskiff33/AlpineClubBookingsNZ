@@ -106,7 +106,7 @@ This file holds only the rules.
 - **A store failure never blocks a request.** The count falls back to the
   #1142 per-process budget, as every auth-sensitive limiter's does.
 
-## INV-AUTH-005
+## INV-AUTH-006
 
 - **A password a person chooses is screened against the public breach list
   before it is hashed.** Every place a person chooses a password — change,

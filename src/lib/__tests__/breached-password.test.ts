@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-// #4610 (INV-AUTH-005): the shared breached-password screen. The range service
+// #4610 (INV-AUTH-006): the shared breached-password screen. The range service
 // is always a stub here: tests never reach the real one.
 
 const mocks = vi.hoisted(() => ({

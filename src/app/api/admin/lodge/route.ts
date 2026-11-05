@@ -318,7 +318,7 @@ export async function PUT(request: NextRequest) {
     }
   }
 
-  // #4610 (INV-AUTH-005): an officer-chosen kiosk password is screened first.
+  // #4610 (INV-AUTH-006): an officer-chosen kiosk password is screened first.
   const screen = password ? await screenChosenPassword(password) : { ok: true as const };
   if (!screen.ok) return breachedPasswordRefusal(screen);
 
@@ -430,7 +430,7 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  // #4610 (INV-AUTH-005): screen the officer-chosen kiosk password first.
+  // #4610 (INV-AUTH-006): screen the officer-chosen kiosk password first.
   const screen = await screenChosenPassword(parsed.data.password);
   if (!screen.ok) return breachedPasswordRefusal(screen);
 

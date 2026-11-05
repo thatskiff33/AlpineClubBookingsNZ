@@ -28,7 +28,7 @@ export interface LoginSecurityPolicy {
   magicLinkTtlMinutes: number;
   /**
    * #4610: refuse a chosen password that the public breached-password range
-   * service already lists. Club setting, default on (INV-AUTH-005). Applied by
+   * service already lists. Club setting, default on (INV-AUTH-006). Applied by
    * `screenChosenPassword` in `@/lib/breached-password`, never by the zod
    * schema below, because it needs a network call.
    */

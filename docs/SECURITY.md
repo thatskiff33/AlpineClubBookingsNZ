@@ -295,8 +295,8 @@ Audience: Operator, Developer.
 A password reused from a breached site passes any length or character rule,
 and it is the first thing an attacker tries. So when a person chooses a
 password, the app asks a public breached-password service whether it has been
-seen in a breach, and refuses it if so. The rules are `INV-AUTH-005` in
-[`invariants/authentication.md`](invariants/authentication.md); this section
+seen in a breach, and refuses it if so. The rules are `INV-AUTH-006` in
+[`invariants/authentication.md`](invariants/authentication.md#inv-auth-006); this section
 holds the behaviour and the limits.
 
 **Where it runs.** Changing a password, choosing one from a reset or

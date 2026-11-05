@@ -1029,4 +1029,4 @@ headings the index keeps verbatim.
 | `INV-AUTH-003` | Claimed under row lock before the compare; password or reset clears it |
 | `INV-AUTH-004` | Fixed security floor, idle-hour reset, password only, per-process fallback |
 | `INV-AUTH-005` | Reset and sign-in-link requests limited per account, answered as accepted |
-| `INV-AUTH-005` | Chosen passwords screened by prefix-only breach lookup; fails open |
+| `INV-AUTH-006` | Chosen passwords screened by prefix-only breach lookup; fails open |

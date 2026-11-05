@@ -3,7 +3,7 @@
 file: src/app/api/admin/lodge/route.ts
 lines: 501
 reason: the kiosk PUT and POST each gain the two-line breach screen
-  (INV-AUTH-005) right before they hash the officer-chosen password, plus
+  (INV-AUTH-006) right before they hash the officer-chosen password, plus
   one import. The refusal response lives in breached-password.ts already;
   the screen itself has to stay in the handler, because the passwordHash
   writer census only accepts a guard in a block that encloses the write.

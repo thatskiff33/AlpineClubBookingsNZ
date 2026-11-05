@@ -24,7 +24,7 @@ import { requireAdmin } from "@/lib/session-guards";
 // route (PUT /api/admin/security/magic-link, wired in #2103) and is deliberately
 // not writable here — the strict schema below rejects it.
 //
-// #4610: the breached-password check switch (INV-AUTH-005) is written here too,
+// #4610: the breached-password check switch (INV-AUTH-006) is written here too,
 // beside the rules it extends. It is optional in the body so a page loaded
 // before the upgrade (which never sends it) still saves and leaves it as it was.
 

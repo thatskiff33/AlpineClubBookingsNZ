@@ -63,7 +63,7 @@ describe("Sentry 11 collects no more than v10 did (#3892, INV-INT-005, INV-PRIV-
   });
 });
 
-// #4610 (INV-AUTH-005): the breached-password lookup's outgoing fetch would put
+// #4610 (INV-AUTH-006): the breached-password lookup's outgoing fetch would put
 // `<range URL><5-character SHA-1 prefix>` on a Sentry span and breadcrumb.
 describe("Sentry never carries the breached-password range prefix (#4610)", () => {
   const PREFIX = "21BD1";
