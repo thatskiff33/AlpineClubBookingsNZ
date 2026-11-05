@@ -287,6 +287,14 @@ async function main() {
   const existingLodge = await prisma.member.findFirst({
     where: { email: lodgeAccountEmail },
   });
+  // The admin and the kiosk are two accounts. An admin email set to the kiosk's
+  // address would create both under one login email part-way through the seed,
+  // so it is refused here, before anything is written.
+  if (!existingAdmin && seedAdminEmail === lodgeAccountEmail) {
+    throw new Error(
+      `SEED_ADMIN_EMAIL must not be the lodge kiosk account's address (${lodgeAccountEmail}); choose another email for the admin.`,
+    );
+  }
   // Read only when the kiosk account is missing, so null exactly when it exists.
   const lodgePassword = existingLodge ? null : requireSeedEnv("SEED_LODGE_PASSWORD");
   const adminScreen = existingAdmin

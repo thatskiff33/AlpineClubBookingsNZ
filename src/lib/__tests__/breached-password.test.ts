@@ -249,6 +249,13 @@ describe("the seed screens its operator-chosen passwords", () => {
     expect(hashAt).toBeGreaterThan(refuseAt);
   });
 
+  it("refuses an admin email equal to the kiosk's address before the first write", () => {
+    const guardAt = seedSource.indexOf("if (!existingAdmin && seedAdminEmail === lodgeAccountEmail) {");
+    expect(guardAt).toBeGreaterThan(mainAt);
+    expect(guardAt).toBeLessThan(mainAt + firstWriteAt);
+    expect(seedSource.slice(guardAt, guardAt + 400)).toMatch(/throw new Error\(/);
+  });
+
   it("reads and screens the kiosk password only when the kiosk account is missing", () => {
     expect(seedSource).toContain(
       'const lodgePassword = existingLodge ? null : requireSeedEnv("SEED_LODGE_PASSWORD");',
