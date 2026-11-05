@@ -25,10 +25,7 @@ import { clubFormatValues } from "@/lib/club-format-server";
 import { loadPersistedClubFormatSettings } from "@/lib/club-format-settings";
 import { chargeCurrencyRefusal } from "@/lib/stripe-charge-currency";
 import { prisma } from "@/lib/prisma";
-import {
-  cancelPaymentIntentIfCancellableWithResult,
-  processRefund,
-} from "@/lib/stripe";
+import { cancelPaymentIntentIfCancellableWithResult, getPaymentIntent, processRefund } from "@/lib/stripe";
 import { isPaymentIntentCancelConfirmed } from "@/lib/card-intent-retirement";
 import {
   findPaymentTransactionByIntentId,
@@ -62,7 +59,7 @@ import {
   planReissuedAskMint,
   resolveAskCustomerId,
 } from "@/lib/reissued-ask-mint";
-import { isRecoveryReplaySettled, sizeRecoveryReplayAsk } from "@/lib/additional-ask-recovery-replay";
+import { findOwnRecoveryRow, isRecoveryReplaySettled, refuseSupersedingAskBeingPaid, sizeRecoveryReplayAsk } from "@/lib/additional-ask-recovery-replay";
 import { mintOrdinaryAskIntent, refuseAdoptedIntentOnLedger } from "@/lib/ordinary-ask-mint";
 import { unretryableRecoveryCause } from "@/lib/recovery-unretryable-cause";
 import { ORDINARY_ASK_RECOVERY_REASON, planOrdinaryAskMint } from "@/lib/ordinary-ask-request";
@@ -2391,13 +2388,11 @@ type DeferredSupplementaryInvoiceAttempt =
  *
  * BEST-EFFORT, AND NOT A RETRY, which is the one thing here that is not obvious.
  * Throwing would hand the row to `failPaymentRecoveryOperation` and buy a retry -
- * except that on the ordinary fork the retry cannot work: the replay has by then
- * written this edit's `ADDITIONAL` PaymentTransaction, and the processor's own
- * "a LATER edit superseded this one" check tests for an additional transaction
- * created after the operation, which that row now is. Before #4442 a second
- * pass found its own transaction, read it as a supersession, and completed
+ * except that on the ordinary fork the retry used not to work: the replay has
+ * by then written this edit's `ADDITIONAL` PaymentTransaction, and before #4442
+ * a second pass read that row as a later edit's supersession and completed
  * having done nothing at all. A retry now recognises its own row and resumes
- * these steps (`ownRow` in the replay), but a throw would still mark the
+ * these steps (`findOwnRecoveryRow`, #4015), but a throw would still mark the
  * recovery FAILED for a failure this function already records and alerts, so
  * it stays best-effort.
  *
@@ -2481,9 +2476,9 @@ async function raiseDeferredSupplementaryInvoiceForRecoveredIntent(params: {
  * Re-create a booking edit's additional PaymentIntent whose original
  * post-transaction creation failed (#1096). Idempotent: the stored Stripe
  * idempotency key (`mod_*_{bookingModificationId}`) makes Stripe answer a
- * retry with the same intent, the ADDITIONAL transaction row is an upsert,
- * and an additional intent minted by a *later* edit supersedes this one — in
- * that case the operation completes without creating anything.
+ * retry with the same intent, and the ADDITIONAL transaction row is an upsert.
+ * A *later* edit's intent never settles it (#4015) - the replay carries and
+ * supersedes it - unless its figure is frozen (`isRecoveryReplaySettled`).
  *
  * #3954 ("retry nets it off", owner decision 9 Oct 2026; `INV-PAY-120`): a price
  * reduction saved while this waits re-checks what the booking owes before the
@@ -3010,10 +3005,10 @@ async function processCreateAdditionalPaymentIntentOperation(
   // #4442 review C-F1: THIS recovery's own row, written by an earlier attempt
   // that then failed before the steps above (its re-stamp timed out behind a
   // long holder, say). It is not an overtake: completing here would collect the
-  // ask with no invoice behind it, so the steps run now.
-  const ownRow = payment.transactions.find(
-    (row) => row.kind === PaymentTransactionKind.ADDITIONAL && row.stripePaymentIntentId === operation.paymentIntentId,
-  );
+  // ask with no invoice behind it, so the steps run now. #4015 (L5): or the
+  // door's own row for this edit, written before the step that enqueued this
+  // recovery threw - one rule with the settled check (`findOwnRecoveryRow`).
+  const ownRow = findOwnRecoveryRow(operation, payment.transactions);
   if (ownRow?.stripePaymentIntentId) {
     // A reduction that retired the ask while this recovery sat PENDING has
     // already accounted for its money; an invoice parked on the withdrawn
@@ -3046,6 +3041,9 @@ async function processCreateAdditionalPaymentIntentOperation(
     await completePaymentRecoveryOperation(operation);
     return "done";
   }
+
+  // #4015 review C1: never supersede a live ask Stripe is taking money on (a retry); no transaction open.
+  await refuseSupersedingAskBeingPaid(payment, (paymentIntentId) => getPaymentIntent(paymentIntentId));
 
   // #3954 round 7: one resolution, shared with the door's re-issue mint, so
   // the two minters of one key send one request (`resolveAskCustomerId`).
@@ -3208,7 +3206,7 @@ async function processCreateAdditionalPaymentIntentOperation(
       store,
     });
     // #3954: the row names this attempt's intent from the moment it exists, so
-    // a retry after a later failure recognises its own row (`ownRecoveryRow`).
+    // a retry after a later failure recognises its own row (`findOwnRecoveryRow`).
     await store.paymentRecoveryOperation.update({
       where: { id: operation.id },
       data: { paymentIntentId: pi.id },

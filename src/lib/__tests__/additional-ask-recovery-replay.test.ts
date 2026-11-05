@@ -16,22 +16,42 @@ import type { AskRecoveryOperation } from "@/lib/additional-ask-pending-recoveri
 import { pendingAskRecoveries } from "@/lib/additional-ask-pending-recoveries";
 import type { AskTransaction } from "@/lib/additional-ask-reduction";
 import {
+  CarriedAskBeingPaidError,
+  findOwnRecoveryRow,
   isRecoveryOvertakenByLaterAsk,
   isRecoveryReplaySettled,
   recoveryAskBeyondPaymentAskCents,
+  refuseSupersedingAskBeingPaid,
   sizeRecoveryReplayAsk,
 } from "@/lib/additional-ask-recovery-replay";
-import { buildAdditionalIntentRecoveryIdempotencyKey } from "@/lib/payment-recovery-keys";
+import {
+  buildAdditionalIntentRecoveryIdempotencyKey,
+  buildEditFinancialReviewAdditionalIntentRecoveryIdempotencyKey,
+} from "@/lib/payment-recovery-keys";
 
 const QUEUED_AT = new Date("2026-06-20T00:00:00.000Z");
 const LATER = new Date("2026-06-25T00:00:00.000Z");
 const EARLIER = new Date("2026-06-10T00:00:00.000Z");
 
 /** E1's failed mint, waiting under its Stripe key. */
-const E1_RECOVERY = { createdAt: QUEUED_AT, paymentIntentId: "mod_guest_bk1_e1" };
+const E1_RECOVERY = {
+  createdAt: QUEUED_AT,
+  paymentIntentId: "mod_guest_bk1_e1",
+  idempotencyKey: buildAdditionalIntentRecoveryIdempotencyKey("mod-e1"),
+};
 
-function additionalRow(stripePaymentIntentId: string, createdAt: Date) {
-  return { kind: "ADDITIONAL", createdAt, stripePaymentIntentId };
+function additionalRow(
+  stripePaymentIntentId: string,
+  createdAt: Date,
+  stamp: { bookingModificationId?: string; withdrawnAt?: Date } = {},
+) {
+  return {
+    kind: "ADDITIONAL",
+    createdAt,
+    stripePaymentIntentId,
+    bookingModificationId: stamp.bookingModificationId ?? null,
+    withdrawnAt: stamp.withdrawnAt ?? null,
+  };
 }
 
 /** E1 raised the price by $50 and its mint failed; nothing was folded. */
@@ -72,7 +92,7 @@ describe("isRecoveryReplaySettled (#4015)", () => {
   it("is settled once its OWN row exists, newer or older than the recovery, so a retry never mints twice", () => {
     const payment = { additionalAmountCents: 5_000, additionalPaymentStatus: "PENDING" };
     const replay = sizeRecoveryReplayAsk({ frozenAmountCents: 5_000, modification: E1, payment });
-    const recorded = { createdAt: QUEUED_AT, paymentIntentId: "pi_e1_recovered" };
+    const recorded = { ...E1_RECOVERY, paymentIntentId: "pi_e1_recovered" };
 
     expect(isRecoveryReplaySettled(replay, recorded, [additionalRow("pi_e1_recovered", LATER)])).toBe(true);
     expect(isRecoveryReplaySettled(replay, recorded, [additionalRow("pi_e1_recovered", EARLIER)])).toBe(true);
@@ -139,5 +159,104 @@ describe("pendingAskRecoveries: a reduction nets a waiting increase a later ask 
     // What the replay adds beyond the Payment's ask is E1's own money, never E2's twice.
     const replay = sizeRecoveryReplayAsk({ frozenAmountCents: 5_000, modification: E1, payment: booking.payment });
     expect(recoveryAskBeyondPaymentAskCents(replay)).toBe(5_000);
+  });
+});
+
+describe("findOwnRecoveryRow: one own-row rule for the replay's resume and the settled check (#4015 review L5)", () => {
+  const payment = { additionalAmountCents: 5_000, additionalPaymentStatus: "PENDING" };
+  const replay = sizeRecoveryReplayAsk({ frozenAmountCents: 5_000, modification: E1, payment });
+
+  it("the door's own row, stamped with the edit, is the recovery's own though the recovery holds only the Stripe key - never a later ask to carry", () => {
+    // The door wrote its row, then a later step threw (or the commit's reply was lost) and enqueued the recovery.
+    const doorRow = additionalRow("pi_e1_door", EARLIER, { bookingModificationId: "mod-e1" });
+    expect(findOwnRecoveryRow(E1_RECOVERY, [doorRow])).toBe(doorRow);
+    expect(isRecoveryReplaySettled(replay, E1_RECOVERY, [doorRow])).toBe(true);
+  });
+
+  it("a row stamped with ANOTHER edit is never its own", () => {
+    const e2Row = additionalRow("pi_e2", LATER, { bookingModificationId: "mod-e2" });
+    expect(findOwnRecoveryRow(E1_RECOVERY, [e2Row])).toBeNull();
+    expect(isRecoveryReplaySettled(replay, E1_RECOVERY, [e2Row])).toBe(false);
+  });
+
+  it("a stamped row a reduction withdrew is still its own - the reduction netted it, so the replay must not ask for it again", () => {
+    const withdrawn = additionalRow("pi_e1_door", EARLIER, { bookingModificationId: "mod-e1", withdrawnAt: LATER });
+    expect(findOwnRecoveryRow(E1_RECOVERY, [withdrawn])).toBe(withdrawn);
+    expect(isRecoveryReplaySettled(replay, E1_RECOVERY, [withdrawn])).toBe(true);
+  });
+
+  it("prefers the live stamped row over a withdrawn one, and the recorded intent over either", () => {
+    const withdrawn = additionalRow("pi_e1_old", EARLIER, { bookingModificationId: "mod-e1", withdrawnAt: LATER });
+    const live = additionalRow("pi_e1_reissued", LATER, { bookingModificationId: "mod-e1" });
+    expect(findOwnRecoveryRow(E1_RECOVERY, [withdrawn, live])).toBe(live);
+    const recordedRow = additionalRow("pi_e1_recovered", LATER);
+    expect(findOwnRecoveryRow({ ...E1_RECOVERY, paymentIntentId: "pi_e1_recovered" }, [withdrawn, live, recordedRow])).toBe(recordedRow);
+  });
+
+  it("an officer's review charge is never matched by the edit stamp, only by its recorded intent", () => {
+    const review = { ...E1_RECOVERY, idempotencyKey: buildEditFinancialReviewAdditionalIntentRecoveryIdempotencyKey("mod-e1") };
+    expect(findOwnRecoveryRow(review, [additionalRow("pi_e1_door", EARLIER, { bookingModificationId: "mod-e1" })])).toBeNull();
+    const recordedRow = additionalRow("pi_review", LATER);
+    expect(findOwnRecoveryRow({ ...review, paymentIntentId: "pi_review" }, [recordedRow])).toBe(recordedRow);
+  });
+
+  it("only ADDITIONAL rows count", () => {
+    const primary = { ...additionalRow("mod_guest_bk1_e1", EARLIER, { bookingModificationId: "mod-e1" }), kind: "PRIMARY" };
+    expect(findOwnRecoveryRow(E1_RECOVERY, [primary])).toBeNull();
+  });
+});
+
+describe("refuseSupersedingAskBeingPaid: a replay never supersedes an ask Stripe is taking (#4015 review C1)", () => {
+  const livePayment = { additionalAmountCents: 2_000, additionalPaymentStatus: "PENDING", additionalPaymentIntentId: "pi_e2" };
+  const answering = (status: string) => {
+    const calls: string[] = [];
+    return {
+      calls,
+      retrieve: async (id: string) => {
+        calls.push(id);
+        return { status };
+      },
+    };
+  };
+
+  it.each(["succeeded", "processing", "requires_capture"])("backs off, retryably, when the carried ask is %s at Stripe", async (status) => {
+    const stripe = answering(status);
+    const refusal = refuseSupersedingAskBeingPaid(livePayment, stripe.retrieve);
+    await expect(refusal).rejects.toBeInstanceOf(CarriedAskBeingPaidError);
+    await expect(refusal).rejects.toMatchObject({ paymentIntentId: "pi_e2", status });
+    expect(stripe.calls).toEqual(["pi_e2"]);
+  });
+
+  it.each(["requires_payment_method", "requires_confirmation", "requires_action", "canceled"])(
+    "lets the replay supersede an ask that is %s",
+    async (status) => {
+      await expect(refuseSupersedingAskBeingPaid(livePayment, answering(status).retrieve)).resolves.toBeUndefined();
+    },
+  );
+
+  it("an intent Stripe has no record of is nothing being paid", async () => {
+    const missing = async () => {
+      throw Object.assign(new Error("No such payment_intent"), { code: "resource_missing" });
+    };
+    await expect(refuseSupersedingAskBeingPaid(livePayment, missing)).resolves.toBeUndefined();
+  });
+
+  it("asks Stripe nothing when there is no unpaid ask to carry", async () => {
+    for (const payment of [
+      { ...livePayment, additionalPaymentStatus: "SUCCEEDED" },
+      { ...livePayment, additionalAmountCents: 0 },
+      { ...livePayment, additionalPaymentIntentId: null },
+    ]) {
+      const stripe = answering("succeeded");
+      await expect(refuseSupersedingAskBeingPaid(payment, stripe.retrieve)).resolves.toBeUndefined();
+      expect(stripe.calls).toEqual([]);
+    }
+  });
+
+  it("any other Stripe read error propagates, so the replay retries rather than superseding blind", async () => {
+    const outage = async () => {
+      throw new Error("Stripe is unavailable");
+    };
+    await expect(refuseSupersedingAskBeingPaid(livePayment, outage)).rejects.toThrow("Stripe is unavailable");
   });
 });

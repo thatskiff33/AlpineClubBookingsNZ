@@ -210,6 +210,9 @@ vi.mock("@/lib/stripe", () => ({
     mockCancelPaymentIntentIfCancellableWithResult(...args),
   processRefund: (...args: unknown[]) => mockProcessRefund(...args),
   createPaymentIntent: (...args: unknown[]) => mockCreatePaymentIntent(...args),
+  // #4015 review C1: the replay reads the live ask it would carry; unpaid unless a test says.
+  getPaymentIntent: async (...args: unknown[]) =>
+    (await mockGetPaymentIntent(...args)) ?? { id: args[0], status: "requires_payment_method" },
   findRecentPaymentIntentByMetadata: (...args: unknown[]) => mockFindRecentPaymentIntentByMetadata(...args),
   findOrCreateCustomer: (...args: unknown[]) =>
     mockFindOrCreateCustomer(...args),
@@ -219,6 +222,7 @@ vi.mock("@/lib/stripe", () => ({
     (await mockListRecentPaymentIntentsMatching(...args)) ?? { intents: [], complete: true },
 }));
 const mockFindRecentPaymentIntentByMetadata = vi.fn();
+const mockGetPaymentIntent = vi.fn();
 const mockStampPaymentIntentMetadata = vi.fn();
 const mockListRecentPaymentIntentsMatching = vi.fn();
 
@@ -4609,6 +4613,7 @@ describe("payment recovery worker", () => {
         stripeCustomerId: "cus_123",
         additionalAmountCents: 4500,
         additionalPaymentStatus: PaymentStatus.PENDING,
+        additionalPaymentIntentId: "pi_later_edit",
         transactions: [
           {
             id: "txn-newer",
@@ -4655,6 +4660,48 @@ describe("payment recovery worker", () => {
       expect(mockCompleteDeferredSupplementaryInvoice).toHaveBeenCalledWith(
         expect.objectContaining({ bookingModificationId: "mod-9", priceDiffCents: 3000 }),
       );
+    });
+
+    it.each(["succeeded", "processing", "requires_capture"])(
+      "MUTATION (#4015 review C1): the later ask it would carry is %s at Stripe - the replay backs off, retryably, minting and superseding nothing",
+      async (status) => {
+        primeQueue(additionalIntentOperation());
+        mockPaymentFindUnique.mockResolvedValue(paymentWithLaterEditAsk());
+        mockGetPaymentIntent.mockResolvedValueOnce({ id: "pi_later_edit", status });
+
+        const result = await processPaymentRecoveryOperations({ limit: 1 });
+
+        expect(result).toMatchObject({ succeeded: 0, retried: 1, failed: 0 });
+        expect(mockGetPaymentIntent).toHaveBeenCalledWith("pi_later_edit");
+        expect(mockCreatePaymentIntent).not.toHaveBeenCalled();
+        expect(mockUpsertPaymentIntentTransaction).not.toHaveBeenCalled();
+        expect(mockCancelPaymentIntentIfCancellableWithResult).not.toHaveBeenCalled();
+        expect(mockPaymentRecoveryUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
+          data: expect.objectContaining({
+            status: PaymentRecoveryOperationStatus.FAILED,
+            lastError: expect.stringContaining(`(pi_later_edit) is ${status} at Stripe`),
+          }),
+        }));
+      },
+    );
+
+    it("#4015 review C1: the read runs with no transaction open, before the mint", async () => {
+      primeQueue(additionalIntentOperation());
+      mockPaymentFindUnique.mockResolvedValue(paymentWithLaterEditAsk());
+      mockPaymentTransactionFindMany.mockResolvedValueOnce([
+        { id: "txn-newer", stripePaymentIntentId: "pi_later_edit", amountCents: 4500 },
+      ]);
+      const openAtRead: number[] = [];
+      mockGetPaymentIntent.mockImplementationOnce(async (id: unknown) => {
+        openAtRead.push(openTransactions.count);
+        return { id, status: "requires_payment_method" };
+      });
+
+      const result = await processPaymentRecoveryOperations({ limit: 1 });
+
+      expect(result.succeeded).toBe(1);
+      expect(openAtRead).toEqual([0]);
+      expect(mockGetPaymentIntent.mock.invocationCallOrder[0]!).toBeLessThan(mockCreatePaymentIntent.mock.invocationCallOrder[0]!);
     });
 
     it("a FROZEN figure (no modification to read) still completes without creating when a later edit minted a newer additional intent", async () => {

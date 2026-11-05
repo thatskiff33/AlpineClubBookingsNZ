@@ -122,8 +122,9 @@ export type PendingAskRecovery = {
   processingStartedAt: Date | null;
   /**
    * What the recovery adds to the rows' ask (`recoveryAskBeyondPaymentAskCents`).
-   * 0 for a claimed retry a later row already overtook: nothing more is owed
-   * for it, but it is still closed (or refuses the edit) so it cannot write.
+   * 0 for a claimed retry whose own row is written (`findOwnRecoveryRow`):
+   * that row already carries it, but it is still closed (or refuses the edit)
+   * so it cannot write.
    */
   askCents: number;
   /**

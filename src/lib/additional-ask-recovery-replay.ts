@@ -14,6 +14,11 @@ import {
   type AdditionalAsk,
   type AdditionalAskPayment,
 } from "@/lib/additional-payment-ask";
+import { isProviderCapturedIntentStatus, readOpenProviderIntent } from "@/lib/additional-payment-chase";
+import {
+  bookingModificationIdForAdditionalIntentRecoveryKey,
+  isEditFinancialReviewAdditionalIntentRecoveryKey,
+} from "@/lib/payment-recovery-keys";
 import { recordedFoldedReissuedAskCents } from "@/lib/unpaid-ask-offset-marker";
 
 /** The `BookingModification` figures a failed mint's recovery re-derives from. */
@@ -138,14 +143,70 @@ export function isRecoveryOvertakenByLaterAsk(
   );
 }
 
+/** A recovery, as `findOwnRecoveryRow` and `isRecoveryReplaySettled` read it. */
+export type ReplayRecovery = {
+  createdAt: Date;
+  /** The Stripe key until its replay records an intent, then that intent's id. */
+  paymentIntentId: string;
+  /** Names the edit whose ask it is (`bookingModificationIdForAdditionalIntentRecoveryKey`). */
+  idempotencyKey: string;
+};
+
+/**
+ * A ledger row, as the own-row rule reads it. `bookingModificationId` and
+ * `withdrawnAt` are REQUIRED, so no reader can drop the second half of the rule.
+ */
+export type ReplayLedgerRow = {
+  kind: string;
+  createdAt: Date;
+  stripePaymentIntentId: string | null;
+  bookingModificationId: string | null;
+  withdrawnAt: Date | null;
+};
+
+/**
+ * THE RECOVERY'S OWN ROW - the one rule for the replay's resume
+ * (`processCreateAdditionalPaymentIntentOperation`) and for whether it is
+ * settled (`isRecoveryReplaySettled`), so the two can never disagree
+ * (`INV-SSOT`, #4015 review L5). An ADDITIONAL row is its own when:
+ *
+ * - it carries the intent its replay recorded on the recovery
+ *   (`holdAdditionalIntentRecoveryClaim` stamps it in the row's transaction); or
+ * - it is stamped with the recovery's own edit
+ *   (`PaymentTransaction.bookingModificationId`, which every ordinary ask write
+ *   names, #3954 round 8). The door can write that row and still enqueue the
+ *   recovery - a step after the write threw, or the commit's reply was lost -
+ *   and the recovery then holds only the Stripe key. Without this half its
+ *   replay carried that row as a later ask and asked for the edit's money twice.
+ *
+ * Withdrawn or not, in both halves: a price reduction that retired the row has
+ * already netted its money, and the replay finishes it as such (#4442). A live
+ * row is preferred where both exist (a currency re-issue keeps the stamp).
+ *
+ * Never by the edit stamp for an officer's review charge: its key names the
+ * edit too, but its ask is not that edit's ordinary row, and it replays by its
+ * own rules.
+ */
+export function findOwnRecoveryRow<R extends ReplayLedgerRow>(
+  operation: Pick<ReplayRecovery, "paymentIntentId" | "idempotencyKey">,
+  transactions: readonly R[],
+): R | null {
+  const additional = transactions.filter((transaction) => transaction.kind === "ADDITIONAL");
+  const byIntent = additional.find((transaction) => transaction.stripePaymentIntentId === operation.paymentIntentId);
+  if (byIntent) return byIntent;
+  if (isEditFinancialReviewAdditionalIntentRecoveryKey(operation.idempotencyKey)) return null;
+  const bookingModificationId = bookingModificationIdForAdditionalIntentRecoveryKey(operation.idempotencyKey);
+  if (!bookingModificationId) return null;
+  const stamped = additional.filter((transaction) => transaction.bookingModificationId === bookingModificationId);
+  return stamped.find((transaction) => transaction.withdrawnAt === null) ?? stamped[0] ?? null;
+}
+
 /**
  * WHETHER A RECOVERY HAS NOTHING LEFT TO MINT - the replay's rule and a price
  * reduction's, read from one place (#3954 review round 4; #4015).
  *
  * A recovery the replay can size - an INCREASE or a RE-ISSUE - is done only
- * once it has written ITS OWN row: the row carrying the intent its replay
- * recorded on the recovery (`holdAdditionalIntentRecoveryClaim`,
- * `writeReissuedAskUnderRecovery`).
+ * once ITS OWN row exists (`findOwnRecoveryRow`).
  *
  * A LATER ASK NEVER SETTLES IT, because it never carries this money. A later
  * ask is sized off the `Payment` (`sizeAdditionalAsk`), and a failed mint never
@@ -165,13 +226,55 @@ export function isRecoveryOvertakenByLaterAsk(
  */
 export function isRecoveryReplaySettled(
   replay: RecoveryReplayAsk,
-  operation: { createdAt: Date; paymentIntentId: string },
-  transactions: readonly { kind: string; createdAt: Date; stripePaymentIntentId: string | null }[],
+  operation: ReplayRecovery,
+  transactions: readonly ReplayLedgerRow[],
 ): boolean {
-  if (replay.kind === "frozen") return isRecoveryOvertakenByLaterAsk(operation, transactions);
-  return transactions.some(
-    (transaction) =>
-      transaction.kind === "ADDITIONAL" &&
-      transaction.stripePaymentIntentId === operation.paymentIntentId,
-  );
+  if (findOwnRecoveryRow(operation, transactions)) return true;
+  return replay.kind === "frozen" && isRecoveryOvertakenByLaterAsk(operation, transactions);
+}
+
+/**
+ * #4015 review C1: the live ask a replay would carry and supersede is being paid
+ * at Stripe right now (`isProviderCapturedIntentStatus`), and our rows have not
+ * caught up. An ordinary, RETRYABLE failure: the replay backs off and, once the
+ * capture's webhook lands, carries nothing of that ask.
+ */
+export class CarriedAskBeingPaidError extends Error {
+  constructor(
+    readonly paymentIntentId: string,
+    readonly status: string,
+  ) {
+    super(
+      `Additional intent recovery deferred: the unpaid ask it would carry (${paymentIntentId}) is ${status} at Stripe; retrying once that payment is recorded`,
+    );
+    this.name = "CarriedAskBeingPaidError";
+  }
+}
+
+/**
+ * A REPLAY NEVER SUPERSEDES AN ASK THE MEMBER IS PAYING (#4015 review C1).
+ *
+ * A replay mints the edit's money plus the unpaid balance of the `Payment`'s
+ * live ask, then cancels that ask. Since #4015 a later edit's ask no longer
+ * settles a waiting increase, so the replay can now carry an ask the member is
+ * paying this minute: confirmed, or through 3DS, with the webhook not yet in.
+ * Cancelling it then fails their confirmation, or refunds a capture
+ * (`REFUND_SUPERSEDED_PAYMENT`) only to ask again. So, before the mint and
+ * outside any transaction, Stripe's own state of that ask is read, and one that
+ * is taking money throws `CarriedAskBeingPaidError`.
+ *
+ * A window remains: a confirmation landing between this read and the hold's
+ * cancel still takes the superseded-capture refund (`INV-PAY-120`).
+ * `retrieve` is injected so this module stays pure.
+ */
+export async function refuseSupersedingAskBeingPaid(
+  payment: AdditionalAskPayment & { additionalPaymentIntentId: string | null },
+  retrieve: (paymentIntentId: string) => Promise<{ status: string }>,
+): Promise<void> {
+  const liveAsk = payment.additionalPaymentIntentId;
+  if (!liveAsk || outstandingAdditionalAskCents(payment) <= 0) return;
+  const intent = await readOpenProviderIntent(liveAsk, retrieve);
+  if (intent && isProviderCapturedIntentStatus(intent.status)) {
+    throw new CarriedAskBeingPaidError(liveAsk, intent.status);
+  }
 }

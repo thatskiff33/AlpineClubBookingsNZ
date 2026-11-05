@@ -265,7 +265,8 @@ export async function foldWaitingReissuedAsks(
   const [transactions, modifications] = await Promise.all([
     tx.paymentTransaction.findMany({
       where: { paymentId: payment.id, kind: PaymentTransactionKind.ADDITIONAL },
-      select: { kind: true, createdAt: true, stripePaymentIntentId: true },
+      // #4015: the own-row rule reads the edit stamp and the withdrawal too (`findOwnRecoveryRow`).
+      select: { kind: true, createdAt: true, stripePaymentIntentId: true, bookingModificationId: true, withdrawnAt: true },
     }),
     tx.bookingModification.findMany({
       where: { bookingId: booking.id },
