@@ -84,7 +84,7 @@ import {
   withoutScopedSideNotes,
 } from "@/lib/xero-booking-repair-side-notes";
 import { addAppliedCreditFindings, waitForAppliedCreditWorkBeforeClearing } from "./xero-booking-repair-applied-credit";
-import { addBlockedNoteAllocationFinding, dispatchOwnNoteRow } from "./xero-booking-repair-own-note-row";
+import { addBlockedNoteAllocationFinding, addResolvedNoteAllocationFinding, dispatchOwnNoteRow } from "./xero-booking-repair-own-note-row";
 import { addKeptLateCaptureRefundByHandFinding, addLateCaptureCardRefundByHandFindings, addPaidAnotherWayReceiptFinding } from "./xero-booking-repair-paid-another-way";
 import { addKeptChangeCaptureFinding, addUnrecordedAdditionalCaptureFindings, keptInvoiceBillsChange } from "./xero-booking-repair-additional-capture";
 import { addRefundRequestNoteNotQueuedFindings, paidBackRefundRequestCents } from "./xero-booking-repair-request-notes";
@@ -1251,7 +1251,6 @@ export function classifyBookingContext(
               bookingId: booking.id,
               creditNoteId: modificationCreditNote.objectId,
               retryDetails: modificationArm.details,
-              resolved: "live-allocation-only", // #4763
             }
           );
           const blockingOperation =
@@ -1343,7 +1342,7 @@ export function classifyBookingContext(
           } else if (blockingOperation.kind === "resolved") {
             // #3635 (`INV-INT-025`): done by hand in Xero - never retried or
             // queued beside, but reported (decision 2), so a wrong resolve can be seen.
-            addResolvedInXeroFinding(findings, blockingOperation.resolvedOperation, "credit-note allocation", { modificationId: modification.id });
+            addResolvedNoteAllocationFinding(findings, modificationArm, blockingOperation.resolvedOperation);
           } else {
             // #1427 third arm: a live-but-not-retryable allocation operation
             // must block, not be re-queued beside it — evidence-sized
@@ -1800,7 +1799,6 @@ export function classifyBookingContext(
             bookingId: booking.id,
             creditNoteId: cancellationCreditNote.objectId,
             retryDetails: { bookingId: booking.id },
-            resolved: "live-allocation-only", // #4763
           }
         );
         if (ownNoteRow.outcome === "handled") {
@@ -1833,7 +1831,7 @@ export function classifyBookingContext(
           } else if (blockingOperation?.kind === "resolved") {
             // #3635 (`INV-INT-025`): done by hand in Xero - never retried or
             // queued beside, but reported (decision 2), so a wrong resolve can be seen.
-            addResolvedInXeroFinding(findings, blockingOperation.resolvedOperation, "invoice-clearing allocation");
+            addResolvedNoteAllocationFinding(findings, clearingArm, blockingOperation.resolvedOperation);
           } else if (blockingOperation?.kind === "blocked") {
             // #3635: a live allocation (pending, running, or failed and not
             // retryable) is reported, never queued beside - the #1356/#1427
