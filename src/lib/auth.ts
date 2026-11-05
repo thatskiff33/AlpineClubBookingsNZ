@@ -21,7 +21,6 @@ import logger from "./logger";
 import type { PostLoginLanding } from "@prisma/client";
 import type { AppRole } from "./member-roles";
 import {
-  hasAccessRole,
   isAccessRole,
   isFullAdmin,
   sessionAccessRoleClaim,
@@ -34,10 +33,16 @@ import {
   type AdminPermissionMatrix,
 } from "./admin-permissions";
 import {
-  isLoginRevokedSession,
+  getTokenSessionIssuedAtMs,
+  isRevokedMemberSession,
   loadSessionMemberSecurity,
 } from "./session-member-security";
 import { loadEffectiveModuleFlags } from "./module-settings";
+import {
+  ACCOUNT_SESSION_IDLE_SECONDS,
+  isKioskSessionMember,
+  resolveRequestSessionIdleSeconds,
+} from "./session-idle-expiry";
 import { consumeTwoFactorSessionChallenge } from "./two-factor";
 import { hashActionToken, isActionTokenFormat } from "./action-tokens";
 import {
@@ -128,24 +133,6 @@ declare module "next-auth" {
     twoFactorEnabled: boolean;
     twoFactorMethod: "TOTP" | "EMAIL" | null;
   }
-}
-
-function getTokenSessionIssuedAtMs(token: {
-  sessionIssuedAt?: unknown;
-  iat?: unknown;
-}) {
-  if (
-    typeof token.sessionIssuedAt === "number" &&
-    Number.isFinite(token.sessionIssuedAt)
-  ) {
-    return token.sessionIssuedAt;
-  }
-
-  if (typeof token.iat === "number" && Number.isFinite(token.iat)) {
-    return token.iat * 1000;
-  }
-
-  return Date.now();
 }
 
 /**
@@ -608,6 +595,8 @@ export const authConfig = {
           // session through adminPermissionMatrix below (#1367).
           token.accessRoles = sessionAccessRoleClaim(member);
           token.canLogin = member.canLogin;
+          // #4612: the next refresh's idle window (session-idle-expiry.ts).
+          token.kioskAccount = isKioskSessionMember(member);
           // #1367: merged admin-permission matrix over the JOINED assignment
           // rows, so definition-backed custom roles and club-edited seeded
           // definitions grant correctly through every session.user-based
@@ -621,30 +610,14 @@ export const authConfig = {
           token.forcePasswordChange = member.forcePasswordChange;
           token.postLoginLanding = member.postLoginLanding ?? null;
           token.isEmailVerified = member.emailVerified;
-          // #2620: an account an approved deletion request has anonymised holds
-          // no session, full stop — whatever `active` currently says. This is the
-          // defence-in-depth backstop behind the provider refusals above: it
-          // covers a session minted BEFORE the deletion (which also switches
-          // login off, so the login rule below refuses it too) and a session
-          // minted after someone flipped `active` back directly in the
-          // database. Same kill-switch as a revoking password change: auth()
-          // nulls any session carrying it, so every server touch reads as
-          // logged-out.
-          const deletedAccountSession = isDeletedAccountRecord(member);
-          if (deletedAccountSession) {
-            logger.warn(
-              { memberId: token.id },
-              "Invalidating session for a deleted account (#2620)",
-            );
-          }
-          // #3603: login off, or switched off after this session began; a
-          // token once invalidated stays so (see session-member-security.ts).
+          // #2620 deleted account, #3603 login off or switched off, or a newer
+          // password: the defence-in-depth backstop behind the provider
+          // refusals above. auth() nulls any session carrying the flag, so every
+          // server touch reads as logged-out; a token once invalidated stays so
+          // (see session-member-security.ts).
           token.sessionInvalidated =
             token.sessionInvalidated === true ||
-            deletedAccountSession ||
-            isLoginRevokedSession(member, sessionIssuedAt, token.id) ||
-            (member.passwordChangedAt instanceof Date &&
-              member.passwordChangedAt.getTime() > sessionIssuedAt);
+            isRevokedMemberSession(member, sessionIssuedAt, token.id);
           token.twoFactorRequired = twoFactorRequired;
           token.twoFactorEnrolled = member.twoFactorEnabled;
           token.twoFactorMethod = member.twoFactorMethod ?? null;
@@ -662,10 +635,6 @@ export const authConfig = {
             token.twoFactorVerified = verifiedByChallenge;
             token.twoFactorVerifiedByChallenge = verifiedByChallenge;
           }
-          // Lodge access accounts get 30-day sessions for shared iPad kiosk.
-          if (user && hasAccessRole(member, "LODGE")) {
-            token.exp = Math.floor(Date.now() / 1000) + 30 * 24 * 60 * 60;
-          }
         } else {
           // No live member resolves for this token id — a deleted member, or a
           // dangling id from a fallback-user substitution (#2229). Invalidate the
@@ -681,6 +650,7 @@ export const authConfig = {
           // left to propagate), so a connection blip never invalidates a live
           // session.
           token.sessionInvalidated = true;
+          token.kioskAccount = false;
         }
       }
 
@@ -739,7 +709,7 @@ export const authConfig = {
   },
   session: {
     strategy: "jwt",
-    maxAge: 8 * 60 * 60, // 8 hours
+    maxAge: ACCOUNT_SESSION_IDLE_SECONDS, // set per request (#4612)
   },
 } satisfies NextAuthConfig;
 
@@ -769,7 +739,9 @@ const baseProviders = authConfig.providers.filter(
  * 2FA sign-in. Exported for tests (the fail-open acceptance test asserts the
  * base providers survive while the resolver throws).
  */
-export async function buildRequestAuthConfig(): Promise<NextAuthConfig> {
+export async function buildRequestAuthConfig(
+  request?: Request,
+): Promise<NextAuthConfig> {
   let google: Awaited<ReturnType<typeof getGoogleOAuthConfig>> = null;
   try {
     google = await getGoogleOAuthConfig();
@@ -780,18 +752,21 @@ export async function buildRequestAuthConfig(): Promise<NextAuthConfig> {
     );
     google = null;
   }
+  // #4612: the idle window of the session this request carries.
+  const maxAge = await resolveRequestSessionIdleSeconds(request, authConfig);
   return {
     ...authConfig,
     providers: google
       ? [...baseProviders, buildGoogleProvider(google)]
       : baseProviders,
+    session: { ...authConfig.session, maxAge },
   };
 }
 
 // v5 request-scoped function form: the config (hence the provider list) is
 // recomputed per request from live DB credential state. next-auth@5.0.0-beta.31
-// supports `NextAuth((request) => Awaitable<NextAuthConfig>)`; the request arg is
-// unused (the only per-request input is the DB credential state).
+// supports `NextAuth((request) => Awaitable<NextAuthConfig>)`. The request arg
+// (absent for server components and actions) carries the session cookie (#4612).
 const nextAuth = NextAuth(buildRequestAuthConfig);
 
 export const { handlers, signIn, signOut, unstable_update: updateSession } =
