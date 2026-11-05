@@ -557,7 +557,7 @@ describe("passwordHash writer scanner", () => {
     const guarded = (source: string) => scan(source).map((s) => s.screenedBefore);
     // Guarded: bound, awaited, `if (!x.ok)` exits, all before the writer.
     expect(guarded(`async function a(p) { const s = await screenChosenPassword(p); if (!s.ok) return; save({ passwordHash: await hash(p, 12) }); }`)).toEqual([true]);
-    expect(guarded(`async function a(p) { const s = p ? await screenChosenPassword(p) : { ok: true }; if (!s.ok) { log(); return r(s); } save({ passwordHash: await hash(p, 12) }); }`)).toEqual([true]);
+    expect(guarded(`async function a(p) { const s = await screenChosenPassword(p); if (!s.ok) { log(); return r(s); } save({ passwordHash: await hash(p, 12) }); }`)).toEqual([true]);
     expect(guarded(`async function a(p) { const s = await screenChosenPassword(p); if (!s.ok) throw new E(); await tx(async (t) => t.save({ passwordHash: await hash(p, 12) })); }`)).toEqual([true]);
     // A `||` chain still enters the branch whenever the screen failed.
     expect(guarded(`async function a(p) { const s = await screenChosenPassword(p); if (bad || !s.ok) return; save({ passwordHash: await hash(p, 12) }); }`)).toEqual([true]);
@@ -609,6 +609,146 @@ describe("passwordHash writer scanner", () => {
         export const PUT = wrap(async () => save({ passwordHash: await hash(p, 12) }));
       `),
     ).toEqual([false]);
+  });
+
+  it("accepts a conditional screen only when every branch screens (#4764)", () => {
+    const guarded = (source: string) => scan(source).map((s) => s.screenedBefore);
+    const check = (init: string) =>
+      guarded(`async function a(b, skip, other) { const s = ${init}; if (!s.ok) return; save({ passwordHash: await hash(b.pw, 12) }); }`);
+    const call = `await screenChosenPassword(b.pw)`;
+    // Refused: a branch (or operand) that gives a result with no screen.
+    expect(check(`skip ? { ok: true } : ${call}`)).toEqual([false]);
+    expect(check(`skip ? ${call} : { ok: true }`)).toEqual([false]);
+    expect(check(`skip ? ${call} : other`)).toEqual([false]);
+    // Nested: one branch deep down still has none.
+    expect(check(`skip ? (other ? ${call} : { ok: true }) : ${call}`)).toEqual([false]);
+    expect(check(`skip ? ${call} : (other ? { ok: true } : ${call})`)).toEqual([false]);
+    // `||` and `??` give back an operand that was not screened.
+    expect(check(`other || ${call}`)).toEqual([false]);
+    expect(check(`${call} || other`)).toEqual([false]);
+    expect(check(`other ?? ${call}`)).toEqual([false]);
+    expect(check(`${call} ?? other`)).toEqual([false]);
+    // A screen of another value does not count as a branch.
+    expect(check(`skip ? ${call} : await screenChosenPassword(b.other)`)).toEqual([false]);
+    // No false positives: the plain screen, and every branch or operand screening.
+    expect(check(call)).toEqual([true]);
+    expect(check(`skip ? ${call} : ${call}`)).toEqual([true]);
+    expect(check(`skip ? (other ? ${call} : ${call}) : ${call}`)).toEqual([true]);
+    expect(check(`skip ? ${call} : (other ? ${call} : ${call})`)).toEqual([true]);
+    expect(check(`${call} || ${call}`)).toEqual([true]);
+    expect(check(`${call} ?? ${call}`)).toEqual([true]);
+    expect(check(`skip ? (${call}) : (${call})`)).toEqual([true]);
+    // A branch a constant test rules out need not screen (and one that stays live must).
+    expect(check(`true ? ${call} : { ok: true }`)).toEqual([true]);
+    expect(check(`false ? { ok: true } : ${call}`)).toEqual([true]);
+    expect(check(`true ? { ok: true } : ${call}`)).toEqual([false]);
+    // A gap is harmless where the writer cannot run on its path: the real kiosk and seed shapes.
+    const gated = (init: string, writer: string) =>
+      guarded(`async function a(b, skip, other, password) { const s = ${init}; if (!s.ok) return; ${writer} }`);
+    const save = `save({ passwordHash: await hash(b.pw, 12) });`;
+    expect(gated(`skip ? { ok: true } : ${call}`, `if (!skip) { ${save} }`)).toEqual([true]);
+    expect(gated(`skip ? { ok: true } : ${call}`, `if (skip) { log(); } else { ${save} }`)).toEqual([true]);
+    expect(gated(`skip ? { ok: true } : ${call}`, `if (skip) { ${save} }`)).toEqual([false]);
+    expect(gated(`skip ? { ok: true } : ${call}`, `if (other) { ${save} }`)).toEqual([false]);
+    expect(gated(`skip ? { ok: true } : ${call}`, `if (!skip) { log(); } ${save}`)).toEqual([false]);
+    expect(gated(`skip ? { ok: true } : ${call}`, `if (!skip && other) { ${save} }`)).toEqual([true]);
+    expect(gated(`skip ? { ok: true } : ${call}`, `if (!skip || other) { ${save} }`)).toEqual([false]);
+    expect(gated(`skip ? { ok: true } : ${call}`, `if (!skip) { await tx(async () => { ${save} }); }`)).toEqual([true]);
+    expect(gated(`password ? ${call} : { ok: true }`, `if (password) { ${save} }`)).toEqual([true]);
+    expect(gated(`password ? ${call} : { ok: true }`, `if (!password) { ${save} }`)).toEqual([false]);
+    // A comparison and its negation, with the operands in either order.
+    expect(gated(`password === null ? { ok: true } : ${call}`, `if (password !== null) { ${save} }`)).toEqual([true]);
+    expect(gated(`password === null ? { ok: true } : ${call}`, `if (null !== password) { ${save} }`)).toEqual([true]);
+    expect(gated(`password !== null ? ${call} : { ok: true }`, `if (password === null) { log(); } else { ${save} }`)).toEqual([true]);
+    expect(gated(`password === null ? { ok: true } : ${call}`, `if (password === null) { ${save} }`)).toEqual([false]);
+    expect(gated(`password == null ? { ok: true } : ${call}`, `if (password !== null) { ${save} }`)).toEqual([false]);
+    // Nested: each gap needs its own path ruled out, and one fact on the path is enough.
+    expect(gated(`skip ? (other ? ${call} : { ok: true }) : ${call}`, `if (other) { ${save} }`)).toEqual([true]);
+    expect(gated(`skip ? (other ? ${call} : { ok: true }) : ${call}`, `if (skip) { ${save} }`)).toEqual([false]);
+    expect(gated(`skip ? { ok: true } : (other ? ${call} : { ok: true })`, `if (!skip && other) { ${save} }`)).toEqual([true]);
+    expect(gated(`skip ? { ok: true } : (other ? ${call} : { ok: true })`, `if (!skip) { ${save} }`)).toEqual([false]);
+    expect(gated(`skip ? { ok: true } : (other ? ${call} : { ok: true })`, `if (other) { ${save} }`)).toEqual([false]);
+    // A `||` or `??` operand gives back a result with no fact to rule it out.
+    expect(gated(`skip || ${call}`, `if (!skip) { ${save} }`)).toEqual([false]);
+    // The tested value must not be able to change between the screen and the guard.
+    expect(guarded(`async function a(b, skip) { const s = skip ? { ok: true } : ${call}; if (!s.ok) return; skip = false; if (!skip) { ${save} } }`)).toEqual([false]);
+    expect(guarded(`async function a(b) { let skip = f(); const s = skip ? { ok: true } : ${call}; if (!s.ok) return; if (!skip) { ${save} } }`)).toEqual([false]);
+    expect(gated(`b.skip ? { ok: true } : ${call}`, `if (!b.skip) { ${save} }`)).toEqual([false]);
+    expect(gated(`f() ? { ok: true } : ${call}`, `if (!f()) { ${save} }`)).toEqual([false]);
+    // A same-named value in a callback is another declaration.
+    expect(gated(`skip ? { ok: true } : ${call}`, `xs.forEach(async (skip) => { if (!skip) { ${save} } });`)).toEqual([false]);
+    // The window starts at the earliest screen of any branch.
+    expect(
+      guarded(`async function a(b, skip) { const s = skip ? ${call} : (Object.assign(b, { pw: x }), ${call}); if (!s.ok) return; save({ passwordHash: await hash(b.pw, 12) }); }`),
+    ).toEqual([false]);
+  });
+
+  it("extends the change window to the end of a loop the writer sits in (#4764)", () => {
+    const guarded = (source: string) => scan(source).map((s) => s.screenedBefore);
+    const screen = `const s = await screenChosenPassword(b.pw); if (!s.ok) return;`;
+    const write = `save({ passwordHash: await hash(b.pw, 12) });`;
+    const change = `Object.assign(b, { pw: x });`;
+    const inFn = (body: string) => guarded(`async function a(b, xs, ys, x) { ${body} }`);
+    // The issue's example, and each loop kind: the change runs before the writer on the next pass.
+    expect(inFn(`${screen} for (const x of xs) { ${write} ${change} }`)).toEqual([false]);
+    expect(inFn(`${screen} for (const k in xs) { ${write} ${change} }`)).toEqual([false]);
+    expect(inFn(`${screen} for (let i = 0; i < 3; i++) { ${write} ${change} }`)).toEqual([false]);
+    expect(inFn(`${screen} while (more()) { ${write} ${change} }`)).toEqual([false]);
+    expect(inFn(`${screen} do { ${write} ${change} } while (more());`)).toEqual([false]);
+    // A braceless body, a write through an alias and a plain property write.
+    expect(inFn(`${screen} for (const x of xs) { ${write} const al = b; al.pw = x; }`)).toEqual([false]);
+    expect(inFn(`${screen} for (const y of ys) { ${write} b.pw = y; }`)).toEqual([false]);
+    // The loop's own header changes the object between passes.
+    expect(inFn(`${screen} for (let i = 0; i < 3; mutate(b)) { ${write} }`)).toEqual([false]);
+    expect(inFn(`${screen} while (mutate(b)) { ${write} }`)).toEqual([false]);
+    expect(inFn(`${screen} do { ${write} } while (mutate(b));`)).toEqual([false]);
+    // Nested loops: the change after the inner loop, in the outer body, still comes first on the next outer pass.
+    expect(inFn(`${screen} for (const x of xs) { for (const y of ys) { ${write} } ${change} }`)).toEqual([false]);
+    expect(inFn(`${screen} while (more()) { do { ${write} } while (again()); ${change} }`)).toEqual([false]);
+    expect(inFn(`${screen} for (const x of xs) { ${change} for (const y of ys) { ${write} } }`)).toEqual([false]);
+    // The writer in a callback in the loop runs on each pass as well.
+    expect(inFn(`${screen} for (const x of xs) { await tx(async () => { ${write} }); ${change} }`)).toEqual([false]);
+    // A change before the writer in the loop was already refused.
+    expect(inFn(`${screen} for (const x of xs) { ${change} ${write} }`)).toEqual([false]);
+    // No false positives: the plain loop, a change after the loop, one outside any loop after the
+    // writer (a stated limit), a change to another value, and a loop that screens on each pass.
+    expect(inFn(`${screen} for (const x of xs) { ${write} }`)).toEqual([true]);
+    expect(inFn(`${screen} for (const x of xs) { ${write} } ${change}`)).toEqual([true]);
+    expect(inFn(`${screen} ${write} ${change}`)).toEqual([true]);
+    expect(inFn(`${screen} ${write} for (const x of xs) { ${change} }`)).toEqual([true]);
+    expect(inFn(`${screen} for (const x of xs) { ${write} log(b.other); b.other = x; }`)).toEqual([true]);
+    expect(inFn(`${screen} for (const x of xs) { ${write} } for (const y of ys) { ${change} }`)).toEqual([true]);
+    expect(inFn(`for (const x of xs) { ${screen} ${write} ${change} }`)).toEqual([true]);
+    expect(inFn(`${screen} for (const x of xs) { for (const y of ys) { ${write} } }`)).toEqual([true]);
+    expect(inFn(`${screen} for (const x of xs) { const t = x; ${write} log(t); }`)).toEqual([true]);
+    // A screen inside the loop's body, with the change after the writer in the same pass, is screened again on the next.
+    expect(inFn(`while (more()) { ${screen} ${write} ${change} }`)).toEqual([true]);
+    // A loop only starts the window after the screen: one wrapped around the screen does not extend it.
+    expect(inFn(`for (const x of xs) { { ${screen} ${write} } ${change} }`)).toEqual([true]);
+    // The loop must end the change window only for loops around the writer, not a sibling before it.
+    expect(inFn(`for (const y of ys) { log(y); } ${screen} ${write} ${change}`)).toEqual([true]);
+  });
+
+  it("applies the loop window to a copy and to the writer a copy came from (#4764)", () => {
+    const sources = (source: string) => scan(source).map((s) => s.source);
+    const screen = `const s = await screenChosenPassword(b.pw); if (!s.ok) return;`;
+    const built = `const data = { passwordHash: await hash(randomUUID(), 12) };`;
+    const copy = `save({ passwordHash: data.passwordHash });`;
+    const change = `Object.assign(data, x);`;
+    const inFn = (body: string) => sources(`async function a(b, xs, x) { ${body} }`);
+    // A change after the copy in a loop, with the object built before or inside it (the copy window runs to the end of the scope).
+    expect(inFn(`${built} for (const x of xs) { ${copy} ${change} }`)).toEqual(["random", "unknown"]);
+    expect(inFn(`for (const x of xs) { ${built} ${copy} ${change} }`)).toEqual(["random", "unknown"]);
+    expect(inFn(`${built} while (more()) { ${copy} ${change} }`)).toEqual(["random", "unknown"]);
+    // A change after the copy outside any loop is refused too, and no change keeps the copy.
+    expect(inFn(`${built} ${copy} ${change}`)).toEqual(["random", "unknown"]);
+    expect(inFn(`${built} for (const x of xs) { ${copy} }`)).toEqual(["random", "copy"]);
+    // The copied writer is screened: a change to the screened password later in its loop voids the screen, and so the copy.
+    const screenedBuild = `const data = { passwordHash: await hash(b.pw, 12) };`;
+    expect(inFn(`${screen} for (const x of xs) { ${screenedBuild} ${copy} Object.assign(b, { pw: x }); }`)).toEqual(["unknown", "unknown"]);
+    expect(inFn(`${screen} for (const x of xs) { ${screenedBuild} ${copy} }`)).toEqual(["unknown", "copy"]);
+    // A change after the screened writer outside any loop stays out of scope.
+    expect(inFn(`${screen} ${screenedBuild} ${copy} Object.assign(b, { pw: x });`)).toEqual(["unknown", "copy"]);
   });
 
   it("refuses a copy whose object is changed after it is built (#4746)", () => {
