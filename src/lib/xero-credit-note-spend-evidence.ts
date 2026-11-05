@@ -11,13 +11,23 @@
  * land after the reading, so the verdict is derived each time it is asked for.
  *
  * One key, replaced whole by the link funnel's top-level merge, so a later write
- * can never leave old allocations beside a newer total. A refund note's links never
- * carry it (a refund note funds no lot, and its snapshot has its own write order,
- * `judgeRefundNoteWrite`). Nothing here reads or writes Xero or the credit ledger.
+ * can never leave old allocations beside a newer total. A reading older than the
+ * one already kept (by Xero's change time) is not written over it. A refund note's
+ * links never carry it (a refund note funds no lot, and its snapshot has its own
+ * write order, `judgeRefundNoteWrite`). A note that funds a lot but has no active
+ * credit-note link gets no reading, so it is never warned about. Nothing here reads
+ * or writes Xero or the credit ledger.
  */
 import type { Prisma } from "@prisma/client";
-import { creditNoteMirrorEvidenceFrom, type CreditNoteMirrorEvidence, type XeroCreditNoteLike } from "@/lib/xero-credit-note-mirror";
-import { NOT_A_CONVERGENCE_ROW } from "@/lib/xero-credit-note-write-down";
+import { isNonNegativeIntegerCents } from "@/lib/edit-financial-review-context";
+import { fundingLotWhere } from "@/lib/xero-applied-credit-slice-lookup";
+import {
+  creditNoteMirrorEvidenceFrom,
+  readCreditNoteInstant,
+  type CreditNoteMirrorEvidence,
+  type XeroCreditNoteLike,
+} from "@/lib/xero-credit-note-mirror";
+import { asRecord } from "@/lib/xero-json";
 import { REFUND_NOTE_LINK_ROLES, isRefundNoteLinkOf } from "@/lib/xero-refund-note-status";
 import type { XeroObjectLinkInput } from "@/lib/xero-sync";
 
@@ -52,16 +62,7 @@ export function storedSpendEvidenceFrom(evidence: CreditNoteMirrorEvidence, obse
   };
 }
 
-const isCents = (value: unknown): value is number => typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
-const isNullableCents = (value: unknown): value is number | null => value === null || isCents(value);
-const asRecord = (value: unknown): Record<string, unknown> | null =>
-  value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
-const readInstant = (value: unknown): Date | null | undefined => {
-  if (value === null) return null;
-  if (typeof value !== "string") return undefined;
-  const parsed = new Date(value);
-  return Number.isNaN(parsed.getTime()) ? undefined : parsed;
-};
+const isNullableCents = (value: unknown): value is number | null => value === null || isNonNegativeIntegerCents(value);
 
 function readEntries<K extends "invoiceId" | "paymentId">(value: unknown, key: K): Array<Record<K, string> & { cents: number }> | null {
   if (!Array.isArray(value)) return null;
@@ -69,11 +70,15 @@ function readEntries<K extends "invoiceId" | "paymentId">(value: unknown, key: K
   for (const raw of value) {
     const entry = asRecord(raw);
     const id = entry?.[key];
-    if (!entry || typeof id !== "string" || id === "" || !isCents(entry.cents)) return null;
+    if (!entry || typeof id !== "string" || id === "" || !isNonNegativeIntegerCents(entry.cents)) return null;
     entries.push({ [key]: id, cents: entry.cents } as Record<K, string> & { cents: number });
   }
   return entries;
 }
+
+/** A stored ISO instant: a string Xero's reader accepts, else `undefined` (untrusted). */
+const readStoredInstant = (value: unknown): Date | undefined =>
+  typeof value === "string" ? readCreditNoteInstant(value) ?? undefined : undefined;
 
 /**
  * The reading out of a link's metadata, or null for anything that is not exactly
@@ -88,29 +93,64 @@ export function readStoredSpendEvidence(metadata: unknown): CreditNoteSpendReadi
   if (!isNullableCents(totalCents) || !isNullableCents(remainingCents)) return null;
   const allocations = readEntries(raw.allocations, "invoiceId");
   const payments = readEntries(raw.payments, "paymentId");
-  const updatedAt = readInstant(raw.noteUpdatedAt);
-  const observedAt = readInstant(raw.observedAt);
+  const updatedAt = raw.noteUpdatedAt === null ? null : readStoredInstant(raw.noteUpdatedAt);
+  const observedAt = readStoredInstant(raw.observedAt);
   if (!allocations || !payments || updatedAt === undefined || !observedAt) return null;
   return { status, totalCents, remainingCents, allocations, payments, updatedAt, observedAt };
 }
 
 /**
+ * THE ORDER OF TWO READINGS OF ONE NOTE: by Xero's change time (a reading with
+ * none is the oldest), then by when the app took it. Positive when `a` is newer.
+ */
+export function compareSpendReadings(
+  a: Pick<CreditNoteSpendReading, "updatedAt" | "observedAt">,
+  b: Pick<CreditNoteSpendReading, "updatedAt" | "observedAt">,
+): number {
+  const byChange = (a.updatedAt?.getTime() ?? -Infinity) - (b.updatedAt?.getTime() ?? -Infinity);
+  if (byChange !== 0 && !Number.isNaN(byChange)) return byChange;
+  return a.observedAt.getTime() - b.observedAt.getTime();
+}
+
+/** The newest trustworthy reading per note across the note's active credit-note links. */
+export async function newestSpendReadings(
+  db: Pick<Prisma.TransactionClient, "xeroObjectLink">,
+  where: Prisma.XeroObjectLinkWhereInput,
+): Promise<Map<string, CreditNoteSpendReading>> {
+  const links = await db.xeroObjectLink.findMany({
+    where: { ...where, xeroObjectType: "CREDIT_NOTE", active: true },
+    select: { xeroObjectId: true, metadata: true },
+  });
+  const readings = new Map<string, CreditNoteSpendReading>();
+  for (const link of links) {
+    const reading = readStoredSpendEvidence(link.metadata);
+    const kept = readings.get(link.xeroObjectId);
+    if (reading && (!kept || compareSpendReadings(reading, kept) > 0)) readings.set(link.xeroObjectId, reading);
+  }
+  return readings;
+}
+
+/**
  * The metadata to merge onto the note's links at ingest: the reading, when the note
  * funds a member's credit lot (most notes fund none: one indexed read, then an empty
- * object). Built from the note the reconcile already holds; it makes no Xero call.
+ * object), and unless a reading of a later change of the note is already kept (an
+ * event processed out of order must not put an older reading back). Built from the
+ * note the reconcile already holds; it makes no Xero call. The kept reading is read
+ * and then written without a lock: the reading is advisory, and the next event of
+ * the note settles a race.
  */
 export async function creditNoteSpendEvidenceMetadata(
   note: XeroCreditNoteLike,
-  db: Pick<Prisma.TransactionClient, "memberCredit">,
+  db: Pick<Prisma.TransactionClient, "memberCredit" | "xeroObjectLink">,
   observedAt: Date = new Date(),
 ): Promise<Record<string, StoredCreditNoteSpendEvidence>> {
   const evidence = creditNoteMirrorEvidenceFrom(note);
   if (!evidence) return {};
-  const funded = await db.memberCredit.findFirst({
-    where: { xeroCreditNoteId: evidence.creditNoteId, amountCents: { gt: 0 }, ...NOT_A_CONVERGENCE_ROW },
-    select: { id: true },
-  });
-  return funded ? { [CREDIT_NOTE_SPEND_EVIDENCE_KEY]: storedSpendEvidenceFrom(evidence, observedAt) } : {};
+  const funded = await db.memberCredit.findFirst({ where: fundingLotWhere(evidence.creditNoteId), select: { id: true } });
+  if (!funded) return {};
+  const kept = (await newestSpendReadings(db, { xeroObjectId: evidence.creditNoteId })).get(evidence.creditNoteId);
+  if (kept && compareSpendReadings(kept, { updatedAt: evidence.updatedAt, observedAt }) > 0) return {};
+  return { [CREDIT_NOTE_SPEND_EVIDENCE_KEY]: storedSpendEvidenceFrom(evidence, observedAt) };
 }
 
 /** A link the reconcile writes, with the reading merged in; a refund note's link is left as it is. */

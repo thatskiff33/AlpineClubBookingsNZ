@@ -50,7 +50,7 @@ import {
   XERO_OUTBOX_APPLIED_CREDIT_ALLOCATION_TYPE,
   XERO_OUTBOX_APPLIED_CREDIT_DEALLOCATION_TYPE,
 } from "./xero-operation-outbox-payload";
-import { findFundingLotsForNote } from "./xero-applied-credit-slice-lookup";
+import { findFundingLotsForNote, fundingLotWhere } from "./xero-applied-credit-slice-lookup";
 import {
   CREDIT_NOTE_MIRROR_SETTLE_MS,
   creditNoteSettlesAt,
@@ -64,7 +64,6 @@ import { planOutsideSpendMirror } from "./xero-credit-note-mirror-plan";
 import {
   CREDIT_NOTE_MIRROR_RESTORE_DESCRIPTION,
   CREDIT_NOTE_MIRROR_WRITE_DOWN_DESCRIPTION,
-  NOT_A_CONVERGENCE_ROW,
   writtenDownCentsByCreditNote,
 } from "./xero-credit-note-write-down";
 
@@ -102,7 +101,8 @@ export interface XeroCreditNoteLike {
   payments?: Parameters<typeof xeroPaymentsOf>[0];
 }
 
-function readInstant(value: unknown): Date | null {
+/** An instant Xero sent (a `Date` or a date string), or null when it is missing or unreadable. */
+export function readCreditNoteInstant(value: unknown): Date | null {
   if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value;
   if (typeof value === "string" && value.trim() !== "") {
     const parsed = new Date(value);
@@ -121,7 +121,7 @@ export function creditNoteMirrorEvidenceFrom(note: XeroCreditNoteLike): CreditNo
     remainingCents: exactProviderAmountToCents(note.remainingCredit),
     allocations: xeroAllocationsOf(note.allocations),
     payments: xeroPaymentsOf(note.payments),
-    updatedAt: readInstant(note.updatedDateUTC),
+    updatedAt: readCreditNoteInstant(note.updatedDateUTC),
   };
 }
 
@@ -213,7 +213,7 @@ export async function mirrorCreditNoteOutsideSpend(
 
   // Most notes fund no lot at all (an invoice's, a refund's): one indexed read, then out.
   const lots = await db.memberCredit.findMany({
-    where: { xeroCreditNoteId: creditNoteId, amountCents: { gt: 0 }, ...NOT_A_CONVERGENCE_ROW },
+    where: fundingLotWhere(creditNoteId),
     select: { id: true, memberId: true },
     take: 2,
   });

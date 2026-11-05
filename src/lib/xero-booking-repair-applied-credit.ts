@@ -119,25 +119,40 @@ function addUnallocatedCardAppliedCreditFindings(
  * refuse the allocation (#4218). Report-only: no action, never auto-applied, and no
  * Xero call - the reading was kept at ingest and judged in the load
  * (`findCreditNotesSpentOutsideApp`). The converge (#4219) acts when Xero refuses
- * the allocation; until then an officer checks the note in Xero.
+ * the allocation; until then an officer checks the note in Xero. A booking whose
+ * allocation was resolved by hand, or closed by the converge, gets no warning: it
+ * is reported as resolved in Xero, once (the card arm above may already have).
  */
 export function addCreditNoteSpentOutsideFindings(findings: MutableFinding[], context: BookingClassificationContext): void {
+  const bookingId = context.booking.id;
   for (const note of context.creditNotesSpentOutsideApp ?? []) {
+    const details = {
+      creditNoteId: note.creditNoteId,
+      memberCreditId: note.lotId,
+      xeroRemainingCents: note.xeroRemainingCents,
+      pendingAllocationCents: note.pendingAllocationCents,
+      pendingSliceCents: note.pendingSliceCents,
+      unslicedDrawCents: note.unslicedDrawCents,
+      outsideSpendCents: note.outsideSpendCents,
+      leftForAllocationCents: note.leftForAllocationCents,
+      observedAt: note.observedAt.toISOString(),
+    };
+    const resolved = note.resolvedAllocations.find((entry) => entry.bookingId === bookingId);
+    if (resolved) {
+      const reported = findings.some(
+        (finding) => finding.code === "RESOLVED_IN_XERO_BY_OFFICER" && finding.details.operationId === resolved.operation.id,
+      );
+      if (!reported) addResolvedInXeroFinding(findings, resolved.operation, "applied-credit allocation", details);
+      continue;
+    }
+    if (!note.bookingIds.includes(bookingId)) continue;
     addFinding(findings, {
       code: "APPLIED_CREDIT_NOTE_CONSUMED_EXTERNALLY",
       severity: "warning",
       summary:
         "A credit note this booking's applied credit still has to be allocated from was used in Xero outside the app, so Xero has less left on it than the app will allocate. Check the note in Xero before the allocation runs.",
       safeToAutoApply: false,
-      details: {
-        creditNoteId: note.creditNoteId,
-        memberCreditId: note.lotId,
-        xeroRemainingCents: note.xeroRemainingCents,
-        pendingAllocationCents: note.pendingAllocationCents,
-        outsideSpendCents: note.outsideSpendCents,
-        leftForAllocationCents: note.leftForAllocationCents,
-        observedAt: note.observedAt.toISOString(),
-      },
+      details,
       actionKeys: [],
     });
   }

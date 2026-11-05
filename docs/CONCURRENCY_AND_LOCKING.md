@@ -5892,8 +5892,12 @@ mirror, converge or allocation that commits while it runs can make one answer st
 by one change; it is advisory, and the next ask is fresh. The reading it judges is
 merged onto the note's existing links by `reconcileXeroCreditNote` through
 `upsertXeroObjectLink`: the same writer, the same links and the same top-level
-`mergeMetadata`, with one more key, outside any transaction and after the reconcile's
-one Xero read. No new advisory key and no new participant in the lock inventory.
+`mergeMetadata`, with one more key, after the reconcile's one Xero read. Each
+`upsertXeroObjectLink` runs in its own short transaction, never inside a caller's.
+Ingest reads the kept reading first and skips a reading of an older change; that read
+and the write are not locked together, because the reading is advisory and the
+note's next event settles a race. No new advisory key and no new participant in the
+lock inventory.
 
 ## A request for released credit: the recovery claim, and one global-key close (#4253)
 

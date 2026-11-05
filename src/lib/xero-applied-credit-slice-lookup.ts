@@ -42,6 +42,18 @@ export async function slicesHeldInXero(
 }
 
 /**
+ * THE FUNDING-LOT PREDICATE: a positive credit row stamped with a Xero note (this
+ * one, or any matching `xeroCreditNoteId` filter), never one the credit-note
+ * convergence wrote. The lookup below, the inbound mirror, its sweep and the early
+ * warning (#4220) all ask it.
+ */
+export function fundingLotWhere(
+  xeroCreditNoteId: Prisma.MemberCreditWhereInput["xeroCreditNoteId"],
+): Prisma.MemberCreditWhereInput {
+  return { xeroCreditNoteId, amountCents: { gt: 0 }, ...NOT_A_CONVERGENCE_ROW };
+}
+
+/**
  * The member's positive funding lots for a credit note, at most two (the callers
  * only need to know whether there is exactly one). A row the credit-note
  * convergence wrote is never a funding lot.
@@ -52,7 +64,7 @@ export async function findFundingLotsForNote(
   xeroCreditNoteId: string,
 ): Promise<Array<{ id: string; amountCents: number }>> {
   return db.memberCredit.findMany({
-    where: { memberId, xeroCreditNoteId, amountCents: { gt: 0 }, ...NOT_A_CONVERGENCE_ROW },
+    where: { memberId, ...fundingLotWhere(xeroCreditNoteId) },
     select: { id: true, amountCents: true },
     take: 2,
   });

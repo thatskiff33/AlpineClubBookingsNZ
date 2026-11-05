@@ -676,7 +676,9 @@ export async function loadAuditData(
     xeroAllocatedAppliedCreditCents:
       allocatedAppliedCreditByBookingId.get(booking.id) ?? 0,
     unallocatedAppliedCreditCents: unallocatedAppliedCreditByBookingId.get(booking.id) ?? 0,
-    creditNotesSpentOutsideApp: creditNotesSpentOutside.filter((note) => note.bookingIds.includes(booking.id)),
+    creditNotesSpentOutsideApp: creditNotesSpentOutside.filter(
+      (note) => note.bookingIds.includes(booking.id) || note.resolvedAllocations.some((entry) => entry.bookingId === booking.id),
+    ),
     openEditReviewChargeIntentRecoveryModificationIds:
       openIntentRecoveries.review.get(booking.id) ?? new Set<string>(),
     openAdditionalIntentRecoveryModificationIds:

@@ -2607,9 +2607,12 @@ describe("runBookingXeroRepair", () => {
       lotId: "lot_1",
       xeroRemainingCents: 3000,
       pendingAllocationCents: 6000,
+      pendingSliceCents: 6000,
+      unslicedDrawCents: 0,
       outsideSpendCents: 3000,
       leftForAllocationCents: 3000,
       bookingIds: ["booking_1"],
+      resolvedAllocations: [],
       observedAt: new Date("2026-06-30T20:00:00.000Z"),
     };
     spentOutside.find.mockResolvedValue([note, { ...note, creditNoteId: "cn_other", bookingIds: ["booking_9"] }]);
@@ -2630,6 +2633,8 @@ describe("runBookingXeroRepair", () => {
           memberCreditId: "lot_1",
           xeroRemainingCents: 3000,
           pendingAllocationCents: 6000,
+          pendingSliceCents: 6000,
+          unslicedDrawCents: 0,
           outsideSpendCents: 3000,
           leftForAllocationCents: 3000,
           observedAt: "2026-06-30T20:00:00.000Z",
@@ -2640,6 +2645,48 @@ describe("runBookingXeroRepair", () => {
     spentOutside.find.mockResolvedValue([]);
     const unflagged = await runBookingXeroRepair(CLUB_FORMAT_TEST, { dependencies: createDependencies({ bookings: [makeBooking()], operations: [makePrimaryInvoiceCreateOperation()] }), scope: { all: true } });
     expect(bookingReport.actions).toEqual(unflagged.passes[0].bookings[0].actions);
+  });
+
+  it("#4220: a booking whose allocation was resolved in Xero gets the resolved report, once, and no warning", async () => {
+    const resolved = {
+      ...makePrimaryInvoiceCreateOperation(),
+      id: "op_alloc_resolved",
+      entityType: "ALLOCATION",
+      operationType: "ALLOCATE",
+      status: "FAILED",
+      manuallyResolvedAt: new Date("2026-06-30T21:00:00.000Z"),
+      manuallyResolvedReason: "Allocated by hand in Xero",
+    };
+    const note = {
+      creditNoteId: "cn_spent",
+      memberId: "member_1",
+      lotId: "lot_1",
+      xeroRemainingCents: 0,
+      pendingAllocationCents: 6000,
+      pendingSliceCents: 0,
+      unslicedDrawCents: 6000,
+      outsideSpendCents: 10000,
+      leftForAllocationCents: 6000,
+      bookingIds: ["booking_9"],
+      resolvedAllocations: [{ bookingId: "booking_1", operation: resolved }],
+      observedAt: new Date("2026-06-30T20:00:00.000Z"),
+    };
+    // Two flagged notes resolve through the same operation: it is reported once.
+    spentOutside.find.mockResolvedValue([note, { ...note, creditNoteId: "cn_other" }]);
+    const deps = createDependencies({ bookings: [makeBooking()], operations: [makePrimaryInvoiceCreateOperation()] });
+
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, { dependencies: deps, scope: { all: true } });
+
+    const codes = report.passes[0].bookings[0].findings.map((finding) => finding.code);
+    expect(codes).not.toContain("APPLIED_CREDIT_NOTE_CONSUMED_EXTERNALLY");
+    const reported = report.passes[0].bookings[0].findings.filter((finding) => finding.code === "RESOLVED_IN_XERO_BY_OFFICER");
+    expect(reported).toEqual([
+      expect.objectContaining({
+        severity: "info",
+        actions: [],
+        details: expect.objectContaining({ creditNoteId: "cn_spent", operationId: "op_alloc_resolved", unslicedDrawCents: 6000 }),
+      }),
+    ]);
   });
 
   it("#4220: reports nothing when no credit note the booking draws on is flagged", async () => {

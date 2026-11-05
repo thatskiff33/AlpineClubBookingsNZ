@@ -299,13 +299,17 @@ left unpaid in Xero, only if Xero then refuses it (see the troubleshooting row).
 That case gets an early warning instead (#4220). The **Credit used in Xero** tile on
 the Health Snapshot counts the credit notes Xero shows used outside the app while a
 booking is still waiting for its credit to be allocated from them, so Xero would
-refuse that allocation. The booking repair check
+refuse that allocation, including a booking whose credit has not been allocated at
+all yet. The booking repair check
 (`pnpm run xero:booking-repair --dry-run`) names each booking with the finding
 `APPLIED_CREDIT_NOTE_CONSUMED_EXTERNALLY`. Neither changes anything: check the note
 in Xero, and undo the use there if it was a mistake. The count follows Xero by the
 webhook and sync delay, so a use shows, and an undo clears, after the note's next
 update reaches the app. A note Xero has not sent the app since this change, or one
-whose figures do not add up, is not counted.
+whose figures do not add up, is not counted. A cancelled booking is not counted, and
+neither is one whose allocation was resolved in Xero: the repair check reports that
+one as resolved instead. If the tile shows **Unknown**, the server did not report the
+count; reload once the update has finished.
 
 Each change has an audit entry (`xero.credit_note.outside_spend_mirrored` or
 `xero.credit_note.outside_spend_restored`). A note voided or deleted in Xero is never

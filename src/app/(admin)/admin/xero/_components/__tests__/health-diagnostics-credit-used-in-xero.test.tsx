@@ -57,14 +57,21 @@ describe("the Health Snapshot's credit-used-in-Xero count (#4220)", () => {
     expect(card).toHaveTextContent("the booking repair check lists the bookings")
   })
 
-  it("reads clear at zero, and when an older server sends no count", async () => {
-    for (const snapshot of [{ ...health, creditNotesSpentOutsideApp: { count: 0 } }, health]) {
-      mocks.fetchJson.mockResolvedValue(snapshot)
-      const { unmount } = renderPanel()
-      const card = await tile()
-      expect(card).toHaveTextContent("0")
-      expect(card).toHaveTextContent("Clear")
-      unmount()
-    }
+  it("reads clear at zero", async () => {
+    mocks.fetchJson.mockResolvedValue({ ...health, creditNotesSpentOutsideApp: { count: 0 } })
+    renderPanel()
+    const card = await tile()
+    expect(card).toHaveTextContent("0")
+    expect(card).toHaveTextContent("Clear")
+  })
+
+  it("reads unknown, never clear, when an older server sends no count", async () => {
+    mocks.fetchJson.mockResolvedValue(health)
+    renderPanel()
+    const card = await tile()
+    expect(card).toHaveTextContent("Unknown")
+    expect(card).toHaveTextContent("did not report the count")
+    expect(card).not.toHaveTextContent("Clear")
+    expect(card).not.toHaveTextContent("0")
   })
 })
