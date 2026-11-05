@@ -124,7 +124,15 @@ vi.mock("@/lib/servernz-api", () => ({
 vi.mock("@/lib/servernz-config", () => ({
   getServerNzSetupState: mocks.getServerNzSetupState,
   SERVERNZ_PROVIDER: "servernz",
-  SERVERNZ_CREDENTIAL_KEYS: { apiKey: "api_key", pushSecret: "push_secret" },
+  SERVERNZ_CREDENTIAL_KEYS: {
+    apiKey: "api_key",
+    pushSecret: "push_secret",
+    pushRegisteredUrl: "push_registered_url",
+  },
+  SERVERNZ_PUSH_REGISTRATION_KEYS: {
+    secret: "push_secret",
+    callbackUrl: "push_registered_url",
+  },
 }));
 
 vi.mock("@/lib/integration-credentials", () => ({
@@ -1033,6 +1041,16 @@ describe("ensurePushRegistration stores the secret only for the connection it re
       actor: { kind: "system", actor: "servernz-push-registration" },
       expect: { expect: "any" },
     });
+    // The address the secret was issued for, in the same fenced write.
+    expect(mocks.setIntegrationCredential).toHaveBeenCalledWith({
+      tx: mocks.answerTx,
+      provider: "servernz",
+      key: "push_registered_url",
+      value: "https://club.example.nz/api/webhooks/servernz-posts",
+      actor: { kind: "system", actor: "servernz-push-registration" },
+      expect: { expect: "any" },
+    });
+    expect(mocks.answerWriter).toHaveBeenCalledTimes(1);
     expect(mocks.invalidateProviderCredentialCache).toHaveBeenCalledWith("servernz");
     expect(mocks.answerWriter.mock.invocationCallOrder[0])
       .toBeLessThan(mocks.invalidateProviderCredentialCache.mock.invocationCallOrder[0]);
@@ -1047,11 +1065,122 @@ describe("ensurePushRegistration stores the secret only for the connection it re
     expect(mocks.loggerWarn).toHaveBeenCalledWith(expect.stringMatching(/connection changed while this install registered/));
   });
 
-  it("registers nothing while a secret is stored", async () => {
-    mocks.getIntegrationCredentialValue.mockResolvedValue("stored-secret");
+  it("registers nothing while a secret is stored for this site's current address", async () => {
+    mocks.getIntegrationCredentialValue.mockImplementation(async (_provider: string, key: string) =>
+      key === "push_registered_url" ? "https://club.example.nz/api/webhooks/servernz-posts" : "stored-secret");
     await expect(ensurePushRegistration()).resolves.toBe("already-registered");
     expect(mocks.registerPushTarget).not.toHaveBeenCalled();
     expect(mocks.answerWriter).not.toHaveBeenCalled();
+  });
+});
+
+// A stored address that differs only in how it is written registers again; a
+// registration made for another origin (host name or port) is never taken over
+// by the pass, so a staging or restored copy cannot steal production's (#4771
+// review).
+describe("ensurePushRegistration registers again when this site's address moves", () => {
+  const SENT_ON = { baseUrl: "https://central.test", credentialVersion: "v-1" };
+  const CALLBACK = "https://club.example.nz/api/webhooks/servernz-posts";
+  /** The credential store holding these values, by key. */
+  function stored(values: Record<string, string>) {
+    mocks.getIntegrationCredentialValue.mockImplementation(
+      async (_provider: string, key: string) => values[key] ?? null,
+    );
+  }
+  function storedKeys() {
+    return mocks.setIntegrationCredential.mock.calls.map(([args]) => [args.key, args.value]);
+  }
+
+  beforeEach(() => {
+    process.env.NEXTAUTH_URL = "https://club.example.nz";
+  });
+  afterEach(() => {
+    delete process.env.NEXTAUTH_URL;
+  });
+
+  it("registers again, storing the pair together, when the stored address differs only in how it is written", async () => {
+    stored({
+      push_secret: "old-secret",
+      // The same origin: URL drops a default port, so the callback never spells it.
+      push_registered_url: "https://club.example.nz:443/api/webhooks/servernz-posts",
+    });
+    mocks.registerPushTarget.mockResolvedValue({ secret: "rotated", secretVersion: 3, sentOn: SENT_ON });
+    await expect(ensurePushRegistration()).resolves.toBe("registered");
+    expect(mocks.registerPushTarget).toHaveBeenCalledWith(CALLBACK);
+    expect(mocks.answerWriter).toHaveBeenCalledTimes(1);
+    expect(storedKeys()).toEqual([
+      ["push_secret", "rotated"],
+      ["push_registered_url", CALLBACK],
+    ]);
+  });
+
+  it("leaves a secret stored before addresses were kept as it is: a restored old backup is no different", async () => {
+    stored({ push_secret: "secret" });
+    await expect(ensurePushRegistration()).resolves.toBe("already-registered");
+    process.env.NEXTAUTH_URL = "https://staging.club.example.nz";
+    await expect(ensurePushRegistration()).resolves.toBe("already-registered");
+    expect(mocks.registerPushTarget).not.toHaveBeenCalled();
+    expect(mocks.setIntegrationCredential).not.toHaveBeenCalled();
+  });
+
+  it("keeps a working registration when this site's address is no longer https", async () => {
+    stored({ push_secret: "secret", push_registered_url: CALLBACK });
+    process.env.NEXTAUTH_URL = "http://club.example.nz";
+    await expect(ensurePushRegistration()).resolves.toBe("already-registered");
+    expect(mocks.registerPushTarget).not.toHaveBeenCalled();
+  });
+
+  it("does not take over a registration made for another host: a restored or staging copy", async () => {
+    // Production registered https://club.example.nz; this copy of its database
+    // runs as staging.club.example.nz.
+    stored({ push_secret: "production-secret", push_registered_url: CALLBACK });
+    process.env.NEXTAUTH_URL = "https://staging.club.example.nz";
+    await expect(ensurePushRegistration()).resolves.toBe("registered-elsewhere");
+    expect(mocks.registerPushTarget).not.toHaveBeenCalled();
+    expect(mocks.setIntegrationCredential).not.toHaveBeenCalled();
+    expect(mocks.answerWriter).not.toHaveBeenCalled();
+    // Not silent: the warning names both addresses and the way to move it.
+    expect(mocks.loggerWarn).toHaveBeenCalledWith(
+      { callback: "https://staging.club.example.nz/api/webhooks/servernz-posts", registered: CALLBACK },
+      expect.stringContaining("save the Alpine Central Server key again"),
+    );
+  });
+
+  it("does not take over a registration on the same host name but another port", async () => {
+    stored({ push_secret: "production-secret", push_registered_url: CALLBACK });
+    process.env.NEXTAUTH_URL = "https://club.example.nz:8443";
+    await expect(ensurePushRegistration()).resolves.toBe("registered-elsewhere");
+    expect(mocks.registerPushTarget).not.toHaveBeenCalled();
+    expect(mocks.setIntegrationCredential).not.toHaveBeenCalled();
+  });
+
+  it("leaves a site that really moved host to a key save, which clears the pair and registers it", async () => {
+    stored({
+      push_secret: "old-secret",
+      push_registered_url: "https://new.club.example.nz/api/webhooks/servernz-posts",
+    });
+    await expect(ensurePushRegistration()).resolves.toBe("registered-elsewhere");
+    expect(mocks.registerPushTarget).not.toHaveBeenCalled();
+
+    // The key save's transaction removed both rows (clearServerNzPushSecret).
+    stored({});
+    mocks.registerPushTarget.mockResolvedValue({ secret: "moved", secretVersion: 4, sentOn: SENT_ON });
+    await expect(registerAfterKeySave("admin-1")).resolves.toBe("registered");
+    expect(mocks.registerPushTarget).toHaveBeenCalledWith(CALLBACK);
+    expect(storedKeys()).toEqual([
+      ["push_secret", "moved"],
+      ["push_registered_url", CALLBACK],
+    ]);
+  });
+
+  it("keeps the stored pair when a re-registration is refused", async () => {
+    stored({
+      push_secret: "old-secret",
+      push_registered_url: "https://club.example.nz:443/api/webhooks/servernz-posts",
+    });
+    mocks.registerPushTarget.mockRejectedValueOnce(new mocks.FakeApiError(403));
+    await expect(ensurePushRegistration()).resolves.toBe("awaiting-approval");
+    expect(mocks.setIntegrationCredential).not.toHaveBeenCalled();
   });
 });
 
@@ -1113,8 +1242,11 @@ describe("ensurePushRegistration outcome, and registerAfterKeySave", () => {
     await expect(registerAfterKeySave("admin-1")).resolves.toBe("registered");
     // The key-save's registration stores the secret in the administrator's
     // name, not the mirror pass's system actor (#4720 review).
-    expect(mocks.setIntegrationCredential).toHaveBeenLastCalledWith(
+    expect(mocks.setIntegrationCredential).toHaveBeenCalledWith(
       expect.objectContaining({ key: "push_secret", actor: { kind: "admin", memberId: "admin-1" } }),
+    );
+    expect(mocks.setIntegrationCredential).toHaveBeenLastCalledWith(
+      expect.objectContaining({ key: "push_registered_url", actor: { kind: "admin", memberId: "admin-1" } }),
     );
   });
 });
