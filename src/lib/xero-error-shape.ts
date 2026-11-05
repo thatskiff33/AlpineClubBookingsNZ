@@ -161,8 +161,8 @@ export function getXeroErrorHeader(
   }
 
   for (const value of getStringCandidates(error)) {
-    // headerName is always an internal literal header key; escaped above so no
-    // ReDoS surface exists despite the dynamic RegExp.
+    // headerName is always an internal literal header key, escaped here by
+    // escapeRegExp, so no ReDoS surface exists despite the dynamic RegExp.
     const pattern = new RegExp(`"${escapeRegExp(headerName)}":"([^"]+)"`, "i");
     const match = value.match(pattern);
     if (match) {
