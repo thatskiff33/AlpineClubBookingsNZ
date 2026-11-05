@@ -1251,7 +1251,6 @@ export function classifyBookingContext(
               bookingId: booking.id,
               creditNoteId: modificationCreditNote.objectId,
               retryDetails: modificationArm.details,
-              unretryable: "report",
               resolved: "live-allocation-only", // #4763
             }
           );
@@ -1783,11 +1782,13 @@ export function classifyBookingContext(
         // primary and supplementary invoices a clearing note is spread across)
         // - a fresh allocation sized here would be the note's whole amount
         // against the primary invoice alone. RUNNING, a retry is on it now;
-        // resolved in Xero (`INV-INT-025`), an officer allocated by hand. None
-        // is queued beside. Since #4757 (deliberately; before, the retry was
-        // offered regardless) the retry waits for any admissible ALLOCATE row
-        // on the booking that is not the note's own attempt: that row is
-        // answered below, from the match the dispatcher found.
+        // resolved in Xero (`INV-INT-025`), an officer allocated by hand;
+        // PARTIAL with a retry the retry fence refuses, reported blocked
+        // (#4762). None is queued beside. Since #4757 (deliberately; before,
+        // the retry was offered regardless) the retry waits for any
+        // admissible ALLOCATE row on the booking that is not the note's own
+        // attempt: that row is answered below, from the match the dispatcher
+        // found.
         const clearingArm = { kind: "clearing", details: {} } as const;
         const ownNoteRow = dispatchOwnNoteRow(
           findings,
@@ -1799,7 +1800,6 @@ export function classifyBookingContext(
             bookingId: booking.id,
             creditNoteId: cancellationCreditNote.objectId,
             retryDetails: { bookingId: booking.id },
-            unretryable: "fall-through", // #4762
             resolved: "live-allocation-only", // #4763
           }
         );

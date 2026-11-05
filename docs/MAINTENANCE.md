@@ -1453,9 +1453,12 @@ its allocation refused) reports `MISSING_CREDIT_NOTE_ALLOCATION` with that
 operation's retry, never a fresh allocation; while a retry is running on it,
 or where the retry is refused, the report says the allocation is blocked and
 offers nothing, and you check again later or allocate it by hand in Xero.
-Nor is the note's retry offered beside an allocation operation still
-pending or running (reported blocked: let it finish, then run the report
-again), or beside a failed one that is not the note's own attempt at a
+Since #4762 the same holds for an invoice-clearing note whose operation the
+retry refuses: reported blocked with the reason, never a fresh allocation of
+the whole note against the primary invoice. Nor is the note's retry offered
+beside an allocation operation still pending or running (reported blocked:
+let it finish, then run the report again), or beside a failed one that is
+not the note's own attempt at a
 planned invoice and amount - such as an older, differently sized allocation
 the tool once queued. The report reads the edit's own operations, or for an
 invoice-clearing note the whole booking's. That operation is retried first,

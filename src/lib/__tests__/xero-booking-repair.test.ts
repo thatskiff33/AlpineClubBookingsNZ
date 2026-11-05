@@ -1709,7 +1709,8 @@ describe("runBookingXeroRepair", () => {
       });
     const classifyClearing = async (
       allocationLinks: ReturnType<typeof clearingLink>[],
-      allocationRows: ReturnType<typeof makeOperation>[]
+      allocationRows: ReturnType<typeof makeOperation>[],
+      noteRowOverrides: Record<string, unknown> = {}
     ) => {
       const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
         dependencies: createDependencies({
@@ -1737,6 +1738,7 @@ describe("runBookingXeroRepair", () => {
                   { invoiceId: "inv_supp", amountCents: 4000 },
                 ],
               },
+              ...noteRowOverrides,
             }),
             ...allocationRows,
           ],
@@ -1886,66 +1888,40 @@ describe("runBookingXeroRepair", () => {
       expect(bookingReport.findings.map((finding) => finding.code)).toContain("RESOLVED_IN_XERO_BY_OFFICER");
       expect(bookingReport.findings.map((finding) => finding.code)).not.toContain("MANUAL_REVIEW_REQUIRED");
     });
-  });
 
-  // A characterisation, not an endorsement: a clearing note's PARTIAL row the
-  // retry refuses is still left to the arm's own no-allocation path, as before
-  // #4757 (the dispatcher's `unretryable: "fall-through"`). Whether it should be
-  // reported instead is #4762; that change updates this test.
-  it("MUTATION: leaves an unretryable partial clearing note to the arm's own path, as before #4757 (#4762)", async () => {
-    const booking = makeBooking({
-      status: "CANCELLED",
-      payment: { ...makeBooking().payment, status: "FAILED" },
-    });
-    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
-      dependencies: createDependencies({
-        bookings: [booking],
-        links: [
-          {
-            id: "link_clearing_note",
-            localModel: "Booking",
-            localId: "booking_1",
-            xeroObjectType: "CREDIT_NOTE",
-            xeroObjectId: "cn_clear",
-            xeroObjectNumber: "CN-9",
-            xeroObjectUrl: null,
-            role: "MODIFICATION_CREDIT_NOTE",
-            active: true,
-            metadata: null,
-            createdAt: new Date("2026-05-03T00:00:00Z"),
-            updatedAt: new Date("2026-05-03T00:00:00Z"),
-          },
-        ],
-        operations: [
-          makeOperation({
-            id: "operation_unreplayable_clearing",
-            localModel: "Booking",
-            localId: "booking_1",
-            entityType: "CREDIT_NOTE",
-            operationType: "CREATE",
-            status: "PARTIAL",
-            replayable: false,
-            xeroObjectType: "CREDIT_NOTE",
-            xeroObjectId: "cn_clear",
-            requestPayload: {
-              invoiceId: "inv_primary",
-              refundAmountCents: 10000,
-              clearsUnpaidInvoice: true,
-              allocations: [{ invoiceId: "inv_primary", amountCents: 10000 }],
+    // #4762: a PARTIAL row the retry refuses is reported blocked, as for an
+    // edit's note. Before, it fell through to the arm's own path, which could
+    // queue the whole note (10000) against the primary invoice beside the
+    // spread plan - the #3535 hazard - or, with one invoice linked, say nothing.
+    it.each([
+      ["nothing linked", []],
+      ["the primary invoice linked", [allocationLink("inv_primary", 6000)]],
+      ["the supplementary invoice linked", [allocationLink("inv_supp", 4000)]],
+    ])(
+      "MUTATION: reports an unretryable partial clearing note blocked and queues nothing, with %s (#4762)",
+      async (_label, links) => {
+        const bookingReport = await classifyClearing(links, [], { replayable: false });
+
+        expect(actionsOf(bookingReport)).toEqual([]);
+        expect(bookingReport.findings).toContainEqual(
+          expect.objectContaining({
+            code: "BLOCKED_BY_XERO_OPERATION",
+            severity: "warning",
+            summary: expect.stringContaining("invoice-clearing credit note's allocations did not all complete and its operation cannot be retried here"),
+            safeToAutoApply: false,
+            details: {
+              operationId: "operation_partial_clearing",
+              operationStatus: "PARTIAL",
+              retryUnsupportedReason: "This operation is not marked replayable.",
             },
-          }),
-        ],
-      }),
-      scope: { all: true },
-    });
-
-    const bookingReport = report.passes[0].bookings[0];
-    expect(bookingReport.findings.some((finding) => finding.details.operationId === "operation_unreplayable_clearing")).toBe(false);
-    expect(bookingReport.findings).toContainEqual(
-      expect.objectContaining({
-        code: "MISSING_CREDIT_NOTE_ALLOCATION",
-        details: { bookingId: "booking_1", creditNoteId: "cn_clear", invoiceId: "inv_primary", amountCents: 10000 },
-      })
+            actions: [],
+          })
+        );
+        const codes = bookingReport.findings.map((finding) => finding.code);
+        expect(codes).not.toContain("MISSING_CREDIT_NOTE_ALLOCATION");
+        expect(codes).not.toContain("MANUAL_REVIEW_REQUIRED");
+        expect(bookingReport.actions.map((action) => action.type)).not.toContain("QUEUE_CREDIT_NOTE_ALLOCATION");
+      }
     );
   });
 

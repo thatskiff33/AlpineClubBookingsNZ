@@ -26,7 +26,7 @@ type NoteAllocationKind = "modification" | "clearing";
 
 const WORDING: Record<
   NoteAllocationKind,
-  { failed: string; stuck: string; live: string; repairing: string; retry: string; handMade: string; unretryable?: string }
+  { failed: string; stuck: string; live: string; repairing: string; retry: string; handMade: string; unretryable: string }
 > = {
   modification: {
     failed: "A Xero credit-note allocation operation failed and cannot be auto-retried - resolve the operation manually.",
@@ -49,10 +49,12 @@ const WORDING: Record<
       "The invoice-clearing credit note exists, but its allocations did not all complete; retrying replays the recorded plan.",
     handMade:
       "Part of this invoice-clearing credit note's allocations was resolved by hand in Xero, and a retry would allocate that part again - allocate the invoices left by hand in Xero.",
+    unretryable:
+      "The invoice-clearing credit note's allocations did not all complete and its operation cannot be retried here - allocate the invoices left by hand in Xero so the cancelled unpaid booking's invoice closes.",
   },
 };
 
-/** The arm that would allocate the note, and two behaviours from main each arm keeps, as explicit options. */
+/** The arm that would allocate the note, and one behaviour from main both arms keep, as an explicit option. */
 type NoteAllocationArm = {
   kind: NoteAllocationKind;
   bookingId: string;
@@ -61,12 +63,6 @@ type NoteAllocationArm = {
   details: Record<string, unknown>;
   /** Carried on the retry finding beside `creditNoteId` and `operationId`. */
   retryDetails: Record<string, unknown>;
-  /**
-   * A PARTIAL row the retry refuses. An edit's note reports it; a clearing
-   * note's falls through to the arm's own no-allocation path as it did before
-   * #4757 - whether it should report it too is #4762, not decided here.
-   */
-  unretryable: "report" | "fall-through";
   /**
    * A row an officer resolved in Xero (`INV-INT-025`): neither arm reports a
    * resolved-by-officer finding for it, only a live allocation row beside it.
@@ -104,8 +100,7 @@ export function addBlockedNoteAllocationFinding(
  * What the dispatcher did with the note's own row:
  * - `handled`: reported, or the row's own retry offered - the caller queues
  *   nothing for the note's allocation;
- * - `arm-decides`: no own row says the note is unfinished, or the arm keeps
- *   its own path for this state (#4762);
+ * - `arm-decides`: no own row says the note is unfinished;
  * - `allocation-row-first`: beside the note's retry, an ALLOCATE row in the
  *   arm's scope that is not the note's own attempt - the arm answers
  *   `blocking` (that row's retry, a blocked report, or the resolved report)
@@ -241,7 +236,10 @@ export function dispatchOwnNoteRow(
       return HANDLED;
     }
     case "unretryable":
-      if (arm.unretryable === "fall-through") return ARM_DECIDES;
+      // A PARTIAL row the retry refuses is reported blocked for both arms: a
+      // clearing note's fell through to its arm's own path before #4762, which
+      // could queue a fresh allocation of the whole note against the primary
+      // invoice beside it - for a spread plan, the #3535 hazard.
       addBlockedNoteAllocationFinding(findings, arm, row.operation, WORDING[arm.kind].unretryable, {
         retryUnsupportedReason: row.reason,
       });
