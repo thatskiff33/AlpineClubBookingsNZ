@@ -348,10 +348,11 @@ elsewhere never stops a member setting a password or finishing setup.
 `passwordHash` writer under `src/`, `prisma/` and `scripts/`: property writes,
 and raw-SQL `INSERT` or `UPDATE` literals naming the column. A writer must
 either be guarded — a `const` bound to the awaited `screenChosenPassword`
-result (a conditional or `||` chain must screen on every branch, or leave the
-unscreened one to a write inside a matching `if`, as in
-`password ? await screen(password) : { ok: true }` guarded by
-`if (password)`), then an `if (!result.ok)` that returns, both in a block
+result (a conditional, `||` or `??` chain must screen on every branch, or leave
+the unscreened one to a write inside a matching `if` or ternary arm, as in
+`password ? await screen(password) : { ok: true }` guarded by `if (password)`;
+the matching test names only stable values: an unreassigned `const`, a
+parameter or a literal), then an `if (!result.ok)` that returns, both in a block
 enclosing the write and before it, where the screened argument and the written hash's
 `bcrypt.hash` input resolve to the same unreassigned `const` or parameter, and
 the call does not switch the check off — or be listed as exempt with its reason (placeholders, imports,
@@ -371,7 +372,9 @@ exempt only when given an inline function that does not read `arguments`,
 whose element and array parameters are followed as aliases; a named one is a
 hand-over). A screen likewise stops counting
 when, after it, an alias or a call changes the screened object, and for a write
-inside a loop, anywhere in that loop. Only the local
+inside a loop, anywhere in that loop, or inside a function, anywhere after the
+function is made; a function declaration can run before the screen, so a screen
+outside it never counts. Only the local
 demo seed is listed as untraced. A new
 writer in neither list fails the build. It cannot see SQL assembled by
 concatenating separate literals or read from a `.sql` file at run time, or a

@@ -38,10 +38,15 @@ import ts from "typescript";
 // the scope does either (#4746). One definition of that change test serves the
 // copy rule below (`objectChanged`). For a writer inside a loop that starts after
 // the screen, that window runs to the end of the outermost such loop, since a
-// change later in the body runs before the writer on the next pass (#4764). These
+// change later in the body runs before the writer on the next pass; for a writer
+// in a function, it runs to the end of the screen's block, since the function can
+// be called later; and a screen does not count for a writer in a hoisted function
+// declaration, which can run before it (#4764). These
 // rules are a best-effort guard against accidental changes, not a defence against a determined author: deliberately
 // contrived forms (getters, functions that return the object or a closure over
-// it, generators, access to an inline literal such as `[b][0]`) are out of scope.
+// it, generators, access to an inline literal such as `[b][0]`, a `var`
+// redeclared in a block to defeat a stable value (`{ var skip = false; }`), a
+// local `const undefined`) are out of scope.
 //
 // Each property writer also carries the SOURCE of the value it writes
 // (`traceWrittenValue`): the expression is followed back through `const`
@@ -453,25 +458,22 @@ function changedAfterScreen(
   return objectChanged(hashed.id, declarationScope(declaration), hashed.path, window, false);
 }
 
-const isLoop = (node: ts.Node): boolean =>
-  ts.isForStatement(node) ||
-  ts.isForInStatement(node) ||
-  ts.isForOfStatement(node) ||
-  ts.isWhileStatement(node) ||
-  ts.isDoStatement(node);
-
 /**
  * Where a change can still reach the writer, past its own start (#4764): the end
  * of the outermost loop between the writer and `block`, since a change later in
- * the body runs before the writer on the next pass. The screen is a statement of
- * `block`, so such a loop always starts after it; a loop that holds the screen
- * too is outside `block`, screens again on each pass, and never counts. The copy
- * rule's window already runs to the end of its scope (`copiedWriters`).
+ * the body runs before the writer on the next pass; and, when a function lies
+ * between them, the end of `block`, since the function can be called at any point
+ * after it is made (`const w = () => save(...); change(); w();`, a callback given
+ * to `$transaction` or `setTimeout`). The screen is a statement of `block`, so a
+ * loop always starts after it; one that holds the screen too is outside `block`,
+ * screens again on each pass, and never counts. The copy rule's window already
+ * runs to the end of its scope (`copiedWriters`).
  */
 function windowEnd(writer: ts.Node, block: ts.Node): number {
   let end = writer.getStart();
   for (let current = writer.parent; current && current !== block; current = current.parent) {
-    if (isLoop(current)) end = Math.max(end, current.getEnd());
+    if (ts.isIterationStatement(current, false)) end = Math.max(end, current.getEnd());
+    if (isFunctionLike(current)) end = Math.max(end, block.getEnd());
   }
   return end;
 }
@@ -491,8 +493,12 @@ function guardedByScreen(writer: ts.Node, hashedInput: ts.Expression | null): bo
   const hashed = hashedInput ? referenceOf(hashedInput) : null;
   if (hashed === null) return false;
   const position = writer.getStart();
+  // A function declaration is hoisted, so one around the writer can run before a
+  // screen that precedes it in text: no block outside it holds a screen for it.
+  let hoisted = false;
   for (let current = writer.parent; current; current = current.parent) {
-    if (!ts.isBlock(current) && !ts.isSourceFile(current)) continue;
+    if (ts.isFunctionDeclaration(current)) hoisted = true;
+    if (hoisted || (!ts.isBlock(current) && !ts.isSourceFile(current))) continue;
     const bound = new Set<string>();
     let screenedAt = Infinity;
     let facts: Fact[] | null = null;

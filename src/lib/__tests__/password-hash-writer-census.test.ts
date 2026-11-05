@@ -729,6 +729,42 @@ describe("passwordHash writer scanner", () => {
     expect(inFn(`for (const y of ys) { log(y); } ${screen} ${write} ${change}`)).toEqual([true]);
   });
 
+  it("covers a writer in a function that runs after a change, or before the screen (#4764)", () => {
+    const guarded = (source: string) => scan(source).map((s) => s.screenedBefore);
+    const screen = `const s = await screenChosenPassword(b.pw); if (!s.ok) return;`;
+    const body = `save({ passwordHash: hashSync(b.pw, 12) })`;
+    const change = `Object.assign(b, { pw: x });`;
+    const inFn = (code: string) => guarded(`async function a(b, xs, x, db) { ${code} }`);
+    // The issue's input: a closure made after the screen, called after a change.
+    expect(inFn(`${screen} const w = () => ${body}; ${change} w();`)).toEqual([false]);
+    expect(inFn(`${screen} const w = () => ${body}; ${change} await db.$transaction(w);`)).toEqual([false]);
+    expect(inFn(`${screen} setTimeout(async () => { ${body}; }, 0); ${change}`)).toEqual([false]);
+    expect(inFn(`${screen} const fs = []; for (const y of xs) { fs.push(() => ${body}); } ${change} fs.forEach((f) => f());`)).toEqual([false]);
+    expect(inFn(`${screen} function w() { ${body}; } ${change} w();`)).toEqual([false]);
+    expect(inFn(`${screen} const w = function () { ${body}; }; ${change} w();`)).toEqual([false]);
+    expect(inFn(`${screen} const o = { w() { ${body}; } }; ${change} o.w();`)).toEqual([false]);
+    // A change made while a callback to `$transaction` is the writer's own function.
+    expect(inFn(`${screen} await db.$transaction(async () => { ${body}; }); ${change}`)).toEqual([false]);
+    // No false positives: a closure with no change after it, or one that only reads.
+    expect(inFn(`${screen} const w = () => ${body}; w();`)).toEqual([true]);
+    expect(inFn(`${screen} const w = () => ${body}; log(b.other); w();`)).toEqual([true]);
+    expect(inFn(`${screen} await db.$transaction(async () => { ${body}; });`)).toEqual([true]);
+    expect(inFn(`${screen} setTimeout(() => { ${body}; log(b.pw); }, 0); b.other = 1;`)).toEqual([true]);
+    // A change before the screen is never in the window.
+    expect(inFn(`${change} ${screen} const w = () => ${body}; w();`)).toEqual([true]);
+    // A screen inside the closure holds the screen and the write, so a change outside it does not count.
+    expect(inFn(`const w = async () => { ${screen} ${body}; }; ${change} await w();`)).toEqual([true]);
+    // The issue's input for a hoisted declaration: it can be called before the screen.
+    expect(guarded(`async function a(b) { await g(); ${screen} async function g() { save({ passwordHash: await hash(b.pw, 12) }); } }`)).toEqual([false]);
+    expect(guarded(`async function a(b) { g(); ${screen} function g() { save({ passwordHash: hashSync(b.pw, 12) }); } }`)).toEqual([false]);
+    expect(guarded(`async function a(b) { ${screen} async function g() { save({ passwordHash: await hash(b.pw, 12) }); } await g(); }`)).toEqual([false]);
+    // No false positives: the screen in the declaration's own body, an unrelated declaration,
+    // and an arrow function (not hoisted) after the screen.
+    expect(guarded(`async function a(b) { async function g() { ${screen} save({ passwordHash: await hash(b.pw, 12) }); } await g(); }`)).toEqual([true]);
+    expect(guarded(`async function a(b) { ${screen} function unrelated() { log(b.other); } save({ passwordHash: hashSync(b.pw, 12) }); }`)).toEqual([true]);
+    expect(guarded(`async function a(b) { ${screen} const g = async () => { save({ passwordHash: await hash(b.pw, 12) }); }; await g(); }`)).toEqual([true]);
+  });
+
   it("applies the loop window to a copy and to the writer a copy came from (#4764)", () => {
     const sources = (source: string) => scan(source).map((s) => s.source);
     const screen = `const s = await screenChosenPassword(b.pw); if (!s.ok) return;`;
