@@ -223,19 +223,36 @@ describe("the seed screens its operator-chosen passwords", () => {
     await expect(screenChosenPassword(BREACHED, SEED_PASSWORD_SCREEN_POLICY)).resolves.toEqual({ ok: true });
   });
 
+  // #4740 review: both are screened before the seed's first write, so a
+  // breached second password cannot leave the first account half-seeded.
+  const mainAt = seedSource.indexOf("async function main() {");
+  const firstWriteAt = seedSource
+    .slice(mainAt)
+    .search(/await prisma\.\w+\.(?:create|createMany|update|updateMany|upsert|delete|deleteMany)\(|\$executeRaw/);
+
   it.each([
-    ["SEED_ADMIN_PASSWORD", "seedAdminPassword", "adminScreen"],
-    ["SEED_LODGE_PASSWORD", "lodgePassword", "lodgeScreen"],
-  ])("screens %s before hashing it, and throws on a refusal", (name, variable, screen) => {
+    ["SEED_ADMIN_PASSWORD", "seedAdminPassword", "adminScreen", "existingAdmin"],
+    ["SEED_LODGE_PASSWORD", "lodgePassword", "lodgeScreen", "lodgePassword === null"],
+  ])("screens %s before the first write, and throws on a refusal", (name, variable, screen, skipWhen) => {
     const screenAt = seedSource.indexOf(
-      `const ${screen} = await screenChosenPassword(${variable}, SEED_PASSWORD_SCREEN_POLICY);`,
+      `const ${screen} = ${skipWhen}\n    ? { ok: true as const }\n    : await screenChosenPassword(${variable}, SEED_PASSWORD_SCREEN_POLICY);`,
     );
     const refuseAt = seedSource.indexOf(
       `if (!${screen}.ok) throw new Error(seedPasswordBreachedMessage("${name}"));`,
     );
     const hashAt = seedSource.indexOf(`await bcrypt.hash(${variable}, PASSWORD_BCRYPT_COST)`);
-    expect(screenAt).toBeGreaterThan(-1);
+    expect(mainAt).toBeGreaterThan(-1);
+    expect(firstWriteAt).toBeGreaterThan(0);
+    expect(screenAt).toBeGreaterThan(mainAt);
     expect(refuseAt).toBeGreaterThan(screenAt);
+    expect(refuseAt).toBeLessThan(mainAt + firstWriteAt);
     expect(hashAt).toBeGreaterThan(refuseAt);
+  });
+
+  it("reads and screens the kiosk password only when the kiosk account is missing", () => {
+    expect(seedSource).toContain(
+      'const lodgePassword = existingLodge ? null : requireSeedEnv("SEED_LODGE_PASSWORD");',
+    );
+    expect(seedSource.match(/requireSeedEnv\("SEED_LODGE_PASSWORD"\)/g)).toHaveLength(1);
   });
 });

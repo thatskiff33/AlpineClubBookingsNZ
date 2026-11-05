@@ -302,9 +302,10 @@ holds the behaviour and the limits.
 **Where it runs.** Changing a password, choosing one from a reset or
 account-setup link, an officer setting a kiosk password (Lodge settings), and
 the install-time seed's `SEED_ADMIN_PASSWORD` and `SEED_LODGE_PASSWORD`, each
-checked just before its account is created. The seed runs before the club
-setting exists, so it always checks, and a breached password stops it with a
-message naming the variable.
+checked only when its account is missing, and both before the seed writes
+anything. The seed runs before the club setting exists, so it always checks,
+and a breached password stops it, with nothing written, and a message naming
+the variable.
 Self-registration is retired (`/api/auth/register` answers 410), and the
 other ways an account is created (admin creation, imports, approved
 applications, placeholder contacts) store a random placeholder, so the

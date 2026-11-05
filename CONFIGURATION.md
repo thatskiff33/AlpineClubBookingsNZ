@@ -1264,11 +1264,11 @@ test/demo mode or disabled:
 | `DEMO_SECOND_LODGE`     | Local-only; set to `1` to also seed a second demo lodge (rooms + a few bookings) so two-lodge flows are demoable. Default demo dataset is unchanged when unset. |
 
 `prisma/seed.ts` fails before seeding if `SEED_ADMIN_EMAIL` or
-`SEED_ADMIN_PASSWORD` is unset, and fails before creating the lodge kiosk
-account if `SEED_LODGE_PASSWORD` is unset. Before creating either account it
-checks that password against the public breached-password service and stops
-if the password is listed (#4610); if the service cannot be reached, the
-password is accepted unchecked. The seeded admin is created with
+`SEED_ADMIN_PASSWORD` is unset, or if the lodge kiosk account is missing and
+`SEED_LODGE_PASSWORD` is unset. Before it writes anything, it checks the
+password of each account it is about to create against the public
+breached-password service and stops if one is listed (#4610); if the service
+cannot be reached, the password is accepted unchecked. The seeded admin is created with
 `role: ADMIN`, `canLogin: true`, `emailVerified: true`, and a `NOT_REQUIRED`
 membership subscription for the current season, and is forced through
 `/change-password` on first login. The seed also writes the normalized

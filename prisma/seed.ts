@@ -275,6 +275,29 @@ async function main() {
   const seedAdminEmail = requireSeedEnv("SEED_ADMIN_EMAIL").toLowerCase();
   const seedAdminPassword = requireSeedEnv("SEED_ADMIN_PASSWORD");
 
+  // #4610 (INV-AUTH-006): an operator chose SEED_ADMIN_PASSWORD and
+  // SEED_LODGE_PASSWORD, so each is screened like any other chosen password,
+  // only for an account the seed is about to create, and both before the
+  // seed's first write: a breached one stops the seed with nothing written. An
+  // unreachable service accepts it (fail open).
+  const existingAdmin = await prisma.member.findFirst({
+    where: { role: "ADMIN" },
+  });
+  const lodgeAccountEmail = clubDomainEmail("lodge");
+  const existingLodge = await prisma.member.findFirst({
+    where: { email: lodgeAccountEmail },
+  });
+  // Read only when the kiosk account is missing, so null exactly when it exists.
+  const lodgePassword = existingLodge ? null : requireSeedEnv("SEED_LODGE_PASSWORD");
+  const adminScreen = existingAdmin
+    ? { ok: true as const }
+    : await screenChosenPassword(seedAdminPassword, SEED_PASSWORD_SCREEN_POLICY);
+  if (!adminScreen.ok) throw new Error(seedPasswordBreachedMessage("SEED_ADMIN_PASSWORD"));
+  const lodgeScreen = lodgePassword === null
+    ? { ok: true as const }
+    : await screenChosenPassword(lodgePassword, SEED_PASSWORD_SCREEN_POLICY);
+  if (!lodgeScreen.ok) throw new Error(seedPasswordBreachedMessage("SEED_LODGE_PASSWORD"));
+
   // Ensure the club's lodge exists (create-if-missing). The migration that
   // introduced the Lodge table seeds a 'Lodge' placeholder row when
   // EmailMessageSetting has no configured lodge name; on a first-run seed,
@@ -493,16 +516,8 @@ async function main() {
   // Seed the first admin account (only if no admin exists). canLogin and
   // emailVerified are required for the credentials login flow to accept the
   // account; forcePasswordChange routes the first login to /change-password.
-  const existingAdmin = await prisma.member.findFirst({
-    where: { role: "ADMIN" },
-  });
-
+  // Its password was screened before the first write, above.
   if (!existingAdmin) {
-    // #4610 (INV-AUTH-006): an operator chose this password, so it is screened
-    // like any other. A breached one stops the seed; an unreachable service
-    // accepts it (fail open).
-    const adminScreen = await screenChosenPassword(seedAdminPassword, SEED_PASSWORD_SCREEN_POLICY);
-    if (!adminScreen.ok) throw new Error(seedPasswordBreachedMessage("SEED_ADMIN_PASSWORD"));
     const passwordHash = await bcrypt.hash(seedAdminPassword, PASSWORD_BCRYPT_COST);
     const admin = await prisma.member.create({
       data: buildSeedAdminMemberData({
@@ -536,18 +551,10 @@ async function main() {
     });
   }
 
-  // Seed the shared lodge kiosk account (create-if-missing).
-  const lodgeAccountEmail = clubDomainEmail("lodge");
-  const existingLodge = await prisma.member.findFirst({
-    where: { email: lodgeAccountEmail },
-  });
-
-  if (!existingLodge) {
-    // #4610 (INV-AUTH-006): screened as the admin password is above. The kiosk
-    // signs in with it and is not forced to change it.
-    const lodgePassword = requireSeedEnv("SEED_LODGE_PASSWORD");
-    const lodgeScreen = await screenChosenPassword(lodgePassword, SEED_PASSWORD_SCREEN_POLICY);
-    if (!lodgeScreen.ok) throw new Error(seedPasswordBreachedMessage("SEED_LODGE_PASSWORD"));
+  // Seed the shared lodge kiosk account (create-if-missing). Its password was
+  // screened before the first write, above; the kiosk signs in with it and is
+  // not forced to change it.
+  if (lodgePassword !== null) {
     const lodgePasswordHash = await bcrypt.hash(lodgePassword, PASSWORD_BCRYPT_COST);
     const lodge = await prisma.member.create({
       data: buildSeedLodgeMemberData({
@@ -567,7 +574,7 @@ async function main() {
       canLogin: lodge.canLogin,
     });
     console.log(`Lodge account seeded: ${lodgeAccountEmail}`);
-  } else {
+  } else if (existingLodge) {
     await ensureMemberAccessRolesFromCompatibilityFields(prisma, {
       memberId: existingLodge.id,
       role: existingLodge.role,
