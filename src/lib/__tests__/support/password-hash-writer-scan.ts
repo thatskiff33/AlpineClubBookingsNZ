@@ -34,7 +34,8 @@ import ts from "typescript";
 // hash's input. An exempt writer must trace to random bytes, the erased-account
 // sentinel or a fixed literal, so swapping a placeholder's input for a typed
 // password fails the census. A raw-SQL writer is a fixed literal only when the
-// literal has no template holes.
+// literal has no template holes, no `$n` or `?` placeholders and no bind
+// arguments beside it.
 //
 // Stated limits: SQL assembled by concatenating separate literals, or read
 // from a `.sql` file at run time, is not seen (no writer here does either;
@@ -49,7 +50,7 @@ export type PasswordHashWriterKind = "property" | "sql";
  * Where a written value comes from. `random`: a hash of `randomBytes` or
  * `randomUUID` output. `deleted-sentinel`: `DELETED_ACCOUNT_PASSWORD_HASH`.
  * `literal`: a fixed string, or the hash of one, or a raw-SQL literal with no
- * holes. `parameter`: a parameter of the enclosing function (or a property of
+ * holes, placeholders or bind arguments. `parameter`: a parameter of the enclosing function (or a property of
  * one), so the caller decides. `copy`: another object's `passwordHash`.
  * `unknown`: anything the trace cannot follow, a typed password included.
  */
@@ -645,6 +646,25 @@ function isSqlWriterNode(node: ts.Node): boolean {
   return text !== null && SQL_WRITE.test(text) && SQL_PASSWORD_HASH_COLUMN.test(text);
 }
 
+/** A `$1`-style or `?` bind placeholder: the value is supplied at run time. */
+const SQL_PLACEHOLDER = /\$\d+|(?:^|[\s(,=])\?(?=[\s,);]|$)/m;
+
+/**
+ * Where a raw-SQL writer's value comes from: a fixed literal only when the
+ * whole statement is one literal with no template holes, no bind placeholders
+ * and no bind arguments beside it, so the value is written inline.
+ */
+function sqlValueSource(node: ts.Node): PasswordHashValueSource {
+  if (ts.isTemplateExpression(node)) return "unknown";
+  if (SQL_PLACEHOLDER.test(literalText(node) ?? "")) return "unknown";
+  let current: ts.Node = node;
+  while (ts.isParenthesizedExpression(current.parent) || ts.isAsExpression(current.parent)) current = current.parent;
+  const call = current.parent;
+  return ts.isCallExpression(call) && call.arguments.length > 1 && call.arguments.includes(current as ts.Expression)
+    ? "unknown"
+    : "literal";
+}
+
 export function scanPasswordHashWriters(file: string, source: string): PasswordHashWriterSite[] {
   const kind = /\.tsx$/.test(file)
     ? ts.ScriptKind.TSX
@@ -659,7 +679,7 @@ export function scanPasswordHashWriters(file: string, source: string): PasswordH
       const value = writtenValue(node);
       const traced: TracedValue = value
         ? traceWrittenValue(value)
-        : { ...UNTRACED, source: ts.isTemplateExpression(node) ? "unknown" : "literal" };
+        : { ...UNTRACED, source: sqlValueSource(node) };
       sites.push({
         file,
         scope: scopeName(node),

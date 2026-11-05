@@ -502,6 +502,16 @@ describe("passwordHash writer scanner", () => {
   it("calls a raw-SQL writer a fixed literal only when it has no template holes", () => {
     expect(scan(`const q = 'UPDATE "Member" SET "passwordHash" = \\'x\\'';`).map((s) => s.source)).toEqual(["literal"]);
     expect(scan("const q = `UPDATE \"Member\" SET \"passwordHash\" = ${h}`;").map((s) => s.source)).toEqual(["unknown"]);
+    // A placeholder or a bind argument supplies the value at run time.
+    const sqlSources = (source: string) => scan(source).map((s) => s.source);
+    expect(sqlSources(`const q = 'UPDATE "Member" SET "passwordHash" = $1 WHERE "id" = $2';`)).toEqual(["unknown"]);
+    expect(sqlSources(`const q = 'UPDATE "Member" SET "passwordHash" = ? WHERE "id" = ?';`)).toEqual(["unknown"]);
+    expect(sqlSources(`const q = 'INSERT INTO "Member" ("id", "passwordHash") VALUES (?,?)';`)).toEqual(["unknown"]);
+    expect(sqlSources(`async function a(h) { await db.$executeRawUnsafe('UPDATE "Member" SET "passwordHash" = :h', h); }`)).toEqual(["unknown"]);
+    expect(sqlSources(`async function a(h) { await db.$queryRawUnsafe(('INSERT INTO "Member" ("passwordHash") VALUES (:h)'), h); }`)).toEqual(["unknown"]);
+    // The value inline, with nothing beside it, is a fixed literal.
+    expect(sqlSources(`async function a() { await db.$executeRawUnsafe('UPDATE "Member" SET "passwordHash" = \\'x\\' WHERE "id" = \\'y\\''); }`)).toEqual(["literal"]);
+    expect(sqlSources("const q = `INSERT INTO \"Member\" (\"passwordHash\") VALUES ('audit-hash')`;")).toEqual(["literal"]);
   });
 
   it("counts a writer as screened only when a bound, awaited screen's !ok branch exits first", () => {
