@@ -288,6 +288,25 @@ describe("every credit-lot read ordered by createdAt is classified (#4013, INV-P
     ).toEqual([{ key: PLANNER_CALLER, fedByLoader: true }]);
   });
 
+  it("keeps the engine's lot loader on the shared loader, with no lot read of its own (#4220)", () => {
+    // The early warning replays the engine's fill from loadFreeCreditLots, so the
+    // engine must read its lots there too: an inline or unordered read in
+    // gatherAppliedCreditLots would let the two draw from different lots unseen.
+    const file = "src/lib/xero-applied-credit-allocation.ts";
+    const source = ts.createSourceFile(file, readFileSync(file, "utf8"), ts.ScriptTarget.Latest, true);
+    let body: string | null = null;
+    const visit = (node: ts.Node): void => {
+      if (ts.isFunctionDeclaration(node) && node.name?.text === LOT_LOADER && node.body) {
+        body = node.body.getText(source);
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(source);
+    expect(body, `${LOT_LOADER} not found in ${file}`).not.toBeNull();
+    expect(body as unknown as string).toMatch(/\bloadFreeCreditLots\s*\(/);
+    expect(body as unknown as string).not.toMatch(/\bmemberCredit(?:NoteAllocation)?\s*\.\s*(?:findMany|findFirst|findFirstOrThrow|groupBy|aggregate)\b/);
+  });
+
   it("finds exactly the declared callers of every lot-order-sensitive function (#4220)", () => {
     expect(
       consumerCalls,
