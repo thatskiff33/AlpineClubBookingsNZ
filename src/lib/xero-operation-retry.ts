@@ -77,14 +77,7 @@ export const REPAIR_RESET_NOT_CLOSED_MESSAGE = "This operation was reset while t
 export const MODIFICATION_NOTE_REPAIR_CLAIM_LOST_MESSAGE = "The credit note allocation was sent to Xero, but this operation was reset while it ran. Retry it once to close it.";
 import { isRetryOfVoidedRefundRequestNote, mayRecordAsCanonicalRefundNote, VOIDED_REQUEST_NOTE_RETRY_REASON } from "@/lib/xero-refund-note-status";
 import type { CashRefundMethod } from "@/lib/xero-refund-method";
-import {
-  NOTE_ALLOCATION_ROLE,
-  readBookingClearingNoteRetryInput,
-  recordedClearingTargets,
-  RedactedClearingPlanError,
-  unallocatedClearingTargets,
-  type ClearingAllocationTarget,
-} from "@/lib/xero-clearing-allocations";
+import { NOTE_ALLOCATION_ROLE, readBookingClearingNoteRetryInput, recordedClearingTargets, RedactedClearingPlanError, unallocatedClearingTargets, type ClearingAllocationTarget } from "@/lib/xero-clearing-allocations";
 import {
   recordedRefundNoteOutcome,
   refundCreditNoteCompletion,
