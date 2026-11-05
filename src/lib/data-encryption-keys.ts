@@ -22,7 +22,9 @@
  * secret as it is now. With no ring set, `currentDataKey()` IS that legacy key,
  * so every consumer behaves exactly as it did before this module existed (a
  * deploy that sets nothing changes nothing — `BLUE_GREEN_MIGRATION_POLICY.md`).
- * The reserved id may not appear in the variable.
+ * The reserved id may not appear in the variable. Once nothing is stored under
+ * it, `DATA_ENCRYPTION_LEGACY_KEY=retired` stops READING under it too, so the
+ * auth secret is no longer a data key at all (`dataKeyById`).
  *
  * THE RULES every consumer follows, and why:
  *   - a WRITE uses `currentDataKey()`, never another ring key;
@@ -41,24 +43,31 @@
 
 import {
   DATA_ENCRYPTION_KEYS_ENV,
+  DATA_ENCRYPTION_LEGACY_KEY_ENV,
   DataKeyRingError,
   LEGACY_AUTH_SECRET_KEY_ID,
   legacyDataKey,
+  legacyKeyRetired,
   parseDataEncryptionKeys,
   type DataKey,
   type DataKeyRingState,
 } from "@/lib/data-encryption-key-material";
 import { getAuthSecret } from "@/lib/runtime-config";
 
-let memo: { raw: string | undefined; authSecret: string | undefined; state: DataKeyRingState } | null =
-  null;
+let memo: {
+  raw: string | undefined;
+  rawLegacy: string | undefined;
+  authSecret: string | undefined;
+  state: DataKeyRingState;
+} | null = null;
 
 /** The ring as the environment states it now (memoised on the raw values). */
 export function readDataKeyRing(): DataKeyRingState {
   const raw = process.env[DATA_ENCRYPTION_KEYS_ENV];
+  const rawLegacy = process.env[DATA_ENCRYPTION_LEGACY_KEY_ENV];
   const authSecret = getAuthSecret();
-  if (memo === null || memo.raw !== raw || memo.authSecret !== authSecret) {
-    memo = { raw, authSecret, state: parseDataEncryptionKeys(raw, authSecret) };
+  if (memo === null || memo.raw !== raw || memo.rawLegacy !== rawLegacy || memo.authSecret !== authSecret) {
+    memo = { raw, rawLegacy, authSecret, state: parseDataEncryptionKeys(raw, authSecret, rawLegacy) };
   }
   return memo.state;
 }
@@ -88,16 +97,28 @@ export function currentDataKey(): DataKey | null {
 /**
  * The key a row names, for a READ: the legacy key for `legacy-auth-secret`,
  * otherwise that ring entry. Null when the row names a key this deployment does
- * not hold — a removed ring key, an unset ring, or no auth secret — so the
- * caller reports a clean "cannot be read" instead of trying the other keys.
- * An invalid ring throws `DataKeyRingError` for a ring id (the legacy key does
- * not depend on the ring, so legacy rows stay readable).
+ * not hold — a removed ring key, an unset ring, no auth secret, or the legacy
+ * key once `DATA_ENCRYPTION_LEGACY_KEY` retires it — so the caller reports a
+ * clean "cannot be read" instead of trying the other keys. An invalid ring
+ * throws `DataKeyRingError` for a ring id (the legacy key does not depend on
+ * the ring, so legacy rows stay readable until the switch is set; any value of
+ * it refuses them, so a typo fails closed).
  */
 export function dataKeyById(id: string): DataKey | null {
-  if (id === LEGACY_AUTH_SECRET_KEY_ID) return legacyKey();
+  if (id === LEGACY_AUTH_SECRET_KEY_ID) {
+    return legacyReadsRetired() ? null : legacyKey();
+  }
   const ring = configuredRing();
   return ring?.keys.find((key) => key.id === id) ?? null;
 }
+
+/** Is reading under the auth secret switched off (`DATA_ENCRYPTION_LEGACY_KEY`)? */
+export function legacyReadsRetired(): boolean {
+  return legacyKeyRetired(process.env[DATA_ENCRYPTION_LEGACY_KEY_ENV]);
+}
+
+/** Why a row under the auth secret cannot be read once the switch is set. Never a value. */
+export const LEGACY_READS_RETIRED_MESSAGE = `it is stored under AUTH_SECRET, which ${DATA_ENCRYPTION_LEGACY_KEY_ENV} has retired for reads. Unset it and run pnpm run data-keys:reencrypt, or re-enter it`;
 
 /**
  * The keys a keyed-hash lookup computes a candidate under: every ring key when

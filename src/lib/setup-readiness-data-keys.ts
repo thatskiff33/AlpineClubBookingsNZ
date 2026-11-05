@@ -16,10 +16,13 @@
 
 import {
   DATA_ENCRYPTION_KEYS_ENV,
+  DATA_ENCRYPTION_LEGACY_KEY_ENV,
   LEGACY_AUTH_SECRET_KEY_ID,
+  LEGACY_KEY_RETIRED,
   parseDataEncryptionKeys,
 } from "@/lib/data-encryption-key-material";
 import { wrappingKeyIdOf } from "@/lib/integration-crypto";
+import { RETIRED_RECOVERY_CODE_KEY_ID } from "@/lib/two-factor-key-format";
 
 type CountsByKeyId = Readonly<Record<string, number>>;
 
@@ -94,8 +97,10 @@ const GENERATE_HINT =
 /** Kept in step with DEPLOYMENT.md → "Adding a data-encryption key" and its rollback notes. */
 const ROLLOUT_HINT =
   "Set it only once every running container is on this release. Once data is written under it, never unset it, roll back to an older release, or route traffic to a colour without it: that data cannot be read there.";
+/** Kept in step with DEPLOYMENT.md → "Moving stored data to the current key". */
 const MOVE_HINT =
-  "To move it now: re-enter each provider credential in Admin → Integrations (a save encrypts it under the data key), and ask members who use an authenticator app to re-enrol it.";
+  "To move it now: run pnpm run data-keys:reencrypt (try --dry-run first). It re-encrypts each credential and authenticator secret under the current key and reports what remains.";
+const RETIRE_LEGACY_HINT = `Nothing stored depends on AUTH_SECRET, so it can be rotated without losing data. To stop reading anything under it at all, set ${DATA_ENCRYPTION_LEGACY_KEY_ENV}=${LEGACY_KEY_RETIRED} and restart.`;
 
 function plural(count: number, noun: string): string {
   return `${count} ${noun}${count === 1 ? "" : "s"}`;
@@ -103,7 +108,9 @@ function plural(count: number, noun: string): string {
 
 const isLegacy = (id: string) => id === LEGACY_AUTH_SECRET_KEY_ID;
 const isUnrecognised = (id: string) => id.startsWith(UNRECOGNISED_PREFIX);
-const isRingKeyId = (id: string) => !isLegacy(id) && !isUnrecognised(id);
+/** A legacy recovery code the re-encrypt retired: under no key, and never ring data. */
+const isRetired = (id: string) => id === RETIRED_RECOVERY_CODE_KEY_ID;
+const isRingKeyId = (id: string) => !isLegacy(id) && !isUnrecognised(id) && !isRetired(id);
 
 /**
  * Rows under ids `keep` accepts, as sentences: credentials and authenticator
@@ -150,6 +157,7 @@ export function buildDataEncryptionKeyCheck(
   rawRing: string | undefined,
   usage: DataKeyUsageSnapshot | undefined,
   authSecret?: string,
+  rawLegacyKey?: string,
 ): DataKeyCheckResult {
   const base = {
     id: "data-encryption-keys" as const,
@@ -159,7 +167,7 @@ export function buildDataEncryptionKeyCheck(
     required: false as const,
     href: "/admin/health",
   };
-  const ring = parseDataEncryptionKeys(rawRing, authSecret);
+  const ring = parseDataEncryptionKeys(rawRing, authSecret, rawLegacyKey);
 
   if (ring.status === "invalid") {
     return {
@@ -219,6 +227,17 @@ export function buildDataEncryptionKeyCheck(
 
   const recovery = retiredRecoveryCodes(usage, (id) => ringIds.has(id));
   const legacy = rowsUnder(usage, isLegacy);
+  if (legacy.length > 0 && ring.legacyRetired) {
+    return {
+      ...base,
+      status: "blocked",
+      message: `${DATA_ENCRYPTION_LEGACY_KEY_ENV}=${LEGACY_KEY_RETIRED} stops reading anything under AUTH_SECRET, but some stored data is still under it, so it cannot be read.`,
+      details: [
+        ...legacy,
+        `Unset ${DATA_ENCRYPTION_LEGACY_KEY_ENV} and restart, run pnpm run data-keys:reencrypt until it reports nothing on AUTH_SECRET, then set it again.`,
+      ],
+    };
+  }
   if (legacy.length > 0) {
     return {
       ...base,
@@ -234,7 +253,9 @@ export function buildDataEncryptionKeyCheck(
     message: `Data is encrypted under the data key "${ring.current.id}".`,
     details: [
       `${plural(ring.keys.length, "key")} in the ring; the first is used for new data.`,
-      "Nothing stored depends on AUTH_SECRET, so it can be rotated without losing data.",
+      ring.legacyRetired
+        ? `Nothing stored depends on AUTH_SECRET, and nothing is read under it (${DATA_ENCRYPTION_LEGACY_KEY_ENV}=${LEGACY_KEY_RETIRED}).`
+        : RETIRE_LEGACY_HINT,
       ...recovery,
     ],
   };

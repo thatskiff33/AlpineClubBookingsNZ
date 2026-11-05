@@ -446,6 +446,59 @@ export async function getXeroTokenReadability(): Promise<XeroTokenReadability> {
 /** The claim lost to a lease held on `XeroConnection` alone; rolls our claim back. */
 class XeroConnectionLeaseHeld extends Error {}
 
+/** A lease row nobody holds at `now`: never claimed, or its lease has run out. */
+function leaseIsFreeAt(now: Date) {
+  return {
+    OR: [
+      { refreshInProgressUntil: null },
+      { refreshInProgressUntil: { lte: now } },
+    ],
+  };
+}
+
+/**
+ * Fence a rewrite of the token set that is not a connect, refresh or disconnect
+ * — the data-key re-encrypt (#4456), which re-encrypts the same value under the
+ * current key — on the CALLER's transaction, before it writes.
+ *
+ * It takes the lease rows' locks in rule 2's order, `XeroToken` then
+ * `XeroConnection`, each with the same lease-guarded `updateMany` a claim uses,
+ * and holds no lease past the transaction (a free lease stays free). It answers
+ * false when a refresh holds either lease: that refresh has already read the
+ * version its save will compare-and-set on, and may have spent the refresh token
+ * at Xero, so a rewrite now would make its save lose and strand the rotated
+ * pair. The caller then rolls back and retries after the save. While the fence
+ * holds the locks a new claim queues behind them, and once they are released it
+ * reads the rewritten row, so its save compares against the new version. With
+ * no connection row there is no lease to fence: nothing can claim one.
+ */
+export async function fenceXeroTokenSetRewrite(
+  tx: XeroTokenDb,
+  now: Date = new Date(),
+): Promise<boolean> {
+  const tokenRow = await tx.xeroToken.findFirst({
+    select: { id: true },
+    orderBy: XERO_TOKEN_ROW_ORDER,
+  });
+  if (tokenRow) {
+    const previousRelease = await tx.xeroToken.updateMany({
+      where: { id: tokenRow.id, ...leaseIsFreeAt(now) },
+      data: { refreshInProgressUntil: null },
+    });
+    if (previousRelease.count !== 1) return false;
+  }
+  const ours = await tx.xeroConnection.updateMany({
+    where: { id: XERO_CONNECTION_ID, ...leaseIsFreeAt(now) },
+    data: { refreshInProgressUntil: null },
+  });
+  if (ours.count === 1) return true;
+  const connection = await tx.xeroConnection.findUnique({
+    where: { id: XERO_CONNECTION_ID },
+    select: { id: true },
+  });
+  return connection === null;
+}
+
 export async function claimXeroTokenRefreshLease(options?: {
   now?: Date;
   leaseMs?: number;
@@ -454,12 +507,7 @@ export async function claimXeroTokenRefreshLease(options?: {
   const leaseUntil = new Date(
     now.getTime() + (options?.leaseMs ?? XERO_TOKEN_REFRESH_LEASE_MS)
   );
-  const leaseIsFree = {
-    OR: [
-      { refreshInProgressUntil: null },
-      { refreshInProgressUntil: { lte: now } },
-    ],
-  };
+  const leaseIsFree = leaseIsFreeAt(now);
 
   try {
     return await prisma.$transaction(async (tx): Promise<XeroTokenRefreshLeaseClaim> => {

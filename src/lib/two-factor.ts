@@ -16,9 +16,11 @@ import {
   type DataKey,
 } from "@/lib/data-encryption-key-material";
 import {
+  LEGACY_READS_RETIRED_MESSAGE,
   codeHashKeys,
   currentDataKey,
   dataKeyById,
+  legacyReadsRetired,
 } from "@/lib/data-encryption-keys";
 import { assertLegacyWriteAllowed } from "@/lib/data-encryption-legacy-write-guard";
 import { prisma } from "@/lib/prisma";
@@ -122,7 +124,9 @@ function totpKeyFor(stored: string): { key: DataKey; envelope: TwoFactorSecretEn
   if (!key) {
     throw new Error(
       envelope.keyId === LEGACY_AUTH_SECRET_KEY_ID
-        ? NO_KEY_MESSAGE
+        ? legacyReadsRetired()
+          ? `This two-factor secret cannot be read: ${LEGACY_READS_RETIRED_MESSAGE}`
+          : NO_KEY_MESSAGE
         : `The data-encryption key "${envelope.keyId}" this two-factor secret was written under is not in DATA_ENCRYPTION_KEYS`,
     );
   }
