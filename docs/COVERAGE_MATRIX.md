@@ -128,6 +128,7 @@ For what an officer sees and does on each screen, use the
 | `site-style` | content | — | [guide](guides/site-style.md) | 4 |
 | `stripe` | finance | [`guides/integrations.md`](guides/integrations.md) (Stripe Setup), [`guides/payments.md`](guides/payments.md) | [guide](guides/integrations.md) (`stripe/setup` wizard) | — (guided setup epic #2078; postdates #2050) |
 | `stuck-states` | support | `ARCHITECTURE.md` (stuck-state dashboard) | [guide](guides/stuck-states.md) | 4 |
+| `subscription-categories` | membership | `AUTHORITATIVE_FEES.md` (subscription category billing axis) | [guide](guides/subscription-categories.md) | — (subscription-category-decoupling; postdates #2050) |
 | `subscription-lockout` | membership | `ARCHITECTURE.md` (subscription lockout) | [guide](guides/subscription-lockout.md) | 2 |
 | `subscriptions` | finance | `ARCHITECTURE.md` (membership subscription billing) | [guide](guides/subscriptions.md) | 2 |
 | `testing` | overview (allowlisted) | TEST-ONLY: `testing/route-error` is the route-error probe for the #4467 boundary E2E. In a real production runtime it calls `notFound()` before any await and has no loading boundary above it, so the answer is a real 404 status; elsewhere it runs the admin guard itself before reading its cookie (`src/lib/route-error-probe.ts`) | — (not an operator surface) | — |
@@ -138,7 +139,7 @@ For what an officer sees and does on each screen, use the
 
 ## Summary
 
-- **85** admin route areas, one row each. `src/app/(admin)/admin` holds two more directories that aren't areas: `__tests__`, and `_lib`, shared server helpers with no route (Next.js treats an `_`-prefixed folder as private). `src/lib/__tests__/coverage-matrix-areas.test.ts` checks this count, that every area directory has exactly one row, and that each row's permission area matches the route map.
+- **86** admin route areas, one row each. `src/app/(admin)/admin` holds two more directories that aren't areas: `__tests__`, and `_lib`, shared server helpers with no route (Next.js treats an `_`-prefixed folder as private). `src/lib/__tests__/coverage-matrix-areas.test.ts` checks this count, that every area directory has exactly one row, and that each row's permission area matches the route map.
 - **2** areas are already served by a **feature hub** (`display` → lobby-display,
   `lodges` → multi-lodge). #2050 should extend, not duplicate, those hubs.
 - **13** areas have **no reference coverage** beyond their operator guide

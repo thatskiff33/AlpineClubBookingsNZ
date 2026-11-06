@@ -168,11 +168,6 @@
       "count": 2
     }
   },
-  "src/app/(admin)/admin/fees/_components/finance-fees-sections.tsx": {
-    "design-system/no-raw-input": {
-      "count": 1
-    }
-  },
   "src/app/(admin)/admin/fees/_components/hut-fees-section.tsx": {
     "design-system/no-native-confirm": {
       "count": 1

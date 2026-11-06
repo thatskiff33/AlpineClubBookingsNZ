@@ -712,36 +712,42 @@ export const AUDIT_CENSUS_TOTALS = {
   // charge-backed recovery is held because Stripe shows a refund made outside the app since the
   // debt arose (INV-PAY-145), an awaited `createAuditLog` under `payment`. RE-MEASURED with
   // `pnpm run audit:census`.
-  // 523 -> 526 (#4432): `XERO_SYNC_NOW` twice (the officer's sync-now outcome and its failure)
+  // 523 -> 526 (subscription-category-decoupling rework, merged onto main
+  // 69ade2d95, 29 Oct 2026): the three Subscription Categories admin-CRUD
+  // writers (create/update/delete), all `admin` category via `auditLog.create`.
+  // 526 -> 528 (#4432): `XERO_SYNC_NOW` twice (the officer's sync-now outcome and its failure)
   // and `XERO_WEBHOOK_THRESHOLD_UPDATED`, each an awaited `createAuditLog` with a literal `xero`
-  // category at the call site. RE-MEASURED with `pnpm run audit:census`.
-  // 526 -> 528 (#4457): `privacy.retention.settings_updated` (`admin`) and
+  // category at the call site.
+  // 528 -> 530 (#4457): `privacy.retention.settings_updated` (`admin`) and
   // `privacy.retention.member_anonymised` (`privacy`, so only membership:view readers see
   // which member was anonymised), each an awaited `createAuditLog` with a literal category.
-  // RE-MEASURED with `pnpm run audit:census` after merging #4555.
-  // 528 -> 529 (#4533): `booking-change-request.create` for the promo correction request an
+  // 530 -> 531 (#4533): `booking-change-request.create` for the promo correction request an
   // officer raises from Edit Booking on a finished stay, a `logAudit` with a literal `booking`
-  // category, like the member's own request. RE-MEASURED with `pnpm run audit:census`.
-  // 529 -> 530 (#4426): `xero.refund_credit_note.late_note_not_recorded`, the one row a refund
+  // category, like the member's own request.
+  // 531 -> 532 (#4426): `xero.refund_credit_note.late_note_not_recorded`, the one row a refund
   // credit-note create writes when Xero answers after its job was resolved by hand recording a
-  // note, an awaited `createAuditLog` with a literal `xero` category. RE-MEASURED with `pnpm run audit:census`.
-  // 530 -> 531 (#4655): `xero.organiser_adjustment_note.late_note_not_recorded`, the one row an
+  // note, an awaited `createAuditLog` with a literal `xero` category.
+  // 532 -> 533 (main-sync, 2 Nov 2026): RE-MEASURED with `pnpm run audit:census` on the
+  // merged tree.
+  // 533 -> 534 (#4655): `xero.organiser_adjustment_note.late_note_not_recorded`, the one row an
   // organiser adjustment's credit-note create writes when Xero answers after its job was reset
   // and the row may not take the note, an awaited `createAuditLog` with a literal `xero` category.
-  // RE-MEASURED with `pnpm run audit:census`.
-  // 531 -> 532 (#4680): `xero.organiser_adjustment_note.run_stood_down`, the one row an organiser
+  // RE-MEASURED with `pnpm run audit:census` on the merged tree (second main-sync, 2 Nov 2026).
+  // 534 -> 537 (third main-sync, 7 Nov 2026): main's own #4680, #4686 and
+  // triyder/AlpineClubBookingsNZ#97 landed independently of this branch and are
+  // disjoint from its subscription-category writers already counted above.
+  // #4680 is `xero.organiser_adjustment_note.run_stood_down`, the one row an organiser
   // adjustment run writes when it finds, before a money-moving Xero call after recording its note,
   // that a stale reset took its claim, an awaited `createAuditLog` with a literal `xero` category.
-  // RE-MEASURED with `pnpm run audit:census`.
-  // 532 -> 533 (#4686): `xero.operation.late_partial_not_recorded`, the one row a Xero operation's
+  // #4686 is `xero.operation.late_partial_not_recorded`, the one row a Xero operation's
   // part-success writes when its attempt lost its claim and its Xero object was not recorded, an
-  // awaited `createAuditLog` with a literal `xero` category. RE-MEASURED with `pnpm run audit:census`.
-  // 533 -> 534 (triyder/AlpineClubBookingsNZ#97): `LODGE_CENTRAL_LINK_UPDATED` from the new
+  // awaited `createAuditLog` with a literal `xero` category.
+  // triyder/AlpineClubBookingsNZ#97 is `LODGE_CENTRAL_LINK_UPDATED` from the new
   // `/api/admin/alpine-server/lodge-links` PUT, the setup page's link dialog. The
   // Central lodge card's own site is unchanged; both pass their audit writer to the
   // shared `saveCentralLodgeLinks`. Categorised `admin` at the site, like the card's.
-  // RE-MEASURED with `pnpm run audit:census`.
-  writeSites: 534,
+  // RE-MEASURED with `pnpm run audit:census` on the merged tree.
+  writeSites: 537,
   /**
    * Of those, sites whose event object carries no `category` key.
    *
@@ -1003,7 +1009,9 @@ export const AUDIT_CENSUS_TOTALS = {
     // 77 -> 75 (#52): the two removed other-lodges writers above.
     // 75 -> 76 (#58): the Other lodges hide of a row the central server does
     // not list, in the same form as the registry's update.
-    "auditLog.create": { total: 76, uncategorised: 0 },
+    // 76 -> 79 (subscription-category-decoupling rework): the three new
+    // Subscription Categories admin-CRUD writers, above.
+    "auditLog.create": { total: 79, uncategorised: 0 },
   },
   /**
    * Literal category values written, and by how many sites. The three `membership`
@@ -1337,11 +1345,18 @@ export const AUDIT_CENSUS_TOTALS = {
     // booking officer's contact - and no member.
     // 110/107 -> 108 (hand sync of `main` f1ecdb5ff into epic #3789): #3819's
     // one and #52's two removals are disjoint. RE-MEASURED on the composed tree.
-    admin: 112, // 108/109 -> 110 (central-server lane, 20 Oct 2026): #62 and #58 are disjoint from upstream's. RE-MEASURED.
-    // 110 -> 111 (#4457): `privacy.retention.settings_updated`. A deliberate +1 to the
-    // support:view-only population: it records only retention settings, never a member.
-    // 111 -> 112 (triyder/AlpineClubBookingsNZ#97): the setup page's link dialog row,
-    // `LODGE_CENTRAL_LINK_UPDATED`, the Central lodge card's twin. RE-MEASURED.
+    admin: 115, // 108/109 -> 110 (central-server lane, 20 Oct 2026): #62 and #58 are disjoint from upstream's. RE-MEASURED.
+    // 110 -> 113 (subscription-category-decoupling rework): the three new
+    // Subscription Categories admin-CRUD writers, all `admin` — officer-only
+    // config, no member data, readable with support:view like every sibling
+    // writer in this category.
+    // 113 -> 114 (#4457, disjoint from the category rework): `privacy.retention.settings_updated`.
+    // A deliberate +1 to the support:view-only population: it records only retention
+    // settings, never a member. RE-MEASURED with `pnpm run audit:census` on the merged tree.
+    // 114 -> 115 (third main-sync, 7 Nov 2026): main's own triyder/AlpineClubBookingsNZ#97,
+    // the setup page's link dialog row, `LODGE_CENTRAL_LINK_UPDATED`, the Central lodge
+    // card's twin, is disjoint from the category rework. RE-MEASURED with
+    // `pnpm run audit:census` on the merged tree.
     // 16 -> 19 (#2581 child 2): `member.password-reset-sent` and
     // `member.setup-invite-sent` (decision 3 — the affected domain is the
     // CREDENTIAL, not the mailing), plus the `member.bulk-set-role` branch

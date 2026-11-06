@@ -57,6 +57,10 @@ const editableData = {
     annualFees: [{ id: "fee-1", ageTier: null, amountCents: 10000, effectiveFrom: "2026-01-01", effectiveTo: null, billingBasis: "PER_MEMBER", prorationRule: "NONE" }],
     joiningFees: [{ id: "joining-1", ageTier: "ADULT", amountCents: 123456, effectiveFrom: "2026-01-01", effectiveTo: null }],
   }],
+  subscriptionCategories: [{
+    id: "cat-1", key: "COUPLE", name: "Couple", isActive: true,
+    fees: [{ id: "cat-fee-1", amountCents: 18000, effectiveFrom: "2026-01-01", effectiveTo: null, prorationRule: "NONE" }],
+  }],
   familyGroups: [{
     id: "family-1", name: "Example family", billingMemberId: "member-1", billingException: false,
     members: [{ id: "member-1", firstName: "Alex", lastName: "Example", email: "alex@example.test", active: true }],
@@ -68,6 +72,10 @@ const editableData = {
 // must still read "full", while a prorating fee reads "prorated".
 const componentFeeData = {
   ...editableData,
+  // This fixture is about annual-fee component display only; an empty
+  // category list avoids an incidental text collision with the Subscription
+  // Category Fees card's own proration-rule labels (e.g. "Full annual fee").
+  subscriptionCategories: [],
   membershipTypes: [{
     id: "type-1", key: "FULL", name: "Full", isActive: true,
     annualFees: [
@@ -92,6 +100,7 @@ const multiFamilyData = {
   canEdit: true,
   familyBillingMode: "BILL_FAMILY_VIA_BILLING_MEMBER",
   membershipTypes: editableData.membershipTypes,
+  subscriptionCategories: editableData.subscriptionCategories,
   familyGroups: [
     {
       id: "family-1", name: "Alpha family", billingMemberId: "m1a", billingException: false,
@@ -438,6 +447,59 @@ describe("fee configuration page", () => {
     expect(await screen.findByText("Delete failed")).toBeTruthy();
     expect(screen.getByRole("dialog")).toBeTruthy();
     expect(screen.getByText(/Full Flat \(all ages\) annual fee from 2026-01-01/)).toBeTruthy();
+  });
+
+  // Subscription-category decoupling: the Subscription Category Fees card has
+  // no ageTier/billingBasis concept at all — unlike the annual-fee tests
+  // above, there's no per-tier select and no billing-basis select to assert.
+  it("gates the subscription category fee form and row controls behind Edit", async () => {
+    stubFetch(response(true, editableData));
+    render(<FeeConfigurationPage />);
+    await screen.findByRole("button", { name: "Edit subscription category fees" });
+    expect(screen.getByText("$180.00")).toBeTruthy();
+    expect(screen.queryByLabelText("Annual amount (NZD)", { selector: "#category-amount" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Edit Couple fee" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Edit subscription category fees" }));
+    expect(document.querySelector("#category-amount")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Edit Couple fee" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Add category fee" })).toBeTruthy();
+    // No ageTier/billingBasis selects exist for this card.
+    expect(document.querySelector("#membership-tier")).toBeNull();
+    expect(document.querySelector("#billing-basis")).toBeNull();
+  });
+
+  it("creates a subscription category fee with no ageTier/billingBasis in the payload", async () => {
+    const fetchMock = stubFetch([response(true, editableData), response(true, editableData)]);
+    render(<FeeConfigurationPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Edit subscription category fees" }));
+    fireEvent.change(document.querySelector("#category-amount") as HTMLInputElement, { target: { value: "200.00" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add category fee" }));
+    await waitFor(() => expect(mocks.toastSuccess).toHaveBeenCalledWith("Fee schedule saved"));
+    const body = postBody(fetchMock) as Record<string, unknown>;
+    expect(body).toMatchObject({ action: "CREATE_SUBSCRIPTION_CATEGORY_FEE", subscriptionCategoryId: "cat-1", amountCents: 20000 });
+    expect(body.ageTier).toBeUndefined();
+    expect(body.billingBasis).toBeUndefined();
+  });
+
+  it("populates the editor from an existing category fee and sends UPDATE on save", async () => {
+    const fetchMock = stubFetch([response(true, editableData), response(true, editableData)]);
+    render(<FeeConfigurationPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Edit subscription category fees" }));
+    fireEvent.click(screen.getByRole("button", { name: "Edit Couple fee" }));
+    expect((document.querySelector("#category-amount") as HTMLInputElement).value).toBe("180.00");
+    fireEvent.click(screen.getByRole("button", { name: "Update category fee" }));
+    await waitFor(() => expect(mocks.toastSuccess).toHaveBeenCalledWith("Fee schedule saved"));
+    expect(postBody(fetchMock)).toMatchObject({ action: "UPDATE_SUBSCRIPTION_CATEGORY_FEE", id: "cat-fee-1", amountCents: 18000 });
+  });
+
+  it("deletes a subscription category fee through the shared delete-confirmation dialog", async () => {
+    const fetchMock = stubFetch([response(true, editableData), response(true, { ...editableData, subscriptionCategories: [{ ...editableData.subscriptionCategories[0], fees: [] }] })]);
+    render(<FeeConfigurationPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Edit subscription category fees" }));
+    fireEvent.click(screen.getByRole("button", { name: "Delete Couple fee" }));
+    expect(screen.getByText(/Couple subscription category fee from 2026-01-01/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Delete fee" }));
+    await waitFor(() => expect(postBody(fetchMock)).toMatchObject({ action: "DELETE_SUBSCRIPTION_CATEGORY_FEE", id: "cat-fee-1" }));
   });
 
   it("gates the entrance fee form and row controls behind Edit", async () => {

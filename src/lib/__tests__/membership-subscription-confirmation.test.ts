@@ -21,6 +21,7 @@ const mocks = vi.hoisted(() => ({
   transaction: vi.fn(),
   mapping: vi.fn(),
   fee: vi.fn(),
+  categoryFee: vi.fn(),
   familyMode: vi.fn(),
   audit: vi.fn(),
   enqueue: vi.fn(),
@@ -45,7 +46,11 @@ vi.mock("@/lib/prisma", () => {
   mocks.client = client;
   return { prisma: client };
 });
-vi.mock("@/lib/authoritative-fees", () => ({ getEffectiveMembershipAnnualFee: mocks.fee, getFamilyBillingMode: mocks.familyMode }));
+vi.mock("@/lib/authoritative-fees", () => ({
+  getEffectiveMembershipAnnualFee: mocks.fee,
+  getEffectiveSubscriptionCategoryFee: mocks.categoryFee,
+  getFamilyBillingMode: mocks.familyMode,
+}));
 vi.mock("@/lib/xero-mappings", () => ({ getResolvedAccountMapping: mocks.mapping }));
 vi.mock("@/lib/audit", () => ({ createAuditLog: mocks.audit }));
 vi.mock("@/lib/xero-subscription-invoices", () => ({ enqueueMembershipSubscriptionChargeOperation: mocks.enqueue }));
@@ -86,6 +91,9 @@ describe("membership subscription confirmation", () => {
     mocks.operationCount.mockResolvedValue(0);
     mocks.operationCreate.mockResolvedValue({ id: "operation-1" });
     mocks.transaction.mockImplementation(async (callback: (client: unknown) => unknown) => callback(mocks.client));
+    // Subscription-category decoupling: no category fee by default — this
+    // file's default member has no subscriptionCategory on their assignment.
+    mocks.categoryFee.mockResolvedValue(null);
   });
 
   it("atomically snapshots the mapping and coverage, then replays to the existing charge", async () => {
@@ -104,6 +112,9 @@ describe("membership subscription confirmation", () => {
         xeroAccountCode: "203",
         xeroItemCode: "SUB",
         chargedAmountCents: 12_000,
+        // No per-covered-member membershipTypeId/Name — those audit columns
+        // were dropped from the subscription-category redesign (write-only,
+        // nothing ever read them back).
         coverage: { create: [{ subscriptionId: "subscription-1", memberId: "member-1", memberName: "Member One" }] },
       }),
     }));
@@ -556,5 +567,56 @@ describe("membership subscription confirmation", () => {
     expect(mocks.transaction).toHaveBeenCalledTimes(1);
     const options = mocks.transaction.mock.calls[0][1] as { timeout?: number } | undefined;
     expect(options?.timeout).toBeGreaterThanOrEqual(60_000);
+  });
+
+  describe("subscription category decoupling", () => {
+    beforeEach(() => {
+      mocks.categoryFee.mockResolvedValue({
+        id: "cat-fee-1", amountCents: 20_000, prorationRule: "NONE",
+      });
+      mocks.memberFindMany.mockResolvedValue([{
+        id: "member-1", firstName: "Member", lastName: "One", email: "member@example.test",
+        role: "USER",
+        seasonalMembershipAssignments: [{
+          membershipType: { id: "type-1", key: "FULL", name: "Full", subscriptionBehavior: "REQUIRED" },
+          subscriptionCategory: { id: "cat-1", key: "couple", name: "Couple", isActive: true },
+        }],
+        familyGroupMemberships: [],
+      }]);
+    });
+
+    it("mints a charge on the category axis with membershipType* null and subscriptionCategory* populated", async () => {
+      const preview = await buildSubscriptionBillingPreview({
+        seasonYear: 2026,
+        decisionDate: new Date("2026-07-13T00:00:00.000Z"),
+      });
+      expect(preview.entries).toHaveLength(1);
+      await confirmSubscriptionBillingPreview({
+        preview,
+        expectedConfirmationToken: preview.confirmationToken,
+        source: "ANNUAL_BATCH",
+      });
+      expect(mocks.chargeUpsert).toHaveBeenCalledWith(expect.objectContaining({
+        create: expect.objectContaining({
+          membershipAnnualFeeId: null,
+          membershipTypeId: null,
+          membershipTypeKey: null,
+          membershipTypeName: null,
+          subscriptionCategoryId: "cat-1",
+          subscriptionCategoryKey: "couple",
+          subscriptionCategoryName: "Couple",
+          subscriptionCategoryFeeId: "cat-fee-1",
+          billingBasis: "PER_FAMILY",
+          chargedAmountCents: 20_000,
+          // No per-covered-member membershipTypeId/Name — dropped from the
+          // redesign (write-only, nothing ever read them back).
+          coverage: {
+            create: [{
+              subscriptionId: "subscription-1", memberId: "member-1", memberName: "Member One",
+            }],
+          },
+        }),
+      }));
+    });
   });
 });

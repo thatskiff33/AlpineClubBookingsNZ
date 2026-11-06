@@ -456,6 +456,16 @@ Journey: Inspect a type, its eligibility and subscription settings before saving
 
 [Guide](guides/membership-types.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
+### Subscription Categories — subscription-categories
+
+Screen: `/admin/subscription-categories`.
+
+Shows: Subscription categories and their fee, the second billing axis alongside membership type.
+
+Journey: Create or edit a category and its flat fee, then assign members from their profile.
+
+[Guide](guides/subscription-categories.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
+
 ### Subscription Lockout — subscription-lockout
 
 Screen: `/admin/subscription-lockout`.

@@ -209,6 +209,13 @@ function makePreviewDb() {
       }),
       createMany: vi.fn(),
     },
+    // Subscription-category decoupling: no test exercises this by default
+    // (the shared `previousAssignment()` fixture carries no category), so a
+    // resolved `null` is a safe default; tests that DO need a real category
+    // override this mock's implementation directly.
+    subscriptionCategory: {
+      findUnique: vi.fn().mockResolvedValue(null),
+    },
     booking: {
       findMany: vi.fn().mockImplementation(async ({ where }: any) => {
         if (where.status === "DRAFT") return draftBookings;
@@ -485,6 +492,9 @@ describe("seasonal membership assignment preview and save", () => {
         },
         update: {
           membershipTypeId: "type-associate",
+          // Subscription-category decoupling: null here since this save did
+          // not set a category.
+          subscriptionCategoryId: null,
           applyFrom: new Date("2026-07-15T00:00:00.000Z"),
           assignedByMemberId: "admin-1",
           source: "ADMIN",
@@ -517,6 +527,190 @@ describe("seasonal membership assignment preview and save", () => {
             resultingSubscriptionBehavior: "REQUIRED",
           }),
         }),
+      }),
+    );
+  });
+
+  it("preserves an existing subscription category when the caller never names the field (bulk/Xero-import shape)", async () => {
+    // Regression for the review finding: `applyBulkSeasonalMembershipType`
+    // and `importMembersFromXero` both call preview/save without ever
+    // passing `subscriptionCategoryId` — they change ONLY membershipType.
+    // That omission must preserve the member's existing category, never
+    // silently clear it to null.
+    const db = makePreviewDb();
+    const coupleCategory = { id: "cat-couple", key: "COUPLE", name: "Couple", isActive: true };
+    db.subscriptionCategory.findUnique = vi.fn().mockResolvedValue(coupleCategory);
+    const assignedWithCategory = {
+      ...previousAssignment(),
+      subscriptionCategoryId: "cat-couple",
+      subscriptionCategory: coupleCategory,
+    };
+    db.seasonalMembershipAssignment.findUnique = vi
+      .fn()
+      .mockResolvedValue(assignedWithCategory);
+    db.seasonalMembershipAssignment.findUniqueOrThrow = vi
+      .fn()
+      .mockResolvedValue(assignedWithCategory);
+
+    const previewResult = await getSeasonalMembershipChangePreview({
+      memberId: "member-1",
+      seasonYear: 2026,
+      membershipTypeId: "type-associate",
+      // subscriptionCategoryId deliberately omitted.
+      now: new Date("2026-07-01T00:00:00.000Z"),
+      clubCurrentSeasonYear: 2026,
+      db: db as never,
+    });
+    const preview = (
+      previewResult.body as {
+        preview: {
+          previewToken: string;
+          newSubscriptionCategory: { id: string } | null;
+          subscriptionCategoryChanged: boolean;
+        };
+      }
+    ).preview;
+    // The category is carried forward, unchanged — not cleared.
+    expect(preview.newSubscriptionCategory?.id).toBe("cat-couple");
+    expect(preview.subscriptionCategoryChanged).toBe(false);
+
+    const result = await saveSeasonalMembershipAssignment({
+      memberId: "member-1",
+      seasonYear: 2026,
+      membershipTypeId: "type-associate",
+      // subscriptionCategoryId deliberately omitted, exactly like the bulk
+      // membership-type route and the Xero member import.
+      adminMemberId: "admin-1",
+      reason: "bulk membership type change",
+      previewToken: preview.previewToken,
+      db: db as never,
+    });
+
+    expect(result.init?.status).toBeUndefined();
+    expect(db.seasonalMembershipAssignment.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        update: expect.objectContaining({
+          membershipTypeId: "type-associate",
+          subscriptionCategoryId: "cat-couple",
+        }),
+      }),
+    );
+  });
+
+  // Review finding: the built-in "Individual" sentinel is a routing signal
+  // (null means Individual), never a real category — only the member card's
+  // own dropdown filter stopped an admin picking it, so any other caller
+  // could assign it directly without this check.
+  it("rejects explicitly assigning the built-in Individual category", async () => {
+    const db = makePreviewDb();
+    db.subscriptionCategory.findUnique = vi
+      .fn()
+      .mockResolvedValue({ id: "cat-individual", key: "individual", name: "Individual", isActive: true, isBuiltIn: true });
+
+    const previewResult = await getSeasonalMembershipChangePreview({
+      memberId: "member-1",
+      seasonYear: 2026,
+      membershipTypeId: "type-associate",
+      subscriptionCategoryId: "cat-individual",
+      now: new Date("2026-07-01T00:00:00.000Z"),
+      clubCurrentSeasonYear: 2026,
+      db: db as never,
+    });
+    expect(previewResult.init?.status).toBe(409);
+  });
+
+  // Review finding, fixed in the opposite direction from the test above: a
+  // PRESERVED (not newly chosen) archived category must NOT block an
+  // unrelated save — the bulk membership-type route and the Xero import
+  // never name subscriptionCategoryId, so the category they carry forward is
+  // always "preserved", never "newly assigned", even if it happens to have
+  // been archived since. The billing engine (not this save) is what flags
+  // that case.
+  it("does not block a save that preserves an already-archived category it never asked to touch", async () => {
+    const db = makePreviewDb();
+    const archivedCategory = { id: "cat-old", key: "OLD", name: "Old Category", isActive: false, isBuiltIn: false };
+    db.subscriptionCategory.findUnique = vi.fn().mockResolvedValue(archivedCategory);
+    const assignedWithArchivedCategory = {
+      ...previousAssignment(),
+      subscriptionCategoryId: "cat-old",
+      subscriptionCategory: archivedCategory,
+    };
+    db.seasonalMembershipAssignment.findUnique = vi.fn().mockResolvedValue(assignedWithArchivedCategory);
+    db.seasonalMembershipAssignment.findUniqueOrThrow = vi.fn().mockResolvedValue(assignedWithArchivedCategory);
+
+    const previewResult = await getSeasonalMembershipChangePreview({
+      memberId: "member-1",
+      seasonYear: 2026,
+      membershipTypeId: "type-associate",
+      // subscriptionCategoryId deliberately omitted — bulk/import shape.
+      now: new Date("2026-07-01T00:00:00.000Z"),
+      clubCurrentSeasonYear: 2026,
+      db: db as never,
+    });
+    expect(previewResult.init?.status).toBeUndefined();
+    const preview = (previewResult.body as { preview: { previewToken: string } }).preview;
+
+    const result = await saveSeasonalMembershipAssignment({
+      memberId: "member-1",
+      seasonYear: 2026,
+      membershipTypeId: "type-associate",
+      adminMemberId: "admin-1",
+      reason: "bulk membership type change",
+      previewToken: preview.previewToken,
+      db: db as never,
+    });
+    expect(result.init?.status).toBeUndefined();
+    expect(db.seasonalMembershipAssignment.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        update: expect.objectContaining({ subscriptionCategoryId: "cat-old" }),
+      }),
+    );
+  });
+
+  // Second review round: the admin card (unlike bulk/import) ALWAYS sends
+  // subscriptionCategoryId explicitly, even when the admin is not touching
+  // it — so gating the archived/built-in checks on "field present" rather
+  // than "value changed" would have 409'd every save for a member whose
+  // category was archived, forever, including a save that only changes
+  // their membership type and resubmits the SAME archived category id.
+  it("does not block a save that EXPLICITLY resubmits the member's own already-archived category unchanged (admin card shape)", async () => {
+    const db = makePreviewDb();
+    const archivedCategory = { id: "cat-old", key: "OLD", name: "Old Category", isActive: false, isBuiltIn: false };
+    db.subscriptionCategory.findUnique = vi.fn().mockResolvedValue(archivedCategory);
+    const assignedWithArchivedCategory = {
+      ...previousAssignment(),
+      subscriptionCategoryId: "cat-old",
+      subscriptionCategory: archivedCategory,
+    };
+    db.seasonalMembershipAssignment.findUnique = vi.fn().mockResolvedValue(assignedWithArchivedCategory);
+    db.seasonalMembershipAssignment.findUniqueOrThrow = vi.fn().mockResolvedValue(assignedWithArchivedCategory);
+
+    const previewResult = await getSeasonalMembershipChangePreview({
+      memberId: "member-1",
+      seasonYear: 2026,
+      membershipTypeId: "type-associate",
+      subscriptionCategoryId: "cat-old", // explicit, same as the member already has
+      now: new Date("2026-07-01T00:00:00.000Z"),
+      clubCurrentSeasonYear: 2026,
+      db: db as never,
+    });
+    expect(previewResult.init?.status).toBeUndefined();
+    const preview = (previewResult.body as { preview: { previewToken: string } }).preview;
+
+    const result = await saveSeasonalMembershipAssignment({
+      memberId: "member-1",
+      seasonYear: 2026,
+      membershipTypeId: "type-associate",
+      subscriptionCategoryId: "cat-old",
+      adminMemberId: "admin-1",
+      reason: "changing membership type only",
+      previewToken: preview.previewToken,
+      db: db as never,
+    });
+    expect(result.init?.status).toBeUndefined();
+    expect(db.seasonalMembershipAssignment.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        update: expect.objectContaining({ subscriptionCategoryId: "cat-old" }),
       }),
     );
   });

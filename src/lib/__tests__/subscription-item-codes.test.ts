@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // buildSubscriptionInvoiceMatchOptions run against controllable data.
 const mocks = vi.hoisted(() => ({
   feeComponentFindMany: vi.fn(),
+  categoryFeeComponentFindMany: vi.fn(),
   accountMappingFindUnique: vi.fn(),
   accountMappingFindMany: vi.fn(),
   itemCodeMappingFindMany: vi.fn(),
@@ -15,6 +16,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     membershipAnnualFeeComponent: { findMany: mocks.feeComponentFindMany },
+    subscriptionCategoryFeeComponent: { findMany: mocks.categoryFeeComponentFindMany },
     xeroAccountMapping: {
       findUnique: mocks.accountMappingFindUnique,
       findMany: mocks.accountMappingFindMany,
@@ -34,6 +36,7 @@ import { buildSubscriptionInvoiceMatchOptions } from "@/lib/xero-membership-sync
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.feeComponentFindMany.mockResolvedValue([]);
+  mocks.categoryFeeComponentFindMany.mockResolvedValue([]);
   mocks.accountMappingFindUnique.mockResolvedValue(null);
   mocks.accountMappingFindMany.mockResolvedValue([]);
   mocks.itemCodeMappingFindMany.mockResolvedValue([]);
@@ -80,6 +83,32 @@ describe("getSubscriptionItemCodes (#2109)", () => {
       itemCode: "SUBS",
     });
     expect(await getSubscriptionItemCodes()).toEqual(["SUBS"]);
+  });
+
+  // Subscription-category decoupling: the independent category-axis fee
+  // schedule's own item codes must be recognized too, since a category
+  // charge stamps them on its invoice lines exactly as a type charge stamps
+  // the membership-annual-fee ones.
+  it("unions subscription-category fee-component codes in too", async () => {
+    mocks.feeComponentFindMany.mockResolvedValue([{ xeroItemCode: "FULL-ADULT" }]);
+    mocks.categoryFeeComponentFindMany.mockResolvedValue([
+      { xeroItemCode: "COUPLE" },
+    ]);
+    mocks.accountMappingFindUnique.mockResolvedValue({
+      code: "203",
+      itemCode: "SUBS",
+    });
+    expect(await getSubscriptionItemCodes()).toEqual(["COUPLE", "FULL-ADULT", "SUBS"]);
+  });
+
+  it("degrades to the other sources when the category fee-component read fails", async () => {
+    mocks.feeComponentFindMany.mockResolvedValue([{ xeroItemCode: "FULL-ADULT" }]);
+    mocks.categoryFeeComponentFindMany.mockRejectedValue(new Error("db down"));
+    mocks.accountMappingFindUnique.mockResolvedValue({
+      code: "203",
+      itemCode: "SUBS",
+    });
+    expect(await getSubscriptionItemCodes()).toEqual(["FULL-ADULT", "SUBS"]);
   });
 
   // Closed-loop invariant: every code billing can stamp on a subscription line

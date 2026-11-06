@@ -1,4 +1,4 @@
-import { BadgeCheck, Lock, Sliders } from "lucide-react";
+import { BadgeCheck, Lock, Sliders, Tags } from "lucide-react";
 import {
   AdminHubPage,
   type AdminHubSection,
@@ -12,6 +12,13 @@ const sections: AdminHubSection[] = [
     description:
       "Configure seasonal membership categories, booking policy, and subscription rules.",
     icon: BadgeCheck,
+  },
+  {
+    href: "/admin/subscription-categories",
+    title: "Subscription Categories",
+    description:
+      "Define flat-rate billing categories (e.g. Couple, Family) that are independent of membership type.",
+    icon: Tags,
   },
   {
     href: "/admin/member-fields",
