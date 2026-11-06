@@ -1,7 +1,7 @@
 import type { PrismaClient } from "@prisma/client";
 import { Client } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { memberMoneyEventKeys as keys, postMemberMoneyEvent, reverseMemberMoneyJournal, reserveMemberMoneyRefund, releaseMemberMoneyRefundReservation, verifyMemberMoneyJournal, type MemberMoneyPlan } from "@/lib/member-money";
+import { MemberMoneyReservationRefused, memberMoneyEventKeys as keys, postMemberMoneyEvent, reverseMemberMoneyJournal, reserveMemberMoneyRefund, releaseMemberMoneyRefundReservation, verifyMemberMoneyJournal, type MemberMoneyPlan } from "@/lib/member-money";
 import { readMemberMoneyApplicationState } from "@/lib/member-money/internal/application-read";
 import { bookingChargePlan, createMemberMoneyScratchDatabase, memberMoneyTestContext, type MemberMoneyScratchDatabase } from "./support/member-money-fixtures";
 
@@ -70,7 +70,9 @@ const reserve = (attemptKey = "attempt:one", amountCents = 60) => prisma.$transa
     const first = await reserve(); reservationId = first.id;
     expect(await reserve()).toEqual({ id: first.id, replayed: true });
     await expect(reserve("attempt:one", 59)).rejects.toThrow(/payload differs/);
-    await expect(reserve("attempt:two")).rejects.toThrow(/C3|C4/);
+    const overSpend = await reserve("attempt:two").then(() => null, (error: unknown) => error);
+    expect(overSpend).toBeInstanceOf(MemberMoneyReservationRefused);
+    expect((overSpend as Error).message).toMatch(/C3|C4/);
     await expect(prisma.$transaction((tx) => reverseMemberMoneyJournal(tx, context, { reversesJournalId: receiptJournal, origin: "APP", source: source(), reason: "cannot reverse funded receipt" }))).rejects.toThrow(/fund application/);
     await expect(prisma.$transaction((tx) => reverseMemberMoneyJournal(tx, context, { reversesJournalId: fundingJournal, origin: "APP", source: source(), reason: "funding still reserved" }))).rejects.toThrow(/C4/);
     const funding = await prisma.memberMoneyJournal.findUniqueOrThrow({ where: { id: fundingJournal }, include: { event: true, applications: true } });

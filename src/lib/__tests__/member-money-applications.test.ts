@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
+import { memberMoneyApplicationKeys, memberMoneyChainKey } from "@/lib/member-money";
+import { memberMoneyEventKeys as keys, walkMemberMoneyChain } from "@/lib/member-money/internal/keys";
 import { buildMemberMoneyBatch, buildMemberMoneyReversal, MemberMoneyPlanError, type MemberMoneyPlan } from "@/lib/member-money/internal/plan";
-import { memberMoneyEventKeys as keys, memberMoneyApplicationKeys, memberMoneyChainKey, walkMemberMoneyChain } from "@/lib/member-money/internal/keys";
 import { memberMoneyConservationProblems, type ApplicationState } from "@/lib/member-money/internal/application-state";
 import { memberMoneyTestContext } from "./support/member-money-fixtures";
 
