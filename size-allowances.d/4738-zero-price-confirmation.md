@@ -10,6 +10,12 @@ reason: the confirmation post sits beside the PAID write it confirms, inside
   the transaction that holds the draft's locks, and moving it out would
   separate the ledger post from the status change it belongs to.
 
+file: src/app/api/bookings/[id]/waitlist-confirm/route.ts
+lines: 571
+reason: the post runs only after the $0 flip wins its status-guarded claim,
+  inside that transaction, so a lost claim posts nothing; splitting it out
+  would put the post on the far side of the claim.
+
 file: src/app/api/admin/bookings/[id]/confirm-pending-guests/route.ts
 lines: 951
 reason: the post follows the zero-worth payment row in the $0 branch's own

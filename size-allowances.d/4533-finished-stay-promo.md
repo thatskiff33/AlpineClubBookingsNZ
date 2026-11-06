@@ -24,3 +24,10 @@ reason: the edit's changes split into the promo code and everything else (so
   in edit-booking/finished-stay-promo-correction-card.tsx; these lines read the
   panel's own state, which only the panel holds.
 
+file: src/lib/booking-batch-modification-service.ts
+lines: 2754
+reason: the finished-stay fee rule is classified with whether the edit changes
+  promo codes, and the full-reduction settlement and the untiered give-back
+  read the new finishedStayReductionReturnedInFull. The rules live in
+  booking-finished-stay-correction.ts; these lines are where the service
+  already chooses the settlement and the fee, and must stay beside them.

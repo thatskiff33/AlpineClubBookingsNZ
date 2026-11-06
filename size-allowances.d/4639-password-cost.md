@@ -1,5 +1,9 @@
 # File-size allowances for #4639
 
+file: src/app/api/admin/lodge/route.ts
+lines: 492
+reason: One import routes the existing password writer to the shared bcrypt cost. Splitting the surrounding service would expand this auth fix into an unrelated refactor.
+
 file: src/app/api/admin/members/import/route.ts
 lines: 816
 reason: One import routes the existing password writer to the shared bcrypt cost. Splitting the surrounding service would expand this auth fix into an unrelated refactor.
@@ -22,6 +26,10 @@ reason: One import routes the existing password writer to the shared bcrypt cost
 
 file: src/lib/booking-request.ts
 lines: 3091
+reason: One import routes the existing password writer to the shared bcrypt cost. Splitting the surrounding service would expand this auth fix into an unrelated refactor.
+
+file: src/lib/group-booking.ts
+lines: 1967
 reason: One import routes the existing password writer to the shared bcrypt cost. Splitting the surrounding service would expand this auth fix into an unrelated refactor.
 
 file: src/lib/nomination.ts
