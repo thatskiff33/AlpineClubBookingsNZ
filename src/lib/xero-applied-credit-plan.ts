@@ -99,16 +99,9 @@ export function planAppliedCreditAllocation(
 ): AppliedCreditPlan {
   const noteAllocations: PlannedNoteAllocation[] = [];
   const mintSlices: PlannedMintSlice[] = [];
-  let outstanding = appliedCents;
+  const { slices, outstanding } = fillLotsInOrder(lots, appliedCents);
 
-  for (const lot of lots) {
-    if (outstanding <= 0) {
-      break;
-    }
-    const slice = Math.min(lot.remainingCents, outstanding);
-    if (slice <= 0) {
-      continue;
-    }
+  for (const { lot, amountCents: slice } of slices) {
     if (lot.xeroCreditNoteId) {
       noteAllocations.push({
         memberCreditId: lot.memberCreditId,
@@ -122,7 +115,6 @@ export function planAppliedCreditAllocation(
         amountCents: slice,
       });
     }
-    outstanding -= slice;
   }
 
   if (outstanding > 0) {
@@ -138,6 +130,79 @@ export function planAppliedCreditAllocation(
     mintTotalCents,
     coveredCents: appliedCents - outstanding,
   };
+}
+
+/**
+ * THE FILL (#1620, `INV-SSOT`): `appliedCents` taken from the lots in the order
+ * given, each giving what is still outstanding up to its free credit, until
+ * nothing is outstanding. It never throws: what the lots could not cover is
+ * `outstanding`. {@link planAppliedCreditAllocation} refuses a shortfall; the
+ * early warning (#4220) reads how much lands on one lot, shortfall or not.
+ */
+export function fillLotsInOrder(
+  lots: readonly AppliedCreditLot[],
+  appliedCents: number,
+): { slices: Array<{ lot: AppliedCreditLot; amountCents: number }>; outstanding: number } {
+  const slices: Array<{ lot: AppliedCreditLot; amountCents: number }> = [];
+  let outstanding = appliedCents;
+  for (const lot of lots) {
+    if (outstanding <= 0) {
+      break;
+    }
+    const slice = Math.min(lot.remainingCents, outstanding);
+    if (slice <= 0) {
+      continue;
+    }
+    slices.push({ lot, amountCents: slice });
+    outstanding -= slice;
+  }
+  return { slices, outstanding };
+}
+
+// ---------------------------------------------------------------------------
+// The free credit of each lot (#1620, #4219, #4220)
+// ---------------------------------------------------------------------------
+
+/** A positive credit lot as the loader reads it, before its free credit is worked out. */
+interface CreditLotRow {
+  id: string;
+  amountCents: number;
+  type: CreditType;
+  xeroCreditNoteId: string | null;
+}
+
+/**
+ * THE FREE CREDIT OF EACH LOT, in the order given (the loader's
+ * {@link CREDIT_LOT_USE_ORDER}): the lot's amount, less the slices already drawn
+ * from it, less its note's net write-down (#4219), which is taken once per note,
+ * oldest lot first, never from each lot stamped with the note. A lot with nothing
+ * free is dropped. The one loader, `loadFreeCreditLots`, works it out here for the
+ * allocation engine and for the early warning's replay of its draw (#4220, `INV-SSOT`).
+ */
+export function freeCreditLots(
+  lots: readonly CreditLotRow[],
+  allocatedByLotId: ReadonlyMap<string, number>,
+  writtenDownByNote: ReadonlyMap<string, number>,
+): AppliedCreditLot[] {
+  const writtenDown = new Map(writtenDownByNote);
+  const free: AppliedCreditLot[] = [];
+  for (const lot of lots) {
+    const unallocated = lot.amountCents - (allocatedByLotId.get(lot.id) ?? 0);
+    // A note's write-down is taken once, oldest lot first, never from each lot stamped with the note.
+    const downCents = lot.xeroCreditNoteId ? Math.min(Math.max(unallocated, 0), writtenDown.get(lot.xeroCreditNoteId) ?? 0) : 0;
+    if (lot.xeroCreditNoteId && downCents > 0) writtenDown.set(lot.xeroCreditNoteId, (writtenDown.get(lot.xeroCreditNoteId) ?? 0) - downCents);
+    const remainingCents = unallocated - downCents;
+    if (remainingCents <= 0) {
+      continue;
+    }
+    free.push({
+      memberCreditId: lot.id,
+      creditType: lot.type,
+      xeroCreditNoteId: lot.xeroCreditNoteId,
+      remainingCents,
+    });
+  }
+  return free;
 }
 
 // ---------------------------------------------------------------------------

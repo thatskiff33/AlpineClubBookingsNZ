@@ -8,7 +8,7 @@ import { strandNightPriceOffersForBooking } from "@/lib/stored-night-price-stran
 import { getBookingManualPaymentState } from "@/lib/manual-booking-payment-state";
 import { getWithheldBookingEmailSummary } from "@/lib/booking-email-suppression";
 import { bookingHasLiveWaitlistOffer } from "@/lib/booking-no-emails-service";
-import { findUnresolvedWaitlistStrandReport } from "@/lib/waitlist-return-contract";
+import { findUnresolvedWaitlistStrandReport, hasStrandedWaitlistConfirmShape } from "@/lib/waitlist-return-contract";
 import {
   getBookingFinancialReviewWarnings,
   getBookingProviderMismatches,
@@ -179,9 +179,7 @@ export async function loadBookingDetailAdminTools({
     canSeeAdminTools &&
     !isDeleted &&
     modules.waitlist &&
-    booking.status === "PAYMENT_PENDING" &&
-    booking.finalPriceCents === 0 &&
-    !booking.payment;
+    hasStrandedWaitlistConfirmShape(booking);
   const showReturnToWaitlist = strandedWaitlistConfirmShape
     ? Boolean(await findUnresolvedWaitlistStrandReport(prisma, booking.id))
     : false;

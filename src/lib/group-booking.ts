@@ -26,6 +26,7 @@
  */
 import { randomBytes, randomInt } from "crypto";
 import { hash } from "bcryptjs";
+import { PASSWORD_BCRYPT_COST } from "@/lib/password-hashing";
 import {
   AgeTier,
   BookingEventType,
@@ -1066,9 +1067,10 @@ export async function joinGroupBookingAsMember(
     }
   }
 
-  // #4628: an EACH_PAYS_OWN joiner paying by internet banking binds its charge in
-  // the journal inside the create; its context is read here, on the join's zone,
-  // before the create's transaction (`INV-LOCK-004`).
+  // #4628, #4660: an EACH_PAYS_OWN joiner paying by internet banking binds its
+  // charge in the journal inside the create, and a $0 join confirms there; the
+  // context is read here, on the join's zone, before the create's transaction
+  // (`INV-LOCK-004`).
   const journal = await resolveBookingMoneyPostingContext({ zone: joinClubZone });
   let outcome: Awaited<ReturnType<typeof createConfirmedBooking>>;
   try {
@@ -1679,7 +1681,7 @@ export async function verifyAndCreateNonMemberJoin(
 
   // Non-login member: store a random bcrypt hash so the row satisfies the
   // schema without any usable credential (mirrors approveBookingRequest).
-  const placeholderPasswordHash = await hash(randomBytes(32).toString("hex"), 13);
+  const placeholderPasswordHash = await hash(randomBytes(32).toString("hex"), PASSWORD_BCRYPT_COST);
   const reviewedAt = new Date();
   const holdDays = await getNonMemberHoldDays(checkIn, groupLodgeId);
   const nonMemberHoldUntil = resolveRequestBookingHoldUntil(

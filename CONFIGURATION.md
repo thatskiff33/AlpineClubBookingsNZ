@@ -1248,9 +1248,11 @@ test/demo mode or disabled:
 | `DB_PASSWORD`           | PostgreSQL password used by Docker Compose. It is the operator (superuser) `tac`'s password, and every service's password unless the least-privilege roles below are set. |
 | `POSTGRES_MAX_CONNECTIONS` | Postgres `max_connections` for the compose `postgres` service (default `40`). Raise it, for example to `80`, when a deploy's warm-up gate blocks with "too many database connections opened": a live host was measured holding 39 client connections across three app containers during a routine handover, before #4269 gave each container one pool. Applied when the `postgres` container is next created. The deploy refuses, at step 3, a value that is not a whole number above the pools the resolved Compose model can open together (27 shipped) or that is above `1000`. See DEPLOYMENT.md "Connection pool sizing". |
 | `POSTGRES_MEM_LIMIT` | Memory limit of the compose `postgres` container (default `768m`). Raise it in step with `POSTGRES_MAX_CONNECTIONS`: each backend costs its `work_mem` and connection overhead, so a ceiling of `80` wants the limit taken towards `1g`. Applied when the container is next created. |
-| `AUTH_SECRET`           | Auth.js session secret. Also the root of 2FA-secret and in-app provider-credential encryption (#2079) — use a strong value (>= 32 chars); rotating it is a planned maintenance event (see `DEPLOYMENT.md`). |
+| `AUTH_SECRET`           | Auth.js session secret — use a strong value (>= 32 chars). Until `DATA_ENCRYPTION_KEYS` is set it is also the key 2FA secrets and in-app provider credentials are encrypted under (#2079), which makes rotating it a planned maintenance event (see `DEPLOYMENT.md`). |
 | `NEXTAUTH_SECRET`       | Legacy Auth.js secret fallback; keep aligned with `AUTH_SECRET`. |
+| `DATA_ENCRYPTION_KEYS`  | Optional, recommended (#4456). The data-encryption key ring: comma-separated `<id>:<base64 key>` entries, each exactly 32 random bytes (`openssl rand -base64 32`), the **first** used for new data. Once set, stored provider credentials and authenticator secrets no longer depend on `AUTH_SECRET`. Read [Data-encryption keys](#data-encryption-keys-4456) before setting it. |
 | `NEXTAUTH_URL`          | Exact app origin, for example `http://localhost:3000`.           |
+| `SERVERNZ_DEFAULT_BASE_URL` | The Alpine Central Server this deployment pairs with, for example `https://central.example.org`; empty by default. Offered only: the setup page pre-fills its address field from it while no address is saved, and an administrator's Save stores it; the sync and the Request a Connection link read the saved address alone. Must be `https` on a public host, or it is ignored as if unset (triyder/AlpineClubBookingsNZ#81). |
 | `AUTH_TRUST_HOST`       | Set `true` behind trusted proxies/Compose.                       |
 | `CRON_SECRET`           | Shared secret for cron and deploy status endpoints.              |
 | `SEED_ADMIN_EMAIL`      | Email for the first seeded admin account.                        |
@@ -1263,8 +1265,11 @@ test/demo mode or disabled:
 | `DEMO_SECOND_LODGE`     | Local-only; set to `1` to also seed a second demo lodge (rooms + a few bookings) so two-lodge flows are demoable. Default demo dataset is unchanged when unset. |
 
 `prisma/seed.ts` fails before seeding if `SEED_ADMIN_EMAIL` or
-`SEED_ADMIN_PASSWORD` is unset, and fails before creating the lodge kiosk
-account if `SEED_LODGE_PASSWORD` is unset. The seeded admin is created with
+`SEED_ADMIN_PASSWORD` is unset, or if the lodge kiosk account is missing and
+`SEED_LODGE_PASSWORD` is unset. Before it writes anything, it checks the
+password of each account it is about to create against the public
+breached-password service and stops if one is listed (#4610); if the service
+cannot be reached, the password is accepted unchecked. The seeded admin is created with
 `role: ADMIN`, `canLogin: true`, `emailVerified: true`, and a `NOT_REQUIRED`
 membership subscription for the current season, and is forced through
 `/change-password` on first login. The seed also writes the normalized
@@ -1325,6 +1330,15 @@ The club-config step also warns when any **active lodge** resolves as not set up
 for bookings (no capacity and no active beds, through the same resolver every
 booking path reads), and lists those lodges by name so each can be given a
 capacity on its configuration page (#3407).
+
+The **Data Encryption Key** step (#4456) reports whether stored credentials,
+authenticator secrets and recovery codes are under a `DATA_ENCRYPTION_KEYS`
+ring key or still under `AUTH_SECRET` alone, counted per key. With no ring set
+it is **blocked** while a provider credential or an authenticator-app secret is
+stored under `AUTH_SECRET` alone, or while any credential, authenticator secret
+or recovery code names a ring key; the report is then blocked and `setup:check`
+exits 1 until a key is set or restored. The app itself runs unchanged and no
+deploy gates on it. See [Data-encryption keys](#data-encryption-keys-4456).
 
 After signing in as an administrator, open `/admin/setup` to review:
 
@@ -2127,6 +2141,7 @@ the `security` category.
 | Require a number | off | on/off | `0–9` |
 | Require a symbol | off | on/off | any non-alphanumeric character |
 | Magic-link TTL (minutes) | 15 | 5–60 | Read by the magic-link sign-in flow (#2034). Shown on the Login & Security page's Email sign-in link card; editing the value from that page is a planned follow-up, so it is read-only there for now. |
+| Refuse passwords found in public data breaches | on | on/off | `breachedPasswordCheck` (#4610). Checks a newly chosen password against a public breached-password list; see [below](#breached-password-check-and-outbound-access). |
 
 The policy governs only the paths where a member **chooses** a password —
 `/change-password` and the reset/setup-invite redemption at `/reset-password`.
@@ -2143,6 +2158,25 @@ A public, unauthenticated endpoint (`GET /api/auth/password-policy`) discloses
 the active rules so the reset and change-password forms can show live hints and
 validate length client-side; disclosing the policy is standard and the server
 enforces it regardless.
+
+### Breached-password check and outbound access
+
+With **Refuse passwords found in public data breaches** on (the default), the
+same set-time paths, plus an officer setting a kiosk password under Lodge
+settings, refuse a password that a public breached-password service lists
+(#4610, `INV-AUTH-006`). Only the first five characters of the password's
+SHA-1 hash are sent; the match is made on the server.
+
+#### Outbound network access
+
+The check makes an HTTPS `GET` from the app server to
+`https://api.pwnedpasswords.com/range/<5 hex characters>`. No key or
+environment variable is needed. A deployment whose firewall or proxy restricts
+outbound traffic must allow HTTPS to `api.pwnedpasswords.com`, or switch the
+setting off. If the host cannot be reached, or does not answer within three
+seconds, the password is accepted and a warning is logged, so a blocked host
+weakens the check without stopping anyone setting a password. Details and
+stated limits: [`docs/SECURITY.md`](docs/SECURITY.md#breached-password-check-4610).
 
 ## Two-Factor Authentication
 
@@ -2207,7 +2241,7 @@ allowed because every login-capable member keeps password login.
 
 **Where credentials live (#2087).** The per-club Google OAuth client id and
 secret are stored **only** in the encrypted `IntegrationCredential` store
-(AES-256-GCM, key derived from `AUTH_SECRET`), entered through the in-app setup
+(AES-256-GCM under the data-encryption key (`DATA_ENCRYPTION_KEYS`, or `AUTH_SECRET` while that is unset — see [Data-encryption keys](#data-encryption-keys-4456))), entered through the in-app setup
 wizard — never in the environment. The NextAuth config is **request-scoped**
 (`NextAuth((request) => config)`): the Google provider is resolved from the DB
 per request and is **omitted entirely** when unconfigured (no ghost button, no
@@ -2266,16 +2300,19 @@ now **ignored** (a readiness warning flags them). Re-enter the same credentials
 in the wizard, verify, then delete the env vars.
 
 Users enroll either an authenticator app (TOTP) or an email one-time code. TOTP
-secrets are encrypted at rest using key material derived from `AUTH_SECRET` (or
-`NEXTAUTH_SECRET` fallback), so rotating that secret invalidates stored TOTP
-secrets and recovery-code hashes. Email codes are short-lived, hashed at rest,
+secrets are encrypted, and recovery and email codes keyed-hashed, at rest under
+the data-encryption key (`DATA_ENCRYPTION_KEYS`, or `AUTH_SECRET`/`NEXTAUTH_SECRET`
+while that is unset — see [Data-encryption keys](#data-encryption-keys-4456)).
+Email codes are short-lived, hashed at rest,
 and the `two-factor-code` email template is marked sensitive so rendered code
 content is not retained in email logs. Recovery codes are generated on
 enrollment and profile regeneration, shown once, hashed at rest, and consumed
 once.
 
-> **Operational note — rotating `AUTH_SECRET`/`NEXTAUTH_SECRET` is a planned
-> event, not a casual credential refresh.** Because members' TOTP secrets and
+> **Operational note — while `DATA_ENCRYPTION_KEYS` is unset, rotating
+> `AUTH_SECRET`/`NEXTAUTH_SECRET` is a planned event, not a casual credential
+> refresh.** Once a data key is set and the setup step "Data Encryption Key" is
+> green, rotating the auth secret only signs everyone out. Until then: because members' TOTP secrets and
 > recovery-code hashes are bound to key material derived from the secret,
 > rotating it **invalidates every member's enrolled authenticator and recovery
 > codes at once** — on their next sign-in each member is forced back through
@@ -2288,6 +2325,69 @@ once.
 > their authenticator device); never rotate ad hoc. See the **auth-secret
 > rotation runbook** in `DEPLOYMENT.md`. Short-lived email one-time codes are
 > unaffected (re-issued per attempt).
+
+### Data-encryption keys (#4456)
+
+`DATA_ENCRYPTION_KEYS` separates the key that protects stored data from the
+session secret. Without it, `AUTH_SECRET` both signs sessions and encrypts every
+stored provider credential and authenticator secret, so a leak of that one value
+exposes both and rotating it destroys the stored data.
+
+- **Format.** Comma-separated `<id>:<base64 key>` entries. An id is 1–32
+  letters, digits, `-` or `_`, starting with a letter or digit;
+  `legacy-auth-secret` is reserved. Each key is exactly 32 random bytes:
+  generate one with `openssl rand -base64 32` (or
+  `node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"`).
+  Example: `DATA_ENCRYPTION_KEYS=k2026:<that value>`.
+- **The first key is current.** Every new credential, authenticator secret and
+  two-factor code hash uses it. The other keys stay readable: each stored row
+  names the key it was written under and is read with that key only.
+- **A bad value is refused whole**, never used in part: a malformed entry, a
+  key that is not 32 bytes, a key repeating one byte, a duplicate id, a
+  duplicate key, a key that **is the auth secret** (its text, or the bytes it
+  decodes to as base64, hex or UTF-8), or a key whose 32 bytes are **all
+  printable ASCII** (a password, not random bytes). The release then fails
+  `/api/health/ready`, credential capture refuses to save, and the setup step
+  "Data Encryption Key" goes red naming why (never the value).
+- **Until it is set, the setup step is red** wherever a provider credential or
+  an authenticator-app secret is stored (recovery codes alone do not count:
+  they are retired at cut-over, not moved): Admin → Setup shows the report
+  blocked and `pnpm run setup:check` exits 1. The app runs unchanged and no
+  deploy gates on it; it is a prompt to set a key, not a failure. It is red
+  too, naming the missing ring, while any credential, authenticator secret or
+  recovery code names a ring key, which is the same test the refusals below
+  use.
+- **Rows written before the ring** stay readable under `AUTH_SECRET` until they
+  are re-encrypted; the setup step counts them. Rotate `AUTH_SECRET` only once
+  it reports nothing left on it. This release has no switch to stop reading
+  them under the auth secret; the second part of #4456 adds one with the
+  re-encrypt.
+- **Recovery codes are the exception** (owner decision on #4456): codes issued
+  before a ring was set stop working the moment it is set, because a hash cannot
+  be re-keyed. A member holding them is told, on the sign-in challenge and on
+  their profile, to generate a new set. They are refused, not yet deleted: on
+  an instance without the ring they work again, until the second part of #4456
+  retires them in the database. Email codes last ten minutes and simply expire.
+- **Rollout, and no way back.** Set it only once every running container is on
+  a release that understands it: an older release cannot read data written
+  under a data key. Once rows are written under it, the previous colour of the
+  same release (started without the ring) cannot read them during the redeploy
+  that sets it, and rolling back to an older release, routing traffic back to a
+  ring-less colour or unsetting the variable strands every ring-keyed
+  credential, authenticator secret and recovery code. While the variable is
+  unset over ring-keyed data, nothing durable is saved under `AUTH_SECRET`:
+  credential capture, two-factor enrolment and recovery-code regeneration
+  refuse. (Email codes and the sign-in challenge last minutes and are still
+  issued, so email two-factor members, admins among them, can sign in and see
+  why.) Put the ring back as it was, or, if the key is lost for
+  good, set a new key and re-enter the credentials and re-enrol the
+  authenticators the old one held. If that deploy fails, keep the ring set and
+  go forward. Steps, the safe sequence and the two-step for a newer key:
+  [`DEPLOYMENT.md` → Adding a data-encryption key](DEPLOYMENT.md#adding-a-data-encryption-key-4456).
+- **Removing a key** strands every row still naming it ("needs re-entry" for a
+  credential; an authenticator that no longer verifies; recovery codes that no
+  longer match). Keep an old key in the ring until nothing names it.
+- Production and every copy must use **different** keys, as with `AUTH_SECRET`.
 
 Invalid two-factor attempts are rate-limited and tracked per member. Five
 invalid app, email, or recovery-code attempts lock the two-factor challenge for
@@ -2313,8 +2413,8 @@ webhook badge.
 There are **no** `STRIPE_SECRET_KEY`, `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY`, or
 `STRIPE_WEBHOOK_SECRET` environment variables any more — if any are still present
 they are **ignored** and setup readiness raises a warning naming them for removal
-(never silently honoured). Secrets are encrypted at rest with AES-256-GCM under a
-key derived from `AUTH_SECRET`/`NEXTAUTH_SECRET` via HKDF-SHA256.
+(never silently honoured). Secrets are encrypted at rest with AES-256-GCM under
+the data-encryption key (`DATA_ENCRYPTION_KEYS`, or `AUTH_SECRET` while that is unset — see [Data-encryption keys](#data-encryption-keys-4456)) via HKDF-SHA256.
 
 The **publishable key** is not secret; it is delivered to the card form at
 **runtime** from the store via `GET /api/stripe/publishable-key` — there is no
@@ -2395,8 +2495,8 @@ encrypted `IntegrationCredential` store (provider `anthropic`, key `api_key`),
 captured write-only on **Admin → Integrations** (Full Admin only). There is **no**
 `ANTHROPIC_API_KEY` environment variable — the key is never read from the
 environment for operation, and it is never returned to a browser, logged, or put
-in an audit row. It is encrypted at rest with AES-256-GCM under a key derived
-from `AUTH_SECRET`/`NEXTAUTH_SECRET`; if the auth secret is rotated the key drops
+in an audit row. It is encrypted at rest with AES-256-GCM under
+the data-encryption key (`DATA_ENCRYPTION_KEYS`, or `AUTH_SECRET` while that is unset — see [Data-encryption keys](#data-encryption-keys-4456)); if the key it was written under is lost it drops
 to a "needs re-entry" state and the assistant stops answering until it is
 re-entered.
 
@@ -2489,9 +2589,8 @@ shown for copy-paste in the wizard. There are **no**
 `XERO_ENCRYPTION_KEY`, or `XERO_WEBHOOK_KEY` environment variables any more — if
 any are still present they are **ignored** and setup readiness raises a warning
 naming them for removal (never silently honoured). Credentials are encrypted at
-rest with AES-256-GCM under a key derived from `AUTH_SECRET`/`NEXTAUTH_SECRET`
-via HKDF-SHA256 (a strong auth secret is required — see the auth-secret note
-above). The separate wrapped Xero token-encryption key earlier releases
+rest with AES-256-GCM under the data-encryption key (`DATA_ENCRYPTION_KEYS`, or `AUTH_SECRET` while that is unset — see [Data-encryption keys](#data-encryption-keys-4456)) via HKDF-SHA256 (with no ring set, a
+strong auth secret is required — see the auth-secret note above). The separate wrapped Xero token-encryption key earlier releases
 generated is retired (#3806).
 
 The wizard then finishes the connection (#2081): an optional **Webhooks** step
@@ -2808,3 +2907,10 @@ straight after one.
 Public forks should keep live provider credentials out of GitHub Actions. Use
 Stripe test mode, Xero demo tenants, SES sandbox credentials, and non-production
 databases for validation.
+
+The status board reads one repository variable (Settings, then Secrets and
+variables, then Actions):
+
+| Variable | Description |
+| --- | --- |
+| `STATUS_BOARD_ISSUE` | Optional. The number of the issue whose body `.github/workflows/status-board.yml` overwrites hourly with the generated lane status board (#4464). Only the repository owner can set it. While it is unset the job exits with a notice and writes nothing; it also refuses an issue that is a pull request or whose body is neither empty nor an earlier board. |

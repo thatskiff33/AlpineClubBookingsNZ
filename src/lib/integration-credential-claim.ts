@@ -22,7 +22,7 @@ import {
   StaleCredentialWriteError,
   type CredentialWriteExpectation,
 } from "@/lib/integration-credential-actor";
-import type { AuthSecretSource } from "@/lib/integration-crypto";
+import type { WrappingKeySource } from "@/lib/integration-crypto";
 import { isPrismaUniqueConstraintError } from "@/lib/prisma-errors";
 
 /** The encrypted columns one write lands, plus its attribution. */
@@ -30,7 +30,7 @@ export interface CredentialRowWrite {
   ciphertext: string;
   iv: string;
   authTag: string;
-  secretSource: AuthSecretSource;
+  secretSource: WrappingKeySource;
   labelVersion: string;
   updatedByUserId: string | null;
 }

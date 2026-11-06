@@ -57,6 +57,22 @@ export const RETURN_TO_WAITLIST_PAYMENT_PRESENT_MESSAGE =
 export const RETURN_TO_WAITLIST_NO_STRAND_EVIDENCE_MESSAGE =
   "Nothing on this booking records a waitlist confirmation that got stuck, so this is not the failure this repair fixes — a free booking can sit in Payment pending for several ordinary reasons. Nothing was changed. Check Admin -> Audit log for a 'waitlist.confirm_offer_release_failed' entry on this booking before using any other tool.";
 
+/**
+ * The cheap shape a stranded free waitlist confirm sits in: `PAYMENT_PENDING`,
+ * free, no `Payment` row. Necessary, never sufficient — see
+ * {@link findUnresolvedWaitlistStrandReport}. It is also the shape between a
+ * free confirm's two phases, so no other writer may open a payment row on it
+ * (#4735): that row would read as "the confirm finished", hiding the repair and
+ * failing the confirm's own `$0` row on `Payment.bookingId`.
+ */
+export function hasStrandedWaitlistConfirmShape(booking: {
+  status: string;
+  finalPriceCents: number;
+  payment: unknown;
+}): boolean {
+  return booking.status === "PAYMENT_PENDING" && booking.finalPriceCents === 0 && booking.payment == null;
+}
+
 /** Db handle for {@link findUnresolvedWaitlistStrandReport}: the live client or a transaction. */
 type WaitlistStrandAuditReader = Prisma.TransactionClient | PrismaClient;
 
@@ -156,36 +172,20 @@ export const RETURN_TO_WAITLIST_CLAIM_LOST_MESSAGE =
   "The booking changed while it was being returned to the waitlist, so nothing was written. Reload the page and check where it ended up.";
 
 /**
- * Prisma's transaction contention codes: P2028 (transaction API error, which
- * covers an exhausted `maxWait`/`timeout`) and P2034 (write conflict/deadlock,
- * retryable by definition). Same set and same 503 answer as
- * `waitlist-confirm/route.ts`, `admin-bed-allocation-routes.ts`,
- * `admin/site-style/route.ts` and `deletion-request-decision.ts`, for the reason
- * `docs/CONCURRENCY_AND_LOCKING.md` gives: a counterpart writer legitimately
- * holds `lock(1)` or the lodge key for the length of a whole transaction, so an
- * exhausted wait is contention rather than a fault, nothing was committed, and
- * the real remedy is "again shortly", not "differently".
+ * Refused because the locked transaction could not take its locks in time
+ * (Prisma's transaction contention, P2028 or P2034: `isTransactionContention`).
+ * Nothing was written, so the operator is told to retry rather than to escalate:
+ * the same 503 answer as `waitlist-confirm/route.ts`,
+ * `admin-bed-allocation-routes.ts`, `admin/site-style/route.ts` and the deletion
+ * release, for the reason `docs/CONCURRENCY_AND_LOCKING.md` gives - a
+ * counterpart writer legitimately holds `lock(1)` or the lodge key for the
+ * length of a whole transaction, so an exhausted wait is contention rather than
+ * a fault, and the real remedy is "again shortly", not "differently".
  *
  * This route needs the distinction more than most: it exists precisely BECAUSE
  * lock contention broke the confirm's compensating release (#2623 T4). Reporting
  * its own contention as an opaque 500 would tell the operator the repair is
  * broken when the honest answer is that something else is holding the booking.
- */
-const RETURN_TO_WAITLIST_CONTENTION_CODES: ReadonlySet<string> = new Set([
-  "P2028",
-  "P2034",
-]);
-
-export function isReturnToWaitlistTransactionContention(
-  error: unknown,
-): boolean {
-  const code = (error as { code?: unknown } | null)?.code;
-  return typeof code === "string" && RETURN_TO_WAITLIST_CONTENTION_CODES.has(code);
-}
-
-/**
- * Refused because the locked transaction could not take its locks in time.
- * Nothing was written, so the operator is told to retry rather than to escalate.
  */
 export const RETURN_TO_WAITLIST_CONTENDED_MESSAGE =
   "Something else is holding this booking right now, so it could not be returned to the waitlist in time. Nothing was changed — try again in a moment.";

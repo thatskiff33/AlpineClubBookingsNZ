@@ -16,6 +16,9 @@
  * 4. #4374's alert, once per late note (`unrecordedLateSuccessAlert`, keyed
  *    `xero-success-after-resolution:<operation id>:<note id>`).
  *
+ * Steps 2-4 are `traceLateXeroObject`, which #4686's part-success that lost
+ * its claim shares (`xero-late-partial-trace.ts`).
+ *
  * Each step is caught: nothing here throws into the create, whose catch would
  * fail the row an officer reset, resolved or queued again. Run it outside any
  * transaction - the alert sends an email.
@@ -56,10 +59,19 @@ export interface LateNoteTrace {
   audit: (trace: Record<string, unknown>, row: XeroSyncOperation | null) => Promise<void>;
   /** The alert's body for this row and late note; omitted, a refund note's (#4426). */
   alertMessage?: (row: XeroSyncOperation, late: UnrecordedXeroObject) => string;
+  /** The alert's log line; omitted, a late success kept off a reset or resolved row (#4426). */
+  alertWarning?: string;
 }
 
+/**
+ * What the trace found. `same-note`: the re-read row records this very note,
+ * so nothing was audited or alerted; the row is handed back for the caller to
+ * judge whose record that was (#4656). `traced`: everything else.
+ */
+type LateNoteTraceResult = { kind: "same-note"; row: XeroSyncOperation } | { kind: "traced" };
+
 /** Log, audit and alert a late note the create did not record. Never throws. */
-export async function traceUnrecordedLateNote(note: UnrecordedLateNote, report: LateNoteTrace): Promise<void> {
+export async function traceUnrecordedLateNote(note: UnrecordedLateNote, report: LateNoteTrace): Promise<LateNoteTraceResult> {
   const trace = {
     operationId: note.operationId,
     ...report.context,
@@ -68,41 +80,102 @@ export async function traceUnrecordedLateNote(note: UnrecordedLateNote, report: 
     creditNoteNumber: note.creditNoteNumber,
     amountCents: note.amountCents,
   };
-  const notRecorded = `${report.subject} from Xero not recorded`;
   // The first trace, before anything else can fail: the note exists in Xero and nothing here records it.
   logger.warn(trace, `${report.subject} from Xero: ${report.lostTo}; re-checking the operation (INV-INT-029, ${report.issue})`);
+  return traceLateXeroObject({
+    operationId: note.operationId,
+    xeroObjectId: note.creditNoteId,
+    trace,
+    notRecorded: `${report.subject} from Xero not recorded`,
+    issue: report.issue,
+    sameObject: report.sameNote,
+    audit: (row) => report.audit(trace, row),
+    lateObject: () => lateNoteObject(note),
+    alertMessage: report.alertMessage,
+    alertWarning: report.alertWarning,
+  });
+}
+
+/** What {@link traceLateXeroObject} is told about one late Xero object and how its caller reports it. */
+export interface LateXeroObjectTrace {
+  operationId: string;
+  /** The object's Xero id, compared with the id the re-read row records. */
+  xeroObjectId: string;
+  /** The fields every log line carries. */
+  trace: Record<string, unknown>;
+  /** The start of every error line, e.g. "Refund credit note from Xero not recorded". */
+  notRecorded: string;
+  /** The issue every error line cites. */
+  issue: string;
+  /** The info line when the re-read row records this very object. */
+  sameObject: string;
+  /**
+   * PR #4708 rounds 2-3: whether a row recording this very object ends the
+   * trace, given that row. Omitted, it always does. A part-success with an
+   * unfinished step goes on past a SUCCEEDED row (its run may not have done the
+   * step) but stops at a PARTIAL one, whose own outcome already shows it.
+   */
+  stopOnSameObject?: (row: XeroSyncOperation) => boolean;
+  /** The caller's own audit row, given the re-read row (null when it is gone). */
+  audit: (row: XeroSyncOperation | null) => Promise<void>;
+  /** The object as the alert names it; read only when an alert is due. */
+  lateObject: () => Promise<UnrecordedXeroObject> | UnrecordedXeroObject;
+  alertMessage?: (row: XeroSyncOperation, late: UnrecordedXeroObject) => string;
+  alertWarning?: string;
+}
+
+/**
+ * PR #4708 review (`INV-SSOT`): the one skeleton of a late Xero object's trace,
+ * shared by the late credit notes (#4426, #4655) and the part-success that
+ * lost its claim (#4686, `xero-late-partial-trace.ts`): re-read the row; if it
+ * records this very object, log info and stop; the caller's audit row; no
+ * alert when the row is gone; else #4374's alert once per object. Each step is
+ * caught and logged; the caller logs its own first warning. Never throws.
+ */
+export async function traceLateXeroObject(input: LateXeroObjectTrace): Promise<LateNoteTraceResult> {
+  const { trace, notRecorded, issue } = input;
   let row: XeroSyncOperation | null;
   try {
-    row = await prisma.xeroSyncOperation.findUnique({ where: { id: note.operationId } });
+    row = await prisma.xeroSyncOperation.findUnique({ where: { id: input.operationId } });
   } catch (error) {
-    logger.error({ ...trace, err: error }, `${notRecorded}, and its operation could not be re-read: no audit row or alert; this log is its only record (${report.issue})`);
-    return;
+    logger.error({ ...trace, err: error }, `${notRecorded}, and its operation could not be re-read: no audit row or alert; this log is its only record (${issue})`);
+    return { kind: "traced" };
   }
-  if (row?.xeroObjectId === note.creditNoteId) {
-    logger.info(trace, report.sameNote);
-    return;
+  if (row && row.xeroObjectId === input.xeroObjectId && (input.stopOnSameObject?.(row) ?? true)) {
+    logger.info(trace, input.sameObject);
+    return { kind: "same-note", row };
   }
   try {
-    await report.audit(trace, row);
+    await input.audit(row);
   } catch (error) {
-    logger.error({ ...trace, err: error }, `${notRecorded}, and its audit row failed (${report.issue})`);
+    logger.error({ ...trace, err: error }, `${notRecorded}, and its audit row failed (${issue})`);
   }
   if (!row) {
-    logger.error(trace, `${notRecorded}, and its operation row is gone: no alert sent (${report.issue})`);
-    return;
+    logger.error(trace, `${notRecorded}, and its operation row is gone: no alert sent (${issue})`);
+    return { kind: "traced" };
   }
   try {
-    const late: UnrecordedXeroObject = {
-      xeroObjectType: "CREDIT_NOTE",
-      xeroObjectId: note.creditNoteId,
-      xeroObjectNumber: note.creditNoteNumber,
-      amount: await formattedAmount(note),
-      bookingId: note.bookingId,
-    };
-    await unrecordedLateSuccessAlert(row, late, report.alertMessage?.(row, late))();
+    const late = await input.lateObject();
+    await unrecordedLateSuccessAlert(row, late, input.alertMessage?.(row, late), input.alertWarning)();
   } catch (error) {
-    logger.error({ ...trace, err: error }, `${notRecorded}, and its alert failed (${report.issue})`);
+    logger.error({ ...trace, err: error }, `${notRecorded}, and its alert failed (${issue})`);
   }
+  return { kind: "traced" };
+}
+
+/**
+ * The credit note as #4374's late-object alert names it, its amount in the
+ * club's money format. #4680 (`INV-SSOT`): also the stood-down organiser run's
+ * alert (`traceOrganiserRunStoodDown`).
+ */
+export async function lateNoteObject(note: UnrecordedLateNote): Promise<UnrecordedXeroObject> {
+  return {
+    xeroObjectType: "CREDIT_NOTE",
+    xeroObjectId: note.creditNoteId,
+    xeroObjectNumber: note.creditNoteNumber,
+    amount: await formattedAmount(note),
+    bookingId: note.bookingId,
+  };
 }
 
 /** The note's amount in the club's money format, or null when the format cannot be read (the alert still goes). */

@@ -48,6 +48,8 @@ vi.mock("@/lib/prisma", () => ({
         return [Object.fromEntries(Object.keys(select).map((key) => [key, state.row![key]]))];
       }),
       findUnique: vi.fn(async () => (state.row ? { ...state.row } : null)),
+      // #4680: the claim check's status-guarded read, evaluated on the same row.
+      findFirst: vi.fn(async ({ where }: { where: Row }) => (state.row && matchesWhere(state.row, where) ? { id: state.row.id } : null)),
       // The resolve mark's and the outbox claim's own writes, evaluated on the same row.
       updateMany: vi.fn(async ({ where, data }: { where: Row; data: Row }) => {
         if (!state.row || !matchesWhere(state.row, where)) return { count: 0 };
@@ -69,9 +71,16 @@ vi.mock("@/lib/alert-cooldown", () => ({
 vi.mock("@/lib/email", () => ({ sendAdminXeroSyncErrorAlert: mocks.send }));
 vi.mock("@/lib/logger", () => ({ default: { warn: mocks.warn, error: mocks.error, info: mocks.info } }));
 
-import { LATE_ORGANISER_NOTE_NOT_RECORDED_ACTION, createdOrganiserNoteWrites, recordCreatedOrganiserNote } from "@/lib/organiser-extra-note-record";
+import {
+  LATE_ORGANISER_NOTE_NOT_RECORDED_ACTION,
+  ORGANISER_RUN_STOOD_DOWN_ACTION,
+  createdOrganiserNoteWrites,
+  recordCreatedOrganiserNote,
+  traceOrganiserRunStoodDown,
+  traceOrganiserVoidStoodDown,
+} from "@/lib/organiser-extra-note-record";
 import { claimResolvedInXeroMark } from "@/lib/xero-operation-resolve-guards";
-import { claimXeroSyncOperationToRunning } from "@/lib/xero-operation-claim";
+import { claimXeroSyncOperationToRunning, holdsXeroOperationClaim } from "@/lib/xero-operation-claim";
 import { outcomeWriteGuard } from "@/lib/xero-operation-outcome-guard";
 import { xeroSuccessAfterResolutionAlertKey } from "@/lib/xero-success-after-resolution-alert";
 
@@ -319,5 +328,176 @@ describe("#4655: an organiser adjustment's late credit note is recorded where a 
 
   it("refuses to build a record with no operation id (an updateMany would read it as no filter)", () => {
     expect(() => createdOrganiserNoteWrites({ ...LATE, claim: { id: "", startedAt: STARTED_AT } }, LANDED_AT)).toThrow("operation's id");
+  });
+});
+
+/**
+ * #4680 (`INV-INT-034`): a run that recorded its note on its own claim checks,
+ * before each money-moving Xero call after the record, that it still holds
+ * that claim (`holdsXeroOperationClaim`). One that does not stands down: no
+ * Xero call, no outcome, and `traceOrganiserRunStoodDown` - warned, audited
+ * once (`xero`), and alerted once per note only when an officer resolved the
+ * row, since anywhere else whoever holds or retries the row finishes from the
+ * note it records.
+ */
+describe("#4680: a run whose claim a reset took after it recorded its note stands down, traced", () => {
+  const RECORDED = { xeroObjectType: "CREDIT_NOTE", xeroObjectId: "cn-late", xeroObjectNumber: "CN-9" };
+  const RESOLVED = { ...RESET, ...RECORDED, manuallyResolvedAt: RESOLVED_AT, manuallyResolvedById: "officer-1", manuallyResolvedReason: "Credited by hand" };
+
+  it.each([
+    { held: true, label: "its own RUNNING claim", row: { ...RECORDED } },
+    { held: false, label: "a row a stale reset failed", row: { ...RESET, ...RECORDED } },
+    { held: false, label: "a reset row an officer resolved", row: RESOLVED },
+    { held: false, label: "a reset row an officer's Retry queued again", row: { ...RECORDED, status: "PENDING", startedAt: null } },
+    { held: false, label: "a later claim's RUNNING row", row: { ...RECORDED, startedAt: LATER_CLAIM_AT } },
+    { held: false, label: "a row completed since", row: { ...RECORDED, status: "SUCCEEDED" } },
+  ])("MUTATION: the claim check holds on $label: $held", async ({ held, row }) => {
+    seedRow(row);
+    await expect(holdsXeroOperationClaim(LATE.claim)).resolves.toBe(held);
+  });
+
+  it("the claim check reads the row status-guarded on its id, RUNNING and this claim's startedAt", async () => {
+    seedRow(RECORDED);
+    const { prisma } = await import("@/lib/prisma");
+    await holdsXeroOperationClaim(LATE.claim);
+    expect(vi.mocked(prisma.xeroSyncOperation.findFirst)).toHaveBeenCalledWith({ where: { id: OPERATION_ID, status: "RUNNING", startedAt: STARTED_AT }, select: { id: true } });
+  });
+
+  it("a claim with no startedAt holds nothing, and one with no id is refused (a findFirst would read it as no filter)", async () => {
+    seedRow({ ...RECORDED, startedAt: null });
+    await expect(holdsXeroOperationClaim({ id: OPERATION_ID, startedAt: null })).resolves.toBe(false);
+    await expect(holdsXeroOperationClaim({ id: "", startedAt: STARTED_AT })).rejects.toThrow("operation's id");
+  });
+
+  it("MUTATION: on a row an officer resolved: warned first, audited once, and alerted once naming the recorded note; a repeat sends nothing more", async () => {
+    seedRow(RESOLVED);
+    await expect(traceOrganiserRunStoodDown(LATE, "allocation")).resolves.toBeUndefined();
+    expect(state.row).toMatchObject(RESOLVED);
+    expect(mocks.warn).toHaveBeenCalledWith({ ...TRACE, claimStartedAt: STARTED_AT, step: "allocation" }, expect.stringContaining("stands down and makes no Xero call (INV-INT-034, #4680)"));
+    expect(mocks.warn.mock.invocationCallOrder[0]).toBeLessThan(mocks.audit.mock.invocationCallOrder[0]!);
+    expect(mocks.audit).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      action: ORGANISER_RUN_STOOD_DOWN_ACTION, category: "xero", severity: "important", outcome: "blocked",
+      targetId: "booking-1", entityType: "XeroSyncOperation", entityId: OPERATION_ID,
+      details: expect.stringContaining("stopped before allocating the note to the organiser's invoice"),
+      metadata: expect.objectContaining({ ...TRACE, step: "allocation", claimStartedAt: STARTED_AT.toISOString(), rowFound: true, rowStatus: "FAILED", resolvedByHand: true }),
+    }));
+    expect(mocks.claim).toHaveBeenCalledWith(expect.objectContaining({ key: xeroSuccessAfterResolutionAlertKey(OPERATION_ID, "cn-late") }));
+    expect(mocks.send).toHaveBeenCalledTimes(1);
+    expect(mocks.send.mock.calls[0]![0]).toMatchObject({ errorType: "XERO_SUCCESS_AFTER_RESOLUTION" });
+    expect(sentMessage()).toContain('was reset, and was then marked "Resolved in Xero"');
+    expect(sentMessage()).toContain("credit note CN-9 for $40.00 (Xero id cn-late, booking booking-1)");
+    expect(sentMessage()).toContain("stopped before allocating the note to the organiser's invoice");
+    expect(sentMessage()).toContain("The operation stays as resolved");
+
+    await traceOrganiserRunStoodDown(LATE, "allocation");
+    expect(mocks.send).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    { step: "resize" as const, purpose: "waive" as const, says: "resizing the note to what is still due" },
+    { step: "refund-payment" as const, purpose: "refund" as const, says: "recording a refund payment against the note" },
+    { step: "completion" as const, purpose: "waive" as const, says: "recording the adjustment as done (the note was already allocated in full)" },
+    { step: "completion" as const, purpose: "refund" as const, says: "recording the adjustment as done (Xero already showed the note settled" },
+  ])("the alert and audit row name the call not made: $purpose $step", async ({ step, purpose, says }) => {
+    seedRow(RESOLVED);
+    await traceOrganiserRunStoodDown({ ...LATE, purpose }, step);
+    expect(sentMessage()).toContain(says);
+    expect(mocks.audit).toHaveBeenCalledWith(expect.objectContaining({ details: expect.stringContaining(says) }));
+  });
+
+  it.each([
+    { label: "a reset row nobody touched (a Retry finishes from the note)", row: { ...RESET, ...RECORDED }, status: "FAILED" },
+    { label: "a row an officer's Retry queued again", row: { ...RECORDED, status: "PENDING", startedAt: null }, status: "PENDING" },
+    { label: "a later claim's RUNNING row", row: { ...RECORDED, startedAt: LATER_CLAIM_AT }, status: "RUNNING" },
+  ])("MUTATION: on $label: audited once, no alert", async ({ row, status }) => {
+    seedRow(row);
+    await traceOrganiserRunStoodDown(LATE, "allocation");
+    expect(mocks.audit).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ metadata: expect.objectContaining({ rowStatus: status, resolvedByHand: false }) }));
+    expect(mocks.claim).not.toHaveBeenCalled();
+    expect(mocks.send).not.toHaveBeenCalled();
+  });
+
+  it("a row gone: audited saying so, no alert", async () => {
+    state.row = null;
+    await traceOrganiserRunStoodDown(LATE, "allocation");
+    expect(mocks.audit).toHaveBeenCalledWith(expect.objectContaining({ metadata: expect.objectContaining({ rowFound: false, rowStatus: null, resolvedByHand: null }) }));
+    expect(mocks.send).not.toHaveBeenCalled();
+  });
+
+  it("nothing throws into the outbox: an unreadable row logs only; a failed audit row still alerts; a failed send is logged", async () => {
+    const { prisma } = await import("@/lib/prisma");
+    seedRow(RESOLVED);
+    vi.mocked(prisma.xeroSyncOperation.findUnique).mockRejectedValueOnce(new Error("database down"));
+    await expect(traceOrganiserRunStoodDown(LATE, "allocation")).resolves.toBeUndefined();
+    expect(mocks.audit).not.toHaveBeenCalled();
+    expect(mocks.error).toHaveBeenCalledWith(expect.objectContaining({ operationId: OPERATION_ID }), expect.stringContaining("could not be re-read"));
+
+    mocks.audit.mockRejectedValueOnce(new Error("audit down"));
+    await expect(traceOrganiserRunStoodDown(LATE, "allocation")).resolves.toBeUndefined();
+    expect(mocks.send).toHaveBeenCalledTimes(1);
+
+    state.held.clear();
+    mocks.send.mockRejectedValueOnce(new Error("mail down"));
+    await expect(traceOrganiserRunStoodDown(LATE, "allocation")).resolves.toBeUndefined();
+  });
+});
+
+/**
+ * #4701 (`INV-INT-034`): a waiver run that stalled in its first invoice read
+ * and lost its claim before voiding the organiser's unpaid invoice voids
+ * nothing. It has raised no note, so its trace names the invoice: warned,
+ * audited once under the stand-down action, and alerted once per operation
+ * and invoice only when an officer resolved the row.
+ */
+describe("#4701: a waiver run whose claim a reset took before its invoice void stands down, traced", () => {
+  const VOID = { claim: { id: OPERATION_ID, startedAt: STARTED_AT }, bookingId: "booking-1", invoiceId: "inv-extra", invoiceNumber: "EXTRA-1", amountCents: 6_000 };
+  const RESOLVED = { ...RESET, manuallyResolvedAt: RESOLVED_AT, manuallyResolvedById: "officer-1", manuallyResolvedReason: "Credited by hand" };
+
+  it("MUTATION: on a row an officer resolved: warned first, audited once naming the invoice, alerted once; a repeat sends nothing more", async () => {
+    seedRow(RESOLVED);
+    await expect(traceOrganiserVoidStoodDown(VOID)).resolves.toBeUndefined();
+    expect(state.row).toMatchObject(RESOLVED);
+    expect(mocks.warn).toHaveBeenCalledWith(
+      { operationId: OPERATION_ID, claimStartedAt: STARTED_AT, bookingId: "booking-1", purpose: "waive", invoiceId: "inv-extra", invoiceNumber: "EXTRA-1", amountCents: 6_000, step: "void" },
+      expect.stringContaining("before voiding the organiser's invoice; it stands down and makes no Xero call (INV-INT-034, #4701)"),
+    );
+    expect(mocks.warn.mock.invocationCallOrder[0]).toBeLessThan(mocks.audit.mock.invocationCallOrder[0]!);
+    expect(mocks.audit).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      action: ORGANISER_RUN_STOOD_DOWN_ACTION, category: "xero", severity: "important", outcome: "blocked",
+      targetId: "booking-1", entityType: "XeroSyncOperation", entityId: OPERATION_ID,
+      details: expect.stringContaining("stopped before voiding the organiser's invoice EXTRA-1. The app made no Xero call."),
+      metadata: expect.objectContaining({ step: "void", invoiceId: "inv-extra", rowStatus: "FAILED", resolvedByHand: true }),
+    }));
+    expect(mocks.claim).toHaveBeenCalledWith(expect.objectContaining({ key: xeroSuccessAfterResolutionAlertKey(OPERATION_ID, "inv-extra") }));
+    expect(mocks.send).toHaveBeenCalledTimes(1);
+    expect(sentMessage()).toContain('was reset, and was then marked "Resolved in Xero"');
+    expect(sentMessage()).toContain("stopped before voiding the organiser's invoice EXTRA-1 (Xero id inv-extra, booking booking-1)");
+    expect(sentMessage()).toContain("raised no credit note and changed nothing in Xero");
+
+    await traceOrganiserVoidStoodDown(VOID);
+    expect(mocks.send).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    { label: "a reset row nobody touched", row: { ...RESET }, status: "FAILED" },
+    { label: "a row an officer's Retry queued again", row: { status: "PENDING", startedAt: null }, status: "PENDING" },
+    { label: "a later claim's RUNNING row", row: { startedAt: LATER_CLAIM_AT }, status: "RUNNING" },
+  ])("MUTATION: on $label: audited once, no alert", async ({ row, status }) => {
+    seedRow(row);
+    await traceOrganiserVoidStoodDown(VOID);
+    expect(mocks.audit).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ metadata: expect.objectContaining({ step: "void", rowStatus: status, resolvedByHand: false }) }));
+    expect(mocks.send).not.toHaveBeenCalled();
+  });
+
+  it("nothing throws into the outbox: an unreadable row logs only; a failed send is logged", async () => {
+    const { prisma } = await import("@/lib/prisma");
+    seedRow(RESOLVED);
+    vi.mocked(prisma.xeroSyncOperation.findUnique).mockRejectedValueOnce(new Error("database down"));
+    await expect(traceOrganiserVoidStoodDown(VOID)).resolves.toBeUndefined();
+    expect(mocks.audit).not.toHaveBeenCalled();
+    expect(mocks.error).toHaveBeenCalledWith(expect.objectContaining({ operationId: OPERATION_ID, step: "void" }), expect.stringContaining("(#4701)"));
+
+    mocks.send.mockRejectedValueOnce(new Error("mail down"));
+    await expect(traceOrganiserVoidStoodDown(VOID)).resolves.toBeUndefined();
   });
 });

@@ -173,6 +173,16 @@ reads "The extra $X for this change has been invoiced to the group organiser,
 because the group organiser paid for this booking. There is nothing for you to
 pay." instead of asking them for a payment.
 
+**Payment Refunded** (`superseded-payment-refunded`, #3340) tells a member that
+a charge on a payment request the club had already replaced was refunded, with
+`{{refundedAmount}}` and `{{owingSentence}}` saying what came back and what is
+still owing. It is sent once per refund, however often the payment recovery
+queue retries the refund (#4690), and, like the organiser's extra invoice, it is
+handed to the email retry job, so it arrives after that job's usual 15-minute
+wait rather than the moment the refund is made. The booking's **No emails** switch withholds it;
+the admin alert beside it (**Superseded payment auto-refunded**) is not silenced
+by that switch.
+
 `{{amountDue}}` on the **Booking Request Approved** and **Split Guest Payment
 Link** messages is what the pay link asks the member to pay: the booking's price
 plus any change fee recorded on it, less account credit already applied - the

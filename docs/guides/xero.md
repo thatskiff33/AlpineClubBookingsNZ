@@ -42,7 +42,7 @@ does not record a refund (#4315).
 1. Go to **Admin → Finance → Xero Sync**. The **Connection Status** panel shows
    whether Xero is connected (and the tenant/token), and the **Health Snapshot**
    summarises unlinked members, failed issues, pending operations, paid bookings
-   missing invoices, group/link mismatches, and API budget.
+   missing invoices, group/link mismatches, credit used in Xero, and API budget.
 
    > **Missing invoices** lists a paid booking only when the club's own records
    > hold no invoice for it — no invoice id stamped on its payment and no active
@@ -295,6 +295,23 @@ removed". The member's balance goes down by that amount and they are not emailed
 you undo the use in Xero, a second row gives the credit back. Credit that a booking
 has already been given is left alone here: it is released, and the booking's invoice
 left unpaid in Xero, only if Xero then refuses it (see the troubleshooting row).
+
+That case gets an early warning instead (#4220). The **Credit used in Xero** tile on
+the Health Snapshot counts the credit notes Xero shows used outside the app while a
+booking is still waiting for its credit to be allocated from them, so Xero would
+refuse that allocation, including a booking whose credit has not been allocated at
+all yet. The booking repair check
+(`pnpm run xero:booking-repair --dry-run`) names each booking with the finding
+`APPLIED_CREDIT_NOTE_CONSUMED_EXTERNALLY`. Neither changes anything: check the note
+in Xero, and undo the use there if it was a mistake. The count follows Xero by the
+webhook and sync delay, so a use shows, and an undo clears, after the note's next
+update reaches the app. A note Xero has not sent the app since this change, or one
+whose figures do not add up, is not counted. A booking whose allocation was resolved
+in Xero is not counted: the repair check reports it as resolved instead. A cancelled
+booking is counted while the app still has its credit to allocate: always for a slice
+it has not sent, and for the rest only if the booking was cancelled after its payment
+was taken. If the tile shows **Unknown**, the server did not report the
+count; reload once the update has finished.
 
 Each change has an audit entry (`xero.credit_note.outside_spend_mirrored` or
 `xero.credit_note.outside_spend_restored`). A note voided or deleted in Xero is never

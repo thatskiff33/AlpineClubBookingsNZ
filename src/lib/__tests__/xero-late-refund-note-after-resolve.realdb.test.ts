@@ -23,10 +23,10 @@
  * `claimResolvedInXeroMark`) lets B land, settle and complete as before #4426,
  * with #4374's alert. The control: a Mark failed with no resolve records B as
  * before. And the other half of the race, each transaction held open while the
- * other runs: the create's record holding the Payment row (a canonical note)
- * makes the resolve's claim wait on it, and holding only the operation row (a
- * per-refund note) makes the resolve's `updateMany` wait on that row; either
- * way the create's record stands and the resolve's claim is lost.
+ * other runs: the create's record holding the Payment row makes the resolve's
+ * claim wait on it - for a canonical note and (#4656, which takes the Payment
+ * row for every note) a per-refund note alike; either way the create's record
+ * stands and the resolve's claim is lost.
  *
  * Ordinary Vitest runs skip the whole file. It reuses the guarded, disposable
  * loopback PostgreSQL `concurrency-lock-races.realdb.test.ts` provisions, which
@@ -431,7 +431,7 @@ let prisma: (typeof import("@/lib/prisma"))["prisma"];
       expect(send).not.toHaveBeenCalled();
     });
 
-    it("race, per-refund note (no pointer): the resolve's updateMany waits on the row the create's record holds, and loses", async () => {
+    it("race, per-refund note (no pointer): the resolve's claim still waits on the Payment row the create's record holds (#4656), and loses", async () => {
       const operationId = await queuedPerRefundNote();
       const stalled = await stalledRaise(operationId);
       await resetStale(operationId);
@@ -441,8 +441,9 @@ let prisma: (typeof import("@/lib/prisma"))["prisma"];
       const resolve = resolveRecording(operationId, NOTE_A, "CN-A", { checkPrompt: false });
       try {
         await waitForBlockedBy(holder);
-        // Not the Payment row: the record took none. The resolve passed its reads and waits on the operation row.
-        expect(await rowWaitedOn(holder)).toEqual(["XeroSyncOperation"]);
+        // #4656: the record takes the Payment row for a note that takes no pointer too, so the resolve
+        // queues there before its reads, as for a canonical note (before #4656 it waited on the operation row).
+        expect(await rowWaitedOn(holder)).toEqual(["Payment"]);
       } finally {
         held.release();
       }

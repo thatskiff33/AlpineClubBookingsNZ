@@ -22,7 +22,7 @@ import type { XeroSyncOperation } from "@prisma/client";
 import { matchesWhere } from "./support/prisma-where";
 import { blankLiterals, stripComments } from "./support/strip-comments";
 import { balancedBrackets } from "./support/balanced-brackets";
-import { xeroClaim } from "./helpers/xero-claim";
+import { TEST_XERO_CLAIMED_AT, xeroClaim } from "./helpers/xero-claim";
 
 const mocks = vi.hoisted(() => ({
   transaction: vi.fn(), updateMany: vi.fn(), findUnique: vi.fn(), findUniqueOrThrow: vi.fn(),
@@ -184,6 +184,8 @@ describe("#4374: a success landing after an officer resolved the operation in Xe
   });
 
   it("raises nothing for a PARTIAL outcome on a resolved row", async () => {
+    // #4686: a PARTIAL lands only on its own claim's row - here the FAILED row its stale reset left.
+    row.startedAt = TEST_XERO_CLAIMED_AT;
     await completeXeroSyncOperation(xeroClaim(OPERATION_ID), { status: "PARTIAL" });
     expect(row.status).toBe("PARTIAL");
     expect(mocks.claim).not.toHaveBeenCalled();

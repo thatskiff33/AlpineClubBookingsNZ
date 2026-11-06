@@ -563,6 +563,12 @@ import "./resolved-voided-refund-note-coverage.realdb.test";
 // failed write gives the row back PARTIAL. Skipped unless
 // RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own `race-4256-` fixtures.
 import "./xero-partial-repair-claim.realdb.test";
+// #4259 reuses it to prove the PARTIAL modification credit-note repair claims
+// its row the same way and closes it: a resolve or a mark committed while it
+// waits wins, two retries make one allocation and close the row once SUCCEEDED,
+// and a refused allocation gives the row back PARTIAL. Skipped unless
+// RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own `race-4259-` fixtures.
+import "./xero-modification-note-repair-claim.realdb.test";
 // #4356 reuses it to prove two callers sharing one ACTIVE Xero operation row
 // never let a failure overwrite a recorded success: the real
 // createXeroPaymentForInvoice twice onto one row, each Xero call held on a gate,
@@ -681,6 +687,20 @@ import "./resolve-records-refund-note.realdb.test";
 // late note lands as before. Skipped unless RUN_CONCURRENCY_RACE_TESTS=1; it
 // owns and cleans its own `race-4426-` fixtures.
 import "./xero-late-refund-note-after-resolve.realdb.test";
+// #4656 reuses it to prove the refund-note create's record asks freshness under
+// the Payment row (a second record of the same note queues there, though neither
+// takes the pointer, and is refused), records behind a holder past Prisma's 5s
+// default, and, behind one past its whole budget, records nothing, fails nothing
+// and audits and alerts the note once. Skipped unless RUN_CONCURRENCY_RACE_TESTS=1;
+// it owns and cleans its own `race-4656-` fixtures.
+import "./xero-refund-note-record-gaps.realdb.test";
+// #4688 reuses it to prove a refund note Xero made but the app could not record
+// (its record lost its wait) fences the payment's later refund notes past the
+// 15-minute in-flight hold: a later refund's note, the nightly self-heal and Retry
+// all raise nothing until Resolve by hand records it, and the next note is then
+// sized with it counted. Skipped unless RUN_CONCURRENCY_RACE_TESTS=1; it owns and
+// cleans its own `race-4688-` fixtures.
+import "./xero-unrecorded-refund-note-fence.realdb.test";
 // #4655 reuses it to prove an organiser adjustment's credit note that Xero creates
 // after its stalled job was reset is recorded or surfaced: it lands on a reset or
 // re-queued row (one note, never a second), and on a row resolved by hand or held by
@@ -688,6 +708,18 @@ import "./xero-late-refund-note-after-resolve.realdb.test";
 // row. Skipped unless RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own
 // `race-4655-` fixtures.
 import "./organiser-late-note-after-reset.realdb.test";
+// #4680 reuses it to prove an organiser adjustment run whose claim a reset took
+// after it recorded its credit note never allocates or pays out after an
+// officer's Resolve: it stands down before the money-moving call, audited and
+// alerted once, and a Retry finishes from the recorded note. Skipped unless
+// RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own `race-4680-` fixtures.
+import "./organiser-run-claim-check.realdb.test";
+// #4673 reuses it to prove a stalled run's late failure never undoes an officer's
+// in-place Retry after a stale reset: the row stays PENDING and the queued run
+// completes it, a queued run's own failure is kept, and with no Retry the failure
+// lands on its own claim's reset row. Skipped unless RUN_CONCURRENCY_RACE_TESTS=1;
+// it owns and cleans its own `race-4673-` fixtures.
+import "./xero-late-failure-after-retry.realdb.test";
 // #4609 reuses it to prove the per-account password throttle's claim: two
 // failures racing on one account both count, a burst at the end of a wait admits
 // exactly one guess, two first-ever claims both count, and a row deleted between
@@ -703,6 +735,28 @@ import "./xero-object-link-metadata-merge.realdb.test";
 // #4657 reuses it to prove the erased-member contact status check keeps a
 // concurrent writer's link metadata; it owns and cleans its own `race-4657-` links.
 import "./xero-erased-contact-status-metadata.realdb.test";
+// #4690 reuses it to prove a superseded payment's refund is announced once,
+// whichever recovery attempt sends it: a stalled attempt that lost its close to
+// the reaper, the reclaiming runner, or the next claim that finds the refund
+// made. Skipped unless RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own
+// `race-4690-` fixtures.
+import "./superseded-refund-notice-once.realdb.test";
+// #4685 reuses it to prove an account-credit Xero note stamps the one credit it
+// was raised for, by id, and that a row queued without the id still stamps.
+// Skipped unless RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own
+// `race-4685-` fixtures.
+import "./xero-account-credit-note-stamp.realdb.test";
+// #4661 reuses it to prove an edit's change fee on an Internet Banking booking
+// still to be paid is recorded once on its payment and posts one CHANGE_FEE
+// line under the edit at the settle. Skipped unless RUN_CONCURRENCY_RACE_TESTS=1;
+// it owns and cleans its own `race-4661-` fixtures.
+import "./unpaid-edit-change-fee-owed.realdb.test";
+// #4456 reuses it to prove a credential written under a data-encryption ring key
+// survives an AUTH_SECRET rotation and goes through the store's version-guarded
+// claim like any other: a re-key of a legacy row, a write that lost to a row
+// changed underneath it (no side effect, retried), and two writers forced to meet
+// at the claim. It owns and cleans its own `race-4456` credential rows.
+import "./data-encryption-key-ring.realdb.test";
 // #2374 (AID-5) deliberately is NOT imported here, unlike the two suites above.
 // `ai-diagnostics-select-only-role.realdb.test.ts` provisions and drops a cluster
 // ROLE and revokes `TEMPORARY ... FROM PUBLIC` on the shared throwaway database

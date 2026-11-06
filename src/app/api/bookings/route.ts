@@ -1639,8 +1639,9 @@ export async function POST(request: NextRequest) {
     await getMemberCreditBalance(effectiveMemberId, prisma);
   }
 
-  // #4628: an internet-banking create posts its charge to the journal; the
-  // context is read here, before the create's transaction (`INV-LOCK-004`).
+  // #4628, #4660: an internet-banking create posts its charge, and a $0 or
+  // credit-covered create its confirmation, to the journal; the context is
+  // read here, before the create's transaction (`INV-LOCK-004`).
   const journal = await resolveBookingMoneyPostingContext();
 
   try {

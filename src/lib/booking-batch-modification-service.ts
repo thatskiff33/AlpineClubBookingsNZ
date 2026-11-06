@@ -166,6 +166,7 @@ import type { ClubFormat } from "@/lib/club-format";
 import type { BookingModifiedRefundDestination } from "@/lib/booking-modified-email-copy";
 import { unpaidAskOffsetHistory } from "@/lib/unpaid-ask-offset-marker";
 import { primaryInvoiceSettlementHistory } from "@/lib/booking-primary-invoice-claim";
+import { changeFeeAddedToAmountOwedHistory } from "@/lib/change-fee-owed";
 import {
   assertFinishedStayCorrectionCall,
   classifyFinishedStayChangeFeeRule,
@@ -1746,8 +1747,8 @@ export async function modifyBookingBatch({
       bookingId,
       newCheckIn: dates.newCheckIn,
       newFinalPriceCents,
-      // #3955 review F1: the fee just recorded is owed with the price.
-      feeRecordedByThisEditCents: feeAddedToAmountOwed ? changeFeeCents : 0,
+      // #3955 review F1, #4661: the fee just recorded (a correction's, or the settle's) is owed with the price.
+      feeRecordedByThisEditCents: feeAddedToAmountOwed ? changeFeeCents : payments.changeFeeAddedToAmountOwedCents,
       format,
       guestsForPricing: guestPlan.guestsForPricing,
       skipBookingLifecycleRules: dates.skipBookingLifecycleRules,
@@ -1986,6 +1987,7 @@ export async function modifyBookingBatch({
           // #3954: what an unpaid ask took of this reduction, for the Xero repair pass.
           ...unpaidAskOffsetHistory(payments),
           ...primaryInvoiceSettlementHistory(payments), // #3980: the gap's anchor
+          ...changeFeeAddedToAmountOwedHistory(payments.changeFeeAddedToAmountOwedCents), // #4661: the settle's fee line
           // #2266: what this edit did to the stored credit election (#2265),
           // recorded whenever the request carried a credit input — the
           // member's booking history reads it back.

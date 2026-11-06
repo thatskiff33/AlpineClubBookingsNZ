@@ -1,8 +1,8 @@
-import { CreditType } from "@prisma/client";
 import { bookingOwner } from "@/lib/booking-owner";
 import { prisma } from "@/lib/prisma";
 import logger from "@/lib/logger";
 import { creditNoteMirrorEvidenceFrom, mirrorCreditNoteOutsideSpend } from "@/lib/xero-credit-note-mirror";
+import { creditNoteSpendEvidenceMetadata, withCreditNoteSpendEvidence } from "@/lib/xero-credit-note-spend-evidence";
 import { buildXeroInvoiceUrl } from "@/lib/xero-links";
 import { callXeroApi, getAuthenticatedXeroClient } from "@/lib/xero-api-client";
 import { type XeroObjectLinkInput, upsertXeroObjectLink } from "@/lib/xero-sync";
@@ -13,7 +13,7 @@ import { writeXeroInboundAuditLogs } from "./audit";
 import { type XeroAuditLocalLink } from "./types";
 import { repairAccountCreditAllocationBusinessState, repairRefundedPaymentBusinessState, resolveAccountCreditPaymentsFromMemberCredits, resolveAppliedCreditPaymentsFromLocalProvenance } from "./credit-note-repairs";
 import { resolveModificationRefundAmountsByPaymentId } from "./modification-note-refunds";
-import { cancellationCreditDescription } from "@/lib/cancellation-settled-money";
+import { accountCreditNoteHeld, accountCreditNoteRaisedFor, stampCancellationCreditXeroNote } from "@/lib/xero-account-credit-note-stamp";
 import { isIncludedRefundCreditNoteStatus, isRefundNoteLinkOf, mayRecordAsCanonicalRefundNote, withoutVoidedRefundNoteLinks, xeroCreditNoteSnapshotMetadata } from "@/lib/xero-refund-note-status";
 
 /** #4291: the audit source naming a recount reached only through a voided mirror. */
@@ -61,9 +61,14 @@ export async function reconcileXeroCreditNote(creditNoteId: string) {
   // fallback fails closed (returns []) on any ambiguity, preserving the existing
   // skip-with-no-write behaviour. Notes WITH CANCELLATION_REFUND provenance keep
   // the existing resolver unchanged — the fallback only runs when it is empty.
-  const resolvedAccountCreditPayments =
+  // #4712: these are payments on the bookings the credit was SPENT on, not ones
+  // the note was raised for, so they only open the applied-credit repair below:
+  // no ACCOUNT_CREDIT_NOTE link (it would block the booking's own cancellation
+  // note), no refund recount and no stamp. The slices and their ALLOCATION
+  // links already record the applied credit.
+  const appliedCreditPayments =
     canonicalAccountCreditPayments.length > 0
-      ? canonicalAccountCreditPayments
+      ? []
       : await resolveAppliedCreditPaymentsFromLocalProvenance(
           creditNote.creditNoteID
         );
@@ -118,7 +123,7 @@ export async function reconcileXeroCreditNote(creditNoteId: string) {
             mergeMetadata: true,
           }) satisfies XeroObjectLinkInput
       ),
-    ...resolvedAccountCreditPayments
+    ...canonicalAccountCreditPayments
       .filter((payment) => !existingAccountCreditPaymentIds.has(payment.id))
       .map(
         (payment) =>
@@ -137,8 +142,14 @@ export async function reconcileXeroCreditNote(creditNoteId: string) {
       ),
   ]);
 
+  // #4220: what Xero sent about the note's spend, kept with its links for the early warning.
+  // Advisory only: a failure leaves the previous reading (or none) and never fails the event.
+  const spendEvidence = await creditNoteSpendEvidenceMetadata(creditNote, prisma).catch((err: unknown) => {
+    logger.warn({ err, creditNoteId: creditNote.creditNoteID }, "Could not refresh a credit note's spend reading; its links keep the previous one until the note's next event");
+    return {};
+  });
   for (const link of creditNoteLinks) {
-    await upsertXeroObjectLink(link);
+    await upsertXeroObjectLink(withCreditNoteSpendEvidence(link, spendEvidence));
   }
 
   const linkedRefundPaymentIds = creditNoteLinks
@@ -177,6 +188,8 @@ export async function reconcileXeroCreditNote(creditNoteId: string) {
               in: linkedAccountCreditPaymentIds,
             },
           },
+          // #4705: the stamp's pass ends at its first stamp, so it reads them in a fixed order.
+          orderBy: { id: "asc" },
           select: {
             id: true,
             bookingId: true,
@@ -214,31 +227,41 @@ export async function reconcileXeroCreditNote(creditNoteId: string) {
 
   const creditNoteAmountCents = getCreditNoteAmountCents(creditNote);
   let updatedCredits = 0;
-  for (const payment of accountCreditPayments) {
-    if (creditNoteAmountCents === null) {
-      continue;
-    }
+  // #4705: the note stamps the one credit it was raised for, through the
+  // outbox's own stamp (`INV-INT-036`), and only while no lot or slice records
+  // it - which also covers every note a resolver reached: a cancellation
+  // credit holds it, or (#1925's local provenance) a slice does. Only a payment
+  // whose own outbox row raised the note as an account-credit note is stamped
+  // (PR #4711 review): an ACCOUNT_CREDIT_NOTE link alone can be one local
+  // provenance wrote on a booking the credit was APPLIED to before #4712. The
+  // credit that row named is stamped by id, else one equal credit, oldest
+  // first; the first stamp ends the pass.
+  const raisedFor =
+    creditNoteAmountCents !== null && accountCreditPayments.length > 0 && !(await accountCreditNoteHeld(creditNote.creditNoteID))
+      ? await accountCreditNoteRaisedFor({ creditNoteId: creditNote.creditNoteID, paymentIds: accountCreditPayments.map((payment) => payment.id) })
+      : null;
+  if (raisedFor && creditNoteAmountCents !== null) {
+    for (const payment of accountCreditPayments) {
+      if (!raisedFor.paymentIds.includes(payment.id)) continue;
 
-    // #3369: this stamps the note onto a MEMBER CREDIT row, and an
-    // organisation-owned booking has none — credit belongs to a person's
-    // account. Nothing to backfill.
-    const creditOwnerMemberId = bookingOwner(payment.booking).memberId;
-    if (!creditOwnerMemberId) continue;
+      // #3369: this stamps the note onto a MEMBER CREDIT row, and an
+      // organisation-owned booking has none — credit belongs to a person's
+      // account. Nothing to backfill.
+      const creditOwnerMemberId = bookingOwner(payment.booking).memberId;
+      if (!creditOwnerMemberId) continue;
 
-    const backfilledCredits = await prisma.memberCredit.updateMany({
-      where: {
+      const stampedCreditId = await stampCancellationCreditXeroNote({
         memberId: creditOwnerMemberId,
-        sourceBookingId: payment.bookingId,
-        amountCents: creditNoteAmountCents,
-        type: CreditType.CANCELLATION_REFUND,
-        description: cancellationCreditDescription(payment.bookingId),
-        xeroCreditNoteId: null,
-      },
-      data: {
-        xeroCreditNoteId: creditNote.creditNoteID,
-      },
-    });
-    updatedCredits += backfilledCredits.count;
+        bookingId: payment.bookingId,
+        refundAmountCents: creditNoteAmountCents,
+        creditNoteId: creditNote.creditNoteID,
+        ...(raisedFor.memberCreditId ? { memberCreditId: raisedFor.memberCreditId } : {}),
+      });
+      if (stampedCreditId) {
+        updatedCredits += 1;
+        break;
+      }
+    }
   }
   const allocationTargets = buildCreditNoteAllocationTargets(creditNote);
   const resolvedCreditNoteLinks = dedupeXeroObjectLinks([
@@ -363,7 +386,7 @@ export async function reconcileXeroCreditNote(creditNoteId: string) {
   });
 
   const accountCreditAllocationRepair =
-    accountCreditPayments.length > 0
+    accountCreditPayments.length > 0 || appliedCreditPayments.length > 0
       ? await repairAccountCreditAllocationBusinessState(
           creditNote.creditNoteID,
           allocationTargets
@@ -419,11 +442,23 @@ export async function reconcileXeroCreditNote(creditNoteId: string) {
     localScope: resolvedCreditNoteLinks.filter((link) => isRefundNoteLinkOf(link)),
   });
 
+  // #4712: audit-only entries naming the payments reached only through local
+  // provenance, so their applied-credit repair is attributed; never handed to
+  // a link write.
+  const appliedCreditAuditLinks: XeroAuditLocalLink[] = appliedCreditPayments.map((payment) => ({
+    localModel: "Payment",
+    localId: payment.id,
+    xeroObjectType: "CREDIT_NOTE",
+    xeroObjectId: creditNote.creditNoteID!,
+    xeroObjectNumber: creditNote.creditNoteNumber ?? null,
+    role: "APPLIED_CREDIT_ALLOCATION",
+  }));
   const auditMetadata = {
     creditNoteId: creditNote.creditNoteID,
     creditNoteNumber: creditNote.creditNoteNumber ?? null,
     matchedPayments: paymentCandidates.length,
     matchedAccountCreditPayments: accountCreditPayments.length,
+    matchedAppliedCreditPayments: appliedCreditPayments.length,
     updatedPayments,
     updatedCredits,
     updatedRefundedPayments: refundedPaymentRepair.updatedPayments,
@@ -433,7 +468,7 @@ export async function reconcileXeroCreditNote(creditNoteId: string) {
   };
   await writeXeroInboundAuditLogs({
     source: "xero-inbound-credit-note",
-    links: [...resolvedCreditNoteLinks, ...allocationLinks, ...refundPaymentLinks],
+    links: [...resolvedCreditNoteLinks, ...allocationLinks, ...refundPaymentLinks, ...appliedCreditAuditLinks],
     metadata: auditMetadata,
   });
   // #4291: the payments recounted only through their voided mirror.
@@ -471,6 +506,7 @@ export async function reconcileXeroCreditNote(creditNoteId: string) {
     creditNoteNumber: creditNote.creditNoteNumber ?? null,
     matchedPayments: paymentCandidates.length,
     matchedAccountCreditPayments: accountCreditPayments.length,
+    matchedAppliedCreditPayments: appliedCreditPayments.length,
     updatedPayments,
     updatedCredits,
     matchedRefundedPayments: refundedPaymentRepair.matchedPayments,

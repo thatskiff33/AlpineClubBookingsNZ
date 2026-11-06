@@ -48,8 +48,11 @@ vi.mock("@/lib/servernz-settings", () => ({
 vi.mock("@/lib/integration-credentials", () => ({
   getIntegrationCredentialValue: (...args: unknown[]) => mockSecret(...args),
 }));
+const mockFeesSync = vi.hoisted(() => vi.fn().mockResolvedValue([]));
+vi.mock("@/lib/other-lodge-fees-sync", () => ({ syncOwnOtherLodgesFromFees: mockFeesSync }));
 
 import { GET, PUT } from "@/app/api/admin/lodges/[id]/central-lodge/route";
+import { saveCentralLodgeLinks } from "@/lib/central-lodge-link";
 
 const A = { id: "ol_a", name: "Aorangi Ski Club" };
 const B = { id: "ol_b", name: "Boomerang Ski Club" };
@@ -169,6 +172,8 @@ describe("PUT /api/admin/lodges/[id]/central-lodge", () => {
       // the transition it describes (#4262).
       mockPrisma,
     );
+    // Linked, the own lodge's rates can be filled from the Fees page.
+    expect(mockFeesSync).toHaveBeenCalledWith("central lodge linked", "admin-1");
   });
 
   it("locks settings then the lodge row, then checks, reads, writes and audits inside that one transaction (#4262)", async () => {
@@ -303,6 +308,7 @@ describe("PUT /api/admin/lodges/[id]/central-lodge", () => {
     const res = await PUT(put({ centralLodgeId: "ol_a" }), params());
     expect(res.status).toBe(409);
     expect((await res.json()).error).toContain("Iwikau");
+    expect(mockFeesSync).not.toHaveBeenCalled();
     // The refused write throws before the audit, inside the same transaction.
     expect(mockCreateAuditLog).not.toHaveBeenCalled();
   });
@@ -315,5 +321,87 @@ describe("PUT /api/admin/lodges/[id]/central-lodge", () => {
   ])("is 400 for %s", async (_label, body) => {
     expect((await PUT(put(body), params())).status).toBe(400);
     expect(mockPrisma.lodge.update).not.toHaveBeenCalled();
+  });
+});
+
+// The same writer, several rows at once: the setup page's link dialog (server
+// onboarding, B2) and its automatic one-to-one link.
+describe("saveCentralLodgeLinks (several rows)", () => {
+  // The caller's audit writer, on the save's transaction client.
+  const audit = (entry: { lodgeId: string; before: unknown; after: unknown }, tx: unknown) =>
+    mockCreateAuditLog({ entityId: entry.lodgeId, metadata: { before: entry.before, after: entry.after } }, tx);
+
+  function stored(links: Record<string, string | null>) {
+    mockPrisma.lodge.findUnique.mockImplementation(async ({ where }: { where: { id?: string } }) =>
+      where.id && where.id in links ? { centralLodgeId: links[where.id] } : null,
+    );
+  }
+
+  it("locks every row in id order, clears a moving link before any is set, and audits each row", async () => {
+    stored({ lodge_1: "ol_a", lodge_2: "ol_b" });
+    const result = await saveCentralLodgeLinks(
+      [
+        { lodgeId: "lodge_2", centralLodgeId: "ol_a" },
+        { lodgeId: "lodge_1", centralLodgeId: "ol_b" },
+      ],
+      audit,
+    );
+    expect(result).toEqual({
+      ok: true,
+      before: [
+        { lodgeId: "lodge_1", centralLodgeId: "ol_a" },
+        { lodgeId: "lodge_2", centralLodgeId: "ol_b" },
+      ],
+    });
+    // Settings lock, then the two rows, lodge_1 first.
+    expect(mockPrisma.$executeRaw.mock.calls.map((c) => c.slice(1))).toEqual([["default"], ["lodge_1"], ["lodge_2"]]);
+    expect(mockPrisma.lodge.update.mock.calls.map(([args]) => [args.where.id, args.data.centralLodgeId])).toEqual([
+      ["lodge_1", null],
+      ["lodge_2", null],
+      ["lodge_1", "ol_b"],
+      ["lodge_2", "ol_a"],
+    ]);
+    expect(mockCreateAuditLog.mock.calls.map(([entry]) => entry.metadata)).toEqual([
+      { before: { centralLodgeId: "ol_a" }, after: { centralLodgeId: "ol_b" } },
+      { before: { centralLodgeId: "ol_b" }, after: { centralLodgeId: "ol_a" } },
+    ]);
+  });
+
+  it("never overwrites a link it was not shown: an expectation that no longer holds writes nothing", async () => {
+    stored({ lodge_1: "ol_b" });
+    const result = await saveCentralLodgeLinks(
+      [{ lodgeId: "lodge_1", centralLodgeId: "ol_a", expectCurrent: null }],
+      audit,
+    );
+    expect(result).toEqual({ ok: false, reason: "stale" });
+    expect(mockPrisma.lodge.update).not.toHaveBeenCalled();
+    expect(mockCreateAuditLog).not.toHaveBeenCalled();
+  });
+
+  it("refuses one central lodge chosen for two lodges, before any lock", async () => {
+    const result = await saveCentralLodgeLinks(
+      [
+        { lodgeId: "lodge_1", centralLodgeId: "ol_a" },
+        { lodgeId: "lodge_2", centralLodgeId: "ol_a" },
+      ],
+      audit,
+    );
+    expect(result).toEqual({ ok: false, reason: "duplicate" });
+    expect(mockPrisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it("names a holder outside the save on a unique clash", async () => {
+    stored({ lodge_1: null });
+    mockPrisma.lodge.update.mockRejectedValue(
+      new Prisma.PrismaClientKnownRequestError("Unique constraint failed", { code: "P2002", clientVersion: "7" }),
+    );
+    mockPrisma.lodge.findUnique.mockImplementation(async ({ where }: { where: { id?: string; centralLodgeId?: string } }) =>
+      where.id ? { centralLodgeId: null } : { id: "lodge_9", name: "Iwikau" },
+    );
+    expect(await saveCentralLodgeLinks([{ lodgeId: "lodge_1", centralLodgeId: "ol_a" }], audit)).toEqual({
+      ok: false,
+      reason: "already-linked",
+      holderName: "Iwikau",
+    });
   });
 });

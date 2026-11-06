@@ -56,7 +56,8 @@ download a backup, exactly as you already do for addresses and dates of birth.
 - Setting up durable off-site (S3) backups for the first time.
 - Taking a fresh backup immediately before a risky change or an upgrade.
 - Checking that the nightly backup is healthy and durable.
-- Re-entering S3 credentials after rotating the app auth secret (see
+- Re-entering S3 credentials after the key they were encrypted under is gone
+  (an app auth-secret rotation, or a removed data-encryption key; see
   Troubleshooting).
 
 ## Step-by-step
@@ -222,7 +223,7 @@ finishes or fails — so a restore is always traceable even if it dies part-way.
 
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
-| Banner: "credentials could not be decrypted" and backups failing | The app auth secret (`AUTH_SECRET`/`NEXTAUTH_SECRET`) was rotated, so stored credentials can no longer be decrypted | Re-enter the S3 access key/secret on this page (see the auth-secret rotation runbook in [`DEPLOYMENT.md`](../../DEPLOYMENT.md)) |
+| Banner: "credentials could not be decrypted" and backups failing | The key they were encrypted under is gone: the app auth secret (`AUTH_SECRET`/`NEXTAUTH_SECRET`) was rotated, or a data-encryption key was removed or unset ([`DEPLOYMENT.md`](../../DEPLOYMENT.md#adding-a-data-encryption-key-4456)) | Re-enter the S3 access key/secret on this page (see the auth-secret rotation runbook in [`DEPLOYMENT.md`](../../DEPLOYMENT.md)) |
 | Status shows "Local only" / cron records `FAILURE` `backup-not-durable` | No durable destination configured; the staging volume alone does not count as a configured backup destination | Configure S3 credentials or enable local backups (Full Admin for destination changes) |
 | "Run backup now" is disabled | You lack support-edit access, backups are disabled, a run is already in progress, or credentials need re-entry | Resolve the specific condition shown in the status card |
 | Warning listing `BACKUP_*` environment variables | Legacy env config is still set but no longer read | Re-enter the values in-app, then remove the variables from the environment |

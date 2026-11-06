@@ -395,9 +395,9 @@ async function removeClaimedConsentGuest(
       xeroSettlement: guestRemovalXeroSettlement(result),
       // #3954: the unpaid ask this removal's reduction retired, for after commit
       // - its intents to cancel, or a smaller ask to mint; an ask whose failed
-      // mint the reduction netted off leaves only the second.
+      // mint the reduction netted off leaves the second, or its sweep (#4693).
       askRetirement:
-        result.retiredAdditionalAsks.length > 0 || result.additionalAsk.reissuesUnpaidAsk
+        result.retiredAdditionalAsks.length > 0 || result.additionalAsk.reissuesUnpaidAsk || result.unpaidAskCancelled
           ? result
           : undefined,
     };

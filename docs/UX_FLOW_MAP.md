@@ -1,1569 +1,1010 @@
 # UX Flow Map
 
-This is a first-pass journey map for review planning. Route names are based on
-current docs and may need verification during a later UI/UX review.
-
-Concrete-booking email flow (#2362): a signed-in owner, linked member, or
-bookings-view admin follows **View this booking** to the canonical encoded
-`/bookings/<id>` detail route. Public/non-login contacts and aggregate operator
-messages receive no authenticated detail URL; their bearer payment, quote,
-consent, and response actions remain the next step. An unrelated or disabled
-member, a non-Full-Admin viewing a deleted booking, or a failed authority read
-also receives no detail URL rather than a link that redirects or discloses the
-booking id. A failed delivery repeats that check at retry time from the durable
-recipient identity and confirms the retained destination is still that member's
-direct or inherited mailbox. Revoked/stale recipients receive operational mail
-without the detail CTA. Stored override source is never rewritten; only the
-unauthorized delivery copy is sanitized. Booking-page actions such as `#consent`
-and bearer consent routes keep their exact target. A rolled-back pre-#2362 retry
-worker cannot see new-version booking retry bodies.
-
-## Bed-allocation preferences (#2593, relocated #2937)
-
-A bookings-view admin opens **Bookings Setup → Rooms & Beds**
-(`/admin/rooms-beds`), chooses a lodge at the top of the page, and reads that
-lodge's **Allocation preferences** at the foot of it — beside the rooms and beds
-the preferences order guests into. The Bed Allocation board no longer hosts the
-editor; it carries a link to this page, pre-pointed at the board's own lodge
-when it has one and plain when it does not, because a board with no settled
-lodge must not invent one for a link any more than for a write. "Has one" means
-a lodge Rooms & Beds could itself settle on: a board focused on a booking at a
-**deactivated** lodge holds that lodge on purpose, and the destination would
-silently substitute the first active one, so the link drops it rather than
-naming it.
-
-The card takes the page's whole settled lodge scope rather than a lodge id, so
-only one of its six states is a write target. `lodge` loads, edits and saves
-that lodge alone. `loading`, `failed`, `forbidden` and a club with no active
-lodge are visible and read-only: each says which it is, requests nothing, and
-offers no edit path — `failed` points at the page's one **Try again** rather
-than growing a second retry. The sixth state, `all`, is implemented and tested
-but not reachable on this host, which offers no club-wide view of its inventory;
-it exists because the next host may, and because an "all lodges" view silently
-acquiring a write target is the failure this issue exists to make impossible.
-Switching lodge discards an unsaved draft, and the draft carries the lodge it
-was LOADED from, so even a host that dropped the per-lodge key could not write
-one lodge's edits onto another.
-
-A bookings-edit admin clicks **Edit**, stages the auto-allocation switch and the
-ordered priorities (drag or arrow movement, Enable/Disable), then chooses
-**Save** or **Cancel**. Save remains disabled while pristine. Saving changes what
-is proposed from the next allocation run onwards; it never rearranges or
-re-approves allocations that already exist.
-
-The enabled values are compared top-to-bottom: keep the booking together, keep
-each guest in the same room/bed, honour the requested room, and keep directly
-linked family members together. All may be disabled for deterministic neutral
-allocation. Hard placement, school separation, age mix, lodge isolation,
-holds, and approval/displacement rules always outrank them. Copy must describe
-this as a bounded deterministic heuristic, not a globally optimal arrangement,
-and must say that saving affects future suggestions/reconciliation only rather
-than moving existing guests. Lodge changes abort or ignore stale reads and stale
-optimistic callbacks. A view-only role sees the card's own section banner and
-disabled Edit/Save affordances; the API independently enforces `bookings:view`
-on GET and `bookings:edit` on PUT. Neither the permission needed to read or
-change a preference, the storage, nor the API route changed when the editor
-moved. What the move DID change is which admin area opens the page holding it:
-the board is in the `bookings` area and Rooms & Beds is registered under
-`lodge`, so admission to `/admin/rooms-beds` became an OR across the two —
-`isRoomsBedsPath` / `canAccessRoomsBedsPage`, on the consolidated fee console's
-precedent — rather than leaving two seeded bookings-view roles redirected away
-from a setting they could reach the day before.
-
-A refused load or save keeps its states distinct and surfaces no internal detail
-(#2931). They are told apart by what the BODY says, never by the status alone:
-`/api/admin/bed-allocation` is module-gated, so 404 is both "the module is off"
-and "the caller is not signed in" (`moduleGatedNotFoundResponse` in
-`src/lib/session-guards.ts`, deliberate — one anonymous probe must not be able
-to read which optional modules a club runs). The module refusal therefore names
-itself with `code: MODULE_DISABLED`, set only past the permission guard, and the
-card reads the name:
-
-- `MODULE_DISABLED` — the module is off, and the copy names the `support` role
-  that can turn it on rather than telling a bookings officer to do it. Only
-  reachable by switching the module off while the page is open: `/admin/rooms-beds`
-  is itself feature-gated on `bedAllocation`, so with the module already off the
-  whole page is a 404 and this card never renders.
-- 404 without that code, and 401 — the sign-in behind the tab has expired.
-- 403 — permission-specific. The save keeps `ADMIN_FORBIDDEN_SAVE_REASON`; the
-  load has its own read-shaped sentence, since "this change was not saved" is
-  the wrong tense for a read. Either way the guard's OWN curated 403 sentences
-  ("Two-factor verification required", "Password change required", "Account is
-  deactivated") win over the generic role copy — only the bare word "Forbidden"
-  is replaced.
-- Everything else shows the server's own non-empty `{ error }` sentence, read as
-  JSON and projected to that one field, so a zod `details`, a Prisma `meta` or a
-  proxy's HTML error page can never reach the screen. An unreadable or blank
-  reply falls back to the card's own wording, and a 200 whose body is not the
-  promised shape does too rather than putting a `TypeError` on the page.
-
-The write body is `BedAllocationSettingsWriteBody`, the single write contract in
-`src/lib/bed-allocation-settings.ts` that the route's `.strict()` schema is
-checked against with `satisfies` — never a spread of the loaded settings, whose
-six read-only provenance fields the schema refuses. The projection helpers live
-in `src/lib/api-error-message.ts`.
-
-## Reviewed bed-allocation removal (#2594)
-
-All removal triggers share one **Remove bed allocations** dialog: a chip menu,
-dragging a chip back to the pool, the board's **Reset allocations…**, and an
-in-booking run's **Remove** action. A bookings-view admin may call the read-only
-preview; a bookings-edit admin may apply it. The board reset starts with the
-selected lodge/visible-window scope and no categories selected. A chip or run
-starts with **This night only** plus the row's exact Auto draft, Manual draft,
-or Approved category. From an anchor the admin may widen to the person or whole
-booking, both of which intentionally include off-screen nights; the booking card
-does not offer lodge-window reset.
-
-The admin must select at least one category, run **Preview removal**, and review
-row/category counts, bookings/nights, shared-double promotions, and every
-booking whose final approved row will be removed and whose requested-room
-editing will therefore re-open. **Remove reviewed allocations** is enabled only
-for a non-empty preview. A stale digest returns a refreshed preview and states
-that nothing was removed. Success closes the dialog, restores focus through the
-shared trigger seam, reloads its parent surface, and says no automatic
-allocation ran. Freed nights remain awaiting allocation until a later manual
-placement or explicit board auto-run. The retired per-id DELETE and optimistic
-board update are never used.
-
-## Reviewed bed-allocation moves (#2595)
-
-Dragging an existing chip to any bed, or choosing any destination under its
-**Move to bed** menu (including its current bed), opens one **Move allocation**
-dialog. Pointer and keyboard paths share that seam and send no write while the
-dialog opens. A bookings-view admin can load the authoritative preview; only a
-bookings-edit admin can confirm it. Closing or succeeding restores focus to the
-originating chip/menu control. The in-booking bed-allocation panel has no move
-scope control.
-
-The dialog starts with **This allocation night** and also offers **This person
-on this booking**. Person scope resolves every existing allocation row for that
-guest on the booking, including sparse and off-screen nights (up to 366), but
-does not create missing nights. The preview names the destination and exact NZ
-lodge nights, separates changing and unchanged counts, warns that changed
-approved rows become unapproved Manual drafts, and shows shared-double
-promotions or hard refusals. Counterpart occupants are never identified.
-
-**Confirm move** applies the exact digest-reviewed set atomically and never runs
-auto-allocation. A changed destination, allocation, booking, guest-night, hold,
-occupant, member, or partner fact returns a refreshed 409 preview, preserves the
-chosen scope, and requires **Confirm refreshed move**. An all-noop confirmation
-succeeds with explicit **No change** feedback and writes neither an allocation
-nor an audit entry. Feedback live regions remain mounted throughout loading,
-errors, stale review, and success.
-
-## Minimum-stay exception foundation (#2363)
-
-An operator creating or editing a minimum-stay rule must choose whether a later
-exception request will **hold requested capacity while it waits** or **not hold
-capacity until approval**. The row displays that choice, and a stale update is
-refused and reloaded if another admin or config import saved first. Public pages
-using `{{booking-policies}}` show the configured choice in plain language.
-
-A hold is not open-ended (#2553). The option label, the field hint, the saved-rule
-summary and the published sentence all say so: it lasts until the request is
-decided or its deadline passes — 7 days from when the request is raised, never
-past the start of the first night held, and never less than 24 hours — after
-which the hold-reaper cron returns the beds, marks the request **Expired**, and
-emails the member who raised it. An operator choosing HOLD to protect capacity
-while they consult the committee needs to see that deadline in the setting itself,
-which is why the copy carries it rather than only the docs.
-
-For members, the #2363 release deliberately kept the existing journey: create,
-group join, and date-change mutations stop on minimum stay; quote/policy-check
-surfaces can describe the exact affected nights and policy, but the booking
-wizard offered no submit-for-review action. **That last clause is now historical
-— #2562 added it**; see "Asking to be let past a booking rule — the member's
-side" below for what a member sees today. The rest of this section still holds,
-including which failures never become exception choices. The edit panel's
-minimum-stay banner stays advisory and Save stays enabled — the server decides —
-and a refused save now names the rule and the affected nights in the panel
-rather than showing a generic failure. A non-member signing up to a group by
-its public link is told the stay is too short and to contact the organiser
-(only the organiser can move those dates); if the rules change between their
-request and their confirmation click, the confirmation page says so plainly and
-confirms nothing was booked or charged. No capacity is reserved from the
-configured `HOLD` value yet. The combined review interaction,
-durable request, approval, and reservation behavior belong to #2365 and have all
-since shipped (#2524/#2525/#2526 on the server and officer side, #2562 on the
-member's). Capacity,
-date, authentication, subscription/membership, duplicate member-night,
-payment, privacy, and data-integrity failures never become exception choices.
-
-## Deciding a booking-policy exception (#2526)
-
-A Booking Officer opens **Admin -> Booking Requests -> Policy Exceptions**. The
-tab carries a count of everything waiting, and each card answers the four
-questions a decision actually needs: who asked and **how long ago** (in plain
-English — "3 days ago", not a timestamp the officer has to subtract), what they
-proposed (dates, party size, the change requested), which rules it breaks at the
-exact policy revision that was reviewed, and whether the request is holding beds
-while it waits. A request that has already been kept pending on capacity shows
-the last conflict and when it happened, so nobody re-clicks Approve wondering
-why nothing happened. A request for a booking that does not exist yet always
-reads *No beds held*, because there is nothing for a reservation to hang off —
-telling an officer those beds were safe was the opposite of the truth and invited
-them to deprioritise the one request that could be beaten to them.
-
-**Who this would put on the booking** sits above the decision, with a *Show the
-guests* button that loads the frozen party on demand: each guest's name, age
-tier, whether they are a member, and whether they are from outside the
-requester's family. Approving executes that party for real, so a bare guest count
-was asking the officer to take responsibility for a decision they had no way to
-make — an unrelated member attached to somebody else's stay, or a party of minors
-with no adult, are both invisible behind "Guests: 2".
-
-Deciding is deliberately two steps: **Decide this request** opens a reason box
-and a confirmation checkbox, and only then do Approve and Refuse become
-available. Approving an adult-member hosting exception, and every refusal, need
-the reason written down — the member reads the note on ANY decision (the field
-says so), and an approved hosting exception is recorded against the booking with
-the officer's name on it. For a change, the form also carries the refund
-question — card or account credit — because a change that reduces a paid
-booking's price cannot be applied until somebody says where the money goes, and
-an officer who is only told "the request is still pending" has been given no
-action and no control to take it with.
-
-The screen is honest about what Approve does: it applies the exact proposal
-shown — creating the booking, or changing the live one — in one step, and it
-overrides only the rules listed on that card. Capacity, payment, membership and
-privacy rules all still apply. If the lodge has filled since the request was
-made, the officer is told the request **stays pending** and nothing is created;
-they can approve it later if space frees up, or refuse it with a reason. Every
-failed attempt refreshes the queue underneath them, because their own failed
-attempt can move the row's version and the next click would otherwise be refused
-as "somebody else changed this". A booking still waiting on any admin review
-remains blocked from lodge check-in; approving a policy exception is not a way
-around that — including a child-safety review the approved party itself opens.
-
-The screen is equally honest in the other direction: work that happens after the
-booking is committed (emails, accounting hand-offs, audit writes) can fail on its
-own, and when it does the officer reads **approved, and the booking was created —
-but some follow-up work failed**, with a nudge to check the booking and the
-member's email. It never reports a committed approval as still pending, which
-sent officers either into a stale-version refusal or into creating the booking a
-second time by hand.
-
-A view-only admin sees the same queue with the controls disabled and a banner
-saying bookings edit access is required.
-
-The decision form asks for **two** notes, each labelled with its audience before
-anything is submitted (#2562): an **Explanation for the member**, which the member
-reads on their own request list and in the approval email, and an optional
-**Internal note**, which only admins ever see. The labelling is the safety
-mechanism — one field previously did both jobs and was member-visible, so an officer
-recording a judgement about a member had no honest option. A refusal still requires
-the member-facing explanation: an internal note cannot stand in for it, and the
-message says so rather than accepting one silently. After the decision both notes
-stay on the card, separately labelled, so a colleague can see which half the member
-has already read.
-
-## Asking to be let past a booking rule — the member's side (#2562)
-
-The member journey the two sections above deliberately left out. A refusal from a
-waivable rule is no longer a dead end: **Request Booking Officer approval** appears
-on the booking wizard's review step and under Save on the edit panel — and *only*
-where the server's own refusal said every blocking failure is reviewable. A full
-lodge, dates in the past, a night the member already holds, a guest they have no
-authority over, a missing consent and a tampered proposal draw no door at all; the
-action is absent rather than disabled, because a door that cannot open is worse than
-no door.
-
-Before submitting, the member reads the exact proposal — lodge, nights, every guest
-and the nights they picked for them, the guest-night total, the price the server
-quoted (or, where the refusal was answered instead of a quote, how pricing actually
-works rather than an invented number), and every rule they are asking to be let
-past, all at once rather than one at a time. An explanation is **required**. Two
-sentences are always present and never softened: sending a request books and
-confirms nothing, and approval is at the officer's discretion with no guarantee.
-
-Capacity wording follows the real behaviour of the path rather than the policy's
-intent, because the tempting generic sentence is false for a whole population: a
-new-booking request **holds no beds**, whatever the rule's capacity mode says, and
-says so; a modification says whether *its own* incremental hold exists, which is
-also correct for a pure shrink that reserves nothing. Approval can never put the
-lodge over capacity, and every branch says so or implies it without promising a bed.
-After submitting, the member sees the proposal the server actually **froze** — which
-can be wider than the dates they typed, because the freeze expands the envelope to
-cover every guest night — while withdraw and replace are still open.
-
-**My booking-rule requests** on My Bookings is the tracking surface, and it shows
-every state rather than a friendly summary of them: with the officer, waiting
-because the lodge was full, approved and booked (with a link to the booking),
-not approved (with the officer's member-facing explanation), withdrawn, replaced,
-and lapsed. A `REQUESTED` row with a recorded conflict reads as "an officer tried
-and there was no room", never as "nobody has looked". While a request is open the
-member can **Withdraw** it (one click, then a confirmation) or **Replace it with a
-corrected request** — which returns them to the screen that built the proposal, since
-an officer decides the exact proposal that was frozen and editing it underneath them
-is how an approval lands on something nobody read. The section is absent entirely for
-a member who has never raised one, and the cards stack on a phone.
-
-One honesty note the edit path needs and the wizard does not: a proposal is a party
-and a set of nights, so anything else in the same pending edit — a guest name
-correction, a promo code, an account-credit election, a placeholder-to-member link —
-is **named on the card** and stated as not included, rather than left for the member
-to assume it was submitted.
-
-## Adult-member hosting (#2364)
-
-An operator opens **Booking Policies → Adult Member Hosting** and edits two
-independent choices for each configuration scope. The consequence is
-**Disabled**, **Send to admin review**, or **Enforce the rule**. The host-scope
-set permits an adult on the **same booking**, on **another booking owned by the
-same member** at the same lodge/night, or both. Another guest at the lodge, a
-shared email, or a Family Group connection never counts. With two or more
-lodges, each lodge may inherit either choice from club-wide while overriding the
-other. The card follows read-only → Edit → Save/Cancel; a failed scope switch
-shows "we do not know what is stored here" with **Try again**, and a stale save
-is refused and reloaded. A first save also requires an explicit
-exception-capacity choice.
-
-### Moving a booking that another of your own bookings relies on (#3232)
-
-The member opens their booking, changes the dates and presses Save. Where that
-would leave another booking on their own account without a qualifying adult on
-nights it was relying on this one for, the save is not written and the panel shows
-**"Another of your bookings needs an adult on these nights"** with the affected
-booking's reference, lodge, its current dates, the dates it would move to, and the
-nights it would be left uncovered on.
-
-Underneath sit two radio options and **no default** — the save button will not
-proceed until one is picked, because either default would answer a money question
-on the member's behalf:
-
-- **Move both bookings**, with the combined figure beside it: what is payable or
-  coming back across both bookings, whether both change fees are included (the
-  club's setting decides, and the sentence says which answer it gave), and a note
-  that the card-or-credit choice already made above covers both. Where a group
-  organiser paid for one of the bookings (#3949), its refund is not "coming back
-  to you": the sentence says how much goes back to the group organiser, by bank
-  transfer or to their card, and that the one choice covers only the bookings the
-  member paid for.
-- **Move only this booking**, with the consequence beside it: the other booking
-  will be left without adult supervision on those nights, a Booking Officer will
-  be told, and they will be in touch if anything needs to change.
-
-Where the OTHER booking's move brings money back and this booking's own edit
-needs no such choice — it is unpaid, or its price went up — a **Return method**
-choice (refund to the original card, or hold as account credit) appears directly
-above the offer, and Save waits for it. That is the case the card-or-credit
-control in the price summary cannot serve, because that one belongs to this
-booking's money and is only drawn when this booking's own total falls; without
-this the member was told to choose a refund or account credit with nothing on the
-page to choose and could then move neither booking.
-
-A booking the group organiser paid for by card shows no **Return method** choice
-at all (#3653): the price summary says the reduction goes back to the
-organiser's card, and the edit refuses an account-credit request. A change that
-would raise its price is refused with a message to contact the club; the quote
-shows that message in the price summary and Save stays off, and an officer
-completing a parked edit's review cannot charge the joiner for it either. The
-cancel dialog likewise offers only the refund to the organiser's card, including
-after an earlier reduction was refunded. A child the organiser settled by
-Internet Banking (#3949) likewise shows no **Return method** choice: the price
-summary says the reduction is to be refunded to the group organiser by bank
-transfer; while that organiser is part-way through cancelling the group, the
-price summary shows that any change is refused and Save stays off.
-
-A booking that still owes an unpaid additional payment from an earlier change shows,
-when the edit lowers its price, how much **comes off the unpaid additional
-payment** (#3954), followed by what is then still owed or "nothing left to
-pay": that request is cancelled or replaced by a smaller one, and the **Return
-method** choice appears only for what is left, if anything.
-
-Picking one and saving again applies it. Both bookings move together or neither
-does. Choosing account credit can produce a different figure from the card
-option, so the offer is shown once more with the true numbers before it commits —
-the member is never charged, or refunded, an amount they were not shown. Changing anything about the edit retires the offer and the choice, so a
-member cannot accept a total that has stopped being true — they are asked again
-with the new figure.
-
-Where there are not enough beds free on the new nights for both, the first option
-is shown **disabled with the reason**, and the second is still available: a full
-lodge never stops somebody moving their own booking. The same happens, with its
-own reason, when the other booking's group organiser paid for it by Internet
-Banking and is part-way through cancelling the group (#3949): its place cannot
-move until that finishes, but this booking still can.
-
-Feedback: the offer sits in a permanently mounted assertive live region, so it is
-announced when it appears; the radio group sits outside that region so choosing an
-option does not re-announce the whole offer.
-
-In review mode the member's booking is made and officer work opens beside it. In
-enforced mode a non-compliant create or change is rolled back and the member sees
-the same **Request Booking Officer approval** journey described above — but only
-when the server marks every blocker reviewable. The exception request, its
-capacity treatment, and its public/internal notes use that shared workflow.
-School and organisation approvals are deliberately review-only; member-owned
-flows, including member whole-lodge approval, remain enforced.
-
-An ADMIN booking on somebody else's behalf has an explicit approval seam: if the
-party would trip the rule, `/admin/book` asks for a reason on both confirm and
-save-as-draft. The reason is stored with the approving admin, submitting is
-blocked until it is supplied, and changing the party clears it. The public
-`{{booking-policies}}` page states the active rule but does not advertise a
-signed-in exception action to anonymous visitors.
-
-When an accepted booking later loses its only same-owner cover, the dependent
-booking stays accepted and the Booking Officer sees its urgent incident above the
-ordinary bookings list. Restoring active cover from another booking clears that
-incident automatically; there is no separate acknowledgement and no booking-status
-change. If a booking or membership write races a member merge, the database
-transaction that owns the write and its hosting queue item either saves against the
-surviving member or rolls back as one unit with the fixed safe message: the database
-update could not be completed because the booking or member changed, reload before
-trying again, and check payment status before retrying where relevant.
-
-The member's zero-dollar draft confirmation and the admin waitlist Force Confirm
-keep that failure in a permanently mounted, focused/scrolled alert and restore the
-action in every exit path. A network or unreadable response cannot prove whether
-the write landed, so those surfaces retain the selected retry context but instruct
-the user to reload and verify booking status before trying again.
-
-That atomic promise stops at the transaction boundary. A provider or an earlier
-phase may already have completed before a later local reconciliation reaches the
-participant fence. The card-payment panel therefore suppresses another payment and
-keeps a focused alert mounted: it distinguishes received-but-unconfirmed payment,
-an existing successful card transaction whose refund/net state is unknown, and a
-capacity cancellation whose refund did or did not complete. For that cancellation,
-the two checkout endpoints carry the existing charged and planned-refund amounts
-as additive `capacityRefund` facts. Only a confirmed plan is described as refunded:
-a partial plan names the card amount and the remaining club follow-up; an empty,
-failed or unknown plan says the club will be in touch about the refund, without
-claiming automatic recovery is pending. The card-refund and follow-up clauses
-share `booking-card-refund-copy.ts` with the booking narrative (`INV-SSOT-001`).
-
-Xero create, link, unlink, and contact import likewise name only the phase already
-proved. Member detail, member list/editor, Contact Sync, and diagnostics close or
-disable the stale action, reload or reflect canonical state, and keep their focused
-warning visible through loading and refresh failure. **Try again** reloads state;
-Member Status Repair Backfill is offered only when refresh/cleanup remains pending.
-An ambiguous contact create hides every Xero write and leaves only **Try again**;
-once provider creation is proven but the local link is pending, **Link to Xero**
-returns as the explicit repair while another Create remains suppressed.
-Interfaces must distinguish a rolled-back queue transaction from truthful partial
-completion at these multi-phase boundaries. Officer override reasons remain attached
-to the original incident work, while merge-generated follow-up is a separate
-actorless system change.
-
-| Persona or flow                           | User goal                                                                                                                            | Expected steps                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | Copy and next action needs                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | Failure, empty, pending states                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              | Accessibility and manual test route                                                                                                                                                                                                                             |
-| ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Anonymous visitor                         | Understand the club and start joining or booking                                                                                     | Visit `/`, read public pages, see any current site notice banners above the header, dismiss a banner with its X button, use contact/join links                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | Clear club identity, eligibility, support contact, and member login path; banner priority colour and icon convey urgency                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | Holding page before setup, contact send errors, disabled modules; dismissed banners stay hidden in that browser until the banner is edited                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | Keyboard nav and heading order on `/`, `/contact`, `/join`; banner dismiss button labelled "Dismiss notice", URGENT banners announced as alerts                                                                                                                 |
-| Anonymous visitor                         | Choose whether Google Analytics may run                                                            | With the consent banner on, answer the bottom-of-page banner (Accept / Decline / Close, where Close means decline); change the answer later from the **Analytics preferences** link in the website footer, which is offered in both banner modes whenever analytics is configured (#2573) | Ask once and remember the answer per browser; link the club's privacy policy from both the banner and the preferences panel while one is published, so the policy is readable before the choice is made; state plainly that switching analytics off stops further collection but does not remove what Google already has; never describe a mode as legally compliant | Analytics module off or unconfigured (no banner and no footer link at all); an ineligible route (no banner, no tag, but the footer link still works so opting out is always reachable); no published privacy policy (no link is shown rather than a link to a missing page); storage unavailable in private browsing (the banner simply asks again); an admin running "Ask visitors to choose again" (every stored banner choice goes stale and the banner returns) | Banner is a labelled `role="dialog"` with Accept, Decline and a labelled Close; the preferences panel is a dialog stating the current choice; the banner steps aside for the public help launcher in the same corner |
-| Applicant                                 | Apply for membership                                                                                                                 | Open `/join/apply`, submit personal/family/nominator details                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            | Explain nomination, reminder, and admin review sequence; the submitted screen tells the applicant how to recover if a nominator's email goes missing (spam check, then the club can re-send the link)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     | Duplicate application, invalid nominator emails, pending nominations                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | Form labels/errors on `/join/apply`                                                                                                                                                                                                                             |
-| Nominator                                 | Confirm nomination                                                                                                                   | Open nomination link, sign in if needed, confirm                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | Explain who is being nominated and consequence of confirmation; invalid and expired link states point at the club office for an admin re-send; this single-action `/nominations/<token>` page is exempt from the mandatory "Confirm member details" onboarding gate, so a member with an incomplete profile can still confirm the nomination                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              | Expired token, wrong account, replaced nominator, already used token                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | Token route and signed-in confirmation page, to verify                                                                                                                                                                                                          |
-| New member                                | Finish first login and setup                                                                                                         | Login, change forced password, verify profile/subscription status                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | Clear next action after approval and setup invite; the login page tells members whose setup/invite email never arrived to check spam and use forgot password for a fresh link (works before first sign-in); a member bounced back to `/login` by a server-side session failure sees "Trouble signing in? Reference: `XXXXXXXX`" — quoting that code lets an admin find the recorded cause of the bounce (#1669); when the club enables the Email sign-in link module, `/login` also offers "Email me a sign-in link" — an enumeration-safe request that emails a single-use link to `/login/magic` (additive to password login, only for active verified members, always shows the same confirmation, refuses forced-password-change members, and still challenges 2FA); when the club enables the Google sign-in module and per-club `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET` are configured, `/login` also shows "Continue with Google" — sign-in resolves a member ONLY by the Google account they have linked from their profile (never by email, never provisioning), and an unlinked or ineligible identity is refused with a friendly `/login?error=…` message; a member links their own Google account from Profile > Security > Connected accounts (Connect Google), which starts an OAuth round-trip that pins the Google subject id without switching their session, and can unlink it there at any time while keeping password login; a visitor who is already signed in never sees the form at all — `/login` redirects them to the sanitised `callbackUrl` (or their password-change / two-factor gate), so a bounced-but-signed-in tab self-heals on reload; after a successful sign-in the member is taken to their post-login landing (#2090) — a member with **admin access lands on their first accessible admin page** by default (an admin whose overview area is denied still lands on another admin page they can reach, never a permission-denied loop), everyone else on `/dashboard`; each such admin can override this from **Profile > Account Information > "After sign-in, take me to"** (Use my role default / Member dashboard / Admin dashboard), and a genuinely deep-linked `callbackUrl` always wins over the preference, while a value the login flow itself materialised (the 2FA detour, a provider return URL) never counts as explicit; the same landing applies to password, magic-link, and Google sign-in and survives the two-factor detour                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | Expired setup invite, forced password, missing membership invoice                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           | `/login`, `/change-password`, `/dashboard`                                                                                                                                                                                                                      |
-| Member dashboard                          | Drill into account and stay summaries                                                                                                | Open `/dashboard`, then activate summary cards for upcoming bookings, next stay, account credit, payment owed, and promo codes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | Dashboard summary cards are real links with hover/focus affordance: Upcoming Bookings opens `/bookings`, Next Stay opens the specific booking when one exists, Account Credit and Promo Codes open the anchored profile sections, and Payment Owed opens the single owing booking when singular or `/bookings` otherwise                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | No upcoming stay links to the booking flow, no payment due still opens bookings history, no promo codes still opens the profile promo section when the module is enabled                                                                                                                                                                                                                                                                                                                                                                                                                                                    | `/dashboard`, `/bookings/[id]`, `/profile#account-credit`, `/profile#promo-codes`                                                                                                                                                                               |
-| Existing member booking                   | Book lodge nights                                                                                                                    | Choose dates and guests (the booker is added to the party by default and can be removed; optionally mark the booking as a group trip and pick who pays), review quote, handle waitlist or payment. **Dates-first, and a full night is a door rather than a wall (#2930):** every calendar cell derives a ROLE on render — unreachable / arrival / departure — and that one role drives its disabled state, its click handling, its styling and its accessible name. A full FUTURE night stays selectable for a member and is labelled **Waitlist** (`full — waitlist only`), because the waitlist offer only arrives with the server's 409 and a member who cannot select those dates can never produce the request that raises it. Once a check-in is chosen, a full date is offered as a check-out morning (`selectable as your check-out morning`) and is never blocked: occupancy is `[checkIn, checkOut)`, so nobody uses a bed on the day they leave. The guests step no longer hard-stops a party that will not fit — it shows the per-night shortfall as advisory copy, lists the full nights, and its Continue reads "Continue to waitlist". On a stay that cannot be confirmed the review step withholds the payment-method chooser entirely and its primary action becomes **Join Waitlist**: a waitlist place takes no money and stores no payment method, so the choice is obtained later through the ordinary payment path if a promotion makes confirmation possible. Free-bed counts come from the SELECTED lodge's own effective capacity, never a club-wide figure (`INV-CAP-001`), months already loaded stay loaded when paging, and a night with no data reads `availability not loaded` rather than being drawn as an empty lodge                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           | Explain date-only nights, capacity, policies, cancellation terms, and existing bookings for the same member/night. **A whole-lodge hold must be indistinguishable from ordinary fullness here** (ADR-001 decision 6, `INV-CAP-021`, `INV-CAP-038`): the calendar, the guests-step advisory, the review notice and the waitlist prompt all describe a held night in the same words as a full one, and they can do nothing else — `/api/availability/check` pins a held night to a full lodge at zero free beds and projects no hold flag, so no client-side code has the distinction to leak. The nights a 409 names now include held nights for the same reason (#2930); before that a hold-only refusal named none, which rendered as "at capacity on 0 nights" and gave the hold away. A member may join the waitlist over held nights and is simply not promoted while the hold applies; show non-member provisional copy and "Only book if my guests can come" only when the quote says an enabled Members First hold will actually be created. When that hold splits a mixed member/non-member party (#738), the review step spells the split out (#1942): it names which guests are held provisionally, states no bed is reserved for them yet, that today's charge covers only the member places, shows the guest-portion sub-amount derived from the quote (not recomputed), explains "because your stay is more than N hold-days away", and says the guest portion is auto-charged to the same card around the hold deadline if beds remain (otherwise those guests are bumped). The split parent's post-payment booking-confirmed email carries the same provisional-guests section (who is provisional, no bed held yet, the expected second charge around the hold date, and the bump possibility) via a `{{provisionalGuestsNote}}` message token. In the guests step, a typed-in non-member guest whose name matches one of the member's own family group members who can be booked as a linked member guest gets a one-click "Add as member guest" suggestion (bed held, member rate, no split — a suggestion, never forced); when the matched family member is not yet bookable, the existing fallback message is extended to explain the provisional-hold consequence, but only when the hold policy would actually apply. A typed name that EXACTLY matches one of the booker's own recorded dependants is not that suggestion but a stop (#2721, `INV-GUEST-019`): the softer suggestion is suppressed for that name and the step will not continue until the booker says which person they mean — **This is my dependant**, which moves the row onto the member path (or says what has to happen first and links to Family Group when that dependant is not yet bookable here), or **This is a different person with the same name**, which continues the guest path behind a declaration naming that dependant, asked once per dependant. The comparison is against the booker's OWN parent links only, exact on the normalised name, so free-text guest entry never becomes a way to ask whether some name is a member; the create route re-resolves both from authenticated data. An authorised on-behalf create is NOT exempt (owner decision 15 Sep 2026): `/admin/book` asks an officer the same question about the selected member's dependants, because this check protects a third party's bed rather than the officer's own authority, and the parent is not at the screen to notice. Under First Paid, First In, or inside the configured hold window, the whole party continues to normal payment. The wizard's step cue shows "4. Pay" (or "4. Admin Review"), the submit button reads "Continue to Payment" when money is due, and on the card path payment is taken inside the wizard as step 4 (abandoning it is safe: the booking page's anchored Complete Payment card and amber "Payment required" banner take over, as they do for all non-card paths). In My Bookings (`/bookings`) the provisional non-member child renders as an indented sub-row nested inside its parent member booking's card (#1975 — owner-selected Option A): one visual card carrying the parent's and the child's own status badges separately, instead of two sibling rows. The nested sub-row is its own keyboard-focusable link inside a `role="group"` labelled "Your non-member guests"; the now-redundant inline `Includes linked provisional non-member guests` (parent) and `Provisional non-member guests · linked to your member booking` (child) labels are suppressed while nested. If the parent is filtered or paged out of the visible list the child falls back to its own top-level row and re-shows the full `Provisional non-member guests · linked to your member booking` label so it never disappears. The parent booking detail page gains a `Your non-member guests` section (`#non-member-guests`) listing each genuine split child inline — its own status badge (any status, including a cancelled/bumped child and the #1967 post-IB-switch still-PENDING child), differing dates if any, guest count, amount, and a link through — while the child's own detail page stays reachable and keeps its provisional banner with a link back to the parent member booking. Presentation only: the split is still created, priced, capacity-checked, settled, and invoiced (two Xero invoices) exactly as before. A member who was put on somebody ELSE's booking sees a `You are a guest on this booking` card on that booking's own detail page (#2250) explaining that it is not theirs to change and offering **Remove me from this booking** behind a confirm — previously the only entry point anywhere was the wizard's night-conflict card, so the action was discoverable only while attempting a clashing booking. Visibility is the shared server-side rule (`evaluateGuestSelfRemoval`), the same one behind the conflict card's `canSelfRemove` and whose status gate the removal service enforces; when it says no, the action is hidden (never merely disabled) and the reason is stated in its place — the stay has started, the booking's status no longer allows it, they are the only person on it, or the club priced the booking as a quote (the page runs that one lookup so the refusal is predicted rather than met on submit)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     | No capacity; a lodge nobody has given a capacity (#3407), where the calendar and every party-size refusal say the lodge is not set up for bookings yet and no night is offered, rather than Waitlist, Full or a limit of zero; duplicate member-night booking, invalid stay, expired draft, policy violation; linked guests can remove only themselves from a future conflicting booking; group-trip choice is deferred (with a toast) on save-as-draft and dropped on waitlist. The already-booked block reads as one plain-English message (#2250): it names who is already booked, the exact clashing nights as club dates, and the next step this particular viewer can take — take yourself off that booking, open your own clashing booking, or ask whoever made it. The other booking's owner and status are named only for a viewer the server marked `canOpenBooking` (its owner, an admin, or the clashing guest themselves), so a member adding a guest who turns out to be on a stranger's booking learns the nights are taken, never whose booking took them. The 409 body itself is scoped the same way: an unentitled row carries no booking id, owner name, status, stay dates, or guest id at all, so the detail is not merely unrendered but absent                                                                                                                                                                                                                                                                                                                                                               | `/book`, `/bookings`, booking detail route                                                                                                                                                                                                                      |
-| Group trip organiser                      | Let others join the same dates with their own bookings                                                                               | Tick "Make this a group trip" in the wizard (or open a group later from the booking page), share the join code/link, watch the joiner roster, close/reopen joins, settle one combined bill when organiser-pays                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | Explain each-pays-own versus organiser-pays, that joiners hold their own beds, and where the share link lives on the booking page                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         | Group creation fails after booking (toast points at the booking page as the retry path), module disabled hides the option, group not openable until the booking is committed (not draft/waitlist/under review/non-member PENDING hold); a group whose stay has fully ended (organiser check-out on or before NZ today, #1723 path 3) leaves the joinable set entirely — `/join/[code]` shows the "no longer accepting new joiners" banner and every join path refuses (member join 409 "This group's stay has ended", non-member join request 409 `GROUP_STAY_ENDED`, emailed-token verify `not_joinable`)                                                                                                                                                                                                                                                                                                                                                                                      | `/book` guests step, booking detail group card, `/join/[code]`, `/api/group-bookings`                                                                                                                                                                           |
-| Dual-hat admin or Booking Officer booking | Book a stay for yourself, or complete one for a member                                                                               | Dual-hat admins (member + admin roles) open `/book` like any member and book themselves + family under full member rules; admin-only accounts opening `/book` are redirected to `/admin/book`; Full Admins and Booking Officers use `/admin/book` to book on behalf of a member (pick member, dates, guests, quote, confirm or save draft); the booking owner can instead be a non-member — the officer inline-creates a non-login `NON_MEMBER` owner, reuses an existing one via suggest-and-pick dedupe, or records a no-email walk-in on a club-internal placeholder, and the owner's typed guests are priced at non-member rates and held `PENDING` (#1935 E9, live-app follow-up #1962); an on-behalf create may exceed capacity — full days stay selectable on the calendar, the guest step warns, and submit is warn-and-confirm ("Confirm over-capacity and create", #1767; non-member hold-eligible parties and waitlist opt-ins keep the standard capacity outcome, and over-capacity parties can't be saved as drafts) — while member self-books keep the hard capacity block; **Save as Draft** leaves the money to the member, and the review step says so: the draft appears on their dashboard labelled "Saved for you by the club" with a **Review & pay** control, paying it confirms the booking even while an unpaid subscription blocks them from starting one of their own (#2779), it is deleted 72 hours after it is saved, and a $0 booking has no payment step so an admin confirms that one instead; **a typed guest name that exactly matches one of the SELECTED MEMBER's own recorded dependants stops the guest step here too** (#2721, `INV-GUEST-019`, owner decision 15 Sep 2026) — the officer answers **This is <member>'s dependant**, which moves the row onto the member path when that dependant is in the member's family group (and otherwise says to put them in it under Membership first), or **This is a different person with the same name**, which continues the guest path behind a declaration naming that dependant, asked once per dependant and re-verified by the create route; the candidate set is the member's own parent links and never the officer's                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              | Being an admin gives no shortcuts on your own booking (subscription, Xero link, minimum stay, and guest rules all apply); Book on Behalf never allows selecting yourself — own stays always go through the member flow and normal payment paths; the on-behalf quote always prices the selected member, and an unauthorized on-behalf attempt is rejected rather than mispriced                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           | Admin-only account has no member booking path (by design); officer without `bookings:edit` gets 403 on create/quote; self-target on-behalf rejected with a pointer to the member flow                                                                                                                                                                                                                                                                                                                                                                                                                                       | `/book` (dual-hat self-booking), `/admin/book` (on-behalf; bookings:edit), e2e/dual-hat-booking.spec.ts, e2e/book-on-behalf-nonmember.spec.ts                                                                                                                                                         |
-| Public quote requester                    | Respond to an emailed lodge quote                                                                                                    | Reach the request form at `/booking-requests` — an editable CMS page that is **unlisted by default (#2421, #2818)**: it seeds an empty menu title, which keeps it out of the site menu *and* out of search engines (one field drives both, so they cannot disagree; `robots.txt` deliberately does not disallow it, so crawlers fetch the page and see the `noindex`). On that default the club sends the direct URL only to a guest it has agreed to host (an admin copies it from Admin → Booking Requests → Public Requests); a club that wants it advertised gives the page a menu title under Site Appearance & Content → Page Content. The only other path in is the rebook button on a tokenised `/pay/[token]` link the club itself emailed a past requester. Then open the secure quote link, review options/price/expiry, then accept, cancel, ask a question, or request changes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | Show price, what each option includes, when the quote expires, and the next step after each action; Cancel Request confirms before withdrawing the quote (destructive one-click guard, #1371). No public surface may state or imply that a non-member can book — whether the club hosts non-members at all is the club's own policy, and the public help corpus defers to the club's own FAQ/rules/policy pages (#2421)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             | Invalid link, quote no longer active, expired quote (recover by requesting a new one), lodge filled before acceptance (names the full nights; link stays active)                                                                                                                                                                                                                                                                                                                                                                                                                                                            | `/booking-requests/respond/[token]`, `/api/booking-requests/respond/[token]`                                                                                                                                                                                    |
-| School contact confirming attendees       | Replace placeholder attendee names and confirm who is coming before check-in                                                         | Open the emailed secure link (re-sent on a configurable cadence), edit names, save, then explicitly confirm the list                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    | Explain that names feed the lodge roster, that headcount/age changes need the club, and that the link stays valid until check-in                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | Invalid/replaced link, expired link (admins re-send instantly from the request card, #1153), already confirmed (read-only list), booking cancelled                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | `/school-bookings/confirm/[token]`, `/api/school-bookings/confirm-attendees`                                                                                                                                                                                    |
-| Admin processing a booking request | Price, quote, hold capacity (SCHOOL requests only; generic quotes auto-hold on send), and approve a public or school booking request. Correct an unconverted request before converting it (#2936). | Open the requests panel, price or quote the request, optionally hold slots (SCHOOL requests only; generic quotes auto-hold on send), choose the booking contact — create a new non-login contact (default) or **map to an existing Organisation/School contact** (repeat emails/names surface likely matches) — then approve/decline (#1255). When slots are already held, the contact is read-only, but a **Release hold** action (with an inline confirm) frees the beds and re-enables the contact choice so the admin can re-map and re-hold. Declining a VERIFIED/PRICED request now also releases any capacity hold it carries (#1365) — in practice a SCHOOL manual hold: claim-first, the request is flipped to DECLINED and only then is the held AWAITING_REVIEW booking cancelled, its beds freed and the pointer detached via the shared cancel path (requester cancellation email suppressed). A generic held request is QUOTE_SENT (auto-hold-on-send), which this decline route does NOT decline (409, hold untouched) — its hold is released via the requester declining the quote, quote-expiry, or the Release hold button instead. On a SCHOOL request the **Adjust group numbers** boxes are part of the quote (#3412): **Save quote** is what applies them to the request, and the price, the attendee list the school sees, the guest count in their email, the beds held on send and the booking created at approval all read that one list. Until the officer saves, **Hold slots** and **Send quote** are both disabled — each reserves the beds for the numbers stored on the request, and sending also emails the school that headcount. **Correct this request** (#2936) is offered on the same six live, undecided statuses the linking editor uses, inside the edit-capable block so a view-only admin never sees it, and hidden on a member whole-lodge request and on one flagged **Saved details need attention** (including a school request whose stored teacher list is invalid, which names that failure and shows no partial teacher list). It corrects dates, party (guest list, or teachers plus per-tier child counts on a school request), catering preference and the contact identity, in ONE write that re-opens the request: every DRAFT/SENT quote goes SUPERSEDED, the price is cleared, the status returns to VERIFIED, any admin-made member link is cleared when the party moved (they are keyed by position in the guest list, so a rewritten list would hand one member's identity to another guest), and any capacity hold is released through the shared cancel path — except a catering-only correction, which keeps the beds, and which the cron sweep then frees once the last quote window lapses. An ACCEPTED quote refuses the edit outright. On a SCHOOL request the form asks `GET .../school-record?name=` as the name is typed and shows which Organisation the corrected name would resolve to at approval (#3367), whether that record already owns a Xero customer and who its contact people are today; Save stays disabled until the officer ticks the matching confirmation, and retyping the name takes the tick back; a lookup that fails says so and offers a retry rather than reporting itself as still checking. | Explain that mapping reuses the existing contact and its Xero contact (no duplicate) and never merges silently; that a held request's owner contact is fixed until the hold is released; that releasing frees the held beds via the shared cancel path but suppresses the requester's "booking cancelled" email (it is an admin re-map, not a requester cancellation) and intentionally leaves the requester's quote link active, so the confirm step warns the admin to re-send a fresh quote after re-mapping; and that per-teacher hut-leader records always stay separate; and that linking a request guest to a real member runs an **advisory-only** member-night overlap warning (#1226) so a double-book surfaces before approve/hold, while the transactional guard at approve/hold stays the sole hard block; that **Hold slots** is now a SCHOOL-only manual hold — sending a quote auto-holds the beds across the whole quote lifecycle (#1280), so the manual Hold slots UI entry is hidden on the generic quote flow as redundant (#1385, superseding the earlier #1317 "kept for all flows" stance) and shown only for SCHOOL requests, where a school can be approved directly without a sent quote and approval reuses the held booking (#1352); and that an accepted-but-unpaid hold is still reclaimed if an admin later lowers the lodge capacity for those nights below what is booked — the `cron-confirm-pending` job bumps it (no charge) at its hold deadline, and only an admin capacity cut can do this, not a competing member booking (owner-ratified, #1317); and that declining a request now asks per action whether to email the requester ("Decline and email requester" / "Decline without emailing"; default = notify; audited `notifyMember`, #1791) — only the requester's decline notice is gated, while the booking-request approved and quote emails carry the payment/quote link and always send. For the correction: say in words that saving RE-OPENS the request — the sent quote is withdrawn, the price cleared, the held beds released and a fresh quote must follow — and that the catering preference is the one detail a hold is not built from (said only on a school request, which is the only kind with a catering control). Say that changing who is in the group clears the member links keyed to it, and that they must be linked again before pricing. On a school request say which of two things the name does (rejoin the school the club already has, with its accounting customer and invoice history, or create a new school and a new customer) and that approving REPLACES the school's current contact people with the teachers on the request; the reason field is labelled club-record-only and is never emailed. | Login-capable member rejected as a map target (guarded), held-request contact shown read-only until released, release confirm warns the quote link stays active (accepting before re-hold can drop the reservation/mapping), release blocked (409) once the requester has accepted, no matching contacts, capacity lost before approve, accepted-but-unpaid hold bumped by cron when capacity is later lowered (#1317), already-processed request; if a mapped contact became invalid before the requester accepts, a fresh contact is substituted so the accept still succeeds and an admin-attention audit row is written, unsaved group numbers (Hold slots and Send quote disabled, with the reason stated beside them), a count change attempted while beds are held (409 — Release hold first; a hold pointer left behind by a cancelled booking does NOT block, and the panel reads the hold's status rather than the pointer so it agrees), a member linked to a row the new numbers would hand to somebody else (422 — a change that leaves the linked row untouched, such as appending youth, is allowed; the panel names the member and the row before the click and says to re-link them afterwards, so the member rate is not lost), a save or a send that lost a race to another officer (409, nothing written and no email sent). For the correction: accepted quote (409, re-open or re-issue the quote first), already converted, no longer open, member whole-lodge request, unreadable stored party, version moved under the officer (409, reload), school record created or renamed under an open form (409 naming the school), nothing actually changed, party over lodge capacity, a stay starting before the club's today, and the correction-SAVED-but-hold-not-released case, which is reported as a save rather than a failure and must not be retried. Post-correction availability is advisory and never refuses the save. | `/admin/booking-requests`, `/api/admin/booking-requests/[id]/contacts`, `/api/admin/booking-requests/[id]/hold`, `/api/admin/booking-requests/[id]/release-hold`, `/api/admin/booking-requests/[id]/link-conflicts`, `/api/admin/booking-requests/[id]/approve`, `/api/admin/booking-requests/[id]/correct`, `/api/admin/booking-requests/[id]/school-record`, `/api/admin/booking-requests/[id]/resolve-pending-adults` |
-| Member requesting the whole lodge (#2263) | Ask the booking officer for sole occupancy of the lodge for a course, club trip or family gathering | Book a Stay shows a "Need the whole lodge?" card beside the wizard (the wizard itself is untouched) → `/book/whole-lodge` asks for dates, an approximate headcount, who the group is and any notes, and — only when the member holds account credit — offers **Put my account credit towards this booking if it is approved** (the member's own balance, not a fact about the calendar) → submit → a fixed acknowledgement card → the request appears under **My requests** on `/bookings`, where it can be withdrawn while it is still pending | Deliberately absent: any availability calendar, capacity hint, price, or quote — each is the disclosure rule in picture form (ADR-001 decision 6). Say plainly that this is a request, not a booking, and that nothing is reserved or charged until the officer confirms. The acknowledgement must echo NOTHING the member submitted — no dates, no headcount, no reference — and must read identically whether the lodge is free, full, or already held for someone else. Headcount copy says an estimate is fine and guest names are not needed yet. |
-| Member naming a whole-lodge party (#2550) | Replace the placeholder "Guest 1..N" names on a converted whole-lodge booking with real people before check-in | An escalating reminder email arrives from `attendeeConfirmationLeadDays` before check-in (every `attendeeConfirmationReminderDays`, then daily from two days out through the arrival morning) → the member opens their own booking behind their login and edits the guest names through the ordinary guest-edit path → the reminders stop as soon as every guest is named | No token and no public page — this is the member's own booking, so the email carries only the canonical authorized booking link. Every stage says plainly that the names feed the lodge chore list and roster, that a rename changes neither age group nor price, and that the stay is NOT conditional on it: the final reminder explicitly says to come anyway and tell the lodge on arrival. Headcount or age-group changes still go through the club. | Party already fully named (nothing is sent), booking cancelled or bumped (dropped from the sweep), booking silenced by "No emails" (withheld and listed on the booking's withheld-emails banner), delivery failure (retried at the next cadence window) | `/bookings/[id]` (existing guest edit), `placeholder-guest-name-reminders` cron |
-| Member tracking a whole-lodge request (#2263) | See where the request got to, and pull it back if plans change | `/bookings` → **My requests** section (hidden entirely when empty) → each row shows the dates, the approximate headcount, and one of four words: With the booking officer / Approved / Not available / Withdrawn → Approved rows link through to the real booking; pending rows offer **Withdraw** | Never show a raw pipeline status — "Priced" or "Quote sent" would tell a member what the officer is doing behind the queue. A declined row carries ONE fixed sentence with no reason, no dates-are-taken wording, and never the officer's note. Say that declined and withdrawn requests are removed after 90 days, so a member is not surprised when the history shortens. |
-| Officer handling a whole-lodge request (#2263) | Decide a whole-lodge ask with the calendar in front of you | `/admin/booking-requests` (one shared queue) → the row carries **Member** and **Whole lodge requested** badges → expand the admin-only availability strip to see per-night occupancy, already-held nights and any overlapping bookings → set the headcount you are actually pricing (and a total price override when no season covers the dates) → **Approve & hold the whole lodge** (solid primary — it is the only forward action on this path) or **Decline** through the usual notify dialog | The strip and the conflict list are ADMIN-ONLY and must never reach a member surface. Approving grants the hold regardless of overlaps and never cancels anything, so the callout has to say so in words and name what the officer now has to sort out by hand. The decline note field is labelled audit-log-only, with the reason stated: the member is emailed fixed wording either way. No quote, price or hold-slots controls appear on these rows, and the service refuses them anyway. A row whose member asked for their account credit says so above the pricing fields. With the Internet Banking and Xero modules both on, approval picks no payment method: the toast says the member pays from their booking page (card, with any credit they asked for applied, or a switch to internet banking that raises the invoice), or that their credit covered it; with either module off it says whether the invoice went through Xero or must be raised by hand, as before. |
-| Payment selection                         | Pay by Stripe or Internet Banking/Xero where available                                                                               | Choose payment option, confirm payment or invoice instructions                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | Distinguish card payment from Internet Banking invoice settlement. When a split booking's own place is paid by Internet Banking, warn (never block) that the non-member guest portion has no card on file for its later charge, and offer to email a secure `/pay/<token>` link to settle the guests now (#1967, `POST /api/bookings/[id]/send-guest-payment-link`). On the card path the pay step (both the in-wizard step 4 and the booking page's Complete Payment card, which share `PaymentForm`) sources the SPLIT display from the server intent amount, not client arithmetic: for a split parent (#738) the headline reads "Charged today: $X" (the member portion actually charged now, from the server `chargedAmountCents`) with a secondary line naming the deferred non-member guest portion "charged closer to your stay"; a non-split booking deliberately keeps its existing client-provided "Total: $X" line for byte-identical presentation (the client amount and the server intent amount are equal in practice, so no figure changes). The figures come straight from `POST /api/payments/create-payment-intent`, which now returns `chargedAmountCents`, `isSplit`, and `deferredGuestAmountCents` (the child's server-priced total) so the split "charged today" always equals the intent amount (#1976). The same response also carries `creditElection` (#2265) whenever this request spent a credit election the member made when they saved the booking — `requestedCents`, `appliedCents`, `shortfallCents`, `shortfallReason` (`none` / `balance` / `price` / `balance_and_price`) and `availableBalanceCents` — so a clamp forced by a spent balance or a repriced booking is stated, never silent; null when the booking carried no election. When nothing is left to pay the response is terminal instead of an intent: `{ alreadyPaid: true, status: "PAID", creditElection }`, and the pay step should show a "your credit covered it all" confirmation rather than a card form. The Internet Banking switch returns the same `creditElection` payload, and refuses with 409 `CREDIT_COVERS_BOOKING` when credit covers the booking in full (there is no invoice to raise — the member completes it on the pay step). A public `/pay/<token>` link REFUSES (409) a booking that still carries an unconsumed election rather than charging the pre-credit price (#2319): the payer is often not the member, so the message names no figure and points at the club, while the operator alert carries the detail and the member pays from their own bookings page where the credit is applied. If a settlement does take the full price before the election can be applied, the booking's History gains a "Saved account credit was not applied" line naming the amount and confirming the balance is untouched (audit action `booking.credit_election.unapplied`), and admins are alerted so they can refund the difference or leave the credit in place. For a PENDING booking with non-member guests, the booking page's owner-only "Save Payment Method" card (SetupIntent, charged closer to check-in) shows exactly when `savedPaymentMethodForBooking` (`INV-PAY-053`) finds no card the auto-charge could use on the booking's own row or its split parent's (#3269) — first save, an abandoned replacement, a card retired after Stripe refused it, or a legacy copied card never saved through a SetupIntent (#3266, #3268) — rather than only until the first SetupIntent exists, so the member can always get back to the form, and the same const drives the admin button's will-charge wording; the "Payment on hold" notice takes its place once a chargeable card is on file. Minting a replacement clears the previous card from the row, and a succeeded SetupIntent whose card Stripe no longer holds for the customer is not re-adopted: `POST /api/payments/create-setup-intent` asks Stripe and mints afresh (`INV-PAY-052`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         | Payment failed, Xero unavailable, saved card failure, recovery pending; a split guest portion that reaches its hold deadline with no card on file (parent paid by Internet Banking, or paid by card without saving it for reuse — #3269) is not stranded — the member is emailed a payment link and admins alerted, then the hold is extended (#1967); admin alerts are capped to hold-extension windows 1, 2, 3 then every 7th (#1993 Part B), and if the guest portion is still unpaid at the end of its check-in day the provisional guest booking is automatically cancelled — member emailed, admins sent one final notice, the member's own place untouched (#1993 Part A); a saved card the auto-charge cron finds permanently unusable (Stripe rejects the payment method, a do-not-retry decline, or a soft decline still failing two days after the charge became due) is retired rather than retried every three hours — detached at Stripe, removed from the booking and from the parent it was borrowed from, the member emailed once to save a new card, admins alerted once in plain English (#3268)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | Payment step in booking flow, route to verify                                                                                                                                                                                                                   |
-| Waitlist                                  | Join or accept offered place                                                                                                         | Join waitlist (optionally opting into alternate lodges, ADR-004), wait for offer, accept before expiry; cross-lodge offers state the lodge and its price and need explicit confirmation                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | Explain offer expiry, next action, and that a cross-lodge price differs and books a fresh entry at the offered lodge                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | Offer expired, capacity changed, cross-lodge price changed since offer, payment needed                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | Waitlist UI and emails, route to verify                                                                                                                                                                                                                         |
-| Booking modification                      | Change dates/guests/promo/credit                                                                                                            | Open booking, request or perform allowed edit, settle delta; #2266: members resume + edit their own drafts (dashboard Resume), the edit panel surfaces eligible promo chips + the shared PromoCodeInput (guest selection included, promoLocked rules unchanged), and an Account credit card (own card above the Return-method radio, "Credit → booking" vs "Booking → you" tags) saves the member's election on the booking for the pay step to apply — the booking page then shows "Your $X credit choice is saved and will be applied when you confirm"; #3451 (`INV-GUEST-019`): a typed guest the edit ADDS (or an existing typed guest it RENAMES onto a new name) whose name exactly matches one of the booking owner's own recorded dependants gets the create wizard's question in the Guests card — **This is my dependant**, which moves the row onto the member path, or **This is a different person with the same name** — in the officer's words when an officer edits somebody else's booking (ownership, not role, decides); `modify-quote` (its name-fix-only echo included) and the save both re-check the answer from authenticated data, an exception request raised from the panel carries and freezes the answer for the approval to re-check, untouched guests are not re-asked, and the API-only `POST /api/bookings/[id]/guests` refuses such a guest with a pointer to Edit Booking; #4030 (`INV-REQ-011`): on an in-progress stay the **Admin Request** card adds guests for tonight or earlier with the guest editor's fields (non-member name and age, a family quick-add, or the member-guest finder) and Date In / Date Out inside the stay, shows an estimate for the non-member guests (`POST /api/bookings/[id]/change-requests/quote`; #4203: the group discount counts the whole proposed party, editor additions and removals included, and the estimate refuses a removal or stay range naming a guest not on the booking), and keeps the note as context — a note alone cannot be sent and the request route refuses one (`STRUCTURED_CHANGE_REQUIRED`); on the officer's side, a free-text request on a finished stay offers **Guests the member asked to add** on its Changes card, priced by **Check the figures** for exactly that list and stored on the request as officer-entered on the member's behalf by **Approve and apply**; #4533 (`INV-REQ-013`): on a finished stay an officer's Edit Booking says **This stay has finished, so Save can't change it.** in place of the price summary, keeps Save off, and offers **Send as a promo correction request** for a promo code chosen in the promo box (`POST /api/bookings/[id]/change-requests` with `promoChange`), which opens the request on the Changes tab; there, and on any finished-stay request naming no code, **Promo code to apply** is priced by **Check the figures** and applied by **Approve and apply**, with **Apply and email member about the correction** on a promo-only correction (dropped for a booking whose emails are off, #2259)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             | Explain locked nights, review requirements, delta settlement                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              | Admin review pending, extra payment failed, refund/credit pending; a date change on a booking with an issued unpaid Xero invoice whose resolved check-in sits in a locked Xero period is rejected at preview and save (#1729: 409 `XERO_PERIOD_LOCKED` — members see "contact an administrator" wording, admins the unlock instructions; fail-closed 503; identity-only name fixes are never blocked)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           | Booking detail modify flow, route to verify                                                                                                                                                                                                                     |
-| Booker choosing promo codes (#3492) | Use their own and their guests' promo codes on one booking | On the review step (`/book`), the booking's edit panel, or `/admin/book`: press a chip — the booker's own codes, and each guest member's codes grouped under every guest who holds them and marked "applies to *name* only" — or type a code; with the **Several promo codes on one booking** module on, add more and set their order with **Move earlier** / **Move later**; the summary shows one adjustment row per code; with the module on, a working bee combines with codes on the review step and covers its own nights first | Nothing is applied until the booker chooses (opt-in). Guest chips appear only for family guests, or for an outside guest the booking treats as confirmed — accepted, notify-only, officer-added or pre-consent (so on a new booking only family guests' chips); never for a pending or declined guest, and never for a code only its own member may book with. A chip says only the code and what it gives. The order controls are real buttons, each move is announced and keeps focus on the moved code, and a move or removal the server refuses is reverted and read out. Focus moves to an applied code's Remove button, and after a removal to the next code, else the entry box. The edit panel shows "Checking promo codes…" until the module's answer arrives, and says so when it could not check. With the module off the list holds one code. Every lookup writes a `privacy` audit row and is rate-limited | A later code that would cover no night is refused ("Already covered by …"); a removal that would leave the other codes unpriceable is refused and the list kept; the lookup's rate limit; module off (one code); a guest whose code is restricted to another lodge shows no chip | Keyboard only: Tab to a chip and press Enter; Tab to Move earlier / later and press Enter, focus stays on the moved code; a screen reader hears each guest group's name, "applies to *name* only" on each chip, the list's order, and each apply/move/remove through a polite status message. `/book`, booking detail route (edit panel), `/admin/book`; `e2e/guest-promo-code-chips.spec.ts` |
-| Expected arrival time (member or Booking Officer, #2621) | Tell the lodge roughly when to expect you, without changing anything about the booking | Open `/bookings/[id]` → **Expected Arrival Time** card → pick a time on the hour or half hour (or **Not sure** to clear it) → press **Save arrival time**. Editable by the booking owner, a Full Admin or a Booking Officer (bookings:edit, #1313 option A2) while the booking is modifiable and its check-in date has not passed; the value then shows on the lodge kiosk and on the lobby wall's arrivals board | The field is INFORMATION ONLY and the card says so: it changes no date, no charge and no chore assignment, because a guest night runs midday to midday (#2622/#2631) and a guest is on the roster for their check-out morning regardless. Someone leaving early talks to the hut leader; no departure time is collected or inferred. The editor STAGES the value and saves on an explicit press — it used to auto-save and print "Saved" without reading the response, so a refusal looked like a success (#2621). "Saved" now appears only after the server confirms, and a refusal shows the server's own message with the previously confirmed value left intact. Every set and clear is written to the audit log with the actor, the booking owner and the old→new pair. On the lobby wall the time rides the name-privacy gate: a row the wall may not name (family, group, whole-lodge, counts-only) carries no time either | Refused because the check-in date has passed or the booking is cancelled/completed (400, message shown in place); not your booking and no bookings:edit (403, message shown); network failure (message shown, staged value kept for retry); no time recorded (reads "Not set"; the kiosk says "Arrival time: Not specified" and the wall shows nothing) | `/bookings/[id]` (`#arrival`), `PUT`/`DELETE /api/bookings/[id]/arrival-time`; the select carries a programmatic label and a described-by hint (#2621 — it previously announced as a bare combo box) |
-| Admin date override (Full Admin / Booking Officer) | Move an in-progress or fully-past booking's dates that the normal edit window locks | Open the booking, click Edit Booking (the control appears for an admin even on a fully-past stay the member cannot edit), enable "Admin override (move dates)", choose **Shift dates** (keep the price, same night count) or **Recalculate price**, set the new check-in/check-out, review the preview, then Save — a dialog asks whether to email the member the standard change notification ("Save and email member" / "Save without emailing", recorded in the audit log); if the target nights are full, confirm the over-capacity warning to proceed | Explain that the override is date-only (guest/promo controls are hidden while it is on); that outside override mode the panel offers "Add a partner (shares a double bed)" quick-adds — server-computed confirmed partners of the booking's member guests, admitted through the reserved partner-shared double-bed slots even when the lodge is full by beds, bounded per night by the double count and rejected with the capacity check's reason verbatim (#1745/#1746, admin-only; the public wizard has no shared-slot affordance) — and that the added partner still needs board placement as the double's second occupant; that Shift freezes every price and keeps the night count while Recalculate reprices at season rates, that an over-capacity move is allowed only after an explicit confirm, and that the move is audited and auto-linked to any approved change request; the preview mirrors exactly what Save will do. A Recalculate whose new (or unchanged past) check-in falls on or before the Xero organisation lock date is rejected at preview and Save with unlock instructions (Settings → Advanced → Financial settings → Lock dates) — the same lock-date guard as retroactive creation; Shift is exempt (it writes no Xero documents). The notify-or-not email dialog is no longer override-specific — EVERY admin / Booking Officer booking edit (dates, guests, or promo) now ends with it (default = notify, the choice audited as `notifyMember`), while a member editing their own booking always sends the change email (#1696) | Non-admin (control hidden, server 403 on the flags), ineligible status (e.g. cancelled), night-count changed in Shift mode (400 with a "use Recalculate" hint), over-capacity un-confirmed (Save disabled + warning), member-night conflict on the target nights (409 shown before Save), Recalculate into a locked Xero period (409 `XERO_PERIOD_LOCKED`), Xero lock-date fetch failed (503 `XERO_LOCK_DATE_CHECK_FAILED`) | Booking detail Edit Booking panel (override card, pricing radios, capacity confirm); `/api/bookings/[id]/modify`, `/api/bookings/[id]/modify-dates`, `/api/bookings/[id]/modify-quote`; e2e/admin-override-dates.spec.ts |
-| Admin capacity hold (Full Admin / Booking Officer) | Reserve lodge capacity for an unpaid member booking until payment is sorted (#1764) | Open the booking detail page as an admin, find the Admin tools card, click **Hold capacity** (offered only while the booking is `PAYMENT_PENDING` and not already holding), confirm the dialog; if the nights are full, a second explicit **Hold and overbook** confirm is required; later click **Release hold** (offered only while the admin hold is the only thing holding capacity) to free the beds | Explain that the hold reserves the beds club-wide (availability, bed board, waitlist all see it) without changing the booking's status or faking a payment; that paying through the normal flow simply takes over (capacity counted once, hold record inert) after which Release is no longer offered and the API refuses it; that cancel/expiry releases the hold automatically; and that both actions are audited (`booking.admin_capacity_hold.*`) | Non-admin (controls hidden, server 403), booking not `PAYMENT_PENDING` (400), already held (409), already naturally holding (409), over-capacity without the overbook confirm (409 `CAPACITY_EXCEEDED` with the full nights listed), double-release (409, no state change) | Booking detail Admin tools card (hold/release buttons + held banner); `/api/admin/bookings/[id]/capacity-hold` (POST/DELETE) |
-| Per-booking "No emails" switch (Full Admin / Booking Officer) | Silence EVERYTHING the club would send a member about one booking, when the officer will handle that member personally (#2258/#2259, owner decision D10) | Open the booking detail page as an admin, find the Admin tools card, click **Turn off all emails**; a dialog states the consequence in plain words — no emails at all for this booking, including cancellation notices and payment reminders, and you are responsible for telling the member directly — and nothing is written until you press **Yes — I will tell the member myself**. If the booking is holding a live waitlist offer the dialog says so before you confirm — that offer was already emailed, so the member CAN still accept and the bed must not be reassigned; what they lose is the expiry warning and the acceptance confirmation. If it is still waitlisted with no offer yet, the dialog says it will be passed over for offers entirely (nothing is withheld, so nothing will ever appear in the list). While it is on, the booking carries a persistent banner (red while off, amber once back on) listing which KINDS of message were withheld, with an exact count each, subject and most-recent time, and every per-action "email the member?" prompt on that booking stops offering the choice and says emails are off. Click **Turn emails back on** to clear it (no acknowledgement needed) | Explain that this is a promise the OFFICER makes, not one the system keeps: nothing withheld is ever re-sent, so clearing the switch does not catch the member up, and the banner keeps listing what was missed for exactly that reason. Explain that the Xero invoice email is withheld too — the invoice still exists in Xero and must be sent by hand from there — and that account and security email (2FA codes, password resets, magic links) is never affected, because the switch is keyed on the booking and never on the member's address. Explain that a member never sees any sign of it | View-only bookings admin (control disabled, server 403); non-admin (server 403); enable without the acknowledgement (400, nothing written); a live waitlist offer already outstanding (warned, not blocked — the offer is not retracted); repeated clicks (idempotent, the original who/when record is not overwritten) | Booking detail Admin tools card (`BookingNoEmailsControls`) + withheld-emails banner (`BookingWithheldEmailsBanner`); `/api/admin/bookings/[id]/no-emails` (POST); the mailer gate in `src/lib/booking-email-suppression.ts` |
-| Recording what a guest's nights sold for (Full Admin / Finance Officer, #3214) | Legacy: since #4317 every change is priced automatically, so this only re-apportions a guest's stored total across its nights, without changing what anybody owes; wave C removes it (D6) | Open the booking detail page as an admin and find the Admin tools card. A guest whose stored night prices cannot be read back appears under **Nights whose sold price the records cannot tell us**, with the reason in plain words and what is on file for each night. Give a figure for **every** night of that guest's stay — including any that already show one — and press **Record what these nights sold for**. The running total under the boxes says what has been typed and what it has to come to; the button stays dead until the two agree. One guest at a time | Explain that this **cannot change what anybody owes**: the figures have to come to what that guest's stay is already stored as being worth, so the amount owing is identical afterwards and only the night-by-night make-up changes — which matters because a later part-refund is worked out from those nights. Explain the one thing that DOES move: where a stay crosses the end of a month, shifting an amount between its nights shifts which month the club counts that income in, so a revenue figure already reported for the earlier month stops reproducing — traceable, because the audit entry keeps what each night held before. Explain that **nothing is filled in for you**, that a figure typed to close a gap is a price nobody decided, and that $0.00 is a real price and not the same as an empty box. Explain that it is offered per GUEST, so a booking with two such guests needs both. Explain that a booking does not need it to be changed or re-rated: every change is priced automatically (#4317) | View-only finance admin (section shown, every control disabled, server 403); non-finance admin (server 403); a guest whose nights already add up (not offered; server 409 if posted); a guest whose stored stay total is not usable money (not offered; server 409); a booking with an OPEN financial review (section withheld — the settle screen asks for the same figures against a total that also includes the amount being settled; server 409); a guest on another booking (404, nothing written); figures that do not add up, a night left blank, or a box holding something that is not an amount (refused on screen, nothing posted); somebody else changing a night between the page loading and the press (409, nothing written) | Booking detail Admin tools card (`BookingStoredNightPriceControls`); `/api/admin/bookings/[id]/stored-night-prices` (POST); the rule and the writer in `src/lib/stored-night-price-strand-reconcile.ts` and `src/lib/stored-night-price-repair-store.ts` |
-| In-booking bed allocation (Full Admin / Booking Officer) | Place, reviewed-remove and confirm one booking's beds without leaving the booking (#2252, #2594) | Open the booking detail **Bed allocation** card. **Assign…** opens the shared range dialog; **Remove** opens the shared removal dialog preselected to one night and the run's exact category, with optional person/whole-booking scopes that include off-screen rows; **Confirm draft beds** approves every draft row on this booking and no other; **Open on the board** keeps the booking in focus AND scopes the board to that booking's own lodge (derived server-side from the booking and echoed back so the board's selector adopts it, #2678/#2701; a link naming a contradicting lodge is refused with an explanation rather than shown as a board that disagrees with its own selector) — changing the board's lodge selector afterwards releases the focus and the "Focused booking" badge with it. A bookings-view officer may open and load the same non-mutating removal preview, while Apply remains disabled without bookings-edit | Confirming or range assignment locks member requested-room editing. The removal preview uses the booking-wide approved-row set and names any booking whose editor will re-open; apply is atomic and never auto-reallocates. A paged stay remains labelled while Confirm and widened removal scopes may deliberately act off-screen | Member never receives this admin card; view-only admin can preview but cannot apply/assign/confirm; module off; non-allocatable or exclusive-hold booking; stale removal preview (refreshed, no delete); no matching categories (no apply) | Booking detail `BookingBedAllocationPanel`; `GET /api/admin/bed-allocation`; `POST`/`PUT /api/admin/bed-allocation/allocations/removal`; `POST /api/admin/bed-allocation/approve`; focused component/route suites and `e2e/bed-allocation.spec.ts` |
-| Admin bed-allocation board (Full Admin / Booking Officer) | Review night-or-person bed moves without changing lodge nights, or reviewed-remove/reset allocations (#2366, #2594, #2595) | The lodge selector offers each lodge plus **All lodges**, which is a deliberate club-wide **read-only** overview: every allocation control is disabled with one explanation on screen, because none of them can be scoped without a lodge (#2701, `INV-CAP-033`). Otherwise: drag/drop or **Move to bed** opens the shared move dialog before any write; choose this allocation night or every existing row for this person on the booking, including off-screen rows. Drop to the pool or **Remove allocation** opens a one-night removal preview; **Reset allocations…** opens selected-lodge/visible-window review with categories. A bookings-view officer may open non-mutating previews; confirmations remain bookings-edit gated. Escape/cancel sends no request and focus returns to the origin | Move preview binds exact selected/noop rows, destination occupancy, booking/guest/member/partner/hold consequences and feasibility to a digest; Apply takes global → complete sorted lodge → lifecycle/link → tuple locks, re-previews, writes changed rows atomically as Manual drafts, and runs no planner. Removal keeps its separate global → sorted lodge → row topology and no-replacement contract | View-only confirms disabled while previews remain available; same-bed all-noop; move conflict or refreshed stale confirmation; 366-row cap; removal zero match and stale/moved/approved anchor; no partial mutation; **All lodges** (read-only overview); a role with no lodge access (the same read-only club-wide board, with its own note, since it has nothing to choose from); the lodge list failing to load (error + retry, and no board is loaded at all); a club with no active lodge (says so, loads nothing) | `/admin/bed-allocation`; move preview `POST /api/admin/bed-allocation/allocations/move`; move apply `PATCH /api/admin/bed-allocation/allocations`; removal `POST`/`PUT /api/admin/bed-allocation/allocations/removal`; `applyBedAllocationMove`; `applyBedAllocationRemoval`; focused suites plus `e2e/bed-allocation.spec.ts` and `e2e/double-bed-sharing.spec.ts` |
-| Admin retroactive create (Full Admin / Booking Officer) | Record a stay that already happened by creating a past-dated booking on behalf of a member | Open `/admin/book`, pick the member, tick "Record a past stay (retroactive booking)", walk the calendar back and select the past check-in/check-out (muted-but-clickable past days show real occupancy), add guests (the availability cap becomes a warning, not a hard block), review, then Confirm — a dialog asks whether to email the member ("Create and email member" / "Create without emailing", recorded in audit); if the past nights are over capacity a warn-and-confirm panel lets the admin "Confirm over-capacity and create" | Explain the flag is admin-only and on-behalf-only, that the lookback is 365 days, that a check-in on or before the Xero lock date is rejected with unlock instructions (Settings → Advanced → Financial settings → Lock dates) and that a lock-date fetch failure fails closed (retry), that over-capacity is warn-and-confirm with the capacity lock still taken, and that the member email is an explicit per-create choice — and that choosing "Create without emailing" now ALSO withholds the Xero invoice email (Internet Banking path) for that one invoice creation (#2929): the invoice is still raised and AUTHORISED, it is listed among the booking's withheld messages with "send it from Xero" as the remedy, and nothing persistent changes (`Booking.noEmails` is not set, the Xero contact keeps its address, later booking emails are unaffected). The per-booking "No emails" switch (#2258) remains the broader, persistent withhold. Note the same email-choice dialog and over-capacity warn-and-confirm now apply to every on-behalf create, not just retroactive ones (#1767) | Non-admin or member-context (server 403 on the flags), flag without `forMemberId` (400), `confirmOverCapacity` combined with draft/waitlist (400), retroactive draft/waitlist (400, drafts disabled), check-in > 365 days back (400), Xero period locked (409 `XERO_PERIOD_LOCKED`), Xero lock-date fetch failed (503 `XERO_LOCK_DATE_CHECK_FAILED`), member-night duplicate on a past night (409, applies to past nights too), stay outside a seeded season (priced at $0 / rejected) | Admin booking page `/admin/book` (retroactive checkbox, calendar, email-choice dialog, over-capacity confirm panel); shared `BookingCalendar` `allowPastDates`; `/api/bookings` (POST); `e2e/admin-retroactive-booking.spec.ts` |
-| Cancellation/refund/credit                | Cancel booking and understand settlement                                                                                             | Request cancellation/refund, review policy, see outcome. An admin / Booking Officer confirming a cancellation first answers the notify-choice dialog ("Cancel and email member" / "Cancel without emailing", default = notify, the choice audited as `notifyMember`, #1705); a member self-cancel keeps the immediate always-notify confirm                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | Explain refund versus member credit and timing; the booking detail help widget (Page guide tab) surfaces the booking status glossary and — once a payment has been captured — the applicable cancellation refund schedule so members see refund consequences before starting a cancellation; an unpaid but cancellable booking says no payment received/no refund instead of showing tiers (#1371); the booking detail footer notes the page is the live source of truth when a confirmation, payment, or cancellation email goes missing; the admin notify choice suppresses the member-facing cancellation email only — refund/credit settlement, audit, booking events, and waitlist processing are identical either way, and the choice also covers the standalone guest-removal route (`DELETE /api/bookings/[id]/guests/[guestId]`, API-level; admin UI guest removals already go through the edit panel's #1696 dialog). The Xero invoice email on the Internet Banking path is a payment instruction and is ALWAYS sent regardless of THIS (cancellation) notify choice (#1705 owner decision) -- superseded by the per-booking "No emails" switch (#2258, D10), which withholds it along with everything else for that booking, and, at CREATE time only, by the on-behalf create's own "Create without emailing" choice (#2929), which withholds that one invoice creation's email and nothing later. In every case the invoice still exists in Xero; only the emailing stops                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | Ineligible cancellation — the member-facing doors (Cancel button, cancel-preview, the cancel route) all read `MEMBER_CANCELLABLE_BOOKING_STATUSES`, the service set minus `AWAITING_REVIEW`, so a booking under club review shows no Cancel button and is refused with a sentence pointing the member at the club (the reviewing officer's Reject withdraws it, #3497); pending admin review; provider failure; non-admin caller carrying `notifyMember` (server 403)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             | Booking detail cancellation/refund route (`/api/bookings/[id]/cancel`), guest-removal route `/api/bookings/[id]/guests/[guestId]`                                                                                                                                                                                                                                                        |
-| Profile/family/dependents                 | Manage personal and family data                                                                                                      | Open profile/family pages, edit details, invite/remove dependents; a group-less adult can "Request to Join a Family Group" by member email or "Create a Family Group" from scratch (#1681) — optional group name (defaults to "{lastName} Family"), optional partner by email (a registered member is invited on approval; an email that matches no member is sent a single-use partner-invite link that routes them through the membership process and then into the approved group, #1682), optional infant/child/youth rows — the whole bundle goes to admin review                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | Explain login-capable adult versus dependent behavior; the create-group form accepts a partner by email whether or not they are a registered member (an unregistered partner is emailed a claim link) and states that an admin reviews the request before the group exists; the claim page tells an unregistered partner to apply for membership first and return to the link, and an admin can revoke an outstanding partner invitation from `/admin/family-groups` (the inviter can also cancel their own outstanding declared-partner invitation from the profile Partner card, #1754)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     | Pending family request, inherited email ambiguity, address autocomplete disabled/unconfigured/unavailable with manual entry still available; while a create-group request is pending the join/create buttons are hidden and the profile shows "Your family group request is awaiting admin review" with the requested group name, partner, and submitted children (no member-side cancel in v1 — admins reject)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | `/profile` and family routes, to verify                                                                                                                                                                                                                         |
-| Partner (declared relationship)           | Record or manage a Partner/Husband/Wife link (#1742)                                                                                 | Profile -> Partner card: request by the partner's email (they confirm or decline from their own profile, mirroring family invitations), or — for the adult recorded as having confirmed that member's details (#2284; there is no group-admin rank) — declare a no-login adult member of their group in one step; withdraw a pending request; cancel an outstanding invitation to an unregistered declared partner while it is unclaimed (#1754); remove a confirmed partnership (the other partner is emailed, and any future shared double-bed placements the pair still held are removed back to the awaiting-allocation queue with an admin alert, #1756). The create-group form can mark the named partner as a declared partner (registered partner gets a pending request; an unregistered partner's invite token forms the link on claim). Admin: the Partner card on `/admin/members/[id]` assigns a partner directly (member search, confirmed immediately, admin recorded) or removes a link; a two-button dialog then asks whether to email the members ("Assign/Remove and email members" vs "…without emailing"; default = notify; the choice audited as `notifyMember`, #1769a), while removing a still-pending link emails no one so it removes directly without asking. | Explain that both members must be adults, each member can have at most one confirmed partner, a pending or confirmed partner pair cannot also be direct parent/dependant in either direction, and consent happens on the partner's own profile; removing (or assigning) is a per-action admin email choice — a dialog asks whether to email the members (default = notify, audited `notifyMember`, #1769a), while removing a still-pending link emails no one | A pending outgoing request shows "waiting for X to confirm" with a withdraw action; requester-side conflicts (own confirmed partner, own outstanding request, duplicate pair, or direct parentage) return clear errors, but a by-email request always answers with the generic "If they're eligible, we've sent them a partner request." — a target who already has a confirmed partner or is the requester's direct parent/dependant is deliberately indistinguishable from an eligible one (D9), and only the family memberId path names the specific conflict; a declined request simply disappears for the initiator, who may re-request | Manual: `/profile` Partner card, `/admin/members/[id]` Partner card |
-| Membership cancellation                   | Request cancellation for self/family                                                                                                 | Start request, collect participant confirmations, wait for admin                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | Explain account access, booking blockers, rejoin process; pending-confirmation status on the profile panel and invalid/expired confirmation links point at admin re-send recovery                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         | Pending participant, rejected, withdrawn, future booking blocker                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            | Member cancellation route, to verify                                                                                                                                                                                                                            |
-| Admin review                              | Review applications, family groups, cancellations, bookings, refunds                                                                 | Open admin queues, inspect evidence, refresh/replace pending nominators, approve/reject                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | Show blockers, irreversible effects, audit trail, next queue item; on a booking detail page admins get one "Admin tools" card (copy booking, confirm pending guests, member/bed-allocation/Xero/audit deep links) instead of scattered controls — "confirm pending guests" first prompts a confirmation dialog stating the exact consequence (saved card charged $X.XX / moved to payment-owed / confirmed at no charge) and then — because the two PAID branches (zero-dollar and charge-saved-card) send the member a booking-confirmation email — asks per action whether to email the member ("Confirm and email member" / "Confirm without emailing"; default = notify; the choice audited as `notifyMember`, #1769b; the payment-owed branch emails no one and skips the dialog), and, for the branches that flip to a capacity-holding PAID status (zero-dollar and charge-saved-card), confirms under an advisory-locked capacity re-check that blocks a late oversell (409 CAPACITY_EXCEEDED unless an explicit overbook override is passed, #1366), and the card flags provider-mismatch states for that booking (paid but Xero invoice pending, refunded but credit note pending, waitlist offer email undelivered) with a link to the right recovery surface; a free booking left awaiting payment by a waitlist confirmation that could not finish gets a "Return to waitlist" control in the same card (#2649), shown only where the audit log carries an UNRESOLVED `waitlist.confirm_offer_release_failed` report for that booking on top of the shape (free, PAYMENT_PENDING, no payment record) — the shape alone is reached by several ordinary paths that were never on a waitlist, so provenance is the gate — which puts the member back in the queue at the ordinary position, frees the beds for the next offer, releases any admin capacity or exclusive whole-lodge hold (stated in the confirmation dialog before the press, and named in the audit row), emails the member a dedicated "your waitlist place is back" notice that says plainly their offer did NOT expire unless the booking's "No emails" switch is on, and records an audit row naming the strand it resolves; a non-owner admin no longer sees the member "Save Payment Method"/"Complete Payment"/on-hold self-service cards (owner-only, #1303), and the Cancel control is re-framed as an explicit "cancel on behalf of member" action (admin-appropriate confirm/success copy; the admin path to cancel a member's booking). A Booking Officer (bookings:edit) shares this same on-behalf authority for cancel, modify, admin notes, and arrival time — the member-facing `/api/bookings/[id]/*` routes authorize bookings:edit alongside owner-or-Full-Admin, with byte-identical refund/settlement (owner-approved option A2, #1313). The admin dashboard auto-flags unpaid finished stays (#1709, owner option B for retroactive creates #1704): an amber attention card counts `PAYMENT_PENDING` bookings whose check-out is on or before NZ today (a retroactive card create qualifies from the moment of creation; an organic booking that crosses its check-out still unpaid surfaces too) and deep-links to `/admin/bookings?unpaid=finished&checkOutTo=<today>` via the bookings list's Check Out date-range filter (the bookings list is paginated at 100 rows per page (#1738), so the deep link lands on page 1; a real filter change resets to page 1 while a sort-header change keeps the current page, and an out-of-range page clamps to the last non-empty page); the same count also badges an "Unpaid Finished Stays" entry in the admin sidebar's Needs Attention menu (#1731) with the identical deep link — both surfaces consume the shared `src/lib/unpaid-finished-stays.ts` predicate and `src/lib/unpaid-finished-stays-hrefs.ts` href helpers so they can never drift, and the sidebar entry disappears at zero like every other Needs Attention queue. #1723 closes the remaining side doors into that state: a second amber card ("Finished Stays With Unpaid Additions") and an "Unpaid Stay Additions" sidebar badge count settled (CONFIRMED/PAID/COMPLETED — deliberately never PAYMENT_PENDING, so the two queues stay disjoint and never double-count) bookings past check-out whose upward-modification delta was never collected (latest additional payment not SUCCEEDED, or null on legacy rows), deep-linking to `/admin/bookings?additionalOwed=owed&checkOutTo=<today>` via the bookings list's new "Additional Payment: Still owing" filter (same shared-helper drift rule); and a past-dated waitlist force-confirm that lands PAYMENT_PENDING (owner decision B, #1723 path 1) is allowed but announces itself at creation — the route response flags `unpaidFinishedStay`, the audit record carries `createdUnpaidFinishedStay`, and `/admin/waitlist` shows an amber "Unpaid finished stay created" card pointing the admin at the queue ($0 force-confirms land PAID and parked-for-review outcomes are not flagged); a force-confirm that lands PAID (the $0, review-resolved case) sends the member a booking-confirmation email, so the waitlist "Force Confirm" asks per action whether to email the member ("Confirm and email member" / "Confirm without emailing"; default = notify; audited `notifyMember`, #1769b) — shown only when an email would send, so a priced entry force-confirms directly as before, and the choice is carried through an over-capacity overbook retry. Completing the #1780/#1769b sweep, the same per-action email-notify choice (two-button dialog, default = notify, audited `notifyMember: false` only when it truly suppresses a send) now spans the rest of the admin review queues: membership application approve/reject (#1786 — the induction sign-off requests to nominators still always send, and suppressing an approval also withholds the applicant's account-setup link, token still created); membership cancellation review approve/reject (#1787); member archive review approve/reject and account-deletion reject (#1788 — but account-deletion **approval** always sends the final privacy receipt, and a member with no email on file shows no dialog); family-group child-request and group-create approve/reject (#1789 — the token-bearing partner invite auto-filed on a group-create approval always sends); booking review approve/reject for the minors flow (#1790 — a suppressed **reject** still sends the deliberately always-notify cancellation email, #1730, and withholds only the review-declined explainer); and refund-appeal approve/reject (#1792 — refund money, ledger, and Stripe/Xero effects identical either way, only the outcome notice is suppressed)                                                                                                                                                                                                                                                                                                                                                                                              | Empty queue, stale pending, exhausted nomination reminders, pending family-group requests, provider failure                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | `/admin/dashboard`, relevant queue pages                                                                                                                                                                                                                        |
-| Admin dashboard (officer key cards)       | Open the daily bookings-officer worklist at a glance                                                                                 | Open `/admin/dashboard`; scan the attention/alert cards, then the four officer key cards, the slim secondary row, Recent Bookings, and Quick Actions                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     | Section order (#2091, D-E4): attention/alert cards → officer key cards → slim secondary row → Recent Bookings → Quick Actions. The primary row re-targets the old Members/Total/Active/Revenue/Upcoming KPIs to the four surfaces a bookings officer works every day, each headlining an actionable "work to do" count that is **bounded to the next 7 days and computed with the target surface's own semantics** so the headline reconciles with what the officer sees on landing (#2091 adversarial-review fix): **Bookings** (→ `/admin/bookings?upcoming=7`, headline = check-ins within 7 days, counted with the SAME status set the linked list applies — `UPCOMING_CHECK_IN_BOOKING_STATUSES`, which excludes AWAITING_REVIEW — so the number matches the list, with active-of-all-time context absorbing the old Total/Active/Upcoming cards); **{Hut Leader} Assignment** (→ `/admin/hut-leaders`, upcoming lodge-nights with guests but no hut leader **staying** — a night counts as covered only when a leader is assigned to it AND staying it (#3818, `INV-DATE-031`); the amber attention card, now titled "Nights without a {hut leader} who counts" (#3821: on a school group's night only a kind the lodge ticks counts, and a school booking awaiting its invoice needs a leader), gives each night with its guest count, and a **Handovers this week** card (lodge view, same presence-aware cover) lists each midday changeover in the next seven days — LODGE-nights, not calendar nights (#2917): each lodge runs its own leader, so one night uncovered at two lodges counts twice, and the amber attention card names the lodge on each date whenever the club has more than one active lodge (ADR-002's Presentation Rule, measured with `countActiveLodges` — never inferred from how many lodges the rows happen to span). A club-wide read is NOT filtered to active lodges: a lodge archived while it still had future bookings keeps those guest nights, so its rows stay visible and are labelled "archived". The same `getUnassignedHutLeaderDates` data as the amber "assignment required" attention card, deduped); **Roster Assignment** (→ `/admin/roster`, "N days in the next 7 days with no chores assigned" — the `needs-roster` days from the roster surface's own `computeRosterDayStatuses` (src/lib/roster-status.ts), counted by `countRosterDaysNeedingChores`: DAYS, not nights (#2631) — the unit is the operational lodge day (a night plus the following morning), so a changeover morning whose occupants all leave before midday is a day of chores and counts here exactly as the roster calendar paints it. A day qualifies when ≥1 guest is in the lodge and no chore assignment exists at all; a stay rostered on only some of its days still surfaces its un-rostered days, and guestless bookings don't inflate it. The population is the roster's own, so consent-pending member guests (D-12) and review-blocked bookings (#1422) are excluded and the headline can never send the officer to a page with nobody on it); **Bed Allocation** (→ `/admin/bed-allocation`, "N guests in the next 7 days awaiting a bed" — a window-scoped mirror of the bed board's own `unallocatedGuestNights` set (src/lib/bed-allocation-board.ts): a per-guest-night diff with the board's guest-existence rule and whole-lodge holds excluded, counting each guest once, so a partially-allocated booking still counts its pending guests exactly as the board's bucket cards do). A visually lighter secondary row keeps **Members** (→ `/admin/members`) and **Net Collected This Month** (→ `/admin/payments`) for the committee glance. All counts (including the roster/bed window-scoped helpers and the actor's permission-matrix lookup) are batched in the existing parallel `getStats`/`Promise.all` set so there is no added round-trip. Cards are permission-gated via the shared admin matrix (D-E3): a card whose target page the actor cannot open is hidden, never disabled, and the page renders correctly with any subset visible (a lodge-only officer sees only Hut Leader + Roster; a bookings-only officer sees Bookings + Bed Allocation).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    | Zero-count cards still render (they show `0` as "all clear", not hidden); an actor with no bookings/lodge/membership/finance access sees no officer or secondary cards but still gets Recent Bookings + Quick Actions; empty Recent Bookings shows the "No bookings yet" empty state                                                                                                                                                                                                                                                                                                                                          | `/admin/dashboard`; verify card visibility across Full Admin, a lodge-only role, and a bookings-only role; keyboard nav/hover-focus on each card link                                                                                                            |
-| Admin membership admin                    | Review member deletion requests (self-service + admin-initiated)                                                                     | Open `/admin/deletion-requests`, pick a status filter, review member self-service account-deletion requests and admin-initiated hard-delete requests in their two sections, approve or reject each; on a self-service request left mid-approval, resume it or (Full Admin only) release it back to pending                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    | The page hosts two flows: member self-service account deletion (anonymise, cancel future bookings, deactivate login) and admin-initiated permanent hard-delete of a record added in error. Admin-initiated requests enforce separation of duties — a different admin than the requester must approve/reject, so the requester's own approve/reject buttons are disabled with "A different admin must review this request" (the server review PATCH stays authoritative and 403s a self-review). Both flows feed the sidebar "Deletion Requests" attention badge (self-service PENDING + admin-initiated REQUESTED), and the admin-initiated alert email deep-links here (#1938)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | Empty queue in either section, requester viewing their own admin-initiated request (buttons disabled with the note), an approved hard-delete whose target record is already gone (snapshot-captured name shown), server 403 on self-review, a self-service request stuck in Approval in progress (Resume, plus Release approval for a Full Admin and a note naming who else can release it; #2627), a released request back in the pending queue (row warning naming the release date and reason instead of a "Reviewed" line, the same warning inside the reject dialog, Reject hidden from anyone but a Full Admin, a confirmation the route demands so a page opened before the release cannot decline it unaware, and a reject dialog whose reason is mandatory with no "Reject without emailing" option because that note is the only thing the member is told about stays that are already gone; #2627), an approval that loses its guard to a concurrent release (named as exactly that, with the cancellations that did commit, and the row left usable)                                                                                                                                                                                                                                                                                                                                                                                    | `/admin/deletion-requests`, `/api/admin/deletion-requests`, `/api/admin/member-lifecycle-action-requests`, `/api/admin/member-lifecycle-action-requests/[requestId]`                                                                                             |
-| Admin family suggestions                  | Turn likely related ungrouped members into family groups or dismiss noise                                                            | Open `/admin/family-suggestions`, review shared-email and shared-last-name cards, optionally adjust the group name, create the family group, Skip a card for this browser session, or Permanently Hide a card globally; use Reset hidden beside Refresh to restore every globally hidden suggestion after confirmation                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | Skip is a short-lived this-visit dismissal. Permanently Hide stores the sorted member-id set, affects every admin, is audit-logged, and the same family resurfaces automatically when the suggested member set changes. Reset hidden is a shared destructive action and is audit-logged.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | No suggestions, all matching suggestions hidden, hide/reset API failure, suggested members changed before action                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            | `/admin/family-suggestions`, `/api/admin/family-suggestions`, `/api/admin/family-suggestions/hide`, `/api/admin/family-suggestions/reset`                                                                                                                       |
-| Admin/finance help                        | Understand what any page does                                                                                        | Open any page, open the chat-style help widget from its floating launcher, read the route-specific Page guide (or tap a curated question chip), then continue the workflow                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | Help explains common actions, key fields, important notes, and complex page sections without leaving the page; setup hub pages have their own entries; `/admin/membership-types` explains Xero rule modes (`Managed` syncs matching members into the group; `Accepted` allows the group if already present but does not sync it); `/admin/bookings` help includes a booking status glossary (statuses render human labels everywhere, e.g. CONFIRMED shows as "Confirmed (Unpaid)", never the same text as Payment Pending); members reach the same shared glossary from the booking detail help widget (#1371). The same chat-style help widget serves the member and public-website surfaces too. On the **authenticated** surfaces (member, admin, finance) the free-text **AI help assistant** path is live once the `aiAssistant` module is on and a club Anthropic key is stored (epic #2094 C4): a textarea under the chips POSTs to `/api/help/chat`, answers stream grounded strictly in the same curated corpus, a persistent disclaimer warns that AI answers can be wrong and that the question is sent to Anthropic (US), each conversation is capped to a few exchanges, and the input degrades to a fallback bubble (module-off / not-configured / unavailable / budget-exhausted / rate-limited) without breaking curated help. The **public website** widget stays templated-only (`llmEnabled={false}`, no endpoint); lodge kiosk pages still use workflow-specific help.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    | Unknown/nested route falls back to generic Admin or Finance help; dialog can be dismissed without changing form state                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | `/admin/members`, `/admin/xero/setup`, `/admin/membership-types`, `/admin/membership-setup`, `/finance`, member pages, and the public website; help widget launcher labelled "Help" (`data-testid="help-widget-launcher"`)                                                                                                                   |
-| AI Diagnostics (admin, #2378) | Ask why the system is behaving as it is, about the booking, member or payment in front of you | Open the **Help** bubble on any admin screen and switch to the **Diagnostics** tab (present only when your role and the `aiDiagnostics` module both allow it). On the bookings, booking requests, waitlist and payments lists, the stethoscope beside a row makes that row the subject and opens the tab for you; on `/admin/members/[id]` the address already names the record. Tick either, both or neither of the two per-question consent boxes — include the selected record’s personal details, and let the assistant search for people and records — then ask. Both boxes reset after every send, including a failed one, because the server grants each per REQUEST. Setup and status (readiness, the monthly budget) live on `/admin/ai-diagnostics`; asking never does | Diagnostics reads and explains; it never changes anything. Every answer carries a one-line provenance summary that expands to the tool used, when it was read, what could not be read and why. Honesty markers — something was withheld, capped or stale — stay in the COLLAPSED line, so a caveat reaches the operator without them opening anything. The conversation survives a navigation; the chosen RECORD deliberately does not, because the server works out the record’s kind from the page you are on. Full surface in [`ai-diagnostics/ux.md`](ai-diagnostics/ux.md) | First-class states rather than a generic failure — the full table (deliberately not counted here, so this row cannot drift from it) lives in [`ai-diagnostics/ux.md`](ai-diagnostics/ux.md): module off through budget, rate-limit, consent, permission, partial/stale evidence, session and transport states, and stored provider evidence, where the answer says to confirm against Stripe or Xero's own console before acting (#2815). None of them tells the operator to reload — a reload during database contention makes the cause worse (#2804) | `POST /api/admin/ai-diagnostics/ask` (11 fail-closed gates ahead of the answer step), `/api/admin/ai-diagnostics/readiness`, `/api/admin/ai-diagnostics/settings`; the **Currency for AI spend** card on `/admin/ai-diagnostics` and `/admin/ai-assistant` (`/api/admin/ai-spend-currency`, one shared setting, #3354); the Diagnostics tab (`data-testid="help-widget-tab-diagnostics"`) and the row control (`data-testid="diagnostics-record-button"`) |
-| Lobby display (TV + admin)               | A lodge's TV shows who is arriving/departing/staying, chores, lodge info, and — for arrivals the wall is allowed to name — the expected arrival time (#2621), with zero upkeep                                        | Admin enables the Lobby Display module → creates a device on /admin/display/devices (the page shows the display URL to open on the TV, with a copy button) → TV browser opens /display and shows a 6-character code → admin enters the code and clicks Pair → the TV flips to its template (assigned on the device; the Devices page and the display authoring screens — Visual builder, Layouts (Advanced), Templates, Reference — are reached as cards from the single Lobby Display sidebar entry, which opens the /admin/display hub landing page (fork issue #109); the **Visual builder** (`/admin/display/builder`, ADR-004/#2048) is the no-HTML authoring path — pick a shape (columns/rows/main+side-rail), drop modules from a palette into zones (keyboard-operable @dnd-kit DnD with per-zone Add-menu + arrow-button fallbacks), set per-zone options from registry-driven descriptors and a static/conditional/rotator behaviour, live-preview an **unsaved draft** in the same LTV-036 sandboxed frame (the grant mint validates+renders the draft into an ephemeral in-memory store; a broken draft returns the save UI's errors and no grant), then Save writes a valid Layout+Template pair; a board opens back in the builder only if its body carries the reserved `dlb-root` signature and round-trips byte-equal, else it degrades to Advanced-mode (the raw-textarea Layouts/Templates editors) with a Rebuild option — never silently reinterpreted, and the option controls expose only privacy-restricting choices (no widening control exists), while per-lodge display settings — name granularity, committee notice, and {{config:key}} values — are edited on each lodge in the lodge configuration hub at /admin/lodges/[id], LTV-035) and refreshes itself, stamping the device's "last seen" on every poll; the Devices page also exposes a per-device "Refresh every" interval (seconds, blank = the ~60s default, clamped 15–600) that sets the device's poll cadence — and since the poll doubles as the heartbeat, how often its "last seen" updates (LTV-039); Revoke returns it to the pairing screen. Since #2249 the whole of that path is also available as a GUIDED WIZARD at `/admin/display/setup` — a config of the reusable `IntegrationWizard` shell with six steps in the order the job happens: module check → restore built-in boards (#2247's restore-only action) → pick a board and preview it → lodge-details quick-set (the `{{config:…}}` values and the notice, linking out to the lodge's full display settings) → pair the TV → done. Every step's gate is re-derived from live server truth (module flag, template rows, device rows, lodge config), never from the cursor, so a stale or clobbered resume position can only change which step opens first. It is the ONE path under `/admin/display` exempted from the `lobbyDisplay` module gate (`src/config/feature-routes.ts`, exact match), because its first step turns that module on; the display API stays gated, so the wizard's own reads 404 until step 1 is done. Two steps are deliberately optional: "pick the board" (nothing records a choice before it is bound at pairing) and the lodge-details quick-set (a club whose boards use no config tokens has nothing to fill in), and "done" is a strictly stronger gate than pairing — it needs the screen's own `lastSeenAt`. Both facts the last two steps wait on are written by the TV rather than by the admin page (the device claims its token on its own ~4s poll, and stamps `lastSeenAt` on its first state fetch), so those steps re-read server truth on a BOUNDED interval (~6s, about two minutes) and then offer an explicit "Check again" — the wizard is completable in one sitting without a manual reload. Steps 3–6 also refuse to act when no lodge could be resolved (the lodges read failed, or no lodge is active) instead of widening to every lodge: another lodge's screen must never tick this lodge's gates or be adopted by its pairing step. The resume cursor is stored one row per wizard for the WHOLE install (`IntegrationWizardProgress.wizardId` is globally unique) and its route keeps its finance gate, both accepted deliberately and both stated in the wizard copy and in `docs/guides/display.md`. Entry points: the hub leads with a gold Guided setup card while the club has no boards or no working screen, keeps the same destination as an ordinary hub card once it does, and the Help panel names it on every `/admin/display` page. Admins can also open a read-only preview of any device's board or any template — Preview on the device row opens `/display?previewDevice=<id>` directly, while Preview on the Templates page (LTV-036) opens the sandboxed host `/admin/display/preview`, which mints a short-lived signed grant and renders the authored template in a `sandbox="allow-scripts"` iframe so one admin's template can never run against another admin's session (ADR-003 §5). A template preview renders against an explicitly chosen lodge (the multi-lodge selector next to Preview), never a silent default (#64), and the board shows a "previewing against <lodge>" line near the clock. Previews require an admin login (grant or session), never affect "last seen", and show no banner; in a preview the admin can click the header date to simulate a future date (previewDate) — the date input now sits beside the button so a selection actually applies (#65) — which real device screens ignore                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            | Pairing code legibility from across a room; plain-language privacy copy on the granularity setting; stale-data badge phrasing; the guided wizard must state the shared, install-wide resume position rather than let two admins discover it by surprise                                                                                                                                                                                                                                 |
-| Admin forms                               | Save settings and editor changes from long pages or dialogs                                                                          | Submit member, season, family group, committee, lodge settings, or Xero mapping forms; member detail edits save per group inline (each group's Edit unlocks only that group's fields)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | Bring success feedback back to the top of the admin scroll container, and focus the first error banner when validation fails; a failed per-group save shows its error banner inside the group and scrolls/focuses it                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | Long form remains at submit button while feedback appears above the viewport, dialog body scrolls independently from the page                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               | `/admin/members`, `/admin/members/[id]` group edits, `/admin/seasons`, `/admin/family-groups`, `/admin/committee`, `/admin/setup`, `/admin/xero/setup`                                                                                                          |
-| Admin settings                            | Find setup pages without scanning a long sidebar                                                                                     | Open Setup & Configuration, choose the relevant hub, then follow the card to the existing setup route                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | Setup & Configuration keeps direct Setup and Modules links, then groups lower-frequency setup pages into Membership & Members, Site Appearance & Content, Bookings Setup, Integrations, and Notifications & Email hubs; Chores sits here as one-time setup, Access Roles remains Full Admin only, Committee remains standalone, and feature-gated cards such as Mountain Conditions hide when their module is disabled                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    | Disabled modules hide their gated sidebar entry or hub card; hub cards keep existing route URLs so deep links and permissions remain unchanged                                                                                                                                                                                                                                                                                                                                                                                                                                                                              | `/admin/membership-setup`, `/admin/appearance`, `/admin/bookings-setup`, `/admin/integrations`, `/admin/notifications`                                                                                                                                          |
-| Admin setup drill-downs                   | Move from setup readiness into focused setup work                                                                                    | Open `/admin/setup`, scan KPIs and required blockers, choose a setup hub card, then follow that drill-down's cards before returning to readiness checks                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     | KPIs stay at the top of Setup, required blockers sit directly below them, and the hub cards route to Initial Setup, Finance, Booking Rules, Operational Integrations, Membership & Members, Cancellation, and Email Messages / Notifications; the Initial Setup drill-down also cross-links Club Identity (`/admin/appearance/identity`, content-gated) so admins who came in through "Setup" find the club name / short name / hut-leader overrides; Finance Report Mappings live in the Finance drill-down and are collapsed by default                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           | A viewer without the backing area permission does not see that cross-area hub card or drill-down card; disabled modules hide feature-gated cards                                                                                                                                                                                                                                                                                                                                                                                                                                                                            | `/admin/setup`, `/admin/setup/foundations`, `/admin/setup/finance`, `/admin/setup/booking-rules`, `/admin/setup/integrations`, `/admin/setup/cancellation`, `/admin/membership-setup`, `/admin/notifications`                                                     |
-| Change the club time zone                 | Record or correct the one time zone every club-facing date and time is written in                                                  | Open `/admin/club-time` (Admin → Setup & Configuration → Club Time Zone, or the Club Time Zone step on `/admin/setup`), read the current zone and where it came from, choose **Change time zone**, filter the zone list, read the consequences, tick the acknowledgement, then **Save** | The page renders read-only on mount and nothing persists on selection alone; Save stays disabled until the acknowledgement is ticked, and the server refuses an unconfirmed write as well, so a confirmation is not a UI-only gate. The confirmation names the current and chosen zone and states plainly that nothing already recorded is rewritten — what changes is how instants are displayed from now on and when club-local scheduled work fires, while lodge nights keep the calendar dates they already have. A saved change is audited as `CLUB_TIME_ZONE_UPDATED` with the actor and the before/after zone; re-saving the current zone writes nothing at all. The zone always arrives from the server — the browser lists zones as choices and never decides the current one | **Full Administrators only.** Any other admin, including one holding every permission area at edit, sees a short “available to full administrators only” panel instead of the control; the current zone is still visible to a support-area admin on the `/admin/setup` readiness step | `/admin/club-time`, `/admin/setup`                                                                                                                                                                                                                              |
-| Change the club currency and locale       | Record or correct the currency the club charges in and the way it writes numbers and dates                         | Open `/admin/club-format` (Admin → Setup & Configuration → Club Currency & Locale), read the two values and where each came from, choose **Change currency and format**, filter the currency list, type the language tag, read the consequences, tick the acknowledgement, then **Save** | The page renders read-only on mount and nothing persists on selection alone; Save stays disabled until the acknowledgement is ticked, and the server refuses an unconfirmed write as well, so a confirmation is not a UI-only gate. Both fields are validated before either is written, so a save never lands half-applied. The confirmation names the current and chosen pair and says which screens follow the setting as soon as it is saved — #3564 moved ten of them, such as the currency code beside a fee and the audit-log timestamps — and that amounts and the remaining dates still follow the server's `CURRENCY` and `LOCALE` until #3565-#3566 move them, and that no amount already recorded is rewritten or re-converted. A saved change is audited as `CLUB_FORMAT_UPDATED` with the actor and the before/after pair; re-saving the current pair writes nothing at all. Both values always arrive from the server — the browser lists currencies as choices and never decides the current one. When the connected Xero organisation's base currency differs from the club's currency, an administrator with finance access sees a warning under the currency naming both (#3633); the same warning shows at the Xero setup wizard's Connect step and on the setup list's Operational Xero step, and it blocks nothing | **Any admin may view; only Full Administrators may change** (#3596). Any other admin, including one holding every permission area at edit, sees both values read-only under the view-only banner, with **Change currency and format** disabled, and the server refuses their write regardless. Club Time Zone and Environment Safety differ: they stay Full Administrator only to open as well as to change | `/admin/club-format` |
-| Declare production or non-production      | State whether this installation is the club's live site or a copy of it, and force a copy to stay safe                             | Open `/admin/environment` (Admin → Setup & Configuration → Environment Safety, or the Production Or Non-Production step on `/admin/setup`), read what this installation is and which source decided it; to force it safe choose **Switch the override on**, read the consequences, tick the acknowledgement, then **Save** | The role itself is NOT editable in the app: it is declared by the deployment (`APP_ENVIRONMENT_ROLE`), because a copy of the live database must not be able to declare itself the live site. Nothing is inferred from `NODE_ENV`, the hostname, the branch, the database or `APP_RUNTIME_ROLE`; an undeclared installation reads "not configured", which is neither production nor confirmed non-production. What the page CAN change is the database safer override, which only ever forces the answer towards non-production — switching it off hands the decision back to the deployment, so an undeclared installation returns to "not configured" rather than becoming the live site. The panel mounts read-only, Save stays disabled until the acknowledgement is ticked, and the server refuses an unconfirmed write too. Either direction is audited as `ENVIRONMENT_SAFETY_OVERRIDE_UPDATED` with the actor and the before/after value; re-saving the value already stored writes nothing at all | **Full Administrators only.** Any other admin, including one holding every permission area at edit, sees a short "available to full administrators only" panel instead of the control; the role is still visible to a support-area admin on the `/admin/setup` readiness step | `/admin/environment`, `/admin/setup` |
-| Admin login & security                    | Set the club password complexity policy                                                                                              | Open `/admin/security` (Login & Security), set the minimum password length (8–64) and toggle required character classes, then Save; view-only admins see the read-only notice and a disabled Save                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | Password rules apply the next time a member sets or changes a password (set-time only), never at login; use the member "require password change" lever to force adoption; the hard 128-character maximum always applies; the reset (`/reset-password`) and change (`/change-password`) forms fetch `GET /api/auth/password-policy` and show the live rules as hints                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | Absent settings row behaves like today (min 12, no classes); an out-of-range minimum is rejected with a 400; a stale view-only tab's save is refused server-side with a persistent forbidden-save notice                                                                                                                                                                                                                                                                                                                                                                                                                     | `/admin/security`, `/api/admin/security/password-policy`, `/api/auth/password-policy`, `/reset-password`, `/change-password`                                                                                                                                     |
-| Admin settings                            | Edit shared public footer content                                                                                                    | Open `/admin/site-content`, edit the footer blurb, quick links, or affiliations sections, save one section at a time, then review the public footer                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     | Keep footer chrome separate from Page Content page routing and menu settings; show token help for supported footer text tokens                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            | Empty sections, sanitised HTML differences, load or save failure, token fallback for missing Facebook URL                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | `/admin/site-content`, `/api/admin/site-content`, public website footer                                                                                                                                                                                         |
-| Admin settings                            | Configure seasonal membership type policy                                                                                            | Open `/admin/membership-types`, scan the ordered type list, open the per-type editor to create/edit types, archive or reactivate ordinary types, reactivate an already archived Full or Non-Member, restore either type's expected booking behavior after older drift, and choose allowed age tiers, configure Membership Type Xero group rules (`Managed - sync adds members to this group`; `Accepted - allowed, but not synced`), reorder from the list, delete an unused custom type (confirm) or merge a still-assigned custom type into another active type before deleting it, and use the separate roll-forward section to preview or run seasonal assignment copying                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | Keep access roles separate from seasonal type policy and committee assignments; explain Age Tier Xero groups for age cohorts, Membership Type Xero groups for status/policy labels, and both when Xero needs both; keep unsaved editor changes visible; the editor closes automatically on a successful save (no Cancel needed to leave a saved state) while a successful create keeps it open flipped to edit mode, and the editor and merge dialogs both expose a header close (X) that routes through the same discard-confirm/guard as Escape when there are unsaved changes or an in-flight merge; show roll-forward exceptions before copying; on delete route a still-assigned custom type into the merge (reassign-then-delete) dialog showing the affected count, an active non-source target picker, an explicit move-then-delete summary, and a Xero-rule-difference warning; reassigned members reconcile to Xero contact groups via the existing periodic path, not a synchronous resync                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     | Built-ins present, built-in deletion/merge blocked, empty custom list, zero-assignment custom delete, still-assigned custom delete routed to merge, self-target rejected, archived/inactive merge target blocked, incompatible affected age tier blocked, dirty editor with validation errors, duplicate/conflicting Xero rule validation, no prior assignment, inactive type copied from prior season                                                                                                                                                                                                                      | `/admin/membership-types`, `/api/admin/membership-types`, `/api/admin/membership-types/[id]`, `/api/admin/membership-types/[id]/merge`, `/api/admin/membership-types/roll-forward`                                                                              |
-| Admin settings                            | Configure admin access roles                                                                                                         | Open `/admin/access-roles` (Full Admin only), rename/re-permission/delete the seeded editable roles, create custom roles with per-area None/View/Edit levels and a live matrix preview, then assign them from Admin > Members                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           | Protected system roles (Full Admin, Lodge, User, Organisation) are shown read-only and can never change; edits apply to every holder on their next request; deletion is blocked while members hold the role                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               | Scoped admin sees read-only list and disabled controls, delete-while-assigned 409 with member count, unknown role token rejected on member writes                                                                                                                                                                                                                                                                                                                                                                                                                                                                           | `/admin/access-roles`, `/api/admin/access-roles`, member editor role picker                                                                                                                                                                                     |
-| Admin settings                            | Configure committee roles and assignments                                                                                            | Open `/admin/committee`, create/edit/archive master roles with role email aliases, review member-linked assignments, and publish contactable entries when appropriate                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | Keep committee assignment separate from access role and seasonal membership type; new assignments stay hidden until published; each contactable assignment routes public contact mail per its contact-email mode (ROLE alias, MEMBER email, or CUSTOM address), role email aliases remain admin/server-only, delivery falls back role→member email when the selected address is blank, and phone display is show-phone controlled                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         | No roles, inactive roles, duplicate member-role assignment, hidden/unpublished assignment, non-contactable published assignment, missing role email alias fallback                                                                                                                                                                                                                                                                                                                                                                                                                                                          | `/admin/committee`, `/api/admin/committee/roles`, `/api/admin/committee/assignments`, `/api/committee`, `/api/contact`                                                                                                                                          |
-| Admin settings                            | Publish site-wide notice banners                                                                                                     | Open `/admin/site-banners`, add or edit a banner with message, Urgent/Warning/Notify priority, and NZ date-only display window, check the live preview, toggle active, delete with confirm                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              | Explain that current banners show above the site header for anonymous visitors and signed-in members, dismissal is per browser, and editing a banner re-shows it to visitors who dismissed it                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             | Empty current/upcoming/past groups, end date before start date, message over 500 characters, inactive banner inside its window                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              | `/admin/site-banners`, `/api/admin/site-banners`                                                                                                                                                                                                                |
-| Admin members list                        | Scan, filter, and safely open members                                                                                                | Open `/admin/members`, search by name/email, sort or filter the roster, then use the name link or row **Open** action to enter member detail read-only                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | **Access** comes only from the shared four-state login journey: No login (neutral), Not invited (warning), Invited (information), Can log in (success). Role never changes the label or tone. Invite / Resend Invite / Reset Password stays aligned with the same derivation. The name and **Open** links preserve list state in `returnTo`, never append `edit=true`, and never unlock an editor. Membership-view users can open; selection, login email actions, create/import/bulk changes, and each detail section's Edit remain membership-edit gated. Xero group chips take `cat1..cat6` from stable group identity modulo six; catalog availability, filtering, and row order never change the assignment. Membership Type and Age Tier remain separate filters while the display column remains **Type – Tier**. | Empty or filtered-empty roster; expired invitation falls back to Not invited; view-only membership viewer can use Open but sees no write or selection controls; more than six Xero groups intentionally reuse categorical tones while names remain authoritative; detail opens with every group read-only/collapsed unless browser expansion state says otherwise | `/admin/members`, `/admin/members/[id]`, `/api/admin/members` |
-| Admin subscriptions list                  | Review subscription state and safely open an authorised member                                                                       | Open `/admin/subscriptions`, choose season/status/age/Xero-group filters, scan subscription and Access states, and use a member name only when the viewer also holds membership view                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     | Access and Xero group tones use the exact shared sources from Members. The member link carries `returnTo` but no edit query. `useAdminAreaViewAccess("membership")` is tri-state: unresolved and denied both render plain text, so a finance-only viewer never sees a transient route. Finance edit continues to gate billing/manual-payment writes independently. | Finance-only viewer sees member names but no local member links; session resolution does not flash a link; linked detail opens read-only; more than six Xero groups reuse tones by documented modulo | `/admin/subscriptions`, `/admin/members/[id]`, `/api/admin/subscriptions` |
-| Admin member detail                       | Navigate and edit a member's record                                                                                                  | Open member detail from Members or an authorised Subscriptions name link, read the pinned at-a-glance strip, expand the group that holds the task, and explicitly choose that group's Edit to unlock only its fields inline                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               | Opening is always read-only: navigation does not carry or consume `edit=true`, including a forged legacy query. Groups stay ordered most-touched to least and default collapsed, with per-browser expansion persistence. Each section preserves Edit → Save/Cancel and its tri-state permission gate. `#account-credit` remains the one transient deep link that expands Finance without editing. Header Xero actions still render only while Xero is connected. | First visit shows all groups collapsed; a finance-only Subscriptions viewer gets plain member text and no route; a membership-view viewer can open but cannot edit; localStorage unavailable degrades to per-visit state; Xero disconnected/loading hides Xero header actions | `/admin/members/[id]`; group headers are accordion buttons with visible previews |
-| Admin member detail                       | Classify a member's account access (User Type)                                                                                       | Expand Account & Access, click Edit, pick the User Type select (User / Organisation / Admin); choosing Admin reveals the Access Roles picker with its live permission-matrix preview and an "Also a club member" checkbox (default on) that keeps normal member features alongside admin access                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         | User Type is derived from and saved as the existing access-role tokens (no new stored field); User and Organisation members never see the admin role checkboxes; Lodge kiosk accounts show a read-only type; scoped admins can switch User/Organisation but the Admin option is disabled for them, mirroring the server's Full-Admin gate                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | Non-login records (select disabled until Can Login), lodge kiosk account, scoped admin editing a member with live or dormant privileged roles (whole select locked), Admin selected with no admin roles ticked (saves as a plain User, with a hint)                                                                                                                                                                                                                                                                                                                                                                         | `/admin/members/[id]` Account & Access group; select labelled "User Type"; picker unchanged from `/admin/access-roles` semantics                                                                                                                                |
-| Admin member detail                       | Assign a member's seasonal membership type                                                                                           | Open member detail, expand the Membership group, compare access role and seasonal type, choose season/type and optional apply-from date, preview affected bookings/subscriptions, enter reason, save                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    | Explain that future booking attempts and reprices use the selected rate/block/subscription policy, existing future bookings are not automatically repriced, raw subscription/Xero history remains visible, and access role remains separate                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               | Missing type, inactive target type, invalid apply-from date, stale preview token, no current assignment, no affected bookings                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               | `/admin/members/[id]`, `/api/admin/members/[id]/seasonal-membership/preview`, `/api/admin/members/[id]/seasonal-membership`                                                                                                                                     |
-| Booking dietary/allergy information (#3029) | See and correct one stay's dietary/allergy notes | Admin: `/bookings/[id]` **Dietary/allergy information** card lists every guest (members and non-members) with the stay's value; **Edit** on a guest opens the shared field, **Save**/**Cancel** per guest. Hut leader: the lodge kiosk day list shows each present guest's note under their name | Values are copied from a member's profile when the guest row is first created (field ON only) and then kept for the stay (`INV-MOD-059`). Booking officers with bookings view see the card; bookings edit adds Edit; only the kiosk admin and hut-leader tiers see notes on the kiosk (`INV-PRIV-022`). Saving never touches the profile, reprices, emails or syncs to Xero; audit records only changed/cleared | Field off (no card, no kiosk notes, edit route 409, values kept); bookings view only (no Edit); deleted booking (no Edit); guest of another booking (404); over 500 characters (400); owner, linked guests, members, lodge wall, staying guests, kiosk preview, roster and lobby get no key | `/bookings/[id]`, `/api/admin/bookings/[id]/guest-dietary`, `/lodge/kiosk`, `/api/lodge/guests/[date]`, `/api/member/data-export` |
-| Dietary/allergy information (#2941) | Record dietary needs and allergies once, safely | Admin: **Member Fields** opens read-only; **Edit**, tick **Dietary/allergy information**, **Save** (Cancel restores; Save is dirty-gated). Member: Profile -> Personal Details (and onboarding) shows a free-text box at any age. Admin: `/admin/members/[id]` Contact & Personal shows and edits it; the create dialog collects it; member CSV import/export carries a column | Off by default. Only the member and membership admins see the PROFILE value; family, hut leaders, lodge screens, booking/finance exports, Xero, analytics, notifications and logs never do (`INV-PRIV-022`). A booking's own copy of it has a wider audience (booking officers and the hut leader running the stay): see the #3029 row above. Up to 500 characters; blank clears. Audit records only that it changed. Turning it off hides it but keeps stored values | Field off (no box, no CSV column, no key in any payload); admin without membership access (no value, no column); value over 500 characters (422 / blocked CSV row); member's own data export includes the stored value even while off | `/admin/member-fields`, `/profile`, onboarding wizard, `/admin/members/[id]`, `/api/admin/members/export`, `/api/admin/members/import`, `/api/member/data-export` |
-| Admin member detail                       | Assign committee roles                                                                                                               | Open member detail, expand the Committee group, add or edit committee assignment, choose role, set blurb/sort/published/show-phone/contactable flags, pick the contact-email mode (role/member/custom) for contactable assignments, or deactivate assignment                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            | Show committee assignment beside access role and seasonal type without changing either; when Contactable is ticked the editor states in plain text exactly which address public contact messages will reach and from which source, so operators are never guessing — it defaults to the committee role email, not the member's own inbox (#1550)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | No active roles, existing inactive assignment, duplicate role assignment, hidden by default                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | `/admin/members/[id]`, `/api/admin/committee/roles`, `/api/admin/committee/assignments`                                                                                                                                                                         |
-| Admin lodge setup                         | Stand up a new lodge quickly                                                                                                         | Create the lodge with its capacity (required, #3407), follow the guided wizard (identity → capacity when Bed Allocation is off, or rooms/beds when it is on → lockers → seasons/rates → chores, steps gated by enabled modules), quick-seed or copy from an existing lodge, finish on the lodge configuration hub, which also carries **Who can be hut leader for school bookings** while the Hut Leaders module is on (#3819: four kinds — teacher on the booking, lodge custodian, member on the school booking, member staying separately — staged behind Edit; on a school group's nights only a ticked kind covers, and ticking teachers is what makes school approval assign them), and the **Central lodge** card (#62) linking the lodge to its Alpine Central Server entry, which every club saves explicitly, a one-lodge club included (#4262: Edit preselects a one-lodge club's only owned central lodge as an unsaved change, Save links it, Cancel leaves it unlinked, and an unlinked lodge answers no free beds, which the card and the Alpine Central Server setup page both say)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | Explain that every step is skippable but a lodge with no capacity cannot take a booking, and let the finish step call the lodge ready only when the server says it can take one (#3407); a capacity typed above the lodge's active beds is accepted and does not raise what can be BOOKED until more beds are activated, but it is not inert — it is also the ceiling the partner-shared headroom is measured against, so the field names the configured capacity, the active beds, the resulting effective capacity and the partner spots the surplus allows, and warns that lowering it to the bed count would leave none (#2724), and typing a lower figure than the saved one warns how many partner spots that removes before the save (#3440); the hub's Capacity card breaks out any partner-shared double-bed headroom ("10 beds + up to 1 partner spot" — admin-placed second occupants only, never ordinary bookings, #1745); default name prefixes include the lodge name while room/locker names stay club-wide unique; a configured room can be hard-deleted only when it has no bed-allocation history (its beds delete with it), otherwise deactivate it instead                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | Name-prefix clash with another lodge, copy source has nothing to copy, single lodge so no copy source, module-gated steps hidden; on the **Central lodge** card, no owned-lodge list yet (Download first, no editor), the site not registered with the central server (no question is answered), a stale link to a lodge the club no longer owns (shown so it can be cleared), and the club's only central lodge linked to another lodge (named, unlink it there) | `/admin/lodges`, `/admin/lodges/[id]/setup`, `/admin/lodges/[id]`, `/admin/lodges/[id]/central-lodge` |
-| Admin recovery visibility                 | Find stuck states across domains                                                                                                     | Open `/admin/stuck-states`, triage by severity/owner, follow target link; close a card refund Stripe gave up on as **Paid another way**, choosing **Paid back in full** or **Paid back part of it** (finance:edit, #3372); under **Card refunds paid back twice**, mark a row **Resolved** with a note once it is sorted out with the member (finance:edit, owner 9 Oct 2026); under **Voided bank refund notes to answer**, **Pick the refund** a voided bank-transfer refund note the app could not match recorded, which runs the same undo as a matched note, or **Record the answer** for a card refund's record that has nothing to pick (finance:edit, #4162; read-only while the follow-up is report-only)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | Keep payment, Xero, email, waitlist, bed-allocation, and lodge signals in one scan                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | Empty queue, disabled modules, provider queue failures, stale recovery states                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               | `/admin/stuck-states`, `/api/admin/stuck-states`, `/api/admin/payments/card-refunds/[id]/paid-another-way`, `/api/admin/payments/card-refunds/[id]/paid-twice-resolved`, `/api/admin/payments/bank-refund-voids/[id]/pick`, `/api/admin/payments/bank-refund-voids/[id]/answered`                                                                                                                                                                                                                |
-| Finance/Xero                              | Monitor accounting and reconcile provider state                                                                                      | Open finance/admin Xero pages, run safe syncs, review failures; on the Contact Group Mismatches and Contact Link Mismatches panels, Refresh re-fetches exactly the flagged contacts from Xero (batched, API-budget-metered), rewrites their cache rows, and recomputes — so a fix made inside Xero clears locally; contacts Xero no longer knows are dropped from the cache and reported                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | Explain the shared operational Xero connection used by finance reports; panel loads stay cache-only (no Xero call until Refresh is clicked); show "Re-synced N of M flagged contacts" feedback with the resync time                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | Missing credentials, failed sync, wrong access level, Xero disconnected or daily API limit reached surfaces as an inline panel error instead of a silent recompute                                                                                                                                                                                                                                                                                                                                                                                                                                                          | `/finance`, `/admin/xero`, guarded role checks                                                                                                                                                                                                                  |
-| Admin lodge operations                    | Assign a hut leader for occupied nights                                                                                              | Open `/admin/hut-leaders`, a calendar-first, 3-step flow (#1553). The occupancy calendar is always visible and painted per visible month with a status overlay: **violet** for every night validly covered — an assignment includes it AND its leader is staying it (#3818, `INV-DATE-031`; a custodian — ticked "Custodian (lives on site)" or holding a bed — and a school booking's teachers count as staying) — labelled with the leader's surname so a custodian's multi-month block reads as a band, low-emphasis ring outline for a covered night with no guests; on a day whose two nights have different leaders the cell shows "AM · {who finishes} until midday" and/or "PM · {who starts} from midday", with a leader on duty both halves named plainly first (derived from the nights the way the roster derives Arriving/Departing; nothing stored; below `sm` the " until midday" / " from midday" suffix is hidden and the cell's accessible label keeps the full text), and **red** for a night that has guests but no valid shift ("No {hut-leader label} tonight", in the club's configured label, preceded by the AM line when someone finishes that morning), over the emerald guest shading. The windowed `unassigned-dates?month=` response carries `coveredNights` (who covers each night, from the night before the month) for those labels. **Step 1 — pick nights:** tap a start/end on the range calendar OR type the explicit start/end date inputs (the long-range custodian path). **Step 2 — pick a member:** two tabs — "Staying during these dates" lists the coverage-filtered eligible-adult suggestions (each shows "covers N of M uncovered nights" and adopts its conflict-free suggested range on Select; #1549), and "Any member" is a member-search combobox that assigns anyone staying on those nights, or a custodian. **Custodian tick (#3817):** step 3 offers **Custodian (lives on site)** whether or not bed allocation is on; a ticked assignment counts as present every covered night with no booking and takes one space off capacity on each (once, even with a bed), raising the same over-capacity and whole-lodge-hold cards a bed does. **Hold a bed** and the per-row **Change bed** are offered only while bed allocation is on; **Release bed** stays. **Stayed nights only (#3817):** a role-only assignment that claims a night the member is not staying at the lodge (a check-out morning, a gap between stays, a cancelled stay) is refused with `409 HUT_LEADER_NIGHTS_NOT_STAYED`, naming the first such night; the confirm panel offers **Change last night to …** with the member's last night stayed, and there is no override. A held bed or the custodian tick exempts an assignment; a soft-deleted booking is never a stay, and owning a booking one is not a guest on does not count. Each assignments-table row also has a **Custodian (lives on site)** toggle (`aria-pressed`, through `ViewOnlyActionButton`) that sends `{ isCustodian }` to the same PUT — not on a school teacher's row, whose tick the PUT refuses with 400 (#3821), nor **Hold a bed** / **Change bed** there, since a held bed is a custodian occupancy (the PUT refuses a teacher row that would hold one; **Release bed** stays); unticking, or **Release bed** on an unticked row, is refused when the member has no stay, worded for what was removed (keep them Custodian, or mark them Custodian before releasing the bed). A ticked custodian with no bed who is also a guest here is one space on those nights, not two. **School nights (#3821):** a create or a row edit whose nights include school-group nights its kind does not cover still saves, and the 201 (create) or 200 (PUT, read after the commit) carries `schoolNightsWarning`, shown in the page's advisory note beside the minor-custodian note; the overlap check leaves out school nights a custodian (existing or proposed) does not cover and the ordinary row it clashes with does, so a replacement who leads them may take them with a one-night handover at each end; two custodians never share them. With bed allocation off, an edit moving a bed-holding row's nights or lodge is refused (`MODULE_DISABLED`: release the bed first). With no bed in play the over-capacity and whole-lodge cards speak of counting the custodian, and accept reads **Accept and save**. The tick resets whenever the member, the nights or the lodge change. The end field and table column read **Last night**. **Step 3 — confirm:** a sticky summary ("Assign {name}: {start} → {end} · {nights} nights · fills {k} uncovered nights") with a client-side conflict preview computed via the same `calculateOverlapDays` the server uses. The amber "Upcoming nights with no {label} staying" card is kept, refreshes after a create, a delete or a bed change (a held bed is presence), and its Assign button seeds the picked range. **Optional bed hold (#2286):** step 3 also offers *Hold a bed*, defaulting to "No bed — role only" (the pre-#2286 behaviour and every cron-created row). Choosing a bed turns the assignment into a **custodian occupancy** — that bed leaves the bookable and allocatable pools for every night from start to end *inclusive*, with no booking anywhere. Beds that cannot be held are LISTED with the reason (guests already allocated, or another hut leader's hold on those nights) rather than hidden, and each option names the bed type. If the hold pushes a night past the lodge ceiling the save is answered with a **warn-and-confirm** card (#1668 precedent) that lists the nights, names any live booking the per-night figures could not count (#177 blind spot), and takes focus as a `role="alert"`; the admin re-sends with `confirmOverCapacity`. **Whole-lodge hold amendment (#2698):** if the chosen bed sits inside nights an existing whole-lodge hold already covers, the save is answered with a second warn-and-choose card in the same shape — a focused `role="alert"` naming the affected nights — because holding the bed narrows that booking's sole occupancy (`INV-CAP-038`). **Accept and hold the bed** re-sends with `amendOverlappingHolds`, which writes the assignment and the audited acceptance in one transaction; **Cancel** sends nothing, and nothing on either side changes. The card carries booking ids and nights only, never party data. The reverse order asks nothing: setting a whole-lodge hold over an existing custodian bed is correct by construction, so `admin-exclusive-hold-controls` is unchanged. The assignments table shows the **Bed held** column and, per row, **Release bed** (one click, an explicit `bedId: null` PUT that keeps the assignment, its coverage record and its kiosk PIN) and **Change bed** (an inline picker scoped to that row's dates). Release stays available with the bedAllocation module off, because a hold created while it was on still occupies a real bed | Keep date inputs editable for precise corrections; show occupied nights, who is covered, and who needs a leader directly on the calendar before choosing; preserve the unassigned-dates shortcut as a pre-filled range. A member whose stay is already fully covered is shown greyed with a disabled Select and an "these dates already have a hut leader" note rather than silently omitted. Confirm is disabled with an inline reason (naming the conflicting leader + range) whenever the chosen range overlaps an existing assignment by more than the 1-day handover, so the block is explained before the POST                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | Occupancy API unavailable, no guests in selection, no eligible adults (fall back to the "Any member" tab), past dates blocked in the range picker but a windowed month may paint past history, manual date input can still be corrected; an assignment conflict (client preview or server overlap 409) or PIN-reset error surfaces inline in the confirm panel / on the member card AND in a page-level `aria-live` alert at the top of the page (#1549, #1553)                                                                                                                                                             | `/admin/hut-leaders`, `/api/admin/occupancy`, `/api/admin/hut-leaders`, `/api/admin/hut-leaders/eligible-members`, `/api/admin/hut-leaders/unassigned-dates?month=YYYY-MM`, `/api/admin/hut-leaders/available-beds?startDate&endDate[&lodgeId&assignmentId]`, `PUT /api/admin/hut-leaders/[id]` (three-state `bedId`: absent leaves the hold, `null` clears it, a string sets it; both it and the POST answer `409 CUSTODIAN_OVERLAPS_WHOLE_LODGE_HOLD` until `amendOverlappingHolds` is sent), `DELETE /api/admin/hut-leaders/[id]` (under the lodge capacity key since #2698)                                                                                      |
-| Admin lodge operations                    | Pick a chore roster date with booking context                                                                                        | Open `/admin/roster`, use the single-date occupancy calendar to choose an occupied lodge night, or edit the date input directly; roster generation and guest lists continue to load from the selected date                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              | Show guest-count badges so admins can avoid empty nights and see booking detail links for the chosen date without leaving the roster workflow. Each occupied date is colour-coded by roster status — red "Needs roster" (no assignments yet), amber "Suggested" (unconfirmed), orange "Needs chores" (confirmed but a later booking has no chores), green "Confirmed" — with a matching legend and status text mirrored into each cell's aria-label for colour-blind safety. Coverage is diffed at **booking** granularity: a confirmed date where a booking added after confirmation has zero assignment rows shows the orange overlay, and the header also raises an amber banner prompting Regenerate Roster. The "Email Roster to Guests" action now asks, per send, whether to email — a two-button dialog ("Email guests the roster" vs "Don’t email — keep existing links"); default emails fresh chore links, the suppress choice sends nothing and leaves previously-issued chore links valid, and the choice is audited as `notifyMember` (#1785). **Eligibility is the lodge DAY, not the night (#2622):** everyone who stays a night is in the lodge from midday NZ on their arrival date to midday NZ on their departure date, so a changeover day lists both the people leaving that morning (**Departing** badge, eligible for morning and anytime chores) and the people arriving that evening (**Arriving** badge, eligible for evening and anytime chores), and a day whose only occupants are checking out still generates, edits, saves and confirms. No time is ever displayed: the boundary is definitional, with no setting and no time-of-day data. Manual assignment stays unrestricted, and someone who must leave earlier arranges it with the hut leader. **Since #2631 the calendar's own colours use that same lodge day**, so a changeover morning is coloured **Needs roster** rather than left blank, a departure on the first date of the displayed month is no longer dropped, and a day whose only member guests are still awaiting consent is not coloured at all — it can no longer say a roster is needed and then open with nobody to roster. The **Who's at the lodge** panel beside it is untouched and still counts guest-NIGHTS, so on a changeover day it reads zero while the colour says work is due; the panel now says which of the two it counts, so the pair cannot read as a contradiction                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           | Occupancy API unavailable, roster-status overlay fails silently (calendar still usable), no operational bookings for the selected date, a day whose only occupants are departing (still rosterable), a sparse stay internal gap day (correctly nobody), no roster assignments yet, past dates blocked in the picker while the input remains editable                                                                                                                                                                                                                                                                                                                                                                                        | `/admin/roster`, `/api/admin/occupancy`, `/api/admin/roster/status`, `/api/admin/roster/[date]`                                                                                                                                                                 |
-| Lodge/kiosk                               | Manage arrivals, departures, chores, lodge info                                                                                      | Open `/lodge`, sign in or PIN, review the default week view, then open a day for operations                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             | The week view uses `/api/lodge/week` to show seven days of counts, arrival/departure totals, and roster status only; restricted kiosk ranges dim inaccessible days and expose `{date, accessible:false}` without guest counts. **Since #2631 all of it is the operational DAY** — present on a day if last night or tonight is one of your booked nights — and the count, the departing total and the roster colour come from ONE candidate set per day, so the payload can no longer report guests beside `rosterStatus: "no-guests"` on a changeover morning. "Departing" means *leaves today* here, on the day list, and in the roster setup wizard, which reads the same route with no scope parameter; a sparse stay's internal gap day shows nobody at all. The day view preserves current date, accountable actor, safe sign-out, and day operations; a booking held by a pending admin review (F27 / #1372 + #1422) still appears on the check-in roster but is flagged "Blocked from Check-In — see Booking Officer" with its arrival toggle disabled — the server also rejects arriving it, and the check-in reminder skips it, until an admin clears the review. **Group Trips (#3040, epic #2943):** a card that shares a trip with another card on the same day carries a **Group trip N** chip, whether or not the club has enabled Group Trip adult cover (owner decision D1) — a per-response ordinal counted from the top of the list, never the container's id, and absent unless a second visible card shares the trip. That chip is the WHOLE of the ordinary tier's disclosure: organiser identity, adult-cover source and the join code are not sent to it at all, not merely unrendered. Full Admins and PIN-signed hut leaders additionally see, ON A GROUP CARD ONLY, *who organises the trip* (name only) and *where the adult cover comes from* (per-night counts plus the scope category and any officer decision on it), behind two SEPARATE capabilities; a shared LODGE wall ACCOUNT gets neither — though that same wall device is the hut-leader tier while a PIN session is open on it. The cover line is derived from the canonical hosting snapshot and reads *needs re-checking* / *last check could not be read* / a quiet *no issue recorded* rather than ever claiming cover it cannot stand behind — and a claim resting on a Group Trip sibling is withheld as *needs re-checking* until #3039 can keep it fresh. It is absent entirely where the club's adult-member-hosting requirement is not in force (`INV-PRIV-016`, `INV-HOST-045`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | No access, stale PIN session, empty roster, inaccessible week dates, a changeover morning whose occupants all leave before midday (counted, and rosterable), a sparse stay's internal gap day (nobody), booking blocked from check-in by a pending admin review (shown flagged, arrival disabled, not rostered)                                                                                                                                                                                                                                                                                                                                                                                                                                                | `/lodge`, `/api/lodge/week`, keyboard/touch target checks                                                                                                                                                                                                       |
-| Events calendar (member + committee) | View club events; committee members add events and join video meetings | Open the dashboard Events card → `/calendar` (every logged-in member EXCEPT organisation accounts, and only while the `eventsCalendar` module is on — #2241); page the month with the ‹ › / Today controls, click an event chip for its read-only detail; on a busy day click "+N more" to open that day's full event list and click through to any event (members and committee alike). Committee members (an active CommitteeAssignment under an active CommitteeRole) also get a "New event" button, empty-day create, and a "Join meeting" button on a MiroTalk event; ordinary members are view-only with no create and no Join | Committee assignment is otherwise public contact metadata — the calendar is the one deliberate exception, granting CREATE only (never edit or delete). Ordinary members see event details but no "Join meeting" link (meetings are for the people running them); committee members and admins see Join. "+N more" opens a real day-detail dialog for BOTH audiences so the 4th event onward is always reachable (not the old create-only/no-op behaviour). The write gate is server-enforced and mirrored into the UI (canManage) so controls a member cannot use are never shown; meeting URLs are built server-side per click from the club's own settings (Admin → Integrations → Video meetings), falling back per field to MIROTALK_URL and then to https://meet.<domain> when neither is set. The whole surface is module-gated on `eventsCalendar` (default ON, so an existing club sees no change) and organisation ("ORG") accounts are excluded from it outright (#2241): one predicate, `canViewCalendarEvents`, decides reading AND writing, so an ORG account holding a committee assignment still cannot create. Both page guards are load-bearing, not duplicated middleware — the proxy's page matcher carries `missing: [next-router-prefetch]`, so a router prefetch skips the feature-route gate | Empty month; a day with more than 3 events collapses to "+N more" then a full list; a non-committee member who forges a create/edit/delete request is refused server-side (403); module off → `/calendar`, `/admin/calendar` and `/api/calendar/*` all 404 and the dashboard Events card (and its query) disappear, events retained and restored on switching back on; an ORG account gets the same 404 and no Events card whether the module is on or off; MiroTalk unset in BOTH the club settings and MIROTALK_URL resolves to the derived meet.<domain> host (a broken subdomain is a visible error, not a silent clicker-localhost hit); a stored address that fails validation is ignored and the environment fallback is used instead, with the reason shown on the setup page | `/calendar`, `/api/calendar/events` (GET/POST); "+N more" labelled "Show all N events on this day"; keyboard nav on the month grid, chips, and the day-detail / event dialogs |
-| Admin events calendar (Full Admin / lodge:edit) | Add, edit, and delete club events and committee video meetings | Open Admin → Lodge Operations → Calendar (`/admin/calendar`, lodge-area gated at view, and hidden from the admin sidebar and command palette when the `eventsCalendar` module is off — #2241); create, edit, or delete events; a recurring event's edit or delete asks "This event only" vs "All events in the series"; tick "Video meeting (MiroTalk)" to attach a room and later use "Open meeting link" | Only lodge-edit admins may edit or delete — committee members are create-only, so a committee member can never wipe an admin's series; a committee-only member has an all-none admin matrix and is redirected off /admin/calendar entirely, so the full-edit UI is admin-only by construction. Recurrence edits propagate or regenerate per scope; meeting rooms get an unguessable slug and the join URL is built server-side | Non-admin edit/delete refused server-side (403 on PATCH/DELETE even though create is allowed); event not found (404); invalid recurrence end config (400); committee-only member redirected off /admin/calendar; `eventsCalendar` module off → the page 404s and `/api/calendar/*` 404s with it | `/admin/calendar`, `/api/calendar/events/[id]` (PATCH/DELETE); the recurring-scope chooser dialog is keyboard-operable |
-| Video meetings setup (Full Admin) | Point meeting join links at the club's own MiroTalk server, and store the host sign-in they use, without an operator editing the environment | Open Admin → Integrations → Video meetings (`/admin/video-meetings/setup`, finance-area gated at view); Edit the Meeting server section to set the address, whether whoever opens a link is the host, and how long a link lasts, then Save; store or Clear each of the three host sign-in values in the section below | Every value falls back PER FIELD to its environment variable and then to a documented default, so an installation configured before this page keeps working with no row stored at all, and the page names the source of each value in force. Nothing is copied from the environment into the database: a value is stored only when an administrator types it, and clearing a box hands that field back. Reading is finance-area; every change is Full Admin, and a refused attempt is audited. The three secrets are write-only and encrypted, shown as set / from a named variable / not set / needs re-entering, never as a value; a replace or a clear declares the version the page was shown, so a second administrator's Save is refused rather than silently overwriting | Stored address that fails validation (shown as not in force, with the reason, environment value used instead); environment value the page would refuse (used anyway, reported); a secret stored but undecryptable after an encryption-key change (needs re-entering, links go unsigned rather than broken); a concurrent Save or Clear (409, page reloads); an admin with `finance: edit` but not Full Admin (banner, every control gated) | `/admin/video-meetings/setup`, `/api/admin/integrations/mirotalk` (GET/PUT), `/api/admin/integrations/mirotalk/credentials` (POST/DELETE); each section heads itself with one view-only banner rather than repeating the reason per button |
-| Lodge/kiosk hut-leader unlock and Lock (#3228) | Unlock the shared wall tablet for roster work, and put it back to the ordinary view when you walk away | On `/lodge/kiosk` signed in as the kiosk account, press **Enter PIN**, type the 6-digit hut-leader PIN, press **Unlock**. The controls panel is replaced by "{Hut Leader} controls are unlocked" carrying a **Lock {hut leader} controls** button; press it to end the session at once | The unlock lasts **10 minutes of nobody touching the screen**, not a fixed shift: a tap, key, touch or wheel slides the window forward (at most one renewal a minute), so somebody marking off a full lodge is never dropped mid-roster, while a tablet left on a bench returns to the ordinary view on its own. Renewal is mounted for the whole `(lodge)` area, so it covers the chore-roster wizard the kiosk links to as well as the kiosk itself; the pages' own data traffic deliberately does NOT count as use. Behind the idle window sits a 12-hour ceiling from the PIN entry that no amount of use moves. On a lock or a timeout the kiosk drops every privileged answer it holds and re-asks, so nothing a hut leader could see is left rendered or in the payload; the kiosk account itself stays signed in. A hut leader signed in with their OWN account is not governed by any of it — no idle window, no Lock button | Lock pressed with the **network down** (the refetch fails, so the page shows "Failed to load data" and drops what it held); Lock **refused by the server** (a 500, so the session is genuinely still live: a persistent "Could not lock the screen" banner stays beside the still-visible Lock button until a lock succeeds); the idle window closing mid-wizard (the roster wizard keeps the allocation and offers the PIN inline, and the interrupted Confirm re-runs itself); PIN session already expired when Lock is pressed (still answers, still clears); a hut leader on their own account (neither control appears) | `/lodge/kiosk`, `POST /api/lodge/pin-login`, `POST /api/lodge/pin-session` (renew), `DELETE /api/lodge/pin-session` (lock), `GET /api/lodge/access` |
-
-| Membership/Finance settings | Configure public membership copy, authoritative fees, and family recipients | Membership editor reviews `/admin/membership-types`; Finance editor creates inclusive schedules and resolves exceptions in the Joining Fees / Annual Membership Fees sections of the consolidated `/admin/fees` page (admission on finance or bookings; Hut Fees section is bookings:edit, Joining/Annual are finance:edit; `/admin/seasons` is now season windows only and `/admin/fee-configuration` redirects here) | Public listing is opt-in; money is integer cents; schedules cannot overlap; billing recipients are explicit family members; no invoice/provider call occurs | Missing schedule, compatibility fallback, overlap, invalid date/cents, missing family billing member, insufficient area permission | `/admin/membership-types`, `/admin/fees`, `/api/admin/fee-configuration` |
-| Public CMS data blocks | Publish authoritative fee, membership, booking, and cancellation information | Content editor enables a family in Admin > Page Content, inserts its token, and checks the signed-out page. Fee embeds are `{{hut-fees}}`, `{{joining-fees}}`, and `{{annual-fees}}` (with `{{entrance-fees}}`/`{{membership-types}}` as deprecated aliases); annual fees have their own dedicated visibility opt-in. `{{first-year-costs}}` shows joining fee + first-year subscription per type and tier and needs both the joining and annual opt-ins (#4295). `{{hut-fees}}` renders a table of age tiers x publicly-listed membership-type rate columns, with identically-priced types collapsed into one column (#2129). Fee tokens accept comma-separated params (`lodge=`, `type=`, `group-by=`, bare lodge slug; `by-age`≡`group-by=age`; `{{annual-fees:components}}`); for `{{hut-fees}}`, `type=` filters to one column, `group-by=type` splits into one table per column, and `group-by=age` transposes | Server-rendered display-only data across home, code-backed, catch-all, and 404 routes; exact lodge variants; blocks render at any position and may repeat; audited visibility | Disabled/empty data, hidden membership type, unknown key or unlisted `type=` → empty state (never another group), invalid or inactive lodge, view-only role | `/admin/page-content`, `/api/admin/public-content-settings`, public PageContent routes |
-| Treasurer subscription billing | Preview and explicitly confirm annual membership invoices | Open `/admin/subscriptions`, choose year/decision date, review recipients, coverage, proration, cents, frozen Xero mapping, total and exceptions, then confirm the unchanged preview | Confirmation freezes an immutable charge and queues background Xero work; queue rows show invoice/email/conflict state; retry reuses a persisted invoice; a conflict whose covered members have all already paid offers **Close: already paid** (finance edit, required reason, audited) and then shows as closed with no Retry; due days default 30 and are finance-editable; finance-view users see read-only previews/history with write controls disabled | Missing assignment/schedule/family/recipient/explicit mapping produces a visible no-invoice exception; a date change or failed refresh clears the actionable preview; stale confirmation returns 409; late family members do not create a second invoice; a partly paid conflict offers no close and its message names the two paths that work; a closed family charge still counts as billed for a new joiner, and its family is billed again on a new charge only after a covered member's payment is reversed — with a "Check before confirming" warning when only some were reversed (#4110); with two closed charges the newest decides, and a member exempt at the close who now needs a subscription, or reversed under the older charge, is counted under "Needs your decision" until Finance marks them Paid or invoices the difference in Xero; a voided family charge never counts; email failure remains retryable; provider mismatch/non-AUTHORISED state is `CONFLICT` and never auto-rewritten | `/admin/subscriptions`, `/api/admin/subscription-billing` |
-| Treasurer manual mark-paid | Record a subscription paid outside Xero (non-Xero club / cash), or reverse it | On `/admin/subscriptions`, use the per-row "Mark as paid (manual)" / "Mark as unpaid" action; the confirmation dialog takes an optional note and, on mark-paid, the standard "Mark paid without emailing" / "Mark paid and email member" choice | Sets `PAID` with provenance (who/when/note) and audits it, including the email choice; never calls Xero or touches an invoice; emailing sends the `membership-payment-recorded` receipt (season, amount when the club has one recorded, date recorded); a reversal never emails; the member is immediately paid-up for booking and nomination; chip shows a `(manual)` suffix; finance-view users see no action | Already-`PAID` rows expose no mark-paid action; only manually-paid rows can be reversed (Xero-owned PAID is untouched); reversal restores `UNPAID`/`NOT_INVOICED` by invoice-link presence; the invoice sweep never re-invoices a PAID row and Xero sync never downgrades a manual PAID | `/admin/subscriptions`, `/api/admin/subscriptions/[id]/manual-payment` |
-| Finance reports | Review lodge activity by the nights people stayed, not when bookings were created | Open `/admin/reports`, choose inclusive From/To dates (or **Next Month** from **Quick Range**), retain Lodge and Deleted scope, then read/export distinct overlapping bookings and guests, Booked Revenue allocated to those stay nights, booking-level Net Collected, Outstanding Additions, occupancy, trends, and current status | Say plainly that Booked Revenue is stay-night price, not cash; Net Collected comes from captured payments less refunds and is not allocated by night; **Refunds owed** and **Credits owed** beside it are as at today and club-wide, not the range's (#3372); Outstanding Additions remains separate. The report cohort is PENDING/PAYMENT_PENDING/CONFIRMED/PAID/AWAITING_REVIEW/COMPLETED, while occupancy deliberately remains PAID/COMPLETED-only and excludes custodians. Next Month changes only From/To. | A booking created outside the range but staying inside must appear; a booking created inside but staying outside must not; a booking spanning buckets counts once per touched bucket; a partial range keeps the full-stay cent allocation (100/3 = 34/33/33); December/February preset boundaries; single-lodge installs omit Lodge | `src/lib/__tests__/admin-reports.test.ts`, `src/lib/__tests__/admin-reports-route.test.ts`, Reports page render/export tests, `e2e/admin-reports.spec.ts`, named `admin-reports` screenshot |
-
-| Admin/finance dataset review              | Return a list, queue, ledger, or report to its known default without losing work context                                                   | Change search, filters, explicit sort, or page; use the always-visible **Reset** action; stay on the same lodge, season, tab, cohort, focused record, or Finance view where that value is context rather than dataset state                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | Use one visible label, **Reset**, across the audited 22 dataset surfaces. Keep it rendered at the default but natively disabled; its accessible name explains that search, filters, sort, and page are already at defaults. URL-backed resets use replace-style navigation, remove only known dataset keys, preserve unknown forward-compatible keys, and do not add history entries. Payments returns to the rolling NZ three-month Updated range through today; Reports returns to its rolling default through current month-end while keeping lodge; Subscriptions keeps season; Finance Dashboard restores Last Month / Previous Period / Next Month and empty cost filters while keeping view and lodge                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | Search-only, filter-only, sort-only, page-only, and combined dirty state; default state; a focused record or non-default lodge/season/tab/Finance view; unknown URL key; Xero sibling-panel params                                                                                                                                                                                                                                                                                                                                                                                                                                                     | Members, Bookings, Payments, Subscriptions, Reports, Finance Dashboard, Audit Log, Refund Requests, Waitlist, both Xero panels, Family Groups, Issue Reports, Deletion Requests, Membership Cancellations, Member Applications, all three Booking Request tabs, Induction Register, Promo Redemptions, Lockers |
-
-## Privacy and retention (#4457)
-
-Admin → Monitoring & Support → Privacy & Retention shows saved retention periods,
-two job switches and Sentry Session Replay. Support viewers can inspect the settings;
-support editors use Edit → Save/Cancel. Save is disabled until a valid value changes.
-Pruning and anonymisation ship off. The dry-run lists show IDs, relevant dates, total
-counts and pages of 25 using the jobs' eligibility checks. Application and former-member
-lists also require membership view access: eligible, blocked with reasons, and inactive with
-“no leaving date — set one to include” are separate. Member IDs open the member record.
-Save refreshes the preview; pagination waits for Save or Cancel. Replay ships off, and
-its control warns the club to name screen recordings and the overseas processor in
-its privacy notice before enabling it. See the [retention schedule](PRIVACY_RETENTION.md).
-
-## Group discount on nights added later (#2770)
-
-Admin → Booking Policies → Group Discount carries a fourth control, **Apply to
-nights added after booking**, beside Enabled / Minimum group size / Summer
-seasons only, and it is staged through the same per-section Edit → Save/Cancel
-step as its neighbours (no control auto-persists, and the dirty gate tracks this
-field like the rest, so an admin who changes only this one can still save). It is
-ticked by default, which is what every club already did, and its own help text
-says both halves of the choice in plain English — including that nights already
-booked keep the price they were booked at, so nobody is re-charged by unticking
-it.
-
-The other half of the story is on the edit panel, not the settings page. When the
-club runs a group discount and has switched it off for later edits, the
-modify-quote response carries `groupDiscountEditNotice` and the panel renders it
-verbatim in the same slot as the #2543 subscription-rate notice: a plain
-`role="status"` note beside the number, not a warning, because nothing has gone
-wrong. It is read straight off the quote, so it cannot outlive the quote it
-arrived on — a later quote without it, or a refusal that clears the quote, drops
-the note with it. A club whose switch is on, or which runs no group discount at
-all, sees no note, because there is nothing to explain. The rule behind both
-surfaces is INV-MOD-026.
-
-## Automatically refunded late captures (#2750, #2760, both handlers since #2773)
-
-A finance-view admin opens `/admin/payments`. Above the filters, up to two refund
-cards can appear, and they make opposite claims. **"Money to settle"**
-(#2262, renamed by #3033 when it stopped holding only refunds) is work, each row
-with a **Mark paid back** / **Record the adjustment** control and a **Dismiss** /
-**No adjustment** one. **"Refunded automatically — nothing to pay back"**
-(#2750) is a record: a payment that landed after the booking had already been
-cancelled — the booking's OWN payment or one for a change to it, both since #2773 —
-which Stripe returned to the member automatically. It shows
-the member, the amount, the day the money went back, the stay dates, the booking
-identifier as plain text, and both the reason the payment was queued and the note
-saying it is already settled.
-
-**Settling a review the club pays back by hand asks how (#3536).** On a
-**Record the adjustment** dialog where the officer has chosen "The club owes the
-member" and the booking's money did not come in by card, a **How did the club
-pay the member back?** choice appears: **By bank transfer** or **In cash**,
-neither pre-selected. It sets only the wording on the Xero credit note, and on
-the refund note when the booking has since been cancelled; leaving it blank
-keeps the bank-transfer wording (`INV-PAY-116`).
-
-**A bank refund back on the list because Xero voided its note (#4162).** The row
-asks one question under its reason - "Booking B-123: $200.00 to Sam Lee. Its Xero
-credit note CN-0456 was found voided on 14 Oct 2026, so it's back on this list. Has the
-$200.00 gone to the member?" - with **Yes, it has gone** and **No, the club keeps
-it**; leaving it is "Not yet". **Yes, it has gone** opens a dialog that asks
-which, with neither pre-selected: **Yes, raise a fresh credit note**, or **Yes, I
-already recorded it in Xero myself** with a box for the note's number, which the
-app checks in Xero before anything is recorded and refuses with the reason when it
-is missing, voided, not a sales note or for another amount. **No, the club keeps
-it** is the dismissal and needs a reason. Its own standing paragraph appears only
-when such a row is present.
-
-**A third kind of row, and it has no settle box at all (#3213, registered in this
-release and written in the next).** A booking change settled as money the member
-owes, whose Xero invoice was already being sent and could not be raised to carry
-it. Nothing is invoiced automatically, because an invoice in that state can still
-come back and go out at the full amount, and a second one raised now would bill
-the member twice. The row carries one control - **Close this item** - and no
-completion control at all: the completion door refuses a settlement against this
-kind outright (it would assert a refund the club never made), and a control whose
-only outcome is a refusal is worse than none. Its own standing paragraph appears
-only when such a row is present, and the cash hand-back paragraph deliberately
-does NOT fall through to it - the booking is live, nothing was cancelled and no
-cash was involved, which is the #3033 mistake one kind further along. Beside the
-amount it says what to do in the order it matters: check Xero first, then bill
-only the missing part, never the change's full total. A row raised by the
-payment-recovery pass shows **Amount not known** rather than **Awaiting
-pricing** - nothing on this screen can ever price it, because the pass that
-raised it holds the change's combined total and cannot say which part the sent
-invoice carried.
-
-**And what it says once it is closed is the same correction one step later
-(#3213 fix round).** On every other kind, closing without settling means the club
-decided not to pay something back, and both the receipt on screen and the summary
-written into the booking's permanent history say so in those words. On this kind
-the officer has just done the opposite job - checked Xero and billed a shortfall
-by hand - so being told they dismissed a refund would name the wrong act in the
-wrong direction, and the audit half of it would say so forever. Closing one now
-reads as an uncollected amount dealt with, with no money moved and the officer's
-note as the only record of what the invoices showed and what was billed. Every
-other kind's wording is unchanged, word for word.
-
-**One row per parked change, not one per guest (#3498, owner decision D1).**
-Until this release a booking change whose money could not be worked out raised a
-separate row for **every guest on the booking**, because the writer rewrites every
-guest's night prices whether or not the change touched them. Taking one guest off
-a seven-guest booking put seven rows on this card: six of them guests nobody
-touched, against whom no money could change hands, and one of them the guest who
-actually left — all seven with the same evidence block and the same
-**Record the adjustment** button, and the only thing telling them apart a line
-reading **Nights given back:** with dates on it instead of **none**. Measured on
-the live deployment on 17 September 2026, two booking changes had produced eleven
-rows, ten of them noise, and an officer working them stopped one row short of
-closing the row that carried a real $140.00 adjustment.
-
-A parked change now raises **one** row. It leads with the guest the money hangs
-on — the one whose nights actually moved — and carries, underneath, what was
-stored for every other guest the change touched, under a line saying how many
-there are and that there is one adjustment to record rather than one per guest.
-Nothing that used to be written down has stopped being written down: the same
-figures are on the one row instead of spread across several, which is what makes
-the old rows and the new ones say the same thing about the same change. Nothing
-about WHICH changes parked was different either. Since #4317 no change parks at
-all (`INV-MOD-041`); the rows already raised keep this shape.
-
-**With ONE exception, and it is where the money is most tangled (owner decision,
-17 September 2026).** A row carries one amount. Where a change moves the nights
-of **two or more** guests, two of them need two amounts — and putting both on one
-row would ask the second guest's unpriced nights to come to their stored total
-plus nothing, which only $0.00 satisfies, or to a negative figure no set of
-prices can reach, after which the review could never be closed at all. So a
-change that moves two or more guests' nights keeps a row per guest, each with its
-own amount. Everything else — a removal, a date change, a guest added — moves at
-most one guest's nights and gets the single row above.
-
-Because those rows can look alike again, **every row now says in words whether
-the change actually moved that guest's nights** or merely rewrote what was stored
-for them, in the evidence block and in the foreground colour on the row that
-carries the money. That is the tell that was missing when eleven near-identical
-rows sat on this card together.
-
-The rows already on the queue when this shipped are untouched and are worked by
-hand; they render exactly as they always did.
-
-**A row closed with no adjustment can be put back (#3498, owner decision D2).**
-Closing a row used to be final in both directions, and the queue only ever showed
-open rows — so a row closed by mistake was silent, permanent, and invisible to
-everybody afterwards: no banner, no row, and the booking's stored total not
-corrected either. A third card, **"Closed with no adjustment, lately"**, now lists
-what was closed that way in the last thirty days, with the reason it was raised,
-the note the officer wrote and when — and one control, **Put back on the queue**.
-Putting a row back makes it an open money question again: it returns to the
-settle queue, the member sees that the club is still working the change out, and a
-further price change to that booking is held until it is settled. Nothing is paid,
-charged or credited by it, and the note saying why it was closed is kept.
-
-A row that was **completed** is never offered, and cannot be put back even by
-posting to the endpoint directly: its money has moved, down a settlement route
-that can only ever pay out once, so inviting an officer to price it a second time
-would mean doing the work and then being refused. A row the system closed itself —
-a late capture Stripe had already refunded — is not offered either, for the same
-reason in the other direction: it is a record of money that went back, not a
-decision anybody took. Both refusals say which case it is.
-
-**The settle box asks a second question when the booking has unpriced nights
-(#3191).** A financial-review row whose guest strand holds nights with no stored
-price carries a list of those nights inside the settle dialog, one money box each,
-on BOTH controls - the adjustment one and the no-adjustment one, because a change
-that owes nothing is one of the commonest to have this problem. Nothing is
-pre-filled and there is no control that produces a figure: the officer types
-every figure (`INV-MOD-036`), and a box arriving with a number in it is a
-derivation an officer accepts by pressing a button. Under the boxes is a running
-line saying what the figures come to and what they have to come to - the strand's
-stored total adjusted by the amount being settled - and until the officer has
-chosen a direction and an amount it says instead that the target cannot be worked
-out yet. Filling some boxes and not others disables the confirm button with that
-sentence showing; a box holding something that is not an amount at all -
-`1,200.00`, `$45`, `45.` - is refused by name rather than reported as a missing
-one; and since #3219 D2 filling NONE of them is no longer an answer either - the
-confirm control is dead until every box holds a figure that reconciles, on
-**No adjustment** as well as on the adjustment control, because the booking's own
-price is worked out again from these nights when the review closes. The reason is
-the paragraph already above the boxes, in the words that decision chose, rather
-than a second sentence saying the same thing. Rows that offer no boxes are
-untouched and close exactly as they always did. When the figures cannot be made to add up honestly,
-the refusal itself says so FIRST and names clearing every box as the third way
-out, before it offers to have either figure corrected - the officer facing
-exactly that case must not be steered into typing a price that reconciles and is
-false. The running line is muted while an answer is being typed and turns to a
-warning colour only once every box has been filled AND left, so a wrong figure
-half-entered is not shouted at mid-number.
-
-**A $0.00 settlement is refused with a sentence rather than a disabled button
-(#3195).** The confirm control was already disabled at zero and said nothing,
-which is the bare refusal the owner's 31 Aug 2026 decision rejected. The dialog
-now prints the refusal beneath the amount box, from the same string the server
-would have thrown, naming **No adjustment** - the control that does say "nothing
-to adjust". Only a financial review has an amount box on this screen, so that is
-the only wording the browser ever prints; the hand-back wording, which names
-**Dismiss**, belongs to the server's own refusal and reaches the officer as an
-error after posting. Both the $0.00 refusal and the night-price verdict below it
-are live regions, and each is listed ahead of its box's worked example in
-`aria-describedby` - the confirm button is disabled behind both sentences, so a
-reader who cannot hear one is back at the bare refusal.
-
-**On a cancelled booking the dialog says what is still owed, before completing
-(#3835, `INV-PAY-113`).** Once a money-back direction and an amount are given, a
-review on a booking that was cancelled first asks the server what that share
-will actually give back - the completion's own route choice and netting, never
-a second calculation (`GET .../manual-refund-tasks/[id]/still-owed`) - and prints
-it under the amount box, for example "Only $25.00 of the $50.00 share is still
-owed after the booking's cancellation - hand back $25.00, not the full share".
-That matters most on a bank-transfer hand-back, where the officer moves the
-money themselves before completing; on the card and minted-credit routes it
-says what will be refunded or credited. Where part of what is owed came out of
-the member's applied credit, that part goes back as account credit and the line
-says so ("$25.00 to the card and $25.00 as account credit"). Nothing is printed when the whole share
-is still owed; when nothing is, it says so (and, on a hand-back, not to hand
-anything back); a share the completion would refuse shows that refusal. The
-line is a live region, mounted empty; the dialog's view-only gating is
-unchanged.
-
-**Two groups inside that one card, deleted first (#2760).** The record covers every
-auto-refunded late capture, and since #2760 that includes bookings which are
-cancelled but still on file — where the refund is usually the expected outcome of
-cancelling a booking somebody was part-way through paying for. Those rows would bury
-the case that needs a person, so **"The booking was deleted"** is printed above
-**"The booking was cancelled and is still on file"**, each with a line saying what it
-means: remake the booking and charge the member again if the deletion was the
-mistake, versus normally nothing to do. Each group is newest-first and only
-non-empty groups render.
-
-It carries **no View booking link** at all. That is deliberate: a deleted
-booking's detail page 404s for anybody who is not a Full Admin, and a booking that
-is merely cancelled has a page gated on `bookings:view` — which the Finance Viewer
-bundle does not carry at all — while this screen admits `finance:view`, so a
-Finance Viewer or Treasurer would follow the link into a dead end either way. The
-identifiers are printed instead of any page's audience being widened.
-
-**#3033 applied the same reasoning to the card above**, which until then offered
-its link to everyone this screen admits, including the Finance Viewer for whom it
-was the dead end this paragraph describes. The route now states
-`viewerCanViewBookings` from the DB-verified permission matrix and the card fails
-closed without it; a viewer who holds `bookings:view` gets the link, and everyone
-else gets the booking identifier as plain text, exactly as here. One further
-grant is read per row: an admin who OWNS the booking reaches the same page as its
-member, so a finance-only admin whose own booking is in the queue gets the link
-too — excluding a deleted booking, whose page 404s for a non-admin even when they
-own it. Both grants default to false, so a response that establishes neither
-offers no link.
-
-The second card has **no controls at all**, deliberately: there is no decision
-left, and "Mark paid back" on such a row would record a second refund for one
-refund. Its copy carries the only action that may remain, which is off this
-screen — if deleting the booking was the mistake rather than the payment, the
-booking has to be made again and the member charged again, because the refund has
-already gone out.
-
-The record card states, on screen, exactly what it covers: **every** automatic
-refund of a late payment from the last 30 days — with one clause naming the single
-exception, an operator who closed the hand-back task by hand before the refund
-landed — and the booking's audit entry
-(`booking.payment.refunded_after_cancellation`) named as the permanent record for
-anything older. It said "booking-change payment" until #2773, which was honest
-while the sibling handler for a booking's OWN payment wrote no row at all; both
-handlers write these rows now, through one shared writer, so the word came out. Until #2760 that copy said the opposite — the card was a partial
-list, because a row only existed on one of the four possible orderings — and
-reinstating either claim in the wrong direction is a defect: an operator who reads
-an empty card as proof that no automatic refund happened would be worse off than
-before the card existed, and one told to distrust a complete list stops reading
-it. The exception is deliberately a clause and not a paragraph, for that second
-reason; `INV-ADDPAY-037` carries the full reasoning, and #2774 D1 keeps the
-hand-resolved carve-out as documented behaviour rather than writing a second row
-for one capture — an orchestrator decision the owner has not ruled on, reversible,
-with the authority line under `INV-ADDPAY-039`.
-
-The moment-of-event notice is the admin email, and since #2761 it has its own
-subject naming what happened and which population it was ("Payment refunded
-automatically — booking already deleted" / "… — booking already cancelled"), cannot
-be muted by a notification preference or a delivery rule, and always resolves at
-least one recipient. Since #2773 the body also names WHICH payment was captured —
-the booking's own, or one for a change to it — because the two have different Xero
-consequences and a notice that misdescribes the event is what #2761 was filed about.
-It is still the only notification for the event: no badge and no digest row was
-added (`INV-ADDPAY-038`).
-
-**One case sends a different mail instead, never as well (#2774,
-`INV-ADDPAY-039`).** When an operator has already paid a capture back by hand, the
-automatic refund is withheld and the club gets *Automatic refund withheld — already
-paid back by hand*; when their hand-back landed during the refund, it gets *Payment
-may have been refunded TWICE — reconcile*. Both are unmuteable, both go to Finance
-editors, and neither is a variant of the auto-refund notice — that template's body
-says the money went back and there is nothing to pay back, which is false in one
-direction and the opposite of the truth in the other. Neither case produces a row on
-the record card: no refund was made in the first, and the operator's own row is the
-record in both.
-
-Each card renders only when it has rows, independently of the other, and the
-component renders nothing when both are empty. The record card must appear when
-there is **no** hand-back work at all: that is the ordinary case, since a healthy
-Stripe webhook records the refund itself and leaves nothing to pay back. It looks back 30 days. A failed load shows
-neither card **and one line saying it could not load**, rather than a stale list or
-a silent blank that reads as "nothing to pay back and nothing refunded"; when the
-route could read the queue but not the record, the queue renders as usual and the
-record is replaced by that same kind of line. See `INV-ADDPAY-036`,
-`INV-ADDPAY-037` and `INV-ADDPAY-038`, and the "Manual refund task lifecycle" entry
-in
-[`STATE_MACHINES.md`](STATE_MACHINES.md).
-
-## Outstanding additions on the booking confirmation (#4047)
-
-The booking detail page streams its additional-payment information separately.
-The officer chase/withdraw panel mounts after hydration; streamed HTML shows a
-loading message so React's hidden stream cannot duplicate the active panel.
-The owner sees each current card ask or dated remaining supplementary bank
-invoice amount with how to pay. Officers see the read-only audience; a plain
-linked guest sees neutral copy matching the current stay status, including
-awaiting confirmation on a pending booking. Known or uncertain extras suppress
-whole-booking no-payment reassurance while historical payment receipts and the
-canonical financial-review clauses remain visible to the financial audience.
-The owner banner shares the actual card's secret-response amount and paid or
-processing projection (`INV-ADDPAY-023`); while a replacement loads it shows no
-old amount. Unavailable details and officer views qualify local record amounts.
-
-A user presses **Check more invoices** to reach subsequent bounded batches.
-Each invoice retains its own timestamp and instructions; batches are never
-combined into a current total. Incomplete evidence says amounts/instructions
-cannot yet be confirmed and offers re-entry. Cancelled/bumped/deleted bookings
-suppress collection. A failed continuation marks payment authority uncertain,
-offers an explicit current-payment retry or reload without an automatic read;
-it never treats an unknown card ask as zero or leaves old pay controls current.
-See [the member guide](user-guide/booking-a-stay.md#additional-money-after-a-booking-change)
-and [the provider reader contract](xero/ARCHITECTURE.md#booking-page-supplementary-invoice-observations-4047).
-
-## A booking change whose money is still being worked out (#3033, epic #2797)
-
-**Legacy since #4317.** Every booking change is now priced when it is saved, from
-what the booking stored (`INV-MOD-028`): no new change reaches this state, and
-the edit panel's quote no longer carries a "the club will work the amount out"
-notice. What follows describes bookings whose change was parked before #4317 and
-whose review is still open; waves B and C of epic #4302 settle those reviews and
-retire these screens.
-
-When an edit to an existing booking is valid but its refund or credit cannot be
-established from the booking's own stored price history, the club **saves the stay
-change and holds the money** (owner decision D1). This section is what both sides
-of that state look like. The rule the wording is written against is the epic's:
-never show a fake `$0`, an estimate, or anything implying settlement is complete.
-
-### What the member sees
-
-**On the booking's own page**, an info banner — not a warning — headed *"Your
-booking change is saved"*. It confirms the change first, names the new stay dates,
-says the club is checking what the change means for the amount, and says plainly
-that nothing has been refunded or charged for it yet. Its next step is that there
-is nothing for them to do. **No amount appears anywhere in it**: not a zero, not
-an estimate, and deliberately not the booking's own stored total, which a parked
-edit writes back UNCHANGED — so it is the total from BEFORE the change while the
-dates and guest rows around it are the new ones, and it would read as
-authoritative beside a sentence saying the figure is unknown. Nothing internal appears either — no cause,
-no diagnostic category, and no clause that could read as the member's fault.
-
-Between the banner's facts and its next step sits the club's own explanation,
-which is editable at **Admin → Bookings setup → Booking messages** under
-*"Adjustment being reviewed"*. The split is deliberate and is enforced by the
-wording on each side rather than merely asserted: the narrative owns the FACTS —
-the change saved, the club will confirm the amount, nothing has moved, there is
-nothing to do about it — which are the same for every club, are shared with the
-public payment-link page and with the change-confirmation email, and live once in
-`booking-financial-review-copy.ts`. The message key owns only the club's
-EXPLANATION of why a person is working the amount out, which is the part the
-owner named as needing to be honest without being alarming and therefore the part
-a club must be able to soften without a release. It restates none of the facts —
-an earlier draft repeated two of them, which meant a club softening the key could
-not change the narrative's copy, which was the whole justification for having the
-key. An amount must never be put in it.
-
-**On My Bookings**, the row keeps the booking's stored total and qualifies it —
-*"· being checked"* beside the figure, and an info chip reading *"Adjustment being
-checked"* beside (never instead of) the booking status. That stored total is the
-PRE-change one, which is what the qualifier is there to say; hiding the figure
-would leave the member with no number at all, and correcting it is the estimation
-this epic forbids. The booking status is unchanged and still true, so the chip
-sits next to it rather than overwriting it.
-
-**By email**, the ordinary *Booking Modified* message carries the same sentences in
-its money section. Before #3033 that section rendered **empty** for this case — all
-three of its branches test for a positive amount and an unresolved adjustment has
-none — so the member received a change confirmation that said nothing at all about
-money.
-
-The review note is **composed with** the settlement note, not substituted for it.
-A single edit can add nights that price normally while surrendering nights that
-cannot be valued, so a review-pending change can carry a genuine additional
-amount. An exclusive choice loses one of two true things whichever way it is
-ordered: the payment instruction shadows the honest sentence, or the honest
-sentence suppresses an instruction to pay — and with it the amount, the Xero
-invoice number and the payment reference — leaving a member who does not pay,
-whose hold expires and whose booking cancels. The three settlement notes remain
-mutually exclusive among themselves.
-
-"There is nothing you need to do" is written **"about that change"** everywhere it
-appears, for the same reason: it sits beside instructions that do require action,
-and an unscoped version cancels them.
-
-The banner does **not** displace a cancellation, a release or a decline. Those
-describe what happened to the booking, which is the more important truth, and the
-review wording assumes a stay that is still going ahead.
-
-It does **not** displace a payable narrative either — it is added to it.
-`PAYABLE_STATUSES` covers CONFIRMED, and a CONFIRMED-unpaid booking renders the
-member's **Complete Payment** card, so returning the review narrative outright put
-*"there is nothing you need to do"* directly beside a card asking for money. A
-payable booking with a review keeps its amount due and its instruction to pay, and
-gains the review's sentences plus the fact that joins them: the unpriced
-adjustment is not part of the figure being asked for. Gating the review branch to
-PAID would have resolved the contradiction by deleting the disclosure.
-
-The figure is the **amount owed** (#3991, `INV-PAY-119`): the price plus any change
-fee recorded on the payment, less the credit applied in the ledger — the figure the
-pay card and the `{amountDue}` token quote and the payment link charges. When that
-is nothing, the banner says *"Nothing to pay"*, replaces *"This amount does not yet
-reflect…"* with a sentence that needs no figure before it, and drops the
-nothing-to-pay next step's pointer to the bookings page.
-
-**Who sees the owner's account credit (#3991).** One predicate decides it,
-`canSeeOwnerCredit` (`booking-detail-viewer.ts`): the owner, anyone who can manage
-the booking, and admin-type viewers, read-only ones included. In practice that is
-everyone the page admits except a linked guest, and a read-only admin who is also a
-guest gets the admin answer everywhere. For a viewer it excludes:
-- the banner names no credit: a credit-covered booking says only *"nothing left to
-  pay"*, and a cancellation settled as credit drops *"$X was added to your account
-  credit"* and says only what was retained;
-- the timeline drops the *"Saved account credit was not applied"* entry and any
-  *"Credit Choice Updated"* edit, and the *"Booking cancelled"* entry reads only
-  *"This booking was cancelled."*. That entry's stored text is free-form, so a
-  guest also loses its non-credit detail, such as a cancellation reason: a
-  deliberate trade-off, since the credit cannot be picked out of free text;
-- the cancellation outcome drops its *"Held as account credit"* and *"Previously
-  applied credit restored"* lines, its badge reads *"Settled on Cancellation"*
-  rather than *"Credit Issued"*, and the hand-back note is hidden;
-- the credit-election notice and the pay card's credit row stay hidden, as before.
-
-The price, what was paid, what went back to the card and what was retained stay
-visible, so a guest can still work the credit out by subtraction. What is withheld
-is the statement of the owner's credit, not the arithmetic.
-
-**And it does not displace a paid one (#3194).** #3033 replaced that narrative
-outright, which removed *"nothing more to do"* — the false reassurance the epic is
-aimed at — but removed *"we've received your payment of $360.00 on 12 Aug"* along
-with it. That is the only sentence in the product that answers *"did my payment go
-through?"*, and on the emailed payment link the narrative is the whole page, so a
-member who paid by internet banking and opened the link to check was told nothing
-about their payment at all. A paid booking under review now keeps its
-confirmation, gains the same review sentences beside it, and has only the banned
-next step replaced: *"there is nothing you need to do about that change. We'll be
-in touch once the amount is confirmed."*
-
-The figure it keeps is money the club **has**, read off a durable payment event.
-The epic's no-amount rule is about the reviewed change's amount, which nobody
-knows; the bridging sentence says out loud that the two are different amounts,
-exactly as it does beside a payable narrative's *"$120.00 is due"*. The standalone
-review wording, where no amount of any kind appears, is what a booking that is
-neither payable nor paid still reads.
-
-**On the emailed payment link** (`/pay/<token>`), the member reads the same
-thing. Until #3194 they did not: that helper is `server-only`, the page is a
-client component, and nobody threaded the answer through — so a member who
-followed their emailed link saw the ordinary payment view and, on a booking that
-read as paid, was told there was nothing more to do, while the booking's own page
-said the money was with the office. The route handler now does the read and hands
-it down, and the sentences come from `booking-financial-review-copy.ts` rather
-than from a second set written for this page.
-
-A paid booking under review reaches this page through the **server's** narrative
-rather than the confirmation the page composes for a payment made on it, so both
-halves have to be in that narrative: the payment confirmed, and the review
-disclosed. `getPaymentLinkContext` loads the link structurally, so an already-used
-link still renders; and a redirect-based card method returns to this same URL and
-re-fetches. Same member, same booking, seconds apart — the page must not confirm
-the payment on the way in and forget it on the way back.
-
-The page keeps taking money. Its payment card is its own — dates, guests, amount
-due, link expiry — so it shows the review half on its own from
-`financialReviewNoteBesideAnAmount`, directly under the amount and above the
-buttons, where it is read before the member decides. The card button, the
-internet banking reference and the *"email me a new link"* action all stay armed,
-because the booking's stored price is still owed and this link is the only way an
-unregistered guest can pay it; disarming them would cost the member the booking
-when the hold expired without moving a cent of the money under review. The note
-also stays on screen after a card payment completes on the page, where the
-confirmation is composed by the page rather than by the server and would
-otherwise sign off with *"your booking is confirmed"*.
-
-**That amount is the one from BEFORE the change, and the page says so.** A parked
-edit saves the new dates and deletes the departing guest's row but writes
-`finalPriceCents` back unchanged — both parking services do, deliberately, so
-nothing settles on a change whose money nobody could work out. The payment card
-therefore shows a post-edit stay beside a pre-edit price, and a member who reads
-that as settled and pays it overpays by exactly the amount nobody could compute.
-So the note beside an amount still DUE opens with *"This amount does not yet
-reflect the change you made to this booking"*, while the note beside an amount
-already RECEIVED keeps *"whose amount is not part of that figure"* — money that
-arrived is a settled historical fact and a parked edit cannot make it stale.
-`financialReviewNoteBesideAnAmount` takes which kind of amount it stands next to,
-with no default, so a new surface has to answer the question rather than inherit
-the reassuring half.
-
-That means the page reads TWO facts off one payload and must not conflate them:
-`state` is the WORDING state, which a review changes, and `payable` /
-`canRequestFreshLink` are the LINK's own state, which it does not. Keying the
-payment card on the wording state hands a CONFIRMED-unpaid member a page saying
-*"pay by card or internet banking below"* with nothing below it.
-
-**In the booking's own Transaction History**, the modification row for the change
-keeps its figure and loses its colour. The signed price difference is real — it is
-how far the booking's total moved — but it was rendered in the same green a
-completed refund gets, which under this banner reads as money already returned.
-The tone drops to neutral and the row says the refund or credit is still being
-worked out. Only the most recent **priced** modification is qualified: a review is
-raised by a priced edit and no later one can sit above it, so saying an edit from
-months ago is unresolved would be false.
-
-### What the admin sees
-
-**On `/admin/payments`**, the settlement queue holds review rows beside cash
-hand-backs, and each of its two explanatory sentences renders only when a row it
-describes is present — before #3033 the cash sentence was printed over every row,
-including reviews, where every clause of it is false. An unpriced review shows
-*"Awaiting pricing"* rather than `$0.00` (#2971), and a row whose amount has been
-amended since it was raised says so on its face.
-
-Each review row carries the evidence captured when the edit was applied, which is
-owner decision D3's *reason plus a link*, never a copy of the ledger: the safe
-diagnostic category as a sentence (never its enum name), the nights given back and
-the nights the same change added, the stored total for that guest, and the stored
-per-night prices — with *"no stored price"* kept distinct from `$0.00`, because a
-comped night and an absence are different evidence. Beside it is the link to the
-booking's own payment and rate history, which is live and is where the payment
-detail belongs. A row whose captured evidence this release cannot read **says so**
-rather than rendering an absence, because that evidence is the only record of what
-the edit destroyed.
-
-The identifiers behind that evidence — the guest's member id and the guest-strand
-id — never leave the server. The route parses the stored context and sends a
-projection that has no field for either, so the redaction cannot be forgotten at a
-send site rather than being remembered at each one.
-
-**Dismissing** a review reads as a finding — *"Close with no adjustment"*, meaning
-somebody looked and nothing is owed — not as the hand-back card's *"declined the
-refund, or settled another way"*. **Recording an adjustment** on a review with no
-confirmed amount is disabled with the reason shown, because the server refuses such
-a completion and a control whose only outcome is a refusal is worse than none.
-
-**Where the money goes when they record an adjustment** is not a choice on the
-screen and never has been — the routes are mutually exclusive on facts. Money that
-came in on a card goes back to that card; money settled by hand is mirrored in the
-ledger; and where nothing was captured there is nothing to reverse, so the amount
-becomes account credit. Since #3194 that question is asked of the BOOKING at the
-moment the officer closes the review, rather than read off a note taken when the
-review was raised. It matters because a review can be parked on a booking nobody
-has paid yet — the member can still pay, deliberately — and the old note said
-"there is no card" for ever after, so a member who paid by card while their change
-was being worked out could only be handed club credit. Nothing about the officer's
-screen changed; the money simply goes where their money is.
-
-**On the booking's own page**, an admin also sees a *"Money waiting for review"*
-row on the Admin tools card, with a link to the settlement queue. It is read-only
-and reuses the provider-mismatch row shape, but sits in its own block: the
-provider block is headed "Provider state out of step", and a review is the opposite
-situation — local state is exactly right and the club owes a decision.
-
-**A failed Xero invoice now says so on the booking (#3001).** The provider block
-also carries the booking's current `BOOKING_INVOICE` create-operation state,
-which until then was visible only under Admin → Xero → Operations while the
-booking itself looked like it was progressing normally. The wordings differ
-because the remedy inverts on whether anything reached Xero: *No Xero invoice for
-this booking* (nothing was raised — retry); *Check Xero: this booking's invoice
-was left mid-flight* (a worker died or an operator reset a stuck row, and nobody
-can tell from here — look before acting); and the rest, which name the invoice
-and say **do not raise a second one** — the payment not recorded against it, the
-member not sent it (in the three separate wordings its three causes need), or the
-operation part-finished.
-
-**One decision drives both the last sentence and the link label**, so the surface
-cannot offer a Retry beside *do not repeat the action*. **Retry from Xero
-activity** appears only where repeating is safe and the engine will run it:
-nothing reached Xero, or the invoice exists and the club's PAYMENT is what is
-missing — the one case where a retry raises nothing. Everywhere else the label is
-**Resolve from Xero activity**, carrying the engine's own refusal where the
-engine is what refuses (an email-only failure is refused precisely because
-"repairing" it would record a payment against an invoice the member has not
-paid). Full-admin-only at both the read and the render — the same gate the whole
-provider block has always had, not a new one — and an invoice email withheld on
-purpose (#2258, #2929, #3035) is not a failure and raises nothing.
-
-## Whole-roster staged editing (#2586)
-
-On `/admin/roster`, selecting a lodge night loads a read-only authoritative
-snapshot. **Edit roster** opens one draft for every assignment on that night;
-dropdown changes, **+ Add Person**, and **Remove** are local until one dirty- and
-valid-gated **Save roster** atomically commits the complete revision. **Cancel**
-restores the snapshot. A dirty draft prompts before date, lodge, or Regenerate
-changes; declining preserves both draft and focus. A failed keyed load clears
-the prior partition and offers **Try again**. Stale, ineligible, permission, and
-service failures keep the draft and move focus to the global alert or affected
-guest row.
-
-The permanent summaries show due-chore staffing against exact configured
-recommendations and every eligible guest grouped by booking/family. Within a
-group the server orders known linked-member dates of birth oldest-to-youngest,
-breaks equal-DOB ties by displayed name/stable id, then orders unknown DOBs by
-displayed name. DOB is never returned or inferred from age tier. The Save path
-re-resolves current guest eligibility and writes both guest and booking foreign
-keys under the shared date lock; all rows return to Suggested, and completed
-rows require explicit reset acknowledgement.
-
-## Member-guest consent ("+ Add Member Guest", #2305 / MG2 #2307)
-
-MG2 turns the feature on server-side and makes consent *happen*. What a person
-actually encounters in this release:
-
-- **Four member-facing emails.** A consent request to the member being added (or
-  to a family adult, when that member has no login of their own); a "you have been
-  added" notice when nobody was asked — notify-only clubs, admin adds, and
-  pipeline rows all share one template distinguished by a single composed
-  sentence; an outcome email to whoever made the booking; and a lapse notice to a
-  member whose request timed out. The request email carries the **full party
-  listing by name and no money at all** (owner decision MG2-D-a). Money is left
-  out as a courtesy rather than as a control, and the docs say so: under owner
-  decision D-11 that member can open the booking page immediately and the guest
-  table there shows every price and the total.
-- **One answer endpoint**, `POST /api/bookings/[id]/guests/[guestId]/consent`,
-  taking `{ action: "APPROVE" | "DECLINE" }`. Every failure — missing booking,
-  missing guest, wrong booking, already answered, not your request — returns the
-  **same 403 with the same body**, so neither id can be used to probe who is on
-  which booking. That uniformity is deliberate and must not be "improved" into
-  helpful messages. It describes a club with the member-guests module **on**;
-  with the module off the proxy's module gate answers **404** before the
-  endpoint runs at all, which says only that this club does not run member
-  guests.
-- **An honest refusal path.** Owner decision D-14 keeps the ordinary
-  self-removal blockers in force for a member who never consented, so "No thanks"
-  is sometimes refused. Predictable refusals state the reason and name who can
-  act; the settled-payment refusal is not predictable without the full repricing
-  pass, so the action is offered and the server's plain-English 400 is repeated
-  verbatim — exactly the pattern #2250 already established.
-- **Admin policy settings** at `GET`/`PUT /api/admin/member-guest-settings`,
-  gated on the bookings permission area with a real view/manage split so a card
-  can render read-only without ever showing a Save button that would 403.
-- **The edit path and admin parity** (MG4 #2309), signed off as
-  `docs/member-guests/mockups/edit-path-and-admin.html` (1 Aug, all four
-  recommendations accepted plus one binding layout change) and built to it. The
-  booking's edit panel gains **the wizard's exact header shape**: the Guests
-  card header carries two buttons, `+ Add Member Guest` then
-  `+ Add Non-Member Guest`, replacing the generic `+ Add Guest`, and pressing
-  the first opens MG3's finder inline in the card content. There is deliberately
-  no dashed block of its own — a member who has used the wizard has learned this
-  control once, and a second surface that looked different would make them learn
-  it twice. Module off and the member-guest button is absent, not disabled, with
-  nothing in its place; the non-member button stays exactly where it was. There
-  is no separate admin booking page in this app, so an officer reads the same
-  panel with the same two buttons, and the admin sentence — *"This member will
-  be added immediately and told by email."* — sits inside the opened finder,
-  because with no block there is nothing to hang it under. The finder offers no
-  "…and email member" tick, because D-16 puts that notice outside the per-action
-  choice, and for an officer who actually has name search it carries the reach
-  hint *"Admins can search every active member by name, including under-18s."*
-  The officer's picker is its own booking-scoped route whose NAME mode is gated
-  on `membership:view` rather than `bookings:edit`, so #1376's directory-less
-  Booking Officer falls back to exact-email resolve and never sees that hint;
-  both modes are audited exactly as a member's are.
-- **A row whose request is unanswered offers "Cancel request", not "Remove"**,
-  because the two are different events to the person on the other end and send
-  different emails.
-- **A member guest who comes OFF a booking is told**, once, by whichever surface
-  did it — the request called off before anybody answered, the guest taken off,
-  or a booking-request booking re-arranged so somebody else has the place. A
-  decline and a lapse each already have their own message and do not use it, and
-  a member who removes themselves is not told what they just did.
-- **The booking-request pipeline notifies too** (MG4-D-b). All three of its
-  guest-write points — the capacity hold, the approval-time swap, and the
-  approval with no hold behind it — stamp the officer who placed the member and
-  email them. The swap preserves each guest row's id so pre-assigned beds
-  survive, which means substituting one person for another looks like an
-  ordinary edit; both parties are told.
-- **A pending guest is deliberately invisible operationally** (owner decision
-  D-12): absent from the kiosk arrivals list and the arrive/depart gate, the chore
-  roster and its print sheet, bed allocation and the admin bed board, the
-  hut-leader pickers, the lodge display board, the week summary, the double-bed
-  candidate sweep, and the pre-arrival and check-in reminder emails. They still
-  hold a bed and a person-night, because that is what the hold IS.
-
-The visible half — signed off as static mockups in `docs/member-guests/mockups/`
-(30 Jul, all four MG2-M decisions ticked as drawn) — ships with it:
-
-- **The consent card** on `/bookings/[id]`, anchored `#consent` (the request
-  email deep-links there), immediately above the #2250 self-removal card. A
-  pending member sees the whole booking page (D-11) with the card inside it:
-  who added them, lodge, stay, their own nights, the answer-by date, the full
-  party listing by name ("— that's you" on their own row), the lapse sentence,
-  and **Yes, add me** / **No thanks**. A predictable decline refusal (last
-  guest, quote-priced, status, started stay) warns before the click and
-  withholds "No thanks"; the unpredictable settled-payment refusal keeps both
-  buttons and repeats the server's 400 verbatim. A quote-priced ask says
-  "booking request" in its heading. Under notify-only policy there is no
-  question, so the card is a "You're on this booking" notice pointing at the
-  #2250 card below — never a second removal path.
-- **The delegate page** at `/bookings/consent/[guestId]` — its own route,
-  carrying real traffic (D-9: a target with no login is the normal case). Only
-  an adult in the target's family group (the same resolver the endpoint
-  authorises with) sees anything beyond one neutral "nothing here to answer"
-  state; no-row, non-consent row and not-your-family are indistinguishable, so
-  the URL cannot be used as an existence oracle. An accepted delegate sees
-  names, dates and the question — **never the booking page and never money**
-  (the deliberate asymmetry with a logged-in target is a security choice) —
-  answers for the target, and has their name recorded against the answer.
-  Already-answered, lapsed and module-off render as honest states; the target
-  themselves is redirected to the booking page's `#consent` card.
-- **Consent badges on the guest list** (`BookingEditor`, the same page member
-  and admin read), wording per MG2-M-2 as ticked: "Waiting for consent ·
-  expires 7 Aug", "Consented", "Consented by Ana Kaur, 2 Aug", "Told, not
-  asked", "Added by Jo Admin", "Said no — could not be removed", "Lapsed —
-  could not be removed". Family and non-member rows get no badge and no layout
-  change.
-- **The settings card** on Admin › Bookings setup (MG2-M-1: no new admin
-  route): ask-first/tell radios (ask is the default), the 1–60 day waiting
-  period with the never-outlives-the-stay rule stated, and the two name-search
-  toggles with their privacy warnings; the D-18 note states that the search
-  settings never travel in config transfer. Three honest states: normal;
-  module-off **editable** with a not-in-use banner (MG2-M-4); view-only as a
-  real third state via the shared banner + gated controls.
-- **The exception queues** as two filter chips on the existing Admin › Bookings
-  list (MG2-M-3: not a new page): "Waiting for consent · N" (bookings holding an
-  unanswered request) and "Consent needs attention · N" (stuck guest rows),
-  where the attention view swaps in a per-guest table with Why-stuck /
-  What-fixes-it columns composed from D-15's four reasons — always the real
-  remedy, never "ask the club".
-- The consent-request email now deep-links per recipient: the target to
-  `/bookings/[id]#consent`, a delegate to `/bookings/consent/[guestId]`.
-
-### Finding and adding the other member (MG3, #2308)
-
-The half a booker actually touches, signed off as
-`docs/member-guests/mockups/find-and-add.html` (31 Jul, all four questions
-answered) and built to it:
-
-- **`+ Add Member Guest`** sits in the Guests step's header row, immediately
-  before the existing `+ Add Non-Member Guest`, and only when the server says
-  the module is on (`GET /api/members/guest-candidates`). Module off and the
-  button is absent, not disabled.
-- **The find panel opens inline, underneath the Guests heading** (owner
-  sign-off answer 3) — never a dialog, because a pop-up inside a multi-step form
-  is awkward on a phone and a trap for keyboard and screen-reader users.
-- **One box takes either an email address or a name** (owner sign-off answer 2).
-  Text containing an `@` is resolved exactly by the email path; anything else
-  searches names, and only where the club turned open search on. There is no
-  mode switch. Half a typed address is treated as an email attempt and answered
-  with the same fixed "no bookable member found" sentence, rather than falling
-  through to a name search that would silently match nothing.
-- **Two routes, one privacy envelope.** `POST
-  /api/members/guest-candidates/resolve` (exact email; POST so the address never
-  reaches a URL, access log or `Referer`) and `GET
-  /api/members/guest-candidates/search?q=` (name type-ahead). Module off ⇒ both
-  **404**; open search off ⇒ the search route **404s** — never 403, because a 403
-  confirms the club has the feature and merely disabled it for you. Turning the
-  setting off makes the route vanish again immediately, with no deploy.
-- **Neither route ever evaluates eligibility.** No profile gate, no subscription
-  check, no person-night check, no already-in-your-party filter. That is what
-  stops the finder becoming an eligibility oracle: it cannot leak an answer it
-  never asks for. Every refusal happens later, at add/quote/create time, in
-  D-8's one neutral sentence. Both routes always answer **200 with the same
-  shape**; "not found", "inactive" and "no such member" are all `{ candidates: [] }`.
-- **A candidate row shows full name and age group only** (D-19) — no email, no
-  town, no photo, no membership type. Rows a booker cannot tell apart are left
-  identical on purpose and the panel points at the email address instead of
-  inventing a distinguisher. The name search caps at ten, matches prefixes only
-  (never mid-string), and reports overflow as a boolean — never "showing 10 of
-  47", which would be a free membership-size oracle.
-- **The panel's keyboard contract is one sentence, and it is the same in both
-  modes:** if there are candidates on screen, Enter chooses the highlighted one;
-  otherwise Enter runs the find. Arrows move the highlight and Escape backs out
-  (from anywhere in the panel, including once a person has been chosen and the
-  input has been replaced by their chip), returning focus to the button that
-  opened it. The combobox ARIA is likewise unconditional — the household
-  pick-list renders in the DEFAULT email mode too, so gating those attributes on
-  the open-search toggle left the list an unannounced orphan for every club. Every
-  outcome is announced, zero results included, and the results list scrolls inside
-  its own box rather than pushing the guest form down a phone screen.
-- **A name typed into the email-only box is answered, not ignored.** With open
-  search off the panel says "This club doesn't list members by name. Enter their
-  email address to find them." rather than doing nothing — the inverse of the
-  trap owner sign-off answer 2 was chosen to avoid, and it lands in the mode
-  every club gets on day one. A query under two characters is refused locally
-  with "Type at least two letters." and never reaches the server, so it spends no
-  budget and cannot be mistaken for "nobody matches".
-- **The neutral refusal renders where the booker was working.** On the Guests
-  step it appears in the find panel beneath a chip naming the person, with the
-  one honest next step the mockup drew — "If you think that's wrong, ask them
-  directly, or contact the club." From the Review step, where the panel is not
-  mounted, the same sentence goes to the page banner instead: an unpaid member
-  guest quotes cleanly and is refused only at Confirm, so routing it to a panel
-  that is not on screen made the button silently stop working.
-- **Under-18s are excluded from the name search** unless a club opts them in
-  (D-20). That sub-setting gates the type-ahead only: a minor stays directly
-  resolvable by their household email address, which is the consequence D-9
-  carries.
-- **Every query is rate-limited per acting member as well as per address, and
-  every query is audited** — including empty results, under-minimum fragments,
-  and rate-limited rejections. The resolve row stores the full address typed,
-  deliberately: probe detection needs it, and admins reading the audit log will
-  see it.
-- **Consent badges in the wizard use warmer, name-bearing wording** — "Waiting
-  for Sam to approve", "Sam approved", "Sam will be told" — while the
-  booking-detail page keeps MG2's "Waiting for consent · expires 7 Aug",
-  "Consented", "Told, not asked" (owner sign-off answer 1, taken against the
-  recommendation). Two vocabularies, ONE function: `describeMemberGuestConsentBadge`
-  gained a third audience rather than a fork, so all eight sub-states are mapped
-  for all three audiences and a new state cannot be added without deciding all
-  three. The wizard never distinguishes a delegate approval from a self
-  approval — the same privacy rule the member audience already followed.
-- **The review step states all four consequences plainly whenever anyone is
-  still waiting** (owner sign-off answer 4), never behind a disclosure link: the
-  hold and its expiry in the club's own configured days; that a decline reprices
-  the booking; that **the person added can see the whole booking, other guests'
-  names included, before they decide** (D-11 as ticked); and that **their
-  approval covers the booking however it later changes**, with removal subject to
-  the usual limits once it is priced or paid (D-13/D-14 as ticked).
-- **#2388's mitigations ride the add paths, not just the finder.**
-  Per-acting-member throttling on all SIX member-facing add paths —
-  `/api/bookings/quote`, create, guest-add, modify-quote, modify and
-  modify-dates. It is counted when the attempt INVOLVES somebody beyond the
-  booker's family, which is not quite the same as naming them: `modify-quote`
-  has a second charge point that fires when the booking merely CARRIES a
-  cross-family member guest and the request only moves the dates, because that
-  preview asks the same question about the same person and used to cost nothing
-  at all. The two share one ledger, so one attempt is one unit however many
-  charge points fire. An ordinary family booking is still never slowed, and
-  neither is a booking with no cross-family member guest on it.
-- **A response floor on every collapsed refusal**, paired with the more
-  important fix: "Linked member is inactive or not found" and the age-exempt
-  refusal used to answer a cross-family probe in their own words with their own
-  status, and now collapse to the neutral one too — as does the membership-type
-  refusal, which used to name the blocked member and their membership category
-  outright. The floor is a MINIMUM, not a budget: refusals raised late in a
-  request (the person-night guard, the unpaid-subscription check) still report
-  whatever the pricing path cost, and this map does not claim otherwise.
-- **Refusals that read nothing about the named members come before the member
-  lookup** (#3770), so they answer the same whether a member id in the party is
-  real. On create: a bad stay range, the own-dependant question, a past date
-  (including a guest whose own stay starts in the past and, for an officer's
-  retroactive booking, the lookback and the Xero lock date), a missing or
-  unknown lodge, a lodge the booker may not book, a room from another lodge, the
-  guest-count cap, the booker's own unpaid
-  subscription, the minimum stay, Internet Banking availability and its cutoff,
-  a working-bee event that cannot apply, and a promo code that is unknown,
-  inactive, out of its window, for another lodge, assigned to somebody else or
-  missing its guest selection. The promo code's usage caps, and which guests may
-  use it, read the priced party and are still answered later. A full lodge is
-  answered before the outsider is looked up too (owner decision), counting the
-  guests the booking would hold beds for, so it can arrive a little ahead of
-  other refusals. On the
-  exception
-  requests: the stay range and the own-dependant question, a lodge id that names
-  no active lodge (new booking), a supersede target that is not the member's
-  open request, and an occupied slot (edit). "Nothing to review" reads the
-  members, so with a beyond-family member named it is the neutral refusal
-  instead, and both doors floor and audit their neutral refusals.
-- **The booker's own family is judged before anyone from beyond it is looked
-  up** (#3770, `INV-GUEST-020`), on create and on both exception requests. A
-  family member who is missing profile details is reported in full whether or
-  not a named outsider is real (and, on create, one already booked those nights,
-  blocked by their membership type, or unpaid), which reverses here the order
-  where the outsider's neutral refusal used to win. Where member guests are off,
-  an outsider is still refused first, as before. If a party on create needs a
-  paid-up adult, an adult host or an adult for its minors and an outsider is
-  named, the rule is judged once that outsider is known: an outsider the rule
-  can count settles it, and if it still fails the member sees the neutral
-  refusal. An outsider waiting to consent does not count towards the paid-up
-  adult, the final hosting check or the adult with children (owner decision),
-  so children plus a not-yet-agreed outsider need a justification, as children
-  alone do. The wizard's review step, the admin booking page and the edit panel
-  ask for that reason with the server's own rule (`adult-supervision.ts`): for
-  an outsider the member just added, the wizard predicts the consent the add
-  will be written with. The finder stays disabled until the member's family
-  list has loaded ("Loading your family…", or "We couldn't load your family
-  list" with **Try again**), so every outsider row carries that prediction; the
-  edit panel also shows the field when the server asks for it.
-- **Every collapsed refusal is audited** naming actor and target, and a run of
-  them against the same target raises a flagged row an admin can find — ONCE per
-  actor/target per 24 hours, on the crossing rather than on every refusal past
-  it, so an afternoon of ordinary re-dating does not bury the signal in
-  duplicates. **Logged, never blocked**, by the owner's explicit sub-decision,
-  because a member trying several dates for a friend is the normal case.
-- **The edit panel does not claim an add that did not happen.** A date change on
-  a booking that already carries a cross-family member guest can be refused, and
-  the shared sentence — "this member can't be added" — would be describing an
-  act the booker did not perform. On a request that adds nobody the panel says
-  "This change can't be made to this booking right now" instead. The server's
-  answer is unchanged; the client is describing its own request.
-- **The family-boundary recomputation is gated** (owner decision, 1 Aug 2026).
-  It runs on a booking-change request only when the club's member-guest module
-  is enabled, or the booking already carries a member-guest consent row — so a
-  club that never adopted the feature does not pay for it on every edit, while a
-  legacy or in-flight booking keeps its protection if the module is later
-  switched off.
-
-Lobby Display's single `/admin/display` hub entry is owned by the collapsible
-**Lodge Operations** sidebar section. The admin command palette derives the same
-group from the shared navigation registry, while the display leaves and their
-BackLinks remain unchanged.
-
-## Lodge maintenance reports (#2780)
-
-Two doors into one form, one officer queue behind them.
-
-- **Member door** — a **Lodge Maintenance Issue** card on `/dashboard` (shown
-  only while the `maintenanceReports` module is on) links to `/maintenance-report`.
-  The member picks the lodge (auto-resolved when the club has one), says what needs
-  fixing, answers the club's short question set, and may attach a photo. The photo
-  is resized in the browser before it is sent.
-- **Anonymous QR door** — a printed sign in the lodge carries a per-lodge bearer
-  token; scanning it opens `/lodge-maintenance/[token]` in the `(public)` group.
-  The token is read from the router, never rendered into the page or its RSC
-  payload, and every failure (bad token, paused sign, module off, lodge inactive)
-  renders one generic "this code is not working" card — the API answers a single
-  404 for all of them, so the page is not an oracle. This door works only when the
-  admin has ticked **Report from a QR code without signing in** (default off), and
-  is rate-limited per IP and per token.
-- **Officer queue** — `/admin/maintenance-reports` (**Admin → Lodge Operations →
-  Lodge Maintenance**, `lodge` area) has four tabs: **Reports** (triage, defaults
-  to Open; photo fetched only when a report is opened, which is also when the
-  disclosure audit row is written), **Questions** (the club-wide bounded editor;
-  removing a question never rewrites what an old report was asked), **Signs**
-  (create/print/pause/replace — the raw code is shown once, the QR bitmap drawn
-  in-app; Replace kills a leaked sign, Pause does not), and **Settings** (photos,
-  retention days, the anonymous switch). Every edit affordance is gated through
-  `ViewOnlyActionButton` under one `AdminViewOnlySectionBanner` per section. A
-  QR reporter's self-declared name is labelled "says they are …", never shown as a
-  verified identity. The officer is emailed a new-report notification through the
-  existing notification-rules machinery.
-
-## Member lodge roster (#2942)
-
-Who else is staying, over a bounded forward window, for members only. Off
-unless the club turns it on.
-
-- **Member door** — a **Who's at the lodge** entry in the main navigation
-  (shown only while the `memberLodgeRoster` module is on) leads to
-  `/lodge-roster`. There is no dashboard card and no API route: the page is
-  rendered entirely on the server, so there is no endpoint to call directly and
-  nothing crosses into the browser but what is drawn.
-- **What it shows** — one card per lodge the member can already book, each
-  listing the people staying and the nights they are here. With exactly one
-  active lodge the card chrome and the lodge name come off, per the ADR-002
-  presentation rule. The window is the club's today through
-  `ROSTER_WINDOW_DAYS` lodge nights; there is no history and no parameter that
-  widens it.
-- **Whose names** — only bookings that are `PAID` or `COMPLETED` count as a
-  stay, so a confirmed-but-unpaid booking is absent and the lodge can be busier
-  than the page suggests. Names are reduced by `Lodge.rosterNameGranularity`
-  (four levels, defaulting to the full name). A booking naming nobody — one
-  containing a child, an organisation's booking, or a party
-  of eight or more that was alone on every one of its nights — appears as one
-  labelled row with the size of its busiest night.
-- **What is never here** — contact details, dates of birth, addresses, money,
-  booking ids or notes, beds, group identity, dietary information, and which
-  booking holds the whole lodge. Custodians are listed outright — a
-  custodian who also books once, as custodian, on their custodian nights
-  (#3821) — and a
-  whole-lodge hold's nights appear as one "Reserved for a private booking"
-  row, the holding party neither named nor counted and given no row of its
-  own (#3474) — both so nothing is left to be deduced by
-  comparing this page with the calendar. The rule is `INV-PRIV-017` and it
-  is enforced by what the server BUILDS, not by what the page renders: a
-  withheld field is an absent key.
-- **Admin door** — **Admin → Lodges → the lodge → Member roster** sets the name
-  detail for that lodge. It stays visible and editable while the module is off,
-  so the disclosure level can be chosen before the feature is switched on, and
-  it says which state the roster is currently in.
-- **No opt-out** — a member cannot remove themselves (owner decision D3). The
-  page says so itself rather than leaving it to the guide.
-
-## Club message board (#2994, epic #2992)
-
-One member-written board, club-local for now.
-
-- **Member door** — a **Message board** card on `/dashboard` (shown only while
-  the `commsPortal` module is on, and only once at least one post exists) links
-  to `/message-board`. The board lists posts newest first with the author's name
-  and the date; the composer sits above the first page only.
-- **What a post is** — plain text, up to 4000 characters, stored and rendered as
-  typed. Markup is neither stripped nor interpreted: a member who types
-  `<b>bold</b>` sees those characters, because rewriting somebody's words is
-  worse than showing them literally. Line breaks are kept.
-- **Who wrote it** — the author's name and id come from the session and are
-  snapshotted onto the row. A name in the request body is ignored. That matters
-  beyond this screen: when a later child shares a post to other clubs, the
-  central server cannot verify the author and trusts this club's key, so the
-  post is only as honest as this route.
-- **Paging** — by link, not by fetching in the browser. The cursor
-  `(postedAt, id)` lives in the query string, so **Older posts** is an ordinary
-  navigation and a page of the board can be linked to. Both halves of the cursor
-  are required; half a cursor is a 400, because paging on `postedAt` alone would
-  silently skip posts sharing a millisecond.
-- **Limits** — ten posts an hour per member (member-scoped, so the IP key
-  carries ten times that and a lodge on one connection is not throttled as one
-  person). Not `authSensitive`: there is no credential behind it, and
-  quartering the allowance during a database blip would silence the board.
-- **Sharing** — a **Share with all clubs** tickbox is rendered, unchecked and
-  disabled, with a note saying it is not available yet. It is present now so the
-  composer does not grow a control out of nowhere when a later child enables it.
-- **Moderation** — `/admin/message-board` (**Admin → Members → Message Board**,
-  `membership` area, #2998) has two tabs: **All posts** and **Hidden**, with
-  search over content and author. Per-post: **Hide** (reversible, content kept),
-  **Edit text** (the ORIGINAL goes into the audit row, since after the write it
-  exists nowhere else), and **Remove** (blanks the content permanently — the row
-  survives to carry the removal, the words do not). There is deliberately no
-  Flagged tab: nothing writes `reportCount` until reporting lands, and a tab
-  that can only ever be empty reads as "no problems" rather than "not built".
-  Every control is a `ViewOnlyActionButton` with `describeReason={false}` under
-  one `AdminViewOnlySectionBanner`, in a frame that renders in every state.
-  Members still cannot edit or delete their own posts; every request reaches an
-  admin.
-- **Retention** — a second section on the same admin page (#2999), and the one
-  place on the board that follows the canonical STAGED-EDIT settings model:
-  read-only on mount, Edit → Save/Cancel, Save dirty-gated by the hook. The
-  window defaults to **keep everything**, and only the offered periods are
-  accepted, so a hand-crafted PUT cannot set a one-day window and empty the
-  board. The card says how many posts the chosen window would delete BEFORE it
-  is saved, using the pass's own arithmetic rather than an estimate. Deletion is
-  strictly older-than, so a post on the boundary survives. The pass runs nightly
-  in the general cron cycle and on demand from **Run cleanup now**, under a
-  status-guarded claim so the two cannot race; a caller that loses the claim
-  reports `busy` rather than deleting twice.
-- **Audit** — one `communication` row per post, carrying the length rather than
-  the body. That category is member-visible, so the author sees "you posted" on
-  their own timeline; the body is deliberately not copied, since a second copy
-  in an audit row would outlive any later moderation of the first.
+Audience: Developer, Agent, Operator.
+
+Find a screen by area, then follow its journey. Routes identify screens; linked
+operator and member guides own detailed tasks, permissions and screenshots.
+This map does not redefine booking, payment or membership rules.
+
+## Find an area
+
+- [Public and member screens](#public-and-member-screens)
+- [Admin overview](#admin-overview)
+- [Bookings](#admin-bookings)
+- [Membership](#admin-membership)
+- [Lodge operations](#admin-lodge)
+- [Finance and integrations](#admin-finance)
+- [Content and appearance](#admin-content)
+- [Support and setup](#admin-support)
+- [Shared screen patterns](#shared-screen-patterns)
+
+Every admin area in the [coverage matrix](COVERAGE_MATRIX.md) has a screen
+section below, including redirects and the developer-only testing area.
+Within an area, find a route with your editor’s search. The sidebar can group
+these screens differently; the route and linked guide identify the destination.
+Admin areas require their configured view permission; editing requires the
+corresponding edit permission, and some actions require Full Admin. Hidden
+modules and lodge scope can further limit what appears.
+
+History links point to an archived snapshot of the previous map, preserving
+issue rationale without making old screen states current guidance. New work
+updates the relevant screen and guide, rather than appending an issue diary.
+The map has a word ceiling enforced by `docs:indexcheck`; detailed
+rules belong in the linked references. See the [budget register](invariants/WORD_BUDGETS.md#screen-map).
+
+## Public and member screens
+
+### Home and sign-in
+
+Screen: `/`, `/login`.
+
+Journey: Browse club information, sign in, or follow account recovery. After sign-in, complete any required security or profile steps before opening the dashboard.
+
+[Guide](user-guide/your-account.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
+
+### Membership application
+
+Screen: `/join/apply`.
+
+Journey: Fill in personal details and nominators, submit the application, and follow the emailed nomination and account-setup steps.
+
+[Guide](user-guide/joining-the-club.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
+
+### Member dashboard
+
+Screen: `/dashboard`.
+
+Journey: Read upcoming stays and account notices, then open a booking or choose Book a Stay.
+
+[Guide](user-guide/README.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
+
+### Book a Stay
+
+Screen: `/book`.
+
+Journey: Choose lodge and nights, add guests, review the price and rules, then confirm and follow the offered payment step. If a rule blocks the stay, use the available exception-request journey.
+
+[Guide](user-guide/booking-a-stay.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
+
+### My Bookings and booking detail
+
+Screen: `/bookings`, `/bookings/[id]`.
+
+Journey: Find a stay and open its detail. Review status, guests and amounts before paying, requesting a change or cancelling. Pending consent appears on the booking for an eligible invited member.
+
+[Guide](user-guide/changing-or-cancelling-a-booking.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
+
+### Payment and booking outcome
+
+Screen: Booking detail and its payment action.
+
+Journey: Open the booking, inspect what is owed and choose an available payment method. Read the resulting status before leaving; bank payments can remain pending while settlement is checked.
+
+[Guide](user-guide/paying-for-your-stay.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
+
+### Guest consent
+
+Screen: Booking detail, including `#consent`, or the emailed response link.
+
+Journey: Read the organiser, lodge, dates, your nights and response deadline. Accept or decline using the available controls; a refusal explains who can act if you cannot.
+
+[Guide](user-guide/being-added-to-a-booking.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
+
+### Waitlist and offers
+
+Screen: My Bookings and the offered booking.
+
+Journey: Join the waitlist for full nights, open an offer, and accept before its deadline. Check the booking status and any payment action afterward.
+
+[Guide](user-guide/waitlist-and-offers.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
+
+### Profile and account security
+
+Screen: `/profile`.
+
+Journey: Use the section rail to open personal details, sign-in security, notification preferences or privacy controls. Stage and save the relevant section.
+
+[Guide](user-guide/your-account.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
+
+### Family and household
+
+Screen: Family Group and Partner sections of `/profile`.
+
+Journey: Request to join or create a family group, manage eligible dependants, or declare a partner. Review the relationship and billing implications before submitting.
+
+[Guide](user-guide/managing-your-family.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
+
+### Who’s at the lodge
+
+Screen: `/lodge-roster`.
+
+Journey: When enabled, choose the lodge card and read names and nights for the next 30 nights. Name visibility follows that lodge’s setting; contact and payment details are absent.
+
+[Guide](user-guide/whos-at-the-lodge.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
+
+### Message board
+
+Screen: `/message-board`.
+
+Journey: When enabled, read recent posts, page to older posts, or compose a message. Review whether sharing with other clubs is available and selected before posting.
+
+[Guide](user-guide/the-message-board.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
+
+## Admin overview
+
+### AI Diagnostics deployment and operator guide — ai-diagnostics
+
+Screen: `/admin/ai-diagnostics`.
+
+Shows: Diagnostic access, provisioning and deployment information.
+
+Journey: Inspect diagnostic access and follow the deployment guide to provision it.
+
+[Guide](ai-diagnostics/deployment.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
+
+### Admin Dashboard — dashboard
+
+Screen: `/admin/dashboard`.
+
+Shows: Attention queues, headline statistics, recent bookings and quick-action links.
+
+Journey: Scan attention cards, follow a queue, or use a quick action to open its screen.
+
+[Guide](guides/dashboard.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
+
+### Testing — testing
+
+Screen: `/admin/testing`.
+
+Shows: A development-only error-boundary probe.
+
+Journey: Developer-only route-error probe; production returns Not Found. It is not an officer journey.
+
+[History](UX_FLOW_HISTORY.md#journey-inventory)
+
+## Admin bookings
+
+### Age Groups — age-tier-settings
+
+Screen: `/admin/age-tier-settings`.
+
+Shows: Age-tier labels, boundaries and guest eligibility settings.
+
+Journey: Review age boundaries and labels before changing how guests are classified.
+
+[Guide](guides/age-tier-settings.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
+
+### Bed Allocation — bed-allocation
+
+Screen: `/admin/bed-allocation`.
+
+Shows: A lodge-and-night board of guests, rooms, beds and allocation state.
+
+Journey: Choose lodge and nights, inspect guests and beds, preview moves or removals, then apply.
+
+[Guide](guides/bed-allocation.md) · [History](UX_FLOW_HISTORY.md#reviewed-bed-allocation-moves-2595)
+
+### Book on Behalf — book
+
+Screen: `/admin/book`.
+
+Shows: The booking wizard with an officer-selected booking owner.
+
+Journey: Choose a member, lodge, dates and guests; review the booking before submitting.
+
+[Guide](guides/book.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
+
+### Booking Requests — booking-approvals
+
+Screen: `/admin/booking-approvals`.
+
+Shows: A redirect into the shared request queue’s Approvals tab.
+
+Journey: Follow the redirect into the Approvals tab of Booking Requests.
+
+[Guide](guides/booking-requests.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
+
+### Booking Requests — booking-change-requests
+
+Screen: `/admin/booking-change-requests`.
+
+Shows: A redirect into the shared request queue’s Changes tab.
+
+Journey: Follow the redirect into the Changes tab of Booking Requests.
+
+[Guide](guides/booking-requests.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
+
+### Booking Policies — booking-policies
+
+Screen: `/admin/booking-policies`.
+
+Shows: Booking rules and cancellation-policy settings.
+
+Journey: Review booking rules and cancellation policies before staging a change.
+
+[Guide](guides/booking-policies.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
+
+### Booking Requests — booking-requests
+
+Screen: `/admin/booking-requests`.
+
+Shows: Tabbed request queues and request details with their current status and actions.
+
+Journey: Choose a queue tab, open a request, inspect the proposed stay, and use its available actions.
+
+[Guide](guides/booking-requests.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
+
+### Bookings — bookings
+
+Screen: `/admin/bookings`.
+
+Shows: A filterable booking list; booking detail holds the stay, party, status and next actions.
+
+Journey: Filter the list, open a booking, and inspect its dates, guests and status before acting.
+
+[Guide](guides/bookings.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
+
+### Bookings Setup — bookings-setup
+
+Screen: `/admin/bookings-setup`.
+
+Shows: Cards linking to the booking configuration screens.
+
+Journey: Open the relevant setup card for policies, seasons, fees or allocation settings.
+
+[Guide](guides/bookings-setup.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
+
+### Fees — fees
+
+Screen: `/admin/fees`.
+
+Shows: Consolidated fee sections with their own permission requirements.
+
+Journey: Review the relevant fee section; stage changes using its permission controls.
+
+[Guide](guides/fees.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
+
+### Promo Codes — promo-codes
+
+Screen: `/admin/promo-codes`.
+
+Shows: Promotion codes, validity windows and redemption limits.
+
+Journey: Inspect a promotion’s dates and limits before creating or editing a code.
+
+[Guide](guides/promo-codes.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
+
+### Seasons — seasons
+
+Screen: `/admin/seasons`.
+
+Shows: Season date ranges and lodge rates.
+
+Journey: Choose a lodge and season, inspect dates and rates, and stage changes.
+
+[Guide](guides/seasons.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
+
+### Waitlist — waitlist
+
+Screen: `/admin/waitlist`.
+
+Shows: Queued bookings, offers and their status.
+
+Journey: Inspect queued stays and offers, open the booking, and use the available queue actions.
+
+[Guide](guides/waitlist.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
+
+## Admin membership
+
+### Committee — committee
+
+Screen: `/admin/committee`.
+
+Shows: Committee roles and assignments, with role and assignment editors.
+
+Journey: Inspect assignments; open Add or Edit Role and save the validated form.
+
+[Guide](guides/committee.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
+
+### Communications — communications
+
+Screen: `/admin/communications`.
+
+Shows: Member communication composition and audience selection.
+
+Journey: Choose recipients and compose a message; review the audience before sending.
+
+[Guide](guides/communications.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
+
+### Message Board — message-board
+
+Screen: `/admin/message-board`.
+
+Shows: Club messages and moderation controls.
+
+Journey: Read club posts and use the moderation actions allowed by the current role.
+
+[Guide](guides/message-board.md) · [History](UX_FLOW_HISTORY.md#club-message-board-2994-epic-2992)
+
+### Member Notices — notices
+
+Screen: `/admin/notices`.
+
+Shows: Member notices, audiences and visibility controls.
+
+Journey: Choose an audience, compose a notice, and review its visibility before publishing.
+
+[Guide](guides/member-notices.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
+
+### Deletion Requests — deletion-requests
+
+Screen: `/admin/deletion-requests`.
+
+Shows: Pending account-deletion requests and their review details.
+
+Journey: Inspect a request and its member record before resolving it.
+
+[Guide](guides/deletion-requests.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
+
+### Family Groups — family-groups
+
+Screen: `/admin/family-groups`.
+
+Shows: Family memberships and billing relationships.
+
+Journey: Find a family, open its members, and review billing and relationship changes.
+
+[Guide](guides/family-groups.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
+
+### Family Suggestions — family-suggestions
+
+Screen: `/admin/family-suggestions`.
+
+Shows: Suggested member relationships awaiting review.
+
+Journey: Inspect suggested relationships and decide whether to link them.
+
+[Guide](guides/family-suggestions.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
+
+### Induction — induction
+
+Screen: `/admin/induction`.
+
+Shows: Member induction records and checklist progress.
+
+Journey: Inspect member induction progress and open the relevant checklist.
+
+[Guide](guides/induction.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
+
+### Lockers — lockers
+
+Screen: `/admin/lockers`.
+
+Shows: Lodge-scoped lockers, assignments and availability.
+
+Journey: Choose a lodge, inspect lockers and assignments, and manage the selected locker.
+
+[Guide](guides/lockers.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
+
+### Member Applications — member-applications
+
+Screen: `/admin/member-applications`.
+
+Shows: Applications, nomination progress and officer decisions.
+
+Journey: Open an application, review its details and nominations, and use the available decision actions.
+
+[Guide](guides/member-applications.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
+
+### Member Fields — member-fields
+
+Screen: `/admin/member-fields`.
+
+Shows: The club’s configurable member-field definitions.
+
+Journey: Review the member fields collected by the club before changing their configuration.
+
+[Guide](guides/member-fields.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
+
+### Members — members
+
+Screen: `/admin/members`.
+
+Shows: A searchable member list and individual membership records.
+
+Journey: Search or filter members, open a profile, and use its permitted membership actions.
+
+[Guide](guides/members.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
+
+### Cancellation Requests — membership-cancellation
+
+Screen: `/admin/membership-cancellation`.
+
+Shows: Cancellation notification and handling settings.
+
+Journey: Review the cancellation notification settings linked from Notifications & Email.
+
+[Guide](guides/membership-cancellations.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
+
+### Cancellation Requests — membership-cancellations
+
+Screen: `/admin/membership-cancellations`.
+
+Shows: The membership cancellation review queue.
+
+Journey: Open a cancellation request and review its consequences before deciding it.
+
+[Guide](guides/membership-cancellations.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
+
+### Membership & Members setup — membership-setup
+
+Screen: `/admin/membership-setup`.
+
+Shows: Cards linking to membership configuration.
+
+Journey: Open the appropriate membership configuration card.
+
+[Guide](guides/membership-setup.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
+
+### Membership Types — membership-types
+
+Screen: `/admin/membership-types`.
+
+Shows: Membership types and their eligibility and billing configuration.
+
+Journey: Inspect a type, its eligibility and subscription settings before saving changes.
+
+[Guide](guides/membership-types.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
+
+### Subscription Categories — subscription-categories
+
+Screen: `/admin/subscription-categories`.
+
+Shows: Subscription categories and their fee, the second billing axis alongside membership type.
+
+Journey: Create or edit a category and its flat fee, then assign members from their profile.
+
+[Guide](guides/subscription-categories.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
+
+### Subscription Lockout — subscription-lockout
+
+Screen: `/admin/subscription-lockout`.
+
+Shows: Lapsed-subscription rules and related notification settings.
+
+Journey: Review the lapsed-subscription rules and member-facing wording.
+
+[Guide](guides/subscription-lockout.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
+
+## Admin lodge
+
+### Events Calendar — calendar
+
+Screen: `/admin/calendar`.
+
+Shows: Club events and the controls for managing them.
+
+Journey: Choose a date range, inspect events, and open an event to manage it.
+
+[Guide](guides/calendar.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
+
+### Chore Templates — chores
+
+Screen: `/admin/chores`.
+
+Shows: The selected lodge’s chore inventory.
+
+Journey: Choose a lodge, inspect its chore list, and stage chore changes.
+
+[Guide](guides/chores.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
+
+### Lobby Display — display
+
+Screen: `/admin/display`.
+
+Shows: The lobby-display hub, device management, templates, layouts and previews.
+
+Journey: Open Devices, Visual builder, Layouts, Templates or Reference from the display hub.
+
+[Guide](guides/display.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
+
+### Hut Leaders — hut-leaders
+
+Screen: `/admin/hut-leaders`.
+
+Shows: Lodge-night leadership assignments and coverage.
+
+Journey: Choose lodge and nights, inspect cover, and manage eligible assignments.
+
+[Guide](guides/hut-leaders.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
+
+### Lodge Kiosk — lodge
+
+Screen: `/admin/lodge`.
+
+Shows: Lodge operational settings and kiosk entry points.
+
+Journey: Inspect lodge operations and open the kiosk or related operational screen.
+
+[Guide](guides/lodge.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
+
+### Lodge Instructions — lodge-instructions
+
+Screen: `/admin/lodge-instructions`.
+
+Shows: Lodge instructions and supported content tokens.
+
+Journey: Choose lodge content, preview the instructions, and save staged wording.
+
+[Guide](guides/lodge-instructions.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
+
+### Lodges — lodges
+
+Screen: `/admin/lodges`.
+
+Shows: The lodge list and each lodge’s settings and feature controls.
+
+Journey: Choose a lodge, open its settings, and manage only that lodge’s configuration.
+
+[Guide](guides/lodges.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
+
+### Lodge Maintenance — maintenance-reports
+
+Screen: `/admin/maintenance-reports`.
+
+Shows: Lodge faults, their descriptions and resolution state.
+
+Journey: Filter faults by lodge and status, inspect a report, then record the next action.
+
+[Guide](guides/maintenance-reports.md) · [History](UX_FLOW_HISTORY.md#lodge-maintenance-reports-2780)
+
+### Rooms & Beds — rooms-beds
+
+Screen: `/admin/rooms-beds`.
+
+Shows: Lodge-specific rooms and beds, plus allocation preferences.
+
+Journey: Choose a lodge, manage its room and bed inventory, and stage allocation preferences.
+
+[Guide](guides/rooms-beds.md) · [History](UX_FLOW_HISTORY.md#bed-allocation-preferences-2593-relocated-2937)
+
+### Chore Roster — roster
+
+Screen: `/admin/roster`.
+
+Shows: A day roster including arrivals, departures and staged chore assignments.
+
+Journey: Choose a lodge and day, inspect arrivals and departures, stage roster edits, then save or cancel.
+
+[Guide](guides/roster.md) · [History](UX_FLOW_HISTORY.md#whole-roster-staged-editing-2586)
+
+### Work Parties — work-parties
+
+Screen: `/admin/work-parties`.
+
+Shows: Work-party dates, participation and attendance.
+
+Journey: Inspect a work party, its participants and attendance before recording changes.
+
+[Guide](guides/work-parties.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
+
+## Admin finance
+
+### Integrations — alpine-server
+
+Screen: `/admin/alpine-server`.
+
+Shows: Central-server registration and synchronisation status.
+
+Journey: Review the central-server connection and its synchronisation state.
+
+[Guide](guides/integrations.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
+
+### Fees — fee-configuration
+
+Screen: `/admin/fee-configuration`.
+
+Shows: A redirect to the shared fee editor.
+
+Journey: Follow the redirect to the consolidated Fees screen.
+
+[Guide](guides/fees.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
+
+### Integrations — google
+
+Screen: `/admin/google`.
+
+Shows: The Google sign-in setup wizard and connection verification.
+
+Journey: Open the setup wizard, verify the sign-in credentials, and review connection status.
+
+[Guide](guides/integrations.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
+
+### Integrations — integrations
+
+Screen: `/admin/integrations`.
+
+Shows: Provider connection cards and setup links.
+
+Journey: Inspect provider cards and open the appropriate setup or status screen.
+
+[Guide](guides/integrations.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
+
+### Internet Banking — internet-banking
+
+Screen: `/admin/internet-banking`.
+
+Shows: Bank-payment instructions and configuration.
+
+Journey: Review bank-payment configuration and the instructions members will see.
+
+[Guide](guides/internet-banking.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
+
+### Payments — payments
+
+Screen: `/admin/payments`.
+
+Shows: Payment records, statuses and links to related bookings.
+
+Journey: Filter payments, open a record, and inspect its booking and provider status.
+
+[Guide](guides/payments.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
+
+### Refunds & Credits — refund-requests
+
+Screen: `/admin/refund-requests`.
+
+Shows: Refund requests with booking context and decision controls.
+
+Journey: Open a request, inspect the booking and amounts, then use the permitted decision action.
+
+[Guide](guides/refund-requests.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
+
+### Reports — reports
+
+Screen: `/admin/reports`.
+
+Shows: Financial summaries, period filters and exports.
+
+Journey: Choose a report, set the period and filters, then inspect or export the result.
+
+[Guide](guides/reports.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
+
+### Integrations — stripe
+
+Screen: `/admin/stripe`.
+
+Shows: The Stripe setup wizard and its verification results.
+
+Journey: Open the setup wizard, review each connection step, and verify status.
+
+[Guide](guides/integrations.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
+
+### Subscriptions — subscriptions
+
+Screen: `/admin/subscriptions`.
+
+Shows: Subscription billing records and statuses.
+
+Journey: Filter subscription records and open the member or billing record for details.
+
+[Guide](guides/subscriptions.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
+
+### Events Calendar — video-meetings
+
+Screen: `/admin/video-meetings`.
+
+Shows: Calendar-linked video meeting controls.
+
+Journey: Open the linked calendar event and join or manage its video meeting.
+
+[Guide](guides/calendar.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
+
+### Xero Sync — xero
+
+Screen: `/admin/xero`.
+
+Shows: Connection setup, the health snapshot (including credit used in Xero outside the app), accounting operations and failure details.
+
+Journey: Inspect connection and operations status; open a failed item to follow its documented recovery.
+
+[Guide](guides/xero.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
+
+## Admin content
+
+### Site Appearance & Content — appearance
+
+Screen: `/admin/appearance`.
+
+Shows: Theme presets and links to club identity controls.
+
+Journey: Choose a preset or open the identity editor; preview before saving.
+
+[Guide](guides/appearance.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
+
+### Image Manager — image-manager
+
+Screen: `/admin/image-manager`.
+
+Shows: Reusable content images and upload controls.
+
+Journey: Browse images, upload an asset, and select it for the intended content.
+
+[Guide](guides/image-manager.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
+
+### Mountain Conditions — mountain-conditions
+
+Screen: `/admin/mountain-conditions`.
+
+Shows: The conditions content displayed on the public site.
+
+Journey: Inspect the public conditions content, stage an update, and publish it.
+
+[Guide](guides/mountain-conditions.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
+
+### Page Content — page-content
+
+Screen: `/admin/page-content`.
+
+Shows: Editable public pages and supported authoritative tokens.
+
+Journey: Choose a public page, edit supported content and tokens, then preview and save.
+
+[Guide](guides/page-content.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
+
+### Site Banners — site-banners
+
+Screen: `/admin/site-banners`.
+
+Shows: Public banner text and visibility settings.
+
+Journey: Choose banner content and visibility, preview it, then save.
+
+[Guide](guides/site-banners.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
+
+### Site Content — site-content
+
+Screen: `/admin/site-content`.
+
+Shows: Links to public content editors.
+
+Journey: Open the relevant public-content editor from the hub.
+
+[Guide](guides/site-content.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
+
+### Site Style — site-style
+
+Screen: `/admin/site-style`.
+
+Shows: Theme settings and their preview.
+
+Journey: Preview the theme settings and save the staged appearance.
+
+[Guide](guides/site-style.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
+
+## Admin support
+
+### Access Roles — access-roles
+
+Screen: `/admin/access-roles`.
+
+Shows: Role definitions and their permission assignments.
+
+Journey: Inspect a role, review its permissions, then stage and save changes.
+
+[Guide](guides/access-roles.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
+
+### AI Help Assistant — ai-assistant
+
+Screen: `/admin/ai-assistant`.
+
+Shows: Assistant configuration, usage and spending controls.
+
+Journey: Read usage and the spend cap before changing the assistant settings.
+
+[Guide](guides/ai-help.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
+
+### Audit Log — audit-log
+
+Screen: `/admin/audit-log`.
+
+Shows: Searchable events with actor, category and affected record.
+
+Journey: Filter events, open an entry, and follow the affected record.
+
+[Guide](guides/audit-log.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
+
+### Background Jobs — background-jobs
+
+Screen: `/admin/background-jobs`.
+
+Shows: Scheduled jobs and their latest execution results.
+
+Journey: Inspect schedules and recent runs before running an eligible job.
+
+[Guide](guides/background-jobs.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
+
+### Database Backups — backups
+
+Screen: `/admin/backups`.
+
+Shows: Backup configuration, available backups and recovery controls.
+
+Journey: Inspect backup status and follow the documented download or restore procedure.
+
+[Guide](guides/backups.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
+
+### Booking Messages — booking-messages
+
+Screen: `/admin/booking-messages`.
+
+Shows: Configurable booking-related messages.
+
+Journey: Read the booking message settings, stage the wording, and save.
+
+[Guide](guides/booking-messages.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
+
+### Club Currency & Locale — club-format
+
+Screen: `/admin/club-format`.
+
+Shows: The club’s country, currency and related format settings.
+
+Journey: Read the club format; Full Admin can review and change the format.
+
+[Guide](guides/club-format.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
+
+### Club Time Zone — club-time
+
+Screen: `/admin/club-time`.
+
+Shows: The club timezone and the consequences of changing it.
+
+Journey: Full Admin reviews the club timezone before saving a change.
+
+[Guide](guides/club-time.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
+
+### Environment Safety — environment
+
+Screen: `/admin/environment`.
+
+Shows: The installation’s declared environment and safety override.
+
+Journey: Full Admin reviews environment identity and the controls for this deployment.
+
+[Guide](guides/environment-role.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
+
+### Export & Import (config transfer) — config-transfer
+
+Screen: `/admin/config-transfer`.
+
+Shows: Configuration export and import controls.
+
+Journey: Export configuration or inspect an import before applying it.
+
+[Guide](guides/config-transfer.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
+
+### Email Deliverability — email-deliverability
+
+Screen: `/admin/email-deliverability`.
+
+Shows: Email delivery results and eligible retry controls.
+
+Journey: Filter delivery outcomes and inspect a failure before retrying eligible mail.
+
+[Guide](guides/email-deliverability.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
+
+### Email Messages — email-messages
+
+Screen: `/admin/email-messages`.
+
+Shows: Email templates, editable wording and supported tokens.
+
+Journey: Choose a message template, inspect its tokens, and stage wording changes.
+
+[Guide](guides/email-messages.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
+
+### System Health — health
+
+Screen: `/admin/health`.
+
+Shows: Component health and diagnostic results.
+
+Journey: Inspect health checks and follow the documented recovery for a failing component.
+
+[Guide](guides/health.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
+
+### Issue Reports — issue-reports
+
+Screen: `/admin/issue-reports`.
+
+Shows: Reported problems, evidence and triage status.
+
+Journey: Filter reports, open the evidence, and update the report status.
+
+[Guide](guides/issue-reports.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
+
+### Modules — modules
+
+Screen: `/admin/modules`.
+
+Shows: Feature switches and their setup prerequisites.
+
+Journey: Review each module’s purpose and prerequisites before enabling or disabling it.
+
+[Guide](guides/modules.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
+
+### Recipients — notification-recipients
+
+Screen: `/admin/notification-recipients`.
+
+Shows: Recipient assignments for club notifications.
+
+Journey: Review the officers or addresses receiving each notification.
+
+[Guide](guides/notification-recipients.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
+
+### Delivery Rules — notification-rules
+
+Screen: `/admin/notification-rules`.
+
+Shows: Notification delivery policies and switches.
+
+Journey: Choose a notification, review its delivery rules, and save staged changes.
+
+[Guide](guides/notification-rules.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
+
+### Notifications & Email — notifications
+
+Screen: `/admin/notifications`.
+
+Shows: Links to notification, recipient and email configuration.
+
+Journey: Open the relevant notification settings or delivery screen from the hub.
+
+[Guide](guides/notifications.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
+
+### Personal-data retention schedule — privacy-retention
+
+Screen: `/admin/privacy-retention`.
+
+Shows: Retention settings, eligible-record previews and cleanup actions.
+
+Journey: Preview eligible records before running the documented retention action.
+
+[Guide](PRIVACY_RETENTION.md) · [History](UX_FLOW_HISTORY.md#privacy-and-retention-4457)
+
+### Login & Security — security
+
+Screen: `/admin/security`.
+
+Shows: Sign-in and account-security configuration.
+
+Journey: Inspect authentication controls and use the permitted security settings.
+
+[Guide](guides/security.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
+
+### Setup — setup
+
+Screen: `/admin/setup`.
+
+Shows: The installation setup hub and configuration cards.
+
+Journey: Open the setup card for the configuration task you need.
+
+[Guide](guides/setup.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
+
+### Stuck States — stuck-states
+
+Screen: `/admin/stuck-states`.
+
+Shows: Operational incidents and guided repair actions.
+
+Journey: Inspect flagged records and use the documented recovery for the selected state.
+
+[Guide](guides/stuck-states.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
+
+## Shared screen patterns
 
 ## Feedback Conventions
 
@@ -1758,225 +1199,10 @@ asserted in the companion RTL suite
 new admin leaf, add its `BackLink` **and** extend whichever suite fits its render
 model, so a leaf that loses its back link fails the build.
 
-## Design Foundation — Restrained Alpine (#1800)
 
-The public utility (`/login`, plus `/school-bookings` and `/booking-requests` —
-both unlisted by default and reachable by the direct link the club shares or an
-emailed payment link, until the club gives either page a menu title, #2421,
-#2818),
-authenticated, and admin app shells carry the club identity, not just stock
-shadcn neutral (epic #1800). `/admin/site-style` now supplies the same saved
-brand accent, neutral ramp, and font choices to the website and all three app
-shells (#1808, #1851); the occupancy meter follows that accent. HTML emails also
-derive their brand colours from this saved theme (`src/lib/email-theme.ts`);
-because emails render server-side from a cached palette, a Site Style save and
-server boot re-prime that cache so a colour-scheme change reaches emails right
-away rather than only after its TTL lapses (#1912). Priming is an optimisation,
-not the guarantee: every send path builds its HTML inside `renderEmailHtml()`,
-which awaits `ensureEmailPaletteReady()` before a template runs, so the FIRST
-email from a freshly started process or replica is coloured from the saved theme
-rather than the shipped default (#2900), and two messages from one workflow can
-no longer arrive in different brands.
-`src/lib/__tests__/email-render-gate-contract.test.ts` keeps that central by
-reading the source tree over the TypeScript AST: it fails any sending module that
-calls a palette-reading `email-templates/` export outside the gate, so a new
-sender or template inherits the guarantee without anybody remembering to. It
-derives which exports read the palette (directly or through any helper chain,
-module-private ones included) rather than matching a `*Template` name, so the
-shared layout blocks are covered too; every one of the 127 render calls across the
-21 sending modules is gated today. When the theme genuinely
-cannot be read the gate says so instead of caching the default as the club's
-choice — `getWebsiteThemeRenderState()` never throws and returns the DEFAULT
-values with `readFailed: true`, so `readFailed` is treated as a failure: nothing
-is committed, the last-good palette is kept, the readiness result reports
-`built-in-default`, and one throttled warning is logged. Mail still goes out;
-concurrent renders share one read, a waiter gives up after a bounded timeout, and
-for a cooldown window after a failed OR TIMED-OUT attempt every render proceeds
-immediately on the current palette instead of waiting again — so an outage costs
-at most one bounded wait per window across the process rather than one per email,
-including when the read is wedged rather than failing, which is the case that
-matters because a read that timed out is still in flight. The read is never
-cancelled: one that lands late still commits and ends the cooldown, so the first
-email after the theme becomes readable is correctly branded.
-Semantic
-success, warning,
-information, danger/error, and waitlist tones remain curated, contrast-locked
-light/dark pairs rather than editable brand fields; public-site Raw CSS is never
-injected into these app shells. App text-bearing surfaces use directly gated
-neutral endpoints (deep on snow/mist in light mode; snow on deep/charcoal in
-dark mode), while the editable accent remains visible in solid filled controls
-and decorative borders. Text-bearing app states keep those endpoints opaque;
-hover feedback uses shadows or another directly gated semantic endpoint rather
-than transparent token variants. Bed-allocation booking identity stays on
-decorative strips/rings while its text cards use direct card/secondary pairs.
-Keyboard focus uses a two-pixel offset deep/snow outline
-that remains visible when a control is opacity-reduced. The foundation (#1801)
-establishes:
+## Related links
 
-- **Type:** Inter (body) + League Spartan (headings) load on the app-scope
-  wrapper in `(authenticated)`/`(admin)` layouts via
-  `clubThemeFontVariableClassName`; `.app-theme-scope` wires
-  `--font-sans`/`--font-heading` and applies League Spartan to `h1`–`h4`.
-  Public/website keep their own fonts; finance/lodge intentionally stay on the
-  system stack for now (they don't load the font vars, so they fall back
-  cleanly).
-- **Semantic status tokens:** `--success`/`--success-foreground`/
-  `--success-muted` and `--warning`/… (plus their `--color-*` registrations in
-  `@theme inline`) are defined for light **and** dark and clear WCAG AA. Use
-  `bg-success-muted text-success` / `bg-warning-muted text-warning` (or the
-  solid `bg-success text-success-foreground`) instead of hardcoded
-  green/yellow Tailwind classes so badges/chips adapt to dark mode. The trio is
-  completed by `--info` (calm blue) and `--danger` (dark-adaptable red), the
-  pair for solid destructive buttons and badges. The `text-destructive` error
-  ink is red-800, the light `--danger` value, in light mode (#4563; red-700
-  read 4.49:1 in an error box on a grey panel) and the dark `--danger` tone in
-  dark mode (#4553); `destructive-contrast-contract.test.ts` pins both, per
-  theme scope, from the values in `globals.css`, for text and for a
-  `bg-destructive/<n>` box on every surface, grey and danger-tinted included.
-- **Status + occupancy primitives (#1804):** render any domain status with
-  `StatusChip` (`src/components/ui/status-chip.tsx`; `kind` =
-  booking|payment|subscription|lifecycle|financeAccess) — it resolves each state
-  to one of five semantic tones (neutral/info/success/warning/danger) as an
-  icon + label, wrapping the shared label maps. Show fullness with
-  `OccupancyMeter` (`filled`/`capacity`; accent bar → safety-orange + a "Full"
-  label when full). Both are presentation-only and dark-mode correct.
-- **Tabular figures:** numeric/data cells inside `.app-theme-scope table` get
-  `tabular-nums` automatically; opt any other money/count/date node in with the
-  `.tabular-figures` class.
-- **A11y baseline:** a global `prefers-reduced-motion: reduce` guard collapses
-  animation/transition duration + delay, and both app shells have a
-  skip-to-content link targeting a programmatically focusable `#main-content`.
-- **Attention after an admin action (#2934):** one shared primitive
-  (`src/hooks/use-scroll-to-feedback.ts`) decides where focus and the viewport go
-  once an action has a result — a failure brings the actionable message or
-  invalid control into view and beats any success positioning, an editor the
-  admin explicitly opened is revealed and focused (a staged section's Edit, Add
-  or row Edit lands in the section — on the first control it opened, or on the
-  section's named region — with no reveal wiring of its own — #4115), a save
-  or step transition that changed the screen positions at the top of the
-  resulting page or card, closing a staged section (Save, Cancel) that dropped focus hands it back to
-  its Edit button or the section, unless a success position took it first
-  (#4087), and a passive update moves nothing. The rule, its
-  three hooks and what the
-  census does and does not hold are written out ONCE, in that module's docblock;
-  do not restate them here. `admin-attention-primitive-contract.test.ts` fails a
-  direct `scrollIntoView` / `scrollTo` or a `requestAnimationFrame` focus in an
-  admin file. It does **not** catch a bare effect-driven `.focus()`, and four
-  surfaces still hand-roll their attention that way — the module names them.
-- **Final sweep (#1819):** colour-coded calendar seasons, payment choices, and
-  focused bed-allocation cards/cells pair their colour with visible text/icons
-  or a distinct border style. The shared error `Alert` uses the AA `--danger`
-  pair rather than `--destructive`. The bookings table keeps a horizontally
-  scrollable minimum width, while booking review, family-group, and member
-  detail controls stack at phone width. The eight #1809 admin-list surfaces now
-  use semantic surrounding form/config/pagination chrome as well as semantic
-  table chrome.
-- **Choice cards (#4563):** a set of mutually exclusive options drawn as cards,
-  such as Card or Internet Banking, uses `OptionCard` inside `OptionCardGroup`
-  (`src/components/ui/option-card.tsx`). Each card is a native button with
-  `aria-pressed`, the chosen one shows a check icon and the word "Selected"
-  (seen, not read: `aria-pressed` announces it) and a strong `border-info` edge,
-  and the group is named by its visible heading. All four payment pickers
-  (booking review, admin Book, the organiser's group settlement, the group
-  join panel) use it; never draw a card whose only cue is its tint.
-- **Inactive, past, departed, removed and locked rows (#4563, #4594):** a row
-  in a lesser state keeps its text at full strength and says the state in
-  words. An archived or inactive row (a chore, committee role or assignment,
-  booking policy or period, family member, a fully covered hut-leader
-  candidate) says so in its status badge or label. A past day on the admin
-  calendar is grey and announces "(past)" to a screen reader; a departed kiosk
-  guest gets a "Departed" chip; a guest removed in an edit keeps its
-  strike-through and gains a "Removed" tag; a locked alert on Notification
-  Recipients says "Locked:" with its reason, which its checkbox also reads out;
-  an already-added member guest says "Already added". A card may add
-  `border-dashed` as a second, non-text cue. Never fade a row with `opacity-*`:
-  it drops the text under 4.5:1, and axe exempts only disabled controls and
-  their labels, not text. A read-only input is not disabled either. The
-  login-holder rows stay faded because their radio really is `disabled`.
-  `final-a11y-presentation-contract.test.ts` fails a faded row in those files.
-- **List loading/empty primitives (#1803):** use the shared `Spinner`
-  (`src/components/ui/spinner.tsx`; `role="status"` with an sr-only label, and
-  it degrades to a static indicator under reduced motion) and `EmptyState`
-  (`src/components/ui/empty-state.tsx`; icon + heading + one-line direction +
-  optional action) instead of bare `Loading…`/`No results` text.
-- **Admin table primitives (#1805):** build admin list screens on the shared
-  `AdminPageHeader`, `AdminDataTable` (`src/components/admin/`; themed
-  shadcn-`Table` shell with a sticky header, optional sticky first column, and a
-  comfortable/compact density toggle persisted per user), the shared
-  `SortHeader` (`aria-sort`, URL- or callback-driven), and the shared
-  `Pagination` (page-size selector; URL `hrefForPage` or callback `onPageChange`
-  modes) — instead of re-implementing the table shell / sort / pagination per
-  page. `bookings-pagination.tsx` / `member-pagination.tsx` are thin wrappers
-  over the shared `Pagination`.
-- **Design-system controls (#4467):** outside `src/components/ui/`, use
-  `Button`, `Input`, `Checkbox`, `Select` and `Table` (or `AdminDataTable`),
-  never a raw `<button>`, `<input>`, `<select>` or `<table>`, and `useConfirm()`
-  rather than the browser's confirm box. Lint reports each one, naming the
-  primitive to use; the existing usages sit on a count ratchet that only falls.
-  The scope, the named exceptions and how to lower the count are in
-  [`TESTING.md`](TESTING.md#design-system-control-ratchet-4467).
-- **Forms (#4467):** build a form on the shared form layer
-  (`src/components/ui/form.tsx`), with its zod schema shared with the API
-  route; see [Forms](#forms-4467).
-- **Long-page section nav (#1818):** wrap the long single-column member pages
-  (`/profile`, `/bookings/[id]`) with `SectionNav` (`src/components/section-nav.tsx`;
-  a sticky desktop anchor rail + a mobile `<details>` disclosure of in-page
-  `#anchor` links). It is presentation-only and additive: give the page's cards
-  stable `id=`s (with `scroll-mt-20`), pass the full candidate list, and it prunes
-  to the sections actually present in the DOM and hides itself below two entries.
-  Member booking cards show "how full for your dates" with `OccupancyMeter` fed by
-  a read-only `checkCapacity` call (never a new capacity computation).
-
-Later epic issues build on these primitives; do not re-introduce hardcoded
-status hex, `bg-white`, or `text-slate-*` on app surfaces — since #2144 the
-admin and finance trees are token-only and
-`src/lib/__tests__/brand-color-source-contract.test.ts` fails the build on any
-raw neutral outside its per-file allowlist.
-
-## Public quote acceptance and officer review (#3415)
-
-The public quote link remains a requester confirmation after acceptance: it
-shows the accepted dates, headcount and total without offering a second action.
-The confirmation uses the recorded accepted option, including when it was the
-second quoted option, on both the immediate response and a later visit. If an
-officer declines, the same card shows the recorded decline date and reason.
-Acceptance places the request in the officer queue as **Accepted**. That card
-shows the accepted quote and offers only **Approve** or **Decline**; it does not
-reopen quote, contact, party or member-link editing. Approval creates the
-booking and its normal payment or school-invoice work. Decline releases the
-request-owned hold and the requester sees the recorded outcome on the same
-read-only link.
-
-## Review Prompts
-
-For every journey, verify the next action, failure state, pending state,
-accessible form semantics, and destructive/financial-action explanation.
-
-### Refresh from Xero now (#4432)
-
-Finance edit users can refresh one member from the member detail Xero panel,
-one booking from its detail page, or run the shared scheduled inbound cycle
-from **Admin → Finance → Xero Sync**. Each action stays on the page and shows
-its result or retryable error; finance view-only users see disabled buttons and
-one section banner. Requests use `/api/admin/xero/sync-now` and are rate-limited
-and audited. Booking sync uses finance permissions independently of booking edit
-access. Whole-club runs refuse overlap with the scheduler.
-
-The Xero Sync page also shows the last verified webhook delivery and a
-connected-only quiet-period warning, linked from Needs Attention and Stuck
-States. Its hours setting defaults to 24 and follows read-only → Edit →
-Save/Cancel, with Save disabled until the valid value changes. The health read
-and settings write use `/api/admin/xero/webhook-health`. See the
-[operator steps](guides/xero.md#pick-up-a-change-made-in-xero-now).
-
-### Xero Operations Failed view (#4220)
-
-Choosing **Failed** under **Status** in **Admin → Finance → Xero → Operations**
-also selects **Active only** under **Failure**, written to the URL as
-`opFailureState=ACTIVE`. A status line, announced to screen readers, says how
-many repaired or resolved failures are hidden; its **Show them** button (or
-**All failures** in the selector) sets Failure to All. A link with only
-`opStatus=FAILED` still lists every failed row. An Active failure whose error
-is a credit note used in Xero outside the app carries a **Credit used outside
-the app** chip: the app could not close it itself, and any amount still owed is
-chased from Xero.
+- [Coverage matrix](COVERAGE_MATRIX.md)
+- [Member guide](user-guide/README.md)
+- [Developer index](contributors/README.md)
+- [Archived issue history](UX_FLOW_HISTORY.md)

@@ -3,6 +3,8 @@
 // duplicate data. Clubs customise the placeholders through the admin screens.
 import { type AgeTier, PrismaClient } from "@prisma/client";
 import bcrypt from "bcryptjs";
+import { PASSWORD_BCRYPT_COST } from "../src/lib/password-hashing";
+import { screenChosenPassword } from "../src/lib/breached-password";
 import { clubConfig } from "../src/config/club";
 import {
   CLUB_CONTACT_EMAIL,
@@ -34,6 +36,8 @@ import {
   buildSeedChoreTemplates,
   buildSeedCommitteeRoles,
   buildSeedLodgeMemberData,
+  SEED_PASSWORD_SCREEN_POLICY,
+  seedPasswordBreachedMessage,
 } from "./seed-data";
 import { starterPageContent } from "./starter-page-content";
 import { starterSiteContent } from "./starter-site-content";
@@ -271,6 +275,37 @@ async function main() {
   const seedAdminEmail = requireSeedEnv("SEED_ADMIN_EMAIL").toLowerCase();
   const seedAdminPassword = requireSeedEnv("SEED_ADMIN_PASSWORD");
 
+  // #4610 (INV-AUTH-006): an operator chose SEED_ADMIN_PASSWORD and
+  // SEED_LODGE_PASSWORD, so each is screened like any other chosen password,
+  // only for an account the seed is about to create, and both before the
+  // seed's first write: a breached one stops the seed with nothing written. An
+  // unreachable service accepts it (fail open).
+  const existingAdmin = await prisma.member.findFirst({
+    where: { role: "ADMIN" },
+  });
+  const lodgeAccountEmail = clubDomainEmail("lodge");
+  const existingLodge = await prisma.member.findFirst({
+    where: { email: lodgeAccountEmail },
+  });
+  // The admin and the kiosk are two accounts. An admin email set to the kiosk's
+  // address would create both under one login email part-way through the seed,
+  // so it is refused here, before anything is written.
+  if (!existingAdmin && seedAdminEmail === lodgeAccountEmail) {
+    throw new Error(
+      `SEED_ADMIN_EMAIL must not be the lodge kiosk account's address (${lodgeAccountEmail}); choose another email for the admin.`,
+    );
+  }
+  // Read only when the kiosk account is missing, so null exactly when it exists.
+  const lodgePassword = existingLodge ? null : requireSeedEnv("SEED_LODGE_PASSWORD");
+  const adminScreen = existingAdmin
+    ? { ok: true as const }
+    : await screenChosenPassword(seedAdminPassword, SEED_PASSWORD_SCREEN_POLICY);
+  if (!adminScreen.ok) throw new Error(seedPasswordBreachedMessage("SEED_ADMIN_PASSWORD"));
+  const lodgeScreen = lodgePassword === null
+    ? { ok: true as const }
+    : await screenChosenPassword(lodgePassword, SEED_PASSWORD_SCREEN_POLICY);
+  if (!lodgeScreen.ok) throw new Error(seedPasswordBreachedMessage("SEED_LODGE_PASSWORD"));
+
   // Ensure the club's lodge exists (create-if-missing). The migration that
   // introduced the Lodge table seeds a 'Lodge' placeholder row when
   // EmailMessageSetting has no configured lodge name; on a first-run seed,
@@ -489,12 +524,9 @@ async function main() {
   // Seed the first admin account (only if no admin exists). canLogin and
   // emailVerified are required for the credentials login flow to accept the
   // account; forcePasswordChange routes the first login to /change-password.
-  const existingAdmin = await prisma.member.findFirst({
-    where: { role: "ADMIN" },
-  });
-
+  // Its password was screened before the first write, above.
   if (!existingAdmin) {
-    const passwordHash = await bcrypt.hash(seedAdminPassword, 12);
+    const passwordHash = await bcrypt.hash(seedAdminPassword, PASSWORD_BCRYPT_COST);
     const admin = await prisma.member.create({
       data: buildSeedAdminMemberData({
         email: seedAdminEmail,
@@ -527,17 +559,11 @@ async function main() {
     });
   }
 
-  // Seed the shared lodge kiosk account (create-if-missing).
-  const lodgeAccountEmail = clubDomainEmail("lodge");
-  const existingLodge = await prisma.member.findFirst({
-    where: { email: lodgeAccountEmail },
-  });
-
-  if (!existingLodge) {
-    const lodgePasswordHash = await bcrypt.hash(
-      requireSeedEnv("SEED_LODGE_PASSWORD"),
-      12,
-    );
+  // Seed the shared lodge kiosk account (create-if-missing). Its password was
+  // screened before the first write, above; the kiosk signs in with it and is
+  // not forced to change it.
+  if (lodgePassword !== null) {
+    const lodgePasswordHash = await bcrypt.hash(lodgePassword, PASSWORD_BCRYPT_COST);
     const lodge = await prisma.member.create({
       data: buildSeedLodgeMemberData({
         email: lodgeAccountEmail,
@@ -556,7 +582,7 @@ async function main() {
       canLogin: lodge.canLogin,
     });
     console.log(`Lodge account seeded: ${lodgeAccountEmail}`);
-  } else {
+  } else if (existingLodge) {
     await ensureMemberAccessRolesFromCompatibilityFields(prisma, {
       memberId: existingLodge.id,
       role: existingLodge.role,

@@ -920,6 +920,34 @@ describe("the bound-invoice rule in the create worker (#3642)", () => {
     });
   });
 
+  // #4710 (PR #4708): a Retry queued after a stalled run bound the invoice. The
+  // queued run raises nothing, but closes its claimed row against the bound
+  // invoice - left RUNNING it would be reset stale and loop.
+  it("MUTATION (#4710): a claimed row for an already-bound invoice completes SUCCEEDED on that invoice, raising and emailing nothing", async () => {
+    mocks.settlementFindUnique.mockResolvedValue(settlementWithInvoice(GroupBookingStatus.OPEN));
+
+    await expect(
+      createXeroInvoiceForGroupSettlement("settle-1", { syncOperation: xeroClaim("op-1") })
+    ).resolves.toBe("inv-existing");
+
+    expect(mocks.accountingApi.createInvoices).not.toHaveBeenCalled();
+    expect(mocks.accountingApi.emailInvoice).not.toHaveBeenCalled();
+    expect(mocks.upsertLink).not.toHaveBeenCalled();
+    expect(mocks.completeSync).toHaveBeenCalledTimes(1);
+    expect(mocks.completeSync).toHaveBeenCalledWith(expect.objectContaining({ id: "op-1" }), expect.objectContaining({
+      status: "SUCCEEDED",
+      xeroObjectType: "INVOICE",
+      xeroObjectId: "inv-existing",
+      xeroObjectNumber: "INV-EXISTING",
+    }));
+  });
+
+  it("an already-bound invoice with no claimed row writes no outcome", async () => {
+    mocks.settlementFindUnique.mockResolvedValue(settlementWithInvoice(GroupBookingStatus.OPEN));
+    await expect(createXeroInvoiceForGroupSettlement("settle-1")).resolves.toBe("inv-existing");
+    expect(mocks.completeSync).not.toHaveBeenCalled();
+  });
+
   it("abandons an invoice that arrives after the settlement was released: VOID queued, link inactive, never pointed at or emailed", async () => {
     mocks.settlementFindUnique
       .mockResolvedValueOnce(settlement(GroupBookingStatus.OPEN))

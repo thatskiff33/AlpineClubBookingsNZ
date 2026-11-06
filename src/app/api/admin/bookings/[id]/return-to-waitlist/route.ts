@@ -21,8 +21,8 @@ import {
   RETURN_TO_WAITLIST_PRICED_MESSAGE,
   RETURN_TO_WAITLIST_STATUS_MESSAGE,
   findUnresolvedWaitlistStrandReport,
-  isReturnToWaitlistTransactionContention,
 } from "@/lib/waitlist-return-contract";
+import { isTransactionContention } from "@/lib/prisma-errors";
 import { processWaitlistForDates } from "@/lib/waitlist";
 import { clubFormatValues } from "@/lib/club-format-server";
 
@@ -403,7 +403,7 @@ export async function POST(
     // question is what the operator should do next, and for an exhausted lock
     // wait that is "again shortly", not "escalate". 503 for the same reason
     // `waitlist-confirm/route.ts` uses it on the release this repair finishes.
-    if (isReturnToWaitlistTransactionContention(err)) {
+    if (isTransactionContention(err)) {
       return NextResponse.json(
         { error: RETURN_TO_WAITLIST_CONTENDED_MESSAGE },
         { status: 503 },

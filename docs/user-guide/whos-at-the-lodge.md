@@ -34,6 +34,8 @@ turn it on.
 3. Beside each name are the nights that person is here. A run of nights reads
    as a range; someone here for two separate stays shows both.
 
+![Who’s at the lodge showing the next-30-nights roster with no bookings to display](../images/public/member-lodge-roster.png)
+
 ## Good to know
 
 **How much of a name you see depends on your club.** Your administrator picks

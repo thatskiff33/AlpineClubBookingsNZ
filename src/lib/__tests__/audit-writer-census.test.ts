@@ -1485,7 +1485,14 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
     // RE-MEASURED with `pnpm run audit:census` on the merged tree (first main-sync, 2 Nov 2026).
     // 403 -> 404 unpinned (#4655): the late organiser adjustment note's row, unpinned `xero`.
     // RE-MEASURED with `pnpm run audit:census` on the merged tree (second main-sync, 2 Nov 2026).
-    ).toEqual({ pinned: 130, unpinned: 404 });
+    // 404 -> 406 unpinned (third main-sync, 7 Nov 2026): main's own #4680 and #4686 are
+    // disjoint from the category rework's writers already counted above. #4680 is the
+    // organiser adjustment run's stand-down row, unpinned `xero`. #4686 is the
+    // lost-claim part-success's row, unpinned `xero`.
+    // 406 -> 407 unpinned (triyder/AlpineClubBookingsNZ#97): the link dialog's `admin`
+    // row, on a finance-gated route, so outside the lodge-gated keep: unpinned.
+    // RE-MEASURED with `pnpm run audit:census` on the merged tree.
+    ).toEqual({ pinned: 130, unpinned: 407 });
   });
 
   it("pins which classified writers a MEMBER can now see about themselves", () => {

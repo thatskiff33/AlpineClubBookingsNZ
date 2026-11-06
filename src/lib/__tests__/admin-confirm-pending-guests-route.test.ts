@@ -328,6 +328,17 @@ beforeEach(() => {
   mocks.sendConfirmedEmail.mockResolvedValue(undefined);
 });
 
+// #4738: a $0 confirmation's lines and R01 are proved against PostgreSQL
+// (zero-price-confirmation.realdb.test.ts); here only the call is observed.
+const confirmationLedger = vi.hoisted(() => ({
+  postStoredBookingConfirmationLedgerLines: vi.fn<(...args: unknown[]) => Promise<void>>(async () => {}),
+}));
+vi.mock("@/lib/booking-ledger-confirmation-sync", () => confirmationLedger);
+vi.mock("@/lib/member-money/doors", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/member-money/doors")),
+  resolveBookingMoneyPostingContext: vi.fn(async () => ({ journal: "context" })),
+}));
+
 describe("POST /api/admin/bookings/[id]/confirm-pending-guests", () => {
   it("returns the fixed 409 before charging when the participant fence contends", async () => {
     mocks.bookingFindUnique.mockResolvedValue(makeBooking());
@@ -1332,6 +1343,9 @@ describe("POST /api/admin/bookings/[id]/confirm-pending-guests", () => {
 
     expect(res.status).toBe(200);
     expect(body).toMatchObject({ status: "PAID", charged: false });
+    // #4738: the PAID is the booking's confirmation, posted once on the claim's transaction.
+    expect(confirmationLedger.postStoredBookingConfirmationLedgerLines).toHaveBeenCalledTimes(1);
+    expect(confirmationLedger.postStoredBookingConfirmationLedgerLines.mock.calls[0]!.slice(1)).toEqual(["b1", { journal: "context" }]);
     // #172: the $0 promote transaction serialises on the per-lodge capacity
     // lock keyed on the booking's lodgeId, on the same tx client.
     expect(mocks.acquireLodgeCapacityLock).toHaveBeenCalledWith(txClient, "lodge-1");

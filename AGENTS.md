@@ -266,7 +266,7 @@ implement → review → fix → verify-fix → validate → PR → CI-green →
 1. **Open the PR** from `.github/pull_request_template.md`: write the body to a
    file and run `pnpm run pr:check <body-file>` first (a body edit does not
    re-run Actions); copy headings and labels verbatim. No base: `git fetch
-   origin main` or `--base <ref>` (an epic child: its branch).
+   origin main` or `--base <ref>` (an exception epic's child: its branch).
 2. **CI green on the exact head SHA** — every required check present and
    passing on the current head; an empty failure list is not a pass (#2641).
    Pre-existing failures, required checks and protection:
@@ -280,8 +280,8 @@ implement → review → fix → verify-fix → validate → PR → CI-green →
    ready comment above, no residual open). Fix anything unclean first; never
    merge around it. No owner Approve or approval comment is needed. A genuine
    open owner *decision* (`needs-decision`, an unanswered option list) still
-   waits for the owner, and production operations stay owner-only. Epic
-   children merge into their `epic/**` branch on the same terms
+   waits for the owner, and production operations stay owner-only. An
+   exception epic's children merge into their `epic/**` branch on the same terms
    ([`EPIC_PLAYBOOK.md`](docs/agents/EPIC_PLAYBOOK.md)).
 4. **Merge** with a merge commit; once eligible and waiting only on CI, arm
    `gh pr merge <n> --auto --merge`. The linked issue closes only then.

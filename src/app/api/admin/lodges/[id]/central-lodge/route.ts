@@ -1,19 +1,14 @@
-import { Prisma } from "@prisma/client";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
 import { createAuditLog } from "@/lib/audit";
-import { centralLinkStatus } from "@/lib/central-lodge-link";
-import { SERVERNZ_CREDENTIAL_KEYS, SERVERNZ_PROVIDER } from "@/lib/servernz-config";
+import { centralLinkStatus, labelOwnedLodges, saveCentralLodgeLinks } from "@/lib/central-lodge-link";
 import { getIntegrationCredentialValue } from "@/lib/integration-credentials";
-import { otherLodgeChoiceLabel } from "@/lib/other-lodge-choice-label";
-import { OWNED_CENTRAL_LODGE_ID_MAX, type OwnedCentralLodge } from "@/lib/other-lodges";
+import { syncOwnOtherLodgesFromFees } from "@/lib/other-lodge-fees-sync";
+import { OWNED_CENTRAL_LODGE_ID_MAX } from "@/lib/other-lodges";
 import { prisma } from "@/lib/prisma";
-import {
-  SERVERNZ_TRANSACTION_OPTIONS,
-  loadServerNzSettings,
-  lockServerNzSettings,
-} from "@/lib/servernz-settings";
+import { SERVERNZ_CREDENTIAL_KEYS, SERVERNZ_PROVIDER } from "@/lib/servernz-config";
+import { loadServerNzSettings } from "@/lib/servernz-settings";
 import { requireAdmin } from "@/lib/session-guards";
 
 /**
@@ -35,19 +30,13 @@ import { requireAdmin } from "@/lib/session-guards";
  * INV-LOCK-001/002 are unaffected. The unique index is what stops one central
  * lodge being linked to two local ones, including under two concurrent saves.
  *
- * The ownership check, the transition and its audit row are ONE serialised
- * step (#4262 review). The save first takes the settings row lock
- * (`lockServerNzSettings`) and re-reads the owned list under it, so a download
- * recording a new list (it unlinks deleted ids under the same lock) cannot
- * slip between the check and the write; then it locks this `Lodge` row
- * (`SELECT 1 … FOR UPDATE`), reads the link it is replacing, writes the new
- * one and writes `LODGE_CENTRAL_LINK_UPDATED` on the same transaction client.
- * Settings then Lodge is the download's own order, so neither can wait on the
- * other in reverse. Two administrators saving at once queue on the locks, so
- * the second reads the first's link as its "before". A save refused for
+ * The save itself is `saveCentralLodgeLinks` (`@/lib/central-lodge-link`),
+ * shared with the setup page's link step: one serialised transaction that
+ * locks the settings row then this `Lodge` row, re-checks ownership, writes
+ * the link and its `LODGE_CENTRAL_LINK_UPDATED` audit row. A save refused for
  * ownership (400) writes nothing; one refused by the unique index (409) rolls
- * back; neither leaves an audit row. See docs/CONCURRENCY_AND_LOCKING.md -> "Central
- * lodge link writer".
+ * back; neither leaves an audit row. See docs/CONCURRENCY_AND_LOCKING.md ->
+ * "Central lodge link writer".
  */
 
 const paramsSchema = z.object({ id: z.string().min(1) });
@@ -59,22 +48,6 @@ const putSchema = z
     centralLodgeId: z.string().trim().min(1).max(OWNED_CENTRAL_LODGE_ID_MAX).nullable(),
   })
   .strict();
-
-/**
- * Each owned lodge with the label its option shows (#69): two may share a
- * name, so such a pair also shows the location their local copies hold.
- */
-async function labelOwnedLodges(owned: ReadonlyArray<OwnedCentralLodge>) {
-  const rows = await prisma.otherLodge.findMany({
-    where: { centralId: { in: owned.map((l) => l.id) } },
-    select: { centralId: true, location: true },
-  });
-  const location = new Map(rows.map((r) => [r.centralId, r.location]));
-  return owned.map((l) => ({
-    ...l,
-    label: otherLodgeChoiceLabel({ name: l.name, location: location.get(l.id) ?? null }, owned),
-  }));
-}
 
 async function readSettings(lodgeId: string) {
   const lodge = await prisma.lodge.findUnique({
@@ -167,77 +140,71 @@ export async function PUT(
   // so the audit row describes the transition that actually happened even when
   // two administrators save at once.
   const lodgeId = parsedParams.data.id;
-  const actorId = guard.session.user.id;
-  let before: { centralLodgeId: string | null } | "not-owned" | null = null;
+  let saved;
   try {
-    before = await prisma.$transaction(async (tx) => {
-      await lockServerNzSettings(tx);
-      // Only a lodge the central server says this club owns may be linked:
-      // anything else could never be asked about, and would hide a typo.
-      if (body.centralLodgeId !== null) {
-        const { otherLodgesOwnedLodges: owned } = await loadServerNzSettings(tx);
-        if (!owned?.some((l) => l.id === body.centralLodgeId)) return "not-owned" as const;
-      }
-      await tx.$executeRaw`SELECT 1 FROM "Lodge" WHERE "id" = ${lodgeId} FOR UPDATE`;
-      const current = await tx.lodge.findUnique({
-        where: { id: lodgeId },
-        select: { centralLodgeId: true },
-      });
-      if (!current) return null;
-      await tx.lodge.update({
-        where: { id: lodgeId },
-        data: { centralLodgeId: body.centralLodgeId },
-      });
-      // Category `admin`, like every writer under `/api/admin/lodges/`
-      // (INV-PRIV-013; see `LODGE_GATED_ADMIN_CATEGORIES_2765` in the audit census).
-      await createAuditLog(
-        {
-          action: "LODGE_CENTRAL_LINK_UPDATED",
-          memberId: actorId,
-          actorMemberId: actorId,
-          entityType: "Lodge",
-          entityId: lodgeId,
-          category: "admin",
-          severity: "important",
-          outcome: "success",
-          summary: "Central lodge link updated",
-          metadata: {
-            before: { centralLodgeId: current.centralLodgeId },
-            after: { centralLodgeId: body.centralLodgeId },
+    const actorId = guard.session.user.id;
+    saved = await saveCentralLodgeLinks(
+      [{ lodgeId, centralLodgeId: body.centralLodgeId }],
+      (entry, tx) =>
+        // Category `admin`, like every writer under `/api/admin/lodges/`
+        // (INV-PRIV-013; see `LODGE_GATED_ADMIN_CATEGORIES_2765` in the audit census).
+        createAuditLog(
+          {
+            action: "LODGE_CENTRAL_LINK_UPDATED",
+            memberId: actorId,
+            actorMemberId: actorId,
+            entityType: "Lodge",
+            entityId: entry.lodgeId,
+            category: "admin",
+            severity: "important",
+            outcome: "success",
+            summary: "Central lodge link updated",
+            metadata: { before: entry.before, after: entry.after },
           },
-        },
-        tx,
-      );
-      return current;
-    }, SERVERNZ_TRANSACTION_OPTIONS);
-  } catch (error) {
-    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
-      const holder = await prisma.lodge.findUnique({
-        where: { centralLodgeId: body.centralLodgeId ?? "" },
-        select: { name: true },
-      });
-      return NextResponse.json(
-        {
-          error: `That central lodge is already linked to ${holder?.name ?? "another lodge"}. Unlink it there first.`,
-        },
-        { status: 409 },
-      );
-    }
+          tx,
+        ),
+    );
+  } catch {
     return NextResponse.json({ error: "Could not save" }, { status: 500 });
   }
+  // Every refusal named (#4720 review): a new one fails to compile here.
+  // `duplicate` and `stale` need two rows or an expected link, which this
+  // one-row save without `expectCurrent` never sends.
+  if (!saved.ok) {
+    switch (saved.reason) {
+      case "already-linked":
+        return NextResponse.json(
+          {
+            error: `That central lodge is already linked to ${saved.holderName ?? "another lodge"}. Unlink it there first.`,
+          },
+          { status: 409 },
+        );
+      case "lodge-not-found":
+        return NextResponse.json({ error: "Lodge not found" }, { status: 404 });
+      case "not-owned":
+        return NextResponse.json(
+          {
+            error:
+              "That is not a lodge the Alpine Central Server says this club owns. Download from the central server, then choose again.",
+          },
+          { status: 400 },
+        );
+      case "duplicate":
+      case "stale":
+        return NextResponse.json(
+          { error: "That link was changed while this was open. Reload the page, then choose again." },
+          { status: 409 },
+        );
+      default: {
+        const unhandled: never = saved;
+        return unhandled;
+      }
+    }
+  }
 
-  if (before === "not-owned") {
-    return NextResponse.json(
-      {
-        error:
-          "That is not a lodge the Alpine Central Server says this club owns. Download from the central server, then choose again.",
-      },
-      { status: 400 },
-    );
-  }
-  if (!before) {
-    return NextResponse.json({ error: "Lodge not found" }, { status: 404 });
-  }
+  // The Fees page fills the own lodge's rates only once it is linked, as the
+  // setup page's link step does after its save.
+  await syncOwnOtherLodgesFromFees("central lodge linked", guard.session.user.id);
 
   const settings = await readSettings(lodgeId);
   if (!settings) {

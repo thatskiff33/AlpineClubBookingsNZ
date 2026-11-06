@@ -1,5 +1,5 @@
 /**
- * Per-account password sign-in throttle (#4609, INV-AUTH).
+ * Per-account password throttle for sign-in and change-password (#4609, #4640, INV-AUTH).
  *
  * The per-address limiter (`RATE_LIMITS.login`) cannot see one account being
  * guessed from many addresses. This counts attempts per ACCOUNT KEY instead:
@@ -14,8 +14,9 @@
  * so one account under attack cannot hold the connection pool. An account
  * already waiting is refused from an unlocked read without queuing at all. A
  * throttled claim writes nothing; a valid password (or a completed password
- * reset) clears the row. Unknown emails are claimed exactly like real ones: the caller decides
- * before it reads any Member.
+ * reset) clears the row. At sign-in, unknown emails are claimed exactly like
+ * real ones: the caller decides before it reads any Member. Change-password
+ * uses the authenticated member's stored email after session validation.
  *
  * If the store fails, the claim falls back to a bounded per-process map at
  * the #1142 divided budget and never refuses sign-in for the failure itself.
@@ -95,9 +96,10 @@ export function loginAccountKey(email: string): string {
 /**
  * The fallback map's key. Without a secret NextAuth cannot sign anyone in
  * anyway; the unkeyed digest only keeps the map working, and it is never
- * stored or logged.
+ * stored or logged. #4613's per-account request limits key their per-process
+ * fallback on it for the same reason.
  */
-function memoryKeyFor(email: string): string {
+export function loginAccountMemoryKey(email: string): string {
   try {
     return loginAccountKey(email);
   } catch {
@@ -260,7 +262,7 @@ export async function claimPasswordAttempt(email: string): Promise<{ allowed: bo
     if (isPostgresLockNotAvailable(err)) return { allowed: false };
     const now = new Date();
     noteStoreFailure(err, now);
-    return { allowed: claimInMemory(memoryKeyFor(email), now) };
+    return { allowed: claimInMemory(loginAccountMemoryKey(email), now) };
   }
 }
 
@@ -271,7 +273,7 @@ export async function claimPasswordAttempt(email: string): Promise<{ allowed: bo
  */
 export async function clearPasswordAttempts(email: string): Promise<void> {
   try {
-    const key = memoryKeyFor(email);
+    const key = loginAccountMemoryKey(email);
     memoryStore.delete(key);
     if (!getAuthSecret()) return;
     await prisma.loginThrottle.deleteMany({ where: { id: key } });

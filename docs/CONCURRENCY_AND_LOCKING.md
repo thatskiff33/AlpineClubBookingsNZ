@@ -171,7 +171,15 @@ FAILED or PARTIAL, so they lose to the RUNNING row, and the stale reset still
 fails it if the process dies. The reset, requeue, outbox claim and resolve
 mark write that row status-guarded too, so whichever commits first wins. A
 lost record runs no allocation or payout and writes no failure; its audit row
-and alert run after, outside any transaction. This composes with the existing cancel/capture/refund cohort and
+and alert run after, outside any transaction. #4680: after the record, each
+money-moving call (resize, allocation, settlement, refund payment, or a
+completion with nothing allocated or paid) is preceded by a plain status-guarded read
+of the row on the run's claim (`holdsXeroOperationClaim`: id, RUNNING,
+`startedAt`), outside any transaction, taking no advisory key and registering
+no lock site (`INV-LOCK-001`..`003` unchanged); a lost claim makes no call and
+writes nothing to the row, only the audit row and the once-ever alert claim.
+The read narrows, not closes, the window: a reset can commit while the call
+it preceded is in flight. This composes with the existing cancel/capture/refund cohort and
 with the supplementary-anchor protocol rather than holding a lock across Xero.
 
 ### One refund credit note in flight per payment, by claim order (#3880)
@@ -196,11 +204,47 @@ after the completion's
 (`lockPaymentForRefundedTotal`), with no provider call. Proven against real
 PostgreSQL by `edit-financial-review-cancelled-refund-xero.realdb.test.ts`.
 
-### A Xero retry claims the original row it writes (#2262 H3, #3462, #4256)
+The stale threshold ends that hold, so a row whose note Xero made but whose
+record lost its wait (#4656) would stop holding anything back after 15
+minutes. Since #4688 (`INV-INT-035`) that record stamps its own row
+`REFUND_NOTE_UNRECORDED` and `assertNoUnrecordedRefundNote` (every
+`createXeroCreditNote`, any mode) refuses while the payment has such a row
+unresolved, at any age, with the same busy error. Classified under
+`INV-LOCK-001`: no global cohort, no advisory key, no row lock added. The
+stamp is one claim-guarded `updateMany` on the operation row alone (this
+run's RUNNING claim, or the FAILED row Mark failed left under it; never a
+resolved row or one naming a note), outside the record's transaction - it never takes the
+Payment row the record just failed to get, so it cannot add a wait cycle to
+`INV-LOCK-002`'s order (Payment, operation row, link). The fence read, like
+the in-flight read, holds no lock. The stamp lands as the record gives up,
+before its trace; until then the row holds others back only as a live claim.
+The fence lifts only through the resolve's own status-guarded claim
+(`manuallyResolvedAt`): a resolve recording the note's number claims under
+`lock(1)`, then the Payment row, then the row, so the fence lifts in the
+commit that records the note and its link, and a create that reads it lifted
+reads that coverage too; a plain resolve's row-only mark lifts it with the
+row's recorded amount counted as covered (`INV-INT-025`). The fence also
+lifts once a live or voided link on the payment records the stamped note
+(#4692: another row resolved with it, or a retry recorded it); that link is
+written in its writer's own commit, so a create that reads the fence lifted
+reads the note's coverage too. A resolve no longer refuses over a PENDING copy
+the fence holds; the outbox cancels it at its next claim
+(`findResolvedSiblingSince`). A copy claimed in the instant before the mark
+commits passes that check, so the create asks it again once the fence reads
+lifted (`passUnrecordedRefundNoteFence`): a lifted fence means the mark has
+committed, so the copy then closes CANCELLED before any sizing - needed for a
+refund request's note, whose plain mark takes no lock and writes no link the
+create's coverage read would see. Mark failed and the bulk reset write the row
+status-guarded as before, and keep the code; Mark failed's plain write
+refuses a stamped row, so a stamp landing after its read is never
+overwritten. Proven against real PostgreSQL by
+`xero-unrecorded-refund-note-fence.realdb.test.ts`.
+
+### A Xero retry claims the original row it writes (#2262 H3, #3462, #4256, #4259)
 
 A retry that writes the original operation row - the booking invoice replay,
-the PARTIAL invoice payment repair, and the PARTIAL and FAILED refund-note
-repairs - first claims it with a status-guarded `updateMany`
+the PARTIAL invoice payment repair, the PARTIAL and FAILED refund-note
+repairs, and the PARTIAL modification credit-note repair (#4259) - first claims it with a status-guarded `updateMany`
 (`runWithClaimedOriginal`, `xero-operation-retry.ts`): FAILED/PARTIAL
 (PARTIAL only for a PARTIAL repair) -> RUNNING, unresolved and replayable. The
 resolve route refuses a RUNNING row, and the mark non-replayable route writes
@@ -219,9 +263,18 @@ replay hands its claim to `createXeroInvoiceForBooking`, whose completion is
 written under it (#4373). A repair whose process died after its payment was recorded is
 closed by the next retry from the payment's link (live, this invoice, this
 amount), with no second Xero call.
+The modification credit-note repair reads its plan's allocation links only
+under the claim, allocates the rest (each allocation's own row and link, as
+before), each only after `holdsXeroOperationClaim` reads the claim still held
+(as #4680), and completes its row SUCCEEDED onto the claim; it used to leave
+the row PARTIAL. While it holds the claim the booking repair tool reports the
+note's RUNNING row - a clearing note's, or an edit's (#4757) - and queues no allocation beside it; nor does it offer a PARTIAL row's retry beside an admissible ALLOCATE row in the arm's scope that is in flight, or that is not the note's own attempt (this note, a planned invoice and amount) and is unresolved, or resolved in Xero but naming this note - that row is reported, or retried, first (#4757). Its claim and completion are single-row status-guarded writes:
+no advisory key, no booking, capacity, settlement-money or credit-ledger row
+(`INV-LOCK-001`; no key or order, `INV-LOCK-002`; no new site, `INV-LOCK-003`).
 During a blue/green overlap the old version's stale reset sends a stuck repair
 to FAILED, which then needs Resolve in Xero or a by-hand payment check. Proven against real PostgreSQL by
-`xero-partial-repair-claim.realdb.test.ts`.
+`xero-partial-repair-claim.realdb.test.ts` and
+`xero-modification-note-repair-claim.realdb.test.ts`.
 
 ### Two callers on one Xero operation row: guarded outcomes (#4356)
 
@@ -260,6 +313,59 @@ trip, a pre-HTTP cooldown refusal or a CAS requeue) or its stale reset, each
 many milliseconds after the first was stamped, so that does not happen. No advisory key, row lock,
 schema change or new participant. Proven against real PostgreSQL by
 `xero-shared-operation-outcome.realdb.test.ts`.
+
+Since #4673 a failure is narrower still: a FAILED outcome, from either writer,
+lands only on a row carrying its own claim's `startedAt`, RUNNING or already
+ended FAILED, never on PENDING, WAITING_PAYMENT, SKIPPED or CANCELLED: a
+withdrawal (`settleKeptLateCaptureRecordOnApproval`, the kept change receipt's)
+cancels a FAILED row keeping its `startedAt`, so a stalled handler's self-fail
+would otherwise make a withdrawn row retryable (PR #4687 review). The race it closes: a run stalls, Reset stale
+running fails its row, an officer's Retry hands an in-place requeue type (the
+organiser adjustment, applied-credit allocation and deallocation, kept late
+capture, released change invoice, card receipt, group invoice and its VOIDs,
+subscription invoice, and the kept-capture close's requeue) back to PENDING
+with `startedAt` cleared, and the stalled run then fails. Its write matches
+nothing, so the queued Retry stands; the outbox counts the refusal skipped and
+exposes no charge error; the additional-capture refusal stamps its code only
+on its own claim's FAILED row and alerts nobody for a refused one. The outbox's
+cooldown give-back to PENDING matches only its own claim's RUNNING or FAILED
+row, so a stalled run's pre-HTTP refusal never revives a FAILED row a later
+claim ended. A claim's own RUNNING row, a repair's marker aside, takes its
+failure, so a refusal never strands a row RUNNING. Limit: the membership
+cancellation credit note's retry takes no claim and writes under the reset
+row's `startedAt`, so a stalled first run's late failure can still replace
+that retry's own error. Still no advisory key, row lock, schema change or new
+participant: the claim is the row's `startedAt`, compared in the same
+status-guarded `updateMany`. Proven by
+`xero-late-failure-after-retry.realdb.test.ts`.
+
+Since #4686 a CANCELLED or PARTIAL completion is held to the same rule: it
+lands only on its own claim's RUNNING or FAILED row (a PARTIAL also on its own
+claim's PARTIAL, two callers sharing the row, #1354), never on the Retry's
+PENDING row, a withdrawn CANCELLED one or a row another claim ended. Every
+production CANCELLED writer completes its own RUNNING claim (the outbox's,
+REQUEUE's or retry's claimed row, or the booking invoice's started row), so
+none relied on landing elsewhere; a start handed a queued winner's row
+(#1354) now leaves it PENDING, and that queued run makes the same
+marked-paid check and cancels itself. A refused PARTIAL's Xero object is not
+linked or written over the row: `refusedOutcomeWrite` warns inside the
+completion's transaction, and after commit, outside any transaction,
+`traceLostClaimPartial` re-reads the row, writes one `xero` audit row per
+refused delivery and sends #4374's alert once per object
+(`sendAdminAlertOnceEver`), through the late notes' `traceLateXeroObject`;
+a PARTIAL (never a SUCCEEDED) naming an unfinished step is traced the same way after a later claim's
+RUNNING row refused it, its links recorded in the refused write's own
+transaction as before. The trace takes no lock, so it never waits on the
+queued run's `lock(1)`.
+The group invoice's bound-invoice return (#4710) completes its own claim
+SUCCEEDED through the same guarded writer, under the lock-free outbox claim
+it already held. Classified
+per `INV-LOCK-001`: no global, lodge or member tier, as before - the write
+is the same single-row status-guarded `updateMany`, the audit row and the
+once-ever alert claim are independent single-row writes that hold no lock
+across the email. `INV-LOCK-002`: no new key or order. `INV-LOCK-003`: no new
+participant to register. The membership cancellation credit note's limit
+above applies to its late PARTIAL too. Proven by the same suite.
 
 ### The Xero token refresh uses a row lease, shared across colours (#3454)
 
@@ -2031,6 +2137,13 @@ mispricing a booking.
   provider call, and the bcrypt compare runs after commit, so INV-LOCK-001 and
   INV-LOCK-002 ordering is not engaged.
 
+  Password sign-in and `POST /api/auth/change-password` share this claim and
+  clear (#4640). Change-password resolves the authenticated member's stored
+  email first; its claim commits before bcrypt, and its clear runs after a valid
+  current password, before the separate password-update transaction. Neither
+  caller holds a Member lock while claiming. There is no new lock site or key
+  (`INV-LOCK-003`); the inventory remains the helper's existing row-lock site.
+
   The wait is bounded (#4637 review), because the threat is many concurrent
   guesses on ONE account and every waiter holds a pooled connection:
   - an unlocked read first refuses an account already waiting, so most of an
@@ -2246,14 +2359,23 @@ mispricing a booking.
   (the credentials route's 409), having written nothing, when another save
   moved it, so a key issued by the old server never lands beside the new
   address. A key saved first is removed by the move queued behind it.
-  Address replacement also deletes the old server's `push_secret` in its
-  transaction, after the API key (settings row, `api_key` row,
-  `push_secret` row, audit); key replacement deletes it after the new key
-  (settings row, `api_key` row, `push_secret` row, answer reset, audit). `ensurePushRegistration` stores a newly issued
-  secret through `serverNzAnswerWriter` for the identity its registration
-  was sent on (settings row, credential read, `push_secret` write, audit),
-  so a registration in flight across a move stores nothing and the next pass
-  registers with the new server. The message-board mirror (`runMirrorSync`)
+  Address replacement also deletes the old server's `push_secret`, and the
+  `push_registered_url` it was issued for, in its transaction, after the API
+  key (settings row, `api_key` row, `push_secret` row, `push_registered_url`
+  row, audit); key replacement deletes them after the new key (settings row,
+  `api_key` row, `push_secret` row, `push_registered_url` row, answer reset,
+  audit). `ensurePushRegistration` stores a newly issued secret and its
+  callback address through `serverNzAnswerWriter` for the identity its
+  registration was sent on (settings row, credential read, `push_secret`
+  write, `push_registered_url` write, audit), so a registration in flight
+  across a move stores nothing and the next pass registers with the new
+  server. It also registers again when the stored address differs from this
+  site's only in how it is written; a registration stored for another origin
+  (host name or port) is never taken over by the pass (a restored or staging
+  copy would otherwise steal production's), only by a key save. The credentials route also runs it
+  (`registerAfterKeySave`, triyder/AlpineClubBookingsNZ#97) after the key
+  save's fenced transaction has committed, never inside it: the same fenced
+  store, no new lock, and its provider call outside every transaction. The message-board mirror (`runMirrorSync`)
   writes each page through `serverNzAnswerWriter(page.sentOn)`: post
   create/update/removal, failure count, cursor and last-sync time, each one
   short transaction (settings row, credential read, then the `ClubPost` row
@@ -2312,13 +2434,17 @@ mispricing a booking.
   A replaced connection refuses the write. Connection replacement clears both
   Other lodges transfer positions and the shared-feed cursor and poison tracking
   in the same transaction as the address or key change.
-- **Central lodge link writer** — `PUT /api/admin/lodges/[id]/central-lodge`
+- **Central lodge link writer** — `saveCentralLodgeLinks` in
+  `src/lib/central-lodge-link.ts`, called by `PUT /api/admin/lodges/[id]/central-lodge`
+  and by the setup page's link step (`/api/admin/alpine-server/lodge-links`)
   (#62; #4262 review): in one transaction it first takes the settings row lock
   (`lockServerNzSettings`) and re-reads the owned-lodge list under it, so a
   download recording a new list (which unlinks deleted ids under the same
   lock) cannot land between the ownership check and the write; then it takes
-  `$executeRaw`SELECT 1 FROM "Lodge" WHERE "id" = $1 FOR UPDATE``, re-reads the
-  link it is replacing, writes the new `Lodge.centralLodgeId`, and writes its
+  `$executeRaw`SELECT 1 FROM "Lodge" WHERE "id" = $1 FOR UPDATE`` on each row
+  it saves, in id order, re-reads the link it is replacing (refusing a save
+  whose caller expected a different link), clears any link moving between the
+  rows, writes each new `Lodge.centralLodgeId`, and writes its
   `LODGE_CENTRAL_LINK_UPDATED` audit row on the same transaction client. Order:
   settings row, then `Lodge` row — the Other lodges download's own order (its
   hides and record-step unlink), so neither can wait on the other in reverse.
@@ -3527,11 +3653,98 @@ release and minted only by that recovery's runner, and no refused replay adopts
 its reason (`isIntentForOrdinaryAskPlan`), so once closed nothing records its
 intent and its owner-check gap is empty. Accepted window, a stated limit: a
 recovery still claimed, even by a runner that already wrote another intent,
-handed back to retry, or failed for good, keeps the stale attempt's intent - a credit-release retry
+or handed back to retry, keeps the stale attempt's intent - a credit-release retry
 re-sizes and may mint under the same key, and Stripe answers with that intent.
-It stays open, never offered, logged under the cleanup event. Reads and one
+It stays open, never offered, logged under the cleanup event, until the row
+ends and its close-time sweep settles it; a row failed for good is now a proof
+too (#4693). Reads and one
 provider call only, after the hold's transaction: no lock, key, participant or
 order changes. Proven on real Postgres through the credit-release writers.
+#4675: the runner's SUCCEEDED close (`completePaymentRecoveryOperation`) was
+fenced only off SUCCEEDED, so an attempt that read "nothing owed", stalled past
+the stale reaper and woke after a reclaiming runner had minted the ask closed
+that runner's row; its hold then lost and the debt was never asked for. The
+close is now a status-guarded `updateMany` on the claim the attempt holds:
+PROCESSING, its `attempts` and its exact `processingStartedAt`
+(`heldPaymentRecoveryClaimWhere`, the claim hold's own fence). A claim time a
+hold re-stamps travels with the attempt (the hold returns the re-stamped
+claim), and the succeeded-intent hand-off reads back the claim its own write
+took, under that write's row lock. A lost close writes and sends nothing: each
+once-only epilogue hangs off its `true`, and the credit-release ask writes its
+no-ask audit row in the close's transaction and alerts officers only after a
+close it won. Only the webhook's close of a superseded intent Stripe reports
+cancelled holds no claim and keeps the SUCCEEDED-only fence
+(`completeUnclaimedPaymentRecoveryOperation`; its one caller is pinned by
+`payment-recovery-completion-fence-census.test.ts`). So a lost hold #4631 and
+#4652 settle now follows only a net-off, a fold or a reclaiming runner's own
+close, and their proof stands. No lock, key, participant or order changes.
+Proven on real Postgres (`credit-release-merge-into-edit.realdb.test.ts`).
+#4676: a claim hold that THROWS - sizing or a merge moved under its locks, or a
+write failed - rolled back and wrote nothing, as a lost one did, but its error
+skipped the settle. Both runners now catch it, take the same
+`settleLostRecoveryClaimHold` proof under no lock, then rethrow to the retry
+(`markPaymentRecoveryOperationFailed`, fenced off SUCCEEDED, so it never
+reopens a closed row). An adopted intent is still never cancelled, and is
+logged `adopted`, never `left-open`: another edit's ask may hold it. Stated
+limit: the re-read usually finds the row still this attempt's, which proves
+nothing, so the intent stays open, never offered, logged `left-open` under the
+cleanup event; a retry may record it, or mint another and leave it - which the
+row's close-time sweep (#4693, below) settles once the row ends. Rejected
+proof: "the next mint's amount-suffixed key differs". Sizing moves both ways
+(an increase, a reduction, Xero's amount due), and a later retry back at this
+figure replays the key inside Stripe's 24-hour window, Stripe answering with
+the intent as first minted, not as cancelled; while the row is open nothing
+proves the intent terminal. Reads and one provider call, after the hold's
+transaction: no lock, key, participant or order changes. Proven on real
+Postgres: the retry back at the figure records the kept intent
+(`credit-release-merge-into-edit.realdb.test.ts`).
+#4693: once the row ENDS - a later attempt closes it with another intent, a
+reduction nets it off, an increase folds it in, or it fails for good - its
+close-time sweep (`sweepAbandonedAskIntents`) lists the recent intents carrying
+the row's own marker (`creditReleaseId`, `reissuedAskKey`, or the
+`askRecoveryId` the runner stamps on its own ordinary intent by a metadata
+update after the mint, never in the create its replay must repeat) and settles
+each the row does not name by the same proof (`closedWithoutIntent`, which now
+also takes a row failed for good: no claim, door or reduction reaches it again)
+and owner check. Classification (`INV-LOCK-001`..`003`): the sweep, the stamp
+and the history read are reads and provider calls only, run after the runner's
+attempt has returned, after the edit's commit and its own mint
+(`createModificationAdditionalPaymentIntent`), or after the terminal failure's
+status write - never inside a transaction, each Stripe request bounded (5s, no
+retries); it
+takes no lock, key or tier, and changes no participant or order. A cancel racing
+a writer is the same owner-check window #4652 already states. Reconciled with
+#4652 (PR #4674), #4675 (PR #4689) and #4676 (PR #4694). Proven on real
+Postgres for the credit release and the runner's re-issue
+(`credit-release-merge-into-edit.realdb.test.ts`,
+`additional-ask-reduction.realdb.test.ts`).
+#4690: the one epilogue #4675 left hanging off a won close - the
+superseded-payment refund's notice - lost it whenever its attempt was reaped
+after the refund: the next claim read nothing outstanding and closed silently.
+The notice now runs before the close and carries its own once-only keys, all
+named for the recovery row, so any attempt that made or finds the refund may
+call it: the member email's durable `EmailLog` row (primary key, for the retry
+worker to send), and `AlertCooldown` once-ever claims for the records and the
+admin alert (a conditional `updateMany` or a unique-guarded insert), with a
+sent marker; an alert claim older than the stale reaper's threshold and never
+marked sent is a dead attempt's, given back under its exact stamp and sent,
+and a younger one is a sibling's still sending, so the row waits with its
+attempt handed back (`waitPaymentRecoveryOperation`). The claim, give-back and
+takeover are the one shared sequence (`sendAdminAlertOnceEverWithTakeover`)
+the unrecognised Stripe payment alert also uses.
+The next claim proves the refund the row's own by a bounded Stripe read
+(exact runner metadata) and a ledger read, outside any transaction. None of
+these is a lifecycle, settlement-money, capacity or credit writer, so no
+advisory lock is taken (`INV-LOCK-001`), no key is minted (`INV-LOCK-002`) and
+no site is registered (`INV-LOCK-003`); the close keeps its claim fence. A
+report not settled throws before the close, so the row is retried. Proven on
+real Postgres (`superseded-refund-notice-once.realdb.test.ts`).
+#4699: the attempt sizes its refund on a second plain read of its charge row,
+taken after the resend preflight's recording (`INV-PAY-145`) and before its
+Stripe request, outside any transaction. A read, not a writer: no advisory lock
+(`INV-LOCK-001`), no key (`INV-LOCK-002`), no site (`INV-LOCK-003`). A refund
+another door makes between that read and the request is the race `INV-PAY-145`
+states: Stripe refuses the excess and the row retries, moving no money twice.
 Round 6: the retire closes waiting recoveries before it stamps the rows - the
 runner's own order (its claim hold writes the recovery, then its row; since
 #4217 both take the `Payment` row before either) - and a
@@ -3563,8 +3776,11 @@ the door still returns the intent's id, so the increase's Xero leg parks its
 invoice on it rather than raising it unpaid; the reduction names the
 increase from the edit its mint stamped on the row
 (`PaymentTransaction.bookingModificationId`), so the repair pass never bills
-it again. An increase's recovery that folded re-issues in
-is settled only by its own row, so a later ask cannot overtake that money; and
+it again. A recovery is settled by its own row (`findOwnRecoveryRow`, #4015),
+and only a frozen one also by a later ask, so a later ask cannot overtake
+money the replay can size; the replay reads Stripe first, outside any
+transaction, and waits (attempt handed back, for up to seven days) while
+Stripe is taking money on the ask it would carry; and
 both minters of a re-issue resolve its Stripe customer one way
 (`resolveAskCustomerId`). A deadlock mapped to the 409 is logged and kept as its
 cause. Deploy window: the previous release's recovery runner, still draining,
@@ -5685,6 +5901,22 @@ that change a lot's free balance (the allocation engine's plan, a cancel's resto
 an admin adjustment) take the member key, so the mirror's free-credit and balance
 reads under that key are exact.
 
+### The early warning reads only, and adds no writer (#4220)
+
+`findCreditNotesSpentOutsideApp` (`xero-credit-note-spent-outside-flag.ts`) runs in
+the repair check's load and the Xero health snapshot. It holds no lock, opens no
+transaction and writes nothing. Its reads are not taken under the member key, so a
+mirror, converge or allocation that commits while it runs can make one answer stale
+by one change; it is advisory, and the next ask is fresh. The reading it judges is
+merged onto the note's existing links by `reconcileXeroCreditNote` through
+`upsertXeroObjectLink`: the same writer, the same links and the same top-level
+`mergeMetadata`, with one more key, after the reconcile's one Xero read. Each
+`upsertXeroObjectLink` runs in its own short transaction, never inside a caller's.
+Ingest reads the kept reading first and skips a reading of an older change; that read
+and the write are not locked together, because the reading is advisory and the
+note's next event settles a race. No new advisory key and no new participant in the
+lock inventory.
+
 ## A request for released credit: the recovery claim, and one global-key close (#4253)
 
 The card request for credit released by `convergeCreditNoteSpentOutsideApp` is
@@ -6010,7 +6242,10 @@ Stripe call:
   the attempt's `attempts` and a live claim, so an attempt the reaper gave up
   on cannot write `FAILED` over a reclaimed one. Not on the claim time: an
   attempt may re-stamp that itself (`holdAdditionalIntentRecoveryClaim`, the
-  worker's own superseded hand-off). The reaper's write takes both fences, each
+  worker's own superseded hand-off). **Its close** (`completePaymentRecoveryOperation`,
+  #4675) is fenced on the claim time as well, because every re-stamp is
+  threaded to it: the hold returns the claim it re-stamped, and the hand-off
+  reads back the claim its write took. The reaper's write takes both fences, each
   its own clause. Every claim therefore counts an attempt: the worker's claim,
   and the superseded hand-off a succeeded-intent door makes
   (`queueSupersededPaymentIntentRefundRecovery`: the webhook, and since #4300
@@ -6335,6 +6570,28 @@ writer only ever ADDS active coverage, whose worst case (coverage above the
 target) suppresses further enqueues and is now reported as drift, never
 compounded by this repair.
 
+## Applied-credit account-note link repair: lock-free (#4712)
+
+`applyStaleAppliedCreditAccountNoteLinkRepair`
+(`src/lib/xero-applied-credit-account-note-link-repair.ts`, operator CLI
+`scripts/xero-applied-credit-account-note-link-repair.ts`) retires a payment's
+stale `ACCOUNT_CREDIT_NOTE` link with an `updateMany` guarded on `active: true`,
+then recounts that one payment through `repairRefundedPaymentBusinessState`
+(`creditNoteId: null`, #4095). The link write touches no money column, booking
+status or pointer, so under `INV-LOCK-001` it joins no advisory cohort and takes
+no key (`INV-LOCK-002`, `INV-LOCK-003` unchanged); the recount's money write is
+that writer's own status-guarded claim, retried once. No provider call.
+
+- **Outbox enqueue.** Retiring a link only removes the "already linked" block on
+  the booking's cancellation note; an enqueue that read the link first still
+  refuses, and the runbook's `xero:booking-repair` step raises it afterwards.
+- **Inbound reconcile.** A sync of the same note that read the link before it
+  was retired upserts it active again and recounts the note in. The repair
+  re-reads its retired links after the recount and names any such payment as
+  needing a second run, never reporting it settled.
+- **Concurrent recount.** A recount that loses its claim twice is named, not
+  retried further.
+
 ## Refund-note link heal (#4161)
 
 The nightly `link-cleanup` (`cleanupStaleCanonicalXeroObjectLinks`,
@@ -6359,8 +6616,9 @@ of the #2901 repair apply and of the funnel's own pointer release (#4046).
 same two rows Payment first, inside their own transactions:
 
 - the refund-note create's record (`recordCreatedRefundNote`, from
-  `createXeroCreditNote`): the pointer, then its claim of its own operation
-  row (#4426), then the link write, whose single-canonical rule updates the
+  `createXeroCreditNote`): the Payment row (taken first for every note since
+  #4656), its claim of its own operation row (#4426), its freshness reads,
+  the pointer, then the link write, whose single-canonical rule updates the
   payment's other active links;
 - the outbox enqueue's existing-note branch
   (`enqueueXeroRefundCreditNoteOperation`, "already linked"): the pointer,
@@ -6642,12 +6900,14 @@ records can still be waiting on Xero: a create stalled past the stale
 threshold, an officer pressed Mark failed, then Resolve by hand. Its Xero call
 holds no lock, as before. When Xero answers, `recordCreatedRefundNote`
 (`xero-refund-note-record.ts`) records the note in one short transaction, in
-the claim's own order: the `Payment` row - only when the note takes the
-pointer (a canonical note; a refund request's or a per-refund note takes no
-`Payment` lock here) - then the operation row, a status-guarded `updateMany`
-refusing a row whose resolve recorded a note (`manuallyResolvedAt` and
-`xeroObjectId` both set), which is the claim and the write of the row's note
-in one statement, then the link through the funnel. Classified under
+the claim's own order: the `Payment` row (`lockPaymentForRefundedTotal`; for
+every note since #4656 - before it, only a canonical note's pointer UPDATE
+took it), then the operation row, a status-guarded `updateMany` refusing a
+row whose resolve recorded a note (`manuallyResolvedAt` and `xeroObjectId`
+both set), which is the claim and the write of the row's note in one
+statement, then (#4656) the freshness reads (`assertFreshRefundNoteFromCreate`:
+no other create row records the note), the pointer when the note takes it,
+and the link through the funnel. Classified under
 `INV-LOCK-001`: no global cohort and no advisory key. The create moves no
 settlement money and no booking status in this transaction, and the one fact
 it shares with the resolve - which note this row records - lives on the
@@ -6659,13 +6919,12 @@ first - writes one audit row and raises #4374's alert (or, when the late note
 is the one the resolve recorded, only logs it) and returns without settling
 or completing. A create that commits first leaves the row naming its note, so
 the resolve's re-read under its locks no longer asks a number and its claim is
-lost: the route answers as for a lost resolve. With the pointer, the resolve
-queues on the `Payment` row behind the create's record; without it, the
-resolve passes its reads (the record has not committed) and its `updateMany`
-queues on the operation row, then matches nothing (`xeroObjectId` is set).
-Both take the `Payment` row before the operation row and the link after it, so
-they never wait on each other in a cycle; before #4426 the create wrote the
-link before the row, the reverse of a completion (row, then link). A plain
+lost: the route answers as for a lost resolve. The resolve queues on the
+`Payment` row behind the create's record (before #4656, a note taking no
+pointer let the resolve pass its reads and queue on the operation row
+instead). Both take the `Payment` row before the operation row and the link
+after it, so they never wait on each other in a cycle; before #4426 the create
+wrote the link before the row, the reverse of a completion (row, then link). A plain
 resolve records no note, so the create's claim still wins over it and the
 completion's #4374 alert follows. No new advisory key, registered site or
 row-lock site. Proven against real PostgreSQL by
@@ -6673,8 +6932,44 @@ row-lock site. Proven against real PostgreSQL by
 inside its Xero call while Mark failed and the resolve's claim run, then
 answered; and the create's record held open at its link write while the
 resolve's claim runs, shown queued (`pg_blocking_pids`) on the `Payment` row
-for a canonical note and on the operation row for a per-refund note, and lost
-either way.
+for a canonical note and a per-refund note alike, and lost either way.
+
+**Two records of one note, and a long holder of the Payment row (#4656).** The
+freshness check (`INV-ADDPAY-041`) ran before the record's transaction, under
+no lock, so two creates Xero answered with the same note (a stalled run and a
+retry sending the same key) could both pass it before either committed, and
+for a note taking no pointer the two records shared no lock at all. Now the
+check runs inside, after the Payment row and the claim: the second record
+queues on the Payment row, reads the first's commit and is refused, rolling
+back and failing its own row as the check always has. Classified under
+`INV-LOCK-001` as before: no global cohort and no advisory key - the fact the
+two records share (which create row records the note) is settled under the
+Payment row every writer of that fact takes, the resolve's claim included
+(`lock(1)`, then the same row). Order under `INV-LOCK-002`: Payment, then the
+operation row, then the link, unchanged for every counterpart (the resolve,
+its withdrawal, the #4161 heal's `NOWAIT`, the enqueue's existing-note
+branch). The record's budget is `PAYMENT_ROW_WAIT_TRANSACTION_OPTIONS`
+(`maxWait` 10s, `timeout` 30s), not Prisma's 5s: the bank-void follow-up
+(`followUpVoidedBankRefundNote`, `{ timeout: 30_000 }`) holds the row in a 30s
+transaction. A record that still cannot get its locks in time (P2028, P2034 or
+40P01, 55P03) committed nothing; the create then neither settles nor fails its
+row, which stays RUNNING under its claim (or FAILED, if Mark failed reached it
+first), the note is traced (`traceUnrecordedLateNote`: logged, one `xero` audit
+row, #4374's alert once, all saying resolve by hand with its number, never
+retry), and the create throws `RefundNoteNotRecordedError`, which no caller
+counts a success (a queued retry fails its REQUEUE row naming the note), and
+whose message never calls a note the row already records unrecorded. #4688:
+before the trace, a row-only, status-guarded write stamps the row, which then
+holds the payment's later refund notes until Resolve by hand (above, "One
+refund credit note in flight per payment"). A
+transaction that committed but answered P2028 is found by the trace's re-read
+on this run's claim and finishes as recorded. No new advisory key, registered site or row-lock site
+(the Payment row is the existing helper's statement). Proven against real
+PostgreSQL by `xero-refund-note-record-gaps.realdb.test.ts`: two records of
+one per-refund note, the first held at its link write, the second shown queued
+on the `Payment` row and refused; a record behind a Payment row held 7s
+recording; and one behind a row held past 30s leaving its row RUNNING, nothing
+recorded, one audit row and one alert.
 
 ## Refund-note link writes racing a void (#4195, #4223)
 
@@ -6792,9 +7087,10 @@ plain re-read of that link row, then the as-read claim, or nothing when the row
 no longer counts (one retry at most; a second fails the inbound event, which
 is retried after its backoff, #4095). An
 unchanged verdict also checks the payment as read under the lock. No provider
-call runs in it, and it takes no other lock. Its budget is `{ maxWait: 10_000,
-timeout: 30_000 }`, copied from `additional-payment-withdraw.ts`, because the
-nightly bank-void follow-up holds the Payment row for up to 30s.
+call runs in it, and it takes no other lock. Its budget is the Payment row's,
+`PAYMENT_ROW_WAIT_TRANSACTION_OPTIONS` (`{ maxWait: 10_000, timeout: 30_000 }`,
+shared since #4656 with the refund-note create's record), because the nightly
+bank-void follow-up holds the Payment row for up to 30s.
 
 Lock order. The recount ran outside any transaction before #4288 and takes only
 this row. The link writer holds the link row and tries the Payment pointer with

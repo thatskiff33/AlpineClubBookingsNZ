@@ -14,6 +14,13 @@
  * marked failed with no resolve is a row no claim holds, where a success
  * lands (`INV-INT-029`).
  *
+ * #4656: the record takes the Payment row first, always, then claims the row,
+ * then asks under those locks that no other create row records the note
+ * (`assertFreshRefundNoteFromCreate`), on the Payment row's budget; a record
+ * that cannot get its locks in time writes nothing, fails nothing and is traced
+ * as a late note is, with no advice to retry; one that committed although its
+ * answer was an error carries on as recorded. Real-PostgreSQL proofs: `xero-refund-note-record-gaps.realdb.test.ts`.
+ *
  * Driven on an in-memory row the claim's `where` is evaluated against
  * (`matchesWhere`), inside a fake transaction that rolls back what it wrote
  * when its callback throws, as PostgreSQL does. The once-ever claim is a fake
@@ -38,8 +45,9 @@ const state = vi.hoisted(() => ({
 }));
 const mocks = vi.hoisted(() => ({
   claim: vi.fn(), send: vi.fn(), warn: vi.fn(), info: vi.fn(), error: vi.fn(), audit: vi.fn(),
-  pointer: vi.fn(), rowClaim: vi.fn(), link: vi.fn(),
+  pointer: vi.fn(), rowClaim: vi.fn(), link: vi.fn(), paymentLock: vi.fn(), fresh: vi.fn(), transactionOptions: [] as unknown[],
 }));
+const BUDGET = vi.hoisted(() => ({ maxWait: 10_000, timeout: 30_000 }));
 
 vi.mock("@/lib/prisma", () => {
   const client = {
@@ -66,7 +74,8 @@ vi.mock("@/lib/prisma", () => {
     prisma: {
       ...client,
       // PostgreSQL's rollback: a callback that throws leaves nothing it wrote.
-      $transaction: vi.fn(async (run: (tx: typeof client) => unknown) => {
+      $transaction: vi.fn(async (run: (tx: typeof client) => unknown, options?: unknown) => {
+        mocks.transactionOptions.push(options);
         const before = { row: state.row && { ...state.row }, payment: { ...state.payment }, links: [...state.links] };
         try {
           return await run(client);
@@ -88,6 +97,8 @@ vi.mock("@/lib/xero-sync", () => ({
   }),
 }));
 vi.mock("@/lib/audit", () => ({ createAuditLog: mocks.audit }));
+vi.mock("@/lib/payment-transactions", () => ({ lockPaymentForRefundedTotal: mocks.paymentLock, PAYMENT_ROW_WAIT_TRANSACTION_OPTIONS: BUDGET }));
+vi.mock("@/lib/xero-refund-note-status", () => ({ assertFreshRefundNoteFromCreate: mocks.fresh }));
 vi.mock("@/lib/club-format-server", () => ({ clubFormatValues: async () => CLUB_FORMAT_TEST }));
 vi.mock("@/lib/alert-cooldown", () => ({
   ALERT_ONCE_EVER_WINDOW_MS: 1_000_000,
@@ -99,8 +110,10 @@ vi.mock("@/lib/alert-cooldown", () => ({
 vi.mock("@/lib/email", () => ({ sendAdminXeroSyncErrorAlert: mocks.send }));
 vi.mock("@/lib/logger", () => ({ default: { warn: mocks.warn, error: mocks.error, info: mocks.info } }));
 
-import { LATE_REFUND_NOTE_NOT_RECORDED_ACTION, recordCreatedRefundNote } from "@/lib/xero-refund-note-record";
+import { isRecordWaitLost, LATE_REFUND_NOTE_NOT_RECORDED_ACTION, recordCreatedRefundNote } from "@/lib/xero-refund-note-record";
 import { xeroSuccessAfterResolutionAlertKey } from "@/lib/xero-success-after-resolution-alert";
+import { XERO_REFUND_NOTE_UNRECORDED_ERROR_CODE } from "@/lib/xero-operation-error-codes";
+import { unrecordedNoteStampPayload } from "@/lib/xero-refund-note-in-flight";
 
 const OPERATION_ID = "op-stalled";
 const RESOLVED_AT = new Date("2026-07-01T00:20:00.000Z");
@@ -114,6 +127,7 @@ const LATE = {
   writesPointer: true,
   linkRole: "REFUND_CREDIT_NOTE",
   linkMetadata: { amountCents: 20_000, watermarkCents: 20_000 },
+  claimStartedAt: new Date("2026-07-01T00:00:00.000Z"),
 };
 
 function seedRow(overrides: Row = {}) {
@@ -149,20 +163,29 @@ beforeEach(() => {
   });
   mocks.send.mockResolvedValue({ deliveryAllowed: true, recipients: 1, sent: 1, queuedForRetry: 0, notDelivered: 0 });
   mocks.audit.mockResolvedValue(undefined);
+  mocks.paymentLock.mockResolvedValue(undefined);
+  mocks.fresh.mockResolvedValue(undefined);
+  mocks.transactionOptions.length = 0;
 });
 
 describe("#4426: a refund-note create never records its note over a note a resolve by hand recorded", () => {
-  it("MUTATION: the claim won writes the pointer, then claims the row with its note, then the link - in that order - and alerts nothing", async () => {
+  it("MUTATION: the claim won locks the Payment row, claims the row with its note, checks the note fresh, then the pointer and the link - in that order - and alerts nothing", async () => {
     seedRow();
-    await expect(recordCreatedRefundNote(LATE)).resolves.toBe("recorded");
+    await expect(recordCreatedRefundNote({ ...LATE, xeroStatus: "AUTHORISED" })).resolves.toBe("recorded");
     expect(state.payment.xeroRefundCreditNoteId).toBe("cn-late-b");
     expect(state.row).toMatchObject({ status: "RUNNING", xeroObjectType: "CREDIT_NOTE", xeroObjectId: "cn-late-b", xeroObjectNumber: "CN-B" });
     expect(state.links).toEqual([
       expect.objectContaining({ localModel: "Payment", localId: "pay-1", xeroObjectId: "cn-late-b", xeroObjectNumber: "CN-B", role: "REFUND_CREDIT_NOTE", metadata: LATE.linkMetadata }),
     ]);
-    // The resolve's claim takes the same rows Payment, row, link: the create keeps that order.
-    const order = [mocks.pointer, mocks.rowClaim, mocks.link].map((fn) => fn.mock.invocationCallOrder[0]);
+    // The resolve's claim takes the same rows Payment, row, link: the create keeps that order (#4656: the
+    // Payment row by its lock, first), and asks freshness under them, on the transaction's own client.
+    const order = [mocks.paymentLock, mocks.rowClaim, mocks.fresh, mocks.pointer, mocks.link].map((fn) => fn.mock.invocationCallOrder[0]);
+    expect(order.every((at) => at !== undefined)).toBe(true);
     expect(order).toEqual([...order].sort((a, b) => a! - b!));
+    expect(mocks.paymentLock).toHaveBeenCalledWith(expect.objectContaining({ xeroSyncOperation: expect.anything() }), "pay-1");
+    expect(mocks.fresh).toHaveBeenCalledWith("pay-1", OPERATION_ID, { creditNoteID: "cn-late-b", status: "AUTHORISED" }, expect.objectContaining({ xeroSyncOperation: expect.anything() }));
+    // #4656: the Payment row's budget, not Prisma's 5s default.
+    expect(mocks.transactionOptions).toEqual([BUDGET]);
     expect(mocks.claim).not.toHaveBeenCalled();
     expect(mocks.audit).not.toHaveBeenCalled();
     expect(mocks.warn).not.toHaveBeenCalled();
@@ -172,6 +195,9 @@ describe("#4426: a refund-note create never records its note over a note a resol
     seedRow();
     await expect(recordCreatedRefundNote({ ...LATE, writesPointer: false })).resolves.toBe("recorded");
     expect(mocks.pointer).not.toHaveBeenCalled();
+    // MUTATION (#4656): it still takes the Payment row first, so two records of one payment queue there.
+    expect(mocks.paymentLock).toHaveBeenCalledTimes(1);
+    expect(mocks.paymentLock.mock.invocationCallOrder[0]).toBeLessThan(mocks.rowClaim.mock.invocationCallOrder[0]!);
     expect(state.payment.xeroRefundCreditNoteId).toBeNull();
     expect(state.row).toMatchObject({ xeroObjectId: "cn-late-b" });
   });
@@ -224,8 +250,10 @@ describe("#4426: a refund-note create never records its note over a note a resol
     expect(mocks.audit).toHaveBeenCalledTimes(1);
     expect(mocks.audit).toHaveBeenCalledWith(expect.objectContaining({
       action: LATE_REFUND_NOTE_NOT_RECORDED_ACTION, category: "xero", targetId: "booking-1", entityType: "XeroSyncOperation", entityId: OPERATION_ID,
-      metadata: expect.objectContaining({ ...trace, recordedCreditNoteId: "cn-hand-a" }),
+      metadata: expect.objectContaining({ ...trace, reason: "resolved-by-hand", recordedCreditNoteId: "cn-hand-a" }),
     }));
+    // The claim lost first: the freshness check never runs, so it can never fail the officer's row.
+    expect(mocks.fresh).not.toHaveBeenCalled();
     expect(mocks.audit.mock.invocationCallOrder[0]).toBeLessThan(mocks.claim.mock.invocationCallOrder[0]!);
 
     expect(mocks.claim).toHaveBeenCalledWith(expect.objectContaining({ key: xeroSuccessAfterResolutionAlertKey(OPERATION_ID, "cn-late-b") }));
@@ -245,7 +273,8 @@ describe("#4426: a refund-note create never records its note over a note a resol
 
   it("MUTATION: the late answer IS the note the resolve recorded (its answer was lost, the officer found it): nothing written, audited or alerted", async () => {
     markedFailedAndResolvedWithNote("cn-late-b", "CN-B");
-    await expect(recordCreatedRefundNote(LATE)).resolves.toBe("resolved-by-hand");
+    // #4656 re-lens F1: its own outcome, so no caller says the note is unrecorded.
+    await expect(recordCreatedRefundNote(LATE)).resolves.toBe("resolved-with-this-note");
     expect(state.row).toMatchObject({ manuallyResolvedAt: RESOLVED_AT, xeroObjectId: "cn-late-b" });
     expect(state.links).toHaveLength(1);
     expect(state.payment.xeroRefundCreditNoteId).toBeNull();
@@ -297,5 +326,203 @@ describe("#4426: a refund-note create never records its note over a note a resol
     expect(state.links).toEqual([]);
     expect(mocks.audit).toHaveBeenCalledWith(expect.objectContaining({ metadata: expect.objectContaining({ rowFound: false }) }));
     expect(mocks.send).not.toHaveBeenCalled();
+  });
+});
+
+describe("#4656: the record checks the note fresh under its locks, and a wait that runs out fails nothing", () => {
+  const timedOut = () => Object.assign(new Error("Transaction already closed: the timeout for this transaction was 30000 ms"), { code: "P2028" });
+
+  it("MUTATION: a note another create row records is refused under the locks - the record rolls back whole and the refusal throws into the create", async () => {
+    seedRow();
+    const refusal = new Error("Refusing to record Xero credit note cn-late-b for payment pay-1: operation op-other already raised it");
+    mocks.fresh.mockRejectedValueOnce(refusal);
+    await expect(recordCreatedRefundNote(LATE)).rejects.toBe(refusal);
+    expect(state.row).toMatchObject({ status: "RUNNING", xeroObjectId: null });
+    expect(state.payment.xeroRefundCreditNoteId).toBeNull();
+    expect(state.links).toEqual([]);
+    expect(mocks.pointer).not.toHaveBeenCalled();
+    expect(mocks.link).not.toHaveBeenCalled();
+    // A refusal is the row's own failure, as before #4656: never traced as a lost note.
+    expect(mocks.audit).not.toHaveBeenCalled();
+    expect(mocks.send).not.toHaveBeenCalled();
+  });
+
+  it("MUTATION: a wait on the Payment row that runs out (P2028) writes nothing, warns first, audits and alerts once, and never throws", async () => {
+    seedRow();
+    mocks.paymentLock.mockRejectedValueOnce(timedOut());
+    await expect(recordCreatedRefundNote(LATE)).resolves.toBe("record-wait-lost");
+    // Nothing recorded, and the row left RUNNING: this module never fails it. #4688: but it carries the fence.
+    expect(state.row).toMatchObject({ status: "RUNNING", xeroObjectId: null, lastErrorCode: XERO_REFUND_NOTE_UNRECORDED_ERROR_CODE });
+    expect(state.row!.lastErrorMessage).toContain("Do not retry: resolve this operation by hand with this note's number");
+    expect(state.payment.xeroRefundCreditNoteId).toBeNull();
+    expect(state.links).toEqual([]);
+
+    const trace = { operationId: OPERATION_ID, paymentId: "pay-1", bookingId: "booking-1", creditNoteId: "cn-late-b", creditNoteNumber: "CN-B", amountCents: 20_000 };
+    expect(mocks.warn).toHaveBeenCalledWith(trace, expect.stringContaining("could not get its locks in time"));
+    expect(mocks.warn.mock.invocationCallOrder[0]).toBeLessThan(mocks.audit.mock.invocationCallOrder[0]!);
+    expect(mocks.audit).toHaveBeenCalledTimes(1);
+    expect(mocks.audit).toHaveBeenCalledWith(expect.objectContaining({
+      action: LATE_REFUND_NOTE_NOT_RECORDED_ACTION, category: "xero", targetId: "booking-1", entityId: OPERATION_ID,
+      summary: expect.stringContaining("could not get its locks in time"),
+      details: expect.stringContaining("Resolve the operation by hand with this note's number. Until it is resolved, the app raises no other refund note on this payment"),
+      metadata: expect.objectContaining({ ...trace, reason: "record-wait-lost", errorCode: "P2028", laterNotesHeld: true, recordedCreditNoteId: null, rowFound: true }),
+    }));
+    expect(mocks.claim).toHaveBeenCalledWith(expect.objectContaining({ key: xeroSuccessAfterResolutionAlertKey(OPERATION_ID, "cn-late-b") }));
+    expect(mocks.send).toHaveBeenCalledTimes(1);
+    const sent = mocks.send.mock.calls[0]![0] as { errorType: string; errorMessage: string };
+    expect(sent.errorType).toBe("XERO_SUCCESS_AFTER_RESOLUTION");
+    expect(sent.errorMessage).toContain("Xero made credit note CN-B for $200.00 (Xero id cn-late-b, booking booking-1) for this refund");
+    expect(sent.errorMessage).toContain("did not mark the operation failed");
+    expect(sent.errorMessage).toContain("Resolve it by hand with this note's number");
+    expect(sent.errorMessage).toContain("could not get its locks in time");
+    // #4688: the fence holds the payment's later notes until the resolve; #4656's race is gone.
+    expect(sent.errorMessage).toContain("Until it is resolved, the app raises no other refund note on this payment");
+    expect(sent.errorMessage).not.toContain("is sized as if this note did not exist");
+    expect(sent.errorMessage).not.toContain("stalled");
+    // The alert's log line says why this note is unrecorded, not that a reset or resolve kept it out.
+    expect(mocks.warn).toHaveBeenCalledWith(expect.objectContaining({ operationId: OPERATION_ID, unrecordedXeroObjectId: "cn-late-b" }), expect.stringContaining("its record could not get its locks in time"));
+    expect(mocks.warn).not.toHaveBeenCalledWith(expect.anything(), expect.stringContaining("reset or resolved"));
+
+    // The same note traced again sends nothing more (the once-ever key is the note's).
+    mocks.paymentLock.mockRejectedValueOnce(timedOut());
+    await expect(recordCreatedRefundNote(LATE)).resolves.toBe("record-wait-lost");
+    expect(mocks.send).toHaveBeenCalledTimes(1);
+  });
+
+  describe("#4688: the fence on the payment's later refund notes", () => {
+    it("MUTATION: is stamped on the row Mark failed reached first, keeping it FAILED", async () => {
+      seedRow({ status: "FAILED", lastErrorCode: "ORPHANED_STALE_RUNNING" });
+      mocks.paymentLock.mockRejectedValueOnce(timedOut());
+      await expect(recordCreatedRefundNote(LATE)).resolves.toBe("record-wait-lost");
+      expect(state.row).toMatchObject({ status: "FAILED", xeroObjectId: null, lastErrorCode: XERO_REFUND_NOTE_UNRECORDED_ERROR_CODE });
+      expect((mocks.send.mock.calls[0]![0] as { errorMessage: string }).errorMessage).toContain("the app raises no other refund note on this payment");
+    });
+
+    it("MUTATION (#4692 review, finding 3): names the note it holds unrecorded, so the fence lifts once another row records it", async () => {
+      seedRow();
+      mocks.paymentLock.mockRejectedValueOnce(timedOut());
+      await expect(recordCreatedRefundNote(LATE)).resolves.toBe("record-wait-lost");
+      expect(state.row).toMatchObject({ status: "RUNNING", xeroObjectId: null, responsePayload: unrecordedNoteStampPayload("cn-late-b") });
+    });
+
+    it.each([
+      ["another claim holds the row RUNNING", { startedAt: new Date("2026-07-01T00:30:00.000Z") }],
+      // #4692 review (finding 6): FAILED under another claim - not the one Mark failed failed under this run.
+      ["another claim's run left the row FAILED", { status: "FAILED", startedAt: new Date("2026-07-01T00:30:00.000Z") }],
+      ["a resolve by hand closed it (a plain one, naming no note)", { status: "FAILED", manuallyResolvedAt: RESOLVED_AT }],
+      ["the row records another note", { status: "FAILED", xeroObjectType: "CREDIT_NOTE", xeroObjectId: "cn-other" }],
+      ["the row was handed back to PENDING", { status: "PENDING", startedAt: null }],
+    ])("MUTATION: is never stamped where %s, and the alert then says nothing holds later notes back", async (_label, overrides) => {
+      seedRow(overrides);
+      const before = { ...state.row };
+      mocks.paymentLock.mockRejectedValueOnce(timedOut());
+      await expect(recordCreatedRefundNote(LATE)).resolves.toBe("record-wait-lost");
+      expect(state.row).toEqual(before);
+      const { details, metadata } = mocks.audit.mock.calls[0]![0] as { details: string; metadata: Record<string, unknown> };
+      expect(metadata.laterNotesHeld).toBe(false);
+      expect(details).toContain("is sized as if this note did not exist");
+      expect((mocks.send.mock.calls[0]![0] as { errorMessage: string }).errorMessage).toContain("is sized as if this note did not exist");
+    });
+
+    it("a stamp that fails is logged and never throws into the create; the alert says the fence is not up", async () => {
+      seedRow();
+      mocks.paymentLock.mockRejectedValueOnce(timedOut());
+      const { prisma } = await import("@/lib/prisma");
+      const realUpdateMany = vi.mocked(prisma.xeroSyncOperation.updateMany).getMockImplementation()!;
+      vi.mocked(prisma.xeroSyncOperation.updateMany).mockImplementation((async (args: { data: Row }) =>
+        args.data.lastErrorCode === XERO_REFUND_NOTE_UNRECORDED_ERROR_CODE ? Promise.reject(new Error("connection lost")) : realUpdateMany(args as never)) as never);
+      try {
+        await expect(recordCreatedRefundNote(LATE)).resolves.toBe("record-wait-lost");
+      } finally {
+        vi.mocked(prisma.xeroSyncOperation.updateMany).mockImplementation(realUpdateMany);
+      }
+      expect(mocks.error).toHaveBeenCalledWith(expect.objectContaining({ operationId: OPERATION_ID }), expect.stringContaining("are not held back (#4688)"));
+      expect((mocks.send.mock.calls[0]![0] as { errorMessage: string }).errorMessage).toContain("could not mark the operation as holding this note");
+    });
+
+    it("a commit whose answer was lost leaves no stamp: the row records the note, and carries on as recorded", async () => {
+      seedRow();
+      mocks.paymentLock.mockRejectedValueOnce(timedOut());
+      // The record committed before its error reached the create: the row names the note, so the stamp's guard refuses it.
+      state.row = { ...state.row!, xeroObjectType: "CREDIT_NOTE", xeroObjectId: "cn-late-b" };
+      await expect(recordCreatedRefundNote(LATE)).resolves.toBe("recorded");
+      expect(state.row!.lastErrorCode).toBeUndefined();
+    });
+  });
+
+  it("a wait lost after the claim (a deadlock at the link) rolls the claim back too", async () => {
+    seedRow();
+    const { upsertXeroObjectLink } = await import("@/lib/xero-sync");
+    vi.mocked(upsertXeroObjectLink).mockRejectedValueOnce(Object.assign(new Error("deadlock detected"), { code: "P2034" }));
+    await expect(recordCreatedRefundNote(LATE)).resolves.toBe("record-wait-lost");
+    expect(state.row).toMatchObject({ status: "RUNNING", xeroObjectId: null });
+    expect(state.payment.xeroRefundCreditNoteId).toBeNull();
+    expect(mocks.send).toHaveBeenCalledTimes(1);
+  });
+
+  it("MUTATION: never advises a retry - the audit row and the alert say resolve by hand with the note's number, and do not retry", async () => {
+    seedRow();
+    mocks.paymentLock.mockRejectedValueOnce(timedOut());
+    await expect(recordCreatedRefundNote(LATE)).resolves.toBe("record-wait-lost");
+    const { details } = mocks.audit.mock.calls[0]![0] as { details: string };
+    const { errorMessage } = mocks.send.mock.calls[0]![0] as { errorMessage: string };
+    for (const text of [details, errorMessage]) {
+      expect(text).toMatch(/resolve (it|the operation) by hand with this note's number/i);
+      expect(text).toMatch(/do not retry/i);
+      // #4656 money lens S1: a retry's key follows what the app recorded, so it is never "the same key".
+      expect(text).not.toMatch(/same (key|request)|normally (gets|answers)|or retry/i);
+    }
+  });
+
+  it("MUTATION: a re-read that finds the note recorded on this run's own claim (the commit's answer was lost) carries on as recorded, alerting nothing", async () => {
+    seedRow();
+    mocks.paymentLock.mockRejectedValueOnce(timedOut());
+    state.reread = { ...state.row!, xeroObjectType: "CREDIT_NOTE", xeroObjectId: "cn-late-b", xeroObjectNumber: "CN-B" };
+    await expect(recordCreatedRefundNote(LATE)).resolves.toBe("recorded");
+    expect(mocks.info).toHaveBeenCalledWith(expect.objectContaining({ creditNoteId: "cn-late-b" }), expect.stringContaining("records this note after all"));
+    expect(mocks.audit).not.toHaveBeenCalled();
+    expect(mocks.send).not.toHaveBeenCalled();
+  });
+
+  it("a committed record on a row Mark failed since is still this run's own: recorded", async () => {
+    seedRow();
+    mocks.paymentLock.mockRejectedValueOnce(timedOut());
+    state.reread = { ...state.row!, status: "FAILED", xeroObjectType: "CREDIT_NOTE", xeroObjectId: "cn-late-b" };
+    await expect(recordCreatedRefundNote(LATE)).resolves.toBe("recorded");
+  });
+
+  it("MUTATION: the same note recorded by a resolve by hand is the officer's, never settled as this run's", async () => {
+    seedRow();
+    mocks.paymentLock.mockRejectedValueOnce(timedOut());
+    state.reread = { ...state.row!, status: "FAILED", manuallyResolvedAt: RESOLVED_AT, xeroObjectType: "CREDIT_NOTE", xeroObjectId: "cn-late-b" };
+    await expect(recordCreatedRefundNote(LATE)).resolves.toBe("resolved-with-this-note");
+    expect(mocks.send).not.toHaveBeenCalled();
+  });
+
+  it("MUTATION: the same note on a row another claim holds RUNNING is not this run's to finish", async () => {
+    seedRow();
+    mocks.paymentLock.mockRejectedValueOnce(timedOut());
+    state.reread = { ...state.row!, startedAt: new Date("2026-07-01T00:30:00.000Z"), xeroObjectType: "CREDIT_NOTE", xeroObjectId: "cn-late-b" };
+    // Recorded, by that claim: never "nothing records it" (#4656 re-lens F1).
+    await expect(recordCreatedRefundNote(LATE)).resolves.toBe("recorded-by-another-claim");
+  });
+
+  it("MUTATION: any other error throws into the create as before - it is not a lost wait", async () => {
+    seedRow();
+    const broken = Object.assign(new Error("Unique constraint failed"), { code: "P2002" });
+    mocks.paymentLock.mockRejectedValueOnce(broken);
+    await expect(recordCreatedRefundNote(LATE)).rejects.toBe(broken);
+    expect(mocks.audit).not.toHaveBeenCalled();
+    expect(mocks.send).not.toHaveBeenCalled();
+  });
+
+  it("names the lost waits: P2028, P2034, a raw deadlock and a lock not available, at any depth the adapter puts them", () => {
+    expect(isRecordWaitLost({ code: "P2028" })).toBe(true);
+    expect(isRecordWaitLost({ code: "P2034" })).toBe(true);
+    expect(isRecordWaitLost(Object.assign(new Error("deadlock detected"), { code: "40P01" }))).toBe(true);
+    expect(isRecordWaitLost({ code: "P2010", meta: { driverAdapterError: { cause: { originalCode: "55P03" } } } })).toBe(true);
+    expect(isRecordWaitLost({ code: "P2002" })).toBe(false);
+    expect(isRecordWaitLost(new Error("Refusing to record Xero credit note"))).toBe(false);
+    expect(isRecordWaitLost(null)).toBe(false);
   });
 });

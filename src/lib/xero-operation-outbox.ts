@@ -34,7 +34,7 @@ import {
   startXeroSyncOperation,
   upsertXeroObjectLink,
 } from "@/lib/xero-sync";
-import { holdsRecordedXeroSuccess, NOT_A_XERO_REPAIR_CLAIM, type XeroOperationClaim } from "@/lib/xero-operation-outcome-guard";
+import { holdsRecordedXeroSuccess, NOT_A_XERO_REPAIR_CLAIM, ownRunningClaim, type XeroOperationClaim } from "@/lib/xero-operation-outcome-guard";
 import {
   createXeroInvoiceForBooking,
   updateXeroBookingInvoiceForBooking,
@@ -47,6 +47,7 @@ import {
 } from "@/lib/xero-credit-notes";
 import { readRefundRequestIdFromPayload } from "@/lib/refund-request-credit-note";
 import { refundNoteKeyAfterVoidParts } from "@/lib/xero-refund-note-status";
+import { RefundNoteNotRecordedError, refundNoteRecordedElsewhere } from "@/lib/xero-refund-note-record";
 import {
   readModificationNoteWording,
   readRefundNoteWording,
@@ -70,6 +71,7 @@ import { isXeroAppliedCreditOperationBusyError } from "@/lib/xero-applied-credit
 import {
   findResolvedBookingInvoiceCreate,
   findResolvedSiblingSince,
+  resolvedSiblingCopySkippedPayload,
   readResolvedRefundCreditNoteCoverage,
   sumRefundCreditNoteCoverageCents,
 } from "@/lib/xero-resolved-in-xero-fences";
@@ -77,6 +79,7 @@ import { createXeroSupplementaryInvoice } from "@/lib/xero-supplementary-invoice
 import { createXeroKeptLateCaptureInvoice } from "@/lib/xero-kept-late-capture-invoice";
 import { recordAdditionalCaptureReceipt } from "@/lib/additional-capture-xero-receipt";
 import { outboxScanSpacesWaitingReceipts } from "@/lib/additional-capture-receipt-gate";
+import { scanSpacesRefundNotesAwaitingResolve } from "@/lib/xero-refund-note-in-flight";
 import { primaryInvoiceGapPayload } from "@/lib/additional-capture-receipt-payload";
 import { anchorCaptureHasReceipt, bookingHasUnattributedCaptures, keptInvoiceBillsChangeCapture } from "@/lib/additional-capture-receipt-link";
 import { isXeroConnected } from "@/lib/xero-token-store";
@@ -1165,7 +1168,7 @@ export async function enqueueXeroRefundCreditNoteOperation(
 export async function enqueueXeroAccountCreditNoteOperation(
   paymentId: string,
   refundAmountCents: number,
-  options?: { createdByMemberId?: string; store?: Prisma.TransactionClient }
+  options?: { createdByMemberId?: string; store?: Prisma.TransactionClient; memberCreditId?: string }
 ) {
   if (refundAmountCents <= 0) {
     return {
@@ -1252,7 +1255,8 @@ export async function enqueueXeroAccountCreditNoteOperation(
     correlationKey,
     requestPayload: {
       queueType: XERO_OUTBOX_ACCOUNT_CREDIT_NOTE_TYPE,
-      refundAmountCents,
+      refundAmountCents, // #4685: and the credit it is for, which its stamp writes by id
+      ...(options?.memberCreditId ? { memberCreditId: options.memberCreditId } : {}),
     },
     createdByMemberId: options?.createdByMemberId ?? null,
     store: db,
@@ -2959,9 +2963,8 @@ export async function processQueuedXeroOutboxOperations(options?: {
       queueType: {
         in: [...XERO_OUTBOX_QUEUE_TYPES],
       },
-      // #3954 round 8: a billed-offset note waiting for its edit's own note
-      // is looked at again only every few minutes, not on every kick.
-      AND: [outboxScanLeavesAwaitingOwnNote(new Date()), outboxScanSpacesWaitingReceipts(new Date())],
+      // Rows waiting their turn are looked at only every few minutes, not on every kick (#3954, #3953, #4692 `INV-INT-035`).
+      AND: [outboxScanLeavesAwaitingOwnNote(new Date()), outboxScanSpacesWaitingReceipts(new Date()), scanSpacesRefundNotesAwaitingResolve(new Date())],
     },
     // Ties on `createdAt` (same ms; all rows under the frozen clock) fall to `id`:
     // deterministic, not insertion order (#4663; STATE_MACHINES.md).
@@ -3046,15 +3049,7 @@ export async function processQueuedXeroOutboxOperations(options?: {
     // hand-made document stands for it. Closed CANCELLED, before any Xero call.
     const resolvedSibling = await findResolvedSiblingSince(queuedOperation);
     if (resolvedSibling) {
-      await completeXeroSyncOperation(claimed, {
-        status: "CANCELLED",
-        responsePayload: {
-          skipped: "resolved-in-xero",
-          resolvedOperationId: resolvedSibling.id,
-          reason:
-            "An officer resolved this document by hand in Xero after this copy was queued, so it was not sent.",
-        },
-      });
+      await completeXeroSyncOperation(claimed, { status: "CANCELLED", responsePayload: resolvedSiblingCopySkippedPayload(resolvedSibling.id) });
       result.skipped += 1;
       continue;
     }
@@ -3155,10 +3150,7 @@ export async function processQueuedXeroOutboxOperations(options?: {
           queuedOperation.localId,
           payload.refundAmountCents,
           format,
-          {
-            createdByMemberId: queuedOperation.createdByMemberId ?? undefined,
-            syncOperation: claimed,
-          }
+          { createdByMemberId: queuedOperation.createdByMemberId ?? undefined, syncOperation: claimed, memberCreditId: payload.memberCreditId }
         );
       } else if (
         payload?.queueType === XERO_OUTBOX_MODIFICATION_ACCOUNT_CREDIT_NOTE_TYPE
@@ -3183,7 +3175,7 @@ export async function processQueuedXeroOutboxOperations(options?: {
         await recordAdditionalCaptureReceipt({ syncOperation: claimed, createdByMemberId: queuedOperation.createdByMemberId ?? undefined });
       } else if (payload?.queueType === XERO_OUTBOX_ORGANISER_EXTRA_ADJUSTMENT_TYPE) {
         const ran = await executeOrganiserExtraAdjustment(payload, claimed, { onRetake: (retaken) => { outcomeClaim = retaken; } });
-        // #4655: a run whose note was recorded on a row queued again, or on none, wrote no outcome.
+        // #4655, #4680, #4701: a stood-down run wrote no outcome, whether its note landed on a re-queued row, on none, or it lost its claim before a money-moving call.
         if (ran === "stood-down") {
           result.skipped += 1;
           continue;
@@ -3271,6 +3263,14 @@ export async function processQueuedXeroOutboxOperations(options?: {
 
       result.succeeded += 1;
     } catch (error) {
+      if (error instanceof RefundNoteNotRecordedError) {
+        // #4656 (`INV-INT-029`): a note this run did not record, already traced; the row stays as the record left it.
+        // Skipped, never succeeded: this run completed nothing, even where the row records this very note.
+        const level = refundNoteRecordedElsewhere(error.outcome) ? "info" : "warn";
+        logger[level]({ queueOperationId: queuedOperation.id, outcome: error.outcome }, error.message);
+        result.skipped += 1;
+        continue;
+      }
       if (isXeroAppliedCreditOperationBusyError(error)) {
         // Two independent outbox runners can claim allocation and deallocation
         // for the same Payment before either handler observes the other. That
@@ -3280,7 +3280,7 @@ export async function processQueuedXeroOutboxOperations(options?: {
         // deallocation says what it is waiting for.
         await prisma.xeroSyncOperation.updateMany({
           // #4356: never take back a repair's marked claim; #4373: nor any claim but this dispatch's (`INV-INT-029`).
-          where: { id: queuedOperation.id, status: "RUNNING", startedAt: outcomeClaim.startedAt, ...NOT_A_XERO_REPAIR_CLAIM },
+          where: { id: queuedOperation.id, ...ownRunningClaim(outcomeClaim), ...NOT_A_XERO_REPAIR_CLAIM },
           data: {
             status: "PENDING",
             startedAt: null,
@@ -3337,8 +3337,8 @@ export async function processQueuedXeroOutboxOperations(options?: {
         const returned = await prisma.xeroSyncOperation.updateMany({
           where: {
             id: queuedOperation.id,
-            // #4373: RUNNING only as this dispatch's own claim, never a later retry's (`INV-INT-029`).
-            AND: [{ OR: [{ status: "RUNNING", startedAt: outcomeClaim.startedAt }, { status: "FAILED" }] }],
+            // #4373/#4687: RUNNING or self-failed FAILED only under this dispatch's own claim, never a later one's (`INV-INT-029`).
+            AND: [{ status: { in: ["RUNNING", "FAILED"] }, startedAt: outcomeClaim.startedAt }],
             // Never revive a row an officer resolved (#3635, `INV-INT-025`), nor a repair's marked claim (#4356).
             manuallyResolvedAt: null,
             ...NOT_A_XERO_REPAIR_CLAIM,
@@ -3372,12 +3372,12 @@ export async function processQueuedXeroOutboxOperations(options?: {
           result.skipped += 1;
           continue;
         }
-        // The row was in neither RUNNING nor FAILED (e.g. a concurrent worker
-        // moved it out from under us). Do NOT report a return-to-PENDING that
-        // did not happen — that false "skipped" is what let an incident summary
-        // tell an operator the queue would self-heal while invoices sat stuck.
-        // Fall through to the honest FAILED path so the log and the failed
-        // counter reflect a row that was NOT recovered.
+        // The row was not this claim's RUNNING or FAILED row (e.g. a concurrent
+        // worker moved it out from under us). Do NOT report a return-to-PENDING
+        // that did not happen — that false "skipped" is what let an incident
+        // summary tell an operator the queue would self-heal while invoices sat
+        // stuck. Fall through to the failure path: the row counts failed when the
+        // failure lands, and skipped when INV-INT-029 refuses it (#4673).
         logger.warn(
           {
             err: error,
@@ -3386,6 +3386,38 @@ export async function processQueuedXeroOutboxOperations(options?: {
           },
           "Xero cooldown refused an outbox operation but the row was not in a returnable state; failing it"
         );
+      }
+      // F4 (#1354): fail the operation for EVERY queue type, not just the two
+      // membership-cancellation types and payload-shape errors. An operation
+      // erroring BEFORE its handler overwrote requestPayload (token refresh,
+      // contact resolution, account mapping) previously stayed RUNNING with
+      // the queued payload; after an operator stale-reset the retry stack
+      // could not parse that shape — a permanent manual dead-end. FAILED rows
+      // are replayable, and the retry parser now understands the queued
+      // payload shape, so failing fast here closes the dead-end for all
+      // types.
+      let failedRow: Awaited<ReturnType<typeof failXeroSyncOperation>> | undefined;
+      try {
+        // #3635 round-3 N5: never over a row withdrawn in the meantime (an
+        // approval cancels a kept row it finds FAILED); CANCELLED stands.
+        failedRow = await failXeroSyncOperation(
+          outcomeClaim,
+          error instanceof Error ? error : new Error(String(error)),
+          undefined,
+          { keepCancelled: true }
+        );
+      } catch (failErr) {
+        logger.error(
+          { err: failErr, queueOperationId: queuedOperation.id },
+          "Failed to mark queued Xero outbox operation FAILED after an error"
+        );
+      }
+      // #4673 (`INV-INT-029`): refused - no longer this run's row (a Retry queued it again, a later claim
+      // holds or ended it) or it keeps a success or a withdrawal. Nothing failed: no charge error, not counted failed.
+      if (failedRow === null) {
+        logger.warn({ err: error, queueOperationId: queuedOperation.id, queueType: payload?.queueType ?? null }, "Queued Xero outbox operation's failure was not recorded: the row is no longer this run's (INV-INT-029)");
+        result.skipped += 1;
+        continue;
       }
       if (payload?.queueType === XERO_OUTBOX_SUBSCRIPTION_INVOICE_TYPE && subscriptionChargeId) {
         const currentCharge = await prisma.membershipSubscriptionCharge.findUnique({
@@ -3408,30 +3440,6 @@ export async function processQueuedXeroOutboxOperations(options?: {
             logger.error({ err: chargeError, chargeId: subscriptionChargeId }, "Failed to expose subscription charge outbox error");
           });
         }
-      }
-      // F4 (#1354): fail the operation for EVERY queue type, not just the two
-      // membership-cancellation types and payload-shape errors. An operation
-      // erroring BEFORE its handler overwrote requestPayload (token refresh,
-      // contact resolution, account mapping) previously stayed RUNNING with
-      // the queued payload; after an operator stale-reset the retry stack
-      // could not parse that shape — a permanent manual dead-end. FAILED rows
-      // are replayable, and the retry parser now understands the queued
-      // payload shape, so failing fast here closes the dead-end for all
-      // types.
-      try {
-        // #3635 round-3 N5: never over a row withdrawn in the meantime (an
-        // approval cancels a kept row it finds FAILED); CANCELLED stands.
-        await failXeroSyncOperation(
-          outcomeClaim,
-          error instanceof Error ? error : new Error(String(error)),
-          undefined,
-          { keepCancelled: true }
-        );
-      } catch (failErr) {
-        logger.error(
-          { err: failErr, queueOperationId: queuedOperation.id },
-          "Failed to mark queued Xero outbox operation FAILED after an error"
-        );
       }
       logger.error(
         {

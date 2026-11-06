@@ -1,6 +1,8 @@
 import { MEMBER_PRIVILEGE_CHECK_SELECT } from "@/lib/access-role-definitions";
+import { isDeletedAccountRecord } from "@/lib/deleted-account";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
+import { readTokenSessionIssuedAtMs } from "@/lib/session-max-age";
 
 /**
  * The member fields the per-request token refresh in `src/lib/auth.ts` reads,
@@ -25,6 +27,10 @@ const SESSION_MEMBER_SECURITY_SELECT = {
   // Post-login landing preference (#2090), refreshed per request alongside the
   // security fields so a profile toggle change takes effect on the next request.
   postLoginLanding: true,
+  // #4612: with `role` and the access-role rows, the record's classification,
+  // which decides whether this is the lodge kiosk account and so its idle
+  // window (`isKioskSessionMember` in `session-idle-expiry.ts`).
+  financeAccessLevel: true,
   // `canLogin` with the joined definitions (#1367, #3603): the refresh computes
   // the merged admin-permission matrix over custom and club-edited
   // definition-backed roles, and clears it once login is off. The shared
@@ -77,4 +83,58 @@ export function isLoginRevokedSession(
     );
   }
   return revoked;
+}
+
+/**
+ * When the session a token carries began, in epoch milliseconds: the stamped
+ * `sessionIssuedAt`, else the JWT's `iat`, else now. The revocation rules below
+ * compare their stored times against it. The maximum session age (#4611) does
+ * NOT use this reader: it takes the stamp alone (`readTokenSessionIssuedAtMs`),
+ * because `iat` is renewed on every refresh and a missing stamp must end the
+ * session rather than start its clock again.
+ */
+export function getTokenSessionIssuedAtMs(token: {
+  sessionIssuedAt?: unknown;
+  iat?: unknown;
+}): number {
+  const stamped = readTokenSessionIssuedAtMs(token);
+  if (stamped !== null) {
+    return stamped;
+  }
+
+  if (typeof token.iat === "number" && Number.isFinite(token.iat)) {
+    return token.iat * 1000;
+  }
+
+  return Date.now();
+}
+
+/**
+ * Whether the member row ends a session that began at `sessionIssuedAt`: the
+ * account was deleted (#2620), its login is off or was switched off after the
+ * session began (#3603, `isLoginRevokedSession`), or its password changed after
+ * the session began. The one rule the `jwt` callback in `auth.ts` invalidates a
+ * token by, and the one the kiosk idle window re-checks (#4612,
+ * `session-idle-expiry.ts`).
+ */
+export function isRevokedMemberSession(
+  member: NonNullable<Awaited<ReturnType<typeof loadSessionMemberSecurity>>>,
+  sessionIssuedAt: number,
+  memberId: string,
+): boolean {
+  // #2620: an account an approved deletion request has anonymised holds no
+  // session, whatever `active` says: a session minted before the deletion, or
+  // after someone flipped `active` back directly in the database.
+  if (isDeletedAccountRecord(member)) {
+    logger.warn(
+      { memberId },
+      "Invalidating session for a deleted account (#2620)",
+    );
+    return true;
+  }
+  return (
+    isLoginRevokedSession(member, sessionIssuedAt, memberId) ||
+    (member.passwordChangedAt instanceof Date &&
+      member.passwordChangedAt.getTime() > sessionIssuedAt)
+  );
 }

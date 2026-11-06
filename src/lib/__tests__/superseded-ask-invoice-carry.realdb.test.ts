@@ -20,6 +20,9 @@
  *    and the payments they record sum to the capture;
  *  - B never paid (the booking is cancelled): nothing is invoiced, both retired;
  *  - B captured before A's cancel lands: A's invoice is released at the move;
+ *  - #4665: the reaper while A's cancel is in flight - backing off, or inside
+ *    its Stripe call - keeps A's invoice, which the cancel then moves onto B;
+ *    a cancel the runner gave up on leaves it to be retired as before;
  *  - a DECLINED A: cancelled at Stripe at B's mint (#4422), and still moved;
  *  - A -> B -> C: three invoices on C's capture, summing to it;
  *  - the move against a price reduction's retire, both orders, forced on the
@@ -812,6 +815,108 @@ function deferred() {
 
       expect(await invoiceFor(MOD_A)).toMatchObject({ status: "PENDING", waitsOn: b, parkedFrom: a, cents: A_CENTS, recordPayment: true });
       expect((await invoices()).reduce((sum, row) => sum + row.cents, 0)).toBe(await captured(b));
+    });
+
+    describe("#4665: the waiting-invoice reaper while A's cancel is still in flight", () => {
+      /** A then B, with Stripe down for B's inline cancel of A: A stays open, its cancel row waits to retry. */
+      async function supersedeWithCancelPending() {
+        await seedPaidBooking();
+        const a = await priceIncrease(MOD_A, A_CENTS);
+        stripe.failCancels = 1;
+        const b = await priceIncrease(MOD_B, B_CENTS);
+        expect(stripe.intents.get(a)?.status).toBe("requires_payment_method");
+        expect(await invoiceFor(MOD_A)).toMatchObject({ status: "WAITING_PAYMENT", waitsOn: a });
+        const cancel = await prisma.paymentRecoveryOperation.findFirstOrThrow({
+          where: { bookingId: BOOKING_ID, type: "CANCEL_PAYMENT_INTENT", paymentIntentId: a },
+          select: { status: true },
+        });
+        expect(cancel.status).not.toBe("SUCCEEDED");
+        return { a, b };
+      }
+
+      /** The reaper, with A's invoice already past the age at which it would retire it. */
+      async function reapPastAge() {
+        await assertNoForeignWaitingInvoices();
+        const { reapStaleWaitingPaymentXeroOutboxOperations } = await import("@/lib/xero-waiting-invoice-reaper");
+        return reapStaleWaitingPaymentXeroOutboxOperations({ ageInDays: 0, failedTransactionGraceHours: 0 });
+      }
+
+      async function expectBothReleasedOnB(a: string, b: string) {
+        expect(await invoiceFor(MOD_A)).toMatchObject({ status: "WAITING_PAYMENT", waitsOn: b, parkedFrom: a, cents: A_CENTS });
+        await payWithCard(b);
+        const both = await invoices();
+        expect(both.map((row) => [row.change, row.status, row.lastErrorCode, row.cents])).toEqual([
+          [MOD_A, "PENDING", null, A_CENTS],
+          [MOD_B, "PENDING", null, B_CENTS],
+        ]);
+        expect(both.reduce((sum, row) => sum + row.cents, 0)).toBe(await captured(b));
+      }
+
+      it("the cancel backing off: A's invoice is kept, then moved onto B when the retry lands", async () => {
+        const { a, b } = await supersedeWithCancelPending();
+
+        const reaped = await reapPastAge();
+
+        expect(reaped.reaped).toBe(0);
+        expect(await invoiceFor(MOD_A)).toMatchObject({ status: "WAITING_PAYMENT", waitsOn: a, lastErrorCode: null });
+
+        await drainCancels();
+        expect(stripe.intents.get(a)?.status).toBe("canceled");
+        await expectBothReleasedOnB(a, b);
+      });
+
+      it("the reaper runs while the cancel's Stripe call is in flight: kept, and the cancel's last step moves it", async () => {
+        const { a, b } = await supersedeWithCancelPending();
+        const entered = deferred();
+        const release = deferred();
+        const cancelAtStripe = stripeRaceHooks.cancel!;
+        stripeRaceHooks.cancel = async (id) => {
+          entered.resolve();
+          await release.promise;
+          return cancelAtStripe(id);
+        };
+
+        const draining = drainCancels();
+        await entered.promise;
+        try {
+          expect(
+            await prisma.paymentRecoveryOperation.findFirstOrThrow({
+              where: { bookingId: BOOKING_ID, type: "CANCEL_PAYMENT_INTENT", paymentIntentId: a },
+              select: { status: true },
+            }),
+          ).toEqual({ status: "PROCESSING" });
+
+          const reaped = await reapPastAge();
+
+          expect(reaped.reaped).toBe(0);
+          expect(await invoiceFor(MOD_A)).toMatchObject({ status: "WAITING_PAYMENT", waitsOn: a, lastErrorCode: null });
+        } finally {
+          release.resolve();
+          await draining;
+        }
+
+        // The reaper's next run finds A's invoice on B, where B's door is still payable: kept there.
+        expect((await reapPastAge()).reaped).toBe(0);
+        await expectBothReleasedOnB(a, b);
+      });
+
+      it("a cancel the runner gave up on moves nothing: the reaper retires A's invoice, as before", async () => {
+        const { a } = await supersedeWithCancelPending();
+        // Stripe stays down through every retry the runner allows.
+        const { MAX_PAYMENT_RECOVERY_ATTEMPTS } = await import("@/lib/payment-recovery-constants");
+        stripe.failCancels = MAX_PAYMENT_RECOVERY_ATTEMPTS;
+        for (let retry = 0; retry < MAX_PAYMENT_RECOVERY_ATTEMPTS; retry += 1) await drainCancels();
+        expect(
+          await prisma.paymentRecoveryOperation.findFirstOrThrow({
+            where: { bookingId: BOOKING_ID, type: "CANCEL_PAYMENT_INTENT", paymentIntentId: a },
+            select: { status: true, attempts: true },
+          }),
+        ).toEqual({ status: "FAILED", attempts: MAX_PAYMENT_RECOVERY_ATTEMPTS });
+
+        expect((await reapPastAge()).reaped).toBe(1);
+        expect(await invoiceFor(MOD_A)).toMatchObject({ status: "CANCELLED", waitsOn: a, lastErrorCode: "STALE_WAITING_PAYMENT" });
+        expect(await invoiceFor(MOD_B)).toMatchObject({ status: "WAITING_PAYMENT" });
+      });
     });
 
     it("#4422: a DECLINED A is cancelled at Stripe at B's mint, so a stale tab cannot pay it, and its invoice moves all the same", async () => {

@@ -18,7 +18,8 @@
  *   or (#4669) the email retry cron holds its copies.
  *   A send nobody received throws, the claim is given back, and the
  *   webhook answers 500 so Stripe redelivers; #4670: a delivery whose
- *   give-back failed gives back its own claim again and still fails. A claim
+ *   give-back failed gives back its own claim again and still fails; #4679:
+ *   so does one whose claim call threw, by the stamp it tried to write. A claim
  *   still held with no `alertedAt` is a delivery that died: younger than the
  *   webhook lease less a margin it belongs to a sibling still sending; older,
  *   this delivery releases it and sends (`UNRECOGNISED_ALERT_IN_FLIGHT_MS`),
@@ -49,8 +50,9 @@ import {
   type UnrecognisedStripePayment,
 } from "@prisma/client";
 
-import { findHeldOnceEverAlertKeys, readHeldOnceEverAlertTimes, sendAdminAlertOnceEverClaim } from "@/lib/admin-alert-once";
-import { ALERT_ONCE_EVER_WINDOW_MS, claimAlertCooldown, releaseAlertCooldown } from "@/lib/alert-cooldown";
+import { findHeldOnceEverAlertKeys } from "@/lib/admin-alert-once";
+import { sendAdminAlertOnceEverWithTakeover } from "@/lib/admin-alert-once-takeover";
+import { ALERT_ONCE_EVER_WINDOW_MS, claimAlertCooldown } from "@/lib/alert-cooldown";
 import { currencyHasTwoDecimalPlaces, canonicalCurrencyCode } from "@/lib/club-currency-minor-unit";
 import type { ClubFormat } from "@/lib/club-format";
 import { sendAdminUnmatchedAppStripePaymentAlert, sendAdminUnrecognisedStripePaymentAlert } from "@/lib/email";
@@ -206,63 +208,37 @@ async function ensureAlert(
   const key = unrecognisedStripePaymentAlertKey(row.stripePaymentIntentId);
   const mail = alertMail(row, event.livemode, format);
   const context = { paymentIntentId: row.stripePaymentIntentId, reason: row.reason };
-  const send = () =>
-    sendAdminAlertOnceEverClaim({
-      key,
-      label: mail.label,
-      context,
-      send: async () => {
-        // #4669: `queued-for-retry` means the email retry cron holds every
-        // copy, so the claim is kept and Stripe must not redeliver for it.
-        const outcome = await mail.send();
-        if (outcome === "undelivered") {
-          throw new UnrecognisedStripePaymentAlertNotSentError(row.stripePaymentIntentId);
-        }
-        await stampAlertSent(row, context);
-        return UNMUTEABLE_ALERT_SENT;
-      },
-    });
-
   /**
-   * #4670: this delivery took the claim and the send failed. The helper gave
-   * the claim back, unless that release failed: then the claim held is this
-   * delivery's own, not a sibling's in flight, and returning would complete the
-   * event with no alert sent. Give it back again - guarded by the exact stamp
-   * this call wrote, so a newer claim is never touched - and fail the webhook so
-   * Stripe's redelivery claims afresh and sends.
+   * The shared sequence (`sendAdminAlertOnceEverWithTakeover`, #4690). #4670:
+   * this delivery's own failed send, or (#4679) its claim write that threw, is
+   * given back under its exact stamp - before any further read that could itself
+   * fail and leave the claim held - and the webhook fails, so Stripe's
+   * redelivery claims afresh and sends; at worst Stripe redelivers once more
+   * than needed. A fresh claim held here belongs to a sibling still sending, so
+   * the event completes: this delivery's own failed send gave its claim back, so
+   * the same event's redelivery reaches a claim only when an attempt crashed,
+   * and that attempt's lease holds the redelivery off until the claim is past
+   * this window (#4647), when it is taken over.
    */
-  const giveBackOwnClaimAndFail = async (claimedAt: Date): Promise<never> => {
-    await releaseAlertCooldown({ key, claimedAt }).catch((err) =>
-      logger.error({ ...context, err }, `Failed again to release the ${mail.label} claim`),
-    );
-    throw new UnrecognisedStripePaymentAlertNotSentError(row.stripePaymentIntentId);
-  };
-
-  // Not kept with a claim of its own means this send did not go out
-  // (`stampAlertSent` never throws), so give it back before any further read
-  // that could itself fail and leave the claim held.
-  const first = await send();
-  if (first.kept) return;
-  if (first.claimedAt) await giveBackOwnClaimAndFail(first.claimedAt);
-  if (await alertWasSent(row)) return;
-
-  const heldAt = (await readHeldOnceEverAlertTimes([key], new Date())).get(key);
-  if (!heldAt) {
-    throw new UnrecognisedStripePaymentAlertNotSentError(row.stripePaymentIntentId);
-  }
-  // A fresh claim held here belongs to a sibling still sending. This delivery's
-  // own failed send gave its claim back above (#4670), so the same event's
-  // redelivery reaches a claim only when an attempt crashed: that attempt's
-  // lease then holds the redelivery off until the claim is past this window
-  // (#4647).
-  if (Date.now() - heldAt.getTime() < UNRECOGNISED_ALERT_IN_FLIGHT_MS) return;
-
-  await releaseAlertCooldown({ key, claimedAt: heldAt });
-  const second = await send();
-  if (second.kept) return;
-  if (second.claimedAt) await giveBackOwnClaimAndFail(second.claimedAt);
-  if (await alertWasSent(row)) return;
-  throw new UnrecognisedStripePaymentAlertNotSentError(row.stripePaymentIntentId);
+  const outcome = await sendAdminAlertOnceEverWithTakeover({
+    key,
+    label: mail.label,
+    context,
+    send: async () => {
+      // #4669: `queued-for-retry` means the email retry cron holds every
+      // copy, so the claim is kept and Stripe must not redeliver for it.
+      const sent = await mail.send();
+      if (sent === "undelivered") {
+        throw new UnrecognisedStripePaymentAlertNotSentError(row.stripePaymentIntentId);
+      }
+      await stampAlertSent(row, context);
+      return UNMUTEABLE_ALERT_SENT;
+    },
+    isSent: () => alertWasSent(row),
+    inFlightMs: UNRECOGNISED_ALERT_IN_FLIGHT_MS,
+  });
+  // A sibling that re-claimed after this delivery's takeover: fail, so Stripe redelivers.
+  if (outcome === "not-sent" || outcome === "taken-over") throw new UnrecognisedStripePaymentAlertNotSentError(row.stripePaymentIntentId);
 }
 
 /**

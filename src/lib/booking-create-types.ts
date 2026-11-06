@@ -189,17 +189,18 @@ interface BaseInput {
 export type DraftBookingInput = BaseInput;
 
 /**
- * #4628 (Ledger M3c): how the create is paid, and the journal context that an
- * internet-banking create needs. Its invoice binds the charge, so the create
- * posts R01 inside its transaction from a context its caller resolved before
- * any transaction (`INV-LOCK-004`, as `todayAtClub`). The union makes the
- * context REQUIRED wherever the method can be internet banking: a caller
- * passing a `BookingPaymentMethod` it did not narrow must pass one too, so the
- * compiler names every door that forgot it (a group join did, #4659).
+ * #4628 (Ledger M3c), #4660: how the create is paid, and the journal context
+ * every create needs. An internet-banking invoice binds the charge, and a $0 or
+ * fully credit-covered create settles PAID on the spot, so either posts R01
+ * inside the create's transaction from a context its caller resolved before any
+ * transaction (`INV-LOCK-004`, as `todayAtClub`). Any create can price to $0 (a
+ * promotion, credit, free tiers), so the context is REQUIRED on every door and
+ * the compiler names one that forgot it (a group join did, #4659).
  */
-export type ConfirmedBookingPaymentInput =
-  | { paymentMethod: "internet_banking"; journal: BookingJournalContext }
-  | { paymentMethod?: Exclude<BookingPaymentMethod, "internet_banking">; journal?: BookingJournalContext };
+interface ConfirmedBookingPaymentInput {
+  paymentMethod?: BookingPaymentMethod;
+  journal: BookingJournalContext;
+}
 
 export type ConfirmedBookingInput = ConfirmedBookingInputFields & ConfirmedBookingPaymentInput;
 

@@ -25,7 +25,7 @@ import { appliedCreditSettledByCancel, unallocatedAppliedCents } from "./xero-ap
 import { prisma } from "./prisma";
 import { APPLIED_CREDIT_ALLOCATION_ROLE } from "./xero-applied-credit-link-roles";
 import { sliceHeldInXero } from "./xero-applied-credit-slice-lookup";
-import { NOT_A_CONVERGENCE_ROW, writtenDownCentsByCreditNote } from "./xero-credit-note-write-down";
+import { loadFreeCreditLots } from "./xero-applied-credit-lots";
 import { lockMemberCreditLedger } from "./member-credit";
 import { convergedForNamedFailure } from "./xero-applied-credit-spent-outside-app";
 import { allocateCreditNoteToInvoice } from "./xero-credit-notes";
@@ -69,7 +69,7 @@ export {
   type PlannedMintSlice,
   type PlannedNoteAllocation,
 } from "./xero-applied-credit-plan";
-import { assertPlanKeepsCommittedSlices, CREDIT_LOT_USE_ORDER, planAppliedCreditAllocation, type AppliedCreditLot } from "./xero-applied-credit-plan";
+import { assertPlanKeepsCommittedSlices, planAppliedCreditAllocation, type AppliedCreditLot } from "./xero-applied-credit-plan";
 import type { XeroOperationClaim } from "@/lib/xero-operation-outcome-guard";
 
 /**
@@ -93,55 +93,8 @@ async function gatherAppliedCreditLots(
   forBookingId: string,
   tx: Prisma.TransactionClient,
 ): Promise<AppliedCreditLot[]> {
-  const positiveLots = await tx.memberCredit.findMany({
-    where: { memberId, amountCents: { gt: 0 }, ...NOT_A_CONVERGENCE_ROW },
-    // `type` is read for the mint's account mapping (#2717) — see
-    // `mintSliceMappingKey`. Blue/green runtime-prep: name only what is read.
-    select: {
-      id: true,
-      amountCents: true,
-      type: true,
-      xeroCreditNoteId: true,
-    },
-    orderBy: [...CREDIT_LOT_USE_ORDER],
-  });
-
-  const allocated = await tx.memberCreditNoteAllocation.groupBy({
-    by: ["memberCreditId"],
-    where: {
-      memberCreditId: { in: positiveLots.map((l) => l.id) },
-      appliedToBookingId: { not: forBookingId },
-    },
-    _sum: { amountCents: true },
-  });
-  const allocatedById = new Map(
-    allocated.map((a) => [a.memberCreditId, a._sum.amountCents ?? 0]),
-  );
-
-  // #4219: credit written down because its note was used outside the app is gone.
-  const writtenDown = await writtenDownCentsByCreditNote(
-    tx,
-    memberId,
-    positiveLots.flatMap((l) => (l.xeroCreditNoteId ? [l.xeroCreditNoteId] : [])),
-  );
-  const lots: AppliedCreditLot[] = [];
-  for (const lot of positiveLots) {
-    const free = lot.amountCents - (allocatedById.get(lot.id) ?? 0);
-    // A note's write-down is taken once, oldest lot first, never from each lot stamped with the note.
-    const downCents = lot.xeroCreditNoteId ? Math.min(Math.max(free, 0), writtenDown.get(lot.xeroCreditNoteId) ?? 0) : 0;
-    if (lot.xeroCreditNoteId && downCents > 0) writtenDown.set(lot.xeroCreditNoteId, (writtenDown.get(lot.xeroCreditNoteId) ?? 0) - downCents);
-    const remainingCents = free - downCents;
-    if (remainingCents <= 0) {
-      continue;
-    }
-    lots.push({
-      memberCreditId: lot.id,
-      creditType: lot.type,
-      xeroCreditNoteId: lot.xeroCreditNoteId,
-      remainingCents,
-    });
-  }
-  return lots;
+  const loaded = await loadFreeCreditLots(tx, [memberId], { exceptBookingId: forBookingId });
+  return loaded.get(memberId)?.lots ?? [];
 }
 
 /** The remainder note this payment already minted, if any. */

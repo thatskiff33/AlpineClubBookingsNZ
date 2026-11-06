@@ -139,8 +139,9 @@ in the same save. A sync running at that moment either uses the previous
 connection together or waits for the change; it cannot send the old key to
 the new address. Enter a key issued by the new server before syncing again.
 The same save clears every sync position and the previous server's push
-secret (replacing the API key clears the push secret too), so the next sync
-registers this site with the new server for pushes. Pushes and free-beds
+secret (replacing the API key clears the push secret too), so this site
+registers with the new server for pushes as soon as the new key is saved
+(step 4 below), or at the next sync if that could not. Pushes and free-beds
 questions signed with the old secret stop being accepted within 45 seconds
 (the time another running copy of the site may still hold it in memory). A
 download, upload, message-board sync or push registration still running
@@ -150,6 +151,13 @@ holds an address you have not saved: save the address first. A key saved
 from a page that still shows the old address is refused with "The central
 server address was changed after this page was loaded": reload the page,
 check the address, and enter the key again.
+
+**Connecting a new site.** The setup page's server address is pre-filled from
+the deployment's `SERVERNZ_DEFAULT_BASE_URL` while nothing is saved, and says
+so; press **Save** to use it (nothing is contacted before then). Then **Request
+a Connection**: register on the central server, copy the API key it shows you
+once, paste it into the API key field, Save, and Download. The key starts
+working once the central server's administrator approves the connection.
 
 **Read this before you turn it on.** This is the one integration that sends data
 *out* of your club. When you enable a shared item, everything recorded on **your
@@ -206,7 +214,8 @@ server proves each question is genuine with the same signing secret it uses
 for the message board, so this only works once this site has registered for
 the message board's pushes: the **Message board** module is on (see
 [Modules](modules.md#settings-reference)) and the site's own address is
-`https://`, then the next sync registers it. Until then the search shows "beds
+`https://`, then saving the API key, or failing that the next sync, registers
+it. Until then the search shows "beds
 available unknown". It also answers nothing while **Other
 lodges** sharing is off. The server names the lodge by its **permanent central
 id**, and your site answers for the local lodge linked to it under **Admin →
@@ -318,10 +327,42 @@ Alpine Central Server**, for you to check its bookings and **Hide** it.
    refused. **Changing the address clears the stored key**, because a key issued
    by one server means nothing to another.
 4. Paste the API key and save. It is stored encrypted and never shown again.
-5. Enable the **Other Clubs details** item, then press **Download** to pull the
+   Saving it also registers this site's address with the central server, and
+   the page says how that went: registered; the address is not `https://`, so
+   the server cannot reach this site (shared posts still arrive by polling, but
+   the central lodge search cannot ask about free beds); the central server has
+   not approved your connection yet (this site registers itself every 3 hours
+   until it is approved, so come back afterwards); no server address is saved
+   yet; syncing is paused because the server runs a different software
+   version; or it could not be reached (tried again every 3 hours).
+   If this site moves to a new name or port (`NEXTAUTH_URL` on another
+   origin), **save the API key again** on this page: that registers the new
+   address, so the central server stops pushing to, and asking free beds of,
+   the old one. The 3-hourly pass does not do this by itself, because a
+   staging or restored copy of the database looks the same as a moved site and
+   must not take over production's registration; it logs a warning instead. A
+   site connected before this check existed has no address kept to compare:
+   save the key again after moving it too.
+5. With **Other Clubs details** enabled, the same save then downloads the
    distributed set — which also tells this site which lodge is yours and turns
-   on **Edit my Lodge** in the Other lodges panel — and **Upload** to push your
-   own lodge's entry.
+   on **Edit my Lodge** in the Other lodges panel — and links your lodges to
+   the ones the central server lists as yours (the **Central lodge** link).
+   A **Link your lodges** dialog gives each of your lodges a choice of the
+   central server's lodges or **Not linked**; a central lodge chosen for one
+   lodge cannot be chosen for another. Current links are preselected, and with
+   one active lodge and one listed for you that pair is preselected too.
+   Nothing is linked until you press **Save links**, which saves them all —
+   every club links explicitly, a one-lodge club included. If the server lists
+   no lodge for you yet, or every lodge it lists is already linked, the page
+   says so instead. With the item disabled, enable it and press **Download**,
+   then link each lodge from its **Central lodge** card.
+6. Saving a change to **Edit my Lodge** uploads your lodge to the central
+   server straight away, when you also hold Finance edit (the **Upload**
+   button's permission), and the panel says whether the server accepted it; the
+   nightly sync sends anything that was not. A save that changes nothing sends
+   nothing. **Upload** pushes it by hand. **View all lodge
+   details**, under Other Clubs details on the setup page, opens the Lodges
+   page.
 
 After that a nightly job at 3am syncs both directions on its own. It only sends
 your own lodge's entry, and only when it changed since last time, and only

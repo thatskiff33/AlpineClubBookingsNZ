@@ -84,6 +84,7 @@ const EXPECTED_ROUTE_AREAS: Record<string, AdminPermissionArea> = {
   "/api/admin/age-tier-settings": "bookings",
   // Alpine Central Server (ServerNZ) integration lives on the Integrations hub
   // (finance), matching the "/api/admin/alpine-server" prefix in admin-permissions.
+  "/api/admin/alpine-server/lodge-links": "finance",
   "/api/admin/alpine-server/other-lodges/download": "finance",
   "/api/admin/alpine-server/other-lodges/upload": "finance",
   "/api/admin/alpine-server/settings": "finance",

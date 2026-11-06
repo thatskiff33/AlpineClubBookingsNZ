@@ -347,9 +347,10 @@ batch re-states the journal to them first, and the door logs it. The Xero
 "invoice paid" receipt now posts the confirmation's lines too, as the settle
 does. Report v2 (`JOURNAL_PENDING`) compares a pending charge with the booking's
 final price plus its recorded fees, or what a cancellation kept. A census
-classifies every booking write that sets PAID or CANCELLED as posting, not a
-sale, or a legacy confirmation gap (a credit-covered PAID) that the back-post
-fills.
+classifies every booking write that sets PAID or CANCELLED as posting or not
+a sale. A $0 or credit-covered create and the pay step's credit settle post
+their confirmation in their own transaction (#4660), as do the zero-price
+confirm-draft, waitlist, pending-guest, cron and force-confirm doors (#4738).
 
 Use the existing lock classification, never a new generic journal advisory key.
 Settlement/lifecycle commands take global `lock(1)` under `INV-LOCK-001`; capacity

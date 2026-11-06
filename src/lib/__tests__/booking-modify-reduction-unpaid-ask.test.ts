@@ -1,5 +1,5 @@
 import { PaymentSource, PaymentStatus, PaymentTransactionKind } from "@prisma/client";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { LoadedBookingForModify } from "@/lib/booking-modify-validation";
 import { REISSUED_ASK_REASON } from "@/lib/payment-recovery-keys";
@@ -41,6 +41,10 @@ const minterDb = vi.hoisted(() => {
     // #4052: a payment row naming the door's intent, and whether a transaction is open.
     intentRow: null as null | { id: string },
     inTransaction: false,
+    // #4693: the edit's own history after commit, the rows it names, and one such row's re-read.
+    editHistory: null as null | { newData: unknown },
+    closedByEdit: [] as Array<Record<string, unknown>>,
+    sweptRow: null as null | Record<string, unknown>,
     recoveryFindUnique: null as unknown as ReturnType<typeof import("vitest").vi.fn>,
     recoveryUpdateMany: null as unknown as ReturnType<typeof import("vitest").vi.fn>,
     executeRaw: null as unknown as ReturnType<typeof import("vitest").vi.fn>,
@@ -49,7 +53,9 @@ const minterDb = vi.hoisted(() => {
 });
 vi.mock("@/lib/prisma", async () => {
   const { vi: hoistedVi } = await import("vitest");
-  minterDb.recoveryFindUnique = hoistedVi.fn(async () => minterDb.reissueRecovery);
+  minterDb.recoveryFindUnique = hoistedVi.fn(async (args?: { where?: { id?: string } }) =>
+    minterDb.sweptRow && args?.where?.id === minterDb.sweptRow.id ? minterDb.sweptRow : minterDb.reissueRecovery,
+  );
   minterDb.recoveryUpdateMany = hoistedVi.fn(async () => ({ count: minterDb.completeCount }));
   minterDb.executeRaw = hoistedVi.fn(async () => 0);
   const prisma = {
@@ -63,7 +69,9 @@ vi.mock("@/lib/prisma", async () => {
       findFirst: async () => null,
       updateMany: minterDb.recoveryUpdateMany,
       upsert: async () => ({ id: "op_upserted" }),
+      findMany: async () => minterDb.closedByEdit,
     },
+    bookingModification: { findUnique: async () => minterDb.editHistory },
   };
   const $transaction = async (fn: (tx: typeof prisma) => unknown) => {
     minterDb.inTransaction = true;
@@ -86,6 +94,7 @@ const mocks = vi.hoisted(() => ({
   findMinted: vi.fn(),
   upsert: vi.fn(),
   cancelIntent: vi.fn(),
+  listIntents: vi.fn(),
 }));
 
 // #3954 decision A: the re-issue's own invoice, queued after its mint
@@ -104,6 +113,7 @@ vi.mock("@/lib/stripe", async (importOriginal) => ({
   findRecentPaymentIntentByMetadata: mocks.findMinted,
   findOrCreateCustomer: vi.fn(async () => ({ id: "cus_1" })),
   cancelPaymentIntentIfCancellableWithResult: mocks.cancelIntent,
+  listRecentPaymentIntentsMatching: mocks.listIntents,
 }));
 
 
@@ -733,6 +743,65 @@ describe("#3954: after commit, the minter cancels what the reduction retired, th
     return { minted, order };
   }
 
+  /**
+   * #4693 (`INV-PAY-120`): the reduction netted off a waiting ask whose earlier attempt's hold
+   * threw and left its stamped intent open. After commit, the minter sweeps the rows the edit's
+   * history names, and that intent is cancelled once - outside every transaction.
+   */
+  describe("#4693: after commit, a waiting ask's recovery the edit netted off is swept", () => {
+    const NETTED_ROW = {
+      id: "op_increase",
+      type: "CREATE_ADDITIONAL_PAYMENT_INTENT",
+      bookingId: "booking_3954",
+      idempotencyKey: "payment_recovery_additional_intent_mod_increase",
+      status: "SUCCEEDED",
+      lastError: "",
+      attempts: 1,
+      paymentIntentId: "mod_guest_booking_3954_mod_increase",
+      createdAt: new Date("2026-06-30T00:00:00.000Z"),
+      payment: { stripeCustomerId: "cus_1" },
+    };
+    const stranded = {
+      id: "pi_stranded",
+      amount: 5_000,
+      status: "requires_payment_method",
+      metadata: { bookingId: "booking_3954", type: "modification_additional", reason: "guest_add_price_increase", askRecoveryId: "op_increase" },
+    };
+    beforeEach(() => {
+      minterDb.editHistory = { newData: { unpaidAskRetiredModificationIds: ["mod_increase"] } };
+      minterDb.closedByEdit = [{ id: "op_increase", status: "SUCCEEDED", lastError: PENDING_ASK_NETTED_BY_REDUCTION_NOTE }];
+      minterDb.sweptRow = { ...NETTED_ROW, lastError: PENDING_ASK_NETTED_BY_REDUCTION_NOTE };
+      mocks.listIntents.mockReset();
+      mocks.listIntents.mockImplementation(async ({ matches }: { matches: (pi: unknown) => boolean }) => {
+        expect(minterDb.inTransaction).toBe(false);
+        return { intents: [stranded].filter((pi) => matches(pi)), complete: true };
+      });
+    });
+    afterEach(() => {
+      minterDb.editHistory = null;
+      minterDb.closedByEdit = [];
+      minterDb.sweptRow = null;
+    });
+
+    it("MUTATION: the netted-off row's unwritten intent is cancelled once as abandoned, outside every transaction", async () => {
+      const result = await adjust(grownBooking({ creditPaid: true }), -2_000);
+      await mintAfter(result);
+      expect(mocks.listIntents).toHaveBeenCalledTimes(1);
+      // #4693 review: AFTER the door's own mint - the sweep's Stripe reads never delay the member's ask.
+      expect(mocks.createIntent.mock.invocationCallOrder[0]!).toBeLessThan(mocks.listIntents.mock.invocationCallOrder[0]!);
+      expect(mocks.cancelIntent).toHaveBeenCalledTimes(1);
+      expect(mocks.cancelIntent).toHaveBeenCalledWith("pi_stranded", { cancellationReason: "abandoned", timeoutMs: 5_000 });
+    });
+
+    it("MUTATION: a row the edit names that no runner ever claimed is not swept - nothing listed", async () => {
+      minterDb.closedByEdit = [];
+      const result = await adjust(grownBooking({ creditPaid: true }), -2_000);
+      await mintAfter(result);
+      expect(mocks.listIntents).not.toHaveBeenCalled();
+      expect(mocks.cancelIntent).not.toHaveBeenCalled();
+    });
+  });
+
   it("MUTATION: a credit-paid booking's shrunk ask is minted though its reduction captured nothing", async () => {
     const result = await adjust(grownBooking({ creditPaid: true }), -2_000);
     expect(result.hasSucceededPayment).toBe(false);
@@ -863,11 +932,13 @@ describe("#3954: after commit, the minter cancels what the reduction retired, th
       ["completed by the runner with another intent", { status: "SUCCEEDED", lastError: null, paymentIntentId: "pi_runner_suffixed_key" }],
       // Delta review: ...and is still finishing its cancels and invoice steps.
       ["still held by a runner that already wrote another intent", { status: "PROCESSING", attempts: 1, lastError: null, paymentIntentId: "pi_runner_suffixed_key" }],
+      // #4693: failed for good - no claim, door or reduction takes the row again.
+      ["failed for good", { status: "FAILED", attempts: 10, lastError: "card currency refused" }],
     ])("MUTATION: a recovery %s during the mint has the door's unused intent cancelled as abandoned, after the fence", async (_label, moved) => {
       await loseFenceTo({ status: "SUCCEEDED", ...moved });
 
       expect(mocks.cancelIntent).toHaveBeenCalledTimes(1);
-      expect(mocks.cancelIntent).toHaveBeenCalledWith("pi_reissued_3000", { cancellationReason: "abandoned" });
+      expect(mocks.cancelIntent).toHaveBeenCalledWith("pi_reissued_3000", { cancellationReason: "abandoned", timeoutMs: 5_000 });
       expect(minterDb.recoveryUpdateMany.mock.invocationCallOrder[0]!).toBeLessThan(mocks.cancelIntent.mock.invocationCallOrder[0]!);
       expect(mocks.upsert).not.toHaveBeenCalled();
       expect(queueReissueInvoice).not.toHaveBeenCalled();
@@ -876,7 +947,7 @@ describe("#3954: after commit, the minter cancels what the reduction retired, th
     it.each([
       ["claimed by the runner", { status: "PROCESSING", attempts: 1, lastError: null }],
       ["completed by the runner with this same intent", { status: "SUCCEEDED", lastError: null, paymentIntentId: "pi_reissued_3000" }],
-      ["failed for good", { status: "FAILED", attempts: 10, lastError: "card currency refused" }],
+      ["failed with a retry left", { status: "FAILED", attempts: 2, lastError: "Stripe is down" }],
       ["still waiting", { status: "PENDING", attempts: 1, lastError: null }],
     ])("MUTATION: a recovery %s during the mint keeps the intent - never cancelled", async (_label, moved) => {
       await loseFenceTo(moved);
@@ -1150,17 +1221,29 @@ describe("#3954 retry nets it off: an ask whose mint failed and waits on its rec
   it.each([
     ["dead - no retry left", { nextRetryAt: null }],
     ["dead - attempts spent", { attempts: 5 }],
-    ["overtaken by a later ask", { createdAt: new Date("2026-06-19T00:00:00.000Z") }],
   ])("MUTATION: a recovery %s mints nothing, so nothing is netted against it", async (_label, overrides) => {
-    if ("createdAt" in overrides) {
-      state.rows = [askRow({ status: PaymentStatus.FAILED, withdrawnAt: new Date("2026-06-20T00:00:00.000Z") } as Partial<Row>)];
-    }
     state.recoveries = [recoveryRow(overrides)];
     const result = await adjust(awaitingRetryBooking(), -2_000);
 
     expect(result.unpaidAskOffsetCents).toBe(0);
     expect(result.refundAmountCents).toBe(2_000);
     expect(recoveryUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("MUTATION (#4015): a later edit's ask does not overtake the waiting $50 - it never carried it, so the reduction nets against both", async () => {
+    // A later edit's $20 ask, written after the $50 increase's mint failed and
+    // sized off a mirror that never showed that $50.
+    state.rows = [askRow({ amountCents: 2_000, createdAt: new Date("2026-06-22T00:00:00.000Z") })];
+    const booking = grownBooking();
+    Object.assign(booking.payment!, { additionalAmountCents: 2_000, additionalPaymentStatus: PaymentStatus.PENDING, additionalPaymentIntentId: ASK_INTENT });
+    const result = await adjust(booking, -2_000);
+
+    // $20 + $50 owed; the $20 reduction leaves a $50 re-issue, and nothing is refunded.
+    expect(result.unpaidAskOffsetCents).toBe(2_000);
+    expect(result.refundAmountCents).toBe(0);
+    expect(result.additionalAsk.amountCents).toBe(5_000);
+    // The waiting recovery is closed, so its retry cannot mint the old $50 beside the re-issue.
+    expect(recoveryUpdateMany).toHaveBeenCalledTimes(1);
   });
 
   it.each([
@@ -1398,8 +1481,9 @@ describe("#3954 retry nets it off: an ask whose mint failed and waits on its rec
   it("MUTATION (round 4): a claimed retry that already wrote its own row is not skipped as overtaken - its row is the ask, and the retry is still fenced", async () => {
     // The retry minted $50 and wrote its row (later than its recovery), then
     // stalled before completing; the row mirrors as the live ask.
+    // The replay stamps its intent on the recovery in the row's own transaction.
     state.rows = [askRow({ createdAt: new Date("2026-06-22T00:00:00.000Z") })];
-    state.recoveries = [recoveryRow({ status: "PROCESSING", attempts: 2, processingStartedAt: CLAIMED_MOMENTS_AGO })];
+    state.recoveries = [recoveryRow({ status: "PROCESSING", attempts: 2, processingStartedAt: CLAIMED_MOMENTS_AGO, paymentIntentId: ASK_INTENT })];
     // Within the window: refused, not netted beside a retry still finishing.
     await expect(adjust(grownBooking(), -2_000)).rejects.toBeInstanceOf(AdditionalAskChangedDuringReductionError);
     // Round 6: the waiting recovery is closed (or refuses) before any row is stamped.
@@ -1411,7 +1495,7 @@ describe("#3954 retry nets it off: an ask whose mint failed and waits on its rec
     recoveryUpdateMany.mockImplementation(async () => ({ count: 1 }));
     xeroUpdateMany.mockImplementation(async () => ({ count: 1 }));
     mocks.enqueueCancel.mockImplementation(async ({ paymentTransactionId }) => ({ id: `op_cancel_${paymentTransactionId}`, status: "PENDING" }));
-    state.recoveries = [recoveryRow({ status: "PROCESSING", attempts: 2, processingStartedAt: CLAIMED_LONG_AGO })];
+    state.recoveries = [recoveryRow({ status: "PROCESSING", attempts: 2, processingStartedAt: CLAIMED_LONG_AGO, paymentIntentId: ASK_INTENT })];
     const result = await adjust(grownBooking(), -2_000);
     expect(result.unpaidAskOffsetCents).toBe(2_000);
     expect(result.additionalAsk.amountCents).toBe(3_000);
@@ -1483,16 +1567,20 @@ describe("#3954: one sizing for a failed mint's replay and the reduction that ma
     expect(alone.kind !== "frozen" && alone.ask.amountCents).toBe(3_000);
   });
 
-  it("MUTATION (round 4): a re-issue is settled only by its own row; an increase by any later ask", () => {
-    const operation = { createdAt: new Date("2026-06-21T00:00:00.000Z"), paymentIntentId: "pi_own" };
-    const later = { kind: "ADDITIONAL", createdAt: new Date("2026-06-22T00:00:00.000Z") };
+  it("MUTATION (round 4, #4015): a re-issue or an increase is settled only by its own row; only a frozen figure by any later ask", () => {
+    const operation = { createdAt: new Date("2026-06-21T00:00:00.000Z"), paymentIntentId: "pi_own", idempotencyKey: buildAdditionalIntentRecoveryIdempotencyKey("mod-own") };
+    const later = { kind: "ADDITIONAL", createdAt: new Date("2026-06-22T00:00:00.000Z"), status: "PENDING", bookingModificationId: null, withdrawnAt: null };
     const reissue = sizeRecoveryReplayAsk({ frozenAmountCents: 3_000, modification: { priceDiffCents: -2_000, changeFeeCents: 0, newData: null }, payment: null });
     const increase = sizeRecoveryReplayAsk({ frozenAmountCents: 3_000, modification: { priceDiffCents: 3_000, changeFeeCents: 0, newData: null }, payment: null });
     const foreign = [{ ...later, stripePaymentIntentId: "pi_later_edit" }];
     const own = [{ ...later, stripePaymentIntentId: "pi_own" }];
     expect(isRecoveryReplaySettled(reissue, operation, foreign)).toBe(false);
     expect(isRecoveryReplaySettled(reissue, operation, own)).toBe(true);
-    expect(isRecoveryReplaySettled(increase, operation, foreign)).toBe(true);
+    // #4015: the later ask was sized off a Payment that never showed this increase.
+    expect(isRecoveryReplaySettled(increase, operation, foreign)).toBe(false);
+    expect(isRecoveryReplaySettled(increase, operation, own)).toBe(true);
+    const frozen = sizeRecoveryReplayAsk({ frozenAmountCents: 3_000, modification: null, payment: null });
+    expect(isRecoveryReplaySettled(frozen, operation, foreign)).toBe(true);
   });
 
   it("round 7 (F15): what a read's reduction leaves after the ask - one home, 0 for an increase", () => {
@@ -1503,8 +1591,8 @@ describe("#3954: one sizing for a failed mint's replay and the reduction that ma
   });
 
   it("MUTATION (round 7): an increase that folded re-issues in is settled only by its own row - a later ask never overtakes the money it folded", () => {
-    const operation = { createdAt: new Date("2026-06-21T00:00:00.000Z"), paymentIntentId: "pi_own" };
-    const later = { kind: "ADDITIONAL", createdAt: new Date("2026-06-22T00:00:00.000Z") };
+    const operation = { createdAt: new Date("2026-06-21T00:00:00.000Z"), paymentIntentId: "pi_own", idempotencyKey: buildAdditionalIntentRecoveryIdempotencyKey("mod-own") };
+    const later = { kind: "ADDITIONAL", createdAt: new Date("2026-06-22T00:00:00.000Z"), status: "PENDING", bookingModificationId: null, withdrawnAt: null };
     const folding = sizeRecoveryReplayAsk({
       frozenAmountCents: 4_000,
       modification: { priceDiffCents: 1_000, changeFeeCents: 0, newData: { foldedReissuedAskCents: 3_000 } },

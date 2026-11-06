@@ -1751,29 +1751,30 @@ release).
 
 ## INV-PAY-140
 
-**Related: `INV-PAY-098`** (a later request carries the balance),
+**Related: `INV-PAY-098`** (the carried balance),
 **`INV-PAY-104`** (late-success release), **`INV-PAY-139`** (one recorder).
 
 - **A superseded card change's waiting invoice follows the money** (#3403;
-  owner, 26 Oct 2026). Each change's supplementary invoice waits
-  `WAITING_PAYMENT` on its own ask. When a later request carries that ask's
-  balance, the invoice is re-pointed at the request that absorbed it: the
+  owner, 26 Oct 2026). A change's supplementary invoice waits
+  `WAITING_PAYMENT` on its own ask; when a later request carries that
+  balance, it is re-pointed at the absorbing request: the
   first later row still payable or captured that no superseded-intent
   operation names (`supersededAskCarriers`); a superseded row captured late
   (refunded) is carried on.
 - **Each for its own amount.** The carrier's capture releases every invoice
-  naming it; a carrier never paid invoices nothing. Never folded onto the
-  later invoice. Bank transfer queues each unpaid when priced: nothing moves.
+  naming it, never folded together; an unpaid carrier invoices nothing. Bank
+  transfer queues each unpaid when priced: nothing moves.
 - **Who moves it.** The supersede's cancel step (failed or captured), every
   superseding minter, an edit leg parking on an already-failed ask, and the
-  reaper before retiring.
+  reaper before retiring - never while the ask's cancel runs (#4665); its
+  last step moves it.
 - **Refused, left as it was:** an ended booking, a linked or second queued
   invoice, or a carrier that would bill more than its amount, or more than it
-  carried for other changes. Decided under the change's and the carrier's
+  carried for other changes. Decided under the change's and carrier's
   supplementary-invoice keys, booking first; writes guarded on status, intent
   and correlation key. A captured carrier releases at once, unpaid where a
   receipt for its capture is active or records it.
-- **Checked together:** a capture against the sum of every invoice naming it.
+- **Checked together:** a capture against every invoice naming it, summed.
 - **A capture of the carried ask.** A declined ask is cancelled too (#4422);
   a capture racing that cancel is refunded or held, invoices staying. A kept
   capture no cancel row owns returns the invoices first parked on it
@@ -1799,7 +1800,9 @@ release).
 - Refunds on the captured charge are recorded through
   `recordStripeRefundsAgainstTransaction`, including ones the app has not seen.
   The existing note router is shared with `charge.refunded`, so recording first
-  does not suppress the refund's accounting correction.
+  does not suppress the refund's accounting correction. The superseded-payment
+  refund is sized on the ledger after this recording (#4699); a stored plan's
+  slices are still sent as written (#4103).
 - A counted refund made outside the app (`cardRefundDoorOf`), on that charge
   at or after the recovery debt's creation second, holds the entire row before
   any slice is sent, regardless of the refund's amount. Counted status comes
@@ -1815,7 +1818,8 @@ release).
   this charge-backed rule. A dashboard refund made after the provider read can
   still race the send; this read is not a Stripe-side lock.
 - Proven by `card-refund-resend-preflight.test.ts`, `payment-recovery.test.ts`,
-  `stripe.test.ts`, `recorded-card-refund-notes.test.ts` and the existing webhook
+  `stripe.test.ts`, `recorded-card-refund-notes.test.ts`,
+  `superseded-refund-notice-once.realdb.test.ts` and the existing webhook
   contracts.
 
 ## INV-PAY-146
@@ -2151,8 +2155,9 @@ total at apply).
   once. A started stay is not emailed; the treasurer is alerted once per
   group, linking each joiner's booking. The claim (`sendAdminAlertOnceEver`)
   is kept once an admin has it or a copy is queued for the email retry cron,
-  held a day when no admin can receive it, and given back only when the send
-  throws first. The
+  held a day when no admin can receive it, and given back when the send
+  throws first, or when the claim write itself throws, under the exact stamp
+  it tried to write (#4696). The
   reaper retries it from the events of stays not yet ended.
 - Pinned by `group-late-joiner.test.ts`, `group-late-joiner-heal.test.ts`,
   `group-late-joiner-alert-outage.test.ts`, `alert-cooldown.test.ts`,
@@ -2788,7 +2793,7 @@ _Legacy: settles tasks raised before #4317._
 ## INV-PAY-120
 
 - **A price reduction is first set against the member's unpaid card ask**
-  (#3954, owner decisions of 8-10 Oct 2026), card-paid and credit-paid alike, at
+  (#3954, owner decisions 8-10 Oct 2026), card-paid and credit-paid alike, at
   every reduction door: cancelled when covered, else re-issued smaller; only
   the rest is refunded, credited or given back by `INV-MOD-011`'s tier, and the
   offset is untiered. Each door reads the ask once
@@ -2796,17 +2801,18 @@ _Legacy: settles tasks raised before #4317._
 - **Retired in the edit's transaction** (`retireUnpaidAskChain`): waiting
   recoveries closed first, then unpaid rows FAILED and `withdrawnAt` behind an
   unpaid fence; cancellations queued; parked invoices CANCELLED. A capture or
-  deadlock in between rolls the edit back (409); one after commit is
-  refunded in full. It writes the re-issue's recovery and billed-offset note.
-  An orphaned intent (#4052) is cancelled at Stripe, best-effort, unless a
-  row, recovery or live runner claim may own it - a lost claim's, the
-  runner's or credit-release ask's (#4631, #4652), only once its recovery
-  closed without it. One uncancellable is left and logged.
+  deadlock between rolls the edit back (409); one after commit is
+  refunded in full, announced once (#4690). It writes the re-issue's recovery
+  and billed-offset note.
+  An orphaned Stripe intent is cancelled, best-effort, once no row,
+  recovery or live claim may own it (#4052, #4631, #4652, #4676). The
+  runner's close is claim-fenced (#4675). One uncancellable is logged.
 - **A declined card stays live** (#4052).
-- **Asks awaiting a failed mint's retry** count, sized as the replay would. A
-  retry claimed within two minutes refuses the edit; an older claim is closed.
-  A later increase folds a waiting re-issue in, recording it so its replay
-  asks for it again. Both minters send one Stripe request
+- **Asks awaiting a failed mint's retry** count, sized as the replay would
+  (none if one's frozen). Only its own row settles one, bar a frozen one's
+  replay (#4015). A claim under two minutes refuses the edit;
+  older ones close. A later increase folds a waiting re-issue in, recorded
+  for its replay to ask; both its minters send one request
   (`planReissuedAskMint`).
 - **Only the member's price asks.** An officer's review charge is never set
   against. Nor is a financial review's settled refund share: paid as the
@@ -3711,11 +3717,12 @@ _Split from `INV-PAY-056` (#3220)._
   opinion on a fact its callers already hold. `nextRetryAt` is forced to `null`
   when terminal rather than trusted from the caller, because a terminal row
   that keeps a retry time is re-claimable and is therefore not terminal.
-  **The write is status-fenced**, like `completePaymentRecoveryOperation` and
-  for the same reason: the worker's arm used `update` by id, which throws
-  `P2025` on a row a manual mark-paid reversal deleted mid-flight — from inside
-  the worker loop's own `catch`, so the throw escaped the loop and abandoned
-  every remaining operation in the batch. A fenced `updateMany` matches
+  **The write is status-fenced**, like `completePaymentRecoveryOperation`
+  (also claim-fenced since #4675) and for the same reason: the worker's arm
+  used `update` by id, which throws `P2025` on a row a manual mark-paid
+  reversal deleted mid-flight — from inside the worker loop's own `catch`, so
+  the throw escaped the loop and abandoned every remaining operation in the
+  batch. A fenced `updateMany` matches
   nothing instead, and the fence also stops a `SUCCEEDED` row being dragged
   back to `FAILED` by a worker holding a stale in-memory copy. **A row that
   matched nothing is still tallied as this attempt's outcome**, so a row that
@@ -3890,9 +3897,10 @@ _Split from `INV-PAY-057` (#3220)._
 - A booking worth $0 has nothing to charge: the cron and confirm-pending-guests
   confirm it, writing its $0 payment in the claim's transaction
   (`writeZeroWorthConfirmPayment`); charge-saved-method refuses it (#4399).
-- A finished-stay correction's fee on a stay with nothing captured is recorded
-  on the payment and posts its `CHANGE_FEE` line under its modification's key
-  at the settle, counting as income once captured.
+- A fee charged with nothing captured (a finished-stay correction or unpaid
+  edit, #4661: `changeFeeGoesOnAmountOwed`) is recorded once on the payment
+  (opened if missing, #4735) and posts its `CHANGE_FEE` line
+  under its modification's key at the settle, as income once captured.
 - **The primary invoice bills worth as the create read it**; an edit racing
   its create is refused or measured (`INV-PAY-136`). The link's transaction
   stores what was billed and Stripe cash (capped so ledger credit fits); a
@@ -3905,8 +3913,9 @@ _Split from `INV-PAY-057` (#3220)._
   `savedCardChargeCents`, #4357), `saved-card-charge-worth.realdb.test.ts`,
   `booking-detail-history-amount-owed.test.ts`,
   `booking-change-request-execution.realdb.test.ts`,
-  `xero-primary-invoice-fee-gap.test.ts` and
-  `primary-invoice-edit-race.realdb.test.ts`.
+  `xero-primary-invoice-fee-gap.test.ts`,
+  `primary-invoice-edit-race.realdb.test.ts` and
+  `unpaid-edit-change-fee-owed.realdb.test.ts`.
 
 ## INV-PAY-124
 

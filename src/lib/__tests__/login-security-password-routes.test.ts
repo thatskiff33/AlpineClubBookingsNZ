@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // Policy enforcement + hints endpoint for the configurable password policy
 // (#2033). Covers both user-chosen-password routes (reset + change) under a
@@ -29,6 +29,10 @@ const mocks = vi.hoisted(() => {
 
 vi.mock("@/lib/prisma", () => ({ prisma: mocks.prisma }));
 vi.mock("@/lib/auth", () => ({ auth: mocks.auth }));
+vi.mock("@/lib/login-throttle", () => ({
+  claimPasswordAttempt: vi.fn().mockResolvedValue({ allowed: true }),
+  clearPasswordAttempts: vi.fn().mockResolvedValue(undefined),
+}));
 vi.mock("@/lib/session-guards", () => ({
   requireActiveSessionUser: mocks.requireActiveSessionUser,
 }));
@@ -52,6 +56,13 @@ vi.mock("@/lib/audit", () => ({
 import { POST as resetPassword } from "@/app/api/auth/reset-password/route";
 import { POST as changePassword } from "@/app/api/auth/change-password/route";
 import { GET as passwordPolicy } from "@/app/api/auth/password-policy/route";
+
+import { PASSWORD_BCRYPT_COST } from "@/lib/password-hashing";
+import {
+  BREACHED_PASSWORD_CODE,
+  BREACHED_PASSWORD_MESSAGE,
+} from "@/lib/breached-password";
+import { stubBreachedPasswordService } from "@/lib/__tests__/helpers/breached-password-service";
 
 const validToken = "a".repeat(64);
 
@@ -99,10 +110,18 @@ describe("password routes honour the configured login-security policy (#2033)", 
     mocks.auth.mockResolvedValue({ user: { id: "member-1" } });
     mocks.requireActiveSessionUser.mockResolvedValue(null);
     mocks.memberFindUnique.mockResolvedValue({
+      email: "member@example.org",
       passwordHash: "hash",
       forcePasswordChange: false,
     });
     mocks.bcryptCompare.mockResolvedValue(true);
+    // #4610: the chosen-password writers screen against the breached-password
+    // range service; tests never reach the real one.
+    stubBreachedPasswordService();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
   });
 
   describe("with min 16 + uppercase + digit configured", () => {
@@ -120,6 +139,7 @@ describe("password routes honour the configured login-security policy (#2033)", 
       const res = await resetPassword(resetReq("Abcdefghijklmno1"));
       expect(res.status).toBe(200);
       expect(mocks.prisma.$transaction).toHaveBeenCalledTimes(1);
+      expect(mocks.bcryptHash).toHaveBeenCalledWith("Abcdefghijklmno1", PASSWORD_BCRYPT_COST);
     });
 
     it("change-password rejects a policy-violating new password", async () => {
@@ -132,6 +152,7 @@ describe("password routes honour the configured login-security policy (#2033)", 
       const res = await changePassword(changeReq("Abcdefghijklmno1"));
       expect(res.status).toBe(200);
       expect(mocks.prisma.$transaction).toHaveBeenCalledTimes(1);
+      expect(mocks.bcryptHash).toHaveBeenCalledWith("Abcdefghijklmno1", PASSWORD_BCRYPT_COST);
     });
   });
 
@@ -153,6 +174,69 @@ describe("password routes honour the configured login-security policy (#2033)", 
     it("rejects a password over the 128 hard maximum at both routes", async () => {
       expect((await resetPassword(resetReq("a".repeat(129)))).status).toBe(400);
       expect((await changePassword(changeReq("a".repeat(129)))).status).toBe(400);
+    });
+  });
+
+  // #4610 (INV-AUTH-006): both routes screen the chosen password against the
+  // breached-password range service before hashing it.
+  describe("breached-password check", () => {
+    const BREACHED = "correct horse battery staple";
+    const CLEAN = "a quiet ridge at first light 4610";
+
+    it("refuses a listed password at reset and change, with a plain message, and stores nothing", async () => {
+      mocks.loginSecurityFindUnique.mockResolvedValue(null);
+      stubBreachedPasswordService([BREACHED]);
+
+      for (const res of [
+        await resetPassword(resetReq(BREACHED)),
+        await changePassword(changeReq(BREACHED)),
+      ]) {
+        expect(res.status).toBe(400);
+        await expect(res.json()).resolves.toEqual({
+          error: BREACHED_PASSWORD_MESSAGE,
+          code: BREACHED_PASSWORD_CODE,
+        });
+      }
+      expect(mocks.bcryptHash).not.toHaveBeenCalled();
+      expect(mocks.prisma.$transaction).not.toHaveBeenCalled();
+      // The reset token is left unused, so the person can try another password.
+      expect(mocks.prisma.passwordResetToken.update).not.toHaveBeenCalled();
+    });
+
+    it("accepts an unlisted password at both routes", async () => {
+      mocks.loginSecurityFindUnique.mockResolvedValue(null);
+      const fetchMock = stubBreachedPasswordService([BREACHED]);
+      expect((await resetPassword(resetReq(CLEAN))).status).toBe(200);
+      expect((await changePassword(changeReq(CLEAN))).status).toBe(200);
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
+
+    it("makes no outbound request when the club has switched the check off", async () => {
+      mocks.loginSecurityFindUnique.mockResolvedValue({ breachedPasswordCheck: false });
+      const fetchMock = stubBreachedPasswordService([BREACHED]);
+      expect((await resetPassword(resetReq(BREACHED))).status).toBe(200);
+      expect((await changePassword(changeReq(BREACHED))).status).toBe(200);
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it("never calls the service for an invalid reset link", async () => {
+      mocks.loginSecurityFindUnique.mockResolvedValue(null);
+      mocks.prisma.passwordResetToken.findUnique.mockResolvedValue(null);
+      const fetchMock = stubBreachedPasswordService([BREACHED]);
+      expect((await resetPassword(resetReq(BREACHED))).status).toBe(400);
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it("fails open at both routes when the service is unreachable", async () => {
+      mocks.loginSecurityFindUnique.mockResolvedValue(null);
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async () => {
+          throw new TypeError("fetch failed");
+        }),
+      );
+      expect((await resetPassword(resetReq(BREACHED))).status).toBe(200);
+      expect((await changePassword(changeReq(BREACHED))).status).toBe(200);
     });
   });
 });

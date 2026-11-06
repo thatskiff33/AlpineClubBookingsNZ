@@ -1,13 +1,8 @@
 import { CREDIT_NOTE_SPENT_OUTSIDE_APP_CODE } from "@/lib/xero-credit-note-spent-outside-app";
+import { escapeRegExp } from "@/lib/escape-regexp";
 
 interface XeroErrorHeaders {
   [key: string]: string | number | undefined;
-}
-
-// Escape regex metacharacters so a header name can never form a pathological
-// pattern. All call sites pass fixed internal literals, so this is defensive.
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 export interface XeroErrorShape {
@@ -166,8 +161,8 @@ export function getXeroErrorHeader(
   }
 
   for (const value of getStringCandidates(error)) {
-    // headerName is always an internal literal header key; escaped above so no
-    // ReDoS surface exists despite the dynamic RegExp.
+    // headerName is always an internal literal header key, escaped here by
+    // escapeRegExp, so no ReDoS surface exists despite the dynamic RegExp.
     const pattern = new RegExp(`"${escapeRegExp(headerName)}":"([^"]+)"`, "i");
     const match = value.match(pattern);
     if (match) {

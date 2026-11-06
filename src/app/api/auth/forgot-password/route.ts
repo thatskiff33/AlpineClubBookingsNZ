@@ -3,6 +3,8 @@ import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { sendPasswordResetEmail } from "@/lib/email";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
+import { checkAccountRequestLimit } from "@/lib/account-request-limit";
+import { normaliseSignInEmail } from "@/lib/login-throttle";
 import logger from "@/lib/logger";
 import { issueActionToken } from "@/lib/action-tokens";
 import { SELF_SERVICE_PASSWORD_RESET_TTL_MS } from "@/lib/password-reset";
@@ -10,6 +12,14 @@ import { SELF_SERVICE_PASSWORD_RESET_TTL_MS } from "@/lib/password-reset";
 const forgotPasswordSchema = z.object({
   email: z.string().email("Invalid email address"),
 });
+
+/**
+ * The one answer for every valid request: a sent reset, an unknown or
+ * ineligible account, and an account over its per-account limit (INV-AUTH-005).
+ */
+function accepted() {
+  return NextResponse.json({ success: true });
+}
 
 export async function POST(req: NextRequest) {
   const rateLimited = await applyRateLimit(rateLimiters.forgotPassword, req);
@@ -34,9 +44,20 @@ export async function POST(req: NextRequest) {
 
     const { email } = parsed.data;
 
+    // Per-account limit (#4613): decided from the email alone, before any
+    // Member read, so real and unknown accounts are counted and answered alike.
+    const account = await checkAccountRequestLimit(rateLimiters.forgotPasswordAccount, email);
+    if (!account.success) {
+      logger.info(
+        { limiterId: rateLimiters.forgotPasswordAccount.id },
+        "Per-account request limit reached; no password reset email sent"
+      );
+      return accepted();
+    }
+
     // Always return success to avoid leaking which emails are registered
     const member = await prisma.member.findFirst({
-      where: { email: email.toLowerCase(), canLogin: true },
+      where: { email: normaliseSignInEmail(email), canLogin: true },
     });
 
     if (member && member.active) {
@@ -62,7 +83,7 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    return NextResponse.json({ success: true });
+    return accepted();
   } catch (err) {
     logger.error({ err }, "Unexpected error in forgot-password");
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });

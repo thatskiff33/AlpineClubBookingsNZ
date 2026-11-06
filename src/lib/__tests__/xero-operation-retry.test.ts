@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
   // through these.
   getAccountMapping: vi.fn(),
   getResolvedAccountMapping: vi.fn(),
+  holdsXeroOperationClaim: vi.fn(),
   findUniqueOperation: vi.fn(),
   updateManyOperation: vi.fn(),
   findUniqueSubscriptionCharge: vi.fn(),
@@ -58,6 +59,13 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("@/lib/credit-release-xero-payment", () => ({
   skipPartialGapRepairPayment: async (...args: unknown[]) => (await mocks.skipPartialGapRepairPayment(...args)) ?? null,
+}));
+
+// #4259 review F2: the modification note repair re-checks its claim before each
+// allocation. Held unless a test says it was lost.
+vi.mock("@/lib/xero-operation-claim", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/xero-operation-claim")),
+  holdsXeroOperationClaim: async (...args: unknown[]) => (await mocks.holdsXeroOperationClaim(...args)) ?? true,
 }));
 
 vi.mock("@/lib/additional-capture-receipt-gate", async (importOriginal) => ({
@@ -168,7 +176,9 @@ vi.mock("@/lib/xero-sync", async (importOriginal) => {
 
 import {
   getXeroOperationRetryMeta,
+  MODIFICATION_NOTE_REPAIR_CLAIM_LOST_MESSAGE,
   PARTIAL_REPAIR_CLAIM_LOST_MESSAGE,
+  REPAIR_RESET_NOT_CLOSED_MESSAGE,
   retryAbandonedItsClaim,
   retryXeroSyncOperation,
   XeroOperationNotReplayableError,
@@ -176,6 +186,8 @@ import {
   XeroOperationRetryError,
 } from "@/lib/xero-operation-retry";
 import { RESOLVED_IN_XERO_RETRY_REASON } from "@/lib/xero-operation-resolution";
+import { XERO_REFUND_NOTE_UNRECORDED_ERROR_CODE } from "@/lib/xero-operation-error-codes";
+import { UNRECORDED_REFUND_NOTE_RETRY_REASON } from "@/lib/xero-refund-note-in-flight";
 import {
   XERO_OUTBOX_CREDIT_NOTE_ALLOCATION_TYPE,
   XERO_OUTBOX_APPLIED_CREDIT_ALLOCATION_TYPE,
@@ -209,6 +221,25 @@ function makeOperation(overrides: Record<string, unknown> = {}) {
 }
 
 const RESOLVED_AT = new Date("2026-06-20T00:00:00.000Z");
+
+describe("#4688: a row whose refund note Xero made but the app could not record is never offered for retry", () => {
+  const unrecorded = (overrides: Record<string, unknown> = {}) =>
+    makeOperation({ entityType: "CREDIT_NOTE", queueType: "REFUND_CREDIT_NOTE", lastErrorCode: XERO_REFUND_NOTE_UNRECORDED_ERROR_CODE, ...overrides });
+
+  it("MUTATION: refuses it with the resolve-by-hand reason; the same row without the code is retryable", () => {
+    expect(getXeroOperationRetryMeta(unrecorded())).toEqual({ supported: false, reason: UNRECORDED_REFUND_NOTE_RETRY_REASON });
+    expect(getXeroOperationRetryMeta(unrecorded({ lastErrorCode: "ORPHANED_STALE_RUNNING" })).reason).not.toBe(UNRECORDED_REFUND_NOTE_RETRY_REASON);
+    // The control on a row whose shape is otherwise retryable: only the code refuses it.
+    const retryable = makeOperation();
+    expect(getXeroOperationRetryMeta(retryable).supported).toBe(true);
+    expect(getXeroOperationRetryMeta({ ...retryable, lastErrorCode: XERO_REFUND_NOTE_UNRECORDED_ERROR_CODE }).supported).toBe(false);
+    expect(getXeroOperationRetryMeta({ ...retryable, lastErrorCode: XERO_REFUND_NOTE_UNRECORDED_ERROR_CODE, xeroObjectId: "cn_recorded" }).reason).not.toBe(UNRECORDED_REFUND_NOTE_RETRY_REASON);
+  });
+
+  it("an officer's resolve says resolved, not unrecorded", () => {
+    expect(getXeroOperationRetryMeta(unrecorded({ manuallyResolvedAt: RESOLVED_AT }))).toEqual({ supported: false, reason: RESOLVED_IN_XERO_RETRY_REASON });
+  });
+});
 
 describe("resolved in Xero is never re-run (#3635, INV-INT-025)", () => {
   beforeEach(() => {
@@ -931,6 +962,25 @@ describe("retryXeroSyncOperation", () => {
     expect(mocks.createUnappliedXeroCreditNote).toHaveBeenCalledWith("pay_9", 4500, CLUB_FORMAT_TEST, {
       createdByMemberId: "admin_1",
       repairExistingLink: true,
+    });
+  });
+
+  it.each([
+    ["queued", { queueType: "ACCOUNT_CREDIT_NOTE", refundAmountCents: 4500, memberCreditId: "credit_9" }],
+    ["executed", { creditNotes: [{ lineItems: [{ unitAmount: 45 }] }], refundAmountCents: 4500, memberCreditId: "credit_9" }],
+  ])("#4685: replays a %s-shape account-credit note op against the credit it names", async (_shape, requestPayload) => {
+    mocks.findUniqueOperation.mockResolvedValue(
+      makeOperation({ entityType: "CREDIT_NOTE", localId: "pay_9", requestPayload })
+    );
+
+    await expect(
+      retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST, { createdByMemberId: "admin_1" })
+    ).resolves.toEqual({ message: "Retried Xero account-credit note creation." });
+
+    expect(mocks.createUnappliedXeroCreditNote).toHaveBeenCalledWith("pay_9", 4500, CLUB_FORMAT_TEST, {
+      createdByMemberId: "admin_1",
+      repairExistingLink: true,
+      memberCreditId: "credit_9",
     });
   });
 
@@ -3742,14 +3792,29 @@ describe("PARTIAL repairs claim the original before they write or call Xero (#42
       requestPayload: { allocation: { invoiceId: "inv_123", amount: 12.34 } },
       responsePayload: {},
     });
+  // #4259: a booking edit's note whose allocation failed after Xero raised it.
+  const partialModificationNote = () =>
+    makeOperation({
+      status: "PARTIAL",
+      entityType: "CREDIT_NOTE",
+      operationType: "CREATE",
+      localModel: "BookingModification",
+      localId: "mod_123",
+      xeroObjectId: "cn_mod",
+      xeroObjectNumber: "CN-0099",
+      requestPayload: { invoiceId: "inv_123", refundAmountCents: 2500 },
+      responsePayload: { creditNote: { creditNotes: [{ creditNoteID: "cn_mod" }] }, allocationError: { message: "Xero 503" } },
+    });
   const branches = [
     ["the invoice payment repair", () => partialInvoice(45.67)],
     ["the zero-cash invoice repair", () => partialInvoice(0)],
     ["the refund-note repair", partialRefundNote],
+    ["the modification credit-note repair", partialModificationNote],
   ] as const;
   const noSideEffect = () => {
     expect(mocks.createXeroPaymentForInvoice).not.toHaveBeenCalled();
     expect(mocks.finishRefundCreditNoteSettlement).not.toHaveBeenCalled();
+    expect(mocks.allocateCreditNoteToInvoice).not.toHaveBeenCalled();
     expect(mocks.completeXeroSyncOperation).not.toHaveBeenCalled();
     expect(mocks.updatePayment).not.toHaveBeenCalled();
   };
@@ -3779,6 +3844,7 @@ describe("PARTIAL repairs claim the original before they write or call Xero (#42
     for (const sideEffect of [
       mocks.createXeroPaymentForInvoice,
       mocks.finishRefundCreditNoteSettlement,
+      mocks.allocateCreditNoteToInvoice,
       mocks.completeXeroSyncOperation,
       mocks.updatePayment,
     ]) {
@@ -3853,10 +3919,16 @@ describe("PARTIAL repairs claim the original before they write or call Xero (#42
       retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST),
     ]);
     expect(results.map((r) => r.status).sort()).toEqual(["fulfilled", "rejected"]);
-    // One run's worth: at most one payment write, one settle, one completion.
+    // #4259: the loser lost the claim, not some other read.
+    expect(results.find((r): r is PromiseRejectedResult => r.status === "rejected")?.reason).toMatchObject({
+      status: 409,
+      message: expect.stringContaining("already claimed"),
+    });
+    // One run's worth: at most one payment write, one settle, one allocation, one completion.
     for (const sideEffect of [
       mocks.createXeroPaymentForInvoice,
       mocks.finishRefundCreditNoteSettlement,
+      mocks.allocateCreditNoteToInvoice,
       mocks.completeXeroSyncOperation,
     ]) {
       expect(sideEffect.mock.calls.length).toBeLessThanOrEqual(1);
@@ -4127,6 +4199,155 @@ describe("PARTIAL repairs claim the original before they write or call Xero (#42
       expect(mocks.failXeroSyncOperation).toHaveBeenCalledWith({ id: "op_123", startedAt: claimedAt }, refusal, undefined, {
         retryClaim: true,
       });
+    });
+  });
+
+  // #4259: the modification note repair claims its row like the others, and
+  // closes it, where it used to leave the repaired row PARTIAL for ever.
+  describe("the PARTIAL modification credit-note repair (#4259)", () => {
+    const allocationLink = { metadata: { creditNoteId: "cn_mod", invoiceId: "inv_123", amountCents: 2500 } };
+
+    it("MUTATION: allocates the plan, then closes its row SUCCEEDED onto its own claim, clearing the allocation fault", async () => {
+      mocks.findUniqueOperation.mockResolvedValue(partialModificationNote());
+
+      await expect(retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST, { createdByMemberId: "admin_1" })).resolves.toEqual({
+        message: "Repaired Xero modification credit note allocation.",
+      });
+
+      expect(mocks.allocateCreditNoteToInvoice).toHaveBeenCalledWith("cn_mod", "inv_123", 2500, {
+        localModel: "BookingModification",
+        localId: "mod_123",
+        role: "MODIFICATION_CREDIT_NOTE_ALLOCATION",
+        createdByMemberId: "admin_1",
+      });
+      const claimedAt = mocks.updateManyOperation.mock.calls[0][0].data.startedAt;
+      expect(mocks.completeXeroSyncOperation).toHaveBeenCalledTimes(1);
+      expect(mocks.completeXeroSyncOperation).toHaveBeenCalledWith(
+        { id: "op_123", startedAt: claimedAt },
+        {
+          status: "SUCCEEDED",
+          responsePayload: {
+            creditNote: { creditNotes: [{ creditNoteID: "cn_mod" }] },
+            allocationError: null,
+            repairedAllocations: [{ invoiceId: "inv_123", amountCents: 2500 }],
+          },
+          xeroObjectType: "CREDIT_NOTE",
+          xeroObjectId: "cn_mod",
+          xeroObjectNumber: "CN-0099",
+        },
+        // Review N1: the shared close; `alert: false` is moot on a SUCCEEDED close.
+        { retryClaim: true, alert: false },
+      );
+      expect(mocks.allocateCreditNoteToInvoice.mock.invocationCallOrder[0]).toBeLessThan(
+        mocks.completeXeroSyncOperation.mock.invocationCallOrder[0],
+      );
+    });
+
+    it("MUTATION: reads the plan's allocation links only once it holds the claim", async () => {
+      mocks.findUniqueOperation.mockResolvedValue(partialModificationNote());
+      await retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST);
+
+      const linkReads = mocks.findManyXeroObjectLink.mock.calls
+        .map((call, index) => ({ where: call[0]?.where, order: mocks.findManyXeroObjectLink.mock.invocationCallOrder[index] }))
+        .filter((read) => read.where?.role === "MODIFICATION_CREDIT_NOTE_ALLOCATION");
+      expect(linkReads).toHaveLength(1);
+      expect(mocks.updateManyOperation.mock.invocationCallOrder[0]).toBeLessThan(linkReads[0].order);
+    });
+
+    it("a row repaired before #4259 - every planned invoice already allocated - closes with no Xero call", async () => {
+      mocks.findUniqueOperation.mockResolvedValue(partialModificationNote());
+      mocks.findManyXeroObjectLink.mockResolvedValue([allocationLink]);
+
+      await expect(retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST)).resolves.toEqual({
+        message: "Repaired Xero modification credit note allocation.",
+      });
+      expect(mocks.allocateCreditNoteToInvoice).not.toHaveBeenCalled();
+      expect(mocks.completeXeroSyncOperation.mock.calls[0][1]).toMatchObject({
+        status: "SUCCEEDED",
+        responsePayload: { allocationError: null, repairedAllocations: [] },
+      });
+    });
+
+    it("MUTATION: a refused allocation gives the row back PARTIAL with its payload, guarded on this claim", async () => {
+      mocks.findUniqueOperation.mockResolvedValue(partialModificationNote());
+      const refusal = new Error("Xero 503 on the allocation");
+      mocks.allocateCreditNoteToInvoice.mockRejectedValueOnce(refusal);
+
+      await expect(retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST)).rejects.toBe(refusal);
+
+      const claim = mocks.updateManyOperation.mock.calls[0][0];
+      expect(mocks.updateManyOperation.mock.calls[1][0]).toEqual({
+        where: { id: "op_123", status: "RUNNING", startedAt: claim.data.startedAt },
+        data: {
+          status: "PARTIAL",
+          lastErrorCode: null,
+          lastErrorMessage: "Xero 503 on the allocation",
+          completedAt: expect.any(Date),
+        },
+      });
+      expect(mocks.completeXeroSyncOperation).not.toHaveBeenCalled();
+      expect(mocks.failXeroSyncOperation).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ["after allocating", [] as unknown[], MODIFICATION_NOTE_REPAIR_CLAIM_LOST_MESSAGE],
+      ["with nothing left to allocate", [allocationLink], REPAIR_RESET_NOT_CLOSED_MESSAGE],
+    ])("MUTATION: a completion that lost its claim %s never reports the row repaired", async (_label, links, message) => {
+      mocks.findUniqueOperation.mockResolvedValue(partialModificationNote());
+      mocks.findManyXeroObjectLink.mockResolvedValue(links);
+      // An operator's Mark failed / Reset stale running took the claim back mid-run.
+      mocks.completeXeroSyncOperation.mockResolvedValue(null);
+
+      await expect(retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST)).resolves.toEqual({ message });
+    });
+
+    // Review F2 (as #4680): a clearing note spread over two invoices re-checks
+    // its claim before each allocation, so one reset mid-run sends no more.
+    const twoTargetNote = () =>
+      makeOperation({
+        ...partialModificationNote(),
+        localModel: "Booking",
+        localId: "booking_7",
+        requestPayload: {
+          invoiceId: "inv_primary",
+          refundAmountCents: 41000,
+          clearsUnpaidInvoice: true,
+          allocations: [
+            { invoiceId: "inv_primary", amountCents: 30000 },
+            { invoiceId: "inv_supp", amountCents: 11000 },
+          ],
+        },
+      });
+
+    it.each([
+      ["after the first allocation", [true, false], ["inv_primary"], MODIFICATION_NOTE_REPAIR_CLAIM_LOST_MESSAGE],
+      ["before any allocation", [false], [] as string[], REPAIR_RESET_NOT_CLOSED_MESSAGE],
+    ])("MUTATION: a claim lost %s makes no further Xero call and never closes the row", async (_label, holds, allocatedInvoices, message) => {
+      mocks.findUniqueOperation.mockResolvedValue(twoTargetNote());
+      for (const held of holds) mocks.holdsXeroOperationClaim.mockResolvedValueOnce(held);
+
+      await expect(retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST)).resolves.toEqual({ message });
+
+      expect(mocks.allocateCreditNoteToInvoice.mock.calls.map((call) => call[1])).toEqual(allocatedInvoices);
+      expect(mocks.completeXeroSyncOperation).not.toHaveBeenCalled();
+      const claimedAt = mocks.updateManyOperation.mock.calls[0][0].data.startedAt;
+      expect(mocks.holdsXeroOperationClaim).toHaveBeenCalledTimes(holds.length);
+      for (const call of mocks.holdsXeroOperationClaim.mock.calls) expect(call[0]).toEqual({ id: "op_123", startedAt: claimedAt });
+    });
+
+    it("checks its claim before every allocation, and closes the row once both have gone", async () => {
+      mocks.findUniqueOperation.mockResolvedValue(twoTargetNote());
+
+      await expect(retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST)).resolves.toEqual({
+        message: "Repaired Xero modification credit note allocation.",
+      });
+      expect(mocks.allocateCreditNoteToInvoice.mock.calls.map((call) => call[1])).toEqual(["inv_primary", "inv_supp"]);
+      const [check1, check2] = mocks.holdsXeroOperationClaim.mock.invocationCallOrder;
+      const [allocate1, allocate2] = mocks.allocateCreditNoteToInvoice.mock.invocationCallOrder;
+      expect(check1).toBeLessThan(allocate1);
+      expect(allocate1).toBeLessThan(check2);
+      expect(check2).toBeLessThan(allocate2);
+      expect(mocks.completeXeroSyncOperation).toHaveBeenCalledTimes(1);
     });
   });
 });

@@ -20,6 +20,7 @@ import {
   type StructuredAuditEvent,
 } from "@/lib/audit";
 import { prisma } from "@/lib/prisma";
+import { getAuthSecret, requireAuthSecret } from "@/lib/runtime-config";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { clubToday, dateOnlyInstantOf } from "@/lib/club-time";
 import { clubSeasonYear } from "@/lib/financial-year";
@@ -403,17 +404,14 @@ function summarizeSubscriptionHistory(records: SubscriptionPreviewRecord[]) {
   };
 }
 
-function getPreviewSecret() {
-  const secret = process.env.AUTH_SECRET ?? process.env.NEXTAUTH_SECRET;
-  if (secret) {
-    return secret;
-  }
+// Production requires the auth secret (#4638); elsewhere a local key is the fallback.
+function getPreviewSecret(): string {
   if (process.env.NODE_ENV === "production") {
-    throw new Error(
+    return requireAuthSecret(
       "AUTH_SECRET or NEXTAUTH_SECRET is required for seasonal membership preview tokens",
     );
   }
-  return "seasonal-membership-preview-local-secret";
+  return getAuthSecret() ?? "seasonal-membership-preview-local-secret";
 }
 
 function normalizeApplyFromInput(value: string | null | undefined):

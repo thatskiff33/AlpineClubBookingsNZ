@@ -24,6 +24,7 @@ import { deleteOwnedMemberPhotoBlobs } from "@/lib/member-photo";
 import { memberDisplayName } from "@/lib/member-serialization";
 import { isBookingJournalInactive, postMemberMergeTransfer, resolveBookingMoneyPostingContext } from "@/lib/member-money/doors";
 import { prisma } from "@/lib/prisma";
+import { getAuthSecret, requireAuthSecret } from "@/lib/runtime-config";
 import { findMemberContactChangeMergeBlocker } from "@/lib/xero-contact-create-recovery";
 import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-coverage-drain";
 import { lockAdultMemberHostingPolicySet } from "@/lib/adult-member-hosting-policy-set";
@@ -388,15 +389,14 @@ export function planPartnerLinkMerge(
 
 const PREVIEW_TOKEN_VERSION = 1;
 
+// Production requires the auth secret (#4638); elsewhere a local key is the fallback.
 function getPreviewSecret(): string {
-  const secret = process.env.AUTH_SECRET ?? process.env.NEXTAUTH_SECRET;
-  if (secret) return secret;
   if (process.env.NODE_ENV === "production") {
-    throw new Error(
+    return requireAuthSecret(
       "AUTH_SECRET or NEXTAUTH_SECRET is required for member merge preview tokens",
     );
   }
-  return "member-merge-preview-local-secret";
+  return getAuthSecret() ?? "member-merge-preview-local-secret";
 }
 
 function outcomeDigest(preview: MemberMergePreviewCore): string {

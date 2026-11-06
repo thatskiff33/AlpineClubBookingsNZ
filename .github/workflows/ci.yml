@@ -13,9 +13,10 @@ name: CI
 #   public maintenance baseline.
 
 on:
-  # `epic/**` is here for the integration-branch model (#3002): an epic's
-  # children target `epic/<issue>-<slug>` rather than `main`, so without this
-  # they would get no CI at all and the only substitute was a throwaway probe
+  # `epic/**` is here for the integration-branch model (#3002), which since
+  # #4464 is the exception (work is otherwise built on `main` behind flags): an
+  # exception epic's children target `epic/<issue>-<slug>` rather than `main`,
+  # so without this they would get no CI at all and the only substitute was a throwaway probe
   # pull request against `main` — which tests the commit OUTSIDE its stack and
   # so can pass while the stacked integration is broken. `push` is included as
   # well so the integration branch is re-checked after each child merges into
@@ -23,7 +24,7 @@ on:
   #
   # This widens WHEN the existing jobs run and adds no new status context, so
   # `main`'s branch protection is untouched. See
-  # docs/agents/EPIC_PLAYBOOK.md -> "An epic reaches `main` as ONE merge".
+  # docs/agents/EPIC_PLAYBOOK.md -> "The exception: an integration branch".
   pull_request:
     branches:
       - main
@@ -587,13 +588,16 @@ jobs:
 
       # Type errors in the app, test and e2e projects (`next build` reads only
       # the first, #2875). tsc's heap crossed the Node default
-      # (~4 GB) when the AID-6B pack landed (#2679) — the same run needs 8 GB
-      # locally — so the ceiling is raised here rather than letting the gate
-      # die of OOM (exit 134) instead of reporting type errors.
+      # (~4 GB) when the AID-6B pack landed (#2679), so the ceiling is raised
+      # here rather than letting the gate die of OOM (exit 134) instead of
+      # reporting type errors. #4752: the test project then outgrew 8 GB
+      # (`tsc -p tsconfig.test.json --extendedDiagnostics` reported 9.0 GB on
+      # main at 230200bc4), so the gate failed or passed by chance. 12 GB leaves
+      # headroom on the 16 GB hosted runner.
       - name: Typecheck
         run: pnpm run typecheck
         env:
-          NODE_OPTIONS: --max-old-space-size=8192
+          NODE_OPTIONS: --max-old-space-size=12288
 
   lint:
     name: Lint

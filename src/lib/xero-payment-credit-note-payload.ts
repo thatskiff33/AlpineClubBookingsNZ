@@ -6,11 +6,25 @@
 import { providerAmountToCents } from "@/lib/money-provider-amount";
 import { asArray, asRecord, readNumber, readString } from "@/lib/xero-json";
 import {
+  readAccountCreditNoteCredit,
   XERO_OUTBOX_ACCOUNT_CREDIT_NOTE_TYPE,
   XERO_OUTBOX_REFUND_CREDIT_NOTE_TYPE,
 } from "@/lib/xero-operation-outbox-payload";
 import { parseRefundMethod, readRefundNoteWording } from "@/lib/xero-refund-method";
 import type { CashRefundMethod, RefundNoteWording } from "@/lib/xero-refund-method";
+
+/**
+ * #4705 (PR #4711 review): whether a payment's credit-note CREATE row is an
+ * account-credit note's - queued as one, or executed by
+ * `createUnappliedXeroCreditNote`, whose payload always keeps
+ * `refundAmountCents` and carries no refund allocation. An applied-credit
+ * remainder mint (`creditNotes` alone) and a refund note are not.
+ */
+export function isAccountCreditNotePayload(payload: Record<string, unknown>): boolean {
+  const queueType = readString(payload.queueType);
+  if (queueType !== null) return queueType === XERO_OUTBOX_ACCOUNT_CREDIT_NOTE_TYPE;
+  return readNumber(payload.refundAmountCents) !== null && payload.allocation === undefined;
+}
 
 /**
  * `INV-PAY-101`: the refund method a stored payload carries, as the cash-refund
@@ -70,6 +84,8 @@ export function parsePaymentCreditNoteRetryInput(
   handBackTaskId?: string;
   /** #4312 (`INV-ADDPAY-047`): the card refund on a bank transfer a note answers. */
   cardRefundId?: string;
+  /** #4685: an account-credit note's own credit, on both shapes; absent on older rows. */
+  memberCreditId?: string;
 } | null {
   const payload = asRecord(operation.requestPayload);
   if (!payload) {
@@ -112,6 +128,7 @@ export function parsePaymentCreditNoteRetryInput(
     return {
       amountCents: Math.round(queuedRefundAmount),
       kind: "unapplied",
+      ...readAccountCreditNoteCredit(payload),
     };
   }
 
@@ -140,5 +157,6 @@ export function parsePaymentCreditNoteRetryInput(
   return {
     amountCents: unitAmountCents,
     kind: "unapplied",
+    ...readAccountCreditNoteCredit(payload),
   };
 }

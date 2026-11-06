@@ -4433,12 +4433,14 @@ model IntegrationCredential {
   ciphertext   String
   iv           String
   authTag      String
-  // Which auth-secret env var the wrapping key was derived from at write time
-  // (AUTH_SECRET | NEXTAUTH_SECRET) — a silent fallback flip stays diagnosable
-  // without ever exposing the value.
+  // What wrapped the row at write time, never a value: the auth-secret env var
+  // its key was derived from (AUTH_SECRET | NEXTAUTH_SECRET, so a silent
+  // fallback flip stays diagnosable), or "DATA_ENCRYPTION_KEY:<id>" for a row
+  // under that DATA_ENCRYPTION_KEYS ring key (#4456).
   secretSource String
   // HKDF info-label version used to derive the wrapping key, e.g.
-  // "integration-credential:v1" / "xero-token-key:v1".
+  // "integration-credential:v1" (auth secret), "integration-credential:v2"
+  // (a ring key, #4456) / "xero-token-key:v1" (retired).
   labelVersion String
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
@@ -5953,6 +5955,14 @@ model LoginSecuritySetting {
   requireDigit        Boolean  @default(false)
   requireSymbol       Boolean  @default(false)
   magicLinkTtlMinutes Int      @default(15)
+  // #4610: refuse a chosen password found by the public breached-password range
+  // service (k-anonymity: only a 5-character SHA-1 prefix leaves the server).
+  // Default on; an absent row also reads as on (DEFAULT_LOGIN_SECURITY_POLICY).
+  breachedPasswordCheck Boolean @default(true)
+  // #4611: the most hours a signed-in session lasts from sign-in, however active
+  // (INV-AUTH-007). Default 7 days; the app clamps it to 8..720 hours
+  // (normalizeLoginSecurityPolicy). The lodge kiosk keeps its own 30 days.
+  sessionMaxAgeHours  Int      @default(168)
   updatedByMemberId   String?
   createdAt           DateTime @default(now())
   updatedAt           DateTime @default(now()) @updatedAt

@@ -59,12 +59,28 @@
 # Set `GITLEAKS_REPORT_PATH` to a host path to also write a JSON report. The
 # report is written by the same `--redact`ed run, so it carries the file, the
 # commit, the line and the rule id and NOT the matched value.
+#
+# WHAT A FAILED RUN PRINTS (#4766). `--verbose` makes gitleaks print each
+# finding to the log, and `--redact` (always passed, in the same invocation)
+# replaces the matched value in that output as well as in a report: `Secret` and
+# `Match` read `REDACTED`. What is left is the non-secret locator — `RuleID`,
+# `File`, `Line`, `Commit`, `Fingerprint` — which is what a contributor without
+# Docker needs to find the line. Without `--verbose` the run printed only
+# `leaks found: N`, so the old error text pointed at details that were not
+# there. `gitleaks-selftest.sh` runs THIS script over a planted finding and
+# asserts the file name, rule id and commit are in its output and the planted
+# value is not, so dropping either flag turns the required gate red rather than
+# leaking quietly or going back to saying nothing.
+#
+# `GITLEAKS_SCAN_ROOT` is the self-test's seam and nothing else: a host
+# directory to mount at `/repo` in place of this checkout. It must hold a
+# `.gitleaks.toml`, which the preflight below still demands. No workflow sets it.
 set -Eeuo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/ci/gitleaks-image.sh
 . "${SCRIPT_DIR}/gitleaks-image.sh"
-REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+REPO_ROOT="${GITLEAKS_SCAN_ROOT:-$(cd "${SCRIPT_DIR}/../.." && pwd)}"
 
 MODE="${1:-}"
 LABEL="${GITLEAKS_SCAN_LABEL:-${MODE}}"
@@ -89,7 +105,9 @@ export MSYS_NO_PATHCONV=1
 # `--exit-code` is the whole point of this script; see the header.
 LEAK_EXIT=2
 
-args=(--exit-code="${LEAK_EXIT}" --redact)
+# `--verbose` and `--redact` travel together and must not be separated: verbose
+# output prints each finding, and `--redact` is what keeps the value out of it.
+args=(--exit-code="${LEAK_EXIT}" --redact --verbose)
 host_repo="$(host_path "${REPO_ROOT}")"
 mounts=(-v "${host_repo}:/repo:ro")
 
@@ -181,7 +199,7 @@ docker run --rm -e NO_COLOR=1 "${mounts[@]}" "${GITLEAKS_IMAGE}" "${scan[@]}" "$
 cat "${log}"
 
 if [ "${status}" -eq "${LEAK_EXIT}" ]; then
-  echo "::error::gitleaks reported findings in ${LABEL}. The values above are redacted; the file, commit and rule id are not." >&2
+  echo "::error::gitleaks reported findings in ${LABEL}. Each finding's rule id, file, line and (for a history scan) commit are printed above; the secret values are redacted." >&2
   exit 1
 fi
 

@@ -104,6 +104,7 @@ import {
   followSupersededAskInvoicesSafely,
   followSupersededAskInvoicesToCarrier,
   readAskInvoicesForCarry,
+  supersededAskCancelInFlight,
   supersededAskCarriers,
 } from "@/lib/superseded-ask-invoice-carry";
 import { prisma as storeClient } from "@/lib/prisma";
@@ -696,5 +697,37 @@ describe("#4491: what the move would take, read before a minter supersedes (`rea
       }),
     );
     expect(await read(["pi_r"])).toEqual([{ anchorId: "mod_e", firstWaitedOn: "pi_e", carriable: true, refusal: null }]);
+  });
+});
+
+describe("#4665: whether an ask's supersede cancel is still in flight (`supersededAskCancelInFlight`)", () => {
+  const cancel = (overrides: Partial<Row>): Row => ({
+    id: "rec_cancel_a",
+    type: "CANCEL_PAYMENT_INTENT",
+    paymentIntentId: "pi_a",
+    status: "PENDING",
+    attempts: 0,
+    nextRetryAt: null,
+    ...overrides,
+  });
+
+  it.each([
+    ["queued, never run", { status: "PENDING", attempts: 0 }, true],
+    ["running now", { status: "PROCESSING", attempts: 1 }, true],
+    ["backing off after a Stripe failure", { status: "FAILED", attempts: 2, nextRetryAt: new Date("2026-07-01T00:05:00.000Z") }, true],
+    ["landed", { status: "SUCCEEDED", attempts: 1 }, false],
+    ["given up (the runner will never claim it again)", { status: "FAILED", attempts: 5, nextRetryAt: null }, false],
+    ["spent while PENDING", { status: "PENDING", attempts: 5 }, false],
+  ] as const)("a cancel %s: %s", async (_label, overrides, inFlight) => {
+    store.recoveryOps = [cancel(overrides)];
+    expect(await supersededAskCancelInFlight("pi_a")).toBe(inFlight);
+  });
+
+  it("asks only about a CANCEL of this intent: another intent's cancel, or this one's refund, is not it", async () => {
+    store.recoveryOps = [
+      cancel({ paymentIntentId: "pi_b" }),
+      cancel({ id: "rec_refund_a", type: "REFUND_SUPERSEDED_PAYMENT" }),
+    ];
+    expect(await supersededAskCancelInFlight("pi_a")).toBe(false);
   });
 });

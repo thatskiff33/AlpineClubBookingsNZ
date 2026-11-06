@@ -29,6 +29,9 @@ file per area named after the route (`docs/guides/bookings.md`), per
 a `GAP`, replace it with a relative link to that file (e.g.
 `[guide](guides/bookings.md)`).
 
+For what an officer sees and does on each screen, use the
+[UX screen map](UX_FLOW_MAP.md). This matrix remains the route and guide inventory.
+
 ## How to read the columns
 
 - **Area** — the route directory, i.e. `/admin/<area>`.

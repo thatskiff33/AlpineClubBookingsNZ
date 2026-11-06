@@ -23,6 +23,9 @@ export const XERO_RERUNNABLE_OPERATION_STATUSES = [
   "PARTIAL",
 ] as const satisfies readonly XeroSyncOperation["status"][];
 
+/** PR #4708 round 2: one of {@link XERO_RERUNNABLE_OPERATION_STATUSES}, as a literal type maps can be keyed on. */
+export type XeroRerunnableOperationStatus = (typeof XERO_RERUNNABLE_OPERATION_STATUSES)[number];
+
 /** The two statuses a retry claims from (`runWithClaimedOriginal`). */
 const XERO_RETRYABLE_ENDED_STATUSES = ["FAILED", "PARTIAL"] as const satisfies readonly XeroSyncOperation["status"][];
 

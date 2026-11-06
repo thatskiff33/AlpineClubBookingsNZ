@@ -4,6 +4,7 @@ import {
   getAuthTrustHost,
   getRuntimeConfigCheck,
   getRuntimeConfigIssues,
+  requireAuthSecret,
 } from "@/lib/runtime-config";
 
 const originalEnv = { ...process.env };
@@ -30,6 +31,40 @@ describe("runtime-config", () => {
 
     expect(getAuthSecret()).toBe("legacy-secret");
   });
+
+  it("requires the preferred secret, trimmed, and observes rotation at call time", () => {
+    process.env.AUTH_SECRET = "  preferred-secret  ";
+    process.env.NEXTAUTH_SECRET = "legacy-secret";
+    expect(requireAuthSecret()).toBe("preferred-secret");
+    process.env.AUTH_SECRET = "rotated-secret";
+    expect(requireAuthSecret()).toBe("rotated-secret");
+  });
+
+  it.each([undefined, "", "   "])(
+    "requires the trimmed legacy secret when AUTH_SECRET is %j",
+    (value) => {
+      if (value === undefined) delete process.env.AUTH_SECRET;
+      else process.env.AUTH_SECRET = value;
+      process.env.NEXTAUTH_SECRET = "  legacy-secret  ";
+      expect(requireAuthSecret()).toBe("legacy-secret");
+    },
+  );
+
+  it.each([undefined, "", "   "])(
+    "throws the default or caller's error when both secrets are %j",
+    (value) => {
+      for (const key of ["AUTH_SECRET", "NEXTAUTH_SECRET"]) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+      expect(() => requireAuthSecret()).toThrow(
+        "AUTH_SECRET or NEXTAUTH_SECRET is required",
+      );
+      expect(() => requireAuthSecret("Caller-specific error")).toThrow(
+        "Caller-specific error",
+      );
+    },
+  );
 
   it("requires auth secret, NEXTAUTH_URL, and CRON_SECRET", () => {
     delete process.env.AUTH_SECRET;
@@ -79,6 +114,40 @@ describe("runtime-config", () => {
       status: "error",
       latencyMs: expect.any(Number),
       error: "AUTH_SECRET or NEXTAUTH_SECRET is required; CRON_SECRET is required",
+    });
+  });
+
+  describe("the data-encryption key ring (#4456)", () => {
+    const VALID = Buffer.from(Array.from({ length: 32 }, (_, index) => (index * 29 + 3) % 256)).toString("base64");
+
+    function readyEnv() {
+      process.env.AUTH_SECRET = "secret";
+      process.env.NEXTAUTH_URL = "https://example.org";
+      process.env.CRON_SECRET = "cron-secret";
+    }
+
+    it("is ready with the ring unset or valid", () => {
+      readyEnv();
+      delete process.env.DATA_ENCRYPTION_KEYS;
+      expect(getRuntimeConfigIssues()).toEqual([]);
+      process.env.DATA_ENCRYPTION_KEYS = `k1:${VALID}`;
+      expect(getRuntimeConfigIssues()).toEqual([]);
+    });
+
+    it("is NOT ready with an invalid ring, naming why but never the value", () => {
+      readyEnv();
+      process.env.DATA_ENCRYPTION_KEYS = `k1:${VALID},k1:${VALID}`;
+      const check = getRuntimeConfigCheck();
+      expect(check.status).toBe("error");
+      expect(check.error).toMatch(/DATA_ENCRYPTION_KEYS: the id "k1" appears more than once/);
+      expect(check.error).not.toContain(VALID);
+    });
+
+    it("is NOT ready when a ring key is the auth secret itself", () => {
+      readyEnv();
+      process.env.AUTH_SECRET = VALID;
+      process.env.DATA_ENCRYPTION_KEYS = `k1:${VALID}`;
+      expect(getRuntimeConfigIssues()).toEqual([expect.stringMatching(/is weak: it is the auth secret/)]);
     });
   });
 });

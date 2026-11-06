@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   recoverLostLateCaptureRecordsForPayment: vi.fn(),
   findPaymentsWithUnrecordedLateCaptures: vi.fn(),
   readRefundCreditNoteGap: vi.fn(),
+  findUnrecordedRefundNoteOperation: vi.fn(),
   logger: {
     info: vi.fn(),
     error: vi.fn(),
@@ -62,6 +63,11 @@ vi.mock("@/lib/late-capture-unrecorded-refunds", () => ({
   findPaymentsWithUnrecordedLateCaptures: mocks.findPaymentsWithUnrecordedLateCaptures,
 }));
 
+// #4688: a payment holding an unrecorded refund note gets no note from the self-heal.
+vi.mock("@/lib/xero-refund-note-in-flight", () => ({
+  findUnrecordedRefundNoteOperation: mocks.findUnrecordedRefundNoteOperation,
+}));
+
 vi.mock("@/lib/logger", () => ({
   default: mocks.logger,
 }));
@@ -88,6 +94,7 @@ beforeEach(() => {
   mocks.queueWaitingPaidAnotherWayNotesForPayment.mockResolvedValue(0);
   mocks.recoverLostLateCaptureRecordsForPayment.mockResolvedValue({ recovered: [], unresolved: false });
   mocks.findPaymentsWithUnrecordedLateCaptures.mockResolvedValue([]);
+  mocks.findUnrecordedRefundNoteOperation.mockResolvedValue(null);
   mocks.enqueueXeroRefundCreditNoteOperation.mockResolvedValue({
     queueOperationId: "op_heal_1",
     message: "queued",
@@ -301,6 +308,37 @@ describe("reconcileCreditBalances", () => {
     expect(
       mocks.kickQueuedXeroOutboxOperationsIfConnected
     ).toHaveBeenCalledWith({ limit: 2 });
+  });
+
+  it("MUTATION (#4688): queues no note, a close's or a card one, for a payment holding an unrecorded refund note, and still heals the others", async () => {
+    const flagged = (paymentId: string) => ({
+      paymentId,
+      bookingId: `booking_${paymentId}`,
+      refundedAmountCents: 8000,
+      cashRefundedCents: 8000,
+      uncoveredCents: 8000,
+      paidAnotherWayUncoveredCents: 3000,
+      refundedAt: new Date("2026-07-01T00:00:00.000Z"),
+    });
+    mocks.getRefundsMissingXeroCreditNotes.mockResolvedValue({ count: 2, payments: [flagged("pay_fenced"), flagged("pay_open")] });
+    mocks.findUnrecordedRefundNoteOperation.mockImplementation(async (paymentId: string) =>
+      paymentId === "pay_fenced" ? { id: "op_unrecorded" } : null,
+    );
+    mocks.isXeroConnected.mockResolvedValue(true);
+
+    const result = await reconcileCreditBalances();
+
+    expect(mocks.findUnrecordedRefundNoteOperation).toHaveBeenCalledWith("pay_fenced");
+    expect(mocks.enqueueXeroRefundCreditNoteOperation).toHaveBeenCalledTimes(1);
+    expect(mocks.enqueueXeroRefundCreditNoteOperation).toHaveBeenCalledWith("pay_open", 5000);
+    expect(mocks.queueWaitingPaidAnotherWayNotesForPayment).toHaveBeenCalledTimes(1);
+    expect(mocks.queueWaitingPaidAnotherWayNotesForPayment).toHaveBeenCalledWith("pay_open");
+    expect(mocks.logger.warn).toHaveBeenCalledWith(
+      { paymentId: "pay_fenced", unrecordedOperationId: "op_unrecorded" },
+      expect.stringContaining("#4688"),
+    );
+    // Still in the alert: the divergence stands until the officer resolves it.
+    expect(result.refundsMissingXeroCreditNotes).toBe(2);
   });
 
   describe("a late capture whose automatic refund lost its record (#4149)", () => {

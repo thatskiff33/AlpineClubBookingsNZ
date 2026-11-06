@@ -161,6 +161,17 @@ the required check hostage to a leak on somebody else's unrelated branch and
 gives a different answer here than in CI. The `--all` sweep is the scheduled
 job's job, and `docs/MAINTENANCE.md` carries its command.
 
+**Reading a failed run.** When the scan finds something, the job log lists each
+finding with its `RuleID`, `File`, `Line`, `Commit` (history scans only) and
+`Fingerprint`; `Secret` and `Match` read `REDACTED`, because the script always
+passes `--redact` alongside `--verbose` (#4766). That is enough to find the line
+without Docker: open the file at that line in that commit. The `::error::` line
+that follows says which scope reported it. A different message — "did NOT
+complete", "walked ZERO commits" or "logged a git error" — means the scanner
+failed, not that you leaked something; fix the range or the checkout, do not
+hunt for a secret. `scripts/ci/gitleaks-selftest.sh` asserts the file name, rule
+id and commit appear in that log and the planted value does not.
+
 Set `GITLEAKS_REPORT_PATH` to a path **outside this repository** for a JSON
 report carrying the rule, file, line, commit and fingerprint of each finding.
 The script always passes `--redact`, so the matched value comes back as the

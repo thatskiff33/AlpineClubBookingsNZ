@@ -44,6 +44,8 @@ import {
   detectLegacyProviderEnv,
 } from "@/lib/xero-config";
 import { authSecretWeaknessReason } from "@/lib/integration-crypto";
+import { DATA_ENCRYPTION_KEYS_ENV } from "@/lib/data-encryption-key-material";
+import { buildDataEncryptionKeyCheck, type DataKeyUsageSnapshot } from "@/lib/setup-readiness-data-keys";
 
 export const SETUP_STEP_IDS = [
   "club-config",
@@ -51,6 +53,7 @@ export const SETUP_STEP_IDS = [
   "environment-role",
   "runtime-env",
   "auth-secret-strength",
+  "data-encryption-keys",
   "seed-admin",
   "feature-flags",
   "booking-policies",
@@ -221,6 +224,8 @@ export interface SetupDatabaseSnapshot {
   // created before #3407, imported without settings, or cleared to no capacity
   // took no booking with nothing saying so. Undefined when not checked.
   lodgesNotSetUpForBookings?: string[];
+  /** Stored data by the key each row names (#4456). Undefined when not checked. */
+  dataKeyUsage?: DataKeyUsageSnapshot;
 }
 
 /*
@@ -2159,6 +2164,7 @@ export function buildSetupReadiness(
       buildEnvironmentRoleCheck(input.database, progress),
       buildRuntimeEnvCheck(env, progress),
       buildAuthSecretStrengthCheck(env, progress),
+      applyProgress(buildDataEncryptionKeyCheck(readEnv(env, DATA_ENCRYPTION_KEYS_ENV), input.database?.dataKeyUsage, readEnv(env, "AUTH_SECRET") ?? readEnv(env, "NEXTAUTH_SECRET")), progress),
       buildSeedAdminCheck(input.database, progress),
       buildFeatureFlagCheck(input.database, progress),
     ],

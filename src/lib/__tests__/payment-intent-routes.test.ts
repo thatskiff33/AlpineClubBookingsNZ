@@ -167,7 +167,12 @@ import { POST as createPaymentIntentRoute } from "@/app/api/payments/create-paym
 import { POST as createSetupIntentRoute } from "@/app/api/payments/create-setup-intent/route";
 import { POST as confirmPaymentRoute } from "@/app/api/bookings/[id]/confirm-payment/route";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
-import { UNSUPPORTED_CHARGE_CURRENCY_MEMBER_MESSAGE } from "@/lib/stripe-charge-currency";
+import {
+  BELOW_STRIPE_MINIMUM_MEMBER_BODY,
+  BelowStripeMinimumError,
+  STRIPE_MINIMUM_AMOUNT_CENTS,
+  UNSUPPORTED_CHARGE_CURRENCY_MEMBER_MESSAGE,
+} from "@/lib/stripe-charge-currency";
 import {
   HOSTING_COVERAGE_RETRY_CODE,
   HOSTING_COVERAGE_RETRY_MESSAGE,
@@ -694,6 +699,66 @@ describe("payment intent routes", () => {
     expect(data.chargedAmountCents).toBe(12500);
     expect(data.isSplit).toBe(false);
     expect(data.deferredGuestAmountCents).toBeNull();
+  });
+
+  describe("#99: an amount below the card minimum", () => {
+    function payableBooking(finalPriceCents: number) {
+      mockPrisma.booking.findUnique.mockResolvedValue({
+        id: "booking-1",
+        memberId: "member-1",
+        status: "PAYMENT_PENDING",
+        hasNonMembers: false,
+        organiserSettled: false,
+        finalPriceCents,
+        member: { id: "member-1", email: "member@example.com", firstName: "Test", lastName: "Member" },
+        guests: [{ id: "guest-1", isMember: true }],
+        payment: null,
+      });
+    }
+    const pay = () =>
+      createPaymentIntentRoute(
+        new NextRequest("http://localhost/api/payments/create-payment-intent", {
+          method: "POST",
+          body: JSON.stringify({ bookingId: "booking-1" }),
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+
+    it.each([1, STRIPE_MINIMUM_AMOUNT_CENTS - 1])(
+      "refuses %ic with the member message and a 409, before any customer lookup, mint or payment row",
+      async (cents) => {
+        payableBooking(cents);
+        const res = await pay();
+        expect(res.status).toBe(409);
+        await expect(res.json()).resolves.toMatchObject(BELOW_STRIPE_MINIMUM_MEMBER_BODY);
+        expect(mockFindOrCreateCustomer).not.toHaveBeenCalled();
+        expect(mockStripeCreatePaymentIntent).not.toHaveBeenCalled();
+        expect(mockPrisma.payment.upsert).not.toHaveBeenCalled();
+      },
+    );
+
+    it("mints as before at exactly the minimum", async () => {
+      payableBooking(STRIPE_MINIMUM_AMOUNT_CENTS);
+      mockStripeCreatePaymentIntent.mockResolvedValue({
+        id: "pi_min",
+        client_secret: "cs_min", currency: "nzd",
+        amount: STRIPE_MINIMUM_AMOUNT_CENTS,
+      });
+      mockPrisma.payment.upsert.mockResolvedValue({ id: "pay-min" });
+      const res = await pay();
+      expect(res.status).toBe(200);
+      expect(mockStripeCreatePaymentIntent).toHaveBeenCalledWith(
+        expect.objectContaining({ amountCents: STRIPE_MINIMUM_AMOUNT_CENTS }),
+      );
+    });
+
+    it("maps a below-minimum refusal thrown by the mint to the same 409, never the generic 500", async () => {
+      payableBooking(STRIPE_MINIMUM_AMOUNT_CENTS);
+      mockStripeCreatePaymentIntent.mockRejectedValue(new BelowStripeMinimumError("below"));
+      const res = await pay();
+      expect(res.status).toBe(409);
+      await expect(res.json()).resolves.toEqual(BELOW_STRIPE_MINIMUM_MEMBER_BODY);
+    });
   });
 
   it("refuses, and never hands out the new intent, when the booking switched to Internet Banking during the mint (#3638)", async () => {
