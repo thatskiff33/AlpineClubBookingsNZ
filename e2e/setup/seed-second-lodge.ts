@@ -34,6 +34,7 @@ import {
   shiftDateOnly,
   WAITLISTER,
 } from "../../prisma/e2e-fixtures";
+import { refuseBookingsWithFinancialHistory } from "../../prisma/seed-financial-history-guard";
 
 const prisma = new PrismaClient({ adapter: createPrismaPgAdapter() });
 
@@ -163,22 +164,26 @@ async function main() {
   // Clear prior fixtures so a standalone re-run is deterministic. Cascades drop
   // guests/nights. Lodge B's own bookings go by lodgeId; the cross-lodge offer
   // (kept on lodge A) and the lodge-A roster arrival go by their fixed ids.
-  await prisma.booking.deleteMany({
-    where: {
-      OR: [
-        { lodgeId: lodgeBId },
-        {
-          id: {
-            in: [
-              CROSS_LODGE_OFFER_BOOKING_ID,
-              CROSS_LODGE_OFFER_MEMBER_GUEST_BOOKING_ID,
-              ROSTER_LODGE_A_BOOKING_ID,
-            ],
-          },
+  //
+  // This seed makes no money rows, so any financial history on these bookings
+  // came from a spec or the app. It is RESTRICT since Ledger M2 (#4514), and the
+  // booking ledger and member journal are append-only, so the seed refuses up
+  // front (#4583) instead of relying on cascades or erasing history. CI starts
+  // from a fresh database and never meets this; a developer re-running it over a
+  // used one recreates the E2E database, as the stack does before every prepare.
+  const staleWhere = {
+    OR: [
+      { lodgeId: lodgeBId },
+      {
+        id: {
+          in: [CROSS_LODGE_OFFER_BOOKING_ID, CROSS_LODGE_OFFER_MEMBER_GUEST_BOOKING_ID, ROSTER_LODGE_A_BOOKING_ID],
         },
-      ],
-    },
-  });
+      },
+    ],
+  };
+  const staleIds = (await prisma.booking.findMany({ where: staleWhere, select: { id: true } })).map((b) => b.id);
+  await refuseBookingsWithFinancialHistory(prisma, staleIds, "seed-second-lodge");
+  await prisma.booking.deleteMany({ where: { id: { in: staleIds } } });
 
   // 2. Rooms + active beds. Capacity for a non-default lodge comes from its
   //    configured active beds (bedAllocation is on in E2E), never the club

@@ -795,6 +795,33 @@ describe("PUT /api/bookings/[id]/modify-dates — price increase", () => {
     );
   });
 
+  // #4052: a card ask whose mint failed (its retry queued) is still a card ask,
+  // with the primary invoice issued: named as one, never as Internet Banking.
+  it("MUTATION (#4052): a card-paid booking's increase whose mint failed is named as a card payment, at its full figure", async () => {
+    const tx = makeTx(makeBooking());
+    mockedAuth.mockResolvedValue(makeSession() as any);
+    mockTransaction.mockImplementation((fn: any) => fn(tx));
+    mockedCheckCapacity.mockResolvedValue({ available: true, availableBeds: 20 } as any);
+    mockedCalcPrice.mockReturnValue({ totalPriceCents: 15000, guests: [{ priceCents: 15000, perNightCents: [7500, 7500] }] } as any);
+    mockedCalcChangeFee.mockReturnValue({ feeCents: 0, fromTierRefundPct: 0, toTierRefundPct: 0 });
+    mockedCreatePaymentIntent.mockRejectedValueOnce(new Error("Stripe is down"));
+    mockPaymentUpdate.mockResolvedValue({});
+
+    const res = await PUT(
+      new NextRequest("http://localhost/api/bookings/bk1/modify-dates", { method: "PUT", body: JSON.stringify({ checkIn: "2026-08-05", checkOut: "2026-08-08" }) }),
+      { params: Promise.resolve({ id: "bk1" }) },
+    );
+    const data = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(data.additionalPaymentClientSecret).toBeNull();
+    const { sendBookingModifiedEmail } = await import("@/lib/email");
+    expect(sendBookingModifiedEmail).toHaveBeenCalledWith(
+      expect.objectContaining({ additionalAmountCents: 5000, additionalPaymentMethod: "STRIPE" }),
+      expect.anything(),
+    );
+  });
+
   // #3954 final review (R1/R2): this date change (R1) shrinks a $50 unpaid ask
   // to $30 and re-issues it; a later reduction (R2) nets that waiting re-issue
   // off before R1's door mints it. R2's own email told the member, so R1's must
@@ -1718,6 +1745,35 @@ describe("POST /api/bookings/[id]/guests — price increase", () => {
     const { sendBookingModifiedEmail } = await import("@/lib/email");
     expect(sendBookingModifiedEmail).toHaveBeenCalledWith(
       expect.objectContaining({ additionalAmountCents: 0, additionalPaymentMethod: undefined }),
+      expect.anything(),
+    );
+  });
+
+  it("MUTATION (#4052): a guest add whose card mint failed is named as a card payment, at its full figure", async () => {
+    const tx = makeTx(makeBooking());
+    mockedAuth.mockResolvedValue(makeSession() as any);
+    mockTransaction.mockImplementation((fn: any) => fn(tx));
+    mockedCheckCapacityForGuestRanges.mockResolvedValue({ available: true, minAvailable: 20, nightDetails: [] } as any);
+    mockedCalcPrice.mockImplementation((_ci, _co, guests) => ({
+      totalPriceCents: guests.length === 1 ? 10000 : 20000,
+      guests: guests.map(() => ({ priceCents: 10000, perNightCents: [5000, 5000] })),
+    } as any));
+    mockedCreatePaymentIntent.mockRejectedValueOnce(new Error("Stripe is down"));
+    mockPaymentUpdate.mockResolvedValue({});
+    mockMemberFindUnique.mockResolvedValue({ active: true, email: "alice@test.com", firstName: "Alice" });
+
+    const res = await POST(
+      new NextRequest("http://localhost/api/bookings/bk1/guests", {
+        method: "POST",
+        body: JSON.stringify({ guests: [{ firstName: "Bob", lastName: "Jones", ageTier: "ADULT", isMember: true }] }),
+      }),
+      { params: Promise.resolve({ id: "bk1" }) },
+    );
+
+    expect(res.status).toBe(200);
+    const { sendBookingModifiedEmail } = await import("@/lib/email");
+    expect(sendBookingModifiedEmail).toHaveBeenCalledWith(
+      expect.objectContaining({ additionalAmountCents: 10000, additionalPaymentMethod: "STRIPE" }),
       expect.anything(),
     );
   });

@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react"
 import { usePathname, useRouter, useSearchParams } from "next/navigation"
-import { CheckCircle2 } from "lucide-react"
+import { AlertTriangle, CheckCircle2 } from "lucide-react"
 import { useConfirm } from "@/components/confirm-dialog"
 import { Button } from "@/components/ui/button"
 import { DatasetResetButton } from "@/components/admin/dataset-reset-button"
@@ -17,6 +17,7 @@ import { Label } from "@/components/ui/label"
 import { redactSensitiveText } from "@/lib/redact-sensitive-json"
 import { summarizeXeroOperation } from "@/lib/xero-operation-summaries"
 import { failureStateAfterStatusChange, isResolvedInXero, resolutionLabel } from "@/lib/xero-operation-resolution"
+import { CREDIT_NOTE_SPENT_OUTSIDE_APP_CODE } from "@/lib/xero-credit-note-spent-outside-app"
 import { resetXeroOperationsDatasetSearchParams } from "@/lib/admin-dataset-reset-state"
 import { useClubTime } from "@/components/club-time-provider"
 import { requireInstant } from "@/lib/club-time"
@@ -537,6 +538,13 @@ export function OperationItem({
   const clubTime = useClubTime()
   const resolved = isResolvedInXero(operation)
   const isFailedOrPartial = operation.status === "FAILED" || operation.status === "PARTIAL"
+  // #4220: a credit spent in Xero is normally closed by the app itself (#4251); one still
+  // Active here is a case it declined to close, so say so and where the amount is chased.
+  const creditSpentStillActive =
+    operation.status === "FAILED" &&
+    !resolved &&
+    operation.failureState === "ACTIVE" &&
+    operation.lastErrorCode === CREDIT_NOTE_SPENT_OUTSIDE_APP_CODE
   const [showRaw, setShowRaw] = useState(false)
   const summary = summarizeXeroOperation({
     entityType: operation.entityType,
@@ -552,6 +560,9 @@ export function OperationItem({
           <ToneChip tone="success" icon={CheckCircle2}>{resolutionLabel(operation.manuallyResolvedReason)}</ToneChip>
         ) : operation.failureState ? (
           <FailureStateChip state={operation.failureState} />
+        ) : null}
+        {creditSpentStillActive ? (
+          <ToneChip tone="warning" icon={AlertTriangle}>Credit used outside the app</ToneChip>
         ) : null}
         <span className="text-sm font-medium">{operation.entityType} {operation.operationType}</span>
         <span className="text-xs text-muted-foreground">{clubTime.instantDateTime(requireInstant(operation.createdAt))}</span>
@@ -585,6 +596,11 @@ export function OperationItem({
       {/* #4049: a SUCCEEDED row's leftover wait or error code describes an attempt that is over. */}
       {operation.lastErrorMessage && operation.status !== "SUCCEEDED" ? (
         <XeroFailureExplanation code={operation.lastErrorCode} message={redactSensitiveText(operation.lastErrorMessage)} entityType={operation.entityType} />
+      ) : null}
+      {creditSpentStillActive ? (
+        <p className="text-xs text-muted-foreground">
+          The app could not close this itself, for example the spend is unexplained or the credit note is shared. Check the credit note in Xero; any amount still owed is chased from Xero.
+        </p>
       ) : null}
       {operation.failureStateReason && operation.status === "FAILED" && !resolved ? <p className="text-xs text-muted-foreground">{operation.failureStateReason}</p> : null}
       {resolved ? (

@@ -1,11 +1,19 @@
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
+  DATE_FIELD_NAMES,
+  FACILITY_FIELDS,
+  TEXT_FIELD_NAMES,
+  WHOLE_NUMBER_FIELD_NAMES,
   emptyForm,
+  formFromLodge,
   formPayload,
   formRequestBody,
   formProblem,
   RATE_FIELD_NAMES,
   type OtherLodgeFormState,
+  type OtherLodgeRecord,
 } from "./other-lodge-form";
 
 // The rate cells of the other-lodge editor (#61): typed dollars, parsed to
@@ -126,5 +134,36 @@ describe("other-lodge form: rates from the Fees page (#77)", () => {
 
   it("sends no switch for a form that has none (another club's lodge)", () => {
     expect(formPayload(withRate("45"))).not.toHaveProperty("ratesFromFees");
+  });
+});
+
+// Server onboarding B3: "Rates and season dates from the Fees page" is ON for a
+// new row and stays OFF for a row someone switched off.
+describe("other-lodge form: the Fees switch's default", () => {
+  function ownLodge(ratesFromFees: boolean): OtherLodgeRecord {
+    const nulls = (names: readonly string[]) => Object.fromEntries(names.map((n) => [n, null]));
+    return {
+      id: "ol_1",
+      name: "Tararua Lodge",
+      roomType: null,
+      ...nulls([...WHOLE_NUMBER_FIELD_NAMES, ...TEXT_FIELD_NAMES, ...DATE_FIELD_NAMES, ...RATE_FIELD_NAMES]),
+      ...Object.fromEntries(FACILITY_FIELDS.map((f) => [f, false])),
+      amenities: [],
+      owned: true,
+      ratesFromFees,
+    } as unknown as OtherLodgeRecord;
+  }
+
+  it("is on for a new row: the column defaults to true, and no form ever sends it for a row it did not load", () => {
+    // Rows are created only by the download merge, which leaves the column to
+    // its default; the form has no create path.
+    const schema = readFileSync(path.join(process.cwd(), "prisma/schema.prisma"), "utf8");
+    expect(schema).toMatch(/^\s*ratesFromFees\s+Boolean\s+@default\(true\)/m);
+    expect(formPayload({ ...emptyForm, name: "New" })).not.toHaveProperty("ratesFromFees");
+  });
+
+  it("keeps a row switched off as off, and one switched on as on, through an edit", () => {
+    expect(formRequestBody(formFromLodge(ownLodge(false)))).toMatchObject({ ratesFromFees: false });
+    expect(formRequestBody(formFromLodge(ownLodge(true)))).toMatchObject({ ratesFromFees: true });
   });
 });

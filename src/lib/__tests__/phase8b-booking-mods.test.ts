@@ -3241,6 +3241,35 @@ describe("DELETE /api/bookings/[id]/guests/[guestId]", () => {
     );
   });
 
+  // #4052: the removal door used to read "no card request came back" as "pay
+  // by Internet Banking" (or say nothing without an invoice). A card ask whose
+  // mint failed waits for its retry and is still a card ask.
+  it.each([
+    ["with the primary invoice issued", "inv_primary"],
+    ["with no invoice issued", null],
+  ])("MUTATION (#4052): a card-paid booking's increase whose mint failed is named as a card payment %s", async (_label, xeroInvoiceId) => {
+    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER", accessRoles: [{ role: "USER" }] } } as any);
+    const base = makePromoIncreaseBooking();
+    const booking = makePromoIncreaseBooking({ payment: { ...base.payment, xeroInvoiceId } });
+    const tx = makeTx(booking);
+    mockTransaction.mockImplementation((fn: any) => fn(tx));
+    mockPromoInvalidatedRepricing();
+    mockCreatePaymentIntent.mockRejectedValueOnce(new Error("Stripe is down"));
+
+    const res = await DELETE(
+      new NextRequest("http://localhost/api/bookings/bk1/guests/g2", { method: "DELETE" }),
+      { params: Promise.resolve({ id: "bk1", guestId: "g2" }) },
+    );
+    expect(res.status).toBe(200);
+    const body = await res.json();
+
+    expect(body.additionalPaymentClientSecret).toBeNull();
+    expect(sendBookingModifiedEmail).toHaveBeenCalledWith(
+      expect.objectContaining({ additionalAmountCents: 2000, additionalPaymentMethod: "STRIPE" }),
+      CLUB_FORMAT_TEST,
+    );
+  });
+
   it("does not hand the owner's client secret to a self-removing linked guest (#1042)", async () => {
     mockedAuth.mockResolvedValue({ user: { id: "guest-member-1", role: "MEMBER", accessRoles: [{ role: "USER" }] } } as any);
     const booking = makePromoIncreaseBooking({

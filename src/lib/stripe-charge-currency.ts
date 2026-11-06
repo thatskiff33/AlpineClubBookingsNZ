@@ -60,6 +60,17 @@ export function stripeChargeCurrency(format: ClubFormat): string {
 }
 
 /**
+ * The club's chargeable currency as an upper-case ISO code — the same rule as
+ * {@link stripeChargeCurrency}, in the case the rest of the app stores codes.
+ * Throws {@link UnsupportedChargeCurrencyError} as that does. The member-money
+ * journal's posting context takes its currency here (#4626), so a club whose
+ * stored currency cannot be charged posts nothing, bank receipts included.
+ */
+export function clubChargeCurrencyCodeOrThrow(format: ClubFormat): string {
+  return stripeChargeCurrency(format).toUpperCase();
+}
+
+/**
  * The currency a card is charged in, as an upper-case ISO code, or `null` when
  * no card can be charged at all (a stored currency that is not usable, or one
  * without two decimal places). The same rule as {@link stripeChargeCurrency},
@@ -69,7 +80,7 @@ export function stripeChargeCurrency(format: ClubFormat): string {
  */
 export function clubChargeCurrencyCode(format: ClubFormat): string | null {
   try {
-    return stripeChargeCurrency(format).toUpperCase();
+    return clubChargeCurrencyCodeOrThrow(format);
   } catch (error) {
     if (error instanceof UnsupportedChargeCurrencyError) return null;
     throw error;
@@ -154,3 +165,33 @@ export const UNSUPPORTED_CHARGE_CURRENCY_MEMBER_BODY = Object.freeze({
   code: UNSUPPORTED_CHARGE_CURRENCY_CODE,
   error: UNSUPPORTED_CHARGE_CURRENCY_MEMBER_MESSAGE,
 });
+
+/** What a member is told when the amount due is below {@link STRIPE_MINIMUM_AMOUNT_CENTS} (#99). */
+export const BELOW_STRIPE_MINIMUM_MEMBER_MESSAGE =
+  "This amount is too small to pay by card. Nothing was charged. Please contact the club to settle it another way.";
+
+export const BELOW_STRIPE_MINIMUM_CODE = "BELOW_STRIPE_MINIMUM" as const;
+
+/** The below-minimum refusal as a coded body, so a client tells it apart from other 409s. */
+export const BELOW_STRIPE_MINIMUM_MEMBER_BODY = Object.freeze({
+  code: BELOW_STRIPE_MINIMUM_CODE,
+  error: BELOW_STRIPE_MINIMUM_MEMBER_MESSAGE,
+});
+
+/**
+ * What an administrator, or the cron, is told when a saved-card charge is below
+ * the minimum (#101). Nothing was claimed, written or sent to Stripe.
+ */
+export const BELOW_STRIPE_MINIMUM_ADMIN_MESSAGE =
+  "No card was charged: the amount is below the smallest charge Stripe accepts by card. Settle it another way, such as by bank transfer.";
+
+export const BELOW_STRIPE_MINIMUM_ADMIN_BODY = Object.freeze({
+  code: BELOW_STRIPE_MINIMUM_CODE,
+  error: BELOW_STRIPE_MINIMUM_ADMIN_MESSAGE,
+});
+
+export function isBelowStripeMinimum(value: unknown): value is { code: typeof BELOW_STRIPE_MINIMUM_CODE; error: string } {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as Record<string, unknown>;
+  return candidate.code === BELOW_STRIPE_MINIMUM_CODE && typeof candidate.error === "string";
+}

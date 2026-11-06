@@ -772,7 +772,7 @@ retention as its change fee, paid or unpaid (on an unpaid stay it is added to
 what is owed, `INV-PAY-119`), never netted against what is added; nights it
 adds are charged normally, and the ordinary late-change fee does not apply.
 Member self-service on a finished stay stays refused. Officer-entered guests
-(`INV-REQ-011`) are applied the same way.
+and promo codes (`INV-REQ-011`, `INV-REQ-013`) are applied the same way.
 
 ## INV-MOD-025
 
@@ -1467,7 +1467,12 @@ recalculates the promotion (bar a stay under way, `INV-MOD-043`), charges the ch
 decision D8), computes the settlement options, moves the booking's stored totals
 and each strand's `BookingGuest.priceCents`, and records the rate-type snapshot,
 as a priced edit always did. The capacity check is unchanged. No
-`EDIT_FINANCIAL_REVIEW` task is raised and no `NULL` is written.
+`EDIT_FINANCIAL_REVIEW` task is raised and no `NULL` is written. A fee on a
+booking with a payment row and nothing captured goes on its amount owed
+(`INV-PAY-119`, #4661), as does one on a card booking still at its pay step
+with no row yet, which the fee opens (#4735) - never a free one awaiting
+payment, where a row would read as a finished waitlist confirm
+(`hasStrandedWaitlistConfirmShape`).
 
 **A promotion change asked for in the same request is applied.** A parked edit
 used to drop a `promoCode`, `promoCodes` or `removePromoCode` and say so in one

@@ -30,6 +30,7 @@ import {
   type BookingLedgerCensusReport,
 } from "../src/lib/booking-ledger-projection-census-report";
 import { censusBookingLedgerProjection } from "../src/lib/booking-ledger-projection-census-store";
+import { bookingJournalInactiveReason } from "../src/lib/member-money";
 import { prisma } from "../src/lib/prisma";
 import { formatCents, formatSignedCents } from "../src/lib/utils";
 
@@ -111,6 +112,12 @@ function summary(report: BookingLedgerCensusReport, format: ClubFormat): string 
       `${identity.padEnd(16)} ${String(tally.applicable).padStart(11)} ${String(tally.agree).padStart(8)} ${String(tally.disagree).padStart(9)} ${String(tally.classified).padStart(11)} ${String(tally.coverage).padStart(9)}`,
     );
   }
+  out.push(
+    "  JOURNAL (#4627): the member-money journal's live charge components against the legacy lines it bridges, for each booking whose confirmation it holds and has linked; a booking confirmed before it is back-posted whole by M9 and not compared",
+  );
+  out.push(
+    "  JOURNAL_PENDING (#4628), in place of JOURNAL for a bank-transfer booking charged at its binding moment and not yet confirmed on the ledger: the journal's live charge against the booking's final price plus the change fees on its payment, or, once cancelled, the kept figure its CANCELLED snapshot froze; acknowledge a disagreement to the cent with identity JOURNAL_PENDING",
+  );
   const strands = report.info.ibUnallocatedAppliedCredit;
   out.push(
     `  CREDIT_APPLIED, information (#1620): internet-banking applied credit no Xero note allocates — realized ${strands.realized.bookings} (${money(strands.realized.cents)})${examples(strands.realized.items.map((item) => item.bookingId))}, unverified (no current receipt or manual settlement proves the invoice paid; not asserted unpaid, #3632) ${strands.unverified.bookings} (${money(strands.unverified.cents)})${examples(strands.unverified.items.map((item) => item.bookingId))}`,
@@ -164,7 +171,8 @@ async function main(): Promise<void> {
   // The club's currency (#3565), read once, outside the snapshot. JSON keeps integer cents.
   const format = await getClubFormat();
   const acknowledgements = options.acknowledged ? readAcknowledgements(options.acknowledged) : [];
-  const report = await censusBookingLedgerProjection(prisma, { acknowledgements });
+  // #4627: a club whose currency no card can be charged in has an inactive journal; one finding says so.
+  const report = await censusBookingLedgerProjection(prisma, { acknowledgements, journalInactive: bookingJournalInactiveReason(format) });
   process.stdout.write(options.json ? `${JSON.stringify(report, null, 2)}\n` : `${summary(report, format)}\n`);
   if (options.draft) process.stderr.write(`${writeDraft(options.draft, draftBookingLedgerAcknowledgements(report))}\n`);
   if (options.failOnGap && report.verdict !== "GATE_OPEN") process.exitCode = 2;

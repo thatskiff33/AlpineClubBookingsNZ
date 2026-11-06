@@ -60,6 +60,9 @@ vi.mock("@/lib/prisma", () => ({
       updateMany: vi.fn(),
     },
     magicLinkToken: { findUnique: vi.fn(), updateMany: vi.fn() },
+    // #4611: the maximum session age is read on every refresh; no row, so the
+    // 7-day default applies.
+    loginSecuritySetting: { findUnique: vi.fn().mockResolvedValue(null) },
     // #2597 introduced the durable PENDING -> APPROVAL_IN_PROGRESS claim, which
     // is taken through `updateMany` on the outer client before the first
     // cancellation commits; the count decides whether this caller owns it.
@@ -95,6 +98,14 @@ vi.mock("@/lib/session-guards", () => ({
 vi.mock("@/lib/runtime-config", () => ({
   getAuthSecret: vi.fn(() => "test-secret"),
   getAuthTrustHost: vi.fn(() => true),
+}));
+
+// #4609: the per-account throttle is its own subject (login-throttle-auth.test.ts);
+// here every attempt is admitted so a refusal can only be this suite's guard.
+vi.mock("@/lib/login-throttle", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/login-throttle")),
+  claimPasswordAttempt: vi.fn().mockResolvedValue({ allowed: true }),
+  clearPasswordAttempts: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock("next-auth/providers/credentials", () => ({

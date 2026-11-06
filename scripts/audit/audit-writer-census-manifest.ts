@@ -719,7 +719,29 @@ export const AUDIT_CENSUS_TOTALS = {
   // `privacy.retention.member_anonymised` (`privacy`, so only membership:view readers see
   // which member was anonymised), each an awaited `createAuditLog` with a literal category.
   // RE-MEASURED with `pnpm run audit:census` after merging #4555.
-  writeSites: 528,
+  // 528 -> 529 (#4533): `booking-change-request.create` for the promo correction request an
+  // officer raises from Edit Booking on a finished stay, a `logAudit` with a literal `booking`
+  // category, like the member's own request. RE-MEASURED with `pnpm run audit:census`.
+  // 529 -> 530 (#4426): `xero.refund_credit_note.late_note_not_recorded`, the one row a refund
+  // credit-note create writes when Xero answers after its job was resolved by hand recording a
+  // note, an awaited `createAuditLog` with a literal `xero` category. RE-MEASURED with `pnpm run audit:census`.
+  // 530 -> 531 (#4655): `xero.organiser_adjustment_note.late_note_not_recorded`, the one row an
+  // organiser adjustment's credit-note create writes when Xero answers after its job was reset
+  // and the row may not take the note, an awaited `createAuditLog` with a literal `xero` category.
+  // RE-MEASURED with `pnpm run audit:census`.
+  // 531 -> 532 (#4680): `xero.organiser_adjustment_note.run_stood_down`, the one row an organiser
+  // adjustment run writes when it finds, before a money-moving Xero call after recording its note,
+  // that a stale reset took its claim, an awaited `createAuditLog` with a literal `xero` category.
+  // RE-MEASURED with `pnpm run audit:census`.
+  // 532 -> 533 (#4686): `xero.operation.late_partial_not_recorded`, the one row a Xero operation's
+  // part-success writes when its attempt lost its claim and its Xero object was not recorded, an
+  // awaited `createAuditLog` with a literal `xero` category. RE-MEASURED with `pnpm run audit:census`.
+  // 533 -> 534 (triyder/AlpineClubBookingsNZ#97): `LODGE_CENTRAL_LINK_UPDATED` from the new
+  // `/api/admin/alpine-server/lodge-links` PUT, the setup page's link dialog. The
+  // Central lodge card's own site is unchanged; both pass their audit writer to the
+  // shared `saveCentralLodgeLinks`. Categorised `admin` at the site, like the card's.
+  // RE-MEASURED with `pnpm run audit:census`.
+  writeSites: 534,
   /**
    * Of those, sites whose event object carries no `category` key.
    *
@@ -822,7 +844,8 @@ export const AUDIT_CENSUS_TOTALS = {
     // 273 -> 273 (#4149): the two handlers' refund entries, one shared writer,
     // and the lost-record recovery's own entry.
     // 273 -> 274 (#4170): the refunded-outside-the-app entry.
-    logAudit: { total: 274, uncategorised: 0 },
+    // 274 -> 275 (#4533): the officer's finished-stay promo correction request, above.
+    logAudit: { total: 275, uncategorised: 0 },
     // 101 -> 102 (#2627): the deletion-approval release, above.
     // 102 -> 104 (#2595): the two reviewed-move writes, above.
     // 104 -> 105 (#2649): the return-to-waitlist repair, above.
@@ -937,7 +960,12 @@ export const AUDIT_CENSUS_TOTALS = {
     // 161 -> 162 (#4359): the re-send hold's row, above.
     // 162 -> 165 (#4432): the sync-now outcome, its failure and the webhook threshold, above.
     // 165 -> 167 (#4457): the retention settings update and the member anonymisation, above.
-    createAuditLog: { total: 167, uncategorised: 0 },
+    // 167 -> 168 (#4426): the late refund note's row, above.
+    // 168 -> 169 (#4655): the late organiser adjustment note's row, above.
+    // 169 -> 170 (#4680): the organiser adjustment run's stand-down row, above.
+    // 170 -> 171 (#4686): the lost-claim part-success's row, above.
+    // 171 -> 172 (triyder/AlpineClubBookingsNZ#97): the link dialog's row, above.
+    createAuditLog: { total: 172, uncategorised: 0 },
     // 8 -> 9 (#2581 child 2 review): `recordAgeUpParentEmailHandoffAudit`
     // moved off its hand-built `prisma.auditLog.create`, the last one in `src/`.
     // Same row, same dedupe keys (`action` + `subjectMemberId` + `outcome`) —
@@ -1069,7 +1097,9 @@ export const AUDIT_CENSUS_TOTALS = {
     // money changing, read by booking officers like every `booking.modify.*`.
     // 107 -> 108 (#3750): the executed change-request approval, `booking` like
     // the acknowledgement of the same action.
-    booking: 108,
+    // 108 -> 109 (#4533): the officer's finished-stay promo correction request,
+    // `booking` like the member's own request — the same readers.
+    booking: 109,
     // 16 -> 33 (#2581 child 2): the seventeen money writers — subscription
     // billing, member credit, fee configuration, saved-card charges and the five
     // Stripe webhook outcomes. `payment` is `support` plus `finance`, the
@@ -1307,9 +1337,11 @@ export const AUDIT_CENSUS_TOTALS = {
     // booking officer's contact - and no member.
     // 110/107 -> 108 (hand sync of `main` f1ecdb5ff into epic #3789): #3819's
     // one and #52's two removals are disjoint. RE-MEASURED on the composed tree.
-    admin: 111, // 108/109 -> 110 (central-server lane, 20 Oct 2026): #62 and #58 are disjoint from upstream's. RE-MEASURED.
+    admin: 112, // 108/109 -> 110 (central-server lane, 20 Oct 2026): #62 and #58 are disjoint from upstream's. RE-MEASURED.
     // 110 -> 111 (#4457): `privacy.retention.settings_updated`. A deliberate +1 to the
     // support:view-only population: it records only retention settings, never a member.
+    // 111 -> 112 (triyder/AlpineClubBookingsNZ#97): the setup page's link dialog row,
+    // `LODGE_CENTRAL_LINK_UPDATED`, the Central lodge card's twin. RE-MEASURED.
     // 16 -> 19 (#2581 child 2): `member.password-reset-sent` and
     // `member.setup-invite-sent` (decision 3 — the affected domain is the
     // CREDENTIAL, not the mailing), plus the `member.bulk-set-role` branch
@@ -1420,7 +1452,15 @@ export const AUDIT_CENSUS_TOTALS = {
     // Nobody's readership changes.
     // 44 -> 47 (#4432): `XERO_SYNC_NOW` (outcome and failure) and
     // `XERO_WEBHOOK_THRESHOLD_UPDATED`, beside the other `xero` rows. Nobody's readership changes.
-    xero: 47,
+    // 47 -> 48 (#4426): `xero.refund_credit_note.late_note_not_recorded`, beside the other `xero` rows.
+    // Nobody's readership changes.
+    // 48 -> 49 (#4655): `xero.organiser_adjustment_note.late_note_not_recorded`, beside the other
+    // `xero` rows. Nobody's readership changes.
+    // 49 -> 50 (#4680): `xero.organiser_adjustment_note.run_stood_down`, beside the other `xero`
+    // rows. Nobody's readership changes.
+    // 50 -> 51 (#4686): `xero.operation.late_partial_not_recorded`, beside the other `xero` rows.
+    // Nobody's readership changes.
+    xero: 51,
     // 12 -> 14 (#2581 child 2): `BULK_COMMUNICATION_SENT` and
     // `EMAIL_SUPPRESSION_CLEARED`. Safe only BECAUSE child 1 moved
     // `communication` out of the support-only system entry into the membership

@@ -48,7 +48,11 @@ export const stripeRaceHooks: {
   customer: null | ((args: Parameters<Stripe["findOrCreateCustomer"]>[0]) => Promise<unknown>);
   /** #4357: a saved card's off-session charge, which every saved-card door makes. */
   charge: null | ((args: Parameters<Stripe["chargePaymentMethod"]>[0]) => Promise<unknown>);
-} = { update: null, get: null, create: null, findByMetadata: null, list: null, cancel: null, refund: null, listRefunds: null, listChargeRefunds: null, customer: null, charge: null };
+  /** #4532: the Checkout Session a payment the app did not create went through. */
+  checkoutSession: null | ((paymentIntentId: string) => Promise<unknown>);
+  /** #4693: the runner's metadata stamp on the intent it minted. */
+  stamp: null | ((paymentIntentId: string, metadata: Readonly<Record<string, string>>) => Promise<void>);
+} = { update: null, get: null, create: null, findByMetadata: null, list: null, cancel: null, refund: null, listRefunds: null, listChargeRefunds: null, customer: null, charge: null, checkoutSession: null, stamp: null };
 
 export function resetStripeRaceHooks(): void {
   stripeRaceHooks.update = null;
@@ -62,6 +66,8 @@ export function resetStripeRaceHooks(): void {
   stripeRaceHooks.listChargeRefunds = null;
   stripeRaceHooks.customer = null;
   stripeRaceHooks.charge = null;
+  stripeRaceHooks.checkoutSession = null;
+  stripeRaceHooks.stamp = null;
   refundsMadeByIntent.clear();
 }
 
@@ -110,5 +116,13 @@ export function stripeRaceDouble(actual: Stripe): Stripe {
       stripeRaceHooks.customer ? stripeRaceHooks.customer(args) : actual.findOrCreateCustomer(args)) as Stripe["findOrCreateCustomer"],
     chargePaymentMethod: ((args: Parameters<Stripe["chargePaymentMethod"]>[0]) =>
       stripeRaceHooks.charge ? stripeRaceHooks.charge(args) : actual.chargePaymentMethod(args)) as Stripe["chargePaymentMethod"],
+    stampPaymentIntentMetadata: ((...args: Parameters<Stripe["stampPaymentIntentMetadata"]>) =>
+      stripeRaceHooks.stamp
+        ? stripeRaceHooks.stamp(args[0], args[1])
+        : actual.stampPaymentIntentMetadata(...args)) as Stripe["stampPaymentIntentMetadata"],
+    findCheckoutSessionForPaymentIntent: ((paymentIntentId: string) =>
+      stripeRaceHooks.checkoutSession
+        ? stripeRaceHooks.checkoutSession(paymentIntentId)
+        : actual.findCheckoutSessionForPaymentIntent(paymentIntentId)) as Stripe["findCheckoutSessionForPaymentIntent"],
   };
 }

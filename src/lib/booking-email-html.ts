@@ -1,4 +1,5 @@
 import { getAppBaseUrl, sanitizeEmailHref } from "@/lib/app-url";
+import { escapeRegExp } from "@/lib/escape-regexp";
 
 function escapeHtml(value: string): string {
   return value
@@ -10,7 +11,7 @@ function escapeHtml(value: string): string {
 }
 
 function findBookingHref(html: string, fromIndex = 0) {
-  const baseUrl = getAppBaseUrl().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const baseUrl = escapeRegExp(getAppBaseUrl());
   const pattern = new RegExp(
     `href="${baseUrl}\\/bookings(?:\\/[^"#?]*)?([?#][^"]*)?"`,
     "g",

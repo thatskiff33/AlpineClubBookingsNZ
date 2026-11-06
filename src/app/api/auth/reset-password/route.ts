@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import bcrypt from "bcryptjs";
+import { PASSWORD_BCRYPT_COST } from "@/lib/password-hashing";
 import { prisma } from "@/lib/prisma";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
 import logger from "@/lib/logger";
@@ -11,6 +12,8 @@ import {
 } from "@/lib/audit";
 import { loadLoginSecuritySettings } from "@/lib/login-security-settings";
 import { buildPasswordSchema } from "@/lib/password-policy";
+import { breachedPasswordRefusal, screenChosenPassword } from "@/lib/breached-password";
+import { clearPasswordAttempts } from "@/lib/login-throttle";
 
 // The password field is validated against the club's configured login-security
 // policy (min length + optional character classes; hard 128 ceiling always).
@@ -75,7 +78,13 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const passwordHash = await bcrypt.hash(password, 13);
+    // #4610 (INV-AUTH-006): refuse a password on the public breach list, after
+    // the token is proven so an invalid link never causes an outbound request.
+    // The token stays unused, so the person can choose another password.
+    const screen = await screenChosenPassword(password, policy);
+    if (!screen.ok) return breachedPasswordRefusal(screen);
+
+    const passwordHash = await bcrypt.hash(password, PASSWORD_BCRYPT_COST);
     const passwordChangedAt = new Date();
 
     await prisma.$transaction([
@@ -108,6 +117,10 @@ export async function POST(req: NextRequest) {
         })
       ),
     ]);
+
+    // #4609 (owner decision): a completed reset proves the mailbox, so the
+    // account's sign-in throttle starts again from zero. Never throws.
+    await clearPasswordAttempts(resetToken.member.email);
 
     return NextResponse.json({ success: true });
   } catch (err) {

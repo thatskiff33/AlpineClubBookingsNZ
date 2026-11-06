@@ -1,6 +1,7 @@
 import type { AgeTier } from "@prisma/client"
 import type { XeroAccount, XeroItem } from "@/lib/xero-admin-cache"
 import type { XeroMappingWritableKey } from "@/lib/xero-account-mapping-keys"
+import type { XeroReentryCause } from "@/lib/xero-token-store"
 
 export interface XeroStatus {
   connected: boolean
@@ -8,6 +9,8 @@ export interface XeroStatus {
   // (auth-secret change, #2079; made before #3454, #3806): reconnect required,
   // not "connected". Optional for older response shapes.
   needsReentry?: boolean
+  /** Why it needs re-entry (#4456): only `tokens-unreadable` is fixed by a reconnect. */
+  reentryCause?: XeroReentryCause
   tenantId: string | null
   tokenExpiresAt: string | null
 }
@@ -272,6 +275,7 @@ export interface XeroHealthSnapshot {
   missingInvoices: { count: number }
   contactGroupMismatches: { count: number; cacheReady: boolean }
   contactLinkMismatches: { count: number; cacheReady: boolean }
+  creditNotesSpentOutsideApp?: { count: number } // #4220; optional while an older server answers
   apiBudget: { status: "healthy" | "warning" | "critical" | "exhausted" | "unknown"; usagePercent: number | null; totalCalls: number | null; failedCalls: number | null }
 }
 

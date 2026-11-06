@@ -1,5 +1,6 @@
 import { randomBytes } from "crypto";
 import { hash } from "bcryptjs";
+import { PASSWORD_BCRYPT_COST } from "@/lib/password-hashing";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { logAudit } from "@/lib/audit";
@@ -170,7 +171,7 @@ export async function POST(request: NextRequest) {
       select: { id: true },
     });
     const canLogin = !existingLoginForEmail;
-    const placeholderHash = await hash(randomBytes(32).toString("hex"), 13);
+    const placeholderHash = await hash(randomBytes(32).toString("hex"), PASSWORD_BCRYPT_COST);
 
     const storedXeroLink = buildXeroContactUrl(cachedContact.contactId);
     const member = await prisma.$transaction(async (tx) => {

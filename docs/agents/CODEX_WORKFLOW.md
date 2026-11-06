@@ -229,7 +229,7 @@ work.
 ### 5. Split fast local evidence from full CI gates
 
 Before push: Prisma generation, lint, typecheck (with
-`NODE_OPTIONS=--max-old-space-size=8192`, as CI sets it), focused
+`NODE_OPTIONS=--max-old-space-size=12288`, as CI sets it), focused
 touched/adjacent tests, a mutation check per new guard, docs linkcheck for doc
 changes and knip for file/export changes. Then push a draft PR. GitHub Actions owns the full `pnpm test`, build,
 migration-drift, E2E, static/secret/dependency, and container gates. Run a full
@@ -264,7 +264,8 @@ its claim to the merge, is in
 The `kept-change-realdb` sandbox check installs the distribution’s declared `postgresql`
 package and runs `bash scripts/ci/kept-change-realdb.sh` against a fresh,
 loopback-only disposable database. It runs the kept-change, superseded-invoice
-carry, change-receipt and primary-invoice race suites serially, then checks the
+carry, change-receipt, primary-invoice race and unpaid-edit change-fee
+(#4661) suites serially, then checks the
 Vitest JSON report with `unexercisedRealdbFiles`: every named suite must pass
 and none may skip. The script stops its database on exit. When the check runs
 as root, only PostgreSQL commands run as the package's unprivileged `postgres`

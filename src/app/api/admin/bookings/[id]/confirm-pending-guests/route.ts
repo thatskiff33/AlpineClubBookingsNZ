@@ -20,6 +20,8 @@ import {
 import { chargeSavedCardAttempt } from "@/lib/saved-card-charge-request";
 import { savedCardChargeCents } from "@/lib/booking-payment-state";
 import { writeZeroWorthConfirmPayment } from "@/lib/zero-worth-confirm-payment";
+import { postStoredBookingConfirmationLedgerLines } from "@/lib/booking-ledger-confirmation-sync";
+import { resolveBookingMoneyPostingContext } from "@/lib/member-money/doors";
 import {
   describeUnsettledPaymentIntent,
   settleSavedCardChargeAttempt,
@@ -219,6 +221,9 @@ export async function POST(
     // worth, the figure the charge branch charges - a change fee recorded on a
     // $0 booking's payment is still owed - and re-checked under the locks.
     if (savedCardChargeCents(booking) === 0) {
+      // #4738: the confirmation's journal context, resolved before the
+      // transaction opens (`INV-LOCK-004`).
+      const journal = await resolveBookingMoneyPostingContext();
       const zeroResult = await prisma.$transaction(async (tx) => {
         await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
         // Two-tier protocol (#1881): this branch CLAIMS capacity (PENDING -> a
@@ -309,6 +314,8 @@ export async function POST(
           actorMemberId: session.user.id,
         });
         await writeZeroWorthConfirmPayment(tx, bookingId);
+        // #4738: the $0 booking's nights post once, under the won claim's locks.
+        await postStoredBookingConfirmationLedgerLines(tx, bookingId, journal);
 
         return { ok: true as const };
       });

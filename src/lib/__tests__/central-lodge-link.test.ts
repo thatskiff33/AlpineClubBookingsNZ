@@ -13,6 +13,7 @@ vi.mock("@/lib/prisma", () => ({
 
 import {
   centralLinkStatus,
+  preselectedCentralLodgeId,
   resolveLocalLodgeForCentralId,
   suggestedCentralLodgeId,
 } from "@/lib/central-lodge-link";
@@ -38,6 +39,19 @@ describe("suggestedCentralLodgeId (what the card preselects, never an answer)", 
     expect(suggestedCentralLodgeId(null, [{ centralLodgeId: null }])).toBeNull();
     expect(suggestedCentralLodgeId([A], [{ centralLodgeId: "ol_a" }])).toBeNull();
     expect(suggestedCentralLodgeId([A], [{ centralLodgeId: "ol_gone" }])).toBeNull();
+  });
+});
+
+describe("preselectedCentralLodgeId (the card's and the link dialog's one rule, #4720 review)", () => {
+  const ONLY = [{ id: "lodge_1", centralLodgeId: null }];
+
+  it("preselects for the one active lodge while no lodge holds the link", () => {
+    expect(preselectedCentralLodgeId("lodge_1", [A], ONLY, false)).toBe("ol_a");
+  });
+
+  it("preselects nothing for another lodge, or while some lodge holds the link", () => {
+    expect(preselectedCentralLodgeId("lodge_inactive", [A], ONLY, false)).toBeNull();
+    expect(preselectedCentralLodgeId("lodge_1", [A], ONLY, true)).toBeNull();
   });
 });
 

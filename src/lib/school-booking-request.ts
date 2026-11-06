@@ -1,4 +1,6 @@
 import { postStoredBookingConfirmationLedgerLines } from "@/lib/booking-ledger-confirmation-sync";
+import { postBindingCharge } from "@/lib/booking-ledger-pending-charge";
+import { resolveBookingMoneyPostingContext } from "@/lib/member-money/doors";
 /**
  * School group booking request variant (issue #709).
  *
@@ -26,6 +28,7 @@ import { postStoredBookingConfirmationLedgerLines } from "@/lib/booking-ledger-c
 import { memberWholeLodgeChoosesPaymentMethod } from "@/lib/booking-payment-flow";
 import { randomBytes } from "crypto";
 import { hash } from "bcryptjs";
+import { PASSWORD_BCRYPT_COST } from "@/lib/password-hashing";
 import {
   AgeTier,
   BookingRequestStatus,
@@ -891,7 +894,7 @@ export async function approveSchoolBookingRequest(input: {
   // row satisfies the schema without any usable credential. Generate teacher
   // PINs (and their hashes) before the transaction so the plaintext PIN can be
   // emailed after commit while only the hash is persisted.
-  const placeholderPasswordHash = await hash(randomBytes(32).toString("hex"), 13);
+  const placeholderPasswordHash = await hash(randomBytes(32).toString("hex"), PASSWORD_BCRYPT_COST);
   const teacherPlans: TeacherCreationPlan[] = await Promise.all(
     teachers.map(async (teacher) => {
       const pin = assignTeachersAsHutLeaders ? generateHutLeaderPin() : null;
@@ -973,12 +976,13 @@ export async function approveSchoolBookingRequest(input: {
   // `booking-request.ts`: `src/instrumentation.node.ts` reaches this family
   // through the booking-request cron chain, and `server-only` is a bare throw
   // at import outside the `react-server` condition.
-  const clubTodayDateOnly = dateOnlyInstantOf(
-    clubToday(await readClubTimeZoneOutsideRequest()),
-  );
+  const schoolClubZone = await readClubTimeZoneOutsideRequest();
+  const clubTodayDateOnly = dateOnlyInstantOf(clubToday(schoolClubZone));
   // #3029 (`INV-MOD-059`): the dietary seeding toggle, read before the same
   // transaction for the same reason (`INV-LOCK-004`).
   const guestDietarySeeding = await resolveBookingGuestDietarySeeding();
+  // #4628: the journal's posting context, likewise, on the same zone.
+  const schoolJournal = await resolveBookingMoneyPostingContext({ zone: schoolClubZone });
 
   try {
     conversion = await prisma.$transaction(async (tx) => {
@@ -1571,6 +1575,8 @@ export async function approveSchoolBookingRequest(input: {
           reference: buildInternetBankingPaymentReference(booking.id),
         },
       });
+      // #4628 (R01): pay-on-account binds the school's charge now, under lock(1) and the lodge key.
+      await postBindingCharge(tx, schoolJournal, booking.id, bookingLodgeId);
 
       // #3369: an officer who MAPPED this request to an existing contact was
       // saying "this person is who we deal with at that school". Until this
@@ -2504,12 +2510,13 @@ export async function approveMemberWholeLodgeRequest(input: {
   // `booking-request.ts`: `src/instrumentation.node.ts` reaches this family
   // through the booking-request cron chain, and `server-only` is a bare throw
   // at import outside the `react-server` condition.
-  const clubTodayDateOnly = dateOnlyInstantOf(
-    clubToday(await readClubTimeZoneOutsideRequest()),
-  );
+  const clubZone = await readClubTimeZoneOutsideRequest();
+  const clubTodayDateOnly = dateOnlyInstantOf(clubToday(clubZone));
   // #3029 (`INV-MOD-059`): the dietary seeding toggle, read before the same
   // transaction for the same reason (`INV-LOCK-004`).
   const guestDietarySeeding = await resolveBookingGuestDietarySeeding();
+  // #4627: the journal's posting context, likewise read before the transaction, on the same zone.
+  const journal = await resolveBookingMoneyPostingContext({ zone: clubZone });
 
   try {
     conversion = await prisma.$transaction(async (tx) => {
@@ -2839,7 +2846,7 @@ export async function approveMemberWholeLodgeRequest(input: {
             where: { id: booking.id },
             data: { status: BookingStatus.PAID },
           });
-          await postStoredBookingConfirmationLedgerLines(tx, booking.id);
+          await postStoredBookingConfirmationLedgerLines(tx, booking.id, journal);
           settledByCredit = true;
         }
       } else {
@@ -2859,6 +2866,8 @@ export async function approveMemberWholeLodgeRequest(input: {
             reference: paymentReference,
           },
         });
+        // #4628 (R01): the pay-on-account receivable binds the charge now, under lock(1) and the lodge key.
+        await postBindingCharge(tx, journal, booking.id, bookingLodgeId);
       }
 
       await reconcileAdultMemberHostingReviewWithSiblings(booking.id, tx);

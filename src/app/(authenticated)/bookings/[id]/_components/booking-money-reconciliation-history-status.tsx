@@ -1,3 +1,4 @@
+import { HydratedOnly } from "@/components/hydrated-only";
 import {
   BOOKING_MONEY_RECONCILIATION_COPY,
   bookingMoneyReviewReasonText,
@@ -23,32 +24,42 @@ export function BookingMoneyReconciliationHistoryStatus({
   const { reconciliation } = view;
   const unreconciled = reconciliation.state === "UNRECONCILED";
   return (
-    <div
-      data-testid="booking-history-money-reconciliation"
-      data-reconciliation-state={reconciliation.state}
-      data-reconciliation-reasons={reconciliation.reasons.join(",")}
-      className={`mb-3 space-y-1 rounded-md border px-3 py-2 text-sm ${
-        unreconciled
-          ? "border-danger-6 bg-danger-3 text-danger-11"
-          : "border-success-6 bg-success-3 text-success-11"
-      }`}
+    // #4704: a retained hidden server stream must not hold another verdict
+    // beside the hydrated page. Keep the loader's audience decision on the server.
+    <HydratedOnly
+      fallback={
+        <p className="text-sm text-muted-foreground" role="status">
+          Loading money reconciliation…
+        </p>
+      }
     >
-      <p className="font-medium">
-        {BOOKING_MONEY_RECONCILIATION_COPY.currentStateLabel}:{" "}
-        {
-          BOOKING_MONEY_RECONCILIATION_COPY.stateLabel[
-            reconciliation.state
-          ]
-        }
-      </p>
-      {unreconciled ? (
-        <p>{bookingMoneyReviewReasonText(reconciliation.reasons)}.</p>
-      ) : (
-        <p>{BOOKING_MONEY_RECONCILIATION_COPY.reconciledDetail}</p>
-      )}
-      <p className="text-xs">
-        {BOOKING_MONEY_RECONCILIATION_COPY.derivedStateNote}
-      </p>
-    </div>
+      <div
+        data-testid="booking-history-money-reconciliation"
+        data-reconciliation-state={reconciliation.state}
+        data-reconciliation-reasons={reconciliation.reasons.join(",")}
+        className={`mb-3 space-y-1 rounded-md border px-3 py-2 text-sm ${
+          unreconciled
+            ? "border-danger-6 bg-danger-3 text-danger-11"
+            : "border-success-6 bg-success-3 text-success-11"
+        }`}
+      >
+        <p className="font-medium">
+          {BOOKING_MONEY_RECONCILIATION_COPY.currentStateLabel}:{" "}
+          {
+            BOOKING_MONEY_RECONCILIATION_COPY.stateLabel[
+              reconciliation.state
+            ]
+          }
+        </p>
+        {unreconciled ? (
+          <p>{bookingMoneyReviewReasonText(reconciliation.reasons)}.</p>
+        ) : (
+          <p>{BOOKING_MONEY_RECONCILIATION_COPY.reconciledDetail}</p>
+        )}
+        <p className="text-xs">
+          {BOOKING_MONEY_RECONCILIATION_COPY.derivedStateNote}
+        </p>
+      </div>
+    </HydratedOnly>
   );
 }

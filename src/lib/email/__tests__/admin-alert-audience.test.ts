@@ -519,6 +519,34 @@ describe("unmuteable admin alerts (#2761)", () => {
     );
   });
 
+  it("treats a non-production hold as delivered and a transport failure as not", async () => {
+    mocks.findMany.mockResolvedValue([enumRole("treasurer@club.test", "FINANCE_ADMIN")]);
+    mocks.sendEmail.mockResolvedValue({
+      status: "withheld_for_environment",
+      emailLogId: "log-1",
+      reason: "environment_non_production",
+    });
+
+    const held = await sendUnmuteableAdminAlert({
+      subject: "Stripe payment the app did not create",
+      html: "<p>alert</p>",
+      templateName: "admin-unrecognised-stripe-payment",
+      requirement: { area: "finance", level: "edit" },
+    });
+
+    expect(held).toBe("sent");
+    expect(mocks.recordEscalation).not.toHaveBeenCalled();
+
+    mocks.sendEmail.mockRejectedValue(new Error("smtp down"));
+    const failed = await sendUnmuteableAdminAlert({
+      subject: "Stripe payment the app did not create",
+      html: "<p>alert</p>",
+      templateName: "admin-unrecognised-stripe-payment",
+      requirement: { area: "finance", level: "edit" },
+    });
+    expect(failed).toBe("undelivered");
+  });
+
   it("does not escalate when somebody was reached", async () => {
     await sendAlert([enumRole("full.admin@club.test", "ADMIN")]);
 

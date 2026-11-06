@@ -353,6 +353,10 @@ Each PR should include:
 
 - a concise summary of the user-facing or operational change
 - a `changelog.d/` fragment, or the no-entry marker in the PR body
+- a `## Plan Deviation` answer: `None`, or each material deviation from the
+  issue's plan with a link to the owner's answer
+  ([`docs/agents/ISSUE_WORKFLOW.md`](docs/agents/ISSUE_WORKFLOW.md#plan-deviation));
+  over 800 changed lines, a one-line `large-pr:` reason
 - validation commands and results
 - migration notes, if schema or data behaviour changes
 - a verification fixture for any migration that **rewrites existing data** (a
@@ -393,6 +397,16 @@ the owner's checklist for rebuilding it.
 | `Image security gate (Trivy CRITICAL)` | applied | `ci.yml` → `docker-image-security` | CRITICAL image vulnerabilities. HIGH stays advisory (#2686). On a pull request it builds and scans only when dependencies, `patches/`, the Dockerfile, a compose file, `.dockerignore`, `.trivyignore` or the workflow changed; every push scans (#4425, owner decision) |
 | `Dependency audit` | applied | `ci.yml` → `dependency-audit` | `pnpm audit --audit-level=high`. Split out of `verify` (#2946), where a failing audit skipped lint, the ratchet, `prisma generate`, typecheck, knip, `pnpm test` and the build on every branch (#2945) |
 
+**Two workflows report on the money modules and are not required** (#4459):
+`Money coverage ratchet` (`money-coverage.yml`, a pull request that changes code,
+tests, scripts or dependencies) goes red when money-module coverage is lower than
+the latest `main` run's (the committed `scripts/ci/money-test-baseline.json` when
+there is none), and
+`Stryker on the money modules` (`money-mutation.yml`) runs nightly and on demand,
+never on a pull request. Neither belongs in `verify` or in branch protection;
+[`TESTING.md`](docs/TESTING.md#coverage-and-mutation-testing-of-the-money-modules)
+says how each reports.
+
 **A required job never skips by a job-level `if:` or `needs:`** (#4397, #4425):
 GitHub counts a skipped required check as passing. A job that may skip work
 decides in a step (`scripts/ci/change-scope.mjs`, `e2e-scope.mjs`) and skips its
@@ -404,7 +418,7 @@ in the gate's `--job` too.
 
 **The PR-body gates read the description from a file, never an environment
 variable** (#4053). `verify` writes `.pull_request.body` from
-`$GITHUB_EVENT_PATH` to `$RUNNER_TEMP/pr-body.md` and the two gates open it
+`$GITHUB_EVENT_PATH` to `$RUNNER_TEMP/pr-body.md` and the gates open it
 through `PR_BODY_FILE` (`readEventPrBody` in `scripts/ci/pr-body.mjs`), as their
 fallback behind the live body fetched from the pulls API. Linux caps one
 environment string at 128 KiB, so a description past that size (PR #3924 reached
@@ -413,6 +427,14 @@ long") and turn `verify` red with no finding. Do not reference
 `github.event.pull_request.body` on any non-comment line of a workflow or action;
 `scripts/ci/pr-body-file.test.mjs` fails if it comes back. Keep a long
 description short anyway: link the review history rather than pasting it.
+
+**Two PR-body checks warn rather than fail** (#4463). The `## Plan Deviation`
+section is a `::warning::` until `PLAN_DEVIATION_ENFORCED` in
+`scripts/ci/check-pr-plan-deviation.mjs` is set to `true` (owner decision, 1 Nov
+2026: warn for seven days, then fail). The size check
+(`scripts/ci/check-pr-size.mjs`) only ever warns: over 800 changed lines, not
+counting files `.gitattributes` marks `linguist-generated`, with no `large-pr:`
+line. `pnpm run pr:check` reports both as `WARN`.
 
 **Adding a required context is a three-step sequence, and doing it out of
 order breaks every open pull request** — whenever a job producing a required

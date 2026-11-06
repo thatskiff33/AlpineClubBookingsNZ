@@ -1,0 +1,253 @@
+name: Money coverage
+
+# Test coverage of the money, ledger and Xero modules, and a ratchet that only
+# goes up (#4459, programme #4450). Neither this workflow nor any job in it is
+# a required check, and none may become one: it has no part in `verify`, and
+# branch protection is untouched (CONTRIBUTING.md -> "Branch protection").
+#
+# HOW IT REPORTS. Every pull request that can move the figure (see the path
+# filter below) gets a "Money-module coverage" table in
+# the job summary of `Money coverage ratchet` (baseline, now, change for lines,
+# statements, functions and branches, and the files with the most uncovered
+# lines). The job goes red when a figure is lower than the latest successful
+# `main` run's by more than 0.1 percentage points (that run's
+# `money-coverage-summary` artifact; the committed floor in
+# `scripts/ci/money-test-baseline.json` stands in when there is none, and the
+# summary says which was used), or when a pull request LOWERS that floor; as it
+# is not required, a red job informs and does not block.
+#
+# WHY A SEPARATE WORKFLOW, AND WHY SHARDS THAT MERGE. The unit suite already
+# runs in four required shards in `ci.yml`. Switching coverage on there would
+# slow jobs `verify` depends on, and a timeout that instrumentation causes in a
+# disk-scanning census would turn a required check red. So these shards are
+# their own copies: `--coverage --reporter=blob` writes each shard's result,
+# the last job merges the four with `vitest --merge-reports` (Vitest's own
+# merge, so a file covered by one shard and not another counts as covered), and
+# only that job judges. The four run in parallel, so a pull request waits about
+# one shard's time plus a short merge, at the price of four more runners.
+#
+# The measure is `test.coverage.include` in vitest.config.mts, which reads the
+# one list of money modules, `scripts/lib/money-modules.mjs`; it only applies
+# when `--coverage` is passed, so the required shards are unchanged.
+
+# The path filter keeps a docs-only pull request from spending four runners: only
+# a change to code, tests, scripts, the schema, the dependencies, this
+# measurement's own configuration or the CODEOWNERS list that defines the money
+# modules can move the figure. A filtered-out run leaves no check at all, which
+# is right for a check that is not required.
+on:
+  pull_request:
+    branches:
+      - main
+      - "epic/**"
+    paths:
+      - "src/**"
+      - "scripts/**"
+      - "prisma/**"
+      - "vitest*.mts"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "stryker.config.mjs"
+      - ".github/CODEOWNERS"
+      - ".github/workflows/money-coverage.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "src/**"
+      - "scripts/**"
+      - "prisma/**"
+      - "vitest*.mts"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "stryker.config.mjs"
+      - ".github/CODEOWNERS"
+      - ".github/workflows/money-coverage.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: money-coverage-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  coverage-shard:
+    name: Coverage shard (${{ matrix.shard }}/4)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        shard:
+          - 1
+          - 2
+          - 3
+          - 4
+    env:
+      AUTH_SECRET: ci-auth-secret
+      NEXTAUTH_SECRET: ci-auth-secret
+      NEXTAUTH_URL: http://localhost:3000
+      AUTH_TRUST_HOST: "false"
+      CRON_SECRET: ci-cron-secret
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/tacbookings
+      STRIPE_SECRET_KEY: sk_test_fake
+      NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: pk_test_fake
+      XERO_ENABLE_DAILY_MEMBERSHIP_REFRESH: "false"
+      XERO_ENABLE_LIVE_MEMBER_GROUP_LOOKUPS: "false"
+      XERO_ENABLE_AUTOLOAD_XERO_CONTACT_GROUPS: "false"
+    steps:
+      # Full history, as the unit shards in ci.yml: part of the suite drives git
+      # against this repository's own commits (#2909).
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+
+      # The pnpm version comes from `packageManager` in package.json (#3673).
+      - name: Set up pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate Prisma client
+        run: pnpm run db:generate
+
+      # The longer test timeout is the clock canary's own precedent: instrumented
+      # runs make the disk-scanning censuses slower, and a census that times out
+      # here would leave a hole in the merged figure.
+      # `continue-on-error`: this job measures coverage and does not judge
+      # tests, which the required shards own. A disk-scanning census with its
+      # own explicit timeout can still time out under instrumentation (one did,
+      # at 31s against its 20s, in a local run), and a shard that stops here
+      # would stop the merge and so the whole report.
+      - name: Test assigned suite files with coverage
+        id: tests
+        continue-on-error: true
+        run: pnpm exec vitest run --shard=${{ matrix.shard }}/4 --coverage --reporter=blob --testTimeout=60000
+
+      - name: Say so when tests failed under coverage
+        if: ${{ steps.tests.outcome == 'failure' }}
+        run: echo "::warning::A test failed under coverage. The required unit shards own test failures; the figure below is judged without that file."
+
+      - name: Upload this shard's blob
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: coverage-blob-${{ matrix.shard }}
+          path: .vitest/blob/
+          retention-days: 7
+          if-no-files-found: error
+
+  coverage-ratchet:
+    name: Money coverage ratchet
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # A failed shard is reported by the required unit shards; judging a merge
+    # of three would call every file the fourth covered "lower".
+    needs: coverage-shard
+    permissions:
+      contents: read
+      # Reads the artifact of the latest successful `main` run (below).
+      actions: read
+    env:
+      AUTH_SECRET: ci-auth-secret
+      NEXTAUTH_SECRET: ci-auth-secret
+      NEXTAUTH_URL: http://localhost:3000
+      AUTH_TRUST_HOST: "false"
+      CRON_SECRET: ci-cron-secret
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/tacbookings
+      STRIPE_SECRET_KEY: sk_test_fake
+      NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: pk_test_fake
+      XERO_ENABLE_DAILY_MEMBERSHIP_REFRESH: "false"
+      XERO_ENABLE_LIVE_MEMBER_GROUP_LOOKUPS: "false"
+      XERO_ENABLE_AUTOLOAD_XERO_CONTACT_GROUPS: "false"
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate Prisma client
+        run: pnpm run db:generate
+
+      - name: Download the four shards' blobs
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: coverage-blob-*
+          merge-multiple: true
+          path: .vitest/blob/
+
+      # A blob that holds a failed test (above) makes the merge exit non-zero
+      # though the coverage is written; the judging step below fails if it is
+      # not, so a merge that really broke still stops the job there.
+      - name: Merge the shards into one coverage summary
+        run: pnpm exec vitest --merge-reports --coverage --coverage.reportOnFailure=true || echo "::warning::The merge exited non-zero (a failed test in a blob, or a merge error); the judging step reads the summary it wrote."
+
+      # What to hold the figure to: the latest successful `main` run's summary.
+      # Finding it is not fatal (a first run, an expired artifact, an API
+      # error): the judge then uses the committed floor and says so.
+      # Only for a pull request into `main` (or a push): `main`'s figures do not
+      # describe an epic branch, which is held to the floor (the judge step also
+      # ignores the summary for any other base).
+      - name: Find the latest successful main run
+        id: base
+        if: ${{ github.base_ref == '' || github.base_ref == 'main' }}
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/ci/money-test-ratchet.mjs find-main-run
+
+      - name: Download that run's coverage summary
+        if: ${{ steps.base.outputs.run_id != '' }}
+        continue-on-error: true
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: money-coverage-summary
+          path: base-summary/
+          run-id: ${{ steps.base.outputs.run_id }}
+          github-token: ${{ github.token }}
+
+      # The branch the pull request targets, fetched by name so the floor-lowered
+      # guard compares with it (`main` on a push or a manual run).
+      #
+      # ON A PUSH TO `main` THE JUDGE RECORDS AND DOES NOT FAIL (`continue-on-error`,
+      # set from the event, never interpolated into `run:`). Whatever merged is
+      # `main`'s figure now, and the next pull request is held to it: a deliberate
+      # drop that was accepted at review cannot leave `main` red for ever. The
+      # table is still written to the summary, and the artifact still uploads.
+      - name: Judge the money modules against the base
+        continue-on-error: ${{ github.event_name == 'push' }}
+        env:
+          BASE_REF: ${{ github.base_ref || 'main' }}
+        run: |
+          git fetch --no-tags origin "+refs/heads/${BASE_REF}:refs/remotes/origin/${BASE_REF}"
+          node scripts/ci/money-test-ratchet.mjs coverage --base-ref "origin/${BASE_REF}" --base-branch "${BASE_REF}" --base-summary base-summary/coverage-summary.json
+
+      - name: Keep the merged summary
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: money-coverage-summary
+          path: coverage/coverage-summary.json
+          retention-days: 30
+          if-no-files-found: warn

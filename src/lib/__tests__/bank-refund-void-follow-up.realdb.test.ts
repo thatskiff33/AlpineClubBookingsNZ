@@ -25,6 +25,7 @@
  * fixtures, and never runs the job over notes that are not its own.
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { releaseBookingJournalForTeardown } from "./support/booking-financial-history-teardown";
 import type { ResolvedBankRefundVoidAnswer } from "@/lib/bank-refund-void-answer";
 import { realElapsedMs } from "@/lib/__tests__/helpers/clock";
 
@@ -82,6 +83,8 @@ let CLUB_FORMAT_TEST: (typeof import("@/lib/__tests__/support/club-format-fixtur
       await prisma.auditLog.deleteMany({ where: { targetId: { in: allBookingIds } } });
       await prisma.xeroSyncOperation.deleteMany({ where: { localModel: "Payment", localId: { in: allPaymentIds } } });
       await prisma.xeroObjectLink.deleteMany({ where: { localId: { in: allPaymentIds } } });
+      // #4627: the doors post journal batches bridged to these lines; release them first.
+      await releaseBookingJournalForTeardown(prisma, allBookingIds);
       await prisma.bookingLedgerLine.deleteMany({ where: { bookingId: { in: allBookingIds } } });
       await prisma.manualRefundTask.deleteMany({ where: { bookingId: { in: allBookingIds } } });
       await prisma.bookingEvent.deleteMany({ where: { bookingId: { in: allBookingIds } } });

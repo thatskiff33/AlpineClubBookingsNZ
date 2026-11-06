@@ -15,6 +15,7 @@ import {
   appendFamilyInviteReturnParam,
   buildFamilyInviteLoginPath,
 } from "@/lib/family-invite-return-address";
+import { LOGIN_THROTTLED_CODE } from "@/lib/login-throttle-policy";
 import { MagicLinkRequestForm } from "./magic-link-request-form";
 
 // The login query params (verified / verifyError / emailChanged / callbackUrl)
@@ -182,6 +183,14 @@ export function LoginForm({
         // NextAuth v5 sets result.code from CredentialsSignin subclass code
         if (result.code === "EMAIL_NOT_VERIFIED" || result.error === "EMAIL_NOT_VERIFIED") {
           setEmailNotVerified(true);
+        } else if (result.code === LOGIN_THROTTLED_CODE) {
+          // #4609: the same words for every account, real or not.
+          setError(
+            "Too many sign-in attempts for this account. Please wait a few minutes and try again" +
+              (magicLinkEnabled || googleLoginEnabled
+                ? ", or use another way to sign in below."
+                : "."),
+          );
         } else {
           setError("Invalid email or password. Please try again.");
         }

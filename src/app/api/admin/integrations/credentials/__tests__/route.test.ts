@@ -18,6 +18,8 @@ const mocks = vi.hoisted(() => ({
   loggerError: vi.fn(),
   findMany: vi.fn(),
   forgetServerConnectionAnswers: vi.fn(),
+  registerAfterKeySave: vi.fn(),
+  loggerWarn: vi.fn(),
   lockServerNzSettings: vi.fn(),
   tx: { serverNzSettings: { createMany: vi.fn(), findUnique: vi.fn() } },
 }));
@@ -54,6 +56,9 @@ vi.mock("@/lib/integration-credentials", async (importOriginal) => ({
   // #4470: a ServerNZ key replacement removes the push secret in its fence.
   deleteIntegrationCredentialInTransaction: mocks.deleteIntegrationCredential,
 }));
+vi.mock("@/lib/servernz-push-registration", () => ({
+  registerAfterKeySave: mocks.registerAfterKeySave,
+}));
 vi.mock("@/lib/stripe-config", () => ({
   STRIPE_PROVIDER: "stripe",
   STRIPE_WRITABLE_CREDENTIAL_KEYS: [
@@ -73,7 +78,7 @@ vi.mock("@/lib/xero-verify-reset", async (importOriginal) => ({
   ...((await importOriginal()) as typeof import("@/lib/xero-verify-reset")),
   withXeroVerifyReset: mocks.withXeroVerifyReset,
 }));
-vi.mock("@/lib/logger", () => ({ default: { error: mocks.loggerError } }));
+vi.mock("@/lib/logger", () => ({ default: { error: mocks.loggerError, warn: mocks.loggerWarn } }));
 
 import { WeakAuthSecretError } from "@/lib/integration-crypto";
 import { GET, POST } from "../route";
@@ -245,6 +250,65 @@ describe("POST /api/admin/integrations/credentials", () => {
     expect(mocks.deleteIntegrationCredential).toHaveBeenCalledWith(expect.objectContaining({
       tx: mocks.tx, provider: "servernz", key: "push_secret", actor: { kind: "admin", memberId: "admin-1" },
     }));
+  });
+
+  it("registers this site straight after the key's fenced write, and reports it (triyder/AlpineClubBookingsNZ#97)", async () => {
+    asFullAdmin();
+    mocks.setIntegrationCredential.mockResolvedValue({
+      provider: "servernz",
+      key: "api_key",
+      secretSource: "AUTH_SECRET",
+      labelVersion: "integration-credential:v1",
+      updatedAt: new Date(),
+    });
+    mocks.registerAfterKeySave.mockResolvedValue("registered");
+    const res = await POST(makeRequest({ provider: "servernz", key: "api_key", value: "acs_replacement", expectedBaseUrl: SHOWN_URL }));
+    expect(res.status).toBe(200);
+    expect(mocks.registerAfterKeySave).toHaveBeenCalledTimes(1);
+    expect(mocks.registerAfterKeySave).toHaveBeenCalledWith("admin-1");
+    // After the fenced write (which removed the old push secret), never inside it.
+    expect(mocks.deleteIntegrationCredential.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.registerAfterKeySave.mock.invocationCallOrder[0]!,
+    );
+    expect(mocks.forgetServerConnectionAnswers.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.registerAfterKeySave.mock.invocationCallOrder[0]!,
+    );
+    expect(await res.json()).toMatchObject({ ok: true, pushRegistration: "registered" });
+  });
+
+  it("does not register when the key save is refused for a moved address", async () => {
+    asFullAdmin();
+    mocks.tx.serverNzSettings.findUnique.mockResolvedValue({ baseUrl: "https://moved.example.invalid" });
+    const res = await POST(makeRequest({ provider: "servernz", key: "api_key", value: "acs_old", expectedBaseUrl: SHOWN_URL }));
+    expect(res.status).toBe(409);
+    expect(mocks.registerAfterKeySave).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["awaiting-approval", "awaiting-approval"],
+    ["not-https", "not-https"],
+    ["failed", "failed"],
+    ["server-version-mismatch", "server-version-mismatch"],
+  ])("reports a %s registration without failing the key save", async (outcome, shown) => {
+    asFullAdmin();
+    mocks.setIntegrationCredential.mockResolvedValue({
+      provider: "servernz",
+      key: "api_key",
+      secretSource: "AUTH_SECRET",
+      labelVersion: "integration-credential:v1",
+      updatedAt: new Date(),
+    });
+    mocks.registerAfterKeySave.mockResolvedValue(outcome);
+    const res = await POST(makeRequest({ provider: "servernz", key: "api_key", value: "acs_new", expectedBaseUrl: SHOWN_URL }));
+    expect(res.status).toBe(200);
+    expect((await res.json()).pushRegistration).toBe(shown);
+  });
+
+  it("does not register on another provider's write", async () => {
+    asFullAdmin();
+    const res = await POST(makeRequest({ provider: "xero", key: "client_secret", value: SECRET_VALUE }));
+    expect(mocks.registerAfterKeySave).not.toHaveBeenCalled();
+    expect(await res.json()).not.toHaveProperty("pushRegistration");
   });
 
   it("does not report success when the connection-answer reset fails", async () => {

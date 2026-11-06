@@ -94,7 +94,7 @@ type Latch = ReturnType<typeof latch>;
       { id: { startsWith: "race-4590-" } }, { serverPostId: { startsWith: "race-4590-" } },
     ] } });
     await prisma.member.deleteMany({ where: { id: MEMBER_ID } });
-    await prisma.integrationCredential.deleteMany({ where: { provider: "servernz", key: { in: ["api_key", "push_secret"] } } });
+    await prisma.integrationCredential.deleteMany({ where: { provider: "servernz", key: { in: ["api_key", "push_secret", "push_registered_url"] } } });
     await prisma.serverNzSettings.deleteMany({ where: { id: "default" } });
   }
 
@@ -225,11 +225,11 @@ type Latch = ReturnType<typeof latch>;
     await clean();
     // Poll-only: no push registration call in these passes.
     delete process.env.NEXTAUTH_URL;
-    const { encryptCredential, INTEGRATION_CREDENTIAL_LABEL } = await import("@/lib/integration-crypto");
+    const { encryptCredential } = await import("@/lib/integration-crypto");
     await prisma.serverNzSettings.create({ data: { id: "default", baseUrl: BASE_URL, serverVersion: SERVERNZ_EXPECTED_SERVER_VERSION } });
     await prisma.integrationCredential.create({ data: {
       provider: "servernz", key: "api_key",
-      ...encryptCredential({ provider: "servernz", key: "api_key", plaintext: "race-4586-key", label: INTEGRATION_CREDENTIAL_LABEL }),
+      ...encryptCredential({ provider: "servernz", key: "api_key", plaintext: "race-4586-key" }),
     } });
     const { resetIntegrationCredentialCacheForTests } = await import("@/lib/integration-credentials");
     resetIntegrationCredentialCacheForTests();

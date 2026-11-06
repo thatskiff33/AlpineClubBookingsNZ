@@ -146,6 +146,8 @@ export async function writeXeroInboundAuditLogs(input: {
   links: XeroAuditLocalLink[];
   source: string;
   metadata?: Record<string, unknown>;
+  /** #4531: what the rows say happened, when it is more than "reconciled". */
+  summary?: string;
 }) {
   const links = dedupeXeroAuditLocalLinks(input.links);
   if (links.length === 0) {
@@ -170,8 +172,8 @@ export async function writeXeroInboundAuditLogs(input: {
         category: "xero",
         severity: "critical",
         outcome: "success",
-        summary: getXeroAuditSummary(link.xeroObjectType),
-        details: `${getXeroAuditSummary(link.xeroObjectType)} for ${link.localModel}`,
+        summary: input.summary ?? getXeroAuditSummary(link.xeroObjectType),
+        details: `${input.summary ?? getXeroAuditSummary(link.xeroObjectType)} for ${link.localModel}`,
         metadata: {
           source: input.source,
           localModel: link.localModel,

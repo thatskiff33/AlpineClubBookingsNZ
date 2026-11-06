@@ -65,6 +65,9 @@ import {
   markGroupSettlementIntentRefunded,
 } from "@/lib/group-settlement";
 import { adoptSavedCardChargeAttemptForIntent } from "@/lib/saved-card-charge-settle";
+import { GROUP_SETTLEMENT_INTENT_TYPE, appPaymentIntentRoute } from "@/lib/stripe-app-intent-metadata";
+import { recordUnmatchedAppStripePayment, recordUnrecognisedStripePayment } from "@/lib/unrecognised-stripe-payment";
+import { STRIPE_WEBHOOK_PROCESSING_LEASE_MINUTES } from "@/lib/stripe-webhook-lease";
 import { PaymentStatus, PaymentTransactionKind } from "@prisma/client";
 import { isCapturedTransactionStatus, isRefusedRefundStatus } from "@/lib/payment-transaction-status";
 import { keyAfterStripeRefusals, refusedRefundMessage } from "@/lib/refused-card-refund-retry";
@@ -81,12 +84,7 @@ function jsonResult(body: unknown, init?: ResponseInit): JsonRouteResult {
   return { body, init };
 }
 
-// F16 (#1887): the ProcessedWebhookEvent claim is a processing LEASE. A
-// PROCESSING claim older than this window is treated as a crashed prior
-// attempt and taken over; a fresher one forces a provider retry. Sized well
-// above real handler runtime (seconds) and far below Stripe's redelivery
-// backoff, so a live handler is never pre-empted by a concurrent redelivery.
-export const STRIPE_WEBHOOK_PROCESSING_LEASE_MINUTES = 15;
+// The processing lease (F16, #1887): `STRIPE_WEBHOOK_PROCESSING_LEASE_MINUTES`.
 const PROCESSED_WEBHOOK_STATUS_PROCESSING = "PROCESSING";
 const PROCESSED_WEBHOOK_STATUS_COMPLETED = "COMPLETED";
 
@@ -406,18 +404,14 @@ export async function processStripeWebhookEvent(
 /**
  * #3267 (`INV-PAY-055`): an intent the ledger does not know may be a saved-card
  * charge attempt whose POST executed but whose response was lost — the row is
- * PENDING with no intent id, and the only link between it and this event is the
- * idempotency key Stripe stamps on the event (`event.request.idempotency_key`),
- * which the row stores on `reference`. Adopt it, forward only, so the handler
- * that follows finds the row by intent id like any other. The `event` is
- * threaded in for exactly this field; a handler that read only the intent could
- * never make the link.
- *
- * `event.request` is null whenever Stripe did not attribute the state change to
- * an API request — an asynchronous capture, notably — so this recovers a lost
- * response only while the intent's own answer was synchronous. The rest fall
- * through to the 23-hour `attempt_key_expired` refusal rather than to a second
- * charge; see `adoptSavedCardChargeAttemptForIntent`.
+ * PENDING with no intent id. Two things link it to this event: the idempotency
+ * key Stripe stamps on the event (`event.request.idempotency_key`), which the
+ * row stores on `reference`, and — when `event.request` is null, as on an
+ * asynchronous capture and every redelivery of it — the attempt row id a
+ * `_v2` attempt's metadata carries (#4646; minted only from #4682). Adopt it,
+ * forward only, so the handler that follows finds the row by intent id like
+ * any other. The `event` is threaded in for the key; see
+ * `adoptSavedCardChargeAttemptForIntent`.
  */
 async function adoptUnknownIntentsAttemptRow(
   paymentIntent: Stripe.PaymentIntent,
@@ -429,6 +423,7 @@ async function adoptUnknownIntentsAttemptRow(
     paymentIntent,
     bookingId,
     idempotencyKey: event.request?.idempotency_key,
+    metadata: paymentIntent.metadata,
   });
   if (!adopted) return null;
   onAdopted?.(adopted.newlyCaptured);
@@ -443,10 +438,20 @@ async function handlePaymentIntentSucceeded(
   event: Stripe.Event,
   format: ClubFormat,
 ) {
+  // #4532 (`INV-INT-032`): a payment the app did not create - a Payment Link, a
+  // Checkout page or a dashboard charge - carries none of the app's metadata, so
+  // no path below claims it. It is recorded and alerted once, and the event
+  // completes; it never reaches a booking or Xero.
+  const route = appPaymentIntentRoute(paymentIntent.metadata);
+  if (route === null) {
+    await recordUnrecognisedStripePayment(paymentIntent, event, format);
+    return;
+  }
+
   // Group ORGANISER_PAYS settlement: one combined intent settles many child
   // bookings, so it carries groupBookingId (not bookingId) and is reconciled by
   // its own handler before the per-booking path below.
-  if (paymentIntent.metadata?.type === "group_settlement") {
+  if (route.kind === "group_settlement") {
     const applied = await applyGroupSettlementSucceeded({
       id: paymentIntent.id,
       amount: paymentIntent.amount,
@@ -461,11 +466,9 @@ async function handlePaymentIntentSucceeded(
     return;
   }
 
-  const bookingId = paymentIntent.metadata?.bookingId;
-  if (!bookingId) {
-    logger.warn({ paymentIntentId: paymentIntent.id }, "PaymentIntent succeeded but no bookingId in metadata");
-    return;
-  }
+  // #4647: the route carries the non-empty booking id, so there is no
+  // "succeeded with no bookingId" case left to handle here.
+  const { bookingId } = route;
 
   if (
     await queueSupersededPaymentIntentRefundRecovery(paymentIntent)
@@ -484,16 +487,15 @@ async function handlePaymentIntentSucceeded(
   }
 
   let recordedByCaller = false; // #4285 review: an adoption that just wrote the capture tells the settle it is new money
+  // #4624 review: re-read after a failed adoption - a saved-card charge's own settle may just have written the intent on its row.
   const paymentTransaction =
-    (await findPaymentTransactionByIntentId({
-      paymentIntentId: paymentIntent.id,
-    })) ?? (await adoptUnknownIntentsAttemptRow(paymentIntent, event, bookingId, (adopted) => (recordedByCaller = adopted)));
+    (await findPaymentTransactionByIntentId({ paymentIntentId: paymentIntent.id })) ??
+    (await adoptUnknownIntentsAttemptRow(paymentIntent, event, bookingId, (adopted) => (recordedByCaller = adopted))) ??
+    (await findPaymentTransactionByIntentId({ paymentIntentId: paymentIntent.id }));
 
+  // #4624 (`INV-INT-033`): the app's own intent, but no PRIMARY row to settle it with - money taken that nothing records.
   if (!paymentTransaction || paymentTransaction.kind !== PaymentTransactionKind.PRIMARY) {
-    logger.warn(
-      { paymentIntentId: paymentIntent.id, bookingId },
-      "No primary payment transaction found for PaymentIntent"
-    );
+    await recordUnmatchedAppStripePayment(paymentIntent, event, format, { bookingId, matchedKind: paymentTransaction?.kind ?? null });
     return;
   }
 
@@ -693,7 +695,7 @@ async function handlePaymentIntentFailed(
 ) {
   // Group settlement intents have no per-booking payment transaction; the
   // children stay CONFIRMED (beds held) so the organiser can retry.
-  if (paymentIntent.metadata?.type === "group_settlement") {
+  if (paymentIntent.metadata?.type === GROUP_SETTLEMENT_INTENT_TYPE) {
     await markGroupSettlementIntentFailed(paymentIntent.id, PaymentStatus.FAILED);
     logger.info(
       { paymentIntentId: paymentIntent.id, groupBookingId: paymentIntent.metadata?.groupBookingId },
@@ -775,7 +777,7 @@ async function handlePaymentIntentCanceled(
 ) {
   // Group settlement intents have no per-booking payment transaction; record the
   // canceled state and leave the children CONFIRMED for a fresh settlement.
-  if (paymentIntent.metadata?.type === "group_settlement") {
+  if (paymentIntent.metadata?.type === GROUP_SETTLEMENT_INTENT_TYPE) {
     await markGroupSettlementIntentFailed(paymentIntent.id, PaymentStatus.FAILED);
     return;
   }

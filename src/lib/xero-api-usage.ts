@@ -51,9 +51,12 @@ interface UsageBucket {
  * each other, which is why this only ever showed as an off-by-one LABEL on the
  * admin usage panel rather than as a lost count.
  *
- * Nothing gates on this figure — it is an operator display of Xero API calls
- * against a daily budget — so the change costs at most one day's bucket being
- * split across the deploy, and no migration.
+ * When CT-5 moved it, nothing gated on this figure - it was only an operator
+ * display - so the change cost at most one day's bucket being split across the
+ * deploy, and no migration. Since #4531 one gate does read it: a deferrable
+ * call (`xeroDailyBudgetAllowsDeferrableCall`) stops at the "critical"
+ * threshold of today's bucket. A mis-bucketed day now changes behaviour, though
+ * only by deferring a call that can always wait or by letting one through.
  */
 async function clubUsageDate(at: Date): Promise<Date> {
   const zone = await readClubTimeZoneOutsideRequest();
@@ -66,6 +69,29 @@ function getUsageStatus(totalCalls: number): "healthy" | "warning" | "critical" 
   if (percent >= XERO_WARNING_THRESHOLDS[1]) return "critical";
   if (percent >= XERO_WARNING_THRESHOLDS[0]) return "warning";
   return "healthy";
+}
+
+/**
+ * #4531: whether a DEFERRABLE Xero call may spend today's budget - one whose
+ * caller loses nothing by waiting for a later run, such as confirming that a
+ * payment missing from an invoice was deleted. It stops at the "critical"
+ * threshold above, so the last share of the day is left to the outbox and the
+ * inbound sync. Xero's own daily-limit cooldown still refuses every call on
+ * top of this (`XeroDailyLimitError`). A deployment without the usage tables
+ * records nothing, so nothing is withheld here.
+ */
+export async function xeroDailyBudgetAllowsDeferrableCall(): Promise<boolean> {
+  const usagePrisma = prisma as XeroApiUsagePrisma;
+  if (!usagePrisma.xeroApiUsageDaily) {
+    return true;
+  }
+  const usageDate = await clubUsageDate(new Date());
+  const daily = (await usagePrisma.xeroApiUsageDaily.findUnique({
+    where: { usageDate },
+    select: { totalCalls: true },
+  })) as { totalCalls: number } | null;
+  const status = getUsageStatus(daily?.totalCalls ?? 0);
+  return status === "healthy" || status === "warning";
 }
 
 function truncateErrorMessage(errorMessage?: string | null): string | null {

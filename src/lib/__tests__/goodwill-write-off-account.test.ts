@@ -53,9 +53,11 @@ const h = vi.hoisted(() => {
         where.appliedToBookingId.in.map((appliedToBookingId) => ({ appliedToBookingId, _sum: { amountCents: -state.appliedCents } })),
       findUnique: async () => null,
       aggregate: async () => ({ _sum: { amountCents: -state.appliedCents } }),
+      // #4220: the one lot loader groups the rows it reads by member (the booking's, m1).
       findMany: async () =>
         state.lots.map((l) => ({
           id: l.id,
+          memberId: "m1",
           amountCents: l.amountCents,
           type: l.type,
           xeroCreditNoteId: l.xeroCreditNoteId,
@@ -243,8 +245,8 @@ describe("goodwill credit spent on a booking (#2717)", () => {
  *
  * Restored cancellation credit (#1547) is the sharp case. It is the member's own
  * prepaid money coming back, it is written with no note, and NOTHING ever
- * backfills one — `backfillCancellationCreditXeroNote` matches three literal
- * descriptions and "Credit restored from cancelled booking …" is not among them.
+ * backfills one — `stampCancellationCreditXeroNote` stamps the credit a note names,
+ * else three literal descriptions, and "Credit restored from cancelled booking …" is neither.
  * Booked as goodwill it would show the club an expense it never incurred beside
  * revenue it did bill; net profit is unchanged, which is exactly why nobody
  * notices until a treasurer asks what the goodwill line is.

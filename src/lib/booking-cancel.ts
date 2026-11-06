@@ -48,6 +48,7 @@ import { bookingReducedThroughCreditGiveBack } from "@/lib/booking-credit-give-b
 import { cancelTieredAppliedCreditCents } from "@/lib/booking-payment-state";
 import { refundedPaymentCreditRestore } from "@/lib/cancel-refunded-payment-credit";
 import { postCancellationLedgerLines } from "@/lib/booking-ledger-cancellation-sync";
+import { resolveBookingMoneyPostingContext } from "@/lib/member-money/doors";
 import {
   applyLocalRefundAllocation,
   foldIntoTransactionRefundedAmount,
@@ -365,6 +366,8 @@ async function cancelLinkedProvisionalChildBookings(
     select: { id: true, lodgeId: true },
   });
 
+  // #4627: the journal's posting context, resolved before any child's transaction.
+  const journal = children.length > 0 ? await resolveBookingMoneyPostingContext() : null;
   for (const candidate of children) {
     const child = await prisma.$transaction(async (tx) => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
@@ -419,7 +422,7 @@ async function cancelLinkedProvisionalChildBookings(
         await restoreCreditFromBooking(childOwnerMemberId, fresh.id, tx);
       }
       // #3611: nothing kept, so only the stay is reversed (if confirmed on the ledger).
-      await postCancellationLedgerLines({ store: tx, bookingId: fresh.id, lodgeId: fresh.lodgeId, keptCents: 0, site: "booking-cancel:linked-child" });
+      await postCancellationLedgerLines({ store: tx, journal: journal!, bookingId: fresh.id, lodgeId: fresh.lodgeId, keptCents: 0, site: "booking-cancel:linked-child" });
       return fresh;
     });
 
@@ -534,7 +537,11 @@ async function performBookingCancellation(
   // reachable from `instrumentation.node.ts` through `general-cron-runner` ->
   // `booking-request.ts`, and `club-time/server` is a bare throw outside the
   // `react-server` condition.
-  const todayAtClub = clubToday(await readClubTimeZoneOutsideRequest());
+  const clubZone = await readClubTimeZoneOutsideRequest();
+  const todayAtClub = clubToday(clubZone);
+  // #4627: the journal's posting context, resolved here for the same reason
+  // and on the same zone, so the cancellation has one club day.
+  const journal = await resolveBookingMoneyPostingContext({ zone: clubZone });
   const booking = await prisma.booking.findUnique({
     where: { id: bookingId },
     include: {
@@ -757,7 +764,7 @@ async function performBookingCancellation(
         ? await restoreCreditFromBooking(restoreMemberId, bookingId, tx)
         : 0;
       // #3611: nothing kept, so only the stay is reversed (if confirmed on the ledger).
-      await postCancellationLedgerLines({ store: tx, bookingId, lodgeId: fresh.lodgeId, keptCents: 0, site: "booking-cancel:no-payment" });
+      await postCancellationLedgerLines({ store: tx, journal, bookingId, lodgeId: fresh.lodgeId, keptCents: 0, site: "booking-cancel:no-payment" });
 
       // #2576 §6. Cancellation is the first change class the owner names, and it
       // is the one that removes attendance outright: cancelling the booking a
@@ -951,7 +958,7 @@ async function performBookingCancellation(
         ? await restoreCreditFromBooking(restoreMemberId, bookingId, tx)
         : 0;
       // #3611: nothing kept, so only the stay is reversed (if confirmed on the ledger).
-      await postCancellationLedgerLines({ store: tx, bookingId, lodgeId: fresh.lodgeId, keptCents: 0, site: "booking-cancel:pending" });
+      await postCancellationLedgerLines({ store: tx, journal, bookingId, lodgeId: fresh.lodgeId, keptCents: 0, site: "booking-cancel:pending" });
       // #2576 §6. Cancellation is the first change class the owner names, and it
       // is the one that removes attendance outright: cancelling the booking a
       // qualifying adult member is staying on can leave ANOTHER booking on the same
@@ -1250,7 +1257,7 @@ async function performBookingCancellation(
       // #3611: nothing kept, so only the stay is reversed (if confirmed on the ledger) -
       // unless the tier kept credit (#3809), which the ledger keeps so owed(b) reaches zero.
       const creditKept = tiered ? { keptCents: appliedAtCancelCents - creditRestoredCents, policyKeptCents: tiered.appliedCreditBaseCents - creditRestoredCents } : { keptCents: 0 };
-      await postCancellationLedgerLines({ store: tx, bookingId, lodgeId: fresh.lodgeId, ...creditKept, site: "booking-cancel:unpaid" });
+      await postCancellationLedgerLines({ store: tx, journal, bookingId, lodgeId: fresh.lodgeId, ...creditKept, site: "booking-cancel:unpaid" });
 
       // Applied-credit rows the inbound reconcile linked to a real Xero
       // credit-note allocation against this booking's invoice: the invoice's
@@ -1866,6 +1873,7 @@ async function performBookingCancellation(
       refundAmountCents,
     });
     let manualRefundTaskId: string | null = null;
+    let cancellationCreditId: string | undefined;
     // #3949 review round 4: the organiser it is repaid to, named in the task's reason and the admins' alert.
     const organiserName = branch === "manual" && organiserByHand && fresh.parentBookingId
       ? bookingOwnerName(await tx.booking.findUniqueOrThrow({ where: { id: fresh.parentBookingId }, select: BOOKING_OWNER_NAME_SELECT })) : null;
@@ -1909,13 +1917,8 @@ async function performBookingCancellation(
           "A booking owned by an organisation cannot be refunded as member credit (#3369).",
         );
       }
-      await createCancellationCredit(
-        creditRecipientMemberId,
-        refundAmountCents,
-        bookingId,
-        undefined,
-        tx
-      );
+      // #4685: the credit's id rides the account-credit note's row, whose stamp writes it by id.
+      cancellationCreditId = await createCancellationCredit(creditRecipientMemberId, refundAmountCents, bookingId, undefined, tx);
     }
 
     // Card-path refund debt, ATOMIC with the claim (F2, #1349): persist the
@@ -1962,6 +1965,7 @@ async function performBookingCancellation(
     // claim took first, in this transaction (design §5.1).
     await postCancellationLedgerLines({
       store: tx,
+      journal,
       bookingId,
       lodgeId: fresh.lodgeId,
       keptCents: ledgerKeptCents,
@@ -2029,7 +2033,7 @@ async function performBookingCancellation(
       cardRefundPlan,
       plannedCardRefundCents,
       cardShortfall,
-      manualRefundTaskId,
+      manualRefundTaskId, cancellationCreditId,
       organiserName,
       clearingOperationId,
       branch,
@@ -2063,7 +2067,7 @@ async function performBookingCancellation(
     cardRefundPlan,
     plannedCardRefundCents,
     cardShortfall,
-    manualRefundTaskId,
+    manualRefundTaskId, cancellationCreditId,
     organiserName,
     clearingOperationId,
     branch,
@@ -2218,9 +2222,7 @@ async function performBookingCancellation(
       const queuedCreditNote = await enqueueXeroAccountCreditNoteOperation(
         paymentId,
         refundAmountCents,
-        {
-          createdByMemberId: sessionUserId,
-        }
+        { createdByMemberId: sessionUserId, memberCreditId: cancellationCreditId },
       );
 
       if (queuedCreditNote.queueOperationId && (await isXeroConnected())) {
@@ -2436,7 +2438,6 @@ async function performBookingCancellation(
       }
     }
 
-    // Queue the Xero credit note durably (allocated against the original invoice).
     try {
       // #4097: the card refund's note, for what the card refund carries; the rest is the hand-back's.
       const queuedCreditNote = await enqueueXeroRefundCreditNoteOperation(
@@ -2444,6 +2445,7 @@ async function performBookingCancellation(
         plannedCardRefundCents,
         {
           createdByMemberId: sessionUserId,
+          refundMethod: "card",
         }
       );
 

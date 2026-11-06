@@ -75,6 +75,8 @@ Location data that phones embed in photographs is removed on upload, so
 posting a picture does not publish where it was taken. A picture can be up to
 8 MB, and a post can carry up to six.
 
+![Message board showing the post composer, sharing control and empty board](../images/public/member-message-board.png)
+
 ## Good to know
 
 - **Posts are limited to ten an hour.** That is far more than ordinary use; it

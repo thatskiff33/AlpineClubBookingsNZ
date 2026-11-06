@@ -190,6 +190,23 @@ export async function loadServerNzSettings(
   }
 }
 
+/**
+ * The central server this deployment pairs with, from `SERVERNZ_DEFAULT_BASE_URL`
+ * (triyder/AlpineClubBookingsNZ#81). It is OFFERED, never used: the setup page
+ * pre-fills its address field from it when no address has been saved, and the
+ * administrator's Save is what stores it. The sync and the Request a Connection
+ * link read only the SAVED address, so a fresh install contacts no server
+ * nobody has looked at. Held to the same rule as a typed address (`https`,
+ * public host); a value that fails it is ignored as if unset, so a bad
+ * `.env` cannot pre-fill something the page would refuse to save.
+ */
+export function serverNzDefaultBaseUrl(): string | null {
+  const raw = process.env.SERVERNZ_DEFAULT_BASE_URL;
+  if (!raw?.trim()) return null;
+  const checked = validateCentralServerBaseUrl(raw);
+  return checked.ok ? (checked.value ?? null) : null;
+}
+
 export interface BaseUrlValidation {
   ok: boolean;
   /** Present when `ok`; the normalised origin-and-path to store. */

@@ -256,7 +256,7 @@ function baseInput(
     todayAtClub: FIXTURE_CLUB_DAY,
     format: CLUB_FORMAT_TEST,
     ...overrides,
-  };
+  } as Parameters<typeof createConfirmedBooking>[0];
 }
 
 /** The `data` payload of each tx.booking.create call, in order. */

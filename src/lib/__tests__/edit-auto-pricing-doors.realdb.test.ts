@@ -35,10 +35,12 @@
  */
 import { Role, type PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { releaseBookingJournalForTeardown } from "./support/booking-financial-history-teardown";
 
 import { raceSession } from "@/lib/__tests__/support/race-session-double";
 
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
+import { memberMoneyTestContext } from "./support/member-money-fixtures";
 
 // The quote route reads the session through `@/lib/auth`: the harness's one
 // shared double, set per call on `raceSession` and put back to signed out.
@@ -125,6 +127,8 @@ async function clean(): Promise<void> {
     },
   });
   await prisma.paymentRecoveryOperation.deleteMany({ where: { bookingId: BOOKING_ID } });
+  // #4627: the doors post journal batches bridged to these lines; release them first.
+  await releaseBookingJournalForTeardown(prisma, [BOOKING_ID]);
   await prisma.bookingLedgerLine.deleteMany({ where: { bookingId: BOOKING_ID } });
   await prisma.bookingEvent.deleteMany({ where: { bookingId: BOOKING_ID } });
   await prisma.manualRefundTask.deleteMany({ where: { bookingId: BOOKING_ID } });
@@ -411,6 +415,7 @@ async function removeGuest(guestId: string) {
         actorRole: "ADMIN",
         today: TODAY,
         format: CLUB_FORMAT_TEST,
+        journal: memberMoneyTestContext(),
       }),
     { maxWait: 10_000, timeout: 20_000 },
   );

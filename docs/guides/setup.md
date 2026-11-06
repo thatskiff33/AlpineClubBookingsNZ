@@ -58,7 +58,7 @@ the areas it links to:
 | --- | --- | --- |
 | Initial Setup | Install checklist, club identity, modules, lodge records, health (`/admin/setup/foundations`) | support |
 | Finance | Finance reporting, Xero setup, sync tools, report mappings — collapsed by default (`/admin/setup/finance`) | finance |
-| Booking Rules | Booking policy, seasons, age groups, promos, inventory, copy (`/admin/setup/booking-rules`) | bookings, lodge |
+| Booking Rules | Booking policy, seasons, age groups, promos, inventory, copy (`/admin/setup/booking-rules`) | bookings (the hub page itself, #4581); its cards need bookings, lodge or support |
 | Operational Integrations | Provider readiness, Xero connection, modules, delivery health (`/admin/setup/integrations`) | support, finance |
 | Membership & Members | Membership types, member fields, subscription lockout ([membership-setup](membership-setup.md)) | membership |
 | Cancellation | Cancellation settings, request queues, message copy (`/admin/setup/cancellation`) | membership, support |
@@ -81,6 +81,15 @@ act on this one if the club is not in New Zealand. Still **blocked** after an
 upgrade means the application has not restarted since the migration; restart it,
 or run `pnpm run config:self-heal`.
 
+The **Data Encryption Key** step is about the server, not a setting you can
+change here. It reads **blocked** until whoever runs the server sets a
+data-encryption key whenever a provider credential or an authenticator-app
+secret is stored, because those are still protected only by the server's
+sign-in secret. It also reads blocked if a key that was set has gone missing.
+The site works normally meanwhile. The step counts what is still on the
+old secret and, once a key is set, how to move it; the server steps are in
+[`CONFIGURATION.md` → Data-encryption keys](../../CONFIGURATION.md#data-encryption-keys-4456).
+
 ## Troubleshooting
 
 | Symptom | Likely cause | Fix |
@@ -90,6 +99,7 @@ or run `pnpm run config:self-heal`.
 | A check stays "blocked" | A required dependency isn't in place | Open the linked area and resolve the named requirement |
 | **Club Time Zone** stays blocked right after an upgrade | The application has not restarted since the migration, so the zone has not been recorded yet. The zone in use is still the right one | Restart the application, or run `pnpm run config:self-heal`. See the [Club Time Zone guide](club-time.md) |
 | **Club Time Zone** shows a warning about confirming the zone | The server's `TZ` named no actual place, so `Pacific/Auckland` was recorded rather than guessed at from a value that names no location | If the club is in New Zealand, acknowledge the step. If not, set the real zone at [`/admin/club-time`](club-time.md) — this is the case that would otherwise put a non-NZ club's times out by hours |
+| **Data Encryption Key** is blocked | No data-encryption key is set on the server yet, or one that was set is now missing or invalid (the step says which) | Ask whoever runs the server to set or restore `DATA_ENCRYPTION_KEYS`, per [`DEPLOYMENT.md`](../../DEPLOYMENT.md#adding-a-data-encryption-key-4456) |
 | Setup shows incomplete after go-live | Optional checks were left unskipped | Mark genuinely-skipped checks as skipped so the summary reflects reality |
 
 ## Related links

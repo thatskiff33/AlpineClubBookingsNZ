@@ -55,6 +55,7 @@ import {
 import { isGroupSettlementBoundToInvoice } from "@/lib/group-settlement-invoice-binding";
 import { voidCancelledGroupSettlementInvoice } from "./xero-group-settlement-invoice-voids";
 import {
+  boundGroupSettlementInvoiceCompletion,
   currentGroupSettlementInvoiceAttempt,
   groupSettlementInvoiceCreateKey,
   groupSettlementInvoiceLink,
@@ -253,9 +254,10 @@ export async function createXeroInvoiceForGroupSettlement(
     return null;
   }
 
-  // Already raised: its link was written beside the pointer under the lock
-  // (#3642); re-writing it here could re-activate a retired invoice's link.
+  // Already raised: its link was written beside the pointer under the lock (#3642), and re-writing it here could
+  // re-activate a retired invoice's link. #4710: a claimed row closes SUCCEEDED on the bound invoice, never left RUNNING.
   if (settlement.xeroInvoiceId) {
+    if (options?.syncOperation) await completeXeroSyncOperation(options.syncOperation, boundGroupSettlementInvoiceCompletion({ id: settlement.xeroInvoiceId, number: settlement.xeroInvoiceNumber ?? null }));
     return settlement.xeroInvoiceId;
   }
 

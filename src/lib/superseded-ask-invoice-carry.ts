@@ -31,7 +31,9 @@
  *   `followSupersededAskInvoicesForIntentSafely`: a leg landing after the
  *   supersession's own move;
  * - the waiting-invoice reaper, before it retires an invoice whose booking no
- *   longer names its intent: the backstop for a crash between the others.
+ *   longer names its intent: the backstop for a crash between the others. It
+ *   keeps, never retires, an invoice whose ask's cancel is still in flight
+ *   (`supersededAskCancelInFlight`, #4665): that cancel's terminal step moves it.
  *
  * WHAT MOVES, and what is refused (each refusal leaves the row exactly as it
  * was, to the reaper and the booking-vs-Xero repair pass as before):
@@ -77,7 +79,7 @@
  * by a capture of its OWN intent, and widening that to another intent would
  * give the re-queue a second trigger it was never reviewed for.
  */
-import { PaymentSource, PaymentStatus, PaymentTransactionKind, type Prisma } from "@prisma/client";
+import { PaymentRecoveryOperationType, PaymentSource, PaymentStatus, PaymentTransactionKind, type Prisma } from "@prisma/client";
 
 import { isAdditionalAskRetiredBookingStatus } from "@/lib/additional-payment-chase";
 import { anchorCaptureHasReceipt, captureChangeId } from "@/lib/additional-capture-receipt-link";
@@ -85,6 +87,7 @@ import { keptCaptureAnchorId } from "@/lib/kept-late-capture-change-receipt";
 import { findActiveSupplementaryInvoiceLink } from "@/lib/late-capture-xero-receipt";
 import logger from "@/lib/logger";
 import { LEDGER_ROWS_OLDEST_FIRST } from "@/lib/payment-ledger-order";
+import { isPaymentRecoveryOperationInFlight, PAYMENT_RECOVERY_OPERATION_IN_FLIGHT_WHERE } from "@/lib/payment-recovery-constants";
 import { isCapturedTransactionStatus, isOpenIntentTransactionStatus } from "@/lib/payment-transaction-status";
 import { prisma } from "@/lib/prisma";
 import { SUPERSEDED_INTENT_OPERATION_TYPES } from "@/lib/superseded-intent-ownership";
@@ -163,7 +166,8 @@ export type CarriedChain = { carrier: LedgerRow; superseded: LedgerRow[] };
  * like a FAILED one, with whatever was already moved onto it (review 2, F1);
  * while its cancel is still in flight it is passed over, and the cancel
  * step's two terminal branches (FAILED, or the captured hand-off to its
- * refund) run the move once it lands.
+ * refund) run the move once it lands - the reaper keeps its invoice meanwhile
+ * (`supersededAskCancelInFlight`, #4665).
  *
  * Passed over, neither carrying nor carried: a row a price reduction withdrew
  * (`retireUnpaidAskChain` retires and counts its own invoices).
@@ -233,6 +237,85 @@ function waitingOnIntentsWhere(intentIds: readonly string[]): Prisma.XeroSyncOpe
     lastErrorCode: null,
     OR: intentIds.map((intentId) => ({ requestPayload: { path: ["paymentIntentId"], equals: intentId } })),
   };
+}
+
+/**
+ * #4491 (`INV-SSOT`): THE MOVE'S ONE TEST OF ONE CHANGE'S WAITING INVOICES,
+ * before anything about the carrier: the change has no active invoice link,
+ * no other invoice of it is going out, and every invoice moving has a billed
+ * figure it can read. The move asks it under its keys
+ * (`moveAnchorOntoCarrier`); a minter asks it, through
+ * `readAskInvoicesForCarry`, before it supersedes. One function, so the two
+ * cannot disagree about which invoice may move.
+ */
+export async function anchorInvoicesMoveRefusal(
+  store: Pick<Prisma.TransactionClient, "xeroSyncOperation" | "xeroObjectLink">,
+  anchorId: string,
+  moving: ReadonlyArray<{ id: string; requestPayload: Prisma.JsonValue | null }>,
+): Promise<Extract<SupersededAskInvoiceRefusal, "invoice-already-linked" | "another-invoice-queued" | "unreadable-invoice"> | null> {
+  const anchor = { localModel: "BookingModification" as const, localId: anchorId };
+  if (await findActiveSupplementaryInvoiceLink([anchor], store)) return "invoice-already-linked";
+  const otherOutstanding = await store.xeroSyncOperation.findFirst({
+    where: { ...outstandingSupplementaryInvoiceOperationsWhere(anchor), id: { notIn: moving.map((operation) => operation.id) } },
+    select: { id: true },
+  });
+  if (otherOutstanding) return "another-invoice-queued";
+  if (moving.some((operation) => supplementaryInvoiceBilledCents(operation.requestPayload) === null)) return "unreadable-invoice";
+  return null;
+}
+
+/** One supplementary invoice naming an ask, and whether the move below could take it, and if not why. */
+export type AskInvoiceForCarry = {
+  anchorId: string | null;
+  /** The intent its money was first asked on (`supplementaryInvoiceWaitedFirstOn`). */
+  firstWaitedOn: string | null;
+  carriable: boolean;
+  /** Why the move would refuse it: not waiting on one of the asks, or the change's refusal. */
+  refusal: "not-waiting" | NonNullable<Awaited<ReturnType<typeof anchorInvoicesMoveRefusal>>> | null;
+};
+
+/**
+ * #4491 (`INV-ADDPAY-052`): THE INVOICES NAMING THESE ASKS, AS THE MOVE WOULD
+ * FIND THEM, for a minter that must know BEFORE it supersedes them whether
+ * each would follow it. The same rows the move reads (`waitingOnIntentsWhere`,
+ * one change at a time) and the move's own test of them
+ * (`anchorInvoicesMoveRefusal`), read without its locks. Any other live
+ * supplementary invoice naming the asks is returned too, `not-waiting`. The
+ * carrier's own checks (that it is the newest row, that it would not bill
+ * more than it asks) are the move's alone, against the carrier it is given.
+ */
+export async function readAskInvoicesForCarry(
+  store: Pick<Prisma.TransactionClient, "xeroSyncOperation" | "xeroObjectLink">,
+  intentIds: readonly string[],
+): Promise<AskInvoiceForCarry[]> {
+  if (intentIds.length === 0) return [];
+  const naming = await store.xeroSyncOperation.findMany({
+    where: {
+      ...SUPPLEMENTARY_INVOICE_CREATE_WHERE,
+      status: { not: "CANCELLED" },
+      OR: intentIds.map((intentId) => ({ requestPayload: { path: ["paymentIntentId"], equals: intentId } })),
+    },
+    select: { id: true, localId: true, requestPayload: true },
+  });
+  const waiting = await store.xeroSyncOperation.findMany({
+    where: waitingOnIntentsWhere(intentIds),
+    select: { id: true, localId: true, requestPayload: true },
+  });
+  const refusalByAnchor = new Map<string, AskInvoiceForCarry["refusal"]>();
+  for (const anchorId of [...new Set(waiting.flatMap((row) => (row.localId ? [row.localId] : [])))]) {
+    refusalByAnchor.set(anchorId, await anchorInvoicesMoveRefusal(store, anchorId, waiting.filter((row) => row.localId === anchorId)));
+  }
+  return naming.map((operation) => {
+    const refusal = waiting.some((row) => row.id === operation.id) && operation.localId
+      ? (refusalByAnchor.get(operation.localId) ?? null)
+      : ("not-waiting" as const);
+    return {
+      anchorId: operation.localId,
+      firstWaitedOn: supplementaryInvoiceWaitedFirstOn(operation.requestPayload),
+      carriable: refusal === null,
+      refusal,
+    };
+  });
 }
 
 /**
@@ -374,22 +457,15 @@ async function moveAnchorOntoCarrier(input: {
     if (moving.length === 0) return { moved: 0, refusal: null };
     const movingIds = moving.map((operation) => operation.id);
 
-    const anchor = { localModel: "BookingModification" as const, localId: input.anchorId };
-    if (await findActiveSupplementaryInvoiceLink([anchor], tx)) {
-      return { moved: 0, refusal: "invoice-already-linked" as const };
-    }
-    const otherOutstanding = await tx.xeroSyncOperation.findFirst({
-      where: { ...outstandingSupplementaryInvoiceOperationsWhere(anchor), id: { notIn: movingIds } },
-      select: { id: true },
-    });
-    if (otherOutstanding) return { moved: 0, refusal: "another-invoice-queued" as const };
+    // The change's own refusals, the one test a minter also asks (#4491, `anchorInvoicesMoveRefusal`).
+    const anchorRefusal = await anchorInvoicesMoveRefusal(tx, input.anchorId, moving);
+    if (anchorRefusal) return { moved: 0, refusal: anchorRefusal };
 
     // NEVER BILL MORE THAN THE CARRIER ASKS FOR. What already names it plus
     // what moves must fit its amount, and what bills changes other than its
     // own (`captureChangeId`; with none, every change's) must fit the part it
     // carried (review M3: the sum, never one change at a time).
     const movingBilled = moving.map((operation) => supplementaryInvoiceBilledCents(operation.requestPayload));
-    if (movingBilled.some((cents) => cents === null)) return { moved: 0, refusal: "unreadable-invoice" as const };
     const onCarrier = await tx.xeroSyncOperation.findMany({
       where: { ...supplementaryInvoicesNamingIntentWhere(carrierIntentId), id: { notIn: movingIds } },
       select: { localId: true, requestPayload: true },
@@ -466,6 +542,25 @@ async function moveAnchorOntoCarrier(input: {
     }
     return { moved, refusal: moved > 0 ? null : ("changed-under-lock" as const) };
   });
+}
+
+/**
+ * #4665 (`INV-PAY-140`): IS THIS ASK'S SUPERSEDE CANCEL STILL IN FLIGHT? While
+ * it is, `supersededAskCarriers` passes the ask over - neither carrying nor
+ * carried - so a move finds nothing for the invoices waiting on it, and the
+ * cancel step's terminal branches run that move once it lands. The reaper asks
+ * this before it would retire such an invoice, and keeps it instead: retired,
+ * it could never follow the money, and the carrier's capture would name no
+ * invoice. In flight is the runner's own reading
+ * (`isPaymentRecoveryOperationInFlight`): a cancel the runner will never claim
+ * again moves nothing, so the reaper decides that invoice as before.
+ */
+export async function supersededAskCancelInFlight(paymentIntentId: string): Promise<boolean> {
+  const cancels = await prisma.paymentRecoveryOperation.findMany({
+    where: { type: PaymentRecoveryOperationType.CANCEL_PAYMENT_INTENT, paymentIntentId, ...PAYMENT_RECOVERY_OPERATION_IN_FLIGHT_WHERE },
+    select: { status: true, attempts: true, nextRetryAt: true },
+  });
+  return cancels.some(isPaymentRecoveryOperationInFlight);
 }
 
 /**

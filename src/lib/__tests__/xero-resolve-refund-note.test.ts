@@ -170,6 +170,7 @@ import {
   RESOLVE_NOTE_WITHDRAW_FAILED_MESSAGE,
 } from "@/lib/bank-refund-void-follow-up-copy";
 import { QUEUED_LIVE_COPY_REFUSAL } from "@/lib/xero-operation-resolve-guards";
+import { unrecordedNoteStampPayload } from "@/lib/xero-refund-note-in-flight";
 
 /** A FAILED $200 refund note on pay_1, queued and never raised: no note of its own. */
 function refundNoteRow(overrides: Partial<Row> = {}): Row {
@@ -612,6 +613,102 @@ describe("Resolve by hand records the officer's note on a refund credit-note cre
     expect((await response.json()).error).toBe(QUEUED_LIVE_COPY_REFUSAL);
     expect(state.calls).toContain("ROLLBACK");
     expect(state.rows.get("op_note")).toMatchObject(unresolved);
+  });
+
+  describe("#4692 review (F4): a stamped row whose own note another row already recorded can still be resolved", () => {
+    /** Row Z made note cn-hand, its record lost its wait, and its stamp names that note. */
+    const stampedNaming = (creditNoteId: string) =>
+      refundNoteRow({ lastErrorCode: "REFUND_NOTE_UNRECORDED", responsePayload: unrecordedNoteStampPayload(creditNoteId) });
+    /** The officer already resolved the original row X with cn-hand: its row and its live link record it. */
+    const originalResolvedWithIt = () => {
+      state.rows.set("op_original", refundNoteRow({ id: "op_original", manuallyResolvedAt: new Date("2026-06-30T00:00:00.000Z"), xeroObjectType: "CREDIT_NOTE", xeroObjectId: "cn-hand", xeroObjectNumber: "CN-0123" }));
+      state.links.push(resolveLink({ id: "link_original", metadata: { ...(resolveLink().metadata as object), resolvedOperationId: "op_original" } }));
+    };
+
+    it("MUTATION: records that very note on the row, writing no second link, so it covers nothing twice and the row leaves the failure list", async () => {
+      state.rows.set("op_note", stampedNaming("cn-hand"));
+      originalResolvedWithIt();
+
+      const response = await resolve(withNumber);
+
+      expect(response.status).toBe(200);
+      expect(state.rows.get("op_note")).toMatchObject({ xeroObjectId: "cn-hand", xeroObjectNumber: "CN-0123", manuallyResolvedAt: expect.any(Date) });
+      expect(mocks.writeHandMadeRefundNoteLink).not.toHaveBeenCalled();
+      expect(state.links.map((link) => link.id)).toEqual(["link_original"]);
+    });
+
+    it("MUTATION: withdrawn because a retry was found running after the commit, it restores the stamped row and leaves the sibling's link live", async () => {
+      state.rows.set("op_note", stampedNaming("cn-hand"));
+      originalResolvedWithIt();
+      // A drain that claimed its queued retry just as the claim committed.
+      state.afterCommit = () => state.rows.set("op_requeue", requeueRow({ status: "RUNNING", startedAt: new Date() }));
+
+      const response = await resolve(withNumber);
+
+      expect(response.status).toBe(409);
+      expect((await response.json()).error).toMatch(/retry of this Xero operation is running/);
+      // Unresolved and naming no note again, still stamped: the row holds its fence once more.
+      expect(state.rows.get("op_note")).toMatchObject({ ...unresolved, lastErrorCode: "REFUND_NOTE_UNRECORDED" });
+      // The withdrawal retires only a link this resolve wrote - it wrote none - never the original's.
+      expect(state.links).toEqual([expect.objectContaining({ id: "link_original", active: true })]);
+    });
+
+    it.each([
+      ["the stamp names another note", () => stampedNaming("cn-other"), () => originalResolvedWithIt()],
+      ["the row holds no stamp", () => refundNoteRow(), () => originalResolvedWithIt()],
+      ["the note's only link is retired (a withdrawn resolve)", () => stampedNaming("cn-hand"), () => {
+        state.links.push(resolveLink({ id: "link_withdrawn", active: false, metadata: { ...(resolveLink().metadata as object), resolvedOperationId: "op_original" } }));
+      }],
+      ["the note is linked on another payment only", () => stampedNaming("cn-hand"), () => {
+        state.links.push(resolveLink({ id: "link_elsewhere", localId: "pay_2", metadata: { ...(resolveLink().metadata as object), resolvedOperationId: "op_elsewhere" } }));
+      }],
+    ])("MUTATION: still refuses the note as already recorded when %s", async (_label, row, beside) => {
+      state.rows.set("op_note", row());
+      beside();
+
+      const response = await resolve(withNumber);
+
+      expect(response.status).toBe(409);
+      expect((await response.json()).error).toMatch(/already recorded against another refund/);
+      expect(state.rows.get("op_note")).toMatchObject(unresolved);
+    });
+  });
+
+  describe("#4692 review (finding 2): a row holding an unrecorded note is never refused for good over a copy its fence holds", () => {
+    const stamped = (overrides: Partial<Row> = {}) => refundNoteRow({ lastErrorCode: "REFUND_NOTE_UNRECORDED", ...overrides });
+
+    it("MUTATION: resolves over a PENDING copy of the same refund (re-queued after Mark failed), which the fence keeps from minting", async () => {
+      state.rows.set("op_note", stamped());
+      state.rows.set("op_copy", refundNoteRow({ id: "op_copy", status: "PENDING" }));
+
+      const response = await resolve(withNumber);
+
+      expect(response.status).toBe(200);
+      expect(state.rows.get("op_note")).toMatchObject({ xeroObjectId: "cn-hand", xeroObjectNumber: "CN-0123", manuallyResolvedAt: expect.any(Date) });
+      // The copy is left to the outbox, which closes it CANCELLED at its next claim (`findResolvedSiblingSince`).
+      expect(state.rows.get("op_copy")).toMatchObject({ status: "PENDING" });
+    });
+
+    it("MUTATION: resolves over a PENDING copy queued while the route checked Xero (the claim's re-check under the locks)", async () => {
+      state.rows.set("op_note", stamped());
+      mocks.verifyHandMadeRefundNote.mockImplementationOnce(async () => {
+        state.rows.set("op_copy", refundNoteRow({ id: "op_copy", status: "PENDING" }));
+        return VERIFIED;
+      });
+
+      expect((await resolve(withNumber)).status).toBe(200);
+    });
+
+    it("still refuses over a copy RUNNING now: it is past the fence's read, or about to be", async () => {
+      state.rows.set("op_note", stamped());
+      state.rows.set("op_copy", refundNoteRow({ id: "op_copy", status: "RUNNING", startedAt: new Date("2026-07-01T00:00:00.000Z") }));
+
+      const response = await resolve(withNumber);
+
+      expect(response.status).toBe(409);
+      expect((await response.json()).error).toBe(QUEUED_LIVE_COPY_REFUSAL);
+      expect(state.rows.get("op_note")).toMatchObject(unresolved);
+    });
   });
 
   it("MUTATION (audit, round 2): every refusal of a resolve that offered a number is audited, whichever check refused it", async () => {

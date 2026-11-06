@@ -82,15 +82,21 @@
  * — a fresh POST that executed but whose response was lost is normally
  * recovered within minutes by the `payment_intent.succeeded` (or
  * `payment_failed`) webhook, which adopts the row by the idempotency key Stripe
- * stamps on the event (`adoptSavedCardChargeAttemptForIntent`) — but the
- * alternative to refusing is a charge with no local witness, and a stuck row
- * has two honest exits: a redelivered webhook, or the member saving a card
- * again, which supersedes the attempt.
+ * stamps on the event or, when the event carries none (an asynchronous
+ * capture: `Event.request` is null on it and on every redelivery), by the
+ * attempt id a `_v2` key's metadata carries (#4646,
+ * `adoptSavedCardChargeAttemptForIntent`). Until #4682 every new attempt mints
+ * the original key, which sends no attempt id (`mintedSavedCardChargeKey`), so
+ * its asynchronous capture is adopted by neither, and a redelivery does not
+ * change that: it ends here, the capture is alerted as unmatched
+ * (`INV-INT-033`) and a person matches it. Refusing is still right — the
+ * alternative is a charge with no local witness.
  *
  * What the ledger rows now mean, so nobody "tidies" them: a PRIMARY Stripe row
- * whose `reference` is this module's key built from ITS OWN id is a saved-card
- * charge attempt. PENDING with no intent id: minted, Stripe not yet (or not
- * certainly) asked. PROCESSING with an intent id: Stripe answered with an
+ * whose `reference` is a key built from ITS OWN id for this booking, in either
+ * shape (`savedCardChargeKeyShape`), is a saved-card charge attempt. PENDING
+ * with no intent id: minted, Stripe not yet (or not certainly) asked.
+ * PROCESSING with an intent id: Stripe answered with an
  * unfinished intent. FAILED: this attempt is over — a definite refusal, a dead
  * intent, or overtaken by a later card (`reason` suffixed with why). SUCCEEDED:
  * captured. Rows that are NOT attempt rows fall into two groups. A PRIMARY
@@ -143,16 +149,14 @@ import logger from "@/lib/logger";
 import { LEDGER_ROWS_OLDEST_FIRST } from "@/lib/payment-ledger-order";
 import { readSupersededOwnership } from "@/lib/superseded-capture-ownership";
 import { isCapturedTransactionStatus } from "./payment-transactions";
+import { mintedSavedCardChargeKey, SAVED_CARD_CHARGE_KEY_PREFIX, savedCardChargeKeyShape } from "./saved-card-charge-key";
 
 /**
- * The one prefix every saved-card charge key carries. The ledger filters below
- * select attempt rows by it (the cron's #1992 pre-charge sweep excludes them;
- * #4320's reversal judges them at their own figure), and
- * `savedCardChargeIdempotencyKey` builds the key from it, so no reader and the
- * mint can disagree about what an attempt row is (`INV-SSOT-002`). The complement
- * keeps a NULL `reference` (a link intent's row): SQL `NOT (NULL LIKE …)` is NULL.
+ * Attempt rows by the key prefix (`saved-card-charge-key.ts`), so no reader and
+ * the mint can disagree about what an attempt row is (`INV-SSOT-002`). The
+ * complement keeps a NULL `reference` (a link intent's row): SQL
+ * `NOT (NULL LIKE …)` is NULL.
  */
-export const SAVED_CARD_CHARGE_KEY_PREFIX = "pending_charge_";
 export const SAVED_CARD_CHARGE_ATTEMPT_ROW_WHERE = { reference: { startsWith: SAVED_CARD_CHARGE_KEY_PREFIX } } satisfies Prisma.PaymentTransactionWhereInput;
 export const NOT_SAVED_CARD_CHARGE_ATTEMPT_ROW_WHERE = { OR: [{ reference: null }, { NOT: SAVED_CARD_CHARGE_ATTEMPT_ROW_WHERE }] } satisfies Prisma.PaymentTransactionWhereInput;
 
@@ -196,51 +200,6 @@ export type SavedCardChargeReason =
 const SAVED_CARD_CHARGE_REASONS: ReadonlySet<string> = new Set(
   Object.values(SAVED_CARD_CHARGE_REASON)
 );
-
-/**
- * The Stripe `metadata` every saved-card charge sends — the cron, the admin
- * confirm-pending-guests route and the charge-saved-method route, byte for byte.
- * Modelled on `buildBookingCancellationRefundMetadata` (#1494): the shape is a
- * pure function of the two ids and carries no per-path value, because the admin
- * route's `source: "admin_confirm_pending_guests"` is exactly what made Stripe
- * refuse the shared key with an idempotency parameter mismatch. Which path
- * minted an attempt is recorded on the ledger row's `reason` instead. The
- * webhook reads `bookingId` off this metadata, which is unchanged; nothing
- * downstream reads `memberId` — it is dashboard-only.
- *
- * `chargeSavedCardAttempt` builds it itself from the ids it is handed, so no
- * caller can pass a different shape; exported so the tests can pin the shape
- * without reaching into the charge call.
- */
-export function buildSavedCardChargeMetadata(
-  bookingId: string,
-  /**
-   * The booking OWNER's member id, or null when it is owned by an
-   * `Organisation` (#3369). It is dashboard-only — nothing downstream reads it
-   * — so the key is simply omitted rather than carrying an empty string or an
-   * organisation id under a name that says member.
-   */
-  memberId: string | null
-): Record<string, string> {
-  return memberId ? { bookingId, memberId } : { bookingId };
-}
-
-/**
- * The idempotency key for ONE attempt: the booking id for the operator reading
- * the Stripe dashboard, the attempt row's own id for uniqueness. Stored on the
- * row's `reference` (an indexed free-text column used until now only for
- * Internet-Banking references), so the key can be re-sent when a first POST
- * never answered, so a row can be recognised as an attempt, and so a webhook
- * can find the row by the key Stripe stamps on the event
- * (`Stripe.Event.request.idempotency_key`) when the POST's own response was
- * lost.
- */
-export function savedCardChargeIdempotencyKey(
-  bookingId: string,
-  attemptRowId: string
-): string {
-  return `${SAVED_CARD_CHARGE_KEY_PREFIX}${bookingId}_${attemptRowId}`;
-}
 
 /** A card the caller has already judged chargeable (`INV-PAY-053`). */
 export interface SavedCardToCharge {
@@ -305,7 +264,7 @@ const REFUSAL_MESSAGES: Record<
   superseded_refund_stopped: ({ paymentIntentId }) =>
     `A card payment${paymentIntentId ? ` (${paymentIntentId})` : ""} on this booking was made on a payment a later change replaced, and its refund has stopped retrying, so no new charge was attempted. A person must act: refund it, or close it as paid another way, from Refunds owed on the Payments page or from Stuck States. The next attempt charges once it is.`,
   attempt_key_expired: () =>
-    "An earlier charge attempt for this booking was started more than 23 hours ago and Stripe never confirmed whether it went through. Re-sending it now would be a new charge, so no charge was attempted. An administrator needs to check Stripe for a payment on this booking: if there is one, resend its payment_intent.succeeded event from the Stripe dashboard so it is recorded; if there is none, ask the member to save their card again, which closes this attempt and starts a fresh one.",
+    "An earlier charge attempt for this booking was started more than 23 hours ago and Stripe never confirmed whether it went through. Re-sending it now would be a new charge, so no charge was attempted. An administrator needs to check Stripe for a payment on this booking: if there is one, resend its payment_intent.succeeded event from the Stripe dashboard so it is recorded, and if the app then reports that it could not match that payment, match it to this booking or refund it by hand; if there is none, ask the member to save their card again, which closes this attempt and starts a fresh one.",
 };
 
 /**
@@ -319,7 +278,7 @@ const REFUSAL_MESSAGES: Record<
  * because it is what the alert and the admin response say. Either state is
  * transient when a webhook is merely late (a redelivered
  * `payment_intent.succeeded` settles the booking — through the row it finds by
- * intent id, or the one it adopts by the event's idempotency key) and permanent
+ * intent id, or the one it adopts by the event's key or metadata) and permanent
  * when a person has to look; either way charging on top of it is the one thing
  * that must not happen.
  */
@@ -389,9 +348,9 @@ function isUnresolved(status: PaymentStatus): boolean {
   return UNRESOLVED_ATTEMPT_STATUSES.includes(status);
 }
 
-/** An attempt row is one whose `reference` is the key minted from its OWN id. */
-function isAttemptRow(row: AttemptLedgerRow, bookingId: string): boolean {
-  return row.reference === savedCardChargeIdempotencyKey(bookingId, row.id);
+/** An attempt row is one whose `reference` is a key minted from its OWN id (either shape, #4646). */
+function isAttemptRow(row: AttemptLedgerRow, bookingId: string): row is AttemptLedgerRow & { reference: string } {
+  return savedCardChargeKeyShape(row.reference, bookingId, row.id) !== null;
 }
 
 /**
@@ -663,11 +622,13 @@ export async function beginSavedCardChargeAttempt(
     return {
       kind: "replay",
       attemptRowId: replay.id,
-      // Equal to `replay.reference` for an attempt row (by `isAttemptRow`);
-      // rebuilt so the type is honest without a null-coalesce. For a legacy row
-      // it is a key nothing ever sent — and nothing will: a replay that names
-      // its intent retrieves it and never sends a key.
-      idempotencyKey: savedCardChargeIdempotencyKey(bookingId, replay.id),
+      // #4646: an attempt row's OWN stored key, never a rebuilt one: each
+      // shape is re-sent under its own key, and the shape picks the metadata
+      // (`buildSavedCardChargeMetadata`), so the re-send is its first send byte
+      // for byte — a `_v2` row with its attempt id, an original one without.
+      // Any other replayed row names its intent and is retrieved, so the key
+      // built for it is one nothing sends.
+      idempotencyKey: isAttemptRow(replay, bookingId) ? replay.reference : mintedSavedCardChargeKey(bookingId, replay.id),
       paymentIntentId: replay.stripePaymentIntentId,
       staleIntentIdsToCancel,
     };
@@ -685,7 +646,9 @@ export async function beginSavedCardChargeAttempt(
     },
     select: { id: true },
   });
-  const idempotencyKey = savedCardChargeIdempotencyKey(bookingId, created.id);
+  // #4646: the one switch for the shape a new attempt mints — the original key
+  // until #4682, so the release before #4646 still recognises this row.
+  const idempotencyKey = mintedSavedCardChargeKey(bookingId, created.id);
   await tx.paymentTransaction.update({
     where: { id: created.id },
     data: { reference: idempotencyKey },

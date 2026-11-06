@@ -84,6 +84,10 @@ const JAVASCRIPT_VITEST_TESTS = [
   "scripts/ci/pr-body-file.test.mjs",
   "scripts/ci/check-pr-changelog-fragment.test.mjs",
   "scripts/ci/check-pr-concurrency-declaration.test.mjs",
+  // #4463: the plan-deviation and soft size gates run under bare node before
+  // the install, like the two PR-body gates above.
+  "scripts/ci/check-pr-plan-deviation.test.mjs",
+  "scripts/ci/check-pr-size.test.mjs",
   "scripts/ci/check-prerendered-script-nonces.test.mjs",
   "scripts/ci/check-realdb-ran.test.mjs",
   "scripts/ci/check-semgrep-coverage.test.mjs",
@@ -121,6 +125,9 @@ const JAVASCRIPT_VITEST_TESTS = [
   "scripts/remove-worktree.test.mjs",
   "scripts/run-named-tests.test.mjs",
   "scripts/stale-containers.test.mjs",
+  // #4464: the generated status board is a read-only `.mjs` tool run with bare
+  // node by a scheduled workflow; its suite stays JavaScript like lanes-stale's.
+  "scripts/status-board.test.mjs",
 ];
 
 /**

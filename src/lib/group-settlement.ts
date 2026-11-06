@@ -36,6 +36,7 @@ import { bookingOwner } from "@/lib/booking-owner";
 import { prisma } from "@/lib/prisma";
 import { clubToday, dateOnlyInstantOf } from "@/lib/club-time";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
+import { GROUP_SETTLEMENT_INTENT_TYPE } from "@/lib/stripe-app-intent-metadata";
 import {
   cancelPaymentIntentIfCancellable,
   createPaymentIntent,
@@ -50,6 +51,7 @@ import { enqueueOwnHostingCoverageReevaluation } from "@/lib/adult-member-hostin
 import { reconcileBedAllocationsForBookingWithLodgeLockHeld } from "@/lib/bed-allocation-lifecycle";
 import { recordBookingEvent } from "@/lib/booking-events";
 import { postGroupSettlementLedgerLines } from "@/lib/booking-ledger-group-settlement-sync";
+import { resolveBookingMoneyPostingContext } from "@/lib/member-money/doors";
 import {
   enqueueXeroBookingInvoiceOperation,
   kickQueuedXeroOutboxOperationsIfConnected,
@@ -92,7 +94,7 @@ import {
   type ClearedReplacement,
 } from "@/lib/group-settlement-invoice-replacement";
 import { clubFormatValues } from "@/lib/club-format-server";
-import { chargeCurrencyRefusal, UNSUPPORTED_CHARGE_CURRENCY_MEMBER_MESSAGE } from "@/lib/stripe-charge-currency";
+import { BELOW_STRIPE_MINIMUM_CODE, BELOW_STRIPE_MINIMUM_MEMBER_MESSAGE, BelowStripeMinimumError, chargeCurrencyRefusal, localChargeRefusal, UNSUPPORTED_CHARGE_CURRENCY_MEMBER_MESSAGE } from "@/lib/stripe-charge-currency";
 import { intentCurrencyDiffers } from "@/lib/additional-intent-currency";
 import { organiserHasPaidSettlement } from "@/lib/group-organiser-paid";
 import {
@@ -231,6 +233,12 @@ function refuseProcessingSettlementIntent(intent: { status: string }): void {
   }
 }
 
+function refuseBelowCardMinimum(format: ClubFormat, amountCents: number): void {
+  if (localChargeRefusal(format, amountCents) instanceof BelowStripeMinimumError) {
+    throw new GroupBookingError(BELOW_STRIPE_MINIMUM_MEMBER_MESSAGE, 409, { code: BELOW_STRIPE_MINIMUM_CODE });
+  }
+}
+
 export async function createGroupSettlementIntent(
   rawCode: string,
   sessionUserId: string,
@@ -326,10 +334,13 @@ export async function createGroupSettlementIntent(
     }
   }
 
+  // #101: below the card minimum, refused before any child is committed to CONFIRMED.
+  refuseBelowCardMinimum(format, preLockAmountCents);
+
   // Lock, re-read and claim before deriving provider amount. Repricing writers
   // share lock(1), so this returned snapshot is authoritative for this attempt.
   const { children: committedChildren, hostingCoverageQueued } =
-    await commitChildrenToConfirmed(group.id, children, { method: "stripe" });
+    await commitChildrenToConfirmed(group.id, children, { method: "stripe", format });
   if (hostingCoverageQueued) {
     await settleHostingCoverageAfterCommit({ limit: 25 });
   }
@@ -404,7 +415,7 @@ export async function createGroupSettlementIntent(
     amountCents,
     customerId: customer.id,
     metadata: {
-      type: "group_settlement",
+      type: GROUP_SETTLEMENT_INTENT_TYPE,
       groupBookingId: group.id,
       organiserMemberId: group.organiserMemberId,
     },
@@ -719,7 +730,7 @@ async function commitChildrenToConfirmed(
    * without the bound-invoice rule deciding whether it may.
    */
   intent:
-    | { method: "stripe" }
+    | { method: "stripe"; format: ClubFormat }
     | { method: "internet_banking"; replacement: ClearedReplacement | null }
 ): Promise<{
   children: SettleableChild[];
@@ -906,6 +917,11 @@ async function commitChildrenToConfirmed(
     // rolls back: a joiner must never hold a bed that is on no bill. (A new
     // joiner who no longer fits was refused above with CAPACITY_EXCEEDED: an
     // invoice cannot be replaced to include a bed the lodge does not have.)
+    // #4715: the locked total is the one a card would be charged, so it is
+    // refused here, where the throw rolls back every child this commit
+    // confirmed; refused after the commit, they would stay CONFIRMED unpaid.
+    if (intent.method === "stripe") refuseBelowCardMinimum(intent.format, groupSettlementTotalCents(committed));
+
     if (intent.method === "internet_banking") {
       refuseChangeToBoundSettlement(
         await tx.groupBookingSettlement.findUnique({
@@ -1047,6 +1063,8 @@ async function settleConfirmedChildrenAndNotify(
   // #3672: joiners the paid bill did not cover are moved to member-pays below;
   // the club's day (read here, outside the lock) decides who is emailed.
   const clubTodayDateOnly = await clubTodayForStartedStay();
+  // #4627: the journal's posting context, likewise read outside the lock.
+  const journal = await resolveBookingMoneyPostingContext();
   let leftBehind: JoinerPayerSwitch = NO_PAYER_SWITCH;
   const settled = await prisma.$transaction(async (tx) => {
     leftBehind = NO_PAYER_SWITCH;
@@ -1274,7 +1292,7 @@ async function settleConfirmedChildrenAndNotify(
       settledIds.push(child.id);
     }
     // #3854: each child's confirmation and share post in this claim, keyed.
-    await postGroupSettlementLedgerLines({ store: tx, settlement: { id: settlement.id, source: options.source, amountCents: recordedCents }, children });
+    await postGroupSettlementLedgerLines({ store: tx, journal, settlement: { id: settlement.id, source: options.source, amountCents: recordedCents }, children });
 
     // Status-guarded settlement SUCCEEDED claim (#1881): never overwrite a
     // settlement a concurrent reaper/refund already moved to a terminal state.
@@ -1307,7 +1325,7 @@ async function settleConfirmedChildrenAndNotify(
     );
 
     return settledIds;
-  });
+  }, { maxWait: 10_000, timeout: 30_000 }); // #4627: each child's R01 adds journal round trips; the lock(1) holders' bound.
 
   if (settled === "refunded") {
     logger.warn(

@@ -2,6 +2,7 @@ import "server-only";
 
 import { randomBytes } from "crypto";
 import { hash } from "bcryptjs";
+import { PASSWORD_BCRYPT_COST } from "@/lib/password-hashing";
 import {
   ApplicationStatus,
   AgeTier,
@@ -1486,7 +1487,7 @@ export async function approveMemberApplication(
       )
     : [];
 
-  const applicantPasswordHash = await hash(randomBytes(32).toString("hex"), 13);
+  const applicantPasswordHash = await hash(randomBytes(32).toString("hex"), PASSWORD_BCRYPT_COST);
   const passwordSetupToken = buildResetToken();
   const passwordSetupExpiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
 

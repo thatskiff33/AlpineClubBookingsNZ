@@ -242,6 +242,17 @@ function payRequest() {
   });
 }
 
+// #4738: a $0 confirmation's lines and R01 are proved against PostgreSQL
+// (zero-price-confirmation.realdb.test.ts); here only the call is observed.
+const confirmationLedger = vi.hoisted(() => ({
+  postStoredBookingConfirmationLedgerLines: vi.fn<(...args: unknown[]) => Promise<void>>(async () => {}),
+}));
+vi.mock("@/lib/booking-ledger-confirmation-sync", () => confirmationLedger);
+vi.mock("@/lib/member-money/doors", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/member-money/doors")),
+  resolveBookingMoneyPostingContext: vi.fn(async () => ({ journal: "context" })),
+}));
+
 describe("#2266 door 1 — confirm-draft refuses an unresolved review", () => {
   it("refuses a $0 confirm on a review-PENDING draft, writing nothing", async () => {
     mocks.prismaBookingFindUnique.mockResolvedValue(flaggedDraft());
@@ -285,11 +296,38 @@ describe("#2266 door 1 — confirm-draft refuses an unresolved review", () => {
     });
 
     expect(res.status).toBe(200);
+    // #4738: the $0 draft's confirmation posts once, in the transaction that marks it PAID.
+    expect(confirmationLedger.postStoredBookingConfirmationLedgerLines).toHaveBeenCalledTimes(1);
+    expect(confirmationLedger.postStoredBookingConfirmationLedgerLines.mock.calls[0]!.slice(1)).toEqual([BOOKING_ID, { journal: "context" }]);
     expect(mocks.txBookingUpdate).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({ status: "PAID" }),
       }),
     );
+  });
+});
+
+describe("#4738 — confirm-draft re-asserts $0 under the lock", () => {
+  it("refuses a draft priced between the outer check and the lock, writing and posting nothing", async () => {
+    const draft = flaggedDraft({ adminReviewStatus: "APPROVED" });
+    mocks.prismaBookingFindUnique.mockResolvedValue(draft);
+    // The member added a priced guest after the outer $0 check passed.
+    mocks.txBookingFindUnique.mockResolvedValue({
+      ...draft,
+      finalPriceCents: 12_000,
+      guests: [{ id: "g1", nights: [] }, { id: "g2", nights: [] }],
+    });
+
+    await expect(
+      confirmDraftRoute(confirmRequest(), {
+        params: Promise.resolve({ id: BOOKING_ID }),
+      }),
+    ).rejects.toThrow(/payment flow/i);
+
+    expect(mocks.prismaTransaction).toHaveBeenCalledTimes(1);
+    expect(mocks.txPaymentCreate).not.toHaveBeenCalled();
+    expect(mocks.txBookingUpdate).not.toHaveBeenCalled();
+    expect(confirmationLedger.postStoredBookingConfirmationLedgerLines).not.toHaveBeenCalled();
   });
 });
 

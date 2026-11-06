@@ -1,4 +1,4 @@
-import { XERO_ACTIVE_OPERATION_STATUSES } from "./xero-active-operation-statuses";
+import { XERO_RERUNNABLE_OPERATION_STATUSES } from "./xero-active-operation-statuses";
 import type { Prisma } from "@prisma/client";
 
 import { XERO_OUTBOX_BOOKING_INVOICE_TYPE } from "./xero-operation-outbox-payload";
@@ -27,7 +27,7 @@ export async function busyWhileCardAllocationUnfinished(
       localId: payment.id,
       entityType: "INVOICE",
       queueType: XERO_OUTBOX_BOOKING_INVOICE_TYPE,
-      status: { in: [...XERO_ACTIVE_OPERATION_STATUSES, "FAILED", "PARTIAL"] },
+      status: { in: [...XERO_RERUNNABLE_OPERATION_STATUSES] },
     },
     select: { id: true },
   });

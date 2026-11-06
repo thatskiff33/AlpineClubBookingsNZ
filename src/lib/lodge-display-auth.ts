@@ -2,7 +2,7 @@ import { createHmac, randomInt, timingSafeEqual } from "crypto";
 import type { NextRequest } from "next/server";
 import { hashActionToken, issueActionToken } from "./action-tokens";
 import { prisma } from "./prisma";
-import { getAuthSecret } from "./runtime-config";
+import { requireAuthSecret } from "./runtime-config";
 
 // Lobby display device auth (fork issue #27, ADR-001): a deliberately
 // weakest-privileged, sessionless credential. checkDisplayAuth() resolves
@@ -23,15 +23,8 @@ const PAIRING_CODE_PATTERN = new RegExp(
   `^[${PAIRING_CODE_ALPHABET}]{${PAIRING_CODE_LENGTH}}$`
 );
 
-function getDisplaySecret(): string {
-  const secret = getAuthSecret();
-  if (!secret) {
-    throw new Error(
-      "AUTH_SECRET or NEXTAUTH_SECRET is required for lobby display pairing"
-    );
-  }
-  return secret;
-}
+const MISSING_SECRET_ERROR =
+  "AUTH_SECRET or NEXTAUTH_SECRET is required for lobby display pairing";
 
 export function isPairingCodeFormat(code: string): boolean {
   return PAIRING_CODE_PATTERN.test(code);
@@ -55,7 +48,7 @@ interface PairingBlobPayload {
 }
 
 function signPart(payloadPart: string): string {
-  return createHmac("sha256", getDisplaySecret())
+  return createHmac("sha256", requireAuthSecret(MISSING_SECRET_ERROR))
     .update(`lodge-display-pairing:${payloadPart}`)
     .digest("base64url");
 }
@@ -176,7 +169,7 @@ export interface PreviewGrantPayload {
 }
 
 function signGrantPart(payloadPart: string): string {
-  return createHmac("sha256", getDisplaySecret())
+  return createHmac("sha256", requireAuthSecret(MISSING_SECRET_ERROR))
     .update(`lodge-display-preview-grant:${payloadPart}`)
     .digest("base64url");
 }

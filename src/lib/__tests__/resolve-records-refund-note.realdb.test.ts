@@ -23,6 +23,7 @@
  * fixtures. No Stripe or Xero call is made.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { releaseBookingJournalForTeardown } from "./support/booking-financial-history-teardown";
 import { NextRequest } from "next/server";
 import { assertSafeRaceDbUrl } from "@/lib/__tests__/support/race-db-url";
 import { raceSession } from "@/lib/__tests__/support/race-session-double";
@@ -61,6 +62,8 @@ let CLUB_FORMAT_TEST: (typeof import("@/lib/__tests__/support/club-format-fixtur
       await prisma.auditLog.deleteMany({ where: { OR: [{ targetId: { in: [BOOKING_ID, ...ops.map((op) => op.id)] } }, { memberId: OFFICER_ID }] } });
       await prisma.xeroSyncOperation.deleteMany({ where: { localModel: "Payment", localId: PAYMENT_ID } });
       await prisma.xeroObjectLink.deleteMany({ where: { localId: PAYMENT_ID } });
+      // #4627: the doors post journal batches bridged to these lines; release them first.
+      await releaseBookingJournalForTeardown(prisma, [BOOKING_ID]);
       await prisma.bookingLedgerLine.deleteMany({ where: { bookingId: BOOKING_ID } });
       await prisma.manualRefundTask.deleteMany({ where: { bookingId: BOOKING_ID } });
       await prisma.bookingEvent.deleteMany({ where: { bookingId: BOOKING_ID } });

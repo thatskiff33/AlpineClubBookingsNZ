@@ -84,6 +84,7 @@ import { bookingOwner } from "@/lib/booking-owner";
 import { cancelRefundableBaseCents, hasCapturedPayment } from "@/lib/booking-payment-state";
 import { openNonCancellationHandBackCents } from "@/lib/edit-refund-hand-back";
 import { postGroupCancelChildLedgerLines, postGroupSettlementRefundLedgerLine } from "@/lib/booking-ledger-group-settlement-sync";
+import { resolveBookingMoneyPostingContext } from "@/lib/member-money/doors";
 import { formatCents } from "@/lib/utils";
 import { reconcileHostingReviewForSystemCancellation } from "@/lib/adult-member-hosting-system-cancellation";
 import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-coverage-drain";
@@ -594,6 +595,8 @@ export async function settleGroupBookingOnOrganiserCancel(
     }
   }
 
+  // #4627: the journal's posting context, resolved before any child's transaction (`INV-LOCK-004`).
+  const journal = await resolveBookingMoneyPostingContext();
   // #4042 (`INV-PAY-124`): the organiser's hand-back is alerted once the loop ends (finally), at least once.
   try {
   for (const child of children) {
@@ -725,6 +728,7 @@ export async function settleGroupBookingOnOrganiserCancel(
           mirrorPlan,
           refundForChild,
           plannedRefundCents: plannedMirrorRefunds.get(child.id) ?? 0,
+          journal,
         });
         return queuedOperationId;
       });

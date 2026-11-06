@@ -1,12 +1,14 @@
 #!/usr/bin/env node
 /**
- * Run the two PR-body gates against a LOCAL file, before the PR exists.
+ * Run the PR-body gates against a LOCAL file, before the PR exists.
  *
  *   pnpm run pr:check path/to/body.md
  *   pnpm run pr:check path/to/body.md --base origin/main
  *
- * `verify` enforces two gates that read the PR body rather than the code: the
- * concurrency declaration and the changelog fragment. Both fetch the live body
+ * `verify` runs gates that read the PR body rather than the code: the
+ * concurrency declaration and the changelog fragment, and (#4463) the plan
+ * deviation section and the soft size limit, which report WARN where CI prints
+ * a `::warning::`. All fetch the live body
  * from GitHub, so before this script the only way to test a body was to open or
  * edit a PR and wait ~15 minutes for the answer — one field per attempt, because
  * each gate stops at its first failure. That loop cost four CI cycles on #2634
@@ -25,6 +27,8 @@ import { execFileSync } from "node:child_process";
 
 import { validateConcurrencyDeclaration } from "./check-pr-concurrency-declaration.mjs";
 import { validateChangelogFragment } from "./check-pr-changelog-fragment.mjs";
+import { planDeviationVerdict } from "./check-pr-plan-deviation.mjs";
+import { measurePrSize, prSizeVerdict } from "./check-pr-size.mjs";
 import { gitDiffChangedFiles, parseNameStatus } from "./pr-body.mjs";
 
 function parseArgs(argv) {
@@ -150,12 +154,43 @@ for (const [label, run] of [
     run();
     console.log(`  PASS  ${label}`);
   } catch (error) {
-    // Report BOTH gates rather than stopping at the first. Each CI run only
+    // Report EVERY gate rather than stopping at the first. Each CI run only
     // ever tells you about one failure, which is what makes the remote loop so
     // slow; there is no reason to reproduce that here.
     failures.push(`${label}: ${error.message}`);
     console.log(`  FAIL  ${label}`);
   }
+}
+
+// #4463: the plan-deviation gate (WARN until `PLAN_DEVIATION_ENFORCED` flips,
+// then FAIL) and the soft size gate (never FAIL). Same verdict functions the CI
+// entrypoints print, so WARN here is a `::warning::` there.
+const warnings = [];
+let size = null;
+try {
+  const mergeBase = execFileSync("git", ["merge-base", "HEAD", base], { encoding: "utf8" }).trim();
+  size = measurePrSize(mergeBase, "HEAD");
+} catch {
+  // An unresolved base is reported once already by `changesAgainst`, and the
+  // size verdict says it could not measure — a WARN, never a PASS.
+}
+for (const [label, verdict] of [
+  ["Plan deviation", planDeviationVerdict(body)],
+  ["PR size", prSizeVerdict(body, size)],
+]) {
+  if (verdict.status === "fail") {
+    failures.push(`${label}: ${verdict.message}`);
+    console.log(`  FAIL  ${label}`);
+  } else if (verdict.status === "warn") {
+    warnings.push(`${label}: ${verdict.message}`);
+    console.log(`  WARN  ${label}`);
+  } else {
+    console.log(`  PASS  ${label}`);
+  }
+}
+
+if (warnings.length > 0) {
+  console.warn(`\nWarnings (verify reports these as ::warning:: and stays green):\n${warnings.map((w) => `- ${w}`).join("\n\n")}`);
 }
 
 if (failures.length > 0) {
@@ -164,4 +199,6 @@ if (failures.length > 0) {
   process.exit(1);
 }
 
-console.log(`\nPR body passes both gates (${diffSummary}).`);
+console.log(
+  `\nPR body passes every enforced gate${warnings.length > 0 ? `, with ${warnings.length} warning(s)` : ""} (${diffSummary}).`,
+);

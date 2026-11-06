@@ -107,6 +107,13 @@ const cancellationLedger = vi.hoisted(() => ({
 }));
 vi.mock("@/lib/booking-ledger-cancellation-sync", () => cancellationLedger);
 
+// #4660: a $0 create's confirmation lines and R01 are proved against PostgreSQL
+// (credit-covered-confirmation.realdb.test.ts); here only the call is observed.
+const confirmationLedger = vi.hoisted(() => ({
+  postStoredBookingConfirmationLedgerLines: vi.fn<(...args: unknown[]) => Promise<void>>(async () => {}),
+}));
+vi.mock("@/lib/booking-ledger-confirmation-sync", () => confirmationLedger);
+
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     // #3770 R2: the create route reads the booker's lodge restrictions before
@@ -448,6 +455,9 @@ describe("Booking Creation Route: zero-dollar handling", () => {
         status: "SUCCEEDED",
       }),
     });
+    // #4660: the PAID is the booking's confirmation, posted once in the create's transaction.
+    expect(confirmationLedger.postStoredBookingConfirmationLedgerLines).toHaveBeenCalledTimes(1);
+    expect(confirmationLedger.postStoredBookingConfirmationLedgerLines.mock.calls[0]![1]).toBe("bk1");
   });
 
   it("sets booking status to PAID inside the transaction for a $0 PAYMENT_PENDING booking", async () => {

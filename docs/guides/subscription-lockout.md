@@ -11,10 +11,10 @@ Setup & Configuration → Membership & Members → Subscription Lockout**
 (`/admin/subscription-lockout`); it has no direct sidebar entry — reach it through
 the [Membership & Members setup hub](membership-setup.md).
 
-**Opening this page requires *support*-area view access** — the route is
-admitted under the support permission area, and an admin without it is
-redirected away even though the hub card is still visible. Once inside, the
-sections span three further permission areas: the lockout switch, financial
+**Opening this page requires *membership*-area view access** — the same area as
+the settings API behind it (#4581), so a Membership Officer can both open the
+page and save. An admin without it is redirected away. Inside, the
+sections span further permission areas: the lockout switch, financial
 year, text-match fallback, and item-code matching mode are **membership**
 settings; the Xero account/item detection codes are **finance** settings; and
 the per-age-tier

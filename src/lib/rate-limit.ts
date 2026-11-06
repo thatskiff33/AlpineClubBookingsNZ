@@ -15,6 +15,7 @@ import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import logger from "@/lib/logger";
 import { decodeRawRows, rawIntColumn } from "@/lib/raw-sql-rows";
+import { DEGRADED_AUTH_LIMIT_DIVISOR } from "@/lib/degraded-auth-limit";
 
 interface RateLimitEntry {
   count: number;
@@ -67,13 +68,6 @@ export interface RateLimitConfig {
    */
   authSensitive?: boolean;
 }
-
-/**
- * Divisor applied to an auth-sensitive limiter's budget while running on the
- * per-process fallback. 4 covers the blue/green double-slot deployment plus
- * headroom for process restarts resetting in-memory counters mid-window.
- */
-const DEGRADED_AUTH_LIMIT_DIVISOR = 4;
 
 export interface RateLimitResult {
   success: boolean;
@@ -413,10 +407,14 @@ export const rateLimiters = {
   register: { id: "register", limit: 5, windowSeconds: 60 * 60, authSensitive: true } as RateLimitConfig,
   /** Membership application: 3 submissions per hour */
   membershipApplication: { id: "membership-application", limit: 3, windowSeconds: 60 * 60, authSensitive: true } as RateLimitConfig,
-  /** Password reset request: 5 per hour */
+  /** Password reset request: 5 per hour per address */
   forgotPassword: { id: "forgot-password", limit: 5, windowSeconds: 60 * 60, authSensitive: true } as RateLimitConfig,
-  /** Magic-link sign-in request: 5 per hour (mirrors forgot-password) */
+  /** Password reset request: 3 per hour per ACCOUNT, via checkAccountRequestLimit (#4613, INV-AUTH-005) */
+  forgotPasswordAccount: { id: "forgot-password-account", limit: 3, windowSeconds: 60 * 60, authSensitive: true } as RateLimitConfig,
+  /** Magic-link sign-in request: 5 per hour per address (mirrors forgot-password) */
   magicLinkRequest: { id: "magic-link-request", limit: 5, windowSeconds: 60 * 60, authSensitive: true } as RateLimitConfig,
+  /** Magic-link sign-in request: 3 per hour per ACCOUNT, via checkAccountRequestLimit (#4613, INV-AUTH-005) */
+  magicLinkRequestAccount: { id: "magic-link-request-account", limit: 3, windowSeconds: 60 * 60, authSensitive: true } as RateLimitConfig,
   /** Password reset submission: 10 per hour */
   resetPassword: { id: "reset-password", limit: 10, windowSeconds: 60 * 60, authSensitive: true } as RateLimitConfig,
   /** General API: 100 per minute */

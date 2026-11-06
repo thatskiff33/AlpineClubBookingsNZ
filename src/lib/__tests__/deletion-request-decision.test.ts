@@ -6,10 +6,10 @@ import {
   DELETION_REQUEST_ALREADY_REVIEWED_CODE,
   DELETION_REQUEST_CLAIM_NOT_HELD_CODE,
   deletionApprovalWasReleased,
-  isDeletionRequestTransactionContention,
   OPEN_DELETION_REQUEST_STATUSES,
   releaseDeletionRequestApprovalClaim,
 } from "@/lib/deletion-request-decision";
+import { isTransactionContention } from "@/lib/prisma-errors";
 
 describe("deletion request approval ownership claim (#2597)", () => {
   it("moves PENDING to APPROVAL_IN_PROGRESS with one guarded mutation", async () => {
@@ -705,9 +705,10 @@ describe("release transaction contention (#2627)", () => {
   // an exhausted wait is contention, not a fault. The route maps this set to a
   // 503 retry-later; before the release moved into a transaction the same
   // interleaving blocked on an auto-commit statement and returned the mapped 409,
-  // so a bare 500 would be a regression.
+  // so a bare 500 would be a regression. #4656: the route asks the one
+  // shared reading (`isTransactionContention`), pinned here for this branch.
   it.each(["P2028", "P2034"])("recognises Prisma %s as contention", (code) => {
-    expect(isDeletionRequestTransactionContention({ code })).toBe(true);
+    expect(isTransactionContention({ code })).toBe(true);
   });
 
   it.each([
@@ -718,6 +719,6 @@ describe("release transaction contention (#2627)", () => {
     ["null", null],
     ["undefined", undefined],
   ])("does not treat %s as contention", (_label, error) => {
-    expect(isDeletionRequestTransactionContention(error)).toBe(false);
+    expect(isTransactionContention(error)).toBe(false);
   });
 });

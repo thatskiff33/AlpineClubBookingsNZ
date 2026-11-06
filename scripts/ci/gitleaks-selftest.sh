@@ -33,6 +33,7 @@ set -Eeuo pipefail
 # self-test on a different version proves nothing about the gate.
 # shellcheck source=scripts/ci/gitleaks-image.sh
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/gitleaks-image.sh"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 CONFIG="${REPO_ROOT}/.gitleaks.toml"
 
@@ -68,7 +69,17 @@ pass() { echo "  ok: $*"; }
 # Random material, from the kernel rather than from a literal in this file.
 rand() {
   # $1 = length, $2 = character class for `tr -dc`
-  LC_ALL=C tr -dc "$2" </dev/urandom | head -c "$1"
+  # `head` closing the pipe makes `tr` exit on SIGPIPE, which `pipefail` reports
+  # as a failure. That is expected, so the pipeline's status is ignored and the
+  # LENGTH is checked instead: a short or empty value still fails loudly.
+  # (Assigned at top level, `x="$(rand …)"` would otherwise trip `set -e`, #4766.)
+  local value
+  value="$(LC_ALL=C tr -dc "$2" </dev/urandom 2>/dev/null | head -c "$1" || true)"
+  if [ "${#value}" -ne "$1" ]; then
+    echo "FAIL: rand produced ${#value} of $1 characters" >&2
+    exit 1
+  fi
+  printf '%s' "${value}"
 }
 
 scan_dir() {
@@ -162,6 +173,8 @@ fi
 # and asserts the flag the workflow uses catches it.
 echo "3. a secret in a merge resolution must be reported"
 mkdir -p "${WORK}/merge"
+# Kept in a variable so section 4 can prove this exact value never reaches the log.
+merge_secret="$(rand 24 'A-Za-z0-9')"
 (
   cd "${WORK}/merge"
   git init --quiet -b main .
@@ -178,9 +191,10 @@ mkdir -p "${WORK}/merge"
   git add -A && git commit --quiet -m "main"
   git merge --no-commit side >/dev/null 2>&1 || true
   # The conflict resolution — and the ONLY place this value ever appears.
-  printf 'STRIPE_SECRET_KEY=sk_%s_%s\n' 'live' "$(rand 24 'A-Za-z0-9')" >conf.env
+  printf 'STRIPE_SECRET_KEY=sk_%s_%s\n' 'live' "${merge_secret}" >conf.env
   git add -A && git commit --quiet --no-edit
 )
+merge_sha="$(git -C "${WORK}/merge" rev-parse HEAD)"
 
 merge_exit=0
 docker run --rm -v "$(host_path "${WORK}/merge"):/repo:ro" -v "${CONFIG_MOUNT}:/cfg.toml:ro" \
@@ -203,9 +217,67 @@ docker run --rm -v "$(host_path "${WORK}/merge"):/repo:ro" -v "${CONFIG_MOUNT}:/
   --exit-code=1 --redact --no-banner >/dev/null 2>&1 || plain_exit=$?
 echo "  note: the same scan without --diff-merges=first-parent exits ${plain_exit} (0 means the merge commit is still invisible to a plain scan)"
 
+# ---------------------------------------------------------------------------
+# 4. A failed run's LOG must locate the finding and must not print its value.
+# ---------------------------------------------------------------------------
+# #4766. The required gate reads its result from the exit code, but the person
+# fixing it reads the log, and for a long time the log said "leaks found: N" and
+# nothing else while the error text claimed the file, commit and rule were shown
+# above it. Sections 1 to 3 cannot see that: they read a JSON report, which has
+# always carried those fields. This runs the SAME script CI runs (the one
+# invocation, `gitleaks-scan.sh`) over the section 3 repository, so it covers the
+# real flag set rather than a copy of it, and asserts on what a contributor sees.
+#
+# Both directions matter and both are asserted. Losing `--verbose` removes the
+# locator; losing `--redact` would print the credential into a public log.
+echo "4. a finding's log output must name the file, rule and commit, and never the value"
+# The config goes in as the scan root's own `.gitleaks.toml`, exactly as gitleaks
+# discovers it in CI. Untracked, so it is not part of any scanned commit.
+cp "$CONFIG" "${WORK}/merge/.gitleaks.toml"
+gate_exit=0
+gate_log="$(
+  GITLEAKS_SCAN_ROOT="${WORK}/merge" \
+    GITLEAKS_SCAN_LABEL="the self-test merge repository" \
+    GITLEAKS_LOG_OPTS="--diff-merges=first-parent main" \
+    bash "${SCRIPT_DIR}/gitleaks-scan.sh" git 2>&1
+)" || gate_exit=$?
+# Only the error line goes to the log on a failure below; the captured text
+# holds the planted (random, fake) value only if redaction has broken.
+if [ "$gate_exit" -ne 1 ]; then
+  fail "gitleaks-scan.sh exited ${gate_exit} over a planted finding; expected 1 (findings)."
+elif ! printf '%s\n' "$gate_log" | grep -q 'gitleaks reported findings in'; then
+  fail "gitleaks-scan.sh failed over a planted finding but did not report it as a finding; it looks like a scanner failure."
+else
+  pass "gitleaks-scan.sh failed on the planted finding, as a finding"
+fi
+if printf '%s\n' "$gate_log" | grep -qF 'conf.env'; then
+  pass "the log names the file that holds the finding"
+else
+  fail "the log does not name the file (conf.env) that holds the finding. A contributor cannot find the line."
+fi
+if printf '%s\n' "$gate_log" | grep -q 'stripe-access-token'; then
+  pass "the log names the rule id"
+else
+  fail "the log does not name the rule id (stripe-access-token)."
+fi
+if printf '%s\n' "$gate_log" | grep -qF "$merge_sha"; then
+  pass "the log names the commit"
+else
+  fail "the log does not name the commit (${merge_sha})."
+fi
+if printf '%s\n' "$gate_log" | grep -qF "$merge_secret"; then
+  fail "the planted secret value appears in the gate's log. Redaction is not holding on a PUBLIC log."
+else
+  pass "the planted secret value is not in the log"
+fi
+if [ "$failures" -ne 0 ]; then
+  echo "--- gitleaks-scan.sh output the section 4 checks read, with any planted value masked ---" >&2
+  printf '%s\n' "$gate_log" | sed "s/${merge_secret}/<PLANTED-VALUE>/g" >&2
+fi
+
 echo
 if [ "$failures" -ne 0 ]; then
   echo "gitleaks self-test FAILED with ${failures} problem(s). The required secret-scanning gate is not enforcing what it claims." >&2
   exit 1
 fi
-echo "gitleaks self-test passed: the gate can fail, it is not noise, and it can see merge commits."
+echo "gitleaks self-test passed: the gate can fail, it is not noise, it can see merge commits, and its log locates a finding without printing it."

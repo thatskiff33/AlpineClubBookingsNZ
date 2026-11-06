@@ -155,11 +155,24 @@ describe("financial history outlives its booking: the schema (#4514, D1)", () =>
     // half-wiped database, so the check must come before the first delete.
     const seed = readFileSync(path.join(process.cwd(), "prisma/demo-seed.ts"), "utf8");
     const cleanup = seed.slice(seed.indexOf("async function cleanup()"));
-    const refusal = cleanup.search(/bookingsWithFinancialHistory\(\s*prisma,\s*\w+,\s*APPEND_ONLY_FINANCIAL_HISTORY_RELATIONS\s*\)/);
+    const refusal = cleanup.search(
+      /refuseBookingsWithFinancialHistory\(\s*prisma,\s*\w+,\s*"[^"]+",\s*APPEND_ONLY_FINANCIAL_HISTORY_RELATIONS\s*\)/,
+    );
     const firstDelete = cleanup.search(/\.deleteMany\(/);
     expect(refusal, "the seed asks the one list for append-only money lines").toBeGreaterThan(-1);
     expect(refusal).toBeLessThan(firstDelete);
-    expect(cleanup.slice(refusal, firstDelete)).toMatch(/throw new Error/);
+    // The shared helper (#4583) reads the one list and throws; nothing restates it.
+    const guard = readFileSync(path.join(process.cwd(), "prisma/seed-financial-history-guard.ts"), "utf8");
+    expect(guard).toMatch(/bookingsWithFinancialHistory\(db, bookingIds, relations\)/);
+    expect(guard).toMatch(/throw new Error/);
+  });
+
+  it("has the second-lodge E2E seed refuse on any booking financial history before it deletes a booking (#4583)", () => {
+    const seed = readFileSync(path.join(process.cwd(), "e2e/setup/seed-second-lodge.ts"), "utf8");
+    const refusal = seed.search(/await refuseBookingsWithFinancialHistory\(prisma, \w+, "seed-second-lodge"\)/);
+    const firstDelete = seed.search(/prisma\.booking\.deleteMany\(/);
+    expect(refusal, "the seed asks the one list, with every relation").toBeGreaterThan(-1);
+    expect(refusal).toBeLessThan(firstDelete);
   });
 
   it("FAILS on a cascading or update-cascading key, and parses what the schema writes (fixture proof)", () => {

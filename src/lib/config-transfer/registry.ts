@@ -58,7 +58,9 @@ export const FORBIDDEN_FIELD_PATTERNS: RegExp[] = [
   // `forcePasswordChange` stay forbidden here, the hash is additionally blocked
   // by the dedicated /passwordhash/i pattern below, and any secret-suffixed name
   // (e.g. "...secret", "...token") is still caught by its own pattern.
-  /password(?!length\b)/i,
+  // #4610 adds the one boolean policy switch `breachedPasswordCheck` ("password"
+  // followed by the whole word "check"), a portable on/off club rule.
+  /password(?!length\b|check\b)/i,
   /secret/i,
   /token/i,
   /(^|[^a-z])api[_-]?key/i,

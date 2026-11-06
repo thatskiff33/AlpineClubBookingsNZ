@@ -52,6 +52,12 @@ It exists so the eventual `__BRANCH__` → `main` merge is a series of small rec
 Run: __RUN_URL__
 <!-- /workflow -->
 
+## Plan Deviation
+
+- None — a sync builds no plan of its own. Every commit in the range merged to `main` on its own pull request, which answered this section for its own issue's plan.
+
+large-pr: a sync merges `main` commits that were each reviewed on their own pull request; nothing in the range is new code to review here.
+
 ## Concurrency And Lock Impact
 
 **<!-- workflow -->The sync workflow<!-- /workflow --><!-- by-hand -->`pnpm run epic:sync-body`<!-- /by-hand --> wrote this section; no person examined the diff to produce it, and it must not be read as though one had.** It is here because the gate that requires it is the first step of `verify`, so without it the job fails in under half a minute and every later step — lint, typecheck, knip, the suite, the build — is skipped. That is precisely backwards: proving `main` and this epic branch still work together is the entire point of the sync, and the missing section was stopping the proof from ever running (#3142).

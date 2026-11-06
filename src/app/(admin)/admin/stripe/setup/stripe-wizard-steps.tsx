@@ -197,7 +197,7 @@ export function CredentialsStep({
 
       <LegacyEnvWarning vars={context.legacyEnvVars} />
 
-      {context.needsReentry ? (
+      {context.keysNeedReentry ? (
         <div className="flex items-start gap-2 rounded-md border border-warning-6 bg-warning-3 p-3 text-sm text-warning-11">
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
           <span>
@@ -470,6 +470,17 @@ export function WebhookStep({
           ))}
         </ul>
       </div>
+
+      {context.webhookSecretNeedsReentry ? (
+        <div className="flex items-start gap-2 rounded-md border border-warning-6 bg-warning-3 p-3 text-sm text-warning-11">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
+          <span>
+            The stored signing secret can no longer be read (the app encryption
+            key changed). Paste the endpoint&apos;s signing secret below so
+            payment updates are accepted again.
+          </span>
+        </div>
+      ) : null}
 
       {canWrite === false ? (
         <div className="flex items-start gap-2 rounded-md border border-border bg-muted p-3 text-sm text-muted-foreground">

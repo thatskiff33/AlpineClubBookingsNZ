@@ -10,7 +10,7 @@ import {
 import { OPEN_INTENT_TRANSACTION_STATUS_LIST } from "@/lib/payment-transaction-status";
 
 import { MAX_PAYMENT_RECOVERY_ATTEMPTS } from "@/lib/payment-recovery-constants";
-import { SAVED_CARD_CHARGE_KEY_PREFIX } from "@/lib/saved-card-charge-attempt";
+import { SAVED_CARD_CHARGE_KEY_PREFIX } from "@/lib/saved-card-charge-key";
 import { prisma } from "@/lib/prisma";
 
 /**

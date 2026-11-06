@@ -1,6 +1,9 @@
 import { CREDIT_NOTE_SPENT_OUTSIDE_APP_CODE } from "@/lib/xero-credit-note-spent-outside-app";
 import { redactSensitiveText } from "@/lib/redact-sensitive-json";
-import { XERO_ORPHANED_STALE_RUNNING_ERROR_CODE } from "@/lib/xero-operation-error-codes";
+import {
+  XERO_ORPHANED_STALE_RUNNING_ERROR_CODE,
+  XERO_REFUND_NOTE_UNRECORDED_ERROR_CODE,
+} from "@/lib/xero-operation-error-codes";
 
 /**
  * #4278: WHY a Xero sync operation failed, in words an officer who does not read
@@ -44,6 +47,7 @@ export type XeroFailureKind =
   | "NO_LINKED_INVOICE"
   | "REQUEST_KEY_REUSED"
   | "LOST_TRACK"
+  | "NOTE_NOT_RECORDED"
   | "PERIOD_LOCKED"
   | "ACCOUNT_CODE"
   | "CONTACT_ARCHIVED"
@@ -308,6 +312,17 @@ export function explainXeroFailure(input: XeroFailureInput): XeroFailureExplanat
           "Xero refused to apply the credit because the credit note has less credit left than the app expected.",
           "The credit note was used in Xero directly, for example an offset or a payment made there, and the app was not told.",
           "For a booking's credit the app brings its own record into line with Xero by itself and closes this row. Check the credit note in Xero if the row stays.",
+        ),
+      );
+    }
+    // #4688: before the stale-running wording, which Mark failed adds to this row's message.
+    if (code === XERO_REFUND_NOTE_UNRECORDED_ERROR_CODE) {
+      return done(
+        known(
+          "NOTE_NOT_RECORDED",
+          "Xero made this refund credit note, but the app could not record it.",
+          "The note is in Xero, and the app does not know about it. Until it is resolved, the app raises no other refund credit note for this payment.",
+          "Do not retry. Find the note in Xero (the technical details name it), then use Resolve by hand with its number. If this still shows as running, mark it failed first.",
         ),
       );
     }

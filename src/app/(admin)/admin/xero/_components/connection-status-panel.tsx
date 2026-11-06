@@ -10,6 +10,7 @@ import type { LucideIcon } from "lucide-react"
 import { useClubTime } from "@/components/club-time-provider"
 import { requireInstant } from "@/lib/club-time"
 import { ToneChip } from "./shared"
+import type { XeroReentryCause } from "@/lib/xero-token-store"
 import type { XeroConnectionProbe, XeroStatus, XeroTokenHealth } from "./types"
 
 // Presentation for each probed health state. reconnect_required / rate_limited
@@ -32,6 +33,19 @@ const HEALTH_PRESENTATION: Record<
     showReconnect: false,
   },
   error: { tone: "danger", icon: XCircle, label: "Connection check failed", showReconnect: false },
+}
+
+// What fixes each cause (#4456). Only unreadable tokens are a reconnect; the
+// others are the server's configuration, which a reconnect cannot save past.
+const REENTRY_ADVICE: Record<XeroReentryCause, string> = {
+  "tokens-unreadable":
+    "Stored Xero tokens can no longer be read because the key they were encrypted under changed or is no longer on this server. Reconnect Xero to re-authorise — no data inside Xero is affected.",
+  "data-key-ring-missing":
+    "Xero tokens cannot be used or saved: stored data is encrypted under a data-encryption key, but DATA_ENCRYPTION_KEYS is not set on this server. Ask whoever runs the server to restore the key (Admin → Setup has the details). Reconnecting will not help until then.",
+  "data-key-ring-invalid":
+    "Xero tokens cannot be read or saved because DATA_ENCRYPTION_KEYS on this server is invalid. Ask whoever runs the server to correct it (Admin → Setup names the problem). Reconnecting will not help until then.",
+  "auth-secret-weak":
+    "Refreshed Xero tokens cannot be saved because the server's auth secret fails the strength check and no data-encryption key is set. Ask whoever runs the server to fix it (Admin → Setup has the details). Reconnecting will not help until then.",
 }
 
 export function ConnectionStatusPanel({
@@ -82,6 +96,8 @@ export function ConnectionStatusPanel({
   }
 
   const presentation = probe ? HEALTH_PRESENTATION[probe.tokenHealth] : null
+  // An older response shape has no cause: the reconnect case, as before.
+  const reentryCause = status?.reentryCause ?? "tokens-unreadable"
 
   return (
     <Card className="mb-6">
@@ -195,19 +211,17 @@ export function ConnectionStatusPanel({
             </p>
           </div>
         ) : status?.needsReentry ? (
-          // Tokens exist but no longer decrypt — the auth secret / encryption
-          // key changed (e.g. the #2079 env→DB upgrade). This is a reconnect,
-          // not a first-time connect.
+          // A connection exists but cannot be used. Only unreadable tokens are
+          // fixed by a reconnect; a missing, invalid or weak server key is fixed
+          // on the server, and a reconnect would fail to save (#4456).
           <div className="space-y-3">
             <div className="flex items-start gap-2 rounded-md border border-warning-6 bg-warning-3 p-3 text-sm text-warning-11">
               <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
-              <span>
-                Stored Xero tokens can no longer be read because the encryption
-                key (derived from the app auth secret) changed. Reconnect Xero to
-                re-authorise — no data inside Xero is affected.
-              </span>
+              <span>{REENTRY_ADVICE[reentryCause]}</span>
             </div>
-            <Button onClick={onConnect} disabled={editDisabled}>Reconnect Xero</Button>
+            {reentryCause === "tokens-unreadable" ? (
+              <Button onClick={onConnect} disabled={editDisabled}>Reconnect Xero</Button>
+            ) : null}
           </div>
         ) : (
           <Button onClick={onConnect} disabled={editDisabled}>Connect Xero</Button>

@@ -103,9 +103,9 @@ An owner directive can also move a migration *into* this class. #2520 was planne
 
 ## An epic's migrations arrive together, and that constrains what a child may do
 
-Since #3002 an epic's children merge into an integration branch and the epic
-reaches `main` as one merge, so **every migration in the epic lands in a single
-deploy.** Two consequences bind each child:
+Since #3002 an exception epic's children (an integration branch is the
+exception since #4464) merge into that branch and the epic reaches `main` as one
+merge, so **every migration in the epic lands in a single deploy.** Two consequences bind each child:
 
 - **No child may pair an expand with its own contract.** The contract release's
   whole definition is that the previous runtime *no longer depends* on what is
@@ -210,9 +210,9 @@ and `migration-drift`'s is populated by the time that job runs. Plus a step-leve
 condition on whether the diff adds a migration. That is a reasonable thing to
 build later; it is not a reason to skip the rehearsal now.
 
-The full model, including merge authority and the narrow inert-child exception,
-is [`agents/EPIC_PLAYBOOK.md`](agents/EPIC_PLAYBOOK.md) → "An epic reaches
-`main` as ONE merge".
+The full model, including merge authority and when the integration-branch
+exception applies, is [`agents/EPIC_PLAYBOOK.md`](agents/EPIC_PLAYBOOK.md) → "The exception: an
+integration branch".
 
 ## The lock timeout a `lock_impact_plan` may name
 

@@ -50,6 +50,7 @@
  */
 import type { Prisma, PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { releaseBookingJournalForTeardown } from "./support/booking-financial-history-teardown";
 
 import { assertSafeRaceDbUrl } from "@/lib/__tests__/support/race-db-url";
 import { realElapsedMs } from "@/lib/__tests__/helpers/clock";
@@ -92,6 +93,8 @@ let invoiceKey: typeof import("@/lib/xero-booking-invoice-key");
 
 async function clean(): Promise<void> {
   await prisma.auditLog.deleteMany({ where: { OR: [{ entityId: REFUND_OPERATION_ID }, { targetId: BOOKING_ID }] } });
+  // #4627: the doors post journal batches bridged to these lines; release them first.
+  await releaseBookingJournalForTeardown(prisma, [BOOKING_ID]);
   await prisma.bookingLedgerLine.deleteMany({ where: { bookingId: BOOKING_ID } });
   await prisma.paymentRecoveryOperation.deleteMany({ where: { id: REFUND_OPERATION_ID } });
   await prisma.xeroSyncOperation.deleteMany({

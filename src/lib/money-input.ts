@@ -45,6 +45,12 @@
  * spread was retired so a caller cannot miss those behaviours.
  */
 
+/**
+ * The largest amount any stored money column holds: PostgreSQL `integer`
+ * cents. The one ceiling every money boundary checks against (`INV-MONEY-001`).
+ */
+export const MAX_INTEGER_CENTS = 2_147_483_647;
+
 /** Parse a non-negative decimal amount input exactly, without binary float math. */
 export function parseDecimalDollarsToCents(value: string): number | null {
   const match = /^(0|[1-9]\d*)(?:\.(\d{1,2}))?$/.exec(value.trim());
@@ -53,7 +59,7 @@ export function parseDecimalDollarsToCents(value: string): number | null {
   const cents = Number((match[2] ?? "").padEnd(2, "0"));
   if (!Number.isSafeInteger(dollars)) return null;
   const total = dollars * 100 + cents;
-  return Number.isSafeInteger(total) && total <= 2_147_483_647 ? total : null;
+  return Number.isSafeInteger(total) && total <= MAX_INTEGER_CENTS ? total : null;
 }
 
 /**

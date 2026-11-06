@@ -54,7 +54,9 @@ import {
   buildXeroIdempotencyKey,
   completeXeroSyncOperation,
   failXeroSyncOperation,
+  type XeroSyncOperationCompletion,
 } from "@/lib/xero-sync";
+import { holdsXeroOperationClaim } from "@/lib/xero-operation-claim";
 import logger from "@/lib/logger";
 import { CLUB_NAME } from "@/config/club-identity";
 import {
@@ -65,10 +67,14 @@ import {
 import { queuedReviewTaskId } from "@/lib/xero-review-task-key";
 import { xeroSyncErrorFields } from "@/lib/xero-sync-error-text";
 import { XERO_PARTIAL_REPAIR_RUNNING_CODE, XERO_REFUND_NOTE_REPAIR_RUNNING_CODE } from "@/lib/xero-stale-operations";
-import type { XeroOperationClaim } from "@/lib/xero-operation-outcome-guard";
+import { ownRunningClaim, type XeroOperationClaim } from "@/lib/xero-operation-outcome-guard";
 
 export const PARTIAL_REPAIR_CLAIM_LOST_MESSAGE =
   "The payment was sent to Xero, but this operation was reset while it ran. Retry it once to close it.";
+// #4259: a repair that lost its claim, having sent Xero nothing (a zero-cash repair, or a note whose planned
+// allocations were all already linked) - or, below, a credit note allocation.
+export const REPAIR_RESET_NOT_CLOSED_MESSAGE = "This operation was reset while the repair ran, so it was not closed. Retry it once to close it.";
+export const MODIFICATION_NOTE_REPAIR_CLAIM_LOST_MESSAGE = "The credit note allocation was sent to Xero, but this operation was reset while it ran. Retry it once to close it.";
 import { isRetryOfVoidedRefundRequestNote, mayRecordAsCanonicalRefundNote, VOIDED_REQUEST_NOTE_RETRY_REASON } from "@/lib/xero-refund-note-status";
 import type { CashRefundMethod } from "@/lib/xero-refund-method";
 import {
@@ -88,6 +94,7 @@ import type { ClubFormat } from "@/lib/club-format";
 import { readRefundRequestIdFromPayload } from "@/lib/refund-request-credit-note";
 import { findResolvedSiblingSince } from "@/lib/xero-resolved-in-xero-fences";
 import { cardRefundIdOfNoteRow } from "@/lib/card-refund-own-note-share";
+import { holdsUnrecordedRefundNote, UNRECORDED_REFUND_NOTE_RETRY_REASON } from "@/lib/xero-refund-note-in-flight";
 import {
   isStrayInvoiceAfterCloseOutcome,
   membershipChargeNeedsNoInvoice,
@@ -125,6 +132,7 @@ type RetryableOperation = Pick<
   // Optional so row shapes selected before #1354 stay assignable; callers
   // that omit it simply fall back to payload-based delta detection.
   queueType?: XeroSyncOperation["queueType"];
+  lastErrorCode?: XeroSyncOperation["lastErrorCode"]; // #4688: optional; Retry's own refusal reads the stored row
 };
 
 export class XeroOperationRetryError extends Error {
@@ -410,7 +418,7 @@ async function runWithClaimedOriginal<T>(
       if (options?.from) {
         // Not `abandonedClaimErrors`: the original is back to PARTIAL, not FAILED.
         await prisma.xeroSyncOperation.updateMany({
-          where: { id: operationId, status: "RUNNING", startedAt: claimedAt },
+          where: { id: operationId, ...ownRunningClaim({ id: operationId, startedAt: claimedAt }) },
           data: { status: "PARTIAL", ...xeroSyncErrorFields(error), completedAt: new Date() },
         });
       } else {
@@ -431,6 +439,14 @@ async function runWithClaimedOriginal<T>(
     }
     throw error;
   }
+}
+
+// #4256, #4259: a PARTIAL repair's close, onto its own claim only; lost (an operator reset the row) it says `lostMessage`.
+// `alert: false`: a repair left PARTIAL raises no repeated-failure alert (a SUCCEEDED close raises none anyway).
+async function closeRepairOnClaim(claim: XeroOperationClaim, completion: XeroSyncOperationCompletion, message: string, lostMessage: string) {
+  if (await completeXeroSyncOperation(claim, completion, { retryClaim: true, alert: false })) return { message };
+  logger.warn({ operationId: claim.id }, "Xero PARTIAL repair finished after its claim was reset; row left as the operator set it");
+  return { message: lostMessage };
 }
 
 export interface XeroOperationRetryMeta {
@@ -1024,6 +1040,8 @@ export function getXeroOperationRetryMeta(operation: RetryableOperation): XeroOp
   if (isResolvedInXeroForRetry(operation)) {
     return { supported: false, reason: RESOLVED_IN_XERO_RETRY_REASON };
   }
+  // #4688 (`INV-INT-035`): Xero made this row's note and the app could not record it.
+  if (holdsUnrecordedRefundNote(operation)) return { supported: false, reason: UNRECORDED_REFUND_NOTE_RETRY_REASON };
 
   if (!operation.replayable) {
     return {
@@ -1483,9 +1501,7 @@ export async function retryXeroSyncOperation(
   const createdByMemberId = options?.createdByMemberId ?? undefined;
 
   if (operation.status === "PARTIAL") {
-    const partialInvoiceRepair = partialInvoiceOperationHasPaymentFault(operation)
-      ? parsePartialInvoiceRepairInput(operation)
-      : null;
+    const partialInvoiceRepair = partialInvoiceOperationHasPaymentFault(operation) ? parsePartialInvoiceRepairInput(operation) : null;
     if (
       operation.entityType === "INVOICE" &&
       operation.operationType === "CREATE" &&
@@ -1499,27 +1515,14 @@ export async function retryXeroSyncOperation(
         operation.id,
         async (claim) => {
           const repair = partialInvoiceRepair;
-          // Completes onto this claim only; null when an operator reset the row meanwhile.
-          const close = async (
-            paymentOutcome: Record<string, unknown>,
-            message: string,
-            lostMessage = PARTIAL_REPAIR_CLAIM_LOST_MESSAGE,
-          ) => {
-            const closed = await completeXeroSyncOperation(
-              claim,
-              repairedPartialInvoiceCompletion(operation, repair.invoiceId, paymentOutcome),
-              { retryClaim: true, alert: false },
-            );
-            if (closed) return { message };
-            logger.warn({ operationId: operation.id }, "Xero PARTIAL repair finished after its claim was reset; row left as the operator set it");
-            return { message: lostMessage };
-          };
+          const close = (paymentOutcome: Record<string, unknown>, message: string, lostMessage = PARTIAL_REPAIR_CLAIM_LOST_MESSAGE) =>
+            closeRepairOnClaim(claim, repairedPartialInvoiceCompletion(operation, repair.invoiceId, paymentOutcome), message, lostMessage);
           if (repair.amountCents === 0) {
             const zeroCashRepair = zeroCashRepairOutcome(repair);
             return close(
               { payment: null, paymentSkipped: true, paymentSkipReason: zeroCashRepair.skipReason },
               zeroCashRepair.message,
-              "This operation was reset while the repair ran, so it was not closed. Retry it once to close it.",
+              REPAIR_RESET_NOT_CLOSED_MESSAGE,
             );
           }
           // #4256: a payment an earlier run recorded (its link) is never sent
@@ -1545,6 +1548,8 @@ export async function retryXeroSyncOperation(
               "The payment is already recorded in Xero; retry once to close this operation.",
             );
           }
+          const gapSkip = await (await import("@/lib/credit-release-xero-payment")).skipPartialGapRepairPayment(operation, claim);
+          if (gapSkip) return close(gapSkip.paymentOutcome, gapSkip.message); // #4494: overlaps the credit-release sweep's share.
           const paymentId = await xero.createXeroPaymentForInvoice({
             localModel: operation.localModel!,
             localId: operation.localId!,
@@ -1595,25 +1600,22 @@ export async function retryXeroSyncOperation(
       operation.localModel &&
       operation.localId
     ) {
-      for (const target of await unallocatedClearingTargets({
-        ...modificationCreditNoteRepair,
-        localModel: operation.localModel,
-        localId: operation.localId,
-      })) {
-        await xero.allocateCreditNoteToInvoice(
-          modificationCreditNoteRepair.creditNoteId,
-          target.invoiceId,
-          target.amountCents,
-          {
-            localModel: operation.localModel,
-            localId: operation.localId,
-            role: modificationCreditNoteRepair.allocationRole,
-            createdByMemberId,
-          }
-        );
-      }
-
-      return { message: "Repaired Xero modification credit note allocation." };
+      const [repair, local] = [modificationCreditNoteRepair, { localModel: operation.localModel, localId: operation.localId }];
+      return runWithClaimedOriginal(operation.id, async (claim) => {
+        // #4259: claimed like the sibling repairs, reading the plan's links under the claim; it closes its row (it stayed PARTIAL).
+        const targets = await unallocatedClearingTargets({ ...repair, ...local });
+        const lostMessage = (allocated: number) => (allocated > 0 ? MODIFICATION_NOTE_REPAIR_CLAIM_LOST_MESSAGE : REPAIR_RESET_NOT_CLOSED_MESSAGE);
+        for (const [allocated, target] of targets.entries()) {
+          // #4259 review F2 (as #4680): each allocation goes only while this run still holds its claim.
+          if (!(await holdsXeroOperationClaim(claim))) return { message: lostMessage(allocated) };
+          await xero.allocateCreditNoteToInvoice(repair.creditNoteId, target.invoiceId, target.amountCents, { ...local, role: repair.allocationRole, createdByMemberId });
+        }
+        return closeRepairOnClaim(claim, {
+          status: "SUCCEEDED",
+          responsePayload: { ...(asRecord(operation.responsePayload) ?? {}), allocationError: null, repairedAllocations: targets },
+          xeroObjectType: "CREDIT_NOTE", xeroObjectId: repair.creditNoteId, xeroObjectNumber: operation.xeroObjectNumber ?? null,
+        }, "Repaired Xero modification credit note allocation.", lostMessage(targets.length));
+      }, { from: "PARTIAL" });
     }
 
     throw new XeroOperationRetryError(
@@ -1791,7 +1793,7 @@ export async function retryXeroSyncOperation(
         repairExistingLink: true,
         format,
       });
-      if (replay?.raisedUnpaid) return { message: "Retried Xero supplementary invoice creation, raised unpaid: the card payment it would record is recorded by its own receipt." };
+      if (replay?.raisedUnpaid) return { message: "Retried Xero supplementary invoice creation, raised unpaid: the card payment it would record is recorded by its own receipt, or overlaps a credit-release payment." };
       return { message: "Retried Xero supplementary invoice creation." };
     }
 
@@ -1908,7 +1910,7 @@ export async function retryXeroSyncOperation(
 
       await xero.createUnappliedXeroCreditNote(operation.localId!, retryInput.amountCents, format, {
         createdByMemberId,
-        repairExistingLink: true,
+        repairExistingLink: true, memberCreditId: retryInput.memberCreditId, // #4685
       });
       return { message: "Retried Xero account-credit note creation." };
     }

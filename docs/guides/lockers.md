@@ -11,7 +11,9 @@ page from the **lodge configuration hub**'s **Lockers** card (**Admin → Setup 
 Configuration → Lodges →** a lodge **→ Lockers**), which opens it already filtered
 to that lodge.
 
-Lockers are a **membership** permission area (despite being lodge-scoped):
+Lockers are a **membership** permission area (despite being lodge-scoped), so
+the lodge hub's **Lockers** card is hidden from an admin without membership
+access (#4581):
 membership view to read, membership **edit** to create, allocate, or delete. Each
 locker belongs to exactly one lodge, fixed when it is created.
 

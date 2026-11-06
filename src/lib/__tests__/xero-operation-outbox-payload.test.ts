@@ -7,8 +7,32 @@ import {
   subscriptionInvoiceOutboxRow,
   XERO_OUTBOX_QUEUE_TYPES,
 } from "@/lib/xero-operation-outbox-payload";
+import { isAccountCreditNotePayload, parsePaymentCreditNoteRetryInput } from "@/lib/xero-payment-credit-note-payload";
 
 describe("xero operation outbox payload parsing", () => {
+  it("#4685: reads an account-credit note's own credit, and none from a row queued before it", () => {
+    expect(readQueuedOutboxPayload({ queueType: "ACCOUNT_CREDIT_NOTE", refundAmountCents: 4200, memberCreditId: "credit_1" })).toEqual({
+      queueType: "ACCOUNT_CREDIT_NOTE", refundAmountCents: 4200, memberCreditId: "credit_1",
+    });
+    expect(readQueuedOutboxPayload({ queueType: "ACCOUNT_CREDIT_NOTE", refundAmountCents: 4200 })).toEqual({
+      queueType: "ACCOUNT_CREDIT_NOTE", refundAmountCents: 4200,
+    });
+    // An unreadable id reads as none: the stamp then falls back, never stamps a bad id.
+    expect(readQueuedOutboxPayload({ queueType: "ACCOUNT_CREDIT_NOTE", refundAmountCents: 4200, memberCreditId: 7 })).toEqual({
+      queueType: "ACCOUNT_CREDIT_NOTE", refundAmountCents: 4200,
+    });
+    expect(readQueuedOutboxPayload({ queueType: "ACCOUNT_CREDIT_NOTE", memberCreditId: "credit_1" })).toBeNull();
+  });
+
+  it("#4685: the retry parser reads the same credit off the queued and executed account-credit shapes", () => {
+    expect(parsePaymentCreditNoteRetryInput({ requestPayload: { queueType: "ACCOUNT_CREDIT_NOTE", refundAmountCents: 4200, memberCreditId: "credit_1" } }))
+      .toEqual({ amountCents: 4200, kind: "unapplied", memberCreditId: "credit_1" });
+    expect(parsePaymentCreditNoteRetryInput({ requestPayload: { creditNotes: [{ lineItems: [{ unitAmount: 42 }] }], memberCreditId: "credit_1" } }))
+      .toEqual({ amountCents: 4200, kind: "unapplied", memberCreditId: "credit_1" });
+    expect(parsePaymentCreditNoteRetryInput({ requestPayload: { queueType: "ACCOUNT_CREDIT_NOTE", refundAmountCents: 4200 } }))
+      .toEqual({ amountCents: 4200, kind: "unapplied" });
+  });
+
   it("normalizes entrance fee invoice payloads with integer cents", () => {
     expect(
       readQueuedOutboxPayload({
@@ -398,5 +422,21 @@ describe("xero operation outbox payload parsing", () => {
         expectedEntityTypes.get(queueType)
       );
     }
+  });
+});
+
+describe("isAccountCreditNotePayload (#4705, PR #4711 review)", () => {
+  it("MUTATION: reads an account-credit note's queued and executed shapes as its own", () => {
+    expect(isAccountCreditNotePayload({ queueType: "ACCOUNT_CREDIT_NOTE", refundAmountCents: 5000 })).toBe(true);
+    expect(isAccountCreditNotePayload({ creditNotes: [], refundAmountCents: 5000, queueType: "ACCOUNT_CREDIT_NOTE", memberCreditId: "credit_1" })).toBe(true);
+    // An inline create's executed shape: no queue type, the amount kept.
+    expect(isAccountCreditNotePayload({ creditNotes: [], refundAmountCents: 5000 })).toBe(true);
+  });
+
+  it("MUTATION: refuses an applied-credit remainder mint, a refund note, and every other queue type", () => {
+    expect(isAccountCreditNotePayload({ creditNotes: [{ lineItems: [{ unitAmount: 50 }] }] })).toBe(false);
+    expect(isAccountCreditNotePayload({ creditNotes: [], allocation: { invoiceId: "inv_1", amount: 50 }, refundAmountCents: 5000 })).toBe(false);
+    expect(isAccountCreditNotePayload({ queueType: "REFUND_CREDIT_NOTE", refundAmountCents: 5000 })).toBe(false);
+    expect(isAccountCreditNotePayload({ queueType: "MODIFICATION_ACCOUNT_CREDIT_NOTE", refundAmountCents: 5000 })).toBe(false);
   });
 });

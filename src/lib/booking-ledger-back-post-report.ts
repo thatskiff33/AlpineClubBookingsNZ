@@ -55,10 +55,44 @@ export type BookingBackPostOutcome =
       lines: number;
       /** The ids of the lines this booking's transaction inserted (empty on a dry run, which commits none). */
       lineIds: string[];
+      /** #4627: member-money journal batches it posted beside them (R01, R26, R04). */
+      journalBatches: number;
       steps: string[];
       classes: string[];
     }
+  /**
+   * #4627: no legacy line to fill, but journal batches posted: a journal-era
+   * booking's missing R01, or lines no batch had picked up. A dry run reports
+   * it exactly as --apply commits it.
+   */
+  | { bookingId: string; kind: "JOURNAL_ONLY"; journalBatches: number; steps: string[]; classes: string[] }
   | (BackPostRefused & { kind: "CANNOT_POST" });
+
+export type BookingLedgerBackPostTotals = {
+  bookings: number;
+  posted: number;
+  lines: number;
+  /** #4627 */
+  journalOnly: number;
+  /** #4627: journal batches across POSTED and JOURNAL_ONLY. */
+  journalBatches: number;
+  nothingToPost: number;
+  cannotPost: number;
+};
+
+/** The run's totals, from its outcomes. */
+export function backPostTotals(outcomes: readonly BookingBackPostOutcome[]): BookingLedgerBackPostTotals {
+  const count = (kind: BookingBackPostOutcome["kind"]) => outcomes.filter((outcome) => outcome.kind === kind).length;
+  return {
+    bookings: outcomes.length,
+    posted: count("POSTED"),
+    lines: outcomes.reduce((sum, outcome) => sum + (outcome.kind === "POSTED" ? outcome.lines : 0), 0),
+    journalOnly: count("JOURNAL_ONLY"),
+    journalBatches: outcomes.reduce((sum, outcome) => sum + ("journalBatches" in outcome ? outcome.journalBatches : 0), 0),
+    nothingToPost: count("NOTHING_TO_POST"),
+    cannotPost: count("CANNOT_POST"),
+  };
+}
 
 export type BookingLedgerBackPostRun = {
   mode: "dry-run" | "apply";
@@ -67,7 +101,7 @@ export type BookingLedgerBackPostRun = {
   startedAt: string;
   finishedAt: string;
   outcomes: BookingBackPostOutcome[];
-  totals: { bookings: number; posted: number; lines: number; nothingToPost: number; cannotPost: number };
+  totals: BookingLedgerBackPostTotals;
 };
 
 /** One booking's report line(s); nothing for a booking with nothing to post. */
@@ -77,10 +111,15 @@ export function formatBookingLedgerBackPostOutcome(
   money: (cents: number) => string,
 ): string[] {
   const verb = mode === "apply" ? "POSTED" : "WOULD POST";
+  const classes = (names: string[]) => (names.length > 0 ? `  [census classes: ${names.join(", ")}]` : "");
+  const journal = (batches: number) => (batches > 0 ? `, ${batches} journal batch(es)` : "");
   if (outcome.kind === "POSTED") {
     return [
-      `${verb}  ${outcome.bookingId}  ${outcome.lines} line(s): ${outcome.steps.join("; ") || "settlement and credit lines"}${outcome.classes.length > 0 ? `  [census classes: ${outcome.classes.join(", ")}]` : ""}`,
+      `${verb}  ${outcome.bookingId}  ${outcome.lines} line(s)${journal(outcome.journalBatches)}: ${outcome.steps.join("; ") || "settlement and credit lines"}${classes(outcome.classes)}`,
     ];
+  }
+  if (outcome.kind === "JOURNAL_ONLY") {
+    return [`${verb}  ${outcome.bookingId}  journal only, ${outcome.journalBatches} batch(es): no legacy line to fill${classes(outcome.classes)}`];
   }
   if (outcome.kind === "CANNOT_POST") {
     return [
@@ -98,7 +137,7 @@ export function formatBookingLedgerBackPostSummary(run: BookingLedgerBackPostRun
   const verb = run.mode === "apply" ? "posted" : "would post";
   return [
     `Booking ledger back-post (#3583) — ${run.mode === "apply" ? "APPLIED" : "DRY RUN, nothing was committed"}. Run ${run.runId}, ${run.startedAt} to ${run.finishedAt}.`,
-    `Bookings: ${run.totals.bookings}   ${verb}: ${run.totals.posted} (${run.totals.lines} line(s))   nothing to post: ${run.totals.nothingToPost}   cannot post: ${run.totals.cannotPost}`,
+    `Bookings: ${run.totals.bookings}   ${verb}: ${run.totals.posted} (${run.totals.lines} line(s))   journal only: ${run.totals.journalOnly}   journal batches: ${run.totals.journalBatches}   nothing to post: ${run.totals.nothingToPost}   cannot post: ${run.totals.cannotPost}`,
   ].join("\n");
 }
 

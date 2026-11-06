@@ -1448,6 +1448,35 @@ also manual-review (not auto-queued) when the payment captured money and no
 stored evidence records the policy-limited settlement — the report tells you
 to size the credit note (or confirm the note's total) by hand from the
 cancellation-policy history before acting; `--apply` will not touch these.
+Since #4757, an edit's note whose own operation went PARTIAL (the note made,
+its allocation refused) reports `MISSING_CREDIT_NOTE_ALLOCATION` with that
+operation's retry, never a fresh allocation; while a retry is running on it,
+or where the retry is refused, the report says the allocation is blocked and
+offers nothing, and you check again later or allocate it by hand in Xero.
+Since #4762 the same holds for an invoice-clearing note whose operation the
+retry refuses: reported blocked with the reason and the invoices left to
+allocate by hand, never a fresh allocation of the whole note against the
+primary invoice; where its recorded plan was redacted, the invoices left are
+not listed. For either note, whether its retry is offered or refused, an
+allocation operation still pending or running is reported instead (let it
+finish, then run the report again), and so is a failed one that is not the
+note's own attempt at a planned invoice and amount - such as an older,
+differently sized allocation the tool once queued: it is retried first, or
+reported if it cannot be, or reported as done if resolved in Xero and it
+names the same credit note (one resolved for another note is left to that
+note's own report). The report reads the edit's own operations, or for an
+invoice-clearing note the whole booking's. The note's own failed attempts
+are covered by its retry. Invoices you allocated by hand through one of the
+note's own attempts are not listed: if none is left, the note is reported as
+done; otherwise the report asks you to allocate the planned invoices it
+lists as left by hand, and offers nothing.
+Since #4763, a note whose own operation was marked resolved in Xero is
+listed as an information-only "resolved in Xero by an officer" finding
+naming the note, with nothing offered. Any other allocation operation still
+failed or pending beside it is reported too, and not retried from this
+report: a retry of one of that note's own could allocate it a second time,
+since the allocation you made by hand is not linked in the app. Check such
+an operation in Xero, then retry or resolve it on the Xero operations panel.
 Since #1491, `LATE_CAPTURE_AFTER_CANCELLATION` is also never auto-applied:
 it now fires only when a cancelled booking retains captured value with NO
 recorded cancellation-refund decision (no cancellation credit, no
@@ -1913,7 +1942,24 @@ repeatable-read snapshot opened `READ ONLY`, so PostgreSQL itself refuses a
 write inside it; it repairs nothing and calls no provider. For every booking it
 checks seven identities — the price, the captured amount, applied credit, the
 refunded total, change fees, the uncollected ask, and a live booking's balance
-owed — against the ledger lines that project them, and prints:
+owed — against the ledger lines that project them. Since Ledger M3b (#4627,
+[`INV-MONEY-044`](invariants/money.md#inv-money-044)) an eighth, `JOURNAL`,
+compares, for each booking whose confirmation is in the member-money journal,
+the total of the journal's live charge components with the ledger lines it links; a booking
+confirmed earlier is not compared (M9 back-posts it). The comparison is of each
+booking's total, not component by component (a give-back may legitimately be
+taken from a change fee), so money posted to the wrong component of the right
+booking is not caught here; the mapping is pinned by its tests. Since Ledger
+M3c (#4628, [`INV-MONEY-045`](invariants/money.md#inv-money-045)) a
+bank-transfer booking charged at its binding moment and not yet confirmed on
+the ledger is judged by `JOURNAL_PENDING` instead: the journal's live charge
+against the booking's final price plus the change fees recorded on its payment,
+or, once cancelled, the kept figure its CANCELLED snapshot froze (none: zero).
+A disagreement there means a writer moved the price before payment without a
+journal event; the confirmation will re-state it once (logged as "confirmation
+lines differ from the charge posted before settlement"), so acknowledge it to
+the cent or let the booking settle. A charge line on such a booking is
+`UNBRIDGED_CHARGE_LINE`: a confirmation that skipped the bridge. It prints:
 
 - per identity, how many bookings it applies to, agree, disagree, are
   classified, or are a coverage gap;
@@ -1928,8 +1974,14 @@ owed — against the ledger lines that project them, and prints:
 - **integrity**: reversals that name no line or are not its exact opposite, a
   second live line for one guest-night, an unknown posting-key namespace or one
   on an anchor it never posts under, and a live line its source row (or a
-  cancellation's frozen kept figure) no longer bears out. PostgreSQL's update and delete
-  counts for the table are printed as information only;
+  cancellation's frozen kept figure) no longer bears out, and (`UNBRIDGED_CHARGE_LINE`)
+  a charge line on a journal-confirmed booking that no journal batch links,
+  (`CONFIRMED_WITHOUT_R01`) a booking created after the journal's first
+  confirmation and confirmed on the ledger with none, and (`JOURNAL_INACTIVE`,
+  once) a club whose currency no card can be charged in, for which the journal
+  posts nothing.
+  PostgreSQL's update and delete counts for the table are printed as
+  information only;
 - **named classes** — expected differences, each matched to the cent from the
   booking's own rows (in-flight refunds and hand-backs, a review share kept by
   the club, the refunded total's credit and hand-back allocations, and so on).
@@ -2091,8 +2143,9 @@ DATABASE_URL=<...> pnpm run booking-ledger:back-post --json           # the repo
 ```
 
 **Reading the report.** One summary line — bookings, how many it posted (or
-would) and how many lines, how many had nothing to post, how many it cannot
-post — then one line per booking that posts or cannot:
+would) and how many lines, how many were journal only and how many
+member-money journal batches it posted, how many had nothing to post, how many
+it cannot post — then one line per booking that posts or cannot:
 
 - `POSTED` / `WOULD POST <id>  <n> line(s): …` names the steps: the
   confirmation (one line per guest-night, an evenly split strand included), an
@@ -2103,7 +2156,13 @@ post — then one line per booking that posts or cannot:
   `group plan refund (<cents>)`; its kept figure is the organiser cancel's own
   (the share less every refund made or still owed). A plan refund still being
   retried is not posted: the census names it `IN_FLIGHT_REFUND`, and the retry
-  posts it when it goes through.
+  posts it when it goes through. Since #4627 the line also counts the
+  member-money journal batches posted beside the lines (`, <n> journal batch(es)`).
+- `POSTED` / `WOULD POST <id>  journal only, <n> batch(es)` (#4627,
+  `JOURNAL_ONLY`): no legacy line to fill, but the journal had work — a
+  booking created after the journal's first confirmation that is missing its
+  R01, or lines no journal batch had picked up. A dry run reports these exactly
+  as `--apply` commits them.
 - `CANNOT POST <id>  <reason>: …`. `UNPRICED_NIGHT` — a strand has a night with
   no price, which is an open review: close the review, then re-run.
   `CONFIRMATION_DOES_NOT_RECONCILE` — the night rows and promotion do not make
@@ -2394,6 +2453,109 @@ read-only `RepeatableRead` snapshot, held for up to 120 seconds, and on a very
 large database it may reach that timeout and fail; run it again in a quiet
 window rather than raising the bound.
 
+### Retire links to payments deleted in Xero (#4531)
+
+Before #4531 a payment deleted in Xero kept its link here active, because Xero
+leaves a deleted payment out of its invoice and the inbound sync never saw it
+again. The sync now retires such a link when it next reads the invoice or credit
+note (`INV-INT-031`), and re-checks on a schedule any it could not confirm at
+the time. A payment deleted before that, on an invoice nobody has touched
+since, stays active until this backfill retires it. So does a booking change's
+card payment, whose link the inbound sync never reaches.
+
+```bash
+pnpm run xero:deleted-payment-link-backfill                   # dry run: lists, changes no link
+pnpm run xero:deleted-payment-link-backfill --apply           # retire every confirmed one
+pnpm run xero:deleted-payment-link-backfill --apply --payment <xero payment id>
+pnpm run xero:deleted-payment-link-backfill --json            # machine-readable report too
+```
+
+- **Dry run (the default).** It pages Xero's list of DELETED payments, oldest
+  change first (100 a call, at most 50 calls), checks each row's status itself,
+  and prints every ACTIVE local payment link that points at one: the link, its
+  local record, its role and the invoice or credit note it names. It changes
+  no link; its Xero calls are still recorded on the usage panel, like any
+  other.
+- **`--payment <id>`.** Instead of listing, it asks Xero about each named
+  payment directly (one call each) and keeps only those Xero reports DELETED.
+- **`--apply`.** It retires only the links of a payment Xero confirms DELETED:
+  inactive, with its recorded status `DELETED` and its other fields kept. A
+  listed payment is asked about once more first, so `--apply` costs one extra
+  call per candidate payment it checks, retired or not; a `--payment` id's
+  direct answer is already that confirmation. A payment Xero reports live, or
+  does not answer for, is left active and named. So is one with a Xero
+  operation that may run again and reads the link: a replayable failed card
+  receipt or PARTIAL booking invoice on its record, or an open receipt or
+  supplementary invoice on the same booking. Retiring it then would let that
+  retry pay again. It is marked, and the scheduled re-check retires it once
+  that operation is done, so retry or resolve the operation first. Keep the
+  dry-run output with the change record.
+- **A link the scheduled re-check gave up on.** After five checks Xero did not
+  answer, the re-check stops asking about a link on its own and logs an error;
+  its metadata records `deletionCheckGaveUpAt`. This backfill asks about it
+  again.
+- **Xero calls.** Every call is read-only and a single attempt. A run stops
+  once the day's recorded usage reaches 85% of the usage panel's budget, on a
+  Xero rate limit or outage, or while Xero's own daily limit is in force, and
+  then says it stopped early. A later run lists again from the beginning,
+  re-spending those list calls; it acts only on links still active. An
+  organisation with more than 5,000 deleted payments is never listed in full:
+  name the payments with `--payment` instead.
+
+It changes nothing in Xero and nothing else locally: no booking, payment or
+ledger row. Readers that judge recorded payments skip a `DELETED` status
+(`isRecordedBookingInvoicePayment`), so they stop counting the retired payment
+as money held. Before, they reached the right answer only because a
+replacement payment usually existed. It also removes the double count from the
+"recorded in Xero" totals. A booking change's card payment it retires gets no
+audit row (the audit writer resolves no subject for it), so keep this run's
+output. Design and call budget: [`xero/ARCHITECTURE.md` -> "A payment deleted
+in Xero (#4531)"](xero/ARCHITECTURE.md#a-payment-deleted-in-xero-4531).
+
+### Retire account-credit note links written on bookings a credit was applied to (#4712)
+
+Before #4712 the inbound credit-note reconcile, when it could place a note only
+through #1925's local provenance, linked the note as an account-credit note to
+every payment on the bookings the credit was spent on. That link stops the
+booking's own cancellation note being queued ("already linked"), and the
+payment's refunded total counted the note as money paid back. The reconcile no
+longer writes it; this repair retires the ones it left.
+
+```bash
+pnpm run xero:applied-credit-account-note-link-repair                    # dry run: lists, changes nothing
+pnpm run xero:applied-credit-account-note-link-repair --json             # machine-readable report too
+pnpm run xero:applied-credit-account-note-link-repair --apply --payment <payment id> [--payment <payment id> ...]
+```
+
+- **Dry run (the default).** Lists every active account-credit note link on a
+  payment as *stale* - a slice or applied-credit ledger row shows the note was
+  spent on the payment's booking, and neither an outbound create of the note
+  for that payment nor a cancellation credit of that booking shows it was
+  raised there - *conflicting*, when both show, or *unexplained*, when
+  neither does. Links the note was raised for are counted, not listed.
+- **`--apply`.** Needs the reviewed payment ids, and works one payment at a
+  time. Each is classified again; a stale link is retired (inactive, guarded
+  on still active) with an audit row, and the payment's refunded total and
+  status are recounted from the links left (the #4095 recount). It prints each
+  payment's refunded total before and after, and names any it could not
+  settle: a failed recount, or a link an inbound sync running at the same time
+  made active again (run the repair again for that one). The recount never
+  lowers a Stripe payment's recorded refund, nor a bank-transfer payment's
+  below its own refund detail: it raises an admin alert instead, so settle
+  that one by hand. Keep the dry-run output with the change record.
+- **Then raise the missing cancellation notes.** Retiring a link raises
+  nothing by itself. For each booking `--apply` names, run
+  `pnpm run xero:booking-repair --booking <bookingId> --dry-run`, review its
+  missing account-credit note, and apply it.
+- **Conflicting and unexplained links** are never retired. A conflicting link
+  may mean the booking's own cancellation note was completed with the note
+  spent there, so the member's cancellation credit names the wrong note.
+  Check both kinds in Xero by hand.
+
+It makes no Xero call. Design: [`xero/ARCHITECTURE.md`](xero/ARCHITECTURE.md),
+the `xero-applied-credit-account-note-link-repair` module row; concurrency:
+[`CONCURRENCY_AND_LOCKING.md`](CONCURRENCY_AND_LOCKING.md#applied-credit-account-note-link-repair-lock-free-4712).
+
 ### Count voided bank-transfer refund notes before the follow-up writes (#4162)
 
 `scripts/bank-refund-void-count.ts` sorts every voided bank-transfer refund
@@ -2563,6 +2725,69 @@ document by hand, Xero may now hold it twice. The app may instead have found
 and used yours, by its reference, leaving only one: check Xero before voiding
 a duplicate. If that email cannot reach anyone, it is not sent again; the
 operation's succeeded status on the panel is then the only sign.
+
+A payment refund credit note is the exception (#4426): a refund-note job that
+stalled in Xero, was marked failed and was then resolved by hand with the
+number of the note you made keeps your note when its own call comes back with
+a second one. The app does not record or link the late note, or record a
+refund payment against it in Xero, and the operation stays as you resolved it.
+The audit log gets one Xero entry naming the late note (its number, Xero id,
+amount and booking), and the same **Xero Sync Error** email names it and the
+note the operation keeps: check the late note in Xero, and that it is not
+recorded on the payment, before voiding it. If the late note is the very note
+you recorded (Xero made it but its answer to the app was lost, and you found
+it), nothing is wrong and nothing is sent; recording its refund payment in
+Xero, if one is due, stays with you, as for any note you resolve by hand. A
+job resolved without a note number (a refund request's note) records the late
+note as before and sends the email above.
+
+Limit: if the app stops between deciding not to record the late note and
+writing its audit entry, the app's log is the only record of it; if the email
+cannot reach anyone, the audit entry and the log remain. In the rare case of
+two copies of one job both getting the late note back, each writes an audit
+entry; the email still goes once.
+
+An organiser adjustment's credit note (the waiver of a group organiser's unpaid
+extra, or an organiser's bank-transfer refund note) has its own rule (#4655).
+If its job stalls in Xero and you press **Reset stale running**, the stalled
+call may still come back with a note:
+
+- If you did nothing else, the app records the note on the job, takes the job
+  back as running, and finishes it (allocates the waiver, or records the
+  refund payment); the job shows as succeeded. One note, nothing to do. While
+  it shows as running, **Resolve** and **Retry** are refused: wait for it to
+  finish or fail. If it fails, it fails with the note kept, and **Retry**
+  finishes from that note.
+- If you pressed **Retry** after the reset, the app records the note on the
+  queued job, and the retry finishes from it instead of raising a second note.
+- If you resolved the job by hand, or a retry was already running its own
+  create, or the job has since finished with a different note, the app leaves
+  the job exactly as it is and records nothing. The audit log gets one Xero
+  entry naming the late note (its number, Xero id, amount and booking), and the
+  finance contacts get one **Xero Sync Error** email naming it. Check the late
+  note in Xero, and that nothing is allocated from it or paid against it,
+  before voiding it. If a retry was running, wait for it to finish first: it
+  may have recorded that very note, in which case nothing needs voiding.
+
+Limit: if the app stops between deciding not to record the note and writing
+its audit entry, the app's log is the only record of it; if the email cannot
+reach anyone, it is not sent again, and the audit entry and the log remain.
+
+The job can also stall after it has recorded its note, while it allocates the
+waiver or records the refund payment (#4680). After **Reset stale running**,
+the stalled job no longer allocates or pays out when it comes back: it checks
+first that the job is still its own, and stops if not. It records nothing on
+the job and leaves it as it stands, and the audit log gets one Xero entry. If
+you did nothing else, the job stays failed with its note: **Retry** finishes
+from that note. If you pressed **Retry**, the retry finishes from it. If you
+resolved the job by hand, the finance contacts also get one **Xero Sync
+Error** email naming the note: it is in Xero, but the app did not allocate it
+or pay against it. Check it in Xero before voiding it, in case the adjustment
+was also made by hand.
+
+Limit: a Xero call already under way when you reset can still finish. If it
+does, the job shows as succeeded, and if you had resolved it, the **Xero Sync
+Error** email says a success landed after the resolve.
 
 There is no undo on the panel. If you marked one by mistake, fix the Xero side
 by hand, or use **Targeted force sync** for that one booking's invoice: it

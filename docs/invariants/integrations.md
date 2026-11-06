@@ -482,29 +482,29 @@ re-run, never offered for retry, never re-minted beside (owner decision,
 
 - **One predicate.** `isResolvedInXero` (`xero-operation-resolution.ts`); a
   `where` clause spells it on `manuallyResolvedAt`. The mark leaves the row
-  `FAILED`/`PARTIAL`, so status alone reads it as live; a late success lands
-  and alerts (`INV-INT-029`).
+  `FAILED`/`PARTIAL`, so status alone reads it live; a late success lands
+  and alerts, except where `INV-INT-029` says.
 - **Retries refuse it.** `getXeroOperationRetryMeta` refuses first; retry and
-  requeue answer 409; the drain closes that queued row `CANCELLED`.
+  requeue answer 409; the drain cancels that queued row.
 - **Enqueues and the outbox respect it.** A resolved refund note covers its
   recorded amount, so later refunds still get notes, unless voided or deleted
   (#4250) or a refund request's (#4265); one sum
   (`sumRefundCreditNoteCoverageCents`) caps the enqueue, the send and the gap. No booking invoice is
   queued while the latest create is resolved; only single-booking force-sync
-  overrides, and audits it. The outbox cancels, before any Xero call, a copy
-  queued before a sibling was resolved.
+  overrides it, audited. The outbox cancels, unsent, a copy queued before a
+  sibling was resolved.
 - **Resolve and retry.** The route refuses while the operation is RUNNING, a
   live copy is queued, or a queued retry is RUNNING or started before the mark
-  and completed after it - checked after the mark is written, which is then
-  withdrawn. Gaps: clock skew between instances, and a caller of
+  and completed after it - checked after the mark is written, then withdrawn.
+  Gaps: clock skew between instances, and a caller of
   `retryXeroSyncOperation` that bypasses the drain.
 - **Applied-credit operations are retry-only.** The route refuses them, and a
   pre-release mark on one is void on the retry path.
 - **Done is not absent.** `getBlockingOperation` returns `retryable`, `blocked`
-  or `resolved`; a resolved row never outranks a live one and is never dropped.
-  `buildRetryAction` takes only `retryable`. Where no document is recorded, the
-  repair tool reports `RESOLVED_IN_XERO_BY_OFFICER` (info, no action), as does
-  the booking page.
+  or `resolved`; a resolved row never outranks a live one, nor is dropped.
+  `buildRetryAction` takes only `retryable`. The repair tool and booking page
+  report `RESOLVED_IN_XERO_BY_OFFICER` (info, no action) where no document is
+  recorded; the tool also for a note allocated by hand.
 
 Pinned by `xero-operation-retry.test.ts`, `xero-operation-queue.test.ts`,
 `xero-operation-routes.test.ts`, `xero-operations-panel-failed-default.test.tsx`,
@@ -520,13 +520,12 @@ officer made, and that note records no other refund: one note, one refund
 
 - **Asked of one population.** `refundNoteResolveShape`
   (`xero-resolve-refund-note.ts`) asks for the number on a FAILED row naming no
-  note, among the rows `readResolvedRefundCreditNoteCoverage` reads (one set of
-  row constants) that are their own refund's (`countsTowardRefundNoteCoverage`).
-  A refund request's note (#4391), a row naming its note and every other row
-  resolve as `INV-INT-025` says; a number sent for one is refused. Refused
-  too: a PARTIAL row naming no note, an unreadable amount (Mark
-  non-replayable; the treasurer decides), and a row a retry or same-key run
-  already raised.
+  note, among the rows `readResolvedRefundCreditNoteCoverage` reads that are
+  their own refund's (`countsTowardRefundNoteCoverage`). A refund request's
+  note (#4391), a row naming its note and every other row resolve as
+  `INV-INT-025` says; a number sent for one is refused. Refused too: a PARTIAL
+  row naming no note, an unreadable amount (Mark non-replayable), and a row a
+  retry or same-key run already raised.
 - **Checked as the hand-made answer is.** `verifyHandMadeRefundNote`
   (`INV-ADDPAY-042`), before any transaction: approved or paid, a sales credit
   note for the booking's contact, the row's exact amount.
@@ -534,51 +533,170 @@ officer made, and that note records no other refund: one note, one refund
   retry since the read, a superseding run, a live copy, another create row or
   any link recording the note refuses with a 409 and nothing written; then the
   status-guarded claim writes the mark and the note, and the answer's own
-  writer (`writeHandMadeRefundNoteLink`) its live link, so the inbound sync
-  catches a void and coverage counts the note once. Either order of resolve and
-  answer ends with one record. A withdrawn mark retires its link (audited; a
-  failed withdrawal alerts); only that row takes it back. Every refusal is
-  audited.
-- **Legacy.** A row resolved before #4421 names no note and stays so.
+  writer (`writeHandMadeRefundNoteLink`) its live link, so a void is caught and
+  the note counted once. Either order of resolve and answer records once. A
+  withdrawn mark retires its link (audited; a failed withdrawal alerts); only
+  that row takes it back. Every refusal is audited.
+- **Legacy.** A row resolved before #4421 names no note.
+- **A create records once (#4426, #4656).** Under the Payment row,
+  `recordCreatedRefundNote` claims its row, then refuses a note another create
+  row records; a note kept out or not recorded in time is audited and
+  alerted, never linked, settled or failed.
 
 Pinned by `xero-resolve-refund-note.test.ts`,
-`resolve-records-refund-note.realdb.test.ts`, `advisory-lock-guard.test.ts`.
+`resolve-records-refund-note.realdb.test.ts`, `advisory-lock-guard.test.ts`,
+`xero-late-refund-note-after-resolve.realdb.test.ts`,
+`xero-refund-note-record-gaps.realdb.test.ts`.
+
+### INV-INT-035
+
+While Xero holds a payment refund note the app could not record, no other
+refund note on that payment is sized or raised until that note is recorded
+(#4688).
+
+- **The mark is on the row.** A record that loses its wait (`INV-INT-028`,
+  #4656) stamps its own create row `REFUND_NOTE_UNRECORDED`, naming the note
+  in its response payload; row-only and guarded on its claim: RUNNING, or the
+  FAILED row Mark failed left; never a resolved row or one naming a note.
+- **One read fences.** `findUnrecordedRefundNoteOperation`: a stamped,
+  unresolved row naming no note, whatever its status or age, unless a live
+  or voided link on the payment now records its note. Every refund-note create
+  waits on it before sizing, back to PENDING as
+  `REFUND_NOTE_AWAITING_RESOLVE`, which the outbox scan and the retry drain
+  space out (#4692); Retry, Requeue and Retry all refuse the payment's
+  refund-note creates; the nightly self-heal queues none.
+- **Resolving lifts it.** The resolve's claim sets `manuallyResolvedAt`; a
+  withdrawn resolve restores the fence. A PENDING copy the fence holds does
+  not refuse the resolve; once the fence reads lifted, a copy queued before
+  the resolve closes CANCELLED (`INV-INT-025`). A stamped row whose note
+  another row recorded resolves with that note, adding no link.
+  Mark failed and Reset stale running keep the code and the note's message.
+- **Limits.** Until the stamp lands the row holds others back only as a live
+  claim (#3880). A stamp that fails is logged, and the alert says nothing
+  holds later notes back.
+
+Pinned by `xero-refund-note-in-flight.test.ts`,
+`xero-late-refund-note-record.test.ts`, `xero-refund-note-crash-window.test.ts`,
+`xero-operation-outbox.test.ts`, `xero-operation-queue.test.ts`,
+`xero-resolve-refund-note.test.ts`, `xero-operation-routes.test.ts`,
+`cron-credit-reconciliation.test.ts` and, against real PostgreSQL,
+`xero-unrecorded-refund-note-fence.realdb.test.ts`.
+
+## An account-credit note's member credit (#4685)
+
+### INV-INT-036
+
+An account-credit Xero note stamps the one member credit it was raised for, and
+a note is on at most one of a booking's cancellation credits
+(`MemberCredit.xeroCreditNoteId`, which `INV-PAY-023`'s allocation engine reads
+as the lot's note).
+
+- **The row names its credit.** Every enqueue of a payment's account-credit
+  note adds `memberCreditId` to the queued payload: the cancel's credit branch,
+  both inbound Internet Banking mint arms (a replay names the credit it found),
+  and the repair tool's missing-note action when one credit makes up its sum.
+  The executed payload keeps it, so a retry stamps the same credit. One reader,
+  `readAccountCreditNoteCredit`, serves both parses.
+- **The stamp writes that row by id** (`stampCancellationCreditXeroNote`),
+  scoped to its member, booking, type and amount, and only while it names no
+  note. It never overwrites a note, and a note already on one of the booking's
+  cancellation credits stamps nothing more. Inbound reconciles stamp unheld
+  notes through it, by the outbox row's credit (#4705).
+- **Rows queued before the field** name no credit, so the stamp falls back to
+  the old match (member, booking, amount, the three pipeline descriptions), one
+  credit at a time, oldest first - never every equal credit at once.
+- **No lock.** The write moves no balance, status or settlement money, and each
+  is one null-guarded single-row update (`INV-LOCK-001`; no key or order,
+  `INV-LOCK-002`; no new site, `INV-LOCK-003`).
+- **Limits.** A payment gets one account-credit note (the enqueue keys it on
+  the amount; no writer retires its link), so a second equal credit gets none,
+  and no writer mints one today. Two writers stamping one note on two credits
+  at once can both land.
+
+Pinned by `xero-account-credit-note-stamp.test.ts`,
+`xero-operation-outbox-payload.test.ts`, `xero-operation-outbox.test.ts`,
+`xero-operation-retry.test.ts`, `booking-cancel.test.ts`,
+`xero-inbound-reconciliation.test.ts`, `xero-booking-repair.test.ts` and,
+against real PostgreSQL, `xero-account-credit-note-stamp.realdb.test.ts`.
 
 ## One outcome per Xero operation row (#4356)
 
 ### INV-INT-029
 
-A recorded Xero outcome is never replaced by a worse one, and never lands on
-another attempt's claim. Two callers can hold one row: a start losing the
-one-ACTIVE-row insert race (#1354) takes the winner's row, each recording its
-outcome of the same keyed Xero call there.
+A recorded Xero outcome is never replaced by a worse one, nor lands on another
+attempt's claim. Two callers can share one row (#1354).
 
 - **One guard, in the two writers.** `completeXeroSyncOperation` and
-  `failXeroSyncOperation` (`xero-sync.ts`) guard every outcome write with
-  `outcomeWriteGuard` (`xero-operation-outcome-guard.ts`). Only SUCCEEDED
-  lands on SUCCEEDED, only SUCCEEDED or PARTIAL on PARTIAL; `keepCancelled`
-  also keeps CANCELLED.
+  `failXeroSyncOperation` guard every outcome with `outcomeWriteGuard`
+  (`xero-operation-outcome-guard.ts`). Only SUCCEEDED lands on SUCCEEDED,
+  only SUCCEEDED or PARTIAL on PARTIAL.
 - **Every outcome carries its claim (#4373):** the row's id and its RUNNING
-  claim's `startedAt`, from the started row, the outbox or REQUEUE claim
-  (`claimXeroSyncOperationToRunning`) or a retry's claim. No outcome, a
-  success included, lands on a RUNNING row another claim holds, such as a
-  retry's after a stale reset or failure.
-- **A repair's claim is kept too.** The PARTIAL repair and FAILED
-  refund-note repair stamp a marker code on their RUNNING claim; no outcome
-  but SUCCEEDED lands there unless written onto that claim (`retryClaim`).
-- **A success lands on any row no claim holds** (Xero's answer to the same
-  keyed call), even one resolved in Xero (#4374). The write leaves the mark;
-  if it recorded a Xero object, after commit it warns and alerts officers
-  once per operation: Xero may hold it twice. Limit: an alert reaching
-  nobody is retried only if another success lands.
-- **A refused write changes nothing.** It answers null, writes no link and
-  raises no alert. A missing row throws, or is logged for a guarded caller.
-  A success refused for a later claim still records its links, warned.
-- **Claims, resets and marks write directly,** guarded as before. The outbox
-  and REQUEUE hand-backs to PENDING touch only their own claim.
+  claim's `startedAt`, from its start, outbox, REQUEUE or retry claim, or
+  late-note re-take (`INV-INT-034`). None lands on another claim's RUNNING
+  row.
+- **Any other outcome lands only on its own claim's row (#4673, #4686):**
+  RUNNING or FAILED under its `startedAt` (a PARTIAL, PARTIAL too), never
+  CANCELLED (a withdrawal keeps `startedAt`). One that lost its claim (an
+  in-place Retry) is dropped; the queued run writes its own. A dropped
+  PARTIAL's Xero object is not linked (that run's keyed call records it):
+  audited per delivery, alerted once.
+- **A repair's claim is kept too.** The PARTIAL and FAILED refund-note
+  repairs mark their RUNNING claim; only SUCCEEDED, or that claim's own
+  outcome (`retryClaim`), lands there.
+- **A success lands on any row no claim holds,** even one resolved in Xero
+  (#4374): the mark stays; a recorded object alerts officers once per
+  operation after commit (one reaching nobody retries only on another
+  success). Late notes under `INV-INT-028` and `INV-INT-034` keep out:
+  audited and alerted.
+- **A refused write leaves the row:** null; the outbox counts refused
+  failures skipped. A missing row throws, or logs for a guarded caller. A
+  success refused for a later claim records its links, warned.
+- **Claims, resets and marks write directly,** guarded; the outbox and
+  REQUEUE hand-backs to PENDING touch only their own claim.
 
-Pinned by `xero-sync.test.ts`, `xero-success-after-resolution-alert.test.ts`
-and, against real PostgreSQL, `xero-shared-operation-outcome.realdb.test.ts`.
+Pinned by `xero-sync.test.ts`, `xero-outbox-fail-fast.test.ts`,
+`xero-success-after-resolution-alert.test.ts`,
+`xero-late-partial-trace.test.ts` and, against real PostgreSQL,
+`xero-shared-operation-outcome.realdb.test.ts` and
+`xero-late-failure-after-retry.realdb.test.ts`.
+
+### INV-INT-034
+
+An organiser adjustment's credit note that Xero creates after its stalled job
+was reset is recorded on the job or surfaced once, never lost (#4655).
+
+- **It lands where a success may.** `recordCreatedOrganiserNote` writes it
+  before moving money, in status-guarded `updateMany`s, only on a row
+  recording no other note: this run's RUNNING claim; an unresolved FAILED row
+  (a reset), re-taken RUNNING under a fresh claim in one write; or an
+  unresolved PENDING row (a Retry queued it; the queued run continues). A
+  retry never raises a second note.
+- **A re-taken row is this run's (#4672):** its outcomes go under the fresh
+  claim; Resolve and Retry refuse it while RUNNING; a dead process is reset
+  again.
+- **Anywhere else it is kept out.** A row resolved by hand, non-replayable,
+  held by another claim (or a live row with its key), recording another note
+  or closed takes nothing and is not failed. `traceUnrecordedLateNote` warns,
+  writes one `xero` audit row
+  (`xero.organiser_adjustment_note.late_note_not_recorded`) and sends #4374's
+  alert once per note, each step caught.
+- **A resolved row is a stated choice:** unlike a plain-resolved refund-note
+  row (#4426), it takes no late note: that would move money after an officer
+  took over.
+- **Money moves only under the run's claim (#4680, #4701).** Each invoice
+  void, resize, allocation, settlement, refund payment, or completion with
+  nothing allocated or paid reads the row RUNNING under it first
+  (`holdsXeroOperationClaim`); lost, the run calls nothing, writes no outcome;
+  audited, alerted once if resolved.
+- **Limits.** A retry may record the same note via Xero's idempotency key
+  (the alert says compare). A process dying before auditing leaves only
+  the warning. A call in flight as the claim is lost still completes,
+  alerted (#4374).
+
+Pinned by `organiser-extra-note-record.test.ts`,
+`organiser-extra-adjustment.test.ts` and, on real PostgreSQL,
+`organiser-late-note-after-reset.realdb.test.ts` and
+`organiser-run-claim-check.realdb.test.ts`.
 
 ## Stored outbox payloads (#3971)
 
@@ -652,3 +770,39 @@ The central server's public lodge search may ask this site how many beds are fre
 - **Counts only.** The body is the free beds per night and their minimum, for the active lodge an administrator has explicitly linked to its central id (`Lodge.centralLodgeId`), a one-lodge club included: there is no automatic one-lodge fallback (owner decision, 24 Oct 2026, #4262); never a guest, member or booking, and every refusal is one 404.
 
 Pinned by `webhooks/servernz-availability/__tests__/route.test.ts`, `webhooks/servernz-posts/__tests__/route.test.ts`, `central-lodge-link.test.ts`.
+
+## A payment deleted in Xero (#4531)
+
+### INV-INT-031
+A Xero payment link is retired only when Xero says its payment is DELETED, never because a payload left it out.
+
+- **Absence nominates; Xero decides.** The inbound invoice and credit-note reconcile nominate an active `PAYMENT` link, of a role that document's own reconcile writes, whose payment the payload no longer lists. Only a trusted payload nominates: a `Payments` list whose entries all carry an id, every one not already DELETED a readable amount, and, for an invoice, whose cash `quantifyXeroInvoiceCashCents` finds complete and whose `AmountPaid` equals the listed sum. Retirement needs `GET /Payments/{id}` to report DELETED.
+- **Budgeted and deferrable.** One attempt per payment, at most five per run, none past the usage panel's critical threshold or during Xero's daily limit. A deferred or unanswered candidate stays active and marked, and the inbound cron cycle re-checks marked links at most every six hours, five failed answers at most; the event does not fail.
+- **The retire.** `active = false` and `metadata.status = "DELETED"`, other fields kept, in one write guarded on the link still being active with the metadata it was read with. Never while an operation that reads the link may run again (`rerunnableOperationWhere`, on its record or the same booking): its retry would pay again. A replay writes nothing.
+- **Never re-adopted.** Any inbound write of a payment Xero reports DELETED lands its link inactive. A hand-entered replacement is in the payload and stays active.
+- **Backfill.** `scripts/xero-deleted-payment-link-backfill.ts` is report-only by default; `--apply` retires only payments Xero confirms DELETED, through the same write.
+
+Pinned by `xero-deleted-payment-links.test.ts`, `xero-deleted-payment-link-backfill.test.ts`, `xero-inbound-reconciliation.test.ts`, `xero-inbound-audit-summary.test.ts`, `xero-api-usage.test.ts` and, against a real database, `xero-deleted-payment-links.realdb.test.ts`.
+
+## Stripe payments the app did not create (#4532)
+
+### INV-INT-032
+A succeeded Stripe payment the app did not create is recorded once and alerted once; it never completes silently.
+
+- **Recognised means routed.** `appPaymentIntentRoute` (`stripe-app-intent-metadata.ts`) is the one definition: a non-empty `bookingId` or `type: "group_settlement"`. Both PaymentIntent wire functions in `stripe.ts` require `AppPaymentIntentMetadata`, and a census holds every Stripe money-object creation (PaymentIntent, Checkout session, Payment Link, invoice, subscription, charge) to those two. Key presence is not recognition: a Payment Link's own `type` or `memberId` metadata is still foreign.
+- **One record.** `payment_intent.succeeded` for any other intent writes one `UnrecognisedStripePayment` row: amount in Stripe's smallest unit, currency, created instant, PaymentIntent, charge, Checkout session and Payment Link ids, and the line items (else the intent's description), capped. The unique PaymentIntent id is the claim; a later delivery reads the stored row and asks Stripe nothing. The Checkout read runs before the write, outside any transaction.
+- **One alert.** `admin-unrecognised-stripe-payment`, unmuteable and delivery-locked, to Finance editors, claimed once ever per PaymentIntent. A send nobody received releases its copies, gives its own claim back, twice if need be, and fails the event, as does a claim write that threw (#4679): Stripe redelivers; the email cron replays one recipient's lost copy, or all once it claimed one, keeping the claim (#4669). An unstamped claim is a sibling's for the webhook lease less a margin, then taken over and sent, unless a sent marker shows it went out. No card data or payer identity is sent.
+- **Nothing else.** The event completes; no booking, settlement, ledger or Xero document is touched, and no advisory lock is taken. Coding the money in Xero is the treasurer's, by hand.
+
+Pinned by `stripe-app-intent-metadata.test.ts`, `unrecognised-stripe-payment.test.ts`, `unrecognised-stripe-payment-email-retry.test.ts`, `caller-retried-alert-replay.test.ts`, `stripe-webhook-alerts.test.ts`, `admin-unrecognised-stripe-payment-alert.test.ts` and, against a real database, `unrecognised-stripe-payment.realdb.test.ts`.
+
+## A succeeded app intent no payment row settles (#4624)
+
+### INV-INT-033
+A succeeded PaymentIntent the app created for a booking that matches no PRIMARY payment transaction is recorded once and alerted once; it never completes silently.
+
+- **Where.** `handlePaymentIntentSucceeded` (`stripe-webhook-service.ts`), after the group-settlement, superseded-capture and additional-ask routes and the saved-card attempt adoption: no row names the intent (`APP_INTENT_NO_TRANSACTION`), or the row is not `PRIMARY` (`APP_INTENT_NOT_PRIMARY`). Those routes are the expected cases and never reach it. [`STATE_MACHINES.md`](../STATE_MACHINES.md#a-succeeded-app-intent-no-primary-row-settles-4624) lists every minting flow and whether it can.
+- **One record, one alert.** `recordUnmatchedAppStripePayment` reuses `INV-INT-032`'s `UnrecognisedStripePayment` row (with `reason` and the metadata `bookingId`; no Checkout read) and its once-ever key, so one PaymentIntent has one row and one alert whichever case recorded it first; the stored row's reason picks the mail. The alert is `admin-unmatched-app-stripe-payment`: unmuteable, delivery-locked, to Finance editors. Retried as for `INV-INT-032`: by Stripe's redelivery when nobody received it, by the email retry cron for one recipient's lost copy (#4669).
+- **Nothing else.** The booking, its payment, ledger, capacity and Xero are untouched, and no advisory lock is taken: matching the money to the booking or refunding it is a person's.
+
+Pinned by `unrecognised-stripe-payment.test.ts`, `unrecognised-stripe-payment-email-retry.test.ts`, `caller-retried-alert-replay.test.ts`, `stripe-webhook-alerts.test.ts` ("#4624"), `admin-unrecognised-stripe-payment-alert.test.ts` and, against a real database, `unrecognised-stripe-payment.realdb.test.ts`.

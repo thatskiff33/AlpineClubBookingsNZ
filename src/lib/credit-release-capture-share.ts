@@ -3,7 +3,11 @@ import "server-only";
 import type { Prisma } from "@prisma/client";
 import { PaymentTransactionKind } from "@prisma/client";
 
-import { planCreditReleasePayments, type AskLedgerRow } from "@/lib/credit-release-payment-plan";
+import {
+  creditReleaseShareFromPlan,
+  planCreditReleasePayments,
+  type AskLedgerRow,
+} from "@/lib/credit-release-payment-plan";
 import { LEDGER_ROWS_OLDEST_FIRST } from "@/lib/payment-ledger-order";
 import { prisma } from "@/lib/prisma";
 
@@ -11,13 +15,15 @@ import { prisma } from "@/lib/prisma";
  * HOW MUCH OF ONE CARD CAPTURE THE CREDIT-RELEASE SWEEP RECORDS (#4253,
  * `INV-ADDPAY-046`), so the capture's receipt writer records only the rest.
  *
- * Two writers could otherwise record the same card payment on the booking's
- * invoice: the sweep (`credit-release-xero-payment.ts`) and the additional-capture
- * receipt (`additional-capture-recorder.ts`). Both derive their share from the
- * same ledger chain, so they cannot disagree about it and neither depends on the
- * other having run. `held` means the sweep will not record this capture and an
- * officer has been told: the receipt stands down too, rather than record a payment
- * that may include money nobody has worked out.
+ * Three writers could otherwise record the same card payment: the sweep
+ * (`credit-release-xero-payment.ts`), the additional-capture receipt and the
+ * #3980 gap invoice, which pays itself from spare captured cash
+ * (`additional-capture-recorder.ts`, #4494). All derive the share from the same
+ * ledger chain, so they cannot disagree about it and none depends on another
+ * having run. `held` means the sweep will not record this capture and an
+ * officer has been told: the receipt stands down too, and the gap invoice treats
+ * all of it as taken, rather than record a payment that may include money
+ * nobody has worked out.
  */
 export type CreditReleaseCaptureShare = { ownCents: number; held: boolean };
 
@@ -44,11 +50,15 @@ export async function readCreditReleaseCaptureShare(
       stripePaymentIntentId: true,
     },
   });
-  const plan = planCreditReleasePayments(rows as AskLedgerRow[]);
-  return {
-    ownCents: plan.items
-      .filter((item) => item.capturedByIntentId === paymentIntentId)
-      .reduce((sum, item) => sum + item.ownCents, 0),
-    held: plan.unexplainedCaptureIntentIds.includes(paymentIntentId),
-  };
+  return creditReleaseShareFromPlan(planCreditReleasePayments(rows as AskLedgerRow[]), paymentIntentId);
+}
+
+/**
+ * #4494 (`INV-SSOT`): the cents of a capture's NET cash that are the sweep's, so
+ * the gap invoice never pays itself from them: all of it where the sweep holds
+ * the capture, else its own share, never more than the capture holds.
+ */
+export function creditReleaseSweptCents(share: CreditReleaseCaptureShare, netCents: number): number {
+  const net = Math.max(0, netCents);
+  return share.held ? net : Math.min(Math.max(0, share.ownCents), net);
 }

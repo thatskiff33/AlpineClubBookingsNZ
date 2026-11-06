@@ -131,6 +131,11 @@ import {
 } from "@/lib/stripe";
 import { markBookingPaymentSucceeded } from "@/lib/payment-reconciliation";
 import {
+  BELOW_STRIPE_MINIMUM_CODE,
+  BELOW_STRIPE_MINIMUM_MEMBER_MESSAGE,
+  STRIPE_MINIMUM_AMOUNT_CENTS,
+} from "@/lib/stripe-charge-currency";
+import {
   findPaymentTransactionByIntentId,
   upsertPaymentIntentTransaction,
 } from "@/lib/payment-transactions";
@@ -1135,6 +1140,20 @@ describe("createPaymentIntentForPaymentLink", () => {
 
     await expect(createPaymentIntentForPaymentLink(RAW_TOKEN)).rejects.toMatchObject({ status: 410 });
     expect(mockedFindOrCreateCustomer).not.toHaveBeenCalled();
+  });
+
+  it("#99: refuses an amount below the card minimum with a coded 409, before any customer lookup or mint", async () => {
+    const booking = baseBooking({ finalPriceCents: STRIPE_MINIMUM_AMOUNT_CENTS - 1 });
+    mockedFindUnique.mockResolvedValue(baseLink({ booking }) as never);
+    vi.mocked(prisma.booking.findUnique).mockResolvedValue(booking as never);
+
+    await expect(createPaymentIntentForPaymentLink(RAW_TOKEN)).rejects.toMatchObject({
+      status: 409,
+      code: BELOW_STRIPE_MINIMUM_CODE,
+      message: BELOW_STRIPE_MINIMUM_MEMBER_MESSAGE,
+    });
+    expect(mockedFindOrCreateCustomer).not.toHaveBeenCalled();
+    expect(mockedCreatePaymentIntent).not.toHaveBeenCalled();
   });
 
   it("throws NOT_PAYABLE_MESSAGE for a CANCELLED booking", async () => {

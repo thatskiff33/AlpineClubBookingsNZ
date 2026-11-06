@@ -90,6 +90,9 @@ interface EditPolicyInfo {
   // Optional so pre-existing fixtures/serialisers stay valid; the booking page
   // always sets it.
   adminOverrideAvailable?: boolean;
+  // #4533: an officer on a FINISHED stay, where Save cannot apply and a promo
+  // code is sent as a correction request instead. Absent for everyone else.
+  finishedStayPromoCorrection?: boolean;
 }
 
 export interface BookingEditorData {

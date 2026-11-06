@@ -1,8 +1,14 @@
 /**
  * The one reading of whether a Stripe intent is unpaid, for the currency re-issue
- * (`additional-intent-currency.ts`, #3567) and an ordinary ask's refused replay
- * (`ordinary-ask-request.ts`, #4036). A module of its own so a pure caller need
- * not import the re-issue's database and Stripe writers.
+ * (`additional-intent-currency.ts`, #3567), an ordinary ask's refused replay
+ * (`ordinary-ask-request.ts`, #4036) and a recovery replay's carried ask, which
+ * it waits on unless this says `reissue` (`carriedAskPaymentWait`, #4015). A
+ * module of its own so a pure caller need not import the re-issue's database
+ * and Stripe writers.
+ *
+ * The member's pay door keeps its own list (`PROVIDER_CAPTURED_INTENT_STATUSES`
+ * in `additional-payment-chase.ts`): identical on every documented status, it
+ * stays payable on an unknown one where this fails safe (`gone`).
  */
 
 /**

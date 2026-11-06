@@ -57,7 +57,7 @@ function latch() {
     await prisma.lodge.deleteMany({ where: { id: { startsWith: "race-4262-" } } });
     await prisma.clubPost.deleteMany({ where: { serverPostId: { startsWith: "race-4470-" } } });
     await prisma.otherLodge.deleteMany({ where: { id: { startsWith: "race-4262-" } } });
-    await prisma.integrationCredential.deleteMany({ where: { provider: "servernz", key: { in: ["api_key", "push_secret"] } } });
+    await prisma.integrationCredential.deleteMany({ where: { provider: "servernz", key: { in: ["api_key", "push_secret", "push_registered_url"] } } });
     await prisma.serverNzSettings.deleteMany({ where: { id: "default" } });
   }
 
@@ -123,13 +123,13 @@ function latch() {
 
   beforeEach(async () => {
     await clean();
-    const { encryptCredential, INTEGRATION_CREDENTIAL_LABEL } = await import("@/lib/integration-crypto");
+    const { encryptCredential } = await import("@/lib/integration-crypto");
     await prisma.serverNzSettings.create({ data: {
       id: "default", baseUrl: OLD_URL, serverVersion: SERVERNZ_EXPECTED_SERVER_VERSION, otherLodgesOwnedNames: ["Old lodge"],
     } });
     await prisma.integrationCredential.create({ data: {
       provider: "servernz", key: "api_key",
-      ...encryptCredential({ provider: "servernz", key: "api_key", plaintext: OLD_KEY, label: INTEGRATION_CREDENTIAL_LABEL }),
+      ...encryptCredential({ provider: "servernz", key: "api_key", plaintext: OLD_KEY }),
     } });
     const { resetIntegrationCredentialCacheForTests, resolveIntegrationCredential } = await import("@/lib/integration-credentials");
     resetIntegrationCredentialCacheForTests();
@@ -410,18 +410,26 @@ function latch() {
     const OLD_SERVER_SECRET = "o".repeat(40);
     const STANDING_SECRET = "s".repeat(40);
 
-    async function storedPushSecret() {
+    async function storedCredential(key: "push_secret" | "push_registered_url") {
       const { readIntegrationCredentialRow } = await import("@/lib/integration-credentials");
-      const row = await readIntegrationCredentialRow(prisma, "servernz", "push_secret");
+      const row = await readIntegrationCredentialRow(prisma, "servernz", key);
       return row.status === "configured" ? row.value : null;
     }
+    const storedPushSecret = () => storedCredential("push_secret");
+    const storedPushAddress = () => storedCredential("push_registered_url");
 
+    /** A registration as `ensurePushRegistration` leaves it: the secret and its address. */
     async function seedPushSecret(value: string) {
-      const { encryptCredential, INTEGRATION_CREDENTIAL_LABEL } = await import("@/lib/integration-crypto");
-      await prisma.integrationCredential.create({ data: {
-        provider: "servernz", key: "push_secret",
-        ...encryptCredential({ provider: "servernz", key: "push_secret", plaintext: value, label: INTEGRATION_CREDENTIAL_LABEL }),
-      } });
+      const { encryptCredential } = await import("@/lib/integration-crypto");
+      for (const [key, plaintext] of [
+        ["push_secret", value],
+        ["push_registered_url", "https://club.race-4470.example.invalid/api/webhooks/servernz-posts"],
+      ] as const) {
+        await prisma.integrationCredential.create({ data: {
+          provider: "servernz", key,
+          ...encryptCredential({ provider: "servernz", key, plaintext }),
+        } });
+      }
     }
 
     afterAll(() => {
@@ -434,8 +442,10 @@ function latch() {
       await prisma.serverNzSettings.update({ where: { id: "default" }, data: {
         otherLodgesCursor: "race-4470-cursor", commsCursorSince: "2026-06-30T00:00:00.000Z", commsCursorSinceId: "race-4470-post",
       } });
+      expect(await storedPushAddress()).not.toBeNull();
       await moveAddress();
       expect(await storedPushSecret()).toBeNull();
+      expect(await storedPushAddress()).toBeNull();
       expect(await prisma.serverNzSettings.findUnique({ where: { id: "default" } })).toMatchObject({
         baseUrl: NEW_URL, otherLodgesCursor: null, commsCursorSince: null, commsCursorSinceId: null,
       });
@@ -453,12 +463,14 @@ function latch() {
       await ensurePushRegistration();
       expect(fetchMock).toHaveBeenCalledTimes(1);
       expect(await storedPushSecret()).toBeNull();
+      expect(await storedPushAddress()).toBeNull();
     });
 
     it("is removed by a key replacement at the same address too (#4470 review)", async () => {
       await seedPushSecret("race-4470-old-key-push-secret");
       await config.setServerNzApiKey("race-4470-rotated-key", OLD_URL, { kind: "admin", memberId: ACTOR_ID });
       expect(await storedPushSecret()).toBeNull();
+      expect(await storedPushAddress()).toBeNull();
       expect(await prisma.serverNzSettings.findUnique({ where: { id: "default" } })).toMatchObject({ baseUrl: OLD_URL });
     });
 
@@ -470,6 +482,9 @@ function latch() {
       })));
       await ensurePushRegistration();
       expect(await storedPushSecret()).toBe(STANDING_SECRET);
+      // The address it was issued for is stored beside it, in the same write.
+      expect(await storedPushAddress())
+        .toBe("https://club.race-4470.example.invalid/api/webhooks/servernz-posts");
     });
   });
 

@@ -6,6 +6,7 @@ import {
   ServerNzNotConfiguredError,
   ServerNzVersionMismatchError,
 } from "@/lib/servernz-api";
+import type { DownloadSummary, UploadSummary } from "@/lib/servernz-other-lodges-sync";
 import {
   OTHER_LODGES_SYNC_RUNNING_CODE,
   SERVER_VERSION_MISMATCH_CODE,
@@ -31,6 +32,76 @@ export function respondSyncRunning(): NextResponse {
 }
 
 /**
+ * The audit row for a download an administrator started, by the Download
+ * button or by the setup page's step after a key save. A download that
+ * stopped (#4262 review) is its own outcome, with the reason. Hidden (#58):
+ * lodges the central server deleted, now kept only for what names them.
+ */
+export async function auditDownload(
+  result: Pick<DownloadSummary, "stopped" | "fetched" | "created" | "updated" | "hiddenLodges">,
+  memberId: string,
+  summary: string,
+): Promise<void> {
+  const hidden = result.hiddenLodges;
+  await createAuditLog({
+    action: "alpine_server.other_lodges.download",
+    category: "lodge",
+    severity: result.stopped ? "important" : "info",
+    outcome: result.stopped ? "failure" : "success",
+    memberId,
+    summary: result.stopped
+      ? `Download from Alpine Central Server stopped (${result.stopped}); its cursor was not recorded`
+      : summary,
+    details: `fetched ${result.fetched}, added ${result.created}, updated ${result.updated}, hidden ${hidden.length}${hidden.length ? ` (${hidden.join(", ")})` : ""}`,
+  });
+}
+
+/** The audit row for an upload an administrator started (button, or a lodge save). */
+export async function auditUpload(
+  result: Pick<UploadSummary, "created" | "updated" | "skipped">,
+  memberId: string,
+  summary: string,
+): Promise<void> {
+  await createAuditLog({
+    action: "alpine_server.other_lodges.upload",
+    category: "lodge",
+    severity: "info",
+    outcome: "success",
+    memberId,
+    summary,
+    details: `created ${result.created}, updated ${result.updated}, skipped ${result.skipped}`,
+  });
+}
+
+/**
+ * The audit row for a failed or paused sync an administrator started, by a
+ * press of Upload or Download or by a save that uploads straight away.
+ * Details name only the two versions or the server's status (INV-INT-005).
+ */
+export async function auditSyncFailure(
+  error: unknown,
+  memberId: string,
+  direction: "upload" | "download",
+): Promise<void> {
+  const paused = error instanceof ServerNzVersionMismatchError;
+  await createAuditLog({
+    action: `alpine_server.other_lodges.${direction}`,
+    category: "lodge",
+    severity: "important",
+    outcome: "failure",
+    memberId,
+    summary: paused
+      ? `Alpine Central Server ${direction} paused: server API version differs`
+      : `Alpine Central Server ${direction} failed`,
+    details: paused
+      ? `this site is built for ${error.expected}; the server reports ${error.serverVersion}`
+      : error instanceof ServerNzApiError
+        ? `server responded ${error.status}: ${error.message}`
+        : "connection error",
+  });
+}
+
+/**
  * Map a ServerNZ sync failure to an audited HTTP response. Shared by the upload
  * and download routes. Not a route file, so it may export freely.
  *
@@ -49,22 +120,8 @@ export async function respondToSyncError(
   if (error instanceof ServerNzNotConfiguredError) {
     return NextResponse.json({ error: error.message }, { status: 409 });
   }
+  await auditSyncFailure(error, memberId, direction);
   const paused = error instanceof ServerNzVersionMismatchError;
-  await createAuditLog({
-    action: `alpine_server.other_lodges.${direction}`,
-    category: "lodge",
-    severity: "important",
-    outcome: "failure",
-    memberId,
-    summary: paused
-      ? `Alpine Central Server ${direction} paused: server API version differs`
-      : `Alpine Central Server ${direction} failed`,
-    details: paused
-      ? `this site is built for ${error.expected}; the server reports ${error.serverVersion}`
-      : error instanceof ServerNzApiError
-        ? `server responded ${error.status}: ${error.message}`
-        : "connection error",
-  });
   if (paused) {
     return NextResponse.json(
       {

@@ -4,15 +4,19 @@ import { useState } from "react";
 import { Copy, Loader2, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { RetiredRecoveryCodesNotice } from "@/components/retired-recovery-codes-notice";
 
 export function TwoFactorSecurityCard({
   enabled,
   method,
   moduleEnabled,
+  recoveryCodesRetired = false,
 }: {
   enabled: boolean;
   method: "TOTP" | "EMAIL" | null;
   moduleEnabled: boolean;
+  /** The member's saved recovery codes were retired by a key change (#4456). */
+  recoveryCodesRetired?: boolean;
 }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -97,6 +101,12 @@ export function TwoFactorSecurityCard({
           </Button>
         ) : null}
       </div>
+
+      {recoveryCodesRetired && enabled && !codes ? (
+        <RetiredRecoveryCodesNotice>
+          Choose Regenerate codes to get a new set, and keep it somewhere safe.
+        </RetiredRecoveryCodesNotice>
+      ) : null}
 
       {error ? (
         <div className="rounded-md border border-destructive/20 bg-destructive/10 px-3 py-2 text-sm text-destructive">

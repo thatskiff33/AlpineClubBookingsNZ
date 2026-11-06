@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const findMany = vi.hoisted(() => vi.fn());
-vi.mock("@/lib/prisma", () => ({ prisma: { xeroSyncOperation: { findMany } } }));
+const findTasks = vi.hoisted(() => vi.fn());
+vi.mock("@/lib/prisma", () => ({ prisma: { xeroSyncOperation: { findMany }, manualRefundTask: { findMany: findTasks } } }));
 
 import {
   invoiceCorrectionNoteIds,
@@ -18,11 +19,25 @@ import { UNPAID_ASK_BILLED_OFFSET_NOTE_SCOPE } from "@/lib/xero-review-task-key"
  * when it was raised.
  */
 function operation(xeroObjectId: string, requestPayload: Record<string, unknown>, localModel = "BookingModification") {
-  return { xeroObjectId, localModel, requestPayload };
+  return { xeroObjectId, localId: xeroObjectId, localModel, requestPayload };
 }
 
 describe("noCashModificationNoteIds (#3809, #3954, #3979)", () => {
-  beforeEach(() => findMany.mockReset());
+  beforeEach(() => { findMany.mockReset(); findTasks.mockReset().mockResolvedValue([]); });
+
+  it("an unpaid edit hand-back is no cash, but a review on that edit and legacy notes keep their own treatment (#4315)", async () => {
+    findMany.mockResolvedValue([
+      operation("edit", { refundMethod: "internet-banking" }),
+      { ...operation("review", { refundMethod: "internet-banking", reviewTaskId: "review-task" }), localId: "edit" },
+      operation("legacy", { refundMethod: "internet-banking" }),
+    ]);
+    findTasks.mockResolvedValue([{ kind: "CANCELLED_BOOKING_HAND_BACK", occurrenceKey: "edit-refund-hand-back:edit" }]);
+    expect(await noCashModificationNoteIds(["edit", "review", "legacy"])).toEqual(new Set(["edit"]));
+    expect(findTasks).toHaveBeenCalledWith(expect.objectContaining({ where: {
+      occurrenceKey: { in: ["edit-refund-hand-back:edit", "edit-refund-hand-back:legacy"] },
+      status: { not: "COMPLETED" },
+    } }));
+  });
 
   it("an invoice correction moved no cash; a refund by any method did", async () => {
     findMany.mockResolvedValue([

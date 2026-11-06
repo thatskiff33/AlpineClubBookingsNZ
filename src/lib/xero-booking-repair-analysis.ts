@@ -18,7 +18,7 @@ import {
   readJsonString,
 } from "./xero-booking-repair-utils";
 import { bookingOwner } from "@/lib/booking-owner";
-import { getCancellationCreditCents } from "@/lib/cancellation-settled-money";
+import { cancellationCreditsOf, getCancellationCreditCents } from "@/lib/cancellation-settled-money";
 import { unpaidInvoiceClearingAmountCents } from "@/lib/invoice-clearing-amount";
 
 export function buildMemberName(booking: BookingRepairRecord) {
@@ -30,6 +30,16 @@ export function buildMemberName(booking: BookingRepairRecord) {
 // artefact and two copies of the description match would drift.
 export function getCancellationCreditAmountCents(booking: BookingRepairRecord) {
   return getCancellationCreditCents(booking.id, booking.creditsFromCancellation);
+}
+
+/**
+ * #4685: the credit a missing account-credit note is for, when that sum is one
+ * row - which the note's stamp then writes by id. Several rows name none, and
+ * the stamp falls back to its amount match.
+ */
+export function cancellationCreditNoteTarget(booking: BookingRepairRecord): { memberCreditId?: string } {
+  const credits = cancellationCreditsOf(booking.id, booking.creditsFromCancellation);
+  return credits.length === 1 ? { memberCreditId: credits[0]!.id } : {};
 }
 
 // Pick<> keeps this callable from the retry stack's slim modification select

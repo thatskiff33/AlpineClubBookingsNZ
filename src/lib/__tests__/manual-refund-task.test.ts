@@ -3326,7 +3326,9 @@ describe("recording per-night amounts while settling (#3191)", () => {
     // held while waiting for it — and the closure posts its ledger lines with
     // the share's direction. #3740: only the task's `kind` is read before it;
     // the read that picks the money route comes after.
-    expect(mocks.executeRaw).toHaveBeenCalledTimes(1);
+    // #4627: and then the closure takes its booking row, before any of its writes.
+    expect(mocks.executeRaw).toHaveBeenCalledTimes(2);
+    expect((mocks.executeRaw.mock.calls[1]![0] as unknown as string[]).join("?")).toMatch(/FROM "Booking" WHERE "id" = \? FOR NO KEY UPDATE/);
     expect(mocks.manualRefundTaskFindUnique.mock.calls[0]![0]).toMatchObject({ select: { kind: true } });
     expect(Object.keys((mocks.manualRefundTaskFindUnique.mock.calls[0]![0] as { select: object }).select)).toEqual([
       "kind",

@@ -3,10 +3,9 @@ import "server-only";
 import { NextResponse } from "next/server";
 
 import { requireAdmin } from "@/lib/session-guards";
-import { createAuditLog } from "@/lib/audit";
 import { loadServerNzSettings } from "@/lib/servernz-settings";
 import { downloadOtherClubsFromServer } from "@/lib/servernz-other-lodges-sync";
-import { respondSyncRunning, respondToSyncError } from "@/lib/servernz-sync-response";
+import { auditDownload, respondSyncRunning, respondToSyncError } from "@/lib/servernz-sync-response";
 import { withOtherLodgesSyncClaim } from "@/lib/servernz-sync-claim";
 import { assertStoredServerVersionMatches } from "@/lib/servernz-api";
 
@@ -38,19 +37,7 @@ export async function POST() {
     if (result === null) return respondSyncRunning();
     // A download that stopped (#4262 review) is its own outcome, with the
     // reason, never a plain success.
-    await createAuditLog({
-      action: "alpine_server.other_lodges.download",
-      category: "lodge",
-      severity: result.stopped ? "important" : "info",
-      outcome: result.stopped ? "failure" : "success",
-      memberId: guard.session.user.id,
-      summary: result.stopped
-        ? `Download from Alpine Central Server stopped (${result.stopped}); its cursor was not recorded`
-        : "Downloaded Other Clubs from Alpine Central Server",
-      // Hidden (#58): lodges the central server deleted, now kept only for
-      // the bookings and requests that name them.
-      details: `fetched ${result.fetched}, added ${result.created}, updated ${result.updated}, hidden ${result.hiddenLodges.length}${result.hiddenLodges.length ? ` (${result.hiddenLodges.join(", ")})` : ""}`,
-    });
+    await auditDownload(result, guard.session.user.id, "Downloaded Other Clubs from Alpine Central Server");
     return NextResponse.json(result);
   } catch (error) {
     return respondToSyncError(error, guard.session.user.id, "download");

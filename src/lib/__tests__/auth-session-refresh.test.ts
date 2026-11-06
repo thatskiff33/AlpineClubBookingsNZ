@@ -35,6 +35,9 @@ vi.mock("@/lib/prisma", async () => {
         findFirst: mockFindFirst,
         update: mockUpdate,
       },
+      // #4611: the maximum session age is read on every refresh; no row, so the
+      // 7-day default applies.
+      loginSecuritySetting: { findUnique: vi.fn().mockResolvedValue(null) },
     },
   };
 });
@@ -42,6 +45,14 @@ vi.mock("@/lib/prisma", async () => {
 vi.mock("@/lib/runtime-config", () => ({
   getAuthSecret: vi.fn(() => "test-secret"),
   getAuthTrustHost: vi.fn(() => true),
+}));
+
+// #4609: the per-account throttle is its own subject (login-throttle-auth.test.ts);
+// here every attempt is admitted so a refusal can only be this suite's guard.
+vi.mock("@/lib/login-throttle", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/login-throttle")),
+  claimPasswordAttempt: vi.fn().mockResolvedValue({ allowed: true }),
+  clearPasswordAttempts: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock("next-auth/providers/credentials", () => ({
@@ -164,6 +175,9 @@ describe("auth session refresh", () => {
         twoFactorEnabled: true,
         twoFactorMethod: true,
         postLoginLanding: true,
+        // #4612: with role and the rows, the record's classification, which
+        // decides the lodge kiosk account's longer idle window.
+        financeAccessLevel: true,
       },
     });
     expect(refreshedToken).toEqual(
@@ -178,16 +192,25 @@ describe("auth session refresh", () => {
     );
   });
 
-  it("marks the session invalid when the password changed after issuance", async () => {
-    mockFindUnique.mockResolvedValue({
+  // #4611: both instants sit within an hour or two of the frozen clock, well
+  // inside the 7-day maximum session age, so only the password-change rule can
+  // end the session here; the control below proves the cap is not the reason.
+  function passwordChangedMember(passwordChangedAt: Date) {
+    return {
       role: "MEMBER",
       accessRoles: [{ role: "USER" }],
       forcePasswordChange: false,
       emailVerified: true,
-      passwordChangedAt: new Date("2026-04-26T10:00:00.000Z"),
+      passwordChangedAt,
       twoFactorEnabled: false,
       twoFactorMethod: null,
-    });
+    };
+  }
+
+  it("marks the session invalid when the password changed after issuance", async () => {
+    mockFindUnique.mockResolvedValue(
+      passwordChangedMember(new Date(Date.now() - 60 * 60 * 1000)),
+    );
 
     const refreshedToken = await authConfig.callbacks.jwt?.({
       token: {
@@ -195,13 +218,35 @@ describe("auth session refresh", () => {
         role: "MEMBER",
         forcePasswordChange: false,
         isEmailVerified: true,
-        sessionIssuedAt: new Date("2026-04-26T09:00:00.000Z").getTime(),
+        sessionIssuedAt: Date.now() - 2 * 60 * 60 * 1000,
       },
     } as never);
 
     expect(refreshedToken).toEqual(
       expect.objectContaining({
         sessionInvalidated: true,
+      })
+    );
+  });
+
+  it("keeps the session live when the password changed before issuance", async () => {
+    mockFindUnique.mockResolvedValue(
+      passwordChangedMember(new Date(Date.now() - 2 * 60 * 60 * 1000)),
+    );
+
+    const refreshedToken = await authConfig.callbacks.jwt?.({
+      token: {
+        id: "member-1",
+        role: "MEMBER",
+        forcePasswordChange: false,
+        isEmailVerified: true,
+        sessionIssuedAt: Date.now() - 60 * 60 * 1000,
+      },
+    } as never);
+
+    expect(refreshedToken).toEqual(
+      expect.objectContaining({
+        sessionInvalidated: false,
       })
     );
   });

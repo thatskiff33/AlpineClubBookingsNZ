@@ -134,6 +134,30 @@ describe("OperationItem failure explanation (#4278)", () => {
   });
 });
 
+describe("OperationItem credit-used-outside-the-app chip (#4220)", () => {
+  const spent = { status: "FAILED" as const, entityType: "ALLOCATION", lastErrorCode: "CREDIT_NOTE_SPENT_OUTSIDE_APP", lastErrorMessage: "spent in Xero" };
+
+  it("names an Active failure the converge left open and says where the amount is chased", () => {
+    renderItem(makeOperation({ ...spent, failureState: "ACTIVE" }));
+    expect(screen.getByText("Credit used outside the app")).toBeDefined();
+    expect(screen.getByText(/chased from Xero/)).toBeDefined();
+  });
+
+  it("is absent for another error code, a repaired row and a resolved row", () => {
+    const cases = [
+      makeOperation({ ...spent, lastErrorCode: "400", failureState: "ACTIVE" }),
+      makeOperation({ ...spent, failureState: "REPAIRED" }),
+      makeOperation({ ...spent, failureState: "ACTIVE", manuallyResolvedAt: "2026-06-30T00:00:00.000Z" }),
+    ];
+    for (const operation of cases) {
+      const { unmount } = renderItem(operation);
+      expect(screen.queryByText("Credit used outside the app")).toBeNull();
+      expect(screen.queryByText(/chased from Xero/)).toBeNull();
+      unmount();
+    }
+  });
+});
+
 describe("OperationItem Mark failed (#3462)", () => {
   it("offers Mark failed on a stale running operation and calls it", () => {
     const onMarkFailed = vi.fn();

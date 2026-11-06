@@ -115,8 +115,9 @@ const UNORDERED_ROW_SETS: Record<string, string> = {
   "src/lib/manual-settlement-intent-hygiene.ts > withdrawManualSettlementIntentCancellations":
     "#4320: reads the payable intents' ids only as a set for the recovery-row read's `in` filter; the rows it " +
     "deletes are read ordered (createdAt) from the recovery table.",
-  "src/lib/xero-applied-credit-ledger-state.ts > appliedCreditSettledByCancel":
-    "reads only each row's status for paymentHasCaptureEvidence, which asks whether ANY row was captured.",
+  "src/lib/xero-applied-credit-ledger-state.ts > SETTLED_BY_CANCEL_BOOKING_SELECT":
+    "reads only each row's status for paymentHasCaptureEvidence, which asks whether ANY row was captured " +
+    "(#4220: the select appliedCreditSettledByCancel and its batched form share).",
   "src/lib/xero-inbound/modification-note-refunds.ts > paymentsCountingInvoiceCorrections":
     "receiptCountsInvoiceCorrections asks whether every captured IB receipt carries a stored-figure " +
     "reason (`.every` / `.filter`), not which comes first.",
@@ -135,9 +136,9 @@ const UNORDERED_ROW_SETS: Record<string, string> = {
  */
 const UNPROVEN_FIRST_READS: Record<string, string> = {
   "src/lib/saved-card-charge-settle.ts > adoptSavedCardChargeAttemptForIntent > row":
-    "looks the attempt row up by `reference`, the saved-card idempotency key, which embeds the row's own id " +
-    "(savedCardChargeIdempotencyKey(bookingId, row.id)), and re-checks that key against the row it got, so " +
-    "only that one row can be adopted.",
+    "looks the attempt row up by `reference`, the saved-card idempotency key, which embeds the row's own id, " +
+    "or (#4646) by `id` from the intent's metadata, and re-checks the row's key against its own id and this " +
+    "booking (savedCardChargeKeyShape), so only that one row can be adopted.",
 };
 
 /**

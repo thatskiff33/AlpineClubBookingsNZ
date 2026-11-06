@@ -12,14 +12,10 @@ reaches them, and whoever picks it up months later when everybody who discussed
 it has forgotten. So the body opens with what a person needs, and the execution
 contract sits underneath it.
 
-This is a correction rather than a new idea. An August 2026 portfolio cleanup
-rewrote a batch of issue bodies for the coding agent that would implement them
-and dropped the human half — what somebody actually experiences today, who
-notices, why the work is worth doing, and which alternatives were weighed and
-rejected. The bodies came out precise and unreadable: correct instructions to an
-implementor, and no way for a person to judge whether the thing should be built
-at all. The technical brief was not the problem and must not be thinned. The fix
-is to put the explanation above it.
+This corrects an August 2026 cleanup that rewrote issue bodies for the
+implementing agent and dropped the human half: they came out precise and
+unreadable, with no way for a person to judge whether to build the thing. Do not
+thin the technical brief; put the explanation above it.
 
 **Write a new or materially rewritten issue in this order.** A section that does
 not apply is left out, not padded.
@@ -81,17 +77,15 @@ person and still briefs an agent.
 
 **A finding that touches a payment instrument, invoice, refund or credit says
 what happens to the money, not only to the row** — the finding form's required
-"What happens to the money?" field. The worked example is #486 → #543 → #3340:
-the audit saw the exact two-edits trigger but framed it as a `PaymentTransaction`
-stuck in `PENDING`; #543 did precisely what it asked and retired the instrument;
-nobody asked what became of the debt it represented, and members were
-under-charged $135 four months later. A money seam's test is held to the same
-standard by `INV-OPS-015`.
+"What happens to the money?" field. In #486 → #543 → #3340 a `PaymentTransaction`
+stuck in `PENDING` was retired as asked, nobody asked what became of its debt,
+and members were under-charged $135. `INV-OPS-015` holds a money seam's test to
+the same standard.
 
 ## Epics
 
 Whether work is an epic at all (the four-question test — the standalone issue
-is the default), and how a genuine epic ships through its integration branch,
+is the default), and how multi-step work ships on `main` behind flags,
 are in [`EPIC_PLAYBOOK.md`](EPIC_PLAYBOOK.md). Run that test before applying
 the `epic` label.
 
@@ -101,15 +95,29 @@ One issue equals one branch and one PR unless the issue explicitly says
 otherwise. Use a branch name that includes the issue number or clear workstream,
 for example `codex/issue-812-payment-recovery-idempotency`.
 
-Do not bundle unrelated fixes or opportunistic refactors into the same PR. The
-line is `AGENTS.md` → "Change discipline": a defect the PR introduces, or one
-that blocks its agreed behaviour, is fixed in the PR; a pre-existing defect
-found nearby is filed as a new issue.
+Do not bundle unrelated fixes or refactors (`AGENTS.md` → "Change
+discipline"): a defect the PR introduces or that blocks it is fixed in the PR;
+a pre-existing defect found nearby is filed as a new issue.
 
 Open the PR from `.github/pull_request_template.md`, copying headings and labels
 verbatim with values on the label's line. The diff decides when the changelog
 and `## Concurrency And Lock Impact` sections are required, but fill the whole
 template regardless. `Closes #NNN` works only in the PR description.
+
+### Plan deviation
+
+The owner approves an issue's plan, not the diff (27 Oct 2026): a PR built to
+plan merges on the `AGENTS.md` gate; a **material deviation** goes to the owner
+first. It is material when the PR adds a table or column not in the plan; adds
+a money path or provider call; adds or changes an invariant; goes beyond the
+issue's allowed scope; or takes a Decision option the owner did not pick. The
+PR's `## Plan Deviation` section answers `None`, or lists each, linking the
+owner's answer: its comment URL, or the `#<number>` of the issue whose body
+records it. `verify` checks it (#4463).
+
+Over 800 changed lines (`linguist-generated` files in `.gitattributes` not
+counted), add a one-line `large-pr:` reason; `verify` warns otherwise. Split
+money work test-first: tests pinning the scenario land, then the implementation.
 
 ## Risk And Attendance
 
@@ -124,9 +132,7 @@ issue has complete scope and validation commands and does not touch money
 movement, booking capacity, membership lifecycle, live providers, schema,
 production config, or deployment behavior. Such eligible runs may also push,
 monitor CI to green, and merge their own PR with a merge commit per the
-`AGENTS.md` "Completion and Merge" merge gate (#3959). A High or critical PR
-merges on the same gate, with the lenses chosen for its risk; an open owner
-decision on it still waits for the owner.
+`AGENTS.md` "Completion and Merge" merge gate (#3959).
 
 ## Conflict Handling
 
@@ -160,8 +166,7 @@ following:
   - **A public GitHub handle is not a private real name.** Tagging somebody's
     handle to answer their review is correct and expected; it is the real name
     that must not appear. Reading this rule too broadly once left an external
-    reviewer's direct question unanswered for a day, while their feedback held a
-    live defect and a better answer than the options being drafted.
+    reviewer's question, and the live defect it held, unanswered for a day.
   - **The rule binds new writing only.** Occurrences already published on `main`
     — fork issue links, and the credit in `src/lib/integration-crypto.ts` to
     somebody who corrected the key-derivation design — stay as historical
@@ -391,6 +396,7 @@ finding is fixed and CI is green. It is the only post-PR evidence comment:
 - which review lenses ran, why each was chosen (or why none was needed), the
   head SHA each read, what they found, and how each finding was fixed;
 - validation run, validation not run and why, manual checks, and stated limits;
+- a PR touching money modules: `Money coverage ratchet: green` or `red`, why;
 - confirmation that no production credentials, production data, live providers
   or live webhooks were used;
 - residual risks (none open) and carry-forward issues, filed and linked. Once it
@@ -398,6 +404,5 @@ finding is fixed and CI is green. It is the only post-PR evidence comment:
   Merge" merge gate (#3959); no owner Approve is needed, and `.github/CODEOWNERS`
   gates nothing. Name any open owner decision that holds it instead.
 
-With the CLAIM comment it makes the issue thread a full audit trail that reads
-cold, because whoever picks the work up next may be a session that never saw
-yours.
+With the CLAIM comment it makes the thread an audit trail that reads cold: the
+next session never saw yours.
