@@ -198,6 +198,14 @@ BEGIN
     WHERE l.id IN (SELECT "sourceLineId" FROM public."MemberMoneyApplication" WHERE "journalId" = h.id)
     GROUP BY l.id, l."amountCents" HAVING sum(s.amount) < 0 OR sum(s.amount) > l."amountCents"
   ) THEN errors := array_append(errors, 'application_source_cap'); END IF;
+  -- The reservation trigger does not re-fire when funding is reversed. A release
+  -- other than ANSWERED reverses that funding in the same transaction, so an
+  -- open reservation must not still name the journal this batch reverses.
+  IF h."reversesJournalId" IS NOT NULL AND EXISTS (
+    SELECT 1 FROM public."MemberMoneyRefundReservation" r
+    WHERE r."fundingJournalId" = h."reversesJournalId"
+      AND NOT EXISTS (SELECT 1 FROM public."MemberMoneyRefundReservationRelease" x WHERE x."reservationId" = r.id)
+  ) THEN errors := array_append(errors, 'open_reservation_without_funding'); END IF;
   RETURN errors;
 END
 $$;

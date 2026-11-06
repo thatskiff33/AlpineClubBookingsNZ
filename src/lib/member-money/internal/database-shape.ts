@@ -55,7 +55,7 @@ export const MEMBER_MONEY_DATABASE_SHAPE = {
       config: ["search_path=pg_catalog, public"],
     },
     member_money_batch_errors: {
-      source: "43b778b6a2f2745b84b56d2de6023648", volatility: "stable", securityDefiner: false,
+      source: "47c4b03605b677ee51f9daaea0c6d505", volatility: "stable", securityDefiner: false,
       config: ["search_path=pg_catalog, public"],
     },
     member_money_require_complete: {

@@ -72,6 +72,24 @@ const reserve = (attemptKey = "attempt:one", amountCents = 60) => prisma.$transa
     await expect(reserve("attempt:one", 59)).rejects.toThrow(/payload differs/);
     await expect(reserve("attempt:two")).rejects.toThrow(/C3|C4/);
     await expect(prisma.$transaction((tx) => reverseMemberMoneyJournal(tx, context, { reversesJournalId: receiptJournal, origin: "APP", source: source(), reason: "cannot reverse funded receipt" }))).rejects.toThrow(/fund application/);
+    await expect(prisma.$transaction((tx) => reverseMemberMoneyJournal(tx, context, { reversesJournalId: fundingJournal, origin: "APP", source: source(), reason: "funding still reserved" }))).rejects.toThrow(/C4/);
+    const funding = await prisma.memberMoneyJournal.findUniqueOrThrow({ where: { id: fundingJournal }, include: { event: true, applications: true } });
+    const application = funding.applications[0]!;
+    await app.query("BEGIN");
+    try {
+      await app.query(`INSERT INTO "MemberMoneyEvent" (id,"eventKey",kind,origin,"sourceKind","sourceIdentity","sourceVersion","payloadHash",reason,"effectiveAt","effectiveDate")
+        VALUES ('reverse-funding-event','reversal:funding-open','REVERSAL','APP','OFFICER_FACT','reverse-funding-fact','1',repeat('b',64),'direct reversal',$1,$2)`,
+        [funding.event.effectiveAt, funding.event.effectiveDate]);
+      await app.query(`INSERT INTO "MemberMoneyJournal" (id,"eventId",currency,"policyVersion","codingVersion","expectedLineCount","expectedObligationCount","expectedApplicationCount","reversesJournalId")
+        VALUES ('reverse-funding-journal','reverse-funding-event',$1,$2,$3,0,0,1,$4)`,
+        [funding.currency, funding.policyVersion, funding.codingVersion, fundingJournal]);
+      await app.query(`INSERT INTO "MemberMoneySourceLink" (id,"journalId","sourceKind","sourceId","sourceVersion")
+        VALUES ('reverse-funding-source','reverse-funding-journal','OFFICER_FACT','reverse-funding-fact','1')`);
+      await app.query(`INSERT INTO "MemberMoneyApplication" (id,"applicationKey","journalId","sourceLineId","obligationId","amountCents","reversesApplicationId")
+        VALUES ('reverse-funding-application','reversal:funding-open','reverse-funding-journal',$1,$2,$3,$4)`,
+        [application.sourceLineId, application.obligationId, application.amountCents, application.id]);
+      await expect(app.query("COMMIT")).rejects.toThrow(/open_reservation_without_funding/);
+    } finally { await app.query("ROLLBACK"); }
   });
   it("releases and reverses its funding atomically, allowing a new exact attempt", async () => {
     await prisma.$transaction((tx) => releaseMemberMoneyRefundReservation(tx, context, { bookingId: booking.bookingId, reservationId, reason: "SUPERSEDED_KEY", source: source() }));

@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { MemberMoneyRefundReservationReleaseReason, Prisma } from "@prisma/client";
+import { MAX_INTEGER_CENTS } from "../../money-input";
 import { applicationRoleOf, sameApplicationDebtor, memberMoneyConservationProblems, memberMoneyApplicationTotals, type ApplicationState } from "./application-state";
 import { lockMemberMoneyPayment, readMemberMoneyApplicationState } from "./application-read";
 import { readBookingLiveComponents } from "./booking-journal-read";
@@ -435,7 +436,7 @@ export async function reserveMemberMoneyRefund(db: Db, plan: MemberMoneyReservat
     }
     return { id: prior.id, replayed: true };
   }
-  if (!Number.isSafeInteger(plan.amountCents) || plan.amountCents <= 0 || plan.amountCents > 2147483647 || !plan.attemptKey) {
+  if (!Number.isSafeInteger(plan.amountCents) || plan.amountCents <= 0 || plan.amountCents > MAX_INTEGER_CENTS || !plan.attemptKey) {
     throw new MemberMoneyReservationRefused(["reservation requires its verbatim attempt key and positive integer cents"]);
   }
   const state = await readMemberMoneyApplicationState(db, plan.bookingId);

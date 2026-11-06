@@ -187,6 +187,20 @@ INSERT. If it ever names a journal table, re-run `pnpm run db:provision-roles
 application connection should report no findings
 ([details](../DEPLOYMENT.md#member-money-journal-grants-m1)).
 
+### Member-money applications and refund reservations (#4691)
+
+**What changes.** Migration `20261210080000_member_money_applications` adds two
+empty append-only tables for a refund reservation and its release, and tightens
+the journal's own checks so a payment cannot be applied for more than it is
+worth. No screen, payment, refund or Xero document changes in this release:
+nothing in the running app calls the new code yet. A club on the previous
+release keeps posting as before.
+
+**What you do.** Nothing beyond the normal deploy. Single-role clubs and clubs
+on the least-privilege roles both need no provisioning step: the migration
+narrows its own two tables. If the deploy's grants check ever names one of
+them, re-run `pnpm run db:provision-roles --apply` and deploy again.
+
 ### Nightly backups stream to a disk-backed spool volume (#4487)
 
 **What changes.** The nightly backup no longer holds the whole `pg_dump` output in

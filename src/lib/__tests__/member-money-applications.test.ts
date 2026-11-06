@@ -65,6 +65,8 @@ describe("M4a stable keys", () => {
     const built = [keys.bookingCharge("x"), keys.modification("x"), keys.cancellation("x", 0), keys.reviewClose("x", "x"), keys.backPost("x"), keys.chargeRestatement("x"), keys.merge("x", "x"), keys.reversal("x"), keys.capture("x"), keys.receipt("x", "x"), keys.collect(keys.capture("x")), keys.chargeOpen("x"), keys.refundFunding("x:a"), keys.refund("x"), keys.refundAnswer("x"), keys.paidAnotherWay("x"), keys.handBackPaid("x"), keys.refundCloseOut(keys.refundObligation("review", "x")), keys.keptCapture("x"), keys.successor(keys.refundObligation("review", "x"), "x", "x"), keys.mergeResidue("x", "x", keys.capture("x")),
       ...(["cancellation", "modification", "refund-request", "review", "capture-return", "hand-back"] as const).map((scope) => keys.refundObligation(scope, "x"))];
     expect(new Set(built).size).toBe(built.length);
+    expect(keys.refund("re_1")).toBe("refund:re_1");
+    expect(keys.capture("pi_1")).toBe("capture:pi_1");
     expect(keys.refundFunding("prefix:slice:100")).toBe("refund-funding|prefix:slice:100");
     expect(() => keys.refundFunding("prefix|slice")).toThrow();
     expect(() => keys.capture("x|after|y")).toThrow();

@@ -435,19 +435,25 @@ async function privilegeSnapshot(database: string, { includeDatabaseAcl = true }
       it("narrows its own tables as the migration role, so the deploy grants check passes without re-provisioning", async () => {
         const database = DATABASES.journal;
         await admin.query(`CREATE DATABASE "${database}" TEMPLATE "${DATABASES.fresh}"`);
-        // The release before the journal, provisioned: take the journal away again.
+        // The release before the journal, provisioned: take the journal and the
+        // M4a reservation tables away, then apply both migrations as the migrator.
         await withClient(urlFor(database), (client) => client.query(`
           DROP TABLE ${MEMBER_MONEY_RELATIONS.map((name) => `"${name}"`).join(", ")} CASCADE;
-          DROP FUNCTION member_money_require_complete(), member_money_batch_errors(text),
-            member_money_check_seal(), member_money_refuse_mutation(), member_money_system_identifier();
+          DROP FUNCTION IF EXISTS member_money_require_complete(), member_money_batch_errors(text),
+            member_money_check_seal(), member_money_refuse_mutation(), member_money_system_identifier(),
+            member_money_application_state(text), member_money_reservation_errors(text),
+            member_money_require_reservation();
           DROP TYPE "MemberMoneyAccount", "MemberMoneySide", "MemberMoneyEventKind", "MemberMoneyOrigin",
-            "MemberMoneySourceKind", "MemberMoneyObligationKind", "MemberMoneyDebtorKind";
-          DELETE FROM "_prisma_migrations" WHERE migration_name = '${APPEND_ONLY_SCHEMA_MIGRATION}'`));
+            "MemberMoneySourceKind", "MemberMoneyObligationKind", "MemberMoneyDebtorKind",
+            "MemberMoneyRefundReservationReleaseReason";
+          DELETE FROM "_prisma_migrations" WHERE migration_name IN (
+            '20261127010000_member_money_journal', '${APPEND_ONLY_SCHEMA_MIGRATION}')`));
         expect(deployGrantsCheck(database)).toBe("");
-        // Applied as prisma migrate deploy applies it: one file, as the migration role.
-        await withClient(urlFor(database, "migrator"), (client) => client.query(
-          readFileSync(path.join(REPO_ROOT, `prisma/migrations/${APPEND_ONLY_SCHEMA_MIGRATION}/migration.sql`), "utf8"),
-        ));
+        // Applied as prisma migrate deploy applies them: each file, as the migration role.
+        await withClient(urlFor(database, "migrator"), async (client) => {
+          await client.query(readFileSync(path.join(REPO_ROOT, "prisma/migrations/20261127010000_member_money_journal/migration.sql"), "utf8"));
+          await client.query(readFileSync(path.join(REPO_ROOT, `prisma/migrations/${APPEND_ONLY_SCHEMA_MIGRATION}/migration.sql`), "utf8"));
+        });
         expect(deployGrantsCheck(database)).toBe("");
         const { rows } = await withClient(urlFor(database), (client) => client.query(
           `SELECT t.name, has_table_privilege($1, to_regclass(format('public.%I', t.name)), 'SELECT')

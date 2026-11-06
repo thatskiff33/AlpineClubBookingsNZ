@@ -11,7 +11,7 @@ const right = (grantee: string, privilege: string) =>
 const verification: DataMigrationVerification = {
   migration: "20261210080000_member_money_applications",
   intent:
-    "Create the inert member-money journal and narrow only its own two new tables, for every grantee but their owner and without naming a role, to rights that cannot change a row: SELECT and INSERT survive, UPDATE, DELETE, TRUNCATE, TRIGGER and REFERENCES do not. No other table's grants and no existing row change.",
+    "Add two empty append-only refund-reservation tables and narrow only those tables, for every grantee but their owner and without naming a role, to rights that cannot change a row: SELECT and INSERT survive, UPDATE, DELETE, TRUNCATE, TRIGGER and REFERENCES do not. No other table's grants and no existing row change.",
   executionMode: "case_transaction",
   idempotentReRun: false,
   cases: [

@@ -60,13 +60,12 @@ jobs cover all lodges while preserving booking and financial lodge references.
 
 ## Member money journal (#4513)
 
-M4a refund reservations and releases are club-wide evidence. Their obligation
-and funding batch identify the booking and its lodge; the engine requires one
-booking per application batch and serializes it on that booking’s Payment row.
-
 `MemberMoneyEvent`, `MemberMoneyJournal`, `MemberMoneyObligation`,
-`MemberMoneyApplication`, `MemberMoneySourceLink` and `MemberMoneySourcePosting` are club-wide economic
-records: one receipt may cover several lodges. `MemberMoneyLine` carries optional
+`MemberMoneyApplication`, `MemberMoneySourceLink`, `MemberMoneySourcePosting`,
+`MemberMoneyRefundReservation` and `MemberMoneyRefundReservationRelease` are club-wide economic
+records: one receipt may cover several lodges. A reservation names its obligation
+and its funding batch, which identify the booking; an application batch names
+one booking and takes that booking's Payment row. `MemberMoneyLine` carries optional
 `bookingId` and `lodgeId` dimensions with RESTRICT foreign keys and no update
 cascade. A booking dimension requires its actual lodge (checked on insert).
 Non-booking money can have a lodge dimension or be club-wide. No default lodge

@@ -106,8 +106,9 @@ export interface MemberMoneyScratchDatabase {
 
 /**
  * A disposable database on the race server holding the journal migration, the
- * stub parents it references (`Lodge`, `Booking`, `BookingLedgerLine`,
- * `AuditLog`) and the least-privilege roles provisioning creates. The full
+ * M4a reservation migration, the stub parents they reference (`Lodge`,
+ * `Booking`, `BookingLedgerLine`, `AuditLog`, `Payment`, `PaymentTransaction`,
+ * `PaymentRefund`) and the least-privilege roles provisioning creates. The full
  * migration history is rehearsed in `database-roles.realdb.test.ts`.
  */
 export async function createMemberMoneyScratchDatabase(
