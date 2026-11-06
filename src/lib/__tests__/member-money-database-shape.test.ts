@@ -12,7 +12,7 @@ import { describe, expect, it } from "vitest";
 import { MEMBER_MONEY_DATABASE_SHAPE } from "@/lib/member-money/internal/database-shape";
 import { MEMBER_MONEY_RELATIONS } from "@/lib/member-money-tables";
 
-const MIGRATION = readFileSync("prisma/migrations/20261127010000_member_money_journal/migration.sql", "utf8");
+const MIGRATION = ["20261127010000_member_money_journal", "20261210080000_member_money_applications"].map((name) => readFileSync(`prisma/migrations/${name}/migration.sql`, "utf8")).join("\n");
 
 /** Each relation's names, sorted, from `[relation, name]` pairs. */
 function namesByRelation(pairs: Iterable<readonly [string, string]>) {
@@ -28,7 +28,7 @@ const primaryKeys = MEMBER_MONEY_RELATIONS.map((relation) => [relation, `${relat
 describe("member money database shape (#4513)", () => {
   it("holds every member_money_* function's body md5 and settings exactly as the migration writes them", () => {
     const functions = Object.fromEntries(
-      [...MIGRATION.matchAll(/CREATE FUNCTION (member_money_\w+)\(([\s\S]*?)AS \$\$([\s\S]*?)\$\$;/g)]
+      [...MIGRATION.matchAll(/CREATE (?:OR REPLACE )?FUNCTION (member_money_\w+)\(([\s\S]*?)AS \$\$([\s\S]*?)\$\$;/g)]
         .map(([, name, header, body]) => {
           const volatility = /\b(IMMUTABLE|STABLE|VOLATILE)\b/.exec(header!)?.[1]?.toLowerCase() ?? "volatile";
           const config = [...header!.matchAll(/\bSET (\w+) = (.+?) $/gm)].map(([, setting, value]) => `${setting}=${value}`);

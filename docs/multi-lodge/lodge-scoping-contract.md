@@ -60,6 +60,10 @@ jobs cover all lodges while preserving booking and financial lodge references.
 
 ## Member money journal (#4513)
 
+M4a refund reservations and releases are club-wide evidence. Their obligation
+and funding batch identify the booking and its lodge; the engine requires one
+booking per application batch and serializes it on that booking’s Payment row.
+
 `MemberMoneyEvent`, `MemberMoneyJournal`, `MemberMoneyObligation`,
 `MemberMoneyApplication`, `MemberMoneySourceLink` and `MemberMoneySourcePosting` are club-wide economic
 records: one receipt may cover several lodges. `MemberMoneyLine` carries optional
