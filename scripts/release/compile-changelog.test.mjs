@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 
 import {
   classifyUnreleased,
@@ -910,6 +910,46 @@ describe("compile-changelog", () => {
 });
 
 describe("compile-changelog run directly (#4569)", () => {
+  it.each([false, true])("compiles through a symlinked checkout (dryRun=%s)", (dryRun) => {
+    const entry = "- **Symlinked checkout:** compile this fragment.\n";
+    const root = makeRepo({ fragments: { "4569-checkout.md": entry } });
+    // Copy the real entry point and its dependencies into the fixture so a
+    // non-dry run can prove it writes without touching this checkout's files.
+    for (const relative of [
+      "scripts/release/compile-changelog.mjs",
+      "scripts/lib/is-main-module.mjs",
+      "scripts/lib/allowance-dir.mjs",
+    ]) {
+      const destination = path.join(root, relative);
+      fs.mkdirSync(path.dirname(destination), { recursive: true });
+      fs.copyFileSync(path.resolve(relative), destination);
+    }
+    const link = `${root}-linked checkout`;
+    tempRoots.push(link);
+    fs.symlinkSync(root, link, process.platform === "win32" ? "junction" : "dir");
+    const before = read(root);
+    const result = spawnSync(process.execPath, [
+      path.join(link, "scripts/release/compile-changelog.mjs"),
+      "0.14.0",
+      "2026-07-01",
+      ...(dryRun ? ["--dry-run"] : []),
+    ], { cwd: link, encoding: "utf8", timeout: 10_000 });
+
+    expect(result.error).toBeUndefined();
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stderr).toBe("");
+    // Exit 0 alone is insufficient: a skipped main block also exits 0.
+    expect(result.stdout).toContain("0.14.0 - 2026-07-01");
+    if (dryRun) {
+      expect(result.stdout).toContain("changelog.d/4569-checkout.md (would be deleted)");
+      expect(read(root)).toBe(before);
+      expect(fragmentFiles(root)).toEqual(["4569-checkout.md"]);
+    } else {
+      expect(releaseSection(read(root), "0.14.0")?.body).toBe(entry.trim());
+      expect(fragmentFiles(root)).toEqual([]);
+    }
+  });
+
   it("runs its main block when started through a symlink, never exiting 0 having done nothing", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "compile-changelog-link-"));
     try {
