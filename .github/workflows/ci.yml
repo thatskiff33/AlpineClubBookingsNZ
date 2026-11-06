@@ -13,9 +13,10 @@ name: CI
 #   public maintenance baseline.
 
 on:
-  # `epic/**` is here for the integration-branch model (#3002): an epic's
-  # children target `epic/<issue>-<slug>` rather than `main`, so without this
-  # they would get no CI at all and the only substitute was a throwaway probe
+  # `epic/**` is here for the integration-branch model (#3002), which since
+  # #4464 is the exception (work is otherwise built on `main` behind flags): an
+  # exception epic's children target `epic/<issue>-<slug>` rather than `main`,
+  # so without this they would get no CI at all and the only substitute was a throwaway probe
   # pull request against `main` — which tests the commit OUTSIDE its stack and
   # so can pass while the stacked integration is broken. `push` is included as
   # well so the integration branch is re-checked after each child merges into
@@ -23,7 +24,7 @@ on:
   #
   # This widens WHEN the existing jobs run and adds no new status context, so
   # `main`'s branch protection is untouched. See
-  # docs/agents/EPIC_PLAYBOOK.md -> "An epic reaches `main` as ONE merge".
+  # docs/agents/EPIC_PLAYBOOK.md -> "The exception: an integration branch".
   pull_request:
     branches:
       - main
@@ -587,13 +588,16 @@ jobs:
 
       # Type errors in the app, test and e2e projects (`next build` reads only
       # the first, #2875). tsc's heap crossed the Node default
-      # (~4 GB) when the AID-6B pack landed (#2679) — the same run needs 8 GB
-      # locally — so the ceiling is raised here rather than letting the gate
-      # die of OOM (exit 134) instead of reporting type errors.
+      # (~4 GB) when the AID-6B pack landed (#2679), so the ceiling is raised
+      # here rather than letting the gate die of OOM (exit 134) instead of
+      # reporting type errors. #4752: the test project then outgrew 8 GB
+      # (`tsc -p tsconfig.test.json --extendedDiagnostics` reported 9.0 GB on
+      # main at 230200bc4), so the gate failed or passed by chance. 12 GB leaves
+      # headroom on the 16 GB hosted runner.
       - name: Typecheck
         run: pnpm run typecheck
         env:
-          NODE_OPTIONS: --max-old-space-size=8192
+          NODE_OPTIONS: --max-old-space-size=12288
 
   lint:
     name: Lint
@@ -825,6 +829,32 @@ jobs:
           PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
           PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: node scripts/ci/check-pr-changelog-fragment.mjs
+
+      # #4463: every PR says whether it deviates materially from its issue's
+      # plan (`## Plan Deviation`: `None`, or items linking the owner's answer).
+      # WARNING ONLY until `PLAN_DEVIATION_ENFORCED` in the script is flipped
+      # (owner decision, 1 Nov 2026: warn for seven days, then fail); a warning
+      # is a `::warning::` annotation and the step exits 0.
+      - name: Validate PR plan deviation
+        if: github.event_name == 'pull_request'
+        env:
+          PR_BODY_FILE: ${{ runner.temp }}/pr-body.md
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node scripts/ci/check-pr-plan-deviation.mjs
+
+      # #4463: a PR over 800 changed lines (`linguist-generated` files in
+      # `.gitattributes` not counted) should carry a one-line `large-pr:` reason.
+      # SOFT for good: it only ever annotates a `::warning::` and exits 0.
+      - name: Check PR size (soft limit)
+        if: github.event_name == 'pull_request'
+        env:
+          PR_BODY_FILE: ${{ runner.temp }}/pr-body.md
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: node scripts/ci/check-pr-size.mjs
 
       # #3673: this repository installs with pnpm, and `pnpm-lock.yaml` is the
       # only lockfile. An npm lockfile in the tree means somebody ran npm by
@@ -1245,6 +1275,19 @@ jobs:
         env:
           RUN_CONCURRENCY_RACE_TESTS: "1"
         run: pnpm exec vitest run src/lib/__tests__/member-money-journal.realdb.test.ts
+
+      # #4626 (Ledger M3a): the posting command against real PostgreSQL, as the
+      # INSERT/SELECT-only application role. Only the journal's deferred
+      # checks can say whether a built batch really commits, and replay and
+      # the concurrent-poster race are PostgreSQL behaviour, not code a mock
+      # can run. Same shape as the step above: a scratch database of its own,
+      # required, and the advisory realdb-all job runs the file too. It
+      # describe.skip's itself without the env vars, so this step MUST stay
+      # wired — `review-findings-contracts.test.ts` fails if it goes missing.
+      - name: Prove the member-money posting command against dedicated PostgreSQL
+        env:
+          RUN_CONCURRENCY_RACE_TESTS: "1"
+        run: pnpm exec vitest run src/lib/__tests__/member-money-posting.realdb.test.ts
 
       # E8 (#1934): real-Postgres behavior of the member-grouping cutover
       # migration (legacy-rule deactivation, shape-dedupe, backfill, mode seed,
@@ -1710,7 +1753,7 @@ jobs:
           echo "MIGRATE_IMAGE_NAME=${MIGRATE_IMAGE%:*}" >> "$GITHUB_ENV"
 
       - name: Log in to GHCR
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}

@@ -39,7 +39,7 @@ export const NOT_A_CONVERGENCE_ROW = { outsideSpendConvergedAt: null } satisfies
  * only the negative rows would keep a restored lot written down.
  */
 export function creditNoteWriteDownWhere(
-  memberId: string,
+  memberId: string | { in: string[] },
   creditNoteIds: string[],
 ): Prisma.MemberCreditWhereInput {
   return {
@@ -68,9 +68,39 @@ export async function writtenDownCentsByCreditNote(
   });
   return new Map(
     rows.flatMap((row) =>
-      row.xeroCreditNoteId ? [[row.xeroCreditNoteId, Math.max(0, -(row._sum.amountCents ?? 0))] as const] : [],
+      row.xeroCreditNoteId ? [[row.xeroCreditNoteId, netWrittenDownCents(row._sum.amountCents)] as const] : [],
     ),
   );
+}
+
+/** The net written down from the signed sum of a note's rows: positive cents, never below zero. */
+function netWrittenDownCents(signedSumCents: number | null): number {
+  return Math.max(0, -(signedSumCents ?? 0));
+}
+
+/**
+ * {@link writtenDownCentsByCreditNote} for many members in one read (the same rows
+ * and the same net): per member, per note. `creditNoteIds` may name notes of any of
+ * the members; a member's map holds only its own notes' rows.
+ */
+export async function writtenDownCentsByMemberAndNote(
+  db: Pick<Prisma.TransactionClient, "memberCredit">,
+  memberIds: string[],
+  creditNoteIds: string[],
+): Promise<Map<string, Map<string, number>>> {
+  const byMember = new Map<string, Map<string, number>>();
+  if (memberIds.length === 0 || creditNoteIds.length === 0) return byMember;
+  const rows = await db.memberCredit.groupBy({
+    by: ["memberId", "xeroCreditNoteId"],
+    where: creditNoteWriteDownWhere({ in: memberIds }, creditNoteIds),
+    _sum: { amountCents: true },
+  });
+  for (const row of rows) {
+    if (!row.xeroCreditNoteId) continue;
+    const notes = byMember.get(row.memberId) ?? new Map<string, number>();
+    byMember.set(row.memberId, notes.set(row.xeroCreditNoteId, netWrittenDownCents(row._sum.amountCents)));
+  }
+  return byMember;
 }
 
 export function creditNoteWriteDownDescription(bookingId: string): string {

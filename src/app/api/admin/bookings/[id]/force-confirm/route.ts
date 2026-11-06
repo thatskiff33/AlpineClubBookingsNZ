@@ -30,6 +30,8 @@ import { enqueueOwnHostingCoverageReevaluation } from "@/lib/adult-member-hostin
 import { reconcileBedAllocationsForBookingWithGlobalLockHeld } from "@/lib/bed-allocation-lifecycle";
 import { z } from "zod";
 import { clubFormatValues } from "@/lib/club-format-server";
+import { postStoredBookingConfirmationLedgerLines } from "@/lib/booking-ledger-confirmation-sync";
+import { resolveBookingMoneyPostingContext } from "@/lib/member-money/doors";
 
 const forceConfirmSchema = z.object({
   allowOverbook: z.boolean().optional(),
@@ -70,6 +72,9 @@ export async function POST(
   // The club's format (#3565), resolved once, before any transaction or
   // lock below — never per amount and never inside a transaction.
   const format = await clubFormatValues();
+  // #4738: a $0 booking confirms below and posts its lines and R01 from this
+  // context, resolved before the transaction opens (`INV-LOCK-004`).
+  const journal = await resolveBookingMoneyPostingContext();
 
   try {
     const result = await prisma.$transaction(async (tx) => {
@@ -192,6 +197,8 @@ export async function POST(
             status: "SUCCEEDED",
           },
         });
+        // #4738: the $0 booking's nights post once, under the locks above.
+        await postStoredBookingConfirmationLedgerLines(tx, bookingId, journal);
       }
       await reconcileBedAllocationsForBookingWithGlobalLockHeld({
         bookingId,

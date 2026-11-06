@@ -81,9 +81,10 @@ export async function GET() {
     );
   }
 
-  // Only attempt the live account read when a readable secret key exists.
+  // Only attempt the live account read when a readable secret key exists. An
+  // unreadable webhook secret alone does not stop it (#98).
   const account =
-    state.secretKeySet && !state.needsReentry
+    state.secretKeySet && !state.keysNeedReentry
       ? await resolveConnectedAccount()
       : { connected: false, accountName: null, accountEmail: null };
 
@@ -92,6 +93,8 @@ export async function GET() {
     publishableKeySet: state.publishableKeySet,
     webhookSecretSet: state.webhookSecretSet,
     needsReentry: state.needsReentry,
+    keysNeedReentry: state.keysNeedReentry,
+    webhookSecretNeedsReentry: state.webhookSecretNeedsReentry,
     connected: account.connected,
     accountName: account.accountName,
     accountEmail: account.accountEmail,

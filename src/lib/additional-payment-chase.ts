@@ -278,6 +278,15 @@ export function payableAdditionalPaymentIntentId(
 /**
  * Stripe statuses in which the intent's money has been taken or is being taken,
  * so no second confirmation may be offered.
+ *
+ * #4015 review (I-1): `staleIntentAction` (`stale-intent-action.ts`) reads the
+ * same question for the replay and the currency re-issue. On every status
+ * Stripe documents the two agree (this list is exactly what that rule does not
+ * call `reissue`, `canceled` aside, which this door closes on first;
+ * `additional-ask-recovery-replay.test.ts` proves it). They differ only on a
+ * status neither knows: this door stays payable, so a member is never refused
+ * a form, while the replay waits rather than cancel a request that might be
+ * taking money. Kept apart on purpose for that one case.
  */
 const PROVIDER_CAPTURED_INTENT_STATUSES: readonly string[] = [
   "succeeded",
@@ -293,6 +302,26 @@ export type AdditionalPaymentDoorAnswer<Intent> =
   | { state: "captured-at-provider"; intent: Intent }
   /** Nothing here can be paid: local door shut, Stripe says `canceled`, or Stripe has no such intent. */
   | { state: "closed" };
+
+/**
+ * Stripe's half of the door alone: the intent, or null when Stripe has no such
+ * intent or has cancelled it - the one case a local FAILED row cannot tell from
+ * a declined card. Also read by a just-minted ask's liveness re-read (#4052,
+ * `isMintedAskStillLive`). Any other read error propagates.
+ */
+export async function readOpenProviderIntent<Intent extends { status: string }>(
+  paymentIntentId: string,
+  retrieve: (paymentIntentId: string) => Promise<Intent>,
+): Promise<Intent | null> {
+  let intent: Intent;
+  try {
+    intent = await retrieve(paymentIntentId);
+  } catch (err) {
+    if (isStripeResourceMissingError(err)) return null;
+    throw err;
+  }
+  return intent.status === "canceled" ? null : intent;
+}
 
 /**
  * THE MEMBER'S PAY DOOR (#3641, `INV-PAY-104`). The additional-payment-secret
@@ -320,14 +349,8 @@ export async function resolveAdditionalPaymentDoor<
   const paymentIntentId = payableAdditionalPaymentIntentId(input);
   if (!paymentIntentId) return { state: "closed" };
 
-  let intent: Intent;
-  try {
-    intent = await retrieve(paymentIntentId);
-  } catch (err) {
-    if (isStripeResourceMissingError(err)) return { state: "closed" };
-    throw err;
-  }
-  if (intent.status === "canceled") return { state: "closed" };
+  const intent = await readOpenProviderIntent(paymentIntentId, retrieve);
+  if (!intent) return { state: "closed" };
   if (PROVIDER_CAPTURED_INTENT_STATUSES.includes(intent.status)) {
     return { state: "captured-at-provider", intent };
   }

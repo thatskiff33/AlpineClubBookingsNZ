@@ -22,6 +22,15 @@ describe("normalizeLoginSecurityPolicy", () => {
     );
   });
 
+  // #4610: the breached-password check is on unless a row switches it off.
+  it("defaults the breached-password check on and honours a stored off", () => {
+    expect(DEFAULT_LOGIN_SECURITY_POLICY.breachedPasswordCheck).toBe(true);
+    expect(normalizeLoginSecurityPolicy({}).breachedPasswordCheck).toBe(true);
+    expect(
+      normalizeLoginSecurityPolicy({ breachedPasswordCheck: false }).breachedPasswordCheck,
+    ).toBe(false);
+  });
+
   it("clamps the minimum length into the accepted 8–64 range", () => {
     expect(normalizeLoginSecurityPolicy({ minPasswordLength: 4 }).minPasswordLength).toBe(
       MIN_PASSWORD_LENGTH_FLOOR,

@@ -43,9 +43,13 @@ import {
   checkOwnDependantIdentityForParty,
   claimedMemberPathIds,
 } from "@/lib/booking-dependant-identity";
+import { changeRequestPromoChangeSchema } from "@/lib/booking-change-request-promo";
+import { finishedStayPromoCorrectionRequestResponse } from "@/lib/booking-change-request-promo-submit";
 
 const createChangeRequestSchema = changeRequestDeltaSchema.extend({
   reason: z.string().max(2000).optional(),
+  // #4533: an officer's promo correction on a finished stay (Edit Booking).
+  promoChange: changeRequestPromoChangeSchema.optional(),
 });
 
 function normalizeReason(value: string | undefined) {
@@ -201,6 +205,21 @@ export async function POST(
       { error: changeRequestValidationMessage(parsed.error), details: parsed.error.flatten() },
       { status: 400 }
     );
+  }
+
+  // #4533: a promo change is an officer's correction of a finished stay, raised
+  // from Edit Booking, and takes its own path; nothing below sees one.
+  if (parsed.data.promoChange) {
+    const { promoChange, reason: promoReason, ...delta } = parsed.data;
+    return finishedStayPromoCorrectionRequestResponse(req, {
+      actorMemberId: session.user.id,
+      actorIsOfficer: isAdmin,
+      booking,
+      delta,
+      promoChange,
+      reason: normalizeReason(promoReason),
+      today: await clubTodayDateOnlyInstant(),
+    });
   }
 
   const {

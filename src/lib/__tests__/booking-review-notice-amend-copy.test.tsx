@@ -61,6 +61,7 @@ const baseAccess: BookingDetailEditAccess = {
   },
   canModify: false,
   canAdminOverride: false,
+  canRequestFinishedStayPromoCorrection: false,
   canEditRequestedRoom: false,
   canEditNonMemberGuestNames: false,
   canFixNonMemberGuestNameTypos: false,

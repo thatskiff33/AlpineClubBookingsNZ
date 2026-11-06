@@ -191,6 +191,12 @@ const ROUTE_AREA_PREFIXES: Array<{
     area: "bookings",
     prefixes: [
       "/admin/bookings-setup",
+      // The Booking Rules hub (#4581): every card on it is bookings work, so
+      // Booking Officers open it for their own rules. It MUST stay in an area
+      // listed BEFORE support: the resolver takes the FIRST area whose prefix
+      // matches (not the longest), so this wins over support's "/admin/setup".
+      // Cards the viewer's matrix cannot open are hidden by the hub itself.
+      "/admin/setup/booking-rules",
       "/admin/bookings",
       "/admin/booking-requests",
       "/admin/book",
@@ -247,6 +253,12 @@ const ROUTE_AREA_PREFIXES: Array<{
       "/admin/communications",
       "/admin/notices",
       "/admin/lockers",
+      // Subscription lockout settings (#4581): the page needs the same area as
+      // its API, /api/admin/membership-lockout-settings (membership). It was
+      // support, so a Membership Officer could call the API but not open the
+      // page. The panel hides the finance (Xero) and bookings (age tier)
+      // sections from a viewer whose matrix lacks them.
+      "/admin/subscription-lockout",
       // Club message board moderation (#2998). Membership, beside /admin/notices:
       // the people who curate what members read are the same people. Without
       // these two the paths fall through to the "/admin" catch-all and resolve
@@ -400,7 +412,6 @@ const ROUTE_AREA_PREFIXES: Array<{
       // `support` alongside /admin/modules and the other system-config surfaces.
       "/admin/security",
       "/admin/privacy-retention",
-      "/admin/subscription-lockout",
       "/admin/notifications",
       "/admin/notification-rules",
       "/admin/notification-recipients",

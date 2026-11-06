@@ -34,11 +34,15 @@
  */
 import type { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { releaseBookingJournalForTeardown } from "./support/booking-financial-history-teardown";
+import { memberMoneyTestContext } from "./support/member-money-fixtures";
 
 import { bookingLedgerPriceCents } from "@/lib/booking-ledger-balance";
 import type { ModificationPricingSide } from "@/lib/booking-modification-lines";
 import type { BookingPriceRebase } from "@/lib/booking-review-price-rebase";
 
+/** #4627: a posting context; these bookings are confirmed by direct legacy writes, so no journal batch posts. */
+const JOURNAL = memberMoneyTestContext();
 const RUN = process.env.RUN_CONCURRENCY_RACE_TESTS === "1";
 const RACE_DB_URL = process.env.CONCURRENCY_RACE_DATABASE_URL ?? "";
 
@@ -132,6 +136,8 @@ async function historyRow(type: string, priceDiffCents: number): Promise<string>
 
 async function clean(): Promise<void> {
   for (const id of [BOOKING_ID, UNCONFIRMED_ID]) {
+    // #4627: the doors post journal batches bridged to these lines; release them first.
+    await releaseBookingJournalForTeardown(prisma, [id]);
     await prisma.bookingLedgerLine.deleteMany({ where: { bookingId: id } });
     await prisma.bookingModification.deleteMany({ where: { bookingId: id } });
     await prisma.bookingGuest.deleteMany({ where: { bookingId: id } });
@@ -200,6 +206,7 @@ async function postEdit(
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
     await sync.postModificationLedgerLines({
       store: tx,
+      journal: JOURNAL,
       bookingId,
       lodgeId: LODGE_ID,
       bookingModification: { id: bookingModificationId, priceDiffCents, changeFeeCents },
@@ -239,6 +246,7 @@ async function closeReview(task: string, rebase: BookingPriceRebase | null, sett
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
     await sync.postReviewClosureLedgerLines({
       store: tx,
+      journal: JOURNAL,
       bookingId: BOOKING_ID,
       lodgeId: LODGE_ID,
       manualRefundTaskId: task,
@@ -358,6 +366,7 @@ const G2_ONLY = { guests: [guestSide(G2, [[D1, 5_000], [D2, 5_000]])], promoAdju
         await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
         await sync.postReviewClosureLedgerLines({
           store: tx,
+      journal: JOURNAL,
           bookingId: BOOKING_ID,
           lodgeId: LODGE_ID,
           manualRefundTaskId: "race-3582-task",

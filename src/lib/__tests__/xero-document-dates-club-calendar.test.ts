@@ -66,6 +66,8 @@ const mocks = vi.hoisted(() => ({
   xeroObjectLinkFindFirst: vi.fn(),
   xeroObjectLinkFindMany: vi.fn(),
   xeroSyncOperationUpdate: vi.fn(),
+  // #4688: no unrecorded refund note fences the payment in these runs.
+  xeroSyncOperationFindMany: vi.fn(async () => []),
   chargeFindUnique: vi.fn(),
   chargeUpdate: vi.fn(),
   transaction: vi.fn(),
@@ -132,7 +134,7 @@ vi.mock("@/lib/prisma", () => ({
       findUnique: mocks.creditNoteAllocationFindUnique,
       findMany: mocks.creditNoteAllocationFindMany,
     },
-    xeroSyncOperation: { update: mocks.xeroSyncOperationUpdate },
+    xeroSyncOperation: { update: mocks.xeroSyncOperationUpdate, findMany: mocks.xeroSyncOperationFindMany },
     membershipSubscriptionCharge: {
       findUnique: mocks.chargeFindUnique,
       update: mocks.chargeUpdate,
@@ -358,6 +360,7 @@ describe("#2834 the other half of the premise: a `@db.Date` receiver is read by 
 
 beforeEach(() => {
   vi.resetAllMocks();
+  mocks.xeroSyncOperationFindMany.mockResolvedValue([]);
 
   mocks.getAuthenticatedXeroClient.mockResolvedValue({
     xero: { accountingApi: mocks.accountingApi },
@@ -665,8 +668,9 @@ describe.each(CLUB_DAY_CASES)(
       mocks.memberCreditAggregate.mockResolvedValue({
         _sum: { amountCents: -3000 },
       });
+      // #4220: the one lot loader groups the rows it reads by member.
       mocks.memberCreditFindMany.mockResolvedValue([
-        { id: "lot_1", amountCents: 5000, xeroCreditNoteId: null },
+        { id: "lot_1", memberId: "mem_1", amountCents: 5000, xeroCreditNoteId: null },
       ]);
       mocks.creditNoteAllocationGroupBy.mockResolvedValue([]);
       mocks.transaction.mockImplementation(async (run: (tx: unknown) => unknown) =>

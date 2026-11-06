@@ -2231,6 +2231,13 @@ describe("PUT /api/bookings/[id]/modify", () => {
       // question.
       hadIssuedXeroInvoice: true,
     });
+    // #4052: the member is told the card ask stands - its figure and its
+    // method - while its retry waits, never told to pay by bank transfer.
+    const { sendBookingModifiedEmail } = await import("@/lib/email");
+    expect(vi.mocked(sendBookingModifiedEmail)).toHaveBeenCalledWith(
+      expect.objectContaining({ additionalAmountCents: 10000, additionalPaymentMethod: "STRIPE" }),
+      expect.anything(),
+    );
   });
 
   it("updates non-member guest names while an additional payment is outstanding", async () => {

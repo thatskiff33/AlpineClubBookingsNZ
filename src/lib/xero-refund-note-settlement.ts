@@ -27,6 +27,7 @@ import type { CreditNote as XeroCreditNote, Payment as XeroPayment } from "xero-
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 import { providerAmountToCents } from "@/lib/money-provider-amount";
+import { isLiveXeroPaymentStatus } from "@/lib/xero-payment-status";
 import { callXeroApi, getAuthenticatedXeroClient } from "@/lib/xero-api-client";
 import { asRecord, readNumber, readString } from "@/lib/xero-json";
 import {
@@ -395,7 +396,7 @@ export async function refundNoteSettlementInterrupted(
 }
 
 function isLivePayment(payment: XeroPayment): boolean {
-  return Boolean(payment.paymentID) && String(payment.status ?? "") !== "DELETED";
+  return Boolean(payment.paymentID) && isLiveXeroPaymentStatus(payment.status);
 }
 
 function readSettledState(note: XeroCreditNote, totalCents: number) {
@@ -464,6 +465,7 @@ function settledOutcome(state: ReturnType<typeof readSettledState>): RefundNoteS
  * - Otherwise the first attempt's own leg pays it, dated the note's own day,
  *   under the one note-keyed key. If that call fails, the note is read again:
  *   a concurrent leg that paid it first is recorded, not reported as a failure.
+ *   #4680: a caller's `beforePayment` answering false pays nothing (`stoodDown`).
  * - A voided or missing note throws.
  */
 export async function settleRefundNoteFromXero(input: {
@@ -480,7 +482,12 @@ export async function settleRefundNoteFromXero(input: {
    * refresh of a part-settled note. A note Xero shows no settlement on throws.
    */
   recordOnly?: boolean;
-}): Promise<{ outcome: RefundNoteSettlementOutcome; creditNoteBody: unknown; creditNoteNumber: string | null; totalCents: number }> {
+  /**
+   * #4680 (`INV-INT-034`): asked immediately before the refund payment call,
+   * after every read. False makes no call, and the answer is `stoodDown`.
+   */
+  beforePayment?: () => Promise<boolean>;
+}): Promise<{ outcome: RefundNoteSettlementOutcome; creditNoteBody: unknown; creditNoteNumber: string | null; totalCents: number; stoodDown?: true }> {
   const { paymentId, creditNoteId } = input;
   const { xero, tenantId } = await getAuthenticatedXeroClient();
   const read = await readRefundNote(xero, tenantId, paymentId, creditNoteId);
@@ -554,6 +561,9 @@ export async function settleRefundNoteFromXero(input: {
     });
   }
 
+  if (input.beforePayment && !(await input.beforePayment())) {
+    return { ...result({ refundPaymentResponseBody: null, payments: [], refundPaymentErr: null, refundPaymentSkipReason: null }), stoodDown: true };
+  }
   const outcome = await settleRefundCreditNote({
     xero,
     tenantId,

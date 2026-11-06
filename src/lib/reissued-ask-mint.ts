@@ -48,6 +48,7 @@ import { prisma } from "@/lib/prisma";
 import { REISSUED_ASK_REASON, stripeIdempotencyKeyForAskAmount } from "@/lib/payment-recovery-keys";
 import { createPaymentIntent, findOrCreateCustomer, findRecentPaymentIntentByMetadata } from "@/lib/stripe";
 import { stripeErrorApiType } from "@/lib/stripe-errors";
+import type { AppPaymentIntentMetadata } from "@/lib/stripe-app-intent-metadata";
 
 /** The metadata key a re-issued ask's intent carries its Stripe key under. */
 export const REISSUED_ASK_KEY_METADATA = "reissuedAskKey";
@@ -62,7 +63,7 @@ export type ReissuedAskMintPlan = {
   /** What is asked, all carried (`INV-PAY-098`). */
   readonly ask: AdditionalAsk;
   readonly idempotencyKey: string;
-  readonly metadata: Record<string, string>;
+  readonly metadata: AppPaymentIntentMetadata;
   readonly reason: string;
 };
 

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useSession } from "next-auth/react";
+import Link from "next/link";
 import { ArrowUpToLine, ArrowDownToLine, ExternalLink } from "lucide-react";
 import {
   NO_KEY_SERVER_VERSION,
@@ -38,11 +39,17 @@ import {
   useAdminAreaEditAccess,
   ADMIN_FULL_ADMIN_ONLY_ACTION_REASON,
 } from "@/hooks/use-admin-area-edit-access";
+import { registrationMessage, useLodgeLinkStep, type KeySaveRegistration } from "./server-connect-step";
 
 interface InitialState {
   apiKeySet: boolean;
   apiKeyUpdatedAt: string | null;
   baseUrl: string | null;
+  /**
+   * The deployment's default server address (`SERVERNZ_DEFAULT_BASE_URL`, #81),
+   * present only while no address is saved. Pre-fills the field; Save stores it.
+   */
+  defaultBaseUrl?: string | null;
   otherLodgesEnabled: boolean;
   otherLodgesLastUploadAt: string | null;
   otherLodgesLastDownloadAt: string | null;
@@ -146,7 +153,8 @@ export function AlpineServerSetup({ initialState }: { initialState: InitialState
       ? undefined
       : canEdit &&
         Boolean(session?.user && isFullAdmin(session.user));
-  const [baseUrl, setBaseUrl] = useState(initialState.baseUrl ?? "");
+  const defaultBaseUrl = initialState.baseUrl ? null : (initialState.defaultBaseUrl ?? null);
+  const [baseUrl, setBaseUrl] = useState(initialState.baseUrl ?? defaultBaseUrl ?? "");
   const [savedBaseUrl, setSavedBaseUrl] = useState(initialState.baseUrl ?? "");
   const [apiKey, setApiKey] = useState("");
   const [apiKeySet, setApiKeySet] = useState(initialState.apiKeySet);
@@ -171,6 +179,7 @@ export function AlpineServerSetup({ initialState }: { initialState: InitialState
   // and only while it is shown (an id that names nothing describes nothing).
   const addressUnsavedHint = useFieldHint();
   const describedByUnsaved = addressUnsaved ? addressUnsavedHint.fieldProps : {};
+  const lodgeLinks = useLodgeLinkStep();
 
   // The version check (#49): ONE call per page entry, from a mount effect,
   // and again only after a key or address is saved - never on re-render and
@@ -266,9 +275,12 @@ export function AlpineServerSetup({ initialState }: { initialState: InitialState
       if (!res.ok) throw new Error(data?.error ?? "Failed to save API key");
       setApiKeySet(true);
       setApiKey("");
-      setMessage({ kind: "ok", text: "API key stored securely." });
+      // The route registered this site's address; then the lodges are linked.
+      const registered = registrationMessage(data?.pushRegistration as KeySaveRegistration | undefined);
+      setMessage({ kind: registered.kind, text: registered.text });
       // A new key means a (possibly different) server can now be asked.
       void refreshVersion();
+      if (registered.linkLodges) await lodgeLinks.run();
     } catch (e) {
       setMessage({ kind: "err", text: e instanceof Error ? e.message : "Failed" });
     } finally {
@@ -372,6 +384,8 @@ export function AlpineServerSetup({ initialState }: { initialState: InitialState
           {message.text}
         </p>
       ) : null}
+      {lodgeLinks.statusLine}
+      {lodgeLinks.dialog}
 
       {/* Connection */}
       <Card>
@@ -406,13 +420,22 @@ export function AlpineServerSetup({ initialState }: { initialState: InitialState
                 {busy === "baseUrl" ? "Saving…" : "Save"}
               </ViewOnlyActionButton>
             </div>
+            {defaultBaseUrl && !savedBaseUrl && baseUrl === defaultBaseUrl ? (
+              <p className="text-xs text-muted-foreground" data-testid="acs-base-url-default">
+                Pre-filled from this site&apos;s configuration
+                (<code>SERVERNZ_DEFAULT_BASE_URL</code>). Press Save to use it; nothing
+                is contacted until you do.
+              </p>
+            ) : null}
           </div>
 
           <div className="rounded-md border border-border bg-muted p-3 text-sm">
             <div className="flex items-center justify-between gap-2">
               <span>
-                No account yet? Request a connection on the central server, then
-                paste the API key below.
+                No account yet? Save the address, then Request a Connection: register
+                there, copy the API key it shows you once, paste it below and Save,
+                then Download. The key starts working once the central server&apos;s
+                administrator approves the connection.
               </span>
               {requestConnectionHref ? (
                 <a
@@ -553,11 +576,19 @@ export function AlpineServerSetup({ initialState }: { initialState: InitialState
               Your lodges&apos; names, locations, bed counts and booking-officer
               contact details are uploaded to the central server and redistributed
               to every other connected club, where they appear on those clubs&apos;
-              pages. The booking-officer email is the committee role&apos;s shared
+              pages.
+            </p>
+            <p className="mt-1 text-muted-foreground">
+              The booking-officer email is the committee role&apos;s shared
               address, never a member&apos;s personal one, and a member&apos;s phone
               number is shared only if your club already publishes it on your own
-              committee page. No other member data is sent.
+              committee page.
             </p>
+            <p className="mt-1 text-muted-foreground">
+              The booking officer&apos;s name and email are displayed to other
+              clubs to enable booking sharing when a lodge is at capacity.
+            </p>
+            <p className="mt-1 text-muted-foreground">No other member data is sent.</p>
           </div>
           {!connectionReady ? (
             <p className="mb-4 text-sm text-muted-foreground">
@@ -576,7 +607,10 @@ export function AlpineServerSetup({ initialState }: { initialState: InitialState
                 </div>
                 <p className="text-sm text-muted-foreground">
                   The registry of other clubs&apos; lodges (name, location, booking
-                  officer, beds).
+                  officer, beds).{" "}
+                  <Link href="/admin/lodges" className="font-medium underline underline-offset-4">
+                    View all lodge details
+                  </Link>
                 </p>
                 <p className="mt-1 text-sm text-muted-foreground">
                   Until a lodge&apos;s Central lodge link is saved (Lodges, then

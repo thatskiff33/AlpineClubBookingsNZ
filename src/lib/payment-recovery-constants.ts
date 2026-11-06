@@ -9,6 +9,23 @@ import type { PaymentRecoveryOperationStatus, Prisma } from "@prisma/client";
 export const MAX_PAYMENT_RECOVERY_ATTEMPTS = 5;
 
 /**
+ * #4693 (review of PR #4698): each Stripe request an unwritten ask intent's cleanup
+ * makes - the runner's stamp, the settle's and the close-time sweep's reads and
+ * cancel - is bounded so, with no retries (the #3641 shape). They run in a
+ * member's edit request and in the runner, and one that times out is only a
+ * cleanup that did not happen yet.
+ */
+export const ABANDONED_INTENT_STRIPE_TIMEOUT_MS = 5_000;
+
+/**
+ * #4690 (`INV-SSOT`): how long a PROCESSING attempt may run before the stale
+ * reaper counts it dead and hands its row back (`resetStaleProcessingOperations`).
+ * A superseded-payment refund's alert claim older than this, with no sent
+ * marker, is a dead attempt's by the same rule (`superseded-additional-refund.ts`).
+ */
+export const PAYMENT_RECOVERY_STALE_PROCESSING_MS = 30 * 60 * 1000;
+
+/**
  * #4126 (`INV-SSOT`): a pre-persisted door's row no worker has touched - still
  * PENDING, never attempted. The runner's claim (PENDING -> PROCESSING, attempts
  * + 1) ends it, and from then the runner owns the row. The door's
@@ -22,6 +39,33 @@ export const UNTOUCHED_PRE_PERSISTED_ROW = { status: "PENDING", attempts: 0 } as
 
 export function isUntouchedPrePersistedRow(row: { status: PaymentRecoveryOperationStatus; attempts: number }): boolean {
   return row.status === UNTOUCHED_PRE_PERSISTED_ROW.status && row.attempts === UNTOUCHED_PRE_PERSISTED_ROW.attempts;
+}
+
+/**
+ * #4675 (`INV-PAY-120`, `INV-SSOT`): THE CLAIM ONE RECOVERY ATTEMPT HOLDS - the
+ * `attempts` and `processingStartedAt` its claim wrote
+ * (`claimPaymentRecoveryOperation`, or a succeeded-intent hand-off's), or the
+ * claim time a hold re-stamped since (`holdAdditionalIntentRecoveryClaim`).
+ */
+export type PaymentRecoveryClaim = {
+  id: string;
+  attempts: number;
+  processingStartedAt: Date | null;
+};
+
+/**
+ * The row is still this attempt's: PROCESSING, with exactly the claim it holds.
+ * The stale reaper clears `processingStartedAt` and a reclaim increments
+ * `attempts`, so an attempt the reaper gave up on matches nothing. The runner's
+ * claim hold and its SUCCEEDED close are both fenced on it.
+ */
+export function heldPaymentRecoveryClaimWhere(claim: PaymentRecoveryClaim) {
+  return {
+    id: claim.id,
+    status: "PROCESSING",
+    attempts: claim.attempts,
+    processingStartedAt: claim.processingStartedAt,
+  } as const satisfies Prisma.PaymentRecoveryOperationWhereInput;
 }
 
 /**

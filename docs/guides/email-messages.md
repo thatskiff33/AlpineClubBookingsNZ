@@ -132,7 +132,11 @@ reduction that goes back partly to the card and partly as account credit names
 both. A reduction that
 cancels the member's unpaid additional payment outright adds "The additional
 payment we asked for has been cancelled, so you no longer need to pay it."
-(#3954).
+(#3954). An amount still to pay is named by one rule at every edit: on a
+booking the club asks by card it reads "An additional payment of $X is
+required.", also while the card request waits to be retried; on a booking paid
+by internet banking it names an Internet Banking payment against the Xero
+invoice; any other amount still to pay is named without a method (#4052).
 
 `{{refundSentence}}` on the **Refund Appeal Approved** message works the same
 way. A card refund reads "A refund of $X will be processed to your original
@@ -168,6 +172,16 @@ and is not sent when nothing is. The joiner's own **Booking Modified** message
 reads "The extra $X for this change has been invoiced to the group organiser,
 because the group organiser paid for this booking. There is nothing for you to
 pay." instead of asking them for a payment.
+
+**Payment Refunded** (`superseded-payment-refunded`, #3340) tells a member that
+a charge on a payment request the club had already replaced was refunded, with
+`{{refundedAmount}}` and `{{owingSentence}}` saying what came back and what is
+still owing. It is sent once per refund, however often the payment recovery
+queue retries the refund (#4690), and, like the organiser's extra invoice, it is
+handed to the email retry job, so it arrives after that job's usual 15-minute
+wait rather than the moment the refund is made. The booking's **No emails** switch withholds it;
+the admin alert beside it (**Superseded payment auto-refunded**) is not silenced
+by that switch.
 
 `{{amountDue}}` on the **Booking Request Approved** and **Split Guest Payment
 Link** messages is what the pay link asks the member to pay: the booking's price
@@ -442,7 +456,8 @@ Two consequences worth knowing before you edit one:
   needs `{{additionalAmount}}`, `{{requestedOn}}`, `{{checkIn}}`, `{{checkOut}}` and
   `{{askCauseSentence}}`, which says why the amount is owed: the credit was used
   elsewhere in the club's accounts, or that and a change to the booking when the two
-  were merged into one request (#4253). A customised body saved before
+  were merged into one request (#4253; in either order, #4491). A merged request
+  raised by the release is emailed at once for the combined amount. A customised body saved before
   `{{askCauseSentence}}` existed is flagged stale; put it back in when you re-save. Put
   `{{bankTransferNote}}` on a line of its own above the Pay Now line: it prints the
   whole bank-transfer paragraph (with the booking's invoice number as the payment

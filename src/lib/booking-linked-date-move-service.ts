@@ -43,11 +43,11 @@ import { formatDateOnly } from "@/lib/date-only";
 import {
   LINKED_MOVE_TRANSACTION_BUDGET,
   LinkedDateMoveContendedError,
-  isTransactionContention,
   loadLinkedMoveChargesBothChangeFees,
   prepareLinkedMovePreTransaction,
 } from "@/lib/booking-linked-date-move-preflight";
 import { getDefaultLodgeId } from "@/lib/lodges";
+import { isTransactionContention } from "@/lib/prisma-errors";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 

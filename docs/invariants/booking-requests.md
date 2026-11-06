@@ -335,3 +335,40 @@ release) is listed as asked with neither mark, and is unchanged only where its s
 `booking-change-request-list-officer-entry.test.ts`,
 `booking-change-request-grid-nights.test.ts`, `requested-guest-nights.test.tsx`
 and the realdb cases in `booking-change-request-execution.realdb.test.ts`.
+
+## Finished-stay promo corrections (#4533)
+
+### INV-REQ-013
+
+A `LOCKED_PERIOD` change request on a finished stay may carry a promo change:
+Edit Booking's own fields (`promoCode` with its guests, or the `promoCodes`
+list), entered by an officer on the member's behalf and stored as
+`requested.promoChange` with a stamp naming the officer and where it was
+entered, beside `original.promoCodes`, the booking's codes it was entered
+against. It is entered from Edit Booking (`POST
+/api/bookings/[id]/change-requests` with `promoChange`, which refuses a member,
+a stay not eligible (`finishedStayEligibility`), any other change and
+any pending request on the booking) or on approval of a request naming none,
+written by the approval's guarded claim like `INV-REQ-011`'s guests. No change
+removes a code: `promoChangeRefusal`, read by the route and the executor over
+the edit's own resulting list, refuses one that would release a booker's code
+(a working-bee code follows its carry rule) or changes nothing; the card sends
+the carried codes with the new one where `multiPromoCodes` is on.
+
+Approval maps it through `lockedPeriodRequestToBatchInput` onto
+`modifyBookingBatch` under `finishedStayCorrection`, which admits exactly those
+promo keys; eligibility, assignment, caps and the refusal wording are the
+ordinary edit's. A code applied or released since the snapshot is drift. A
+correction that only changes codes is `PROMO_ONLY_NO_FEE`, and is refused if it
+raises the price; any promo change returns its reduction untiered and defaults
+it to account credit, or the way it was paid on an organiser-paid joiner's
+booking (`defaultCorrectionSettlementMethod`). The officer may withhold the change
+email only when the promo change is the request's one change
+(`storedRequestNamesOnlyPromoChange`); `memberEmailed` reports whether it is
+sent, the booking's "No emails" switch included. The approval's audit row
+records the codes, the officer and the email choice. Guarded by
+`booking-change-request-promo.test.ts`,
+`booking-change-request-promo-execution.test.ts`,
+`booking-change-request-promo-submit.test.ts`,
+`booking-finished-stay-correction.test.ts` and
+`booking-change-request-promo-correction.realdb.test.ts`.

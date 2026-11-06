@@ -38,7 +38,16 @@ configure the `magicLink` and `googleLogin` modules you enable on
    note appears.
 
 2. In **Password policy**, click **Edit**, set the strength requirements that
-   apply to every member and admin password, then **Save**.
+   apply to every member and admin password, then **Save**. **Refuse passwords
+   found in public data breaches** (on by default) checks each newly chosen
+   password against a public list of leaked passwords; only the first five
+   characters of a one-way code made from the password are sent, and if the
+   service does not answer within three seconds the password is accepted.
+   **Sign members out after (hours)** sets how long anyone stays signed in,
+   counted from when they signed in, however much they use the site: a whole
+   number of hours from 8 to 720 (30 days), default 168 (7 days). A change
+   applies to people already signed in, on their next page load. The lodge
+   kiosk account keeps its own 30 days.
 3. In **Email sign-in link**, click **Edit**, confirm the enable toggle is on,
    set the link's expiry (a whole number of minutes between 5 and 60; default
    15), then **Save**. For **Google sign-in**, first set up and verify the
@@ -51,6 +60,8 @@ configure the `magicLink` and `googleLogin` modules you enable on
 | Setting | What it controls | Notes / constraints |
 | --- | --- | --- |
 | Password policy | Minimum strength requirements for all passwords | Applies club-wide, across members and admins |
+| Refuse passwords found in public data breaches | Whether a newly chosen password is checked against a public breach list | Default on; applies when a password is set, never at login; needs outbound HTTPS to `api.pwnedpasswords.com` ([details](../SECURITY.md#breached-password-check-4610)) |
+| Sign members out after (hours) | The most time a signed-in session lasts from sign-in, however active | Default 168 hours (7 days), 8 to 720; nothing extends it; the lodge kiosk keeps its own 30 days ([details](../SECURITY.md#maximum-session-age-4611)) |
 | Email sign-in link (magic link) | Passwordless single-use email sign-in | Requires the `magicLink` module and configured transactional email; additive to password login, never a replacement, for existing verified members only |
 | Magic-link expiry | How long a sign-in link stays valid | Default 15 minutes |
 | Google sign-in | Sign in with a linked Google account | Requires the `googleLogin` module **and** Google OAuth credentials entered + verified in-app (Admin → Integrations → Google — encrypted at rest, no env vars); the module can't be enabled until verification passes; a member links their own Google account from their profile; no account is ever created from Google |
@@ -65,9 +76,10 @@ the `twoFactor` module on [Modules](modules.md).
 | The email sign-in card is inert | The `magicLink` module is off, or email delivery isn't configured | Enable it on [Modules](modules.md); configure transactional email in [`CONFIGURATION.md`](../../CONFIGURATION.md) |
 | No Google button appears for members | The `googleLogin` module is off, or the credentials aren't set up / verified | Set up and verify Google at Admin → Integrations → Google sign-in, then enable the module on Login & Security |
 | Can't turn on Google sign-in (toggle locked) | Google hasn't been verified yet, or a credential was replaced (re-locks) | Run the Verify step in the Google sign-in setup wizard |
-| Stored Google credentials stopped working after an `AUTH_SECRET` rotation | Encrypted credentials can no longer be decrypted | Re-enter and re-verify them in the Google sign-in setup wizard |
+| Stored Google credentials stopped working after an `AUTH_SECRET` rotation, or a data-encryption key was removed or unset | Encrypted credentials can no longer be decrypted (see [`DEPLOYMENT.md`](../../DEPLOYMENT.md#adding-a-data-encryption-key-4456)) | Re-enter and re-verify them in the Google sign-in setup wizard |
 | A member can't sign in with Google | Their Google account isn't linked | They link it from their own profile while signed in; unlinked accounts are refused |
 | Settings won't save | Your role lacks support edit access | Ask a full admin for support edit access |
+| Members (or the lodge tablet) are asked to sign in again although they were using the site | The maximum session age was reached; it counts from sign-in, not from the last use | Expected. Lengthen **Sign members out after (hours)** if the club prefers; the kiosk's 30 days is fixed |
 
 ## Related links
 

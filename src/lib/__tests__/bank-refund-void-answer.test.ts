@@ -5,6 +5,7 @@
  * English and say why.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { applyLinkMetadataMerge, isLinkMetadataMergeStatement, readLinkMetadataMerge } from "./support/xero-link-metadata-merge-double";
 
 const getCreditNotes = vi.fn();
 const getInvoice = vi.fn();
@@ -150,21 +151,33 @@ describe("recordHandMadeRefundNoteLink under the link's own row lock (#4288)", (
    * lock - a void that committed in between shows only there.
    */
   function fakeTx(stored: { metadata: unknown; active: boolean } | null, resolvedRow: { id: string } | null = null) {
-    const upsert = vi.fn(async (args: { update: { active: boolean; metadata: unknown } }) => ({ active: args.update.active, metadata: args.update.metadata }));
+    // The link row as the funnel leaves it: the upsert's columns, then (#4445)
+    // its one-statement metadata merge, applied by the shared double.
+    let row: { id: string; active: boolean; metadata: unknown } | null = null;
+    const upsert = vi.fn(async (args: { create: { active: boolean; metadata?: unknown }; update: { active: boolean; metadata?: unknown } }) => {
+      row = stored
+        ? { id: "link-1", active: args.update.active, metadata: "metadata" in args.update ? args.update.metadata : stored.metadata }
+        : { id: "link-1", active: args.create.active, metadata: args.create.metadata ?? null };
+      return { ...row };
+    });
     const findResolvedRow = vi.fn(async () => resolvedRow);
     const tx = {
-      $executeRaw: vi.fn(async () => 1),
+      $executeRaw: vi.fn(async (template: TemplateStringsArray, ...values: unknown[]) => {
+        if (row && isLinkMetadataMergeStatement(template)) row.metadata = applyLinkMetadataMerge(row.metadata, readLinkMetadataMerge(values));
+        return 1;
+      }),
       xeroSyncOperation: { findFirst: findResolvedRow },
       payment: { findUnique: vi.fn(async () => ({ source: "INTERNET_BANKING", xeroRefundCreditNoteId: null })), updateMany: vi.fn() },
       xeroObjectLink: {
         findMany: vi.fn(async () => []),
         createMany: vi.fn(async () => ({ count: 0 })),
         findUnique: vi.fn(async () => stored),
+        findUniqueOrThrow: vi.fn(async () => ({ ...row! })),
         updateMany: vi.fn(),
         upsert,
       },
     };
-    return { tx: tx as never, upsert, findResolvedRow };
+    return { tx: tx as never, upsert, findResolvedRow, written: () => row };
   }
   const record = (tx: never) => recordHandMadeRefundNoteLink(tx, { paymentId: "pay-1", taskId: "task-1", amountCents: 20_000, note });
 
@@ -188,13 +201,12 @@ describe("recordHandMadeRefundNoteLink under the link's own row lock (#4288)", (
   });
 
   it("records the checked note live, stamped with its Xero timestamp", async () => {
-    const { tx, upsert } = fakeTx(null);
+    const { tx, upsert, written } = fakeTx(null);
     await record(tx);
-    expect(upsert).toHaveBeenCalledWith(expect.objectContaining({
-      update: expect.objectContaining({
-        active: true,
-        metadata: expect.objectContaining({ status: "AUTHORISED", providerUpdatedAt: "2026-06-30T21:15:04.123Z", perDelta: true, handBackTaskId: "task-1" }),
-      }),
+    expect(upsert).toHaveBeenCalledWith(expect.objectContaining({ update: expect.objectContaining({ active: true }) }));
+    expect(written()).toEqual(expect.objectContaining({
+      active: true,
+      metadata: expect.objectContaining({ status: "AUTHORISED", providerUpdatedAt: "2026-06-30T21:15:04.123Z", perDelta: true, handBackTaskId: "task-1" }),
     }));
   });
 
@@ -215,9 +227,9 @@ describe("recordHandMadeRefundNoteLink under the link's own row lock (#4288)", (
     // The stored row is live and active (an inbound reading newer than the
     // treasurer's check): the funnel keeps it whole, so `handBackTaskId` and
     // the other keys of this answer would be silently lost.
-    const { tx, upsert } = fakeTx({ metadata: { status: "PAID", total: 200, providerUpdatedAt: "2026-06-30T22:00:00.000Z" }, active: true });
+    const { tx, written } = fakeTx({ metadata: { status: "PAID", total: 200, providerUpdatedAt: "2026-06-30T22:00:00.000Z" }, active: true });
     await expect(record(tx)).rejects.toMatchObject({ status: 409, message: expect.stringContaining("changed in Xero") });
-    expect(upsert.mock.calls[0]![0].update.metadata).not.toHaveProperty("handBackTaskId");
+    expect(written()!.metadata).not.toHaveProperty("handBackTaskId");
   });
 });
 

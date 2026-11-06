@@ -1,4 +1,5 @@
 import { isHttpUrl } from "@/lib/http-url";
+import { DATA_ENCRYPTION_KEYS_ENV, parseDataEncryptionKeys } from "@/lib/data-encryption-key-material";
 
 function readEnv(name: string): string | undefined {
   const value = process.env[name]?.trim();
@@ -9,6 +10,17 @@ export function getAuthSecret(): string | undefined {
   return readEnv("AUTH_SECRET") ?? readEnv("NEXTAUTH_SECRET");
 }
 
+/** Resolve the auth secret at call time, or fail closed with the caller's error. */
+export function requireAuthSecret(
+  errorMessage = "AUTH_SECRET or NEXTAUTH_SECRET is required",
+): string {
+  const secret = getAuthSecret();
+  if (!secret) {
+    throw new Error(errorMessage);
+  }
+  return secret;
+}
+
 export function getAuthTrustHost(): boolean {
   const raw = readEnv("AUTH_TRUST_HOST");
   return raw === "true";
@@ -17,9 +29,18 @@ export function getAuthTrustHost(): boolean {
 // test seam
 export function getRuntimeConfigIssues(): string[] {
   const issues: string[] = [];
+  const authSecret = getAuthSecret();
 
-  if (!getAuthSecret()) {
+  if (!authSecret) {
     issues.push("AUTH_SECRET or NEXTAUTH_SECRET is required");
+  }
+
+  // #4456: an invalid data-encryption key ring makes credential capture and
+  // every two-factor code throw, so the release is not ready: readiness fails
+  // and blue/green never switches traffic to it. An UNSET ring is valid.
+  const ring = parseDataEncryptionKeys(readEnv(DATA_ENCRYPTION_KEYS_ENV), authSecret);
+  if (ring.status === "invalid") {
+    issues.push(ring.reason);
   }
 
   const nextAuthUrl = readEnv("NEXTAUTH_URL");

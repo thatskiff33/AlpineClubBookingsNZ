@@ -5,12 +5,14 @@
  *
  * Three callers decide from it and must agree: the failure-triggered converge
  * (#4219, `xero-applied-credit-spent-outside-app.ts`), the inbound mirror (#4270,
- * `xero-credit-note-mirror.ts`) and the Failures view's "spent outside the app"
- * flag (#4220). A comparator that drifted between them would write the member's
- * credit down twice, or not at all.
+ * `xero-credit-note-mirror.ts`) and the early warning that a booking's credit note
+ * was spent outside the app (#4220, `xero-credit-note-spent-outside-flag.ts`). A
+ * comparator that drifted between them would write the member's credit down twice,
+ * or not at all, or warn about a spend the writers would not act on.
  */
 import type { Prisma } from "@prisma/client";
 import { exactProviderAmountToCents } from "@/lib/money-provider-amount";
+import { isLiveXeroPaymentStatus } from "@/lib/xero-payment-status";
 import type { XeroNoteAllocation, XeroNotePayment } from "@/lib/xero-credit-note-spent-outside-app";
 import { BOOKING_INVOICE_LINK_MODELS } from "@/lib/xero-credit-note-write-down";
 
@@ -31,7 +33,7 @@ export function xeroPaymentsOf(
   payments: ReadonlyArray<{ paymentID?: string; amount?: unknown; status?: unknown }> | null | undefined,
 ): XeroNotePayment[] {
   return (payments ?? []).flatMap((payment) => {
-    if (String(payment.status ?? "") === "DELETED") return [];
+    if (!isLiveXeroPaymentStatus(payment.status)) return [];
     const cents = exactProviderAmountToCents(payment.amount);
     return payment.paymentID && cents !== null ? [{ paymentId: payment.paymentID, cents }] : [];
   });
@@ -52,6 +54,34 @@ export function spendIsExplained(evidence: {
   const listedCents =
     evidence.allocations.reduce((sum, a) => sum + a.cents, 0) + evidence.payments.reduce((sum, p) => sum + p.cents, 0);
   return listedCents === evidence.totalCents - evidence.remainingCents;
+}
+
+/** A note changed more recently than this is left for a later look (owner decision, 24 Oct 2026). */
+export const CREDIT_NOTE_MIRROR_SETTLE_MS = 2 * 60 * 1000;
+
+/** The statuses whose spend is read; a voided or deleted note is a different class of change. */
+const ACTIVE_NOTE_STATUSES: readonly string[] = ["AUTHORISED", "PAID"];
+
+/** When a reading changed at `updatedAt` has settled enough to be judged; null when Xero sent no change time. */
+export function creditNoteSettlesAt(updatedAt: Date | null): Date | null {
+  return updatedAt ? new Date(updatedAt.getTime() + CREDIT_NOTE_MIRROR_SETTLE_MS) : null;
+}
+
+/**
+ * THE GATES A READING OF A NOTE MUST PASS BEFORE ITS SPEND IS JUDGED, in order:
+ * an active note, a list that accounts for exactly what it lost, and a change at
+ * least two minutes old (so the app's own allocation or refund payment that is not
+ * yet recorded is never read as someone else's). The inbound mirror (#4270) and
+ * the early warning (#4220) both ask this one function; `null` means judgeable.
+ */
+export function judgeOutsideSpendEvidence(
+  evidence: Parameters<typeof spendIsExplained>[0] & { status: string | null; updatedAt: Date | null },
+  now: Date,
+): "note-not-active" | "unexplained-spend" | "unsettled" | null {
+  if (!evidence.status || !ACTIVE_NOTE_STATUSES.includes(evidence.status)) return "note-not-active";
+  if (!spendIsExplained(evidence)) return "unexplained-spend";
+  const settledAt = creditNoteSettlesAt(evidence.updatedAt);
+  return !settledAt || settledAt.getTime() > now.getTime() ? "unsettled" : null;
 }
 
 /**

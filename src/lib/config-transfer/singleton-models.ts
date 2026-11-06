@@ -177,6 +177,15 @@ export const MODEL_LEVEL_EXCLUSIONS: Record<string, string> = {
     "bookkeeping beside it (cleanupStartedAt, lastCleanupAt, lastCleanupDeleted) " +
     "is this install's own run history and is meaningless on another -- " +
     "instance-local",
+  ClubTaxSettings:
+    "the club's GST registration, rate and effective-from date (#4626, Ledger " +
+    "M3a; decision D3): the tax treatment the member-money journal splits every " +
+    "charge under. Like ClubFormatSettings it re-states how a club's money is " +
+    "recorded, and it is a legal fact about THIS club, not policy another club " +
+    "can share: importing it would post a target's future charges under a " +
+    "registration or rate the target never declared. A fresh import keeps the " +
+    "target's own setting, and a target with none keeps the defaults (INV-CONFIG-001) " +
+    "-- instance-local",
   PrivacyRetentionSettings:
     "the personal-data retention schedule (#4457): the windows after which the " +
     "nightly jobs PERMANENTLY DELETE email logs and rejected applications and " +

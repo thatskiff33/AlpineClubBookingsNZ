@@ -2682,7 +2682,9 @@ provider credentials** upgrade runbook in `DEPLOYMENT.md`.
 
 **Credentials at rest.** Stored credentials are encrypted with AES-256-GCM under a
 key derived from the app auth secret, so **a database backup plus the auth secret
-decrypts everything** — treat the auth secret with the same care as the database,
+decrypts everything** (from #4456, rows moved to a `DATA_ENCRYPTION_KEYS` key
+need that key instead; see `DEPLOYMENT.md` → "Adding a data-encryption key") —
+treat the auth secret with the same care as the database,
 and **never share a production auth secret with staging or clones** (a restored
 clone is *expected* to fail decryption and enter the re-entry state, which is
 correct, not a bug). See `docs/SECURITY-ATTACK-SURFACE.md` → "Credentials at

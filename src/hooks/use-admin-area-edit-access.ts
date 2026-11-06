@@ -3,6 +3,7 @@
 import { useSession } from "next-auth/react";
 import { isFullAdmin } from "@/lib/access-roles";
 import {
+  canOpenAdminPath,
   hasAdminAreaAccess,
   type AdminPermissionArea,
 } from "@/lib/admin-permissions";
@@ -110,4 +111,23 @@ export function useAdminAreaViewAccess(
     area,
     level: "view",
   });
+}
+
+/**
+ * Tri-state "may this admin open this page" gate (#4581), for a link whose
+ * target the route map gates on a DIFFERENT area from the page that shows it.
+ * It asks `canOpenAdminPath`, the same question the admin layout asks, so the
+ * link and the screen it opens cannot disagree and no area is named by hand.
+ *
+ * `undefined` while the session resolves (render neutral, i.e. no link);
+ * `true` / `false` once resolved.
+ */
+export function useCanOpenAdminPath(pathname: string): boolean | undefined {
+  const { data: session, status } = useSession();
+
+  if (status === "loading") return undefined;
+
+  if (!session?.user) return false;
+
+  return canOpenAdminPath(session.user, pathname);
 }

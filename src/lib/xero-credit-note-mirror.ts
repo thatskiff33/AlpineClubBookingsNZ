@@ -50,10 +50,12 @@ import {
   XERO_OUTBOX_APPLIED_CREDIT_ALLOCATION_TYPE,
   XERO_OUTBOX_APPLIED_CREDIT_DEALLOCATION_TYPE,
 } from "./xero-operation-outbox-payload";
-import { findFundingLotsForNote } from "./xero-applied-credit-slice-lookup";
+import { findFundingLotsForNote, fundingLotWhere } from "./xero-applied-credit-slice-lookup";
 import {
+  CREDIT_NOTE_MIRROR_SETTLE_MS,
+  creditNoteSettlesAt,
+  judgeOutsideSpendEvidence,
   outsideSpendCents,
-  spendIsExplained,
   xeroAllocationsOf,
   xeroPaymentsOf,
 } from "./xero-credit-note-outside-spend";
@@ -62,12 +64,11 @@ import { planOutsideSpendMirror } from "./xero-credit-note-mirror-plan";
 import {
   CREDIT_NOTE_MIRROR_RESTORE_DESCRIPTION,
   CREDIT_NOTE_MIRROR_WRITE_DOWN_DESCRIPTION,
-  NOT_A_CONVERGENCE_ROW,
   writtenDownCentsByCreditNote,
 } from "./xero-credit-note-write-down";
 
-/** A note changed more recently than this is left for a later look (owner decision, 24 Oct 2026). */
-export const CREDIT_NOTE_MIRROR_SETTLE_MS = 2 * 60 * 1000;
+// The evidence gates and the settle window live with the comparator, so the early warning (#4220) asks the same ones.
+export { CREDIT_NOTE_MIRROR_SETTLE_MS };
 
 /** `CronJobRun.jobName` of the backstop sweep, and the `XeroSyncCursor` rows the mirror keeps. */
 export const CREDIT_NOTE_MIRROR_JOB_NAME = "xero-credit-note-outside-spend-mirror";
@@ -100,7 +101,8 @@ export interface XeroCreditNoteLike {
   payments?: Parameters<typeof xeroPaymentsOf>[0];
 }
 
-function readInstant(value: unknown): Date | null {
+/** An instant Xero sent (a `Date` or a date string), or null when it is missing or unreadable. */
+export function readCreditNoteInstant(value: unknown): Date | null {
   if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value;
   if (typeof value === "string" && value.trim() !== "") {
     const parsed = new Date(value);
@@ -119,7 +121,7 @@ export function creditNoteMirrorEvidenceFrom(note: XeroCreditNoteLike): CreditNo
     remainingCents: exactProviderAmountToCents(note.remainingCredit),
     allocations: xeroAllocationsOf(note.allocations),
     payments: xeroPaymentsOf(note.payments),
-    updatedAt: readInstant(note.updatedDateUTC),
+    updatedAt: readCreditNoteInstant(note.updatedDateUTC),
   };
 }
 
@@ -201,8 +203,6 @@ export async function clearCreditNoteMirrorRecheck(db: typeof prisma, creditNote
   });
 }
 
-const ACTIVE_NOTE_STATUSES = ["AUTHORISED", "PAID"];
-
 export async function mirrorCreditNoteOutsideSpend(
   evidence: CreditNoteMirrorEvidence,
   deps: CreditNoteMirrorDeps = {},
@@ -213,7 +213,7 @@ export async function mirrorCreditNoteOutsideSpend(
 
   // Most notes fund no lot at all (an invoice's, a refund's): one indexed read, then out.
   const lots = await db.memberCredit.findMany({
-    where: { xeroCreditNoteId: creditNoteId, amountCents: { gt: 0 }, ...NOT_A_CONVERGENCE_ROW },
+    where: fundingLotWhere(creditNoteId),
     select: { id: true, memberId: true },
     take: 2,
   });
@@ -225,19 +225,20 @@ export async function mirrorCreditNoteOutsideSpend(
   }
   const memberId = firstLot.memberId;
 
-  if (!evidence.status || !ACTIVE_NOTE_STATUSES.includes(evidence.status)) {
+  const gate = judgeOutsideSpendEvidence(evidence, now);
+  if (gate === "note-not-active") {
     // Voided or deleted in Xero is a different class of change from credit spent: the ledger
     // may owe the member something that no rule here knows, so an officer is told.
     const log = evidence.status === "VOIDED" || evidence.status === "DELETED" ? logger.error : logger.warn;
     log.call(logger, { creditNoteId, status: evidence.status }, "A credit note funding a member's credit is not active in Xero; the credit ledger was not changed");
     return { acted: false, reason: "note-not-active" };
   }
-  if (!spendIsExplained(evidence)) {
+  if (gate === "unexplained-spend") {
     logger.warn({ creditNoteId }, "Xero's list for a credit note does not add up to what it has lost; not mirrored");
     return { acted: false, reason: "unexplained-spend" };
   }
-  const settledAt = evidence.updatedAt ? new Date(evidence.updatedAt.getTime() + CREDIT_NOTE_MIRROR_SETTLE_MS) : null;
-  if (!settledAt || settledAt.getTime() > now.getTime()) {
+  if (gate === "unsettled") {
+    const settledAt = creditNoteSettlesAt(evidence.updatedAt);
     await scheduleRecheck(db, creditNoteId, settledAt ?? new Date(now.getTime() + CREDIT_NOTE_MIRROR_SETTLE_MS));
     return { acted: false, reason: "unsettled" };
   }

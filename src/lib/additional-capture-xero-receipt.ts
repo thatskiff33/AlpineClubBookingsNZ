@@ -260,11 +260,14 @@ export async function recordAdditionalCaptureReceipt(
   const refuse = async (reason: AdditionalCaptureReceiptRefusal, details: Record<string, unknown> = {}) => {
     const message = `The card payment for this booking change was not recorded in Xero: ${REFUSAL_TEXT[reason]}.`;
     logger.error({ operationId, bookingId, paymentIntentId, reason, ...details }, message);
-    await failXeroSyncOperation(params.syncOperation, new Error(message), { refused: reason, ...details }, {
+    const failed = await failXeroSyncOperation(params.syncOperation, new Error(message), { refused: reason, ...details }, {
       lastErrorMessage: message,
     });
+    // #4673 (PR #4687 review): the row is no longer this run's (`INV-INT-029`): the
+    // run that holds it decides, so no refusal stamp and no officer alert from here.
+    if (failed === null) return null;
     await prisma.xeroSyncOperation.updateMany({
-      where: { id: operationId, status: "FAILED" },
+      where: { id: operationId, status: "FAILED", startedAt: params.syncOperation.startedAt },
       data: { lastErrorCode: ADDITIONAL_CAPTURE_RECEIPT_REFUSED_CODE },
     });
     await alertOfficer(paymentIntentId, operationId, message);
@@ -274,8 +277,10 @@ export async function recordAdditionalCaptureReceipt(
   const standDown = async (status: "SUCCEEDED" | "CANCELLED", skipped: string, details: Record<string, unknown> = {}) => {
     await completeXeroSyncOperation(params.syncOperation, { status, responsePayload: { skipped, ...details } });
     // A CANCELLED completion keeps its code: the planning stamp is not an error.
+    // #4707 (`INV-INT-029`): cleared only on the end this claim just wrote - never on a
+    // newer claim's row (a retry after a stale reset), whose own planning stamp stays.
     await prisma.xeroSyncOperation.updateMany({
-      where: { id: operationId, lastErrorCode: ADDITIONAL_CAPTURE_RECEIPT_PLANNING_CODE },
+      where: { id: operationId, status, startedAt: params.syncOperation.startedAt, lastErrorCode: ADDITIONAL_CAPTURE_RECEIPT_PLANNING_CODE },
       data: { lastErrorCode: null },
     });
     return null;

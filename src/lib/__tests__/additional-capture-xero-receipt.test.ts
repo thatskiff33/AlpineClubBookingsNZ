@@ -36,7 +36,10 @@ const mocks = vi.hoisted(() => ({
   findUniqueTask: vi.fn(),
   creditBackLateCaptureRefunds: vi.fn(),
   queueWaitingPaidAnotherWayNote: vi.fn(),
+  // #4494: the unpaid payload a gap invoice's payment overlapping the credit-release sweep's share is sent with.
+  unpaidGapPayloadIfOverlapping: vi.fn(),
 }));
+vi.mock("@/lib/credit-release-xero-payment", () => ({ unpaidGapPayloadIfOverlapping: mocks.unpaidGapPayloadIfOverlapping }));
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
@@ -101,7 +104,11 @@ import {
   queueReceiptsForUnrecordedCaptures,
 } from "@/lib/additional-capture-receipt-enqueue";
 import { readAdditionalCaptureReceiptPayload } from "@/lib/additional-capture-receipt-payload";
-import { ADDITIONAL_CAPTURE_RECEIPT_WAITING_CODE, supplementaryReplayMayRecordPayment } from "@/lib/additional-capture-receipt-gate";
+import {
+  ADDITIONAL_CAPTURE_RECEIPT_PLANNING_CODE,
+  ADDITIONAL_CAPTURE_RECEIPT_WAITING_CODE,
+  supplementaryReplayMayRecordPayment,
+} from "@/lib/additional-capture-receipt-gate";
 import { ADDITIONAL_CAPTURE_PAYMENT_ROLE } from "@/lib/additional-capture-receipt-link";
 import { buildEditFinancialReviewChargeReason } from "@/lib/payment-recovery-keys";
 import { XeroAppliedCreditOperationBusyError } from "@/lib/xero-applied-credit-operation-serialization";
@@ -199,6 +206,7 @@ const gapTarget = (status = "SUCCEEDED") => {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mocks.unpaidGapPayloadIfOverlapping.mockResolvedValue(null);
   order = [];
   invoices = { [PRIMARY]: { amountDue: 8000 } };
   rows = { otherReceiptRunning: false, createRunning: false, primaryCreate: { status: "SUCCEEDED", responsePayload: {}, manuallyResolvedAt: null } };
@@ -262,7 +270,7 @@ const expectRefused = (reason: string) => {
     expect.objectContaining({ lastErrorMessage: expect.stringContaining("was not recorded in Xero") }),
   );
   expect(mocks.updateManyOperation).toHaveBeenCalledWith({
-    where: { id: "op_receipt", status: "FAILED" },
+    where: { id: "op_receipt", status: "FAILED", startedAt: TEST_XERO_CLAIMED_AT },
     data: { lastErrorCode: ADDITIONAL_CAPTURE_RECEIPT_REFUSED_CODE },
   });
   expect(mocks.sendAdminXeroSyncErrorAlert).toHaveBeenCalledTimes(1);
@@ -521,6 +529,38 @@ describe("recordAdditionalCaptureReceipt", () => {
     expect(seam.getAuthenticatedXeroClient).not.toHaveBeenCalled();
   });
 
+  // #4707 (`INV-INT-029`): a stalled run's stand-down lands after a stale reset and a
+  // retry's claim took the row - that claim's planning stamp is the retry's, not this run's.
+  // RUNNING pins the status scope; CANCELLED (a withdrawal keeps `startedAt`) pins `startedAt`.
+  it.each(["RUNNING", "CANCELLED"])("MUTATION: a stand-down after another claim took the row leaves that claim's planning stamp (%s)", async (newerStatus) => {
+    mocks.findUniqueTransaction.mockResolvedValue(capture({}, "CANCELLED"));
+    const newer = { id: "op_receipt", status: newerStatus, startedAt: new Date("2026-07-01T00:05:00.000Z"), lastErrorCode: ADDITIONAL_CAPTURE_RECEIPT_PLANNING_CODE };
+    const row: Record<string, unknown> = { ...newer };
+    mocks.updateManyOperation.mockImplementation(async ({ where, data }: { where: Record<string, unknown>; data: Record<string, unknown> }) => {
+      const matches = Object.entries(where).every(([key, value]) =>
+        value instanceof Date ? row[key] instanceof Date && (row[key] as Date).getTime() === value.getTime() : row[key] === value,
+      );
+      if (matches) Object.assign(row, data);
+      return { count: matches ? 1 : 0 };
+    });
+
+    await expect(run()).resolves.toBeNull();
+
+    expect(mocks.completeXeroSyncOperation).toHaveBeenCalledWith(expect.objectContaining({ id: "op_receipt" }), expect.objectContaining({ status: "CANCELLED" }));
+    expect(row).toEqual(newer);
+  });
+
+  it("a stand-down clears the planning stamp from the end its own claim wrote", async () => {
+    mocks.findUniqueTransaction.mockResolvedValue(capture({}, "CANCELLED"));
+
+    await expect(run()).resolves.toBeNull();
+
+    expect(mocks.updateManyOperation).toHaveBeenCalledWith({
+      where: { id: "op_receipt", status: "CANCELLED", startedAt: TEST_XERO_CLAIMED_AT, lastErrorCode: ADDITIONAL_CAPTURE_RECEIPT_PLANNING_CODE },
+      data: { lastErrorCode: null },
+    });
+  });
+
   /**
    * #4324 (owner decision 25 Oct 2026; `INV-PAY-144`): a late capture a
    * treasurer KEPT on a cancelled booking whose primary invoice bills its
@@ -575,6 +615,22 @@ describe("recordAdditionalCaptureReceipt", () => {
       await run(seam);
       expectRefused("nothing-due");
       expect(mocks.recheckPrimaryInvoiceWorthGap).not.toHaveBeenCalled();
+      expect(seam.createXeroPaymentForInvoice).not.toHaveBeenCalled();
+    });
+
+    // #4673 (PR #4687 review): a refusal whose failure lost its claim (an officer's
+    // Retry queued the row again, or a later run failed it) stamps nothing and
+    // alerts nobody: the run that holds the row decides.
+    it("MUTATION: a refusal whose failure was refused (INV-INT-029) stamps no code and alerts no officer", async () => {
+      invoices[PRIMARY] = { amountDue: 0 };
+      mocks.failXeroSyncOperation.mockResolvedValueOnce(null);
+      const seam = providers();
+      await expect(run(seam)).resolves.toBeNull();
+      expect(mocks.failXeroSyncOperation).toHaveBeenCalledTimes(1);
+      expect(mocks.updateManyOperation).not.toHaveBeenCalledWith(
+        expect.objectContaining({ data: { lastErrorCode: ADDITIONAL_CAPTURE_RECEIPT_REFUSED_CODE } }),
+      );
+      expect(mocks.sendAdminXeroSyncErrorAlert).not.toHaveBeenCalled();
       expect(seam.createXeroPaymentForInvoice).not.toHaveBeenCalled();
     });
 
@@ -1093,6 +1149,18 @@ describe("supplementaryReplayMayRecordPayment (rounds 9 and 11)", () => {
     mocks.txFindFirstLink.mockResolvedValue({ id: "receipt_link" });
     await expect(ask()).resolves.toEqual({ recordPayment: true, raisedUnpaid: false });
     expect(writes()).toEqual([]);
+  });
+
+  it("MUTATION #4494: raises a gap invoice unpaid where its payment would overlap the credit-release sweep's share - asked after the lock, guarded on an unsent status", async () => {
+    const gapPayload = { primaryInvoiceGap: true, recordPayment: true, coveredPaymentIntentIds: ["pi_release"], coveredCaptureCents: { pi_release: 3_000 } };
+    // Here an earlier attempt may have paid, so the answer still names its captures.
+    const unpaid = { ...gapPayload, recordPayment: false };
+    mocks.findUniqueOperation.mockResolvedValue({ status: "FAILED", requestPayload: gapPayload });
+    mocks.unpaidGapPayloadIfOverlapping.mockResolvedValue(unpaid);
+    await expect(ask()).resolves.toEqual({ recordPayment: false, raisedUnpaid: true });
+    expect(mocks.unpaidGapPayloadIfOverlapping).toHaveBeenCalledWith({ operationId: "op_change_invoice", bookingId: "booking_1", payload: gapPayload });
+    expect(mocks.transaction.mock.invocationCallOrder[0]).toBeLessThan(mocks.unpaidGapPayloadIfOverlapping.mock.invocationCallOrder[0]!);
+    expect(writes()).toEqual([[{ where: { id: "op_change_invoice", status: { in: ["FAILED", "PARTIAL"] } }, data: { requestPayload: unpaid } }]]);
   });
 });
 

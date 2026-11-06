@@ -27,6 +27,7 @@
  */
 import type { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { releaseBookingJournalForTeardown } from "./support/booking-financial-history-teardown";
 
 const RUN = process.env.RUN_CONCURRENCY_RACE_TESTS === "1";
 const RACE_DB_URL = process.env.CONCURRENCY_RACE_DATABASE_URL ?? "";
@@ -86,6 +87,8 @@ async function settledCents(): Promise<number> {
 }
 
 async function resetPayment(): Promise<void> {
+  // #4627: the doors post journal batches bridged to these lines; release them first.
+  await releaseBookingJournalForTeardown(prisma, [BOOKING_ID]);
   await prisma.bookingLedgerLine.deleteMany({ where: { bookingId: BOOKING_ID } });
   await prisma.paymentRefund.deleteMany({ where: { paymentId: PAYMENT_ID } });
   await prisma.paymentTransaction.deleteMany({ where: { paymentId: PAYMENT_ID } });
@@ -104,6 +107,8 @@ async function resetPayment(): Promise<void> {
       ({ prisma } = await import("@/lib/prisma"));
       ({ reconcilePaymentAggregates, upsertPaymentIntentTransaction } = await import("@/lib/payment-transactions"));
 
+      // #4627: the doors post journal batches bridged to these lines; release them first.
+      await releaseBookingJournalForTeardown(prisma, [BOOKING_ID]);
       await prisma.bookingLedgerLine.deleteMany({ where: { bookingId: BOOKING_ID } });
       await prisma.paymentRefund.deleteMany({ where: { paymentId: PAYMENT_ID } });
       await prisma.paymentTransaction.deleteMany({ where: { paymentId: PAYMENT_ID } });
@@ -142,6 +147,8 @@ async function resetPayment(): Promise<void> {
 
     afterAll(async () => {
       if (!prisma) return;
+      // #4627: the doors post journal batches bridged to these lines; release them first.
+      await releaseBookingJournalForTeardown(prisma, [BOOKING_ID]);
       await prisma.bookingLedgerLine.deleteMany({ where: { bookingId: BOOKING_ID } });
       await prisma.paymentRefund.deleteMany({ where: { paymentId: PAYMENT_ID } });
       await prisma.paymentTransaction.deleteMany({ where: { paymentId: PAYMENT_ID } });

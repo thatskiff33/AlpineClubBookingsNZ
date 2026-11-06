@@ -282,6 +282,8 @@ describe("every operation name this repository passes to callXeroApi", () => {
       "getOnlineInvoice",
       "getOrganisations",
       "getPayment",
+      // #4531: the deleted-payment link backfill lists Xero's DELETED payments.
+      "getPayments",
       "getReportBalanceSheet",
       "getReportBankSummary",
       "getReportProfitAndLoss",

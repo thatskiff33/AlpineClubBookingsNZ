@@ -26,6 +26,7 @@
  */
 import { randomBytes, randomInt } from "crypto";
 import { hash } from "bcryptjs";
+import { PASSWORD_BCRYPT_COST } from "@/lib/password-hashing";
 import {
   AgeTier,
   BookingEventType,
@@ -114,6 +115,7 @@ import { getNonMemberHoldDays } from "@/lib/cancellation";
 import { resolveRequestBookingHoldUntil } from "@/lib/booking-request";
 import { clubToday, dateOnlyInstantOf } from "@/lib/club-time";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
+import { resolveBookingMoneyPostingContext } from "@/lib/member-money/doors";
 import { paymentLinkExpiryForCheckIn } from "@/lib/payment-link-expiry";
 import {
   checkInternetBankingLeadTime,
@@ -751,7 +753,8 @@ export async function joinGroupBookingAsMember(
   // columns are compared against. Passing one where the other is wanted is the
   // conflation this whole issue exists to remove, which is why neither is
   // named just "today".
-  const clubDayForJoin = clubToday(await readClubTimeZoneOutsideRequest());
+  const joinClubZone = await readClubTimeZoneOutsideRequest();
+  const clubDayForJoin = clubToday(joinClubZone);
   const clubDayInstantForJoin = dateOnlyInstantOf(clubDayForJoin);
   if (hasGroupStayFullyEnded(group.organiserBooking, clubDayInstantForJoin)) {
     throw new GroupBookingError("This group's stay has ended", 409);
@@ -1064,9 +1067,15 @@ export async function joinGroupBookingAsMember(
     }
   }
 
+  // #4628, #4660: an EACH_PAYS_OWN joiner paying by internet banking binds its
+  // charge in the journal inside the create, and a $0 join confirms there; the
+  // context is read here, on the join's zone, before the create's transaction
+  // (`INV-LOCK-004`).
+  const journal = await resolveBookingMoneyPostingContext({ zone: joinClubZone });
   let outcome: Awaited<ReturnType<typeof createConfirmedBooking>>;
   try {
     outcome = await createConfirmedBooking({
+      journal,
       format,
       // #3123 — the CLUB's day (`INV-CONFIG-002`), resolved at the top of this
       // function, outside every transaction. `createConfirmedBooking` is
@@ -1672,7 +1681,7 @@ export async function verifyAndCreateNonMemberJoin(
 
   // Non-login member: store a random bcrypt hash so the row satisfies the
   // schema without any usable credential (mirrors approveBookingRequest).
-  const placeholderPasswordHash = await hash(randomBytes(32).toString("hex"), 13);
+  const placeholderPasswordHash = await hash(randomBytes(32).toString("hex"), PASSWORD_BCRYPT_COST);
   const reviewedAt = new Date();
   const holdDays = await getNonMemberHoldDays(checkIn, groupLodgeId);
   const nonMemberHoldUntil = resolveRequestBookingHoldUntil(

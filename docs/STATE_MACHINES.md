@@ -230,6 +230,16 @@ renders, plus an operator alert. `PENDING -> PAID` via the public payment link i
 the exception that never needs it: that route refuses a booking carrying an
 election outright rather than charging the pre-credit price.
 
+A bank-transfer booking's charge is in the member-money journal before its
+`PAID` (#4628, `INV-MONEY-045`): the transitions that issue its payable invoice
+(the internet-banking create into `PAYMENT_PENDING` or `CONFIRMED`, the switch
+to internet banking, the school pay-on-account approval) post R01; an edit or
+`CANCELLED` before payment re-states it; and the later `PAID` (the settle, or
+the Internet Banking reconcile's flip, which now writes the confirmation's
+ledger lines as the settle does) links its lines to that charge rather than
+charging again. Every writer that sets `PAID` or `CANCELLED` is classified by
+`booking-sale-status-writer-census.test.ts`.
+
 Waitlist confirmation and expiry serialize on the offered booking's lodge lock.
 Confirmation re-reads `WAITLIST_OFFERED` and the deadline after acquiring the
 lock and uses a status/deadline-guarded claim, so an expiry that wins first
@@ -708,6 +718,9 @@ census: a narrowed type or filter list copied from it must carry all six.
 ```text
 member/admin starts edit -> quoted delta -> local booking mutation
 positive delta -> additional payment or supplementary Xero invoice
+  (the Booking Modified email names it by one rule: a card ask as a card
+  payment even while its failed mint waits for retry, an Internet Banking
+  booking's invoice as Internet Banking - #4052)
   (minted after the edit's commit; a booking CANCELLED or BUMPED by then is
   asked nothing, and an ask a cancel landing mid-mint could not see is retired
   FAILED by the minter - the door's, the recovery runner's or a currency
@@ -759,6 +772,23 @@ and permanently ([INV-PAY-047]). The ask is the edit's net PLUS the unpaid
 balance of the ask it supersedes.
 
 ```text
+a failed mint's replay, before it mints (#4015 review, outside any transaction)
+  -> reads Stripe for the live ask it would carry and supersede (bounded read;
+       a timeout is an ordinary retry), through `staleIntentAction`
+       unpaid (requires_action / 3DS included), cancelled or unknown to Stripe
+         -> carried and superseded; a 3DS confirmation in progress then fails
+       succeeded, processing, requires_capture or an unrecognised status
+         -> WAIT: nothing minted or cancelled, the attempt handed back, checked
+            again on the longest retry interval; once the webhook lands it
+            carries none of that ask
+         -> still so 7 days (CARRIED_ASK_PAYMENT_WAIT_MAX_MS) after the LATER of
+            when Stripe began taking that payment (its charge, else the intent's
+            creation) and when the recovery was queued - so a recovery that aged
+            on its own still waits for a payment that has just begun
+            -> FAILED for good at once, officers alerted ("stopped", not an
+               attempt count) to check that request in Stripe, record it, and
+               collect this change by hand
+       a confirmation landing after that read -> the superseded-capture refund below
 edit raises an ask -> mint the replacement intent
   -> enqueue CANCEL_PAYMENT_INTENT for every other live or declined (#4422) ADDITIONAL intent
   -> cancel it SYNCHRONOUSLY, best-effort, BEFORE the new client secret returns
@@ -768,11 +798,12 @@ edit raises an ask -> mint the replacement intent
   -> each superseded ask's WAITING_PAYMENT supplementary invoice, a declined
        ask's included, re-pointed at the replacing intent (#3403, INV-PAY-140)
   -> the member's card sees only the replacing intent
-REFUND_SUPERSEDED_PAYMENT completes
-  -> reconcile aggregates, THEN one audit row + one REFUNDED BookingEvent
-     (discriminated, so the cancellation narrative never reads it as a
-     settlement) + ONE member email (superseded-payment-refunded, naming the
-     corrected amount owing) + ONE admin alert
+REFUND_SUPERSEDED_PAYMENT refunds
+  -> reconcile aggregates, THEN, once per recovery row and before its close
+     (#4690): one audit row + one REFUNDED BookingEvent (discriminated, so the
+     cancellation narrative never reads it as a settlement) + ONE member email
+     (superseded-payment-refunded, naming the corrected amount owing; recorded
+     for the email retry worker) + ONE admin alert
      (admin-superseded-payment-refund)
 ```
 
@@ -788,8 +819,15 @@ reduction edit, under the door's locks
   unpaid ask = the rows' live ask (a chain holding a review-raised request -> none)
              + each ask whose mint FAILED and whose CREATE_ADDITIONAL_PAYMENT_INTENT
                recovery will still run, sized as its replay would size it
-               ("retry nets it off", 9 Oct 2026); an increase's recovery a later
-               ask overtook, or a re-issue that wrote its own row -> already settled
+               ("retry nets it off", 9 Oct 2026); one whose own row exists
+               (`findOwnRecoveryRow`: its recorded intent, or a row stamped
+               with its edit, withdrawn or not) -> already settled. A later ask
+               never settles one (#4015): it was sized off a Payment that never
+               showed the failed mint, so the replay carries it and supersedes it
+       a waiting recovery with only a frozen figure (no edit to re-derive from)
+               -> cannot be sized: the reduction sets nothing against any ask
+               and settles as before. Only its replay still reads a later ask
+               as having overtaken it (#3340)
        an officer's review-charge recovery -> left exactly as set (decision B)
   -> offset = min(reduction, unpaid ask)
   -> every unpaid ADDITIONAL row since the last paid one -> FAILED + withdrawnAt
@@ -798,7 +836,39 @@ reduction edit, under the door's locks
        exact status, attempts and processingStartedAt read; a deadlock -> 409
        claimed under two minutes ago -> 409 "try again in a moment"
        claimed since the read -> 409, the edit rolls back
-       its retry later -> nothing to claim; a stalled runner writes nothing
+       its retry later -> nothing to claim; a stalled runner writes nothing,
+         and the intent it minted, once no row or recovery names it, is
+         cancelled at Stripe (`abandoned`, best-effort, after its claim hold's
+         transaction ended; logged as `reissued-ask.abandoned-intent-cleanup`;
+         #4631), as it is when a stale reclaim's runner closed the recovery
+         SUCCEEDED with another intent or none (#4652), or failed it for good
+         (#4693); a recovery reset, PENDING, FAILED with a retry left or still
+         claimed (even by a runner that already wrote another intent), or an
+         intent it adopted by matching (#4036), keeps it
+       a claim hold that THREW (sizing moved under its locks, or a write
+         failed) -> rolled back, nothing written; the same proof, then the
+         error reaches the retry: a row still its own keeps the intent,
+         logged `left-open` (an adopted one `adopted`) (#4676)
+       the row ENDS later -> its close-time sweep (#4693): a later attempt's
+         close (not the row's first), the edit that netted it off or folded
+         it in (after commit and after its own mint, from its history; rows a
+         runner had claimed - a re-issue's row still naming its door's key
+         whatever its attempts, as its door may have minted under it), or the
+         failure that ends it for good lists the recent intents
+         carrying the row's own marker - a release's `creditReleaseId`, a
+         re-issue's `reissuedAskKey`, or the `askRecoveryId` the runner
+         stamps on its own ordinary intent after minting - and cancels each
+         the row does not name by the same proof and owner check; a bounded
+         scan that stops early (`complete: false`) settles only what it read
+         and logs `sweep-incomplete`; each Stripe request is bounded (5s, no
+         retries), and a cancel another settle won is logged
+         `already-cancelled`. Never swept: an unmarked intent (the door's own,
+         never handed to the runner, or one minted before #4693), an adopted
+         one, and a review charge's (it can be re-armed). A refused replay
+         never adopts an intent stamped for another row
+       a stalled runner's close -> fenced on its own claim (PROCESSING,
+         attempts, claim time), so it never closes a row a reclaiming runner
+         holds; that runner's ask is written (#4675)
   -> enqueue CANCEL_PAYMENT_INTENT for each retired intent (same transaction)
   -> WAITING_PAYMENT supplementary invoices on it, or on a closed recovery's
        edit -> read for what they bill, then CANCELLED
@@ -819,10 +889,23 @@ after commit, the minter
        in one transaction with the row (recovery moved meanwhile -> writes nothing;
        the runner, or a later reduction, owns it) -> queue its own supplementary
        invoice, WAITING_PAYMENT on the intent (decision A)
+       the recovery ended SUCCEEDED without this intent (a later reduction
+         netted it off, an increase folded it in, or the runner wrote another
+         intent under an amount-suffixed key), or is still PROCESSING but
+         already repointed at another intent, and no row or recovery names it
+         -> that intent cancelled at Stripe (`abandoned`, best-effort, after
+         commit; logged as `reissued-ask.abandoned-intent-cleanup`; #4052); a
+         runner claim still naming the key, or one that wrote this same
+         intent, keeps it
+  -> the new intent's row re-read before its invoice and secret: retired only
+       when withdrawn, or FAILED with a queued Stripe cancellation, the
+       supersede stamp, or Stripe reporting the intent cancelled or gone; a
+       declined card (FAILED alone, still open at Stripe) is payable (#4052)
 later increase while a re-issue still waits -> folds it in: one ask for both,
   the re-issue's recovery closed under the same fence, the fold recorded on the
   increase's history (its replay asks again; the re-issue's invoice waits on
-  the increase's intent once minted)
+  the increase's intent once minted); a stalled runner's unwritten intent is
+  cancelled as a net-off's is (#4631)
 chase -> reads the mirror: a cancelled ask stops, a re-issued one is chased at its new amount
 ```
 
@@ -1726,8 +1809,13 @@ saved card — the settlement cron, admin confirm-pending-guests and
 `charge-saved-method` — is one PRIMARY Stripe `PaymentTransaction` created
 inside the caller's claim transaction (under `lock(1)` and the lodge lock,
 after the PENDING -> CONFIRMED claim) BEFORE Stripe is asked, with its own
-Stripe idempotency key `pending_charge_<bookingId>_<rowId>` stored on
-`reference`:
+Stripe idempotency key stored on `reference`. Two key shapes are read as an
+attempt row's: `pending_charge_<bookingId>_<rowId>` and the `_v2` key (that key
+plus `_v2`, #4646). Only the first is minted until #4682
+(`mintedSavedCardChargeKey`), because the release before #4646 reads only it
+and would charge again beside a `_v2` row it met during a deploy or after a
+rollback. The charge's metadata names the row (`savedCardAttemptId`) only under
+a `_v2` key, so a re-sent key always sends its first body:
 
 ```text
 attempt row: PENDING (no intent id)  -- Stripe asked, intent returned -->
@@ -1764,8 +1852,16 @@ next attempt finds a PRIMARY row still holding captured cash -> REFUSED
   (`handOffSupersededCaptureAfterRefusal`), so that capture no longer holds
   the next attempt back; a real capture or a stopped refund still refuses
 `payment_intent.succeeded` / `.payment_failed` for an intent the ledger does not know
-  -> adopt the PENDING no-intent attempt row whose `reference` equals the event's
-     `request.idempotency_key`, settle it, then handle as usual (lost-response recovery)
+  -> adopt the PENDING/PROCESSING no-intent attempt row, settle it, then handle as
+     usual (lost-response recovery), linked exactly by
+       the event's saved-card `request.idempotency_key` = the row's `reference`, or
+       no saved-card key (`request` null: an asynchronous capture, and every
+       redelivery of it) -> the metadata's `savedCardAttemptId` = the row's id,
+       its payment this booking's and its key the `_v2` shape (#4646)
+     the row write is claimed on "still no intent": a lost adoption writes nothing
+     an original-key attempt (every one minted until #4682) has neither link
+     for an asynchronous capture
+       -> stays PENDING, ends at `attempt_key_expired`, alerted as unmatched
 ```
 
 Every write onto an attempt row is FORWARD ONLY. A capture is written over
@@ -1933,6 +2029,49 @@ hand-back task to check for it, raised OPEN in the void's claim. The
 narrative counts every settlement event of a capacity race, so the task
 marked paid back (its REFUNDED event) removes the follow-up line; dismissed,
 the line says the club checked the rest and closed it.
+
+### A succeeded app intent no PRIMARY row settles (#4624)
+
+`handlePaymentIntentSucceeded` routes an intent the app created (it carries
+`bookingId`, `appPaymentIntentRoute`) through its routes in order, and only
+an intent that falls through all of them reaches the unmatched branch:
+
+```text
+payment_intent.succeeded, app metadata
+  type group_settlement            -> organiser settlement (never unmatched)
+  superseded machinery owns it     -> its refund or hold   (never unmatched)
+  type modification_additional     -> additional-ask handler (never unmatched)
+  row by intent id, else saved-card attempt adopted by event.request.idempotency_key
+  or (#4646) by the metadata's savedCardAttemptId,
+  else the row by intent id read once more
+    PRIMARY row                    -> settle the booking as usual
+    no row | non-PRIMARY row       -> UnrecognisedStripePayment (APP_INTENT_NO_TRANSACTION |
+                                      APP_INTENT_NOT_PRIMARY), one admin alert, event COMPLETED
+```
+
+Nothing about the booking, its payment, ledger or Xero is written on that
+branch; the alert is once ever per PaymentIntent and a failed send fails the
+event so Stripe redelivers (`INV-INT-033`). Which minting flows can reach it:
+
+| Flow or kind | Reaches it? | Expected or lost money | Why |
+| --- | --- | --- | --- |
+| Pay step and `/pay` link, PRIMARY | No | - | `attachMintedCardIntent` writes the PRIMARY row under lock(1) before the client secret leaves the server; a refused attach cancels the intent and never hands the secret out |
+| Saved-card charge, answer received (`chargeSavedCardAttempt`) | No | - | The request's `settleSavedCardChargeAttempt` writes the intent onto the attempt row. It can commit after the webhook's first read and before `adoptSavedCardChargeAttemptForIntent`, which then finds no row without an intent; so the webhook reads the row by intent id once more before calling the payment unmatched, finds the PRIMARY row, and settles as usual (`already_paid` when the request settled first) |
+| Saved-card charge, answer lost, Stripe attributes the capture to the request | No | - | `adoptSavedCardChargeAttemptForIntent` adopts it by `event.request.idempotency_key` |
+| Saved-card charge under a `_v2` key, answer lost, capture asynchronous (`event.request` null) | No | - | `adoptSavedCardChargeAttemptForIntent` adopts it by the attempt id the metadata carries (`savedCardAttemptId`, #4646); a redelivery finds the row by intent id. This release reads `_v2` rows but does not mint them; #4682 does |
+| Saved-card charge under the original key (every one minted until #4682), answer lost, capture asynchronous; or the attempt row already ended | Yes, `APP_INTENT_NO_TRANSACTION` | Lost money | The card was charged and no row can be linked: the original key's metadata names no row, and an ended row is never adopted. The attempt ends at `attempt_key_expired`, and a redelivered event reaches the same branch |
+| An app intent confirmed outside the app after its attach was refused or never ran (dashboard or API) | Yes, `APP_INTENT_NO_TRANSACTION` | Lost money | No row was ever written for it |
+| An intent another deployment minted on the same Stripe account (its `bookingId` is not here) | Yes, `APP_INTENT_NO_TRANSACTION` | Unexpected: money this app holds no record of | One deployment serves one club, so it should not happen. Each deployment needs its own Stripe account or test sandbox: staging, development and CI sharing one test account would record each other's app intents. Their emails are held off production, so the cost there is only rows |
+| Additional asks: edit, review charge, currency and price re-issue, released credit | No | - | Each carries `type: ADDITIONAL_ASK_INTENT_TYPE` and is routed to `handleAdditionalModificationPaymentSucceeded` first |
+| An ADDITIONAL row whose intent is not marked an additional ask: no current minter writes one; a legacy row `ensurePaymentTransactionsBackfilled` writes from `Payment.additionalPaymentIntentId` for an intent minted without the type would be one | Yes, `APP_INTENT_NOT_PRIMARY` | Lost money | Neither the booking path nor the additional-ask path settles it |
+| Group organiser settlement | No | - | `type: GROUP_SETTLEMENT_INTENT_TYPE`, routed first to `applyGroupSettlementSucceeded` |
+| Superseded intent with a live cancel or owed-back capture | No | - | `queueSupersededPaymentIntentRefundRecovery` owns it |
+| Pre-ledger payment (intent only on `Payment`) | No | - | `findPaymentTransactionByIntentId` backfills a PRIMARY row |
+| Booking hard-deleted | No | - | Only a DRAFT with no financial history is deleted (`deleteBooking`) |
+
+So every case that reaches the branch today is money nothing records, and
+each alerts; the expected cases are the routes above it, each pinned silent in
+`stripe-webhook-alerts.test.ts` ("#4624").
 
 ### Saved card (SetupIntent) on a PENDING non-member-guest booking (#3266)
 
@@ -2266,9 +2405,12 @@ inbound fence records its conflict the same way, under the
   -> closed, nothing asked    (not a release / ended booking / payment not captured /
                                organiser-settled / invoice paid in Xero / nothing owed /
                                below the card minimum, the last with an officer alert)
-  -> waiting                  (an unpaid edit request is open: back to the longest retry interval,
-                               no attempt spent, never terminal; officers told once, INV-ADDPAY-051)
-  -> ADDITIONAL row PENDING (reason credit_released_outside_app, carries any live ask)
+  -> waiting                  (an unpaid edit request is open whose invoice would not follow a
+                               merge: back to the longest retry interval, no attempt spent, never
+                               terminal; officers told once, INV-ADDPAY-051)
+  -> ADDITIONAL row PENDING (reason credit_released_outside_app, carries any live ask; an unpaid
+                               edit request is MERGED into it, its waiting invoice moved onto it,
+                               cause "mixed", INV-ADDPAY-052)
        -> SUCCEEDED by card  -> payment recorded on the booking's invoice (sweep, XeroObjectLink)
        -> FAILED+withdrawn   when Xero shows the invoice PAID (the request alone, or carrying only
                                earlier released credit): card payment cancelled first,
@@ -2276,6 +2418,29 @@ inbound fence records its conflict the same way, under the
        -> superseded         by a later ask that carries it (INV-PAY-098): an edit made while
                                the request is unpaid MERGES into one request (cause "mixed"),
                                chased and worded as both
+  claim hold lost mid-mint (a stale claim reaped and reclaimed): nothing written; the intent
+                               it minted under the release's key is cancelled at Stripe
+                               (`abandoned`, best-effort, after the hold's transaction; logged
+                               as `reissued-ask.abandoned-intent-cleanup`) only once the
+                               reclaiming runner closed the row SUCCEEDED without it and no row
+                               or recovery names it, or the row failed for good (#4693); a row
+                               still claimable or claimed keeps it: a retry may mint under the
+                               same key and get it back (#4652, INV-PAY-120)
+  claim hold threw mid-mint (sizing or the merge moved under its locks, or a write failed): nothing
+                               written; the intent takes the lost hold's proof before the error
+                               reaches the retry, so a row still this attempt's keeps it (logged
+                               `left-open`) and one since closed SUCCEEDED without it lets it go
+                               (#4676, INV-PAY-120)
+  row ends after a hold left its intent: the retry that closes the row with another intent, or
+                               the failure that ends it for good, sweeps it - lists the recent
+                               intents carrying this release's `creditReleaseId` and cancels each
+                               the row does not name, once, by the same proof and owner check,
+                               outside every transaction; a bounded scan that stops early settles
+                               only what it read (#4693, INV-PAY-120)
+  stale close lost (the attempt read nothing owed, then its row was reaped and reclaimed by a runner
+                               that minted): its close is fenced on its own claim and matches nothing,
+                               so it writes no audit row and alerts nobody; the reclaiming runner's
+                               ask is written and closes the row (#4675, INV-PAY-120)
   chase while unpaid (INV-ADDPAY-048): request email now, reminders at 7, 14, 21 and 28
                                days; after the fourth reminder only the officers' queues chase
   reminder withheld for an officer (INV-ADDPAY-051): Xero shows the invoice owing less than the
@@ -2283,7 +2448,7 @@ inbound fence records its conflict the same way, under the
                                or the request cannot be matched to it (none, a 404, no amount due)
 ```
 
-`INV-ADDPAY-045`, `INV-ADDPAY-046`, `INV-ADDPAY-048`, `INV-ADDPAY-050`, `INV-ADDPAY-051`.
+`INV-ADDPAY-045`, `INV-ADDPAY-046`, `INV-ADDPAY-048`, `INV-ADDPAY-050`, `INV-ADDPAY-051`, `INV-ADDPAY-052`.
 
 ### Manual refund task lifecycle (#2262)
 
@@ -3819,6 +3984,55 @@ template and booking change. Only the retry worker sends it, after its normal
 same email row; failure to persist that row leaves the invoice operation
 retryable. This avoids a synchronous send racing email recovery.
 
+A message whose retry belongs entirely to something else keeps no body
+(`NON_RETRYABLE_EMAIL_LOG_TEMPLATES`), so its `FAILED` row is never replayed.
+
+Three unmuteable admin alerts are retried by their owner when nobody received
+them (`isCallerRetriedAlertTemplate`): the settlement-figure alert by its marker
+(#4446), and the unrecognised and unmatched Stripe payment alerts (#4647,
+`INV-INT-032`, `INV-INT-033`) by Stripe's redelivery, after the delivery gives
+its once-ever claim back and fails the webhook. They keep their bodies, so the
+retry is split by who received the alert (#4669):
+
+```text
+some recipient got it -> owner sees sent -> each lost copy's FAILED row replayed by the cron
+nobody got it -> attempt's FAILED rows lose their body (one transaction) -> owner retries
+nobody got it, cron already claimed a copy -> release rolls back -> cron replays every copy, owner keeps its claim
+```
+
+The release runs before the sender returns, so before the owner can retry,
+and normally long before the cron's 15-minute backoff lets it select the rows.
+A send that hangs past that is the race: the release and the cron's guarded
+claim each take the row lock, so exactly one wins each row, and a copy the
+cron won rolls the whole release back. The release reads a row as the cron's
+only if it is past its first attempt and still holds a body, the cron's own
+selection: a copy the environment gate wrote straight to the retry ceiling
+without one is not the cron's. Dropping the body rather than writing the retry
+ceiling keeps released rows out of the email-failure review queue: their owner
+is already re-sending them.
+
+Stated limits. A copy can go out twice in two ways, both chosen over losing
+the alert: the release fails outright, or the process crashes or restarts
+after a copy's `FAILED` row was written and before the release commits. Either
+leaves the rows holding their bodies while the owner is told nobody received
+it, so the owner retries and the cron may replay as well. When the cron claimed
+a copy first, the owner stamps the alert sent, so delivery then rests on the
+cron's three attempts, about an hour of backoff, rather than the owner's longer
+retries; a copy that exhausts them lands in the email-failure review queue. In
+both nobody-received cases the `email.admin-alert-undeliverable` escalation is
+still written: it means nobody received the alert at send time, not that nobody
+ever will.
+Pinned by `caller-retried-alert-replay.test.ts` and, against a real database,
+`caller-retried-alert-release.realdb.test.ts`.
+
+The Stripe webhook fails even when the claim give-back fails: the delivery
+gives back its own claim, by its exact stamp, again. A sent alert whose
+`alertedAt` write fails keeps its claim and a sent marker, so the event
+completes and no redelivery sends it again (#4670). A claim call that throws
+may still have committed its write, so the delivery gives back the stamp it
+tried to write, a no-op if nothing landed, and fails the webhook; the
+redelivery claims afresh and sends (#4679).
+
 To verify: retry backoff, suppression handling, durable recipient identity,
 direct/inherited mailbox drift, revoked-authority fail-closed behavior,
 page-fragment/bearer preservation, rollback isolation, which business-critical
@@ -3839,6 +4053,11 @@ place. Its original combined-invoice share is retained.
 Waivers start `PENDING`; refund notes start `WAITING_PAYMENT` and become
 `PENDING` only when the matching bank-transfer hand-back is `COMPLETED`. The
 worker claims `RUNNING` before provider work and completes under that claim.
+A run that stalls past Reset stale running still records its credit note,
+re-taking a FAILED row under a fresh claim or leaving a re-queued one to its
+queued run, and is otherwise traced, never lost (#4655, below). A run that
+loses its claim after recording its note makes no further allocation or
+payout (#4680, below).
 A full release of an invoice with no payment or credit voids it; any other
 release allocates a credit note. A still-queued extra invoice a release covers
 whole goes from `PENDING`, `WAITING_PAYMENT` or `FAILED` to `SKIPPED` and is
@@ -3849,6 +4068,16 @@ resolves in Xero Operations.
 Refund notes target the invoice that held each paid share and wait for its
 unpaid-balance waiver to finish before payout. The organiser's app
 notice is a separate durable email row, sent by the email retry lifecycle.
+
+The outbox scan (`processQueuedXeroOutboxOperations`) and the retry scan
+(`processQueuedXeroOperationRetries`) read `PENDING` rows oldest first, ordered
+by `createdAt` then `id` (#4663). `createdAt` comes from JS time, so rows queued
+in one millisecond tie (every row under the frozen test clock), and without the
+`id` tiebreak a tie fell to PostgreSQL's physical row order. The `id` is a cuid,
+so a tie breaks deterministically but not in insertion order: nothing may rely
+on first-in-first-out within one millisecond. A test that runs the worker with
+`limit: 1` reads the row the worker holds, or makes its target the only eligible
+row, and never assumes which of two tied rows is first.
 
 ```text
 local business event -> Xero outbox operation queued
@@ -3876,8 +4105,26 @@ two callers on one row (the hand-off above) each record their own outcome of
   none, a success included, lands on a RUNNING row another claim holds: a
   stale-reset or failed attempt's late outcome never lands on the retry's
   claim, so the row stays RUNNING for the retry and the booking invoice
-  retry's settle-time fence. A refused write answers null: no link, no
-  repeated-failure alert
+  retry's settle-time fence. A failure (or a FAILED completion) lands only on
+  its own claim's row: RUNNING or FAILED under its `startedAt` (#4673); never
+  PENDING, WAITING_PAYMENT, SKIPPED or CANCELLED (a withdrawal cancels a FAILED
+  row keeping its `startedAt`, PR #4687), nor a row another claim ended. So
+  does a CANCELLED or PARTIAL completion (#4686; a PARTIAL also on its own
+  claim's PARTIAL); a PARTIAL refused anywhere but its own claim's recorded
+  success or a later claim's RUNNING row has its Xero object warned, audited
+  per refused delivery (`xero.operation.late_partial_not_recorded`) and
+  alerted once, each naming what did not finish, never linked; one naming an
+  unfinished step (a PARTIAL only) is traced even on a SUCCEEDED row
+  recording its object or one held RUNNING by a later claim (which still
+  records its links), since that run may not have redone the step - officers
+  check in Xero before doing it by hand; a PARTIAL row on that object already
+  shows its own unfinished step, so it ends the trace. A
+  refused write answers null: no link, no repeated-failure alert; the outbox
+  counts it skipped and exposes no subscription charge error, and an
+  additional-capture refusal stamps no code and alerts no officer. Limit: the
+  membership cancellation credit note's retry takes no claim and runs under the
+  reset row's `startedAt`, so a stalled first run's late failure can still
+  replace that retry's own failure (an error refreshed, the row FAILED either way)
 worker claims operation -> provider call -> success or retryable failure
 success -> SUCCEEDED clears lastErrorCode and lastErrorMessage, so an earlier
   wait's or failure's code is not shown on it (#4049); PARTIAL keeps them
@@ -3915,7 +4162,8 @@ supplementary invoice WAITING_PAYMENT on a card ask's intent (INV-PAY-104;
      ADDITIONAL_ASK_RETIRED_BY_REDUCTION (INV-PAY-120)
   -> the pay door closed and nothing carries it -> CANCELLED,
      STALE_WAITING_PAYMENT (the reaper; only a capture of that same intent
-     revives it)
+     revives it; while a supersede's cancel of that intent is still in
+     flight the reaper keeps it, and the cancel's last step moves it, #4665)
 inbound webhook/event recorded -> reconciliation worker processes event
 failure -> retry/backoff/admin visibility
 FAILED/PARTIAL -> officer marks it resolved in Xero -> done: status unchanged,
@@ -3934,6 +4182,56 @@ FAILED/PARTIAL -> officer marks it resolved in Xero -> done: status unchanged,
   withdrawn mark takes the note and retires the link (audited; a failed
   withdrawal alerts); a PARTIAL row naming no note and an unreadable amount
   are refused (Mark non-replayable)
+  the create's own call, stalled past a Mark failed and a resolve recording a
+  note, then answers (#4426): its note is recorded only under a
+  guarded claim refusing a row whose resolve recorded a note -> lost:
+  nothing written (the row keeps the officer's note, no link, no pointer), no
+  settlement, no completion; the same note as the officer's -> nothing more;
+  any other -> one `xero` audit row and one XERO_SUCCESS_AFTER_RESOLUTION
+  alert naming it. After a plain resolve (no note recorded) or a Mark failed
+  with no resolve the late note lands as any success does (-> SUCCEEDED)
+RUNNING payment refund-note create -> Xero returns its note -> the record
+  (#4656, INV-INT-028): the Payment row, the row's claim, then no other create
+  row may record the note (-> rolled back, FAILED as before); a record that
+  cannot get its locks in its 30s budget writes nothing, and the row stays
+  RUNNING under its claim (or FAILED, if Mark failed reached it first), never
+  failed by the create, but stamped REFUND_NOTE_UNRECORDED first (#4688,
+  INV-INT-035): one `xero` audit row and one XERO_SUCCESS_AFTER_RESOLUTION
+  alert name the note -> Mark failed or Reset stale running -> FAILED, code
+  kept -> Resolve by hand with its number, never Retry (Retry, Requeue and
+  Retry all refuse it). Until that resolve, at any age, every other refund
+  note on the payment waits in PENDING before sizing (REFUND_NOTE_AWAITING_RESOLVE,
+  which the outbox scan and retry drain space out, #4692), Retry refuses the
+  payment's refund-note creates and the nightly self-heal queues none; the
+  resolve's mark lifts it, as does the note being linked on the payment through
+  another row, and a withdrawn mark restores it. A queued retry
+  whose inline create ends so fails its REQUEUE row; one whose note a resolve
+  kept out, or already records, closes it CANCELLED (`resolved-in-xero-after-run`);
+  never SUCCEEDED. A record that committed but answered P2028 finishes as
+  recorded
+RUNNING -> Reset stale running -> FAILED, then the organiser adjustment's
+  stalled create answers (#4655, `INV-INT-034`): its note is written on the row
+  before any allocation only where no other note is recorded and the row is
+  this run's RUNNING claim, or unresolved FAILED -> RUNNING under a fresh claim
+  in the same write (#4672: this run allocates or pays out and completes or
+  fails the row under that claim; Resolve and Retry refuse it meanwhile; a
+  dead process is reset again), or unresolved PENDING (a Retry queued it in
+  place: this run stops, counted skipped; the queued run continues from the
+  note, raising no second one) -> otherwise (resolved by hand, a retry's
+  RUNNING claim, another note recorded, closed): nothing written, the run
+  returns without failing the row; the same note -> nothing more; any other ->
+  one `xero` audit row and one XERO_SUCCESS_AFTER_RESOLUTION alert naming it
+RUNNING (the organiser adjustment's note recorded on its own claim) -> Reset
+  stale running -> FAILED while the run waits on Xero, then perhaps Resolve or
+  Retry or a later claim (#4680, `INV-INT-034`): before each resize,
+  allocation, settlement, refund payment, or completion with nothing
+  allocated or paid by the run, the run reads the row RUNNING under its own claim
+  (`holdsXeroOperationClaim`); lost -> no Xero call, no outcome written, the
+  run counted skipped and the row left as it stands (FAILED, resolved or not;
+  PENDING for its queued run; RUNNING for the later claim), one `xero` audit
+  row, and on a row resolved by hand one XERO_SUCCESS_AFTER_RESOLUTION alert
+  naming the note. A call already in flight when the claim is lost completes
+  as any success does (`INV-INT-029`)
 credit-note allocation refused by Xero as more than the note has left (#4218)
   -> FAILED with code CREDIT_NOTE_SPENT_OUTSIDE_APP when a read of the note
   afterwards CONFIRMS it was spent outside the app. Xero's refusal is the
@@ -3977,12 +4275,17 @@ retry claims original FAILED/PARTIAL -> RUNNING -> handler completes it
   handler throws before completing -> original RUNNING -> FAILED with the
   run's error (guarded: still RUNNING, still this claim's startedAt) (#3462)
   queued retry (REQUEUE) -> FAILED, naming the original and its status
-PARTIAL invoice payment repair or refund-note repair claims PARTIAL -> RUNNING
-  with code PARTIAL_REPAIR_RUNNING (#4256) -> invoice repair records the
+PARTIAL invoice payment repair, refund-note repair or modification
+  credit-note repair claims PARTIAL -> RUNNING with code
+  PARTIAL_REPAIR_RUNNING (#4256, #4259) -> invoice repair records the
   payment -> SUCCEEDED, or PARTIAL while an invoice-email fault remains (its
   message says so; no repeated-failure alert); the refund-note leg completes
-  its own row. Every completion is guarded on the claim (still RUNNING, still
-  its startedAt), so it never lands over an officer's Mark failed
+  its own row; the modification note repair reads the plan's allocation links
+  under the claim, allocates the rest, re-reading its claim before each (lost
+  -> no further call, row left as the operator set it) -> SUCCEEDED
+  (allocationError cleared; before #4259 it never closed its row). Every completion is guarded on the
+  claim (still RUNNING, still its startedAt), so it never lands over an
+  officer's Mark failed
   handler throws first -> RUNNING -> PARTIAL, payload kept, with the run's
   error (guarded on the claim), so the row stays repairable
   process dies mid-repair -> stuck RUNNING -> Mark failed / Reset stale running
@@ -3994,7 +4297,8 @@ PARTIAL invoice payment repair or refund-note repair claims PARTIAL -> RUNNING
   completion lost its claim -> row stays as the operator set it; the retry says
   "Retry it once to close it", never "Repaired"
   Reset stale running reports FAILED and PARTIAL counts separately
-  rows repaired before #4256 stay PARTIAL; one retry closes them
+  rows repaired before #4256 stay PARTIAL; one retry closes them (a
+  modification note's every allocation already linked: no Xero call, #4259)
 FAILED refund-note repair claims FAILED only -> RUNNING, with code
   REFUND_NOTE_REPAIR_RUNNING (#4356); a lost claim -> "already claimed". A
   throw before completion, or a stale reset of a dead run -> FAILED; a
@@ -4015,6 +4319,19 @@ retry of an outbox-run row (group invoice and its VOIDs, kept late capture,
   row was queued, which the outbox would cancel unsent (#3994). A subscription
   invoice is also refused when its charge already has a Xero invoice or needs
   none (#3971)
+  the organiser adjustment, the applied-credit allocation and deallocation and
+  a late capture's released change invoice also go back on the SAME row
+  stalled RUNNING -> Reset stale running -> FAILED -> Retry -> PENDING, then
+  the stalled run fails late (#4673, INV-INT-029): refused, the row stays
+  PENDING with no error, the stalled run counts it skipped, and the queued run
+  writes its own outcome; once the queued run has failed under its own claim,
+  the stalled failure leaves its error as it is, and a pre-HTTP cooldown
+  refusing the stalled run gives back to PENDING only its own claim's RUNNING
+  or FAILED row, never the queued run's FAILED one (PR #4687); a late
+  CANCELLED or PARTIAL is refused the same way (#4686): the row stays PENDING
+  for the queued run, and a PARTIAL's Xero object is audited per delivery and
+  alerted once, not recorded; a queued group invoice whose settlement already
+  points at an invoice closes SUCCEEDED on it (#4710), never left RUNNING
 primary booking invoice create saves its link -> worth gap check (#3980,
   INV-PAY-136), and again on its "invoice already exists" replay
   a second save of the same invoice stores nothing -> re-check from the first's
@@ -4065,8 +4382,25 @@ late change capture KEPT on a cancelled, invoiced booking (the #3639 task
     anchor lock: raised unpaid where a capture of it has a receipt linked,
     RUNNING or carrying a stored decision
   gap check: pays the gap invoice only from cash no receipt row claims and no
-    supplementary invoice records, and names the captures it took, with the
-    cents, on its payload (coveredPaymentIntentIds, coveredCaptureCents)
+    supplementary invoice records, never the credit-release sweep's share
+    (#4494), and names the captures it took, with the cents, on its payload
+    (coveredPaymentIntentIds, coveredCaptureCents)
+  gap invoice send (outbox), officer Retry or PARTIAL repair, where what it
+    takes of a capture plus the credit-release sweep's share (the larger of
+    the ledger's and its CREDIT_RELEASE_PAYMENT links') exceeds the gross
+    capture, or the sweep holds a capture it takes from (#4494) -> no
+    payment recorded, an officer alerted; the payload is stored unpaid before
+    any Xero call (the repair: under its claim, then closed with the reason),
+    naming no capture only where its payment provably never reached Xero,
+    else still naming its captures
+  credit-release sweep beside such a gap invoice (#4494): one whose payment
+    may be in Xero (SUCCEEDED, PARTIAL, resolved, a Xero id, response or
+    link, a stale-RUNNING reset, an invoice body its send stored) -> held, an
+    officer alerted; one that cannot have paid yet and can still send (it
+    can run again - PENDING, RUNNING, WAITING_PAYMENT, or FAILED or PARTIAL
+    and replayable, unresolved - queued within 7 days) -> waiting, no alert;
+    otherwise -> held, an officer alerted daily, naming the row: retry it or
+    wait if it can still run, else record the payment by hand
   receipt worker:
     a LIVE invoice create for the booking, or (under the booking's anchor
       lock) a LIVE receipt for it stamped ADDITIONAL_CAPTURE_RECEIPT_PLANNING
@@ -4112,7 +4446,8 @@ The claimed-original abandon and Mark failed are pinned by
 `xero-operation-retry.test.ts`, `xero-sync.test.ts`,
 `xero-operation-queue.test.ts` and `xero-operation-routes.test.ts` (#3462).
 The PARTIAL repair's claim is pinned by `xero-operation-retry.test.ts` and,
-against real PostgreSQL, `xero-partial-repair-claim.realdb.test.ts` (#4256).
+against real PostgreSQL, `xero-partial-repair-claim.realdb.test.ts` (#4256)
+and `xero-modification-note-repair-claim.realdb.test.ts` (#4259).
 The shared-row outcome guard is pinned by `xero-sync.test.ts` and, against real
 PostgreSQL, `xero-shared-operation-outcome.realdb.test.ts` (#4356).
 A change capture's receipt is pinned by `additional-capture-xero-receipt.test.ts`,
@@ -4146,8 +4481,10 @@ send succeeds -> alertSentAt set; send fails three times -> Stuck States, no mor
 ```
 
 The counter is optional in the existing JSON snapshot (old markers read as zero).
-This template does not retain EmailLog HTML: the marker owns retries, so the email
-retry cron cannot send extra copies outside its cap.
+The marker retries a send nobody received; its rows lose their body first, so
+the email retry cron cannot send extra copies outside its cap. A copy one
+recipient lost while another got it counts as sent here and is replayed by the
+email retry cron instead (#4669, Email Retry Lifecycle).
 Failure counts use a conditional snapshot write so a late failed sender cannot
 erase another sender's sent stamp. No schema migration, money transition or
 additional lock is involved. As before,
@@ -4239,6 +4576,89 @@ debt stays on the row (`INV-PAY-092`, `INV-MOD-060`). To verify:
 `payment-recovery.test.ts` and `additional-ask-reduction.realdb.test.ts`
 ("#4081").
 
+### Recovery close under the attempt's claim (#4675)
+
+The runner's close (`completePaymentRecoveryOperation`) takes a recovery row
+only while it is still the attempt's own. Not every writer is fenced so: the
+organiser child refund executor closes its own row off SUCCEEDED alone, and the
+worker's superseded hand-off re-takes its row without an attempt fence.
+
+```text
+claim (PENDING|FAILED -> PROCESSING, attempts + 1, processingStartedAt now)
+  -> hold re-stamps processingStartedAt (claim-fenced); the attempt keeps the new claim
+  -> close: PROCESSING + this attempt's attempts + its claim time -> SUCCEEDED
+       stalled past the reaper (FAILED, claim time cleared)  -> close matches nothing
+       reclaimed since (attempts moved on)                  -> close matches nothing
+  lost close -> the close writes and sends nothing; the row stays with its holder or waits for a claim
+webhook close of a cancelled superseded intent (no claim) -> any status but SUCCEEDED
+```
+
+A superseded-payment refund's notice does not hang off the close (#4690). The
+member's email, the admin alert, the audit row and the booking event are each
+keyed on the recovery row (`supersededRefundReportKeys`; the email's
+`EmailLog` row), and the report runs before the close, so it goes out once
+whichever attempt sends it:
+
+Each attempt sizes its refund on the ledger only after the resend preflight
+(`INV-PAY-145`) has recorded every refund Stripe lists on the charge (#4699).
+Another door's refund listed but not yet recorded comes off the ask, so an
+attempt without a stored plan never asks Stripe for more than the charge still
+holds (a stored plan's slices are sent as written, #4103); one that leaves
+nothing, or the row's own refund an earlier attempt made, takes the
+nothing-outstanding branch below on that same attempt.
+
+```text
+attempt makes and records the refund -> report (once per row) -> close
+  close lost (reaped, reclaimed) -> the notice is already out; nothing more
+claim reads nothing outstanding, after its preflight records Stripe's list
+  report marked sent                                   -> close
+  a refund on the row's intent carrying exactly its runner's metadata,
+    recorded as made in the ledger                     -> report, then close
+  none (another door's refund), or not recorded as made -> close, no notice
+report not settled (email not recorded, alert not sent) -> throws; row retried
+alert claim held, no sent marker: younger than the stale threshold
+  -> the row waits (attempt handed back: never terminal, no officer alert);
+  older -> the dead attempt's claim is given back and the alert sent
+    (a sibling re-claims it first -> the row waits)
+```
+
+The admin alert's claim, give-back and takeover are the shared once-ever
+sequence (`sendAdminAlertOnceEverWithTakeover`), the one the unrecognised
+Stripe payment alert uses (`INV-INT-032`). A report not settled says in its
+error, which officers read if no retry is left, that the member may not have
+been told.
+
+Stated limits:
+
+- The price of refusing a close the attempt no longer owns: a final attempt
+  the reaper ended for good (FAILED at the attempt ceiling, officers alerted)
+  stays FAILED even when its work then completed; the owed readers count
+  recorded refunds, so a refund it made reads as paid, not owed. A
+  superseded-payment refund it made is still announced by that attempt, if its
+  report settles in that attempt: the reaper cleared its claim, so a report
+  that does not settle there fails nothing and nothing retries it.
+- The admin alert can be sent twice; the member's email cannot. An attempt
+  that dies, stalls 30 minutes or more, or fails to write the sent marker,
+  between its admin alert and the marker, has the alert sent again by a
+  takeover after the stale threshold.
+- An attempt that dies between the records' claim and their write loses the
+  audit row and booking event; the notices still go out.
+- A waiting row comes back at the longest backoff (12 hours). Until then the
+  open row keeps the superseded capture in `holdsForMember` / `refundInFlight`,
+  though the refund is made and recorded.
+- The next claim's close now needs a Stripe refund-list read to prove a refund
+  the row's own. A Stripe outage, or a list with more than one page, keeps the
+  row open and spends its attempts - also for a row another door's refund
+  (a cancellation's) brought to nothing outstanding.
+
+The rule is `INV-PAY-120`; the interleavings are in
+`docs/CONCURRENCY_AND_LOCKING.md`. To verify:
+`credit-release-merge-into-edit.realdb.test.ts` ("#4675"),
+`superseded-refund-notice-once.realdb.test.ts` (#4690),
+`superseded-additional-refund.test.ts`,
+`payment-recovery.test.ts`, `credit-release-ask.test.ts` and
+`payment-recovery-completion-fence-census.test.ts`.
+
 ### Edit review-charge recovery row (#3402)
 
 One booking edit's review charge has ONE payment-recovery row. Unlike other
@@ -4309,7 +4729,12 @@ DEAD -> SUCCEEDED     ("Paid another way": finance:edit, lock(1), then the
 Before an ordinary charge-backed recovery sends any unmarked slice, its
 preflight reads Stripe once per involved intent, outside every transaction
 (`INV-PAY-145`). It records the returned charge refunds through the canonical
-writer and queues their existing accounting corrections. Exact `refundSliceKey`
+writer and queues their existing accounting corrections. A booking-modification
+recovery without a stored plan re-reads the payment after this recording before
+sizing and freezing its slices (#4713); no remaining balance completes without
+sending a refund. A newly refundable card charge missing from that preflight
+retries before freezing or sending, so the next attempt checks its refunds too.
+Stored plans retain their original slices. Exact `refundSliceKey`
 evidence marks an unmarked stored-plan slice with its refund, compare-and-set
 on the plan and the runner's `PROCESSING` claim (`INV-PAY-147`); a lost guard
 sends nothing. Both runners send only the returned plan's unmarked slices,
@@ -4604,6 +5029,33 @@ Rendered panel tests cover accepted, pending, rejected and network-failed reques
 direct browser journeys require protected content after Continue and verification,
 without a later helper navigation (#4060).
 
+## Password Sign-In Throttle (#4609)
+
+A per-account count in front of the password check (`INV-AUTH`). It keeps no
+status column: the state is the `LoginThrottle` row's count and its last
+counted attempt, read through the pure policy in
+`src/lib/login-throttle-policy.ts`.
+
+```text
+no row / count < 5 -> free: attempt claimed (count+1) before the password compare
+count >= 5 and now < lastFailureAt + wait(count) -> waiting: dummy compare, LOGIN_THROTTLED, nothing counted, no member read
+waiting and now reaches lastFailureAt + wait(count) -> free for one more claimed attempt (wait doubles 30 s -> 15 min)
+valid password (any count, after a claim) -> row deleted (cleared)
+completed password reset -> row deleted (cleared)
+an hour with no counted attempt -> count reads as 0; idle sweep deletes the row
+store failure -> same states, counted per process at the #1142 divided budget
+```
+
+Authenticated change-password checks use the same claim/wait/clear transitions
+(#4640), keyed on the member's stored email after session validation. A waiting
+request answers HTTP 429 with `LOGIN_THROTTLED`, without comparing a password;
+an admitted valid current password clears the shared count before the change.
+
+To verify: `login-throttle-policy.test.ts` (the waits and the idle reset on the
+frozen clock), `login-throttle-auth.test.ts` (through the real password provider
+and change-password route)
+and `login-throttle.realdb.test.ts` (the row lock under forced interleavings).
+
 ## Magic-Link Sign-In Lifecycle
 
 Passwordless email sign-in (issue #2034, epic #2030). Additive to password
@@ -4613,6 +5065,7 @@ primitive as password reset).
 
 ```text
 member requests link (POST /api/auth/magic-link) -> ALWAYS {success:true} (enumeration-safe)
+  over the per-account request limit (#4613, INV-AUTH-005) -> silent no-op, zero email, decided before the module flag or any Member read
   module off, unknown, canLogin=false, inactive, or unverified -> silent no-op, zero email
   module on + active + verified -> old tokens deleted, one fresh token minted, link emailed (magic-link-login, sensitive-log redacted)
 click /login/magic?token=… -> signIn("magic-link") verify provider:
@@ -4670,6 +5123,10 @@ LOGIN (/login "Continue with Google", shown only when module on + creds present)
       is refused after login is switched back on too, whichever cookie is presented; a token
       once invalidated also stays invalidated (sign-in racing the switch-off, clock skew);
       the member signs in again for a new one
+    now >= sessionIssuedAt + the maximum session age (club setting, default 7 days, 8..720 h;
+      the lodge kiosk's own 30 days), or no readable sessionIssuedAt -> sessionInvalidated=true
+      (#4611, INV-AUTH-007). Only sign-in stamps sessionIssuedAt; no refresh, role change or
+      two-factor verification moves it
     -> auth() reads null everywhere -> single redirect to /login rendering the form
        (breaks the /dashboard<->/login loop for dangling sessions; #2229)
 ```
@@ -4681,6 +5138,8 @@ member-already-linked refusals; archived/dependent/forcePasswordChange refusals
 even when linked; the module kill-switch in both directions; that a linked
 2FA-enrolled member still lands on `/login/verify`; that a resolver throw or a
 dangling member id refuses/invalidates instead of minting a session (#2229);
+that a session ends at its maximum age on the frozen clock however often it
+refreshes (`auth-session-max-age.test.ts`, #4611);
 and that every refusal renders a visible friendly message via the
 `/login?error=…` wiring.
 

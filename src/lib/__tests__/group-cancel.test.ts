@@ -985,6 +985,7 @@ describe("settleGroupBookingOnOrganiserCancel re-drivability (#1236)", () => {
       mirrorPlan: true,
       refundForChild: 1750,
       plannedRefundCents: 1750,
+      journal: expect.objectContaining({ policyVersion: "booking-ledger-bridge-1" }),
     });
   });
 
@@ -1105,6 +1106,7 @@ describe("settleGroupBookingOnOrganiserCancel re-drivability (#1236)", () => {
       mirrorPlan: true,
       refundForChild: 2000,
       plannedRefundCents: 2000,
+      journal: expect.objectContaining({ policyVersion: "booking-ledger-bridge-1" }),
     });
     expect(groupLedger.postGroupCancelChildLedgerLines).toHaveBeenCalledWith(txClient, {
       child: expect.objectContaining({ id: "late-child" }),
@@ -1112,6 +1114,7 @@ describe("settleGroupBookingOnOrganiserCancel re-drivability (#1236)", () => {
       mirrorPlan: true,
       refundForChild: 0,
       plannedRefundCents: 0,
+      journal: expect.objectContaining({ policyVersion: "booking-ledger-bridge-1" }),
     });
   });
 

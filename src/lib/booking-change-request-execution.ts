@@ -7,7 +7,11 @@ import { acquireLodgeCapacityLock } from "@/lib/capacity";
 import { getDefaultLodgeId } from "@/lib/lodges";
 import { calendarDateOfDateOnlyInstant, type CalendarDate } from "@/lib/club-time";
 import type { ClubFormat } from "@/lib/club-format";
-import { activeLifecycleEditRefusal } from "@/lib/booking-edit-policy";
+import { finishedStayEligibility } from "@/lib/booking-edit-policy";
+import { ApiError } from "@/lib/api-error";
+import { dateOnlyInstantOf } from "@/lib/club-time";
+import { paidByOrganiser } from "@/lib/group-organiser-paid";
+import { promoChangeRefusalFor } from "@/lib/booking-change-request-promo-server";
 import { reauthorizeBookingOfficerFromDb } from "@/lib/booking-exception-approval";
 import {
   modifyBookingBatch,
@@ -19,9 +23,22 @@ import {
   keptNightsByGuest,
   lockedPeriodRequestToBatchInput,
   storedLockedPeriodRequestSchema,
+  storedRequestNamesOnlyPromoChange,
   withKeptNightsRecord,
   type StoredLockedPeriodRequest,
 } from "@/lib/booking-change-request-stored";
+import {
+  bookingPromoCodeSnapshot,
+  carriedPromoCodes,
+  NOTIFY_CHOICE_PROMO_ONLY_MESSAGE,
+  OFFICER_PROMO_ON_PROMO_REQUEST_MESSAGE,
+  PROMO_CORRECTION_RAISES_PRICE_MESSAGE,
+  promoChangeCodes,
+  promoCodesDriftedFromRequest,
+  withPromoChange,
+  type ChangeRequestPromoChange,
+  type PromoChangeStamp,
+} from "@/lib/booking-change-request-promo";
 import {
   checkOwnDependantIdentityForParty,
   claimedMemberPathIds,
@@ -70,8 +87,9 @@ import {
  *     moved since is not executed; it stays REQUESTED.
  *  5. Map the request to the canonical input. Nothing structural to apply is
  *     refused, and the request stays REQUESTED — unless the officer entered
- *     the guests a free-text request described (#4030 Part B), which are
- *     written into the request here and mapped instead.
+ *     the guests a free-text request described (#4030 Part B), or a promo
+ *     code on the member's behalf (#4533), which are written into the request
+ *     here and mapped with it.
  *  6. Guarded claim: REQUESTED -> APPROVED with `version + 1`. A lost claim runs
  *     no side effect. An officer's entry is written by this same statement, so
  *     a request never holds officer-entered guests without the approval that
@@ -115,6 +133,7 @@ function bookingDriftedFromRequest(
       stayEnd: Date;
       nights: Array<{ stayDate: Date }>;
     }>;
+    promoRedemptions: Array<{ promoCode: { code: string } | null }>;
   },
 ): boolean {
   if (stored.original.checkIn !== calendarDateOfDateOnlyInstant(booking.checkIn)) {
@@ -126,6 +145,15 @@ function bookingDriftedFromRequest(
   const before = stored.original.guests.map((guest) => guest.id).sort();
   const now = booking.guests.map((guest) => guest.id).sort();
   if (before.length !== now.length || before.some((id, i) => id !== now[i])) {
+    return true;
+  }
+  // #4533: a promo code applied or released since the officer entered the
+  // request's promo change is drift too — approving would re-decide codes
+  // against a booking nobody looked at.
+  if (
+    stored.original.promoCodes &&
+    promoCodesDriftedFromRequest(stored.original.promoCodes, bookingPromoCodeSnapshot(booking.promoRedemptions))
+  ) {
     return true;
   }
   const live = new Map(booking.guests.map((guest) => [guest.id, guest]));
@@ -150,7 +178,10 @@ export const LOCKED_PERIOD_REQUEST_DRIFT_MESSAGE =
 export const LOCKED_PERIOD_REQUEST_UNREADABLE_MESSAGE =
   "This request's stored change could not be read, so nothing has been applied. The request is still pending: reject it with a note and ask the member to send a new one.";
 export const LOCKED_PERIOD_REQUEST_NOTHING_TO_APPLY_MESSAGE =
-  "This request names no guest or date change that can be applied, so nothing has been changed. Enter the guests the member described, or reject it with a note explaining what happens next. The request is still pending.";
+  "This request names no guest, date or promo change that can be applied, so nothing has been changed. Enter the guests the member described or the promo code to apply, or reject it with a note explaining what happens next. The request is still pending.";
+/** #4533 review: the booking's stay has not finished, so nothing is applied as a correction. */
+export const FINISHED_STAY_NOT_FINISHED_MESSAGE =
+  "This booking's stay has not finished, so approving cannot apply this request. Reload the queue; nothing has been changed and the request is still pending.";
 /** #4030: an officer's entry is only for a request that names no change itself. */
 export const OFFICER_ENTRY_ON_STRUCTURED_REQUEST_MESSAGE =
   "This request already names the change it asks for, so guests cannot be entered for it. Reload the queue; nothing has been changed and the request is still pending.";
@@ -184,6 +215,16 @@ export type LockedPeriodExecutionResult =
       settlementMethod: BookingModificationSettlementMethod;
       /** #4030: the guests the officer entered on the member's behalf, if any. */
       officerEnteredGuests: OfficerEnteredGuest[] | null;
+      /** #4533: the promo change applied, with who entered it and where. */
+      promoChange: { codes: string[]; enteredBy: PromoChangeStamp } | null;
+      /** #4533: the officer's email choice (false only on a promo-only correction they withheld). */
+      notifyMember: boolean;
+      /**
+       * #4533 review: whether the change email is really sent — the officer's
+       * choice AND the booking's "No emails" switch off (#2259) — which is
+       * what the officer's toast says.
+       */
+      memberEmailed: boolean;
       followUpFailed?: true;
     }
   | ({ outcome: "quoted" } & FinishedStayCorrectionFigures);
@@ -295,6 +336,18 @@ export async function approveAndExecuteLockedPeriodChangeRequest(params: {
    * already names a change.
    */
   officerEnteredGuests?: OfficerEnteredGuest[];
+  /**
+   * #4533: a promo code the officer entered on the member's behalf, for a
+   * request that names none. Written into the request by the claim, with the
+   * booking's codes it was entered against, and applied with the rest.
+   */
+  officerPromoChange?: ChangeRequestPromoChange;
+  /**
+   * #4533: the officer's notify-or-not choice. Absent means notify; `false` is
+   * honoured only when the request's one change is a promo code — a guest or
+   * date change always emails the member (#4030).
+   */
+  notifyMember?: boolean;
   db?: ExecutionDb;
 } & FinishedStayApprovalMode): Promise<LockedPeriodExecutionResult> {
   const db = params.db ?? prisma;
@@ -372,22 +425,31 @@ export async function approveAndExecuteLockedPeriodChangeRequest(params: {
               nights: { select: { stayDate: true } },
             },
           },
-          payment: { select: { amountCents: true, creditAppliedCents: true } },
+          payment: { select: { amountCents: true, creditAppliedCents: true, source: true } },
+          // #4533: the codes the booking carries, for drift and the promo entry.
+          promoRedemptions: { select: { promoCode: { select: { code: true, internal: true } } } },
+          // #4533 review: who paid (the organiser-return default) and whether
+          // the member can be emailed at all (the officer's toast).
+          organiserSettled: true,
+          parentBookingId: true,
+          noEmails: true,
         },
       });
       if (!booking) return { outcome: "notFound" };
       if (bookingDriftedFromRequest(stored.data, booking)) {
         return { outcome: "keptPending", message: LOCKED_PERIOD_REQUEST_DRIFT_MESSAGE };
       }
-      // The status gate the #1668 date override uses, with the finished stay
-      // admitted (`INV-SSOT-001`). The service's edit policy asks it again; this
-      // copy refuses before the claim, so a cancelled booking's request is not
-      // even claimed.
-      const statusRefusal = activeLifecycleEditRefusal(booking.status, "ADMIN", {
-        includeFinishedStay: true,
-      });
-      if (statusRefusal) {
-        return { outcome: "keptPending", message: statusRefusal };
+      // The one finished-stay eligibility answer Edit Booking's offer and the
+      // request route read too (`INV-SSOT-001`, #4533 review): the stay has
+      // finished, and its status is one the correction edits. The service's
+      // edit policy asks both again; this copy refuses before the claim, so a
+      // cancelled booking's request is not even claimed.
+      const eligibility = finishedStayEligibility(booking, dateOnlyInstantOf(params.todayAtClub));
+      if (!eligibility.eligible) {
+        return {
+          outcome: "keptPending",
+          message: eligibility.reason === "status" ? eligibility.message : FINISHED_STAY_NOT_FINISHED_MESSAGE,
+        };
       }
 
       // (5) What the request asks for, in the canonical service's terms.
@@ -433,12 +495,54 @@ export async function approveAndExecuteLockedPeriodChangeRequest(params: {
         appliedRequest = storedLockedPeriodRequestSchema.parse(officerRequestedChanges);
         requestedInput = lockedPeriodRequestToBatchInput(appliedRequest, booking);
       }
+      // #4533: the officer's promo code, for a request that names none. After
+      // any guests, so the summary the guests' entry writes is extended, not
+      // replaced; judged against the codes the booking carries under the locks.
+      const officerPromo = params.officerPromoChange ?? null;
+      if (officerPromo) {
+        if (appliedRequest.requested.promoChange) {
+          return { outcome: "keptPending", message: OFFICER_PROMO_ON_PROMO_REQUEST_MESSAGE };
+        }
+        const codesNow = bookingPromoCodeSnapshot(booking.promoRedemptions);
+        officerRequestedChanges = withPromoChange(
+          officerRequestedChanges ?? request.requestedChanges,
+          officerPromo,
+          { officerMemberId: actorMemberId, enteredAt: new Date(), enteredOn: "approval" },
+          codesNow,
+        );
+        appliedRequest = storedLockedPeriodRequestSchema.parse(officerRequestedChanges);
+        requestedInput = lockedPeriodRequestToBatchInput(appliedRequest, booking);
+      }
       if (!requestedInput) {
         return {
           outcome: "keptPending",
           message: LOCKED_PERIOD_REQUEST_NOTHING_TO_APPLY_MESSAGE,
         };
       }
+      const appliedPromoChange = appliedRequest.requested.promoChange ?? null;
+      // #4533 review: the one promo rule the request route and the queue card's
+      // entry read — a change never takes a booker's code off and is never a
+      // change to nothing — judged against the codes carried under the locks,
+      // whether the officer entered it now or with the request.
+      if (appliedPromoChange) {
+        const promoRefusal = await promoChangeRefusalFor(
+          tx,
+          appliedPromoChange,
+          carriedPromoCodes(booking.promoRedemptions),
+        );
+        if (promoRefusal) {
+          return {
+            outcome: "keptPending",
+            message: `${promoRefusal} Nothing has been changed; the request is still pending.`,
+          };
+        }
+      }
+      const promoOnly = storedRequestNamesOnlyPromoChange(appliedRequest, booking);
+      // #4533: the email is withheld only on a promo-only correction.
+      if (params.notifyMember === false && !promoOnly) {
+        return { outcome: "keptPending", message: NOTIFY_CHOICE_PROMO_ONLY_MESSAGE };
+      }
+      const notifyMember = params.notifyMember !== false;
 
       // (6) The guarded claim. `version` is the optimistic token every mutating
       // write bumps; a lost claim changes nothing. The officer's entry (#4030)
@@ -471,8 +575,15 @@ export async function approveAndExecuteLockedPeriodChangeRequest(params: {
 
       // (7) The canonical service, on THIS transaction. Its refusals throw and
       // roll the claim back with everything else.
+      // #4533: a promo correction's reduction defaults to account credit — or,
+      // on a joiner's booking the organiser paid, back to the organiser, the
+      // one disposition its options offer (review finding 2).
       const settlementMethod =
-        params.settlementMethod ?? defaultCorrectionSettlementMethod(booking.payment);
+        params.settlementMethod ??
+        defaultCorrectionSettlementMethod(booking.payment, {
+          changesPromoCodes: Boolean(appliedPromoChange),
+          paidByOrganiser: paidByOrganiser(booking),
+        });
       const modified = await modifyBookingBatch({
         bookingId: request.bookingId,
         actor: { id: actorMemberId, role: "ADMIN" },
@@ -490,8 +601,9 @@ export async function approveAndExecuteLockedPeriodChangeRequest(params: {
             ? { memberReviewJustification: request.reason.trim() }
             : {}),
           // The member hears about the change from the canonical change email,
-          // with the amount due and how to pay it — never suppressed here.
-          notifyMember: true,
+          // with the amount due and how to pay it. #4533: only a promo-only
+          // correction may withhold it, on the officer's choice (checked above).
+          notifyMember,
         },
         ipAddress: params.ipAddress,
         todayAtClub: params.todayAtClub,
@@ -500,6 +612,13 @@ export async function approveAndExecuteLockedPeriodChangeRequest(params: {
         preTransaction: params.preTransaction,
         finishedStayCorrection: { changeRequestId: requestId },
       });
+
+      // #4533 review: a missed promo can only lower the price. A promo-only
+      // correction that raises it (a working-bee discount released beside it,
+      // say) is refused, in the quote as in the approval, and rolls back.
+      if (promoOnly && modified.priceDiffCents > 0) {
+        throw new ApiError(PROMO_CORRECTION_RAISES_PRICE_MESSAGE, 409);
+      }
 
       if (params.dryRun) {
         throw new FinishedStayDryRun({
@@ -551,6 +670,11 @@ export async function approveAndExecuteLockedPeriodChangeRequest(params: {
         capacityOverridden: modified.capacityOverridden,
         settlementMethod,
         officerEnteredGuests: officerGuests,
+        promoChange: appliedPromoChange
+          ? { codes: promoChangeCodes(appliedPromoChange), enteredBy: appliedPromoChange.enteredBy }
+          : null,
+        notifyMember,
+        memberEmailed: notifyMember && !booking.noEmails,
       };
     },
   ).catch((error: unknown) => {

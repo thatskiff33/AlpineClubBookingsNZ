@@ -104,14 +104,13 @@ export function getCancellationCreditCents(
   bookingId: string,
   credits: ReadonlyArray<CancellationCreditRow>
 ): number {
+  return cancellationCreditsOf(bookingId, credits).reduce((sum, credit) => sum + credit.amountCents, 0);
+}
+
+/** The rows `getCancellationCreditCents` sums, by the same match (#4685: the repair names a lone one). */
+export function cancellationCreditsOf<T extends CancellationCreditRow>(bookingId: string, credits: ReadonlyArray<T>): T[] {
   const description = cancellationCreditDescription(bookingId);
-  return credits
-    .filter(
-      (credit) =>
-        credit.type === CreditType.CANCELLATION_REFUND &&
-        credit.description === description
-    )
-    .reduce((sum, credit) => sum + credit.amountCents, 0);
+  return credits.filter((credit) => credit.type === CreditType.CANCELLATION_REFUND && credit.description === description);
 }
 
 /**

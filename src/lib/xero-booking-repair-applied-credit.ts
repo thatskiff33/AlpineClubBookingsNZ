@@ -35,7 +35,7 @@ function retryUnlessRefused(bookingId: string, match: Parameters<typeof buildRet
  * operation is unfinished its own replay allocates, so that operation is
  * retried rather than a second engine run queued beside it.
  */
-export function addUnallocatedCardAppliedCreditFindings(
+function addUnallocatedCardAppliedCreditFindings(
   findings: MutableFinding[],
   actionMap: Map<string, BookingXeroRepairAction>,
   context: BookingClassificationContext,
@@ -111,6 +111,63 @@ export function addUnallocatedCardAppliedCreditFindings(
     details,
     actionKeys: [action.key],
   });
+}
+
+/**
+ * #4220 (owner decision, 24 Oct 2026): the early warning that a credit note this
+ * booking still has to draw on was spent in Xero outside the app, so Xero will
+ * refuse the allocation (#4218). Report-only: no action, never auto-applied, and no
+ * Xero call - the reading was kept at ingest and judged in the load
+ * (`findCreditNotesSpentOutsideApp`). The converge (#4219) acts when Xero refuses
+ * the allocation; until then an officer checks the note in Xero. A booking whose
+ * allocation an officer resolved in Xero gets no warning: it is reported as resolved
+ * in Xero, once (the card arm above may already have). The converge's own close is
+ * not an officer's resolve and never reaches here (`resolvedAllocations` holds
+ * officers' marks only): it released the credit, which is chased by card (#4253).
+ */
+export function addCreditNoteSpentOutsideFindings(findings: MutableFinding[], context: BookingClassificationContext): void {
+  const bookingId = context.booking.id;
+  for (const note of context.creditNotesSpentOutsideApp ?? []) {
+    const details = {
+      creditNoteId: note.creditNoteId,
+      memberCreditId: note.lotId,
+      xeroRemainingCents: note.xeroRemainingCents,
+      pendingAllocationCents: note.pendingAllocationCents,
+      pendingSliceCents: note.pendingSliceCents,
+      unslicedDrawCents: note.unslicedDrawCents,
+      outsideSpendCents: note.outsideSpendCents,
+      leftForAllocationCents: note.leftForAllocationCents,
+      observedAt: note.observedAt.toISOString(),
+    };
+    const resolved = note.resolvedAllocations.find((entry) => entry.bookingId === bookingId);
+    if (resolved) {
+      const reported = findings.some(
+        (finding) => finding.code === "RESOLVED_IN_XERO_BY_OFFICER" && finding.details.operationId === resolved.operation.id,
+      );
+      if (!reported) addResolvedInXeroFinding(findings, resolved.operation, "applied-credit allocation", details);
+      continue;
+    }
+    if (!note.bookingIds.includes(bookingId)) continue;
+    addFinding(findings, {
+      code: "APPLIED_CREDIT_NOTE_CONSUMED_EXTERNALLY",
+      severity: "warning",
+      summary:
+        "A credit note this booking's applied credit still has to be allocated from was used in Xero outside the app, so Xero has less left on it than the app will allocate. Check the note in Xero before the allocation runs.",
+      safeToAutoApply: false,
+      details,
+      actionKeys: [],
+    });
+  }
+}
+
+/** Every applied-credit finding about a booking, in one call for the classifier (which is over its size budget). */
+export function addAppliedCreditFindings(
+  findings: MutableFinding[],
+  actionMap: Map<string, BookingXeroRepairAction>,
+  context: BookingClassificationContext,
+): void {
+  addUnallocatedCardAppliedCreditFindings(findings, actionMap, context);
+  addCreditNoteSpentOutsideFindings(findings, context); // #4220
 }
 
 /**

@@ -130,6 +130,17 @@ function txDouble() {
   };
 }
 
+// #4738: a $0 confirmation's lines and R01 are proved against PostgreSQL
+// (zero-price-confirmation.realdb.test.ts); here only the call is observed.
+const confirmationLedger = vi.hoisted(() => ({
+  postStoredBookingConfirmationLedgerLines: vi.fn<(...args: unknown[]) => Promise<void>>(async () => {}),
+}));
+vi.mock("@/lib/booking-ledger-confirmation-sync", () => confirmationLedger);
+vi.mock("@/lib/member-money/doors", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/member-money/doors")),
+  resolveBookingMoneyPostingContext: vi.fn(async () => ({ journal: "context" })),
+}));
+
 describe("zero-dollar waitlist participant contention (#2597)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -403,5 +414,26 @@ describe("zero-dollar waitlist participant contention (#2597)", () => {
     // is unique, so a SUCCEEDED $0 row written before the claim would have
     // survived that commit and blocked the booking's real payment row forever.
     expect(mocks.paymentCreate).not.toHaveBeenCalled();
+    // #4738: and a lost claim posts no confirmation.
+    expect(confirmationLedger.postStoredBookingConfirmationLedgerLines).not.toHaveBeenCalled();
+  });
+
+  it("posts the $0 offer's confirmation once, in the transaction that wins the PAID claim (#4738)", async () => {
+    mocks.enqueueHosting.mockReset();
+    mocks.enqueueHosting.mockResolvedValue(undefined);
+    mocks.sendConfirmed.mockResolvedValue(undefined);
+    mocks.enqueueXero.mockResolvedValue({ queueOperationId: null });
+
+    const response = await post();
+
+    expect(response.status).toBe(200);
+    expect(confirmationLedger.postStoredBookingConfirmationLedgerLines).toHaveBeenCalledTimes(1);
+    expect(confirmationLedger.postStoredBookingConfirmationLedgerLines.mock.calls[0]!.slice(1)).toEqual([
+      "booking-1",
+      { journal: "context" },
+    ]);
+    expect(mocks.bookingUpdateMany.mock.invocationCallOrder[0]).toBeLessThan(
+      confirmationLedger.postStoredBookingConfirmationLedgerLines.mock.invocationCallOrder[0]!,
+    );
   });
 });

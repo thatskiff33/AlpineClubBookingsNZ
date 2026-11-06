@@ -2,6 +2,7 @@ import { queueOrganiserExtraForChange } from "@/lib/organiser-extra-invoice-queu
 import { paidByOrganiserInternetBanking } from "@/lib/group-organiser-paid";
 import { isUnpaidConfirmedWholeLodge } from "@/lib/booking-payment-flow";
 import { postStoredBookingConfirmationLedgerLines } from "@/lib/booking-ledger-confirmation-sync";
+import { resolveBookingMoneyPostingContext, type BookingJournalContext } from "@/lib/member-money/doors";
 import { LEDGER_ROWS_OLDEST_FIRST } from "@/lib/payment-ledger-order";
 import {
   type Booking,
@@ -65,8 +66,8 @@ import { bookingHasOpenFinancialReview } from "@/lib/booking-financial-review-vi
 import { linkModificationToOutstandingChangeRequest } from "@/lib/booking-change-request-linkage";
 import { getDefaultLodgeId } from "@/lib/lodges";
 import { assertBookingEnvelopeInvariants } from "@/lib/booking-envelope-invariants";
+import { additionalAskEmailTerms } from "@/lib/additional-ask-email-terms";
 import {
-  additionalAmountToName,
   createModificationAdditionalPaymentIntent,
   type ModificationAdditionalAskMint,
   drainSupersededPrimaryIntents,
@@ -165,11 +166,14 @@ import type { ClubFormat } from "@/lib/club-format";
 import type { BookingModifiedRefundDestination } from "@/lib/booking-modified-email-copy";
 import { unpaidAskOffsetHistory } from "@/lib/unpaid-ask-offset-marker";
 import { primaryInvoiceSettlementHistory } from "@/lib/booking-primary-invoice-claim";
+import { changeFeeAddedToAmountOwedHistory } from "@/lib/change-fee-owed";
 import {
   assertFinishedStayCorrectionCall,
   classifyFinishedStayChangeFeeRule,
   finishedStayNoticeDay,
   finishedStayRemovalFeeCents,
+  finishedStayReductionReturnedInFull,
+  finishedStayRemovalIsCharged,
   FINISHED_STAY_INVOICE_RAISED_MESSAGE,
   recordFinishedStayFeeOwed,
   finishedStayRemovedPortion,
@@ -532,6 +536,8 @@ interface BatchModificationPreparation {
    * the field toggle, a settings read that belongs out here with the others.
    */
   readonly guestDietarySeeding: BookingGuestDietarySeeding;
+  /** #4627: the journal's posting context, a settings read that belongs out here too. */
+  readonly journal: BookingJournalContext;
 }
 
 /**
@@ -597,7 +603,7 @@ async function prepareBookingBatchModification(options: {
       options.adminOverride.requestedCheckIn,
     );
   }
-  const [memberGuestPolicy, subscriptionLockoutMode, xeroLockDates, guestDietarySeeding] =
+  const [memberGuestPolicy, subscriptionLockoutMode, xeroLockDates, guestDietarySeeding, journal] =
     await Promise.all([
       loadMemberGuestAddPolicy(),
       resolveSubscriptionLockoutMode(),
@@ -605,8 +611,9 @@ async function prepareBookingBatchModification(options: {
         audience: options.audience,
       }),
       resolveBookingGuestDietarySeeding(),
+      resolveBookingMoneyPostingContext(),
     ]);
-  return { memberGuestPolicy, subscriptionLockoutMode, xeroLockDates, guestDietarySeeding };
+  return { memberGuestPolicy, subscriptionLockoutMode, xeroLockDates, guestDietarySeeding, journal };
 }
 
 /**
@@ -1527,6 +1534,7 @@ export async function modifyBookingBatch({
               stored: entry.guest,
               proposed: entry,
             })),
+            changesPromoCodes: requestChangesPromoCodes(input),
           })
         : null;
     const moneyTierDay = finishedStayCorrection
@@ -1538,8 +1546,12 @@ export async function modifyBookingBatch({
     // 7 Oct 2026), and whatever reduction then remains comes back in full, so
     // the tier is applied once and never netted against what was added.
     const finishedStayRemovalCharged =
-      Boolean(finishedStayCorrection) &&
-      finishedStayChangeFeeRule !== "ADD_ONLY_NO_FEE";
+      finishedStayChangeFeeRule !== null && finishedStayRemovalIsCharged(finishedStayChangeFeeRule);
+    // #4533: and a correction that applies a promo code returns its reduction
+    // in full too — the same untiered settlement, with no removal fee.
+    const finishedStayReductionInFull =
+      finishedStayChangeFeeRule !== null &&
+      finishedStayReductionReturnedInFull(finishedStayChangeFeeRule, requestChangesPromoCodes(input));
     const removedPortion = finishedStayRemovalCharged
       ? finishedStayRemovedPortion({
           storedGuests: booking.guests,
@@ -1566,7 +1578,7 @@ export async function modifyBookingBatch({
     // stay correction is charged ONLY the same-day retention on what it removes
     // — never the ordinary late-change fee across the whole booking.
     const chargeableChangeFeeCents =
-      finishedStayChangeFeeRule === "ADD_ONLY_NO_FEE"
+      finishedStayChangeFeeRule === "ADD_ONLY_NO_FEE" || finishedStayChangeFeeRule === "PROMO_ONLY_NO_FEE"
       ? 0
       : finishedStayCorrection
         ? removalFeeCents
@@ -1609,7 +1621,7 @@ export async function modifyBookingBatch({
     // #3750: a correction already paid the tier in its fee, so what remains of a
     // reduction comes back in full — the tier applies once, to the removed portion.
     // #3954: what remains once the unpaid ask has taken its share.
-    const settlementOptions = finishedStayRemovalCharged
+    const settlementOptions = finishedStayReductionInFull
         ? calculateFullReductionSettlementOptions({
             booking,
             netChargeCents: reduction.netChargeLeftCents,
@@ -1713,7 +1725,7 @@ export async function modifyBookingBatch({
       format,
       // #3750 (F2): the tier was already applied in the removal fee, so an
       // applied-credit give-back returns the remaining reduction once, untiered.
-      reductionUntiered: finishedStayRemovalCharged,
+      reductionUntiered: finishedStayReductionInFull,
       // #3954 x #3750: recorded once, below, by `recordFinishedStayFeeOwed`.
       changeFeeRecordedByCaller: feeAddedToAmountOwed,
       // #3980: an officer approves a correction again rather than retrying it.
@@ -1735,8 +1747,8 @@ export async function modifyBookingBatch({
       bookingId,
       newCheckIn: dates.newCheckIn,
       newFinalPriceCents,
-      // #3955 review F1: the fee just recorded is owed with the price.
-      feeRecordedByThisEditCents: feeAddedToAmountOwed ? changeFeeCents : 0,
+      // #3955 review F1, #4661: the fee just recorded (a correction's, or the settle's) is owed with the price.
+      feeRecordedByThisEditCents: feeAddedToAmountOwed ? changeFeeCents : payments.changeFeeAddedToAmountOwedCents,
       format,
       guestsForPricing: guestPlan.guestsForPricing,
       skipBookingLifecycleRules: dates.skipBookingLifecycleRules,
@@ -1975,6 +1987,7 @@ export async function modifyBookingBatch({
           // #3954: what an unpaid ask took of this reduction, for the Xero repair pass.
           ...unpaidAskOffsetHistory(payments),
           ...primaryInvoiceSettlementHistory(payments), // #3980: the gap's anchor
+          ...changeFeeAddedToAmountOwedHistory(payments.changeFeeAddedToAmountOwedCents), // #4661: the settle's fee line
           // #2266: what this edit did to the stored credit election (#2265),
           // recorded whenever the request carried a credit input — the
           // member's booking history reads it back.
@@ -2033,6 +2046,7 @@ export async function modifyBookingBatch({
     await queueOrganiserExtraForChange(tx, booking, bookingModification);
     await postModificationLedgerLines({
       store: tx,
+      journal: preparation.journal,
       bookingId,
       lodgeId: booking.lodgeId,
       bookingModification,
@@ -2042,7 +2056,7 @@ export async function modifyBookingBatch({
     // #4019: this new whole-lodge PAID path bypasses the ordinary settle.
     // Post after guest/night writes and the edit, at the final price only.
     if (lifecycle.zeroDollarAutoPaid && isUnpaidConfirmedWholeLodge(booking)) {
-      await postStoredBookingConfirmationLedgerLines(tx, bookingId);
+      await postStoredBookingConfirmationLedgerLines(tx, bookingId, preparation.journal);
     }
 
     // D-3813-6 (`INV-PAY-117`): a reduction on a booking paid by internet
@@ -2702,8 +2716,6 @@ async function dispatchBatchPostTransactionSideEffects({
     result.booking.id,
   );
 
-  // #3954 round 9: an ask a reduction retired before it was offered is not named.
-  const namedAdditionalCents = additionalAmountToName(result.additionalAmountCents, additionalMint);
   sendBookingModifiedEmail({
     bookingId: result.booking.id,
     recipientMemberId: result.memberId,
@@ -2722,16 +2734,10 @@ async function dispatchBatchPostTransactionSideEffects({
     refundAmountCents: result.refundAmountCents,
     accountCreditAmountCents: result.accountCreditAmountCents,
     appliedCreditGivenBackCents: result.appliedCreditGivenBackCents,
-    additionalAmountCents: namedAdditionalCents,
+    // #4052: the figure and its method, decided together; never a retired ask (#3954 round 9).
+    ...additionalAskEmailTerms(result, additionalMint),
     billedToOrganiserCents: result.billedToOrganiserCents, // #4299
     unpaidAskCancelled: result.unpaidAskCancelled,
-    additionalPaymentMethod:
-      namedAdditionalCents > 0 &&
-      result.paymentSource === PaymentSource.INTERNET_BANKING
-        ? "INTERNET_BANKING"
-        : namedAdditionalCents > 0 && result.hasSucceededPayment
-          ? "STRIPE"
-          : undefined,
     paymentReference: result.paymentReference,
     xeroInvoiceNumber: result.xeroInvoiceNumber,
     // #2390: if a usage cap stopped the promotion reaching somebody this edit

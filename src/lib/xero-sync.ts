@@ -12,6 +12,7 @@ import {
   readCanonicalRefundNoteField,
 } from "./xero-refund-note-status";
 import { buildXeroObjectUrl, stripXeroOrgShortCode } from "./xero-links";
+import { mergeXeroObjectLinkMetadata, planXeroObjectLinkMetadataMerge } from "./xero-object-link-metadata-merge";
 import {
   redactSensitiveRecord,
   redactSensitiveText,
@@ -88,6 +89,9 @@ export interface XeroObjectLinkInput {
    * refresh drop the provenance the adopted-contact reshape depends on, so
    * "correcting" it back on the strength of the general rule disables that
    * reshape without failing anything.
+   *
+   * #4445: the merge is one statement over the stored row, so two writers of
+   * one link both keep their keys (`xero-object-link-metadata-merge.ts`).
    */
   mergeMetadata?: boolean;
 }
@@ -794,38 +798,14 @@ async function upsertXeroObjectLinkWithClient(
       ),
   );
 
-  let metadataForUpdate: unknown = normalizedLink.metadata;
-  if (normalizedLink.mergeMetadata) {
-    const existing = await client.xeroObjectLink.findUnique({
-      where: {
-        localModel_localId_xeroObjectType_xeroObjectId_role: {
-          localModel: normalizedLink.localModel,
-          localId: normalizedLink.localId,
-          xeroObjectType: normalizedLink.xeroObjectType,
-          xeroObjectId: normalizedLink.xeroObjectId,
-          role: normalizedLink.role,
-        },
-      },
-      select: { metadata: true },
-    });
-    const existingRecord =
-      existing?.metadata &&
-      typeof existing.metadata === "object" &&
-      !Array.isArray(existing.metadata)
-        ? (existing.metadata as Record<string, unknown>)
-        : null;
-    const incomingRecord =
-      normalizedLink.metadata &&
-      typeof normalizedLink.metadata === "object" &&
-      !Array.isArray(normalizedLink.metadata)
-        ? (normalizedLink.metadata as Record<string, unknown>)
-        : null;
-    if (existingRecord || incomingRecord) {
-      metadataForUpdate = { ...(existingRecord ?? {}), ...(incomingRecord ?? {}) };
-    }
-  }
+  const metadata = sanitizeForJson(normalizedLink.metadata);
+  // #4445: a merge is written by one statement that reads the row it writes,
+  // after the upsert below takes that row (`xero-object-link-metadata-merge.ts`).
+  const merge = normalizedLink.mergeMetadata
+    ? planXeroObjectLinkMetadataMerge(normalizedLink.metadata, metadata)
+    : null;
 
-  const written = await client.xeroObjectLink.upsert({
+  let written = await client.xeroObjectLink.upsert({
     where: {
       localModel_localId_xeroObjectType_xeroObjectId_role: {
         localModel: normalizedLink.localModel,
@@ -844,15 +824,19 @@ async function upsertXeroObjectLinkWithClient(
       xeroObjectUrl,
       role: normalizedLink.role,
       active: normalizedLink.active ?? true,
-      metadata: sanitizeForJson(normalizedLink.metadata),
+      metadata,
     },
     update: {
       xeroObjectNumber: normalizedLink.xeroObjectNumber ?? null,
       xeroObjectUrl,
       active: normalizedLink.active ?? true,
-      metadata: sanitizeForJson(metadataForUpdate),
+      ...(normalizedLink.mergeMetadata ? {} : { metadata }),
     },
   });
+  if (merge) {
+    await mergeXeroObjectLinkMetadata(client, written.id, merge);
+    written = await client.xeroObjectLink.findUniqueOrThrow({ where: { id: written.id } });
+  }
 
   // After the link row, matching the refund-note repair apply. The nightly
   // report treats Payment.xeroRefundCreditNoteId as a promise that an active
@@ -928,7 +912,7 @@ export async function completeXeroSyncOperation(
   // #4373: the claim this outcome was made under; it never lands on another claim (`INV-INT-029`).
   claim: XeroOperationClaim,
   completion: XeroSyncOperationCompletion,
-  // #4356 (`INV-INT-029`): no PARTIAL, FAILED or CANCELLED completion lands on a recorded success or a repair's claim; null then.
+  // #4356, #4673, #4686 (`INV-INT-029`): no PARTIAL, FAILED or CANCELLED completion lands on a recorded success, a repair's claim or another claim's row; null then.
   // #4256: `retryClaim` writes only onto that retry claim, clearing its marker code; `alert: false` raises no repeated-failure alert.
   options?: { store?: Prisma.TransactionClient; retryClaim?: true; alert?: false },
 ): Promise<(XeroSyncOperation & { deferredPostCommit?: () => Promise<void> }) | null> {
@@ -942,6 +926,7 @@ export async function completeXeroSyncOperation(
         : null),
   );
 
+  let lostClaim = null as { laterClaimHolds: boolean } | null; // #4686: a part-success refused for a lost claim (`INV-INT-029`).
   const completeWithClient = async (tx: Prisma.TransactionClient) => {
     const status = completion.status ?? "SUCCEEDED";
     const data = {
@@ -966,6 +951,7 @@ export async function completeXeroSyncOperation(
         recordLinks: async () => {
           for (const link of completion.extraLinks ?? []) await upsertXeroObjectLinkWithClient(tx, link);
         },
+        lostClaim: (laterClaimHolds) => void (lostClaim = { laterClaimHolds }),
       });
     }
     const operation = await tx.xeroSyncOperation.findUniqueOrThrow({ where: { id: operationId } });
@@ -980,6 +966,8 @@ export async function completeXeroSyncOperation(
     ? await completeWithClient(options.store)
     : await prisma.$transaction(completeWithClient);
 
+  // #4686: its Xero object is traced after commit (or only logged inside a caller's own `store`), never written over the row.
+  if (lostClaim) await import("./xero-late-partial-trace").then((trace) => trace.afterLostClaimPartial(claim, completion, Boolean(options?.store), lostClaim!.laterClaimHolds), (err) => logger.error({ operationId, err }, "Xero part-success trace not loaded (#4686)"));
   // #4374 (`INV-INT-029`): a success landing on a row resolved in Xero warns and alerts once, after commit. On an
   // injected store that is its owner's commit: the owner runs the `deferredPostCommit` returned here after it.
   const resolvedRowAlert = successAfterResolutionAlert(operation);
@@ -1007,15 +995,15 @@ export async function completeXeroSyncOperation(
 /**
  * The optional write guard of {@link failXeroSyncOperation}: at most one, so a
  * caller can never pass two and have one silently dropped (#3462). Either way a failure
- * never lands on a recorded success, a repair's claim (#4356) or another claim (#4373,
- * `INV-INT-029`): null.
+ * never lands on a recorded success, a repair's claim (#4356), another claim (#4373), or
+ * anything but its own claim's RUNNING or FAILED row (#4673, `INV-INT-029`): null.
  */
 type FailXeroSyncOperationGuard =
   | {
       /**
-       * #3635 round-3 N5: leave a row another writer has already WITHDRAWN
-       * (CANCELLED) as it is - the outbox's catch runs after its handler, and an
-       * approval can withdraw a kept row in between. Answers null then.
+       * #3635 round-3 N5: a guarded caller (a missing row only logs). A WITHDRAWN
+       * (CANCELLED) row is left as it is - since PR #4687 review every failure
+       * keeps CANCELLED (`INV-INT-029`). Answers null then.
        */
       keepCancelled: true;
       retryClaim?: never;

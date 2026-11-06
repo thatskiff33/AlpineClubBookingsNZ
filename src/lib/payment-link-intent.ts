@@ -43,7 +43,7 @@ import {
 } from "@/lib/stripe";
 import { queueXeroInvoiceForPaidBooking } from "@/lib/xero-booking-invoice-queue";
 import { clubFormatValues } from "@/lib/club-format-server";
-import { chargeCurrencyRefusal, stripeChargeCurrency, UNSUPPORTED_CHARGE_CURRENCY_MEMBER_MESSAGE } from "@/lib/stripe-charge-currency";
+import { BELOW_STRIPE_MINIMUM_CODE, BELOW_STRIPE_MINIMUM_MEMBER_MESSAGE, BelowStripeMinimumError, chargeCurrencyRefusal, localChargeRefusal, stripeChargeCurrency, UNSUPPORTED_CHARGE_CURRENCY_MEMBER_MESSAGE } from "@/lib/stripe-charge-currency";
 import { intentCurrencyDiffers } from "@/lib/additional-intent-currency";
 import { staleIntentAction } from "@/lib/stale-intent-action";
 import {
@@ -444,6 +444,10 @@ export async function createPaymentIntentForPaymentLink(
   // Nothing left to charge (credit covers what is owed): never a $0 intent.
   if (owedCents <= 0) {
     throw new PaymentLinkError(NOT_PAYABLE_MESSAGE, 410);
+  }
+  // #99: below the card minimum, refused before the customer lookup or any mint.
+  if (localChargeRefusal(format, owedCents) instanceof BelowStripeMinimumError) {
+    throw new PaymentLinkError(BELOW_STRIPE_MINIMUM_MEMBER_MESSAGE, 409, BELOW_STRIPE_MINIMUM_CODE);
   }
 
   // Stripe calls stay outside the database transaction.

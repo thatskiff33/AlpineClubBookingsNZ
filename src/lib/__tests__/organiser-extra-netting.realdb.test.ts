@@ -290,7 +290,9 @@ let reconcile: (typeof import("@/lib/payment-transactions"))["reconcilePaymentAg
       .filter((row) => readOrganiserExtraAdjustmentPayload(row.requestPayload)?.purpose === "waive");
     const startedAt = new Date(Date.UTC(2026, 6, 1, 0, attempt));
     await prisma.xeroSyncOperation.updateMany({ where: { id: { in: waivers.map((row) => row.id) } }, data: { status: "RUNNING", startedAt } });
-    return waivers.map((row) => () => execute(readOrganiserExtraAdjustmentPayload(row.requestPayload)!, { id: row.id, startedAt }));
+    // No reset runs in this suite, so no late note re-takes a row (#4655): a re-take here is a failure.
+    const onRetake = () => { throw new Error("No organiser waiver here should re-take its row: nothing reset it"); };
+    return waivers.map((row) => () => execute(readOrganiserExtraAdjustmentPayload(row.requestPayload)!, { id: row.id, startedAt }, { onRetake }));
   }
   /**
    * Claims every queued waiver of the plan, as the outbox does, and runs them all at once. With

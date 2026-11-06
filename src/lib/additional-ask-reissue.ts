@@ -18,7 +18,7 @@
 import { PaymentRecoveryOperationStatus, PaymentTransactionKind, type Prisma } from "@prisma/client";
 
 import { ADDITIONAL_ASK_QUEUE_TRANSACTION_OPTIONS, lockAdditionalAskQueue } from "@/lib/additional-ask-queue-transaction";
-import { closeWaitingAskRecoveries } from "@/lib/additional-ask-recovery-close";
+import { closeWaitingAskRecoveries, PENDING_ASK_NETTED_BY_REDUCTION_NOTE } from "@/lib/additional-ask-recovery-close";
 import {
   inFlightAskRecoveries,
   reductionLeftAfterAskCents,
@@ -249,10 +249,9 @@ export const WAITING_REISSUE_FOLDED_BY_INCREASE_NOTE =
  * fenced exactly as a reduction closes one (`closeWaitingAskRecoveries`), so
  * one fresh ask asks for both. Returns what it folded, for `sizeAdditionalAsk`.
  *
- * Re-issues only. An increase's own failed mint keeps #3340's rule, under
- * which a later ask overtakes it - unless it folded re-issues in (review round
- * 7): then nothing else asks for that money, so its replay is settled only by
- * its own row and carries the later ask (`isRecoveryReplaySettled`).
+ * Re-issues only. An increase's own failed mint is not folded: a later ask
+ * never settles it (#4015), so its replay is settled only by its own row and
+ * carries the later ask, superseding it (`isRecoveryReplaySettled`).
  */
 export async function foldWaitingReissuedAsks(
   tx: UnpaidAskDb,
@@ -266,7 +265,8 @@ export async function foldWaitingReissuedAsks(
   const [transactions, modifications] = await Promise.all([
     tx.paymentTransaction.findMany({
       where: { paymentId: payment.id, kind: PaymentTransactionKind.ADDITIONAL },
-      select: { kind: true, createdAt: true, stripePaymentIntentId: true },
+      // #4015: the own-row rule reads the edit stamp, the withdrawal and the status too (`findOwnRecoveryRow`).
+      select: { kind: true, status: true, createdAt: true, stripePaymentIntentId: true, bookingModificationId: true, withdrawnAt: true },
     }),
     tx.bookingModification.findMany({
       where: { bookingId: booking.id },
@@ -405,6 +405,21 @@ export async function readReissuedAskRecovery(
       lastError: true,
     },
   });
+}
+
+/**
+ * #4052: whether an additional ask's recovery was closed without its mint, and by
+ * whom: a later reduction that netted it off, or a later increase that folded
+ * it into its own ask (`closeWaitingAskRecoveries`, each with its note). Either
+ * way nobody mints under its Stripe key again. Null for anything else - still
+ * waiting, claimed by the runner, completed with a mint, or failed.
+ */
+export function reissueClosedUnminted(
+  recovery: Pick<ReissuedAskRecovery, "status" | "lastError"> | null,
+): "netted" | "folded" | null {
+  if (recovery?.status !== PaymentRecoveryOperationStatus.SUCCEEDED) return null;
+  if (recovery.lastError === PENDING_ASK_NETTED_BY_REDUCTION_NOTE) return "netted";
+  return recovery.lastError === WAITING_REISSUE_FOLDED_BY_INCREASE_NOTE ? "folded" : null;
 }
 
 /**

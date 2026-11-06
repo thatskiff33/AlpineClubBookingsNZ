@@ -13,8 +13,9 @@
  *    link is saved (`queueReceiptsForUnrecordedCaptures`), and later ones as
  *    they land (the late-success release).
  *  - THE GAP INVOICE pays itself only from cash no receipt row has claimed,
- *    and names the captures that cash came from on its own queued payload
- *    (`coveredPaymentIntentIds`, {@link attributeGapCash}).
+ *    and never from the credit-release sweep's share of a capture (#4494,
+ *    `INV-ADDPAY-046`), and names the captures that cash came from on its own
+ *    queued payload (`coveredPaymentIntentIds`, {@link attributeGapCash}).
  *  - A CHANGE'S OWN SUPPLEMENTARY INVOICE - one on the change, or one naming
  *    the capture's intent - is that capture's document.
  *  - #4324 (`INV-PAY-144`): A KEPT LATE CAPTURE'S OWN INVOICE
@@ -27,10 +28,17 @@
  * before it plans, and the repair tool before it reports anything.
  */
 import type { Prisma } from "@prisma/client";
-import { readCreditReleaseCaptureShare } from "@/lib/credit-release-capture-share";
+import {
+  creditReleaseSweptCents,
+  readCreditReleaseCaptureShare,
+  type CreditReleaseCaptureShare,
+} from "@/lib/credit-release-capture-share";
 import { LIVE_KEPT_LATE_CAPTURE_INVOICE_WHERE } from "@/lib/late-capture-kept-xero-rules";
 import { prisma } from "@/lib/prisma";
-import { asRecord } from "@/lib/xero-json";
+import { asRecord, responseNamesXeroInvoice } from "@/lib/xero-json";
+import { XERO_ORPHANED_STALE_RUNNING_ERROR_CODE } from "@/lib/xero-operation-error-codes";
+import { isRerunnableOperation } from "@/lib/xero-active-operation-statuses";
+import type { PrimaryInvoiceFeeAtLink } from "@/lib/xero-primary-invoice-fee-at-link";
 import { CAPTURED_TRANSACTION_STATUS_LIST } from "@/lib/payment-transaction-status";
 import { LEDGER_ROWS_OLDEST_FIRST } from "@/lib/payment-ledger-order";
 import { XERO_OUTBOX_SUPPLEMENTARY_INVOICE_TYPE } from "@/lib/xero-operation-outbox-payload";
@@ -199,39 +207,10 @@ async function readBaseCaptureRecorder(
   if (kept) return { kind: "kept-late-capture-invoice", operationId: kept.id };
 
   const figures = await readPrimaryInvoiceFeeAtLink(input.bookingId, input.primaryInvoiceId, store);
-  if (figures?.atLink.paymentIntentIdsRecordedAtLink?.includes(input.paymentIntentId)) {
-    return { kind: "primary-invoice" };
-  }
-  const partial = figures?.atLink.partiallyRecordedCaptureAtLink;
-  const primaryPartCents = partial?.paymentIntentId === input.paymentIntentId ? partial.cents : 0;
-
-  // Then a gap invoice whose payment took some of it (F2). GROSS, round 4
-  // (item 3): what the gap and the primary took, against the capture as it
-  // was captured - the receipt records the gross rest, and a refund is its
-  // own note - so the stand-down and the remainder read the one figure.
-  let gapCoveredCents = 0;
-  const covering = await store.xeroSyncOperation.findFirst({
-    where: {
-      queueType: XERO_OUTBOX_SUPPLEMENTARY_INVOICE_TYPE,
-      status: { not: "CANCELLED" },
-      requestPayload: { path: [GAP_COVERED_INTENTS_KEY], array_contains: [input.paymentIntentId] },
-    },
-    orderBy: { createdAt: "desc" },
-    select: { id: true, requestPayload: true },
-  });
-  if (covering) {
-    const covered = asRecord(asRecord(covering.requestPayload)?.[GAP_COVERED_CENTS_KEY])?.[input.paymentIntentId];
-    if (typeof covered !== "number") return { kind: "supplementary-invoice", operationId: covering.id };
-    const capture = await store.paymentTransaction.findUnique({
-      where: { stripePaymentIntentId: input.paymentIntentId },
-      select: { amountCents: true },
-    });
-    if (covered + primaryPartCents >= (capture?.amountCents ?? 0)) {
-      return { kind: "supplementary-invoice", operationId: covering.id };
-    }
-    gapCoveredCents = covered;
-  }
-  const alreadyRecordedCents = gapCoveredCents + primaryPartCents;
+  const recorded = await readRecordedByPrimaryOrGap(input.paymentIntentId, figures?.atLink, store);
+  if (recorded.kind === "primary-invoice") return { kind: "primary-invoice" };
+  if (recorded.kind === "gap-invoice") return { kind: "supplementary-invoice", operationId: recorded.operationId };
+  const alreadyRecordedCents = recorded.cents;
   if (naming) {
     const { localModel, localId, ...operation } = naming;
     const link =
@@ -305,6 +284,173 @@ async function readBaseCaptureRecorder(
 }
 
 /**
+ * #4494 (`INV-SSOT`): WHAT OF ONE CAPTURE THE PRIMARY'S AND THE GAP INVOICE'S
+ * PAYMENTS ALREADY RECORDED - the one reading the receipt's recorder and the
+ * credit-release sweep's overlap hold share. `primary-invoice`: the primary's
+ * create covered it wholly at the link. `gap-invoice`: a gap invoice in any
+ * status but CANCELLED names it with no cents figure (a legacy row), or its
+ * cents and the part the primary's payment reached together make the whole
+ * capture. Otherwise `part`: those two cents, maybe 0. GROSS, round 4 (item 3):
+ * against the capture as it was captured - a refund is its own note - so the
+ * stand-down and the remainder read the one figure.
+ *
+ * WHY THE TWO CALLERS ASK DIFFERENT THINGS OF A QUEUED GAP ROW (#4494 fix
+ * round). The receipt counts a gap row's cents whatever its status: that row
+ * will pay them when it sends, so the receipt records only the rest. The sweep
+ * must also know whether those cents can be in Xero YET, and whether the row
+ * can still send (`withGapSendState`: `gapSend`, {@link gapPaymentMayBeInXero},
+ * {@link gapRowCanStillSend}), because a gap that has not sent is re-checked at
+ * its send and raised unpaid there - the sweep waits for it while it can.
+ */
+/** `rerunnable`: it can still run again (only the wait bound has passed), which decides what an officer is told. */
+export type GapSendState = { operationId: string; mayBeInXero: boolean; canStillSend: boolean; rerunnable: boolean };
+export type RecordedByPrimaryOrGap =
+  | { kind: "primary-invoice" }
+  | { kind: "gap-invoice"; operationId: string; gapSend?: GapSendState }
+  | { kind: "part"; cents: number; gapSend?: GapSendState };
+
+/**
+ * #4494 fix round: WHETHER A GAP INVOICE'S OWN STRIPE PAYMENT CAN BE IN XERO.
+ * Yes for a row that SUCCEEDED, went PARTIAL (a payment call that errored may
+ * still have landed) or was resolved by hand, and for any row with evidence an
+ * attempt reached Xero: a Xero id on the row, a response naming an invoice or
+ * carrying a payment, a stale-RUNNING reset (it died mid-call), a live
+ * `SUPPLEMENTARY_INVOICE` or `SUPPLEMENTARY_INVOICE_PAYMENT` link on its change,
+ * or (delta review d-1) the Xero invoice body a send stores on the row before
+ * any Xero call (`requestPayload.invoices`; the enqueued payload never has
+ * one) - so a payment that landed before its completion failed still counts.
+ * No only for a row that provably never reached Xero. The one rule the sweep's
+ * hold and every send-time rewrite of a gap row use.
+ */
+export async function gapPaymentMayBeInXero(
+  row: {
+    status: string;
+    requestPayload: Prisma.JsonValue | null;
+    xeroObjectId: string | null;
+    responsePayload: Prisma.JsonValue | null;
+    lastErrorCode: string | null;
+    manuallyResolvedAt: Date | null;
+    localModel: string | null;
+    localId: string | null;
+  },
+  store: Pick<Prisma.TransactionClient, "xeroObjectLink"> = prisma,
+): Promise<boolean> {
+  if (row.status === "SUCCEEDED" || row.status === "PARTIAL" || row.manuallyResolvedAt) return true;
+  if (row.xeroObjectId || row.lastErrorCode === XERO_ORPHANED_STALE_RUNNING_ERROR_CODE) return true;
+  if (responseNamesXeroInvoice(row.responsePayload) || asRecord(asRecord(row.responsePayload)?.payment)) return true;
+  if (asRecord(row.requestPayload)?.invoices !== undefined) return true;
+  if (!row.localModel || !row.localId) return false;
+  const link = await store.xeroObjectLink.findFirst({
+    where: {
+      localModel: row.localModel,
+      localId: row.localId,
+      role: { in: ["SUPPLEMENTARY_INVOICE", "SUPPLEMENTARY_INVOICE_PAYMENT"] },
+      active: true,
+    },
+    select: { id: true },
+  });
+  return link !== null;
+}
+
+/**
+ * #4494 delta review (d-3): how long the sweep waits, silently, for a gap
+ * invoice that has not sent, counted from when it was queued. Past it - or
+ * once the row can no longer send (resolved by hand, marked non-replayable) -
+ * the sweep holds and tells an officer, naming the row.
+ */
+export const GAP_SEND_WAIT_MS = 7 * 24 * 60 * 60 * 1000;
+
+/**
+ * Whether an unsent gap invoice can still send: it can run again
+ * (`isRerunnableOperation`, the outbox's own rule) and was queued within
+ * {@link GAP_SEND_WAIT_MS} - the bound is the only gap-specific part. Pure.
+ */
+export function gapRowCanStillSend(
+  row: { status: string; replayable: boolean; manuallyResolvedAt: Date | null; createdAt: Date },
+  now: Date,
+): boolean {
+  return isRerunnableOperation(row) && now.getTime() - row.createdAt.getTime() <= GAP_SEND_WAIT_MS;
+}
+
+/** The row fields {@link gapPaymentMayBeInXero} and {@link gapRowCanStillSend} read. */
+export const GAP_SEND_STATE_SELECT = {
+  status: true,
+  requestPayload: true,
+  replayable: true,
+  createdAt: true,
+  xeroObjectId: true,
+  responsePayload: true,
+  lastErrorCode: true,
+  manuallyResolvedAt: true,
+  localModel: true,
+  localId: true,
+} as const;
+
+export async function readRecordedByPrimaryOrGap(
+  paymentIntentId: string,
+  atLink: PrimaryInvoiceFeeAtLink | null | undefined,
+  store: Pick<RecorderStore, "xeroSyncOperation" | "paymentTransaction" | "xeroObjectLink"> = prisma,
+  options: { withGapSendState?: { now: Date } } = {},
+): Promise<RecordedByPrimaryOrGap> {
+  if (atLink?.paymentIntentIdsRecordedAtLink?.includes(paymentIntentId)) return { kind: "primary-invoice" };
+  const partial = atLink?.partiallyRecordedCaptureAtLink;
+  const primaryPartCents = partial?.paymentIntentId === paymentIntentId ? partial.cents : 0;
+  const covering = await store.xeroSyncOperation.findFirst({
+    where: {
+      queueType: XERO_OUTBOX_SUPPLEMENTARY_INVOICE_TYPE,
+      status: { not: "CANCELLED" },
+      requestPayload: { path: [GAP_COVERED_INTENTS_KEY], array_contains: [paymentIntentId] },
+    },
+    orderBy: { createdAt: "desc" },
+    select: {
+      id: true,
+      requestPayload: true,
+      ...(options.withGapSendState ? GAP_SEND_STATE_SELECT : {}),
+    },
+  });
+  if (!covering) return { kind: "part", cents: primaryPartCents };
+  let sendState: { gapSend?: GapSendState } = {};
+  if (options.withGapSendState) {
+    const row = covering as typeof covering & Parameters<typeof gapPaymentMayBeInXero>[0] & Parameters<typeof gapRowCanStillSend>[0];
+    sendState = {
+      gapSend: {
+        operationId: covering.id,
+        mayBeInXero: await gapPaymentMayBeInXero(row, store),
+        canStillSend: gapRowCanStillSend(row, options.withGapSendState.now),
+        rerunnable: isRerunnableOperation(row),
+      },
+    };
+  }
+  const covered = asRecord(asRecord(covering.requestPayload)?.[GAP_COVERED_CENTS_KEY])?.[paymentIntentId];
+  if (typeof covered !== "number") return { kind: "gap-invoice", operationId: covering.id, ...sendState };
+  const capture = await store.paymentTransaction.findUnique({
+    where: { stripePaymentIntentId: paymentIntentId },
+    select: { amountCents: true },
+  });
+  if (covered + primaryPartCents >= (capture?.amountCents ?? 0)) return { kind: "gap-invoice", operationId: covering.id, ...sendState };
+  return { kind: "part", cents: covered + primaryPartCents, ...sendState };
+}
+
+
+/**
+ * #4494 (`INV-ADDPAY-046`, `INV-PAY-139`): whether the credit-release sweep's
+ * share of a capture, beside what the primary's or the gap invoice's payment
+ * recorded of it ({@link readRecordedByPrimaryOrGap}), would record more than
+ * the card took. A capture the sweep holds overlaps anything recorded of it;
+ * one with no share overlaps nothing. Pure.
+ */
+export function creditReleaseShareOverlaps(
+  recorded: RecordedByPrimaryOrGap,
+  share: CreditReleaseCaptureShare,
+  amountCents: number,
+): boolean {
+  if (!share.held && share.ownCents <= 0) return false;
+  if (recorded.kind !== "part") return true;
+  if (share.held) return recorded.cents > 0;
+  return recorded.cents + share.ownCents > amountCents;
+}
+
+/**
  * Review round 3 (F3): the captures a supplementary invoice records - one
  * naming the intent, or the change's own invoice that records a payment - so
  * the gap invoice never counts their cash as spare. The gap invoice itself is
@@ -370,11 +516,16 @@ export async function readReceiptClaimedIntents(
   );
 }
 
-/** The booking's captured Stripe cash, by intent, oldest first: what `attributeGapCash` walks. */
+/**
+ * The booking's captured Stripe cash, by intent, oldest first: what
+ * `attributeGapCash` walks. #4494: each with the cents of it that are the
+ * credit-release sweep's (`sweptCents`, read through
+ * `readCreditReleaseCaptureShare`, all of it where the sweep holds it).
+ */
 export async function readCapturedStripeCash(
   bookingId: string,
   store: Pick<Prisma.TransactionClient, "paymentTransaction"> = prisma,
-): Promise<Array<{ paymentIntentId: string; netCents: number; bookingModificationId: string | null }>> {
+): Promise<Array<{ paymentIntentId: string; netCents: number; sweptCents: number; bookingModificationId: string | null }>> {
   const rows = await store.paymentTransaction.findMany({
     where: {
       payment: { bookingId },
@@ -385,25 +536,29 @@ export async function readCapturedStripeCash(
     orderBy: [...LEDGER_ROWS_OLDEST_FIRST],
     select: { stripePaymentIntentId: true, amountCents: true, refundedAmountCents: true, bookingModificationId: true },
   });
-  return rows.flatMap((row) =>
-    row.stripePaymentIntentId
-      ? [
-          {
-            paymentIntentId: row.stripePaymentIntentId,
-            netCents: Math.max(0, row.amountCents - row.refundedAmountCents),
-            bookingModificationId: row.bookingModificationId,
-          },
-        ]
-      : [],
-  );
+  const captures = [];
+  for (const row of rows) {
+    if (!row.stripePaymentIntentId) continue;
+    const netCents = Math.max(0, row.amountCents - row.refundedAmountCents);
+    const share = await readCreditReleaseCaptureShare(row.stripePaymentIntentId, store);
+    captures.push({
+      paymentIntentId: row.stripePaymentIntentId,
+      netCents,
+      sweptCents: creditReleaseSweptCents(share, netCents),
+      bookingModificationId: row.bookingModificationId,
+    });
+  }
+  return captures;
 }
 
 /**
  * WHICH CASH THE GAP INVOICE MAY PAY ITSELF FROM, AND WHOSE IT IS. Pure.
  *
- * Each capture's net cash, less what the primary recorded of it, and less
- * every capture another writer claims (a receipt row, or a supplementary
- * invoice that records it), is the leftover. What the primary recorded is the
+ * Each capture's net cash, less the credit-release sweep's share of it
+ * (#4494: `sweptCents`, taken out first, so neither the primary's walk nor the
+ * gap ever counts it), less what the primary recorded of it, and less every
+ * capture another writer claims (a receipt row, or a supplementary invoice
+ * that records it), is the leftover. What the primary recorded is the
  * record its link stored (review round 3, F4: `recordedAtLink`, the captures it
  * covered wholly and the part of one it reached); only a record from before
  * that list is walked from `primaryCashCents`, oldest first. The gap takes its
@@ -412,7 +567,7 @@ export async function readCapturedStripeCash(
  * record only the rest.
  */
 export function attributeGapCash(input: {
-  captures: ReadonlyArray<{ paymentIntentId: string; netCents: number }>;
+  captures: ReadonlyArray<{ paymentIntentId: string; netCents: number; sweptCents: number }>;
   claimed: ReadonlySet<string>;
   primaryCashCents: number;
   recordedAtLink?: { recorded: readonly string[]; partial: { paymentIntentId: string; cents: number } | null };
@@ -422,18 +577,19 @@ export function attributeGapCash(input: {
   const recordedAtLink = input.recordedAtLink;
   const leftover: Array<{ paymentIntentId: string; cents: number }> = [];
   for (const capture of input.captures) {
+    const available = Math.max(0, capture.netCents - capture.sweptCents);
     let toPrimary: number;
     if (recordedAtLink) {
       toPrimary = recordedAtLink.recorded.includes(capture.paymentIntentId)
-        ? capture.netCents
+        ? available
         : recordedAtLink.partial?.paymentIntentId === capture.paymentIntentId
-          ? Math.min(capture.netCents, recordedAtLink.partial.cents)
+          ? Math.min(available, recordedAtLink.partial.cents)
           : 0;
     } else {
-      toPrimary = Math.min(primaryLeft, capture.netCents);
+      toPrimary = Math.min(primaryLeft, available);
       primaryLeft -= toPrimary;
     }
-    const rest = capture.netCents - toPrimary;
+    const rest = available - toPrimary;
     if (rest > 0 && !input.claimed.has(capture.paymentIntentId)) {
       leftover.push({ paymentIntentId: capture.paymentIntentId, cents: rest });
     }

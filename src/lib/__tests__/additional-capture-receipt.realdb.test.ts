@@ -26,6 +26,10 @@
  *  6. Review round 8: a retired invoice the release revives for the capture,
  *     while its receipt stores a decision under the change's anchor lock,
  *     queues behind that lock and is revived unpaid - one recording.
+ *  7. #4494: a credit-release card capture landing before the gap check is
+ *     re-run (`recheckPrimaryInvoiceWorthGap`) is the sweep's money: the gap
+ *     invoice is raised unpaid and names nothing, rather than pay from it -
+ *     also where the sweep holds a partly refunded one.
  *  3. The enqueue runs under the existing per-anchor supplementary-invoice lock
  *     (`lockSupplementaryInvoiceAnchor`) on the change the capture pays for: a
  *     session holding that lock makes the enqueue queue behind it, and the
@@ -53,6 +57,9 @@ const PRIMARY_TX_ID = "race-3953-primary-capture";
 const CHANGE_TX_ID = "race-3953-change-capture";
 const CHANGE_TX_2_ID = "race-3953-change-capture-2";
 const CHANGE_INTENT_2 = "pi_race_3953_change_2";
+/** #4494: a card payment for credit released after a Xero offset. */
+const RELEASE_TX_ID = "race-3953-release-capture";
+const RELEASE_INTENT = "pi_race_3953_release";
 /** The change the capture pays for: a provenance stamp, no foreign key. */
 const MODIFICATION_ID = "race-3953-modification";
 const PRIMARY_INTENT = "pi_race_3953_primary";
@@ -81,7 +88,7 @@ async function receiptRows() {
 
 async function clean(): Promise<void> {
   await prisma.xeroSyncOperation.deleteMany({
-    where: { localId: { in: [CHANGE_TX_ID, CHANGE_TX_2_ID, PRIMARY_TX_ID, PAYMENT_ID, BOOKING_ID, MODIFICATION_ID] } },
+    where: { localId: { in: [CHANGE_TX_ID, CHANGE_TX_2_ID, RELEASE_TX_ID, PRIMARY_TX_ID, PAYMENT_ID, BOOKING_ID, MODIFICATION_ID] } },
   });
   await prisma.bookingModification.deleteMany({ where: { bookingId: BOOKING_ID } });
   await prisma.paymentTransaction.deleteMany({ where: { paymentId: PAYMENT_ID } });
@@ -534,6 +541,98 @@ async function untilQueuedBehind(blockerPid: number, target = 1): Promise<number
       });
       expect((await release.releaseXeroSupplementaryInvoiceForCapturedPaymentIntent(CHANGE_INTENT)).outcome).toBe("none-queued");
       expect(await receiptRows()).toHaveLength(0);
+    });
+  });
+
+  describe("#4494: a credit-release capture before the gap check re-runs", () => {
+    const INVOICE_LINES_CENTS = 30_000;
+
+    beforeEach(async () => {
+      // The edit raced the create and anchors the 80.00 gap, as above.
+      await prisma.bookingModification.create({
+        data: {
+          id: MODIFICATION_ID,
+          bookingId: BOOKING_ID,
+          memberId: OWNER_ID,
+          modificationType: "GUEST_ADD",
+          previousData: {},
+          newData: { primaryInvoiceSettlement: { settledAgainstPrimaryInvoice: true } },
+          priceDiffCents: 8_000,
+        },
+      });
+      // The create stored its figures, in the recorded-at-link form, and died
+      // before it queued the gap: no gap operation exists.
+      const key = invoiceKey.buildXeroBookingInvoiceCorrelationKey(BOOKING_ID);
+      await prisma.xeroSyncOperation.create({
+        data: {
+          direction: "OUTBOUND",
+          entityType: "INVOICE",
+          operationType: "CREATE",
+          localModel: "Payment",
+          localId: PAYMENT_ID,
+          status: "SUCCEEDED",
+          correlationKey: key,
+          idempotencyKey: key,
+          xeroObjectId: INVOICE_ID,
+          requestPayload: {
+            primaryInvoiceBilledFee: {
+              xeroInvoiceId: INVOICE_ID,
+              billedChangeFeeCents: 0,
+              billedTotalCents: INVOICE_LINES_CENTS,
+              recordedChangeFeeCentsAtLink: 0,
+              primaryInvoiceCashCents: INVOICE_LINES_CENTS,
+              worth: { atBuildCents: INVOICE_LINES_CENTS, builtTotalCents: INVOICE_LINES_CENTS, atLinkCents: 38_000, markedModificationIdsAtBuild: [] },
+              paymentIntentIdsRecordedAtLink: [PRIMARY_INTENT],
+            },
+          },
+        },
+      });
+    });
+
+    /** A release request raised, asked for and paid by card - 100.00, more than the 80.00 gap. */
+    async function captureRelease(over: { status: "SUCCEEDED" | "PARTIALLY_REFUNDED"; refundedAmountCents: number }) {
+      await prisma.paymentTransaction.create({
+        data: {
+          id: RELEASE_TX_ID,
+          paymentId: PAYMENT_ID,
+          kind: "ADDITIONAL",
+          source: "STRIPE",
+          reason: "credit_released_outside_app",
+          carriedAskCents: 0,
+          stripePaymentIntentId: RELEASE_INTENT,
+          amountCents: 10_000,
+          hadIssuedXeroInvoice: false,
+          ...over,
+        },
+      });
+    }
+
+    async function gapPayloads() {
+      const rows = await prisma.xeroSyncOperation.findMany({
+        where: { localModel: "BookingModification", localId: MODIFICATION_ID, queueType: "SUPPLEMENTARY_INVOICE" },
+        select: { requestPayload: true },
+      });
+      return rows.map((row) => row.requestPayload);
+    }
+
+    it.each([
+      ["paid in full, the sweep's own", { status: "SUCCEEDED" as const, refundedAmountCents: 0 }],
+      ["partly refunded, held by the sweep for an officer", { status: "PARTIALLY_REFUNDED" as const, refundedAmountCents: 1_000 }],
+    ])("is never the gap invoice's cash when %s: raised unpaid, naming nothing", async (_name, over) => {
+      await captureRelease(over);
+
+      const result = await gapCheck.recheckPrimaryInvoiceWorthGap({ bookingId: BOOKING_ID, xeroInvoiceId: INVOICE_ID });
+
+      expect(result).toMatchObject({ gapCents: 8_000, cashTakenCents: 0 });
+      expect(await gapPayloads()).toEqual([
+        expect.objectContaining({ primaryInvoiceGap: true, recordPayment: false, coveredPaymentIntentIds: [], coveredCaptureCents: {} }),
+      ]);
+      // The edit's own capture has its receipt; the release capture has none - the sweep records it.
+      expect(await receiptRows()).toHaveLength(1);
+      const releaseReceipts = await prisma.xeroSyncOperation.count({
+        where: { localModel: "PaymentTransaction", localId: RELEASE_TX_ID, queueType: "ADDITIONAL_CAPTURE_RECEIPT" },
+      });
+      expect(releaseReceipts).toBe(0);
     });
   });
 

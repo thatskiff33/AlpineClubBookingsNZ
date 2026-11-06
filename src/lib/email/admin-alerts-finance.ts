@@ -250,7 +250,7 @@ export async function sendAdminLateCaptureHandBackConflictAlert(data: {
  * #3340 — the operator notice for a supersede refund. Admin audience, so it is
  * exempt from the per-booking "No emails" switch: that switch silences the
  * MEMBER, and money that moved with nobody deciding it should must still reach
- * an operator.
+ * an operator. #4690: returns what `sendToAdmins` did, for the once-only claim.
  */
 export async function sendAdminSupersededPaymentRefundAlert(data: {
   memberName: string;
@@ -266,7 +266,7 @@ export async function sendAdminSupersededPaymentRefundAlert(data: {
   const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
   const bookingUrl = `${baseUrl}/bookings/${data.bookingId}`;
 
-  await sendToAdmins({
+  return sendToAdmins({
     subject: `Superseded payment auto-refunded: ${data.memberName}`,
     html: await renderEmailHtml(() =>
       adminSupersededPaymentRefundTemplate({

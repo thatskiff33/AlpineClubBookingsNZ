@@ -29,7 +29,8 @@ vi.mock("@/lib/prisma", () => {
 vi.mock("@/lib/xero-operation-outbox", () => ({ enqueueXeroSupplementaryInvoiceOperation: mocks.enqueue }));
 // #3953: one recorder per capture. The booking's captured cash is the payment
 // fixture's, on one intent; no receipt row claims any unless a case says so.
-const recorderMocks = vi.hoisted(() => ({ claimed: new Set<string>(), supplementaryRecorded: new Set<string>(), queueReceipts: vi.fn() }));
+// #4494: none of it is the credit-release sweep's unless a case sets `sweptCents`.
+const recorderMocks = vi.hoisted(() => ({ claimed: new Set<string>(), supplementaryRecorded: new Set<string>(), queueReceipts: vi.fn(), sweptCents: 0 }));
 vi.mock("@/lib/additional-capture-recorder", async () => {
   const actual = (await vi.importActual("@/lib/additional-capture-recorder")) as typeof import("@/lib/additional-capture-recorder");
   return {
@@ -39,7 +40,7 @@ vi.mock("@/lib/additional-capture-recorder", async () => {
     readCapturedStripeCash: async () => {
       const payment = (await mocks.payment.findUnique()) as { amountCents?: number; refundedAmountCents?: number } | null;
       const net = Math.max(0, (payment?.amountCents ?? 0) - (payment?.refundedAmountCents ?? 0));
-      return net > 0 ? [{ paymentIntentId: "pi_booking", netCents: net, bookingModificationId: null }] : [];
+      return net > 0 ? [{ paymentIntentId: "pi_booking", netCents: net, sweptCents: recorderMocks.sweptCents, bookingModificationId: null }] : [];
     },
   };
 });
@@ -222,6 +223,28 @@ describe("the primary invoice's change-fee gap (#3955 X4)", () => {
       } finally {
         recorderMocks[claimer] = new Set();
       }
+    }
+  });
+
+  it("#4494 MUTATION: never pays itself from the credit-release sweep's share of a capture - then it is raised unpaid, naming nothing", async () => {
+    const fees = { ...atLink(primaryInvoiceBilledFee("inv_1", [guestLine, feeLine(25)]), 6_500, 22_500), paymentIntentIdsRecordedAtLink: [] };
+    mocks.payment.findUnique.mockResolvedValue({ ...unpaid, status: "SUCCEEDED", amountCents: 26_500 });
+    recorderMocks.sweptCents = 26_500;
+    try {
+      await expect(queuePrimaryInvoiceWorthGap({ bookingId: "booking_1", atLink: fees })).resolves.toMatchObject({ cashTakenCents: 0 });
+      expect(mocks.enqueue).toHaveBeenLastCalledWith(
+        expect.anything(),
+        expect.objectContaining({ recordPayment: false, primaryInvoiceGap: expect.objectContaining({ coveredCaptures: [] }) }),
+      );
+      // Only the swept part is excluded: 40.00 of the rest still pays the gap.
+      recorderMocks.sweptCents = 22_500;
+      await queuePrimaryInvoiceWorthGap({ bookingId: "booking_1", atLink: fees });
+      expect(mocks.enqueue).toHaveBeenLastCalledWith(
+        expect.anything(),
+        expect.objectContaining({ recordPayment: true, primaryInvoiceGap: expect.objectContaining({ coveredCaptures: [{ paymentIntentId: "pi_booking", cents: 4_000 }] }) }),
+      );
+    } finally {
+      recorderMocks.sweptCents = 0;
     }
   });
 

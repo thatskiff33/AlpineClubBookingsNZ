@@ -15,6 +15,7 @@ import {
   validateFeeScheduleInput,
   type FeeComponentInput,
 } from "@/lib/authoritative-fees";
+import { MAX_INTEGER_CENTS } from "@/lib/money-input";
 import { prisma } from "@/lib/prisma";
 import { getResolvedAccountMapping } from "@/lib/xero-mappings";
 import { hasAdminAreaAccess } from "@/lib/admin-permissions";
@@ -28,7 +29,7 @@ const JOINING_FEE_AGE_TIERS = ["INFANT", "CHILD", "YOUTH", "ADULT"] as const;
 const joiningFeeAgeTier = z.enum(JOINING_FEE_AGE_TIERS).nullable();
 
 const dateField = z.string().trim();
-const moneyField = z.number().int().min(0).max(2_147_483_647);
+const moneyField = z.number().int().min(0).max(MAX_INTEGER_CENTS);
 const scheduleDates = {
   amountCents: moneyField,
   effectiveFrom: dateField,

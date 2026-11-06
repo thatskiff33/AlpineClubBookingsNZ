@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { spendIsExplained, xeroAllocationsOf, xeroPaymentsOf } from "@/lib/xero-credit-note-outside-spend";
+import { judgeOutsideSpendEvidence, spendIsExplained, xeroAllocationsOf, xeroPaymentsOf } from "@/lib/xero-credit-note-outside-spend";
 import { creditNoteMirrorEvidenceFrom } from "@/lib/xero-credit-note-mirror";
 import { writtenDownCentsByCreditNote } from "@/lib/xero-credit-note-write-down";
 
@@ -79,5 +79,30 @@ describe("the write-down is the signed net of its rows (#4270)", () => {
     await writtenDownCentsByCreditNote(db, "m", ["n1"]);
     expect(where).not.toHaveProperty("amountCents");
     expect(where).toMatchObject({ outsideSpendConvergedAt: { not: null }, type: "ADMIN_ADJUSTMENT" });
+  });
+});
+
+describe("the gates a reading passes before its spend is judged, shared by the mirror and the early warning (#4270, #4220)", () => {
+  const NOW = new Date("2026-07-01T00:00:00.000Z");
+  const reading = {
+    status: "AUTHORISED",
+    totalCents: 5_000,
+    remainingCents: 2_000,
+    allocations: [{ invoiceId: "a", cents: 3_000 }],
+    payments: [],
+    updatedAt: new Date("2026-06-30T23:58:00.000Z"),
+  };
+
+  it("passes an active, explained note changed at least two minutes ago", () => {
+    expect(judgeOutsideSpendEvidence(reading, NOW)).toBeNull();
+    expect(judgeOutsideSpendEvidence({ ...reading, status: "PAID" }, NOW)).toBeNull();
+  });
+
+  it("refuses, in order, a note that is not active, a list that does not add up, and a change too recent or unknown", () => {
+    expect(judgeOutsideSpendEvidence({ ...reading, status: "VOIDED", remainingCents: 1 }, NOW)).toBe("note-not-active");
+    expect(judgeOutsideSpendEvidence({ ...reading, status: null }, NOW)).toBe("note-not-active");
+    expect(judgeOutsideSpendEvidence({ ...reading, remainingCents: 1, updatedAt: null }, NOW)).toBe("unexplained-spend");
+    expect(judgeOutsideSpendEvidence({ ...reading, updatedAt: new Date("2026-06-30T23:58:00.001Z") }, NOW)).toBe("unsettled");
+    expect(judgeOutsideSpendEvidence({ ...reading, updatedAt: null }, NOW)).toBe("unsettled");
   });
 });

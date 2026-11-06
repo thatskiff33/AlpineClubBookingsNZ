@@ -1275,10 +1275,40 @@ describe("review finding source/schema contracts", () => {
 
     const suite = readRepoFile("src/lib/__tests__/member-money-journal.realdb.test.ts");
     expect(suite).toContain('process.env.RUN_CONCURRENCY_RACE_TESTS === "1"');
-    expect(suite).toContain("assertSafeRaceDbUrl");
-    // The proof applies the SHIPPED migration and verifier, not a fixture.
-    expect(suite).toContain("prisma/migrations/20261127010000_member_money_journal/migration.sql");
     expect(suite).toContain("verifyMemberMoneyJournal");
+    // #4626 moved the scratch database into the ONE shared fixture, which the
+    // posting suite uses too (INV-SSOT): the suite builds its database there,
+    // and the fixture is what must apply the SHIPPED migration behind the
+    // race URL guard. Pinning the suite's own text would demand a second copy.
+    expect(suite).toContain("createMemberMoneyScratchDatabase");
+    const fixture = readRepoFile("src/lib/__tests__/support/member-money-fixtures.ts");
+    expect(fixture).toContain("assertSafeRaceDbUrl(url, label)");
+    expect(fixture).toContain("prisma/migrations/20261127010000_member_money_journal/migration.sql");
+    expect(fixture).toContain("buildDatabaseRolesSql");
+  });
+
+  it("proves the member-money posting command against a real PostgreSQL in a required job (#4626)", () => {
+    // Whether a built batch commits is decided by the journal's deferred
+    // checks at COMMIT, as the application role; the advisory realdb-all job
+    // cannot block a merge, so the proof has its own required step.
+    const workflow = readRepoFile(".github/workflows/ci.yml");
+    const proofStep = workflow.indexOf("name: Prove the member-money posting command against dedicated PostgreSQL");
+    expect(proofStep).toBeGreaterThan(-1);
+    const journalStep = workflow.indexOf("name: Prove the member-money journal's enforcement against dedicated PostgreSQL");
+    expect(proofStep).toBeGreaterThan(journalStep);
+    expect(proofStep).toBeGreaterThan(workflow.indexOf("\n  migration-drift:\n"));
+    expect(proofStep).toBeLessThan(workflow.indexOf("\n  data-migration-verification:\n"));
+    const step = workflow.slice(proofStep, workflow.indexOf("\n      - name:", proofStep + 1));
+    expect(step).toContain('RUN_CONCURRENCY_RACE_TESTS: "1"');
+    expect(step).toContain("pnpm exec vitest run src/lib/__tests__/member-money-posting.realdb.test.ts");
+    expect(step).not.toContain("continue-on-error");
+    expect(step).not.toMatch(/\n\s+if:/);
+
+    const suite = readRepoFile("src/lib/__tests__/member-money-posting.realdb.test.ts");
+    expect(suite).toContain('process.env.RUN_CONCURRENCY_RACE_TESTS === "1"');
+    expect(suite).toContain("createMemberMoneyScratchDatabase");
+    expect(suite).toContain("verifyMemberMoneyJournal");
+    expect(suite).toContain("postMemberMoneyEvent");
   });
 
   it("executes the email-override annotation strip against a real PostgreSQL in CI (#2269, #2418)", () => {

@@ -186,3 +186,15 @@ CHANGELOG.md merge=union
 *.ico binary
 *.gif binary
 *.zip binary
+
+# #4463: machine-written files, marked with GitHub's own `linguist-generated`
+# attribute. GitHub collapses them in a PR's diff view, and the soft PR-size
+# gate (`scripts/ci/check-pr-size.mjs`) leaves their lines out of a PR's
+# changed-line count. This is the ONE list for both: mark a new generated file
+# here, never in the gate. Each is rewritten by a tool, not by hand: pnpm for
+# the lockfile, the generator its header names for the rest. Migration SQL is NOT
+# listed: Prisma drafts it, but a person reviews every line of it.
+pnpm-lock.yaml linguist-generated
+src/lib/__tests__/support/email-render-pins.txt linguist-generated
+src/lib/theme/__tests__/theme-goldens.json linguist-generated
+scripts/ci/e2e-spec-durations.mjs linguist-generated

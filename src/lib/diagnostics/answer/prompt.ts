@@ -43,6 +43,8 @@
 
 import "server-only";
 
+import { escapeRegExp } from "@/lib/escape-regexp";
+
 import { defuseRoleLabelLines, foldUntrustedText } from "../untrusted-text";
 
 import { DIAGNOSTICS_WIRE_BOUNDS } from "./contract";
@@ -163,7 +165,7 @@ function neutralize(value: string): string {
     // because `Operator asked:` reads as a label to anything that treats the
     // canonical casing as one.
     out = out.replace(
-      new RegExp(label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi"),
+      new RegExp(escapeRegExp(label), "gi"),
       (found) => found.replace(":", "․"),
     );
   }

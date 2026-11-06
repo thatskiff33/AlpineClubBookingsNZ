@@ -1,0 +1,1 @@
+- Fix: re-running `prisma/demo-seed.ts` over its own output no longer fails on `ManualRefundTask_paymentId_fkey`; the seed's clean-up now deletes manual refund tasks before payments. `e2e/setup/seed-second-lodge.ts` now refuses up front, with a clear message, when a stale lodge-B booking carries financial history, instead of relying on cascades (#4583).

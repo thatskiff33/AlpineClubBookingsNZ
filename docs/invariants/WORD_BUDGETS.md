@@ -15,7 +15,7 @@ rule and nothing there has an id**; they are an inventory the gate enforces
 exactly, so a row that is stale, duplicated, malformed or for an id nothing
 defines fails the check.
 
-The last table, [Agent docs](#agent-docs), holds the ceilings for the agent
+The [Agent docs](#agent-docs) table holds the ceilings for the agent
 guides under `docs/agents/`, under the looser rules stated there.
 
 To read a figure the way the gate does, run
@@ -120,7 +120,7 @@ stays for the agent-doc ceilings below.
 | `INV-PRIV-013` | 627 |
 | `INV-MOD-006` | 623 |
 | `INV-HOST-042` | 607 |
-| `INV-ADDPAY-023` | 586 |
+| `INV-ADDPAY-023` | 584 |
 | `INV-LOCK-002` | 589 |
 | `INV-CONFIG-003` | 578 |
 | `INV-LIFE-042` | 562 |
@@ -186,9 +186,9 @@ row per page:
 | --- | ---: |
 | `docs/agents/CODEX_PROMPTS.md` | 1050 |
 | `docs/agents/CODEX_WORKFLOW.md` | 2450 |
-| `docs/agents/COORDINATION.md` | 2350 |
+| `docs/agents/COORDINATION.md` | 2300 |
 | `docs/agents/DATASET_RESET_INVENTORY.md` | 750 |
-| `docs/agents/EPIC_PLAYBOOK.md` | 4450 |
+| `docs/agents/EPIC_PLAYBOOK.md` | 3150 |
 | `docs/agents/ISSUE_WORKFLOW.md` | 3400 |
 | `docs/agents/MODELS.md` | 850 |
 | `docs/agents/PROFILE_GUIDE.md` | 200 |
@@ -197,3 +197,14 @@ row per page:
 | `docs/agents/SCOPED_CONTEXT.md` | 850 |
 | `docs/agents/SEKRETON_ORCHESTRATOR.md` | 1800 |
 | `docs/agents/SUBAGENT_GUIDE.md` | 1100 |
+
+## Screen map
+
+The [UX flow map](../UX_FLOW_MAP.md) is a screen directory, grouped by area,
+with short journeys and links to the detailed guides. `docs:indexcheck` enforces
+this ceiling using its existing word counter. History belongs in the linked
+[archive](../UX_FLOW_HISTORY.md), rather than being appended to the map.
+
+| Document | Ceiling |
+| --- | ---: |
+| `docs/UX_FLOW_MAP.md` | 8000 |

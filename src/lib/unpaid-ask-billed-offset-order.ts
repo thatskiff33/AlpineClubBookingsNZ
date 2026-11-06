@@ -28,6 +28,7 @@ import {
   XERO_OUTBOX_MODIFICATION_CREDIT_NOTE_TYPE,
 } from "@/lib/xero-operation-outbox-payload";
 import { linkReviewTaskId, queuedReviewTaskId } from "@/lib/xero-review-task-key";
+import { scanSpacesWaitCode } from "@/lib/xero-operation-wait-spacing";
 
 /** The billed-offset note's payload key: the edit expects an own note of its own. */
 export const OWN_NOTE_EXPECTED_KEY = "ownNoteExpected" as const;
@@ -51,13 +52,7 @@ export const BILLED_OFFSET_OWN_NOTE_RECHECK_MS = 5 * 60 * 1000;
  * which `not` alone would drop - is scanned as before.
  */
 export function outboxScanLeavesAwaitingOwnNote(now: Date) {
-  return {
-    OR: [
-      { lastErrorCode: null },
-      { lastErrorCode: { not: BILLED_OFFSET_AWAITING_OWN_NOTE_CODE } },
-      { updatedAt: { lte: new Date(now.getTime() - BILLED_OFFSET_OWN_NOTE_RECHECK_MS) } },
-    ],
-  };
+  return scanSpacesWaitCode(BILLED_OFFSET_AWAITING_OWN_NOTE_CODE, BILLED_OFFSET_OWN_NOTE_RECHECK_MS, now);
 }
 
 /** The message a billed-offset note fails with once it has waited too long. */

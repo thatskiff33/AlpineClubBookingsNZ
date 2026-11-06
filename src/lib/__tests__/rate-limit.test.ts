@@ -403,6 +403,12 @@ describe("degraded-mode policy for auth-sensitive limiters (#1142)", () => {
       // session, so it is not a credential-guessing or public-form surface.
       "maintenanceReportAnonymous",
       "maintenanceReportToken",
+      // Per-account email request limits (#4613): the account half of the
+      // forgot-password and sign-in-link doors, keyed by checkAccountRequestLimit.
+      // Marked so a degraded fallback tightens the per-account budget (#1142)
+      // rather than letting many addresses multiply it across replicas.
+      "forgotPasswordAccount",
+      "magicLinkRequestAccount",
     ].sort();
 
     const marked = Object.entries(rateLimiters)

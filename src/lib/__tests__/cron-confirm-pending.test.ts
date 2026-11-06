@@ -569,6 +569,17 @@ function mockPendingBookings(bookings: ReturnType<typeof makePendingBooking>[]) 
   );
 }
 
+// #4738: a $0 confirmation's lines and R01 are proved against PostgreSQL
+// (zero-price-confirmation.realdb.test.ts); here only the call is observed.
+const confirmationLedger = vi.hoisted(() => ({
+  postStoredBookingConfirmationLedgerLines: vi.fn<(...args: unknown[]) => Promise<void>>(async () => {}),
+}));
+vi.mock("@/lib/booking-ledger-confirmation-sync", () => confirmationLedger);
+vi.mock("@/lib/member-money/doors", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/member-money/doors")),
+  resolveBookingMoneyPostingContext: vi.fn(async () => ({ journal: "context" })),
+}));
+
 describe("Cron: Confirm Pending Bookings", () => {
   beforeEach(() => {
     vi.useFakeTimers();
@@ -1359,6 +1370,9 @@ describe("Cron: Confirm Pending Bookings", () => {
       where: { id: "b1", status: "PENDING" },
       data: { status: "PAID", nonMemberHoldUntil: null },
     });
+    // #4738: the claim is the booking's confirmation, posted once from the run's context.
+    expect(confirmationLedger.postStoredBookingConfirmationLedgerLines).toHaveBeenCalledTimes(1);
+    expect(confirmationLedger.postStoredBookingConfirmationLedgerLines.mock.calls[0]!.slice(1)).toEqual(["b1", { journal: "context" }]);
     expect(mockBookingUpdateMany).not.toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({ status: "CANCELLED" }),

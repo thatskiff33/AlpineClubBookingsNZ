@@ -150,7 +150,7 @@ const CREDENTIAL_WRITE_SITES: Record<string, string> = {
   // #4470: the push secret is stored inside the answer fence's transaction for
   // the connection the registration was sent on, so it is the in-transaction form.
   "src/lib/servernz-push-registration.ts::ensurePushRegistration#0":
-    "setIntegrationCredentialInTransaction system / any",
+    "setIntegrationCredentialInTransaction (forwarded) actor / any",
   "src/lib/google-config.ts::clearGoogleVerified#0":
     "deleteIntegrationCredential (forwarded) actor / any",
   "src/lib/google-config.ts::recordGoogleVerified#0":
@@ -237,6 +237,8 @@ const ACTOR_FORWARDED_SITES: Record<string, string> = {
     "the actor is this helper's own required parameter, forwarded from saveServerNzConnectionSettings's own required admin actor (the settings route's acting member) or from setServerNzApiKey's (the credentials route's) (#4470)",
   "src/lib/servernz-config.ts::setServerNzApiKey.saved#0":
     "the actor is this helper's own required parameter, supplied by its caller",
+  "src/lib/servernz-push-registration.ts::ensurePushRegistration#0":
+    "the actor is this function's own parameter: the mirror pass's `servernz-push-registration` system actor by default, or the administrator whose API key save registerAfterKeySave registers for (#4720 review)",
   "src/lib/stripe-config.ts::clearStripeWebhookVerified#0":
     "the actor is this helper's own required parameter: the admin credential route supplies the officer, and recordStripeWebhookVerified supplies its system actor when taking back a marker that raced a signing-secret swap",
   "src/lib/xero-token-store.ts::deleteXeroTokensInTransaction.storeRemoved#0":

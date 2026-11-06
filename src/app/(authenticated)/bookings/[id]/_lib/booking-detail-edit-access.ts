@@ -1,6 +1,10 @@
 import type { FeatureFlags } from "@/config/schema";
 import type { Instant } from "@/lib/club-time";
-import { getBookingEditPolicy, bookingStayHasStarted } from "@/lib/booking-edit-policy";
+import {
+  bookingStayHasStarted,
+  finishedStayEligibility,
+  getBookingEditPolicy,
+} from "@/lib/booking-edit-policy";
 import { isBookingFullyPaidForGuestNameEdits } from "@/lib/booking-modify";
 import {
   isBookingBedAllocationLocked,
@@ -127,6 +131,11 @@ export async function resolveBookingDetailEditAccess({
     viewerAuthorizationRole === "ADMIN" &&
     !isDeleted &&
     overridePolicy.canModify;
+  // #4533: an officer on a FINISHED stay may send a promo code as a correction
+  // request from Edit Booking — the one eligibility answer the request route and
+  // the executor read, so the panel never offers a request they would refuse.
+  const canRequestFinishedStayPromoCorrection =
+    canAdminOverride && finishedStayEligibility(booking, clubTodayDateOnly).eligible;
   const canEditRequestedRoom = isDeleted
     ? false
     : isAdmin
@@ -165,6 +174,7 @@ export async function resolveBookingDetailEditAccess({
     editPolicy,
     canModify,
     canAdminOverride,
+    canRequestFinishedStayPromoCorrection,
     canEditRequestedRoom,
     canEditNonMemberGuestNames,
     canFixNonMemberGuestNameTypos,

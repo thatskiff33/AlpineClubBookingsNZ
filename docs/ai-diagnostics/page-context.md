@@ -148,6 +148,7 @@ no filters, no record" and widens one field at a time.
 | `admin.stuck-states` | `/admin/stuck-states` | `support` | — |
 | `admin.setup` | `/admin/setup` | `support` | — |
 | `admin.setup-finance` | `/admin/setup/finance` | `finance` | — |
+| `admin.setup-booking-rules` | `/admin/setup/booking-rules` | `bookings` | — |
 | `admin.health` | `/admin/health` | `support` | — |
 
 Five drift guards keep this table honest, all in

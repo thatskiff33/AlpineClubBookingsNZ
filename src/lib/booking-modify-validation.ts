@@ -345,9 +345,15 @@ export const GUEST_MEMBER_LINK_IN_PROGRESS_MESSAGE =
  * #3750: what a finished-stay correction may carry. Exactly the structural parts
  * a LOCKED_PERIOD change request can record (`requestedChanges.requested`), plus
  * the three settlement answers the approving officer gives — and nothing a
- * request never asked for. A promo-code change, a member link, a rename, a credit
- * election or an other-lodge tick on a finished stay would be an officer edit
- * nobody requested, wearing the request's approval.
+ * request never asked for. A member link, a rename, a credit election or an
+ * other-lodge tick on a finished stay would be an officer edit nobody
+ * requested, wearing the request's approval.
+ *
+ * #4533: a promo code is admitted, in Edit Booking's own fields — a change
+ * request now records an officer's promo change (`requested.promoChange`), and
+ * the executor maps only that onto these keys. A removal (`removePromoCode`)
+ * and promo targets for added guests (`promoAddedGuestIndexes`) are not: the
+ * request's shape cannot express either.
  */
 const FINISHED_STAY_CORRECTION_INPUT_KEYS: ReadonlySet<string> = new Set<
   keyof BatchModifyInput
@@ -357,6 +363,9 @@ const FINISHED_STAY_CORRECTION_INPUT_KEYS: ReadonlySet<string> = new Set<
   "addGuests",
   "removeGuestIds",
   "guestStayRanges",
+  "promoCode",
+  "promoGuestIds",
+  "promoCodes",
   "settlementMethod",
   "confirmOverCapacity",
   "notifyMember",
@@ -367,7 +376,7 @@ const FINISHED_STAY_CORRECTION_INPUT_KEYS: ReadonlySet<string> = new Set<
 ]);
 
 export const FINISHED_STAY_CORRECTION_FIELD_MESSAGE =
-  "A finished-stay correction applies only the dates and guests its change request asked for.";
+  "A finished-stay correction applies only the dates, guests and promo code its change request asked for.";
 
 export const FINISHED_STAY_CORRECTION_FUTURE_NIGHT_MESSAGE =
   "A finished-stay correction can only change nights before today. Ask the member to make a new booking for later nights.";

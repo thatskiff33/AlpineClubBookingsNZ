@@ -197,6 +197,17 @@ function overbookedCapacity() {
   };
 }
 
+// #4738: a $0 confirmation's lines and R01 are proved against PostgreSQL
+// (zero-price-confirmation.realdb.test.ts); here only the call is observed.
+const confirmationLedger = vi.hoisted(() => ({
+  postStoredBookingConfirmationLedgerLines: vi.fn<(...args: unknown[]) => Promise<void>>(async () => {}),
+}));
+vi.mock("@/lib/booking-ledger-confirmation-sync", () => confirmationLedger);
+vi.mock("@/lib/member-money/doors", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/member-money/doors")),
+  resolveBookingMoneyPostingContext: vi.fn(async () => ({ journal: "context" })),
+}));
+
 describe("POST /api/admin/bookings/[id]/force-confirm", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -407,6 +418,8 @@ describe("POST /api/admin/bookings/[id]/force-confirm", () => {
         status: "PAYMENT_PENDING",
         unpaidFinishedStay: true,
       });
+      // #4738: a priced force-confirm is no confirmation yet; nothing posts.
+      expect(confirmationLedger.postStoredBookingConfirmationLedgerLines).not.toHaveBeenCalled();
       expect(mocks.tx.auditLog.create).toHaveBeenCalledWith({
         data: expect.objectContaining({
           details: expect.stringContaining("created an unpaid finished stay"),
@@ -466,6 +479,10 @@ describe("POST /api/admin/bookings/[id]/force-confirm", () => {
         status: "PAID",
         unpaidFinishedStay: false,
       });
+      // #4738: landing PAID is the booking's confirmation, posted once in the transaction.
+      expect(confirmationLedger.postStoredBookingConfirmationLedgerLines).toHaveBeenCalledTimes(1);
+      expect(confirmationLedger.postStoredBookingConfirmationLedgerLines.mock.calls[0]![0]).toBe(mocks.tx);
+      expect(confirmationLedger.postStoredBookingConfirmationLedgerLines.mock.calls[0]![2]).toEqual({ journal: "context" });
     });
 
     /*

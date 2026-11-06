@@ -16,6 +16,10 @@ import {
   stripeChargeCurrency,
 } from "@/lib/stripe-charge-currency";
 import { refundRequestStripeMetadata } from "@/lib/refund-slice-evidence";
+import {
+  assertAppPaymentIntentMetadata,
+  type AppPaymentIntentMetadata,
+} from "@/lib/stripe-app-intent-metadata";
 
 // DB-only credential resolution (#2082): the secret key lives in the encrypted
 // IntegrationCredential store, so client construction is now ASYNC. We memoize
@@ -68,18 +72,20 @@ export async function createPaymentIntent({
   /** The club's format: the charge currency and the below-minimum refusal. */
   format: ClubFormat;
   customerId?: string;
-  metadata?: Record<string, string>;
+  /** #4532: required, so every app intent is one the webhook recognises (`isAppCreatedPaymentIntent`). */
+  metadata: AppPaymentIntentMetadata;
   idempotencyKey?: string;
 }): Promise<Stripe.PaymentIntent> {
   const currency = stripeChargeCurrency(format);
   refuseBelowStripeMinimum(amountCents, format);
+  assertAppPaymentIntentMetadata(metadata);
   const stripe = await getStripe();
   return stripe.paymentIntents.create(
     {
       amount: amountCents,
       currency,
       customer: customerId,
-      metadata: metadata ?? {},
+      metadata: { ...metadata },
       automatic_payment_methods: { enabled: true },
     },
     idempotencyKey ? { idempotencyKey } : undefined,
@@ -126,11 +132,13 @@ export async function chargePaymentMethod({
   format: ClubFormat;
   customerId: string;
   paymentMethodId: string;
-  metadata?: Record<string, string>;
+  /** #4532: required, as for {@link createPaymentIntent}. */
+  metadata: AppPaymentIntentMetadata;
   idempotencyKey?: string;
 }): Promise<Stripe.PaymentIntent> {
   const currency = stripeChargeCurrency(format);
   refuseBelowStripeMinimum(amountCents, format);
+  assertAppPaymentIntentMetadata(metadata);
   const stripe = await getStripe();
   return stripe.paymentIntents.create(
     {
@@ -140,7 +148,7 @@ export async function chargePaymentMethod({
       payment_method: paymentMethodId,
       off_session: true,
       confirm: true,
-      metadata: metadata ?? {},
+      metadata: { ...metadata },
     },
     idempotencyKey ? { idempotencyKey } : undefined,
   );
@@ -272,7 +280,7 @@ export async function listRefundsForPaymentIntent(
   const stripe = await getStripe();
   const refunds: Stripe.Refund[] = [];
   const list = options
-    ? stripe.refunds.list({ payment_intent: paymentIntentId, limit: 100 }, { timeout: options.timeoutMs, maxNetworkRetries: 0 })
+    ? stripe.refunds.list({ payment_intent: paymentIntentId, limit: 100 }, boundedStripeRequest(options.timeoutMs))
     : stripe.refunds.list({ payment_intent: paymentIntentId, limit: 100 });
   if (options?.singlePage) {
     // INV-PAY-145: exactly one bounded request; an incomplete view cannot authorise a re-send.
@@ -297,12 +305,42 @@ export async function retrieveRefund(
 ): Promise<Stripe.Refund> {
   const stripe = await getStripe();
   if (!options) return stripe.refunds.retrieve(refundId);
-  return stripe.refunds.retrieve(refundId, {}, { timeout: options.timeoutMs, maxNetworkRetries: 0 });
+  return stripe.refunds.retrieve(refundId, {}, boundedStripeRequest(options.timeoutMs));
 }
 
 /**
  * Retrieve a PaymentIntent by ID.
  */
+/**
+ * #4532 (`INV-INT-032`): the Checkout Session that took a PaymentIntent, if
+ * any — a Stripe Payment Link pays through one — with its line items, or
+ * `null` when the intent was not taken through Checkout (a dashboard charge).
+ * Read for a payment the app did not create, to name what was bought. Bounded
+ * like a background read: a webhook must not wait on stripe-node's ~80s default.
+ */
+export async function findCheckoutSessionForPaymentIntent(
+  paymentIntentId: string,
+): Promise<Stripe.Checkout.Session | null> {
+  const stripe = await getStripe();
+  const requestOptions = boundedStripeRequest(10_000);
+  const sessions = await stripe.checkout.sessions.list(
+    { payment_intent: paymentIntentId, limit: 1, expand: ["data.line_items"] },
+    requestOptions,
+  );
+  const session = sessions.data[0];
+  if (!session) return null;
+  // The expand returns the first page (10). A longer Checkout is named in full
+  // up to one more page, and the description says when that is still not all.
+  if (session.line_items?.has_more) {
+    session.line_items = await stripe.checkout.sessions.listLineItems(
+      session.id,
+      { limit: 100 },
+      requestOptions,
+    );
+  }
+  return session;
+}
+
 export async function getPaymentIntent(
   paymentIntentId: string,
   /**
@@ -317,7 +355,7 @@ export async function getPaymentIntent(
   return stripe.paymentIntents.retrieve(
     paymentIntentId,
     options.expand ? { expand: options.expand } : {},
-    { timeout: options.timeoutMs, maxNetworkRetries: 0 }
+    boundedStripeRequest(options.timeoutMs)
   );
 }
 
@@ -382,6 +420,7 @@ export async function listRecentPaymentIntentsMatching({
   createdUntil,
   customerId,
   maxScanned = 1000,
+  timeoutMs,
 }: {
   matches: (intent: Stripe.PaymentIntent) => boolean;
   createdSince: Date;
@@ -390,12 +429,14 @@ export async function listRecentPaymentIntentsMatching({
   /** The customer this caller would mint for: scanned as well as the account. */
   customerId?: string;
   maxScanned?: number;
+  /** #4693: each page's own bound, with no retries (`boundedStripeRequest`); omitted, unchanged. */
+  timeoutMs?: number;
 }): Promise<{ intents: Stripe.PaymentIntent[]; complete: boolean }> {
   const stripe = await getStripe();
   const found = new Map<string, Stripe.PaymentIntent>();
   let complete = true;
   for (const customer of customerId ? [customerId, undefined] : [undefined]) {
-    const scan = await scanRecentPaymentIntents(stripe, { customer, createdSince, createdUntil, maxScanned }, (intent) => {
+    const scan = await scanRecentPaymentIntents(stripe, { customer, createdSince, createdUntil, maxScanned, timeoutMs }, (intent) => {
       if (matches(intent)) found.set(intent.id, intent);
       return false;
     });
@@ -418,23 +459,49 @@ async function scanRecentPaymentIntents(
     createdSince,
     createdUntil,
     maxScanned,
-  }: { customer: string | undefined; createdSince: Date; createdUntil?: Date; maxScanned: number },
+    timeoutMs,
+  }: { customer: string | undefined; createdSince: Date; createdUntil?: Date; maxScanned: number; timeoutMs?: number },
   visit: (intent: Stripe.PaymentIntent) => boolean,
 ): Promise<{ truncated: boolean }> {
   let scanned = 0;
-  for await (const intent of stripe.paymentIntents.list({
+  const params: Stripe.PaymentIntentListParams = {
     ...(customer ? { customer } : {}),
     created: {
       gte: Math.floor(createdSince.getTime() / 1000),
       ...(createdUntil ? { lte: Math.floor(createdUntil.getTime() / 1000) } : {}),
     },
     limit: 100,
-  })) {
+  };
+  const pages = timeoutMs ? stripe.paymentIntents.list(params, boundedStripeRequest(timeoutMs)) : stripe.paymentIntents.list(params);
+  for await (const intent of pages) {
     if (visit(intent)) return { truncated: false };
     scanned += 1;
     if (scanned >= maxScanned) return { truncated: true };
   }
   return { truncated: false };
+}
+
+/**
+ * #4693: add metadata keys to an intent that already exists - Stripe merges them
+ * into what it carries. Not part of any create request, so a key replayed later
+ * still sends the parameters it was first sent with (`planOrdinaryAskMint`).
+ */
+export async function stampPaymentIntentMetadata(
+  paymentIntentId: string,
+  metadata: Readonly<Record<string, string>>,
+  { timeoutMs }: { timeoutMs: number },
+): Promise<void> {
+  const stripe = await getStripe();
+  await stripe.paymentIntents.update(paymentIntentId, { metadata: { ...metadata } }, boundedStripeRequest(timeoutMs));
+}
+
+/**
+ * One request's bound, with no retries - the #3641 shape: the client sets no timeout
+ * (stripe-node's ~80s and its retries), so a caller that must not wait that long says so.
+ * The one spelling (#4693 review): every bounded read and write in this module takes it.
+ */
+function boundedStripeRequest(timeoutMs: number): Stripe.RequestOptions {
+  return { timeout: timeoutMs, maxNetworkRetries: 0 };
 }
 
 /**
@@ -496,20 +563,23 @@ export type PaymentIntentCancellationReason =
 
 export async function cancelPaymentIntentIfCancellableWithResult(
   paymentIntentId: string,
-  options?: { cancellationReason?: PaymentIntentCancellationReason }
+  /** #4693: `timeoutMs` bounds both requests, with no retries; omitted, unchanged. */
+  options?: { cancellationReason?: PaymentIntentCancellationReason; timeoutMs?: number }
 ): Promise<{ paymentIntent: Stripe.PaymentIntent; canceled: boolean }> {
-  const paymentIntent = await getPaymentIntent(paymentIntentId);
+  const timeoutMs = options?.timeoutMs;
+  const paymentIntent = timeoutMs ? await getPaymentIntent(paymentIntentId, { timeoutMs }) : await getPaymentIntent(paymentIntentId);
 
   if (!CANCELLABLE_PAYMENT_INTENT_STATUSES.has(paymentIntent.status)) {
     return { paymentIntent, canceled: false };
   }
 
   const stripe = await getStripe();
+  // The pre-#3220 callers all pass nothing and keep the reason they had.
+  const cancelParams = { cancellation_reason: options?.cancellationReason ?? "requested_by_customer" };
   return {
-    paymentIntent: await stripe.paymentIntents.cancel(paymentIntentId, {
-      // The pre-#3220 callers all pass nothing and keep the reason they had.
-      cancellation_reason: options?.cancellationReason ?? "requested_by_customer",
-    }),
+    paymentIntent: await (timeoutMs
+      ? stripe.paymentIntents.cancel(paymentIntentId, cancelParams, boundedStripeRequest(timeoutMs))
+      : stripe.paymentIntents.cancel(paymentIntentId, cancelParams)),
     canceled: true,
   };
 }

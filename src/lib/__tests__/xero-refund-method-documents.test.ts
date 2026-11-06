@@ -51,6 +51,8 @@ vi.mock("@/lib/prisma", () => {
   const prisma = {
     // #3548: a new refund note is recorded (payment, link, row) in one transaction.
     $transaction: (run: (tx: unknown) => unknown) => run(prisma),
+    // #4656: its first statement takes the Payment row (`lockPaymentForRefundedTotal`).
+    $executeRaw: async () => 1,
     payment: { findUnique: mocks.paymentFindUnique, update: mocks.paymentUpdate },
     booking: { findUnique: mocks.bookingFindUnique, findUniqueOrThrow: mocks.bookingFindUniqueOrThrow },
     bookingModification: {
@@ -64,11 +66,16 @@ vi.mock("@/lib/prisma", () => {
     },
     xeroSyncOperation: {
       update: mocks.xeroSyncOperationUpdate,
+      // #4426: a refund note's record claims its row; no row here is resolved by hand.
+      updateMany: async () => ({ count: 1 }),
       findUnique: async () => null,
       // #3791: the unconverged-deallocation read a review's note defers on.
       findFirst: (...a: unknown[]) => deallocationFence.findFirst(...a),
+      // #4688: no unrecorded refund note fences these payments.
+      findMany: async () => [],
     },
-    memberCredit: { updateMany: mocks.memberCreditUpdateMany },
+    // #4685: the stamp reads which credit holds the note before it writes.
+    memberCredit: { findFirst: vi.fn().mockResolvedValue(null), updateMany: mocks.memberCreditUpdateMany },
   };
   return { prisma };
 });
@@ -563,6 +570,45 @@ describe("the account-credit note (createUnappliedXeroCreditNote)", () => {
 
     expect(builtCreditNote().lineItems?.[0]?.description).toBe(
       "Account Credit - Booking cmbookin - booking change cmmodifi",
+    );
+  });
+});
+
+describe("#4685 (PR #4706 review): the account-credit note's executed payload keeps the credit it names", () => {
+  const xeroRefused = () =>
+    mocks.retryXeroWriteWithContactRepair.mockImplementation(async (options: { buildRequestPayload: (id: string) => unknown }) => {
+      options.buildRequestPayload("contact_1");
+      throw new Error("Xero 500: create refused");
+    });
+
+  it("MUTATION: a queued row's payload is rewritten before the Xero call with memberCreditId kept, so a retry after a failure stamps the same credit", async () => {
+    mocks.paymentFindUnique.mockResolvedValue(paymentRow(PaymentSource.INTERNET_BANKING));
+    xeroRefused();
+
+    await expect(
+      createUnappliedXeroCreditNote(PAYMENT_ID, 5000, CLUB_FORMAT_TEST, { syncOperation: xeroClaim("op_queued"), memberCreditId: "credit_1" }),
+    ).rejects.toThrow("create refused");
+
+    expect(mocks.xeroSyncOperationUpdate).toHaveBeenCalledWith({
+      where: { id: "op_queued" },
+      data: { requestPayload: expect.objectContaining({ queueType: "ACCOUNT_CREDIT_NOTE", refundAmountCents: 5000, memberCreditId: "credit_1" }) },
+    });
+    expect(mocks.failXeroSyncOperation).toHaveBeenCalled();
+    expect(mocks.memberCreditUpdateMany).not.toHaveBeenCalled();
+    // The contact-repair path rebuilds the stored payload from the same fields.
+    const call = mocks.retryXeroWriteWithContactRepair.mock.calls[0]![0] as { buildRequestPayload: (id: string) => Record<string, unknown> };
+    expect(call.buildRequestPayload("contact_repaired")).toMatchObject({ refundAmountCents: 5000, memberCreditId: "credit_1" });
+  });
+
+  it("MUTATION: an inline create records it on the row it starts", async () => {
+    mocks.paymentFindUnique.mockResolvedValue(paymentRow(PaymentSource.INTERNET_BANKING));
+    mocks.startXeroSyncOperation.mockResolvedValue({ id: "op_inline", startedAt: new Date() });
+    xeroRefused();
+
+    await expect(createUnappliedXeroCreditNote(PAYMENT_ID, 5000, CLUB_FORMAT_TEST, { memberCreditId: "credit_1" })).rejects.toThrow("create refused");
+
+    expect(mocks.startXeroSyncOperation).toHaveBeenCalledWith(
+      expect.objectContaining({ requestPayload: expect.objectContaining({ refundAmountCents: 5000, memberCreditId: "credit_1" }) }),
     );
   });
 });

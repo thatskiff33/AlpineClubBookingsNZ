@@ -1,5 +1,6 @@
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import { editRefundHandBackOccurrenceKey, isEditRefundHandBackTask } from "@/lib/manual-refund-task-settlement-rules";
 import { readModificationNoteWording, type ModificationNoteWording } from "@/lib/xero-refund-method";
 import { isUnpaidAskBilledOffsetNoteScope, queuedReviewTaskId } from "@/lib/xero-review-task-key";
 import { getJsonRecord } from "./amounts";
@@ -30,15 +31,34 @@ import {
  *   never carries this wording. One exception, decided per payment by the
  *   refunded-total repair (`invoiceCorrectionNoteIds`): against a bank receipt
  *   recorded at the stored figure the correction is still counted.
+ * - #4315 (`INV-PAY-117`): an edit's own note whose refund hand-back has
+ *   not completed. Allocating the note corrects the invoice; only completing
+ *   the task records the bank refund. A dismissed task moved no cash either.
  */
 export async function noCashModificationNoteIds(
   creditNoteIds: string[],
-  db: Pick<Prisma.TransactionClient, "xeroSyncOperation"> = prisma,
+  db: Pick<Prisma.TransactionClient, "xeroSyncOperation" | "manualRefundTask"> = prisma,
 ): Promise<Set<string>> {
   const operations = await readNoteOperations(creditNoteIds, db);
+  // #4315: an edit's invoice-applied note can arrive before its bank refund.
+  // Only the edit's own note answers its hand-back; a review on the same edit
+  // has its own settlement. Keep legacy notes without a hand-back unchanged.
+  const ownEditKeys = new Map(operations.flatMap((operation) =>
+    operation.localModel === "BookingModification" && operation.localId && !queuedReviewTaskId(operation)
+      ? [[operation, editRefundHandBackOccurrenceKey(operation.localId)] as const] : [],
+  ));
+  const unpaidTasks = ownEditKeys.size === 0 ? [] : await db.manualRefundTask.findMany({
+    where: {
+      occurrenceKey: { in: [...ownEditKeys.values()] },
+      status: { not: "COMPLETED" },
+    },
+    select: { kind: true, occurrenceKey: true },
+  });
+  const unpaidKeys = new Set(unpaidTasks.filter(isEditRefundHandBackTask).map((task) => task.occurrenceKey));
   return new Set(
     operations
-      .filter((operation) => noteCashOf(operation) !== "refund")
+      .filter((operation) => noteCashOf(operation) !== "refund" ||
+        unpaidKeys.has(ownEditKeys.get(operation) ?? ""))
       .map((operation) => operation.xeroObjectId)
       .filter((id): id is string => id !== null),
   );
@@ -115,6 +135,7 @@ const MODIFICATION_NOTE_MODELS = new Set(["BookingModification", "Booking"]);
 
 type NoteOperation = {
   xeroObjectId: string | null;
+  localId: string | null;
   localModel: string | null;
   queueType: string | null;
   requestPayload: unknown;
@@ -127,7 +148,7 @@ async function readNoteOperations(
   if (creditNoteIds.length === 0) return [];
   return db.xeroSyncOperation.findMany({
     where: { direction: "OUTBOUND", entityType: "CREDIT_NOTE", operationType: "CREATE", xeroObjectId: { in: creditNoteIds } },
-    select: { xeroObjectId: true, localModel: true, queueType: true, requestPayload: true },
+    select: { xeroObjectId: true, localId: true, localModel: true, queueType: true, requestPayload: true },
   });
 }
 

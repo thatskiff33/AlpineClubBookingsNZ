@@ -18,18 +18,7 @@ import logger from "@/lib/logger";
 import { requireAdmin } from "@/lib/session-guards";
 import { PUBLIC_LAYOUT_CACHE_TAGS } from "@/lib/public-layout-cache";
 import { revalidatePublicSite } from "@/lib/public-content-revalidation";
-
-/**
- * Prisma's transaction contention codes: P2028 (transaction API error, which
- * covers an exhausted `maxWait`/`timeout`) and P2034 (write conflict / deadlock,
- * retryable by definition).
- */
-const TRANSACTION_CONTENTION_CODES = new Set(["P2028", "P2034"]);
-
-function isTransactionContentionError(error: unknown): boolean {
-  const code = (error as { code?: unknown } | null)?.code;
-  return typeof code === "string" && TRANSACTION_CONTENTION_CODES.has(code);
-}
+import { isTransactionContention } from "@/lib/prisma-errors";
 
 export async function GET() {
   const guard = await requireAdmin({
@@ -168,8 +157,8 @@ export async function PUT(request: NextRequest) {
 
     // Config-transfer apply holds the ClubTheme row for its whole bundle
     // transaction, so a save landing mid-import legitimately exhausts the lock
-    // wait. That is a "try again", not a 500.
-    if (isTransactionContentionError(error)) {
+    // wait. That is a "try again", not a 500 (P2028 or P2034, `isTransactionContention`).
+    if (isTransactionContention(error)) {
       logger.warn(
         { err: error },
         "Site style save contended with another transaction",

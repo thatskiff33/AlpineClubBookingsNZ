@@ -17,7 +17,10 @@ import type { PrismaClient } from "@prisma/client";
 import { expect, vi } from "vitest";
 
 import type { CalendarDate } from "@/lib/club-time";
+import type { BookingJournalContext } from "@/lib/member-money/doors";
 import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
+import { releaseBookingJournalForTeardown } from "@/lib/__tests__/support/booking-financial-history-teardown";
+import { memberMoneyTestContext } from "@/lib/__tests__/support/member-money-fixtures";
 
 const D1 = new Date("2027-08-01T00:00:00.000Z");
 const D2 = new Date("2027-08-02T00:00:00.000Z");
@@ -107,14 +110,31 @@ async function createBooking(
   });
 }
 
-/** The ledger as it stood before #3580: no lines at all. */
+/**
+ * #4627: a history is a booking made before the journal too, so it is created
+ * before any R01 the shared database holds; otherwise the census would read a
+ * journal-era booking confirmed without one (`CONFIRMED_WITHOUT_R01`).
+ */
+async function madeBeforeTheJournal(prisma: PrismaClient, bookingId: string): Promise<void> {
+  await prisma.booking.update({ where: { id: bookingId }, data: { createdAt: new Date("2020-01-01T00:00:00.000Z") } });
+}
+
+/** The ledger as it stood before #3580: no lines at all, and (#4627) no journal batch bridging them. */
 export async function stripAllLines(prisma: PrismaClient, bookingId: string): Promise<void> {
+  await releaseBookingJournalForTeardown(prisma, [bookingId]);
+  await madeBeforeTheJournal(prisma, bookingId);
   await prisma.bookingLedgerLine.deleteMany({ where: { bookingId, reversesLineId: { not: null } } });
   await prisma.bookingLedgerLine.deleteMany({ where: { bookingId } });
 }
 
-/** An edit made before #3582 posted nothing: its own lines go, reversals first. */
+/**
+ * An edit made before #3582 posted nothing: its own lines go, reversals first.
+ * #4627: the booking's journal batches go too, so the journal never bridges a
+ * history the legacy ledger no longer holds; the booking reads as pre-M3b.
+ */
 async function stripModificationLines(prisma: PrismaClient, bookingId: string, modificationId: string): Promise<void> {
+  await releaseBookingJournalForTeardown(prisma, [bookingId]);
+  await madeBeforeTheJournal(prisma, bookingId);
   await prisma.bookingLedgerLine.deleteMany({ where: { bookingId, anchorKind: "MODIFICATION", anchorId: modificationId, reversesLineId: { not: null } } });
   await prisma.bookingLedgerLine.deleteMany({ where: { bookingId, anchorKind: "MODIFICATION", anchorId: modificationId } });
 }
@@ -148,7 +168,13 @@ async function postedEdit(
   names: HistoryNames,
   bookingId: string,
   modificationId: string,
-  edit: { removeGuestId?: string; reprice?: { guestId: string; stayDate: Date; priceCents: number }; changeFeeCents: number },
+  edit: {
+    removeGuestId?: string;
+    reprice?: { guestId: string; stayDate: Date; priceCents: number };
+    changeFeeCents: number;
+    /** #4627: the journal context the door resolved; an active test context unless given. */
+    journal?: BookingJournalContext;
+  },
 ): Promise<void> {
   tick();
   const before = await prisma.bookingGuest.findMany({
@@ -206,6 +232,7 @@ async function postedEdit(
     });
     await postModificationLedgerLines({
       store: tx,
+      journal: edit.journal ?? memberMoneyTestContext(),
       bookingId,
       lodgeId: booking.lodgeId,
       bookingModification: row,
@@ -432,7 +459,8 @@ export function historyPromoCodePrefix(prefix: string): string {
 /** Everything under `prefix`, fixtures included. */
 export async function cleanHistories(prisma: PrismaClient, prefix: string): Promise<void> {
   const names = historyNames(prefix);
-  const rows = await prisma.booking.findMany({ where: { id: { startsWith: prefix } }, select: { id: true } });
+  // #4628: a real create on the prefix's own lodge names its booking with a fresh id.
+  const rows = await prisma.booking.findMany({ where: { OR: [{ id: { startsWith: prefix } }, { lodgeId: names.lodgeId }] }, select: { id: true } });
   const ids = rows.map((row) => row.id);
   const where = { bookingId: { in: ids } };
   const payments = await prisma.payment.findMany({ where, select: { id: true } });
@@ -440,6 +468,7 @@ export async function cleanHistories(prisma: PrismaClient, prefix: string): Prom
   // #3854's group histories (`booking-ledger-group-history.ts`): their settlements and groups.
   const settlements = await prisma.groupBookingSettlement.findMany({ where: { id: { startsWith: prefix } }, select: { id: true } });
   const settlementIds = settlements.map((settlement) => settlement.id);
+  await releaseBookingJournalForTeardown(prisma, ids);
   await prisma.bookingLedgerLine.deleteMany({ where: { ...where, reversesLineId: { not: null } } });
   await prisma.bookingLedgerLine.deleteMany({ where });
   await prisma.xeroSyncOperation.deleteMany({ where: { localId: { in: [...ids, ...paymentIds, ...settlementIds] } } });

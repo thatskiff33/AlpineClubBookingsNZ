@@ -49,6 +49,7 @@
 import type { Invoice } from "xero-node";
 import type { Prisma, PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { releaseBookingJournalForTeardown } from "./support/booking-financial-history-teardown";
 
 import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 import { realElapsedMs } from "@/lib/__tests__/helpers/clock";
@@ -128,6 +129,8 @@ let ledgerStartSeconds = 0;
   { timeout: 60_000 },
   () => {
     async function deleteFixtures() {
+      // #4627: the doors post journal batches bridged to these lines; release them first.
+      await releaseBookingJournalForTeardown(prisma, [BOOKING_ID]);
       await prisma.bookingLedgerLine.deleteMany({ where: { bookingId: BOOKING_ID } });
       await prisma.bookingEvent.deleteMany({ where: { bookingId: BOOKING_ID } });
       await prisma.xeroObjectLink.deleteMany({ where: { OR: [{ localId: { in: [PAYMENT_ID, BOOKING_ID] } }, { xeroObjectId: INVOICE_ID }] } });

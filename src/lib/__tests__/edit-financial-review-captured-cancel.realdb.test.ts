@@ -23,6 +23,7 @@
  */
 import type { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { releaseBookingJournalForTeardown } from "./support/booking-financial-history-teardown";
 
 import { realElapsedMs } from "@/lib/__tests__/helpers/clock";
 
@@ -127,6 +128,8 @@ async function dialogSays(taskId: string, shareCents = 5_000) {
       await prisma.paymentRefund.deleteMany({ where: { paymentId: PAYMENT_ID } });
       await prisma.paymentRecoveryOperation.deleteMany({ where: { bookingId: BOOKING_ID } });
       await prisma.xeroSyncOperation.deleteMany({ where: { localId: { in: [MODIFICATION_ID, BOOKING_ID, PAYMENT_ID] } } });
+      // #4627: the doors post journal batches bridged to these lines; release them first.
+      await releaseBookingJournalForTeardown(prisma, [BOOKING_ID]);
       await prisma.bookingLedgerLine.deleteMany({ where: { bookingId: BOOKING_ID } });
       await prisma.memberCredit.deleteMany({ where: { memberId: MEMBER_ID } });
       await prisma.manualRefundTask.deleteMany({ where: { bookingId: BOOKING_ID } });
@@ -699,6 +702,8 @@ const FULL = { refundPercentage: 100, fixedFeeCents: 0 };
     const where = { bookingId: { in: ids } };
     const paymentIds = (await db.payment.findMany({ where, select: { id: true } })).map((row) => row.id);
     await db.xeroSyncOperation.deleteMany({ where: { localId: { in: [...ids, ...paymentIds, ...ids.map((id) => `${id}-mod`)] } } });
+    // #4627: the doors post journal batches bridged to these lines; release them first.
+    await releaseBookingJournalForTeardown(db, where.bookingId.in);
     await db.bookingLedgerLine.deleteMany({ where });
     await db.memberCredit.deleteMany({ where: { memberId: { in: ids.map(memberOf) } } });
     await db.manualRefundTask.deleteMany({ where });
@@ -981,7 +986,8 @@ const FULL = { refundPercentage: 100, fixedFeeCents: 0 };
     const cardLine = await reviewLine(card.id, card.tasks[0]!, "AGREED_ADJUSTMENT");
     await setLine(cardLine.id, cardLine.amountCents - 1);
     expect(await drifted(card.id)).toHaveLength(1);
-    expect((await says(card.id)).disagreements).toEqual(["PRICE 1"]);
+    // #4627: the journal still carries what was posted, so it disagrees by the same cent.
+    expect((await says(card.id)).disagreements).toEqual(["PRICE 1", "JOURNAL 1"]);
     // The card route's frozen refund, a cent short: the line it made is unexplained.
     const ccTask = built["cc-half"]!.tasks[0]!;
     await db.paymentRecoveryOperation.updateMany({ where: { bookingId: built["cc-half"]!.id, idempotencyKey: { contains: ccTask } }, data: { amountCents: 2_499 } });

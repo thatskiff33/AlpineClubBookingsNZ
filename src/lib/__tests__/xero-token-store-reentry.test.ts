@@ -17,13 +17,18 @@ const h = vi.hoisted(() => ({
     },
     integrationCredential: {
       findUnique: vi.fn(),
+      // #4456 review: stored data under a ring key, the same question the
+      // refresh pre-flight asks before a legacy save.
+      count: vi.fn(async () => 0),
     },
+    member: { count: vi.fn(async () => 0) },
+    twoFactorRecoveryCode: { count: vi.fn(async () => 0) },
   },
 }));
 
 vi.mock("@/lib/prisma", () => ({ prisma: h.prisma }));
 
-import { encryptCredential, INTEGRATION_CREDENTIAL_LABEL } from "@/lib/integration-crypto";
+import { encryptCredential } from "@/lib/integration-crypto";
 import {
   XERO_OAUTH_TOKEN_KEY,
   XERO_OAUTH_TOKEN_PROVIDER,
@@ -44,7 +49,6 @@ function storeRow(plaintext: string) {
     provider: XERO_OAUTH_TOKEN_PROVIDER,
     key: XERO_OAUTH_TOKEN_KEY,
     plaintext,
-    label: INTEGRATION_CREDENTIAL_LABEL,
   });
   return {
     id: "ic-1",
@@ -81,11 +85,14 @@ function connected() {
 beforeEach(() => {
   vi.clearAllMocks();
   process.env.AUTH_SECRET = STRONG_SECRET;
+  delete process.env.DATA_ENCRYPTION_KEYS;
+  h.prisma.integrationCredential.count.mockResolvedValue(0);
   h.prisma.xeroConnection.findUnique.mockResolvedValue(null);
   h.prisma.integrationCredential.findUnique.mockResolvedValue(null);
 });
 
 afterEach(() => {
+  delete process.env.DATA_ENCRYPTION_KEYS;
   if (originalAuthSecret === undefined) delete process.env.AUTH_SECRET;
   else process.env.AUTH_SECRET = originalAuthSecret;
 });
@@ -181,8 +188,38 @@ describe("getXeroConnectionStatus truthfulness (FIX-1, #3806)", () => {
     expect(await getXeroConnectionStatus()).toEqual({
       connected: false,
       needsReentry: true,
+      reentryCause: "tokens-unreadable",
       tenantId: "tenant-1",
       tokenExpiresAt: EXPIRES_AT,
     });
+  });
+
+  it("asks the refresh pre-flight's own question, and names why (#4456 review)", async () => {
+    connected();
+    h.prisma.integrationCredential.findUnique.mockResolvedValue(storeRow(TOKEN_SET));
+
+    // The ring was set and is gone: another credential is under a ring key, the
+    // Xero row is still legacy and reads, but no refresh could be stored.
+    h.prisma.integrationCredential.count.mockResolvedValue(1);
+    expect(await getXeroConnectionStatus()).toMatchObject({
+      connected: false,
+      needsReentry: true,
+      reentryCause: "data-key-ring-missing",
+    });
+    h.prisma.integrationCredential.count.mockResolvedValue(0);
+
+    process.env.DATA_ENCRYPTION_KEYS = "k1:not-a-key";
+    expect(await getXeroConnectionStatus()).toMatchObject({ connected: false, reentryCause: "data-key-ring-invalid" });
+    delete process.env.DATA_ENCRYPTION_KEYS;
+
+    process.env.AUTH_SECRET = "too-short";
+    expect(await getXeroConnectionStatus()).toMatchObject({ connected: false, reentryCause: "auth-secret-weak" });
+  });
+
+  it("propagates a database error from that question rather than guessing", async () => {
+    connected();
+    h.prisma.integrationCredential.findUnique.mockResolvedValue(storeRow(TOKEN_SET));
+    h.prisma.integrationCredential.count.mockRejectedValueOnce(new Error("database unavailable"));
+    await expect(getXeroConnectionStatus()).rejects.toThrow("database unavailable");
   });
 });

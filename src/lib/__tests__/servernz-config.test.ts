@@ -229,6 +229,10 @@ describe("the old server's push secret (#4470)", () => {
     expect(mocks.deleteIntegrationCredential).toHaveBeenCalledWith({
       tx: mocks.tx, provider: "servernz", key: "push_secret", actor, expect: { expect: "any" }, request,
     });
+    // The address it was issued for goes with it.
+    expect(mocks.deleteIntegrationCredential).toHaveBeenCalledWith({
+      tx: mocks.tx, provider: "servernz", key: "push_registered_url", actor, expect: { expect: "any" }, request,
+    });
     const removed = mocks.deleteIntegrationCredential.mock.invocationCallOrder[0];
     expect(mocks.setIntegrationCredential.mock.invocationCallOrder[0]).toBeLessThan(removed);
     expect(removed).toBeLessThan(mocks.forgetServerConnectionAnswers.mock.invocationCallOrder[0]);
@@ -243,17 +247,22 @@ describe("the old server's push secret (#4470)", () => {
   it("is removed under the provider namespace, by the forwarded admin actor", async () => {
     const actor = { kind: "admin", memberId: "member-1" } as const;
     await withServerNzConnectionTransaction((tx) => clearServerNzPushSecret(actor, tx));
-    expect(mocks.deleteIntegrationCredential).toHaveBeenCalledWith({
-      tx: mocks.tx,
-      provider: "servernz",
-      key: "push_secret",
-      actor,
-      expect: { expect: "any" },
-      request: undefined,
-    });
+    expect(mocks.deleteIntegrationCredential.mock.calls.map(([args]) => args)).toEqual(
+      ["push_secret", "push_registered_url"].map((key) => ({
+        tx: mocks.tx,
+        provider: "servernz",
+        key,
+        actor,
+        expect: { expect: "any" },
+        request: undefined,
+      })),
+    );
     expect(SERVERNZ_CREDENTIAL_KEYS.pushSecret).toBe("push_secret");
-    // Never admin-writable: the server issues it.
+    expect(SERVERNZ_CREDENTIAL_KEYS.pushRegisteredUrl).toBe("push_registered_url");
+    // Never admin-writable: the server issues the secret, and the address is
+    // the one it was issued for.
     expect(SERVERNZ_WRITABLE_CREDENTIAL_KEYS).not.toContain("push_secret");
+    expect(SERVERNZ_WRITABLE_CREDENTIAL_KEYS).not.toContain("push_registered_url");
   });
 });
 

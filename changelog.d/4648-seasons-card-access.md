@@ -1,0 +1,1 @@
+- Fix: the lodge page offers the Seasons & Rates card only to admins who can open the fee console (bookings or finance), and reads the season count only for those the seasons API answers (bookings), so a lodge-only admin no longer sees a card that refuses them, and an unread count no longer says "No seasons yet" (#4643).

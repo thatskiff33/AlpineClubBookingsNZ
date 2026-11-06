@@ -51,13 +51,12 @@ import {
   type BookingLedgerPosting,
 } from "@/lib/booking-ledger-write";
 import logger from "@/lib/logger";
+import { postBookingLedgerJournal, type BookingJournalContext } from "@/lib/member-money/doors";
 import { organiserChildCommittedRefundCents } from "@/lib/organiser-child-refund";
 import {
   groupSettlementChildWorthCents,
   type GroupSettlementChildWorth,
 } from "@/lib/group-settlement-invoice-binding";
-
-type SettleStore = Pick<Prisma.TransactionClient, "booking" | "bookingLedgerLine">;
 
 /**
  * The settle's half: each paid child's confirmation lines (once per booking)
@@ -67,10 +66,13 @@ type SettleStore = Pick<Prisma.TransactionClient, "booking" | "bookingLedgerLine
  */
 export async function postGroupSettlementLedgerLines({
   store,
+  journal,
   settlement,
   children,
 }: {
-  store: SettleStore;
+  store: Prisma.TransactionClient;
+  /** #4627: the group settle's journal context, resolved before its transaction. */
+  journal: BookingJournalContext;
   settlement: GroupSettlementForPosting;
   children: ReadonlyArray<{ id: string; lodgeId: string } & GroupSettlementChildWorth>;
 }): Promise<number> {
@@ -127,9 +129,17 @@ export async function postGroupSettlementLedgerLines({
   // (an unpriced or malformed strand) never drops the others' lines.
   const rows: ReturnType<typeof buildBookingLedgerRows> = [];
   const failedBookingIds: string[] = [];
+  // #4627 (R01): each newly confirmed child, with its confirmation keys, posted
+  // into the journal after the write: R01 even for a child whose lines are $0
+  // or could not be built, so its later money posts.
+  const confirmations = new Map<string, { bookingId: string; lodgeId: string; postingKeys: string[] }>(
+    bookings.filter((booking) => unconfirmed.has(booking.id))
+      .map((booking) => [booking.id, { bookingId: booking.id, lodgeId: booking.lodgeId, postingKeys: [] }]),
+  );
   for (const booking of bookings) {
     try {
       const postings: BookingLedgerPosting[] = [];
+      let confirmationKeys: string[] = [];
       if (unconfirmed.has(booking.id)) {
         const plan = planConfirmationChargeLines(booking);
         if (!plan.reconciles) {
@@ -139,9 +149,11 @@ export async function postGroupSettlementLedgerLines({
           );
         }
         postings.push(...plan.postings);
+        confirmationKeys = plan.postings.map((posting) => posting.postingKey);
       }
       postings.push(...shares.filter((share) => share.bookingId === booking.id));
       rows.push(...buildBookingLedgerRows(postings));
+      confirmations.get(booking.id)?.postingKeys.push(...confirmationKeys);
     } catch (error) {
       logger.error({ err: error, settlementId: settlement.id, bookingId: booking.id }, "Booking ledger: could not build a group-settled child's lines (#3854)");
       failedBookingIds.push(booking.id);
@@ -153,7 +165,11 @@ export async function postGroupSettlementLedgerLines({
       "Booking ledger: a group settlement posted no lines for these children; the settle stands and the gap is the census's to report (#3854)",
     );
   }
-  return writeBookingLedgerRows(store, rows);
+  const written = await writeBookingLedgerRows(store, rows);
+  for (const confirmation of confirmations.values()) {
+    await postBookingLedgerJournal(store, journal, { ...confirmation, event: { kind: "confirmation" } });
+  }
+  return written;
 }
 
 /** The refund a frozen organiser-cancel plan hands back on one child, once its share is on the ledger. */
@@ -265,6 +281,8 @@ export async function postGroupCancelChildLedgerLines(
     mirrorPlan: boolean;
     refundForChild: number;
     plannedRefundCents: number;
+    /** #4627: the organiser cancel's journal context, resolved before its transaction. */
+    journal: BookingJournalContext;
   },
 ): Promise<void> {
   const { child, settlement } = input;
@@ -288,6 +306,7 @@ export async function postGroupCancelChildLedgerLines(
     : 0;
   await postCancellationLedgerLines({
     store: tx,
+    journal: input.journal,
     bookingId: child.id,
     lodgeId: child.lodgeId,
     keptCents,

@@ -77,6 +77,13 @@ const cancellationLedger = vi.hoisted(() => ({
   postCancellationLedgerLines: vi.fn<(input: unknown) => Promise<void>>(async () => {}),
 }));
 vi.mock("@/lib/booking-ledger-cancellation-sync", () => cancellationLedger);
+// #4627: the journal half of the confirmation runs on PostgreSQL
+// (`booking-ledger-journal.realdb.test.ts`); here, that the settle hands it the lines.
+const journalDoors = vi.hoisted(() => ({ postBookingLedgerJournal: vi.fn(async () => null) }));
+vi.mock("@/lib/member-money/doors", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/member-money/doors")),
+  postBookingLedgerJournal: journalDoors.postBookingLedgerJournal,
+}));
 
 // #4300 (`INV-PAY-138`): the settle's superseded-capture refusal reads the
 // superseded machinery's rows, which this suite's transaction double does not
@@ -386,6 +393,12 @@ describe("markBookingPaymentSucceeded", () => {
     // card payment) cannot post its charge lines twice.
     expect(rows.every((row) => typeof row.postingKey === "string" && row.postingKey !== "")).toBe(true);
     expect(mocks.ledgerCreateMany.mock.calls[0]?.[0]).toMatchObject({ skipDuplicates: true });
+    // #4627 (R01): the same keys go to the journal, in the settle's transaction, with its pre-resolved context.
+    expect(journalDoors.postBookingLedgerJournal).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ policyVersion: "booking-ledger-bridge-1" }),
+      expect.objectContaining({ bookingId: "booking-1", event: { kind: "confirmation" }, postingKeys: rows.map((row) => row.postingKey) }),
+    );
   });
 
   it("posts nothing when the booking's confirmation is already on the ledger (#3595)", async () => {

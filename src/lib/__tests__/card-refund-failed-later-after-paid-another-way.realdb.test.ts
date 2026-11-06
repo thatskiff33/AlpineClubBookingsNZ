@@ -37,6 +37,7 @@
  */
 import type Stripe from "stripe";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi, type MockInstance } from "vitest";
+import { releaseBookingJournalForTeardown } from "./support/booking-financial-history-teardown";
 
 import { assertSafeRaceDbUrl } from "./support/race-db-url";
 import { resetStripeRaceHooks, stripeRaceHooks } from "./support/stripe-race-double";
@@ -116,6 +117,8 @@ const B: Charge = { id: TXN_B, intent: INTENT_B, charge: CHARGE_B, cents: CHARGE
       await prisma.bookingEvent.deleteMany({ where: { bookingId: BOOKING_ID } });
       await prisma.xeroSyncOperation.deleteMany({ where: { localId: { in: [PAYMENT_ID, BOOKING_ID] } } });
       await prisma.xeroObjectLink.deleteMany({ where: { localId: { in: [PAYMENT_ID, BOOKING_ID] } } });
+      // #4627: the doors post journal batches bridged to these lines; release them first.
+      await releaseBookingJournalForTeardown(prisma, [BOOKING_ID]);
       await prisma.bookingLedgerLine.deleteMany({ where: { bookingId: BOOKING_ID } });
       await prisma.manualRefundTask.deleteMany({ where: { bookingId: BOOKING_ID } });
       await prisma.paymentRecoveryOperation.deleteMany({ where: { bookingId: BOOKING_ID } });

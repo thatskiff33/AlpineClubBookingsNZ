@@ -1936,11 +1936,19 @@ group settlement's group key do too (`INV-MONEY-043`): a booking with money is n
 Database CHECKs, deferred triggers and INSERT/SELECT-only application grants
 carry `INV-MONEY-041`, `INV-MONEY-042` and `INV-OPS-016`. No legacy source is made
 mandatory yet. `src/lib/member-money/index.ts` exposes the account registry, the
-operator verifier and, since M2 (#4514), two read-only references the deletion
-guards consult (`INV-MONEY-043`); implementation lives in `internal/`. No posting
-API is enabled. Later writer commands must implement the
-existing advisory tiers (`INV-LOCK-001`–`003`); M1 adds no advisory key, lifecycle
-participant, outbox or provider call. The verifier reads a repeatable-read,
+operator verifier, since M2 (#4514) two read-only references the deletion guards
+consult (`INV-MONEY-043`), since M3a (#4626) the posting command
+`postMemberMoneyEvent` with its context, keys and tax split, and since M3b
+(#4627) `journalComponentOfLegacyLine`, `bookingChargeIdentity`,
+`readBookingJournalCharges` and `bookingJournalInactiveReason`; implementation
+lives in `internal/`. The booking-ledger chokepoints (confirmation, modification
+and review close, cancellation, the group settle and the back-post) and member
+merge post only through the server-only `src/lib/member-money/doors.ts`
+(`INV-MONEY-044`), as, since M3c (#4628), the bank-transfer binding doors and
+the pending-charge syncs do through `booking-ledger-pending-charge.ts`
+(`INV-MONEY-045`); `member-money-journal-inert-census.test.ts` admits exactly
+those callers. Writers implement the existing advisory tiers
+(`INV-LOCK-001`–`003`); the journal adds no advisory key, outbox or provider call. The verifier reads a repeatable-read,
 read-only snapshot. See [deployment grants](../DEPLOYMENT.md#member-money-journal-grants-m1)
 and [lodge scoping](multi-lodge/lodge-scoping-contract.md#member-money-journal-4513).
 
@@ -3150,8 +3158,15 @@ refuses atomically a ledger row already naming another edit
 (`AdditionalAskAttributionConflictError`), so one intent is never recorded as
 two edits' asks; the runner ends its recovery on that refusal at once and alerts
 an officer, since a retry would meet the same row (#4081). No such write lowers
-a captured row's status (`INV-PAY-132`). It skips itself if a later edit already minted a newer
-additional intent, and settles the Xero half two ways: it points any
+a captured row's status (`INV-PAY-132`). A later edit's newer additional intent does not settle
+it (#4015): that ask was sized off a `Payment` that never showed this failed mint, so the replay
+carries its unpaid balance and supersedes it; only a frozen figure, with no edit to re-derive
+from, still skips itself. Before minting it reads Stripe for that later ask, outside any
+transaction. While Stripe is taking money on it (succeeded, processing, or a status this code does
+not recognise) the replay waits with its attempt handed back, for up to seven days from when that
+payment began or the recovery was queued, whichever is later, then stops and alerts an officer. An ask still unpaid at Stripe, one mid-3DS included, is
+superseded, and a confirmation landing after the read takes the superseded-capture refund
+(`docs/STATE_MACHINES.md`, "One ask at a time"). It settles the Xero half two ways: it points any
 supplementary invoice operation still WAITING_PAYMENT at the recovered intent,
 and it raises the supplementary invoice outright for the edits that queued none
 — the inline dispatch skips that queue while no intent exists, so those edits
@@ -3384,7 +3399,7 @@ flowchart TD
 | `xero-reconciliation-report` | Daily | Send the Xero reconciliation report |
 | `xero-credit-sync-check` | Daily | Reconcile BookingApp's stamped applied credit against Xero's live invoice allocations and warn admins on drift with the exact amount (#2501); read-only, self-throttled |
 | `finance-daily-sync` | Daily when the finance dashboard module is enabled | Refresh finance report/invoice/balance snapshots from the operational Xero connection |
-| `data-pruning` | Daily | Prune expired tokens/logs and run audit retention |
+| `data-pruning` | Daily | Prune expired tokens/logs and idle login-throttle rows, and run audit retention |
 | `draft-cleanup` | Daily | Delete expired draft bookings; leave out and report any that financial history names (`INV-MONEY-043`) |
 | `member-guest-consent-expiry` | Daily at 04:30 NZT when the member-guests module is enabled | Expire lapsed member-guest consent requests, release the bed, and settle the reduction as account credit to the booking owner; rows the shared removal path refuses are counted separately for the admin exception list |
 | `pending-deadline-alerts` | Daily | Alert admins about pending bookings approaching deadline |

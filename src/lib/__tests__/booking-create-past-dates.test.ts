@@ -8,6 +8,9 @@
  * OverCapacityConfirmationRequiredError keeps working with `instanceof`.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { postBindingCharge } from "@/lib/booking-ledger-pending-charge";
+import { postStoredBookingConfirmationLedgerLines } from "@/lib/booking-ledger-confirmation-sync";
+import { memberMoneyTestContext } from "./support/member-money-fixtures";
 import { bookingGuestDietarySeeding } from "@/lib/member-dietary-booking-writes";
 import { AgeTier, BookingStatus } from "@prisma/client";
 import {
@@ -37,6 +40,17 @@ const h = vi.hoisted(() => ({
   sendAdminNewBookingAlert: vi.fn(),
 }));
 
+// #4628: a bank-transfer booking's pending journal charge is proved against PostgreSQL
+// (`booking-ledger-pending-charge.realdb.test.ts`); this fake store does not carry the journal.
+vi.mock("@/lib/booking-ledger-pending-charge", () => ({
+  postBindingCharge: vi.fn(async () => {}),
+  postPendingModificationCharge: vi.fn(async () => {}),
+  postPendingCancellationCharge: vi.fn(async () => {}),
+}));
+// #4660: likewise a $0 create's confirmation lines and R01 (`booking-ledger-journal.realdb.test.ts`).
+vi.mock("@/lib/booking-ledger-confirmation-sync", () => ({
+  postStoredBookingConfirmationLedgerLines: vi.fn(async () => {}),
+}));
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     $transaction: (fn: (tx: unknown) => Promise<unknown>) => h.transaction(fn),
@@ -264,8 +278,9 @@ function baseInput(
     guestDietarySeeding: bookingGuestDietarySeeding(false),
     todayAtClub: FIXTURE_CLUB_DAY,
     format: CLUB_FORMAT_TEST,
+    journal: memberMoneyTestContext(),
     ...overrides,
-  };
+  } as Parameters<typeof createConfirmedBooking>[0];
 }
 
 function auditMetadata(action: string): Record<string, unknown> | undefined {
@@ -433,6 +448,22 @@ describe("createConfirmedBooking retroactive behaviour (#1695)", () => {
     await createConfirmedBooking(baseInput([guest(true, "Alice")]));
 
     expect(h.sendBookingConfirmedEmail).toHaveBeenCalledTimes(1);
+  });
+
+  it("posts a $0 create's confirmation once, inside the create, from the caller's journal context (#4660)", async () => {
+    h.seasonFindMany.mockResolvedValue(seasonWithRate(0));
+    const journal = memberMoneyTestContext();
+
+    const outcome = await createConfirmedBooking(baseInput([guest(true, "Alice")], { journal }));
+
+    expect(outcome).toMatchObject({ type: "created", isZeroDollarConfirmed: true });
+    expect(postStoredBookingConfirmationLedgerLines).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(postStoredBookingConfirmationLedgerLines).mock.calls[0]).toEqual([tx, expect.any(String), journal]);
+  });
+
+  it("posts no confirmation for a create that is still owed money (#4660)", async () => {
+    await createConfirmedBooking(baseInput([guest(true, "Alice")]));
+    expect(postStoredBookingConfirmationLedgerLines).not.toHaveBeenCalled();
   });
 
   const pendingInput = () =>
@@ -687,6 +718,13 @@ describe("createConfirmedBooking carries the on-behalf email choice to its invoi
     expect(enqueuedInvoiceOptions()).toMatchObject({
       invoiceEmailDelivery: XERO_INVOICE_EMAIL_SEND,
     });
+  });
+
+  it("binds the charge in the journal inside the create, from its caller's context (#4628)", async () => {
+    const journal = memberMoneyTestContext();
+    await createConfirmedBooking(internetBanking({ journal }));
+    expect(postBindingCharge).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(postBindingCharge).mock.calls[0]![1]).toBe(journal);
   });
 
   it("records a send when no choice was made at all", async () => {

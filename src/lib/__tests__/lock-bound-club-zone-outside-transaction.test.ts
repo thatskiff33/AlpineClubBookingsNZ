@@ -363,6 +363,10 @@ const LOCK_BOUND_INDIRECT_RESOLVERS = [
   "assertCheckInClearsXeroLockDate(",
   "assertProposedCheckInClearsXeroLockDate(",
   "assertProposedDateEditClearsXeroLockDate(",
+  // #4627 (Ledger M3b): the journal's posting context reads the club zone (unless
+  // handed one), the club format and the tax setting through the module client.
+  "resolveBookingMoneyPostingContext(",
+  "resolveBookingDoorClock(",
 ] as const;
 
 /**
