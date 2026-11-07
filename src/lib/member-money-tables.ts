@@ -7,4 +7,6 @@ export const MEMBER_MONEY_RELATIONS = [
   "MemberMoneyApplication",
   "MemberMoneySourceLink",
   "MemberMoneySourcePosting",
+  "MemberMoneyRefundReservation",
+  "MemberMoneyRefundReservationRelease",
 ] as const;

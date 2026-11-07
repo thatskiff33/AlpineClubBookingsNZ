@@ -106,8 +106,9 @@ export interface MemberMoneyScratchDatabase {
 
 /**
  * A disposable database on the race server holding the journal migration, the
- * stub parents it references (`Lodge`, `Booking`, `BookingLedgerLine`,
- * `AuditLog`) and the least-privilege roles provisioning creates. The full
+ * M4a reservation migration, the stub parents they reference (`Lodge`,
+ * `Booking`, `BookingLedgerLine`, `AuditLog`, `Payment`, `PaymentTransaction`,
+ * `PaymentRefund`) and the least-privilege roles provisioning creates. The full
  * migration history is rehearsed in `database-roles.realdb.test.ts`.
  */
 export async function createMemberMoneyScratchDatabase(
@@ -137,7 +138,11 @@ export async function createMemberMoneyScratchDatabase(
       CREATE TABLE "Booking" (id text PRIMARY KEY, "lodgeId" text REFERENCES "Lodge"(id));
       CREATE TABLE "BookingLedgerLine" (id text PRIMARY KEY);
       CREATE TABLE "AuditLog" (id text PRIMARY KEY, "ipAddress" text, "userAgent" text)`);
+    await owner.query(`CREATE TABLE "Payment" (id text PRIMARY KEY, "bookingId" text UNIQUE REFERENCES "Booking"(id));
+      CREATE TABLE "PaymentTransaction" (id text PRIMARY KEY, "paymentId" text REFERENCES "Payment"(id), "stripePaymentIntentId" text);
+      CREATE TABLE "PaymentRefund" (id text PRIMARY KEY, "stripeRefundId" text UNIQUE, "stripePaymentIntentId" text, "paymentId" text REFERENCES "Payment"(id))`);
     await owner.query(readFileSync(MEMBER_MONEY_JOURNAL_MIGRATION, "utf8"));
+    await owner.query(readFileSync("prisma/migrations/20261210080000_member_money_applications/migration.sql", "utf8"));
     const statements = buildDatabaseRolesSql({
       databaseName: name,
       migrator: { roleName: roles.migrator, password: "m".repeat(28) },

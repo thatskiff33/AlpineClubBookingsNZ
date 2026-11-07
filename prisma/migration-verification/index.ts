@@ -26,6 +26,7 @@ import addLodgeSchoolHutLeaderKinds from "./20261114020000_add_lodge_school_hut_
 import addPaymentTransactionInsertionSeq from "./20261117010000_add_payment_transaction_insertion_seq";
 import correctStarterPrivacyAuditRetention from "./20261119010000_correct_starter_privacy_audit_retention";
 import addXeroConnection from "./20261124010000_add_xero_connection";
+import memberMoneyApplications from "./20261210080000_member_money_applications";
 import memberMoneyJournal from "./20261127010000_member_money_journal";
 import type { DataMigrationVerification } from "./types";
 
@@ -76,4 +77,5 @@ export const DATA_MIGRATION_VERIFICATIONS: DataMigrationVerification[] = [
   correctStarterPrivacyAuditRetention,
   addXeroConnection,
   memberMoneyJournal,
+  memberMoneyApplications,
 ];

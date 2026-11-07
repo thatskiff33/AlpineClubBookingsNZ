@@ -1479,6 +1479,13 @@ const ROW_LOCK_SITE_INVENTORY: Record<string, number> = {
   // merge's owner move is its counterpart. See docs/CONCURRENCY_AND_LOCKING.md ->
   // "The M3b booking doors and member merge's journal transfer".
   "src/lib/member-money/internal/booking-posting.ts": 1,
+  // #4691 (Ledger M4a): an application batch, a refund reservation and a release
+  // take the booking's Payment row (`SELECT 1 … FOR NO KEY UPDATE`) before they
+  // read caps. No advisory key. A caller that already holds the row adds nothing.
+  // Charges and reversals that apply nothing do not take it, so the M3 doors
+  // gain no edge. See docs/CONCURRENCY_AND_LOCKING.md ->
+  // "Member-money applications and refund reservations".
+  "src/lib/member-money/internal/application-read.ts": 1,
   // #4627: an edit review's closure takes its booking row straight after its claim,
   // before any credit write (giveBackCancelledShareCredit, applyLocalRefundAllocation,
   // an account-credit mint: each a KEY SHARE on the owner's Member row), so neither

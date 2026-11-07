@@ -1289,6 +1289,17 @@ jobs:
           RUN_CONCURRENCY_RACE_TESTS: "1"
         run: pnpm exec vitest run src/lib/__tests__/member-money-posting.realdb.test.ts
 
+      # #4691 (Ledger M4a): applications, caps and refund reservations against
+      # real PostgreSQL, as the INSERT/SELECT-only application role. The caps,
+      # the Payment-row queue and the database backstops are PostgreSQL
+      # behaviour. Same shape as the step above. It describe.skip's itself
+      # without the env vars, so this step MUST stay wired —
+      # `review-findings-contracts.test.ts` fails if it goes missing.
+      - name: Prove the member-money application engine against dedicated PostgreSQL
+        env:
+          RUN_CONCURRENCY_RACE_TESTS: "1"
+        run: pnpm exec vitest run src/lib/__tests__/member-money-applications.realdb.test.ts
+
       # E8 (#1934): real-Postgres behavior of the member-grouping cutover
       # migration (legacy-rule deactivation, shape-dedupe, backfill, mode seed,
       # idempotent re-run). Self-provisions a throwaway schema (needs PG 15+
