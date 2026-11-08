@@ -5918,6 +5918,10 @@ Each decision the hook acts on is read under the Payment row, never before it:
   and no merged-debtor balance, the hook returns after those reads, adding no
   per-line work under its caller's locks.
 
+The Xero receipt posts after the delivery's body completes, never from a
+`finally`, so a body that fails in SQL surfaces its own error. It collects only
+the PRIMARY rows that delivery moved to captured, and only on the paid arm.
+
 Counterpart reconciliation at M4b's base: #4776 (engine caps and Payment lock),
 #4749, #4727, #4714, #4706, #4698, #4700, #4694, #4689 and #4684. Their capture,
 recovery claims, exact markers and outbox/provider behaviour remain unchanged.

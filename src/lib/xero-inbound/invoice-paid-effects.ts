@@ -453,9 +453,10 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
     let cashSettlementMarker = null as CashSettlementMarker | null;
     let correctionNotesToRecount = [] as AppliedCreditNote[];
     const outcome = await prisma.$transaction(async (tx) => {
-      let receiptWritten = false;
-      let collectReceipt = false;
-      try {
+      // #4516 (M4b): the PRIMARY rows this delivery moved to captured, the only receipts its hook may collect.
+      // Null until the receipt is written: an arm that returns before it posts nothing.
+      let receiptRowIds = null as string[] | null;
+      const settled = await (async () => {
       cashSettlementMarker = null;
       correctionNotesToRecount = [];
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
@@ -591,16 +592,19 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
         });
       };
 
+      const receiptRows = {
+        paymentId: fresh.id,
+        source: PaymentSource.INTERNET_BANKING,
+        kind: PaymentTransactionKind.PRIMARY,
+      };
+      // Refunded rows keep their refund bookkeeping on replays (#1357).
+      const refunded = [PaymentStatus.REFUNDED, PaymentStatus.PARTIALLY_REFUNDED];
+      const newlyReceived = (await tx.paymentTransaction.findMany({
+        where: { ...receiptRows, status: { notIn: [...refunded, PaymentStatus.SUCCEEDED] } },
+        select: { id: true },
+      })).map((row) => row.id);
       const transactionUpdate = await tx.paymentTransaction.updateMany({
-        where: {
-          paymentId: fresh.id,
-          source: PaymentSource.INTERNET_BANKING,
-          kind: PaymentTransactionKind.PRIMARY,
-          // Refunded rows keep their refund bookkeeping on replays (#1357).
-          status: {
-            notIn: [PaymentStatus.REFUNDED, PaymentStatus.PARTIALLY_REFUNDED],
-          },
-        },
+        where: { ...receiptRows, status: { notIn: refunded } },
         data: {
           status: PaymentStatus.SUCCEEDED,
           xeroInvoiceId: invoiceId,
@@ -621,7 +625,7 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
           select: { id: true },
         });
         if (!existingPrimary) {
-          await tx.paymentTransaction.create({
+          const created = await tx.paymentTransaction.create({
             data: {
               paymentId: fresh.id,
               kind: PaymentTransactionKind.PRIMARY,
@@ -635,6 +639,7 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
               reason: receiptFigure.primaryRowWrite.reason ?? IB_RECEIPT_KEPT_REASON,
             },
           });
+          newlyReceived.push(created.id);
         }
       }
 
@@ -667,8 +672,7 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
       // ledger line at all. A manually settled payment never reaches this
       // point (it returned above), so the row is a genuine bank receipt.
       await syncBookingLedgerSettlements({ paymentId: fresh.id, store: tx });
-      receiptWritten = true;
-      collectReceipt = secondInstrument === null;
+      receiptRowIds = newlyReceived;
 
       const paymentWasPending = fresh.status !== PaymentStatus.SUCCEEDED;
       // A PAID invoice event must never un-refund money (#1357, the #1353
@@ -1415,13 +1419,15 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
         paymentWasPending,
         staleCreditElectionCents,
       };
-      } finally {
-        if (receiptWritten) {
-          const rows = await tx.paymentTransaction.findMany({ where: { paymentId: payment.id, source: "INTERNET_BANKING", kind: "PRIMARY", xeroInvoiceId: invoiceId }, select: { id: true } });
-          await postBookingReceipts(tx, journal!, { paymentId: payment.id,
-            decision: { transactionIds: rows.map((r) => r.id), collect: collectReceipt, effectiveDate: receiptDate ?? undefined } });
-        }
+      })();
+      // Only on normal completion, after the paid arm's confirmation has posted R01; a throw above rolls back
+      // with its own error. Only the paid arm collects: a second instrument (either check), a cancelled booking,
+      // a capacity failure or an already-paid booking keeps the full receipt unapplied.
+      if (receiptRowIds !== null) {
+        await postBookingReceipts(tx, journal!, { paymentId: payment.id,
+          decision: { transactionIds: receiptRowIds, collect: settled.type === "paid", effectiveDate: receiptDate ?? undefined } });
       }
+      return settled;
     });
 
     if (outcome.type === "missing") {

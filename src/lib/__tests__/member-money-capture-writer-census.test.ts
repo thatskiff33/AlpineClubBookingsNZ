@@ -54,9 +54,9 @@ const REVIEWED: Record<string, string> = {
   "src/lib/saved-card-charge-settle.ts|settleSavedCardChargeAttemptUnderLock|updateMany|computed,ledgerStatus|1": "W2: outer settleSavedCardChargeAttempt posts newly captured money deferred to the settlement",
   "src/lib/stripe-webhook-service.ts|handleCancelledBookingPaymentSucceeded|upsertPaymentIntentTransaction|PaymentStatus.SUCCEEDED|1": "W4: held receipt in the new Payment-row transaction",
   "src/lib/xero-booking-invoices.ts|createXeroInvoiceForBooking|updateMany|dynamic-or-no-status|1": "invoice identifiers only; never changes status or amount",
-  "src/lib/xero-inbound/invoice-paid-effects.ts|syncInternetBankingPaymentsForPaidInvoice|create|PaymentStatus.SUCCEEDED|1": "R07: finally posts after the writer and confirmation; second instrument is held",
-  "src/lib/xero-inbound/invoice-paid-effects.ts|syncInternetBankingPaymentsForPaidInvoice|updateMany|PaymentStatus.SUCCEEDED,computed|1": "R07: finally posts after the writer and confirmation; second instrument is held",
-  "src/lib/xero-inbound/invoice-paid-effects.ts|syncInternetBankingPaymentsForPaidInvoice|updateMany|dynamic-or-no-status|1": "R07: finally posts after the writer and confirmation; second instrument is held",
+  "src/lib/xero-inbound/invoice-paid-effects.ts|syncInternetBankingPaymentsForPaidInvoice|create|PaymentStatus.SUCCEEDED|1": "R07: posts on normal completion only; collects just the rows this delivery received, and only when it paid",
+  "src/lib/xero-inbound/invoice-paid-effects.ts|syncInternetBankingPaymentsForPaidInvoice|updateMany|PaymentStatus.SUCCEEDED,computed|1": "R07: posts on normal completion only; collects just the rows this delivery received, and only when it paid",
+  "src/lib/xero-inbound/invoice-paid-effects.ts|syncInternetBankingPaymentsForPaidInvoice|updateMany|dynamic-or-no-status|1": "R07: posts on normal completion only; collects just the rows this delivery received, and only when it paid",
 };
 
 describe("M4b capture-writer census", () => {

@@ -31,6 +31,19 @@ import { assertSafeRaceDbUrl } from "./support/race-db-url";
 
 vi.mock("@/lib/auth", async () => (await import("./support/race-session-double")).raceAuthDouble());
 
+/** #4516 review item 4: a seam in the Xero paid arm, after its receipt is written, where a case makes the body fail in SQL. */
+const confirmationSeam = vi.hoisted(() => ({ fail: false }));
+vi.mock("@/lib/booking-ledger-confirmation-sync", async (importOriginal) => {
+  const original = (await importOriginal()) as typeof import("@/lib/booking-ledger-confirmation-sync");
+  return { ...original, postStoredBookingConfirmationLedgerLines: async (...args: Parameters<typeof original.postStoredBookingConfirmationLedgerLines>) => {
+    if (confirmationSeam.fail) {
+      confirmationSeam.fail = false;
+      await args[0].$executeRaw`SELECT 1 / 0`;
+    }
+    return original.postStoredBookingConfirmationLedgerLines(...args);
+  } };
+});
+
 const RUN = process.env.RUN_CONCURRENCY_RACE_TESTS === "1";
 const RACE_DB_URL = process.env.CONCURRENCY_RACE_DATABASE_URL ?? "";
 
@@ -52,6 +65,27 @@ let priorModules: { xeroIntegration: boolean; internetBankingPayments: boolean }
 let sequence = 0;
 
 const nextId = () => `${PREFIX}b${++sequence}`;
+
+/** What the booking's receipts have collected (#4516). */
+async function collected(bookingId: string): Promise<number> {
+  const { readMemberMoneyApplicationState } = await import("@/lib/member-money/internal/application-read");
+  const { memberMoneyApplicationTotals } = await import("@/lib/member-money/internal/application-state");
+  return prisma.$transaction(async (tx) => memberMoneyApplicationTotals(await readMemberMoneyApplicationState(tx, bookingId)).collected);
+}
+
+/** A bank-transfer booking bound to its Xero invoice, and that invoice as Xero reports it PAID in full. */
+async function invoicedBooking(id: string) {
+  const invoiceId = `${id}-invoice`;
+  await internetBankingCreate(id, invoiceId);
+  await prisma.paymentTransaction.updateMany({ where: { paymentId: `${id}-payment` }, data: { xeroInvoiceId: invoiceId, xeroInvoiceNumber: `INV-${id}` } });
+  await prisma.xeroObjectLink.create({
+    data: { localModel: "Payment", localId: `${id}-payment`, xeroObjectType: "INVOICE", xeroObjectId: invoiceId, role: "PRIMARY_INVOICE", active: true },
+  });
+  const { syncInternetBankingPaymentsForPaidInvoice } = await import("@/lib/xero-inbound/invoice-paid-effects");
+  const invoice = { invoiceID: invoiceId, invoiceNumber: `INV-${id}`, status: "PAID", amountPaid: PRICE / 100, payments: [{ paymentID: `${id}-xpay`, amount: PRICE / 100, status: "AUTHORISED" }] };
+  const paid = invoice as unknown as Parameters<typeof syncInternetBankingPaymentsForPaidInvoice>[0];
+  return () => syncInternetBankingPaymentsForPaidInvoice(paid, [`${id}-payment`], CLUB_FORMAT_TEST);
+}
 
 /** The journal events a booking's charge posted, oldest first. */
 async function events(bookingId: string) {
@@ -305,22 +339,37 @@ async function expectLinkedToBinding(bookingId: string, lineCount: number): Prom
 
   it("the Xero receipt confirms the booking, links its lines to the binding charge, and replays as nothing", async () => {
     const id = nextId();
-    const invoiceId = `${id}-invoice`;
-    await internetBankingCreate(id, invoiceId);
-    await prisma.paymentTransaction.updateMany({ where: { paymentId: `${id}-payment` }, data: { xeroInvoiceId: invoiceId, xeroInvoiceNumber: `INV-${id}` } });
-    await prisma.xeroObjectLink.create({
-      data: { localModel: "Payment", localId: `${id}-payment`, xeroObjectType: "INVOICE", xeroObjectId: invoiceId, role: "PRIMARY_INVOICE", active: true },
-    });
-    const { syncInternetBankingPaymentsForPaidInvoice } = await import("@/lib/xero-inbound/invoice-paid-effects");
-    const invoice = { invoiceID: invoiceId, invoiceNumber: `INV-${id}`, status: "PAID", amountPaid: PRICE / 100, payments: [{ paymentID: `${id}-xpay`, amount: PRICE / 100, status: "AUTHORISED" }] };
-    const paid = invoice as unknown as Parameters<typeof syncInternetBankingPaymentsForPaidInvoice>[0];
-    await syncInternetBankingPaymentsForPaidInvoice(paid, [`${id}-payment`], CLUB_FORMAT_TEST);
-    await syncInternetBankingPaymentsForPaidInvoice(paid, [`${id}-payment`], CLUB_FORMAT_TEST);
+    const deliver = await invoicedBooking(id);
+    await deliver();
+    expect(await collected(id)).toBe(PRICE);
+    await deliver();
+    expect(await collected(id)).toBe(PRICE);
     expect(await prisma.booking.findUniqueOrThrow({ where: { id }, select: { status: true } })).toEqual({ status: "PAID" });
     expect(await events(id)).toEqual([{ eventKey: `booking-charge:${id}`, kind: "CHARGE", sourceVersion: "binding" }]);
     await expectLinkedToBinding(id, 4);
     expect(await receivable(id)).toBe(0); // M4b: the receipt clears the receivable; the charge census below still checks the full charge.
     await expectJudged(id, "JOURNAL", PRICE);
+  });
+
+  it("a Xero receipt on a booking the paid arm does not settle posts its cash in full and collects nothing (#4516 review item 4)", async () => {
+    const id = nextId();
+    const deliver = await invoicedBooking(id);
+    // Settled before the bank cash arrived, by nothing the second-instrument test names: the alreadyPaid arm.
+    await prisma.booking.update({ where: { id }, data: { status: "PAID" } });
+    await deliver();
+    const bank = await prisma.memberMoneyLine.aggregate({ where: { bookingId: id, account: "BANK", side: "DEBIT" }, _sum: { amountCents: true } });
+    expect(bank._sum.amountCents).toBe(PRICE);
+    expect(await collected(id)).toBe(0);
+  });
+
+  it("a Xero delivery whose body fails in SQL after the receipt is written surfaces that error, and posts nothing (#4516 review item 4)", async () => {
+    const id = nextId();
+    const deliver = await invoicedBooking(id);
+    confirmationSeam.fail = true;
+    await expect(deliver()).rejects.toThrow(/division by zero/);
+    expect(confirmationSeam.fail).toBe(false);
+    expect(await prisma.booking.findUniqueOrThrow({ where: { id }, select: { status: true } })).toEqual({ status: "PAYMENT_PENDING" });
+    expect(await prisma.memberMoneyLine.count({ where: { bookingId: id, account: "BANK" } })).toBe(0);
   });
 
   it("a booking never bound posts nothing before settlement: a card booking's edit is not a sale", async () => {
