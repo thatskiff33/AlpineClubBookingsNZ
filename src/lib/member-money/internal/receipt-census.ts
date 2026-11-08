@@ -3,7 +3,7 @@ import { ORGANISER_SHARE_RECEIPT_REASON } from "../../organiser-extra-state";
 import { isCapturedTransactionStatus } from "../../payment-transaction-status";
 import { memberMoneyApplicationTotals } from "./application-state";
 import { readMemberMoneyApplicationState } from "./application-read";
-import { readBookingLiveChargeCents } from "./booking-journal-read";
+import { bookingOwnerDebtor, readBookingLiveChargeCents } from "./booking-journal-read";
 import { bookingReceiptEventKey, RECEIPT_CASH_ACCOUNTS, RECEIPT_LINE_KINDS, readMergedDebtorBalances } from "./booking-receipts";
 
 export type ReceiptCensusClass = "UNBRIDGED_SETTLEMENT_LINE" | "RECEIPT_WITHOUT_EVENT" | "RECEIPT_AMOUNT_DRIFT"
@@ -53,6 +53,8 @@ export async function readBookingReceiptCensus(tx: Db, paymentId: string): Promi
   const unapplied = state.sources.filter((s) => !s.reversed && s.account === "MEMBER_RECEIVABLE" && s.side === "CREDIT" && s.sourceKind === "PAYMENT")
     .reduce((n, s) => n + Math.max(0, s.amountCents - (totals.sources.get(s.id) ?? 0)), 0);
   if (unapplied > 0 && charge > totals.collected) add("UNAPPLIED_RECEIPT_ON_OPEN_CHARGE", bookingId, Math.min(unapplied, charge - totals.collected));
-  for (const [memberId, cents] of await readMergedDebtorBalances(tx, bookingId, payment.booking.memberId)) if (cents !== 0) add("MERGED_DEBTOR_BALANCE", memberId, cents);
+  const owner = bookingOwnerDebtor(payment.booking);
+  const balances = await readMergedDebtorBalances(tx, bookingId, owner.kind === "MEMBER" ? owner.memberId : null);
+  for (const [memberId, cents] of balances) if (cents !== 0) add("MERGED_DEBTOR_BALANCE", memberId, cents);
   return findings;
 }
