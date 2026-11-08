@@ -88,6 +88,30 @@ export function memberMoneyApplicationTotals(state: ApplicationState): Applicati
   return totals;
 }
 
+/** Net collect still standing on one obligation, reversals included. */
+export function netCollectOnObligation(state: ApplicationState, obligationId: string): number {
+  const sources = new Map(state.sources.map((source) => [source.id, source]));
+  const obligations = new Map(state.obligations.map((obligation) => [obligation.id, obligation]));
+  const applications = new Map(state.applications.map((application) => [application.id, application]));
+  const sign = (id: string, visited = new Set<string>()): number => {
+    if (visited.has(id)) throw new Error("Cyclic member-money application reversal");
+    visited.add(id);
+    const application = applications.get(id);
+    if (!application) throw new Error(`Missing original member-money application ${id}`);
+    return application.reversesApplicationId === null ? 1 : -sign(application.reversesApplicationId, visited);
+  };
+  const obligation = obligations.get(obligationId);
+  if (!obligation) return 0;
+  let net = 0;
+  for (const application of state.applications) {
+    if (application.obligationId !== obligationId) continue;
+    const source = sources.get(application.sourceLineId);
+    if (!source || applicationRoleOf(source, obligation) !== "collect") continue;
+    net += application.amountCents * sign(application.id);
+  }
+  return net;
+}
+
 export function memberMoneyConservationProblems(state: ApplicationState): { identity: string; problem: string }[] {
   const totals = memberMoneyApplicationTotals(state);
   const problems: { identity: string; problem: string }[] = [];

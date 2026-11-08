@@ -19,7 +19,9 @@ import {
 } from "@prisma/client";
 import type Stripe from "stripe";
 
+import type { ClubTimeZone } from "@/lib/club-time";
 import logger from "@/lib/logger";
+import { postBookingReceipts, type BookingJournalContext } from "@/lib/member-money/doors";
 import { prisma } from "./prisma";
 import { stripeReferenceId } from "./stripe-references";
 import { isPrismaUniqueConstraintError } from "./prisma-errors";
@@ -213,8 +215,12 @@ export async function settleSavedCardChargeAttempt(params: {
    * by intent id as for any other delivery.
    */
   adopting?: boolean;
+  /** Resolved before the caller's transaction (`INV-LOCK-004`). */
+  journal: BookingJournalContext;
+  zone: ClubTimeZone;
+  capturedAt?: Date | null;
 }): Promise<SettledSavedCardChargeAttempt> {
-  const { attemptRowId, paymentId, paymentIntent } = params;
+  const { attemptRowId, paymentId, paymentIntent, journal, zone } = params;
   const store = params.store ?? prisma;
   const ledgerStatus = ledgerStatusForPaymentIntent(paymentIntent.status);
   const paymentMethodId = stripeReferenceId(paymentIntent.payment_method);
@@ -228,7 +234,9 @@ export async function settleSavedCardChargeAttempt(params: {
   const settle = () =>
     withStoreTransaction(store, async (db) => {
       await lockPaymentForRefundedTotal(db, paymentId);
-      return settleSavedCardChargeAttemptUnderLock(db, { attemptRowId, paymentId, paymentIntent, answer });
+      return settleSavedCardChargeAttemptUnderLock(db, {
+        attemptRowId, paymentId, paymentIntent, answer, journal, zone, capturedAt: params.capturedAt ?? null,
+      });
     });
   if (!isRootPrismaClient(store)) return settle();
   try {
@@ -249,11 +257,17 @@ async function settleSavedCardChargeAttemptUnderLock(
     paymentId,
     paymentIntent,
     answer,
+    journal,
+    zone,
+    capturedAt,
   }: {
     attemptRowId: string;
     paymentId: string;
     paymentIntent: SavedCardChargeAnswer;
     answer: { ledgerStatus: PaymentStatus; amountCents: number; paymentMethodId: string | null; adopting: boolean };
+    journal: BookingJournalContext;
+    zone: ClubTimeZone;
+    capturedAt: Date | null;
   },
 ): Promise<SettledSavedCardChargeAttempt> {
   const { ledgerStatus, paymentMethodId } = answer;
@@ -306,6 +320,14 @@ async function settleSavedCardChargeAttemptUnderLock(
   }
   await reconcilePaymentAggregates({ paymentId, store });
   const newlyCaptured = ledgerStatus === PaymentStatus.SUCCEEDED && before?.status !== PaymentStatus.SUCCEEDED;
+  if (newlyCaptured) {
+    const payment = await store.payment.findUnique({ where: { id: paymentId }, select: { bookingId: true } });
+    if (payment) {
+      await postBookingReceipts(store, journal, {
+        bookingId: payment.bookingId, zone, apply: "hold", focusPaymentIntentIds: [paymentIntent.id], capturedAt,
+      });
+    }
+  }
   return { transactionId: attemptRowId, ledgerStatus, keptExistingRow: false, moved: true, newlyCaptured };
 }
 
@@ -416,6 +438,9 @@ export async function adoptSavedCardChargeAttemptForIntent(params: {
   /** #4646: the intent's metadata, read only when the event carries no saved-card key. */
   metadata: Readonly<Record<string, string | undefined>> | null | undefined;
   store?: PaymentStore;
+  journal: BookingJournalContext;
+  zone: ClubTimeZone;
+  capturedAt?: Date | null;
 }): Promise<SettledSavedCardChargeAttempt | null> {
   const { paymentIntent, bookingId, idempotencyKey } = params;
   const store = params.store ?? prisma;
@@ -458,5 +483,8 @@ export async function adoptSavedCardChargeAttemptForIntent(params: {
     paymentIntent,
     store,
     adopting: true,
+    journal: params.journal,
+    zone: params.zone,
+    capturedAt: params.capturedAt ?? null,
   });
 }

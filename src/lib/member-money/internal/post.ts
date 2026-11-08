@@ -67,6 +67,19 @@ export function resolveMemberMoneyPostingContext(input: {
 }
 
 /**
+ * The same context on another source instant. Receipts are amount legs, so the
+ * tax treatment already resolved is reused: only a fresh revenue split reads it
+ * again. The civil date still comes from the club-time kernel.
+ */
+export function redateMemberMoneyPostingContext(
+  context: MemberMoneyPostingContext,
+  effectiveAt: Instant,
+  zone: ClubTimeZone,
+): MemberMoneyPostingContext {
+  return { ...context, effectiveAt, effectiveDate: clubCalendarDateOf(effectiveAt, zone) } as MemberMoneyPostingContext;
+}
+
+/**
  * THE posting command (#4626, Ledger M3a). Builds one complete batch from the
  * plan, refusing an ill-shaped or unbalanced plan before any write, then writes
  * it inside the caller's transaction. An identical replay of the event key

@@ -89,7 +89,8 @@ import {
 import { postCancellationLedgerLines } from "@/lib/booking-ledger-cancellation-sync";
 import { syncBookingLedgerSettlements } from "@/lib/booking-ledger-settlement-sync";
 import { postBookingConfirmationLedgerLines } from "@/lib/booking-ledger-confirmation-sync";
-import { resolveBookingMoneyPostingContext, type BookingJournalContext } from "@/lib/member-money/doors";
+import { postBookingReceipts, resolveBookingDoorClock, type BookingJournalContext } from "@/lib/member-money/doors";
+import type { ClubTimeZone } from "@/lib/club-time";
 import type { ClubFormat } from "@/lib/club-format";
 
 type ReconciliationBooking = Prisma.BookingGetPayload<{
@@ -193,6 +194,8 @@ type StripeSettlementSource = {
   format: ClubFormat;
   /** #4285 review: the caller wrote this capture SUCCEEDED just before (`newlyCaptured`), so it is not a replay. */
   recordedByCaller?: boolean;
+  /** When Stripe took the money, if the caller already holds the intent. */
+  capturedAt?: Date | null;
 };
 
 /**
@@ -696,6 +699,7 @@ async function settleBookingPaymentInTransaction(
   settlement: BookingSettlementSource,
   /** #4627: the journal's posting context, resolved before the caller's transaction (`INV-LOCK-004`). */
   journal: BookingJournalContext,
+  zone: ClubTimeZone,
 ) {
     // Two-tier lock protocol (#1881). A Stripe capture does BOTH tiers of work:
     // it flips the booking's status + moves money (the booking-status/money
@@ -829,6 +833,14 @@ async function settleBookingPaymentInTransaction(
     });
     // #4217 (`INV-LOCK-002`): the Payment row before any ledger row (the lookup below may backfill).
     await lockPaymentForRefundedTotal(tx, payment.id);
+    const postReceipts = (apply: "collect" | "hold", receiptAt?: Date) => postBookingReceipts(tx, journal, {
+      bookingId: booking.id,
+      zone,
+      apply,
+      ...(settlement.kind === "stripe"
+        ? { focusPaymentIntentIds: [settlement.paymentIntentId], capturedAt: settlement.capturedAt ?? null }
+        : { focusKinds: ["CASH_RECORDED" as const], receiptAt: receiptAt ?? null, actorMemberId: settlement.actingAdminMemberId }),
+    });
 
     let refundedIntentHistory = false;
     // #4285 review: the arriving capture's row was already SUCCEEDED (a replay) and not by this caller.
@@ -999,6 +1011,7 @@ async function settleBookingPaymentInTransaction(
             allocationPlan: verdict.refundPlan,
             store: tx,
           });
+          await postReceipts("hold");
           return {
             outcome: "duplicate_capture" as const,
             booking,
@@ -1011,6 +1024,7 @@ async function settleBookingPaymentInTransaction(
         }
         if (verdict.verdict === "keep_unrecorded_settler") {
           if (verdict.reason === "new-capture") await recordNewCaptureAlertOwed(tx, { bookingId: booking.id, paymentIntentId: settlement.paymentIntentId });
+          await postReceipts("hold");
           return {
             outcome: "duplicate_capture_kept" as const,
             booking,
@@ -1026,6 +1040,7 @@ async function settleBookingPaymentInTransaction(
       // A refunded-history redelivery on an already-PAID or COMPLETED booking
       // (e.g. a Stripe event replay after a partial goodwill refund) stays benign —
       // and, with the guard above, no longer clobbers the refund marker.
+      await postReceipts("hold");
       return {
         outcome: "already_paid" as const,
         booking,
@@ -1050,6 +1065,7 @@ async function settleBookingPaymentInTransaction(
       settlement.kind === "stripe" &&
       (await supersededMachineryOwnsCapture(tx, { paymentId: payment.id, paymentIntentId: settlement.paymentIntentId }))
     ) {
+      await postReceipts("hold");
       return { outcome: "superseded_capture" as const, booking, paymentId: payment.id, bumpedBookingIds: [] as string[] };
     }
 
@@ -1218,6 +1234,7 @@ async function settleBookingPaymentInTransaction(
       // comes after the lodge and credit-ledger keys (`INV-LOCK-002`). Drained by
       // `markBookingPaymentSucceeded`, which settles coverage on every outcome.
       await reconcileHostingReviewForSystemCancellation(booking.id, tx);
+      await postReceipts("hold");
 
       return {
         outcome: "capacity_failed" as const,
@@ -1587,6 +1604,7 @@ async function settleBookingPaymentInTransaction(
         );
       }
 
+      await postReceipts("collect", manualSettledAt);
       return {
         outcome: "manual_paid" as const,
         booking,
@@ -1606,6 +1624,7 @@ async function settleBookingPaymentInTransaction(
       };
     }
 
+    await postReceipts("collect");
     return {
       outcome: "paid" as const,
       booking,
@@ -1634,7 +1653,7 @@ export async function markBookingPaymentSucceeded({
   /** #4285 review: the caller just wrote this capture SUCCEEDED itself (`SettledSavedCardChargeAttempt.newlyCaptured`). */
   recordedByCaller?: boolean;
 }): Promise<MarkBookingPaymentSucceededResult> {
-  const journal = await resolveBookingMoneyPostingContext();
+  const { zone, journal } = await resolveBookingDoorClock();
   const reconciliation = await prisma.$transaction((tx) =>
     settleBookingPaymentInTransaction(tx, bookingId, {
       kind: "stripe",
@@ -1643,7 +1662,7 @@ export async function markBookingPaymentSucceeded({
       paymentMethodId,
       format,
       recordedByCaller,
-    }, journal)
+    }, journal, zone)
   );
 
 
@@ -2184,7 +2203,7 @@ export async function markBookingPaymentManuallySettled({
   /** The club's format (#3565), resolved before any transaction by the caller. */
   format: ClubFormat;
 }): Promise<ManualBookingSettlementResult> {
-  const journal = await resolveBookingMoneyPostingContext();
+  const { zone, journal } = await resolveBookingDoorClock();
   const reconciliation = await prisma.$transaction((tx) =>
     settleBookingPaymentInTransaction(tx, bookingId, {
       kind: "manual",
@@ -2193,7 +2212,7 @@ export async function markBookingPaymentManuallySettled({
       expectedAmountCents,
       notifyMember,
       additionalCoverage,
-    }, journal)
+    }, journal, zone)
   );
 
 
@@ -2375,6 +2394,7 @@ export async function reverseManualBookingPayment({
   actingAdminMemberId: string;
   note: string | null;
 }): Promise<ManualBookingReversalResult> {
+  const { zone, journal } = await resolveBookingDoorClock();
   const reversal = await prisma.$transaction(async (tx) => {
     // Same two-tier ordering as the settlement body: global lock(1) first (this
     // moves booking status and money), then the per-lodge capacity lock,
@@ -2671,6 +2691,9 @@ export async function reverseManualBookingPayment({
     // posts their reversals — new lines, the originals untouched, each keyed by
     // the line it reverses so a replay posts nothing (`INV-MONEY-033`).
     await syncBookingLedgerSettlements({ paymentId: payment.id, store: tx });
+    await postBookingReceipts(tx, journal, {
+      bookingId: booking.id, zone, apply: "hold", reverseRetired: true, actorMemberId: actingAdminMemberId,
+    });
 
     // Releases the claimed beds only when the restore lands on
     // PAYMENT_PENDING; a restored CONFIRMED booking deliberately keeps holding

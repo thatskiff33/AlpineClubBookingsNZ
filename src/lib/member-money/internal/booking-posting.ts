@@ -11,6 +11,8 @@ import {
   type BookingChargeEvent,
   type LegacyChargeLine,
 } from "./booking-charges";
+import { readMemberMoneyApplicationState } from "./application-read";
+import { netCollectOnObligation } from "./application-state";
 import { readBookingLiveComponents } from "./booking-journal-read";
 import {
   planPendingBookingCharge,
@@ -18,9 +20,9 @@ import {
   type PendingChargeEvent,
   type StandingChargeLine,
 } from "./booking-pending-charges";
-import { memberMoneyEventKeys, type MemberMoneyEventKey } from "./keys";
+import { memberMoneyApplicationKeys, memberMoneyEventKeys, type MemberMoneyEventKey } from "./keys";
 import { isBookingJournalInactive, type BookingJournalContext } from "./journal-activity";
-import { MemberMoneyPlanError, type MemberMoneyDebtor, type MemberMoneyPostingContext } from "./plan";
+import { MemberMoneyPlanError, type MemberMoneyDebtor, type MemberMoneyPlan, type MemberMoneyPostingContext, type MemberMoneySource } from "./plan";
 import { postMemberMoneyEvent } from "./post";
 import { linkLegacyLinesToPostedBatch, type MemberMoneyPosting } from "./store";
 
@@ -285,6 +287,7 @@ export async function postMemberMergeTransfer(
   // transfer could never be recovered); reaching here inactive is a caller bug.
   if (isBookingJournalInactive(context)) throw new Error("A member merge cannot post its D4 transfer while the journal is inactive (#4627).");
   if (await eventPosted(tx, memberMoneyEventKeys.merge(input.fromMemberId, input.toMemberId))) return null;
+  const snapshots = await memberMergeSnapshotSources(tx, input.fromMemberId);
   const sums = await tx.memberMoneyLine.groupBy({
     by: ["bookingId", "lodgeId", "side"],
     where: { account: "MEMBER_RECEIVABLE", debtorKind: "MEMBER", memberId: input.fromMemberId },
@@ -298,6 +301,82 @@ export async function postMemberMergeTransfer(
     entry.cents += (row.side === "DEBIT" ? 1 : -1) * (row._sum.amountCents ?? 0);
     balances.set(key, entry);
   }
-  const plan = planMemberMergeTransfer({ ...input, balances: [...balances.values()] });
-  return plan ? postMemberMoneyEvent(tx, context, plan) : null;
+  const planned = planMemberMergeTransfer({ ...input, balances: [...balances.values()] });
+  const plan: MemberMoneyPlan = planned
+    ? { ...planned, additionalSources: snapshots }
+    : {
+      kind: "ZERO",
+      eventKey: memberMoneyEventKeys.merge(input.fromMemberId, input.toMemberId),
+      origin: "OFFICER",
+      source: { kind: "OFFICER_FACT", id: input.fromMemberId, version: `merge:${input.toMemberId}` },
+      additionalSources: snapshots,
+      reason: "Duplicate member merged: no open receivable to transfer (D4)",
+      actorMemberId: input.actorMemberId,
+    };
+  const posted = await postMemberMoneyEvent(tx, context, plan);
+  await postChargeSuccessors(tx, context, input);
+  return posted;
+}
+
+/** Events already naming the merged-away member, plus a marker that the snapshot was taken. */
+async function memberMergeSnapshotSources(tx: Db, fromMemberId: string): Promise<MemberMoneySource[]> {
+  const lines = await tx.memberMoneyLine.findMany({
+    where: { debtorKind: "MEMBER", memberId: fromMemberId },
+    select: { journal: { select: { event: { select: { eventKey: true } } } } },
+  });
+  const keys = [...new Set(lines.map((line) => line.journal.event.eventKey))].sort();
+  return [
+    { kind: "OFFICER_FACT", id: fromMemberId, version: "snapshot:" },
+    ...keys.map((eventKey): MemberMoneySource => ({ kind: "OFFICER_FACT", id: fromMemberId, version: `snapshot:${eventKey}` })),
+  ];
+}
+
+function chargeBookingId(obligationKey: string): string | null {
+  const prefix = "booking-charge:";
+  if (!obligationKey.startsWith(prefix)) return null;
+  const rest = obligationKey.slice(prefix.length);
+  const cut = rest.indexOf("|");
+  const bookingId = cut === -1 ? rest : rest.slice(0, cut);
+  return bookingId.length > 0 && !bookingId.includes(":") ? bookingId : null;
+}
+
+/** Each open charge of the merged-away member gets a zero-net successor on the survivor. No Payment lock. */
+async function postChargeSuccessors(
+  tx: Db,
+  context: MemberMoneyPostingContext,
+  input: { fromMemberId: string; toMemberId: string; actorMemberId: string },
+): Promise<void> {
+  const obligations = await tx.memberMoneyObligation.findMany({
+    where: { kind: "CHARGE", debtorKind: "MEMBER", memberId: input.fromMemberId },
+    select: { obligationKey: true, faceCents: true },
+  });
+  for (const obligation of obligations) {
+    const bookingId = chargeBookingId(obligation.obligationKey);
+    if (!bookingId) continue;
+    const booking = await tx.booking.findUnique({ where: { id: bookingId }, select: { lodgeId: true } });
+    if (!booking) continue;
+    const state = await readMemberMoneyApplicationState(tx, bookingId);
+    const row = state.obligations.find((item) => item.key === obligation.obligationKey);
+    const face = obligation.faceCents - (row ? netCollectOnObligation(state, row.id) : 0);
+    if (face <= 0) continue;
+    const eventKey = memberMoneyEventKeys.successor(obligation.obligationKey, input.fromMemberId, input.toMemberId);
+    if (await eventPosted(tx, eventKey)) continue;
+    const successorKey = memberMoneyApplicationKeys.successor(obligation.obligationKey, "MEMBER", input.toMemberId);
+    const debtor: MemberMoneyDebtor = { kind: "MEMBER", memberId: input.toMemberId };
+    const bookingRef = { bookingId, lodgeId: booking.lodgeId };
+    const evidence = { rule: "D4", fromMemberId: input.fromMemberId };
+    await postMemberMoneyEvent(tx, context, {
+      kind: "ADJUSTMENT",
+      eventKey,
+      origin: "OFFICER",
+      source: { kind: "OFFICER_FACT", id: input.fromMemberId, version: `successor:${obligation.obligationKey}:${input.toMemberId}` },
+      reason: "Charge obligation succeeded onto the surviving member (D4)",
+      actorMemberId: input.actorMemberId,
+      obligations: [{ key: successorKey, kind: "CHARGE", debtor, faceCents: face, evidence }],
+      legs: [
+        { type: "amount", account: "MEMBER_RECEIVABLE", side: "DEBIT", amountCents: face, debtor, obligationKey: successorKey, booking: bookingRef, evidence },
+        { type: "amount", account: "MEMBER_RECEIVABLE", side: "CREDIT", amountCents: face, debtor, booking: bookingRef, evidence },
+      ],
+    });
+  }
 }

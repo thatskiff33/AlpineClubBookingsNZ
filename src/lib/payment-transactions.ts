@@ -27,6 +27,8 @@ import { accountCreditDispositionCents } from "@/lib/stripe-cash-refund-evidence
 import { readPaidAnotherWayCloseBankCashByPayment } from "@/lib/card-refund-paid-another-way-cash";
 import type { ClubFormat } from "@/lib/club-format";
 import { syncBookingLedgerSettlements } from "@/lib/booking-ledger-settlement-sync";
+import type { ClubTimeZone } from "@/lib/club-time";
+import { postBookingReceipts, type BookingJournalContext } from "@/lib/member-money/doors";
 import { compareLedgerRowsNewestFirst, LEDGER_ROWS_OLDEST_FIRST } from "@/lib/payment-ledger-order";
 // Moved to a leaf so the booking ledger's settlement sync can share them
 // without an import cycle (#3581); re-exported so existing importers stand.
@@ -1136,11 +1138,21 @@ export async function markPaymentIntentTransactionSucceeded({
   amountCents,
   paymentMethodId,
   store = prisma,
+  journal,
+  zone,
+  apply,
+  capturedAt = null,
 }: {
   paymentIntentId: string;
   amountCents: number;
   paymentMethodId?: string | null;
   store?: PaymentStore;
+  /** Resolved before the caller's transaction (`INV-LOCK-004`). */
+  journal: BookingJournalContext;
+  zone: ClubTimeZone;
+  /** Collect against the booking's charge, or leave the receipt unapplied. */
+  apply: "collect" | "hold";
+  capturedAt?: Date | null;
 }) {
   // #4217: which payment, read without writing; then that Payment row; then the
   // re-read (which may backfill a pre-ledger payment) and the write under it.
@@ -1167,7 +1179,14 @@ export async function markPaymentIntentTransactionSucceeded({
       },
     });
 
-    return reconcilePaymentAggregates({ paymentId, store: db });
+    const reconciled = await reconcilePaymentAggregates({ paymentId, store: db });
+    const payment = await db.payment.findUnique({ where: { id: paymentId }, select: { bookingId: true } });
+    if (payment) {
+      await postBookingReceipts(db, journal, {
+        bookingId: payment.bookingId, zone, apply, focusPaymentIntentIds: [paymentIntentId], capturedAt,
+      });
+    }
+    return reconciled;
   });
 }
 

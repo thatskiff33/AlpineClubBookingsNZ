@@ -13,6 +13,7 @@ import "server-only";
 export type { BookingChargeEvent } from "./internal/booking-charges";
 export { isBookingJournalInactive, type BookingJournalContext } from "./internal/journal-activity";
 export { postBookingLedgerJournal, postMemberMergeTransfer, postPendingBookingJournal } from "./internal/booking-posting";
+export { postBookingReceipts, type PostBookingReceiptsInput } from "./internal/booking-receipts";
 // #4628 (M3c): a bank-transfer booking's charge before settlement, planned by the legacy side.
 export type { StandingChargeLine } from "./internal/booking-pending-charges";
 export { resolveBookingDoorClock, resolveBookingMoneyPostingContext } from "./internal/door-context";

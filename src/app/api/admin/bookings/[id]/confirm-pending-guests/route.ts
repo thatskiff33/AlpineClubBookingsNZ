@@ -21,7 +21,8 @@ import { chargeSavedCardAttempt } from "@/lib/saved-card-charge-request";
 import { savedCardChargeCents } from "@/lib/booking-payment-state";
 import { writeZeroWorthConfirmPayment } from "@/lib/zero-worth-confirm-payment";
 import { postStoredBookingConfirmationLedgerLines } from "@/lib/booking-ledger-confirmation-sync";
-import { resolveBookingMoneyPostingContext } from "@/lib/member-money/doors";
+import { resolveBookingDoorClock } from "@/lib/member-money/doors";
+import { providerCaptureTime } from "@/lib/stripe-capture-date";
 import {
   describeUnsettledPaymentIntent,
   settleSavedCardChargeAttempt,
@@ -208,6 +209,7 @@ export async function POST(
   };
 
   try {
+    const { zone, journal } = await resolveBookingDoorClock();
     // Zero-dollar booking: confirm without Stripe. Because a generic
     // non-member-hold PENDING booking does NOT hold capacity (#737), the beds
     // may already be taken by the time an admin confirms it. Re-check capacity

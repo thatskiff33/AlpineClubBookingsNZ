@@ -19,6 +19,7 @@ import { revokePaymentLinkById, revokePaymentLinksForBooking } from "@/lib/payme
 import { postCancellationLedgerLines } from "@/lib/booking-ledger-cancellation-sync";
 import { postStoredBookingConfirmationLedgerLines } from "@/lib/booking-ledger-confirmation-sync";
 import { resolveBookingMoneyPostingContext, type BookingJournalContext } from "@/lib/member-money/doors";
+import { providerCaptureTime } from "@/lib/stripe-capture-date";
 import {
   SPLIT_GUEST_PAYMENT_LINK_TEMPLATE,
   mintSplitGuestPaymentLinkIfAbsent,
@@ -1678,6 +1679,9 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
           attemptRowId: resolution.attempt.attemptRowId,
           paymentId: resolution.paymentId,
           paymentIntent,
+          journal,
+          zone: clubZone,
+          capturedAt: providerCaptureTime(paymentIntent),
         });
 
         const reconciliation = await markBookingPaymentSucceeded({
