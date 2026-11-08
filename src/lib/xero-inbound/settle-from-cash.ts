@@ -258,7 +258,7 @@ async function keptCorrectionRefundCents(
     tx.xeroObjectLink.findMany({
       where: {
         xeroObjectType: "ALLOCATION",
-        ...CLEARING_ALLOCATION_LINK_WHERE,
+        AND: [CLEARING_ALLOCATION_LINK_WHERE],
         active: true,
         metadata: { path: ["invoiceId"], equals: input.invoiceId },
       },

@@ -223,8 +223,11 @@ export const CLEARING_TARGET_LINK_ROLES: readonly string[] = [NOTE_ALLOCATION_RO
 export interface ClearingAllocationLink {
   role: string | null;
   metadata: unknown;
-  /** When it was last written: the money readers keep the newest (#4786). */
-  updatedAt?: Date | null;
+}
+
+/** An allocation link with when it was last written, which the money readers order by (#4786). */
+export interface DatedClearingAllocationLink extends ClearingAllocationLink {
+  updatedAt: Date;
 }
 
 /**
@@ -279,30 +282,45 @@ export interface ClearingAllocation<L extends ClearingAllocationLink = ClearingA
  * refunded-total recount). A link counts when it carries the note's own role,
  * or is a role-less `CREDIT_NOTE_ALLOCATION` link that recorded its amount
  * (`clearingAllocationOf`); any other role, or a role-less link with no
- * amount, counts nothing (fail closed, as the retry does).
+ * amount, counts nothing. With `requireAmount`, neither does a link without a
+ * positive amount, so it never stands in for an older one that has one: the
+ * readers that sum amounts ask for it; the kept settle, which asks only
+ * whether the note is linked to the invoice, does not.
  *
- * Of the links for one note and invoice only the newest counts (`updatedAt`;
- * among equals the last given). The inbound mirror writes one own-role link
- * per note and invoice carrying the note's applied amounts SUMMED, beside the
- * builder's per-allocation link and any role-less one, and a re-sync at a new
- * total leaves the older link active (its id carries the amount). Adding them
- * would count an allocation twice. Until the mirror writes, a note applied to
- * one invoice in two parts counts only its newest part - an undercount the
- * mirror's next write corrects, never an overcount. With `creditNoteId`, only
- * that note's. Read only.
+ * Of the links left for one note and invoice, one counts: the newest with the
+ * note's own role (`updatedAt`; among equals the last given), else the newest
+ * role-less one. The inbound mirror writes one own-role link per note and
+ * invoice carrying the note's applied amounts SUMMED, beside the builder's
+ * per-allocation link and any role-less one, and a re-sync at a new total
+ * leaves the older link active (its id carries the amount): adding them would
+ * count an allocation twice. A clearing or edit note's role-less link is
+ * written only by a generic allocation retry, which can replay an older single
+ * allocation after the mirror's sum, so it never displaces an own-role link.
+ *
+ * What a reader counts can still differ from Xero. Before the mirror writes, a
+ * note applied to one invoice in two parts counts only one part: the audit
+ * then reports an under-clear that is not there, and the recount a refunded
+ * total too low, which leaves more refund headroom, until the mirror's next
+ * write. And a note whose allocation is removed in Xero keeps counting while
+ * its link stays active: the audit then misses an under-clear, and the
+ * recount holds a refunded total too high. With `creditNoteId`, only that
+ * note's. Read only.
  */
-export function distinctClearingAllocations<L extends ClearingAllocationLink>(
+export function distinctClearingAllocations<L extends DatedClearingAllocationLink>(
   links: readonly L[],
-  creditNoteId?: string
+  options: { creditNoteId?: string; requireAmount?: boolean } = {}
 ): ClearingAllocation<L>[] {
-  const writtenAt = (link: ClearingAllocationLink) => link.updatedAt?.getTime() ?? 0;
+  const rank = (link: L) => [link.role === NOTE_ALLOCATION_ROLE ? 1 : 0, link.updatedAt.getTime()] as const;
   const byKey = new Map<string, ClearingAllocation<L>>();
   for (const link of links) {
     const allocation = clearingAllocationOf(link);
-    if (!allocation || (creditNoteId !== undefined && allocation.creditNoteId !== creditNoteId)) continue;
+    if (!allocation || (options.creditNoteId !== undefined && allocation.creditNoteId !== options.creditNoteId)) continue;
+    if (options.requireAmount && !(allocation.amountCents !== null && allocation.amountCents > 0)) continue;
     const key = JSON.stringify([allocation.creditNoteId, allocation.invoiceId]);
     const kept = byKey.get(key);
-    if (!kept || writtenAt(link) >= writtenAt(kept.link)) byKey.set(key, allocation);
+    const [ownRole, writtenAt] = rank(link);
+    const [keptOwnRole, keptWrittenAt] = kept ? rank(kept.link) : [-1, 0];
+    if (ownRole > keptOwnRole || (ownRole === keptOwnRole && writtenAt >= keptWrittenAt)) byKey.set(key, allocation);
   }
   return [...byKey.values()];
 }

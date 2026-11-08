@@ -68,18 +68,19 @@ describe("linkAllocatesClearingTarget (#4767)", () => {
 // #4786: the money readers count a clearing note's allocations through this one
 // reader, built on the predicate above.
 describe("distinctClearingAllocations (#4786)", () => {
-  type Link = ReturnType<typeof link> & { updatedAt?: Date };
-  const at = (l: ReturnType<typeof link>, iso: string): Link => ({ ...l, updatedAt: new Date(iso) });
-  const allocations = (links: Link[], creditNoteId?: string) =>
-    distinctClearingAllocations(links, creditNoteId).map(({ creditNoteId: note, invoiceId, amountCents }) => [note, invoiceId, amountCents]);
+  const T0 = "2026-06-01T00:00:00.000Z";
+  const at = (l: ReturnType<typeof link>, iso = T0) => ({ ...l, updatedAt: new Date(iso) });
+  type Link = ReturnType<typeof at>;
+  const allocations = (links: Link[], options?: { creditNoteId?: string; requireAmount?: boolean }) =>
+    distinctClearingAllocations(links, options).map(({ creditNoteId: note, invoiceId, amountCents }) => [note, invoiceId, amountCents]);
 
   it("reads an own-role link and a role-less one", () => {
-    expect(allocations([link(NOTE_ALLOCATION_ROLE)])).toEqual([["cn_clear", "inv_primary", 6000]]);
-    expect(allocations([link(ROLELESS_ALLOCATION_ROLE)])).toEqual([["cn_clear", "inv_primary", 6000]]);
+    expect(allocations([at(link(NOTE_ALLOCATION_ROLE))])).toEqual([["cn_clear", "inv_primary", 6000]]);
+    expect(allocations([at(link(ROLELESS_ALLOCATION_ROLE))])).toEqual([["cn_clear", "inv_primary", 6000]]);
   });
 
   it("MUTATION: an own-role and a role-less link for the same note, invoice and amount count once", () => {
-    expect(allocations([link(NOTE_ALLOCATION_ROLE), link(ROLELESS_ALLOCATION_ROLE)])).toEqual([["cn_clear", "inv_primary", 6000]]);
+    expect(allocations([at(link(NOTE_ALLOCATION_ROLE)), at(link(ROLELESS_ALLOCATION_ROLE))])).toEqual([["cn_clear", "inv_primary", 6000]]);
   });
 
   // The inbound mirror writes one own-role link per note and invoice with the
@@ -103,33 +104,64 @@ describe("distinctClearingAllocations (#4786)", () => {
     ).toEqual([["cn_clear", "inv_primary", 10_000]]);
   });
 
-  it("MUTATION: another invoice or note is another application; links written at the same time keep the last given", () => {
+  // A generic ALLOCATE retry links role-less and can replay an older single
+  // allocation after the mirror recorded the note's sum for that invoice.
+  it("MUTATION: a role-less link written after the mirror's own-role sum never replaces it", () => {
     expect(
       allocations([
-        link(NOTE_ALLOCATION_ROLE),
-        link(ROLELESS_ALLOCATION_ROLE, { amountCents: 4000 }),
-        link(ROLELESS_ALLOCATION_ROLE, { invoiceId: "inv_supp" }),
-        link(ROLELESS_ALLOCATION_ROLE, { creditNoteId: "cn_other" }),
+        at(link(NOTE_ALLOCATION_ROLE, { amountCents: 10_000 }), "2026-06-03T00:00:00.000Z"),
+        at(link(ROLELESS_ALLOCATION_ROLE, { amountCents: 6000 }), "2026-06-05T00:00:00.000Z"),
+      ]),
+    ).toEqual([["cn_clear", "inv_primary", 10_000]]);
+  });
+
+  it("MUTATION: of role-less links alone, the newest counts", () => {
+    expect(
+      allocations([
+        at(link(ROLELESS_ALLOCATION_ROLE, { amountCents: 6000 }), "2026-06-05T00:00:00.000Z"),
+        at(link(ROLELESS_ALLOCATION_ROLE, { amountCents: 4000 }), "2026-06-01T00:00:00.000Z"),
+      ]),
+    ).toEqual([["cn_clear", "inv_primary", 6000]]);
+  });
+
+  it("another invoice or note is another application", () => {
+    expect(
+      allocations([
+        at(link(NOTE_ALLOCATION_ROLE)),
+        at(link(ROLELESS_ALLOCATION_ROLE, { amountCents: 4000 })),
+        at(link(ROLELESS_ALLOCATION_ROLE, { invoiceId: "inv_supp" })),
+        at(link(ROLELESS_ALLOCATION_ROLE, { creditNoteId: "cn_other" })),
       ]),
     ).toEqual([
-      ["cn_clear", "inv_primary", 4000],
+      ["cn_clear", "inv_primary", 6000],
       ["cn_clear", "inv_supp", 6000],
       ["cn_other", "inv_primary", 6000],
     ]);
   });
 
   it("MUTATION: a role-less link with no amount, or a link with any other role, is no allocation", () => {
-    expect(allocations([link(ROLELESS_ALLOCATION_ROLE, { amountCents: undefined })])).toEqual([]);
-    expect(allocations([link("APPLIED_CREDIT_ALLOCATION"), link("")])).toEqual([]);
+    expect(allocations([at(link(ROLELESS_ALLOCATION_ROLE, { amountCents: undefined }))])).toEqual([]);
+    expect(allocations([at(link("APPLIED_CREDIT_ALLOCATION")), at(link(""))])).toEqual([]);
   });
 
-  it("keeps an own-role link with no amount, amount unknown; a link naming no note or invoice is none", () => {
-    expect(allocations([link(NOTE_ALLOCATION_ROLE, { amountCents: undefined })])).toEqual([["cn_clear", "inv_primary", null]]);
-    expect(allocations([link(NOTE_ALLOCATION_ROLE, { creditNoteId: undefined }), link(NOTE_ALLOCATION_ROLE, { invoiceId: undefined })])).toEqual([]);
+  it("keeps an own-role link with no amount, amount unknown, unless an amount is required; a link naming no note or invoice is none", () => {
+    expect(allocations([at(link(NOTE_ALLOCATION_ROLE, { amountCents: undefined }))])).toEqual([["cn_clear", "inv_primary", null]]);
+    expect(allocations([at(link(NOTE_ALLOCATION_ROLE, { amountCents: undefined }))], { requireAmount: true })).toEqual([]);
+    expect(allocations([at(link(NOTE_ALLOCATION_ROLE, { creditNoteId: undefined })), at(link(NOTE_ALLOCATION_ROLE, { invoiceId: undefined }))])).toEqual([]);
+  });
+
+  it.each([
+    ["no amount", undefined],
+    ["a zero amount", 0],
+    ["a negative amount", -500],
+  ])("MUTATION: with an amount required, a newer own-role link with %s never hides an older one that has one", (_label, amountCents) => {
+    const older = at(link(NOTE_ALLOCATION_ROLE, { amountCents: 6000 }), "2026-06-01T00:00:00.000Z");
+    const newer = at(link(NOTE_ALLOCATION_ROLE, { amountCents }), "2026-06-03T00:00:00.000Z");
+    expect(allocations([older, newer], { requireAmount: true })).toEqual([["cn_clear", "inv_primary", 6000]]);
   });
 
   it("MUTATION: with a note, only that note's allocations", () => {
-    expect(allocations([link(NOTE_ALLOCATION_ROLE), link(NOTE_ALLOCATION_ROLE, { creditNoteId: "cn_other" })], "cn_other")).toEqual([
+    expect(allocations([at(link(NOTE_ALLOCATION_ROLE)), at(link(NOTE_ALLOCATION_ROLE, { creditNoteId: "cn_other" }))], { creditNoteId: "cn_other" })).toEqual([
       ["cn_other", "inv_primary", 6000],
     ]);
   });

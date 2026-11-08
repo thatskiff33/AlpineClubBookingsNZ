@@ -109,7 +109,8 @@ function linkMatches(link: LinkRow, where: LinkWhere): boolean {
   if (OR && !OR.some((clause) => linkMatches(link, clause))) return false;
   return !AND || AND.every((clause) => linkMatches(link, clause));
 }
-const withNoteRole = <T extends object>(links: T[]) => links.map((link) => ({ role: NOTE_ALLOCATION_ROLE, ...link }));
+const withNoteRole = <T extends object>(links: T[]) =>
+  links.map((link) => ({ role: NOTE_ALLOCATION_ROLE, updatedAt: new Date("2026-06-01T00:00:00.000Z"), ...link }));
 
 function payment(overrides: Record<string, unknown> = {}) {
   return {
@@ -647,7 +648,7 @@ describe("a modification note's allocations are summed per note, each allocation
       expect(refundedWrites()).toEqual([10_000]);
     });
 
-    it("MUTATION: a role-less link with no amount recorded counts nothing (fail closed)", async () => {
+    it("MUTATION: a role-less link with no amount recorded counts nothing", async () => {
       mocks.paymentFindMany.mockResolvedValue([BANK_PAYMENT()]);
       invoiceLinks = [onEdit(allocation("alloc-x", "inv-1", undefined, undefined, ROLELESS_ALLOCATION_ROLE))];
 
@@ -675,7 +676,35 @@ describe("a modification note's allocations are summed per note, each allocation
       expect(refundedWrites()).toEqual([6000]);
     });
 
-    it("MUTATION: a link naming no invoice is no allocation it can key, so it counts nothing (fail closed)", async () => {
+    it.each([
+      ["no amount", undefined],
+      ["a zero amount", 0],
+      ["a negative amount", -500],
+    ])("MUTATION: a newer own-role link with %s never hides an older one on the same note and invoice", async (_label, amountCents) => {
+      mocks.paymentFindMany.mockResolvedValue([BANK_PAYMENT()]);
+      invoiceLinks = [
+        onEdit(allocation("alloc-60", "inv-1", 6000, "2026-06-01T00:00:00.000Z")),
+        onEdit(allocation("alloc-later", "inv-1", amountCents, "2026-06-03T00:00:00.000Z")),
+      ];
+
+      await recount();
+      expect(refundedWrites()).toEqual([6000]);
+    });
+
+    it("MUTATION: a generic retry's role-less link replaying an older allocation after the mirror's sum never replaces it", async () => {
+      // The mirror recorded the note's $100 on this invoice; the generic
+      // ALLOCATE retry, which names no role, then linked an older $60 result.
+      mocks.paymentFindMany.mockResolvedValue([BANK_PAYMENT()]);
+      invoiceLinks = [
+        onEdit(allocation("alloc-100", "inv-1", 10_000, "2026-06-03T00:00:00.000Z")),
+        onEdit(allocation("alloc-60", "inv-1", 6000, "2026-06-05T00:00:00.000Z", ROLELESS_ALLOCATION_ROLE)),
+      ];
+
+      await recount();
+      expect(refundedWrites()).toEqual([10_000]);
+    });
+
+    it("MUTATION: a link naming no invoice is no allocation it can key, so it counts nothing", async () => {
       // Before #4786 it counted under its own link id; no writer records an
       // allocation link without the invoice.
       mocks.paymentFindMany.mockResolvedValue([BANK_PAYMENT()]);

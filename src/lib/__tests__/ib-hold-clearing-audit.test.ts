@@ -15,6 +15,9 @@ import {
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 import { NOTE_ALLOCATION_ROLE, ROLELESS_ALLOCATION_ROLE } from "@/lib/xero-clearing-allocations";
 
+// When a fixture link was last written; the money readers order by it (#4786).
+const LINK_WRITTEN_AT = new Date("2026-06-01T00:00:00.000Z");
+
 function makeNote(overrides: Partial<IbHoldClearingNote> = {}): IbHoldClearingNote {
   return {
     kind: "allocated-clearing-note",
@@ -163,12 +166,12 @@ describe("resolveIbHoldClearingNotes (#3535: both note shapes)", () => {
           },
         ],
         allocationLinks: [
-          { localModel: "Booking", role: NOTE_ALLOCATION_ROLE, metadata: { creditNoteId: "cn_clear", invoiceId: "inv_1", amountCents: 30000 } },
-          { localModel: "Booking", role: NOTE_ALLOCATION_ROLE, metadata: { creditNoteId: "cn_clear", invoiceId: "inv_supp", amountCents: 11000 } },
+          { localModel: "Booking", role: NOTE_ALLOCATION_ROLE, metadata: { creditNoteId: "cn_clear", invoiceId: "inv_1", amountCents: 30000 }, updatedAt: LINK_WRITTEN_AT },
+          { localModel: "Booking", role: NOTE_ALLOCATION_ROLE, metadata: { creditNoteId: "cn_clear", invoiceId: "inv_supp", amountCents: 11000 }, updatedAt: LINK_WRITTEN_AT },
           // The inbound reconcile's copy of the first allocation.
-          { localModel: "Booking", role: NOTE_ALLOCATION_ROLE, metadata: { creditNoteId: "cn_clear", invoiceId: "inv_1", amountCents: 30000 } },
+          { localModel: "Booking", role: NOTE_ALLOCATION_ROLE, metadata: { creditNoteId: "cn_clear", invoiceId: "inv_1", amountCents: 30000 }, updatedAt: LINK_WRITTEN_AT },
           // A payment-anchored allocation is the refund note's, not this one's.
-          { localModel: "Payment", role: ROLELESS_ALLOCATION_ROLE, metadata: { creditNoteId: "cn_other", invoiceId: "inv_1", amountCents: 999 } },
+          { localModel: "Payment", role: ROLELESS_ALLOCATION_ROLE, metadata: { creditNoteId: "cn_other", invoiceId: "inv_1", amountCents: 999 }, updatedAt: LINK_WRITTEN_AT },
         ],
         xeroRefundCreditNoteId: null,
       }),
@@ -221,7 +224,7 @@ describe("resolveIbHoldClearingNotes (#3535: both note shapes)", () => {
         ],
         allocationLinks: [
           // The inbound mirror of a refund note links its hand allocation role-less.
-          { localModel: "Payment", role: ROLELESS_ALLOCATION_ROLE, metadata: { creditNoteId: "cn_refund", invoiceId: "inv_1", amountCents: 5000 } },
+          { localModel: "Payment", role: ROLELESS_ALLOCATION_ROLE, metadata: { creditNoteId: "cn_refund", invoiceId: "inv_1", amountCents: 5000 }, updatedAt: LINK_WRITTEN_AT },
         ],
         xeroRefundCreditNoteId: "cn_refund",
       }),
@@ -311,13 +314,35 @@ describe("resolveIbHoldClearingNotes reads role-less allocation links (#4786)", 
     expect(allocated([mirrorSum, builderPiece])).toBe(30000);
   });
 
-  it("before the mirror writes, two pieces on one invoice count the newest only - an undercount the audit reports, never an overcount", () => {
+  it("before the mirror writes, two pieces on one invoice count one - the audit then reports an under-clear the mirror's next write clears", () => {
     expect(
       allocated([
         link(ROLELESS_ALLOCATION_ROLE, 10000, "inv_1", "2026-06-01T00:00:00.000Z"),
         link(NOTE_ALLOCATION_ROLE, 20000, "inv_1", "2026-06-02T00:00:00.000Z"),
       ]),
     ).toBe(20000);
+  });
+
+  it("MUTATION: a role-less link written after the mirror's own-role sum never replaces it", () => {
+    expect(
+      allocated([
+        link(NOTE_ALLOCATION_ROLE, 30000, "inv_1", "2026-06-03T00:00:00.000Z"),
+        link(ROLELESS_ALLOCATION_ROLE, 10000, "inv_1", "2026-06-05T00:00:00.000Z"),
+      ]),
+    ).toBe(30000);
+  });
+
+  it.each([
+    ["no amount", undefined],
+    ["a zero amount", 0],
+    ["a negative amount", -500],
+  ])("MUTATION: a newer own-role link with %s never hides an older one on the same note and invoice", (_label, amountCents) => {
+    expect(
+      allocated([
+        link(NOTE_ALLOCATION_ROLE, 30000, "inv_1", "2026-06-01T00:00:00.000Z"),
+        link(NOTE_ALLOCATION_ROLE, amountCents, "inv_1", "2026-06-03T00:00:00.000Z"),
+      ]),
+    ).toBe(30000);
   });
 
   it("each invoice's application counts, the primary and a supplementary one", () => {
@@ -333,9 +358,9 @@ describe("resolveIbHoldClearingNotes reads role-less allocation links (#4786)", 
     const notes = resolveIbHoldClearingNotes({
       operations: [],
       allocationLinks: [
-        { localModel: "Payment", role: ROLELESS_ALLOCATION_ROLE, metadata: { creditNoteId: "cn_refund", invoiceId: "inv_1", amountCents: 5000 } },
-        { localModel: "Payment", role: NOTE_ALLOCATION_ROLE, metadata: { creditNoteId: "cn_refund", invoiceId: "inv_1", amountCents: 5000 } },
-        { localModel: "Payment", role: ROLELESS_ALLOCATION_ROLE, metadata: { creditNoteId: "cn_other", invoiceId: "inv_1", amountCents: 999 } },
+        { localModel: "Payment", role: ROLELESS_ALLOCATION_ROLE, metadata: { creditNoteId: "cn_refund", invoiceId: "inv_1", amountCents: 5000 }, updatedAt: LINK_WRITTEN_AT },
+        { localModel: "Payment", role: NOTE_ALLOCATION_ROLE, metadata: { creditNoteId: "cn_refund", invoiceId: "inv_1", amountCents: 5000 }, updatedAt: LINK_WRITTEN_AT },
+        { localModel: "Payment", role: ROLELESS_ALLOCATION_ROLE, metadata: { creditNoteId: "cn_other", invoiceId: "inv_1", amountCents: 999 }, updatedAt: LINK_WRITTEN_AT },
       ],
       xeroRefundCreditNoteId: "cn_refund",
     });
@@ -485,6 +510,7 @@ describe("auditIbHoldClearingUnderclears (#3535 scan)", () => {
         xeroObjectType: "ALLOCATION",
         role: "MODIFICATION_CREDIT_NOTE_ALLOCATION",
         metadata: { creditNoteId: "cn_retried", invoiceId: "inv_retried", amountCents: 15000 },
+        updatedAt: LINK_WRITTEN_AT,
       },
       {
         localModel: "Payment",

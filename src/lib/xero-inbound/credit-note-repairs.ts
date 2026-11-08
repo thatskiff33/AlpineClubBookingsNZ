@@ -242,10 +242,11 @@ export async function repairRefundedPaymentBusinessState(input: {
           select: { localId: true, xeroObjectId: true, role: true, metadata: true, updatedAt: true },
         });
   // #4095 (L1), #4786: each payment's links read as what each note applied to
-  // each invoice, once (`distinctClearingAllocations`): the newest link per
-  // note and invoice, so the same allocation linked to several local objects,
-  // a role-less link beside the mirror's, or an older amount left active
-  // beside a re-synced one never counts twice.
+  // each invoice, once (`distinctClearingAllocations`): per note and invoice
+  // the newest own-role link with a positive amount, else the newest
+  // role-less one, so the same allocation linked to several local objects, a
+  // role-less link beside the mirror's, or an older amount left active beside
+  // a re-synced one never counts twice.
   const linksByPaymentId = new Map<string, Array<(typeof modificationAllocationLinks)[number]>>();
   for (const { paymentId, link } of [
     ...modificationAllocationLinks.map((link) => ({ paymentId: link.localId, link })),
@@ -258,7 +259,7 @@ export async function repairRefundedPaymentBusinessState(input: {
     linksByPaymentId.set(paymentId, [...(linksByPaymentId.get(paymentId) ?? []), link]);
   }
   const existingModificationAllocations = [...linksByPaymentId].flatMap(([paymentId, links]) =>
-    distinctClearingAllocations(links).map((allocation) => ({ ...allocation, paymentId })),
+    distinctClearingAllocations(links, { requireAmount: true }).map((allocation) => ({ ...allocation, paymentId })),
   );
   const existingModificationCreditNoteIds = [
     ...new Set(existingModificationAllocations.map((allocation) => allocation.creditNoteId).filter((id) => id !== input.creditNoteId)),
@@ -332,7 +333,7 @@ export async function repairRefundedPaymentBusinessState(input: {
     ) {
       continue;
     }
-    if (amountCents === null || amountCents <= 0) continue;
+    if (amountCents === null) continue; // `requireAmount` above leaves none
     modificationAllocationsByPaymentId.set(paymentId, [
       ...(modificationAllocationsByPaymentId.get(paymentId) ?? []),
       { creditNoteId, appliedCents: Math.round(amountCents) },

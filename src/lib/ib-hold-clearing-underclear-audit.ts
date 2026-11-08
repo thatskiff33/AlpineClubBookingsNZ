@@ -191,7 +191,7 @@ type ClearingOperation = {
   requestPayload: unknown;
   xeroObjectId: string | null;
 };
-type AllocationLink = { localModel: string; role: string | null; metadata: unknown; updatedAt?: Date | null };
+type AllocationLink = { localModel: string; role: string | null; metadata: unknown; updatedAt: Date };
 
 /**
  * What the notes on an anchor applied to invoices, by the money readers' one
@@ -214,8 +214,8 @@ function allocatedOnAnchor(
   if (anchor === "Payment" && !creditNoteId) return 0;
   return distinctClearingAllocations(
     links.filter((link) => link.localModel === anchor),
-    anchor === "Payment" ? (creditNoteId ?? undefined) : undefined,
-  ).reduce((sum, allocation) => sum + Math.max(0, allocation.amountCents ?? 0), 0);
+    { creditNoteId: anchor === "Payment" ? (creditNoteId ?? undefined) : undefined, requireAmount: true },
+  ).reduce((sum, allocation) => sum + (allocation.amountCents ?? 0), 0);
 }
 
 /**

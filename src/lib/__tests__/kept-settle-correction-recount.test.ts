@@ -147,12 +147,14 @@ describe("a keep counts an applied correction already synced in its own transact
     localModel: "BookingModification",
     role: NOTE_ALLOCATION_ROLE,
     metadata: { creditNoteId: "cn-correction", invoiceId: INVOICE_ID, amountCents: 10_000 },
+    updatedAt: new Date("2026-06-01T00:00:00.000Z"),
   };
   // `null`: no amount recorded.
   const rolelessLink = (amountCents: number | null = 10_000, localModel = "BookingModification") => ({
     localModel,
     role: ROLELESS_ALLOCATION_ROLE,
     metadata: { creditNoteId: "cn-correction", invoiceId: INVOICE_ID, ...(amountCents === null ? {} : { amountCents }) },
+    updatedAt: new Date("2026-06-02T00:00:00.000Z"),
   });
   type RoleClause = { role: string; localModel?: { not: string } };
   type AllocationRow = { localModel: string; role: string };
@@ -170,11 +172,13 @@ describe("a keep counts an applied correction already synced in its own transact
   }) {
     mocks.readModificationNoteCash.mockResolvedValue(new Map([["cn-correction", "correction"]]));
     // Only the allocation links the query's role clauses match, as Postgres returns them.
-    const linkFindMany = vi.fn(async ({ where }: { where: { role?: string; OR?: RoleClause[] } }) =>
+    const linkFindMany = vi.fn(async ({ where }: { where: { role?: string; AND?: Array<{ OR: RoleClause[] }> } }) =>
       where.role === "MODIFICATION_CREDIT_NOTE"
         ? (input.noteLinks ?? [noteLink("AUTHORISED")])
         : ((input.allocationLinks ?? [allocationLink]) as AllocationRow[]).filter((link) =>
-            (where.OR ?? (where.role ? [{ role: where.role }] : [])).some((clause) => matchesRoleClause(link, clause)),
+            (where.AND ?? [{ OR: where.role ? [{ role: where.role }] : [] }]).every((group) =>
+              group.OR.some((clause) => matchesRoleClause(link, clause)),
+            ),
           ),
     );
     const tx = {
@@ -208,7 +212,7 @@ describe("a keep counts an applied correction already synced in its own transact
     expect(linkFindMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: expect.objectContaining({
-          OR: [{ role: NOTE_ALLOCATION_ROLE }, { role: ROLELESS_ALLOCATION_ROLE, localModel: { not: "Payment" } }],
+          AND: [{ OR: [{ role: NOTE_ALLOCATION_ROLE }, { role: ROLELESS_ALLOCATION_ROLE, localModel: { not: "Payment" } }] }],
           active: true,
           metadata: { path: ["invoiceId"], equals: INVOICE_ID },
         }),
@@ -252,12 +256,18 @@ describe("a keep counts an applied correction already synced in its own transact
     });
   });
 
-  it("MUTATION (#4786): a role-less link with no amount recorded shows nothing linked (fail closed)", async () => {
+  it("MUTATION (#4786): a role-less link with no amount recorded shows nothing linked - the recount after the commit decides", async () => {
     await expect(decide({ allocationLinks: [rolelessLink(null)] }).decided).resolves.toMatchObject({ paymentColumns: null });
   });
 
   it("MUTATION (#4786): a role-less link on a payment - its refund or account note's mirror - shows nothing linked", async () => {
     await expect(decide({ allocationLinks: [rolelessLink(10_000, "Payment")] }).decided).resolves.toMatchObject({ paymentColumns: null });
+  });
+
+  it("MUTATION (#4786): an own-role link with no amount still shows the note linked - the keep reads presence, never an amount", async () => {
+    await expect(
+      decide({ allocationLinks: [{ ...allocationLink, metadata: { creditNoteId: "cn-correction", invoiceId: INVOICE_ID } }] }).decided,
+    ).resolves.toMatchObject({ paymentColumns: { refundedAmountCents: 10_000 } });
   });
 
   it("#4786: an allocation link with any other role shows nothing linked", async () => {

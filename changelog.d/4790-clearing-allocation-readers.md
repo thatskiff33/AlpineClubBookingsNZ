@@ -9,6 +9,7 @@
 
   The audit of bank-transfer holds whose invoice was left open already counted
   it. It now counts only the allocation records a credit note's own allocation
-  or that older repair writes, and for each note and invoice only the latest
-  one, so a note's allocation is never added twice. Nothing changes in Xero,
+  or that older repair writes, and for each note and invoice only one: the
+  latest of the note's own records, or the older repair's where there is none.
+  So a note's allocation is never added twice. Nothing changes in Xero,
   and no stored record is rewritten.

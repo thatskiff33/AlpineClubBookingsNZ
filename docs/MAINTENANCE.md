@@ -2653,8 +2653,9 @@ ref, the notes raised, expected clearing, what was allocated, and the open
 delta. It reads only local rows (no Xero calls). Only allocations count — the
 allocation links the builder and the inbound reconcile write, with the note's
 own role or `CREDIT_NOTE_ALLOCATION` (since #4786 a link with any other role
-counts nothing), the newest per note and invoice, since the inbound reconcile's
-link carries the note's applications to that invoice summed — so a FAILED
+counts nothing), one per note and invoice: the newest with the note's role and
+an amount, else the newest role-less one, since the inbound reconcile's link
+carries the note's applications to that invoice summed — so a FAILED
 clearing operation (nothing created), a PARTIAL one, and a pre-#3535 refund note
 (never allocated by the system) all show as not clearing. A refund note someone
 allocated by hand in Xero counts as far as it was allocated; every clearing
