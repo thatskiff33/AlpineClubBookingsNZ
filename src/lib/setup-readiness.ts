@@ -45,11 +45,7 @@ import {
 } from "@/lib/xero-config";
 import { authSecretWeaknessReason } from "@/lib/integration-crypto";
 import { DATA_ENCRYPTION_KEYS_ENV, DATA_ENCRYPTION_LEGACY_KEY_ENV } from "@/lib/data-encryption-key-material";
-import {
-  buildDataEncryptionKeyCheck,
-  type DataKeyRingSource,
-  type DataKeyUsageSnapshot,
-} from "@/lib/setup-readiness-data-keys";
+import { buildDataEncryptionKeyCheck, type DataKeyRingSource, type DataKeyUsageSnapshot } from "@/lib/setup-readiness-data-keys";
 
 export const SETUP_STEP_IDS = [
   "club-config",
@@ -2154,11 +2150,7 @@ export function buildSetupReadiness(
      * gives no warning.
      */
     xeroBaseCurrency?: string | null;
-    /**
-     * Whose data-encryption ring `env` is (#4456 review round 3): `app` only
-     * from the running app's own route; anything else, `setup:check` among
-     * them, is `shell` and never claims its first key is the app's current one.
-     */
+    /** Whose data-encryption ring `env` is (#4456): `app` only from the app's own route; default `shell`. */
     dataKeySource?: DataKeyRingSource;
   } = {},
 ): SetupReadiness {
