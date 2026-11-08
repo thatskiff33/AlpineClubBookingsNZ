@@ -17,8 +17,11 @@ import ts from "typescript";
 //
 // Each writer is reported with its enclosing named function ("scope", see
 // `scopeName`) and whether it is GUARDED by the screen: a `const` bound to
-// `await screenChosenPassword(x, ...)` (or a conditional with that await as a
-// branch the test does not rule out), where `x` and the input of the
+// `await screenChosenPassword(x, ...)` (or a conditional, `||` or `??` chain
+// that screens on every branch a constant test leaves live; a branch with no
+// screen is allowed only where the writer cannot run when it is taken, as in
+// `password ? await screen(password) : { ok: true }` with the writer inside
+// `if (password) { ... }`, #4764), where `x` and the input of the
 // `bcrypt.hash(x, ...)` that made the written value (traced as below) resolve
 // to the SAME `const` or parameter declaration, with the same property path,
 // and nothing reassigns it; followed by an `if` that tests `!name.ok` and
@@ -33,10 +36,17 @@ import ts from "typescript";
 // method call receives the root or a part of the path above the value
 // (`Object.assign(b, ...)`, `log({ b })`, `b.reset()`), or a function nested in
 // the scope does either (#4746). One definition of that change test serves the
-// copy rule below (`objectChanged`). These rules are a best-effort guard against
-// accidental changes, not a defence against a determined author: deliberately
+// copy rule below (`objectChanged`). For a writer inside a loop that starts after
+// the screen, that window runs to the end of the outermost such loop, since a
+// change later in the body runs before the writer on the next pass; for a writer
+// in a function, it runs to the end of the screen's block, since the function can
+// be called later; and a screen does not count for a writer in a hoisted function
+// declaration, which can run before it (#4764). These
+// rules are a best-effort guard against accidental changes, not a defence against a determined author: deliberately
 // contrived forms (getters, functions that return the object or a closure over
-// it, generators, access to an inline literal such as `[b][0]`) are out of scope.
+// it, generators, access to an inline literal such as `[b][0]`, a `var`
+// redeclared in a block to defeat a stable value (`{ var skip = false; }`), a
+// local `const undefined`) are out of scope.
 //
 // Each property writer also carries the SOURCE of the value it writes
 // (`traceWrittenValue`): the expression is followed back through `const`
@@ -47,8 +57,11 @@ import ts from "typescript";
 // literal has no template holes, no `$n` or `?` placeholders and no bind
 // arguments beside it.
 //
-// Stated limits: SQL assembled by concatenating separate literals, or read
-// from a `.sql` file at run time, is not seen (no writer here does either;
+// Stated limits: a change made while an earlier call is suspended
+// (`const p = save({ passwordHash: await hash(b.pw, 12) }); Object.assign(b, ...);
+// await p`) is a change after the writer outside a loop, so it is not seen; there
+// is no async-flow analysis (#4764). SQL assembled by concatenating separate
+// literals, or read from a `.sql` file at run time, is not seen (no writer here does either;
 // `prisma/migrations` is schema, not a runtime writer, and is the one directory
 // skipped by path). Only `.ts`/`.js` sources under the scan roots are read.
 
@@ -243,30 +256,153 @@ function screenCallOf(node: ts.Expression, hashed: Reference): ts.CallExpression
 }
 
 /**
- * The names `statement` binds to an awaited screen of `hashed`, and where the
- * screen starts (its first argument): a `const` whose initializer is
- * `await screenChosenPassword(x, ...)` itself, or a conditional with that await
- * as one branch and a test that does not rule the branch out. Any other shape
- * (a `let`, an object literal or comma expression that discards the result)
- * binds nothing.
+ * A fact about a value that cannot change once it is set (`stableKey`), true on
+ * some path through the code: `key` is that value or a comparison of two, and
+ * `truthy` whether it holds or is ruled out.
  */
-function screenBinding(statement: ts.Statement, hashed: Reference): { names: string[]; from: number } {
-  const bound = { names: [] as string[], from: Infinity };
+type Fact = { key: string; truthy: boolean };
+
+/**
+ * Names a value that is the same wherever it is read in the scope: a `const` or a
+ * parameter nothing reassigns (by declaration), `null`, `undefined`, a boolean,
+ * number or string literal. Anything else (a property, a call, a `let`) is null,
+ * since it could change between the test and a later check.
+ */
+function stableKey(node: ts.Expression): string | null {
+  const value = unwrapParens(node);
+  if (value.kind === ts.SyntaxKind.NullKeyword) return "null";
+  if (value.kind === ts.SyntaxKind.TrueKeyword) return "true";
+  if (value.kind === ts.SyntaxKind.FalseKeyword) return "false";
+  if (ts.isNumericLiteral(value)) return `n${value.text}`;
+  if (ts.isStringLiteral(value) || ts.isNoSubstitutionTemplateLiteral(value)) return JSON.stringify(value.text);
+  if (!ts.isIdentifier(value)) return null;
+  if (value.text === "undefined") return "undefined";
+  const declaration = findDeclaration(value.text, value);
+  if (declaration?.kind !== "const" && declaration?.kind !== "parameter") return null;
+  return isReassigned({ id: declaration.id, path: [] }, declarationScope(declaration)) ? null : `#${declaration.id.getStart()}`;
+}
+
+const EQUALITY_OPERATORS = new Map<ts.SyntaxKind, { key: string; negated: boolean }>([
+  [ts.SyntaxKind.EqualsEqualsEqualsToken, { key: "===", negated: false }],
+  [ts.SyntaxKind.ExclamationEqualsEqualsToken, { key: "===", negated: true }],
+  [ts.SyntaxKind.EqualsEqualsToken, { key: "==", negated: false }],
+  [ts.SyntaxKind.ExclamationEqualsToken, { key: "==", negated: true }],
+]);
+
+/**
+ * What is certain when `condition` is truthy (or, with `truthy` false, falsy):
+ * a stable value, its negation, a comparison of two stable values, and each part
+ * of a `&&` that held or a `||` that did not. A part that names no stable value
+ * says nothing, so the list may be empty.
+ */
+function factsOf(condition: ts.Expression, truthy: boolean): Fact[] {
+  const node = unwrapParens(condition);
+  if (ts.isPrefixUnaryExpression(node) && node.operator === ts.SyntaxKind.ExclamationToken) {
+    return factsOf(node.operand, !truthy);
+  }
+  if (ts.isBinaryExpression(node)) {
+    const kind = node.operatorToken.kind;
+    if (kind === ts.SyntaxKind.AmpersandAmpersandToken && truthy) {
+      return [...factsOf(node.left, true), ...factsOf(node.right, true)];
+    }
+    if (kind === ts.SyntaxKind.BarBarToken && !truthy) {
+      return [...factsOf(node.left, false), ...factsOf(node.right, false)];
+    }
+    const equality = EQUALITY_OPERATORS.get(kind);
+    if (equality) {
+      const keys = [stableKey(node.left), stableKey(node.right)];
+      return keys.every((key) => key !== null) ? [{ key: `${equality.key} ${keys.sort().join(" ")}`, truthy: truthy !== equality.negated }] : [];
+    }
+    return [];
+  }
+  const key = stableKey(node);
+  return key === null ? [] : [{ key, truthy }];
+}
+
+/** True when no path can satisfy every fact in `path` and every fact in `guards`. */
+const excludes = (guards: readonly Fact[], path: readonly Fact[]): boolean =>
+  path.some((fact) => guards.some((guard) => guard.key === fact.key && guard.truthy !== fact.truthy));
+
+/** The calls that screen, and the facts of each path that does not (#4764). */
+type Screens = { calls: ts.CallExpression[]; gaps: Fact[][] };
+
+/**
+ * What `node` evaluates to when it screens `hashed` (#4764): the awaited call
+ * itself, a conditional, or a `||` or `??` chain. Every branch not ruled out by a
+ * constant test must screen, or be a GAP: a branch that gives a result with no
+ * screen, listed with the facts that must hold to take it (`skip ? { ok: true } :
+ * await screen(x)` has a gap that needs `skip`). A gap is harmless only where the
+ * writer cannot run on its path (`excludes`). Null when nothing screens.
+ */
+function screensOf(node: ts.Expression, hashed: Reference, path: readonly Fact[] = []): Screens | null {
+  const value = unwrapParens(node);
+  let parts: Screens[] | null = null;
+  if (ts.isConditionalExpression(value)) {
+    const branches = [
+      { node: value.whenTrue, ruledOut: isConstantTest(value.condition, false), facts: factsOf(value.condition, true) },
+      { node: value.whenFalse, ruledOut: isConstantTest(value.condition, true), facts: factsOf(value.condition, false) },
+    ];
+    parts = branches
+      .filter((branch) => !branch.ruledOut)
+      .map((branch) => {
+        const taken = [...path, ...branch.facts];
+        return screensOf(branch.node, hashed, taken) ?? { calls: [], gaps: [taken] };
+      });
+  } else if (
+    ts.isBinaryExpression(value) &&
+    (value.operatorToken.kind === ts.SyntaxKind.BarBarToken || value.operatorToken.kind === ts.SyntaxKind.QuestionQuestionToken)
+  ) {
+    parts = [value.left, value.right].map((operand) => screensOf(operand, hashed, path) ?? { calls: [], gaps: [[...path]] });
+  } else {
+    const call = screenCallOf(value, hashed);
+    return call && { calls: [call], gaps: [] };
+  }
+  const calls = parts.flatMap((part) => part.calls);
+  return calls.length === 0 ? null : { calls, gaps: parts.flatMap((part) => part.gaps) };
+}
+
+/**
+ * The names `statement` binds to an awaited screen of `hashed`, each with its
+ * gaps, and where the screen starts (its first argument): a `const` whose
+ * initializer is `await screenChosenPassword(x, ...)` itself, or a conditional or
+ * `||`/`??` chain with a screen on it (`screensOf`). Any other shape (a `let`, an
+ * object literal or comma expression that discards the result) binds nothing.
+ */
+function screenBinding(
+  statement: ts.Statement,
+  hashed: Reference,
+): { names: Map<string, Fact[][]>; from: number } {
+  const bound = { names: new Map<string, Fact[][]>(), from: Infinity };
   if (!ts.isVariableStatement(statement)) return bound;
   if ((statement.declarationList.flags & ts.NodeFlags.Const) === 0) return bound;
   for (const declaration of statement.declarationList.declarations) {
     if (!ts.isIdentifier(declaration.name) || !declaration.initializer) continue;
-    const initializer = unwrapParens(declaration.initializer);
-    const call = ts.isConditionalExpression(initializer)
-      ? (!isConstantTest(initializer.condition, false) && screenCallOf(initializer.whenTrue, hashed)) ||
-        (!isConstantTest(initializer.condition, true) && screenCallOf(initializer.whenFalse, hashed)) ||
-        null
-      : screenCallOf(initializer, hashed);
-    if (!call) continue;
-    bound.names.push(declaration.name.text);
-    bound.from = Math.min(bound.from, call.arguments[0].getStart());
+    const screens = screensOf(declaration.initializer, hashed);
+    if (!screens) continue;
+    bound.names.set(declaration.name.text, screens.gaps);
+    for (const call of screens.calls) bound.from = Math.min(bound.from, call.arguments[0].getStart());
   }
   return bound;
+}
+
+/**
+ * What must hold for the writer to run, from the `if` statements and conditionals
+ * between it and `block` that take it in one branch (#4764). A gap in the screen
+ * is harmless exactly when these rule it out (`excludes`):
+ * `password ? await screen(password) : { ok: true }` with the writer inside
+ * `if (password) { ... }`.
+ */
+function writerFacts(writer: ts.Node, block: ts.Node): Fact[] {
+  const facts: Fact[] = [];
+  for (let child: ts.Node = writer; child.parent && child.parent !== block; child = child.parent) {
+    const parent = child.parent;
+    if (ts.isIfStatement(parent) && (child === parent.thenStatement || child === parent.elseStatement)) {
+      facts.push(...factsOf(parent.expression, child === parent.thenStatement));
+    } else if (ts.isConditionalExpression(parent) && (child === parent.whenTrue || child === parent.whenFalse)) {
+      facts.push(...factsOf(parent.condition, child === parent.whenTrue));
+    }
+  }
+  return facts;
 }
 
 /** True when `statement` leaves the function on every path through it. */
@@ -323,6 +459,26 @@ function changedAfterScreen(
 }
 
 /**
+ * Where a change can still reach the writer, past its own start (#4764): the end
+ * of the outermost loop between the writer and `block`, since a change later in
+ * the body runs before the writer on the next pass; and, when a function lies
+ * between them, the end of `block`, since the function can be called at any point
+ * after it is made (`const w = () => save(...); change(); w();`, a callback given
+ * to `$transaction` or `setTimeout`). The screen is a statement of `block`, so a
+ * loop always starts after it; one that holds the screen too is outside `block`,
+ * screens again on each pass, and never counts. The copy rule's window already
+ * runs to the end of its scope (`copiedWriters`).
+ */
+function windowEnd(writer: ts.Node, block: ts.Node): number {
+  let end = writer.getStart();
+  for (let current = writer.parent; current && current !== block; current = current.parent) {
+    if (ts.isIterationStatement(current, false)) end = Math.max(end, current.getEnd());
+    if (isFunctionLike(current)) end = Math.max(end, block.getEnd());
+  }
+  return end;
+}
+
+/**
  * True when the writer is guarded: in some block enclosing it (up to its
  * function boundary and beyond, so a transaction callback inherits its
  * handler's guard), a screen binding is followed by an `if (!x.ok)` that exits,
@@ -337,20 +493,31 @@ function guardedByScreen(writer: ts.Node, hashedInput: ts.Expression | null): bo
   const hashed = hashedInput ? referenceOf(hashedInput) : null;
   if (hashed === null) return false;
   const position = writer.getStart();
+  // A function declaration is hoisted, so one around the writer can run before a
+  // screen that precedes it in text: no block outside it holds a screen for it.
+  let hoisted = false;
   for (let current = writer.parent; current; current = current.parent) {
-    if (!ts.isBlock(current) && !ts.isSourceFile(current)) continue;
+    if (ts.isFunctionDeclaration(current)) hoisted = true;
+    if (hoisted || (!ts.isBlock(current) && !ts.isSourceFile(current))) continue;
     const bound = new Set<string>();
     let screenedAt = Infinity;
+    let facts: Fact[] | null = null;
     for (const statement of current.statements) {
       if (statement.getEnd() > position) break;
       const screen = screenBinding(statement, hashed);
-      for (const name of screen.names) bound.add(name);
+      for (const [name, gaps] of screen.names) {
+        const guards: Fact[] = (facts ??= writerFacts(writer, current));
+        if (gaps.every((gap) => excludes(guards, gap))) bound.add(name);
+      }
       screenedAt = Math.min(screenedAt, screen.from);
       if (
         ts.isIfStatement(statement) &&
         exits(statement.thenStatement) &&
         testsNotOk(statement.expression, bound) &&
-        !changedAfterScreen(hashedInput as ts.Expression, hashed, { from: screenedAt, to: position })
+        !changedAfterScreen(hashedInput as ts.Expression, hashed, {
+          from: screenedAt,
+          to: windowEnd(writer, current),
+        })
       ) {
         return true;
       }

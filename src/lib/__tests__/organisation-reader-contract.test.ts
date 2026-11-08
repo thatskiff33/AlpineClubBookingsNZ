@@ -452,6 +452,8 @@ const DECLARED_FILES: Record<string, string> = {
     "the posting plan's debtor is a member or an organisation, and the builder maps it onto a leg's or obligation's organisationId column; it reads no row and decides nothing about a school",
   "src/lib/member-money/internal/store.ts":
     "writes the debtor columns the plan built and checks a leg names its earlier obligation's debtor; it decides nothing about a school",
+  "src/lib/member-money/internal/application-state.ts":
+    "matches a source's currency and member or organisation debtor to its obligation's before applying money",
 
   // #4457: the privacy-retention census classifies every Prisma model by name.
   "src/lib/privacy-retention-classification.ts":

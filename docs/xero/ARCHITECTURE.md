@@ -1032,12 +1032,20 @@ note.
    claims no allocation row up front, so each allocation it makes creates its
    own row and a refused one leaves that row FAILED; the retry covers it: it
    skips a target already linked and links
-   with the note's role, so own attempts never stand in its way (offering
-   their generic retry instead would link without that role, and the note
-   would never close). Another unresolved row - another note, invoice or
-   amount, such as the old tool's evidence-sized allocation - is a second
-   key, so it is answered first, from the match the dispatcher returns:
-   retried or reported blocked. A row resolved in Xero is answered first,
+   with the note's role, so own attempts never stand in its way. Before
+   #4757 the tool could offer such a row its generic retry, which links as
+   `CREDIT_NOTE_ALLOCATION`, without the note's role. Since #4767 one
+   predicate (`linkAllocatesClearingTarget`) decides for the retry, the
+   PARTIAL check and the dispatcher alike: a link with the note's role for
+   the same note and invoice, or a role-less one for the same note, invoice
+   AND amount - Xero's key, so the retry never sends that allocation again.
+   A role-less link for another note, invoice or amount, or with no amount
+   recorded (no writer of that role omits it), is not the allocation, so the
+   retry sends it and a refusal leaves the row PARTIAL, visible. The retry
+   only reads such a link; it never re-roles it. Another unresolved row -
+   another note, invoice or amount, such as the old tool's evidence-sized
+   allocation - is a second key, so it is answered first, from the match the
+   dispatcher returns: retried or reported blocked. A row resolved in Xero is answered first,
    reported done (`INV-INT-025`), only when it names this note; one naming
    another note (an applied-credit or other note's allocation on the same
    booking, fixed by hand) is that note's concern, and would otherwise hold
@@ -1049,8 +1057,23 @@ note.
    person is asked to allocate the invoices left, which the finding lists,
    and nothing is offered. While a retry runs on the note's row, no allocation
    row's retry is offered beside it. A PARTIAL row the retry refuses is
-   reported blocked for an edit's note; a clearing note's still falls through
-   to its arm's own allocation path (#4762). A throw gives the row back
+   reported blocked with the refusal reason and the planned invoices left,
+   and nothing is offered, for both arms: until #4762 a clearing note's fell
+   through to its arm's own allocation path, which could queue the whole note
+   against the primary invoice beside a spread plan. It is read as the retry
+   is: an allocation row in flight beside it is reported instead, another
+   row (not its own attempt, by the same rule) is answered first, and own
+   attempts resolved by hand count as done - with nothing left, the note is
+   reported done. With no readable plan (a redacted one) no row is its own
+   attempt, so a row resolved by hand never answers for the whole note, and
+   the invoices left are reported unknown (null). A PARTIAL row an officer
+   resolved in Xero is reported done (`INV-INT-025`) for both arms, naming
+   the note, with no action. It is answered ahead of the in-flight,
+   others-first and by-hand reads, which only decide whether the retry may
+   be offered and so cannot change an answer that offers nothing. An
+   allocation row beside it, live or failed, is reported alongside, blocked
+   and never retried (#3635 review F8); until #4763 that row was all either
+   arm reported. A throw gives the row back
    PARTIAL with its payload and the run's error, guarded on the claim, never
    FAILED, whose error payload would replace what the repair reads.
 

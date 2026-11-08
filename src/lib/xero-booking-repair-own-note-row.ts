@@ -11,7 +11,7 @@ import type {
   XeroObjectLinkRecord,
   XeroOperationRecord,
 } from "./xero-booking-repair-types";
-import { addAction, addFinding, buildRetryAction } from "./xero-booking-repair-findings";
+import { addAction, addFinding, addResolvedInXeroFinding, buildRetryAction } from "./xero-booking-repair-findings";
 import {
   blockingCandidates,
   getBlockingOperation,
@@ -26,7 +26,19 @@ type NoteAllocationKind = "modification" | "clearing";
 
 const WORDING: Record<
   NoteAllocationKind,
-  { failed: string; stuck: string; live: string; repairing: string; retry: string; handMade: string; unretryable?: string }
+  {
+    failed: string;
+    stuck: string;
+    live: string;
+    repairing: string;
+    retry: string;
+    handMade: string;
+    unretryable: string;
+    /** The document a resolved-by-officer finding names (`addResolvedInXeroFinding`). */
+    resolvedDocument: string;
+    /** The note's own row resolved in Xero (#4763): the note is on record, its allocation finished by hand. */
+    resolvedOwnRow: string;
+  }
 > = {
   modification: {
     failed: "A Xero credit-note allocation operation failed and cannot be auto-retried - resolve the operation manually.",
@@ -38,6 +50,9 @@ const WORDING: Record<
       "Part of this modification credit note's allocation was resolved by hand in Xero, and a retry would allocate that part again - allocate the rest by hand in Xero.",
     unretryable:
       "A modification credit note's allocation did not complete and its operation cannot be retried here - allocate it by hand in Xero.",
+    resolvedDocument: "credit-note allocation",
+    resolvedOwnRow:
+      "An officer marked this modification credit note's operation resolved in Xero: they finished its allocation by hand there, so it is treated as done and is never re-run. Any allocation of this note not linked here was made in Xero; if the resolve was a mistake, allocate the rest by hand in Xero.",
   },
   clearing: {
     failed:
@@ -49,10 +64,15 @@ const WORDING: Record<
       "The invoice-clearing credit note exists, but its allocations did not all complete; retrying replays the recorded plan.",
     handMade:
       "Part of this invoice-clearing credit note's allocations was resolved by hand in Xero, and a retry would allocate that part again - allocate the invoices left by hand in Xero.",
+    unretryable:
+      "The invoice-clearing credit note's allocations did not all complete and its operation cannot be retried here - allocate the invoices left by hand in Xero so the cancelled unpaid booking's invoice closes.",
+    resolvedDocument: "invoice-clearing allocation",
+    resolvedOwnRow:
+      "An officer marked this invoice-clearing credit note's operation resolved in Xero: they finished its allocations by hand there, so it is treated as done and is never re-run. Any allocation of this note not linked here was made in Xero; if the resolve was a mistake, allocate the invoices left by hand in Xero so the cancelled unpaid booking's invoice closes.",
   },
 };
 
-/** The arm that would allocate the note, and two behaviours from main each arm keeps, as explicit options. */
+/** The arm that would allocate the note. */
 type NoteAllocationArm = {
   kind: NoteAllocationKind;
   bookingId: string;
@@ -61,18 +81,6 @@ type NoteAllocationArm = {
   details: Record<string, unknown>;
   /** Carried on the retry finding beside `creditNoteId` and `operationId`. */
   retryDetails: Record<string, unknown>;
-  /**
-   * A PARTIAL row the retry refuses. An edit's note reports it; a clearing
-   * note's falls through to the arm's own no-allocation path as it did before
-   * #4757 - whether it should report it too is #4762, not decided here.
-   */
-  unretryable: "report" | "fall-through";
-  /**
-   * A row an officer resolved in Xero (`INV-INT-025`): neither arm reports a
-   * resolved-by-officer finding for it, only a live allocation row beside it.
-   * Whether it should is #4763, not decided here.
-   */
-  resolved: "live-allocation-only";
 };
 
 /** A note allocation held by a live, failed or unretryable row: reported, never retried or queued beside. */
@@ -101,16 +109,42 @@ export function addBlockedNoteAllocationFinding(
 }
 
 /**
+ * A note allocation an officer resolved in Xero (`INV-INT-025`): done, never
+ * retried or queued beside, but reported - info, no action. For an allocation
+ * row the arm answers, or, given `ownRow`, the note's own row (#4763): the note
+ * is on record there, so its summary says the allocation was finished by hand
+ * rather than that the club holds no allocation - part of a clearing note's
+ * may be linked.
+ */
+export function addResolvedNoteAllocationFinding(
+  findings: MutableFinding[],
+  arm: Pick<NoteAllocationArm, "kind" | "details">,
+  operation: XeroOperationRecord,
+  ownRow?: { creditNoteId: string }
+) {
+  const wording = WORDING[arm.kind];
+  addResolvedInXeroFinding(
+    findings,
+    operation,
+    wording.resolvedDocument,
+    { ...arm.details, ...ownRow },
+    ownRow ? wording.resolvedOwnRow : undefined
+  );
+}
+
+/**
  * What the dispatcher did with the note's own row:
  * - `handled`: reported, or the row's own retry offered - the caller queues
  *   nothing for the note's allocation;
- * - `arm-decides`: no own row says the note is unfinished, or the arm keeps
- *   its own path for this state (#4762);
+ * - `arm-decides`: no own row says the note is unfinished;
  * - `allocation-row-first`: beside the note's retry, an ALLOCATE row in the
  *   arm's scope that is not the note's own attempt - the arm answers
  *   `blocking` (that row's retry, a blocked report, or the resolved report)
  *   instead, even where the note already has an allocation. For a clearing
  *   note this is new with #4757: before, its retry was offered beside such a row.
+ *   A row the retry refuses is read the same way (#4762), and both get the
+ *   resolved report when their own attempts resolved by hand leave no planned
+ *   invoice.
  */
 export type OwnNoteRowOutcome =
   | { outcome: "handled" | "arm-decides" }
@@ -158,44 +192,69 @@ export function dispatchOwnNoteRow(
 ): OwnNoteRowOutcome {
   const row = readOwnNoteRowState(operations, links, arm.creditNoteId);
   if (row === null) return ARM_DECIDES;
-  // #4757 review F1: an allocation row in flight beside the note's retry or its
-  // running repair could allocate the note a second time. Reported, nothing offered.
-  if (row.kind === "retry" || row.kind === "repairing") {
+  // #4757 review F1: an allocation row in flight beside the note's retry, its
+  // running repair, or a by-hand instruction for a row the retry refuses
+  // (#4762) could allocate the note a second time. Reported, nothing offered.
+  if (row.kind === "retry" || row.kind === "repairing" || row.kind === "unretryable") {
     const liveAllocation = getLiveOperation(operations, "ALLOCATION", "ALLOCATE");
     if (liveAllocation) {
       addBlockedNoteAllocationFinding(findings, arm, liveAllocation);
       return HANDLED;
     }
   }
-  if (row.kind === "retry") {
+  if (row.kind === "retry" || row.kind === "unretryable") {
+    const plan = readPlan(row.operation.requestPayload);
+    const candidates = blockingCandidates(operations, "ALLOCATION", "ALLOCATE");
+    const own = candidates.filter((operation) => isOwnAttempt(operation, arm.creditNoteId, plan));
     // #4757 review S1: the note's own attempts never stand in its retry's way
     // (it covers them, and the later targets a refused first one never
     // reached); any other unresolved row goes to the arm first - two keys never
     // both retried. A row resolved in Xero was allocated by hand (#3635,
     // `INV-INT-025`): it goes first only when it names this note (round 5) - one
     // of another note's on the booking is that note's concern, and would hold
-    // this retry back for good.
-    const plan = readPlan(row.operation.requestPayload);
-    const candidates = blockingCandidates(operations, "ALLOCATION", "ALLOCATE");
-    const own = candidates.filter((operation) => isOwnAttempt(operation, arm.creditNoteId, plan));
+    // this retry back for good. The same for a row the retry refuses (#4762):
+    // an allocate-by-hand beside another row's later retry would allocate the
+    // credit twice - except that with no readable plan (redacted, say) none of
+    // its rows is known as its own attempt, so one resolved by hand could be
+    // part of the note only: it never answers for the whole, and the blocked
+    // report below stands.
+    const planKnown = plan.length > 0;
     const others = candidates.filter(
       (operation) =>
         !own.includes(operation) &&
-        (!isResolvedInXero(operation) || readJsonRecord(operation.requestPayload)?.creditNoteId === arm.creditNoteId)
+        (!isResolvedInXero(operation) ||
+          (readJsonRecord(operation.requestPayload)?.creditNoteId === arm.creditNoteId &&
+            (row.kind === "retry" || planKnown)))
     );
     const blocking = getBlockingOperation(others, "ALLOCATION", "ALLOCATE");
     if (blocking) return { outcome: "allocation-row-first", blocking };
     // #4757 review S2: an own attempt resolved by hand has no link, so the
-    // retry would allocate it again. Whole by hand: the resolved report; else a
-    // person allocates the planned invoices left, listed, and nothing is offered.
+    // retry would allocate it again. Whole by hand: the resolved report, for a
+    // row the retry refuses too (#4762); else a person allocates the planned
+    // invoices left, listed, and nothing is offered.
     const handMade = own.filter((operation) => isResolvedInXero(operation));
+    const byHand = new Set(handMade.map((operation) => readJsonRecord(operation.requestPayload)?.invoiceId));
+    const left = targetsWithoutAllocation(plan, arm.creditNoteId, noteAllocationLinks(links)).filter(
+      (target) => !byHand.has(target.invoiceId)
+    );
     const [firstHandMade] = handMade;
+    if (firstHandMade !== undefined && left.length === 0) {
+      return { outcome: "allocation-row-first", blocking: { kind: "resolved", resolvedOperation: firstHandMade } };
+    }
+    if (row.kind === "unretryable") {
+      // #4762: reported blocked for both arms, the invoices left listed - or
+      // null, meaning unknown, when the plan cannot be read: an empty list
+      // would say nothing is left. A clearing note's fell through to its arm's
+      // own path before, which could queue a fresh allocation of the whole
+      // note against the primary invoice beside it - for a spread plan, the
+      // #3535 hazard.
+      addBlockedNoteAllocationFinding(findings, arm, row.operation, WORDING[arm.kind].unretryable, {
+        retryUnsupportedReason: row.reason,
+        unallocatedInvoices: planKnown ? left : null,
+      });
+      return HANDLED;
+    }
     if (firstHandMade !== undefined) {
-      const byHand = new Set(handMade.map((operation) => readJsonRecord(operation.requestPayload)?.invoiceId));
-      const left = targetsWithoutAllocation(plan, arm.creditNoteId, noteAllocationLinks(links)).filter(
-        (target) => !byHand.has(target.invoiceId)
-      );
-      if (left.length === 0) return { outcome: "allocation-row-first", blocking: { kind: "resolved", resolvedOperation: firstHandMade } };
       addFinding(findings, {
         code: "MANUAL_REVIEW_REQUIRED",
         severity: "manual_review",
@@ -218,10 +277,26 @@ export function dispatchOwnNoteRow(
   // (#4259 review F1), so it waits until the repair ends.
   switch (row.kind) {
     case "resolved": {
-      // Allocated by hand: nothing retried or queued, but a separate live
-      // allocation row is still seen (Xero review F8), report-only. No
-      // resolved-by-officer finding (`arm.resolved`, #4763).
-      const blocking = getBlockingOperation(operations, "ALLOCATION", "ALLOCATE");
+      // Allocated by hand (`INV-INT-025`): nothing retried or queued, but the
+      // row is still reported (#4763), naming the note. It is answered ahead of
+      // the in-flight check, others-first and the by-hand count above (and
+      // `readOwnNoteRowState` reads it ahead of a running repair, which cannot
+      // claim a resolved row): those decide whether the note's retry may be
+      // offered, and a resolved row offers none, so none of them can change
+      // the answer. Nor does a row beside it replace the report - that would
+      // hide the officer's resolve: a separate live or failed allocation row
+      // is reported alongside it (Xero review F8), report-only. A retry of one
+      // of this note's rows could allocate the note a second time, since the
+      // officer's hand allocation has no link here. The clearing arm spans
+      // the booking: rows naming another note belong to that note's arm
+      // (#4774), as for resolved rows above.
+      addResolvedNoteAllocationFinding(findings, arm, row.operation, { creditNoteId: arm.creditNoteId });
+      const noteOperations = arm.kind === "clearing"
+        ? operations.filter(
+            (operation) => readJsonRecord(operation.requestPayload)?.creditNoteId === arm.creditNoteId
+          )
+        : operations;
+      const blocking = getBlockingOperation(noteOperations, "ALLOCATION", "ALLOCATE");
       if (blocking && blocking.kind !== "resolved") addBlockedNoteAllocationFinding(findings, arm, blocking.operation);
       return HANDLED;
     }
@@ -240,12 +315,6 @@ export function dispatchOwnNoteRow(
       });
       return HANDLED;
     }
-    case "unretryable":
-      if (arm.unretryable === "fall-through") return ARM_DECIDES;
-      addBlockedNoteAllocationFinding(findings, arm, row.operation, WORDING[arm.kind].unretryable, {
-        retryUnsupportedReason: row.reason,
-      });
-      return HANDLED;
     default: {
       const unhandled: never = row;
       throw new Error(`Unhandled own note row state: ${JSON.stringify(unhandled)}`);

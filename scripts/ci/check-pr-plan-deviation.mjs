@@ -23,26 +23,13 @@
  * Prose such as "the owner agreed in chat" is not a link: a decision nobody can
  * open is one nobody can check.
  *
- * ROLLOUT (owner decision, 1 Nov 2026): the section ships as a WARNING for
- * seven days so open PRs can add it; while `PLAN_DEVIATION_ENFORCED` is
- * `false` a missing, empty or unlinked section prints a GitHub Actions
- * `::warning::` annotation and exits 0, and `pnpm run pr:check` reports WARN.
- * The follow-up PR that makes it a failure changes exactly these:
- *   - `PLAN_DEVIATION_ENFORCED` below, to `true`;
- *   - the `::warning::` branch of this file's entrypoint and its "warning
- *     during the rollout week" text (the `fail` branch already exists);
- *   - tests: `check-pr-plan-deviation.test.mjs` "is in its warning week" (it
- *     fails when the warning sentences below disagree with the constant) and
- *     "prints a ::warning:: annotation…", and `check-pr-body.test.mjs`
- *     "reports a missing plan-deviation section as WARN…";
- *   - the texts that say "warning": the `## Plan Deviation` comment in
- *     `.github/pull_request_template.md`, the "WARNING ONLY" comment on the
- *     `Validate PR plan deviation` step in `.github/workflows/ci.yml`, and
- *     "Two PR-body checks warn rather than fail" in `CONTRIBUTING.md`;
- *   - the Dependabot exemption (owner decision): a dependency-only DIFF rule,
- *     the same kind the concurrency gate's #2726 waiver uses — never the
- *     author. Until then a Dependabot body, which cannot carry the section,
- *     only warns.
+ * ENFORCED after the seven-day warning rollout (#4633; do not merge before
+ * 8 Nov 2026). A missing, empty or unlinked section fails `verify` and
+ * `pnpm run pr:check`. Only a known, nonempty diff restricted to this repo's
+ * dependency manifests and lockfile is exempt, regardless of author.
+ * Activation audit (3 Nov 2026): of the five open PRs, #4496 lacked the
+ * section; #4720, #4716, #4677 and #4635 had it. Recheck open PRs before
+ * merging on or after 8 Nov so authors can update their descriptions.
  *
  * Runs before `pnpm install --frozen-lockfile` in the `verify` job, so it uses
  * Node built-ins only.
@@ -51,10 +38,11 @@ import process from "node:process";
 
 import { execFileSync } from "node:child_process";
 
-import { workflowCommand } from "./dependency-mitigation.mjs";
 import { escapeRegex } from "./escape-regex.mjs";
 import {
   fetchLivePrBody,
+  gitDiffChangedFiles,
+  parseNameStatus,
   readEventPrBody,
   sectionAfterHeading,
   selectPrBody,
@@ -62,11 +50,12 @@ import {
 } from "./pr-body.mjs";
 import { isMainModule } from "../lib/is-main-module.mjs";
 
-/**
- * THE SWITCH. `false` during the warning week; the follow-up PR flips it to
- * `true`, which turns every warning this gate gives into a failure of `verify`.
- */
-export const PLAN_DEVIATION_ENFORCED = false;
+/** The warning rollout is complete; invalid answers now fail both runners. */
+export const PLAN_DEVIATION_ENFORCED = true;
+
+// pnpm-workspace.yaml holds this repository's dependency catalog and overrides.
+// Keep the exemption narrower than the concurrency gate's non-sensitive paths.
+const DEPENDENCY_FILES = new Set(["package.json", "pnpm-workspace.yaml", "pnpm-lock.yaml"]);
 
 export const PLAN_DEVIATION_HEADING = "## Plan Deviation";
 
@@ -238,6 +227,7 @@ export function validatePlanDeviation(body, { repository = thisRepository() } = 
 }
 
 const OUTCOME_MESSAGES = {
+  "dependency-only": "only dependency manifests and the lockfile changed, so no plan declaration is required.",
   none: "the PR declares no material deviation from its plan.",
   listed: "every listed deviation links the owner's answer.",
 };
@@ -246,9 +236,14 @@ const OUTCOME_MESSAGES = {
  * The gate's verdict with the rollout switch applied: `pass`, or — for a body
  * that fails `validatePlanDeviation` — `warn` while `enforced` is false and
  * `fail` once it is true. `enforced` is a parameter only so tests can drive
- * both states; every caller leaves it to the constant.
+ * both states; every caller leaves it to the constant. `changedFiles` comes
+ * from the shared diff parser; null means unknown and never grants a waiver.
  */
-export function planDeviationVerdict(body, { enforced = PLAN_DEVIATION_ENFORCED, repository } = {}) {
+export function planDeviationVerdict(body, { enforced = PLAN_DEVIATION_ENFORCED, repository, changedFiles = null } = {}) {
+  // Unknown and empty diffs cannot establish a dependency-only update.
+  if (changedFiles?.length > 0 && changedFiles.every((file) => DEPENDENCY_FILES.has(file))) {
+    return { status: "pass", outcome: "dependency-only", message: OUTCOME_MESSAGES["dependency-only"] };
+  }
   try {
     const { outcome } = validatePlanDeviation(body, repository === undefined ? {} : { repository });
     return { status: "pass", outcome, message: OUTCOME_MESSAGES[outcome] };
@@ -260,19 +255,18 @@ export function planDeviationVerdict(body, { enforced = PLAN_DEVIATION_ENFORCED,
 
 if (isMainModule(import.meta.url)) {
   try {
+    const base = process.env.PR_BASE_SHA;
+    const head = process.env.PR_HEAD_SHA;
+    // Reuse the shared parser so a rename out of any other path cannot hide
+    // behind a manifest destination. A failed git diff reaches the catch below.
+    const changedFiles = base && head
+      ? parseNameStatus(gitDiffChangedFiles(base, head)).map((change) => change.path)
+      : null;
     const fetchedBody = await fetchLivePrBody(GATE_LABEL);
     const body = selectPrBody({ fetchedBody, eventBody: readEventPrBody() });
-    const verdict = planDeviationVerdict(body);
+    const verdict = planDeviationVerdict(body, { changedFiles });
     if (verdict.status === "pass") {
       console.log(`PR plan deviation check passed: ${verdict.message}`);
-    } else if (verdict.status === "warn") {
-      console.log(
-        workflowCommand(
-          "warning",
-          "Plan deviation (warning only, #4463 rollout)",
-          `${verdict.message} This is a warning during the rollout week; it becomes a failure of verify.`,
-        ),
-      );
     } else {
       console.error(`${GATE_LABEL} failed: ${verdict.message}`);
       process.exitCode = 1;

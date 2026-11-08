@@ -1,5 +1,6 @@
 import type { Client } from "pg";
 import { z } from "zod";
+import { MemberMoneyApplicationState, memberMoneyConservationProblems } from "./application-state";
 import { APPEND_ONLY_FORBIDDEN_PRIVILEGE_TYPES, APPEND_ONLY_FORBIDDEN_TABLE_PRIVILEGES } from "../../database-roles";
 import { MEMBER_MONEY_RELATIONS } from "../../member-money-tables";
 import { MEMBER_MONEY_DATABASE_SHAPE, type MemberMoneyFunctionShape } from "./database-shape";
@@ -123,6 +124,13 @@ export async function verifyMemberMoneyJournal(
     LEFT JOIN public."MemberMoneyJournal" j ON j."eventId" = e.id WHERE j.id IS NULL
   `);
   const findings = z.array(Finding).parse(batches.rows);
+
+  const state = MemberMoneyApplicationState.parse((await client.query("SELECT public.member_money_application_state(NULL) AS state")).rows[0].state);
+  findings.push(...memberMoneyConservationProblems(state));
+  findings.push(...z.array(Finding).parse((await client.query(`
+    SELECT r.id AS identity, unnest(public.member_money_reservation_errors(r.id)) AS problem
+    FROM public."MemberMoneyRefundReservation" r
+  `)).rows));
 
   const pinnedFunctions: Record<string, MemberMoneyFunctionShape> = MEMBER_MONEY_DATABASE_SHAPE.functions;
   const routines = z.array(ReadFunction).parse((await client.query(`

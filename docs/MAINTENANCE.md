@@ -1453,18 +1453,36 @@ its allocation refused) reports `MISSING_CREDIT_NOTE_ALLOCATION` with that
 operation's retry, never a fresh allocation; while a retry is running on it,
 or where the retry is refused, the report says the allocation is blocked and
 offers nothing, and you check again later or allocate it by hand in Xero.
-Nor is the note's retry offered beside an allocation operation still
-pending or running (reported blocked: let it finish, then run the report
-again), or beside a failed one that is not the note's own attempt at a
-planned invoice and amount - such as an older, differently sized allocation
-the tool once queued. The report reads the edit's own operations, or for an
-invoice-clearing note the whole booking's. That operation is retried first,
-or reported if it cannot be, or reported as done if resolved in Xero and
-it names the same credit note (one resolved for another note is left to that
-note's own report); the
-note's own failed attempts are covered by its retry. If you resolved one of
-the note's own attempts by hand, the report asks you to allocate the planned
-invoices it lists as left by hand too, and offers nothing.
+Since #4762 the same holds for an invoice-clearing note whose operation the
+retry refuses: reported blocked with the reason and the invoices left to
+allocate by hand, never a fresh allocation of the whole note against the
+primary invoice; where its recorded plan was redacted, the invoices left are
+not listed. For either note, whether its retry is offered or refused, an
+allocation operation still pending or running is reported instead (let it
+finish, then run the report again), and so is a failed one that is not the
+note's own attempt at a planned invoice and amount - such as an older,
+differently sized allocation the tool once queued: it is retried first, or
+reported if it cannot be, or reported as done if resolved in Xero and it
+names the same credit note (one resolved for another note is left to that
+note's own report). The report reads the edit's own operations, or for an
+invoice-clearing note the whole booking's. The note's own failed attempts
+are covered by its retry. Since #4767 that retry, and the report, also
+count an allocation an older version of this tool retried on its own
+(linked as `CREDIT_NOTE_ALLOCATION`) as done when it names the same credit
+note, invoice and amount, so the retry never sends it to Xero again; a
+note whose planned invoices are all covered that way is no longer reported.
+Its operation stays partial on the Xero operations screen until one retry
+closes it, which makes no Xero call. Invoices you allocated by hand through
+one of the note's own attempts are not listed: if none is left, the note is
+reported as done; otherwise the report asks you to allocate the planned
+invoices it lists as left by hand, and offers nothing.
+Since #4763, a note whose own operation was marked resolved in Xero is
+listed as an information-only "resolved in Xero by an officer" finding
+naming the note, with nothing offered. Any other allocation operation still
+failed or pending beside it is reported too, and not retried from this
+report: a retry of one of that note's own could allocate it a second time,
+since the allocation you made by hand is not linked in the app. Check such
+an operation in Xero, then retry or resolve it on the Xero operations panel.
 Since #1491, `LATE_CAPTURE_AFTER_CANCELLATION` is also never auto-applied:
 it now fires only when a cancelled booking retains captured value with NO
 recorded cancellation-refund decision (no cancellation credit, no

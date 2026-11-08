@@ -138,6 +138,28 @@ as a red flag and check the release notes before deploying.
 
 ## Unreleased
 
+### Payment transaction history outlives its payment (#4574)
+
+The database now refuses to delete a payment with transactions, or a transaction
+named by a refund or recovery operation. Migration
+`20261210090000_retain_payment_transaction_history` changes those three foreign
+keys to `ON DELETE RESTRICT`, preserving the history required by D1 on #4482.
+Existing rows, nullable links and update actions are unchanged.
+
+Set `ALLOW_BREAKING_BLUE_GREEN_MIGRATIONS=1` and a nonempty
+`BLUE_GREEN_MIGRATION_OVERRIDE_REASON` explaining "#4574 payment history keys
+change to RESTRICT; old colour compatible". As with Ledger M2, dropping and
+re-adding the keys triggers the breaking-migration gate. The app never deletes
+these parents, so no maintenance window or role provisioning is required.
+
+Deploy at a quiet time: one atomic transaction locks `Payment`,
+`PaymentTransaction`, `PaymentRefund` and `PaymentRecoveryOperation` through
+validation. Each lock waits at most one second; scan time depends on table size.
+On `55P03` or `40P01`, nothing applies: follow
+[the lock-timeout recovery steps](PRODUCTION_UPGRADE_RUNBOOK.md#21a-step-1320-stopped-on-a-lock-timeout)
+before retrying. The [safety ledger](BLUE_GREEN_MIGRATION_SAFETY.tsv) records the
+reverse procedure; reverting app code does not require reverting these keys.
+
 ### Booking-ledger history outlives its booking (#4514)
 
 **What changes.** Migration `20261127050000_retain_ledger_history_on_booking_delete`
@@ -186,6 +208,20 @@ INSERT. If it ever names a journal table, re-run `pnpm run db:provision-roles
 --apply` and deploy again. Afterwards, `pnpm run member-money:verify` with the
 application connection should report no findings
 ([details](../DEPLOYMENT.md#member-money-journal-grants-m1)).
+
+### Member-money applications and refund reservations (#4691)
+
+**What changes.** Migration `20261210080000_member_money_applications` adds two
+empty append-only tables for a refund reservation and its release, and tightens
+the journal's own checks so a payment cannot be applied for more than it is
+worth. No screen, payment, refund or Xero document changes in this release:
+nothing in the running app calls the new code yet. A club on the previous
+release keeps posting as before.
+
+**What you do.** Nothing beyond the normal deploy. Single-role clubs and clubs
+on the least-privilege roles both need no provisioning step: the migration
+narrows its own two tables. If the deploy's grants check ever names one of
+them, re-run `pnpm run db:provision-roles --apply` and deploy again.
 
 ### Nightly backups stream to a disk-backed spool volume (#4487)
 

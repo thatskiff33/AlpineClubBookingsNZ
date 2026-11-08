@@ -401,11 +401,15 @@ providers, and fell four behind as the rest landed. Anything that turns on
   download) until an admin re-enters it under Admin → Integrations → Alpine
   Central Server. The same namespace holds `push_secret`, the secret the
   central server issued when this install registered for pushes; it verifies
-  the posts and free-beds webhooks. The non-secret connection settings (base
+  the posts and free-beds webhooks, and `push_registered_url`, the callback
+  address that secret was issued for (a `NEXTAUTH_URL` on another origin, host name or port, never takes the
+  registration over without a key save, so a restored copy cannot divert
+  production's pushes);
+  both are system-written and removed together. The non-secret connection settings (base
   URL, opt-in flag, sync cursors, and the owned-lodge list) live in
   `ServerNzSettings`. Replacing the key keeps the address and flag but resets
   the connection's answers (owned list, version, every sync cursor) and
-  removes `push_secret` in the same transaction; moving the address does the
+  removes `push_secret` and `push_registered_url` in the same transaction; moving the address does the
   same and removes the key too (#4436, #4470). What the key authorises leaving the club is every column
   of the club's OWN `OtherLodge` rows plus their amenity lists (#50, #52):
   since the fourteen detail columns were added, that includes a site URL, a
