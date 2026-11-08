@@ -498,7 +498,7 @@ describe("a modification note's allocations are summed per note, each allocation
   type AllocationLink = { localId: string; xeroObjectId: string; role: string; metadata: Record<string, unknown>; updatedAt: Date };
   const allocation = (
     xeroObjectId: string,
-    invoiceId: string,
+    invoiceId: string | undefined,
     amountCents: number | undefined,
     updatedAt = "2026-06-01T00:00:00.000Z",
     role = NOTE_ALLOCATION_ROLE,
@@ -627,6 +627,16 @@ describe("a modification note's allocations are summed per note, each allocation
     it("MUTATION: a role-less link with no amount recorded counts nothing (fail closed)", async () => {
       mocks.paymentFindMany.mockResolvedValue([BANK_PAYMENT()]);
       invoiceLinks = [onEdit(allocation("alloc-x", "inv-1", undefined, undefined, ROLELESS_ALLOCATION_ROLE))];
+
+      await recount();
+      expect(refundedWrites()).toEqual([]);
+    });
+
+    it("MUTATION: a link naming no invoice is no allocation it can key, so it counts nothing (fail closed)", async () => {
+      // Before #4786 it counted under its own link id; no writer records an
+      // allocation link without the invoice.
+      mocks.paymentFindMany.mockResolvedValue([BANK_PAYMENT()]);
+      paymentLinks = [allocation("alloc-60", undefined, 6000)];
 
       await recount();
       expect(refundedWrites()).toEqual([]);
