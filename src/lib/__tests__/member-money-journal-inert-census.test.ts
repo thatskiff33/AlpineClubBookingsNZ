@@ -289,6 +289,13 @@ describe("member money journal stays inert in M1 (#4513)", () => {
     expect('import { postMemberMoneyEvent } from "@/lib/member-money";').toMatch(POSTING_COMMAND);
   });
 
+  it("has no production caller of the inert M4a reservation commands (#4691)", () => {
+    const command = /\b(reserveMemberMoneyRefund|releaseMemberMoneyRefundReservation)\b/;
+    const callers = productionSourceFiles(ROOT).filter((file) => !file.startsWith(BOUNDARY) && command.test(readFileSync(join(ROOT, file), "utf8")));
+    expect(callers, "a door calls the reservation engine; M4a stays inert").toEqual([]);
+    expect('reserveMemberMoneyRefund(tx, plan)').toMatch(command);
+  });
+
   it("admits exactly the M3b and M3c doors as posting callers (#4627, #4628)", () => {
     const callers = found.filter((file) => !file.startsWith(BOUNDARY)
       && DOOR_COMMAND.test(stripComments(readFileSync(join(ROOT, file), "utf8"))));

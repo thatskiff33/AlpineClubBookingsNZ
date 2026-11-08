@@ -9056,6 +9056,7 @@ model MemberMoneyJournal {
   sources MemberMoneySourceLink[]
   obligations MemberMoneyObligation[]
   applications MemberMoneyApplication[]
+  refundReservations MemberMoneyRefundReservation[]
 }
 
 model MemberMoneySourceLink {
@@ -9132,6 +9133,7 @@ model MemberMoneyObligation {
   lines MemberMoneyLine[]
   applications MemberMoneyApplication[]
   @@index([journalId])
+  refundReservations MemberMoneyRefundReservation[]
   /// Member hard delete counts the obligations naming a debtor (#4514).
   @@index([memberId])
 }
@@ -9150,6 +9152,7 @@ model MemberMoneyApplication {
   reverses MemberMoneyApplication? @relation("MemberMoneyApplicationReversal", fields: [reversesApplicationId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   reversedBy MemberMoneyApplication? @relation("MemberMoneyApplicationReversal")
   @@index([journalId])
+  reservationReleases MemberMoneyRefundReservationRelease[]
   @@index([sourceLineId])
   @@index([obligationId])
 }
@@ -9164,4 +9167,42 @@ model MemberMoneySourcePosting {
   line MemberMoneyLine @relation(fields: [lineId, journalId], references: [id, journalId], onDelete: Restrict, onUpdate: Restrict)
   @@unique([sourceLinkId, lineId])
   @@index([lineId, journalId])
+}
+
+/// M4a: a durable claim on a refund family, using Stripe's attempt key verbatim.
+model MemberMoneyRefundReservation {
+  id String @id @default(cuid())
+  attemptKey String @unique
+  obligationId String
+  stripePaymentIntentId String
+  paymentTransactionId String
+  amountCents Int
+  fundingJournalId String
+  createdAt DateTime @default(now())
+  obligation MemberMoneyObligation @relation(fields: [obligationId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  fundingJournal MemberMoneyJournal @relation(fields: [fundingJournalId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  release MemberMoneyRefundReservationRelease?
+  @@index([obligationId, stripePaymentIntentId], map: "mm_refund_reservation_obligation_capture_idx")
+  @@index([fundingJournalId])
+}
+
+enum MemberMoneyRefundReservationReleaseReason {
+  ANSWERED
+  REFUSED
+  SUPERSEDED_KEY
+  CLOSED_WITHOUT_REFUND
+  OPERATOR
+}
+
+/// Releases append evidence; neither the reservation nor its funding is edited.
+model MemberMoneyRefundReservationRelease {
+  id String @id @default(cuid())
+  reservationId String @unique
+  reason MemberMoneyRefundReservationReleaseReason
+  stripeRefundId String?
+  applicationId String?
+  createdAt DateTime @default(now())
+  reservation MemberMoneyRefundReservation @relation(fields: [reservationId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  application MemberMoneyApplication? @relation(fields: [applicationId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  @@index([applicationId])
 }

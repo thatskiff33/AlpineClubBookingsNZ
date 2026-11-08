@@ -39,6 +39,9 @@ export interface MemberMoneyFunctionShape {
  */
 export const MEMBER_MONEY_DATABASE_SHAPE = {
   functions: {
+    member_money_application_state: {"source":"5cc318ede0f6b1b24e0c37d4b213cbc9","volatility":"stable","securityDefiner":false,"config":["search_path=pg_catalog, public"]},
+    member_money_require_reservation: {"source":"dfa3c9cf89ec21379d47739531fce19f","volatility":"volatile","securityDefiner":false,"config":["search_path=pg_catalog, public"]},
+    member_money_reservation_errors: {"source":"30967e7cec4e6f34f100a0fc631cfc9e","volatility":"stable","securityDefiner":false,"config":["search_path=pg_catalog, public"]},
     member_money_system_identifier: {
       source: "84a6311f30559828a65a0fcfb6e46c4b", volatility: "stable", securityDefiner: false,
       config: ["search_path=pg_catalog"],
@@ -52,7 +55,7 @@ export const MEMBER_MONEY_DATABASE_SHAPE = {
       config: ["search_path=pg_catalog, public"],
     },
     member_money_batch_errors: {
-      source: "cbb4fab0548c90641ea97c8a9cf94c97", volatility: "stable", securityDefiner: false,
+      source: "47c4b03605b677ee51f9daaea0c6d505", volatility: "stable", securityDefiner: false,
       config: ["search_path=pg_catalog, public"],
     },
     member_money_require_complete: {
@@ -61,6 +64,18 @@ export const MEMBER_MONEY_DATABASE_SHAPE = {
     },
   },
   constraints: {
+    MemberMoneyRefundReservation: {
+      "MemberMoneyRefundReservation_pkey": "PRIMARY KEY (id)",
+      "MemberMoneyRefundReservation_obligationId_fkey": "FOREIGN KEY (\"obligationId\") REFERENCES \"MemberMoneyObligation\"(id) ON UPDATE RESTRICT ON DELETE RESTRICT",
+      "MemberMoneyRefundReservation_fundingJournalId_fkey": "FOREIGN KEY (\"fundingJournalId\") REFERENCES \"MemberMoneyJournal\"(id) ON UPDATE RESTRICT ON DELETE RESTRICT",
+      "member_money_reservation_amount": "CHECK (((\"amountCents\" > 0) AND (length(\"attemptKey\") > 0) AND (length(\"stripePaymentIntentId\") > 0) AND (length(\"paymentTransactionId\") > 0)))"
+    },
+    MemberMoneyRefundReservationRelease: {
+      "MemberMoneyRefundReservationRelease_pkey": "PRIMARY KEY (id)",
+      "MemberMoneyRefundReservationRelease_reservationId_fkey": "FOREIGN KEY (\"reservationId\") REFERENCES \"MemberMoneyRefundReservation\"(id) ON UPDATE RESTRICT ON DELETE RESTRICT",
+      "MemberMoneyRefundReservationRelease_applicationId_fkey": "FOREIGN KEY (\"applicationId\") REFERENCES \"MemberMoneyApplication\"(id) ON UPDATE RESTRICT ON DELETE RESTRICT",
+      "member_money_release_answer": "CHECK (((reason = 'ANSWERED'::\"MemberMoneyRefundReservationReleaseReason\") = ((\"applicationId\" IS NOT NULL) AND (\"stripeRefundId\" IS NOT NULL))))"
+    },
     MemberMoneyEvent: {
       MemberMoneyEvent_pkey:
         `PRIMARY KEY (id)`,
@@ -143,6 +158,16 @@ export const MEMBER_MONEY_DATABASE_SHAPE = {
     },
   },
   triggers: {
+    MemberMoneyRefundReservation: {
+      "member_money_immutable": "CREATE TRIGGER member_money_immutable BEFORE DELETE OR UPDATE ON public.\"MemberMoneyRefundReservation\" FOR EACH ROW EXECUTE FUNCTION member_money_refuse_mutation()",
+      "member_money_no_truncate": "CREATE TRIGGER member_money_no_truncate BEFORE TRUNCATE ON public.\"MemberMoneyRefundReservation\" FOR EACH STATEMENT EXECUTE FUNCTION member_money_refuse_mutation()",
+      "member_money_reservation_complete": "CREATE CONSTRAINT TRIGGER member_money_reservation_complete AFTER INSERT ON public.\"MemberMoneyRefundReservation\" DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION member_money_require_reservation()"
+    },
+    MemberMoneyRefundReservationRelease: {
+      "member_money_immutable": "CREATE TRIGGER member_money_immutable BEFORE DELETE OR UPDATE ON public.\"MemberMoneyRefundReservationRelease\" FOR EACH ROW EXECUTE FUNCTION member_money_refuse_mutation()",
+      "member_money_no_truncate": "CREATE TRIGGER member_money_no_truncate BEFORE TRUNCATE ON public.\"MemberMoneyRefundReservationRelease\" FOR EACH STATEMENT EXECUTE FUNCTION member_money_refuse_mutation()",
+      "member_money_reservation_complete": "CREATE CONSTRAINT TRIGGER member_money_reservation_complete AFTER INSERT ON public.\"MemberMoneyRefundReservationRelease\" DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION member_money_require_reservation()"
+    },
     MemberMoneyEvent: {
       member_money_complete:
         `CREATE CONSTRAINT TRIGGER member_money_complete AFTER INSERT ON public."MemberMoneyEvent" DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION member_money_require_complete()`,
@@ -209,6 +234,14 @@ export const MEMBER_MONEY_DATABASE_SHAPE = {
     },
   },
   uniqueIndexes: {
+    MemberMoneyRefundReservation: {
+      "MemberMoneyRefundReservation_pkey": "CREATE UNIQUE INDEX \"MemberMoneyRefundReservation_pkey\" ON public.\"MemberMoneyRefundReservation\" USING btree (id)",
+      "MemberMoneyRefundReservation_attemptKey_key": "CREATE UNIQUE INDEX \"MemberMoneyRefundReservation_attemptKey_key\" ON public.\"MemberMoneyRefundReservation\" USING btree (\"attemptKey\")"
+    },
+    MemberMoneyRefundReservationRelease: {
+      "MemberMoneyRefundReservationRelease_pkey": "CREATE UNIQUE INDEX \"MemberMoneyRefundReservationRelease_pkey\" ON public.\"MemberMoneyRefundReservationRelease\" USING btree (id)",
+      "MemberMoneyRefundReservationRelease_reservationId_key": "CREATE UNIQUE INDEX \"MemberMoneyRefundReservationRelease_reservationId_key\" ON public.\"MemberMoneyRefundReservationRelease\" USING btree (\"reservationId\")"
+    },
     MemberMoneyEvent: {
       MemberMoneyEvent_eventKey_key:
         `CREATE UNIQUE INDEX "MemberMoneyEvent_eventKey_key" ON public."MemberMoneyEvent" USING btree ("eventKey")`,

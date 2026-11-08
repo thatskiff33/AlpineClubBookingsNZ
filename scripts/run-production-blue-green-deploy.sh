@@ -2921,7 +2921,7 @@ WHERE n.nspname = 'public'
        OR NOT pg_catalog.has_table_privilege(:'app_role', c.oid, 'SELECT')
        OR (c.relkind IN ('v', 'm')
            AND pg_catalog.has_table_privilege(:'app_role', c.oid, 'INSERT, UPDATE, DELETE'))
-       OR (c.relname IN ('BookingLedgerLine', 'AuditLog', 'MemberMoneyEvent', 'MemberMoneyJournal', 'MemberMoneyLine', 'MemberMoneyObligation', 'MemberMoneyApplication', 'MemberMoneySourceLink', 'MemberMoneySourcePosting')
+       OR (c.relname IN ('BookingLedgerLine', 'AuditLog', 'MemberMoneyEvent', 'MemberMoneyJournal', 'MemberMoneyLine', 'MemberMoneyObligation', 'MemberMoneyApplication', 'MemberMoneySourceLink', 'MemberMoneySourcePosting', 'MemberMoneyRefundReservation', 'MemberMoneyRefundReservationRelease')
            AND (pg_catalog.has_table_privilege(:'app_role', c.oid, 'UPDATE, DELETE, TRUNCATE, TRIGGER, REFERENCES')
                 OR pg_catalog.has_any_column_privilege(:'app_role', c.oid, 'UPDATE'))));
 SQL

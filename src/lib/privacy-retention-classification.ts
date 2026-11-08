@@ -218,4 +218,6 @@ export const PRIVACY_RETENTION_CLASSIFICATION = {
   MemberMoneyObligation: "personal",
   MemberMoneyApplication: "personal",
   MemberMoneySourcePosting: "personal",
+  MemberMoneyRefundReservation: "personal",
+  MemberMoneyRefundReservationRelease: "personal",
 } as const;

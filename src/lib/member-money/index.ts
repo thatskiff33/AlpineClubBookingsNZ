@@ -30,3 +30,8 @@ export {
   type BookingJournalCharges,
 } from "./internal/booking-journal-read";
 export { bookingJournalInactiveReason } from "./internal/journal-activity";
+
+// M4a primitives remain inert: no production door imports these.
+export { memberMoneyApplicationKeys, memberMoneyChainKey } from "./internal/keys";
+export { reserveMemberMoneyRefund, MemberMoneyReservationRefused } from "./internal/store";
+export { releaseMemberMoneyRefundReservation } from "./internal/post";
