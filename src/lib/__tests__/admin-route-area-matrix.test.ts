@@ -4,6 +4,7 @@ import {
   type AdminPermissionArea,
 } from "@/lib/admin-permissions";
 import { ADMIN_ROUTE_AREA_ANCHOR_ENTRIES } from "@/lib/__tests__/helpers/admin-route-area-anchors";
+import { ADMIN_PAGES } from "@/lib/admin-hubs";
 import {
   adminApiRouteFiles,
   toRawPathname,
@@ -591,6 +592,180 @@ describe("admin route -> area matrix pin (#1548)", () => {
         ? []
         : [`${pathname}: anchored to "${area}", snapshot says "${snapshot}"`];
     });
+    expect(disagreements).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The same pin for the admin PAGES (#4799).
+//
+// Since C2 of epic #4468 the page half of the route map is generated from the
+// hub registry (`src/lib/admin-hubs/`) rather than written by hand, so the
+// registry entry IS the prefix edit. This snapshot is the reviewed statement
+// that the generation must reproduce: every page's area, keyed by its OLD path
+// (dynamic segments as `[param]`), as `getAdminRouteRequirement` resolved it on
+// `main` before C2. A page's hub path must resolve to the same row.
+//
+// A new page needs a row here as well as a registry entry. A changed row is a
+// change to who can open that screen: confirm it is intended before repasting.
+// ---------------------------------------------------------------------------
+const EXPECTED_PAGE_AREAS: Record<string, AdminPermissionArea> = {
+  "/admin/access-roles": "support",
+  "/admin/age-tier-settings": "bookings",
+  "/admin/ai-assistant": "support",
+  "/admin/ai-diagnostics": "overview",
+  "/admin/alpine-server/setup": "finance",
+  "/admin/appearance": "content",
+  "/admin/appearance/identity": "content",
+  "/admin/audit-log": "support",
+  "/admin/background-jobs": "support",
+  "/admin/backups": "support",
+  "/admin/backups/setup": "support",
+  "/admin/bed-allocation": "bookings",
+  "/admin/book": "bookings",
+  "/admin/booking-approvals": "bookings",
+  "/admin/booking-change-requests": "bookings",
+  "/admin/booking-messages": "support",
+  "/admin/booking-policies": "bookings",
+  "/admin/booking-policies/adult-member-hosting": "bookings",
+  "/admin/booking-policies/cancellation": "bookings",
+  "/admin/booking-policies/group-discount": "bookings",
+  "/admin/booking-policies/minimum-stay": "bookings",
+  "/admin/booking-policies/periods": "bookings",
+  "/admin/booking-policies/public-requests": "bookings",
+  "/admin/booking-requests": "bookings",
+  "/admin/bookings": "bookings",
+  "/admin/bookings-setup": "bookings",
+  "/admin/calendar": "lodge",
+  "/admin/chores": "lodge",
+  "/admin/club-format": "support",
+  "/admin/club-time": "support",
+  "/admin/committee": "membership",
+  "/admin/communications": "membership",
+  "/admin/config-transfer": "support",
+  "/admin/dashboard": "overview",
+  "/admin/deletion-requests": "membership",
+  "/admin/display": "lodge",
+  "/admin/display/builder": "lodge",
+  "/admin/display/devices": "lodge",
+  "/admin/display/layouts": "lodge",
+  "/admin/display/preview": "lodge",
+  "/admin/display/reference": "lodge",
+  "/admin/display/settings": "lodge",
+  "/admin/display/setup": "lodge",
+  "/admin/display/templates": "lodge",
+  "/admin/email-deliverability": "support",
+  "/admin/email-messages": "support",
+  "/admin/environment": "support",
+  "/admin/family-groups": "membership",
+  "/admin/family-suggestions": "membership",
+  "/admin/fee-configuration": "finance",
+  "/admin/fees": "bookings",
+  "/admin/google/setup": "finance",
+  "/admin/health": "support",
+  "/admin/hut-leaders": "lodge",
+  "/admin/image-manager": "content",
+  "/admin/induction": "membership",
+  "/admin/induction/[id]/print": "membership",
+  "/admin/induction/settings": "membership",
+  "/admin/integrations": "finance",
+  "/admin/internet-banking": "finance",
+  "/admin/issue-reports": "support",
+  "/admin/lockers": "membership",
+  "/admin/lodge": "lodge",
+  "/admin/lodge-instructions": "lodge",
+  "/admin/lodges": "lodge",
+  "/admin/lodges/[id]": "lodge",
+  "/admin/lodges/[id]/central-lodge": "lodge",
+  "/admin/lodges/[id]/display": "lodge",
+  "/admin/lodges/[id]/roster": "lodge",
+  "/admin/lodges/[id]/setup": "lodge",
+  "/admin/maintenance-reports": "lodge",
+  "/admin/member-applications": "membership",
+  "/admin/member-fields": "membership",
+  "/admin/members": "membership",
+  "/admin/members/[id]": "membership",
+  "/admin/members/[id]/merge": "membership",
+  "/admin/membership-cancellation": "membership",
+  "/admin/membership-cancellations": "membership",
+  "/admin/membership-setup": "membership",
+  "/admin/membership-types": "membership",
+  "/admin/message-board": "membership",
+  "/admin/modules": "support",
+  "/admin/mountain-conditions": "content",
+  "/admin/notices": "membership",
+  "/admin/notices/[id]": "membership",
+  "/admin/notices/new": "membership",
+  "/admin/notification-recipients": "support",
+  "/admin/notification-rules": "support",
+  "/admin/notifications": "support",
+  "/admin/page-content": "content",
+  "/admin/payments": "finance",
+  "/admin/privacy-retention": "support",
+  "/admin/promo-codes": "bookings",
+  "/admin/refund-requests": "finance",
+  "/admin/reports": "finance",
+  "/admin/rooms-beds": "lodge",
+  "/admin/roster": "lodge",
+  "/admin/roster/[date]/print": "lodge",
+  "/admin/seasons": "bookings",
+  "/admin/security": "support",
+  "/admin/setup": "support",
+  "/admin/setup/booking-rules": "bookings",
+  "/admin/setup/cancellation": "support",
+  "/admin/setup/finance": "finance",
+  "/admin/setup/foundations": "support",
+  "/admin/setup/integrations": "support",
+  "/admin/site-banners": "content",
+  "/admin/site-content": "content",
+  "/admin/site-style": "content",
+  "/admin/stripe/setup": "finance",
+  "/admin/stuck-states": "support",
+  "/admin/subscription-lockout": "membership",
+  "/admin/subscriptions": "finance",
+  "/admin/testing/route-error": "overview",
+  "/admin/video-meetings/setup": "finance",
+  "/admin/waitlist": "bookings",
+  "/admin/work-parties": "lodge",
+  "/admin/xero": "finance",
+  "/admin/xero/member-grouping": "finance",
+  "/admin/xero/records/[localModel]/[localId]": "finance",
+  "/admin/xero/setup": "finance",
+};
+
+/** A concrete URL for a registry path: every `[name]` filled with `x123`. */
+function concretePagePath(registryPath: string): string {
+  return registryPath.replace(/\[[^\]/]+\]/g, "x123");
+}
+
+describe("admin page -> area pin (#4799)", () => {
+  it("has exactly one row per registered page", () => {
+    expect(ADMIN_PAGES.length).toBeGreaterThan(100);
+    expect(ADMIN_PAGES.map((page) => page.oldPath).sort()).toEqual(
+      Object.keys(EXPECTED_PAGE_AREAS).sort(),
+    );
+  });
+
+  it("resolves every page's old path to its pinned area", () => {
+    const drift = ADMIN_PAGES.flatMap((page) => {
+      const area = getAdminRouteRequirement(concretePagePath(page.oldPath), "GET")?.area;
+      return area === EXPECTED_PAGE_AREAS[page.oldPath]
+        ? []
+        : [`${page.oldPath}: ${area}, pinned ${EXPECTED_PAGE_AREAS[page.oldPath]}`];
+    });
+    expect(drift).toEqual([]);
+  });
+
+  it("agrees with the reviewed page anchors", () => {
+    const pageAnchors = ADMIN_ROUTE_AREA_ANCHOR_ENTRIES.filter(({ pathname }) =>
+      pathname.startsWith("/admin"),
+    );
+    expect(pageAnchors.length).toBeGreaterThan(10);
+    const disagreements = pageAnchors.flatMap(({ area, pathname }) =>
+      EXPECTED_PAGE_AREAS[pathname] === area
+        ? []
+        : [`${pathname}: anchored to "${area}", snapshot says "${EXPECTED_PAGE_AREAS[pathname]}"`],
+    );
     expect(disagreements).toEqual([]);
   });
 });

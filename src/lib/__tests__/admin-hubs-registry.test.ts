@@ -896,13 +896,21 @@ describe("buildAdminUrlRules", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Inert until C2/C3: nothing outside the registry and this suite imports it.
+// Inert until C3: nothing outside the registry imports it but the files named
+// below. Each one is a deliberate edit here, so a new reader is reviewed.
 // ---------------------------------------------------------------------------
 
 describe("the registry is inert", () => {
   const ROOT = process.cwd();
   const REGISTRY_DIR = "src/lib/admin-hubs/";
-  const THIS_SUITE = "src/lib/__tests__/admin-hubs-registry.test.ts";
+  /** Every file outside the registry that may import it, and why. */
+  const IMPORTERS: Record<string, string> = {
+    "src/lib/__tests__/admin-hubs-registry.test.ts": "this suite",
+    "src/lib/__tests__/admin-hub-route-parity.test.ts":
+      "C2's census: each page's old and hub path answer as main's hand-written map did",
+    "src/lib/__tests__/admin-route-area-matrix.test.ts":
+      "the reviewed page -> area pin, one row per registered page",
+  };
   const SOURCE = /\.(?:ts|tsx|mts|cts|js|jsx|mjs|cjs)$/;
   const IMPORT = /(?:\bfrom\s*|\bimport\s*\(\s*|\brequire\s*\(\s*|^\s*import\s+)["'][^"']*admin-hubs(?:\/[^"']*)?["']/m;
 
@@ -918,7 +926,7 @@ describe("the registry is inert", () => {
     });
   }
 
-  it("is imported by no file outside src/lib/admin-hubs/ and this suite", () => {
+  it("is imported by no file outside src/lib/admin-hubs/ but the reviewed importers", () => {
     const rootConfigs = fs
       .readdirSync(ROOT)
       .filter((name) => SOURCE.test(name));
@@ -931,10 +939,10 @@ describe("the registry is inert", () => {
     const importers = files.filter(
       (file) =>
         !file.startsWith(REGISTRY_DIR) &&
-        file !== THIS_SUITE &&
         IMPORT.test(fs.readFileSync(path.join(ROOT, file), "utf8")),
     );
-    expect(importers).toEqual([]);
+    // Both directions: an unreviewed importer fails, and so does a stale entry.
+    expect(importers.sort()).toEqual(Object.keys(IMPORTERS).sort());
   });
 
   it("uses only relative imports inside the registry, so next.config.ts can load it", () => {
