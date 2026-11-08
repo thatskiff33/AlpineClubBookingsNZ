@@ -181,8 +181,7 @@ export function explainResidual(
 // Ledger figures and evidence every predicate shares
 // ---------------------------------------------------------------------------
 
-// #4516 (`INV-SSOT`): one capture-kind list, with each kind's receipt account, in its leaf module.
-export { CAPTURE_KINDS };
+export { CAPTURE_KINDS }; // #4516 (`INV-SSOT`): the one list lives in its leaf module.
 
 export function sumKinds(lines: readonly CensusLedgerLine[], kinds: readonly LedgerLineKind[]): number {
   let total = 0;
