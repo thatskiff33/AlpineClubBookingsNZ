@@ -492,10 +492,8 @@ const ROUTE_AREA_PREFIXES: Array<{
 ];
 
 /**
- * Every prefix in the route map above, frozen and read-only, for a census that
- * must see the map itself rather than probe it: the admin hub registry's prefix
- * census (#4798) has to find prefixes that sit BELOW a candidate hub root, and
- * no probe of the root can. Resolution never reads this copy.
+ * Every route-map prefix, frozen and read-only, for the hub registry's prefix
+ * census (#4798), which must see rules BELOW a hub root. Resolution never reads it.
  */
 export const ADMIN_ROUTE_MAP_PREFIXES: readonly string[] = Object.freeze(
   ROUTE_AREA_PREFIXES.flatMap(({ prefixes }) => prefixes),
