@@ -138,6 +138,28 @@ as a red flag and check the release notes before deploying.
 
 ## Unreleased
 
+### Payment transaction history outlives its payment (#4574)
+
+The database now refuses to delete a payment with transactions, or a transaction
+named by a refund or recovery operation. Migration
+`20261210090000_retain_payment_transaction_history` changes those three foreign
+keys to `ON DELETE RESTRICT`, preserving the history required by D1 on #4482.
+Existing rows, nullable links and update actions are unchanged.
+
+Set `ALLOW_BREAKING_BLUE_GREEN_MIGRATIONS=1` and a nonempty
+`BLUE_GREEN_MIGRATION_OVERRIDE_REASON` explaining "#4574 payment history keys
+change to RESTRICT; old colour compatible". As with Ledger M2, dropping and
+re-adding the keys triggers the breaking-migration gate. The app never deletes
+these parents, so no maintenance window or role provisioning is required.
+
+Deploy at a quiet time: one atomic transaction locks `Payment`,
+`PaymentTransaction`, `PaymentRefund` and `PaymentRecoveryOperation` through
+validation. Each lock waits at most one second; scan time depends on table size.
+On `55P03` or `40P01`, nothing applies: follow
+[the lock-timeout recovery steps](PRODUCTION_UPGRADE_RUNBOOK.md#21a-step-1320-stopped-on-a-lock-timeout)
+before retrying. The [safety ledger](BLUE_GREEN_MIGRATION_SAFETY.tsv) records the
+reverse procedure; reverting app code does not require reverting these keys.
+
 ### Booking-ledger history outlives its booking (#4514)
 
 **What changes.** Migration `20261127050000_retain_ledger_history_on_booking_delete`
