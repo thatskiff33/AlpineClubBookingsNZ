@@ -21,7 +21,7 @@ CREATE TABLE "MemberMoneyRefundReservationRelease" (
   CONSTRAINT "MemberMoneyRefundReservationRelease_pkey" PRIMARY KEY ("id")
 );
 CREATE UNIQUE INDEX "MemberMoneyRefundReservation_attemptKey_key" ON "MemberMoneyRefundReservation"("attemptKey");
-CREATE INDEX "MemberMoneyRefundReservation_obligationId_stripePaymentIntentId_idx" ON "MemberMoneyRefundReservation"("obligationId", "stripePaymentIntentId");
+CREATE INDEX "mm_refund_reservation_obligation_capture_idx" ON "MemberMoneyRefundReservation"("obligationId", "stripePaymentIntentId");
 CREATE INDEX "MemberMoneyRefundReservation_fundingJournalId_idx" ON "MemberMoneyRefundReservation"("fundingJournalId");
 CREATE UNIQUE INDEX "MemberMoneyRefundReservationRelease_reservationId_key" ON "MemberMoneyRefundReservationRelease"("reservationId");
 CREATE INDEX "MemberMoneyRefundReservationRelease_applicationId_idx" ON "MemberMoneyRefundReservationRelease"("applicationId");

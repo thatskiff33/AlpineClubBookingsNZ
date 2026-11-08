@@ -9182,7 +9182,7 @@ model MemberMoneyRefundReservation {
   obligation MemberMoneyObligation @relation(fields: [obligationId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   fundingJournal MemberMoneyJournal @relation(fields: [fundingJournalId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   release MemberMoneyRefundReservationRelease?
-  @@index([obligationId, stripePaymentIntentId])
+  @@index([obligationId, stripePaymentIntentId], map: "mm_refund_reservation_obligation_capture_idx")
   @@index([fundingJournalId])
 }
 
