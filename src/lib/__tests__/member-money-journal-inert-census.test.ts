@@ -72,6 +72,16 @@ const READERS: Record<string, { reason: string; importOnly: boolean }> = {
  * files run other raw SQL, such as member merge's member delete).
  */
 const DOORS: Record<string, string> = {
+  "src/lib/payment-reconciliation.ts": "R06 and R08 beside settle and reversal",
+  "src/lib/payment-transactions.ts": "R06 additional capture with explicit collect or hold",
+  "src/lib/payment-recovery.ts": "R06 superseded captures held",
+  "src/lib/saved-card-charge-settle.ts": "R06 newly captured attempts held",
+  "src/lib/stripe-webhook-service.ts": "R06 cancelled-primary capture held",
+  "src/lib/xero-inbound/invoice-paid-effects.ts": "R07 bank receipts and second-instrument holds",
+  "src/lib/credit-release-ask-close.ts": "R07 Xero-paid release receipts",
+  "src/lib/internet-banking-part-payment-at-cancel.ts": "R07 recognised part bank cash",
+  "scripts/member-money-receipt-catch-up.ts": "R26 dry-run-first catch-up receipts unapplied",
+
   "src/lib/booking-ledger-confirmation-sync.ts": "R01: a confirmation's lines, beside the legacy write",
   "src/lib/booking-ledger-group-settlement-sync.ts": "R01: a group-settled child's confirmation lines",
   "src/lib/booking-ledger-modification-sync.ts": "R02/R03 an edit's lines; R21 a review closure's",
@@ -95,15 +105,14 @@ const CONTEXT_RESOLVERS: readonly string[] = [
   "src/lib/booking-date-modification-service.ts",
   "src/lib/booking-guest-removal-service.ts",
   "src/lib/cron-confirm-pending.ts",
+  "src/app/api/payments/charge-saved-method/route.ts",
   "src/lib/group-cancel.ts",
   "src/lib/group-settlement.ts",
   "src/lib/internet-banking-payment-cron.ts",
   "src/lib/manual-refund-task-resolution.ts",
   "src/lib/member-guest-consent-service.ts",
-  "src/lib/payment-reconciliation.ts",
   "src/lib/school-booking-request.ts",
   "src/lib/stored-night-price-repair-store.ts",
-  "src/lib/xero-inbound/invoice-paid-effects.ts",
   // #4628 (M3c): the bank-transfer binding doors' callers, and the create input that carries the context.
   "src/app/api/bookings/route.ts",
   "src/app/api/payments/switch-to-internet-banking/route.ts",
@@ -128,7 +137,7 @@ const WRITER = "src/lib/member-money/internal/store.ts";
 /** The command's entry points: nothing outside the boundary calls them; M3b's doors go through `./doors`. */
 const POSTING_COMMAND = /\b(postMemberMoneyEvent|reverseMemberMoneyJournal|writeMemberMoneyBatch)\b/;
 /** M3b's door entry points (#4627), and M3c's pending charge (#4628). */
-const DOOR_COMMAND = /\b(postBookingLedgerJournal|postMemberMergeTransfer|postPendingBookingJournal)\b/;
+const DOOR_COMMAND = /\b(postBookingLedgerJournal|postMemberMergeTransfer|postPendingBookingJournal|postBookingReceipts)\b/;
 const DELEGATE_WRITE = /\.memberMoney\w*\s*\.\s*(create|update|upsert|delete)/;
 /**
  * Every name that reaches a journal row through Prisma: each relation's

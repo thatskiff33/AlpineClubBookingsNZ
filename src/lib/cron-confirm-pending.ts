@@ -1,3 +1,4 @@
+import { providerCaptureTime } from "@/lib/stripe-capture-date";
 import { savedCardChargeCents } from "@/lib/booking-payment-state";
 import { writeZeroWorthConfirmPayment } from "@/lib/zero-worth-confirm-payment";
 import { handOffSupersededCaptureAfterRefusal } from "@/lib/superseded-paid-intent";
@@ -1675,12 +1676,14 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
         paymentSucceeded = true;
 
         const { newlyCaptured } = await settleSavedCardChargeAttempt({
+            journal,
           attemptRowId: resolution.attempt.attemptRowId,
           paymentId: resolution.paymentId,
           paymentIntent,
         });
 
         const reconciliation = await markBookingPaymentSucceeded({
+      capturedAt: providerCaptureTime(paymentIntent),
           format, recordedByCaller: newlyCaptured, // #4285 review: new money, not a replay
           bookingId: resolution.booking.id,
           paymentIntentId: paymentIntent.id,
@@ -1755,6 +1758,7 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
           // between the retrieve and these locks) is refused by the row's own
           // status guard and reported back as the row's status.
           const recorded = await settleSavedCardChargeAttempt({
+            journal,
             attemptRowId: resolution.attempt.attemptRowId,
             paymentId: resolution.paymentId,
             paymentIntent,

@@ -8,7 +8,7 @@ import type {
   MemberMoneySourceKind,
 } from "@prisma/client";
 import type { ClubTaxTreatment } from "../../club-tax-settings";
-import { isCalendarDate, type CalendarDate, type Instant } from "../../club-time";
+import { isCalendarDate, type CalendarDate, type Instant, type ClubTimeZone } from "../../club-time";
 import { MAX_INTEGER_CENTS } from "../../money-input";
 import { stableDigest, stableStringify } from "../../stable-digest";
 import { formatCentsPlain } from "../../utils";
@@ -72,6 +72,7 @@ declare const postingContextBrand: unique symbol;
  */
 export interface MemberMoneyPostingContext {
   readonly [postingContextBrand]: true;
+  readonly zone: ClubTimeZone;
   readonly effectiveAt: Instant;
   readonly effectiveDate: CalendarDate;
   readonly currency: string;

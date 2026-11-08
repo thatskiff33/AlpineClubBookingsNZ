@@ -1,3 +1,4 @@
+import { xeroCalendarDate } from "@/lib/xero-provider-dates";
 import { bookingWorthCents } from "@/lib/booking-payment-state";
 import { type Invoice } from "xero-node";
 import { bookingPromoEmailFields } from "@/lib/booking-promo-email-options";
@@ -49,7 +50,7 @@ import type { ClubFormat } from "@/lib/club-format";
 import { syncBookingLedgerSettlements } from "@/lib/booking-ledger-settlement-sync";
 import { postCancellationLedgerLines } from "@/lib/booking-ledger-cancellation-sync";
 import { postStoredBookingConfirmationLedgerLines } from "@/lib/booking-ledger-confirmation-sync";
-import { resolveBookingMoneyPostingContext } from "@/lib/member-money/doors";
+import { postBookingReceipts, resolveBookingMoneyPostingContext } from "@/lib/member-money/doors";
 import { syncBookingLedgerCredits } from "@/lib/booking-ledger-credit-sync";
 import { internetBankingLateCashCreditDescription, sumInternetBankingMintedCentsForBookings } from "@/lib/internet-banking-late-cash-credit";
 import { lockMemberCreditLedger, restoreCreditFromBooking } from "@/lib/member-credit";
@@ -409,6 +410,8 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
   const invoiceCash = quantifyXeroInvoiceCashCents(invoice);
   // #3979: the invoice's total and the credit notes Xero lists as applied to it.
   const invoiceFacts = paidInvoiceFacts(invoice);
+  const receiptDate = xeroCalendarDate(invoice.fullyPaidOnDate)
+    ?? (invoice.payments?.length === 1 ? xeroCalendarDate(invoice.payments[0]?.date) : null);
 
   const payments = await prisma.payment.findMany({
     where: paymentFilter,
@@ -450,6 +453,9 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
     let cashSettlementMarker = null as CashSettlementMarker | null;
     let correctionNotesToRecount = [] as AppliedCreditNote[];
     const outcome = await prisma.$transaction(async (tx) => {
+      let receiptWritten = false;
+      let collectReceipt = false;
+      try {
       cashSettlementMarker = null;
       correctionNotesToRecount = [];
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
@@ -661,6 +667,8 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
       // ledger line at all. A manually settled payment never reaches this
       // point (it returned above), so the row is a genuine bank receipt.
       await syncBookingLedgerSettlements({ paymentId: fresh.id, store: tx });
+      receiptWritten = true;
+      collectReceipt = secondInstrument === null;
 
       const paymentWasPending = fresh.status !== PaymentStatus.SUCCEEDED;
       // A PAID invoice event must never un-refund money (#1357, the #1353
@@ -1407,6 +1415,13 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
         paymentWasPending,
         staleCreditElectionCents,
       };
+      } finally {
+        if (receiptWritten) {
+          const rows = await tx.paymentTransaction.findMany({ where: { paymentId: payment.id, source: "INTERNET_BANKING", kind: "PRIMARY", xeroInvoiceId: invoiceId }, select: { id: true } });
+          await postBookingReceipts(tx, journal!, { paymentId: payment.id,
+            decision: { transactionIds: rows.map((r) => r.id), collect: collectReceipt, effectiveDate: receiptDate ?? undefined } });
+        }
+      }
     });
 
     if (outcome.type === "missing") {

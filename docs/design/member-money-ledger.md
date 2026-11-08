@@ -272,7 +272,8 @@ looks up a replay first, then completes corrections, then writes in the order
 the foreign keys need. `reverseMemberMoneyJournal` posts the exact whole-batch
 reversal under the journal's own key, so a retry replays. Outside the store a
 journal delegate is only ever read (`member-money-journal-inert-census.test.ts`).
-Applications are not yet in the plan: M4 adds them with receipts.
+M4a (#4691) added applications, exact reversals and conservation checks. M4b
+(#4516) uses them for receipts through `postBookingReceipts`.
 
 M3b ([#4627](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/4627))
 wired the booking doors, through the boundary's server-only `./doors` entry; the
@@ -791,6 +792,30 @@ member carries and moves each, booking by booking, to the survivor. A door
 holding one of that member's bookings makes the owner move wait, so its charge
 is in the balances read; a door after it reads the survivor. The transfer posts
 no revenue, so it needs no `lock(1)`, which merge deliberately does not take.
+
+M4b adds CHARGE successors after the merge's receivable transfer: each live
+obligation gets a zero-net receivable pair on the survivor for its uncollected
+face. Posted debtors remain immutable. Receipt writers take only the Payment
+row and read the owner without locking Booking; the next receipt posting moves
+any merged-debtor residue explicitly, keyed to its source event. No Payment lock
+is added to merge.
+
+### M4b receipt posting and catch-up
+
+`postBookingReceipts` records R06/R07/R08 beside each legacy cash writer, only
+for bookings with R01. Cash posts in full. Collection is a separate, exact
+application to the selected transaction, capped by source room and live charge;
+held, duplicate and superseded captures stay unapplied. A ZERO R01 gets its
+CHARGE obligation lazily when collection needs one, without another charge.
+Officer reversals copy the original receipt and its live collection exactly.
+Organiser-share mirrors remain M6's. No legacy decision reader changes.
+
+Each hook catches up the payment's other receipts unapplied. The owner command
+`pnpm run member-money:receipt-catch-up` defaults to a read-only census;
+`--execute` runs one Payment-row transaction per population payment. Catch-up
+uses the settlement line's `postedAt`, marked `datedBy: app-record`, without
+provider reads. Missing receipts must reach zero before M4c deploys. See
+[maintenance](../MAINTENANCE.md#catch-up-and-census-member-money-receipts-m4b).
 
 ## 11. Proposed children, in shipping order
 

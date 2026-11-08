@@ -63,6 +63,7 @@ const { ledger, mocks } = vi.hoisted(() => {
   const rows: LedgerRow[] = [];
   let seq = 0;
   const ledger = {
+    payment: { findUnique: vi.fn(async () => null) }, // These histories precede R01; M4b PostgreSQL tests cover journal posting.
     rows,
     // #4217: the settle locks the Payment row first (`lockPaymentForRefundedTotal`),
     // in a short transaction of its own on the root client - which this ledger

@@ -1,3 +1,4 @@
+import { providerCaptureTime } from "@/lib/stripe-capture-date";
 import { NextRequest, NextResponse } from "next/server";
 import { readBookingAmountOwed } from "@/lib/booking-amount-owed";
 import { bookingPromoEmailFields } from "@/lib/booking-promo-email-options";
@@ -629,6 +630,7 @@ export async function POST(request: NextRequest) {
           receivedPaymentIntentId = existingIntent.id;
           if (booking.payment.status !== "SUCCEEDED") {
             const reconciliation = await markBookingPaymentSucceeded({
+      capturedAt: providerCaptureTime(existingIntent),
               format,
               bookingId: booking.id,
               paymentIntentId: existingIntent.id,

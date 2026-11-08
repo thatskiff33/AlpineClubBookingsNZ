@@ -89,7 +89,7 @@ import {
 import { postCancellationLedgerLines } from "@/lib/booking-ledger-cancellation-sync";
 import { syncBookingLedgerSettlements } from "@/lib/booking-ledger-settlement-sync";
 import { postBookingConfirmationLedgerLines } from "@/lib/booking-ledger-confirmation-sync";
-import { resolveBookingMoneyPostingContext, type BookingJournalContext } from "@/lib/member-money/doors";
+import { postBookingReceipts, resolveBookingMoneyPostingContext, type BookingJournalContext } from "@/lib/member-money/doors";
 import type { ClubFormat } from "@/lib/club-format";
 
 type ReconciliationBooking = Prisma.BookingGetPayload<{
@@ -186,6 +186,7 @@ async function alertRefundFailure({
  */
 type StripeSettlementSource = {
   kind: "stripe";
+  capturedAt?: Date;
   paymentIntentId: string;
   amountCents: number;
   paymentMethodId: string | null;
@@ -690,6 +691,18 @@ async function prepareManualSettlement(
  * Runs INSIDE a caller-provided transaction; every provider call (Stripe
  * refunds/cancels, email) belongs to the callers, after commit.
  */
+async function settleAndPostBookingReceipts(tx: Prisma.TransactionClient, bookingId: string, settlement: BookingSettlementSource, journal: BookingJournalContext) {
+  const result = await settleBookingPaymentInTransaction(tx, bookingId, settlement, journal);
+  const paymentId = "paymentId" in result ? result.paymentId : null;
+  if (paymentId) await postBookingReceipts(tx, journal, { paymentId, decision: {
+    collect: result.outcome === "paid" || result.outcome === "manual_paid",
+    ...(settlement.kind === "stripe" ? { paymentIntentId: settlement.paymentIntentId, effectiveAt: settlement.capturedAt }
+      : { officerCash: result.outcome === "manual_paid" ? true : undefined,
+          effectiveAt: result.outcome === "manual_paid" ? result.settledAt : undefined }),
+  } });
+  return result;
+}
+
 async function settleBookingPaymentInTransaction(
   tx: Prisma.TransactionClient,
   bookingId: string,
@@ -1624,6 +1637,7 @@ export async function markBookingPaymentSucceeded({
   paymentMethodId,
   format,
   recordedByCaller = false,
+  capturedAt,
 }: {
   bookingId: string;
   paymentIntentId: string;
@@ -1633,16 +1647,17 @@ export async function markBookingPaymentSucceeded({
   format: ClubFormat;
   /** #4285 review: the caller just wrote this capture SUCCEEDED itself (`SettledSavedCardChargeAttempt.newlyCaptured`). */
   recordedByCaller?: boolean;
+  capturedAt?: Date;
 }): Promise<MarkBookingPaymentSucceededResult> {
   const journal = await resolveBookingMoneyPostingContext();
   const reconciliation = await prisma.$transaction((tx) =>
-    settleBookingPaymentInTransaction(tx, bookingId, {
+    settleAndPostBookingReceipts(tx, bookingId, {
       kind: "stripe",
       paymentIntentId,
       amountCents,
       paymentMethodId,
       format,
-      recordedByCaller,
+      recordedByCaller, capturedAt,
     }, journal)
   );
 
@@ -2186,7 +2201,7 @@ export async function markBookingPaymentManuallySettled({
 }): Promise<ManualBookingSettlementResult> {
   const journal = await resolveBookingMoneyPostingContext();
   const reconciliation = await prisma.$transaction((tx) =>
-    settleBookingPaymentInTransaction(tx, bookingId, {
+    settleAndPostBookingReceipts(tx, bookingId, {
       kind: "manual",
       actingAdminMemberId,
       note,
@@ -2375,6 +2390,7 @@ export async function reverseManualBookingPayment({
   actingAdminMemberId: string;
   note: string | null;
 }): Promise<ManualBookingReversalResult> {
+  const journal = await resolveBookingMoneyPostingContext();
   const reversal = await prisma.$transaction(async (tx) => {
     // Same two-tier ordering as the settlement body: global lock(1) first (this
     // moves booking status and money), then the per-lodge capacity lock,
@@ -2671,6 +2687,7 @@ export async function reverseManualBookingPayment({
     // posts their reversals — new lines, the originals untouched, each keyed by
     // the line it reverses so a replay posts nothing (`INV-MONEY-033`).
     await syncBookingLedgerSettlements({ paymentId: payment.id, store: tx });
+    await postBookingReceipts(tx, journal, { paymentId: payment.id });
 
     // Releases the claimed beds only when the restore lands on
     // PAYMENT_PENDING; a restored CONFIRMED booking deliberately keeps holding

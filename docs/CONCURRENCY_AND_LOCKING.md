@@ -5874,13 +5874,32 @@ application: the Payment row is what keeps two applications, or a reservation
 and a release, from both passing the caps. A price edit still changes the live
 charge under `lock(1)` without this row, so the charge cap (C2) can be over or
 under; that is the accepted limit, and the population check does not fail it.
-No door calls the engine's application or reservation commands yet. Proved
+M4a left the application and reservation commands inert. M4b activates receipt
+applications; refund reservations remain inert until M4c. Proved
 against real PostgreSQL by `member-money-applications.realdb.test.ts`.
 
 Reconciled against #4668, #4671, #4667, #4666, #4664, #4659, #4658, #4654, #4653
 and #4662, the merges the M4 plan checked against these writers, and against
 the open credit-release work that shares this Payment row. No new edge: the
 store does not take a booking row, and merge does not take a Payment row.
+
+M4b (#4516) activates receipt applications through `postBookingReceipts`. Its
+cash, application and exact-reversal writes run under the same Payment row as
+the legacy write (`INV-LOCK-001`–`003`). W1 retains global → lodge → member →
+Payment ordering. Saved-card capture, additional capture, superseded capture and
+cancelled-primary capture take only Payment. The cancelled-primary upsert and
+the formerly unlocked superseded-success write now enclose their legacy write
+and receipt in one Payment-row transaction. No new advisory key or provider call
+is introduced. Receipt debtor reads never lock Booking; D4 transfers residue
+explicitly on a subsequent posting. Merge adds only zero-net CHARGE successors,
+without a Payment lock. Settings and timezone resolve before transactions.
+
+Counterpart reconciliation at M4b's base: #4776 (engine caps and Payment lock),
+#4749, #4727, #4714, #4706, #4698, #4700, #4694, #4689 and #4684. Their capture,
+recovery claims, exact markers and outbox/provider behaviour remain unchanged.
+Open #4779–#4784 and #4496 have no competing receipt writer; the owner's serial
+waiver covers them. `member-money-capture-writer-census.test.ts` inventories all
+transaction mutations, generic capture callers and each new receipt hook.
 
 ## A credit note spent outside the app: global, then the member's credit ledger (#4219)
 

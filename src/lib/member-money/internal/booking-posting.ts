@@ -11,6 +11,7 @@ import {
   type BookingChargeEvent,
   type LegacyChargeLine,
 } from "./booking-charges";
+import { postChargeSuccessors } from "./booking-receipts";
 import { readBookingLiveComponents } from "./booking-journal-read";
 import {
   planPendingBookingCharge,
@@ -299,5 +300,11 @@ export async function postMemberMergeTransfer(
     balances.set(key, entry);
   }
   const plan = planMemberMergeTransfer({ ...input, balances: [...balances.values()] });
-  return plan ? postMemberMoneyEvent(tx, context, plan) : null;
+  const result = plan ? await postMemberMoneyEvent(tx, context, plan) : null;
+  const rows = await tx.memberMoneyLine.findMany({ where: { memberId: input.fromMemberId, bookingId: { not: null } }, select: { bookingId: true, lodgeId: true } });
+  const bookings = new Map(rows.filter((r) => r.bookingId && r.lodgeId).map((r) => [r.bookingId!, r.lodgeId!]));
+  for (const [bookingId, lodgeId] of bookings) await postChargeSuccessors(tx, context, {
+    bookingId, lodgeId, debtor: { kind: "MEMBER", memberId: input.toMemberId }, fromMemberId: input.fromMemberId,
+  });
+  return result;
 }

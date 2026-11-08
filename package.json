@@ -90,6 +90,7 @@
     "db:seed": "tsx --conditions=react-server prisma/seed.ts",
     "db:seed:demo": "tsx --conditions=react-server prisma/demo-seed.ts",
     "db:migrate": "prisma migrate deploy",
+    "member-money:receipt-catch-up": "tsx --conditions=react-server scripts/member-money-receipt-catch-up.ts",
     "member-money:verify": "tsx scripts/verify-member-money-journal.ts",
     "db:provision-roles": "tsx scripts/provision-database-roles.ts",
     "db:push": "prisma db push",

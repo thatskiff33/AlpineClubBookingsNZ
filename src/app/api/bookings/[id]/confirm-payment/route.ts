@@ -1,3 +1,4 @@
+import { providerCaptureTime } from "@/lib/stripe-capture-date";
 import { bookingAmountOwedCents, bookingWorthCents } from "@/lib/booking-payment-state";
 import { NextRequest, NextResponse } from "next/server";
 import { bookingPromoEmailFields } from "@/lib/booking-promo-email-options";
@@ -201,6 +202,7 @@ export async function POST(
     }
 
     const reconciliation = await markBookingPaymentSucceeded({
+      capturedAt: providerCaptureTime(pi),
       format,
       bookingId,
       paymentIntentId: pi.id,

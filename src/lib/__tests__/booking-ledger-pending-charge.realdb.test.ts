@@ -267,7 +267,7 @@ async function expectLinkedToBinding(bookingId: string, lineCount: number): Prom
     expect(await events(id)).toEqual([{ eventKey: `booking-charge:${id}`, kind: "CHARGE", sourceVersion: "binding" }]);
     expect(await prisma.memberMoneyEvent.count({ where: { eventKey: { startsWith: "charge-restatement:" }, sourceIdentity: id } })).toBe(0);
     await expectLinkedToBinding(id, 4);
-    expect(await receivable(id)).toBe(PRICE);
+    expect(await receivable(id)).toBe(0); // M4b: the receipt clears the receivable; the charge census below still checks the full charge.
     await expectJudged(id, "JOURNAL", PRICE);
     // The confirmation's own replay (the settle's fence) posts nothing more.
     const { postStoredBookingConfirmationLedgerLines } = await import("@/lib/booking-ledger-confirmation-sync");
@@ -285,7 +285,7 @@ async function expectLinkedToBinding(bookingId: string, lineCount: number): Prom
     await markPaid(id, PRICE / 2);
     expect((await events(id)).map((event) => event.eventKey)).toEqual([`booking-charge:${id}`, `modification:${id}-edit`]);
     await expectLinkedToBinding(id, 2);
-    expect(await receivable(id)).toBe(PRICE / 2);
+    expect(await receivable(id)).toBe(0); // M4b: the receipt clears the receivable; the charge census below still checks the full charge.
     await expectJudged(id, "JOURNAL", PRICE / 2);
   });
 
@@ -299,7 +299,7 @@ async function expectLinkedToBinding(bookingId: string, lineCount: number): Prom
     await markPaid(id, PRICE + 1_000);
     expect((await events(id)).map((event) => [event.eventKey, event.kind])).toEqual([[`booking-charge:${id}`, "CHARGE"], [`charge-restatement:${id}`, "ADJUSTMENT"]]);
     await expectLinkedToBinding(id, 4);
-    expect(await receivable(id)).toBe(PRICE + 1_000);
+    expect(await receivable(id)).toBe(0); // M4b: the receipt clears the receivable; the charge census below still checks the full charge.
     await expectJudged(id, "JOURNAL", PRICE + 1_000);
   });
 
@@ -319,7 +319,7 @@ async function expectLinkedToBinding(bookingId: string, lineCount: number): Prom
     expect(await prisma.booking.findUniqueOrThrow({ where: { id }, select: { status: true } })).toEqual({ status: "PAID" });
     expect(await events(id)).toEqual([{ eventKey: `booking-charge:${id}`, kind: "CHARGE", sourceVersion: "binding" }]);
     await expectLinkedToBinding(id, 4);
-    expect(await receivable(id)).toBe(PRICE);
+    expect(await receivable(id)).toBe(0); // M4b: the receipt clears the receivable; the charge census below still checks the full charge.
     await expectJudged(id, "JOURNAL", PRICE);
   });
 

@@ -1,3 +1,6 @@
+import { isCapturedTransactionStatus } from "@/lib/payment-transaction-status";
+import { postBookingReceipts, resolveBookingMoneyPostingContext, type BookingJournalContext } from "@/lib/member-money/doors";
+import { providerCaptureTime } from "@/lib/stripe-capture-date";
 /**
  * #3267 (epic #3270) — recording Stripe's answer on a saved-card charge attempt
  * row (`INV-PAY-055`). The other half of `saved-card-charge-attempt.ts`, whose
@@ -47,7 +50,7 @@ import {
 export type SavedCardChargeAnswer = Pick<
   Stripe.PaymentIntent,
   "id" | "status" | "amount" | "payment_method"
->;
+> & Partial<Pick<Stripe.PaymentIntent, "created" | "latest_charge">>;
 
 /**
  * The ledger status an answered PaymentIntent maps to. `succeeded` is captured;
@@ -204,6 +207,7 @@ export async function settleSavedCardChargeAttempt(params: {
   paymentId: string;
   paymentIntent: SavedCardChargeAnswer;
   store?: PaymentStore;
+  journal?: BookingJournalContext;
   /**
    * #4646: the webhook's adoption of a row it found holding no intent. The
    * row's own write then also requires it STILL to hold none, under the
@@ -216,6 +220,8 @@ export async function settleSavedCardChargeAttempt(params: {
 }): Promise<SettledSavedCardChargeAttempt> {
   const { attemptRowId, paymentId, paymentIntent } = params;
   const store = params.store ?? prisma;
+  if (!params.journal && !isRootPrismaClient(store)) throw new Error("A saved-card transaction must receive its pre-resolved journal context.");
+  const journal = params.journal ?? await resolveBookingMoneyPostingContext();
   const ledgerStatus = ledgerStatusForPaymentIntent(paymentIntent.status);
   const paymentMethodId = stripeReferenceId(paymentIntent.payment_method);
   const answer = { ledgerStatus, amountCents: paymentIntent.amount, paymentMethodId, adopting: params.adopting === true };
@@ -228,7 +234,11 @@ export async function settleSavedCardChargeAttempt(params: {
   const settle = () =>
     withStoreTransaction(store, async (db) => {
       await lockPaymentForRefundedTotal(db, paymentId);
-      return settleSavedCardChargeAttemptUnderLock(db, { attemptRowId, paymentId, paymentIntent, answer });
+      const result = await settleSavedCardChargeAttemptUnderLock(db, { attemptRowId, paymentId, paymentIntent, answer });
+      if (isCapturedTransactionStatus(result.ledgerStatus)) await postBookingReceipts(db, journal, { paymentId,
+        decision: { paymentIntentId: paymentIntent.id, collect: false,
+          effectiveAt: "created" in paymentIntent ? providerCaptureTime(paymentIntent as Stripe.PaymentIntent) : undefined } });
+      return result;
     });
   if (!isRootPrismaClient(store)) return settle();
   try {

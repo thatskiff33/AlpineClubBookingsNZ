@@ -1,3 +1,5 @@
+import { providerCaptureTime } from "@/lib/stripe-capture-date";
+import { resolveBookingMoneyPostingContext } from "@/lib/member-money/doors";
 import { NextRequest, NextResponse } from "next/server";
 import { handOffSupersededCaptureAfterRefusal } from "@/lib/superseded-paid-intent";
 import { bookingOwner } from "@/lib/booking-owner";
@@ -342,6 +344,7 @@ export async function POST(request: NextRequest) {
     // (the transaction-wrapper population in
     // `lock-bound-club-zone-outside-transaction.test.ts` is derived from
     // callback parameters).
+    const receiptJournal = await resolveBookingMoneyPostingContext();
     const releaseChargeClaim = async (answer?: {
       attemptRowId: string;
       paymentIntent: SavedCardChargeAnswer;
@@ -350,7 +353,7 @@ export async function POST(request: NextRequest) {
         await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
         await acquireLodgeCapacityLock(tx, lodgeId);
         if (answer) {
-          await settleSavedCardChargeAttempt({ ...answer, paymentId, store: tx });
+          await settleSavedCardChargeAttempt({ journal: receiptJournal, ...answer, paymentId, store: tx });
         }
         const current = await tx.booking.findUnique({
           where: { id: bookingId },
@@ -442,7 +445,7 @@ export async function POST(request: NextRequest) {
       // promotion; non-fatal, reconciliation upserts the same row. #4285 review: `newlyCaptured` means new money, not a replay.
       let recordedByCaller = false;
       try {
-        ({ newlyCaptured: recordedByCaller } = await settleSavedCardChargeAttempt({
+        ({ newlyCaptured: recordedByCaller } = await settleSavedCardChargeAttempt({ journal: receiptJournal,
           attemptRowId: claim.attempt.attemptRowId,
           paymentId,
           paymentIntent,
@@ -454,6 +457,7 @@ export async function POST(request: NextRequest) {
         );
       }
       const reconciliation = await markBookingPaymentSucceeded({
+      capturedAt: providerCaptureTime(paymentIntent),
         format,
         bookingId, recordedByCaller,
         paymentIntentId: paymentIntent.id,

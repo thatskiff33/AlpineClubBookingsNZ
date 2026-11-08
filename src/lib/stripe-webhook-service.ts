@@ -1,3 +1,6 @@
+import { lockPaymentForRefundedTotal } from "@/lib/payment-transactions";
+import { providerCaptureTime } from "@/lib/stripe-capture-date";
+import { postBookingReceipts, resolveBookingMoneyPostingContext } from "@/lib/member-money/doors";
 import { bookingAmountOwedCents, bookingWorthCents } from "@/lib/booking-payment-state";
 import { bookingOwner, bookingOwnerEmail } from "@/lib/booking-owner";
 import { isPaidLikeBookingStatus } from "@/lib/booking-status";
@@ -601,6 +604,7 @@ async function handlePaymentIntentSucceeded(
   }
 
   const reconciliation = await markBookingPaymentSucceeded({
+    capturedAt: providerCaptureTime(paymentIntent),
     format,
     bookingId, recordedByCaller,
     paymentIntentId: paymentIntent.id,
@@ -970,6 +974,7 @@ async function handleAdditionalModificationPaymentSucceeded(
   }
 
   await markPaymentIntentTransactionSucceeded({
+    receiptDecision: { collect: true, effectiveAt: providerCaptureTime(paymentIntent) },
     paymentIntentId: paymentIntent.id,
     amountCents: paymentIntent.amount,
     paymentMethodId:
@@ -1514,6 +1519,7 @@ async function handleCancelledBookingAdditionalPaymentSucceeded(
   // already captured/refunded so a completed refund is not flipped back.
   if (!isCapturedTransactionStatus(paymentTransaction.status)) {
     await markPaymentIntentTransactionSucceeded({
+    receiptDecision: { collect: false, effectiveAt: providerCaptureTime(paymentIntent) },
       paymentIntentId: paymentIntent.id,
       amountCents: paymentIntent.amount,
       paymentMethodId: getStripePaymentMethodId(paymentIntent),
@@ -1701,8 +1707,12 @@ async function handleCancelledBookingPaymentSucceeded(
       ? paymentIntent.payment_method
       : paymentIntent.payment_method?.id ?? null;
 
-  await upsertPaymentIntentTransaction({
-    paymentId: booking.payment.id,
+  const journal = await resolveBookingMoneyPostingContext();
+  await prisma.$transaction(async (tx) => {
+    await lockPaymentForRefundedTotal(tx, booking.payment!.id);
+    await upsertPaymentIntentTransaction({
+    store: tx,
+    paymentId: booking.payment!.id,
     kind: PaymentTransactionKind.PRIMARY,
     paymentIntentId: paymentIntent.id,
     amountCents: paymentIntent.amount,
@@ -1710,6 +1720,9 @@ async function handleCancelledBookingPaymentSucceeded(
     paymentMethodId,
     // #3639: marks this handler's own write, so a crash-and-retry still refunds.
     reason: CANCELLED_BOOKING_LATE_CAPTURE_REASON,
+  });
+    await postBookingReceipts(tx, journal, { paymentId: booking.payment!.id,
+      decision: { paymentIntentId: paymentIntent.id, collect: false, effectiveAt: providerCaptureTime(paymentIntent) } });
   });
   const lateCapture = describeLateCaptureFromBooking(booking, lateCaptureIdentity);
 

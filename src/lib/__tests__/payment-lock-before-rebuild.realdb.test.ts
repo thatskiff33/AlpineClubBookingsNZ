@@ -1,3 +1,4 @@
+import { memberMoneyTestContext } from "./support/member-money-fixtures";
 /**
  * Real-PostgreSQL proof that a payment's aggregate is rebuilt from rows read
  * UNDER the `Payment` row lock, and that every ledger-row writer takes that lock
@@ -329,7 +330,7 @@ let ledgerStartSeconds = 0;
       const race = await raceAgainstHeldPayment({
         afterQueued: (tx) => payments.applyLocalRefundAllocation({ paymentId: PAYMENT_ID, amountCents: 10_000, store: tx }),
         contender: () =>
-          payments.markPaymentIntentTransactionSucceeded({ paymentIntentId: ADDITIONAL_INTENT, amountCents: 5_000, paymentMethodId: "pm_race_4217" }),
+          payments.markPaymentIntentTransactionSucceeded({ journal: memberMoneyTestContext(), receiptDecision: { collect: true }, paymentIntentId: ADDITIONAL_INTENT, amountCents: 5_000, paymentMethodId: "pm_race_4217" }),
       });
 
       expect(race.holderError).toBeUndefined();
@@ -358,7 +359,7 @@ let ledgerStartSeconds = 0;
           await payments.reconcilePaymentAggregates({ paymentId: PAYMENT_ID, store: tx });
         },
         contender: () =>
-          payments.markPaymentIntentTransactionSucceeded({ paymentIntentId: ADDITIONAL_INTENT, amountCents: 5_000 }),
+          payments.markPaymentIntentTransactionSucceeded({ journal: memberMoneyTestContext(), receiptDecision: { collect: true }, paymentIntentId: ADDITIONAL_INTENT, amountCents: 5_000 }),
       });
 
       expect(race.holderError).toBeUndefined();
@@ -549,7 +550,7 @@ let ledgerStartSeconds = 0;
         afterQueued: () => new Promise((resolve) => setTimeout(resolve, 6_500)),
         holderTimeoutMs: 30_000,
         contender: () =>
-          payments.markPaymentIntentTransactionSucceeded({ paymentIntentId: ADDITIONAL_INTENT, amountCents: 5_000 }),
+          payments.markPaymentIntentTransactionSucceeded({ journal: memberMoneyTestContext(), receiptDecision: { collect: true }, paymentIntentId: ADDITIONAL_INTENT, amountCents: 5_000 }),
       });
 
       expect(race.holderError).toBeUndefined();
@@ -561,7 +562,7 @@ let ledgerStartSeconds = 0;
       expect(additional.status).toBe("PENDING");
       expect(await totals()).toEqual(before);
       // And the retry, with the row free, records it.
-      await payments.markPaymentIntentTransactionSucceeded({ paymentIntentId: ADDITIONAL_INTENT, amountCents: 5_000 });
+      await payments.markPaymentIntentTransactionSucceeded({ journal: memberMoneyTestContext(), receiptDecision: { collect: true }, paymentIntentId: ADDITIONAL_INTENT, amountCents: 5_000 });
       expect((await totals()).payment.amountCents).toBe(25_000);
     }, 30_000);
 

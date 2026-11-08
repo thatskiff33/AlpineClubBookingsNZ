@@ -26,6 +26,7 @@ import { IntentLedgerRowOnAnotherPaymentError, writePaymentIntentTransaction } f
 import { accountCreditDispositionCents } from "@/lib/stripe-cash-refund-evidence";
 import { readPaidAnotherWayCloseBankCashByPayment } from "@/lib/card-refund-paid-another-way-cash";
 import type { ClubFormat } from "@/lib/club-format";
+import { postBookingReceipts, resolveBookingMoneyPostingContext, type BookingJournalContext, type BookingReceiptDecision } from "@/lib/member-money/doors";
 import { syncBookingLedgerSettlements } from "@/lib/booking-ledger-settlement-sync";
 import { compareLedgerRowsNewestFirst, LEDGER_ROWS_OLDEST_FIRST } from "@/lib/payment-ledger-order";
 // Moved to a leaf so the booking ledger's settlement sync can share them
@@ -1132,6 +1133,7 @@ export async function recordInternetBankingPaymentTransaction({
 }
 
 export async function markPaymentIntentTransactionSucceeded({
+  journal: suppliedJournal, receiptDecision,
   paymentIntentId,
   amountCents,
   paymentMethodId,
@@ -1141,7 +1143,11 @@ export async function markPaymentIntentTransactionSucceeded({
   amountCents: number;
   paymentMethodId?: string | null;
   store?: PaymentStore;
+  journal?: BookingJournalContext;
+  receiptDecision: Omit<BookingReceiptDecision, "paymentIntentId">;
 }) {
+  if (!suppliedJournal && !isRootPrismaClient(store)) throw new Error("A capture transaction must receive its pre-resolved journal context.");
+  const journal = suppliedJournal ?? await resolveBookingMoneyPostingContext();
   // #4217: which payment, read without writing; then that Payment row; then the
   // re-read (which may backfill a pre-ledger payment) and the write under it.
   const paymentId = await findPaymentIdForIntent(store, paymentIntentId);
@@ -1167,7 +1173,9 @@ export async function markPaymentIntentTransactionSucceeded({
       },
     });
 
-    return reconcilePaymentAggregates({ paymentId, store: db });
+    const result = await reconcilePaymentAggregates({ paymentId, store: db });
+    await postBookingReceipts(db, journal, { paymentId, decision: { ...receiptDecision, paymentIntentId } });
+    return result;
   });
 }
 

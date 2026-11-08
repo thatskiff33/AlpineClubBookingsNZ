@@ -1,3 +1,4 @@
+import { postBookingReceipts, resolveBookingMoneyPostingContext } from "@/lib/member-money/doors";
 import "server-only";
 
 import { PaymentSource, PaymentStatus, PaymentTransactionKind } from "@prisma/client";
@@ -147,6 +148,7 @@ export async function closeCreditReleaseAsksPaidInXero(
       }
     }
 
+    const journal = await resolveBookingMoneyPostingContext();
     const closed = await prisma.$transaction(
       async (tx) => {
         await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
@@ -192,6 +194,8 @@ export async function closeCreditReleaseAsksPaidInXero(
           reason: CREDIT_RELEASE_PAID_IN_XERO_REASON,
           store: tx,
         });
+        const receiptRows = await tx.paymentTransaction.findMany({ where: { paymentId: ask.paymentId, reason: CREDIT_RELEASE_PAID_IN_XERO_REASON }, select: { id: true } });
+        await postBookingReceipts(tx, journal, { paymentId: ask.paymentId, decision: { transactionIds: receiptRows.map((r) => r.id), collect: true } });
         await createAuditLog(
           {
             action: "payment.credit_release_ask.closed_paid_in_xero",
@@ -249,6 +253,7 @@ export async function recordReleasePaidInXeroCash({
   releasedCents: number;
   balance: { invoiceId: string; invoiceNumber: string | null };
 }): Promise<number> {
+  const journal = await resolveBookingMoneyPostingContext();
   return prisma.$transaction(
     async (tx) => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
@@ -295,6 +300,8 @@ export async function recordReleasePaidInXeroCash({
         reason: CREDIT_RELEASE_PAID_IN_XERO_REASON,
         store: tx,
       });
+      const receiptRows = await tx.paymentTransaction.findMany({ where: { paymentId: paymentId, reason: CREDIT_RELEASE_PAID_IN_XERO_REASON }, select: { id: true } });
+      await postBookingReceipts(tx, journal, { paymentId: paymentId, decision: { transactionIds: receiptRows.map((r) => r.id), collect: true } });
       await createAuditLog(
         {
           action: "payment.credit_release_ask.closed_paid_in_xero",
