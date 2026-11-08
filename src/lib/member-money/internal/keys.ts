@@ -12,8 +12,8 @@ export type MemberMoneyEventKey = string & { readonly [eventKeyBrand]: true };
 const key = (value: string) => value as MemberMoneyEventKey;
 
 function part(value: string, label: string): string {
-  if (typeof value !== "string" || value.trim() !== value || value.length === 0 || value.includes(":")) {
-    throw new Error(`A member-money event key's ${label} must be a non-empty identity without ':' or surrounding space.`);
+  if (typeof value !== "string" || value.trim() !== value || value.length === 0 || (value.includes(":") || value.includes("|"))) {
+    throw new Error(`A member-money event key's ${label} must be a non-empty identity without ':' or '|' or surrounding space.`);
   }
   return value;
 }
@@ -57,6 +57,59 @@ export const memberMoneyEventKeys = {
   /** D4: one transfer per merge of two members. */
   merge: (fromMemberId: string, toMemberId: string) =>
     key(`merge:${part(fromMemberId, "merged-away member id")}:${part(toMemberId, "surviving member id")}`),
+  capture: (id: string) => key(`capture:${part(id, "capture intent")}`),
+  receipt: (transactionId: string, settlementLineId: string) => key(`receipt:${part(transactionId, "transaction")}:${part(settlementLineId, "settlement line")}`),
+  collect: (receipt: MemberMoneyEventKey) => key(`collect|${receipt}`),
+  chargeOpen: (id: string) => key(`charge-open:${part(id, "booking")}`),
+  refundObligation: (scope: RefundObligationScope, id: string) => key(`refund-obligation|${scope}|${nestedPart(id)}`),
+  refundFunding: (attemptKey: string) => key(`refund-funding|${nestedPart(attemptKey)}`),
+  refund: (id: string) => key(`refund:${part(id, "refund")}`),
+  refundAnswer: (id: string) => key(`refund-answer:${part(id, "refund")}`),
+  paidAnotherWay: (id: string) => key(`paid-another-way:${part(id, "record")}`),
+  handBackPaid: (id: string) => key(`hand-back-paid:${part(id, "task")}`),
+  refundCloseOut: (obligation: MemberMoneyEventKey) => key(`refund-close-out|${obligation}`),
+  keptCapture: (id: string) => key(`kept-capture:${part(id, "capture")}`),
+  successor: (obligationKey: string, from: string, to: string) => key(`successor|${obligationKey}|${nestedPart(from)}|${nestedPart(to)}`),
+  mergeResidue: (from: string, to: string, event: MemberMoneyEventKey) => key(`merge-residue:${part(from, "from")}:${part(to, "to")}|${event}`),
   /** An exact whole-batch reversal: the database allows one per journal, so the journal names it. */
   reversal: (journalId: string) => key(`reversal:${part(journalId, "journal id")}`),
 } as const;
+
+/** An embedded identity may contain colons; a pipe always belongs to the builder. */
+function nestedPart(value: string): string {
+  if (typeof value !== "string" || value.length === 0 || value.includes("|")) {
+    throw new Error("A nested member-money identity must be non-empty and contain no '|'.");
+  }
+  return value;
+}
+
+export type RefundObligationScope = "cancellation" | "modification" | "refund-request" | "review" | "capture-return" | "hand-back";
+
+/** M4 identities. Composite arguments must themselves come from these builders. */
+export const memberMoneyApplicationKeys = {
+  application: (event: MemberMoneyEventKey, sourceIdentity: string, obligationKey: string) =>
+    `${event}|${nestedPart(sourceIdentity)}|${obligationKey}`,
+  successor: (obligationKey: string, debtorKind: "MEMBER" | "ORGANISATION", id: string) =>
+    `${obligationKey}|for|${debtorKind}|${nestedPart(id)}`,
+};
+
+/** The first posting uses the base; a retry after reversal names that exact reversal. */
+export function memberMoneyChainKey(base: MemberMoneyEventKey, reversalJournalId?: string): MemberMoneyEventKey {
+  return reversalJournalId === undefined ? base : key(`${base}|after|${nestedPart(reversalJournalId)}`);
+}
+
+/** Walk exact reversal identities; a retry returns the same live tip. No revision counter or clock. */
+export async function walkMemberMoneyChain(
+  base: MemberMoneyEventKey,
+  find: (eventKey: MemberMoneyEventKey) => Promise<{ reversedBy: { id: string } | null } | null>,
+): Promise<MemberMoneyEventKey> {
+  let current = base;
+  const seen = new Set<string>();
+  for (;;) {
+    if (seen.has(current)) throw new Error("Cyclic member-money reversal chain");
+    seen.add(current);
+    const journal = await find(current);
+    if (!journal?.reversedBy) return current;
+    current = memberMoneyChainKey(base, journal.reversedBy.id);
+  }
+}

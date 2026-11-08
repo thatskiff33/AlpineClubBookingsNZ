@@ -1066,7 +1066,14 @@ note.
    attempts resolved by hand count as done - with nothing left, the note is
    reported done. With no readable plan (a redacted one) no row is its own
    attempt, so a row resolved by hand never answers for the whole note, and
-   the invoices left are reported unknown (null). A throw gives the row back
+   the invoices left are reported unknown (null). A PARTIAL row an officer
+   resolved in Xero is reported done (`INV-INT-025`) for both arms, naming
+   the note, with no action. It is answered ahead of the in-flight,
+   others-first and by-hand reads, which only decide whether the retry may
+   be offered and so cannot change an answer that offers nothing. An
+   allocation row beside it, live or failed, is reported alongside, blocked
+   and never retried (#3635 review F8); until #4763 that row was all either
+   arm reported. A throw gives the row back
    PARTIAL with its payload and the run's error, guarded on the claim, never
    FAILED, whose error payload would replace what the repair reads.
 

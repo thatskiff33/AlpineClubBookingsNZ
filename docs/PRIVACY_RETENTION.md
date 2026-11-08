@@ -207,6 +207,8 @@ see [backups](guides/backups.md), the
 | `MemberMoneyLine` | Member or organisation debtor, booking and financial evidence | Kept for financial records | Keep |
 | `MemberMoneyObligation` | Member or organisation charge and refund obligations | Kept for financial records | Keep |
 | `MemberMoneyApplication` | Receipt, refund and credit attribution to financial obligations | Kept for financial records | Keep |
+| `MemberMoneyRefundReservation` | Reserved refund amounts linked to financial obligations and captures | Kept for financial records | Keep |
+| `MemberMoneyRefundReservationRelease` | Release evidence for reserved refund amounts | Kept for financial records | Keep |
 | `MemberMoneySourcePosting` | Exact financial source and journal-line coverage | Kept for financial records | Keep |
 
 ## Maintaining coverage

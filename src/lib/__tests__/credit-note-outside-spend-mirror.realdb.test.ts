@@ -126,6 +126,7 @@ let observerClient: import("@prisma/client").PrismaClient;
       await prisma.memberCredit.deleteMany({ where: { memberId: MEMBER_ID } });
       await prisma.bookingEvent.deleteMany({ where: { bookingId: BOOKING_ID } });
       await prisma.auditLog.deleteMany({ where: { OR: [{ memberId: MEMBER_ID }, { subjectMemberId: MEMBER_ID }, { targetId: { in: [BOOKING_ID, LOT_ID, SECOND_LOT_ID] } }] } });
+      await prisma.paymentTransaction.deleteMany({ where: { payment: { bookingId: BOOKING_ID } } });
       await prisma.payment.deleteMany({ where: { bookingId: BOOKING_ID } });
       await prisma.bookingGuestNight.deleteMany({ where: { bookingGuest: { bookingId: BOOKING_ID } } });
       await prisma.bookingGuest.deleteMany({ where: { bookingId: BOOKING_ID } });

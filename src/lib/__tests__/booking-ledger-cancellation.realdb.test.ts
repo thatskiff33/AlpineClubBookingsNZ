@@ -111,6 +111,8 @@ async function clean(): Promise<void> {
     await prisma.bookingEvent.deleteMany({ where: { bookingId: id } });
     await prisma.manualRefundTask.deleteMany({ where: { bookingId: id } });
     await prisma.paymentRecoveryOperation.deleteMany({ where: { bookingId: id } });
+    await prisma.paymentRefund.deleteMany({ where: { payment: { bookingId: id } } });
+    await prisma.paymentTransaction.deleteMany({ where: { payment: { bookingId: id } } });
     await prisma.payment.deleteMany({ where: { bookingId: id } });
     await prisma.bookingGuest.deleteMany({ where: { bookingId: id } });
     await prisma.booking.updateMany({ where: { id }, data: { status: "PAID" } });

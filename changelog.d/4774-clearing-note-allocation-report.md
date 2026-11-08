@@ -1,0 +1,1 @@
+- **Booking repair reports each note's allocation failures in the right place (#4774).** A clearing note marked resolved in Xero now reports beside it only allocation rows that name that note. Other notes' rows are left to their own repair arms, avoiding conflicting blocked and retry findings.

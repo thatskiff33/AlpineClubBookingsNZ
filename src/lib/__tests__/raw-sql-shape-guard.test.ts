@@ -59,6 +59,8 @@ const SCANNED_DIRS = ["src", "scripts", "prisma"];
  * an opt-out below.
  */
 const RAW_READ_INVENTORY: Record<string, number> = {
+  // M4a: the database function returns an exact family/source projection; decoded before caps.
+  "src/lib/member-money/internal/application-read.ts": 1,
   // The #3531 rate-derived backfill's refusal to run before its enum value
   // exists: one `EXISTS` over `pg_enum`, which no Prisma model exposes, and its
   // one boolean is schema-decoded through `decodeRawRows` before it decides.

@@ -2359,14 +2359,20 @@ mispricing a booking.
   (the credentials route's 409), having written nothing, when another save
   moved it, so a key issued by the old server never lands beside the new
   address. A key saved first is removed by the move queued behind it.
-  Address replacement also deletes the old server's `push_secret` in its
-  transaction, after the API key (settings row, `api_key` row,
-  `push_secret` row, audit); key replacement deletes it after the new key
-  (settings row, `api_key` row, `push_secret` row, answer reset, audit). `ensurePushRegistration` stores a newly issued
-  secret through `serverNzAnswerWriter` for the identity its registration
-  was sent on (settings row, credential read, `push_secret` write, audit),
-  so a registration in flight across a move stores nothing and the next pass
-  registers with the new server. The credentials route also runs it
+  Address replacement also deletes the old server's `push_secret`, and the
+  `push_registered_url` it was issued for, in its transaction, after the API
+  key (settings row, `api_key` row, `push_secret` row, `push_registered_url`
+  row, audit); key replacement deletes them after the new key (settings row,
+  `api_key` row, `push_secret` row, `push_registered_url` row, answer reset,
+  audit). `ensurePushRegistration` stores a newly issued secret and its
+  callback address through `serverNzAnswerWriter` for the identity its
+  registration was sent on (settings row, credential read, `push_secret`
+  write, `push_registered_url` write, audit), so a registration in flight
+  across a move stores nothing and the next pass registers with the new
+  server. It also registers again when the stored address differs from this
+  site's only in how it is written; a registration stored for another origin
+  (host name or port) is never taken over by the pass (a restored or staging
+  copy would otherwise steal production's), only by a key save. The credentials route also runs it
   (`registerAfterKeySave`, triyder/AlpineClubBookingsNZ#97) after the key
   save's fenced transaction has committed, never inside it: the same fenced
   store, no new lock, and its provider call outside every transaction. The message-board mirror (`runMirrorSync`)
@@ -5768,7 +5774,9 @@ their event key's unique index makes a duplicate post collapse to one, and
 `ON CONFLICT DO NOTHING` makes a concurrent poster of the same key wait and then
 replay. A refused check looks the key up once more,
 because a same-key poster may have committed in between. Proved against real
-PostgreSQL by `member-money-posting.realdb.test.ts`.
+PostgreSQL by `member-money-posting.realdb.test.ts`. A batch that applies money,
+and a refund reservation or its release, also take the booking's Payment row
+(#4691, below). A charge or a reversal that applies nothing does not.
 
 ## The M3b booking doors and member merge's journal transfer (#4627)
 
@@ -5844,6 +5852,35 @@ order. Its participants:
 Reconciled against #4636 (M3b: the doors, the booking row lock, the inactive
 journal), #4630 (M3a) and #4634 (the finished-stay fee owed, which the planned
 confirmation includes), the last merges touching these writers.
+
+## Member-money applications and refund reservations: the booking's Payment row (#4691)
+
+Ledger M4a adds no advisory key (`INV-LOCK-001`, `INV-LOCK-002`). One participant
+joins an existing row lock (`INV-LOCK-003`): `lockMemberMoneyPayment`
+(`src/lib/member-money/internal/application-read.ts`) takes the booking's
+`Payment` row `FOR NO KEY UPDATE`, the same statement and strength as
+`lockPaymentForRefundedTotal`. It runs before the first write, inside the
+caller's transaction, for three writes only:
+
+- a batch that records applications, including a reversal that copies them;
+- a refund reservation;
+- a release of one.
+
+A charge, an adjustment, or a reversal that applies nothing does not take it, so
+the M3 doors keep the lock order they have. Within a transaction that already
+holds the row, PostgreSQL treats the second take as already held. The engine
+never takes the booking row, and it does not acquire `lock(1)` for an
+application: the Payment row is what keeps two applications, or a reservation
+and a release, from both passing the caps. A price edit still changes the live
+charge under `lock(1)` without this row, so the charge cap (C2) can be over or
+under; that is the accepted limit, and the population check does not fail it.
+No door calls the engine's application or reservation commands yet. Proved
+against real PostgreSQL by `member-money-applications.realdb.test.ts`.
+
+Reconciled against #4668, #4671, #4667, #4666, #4664, #4659, #4658, #4654, #4653
+and #4662, the merges the M4 plan checked against these writers, and against
+the open credit-release work that shares this Payment row. No new edge: the
+store does not take a booking row, and merge does not take a Payment row.
 
 ## A credit note spent outside the app: global, then the member's credit ledger (#4219)
 

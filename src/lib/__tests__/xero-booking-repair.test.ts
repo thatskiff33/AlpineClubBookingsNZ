@@ -4487,13 +4487,33 @@ describe("runBookingXeroRepair", () => {
       );
     });
 
-    it("MUTATION: queues nothing beside a PARTIAL row an officer resolved in Xero", async () => {
+    // #4763 (`INV-INT-025`): resolved is done, but still reported - naming the
+    // note's own row, with no action.
+    it("MUTATION: reports a PARTIAL row an officer resolved in Xero, and queues nothing beside it (#4763)", async () => {
       const bookingReport = await classify([
         noteRow({ id: "operation_resolved_note", status: "PARTIAL", manuallyResolvedAt: new Date("2026-05-03T00:00:00Z") }),
       ]);
 
       expect(bookingReport.actions.map((action) => action.type)).not.toContain("QUEUE_CREDIT_NOTE_ALLOCATION");
+      expect(bookingReport.actions.map((action) => action.type)).not.toContain("REQUEUE_XERO_OPERATION");
       expect(bookingReport.actions.some((action) => JSON.stringify(action.payload).includes("operation_resolved_note"))).toBe(false);
+      expect(bookingReport.findings.filter((finding) => finding.code === "RESOLVED_IN_XERO_BY_OFFICER")).toEqual([
+        expect.objectContaining({
+          severity: "info",
+          summary:
+            "An officer marked this modification credit note's operation resolved in Xero: they finished its allocation by hand there, so it is treated as done and is never re-run. Any allocation of this note not linked here was made in Xero; if the resolve was a mistake, allocate the rest by hand in Xero.",
+          safeToAutoApply: false,
+          details: expect.objectContaining({
+            modificationId: "mod_3",
+            creditNoteId: "cn_mod_3",
+            operationId: "operation_resolved_note",
+            operationStatus: "PARTIAL",
+            manuallyResolvedAt: new Date("2026-05-03T00:00:00Z"),
+          }),
+          actions: [],
+        }),
+      ]);
+      expect(bookingReport.findings.map((finding) => finding.code)).not.toContain("MISSING_CREDIT_NOTE_ALLOCATION");
     });
 
     // #4757 review F1: an allocation row in flight beside the PARTIAL row (one the
@@ -4594,9 +4614,52 @@ describe("runBookingXeroRepair", () => {
       ]);
 
       expect(actionsOf(bookingReport)).toEqual([]);
-      expect(bookingReport.findings.map((finding) => finding.code)).toContain("RESOLVED_IN_XERO_BY_OFFICER");
+      // An allocation row keeps the general wording; only the note's own row
+      // gets the finished-by-hand one (#4763).
+      expect(bookingReport.findings).toContainEqual(
+        expect.objectContaining({
+          code: "RESOLVED_IN_XERO_BY_OFFICER",
+          summary:
+            "An officer marked this booking's Xero credit-note allocation operation resolved in Xero, so it is treated as done and is never re-run. The club's records hold no Xero credit-note allocation for it; if the resolve was a mistake, raise it by hand in Xero.",
+          details: expect.objectContaining({ modificationId: "mod_3", operationId: "operation_resolved_allocation" }),
+        })
+      );
       expect(bookingReport.findings.map((finding) => finding.code)).not.toContain("MISSING_CREDIT_NOTE_ALLOCATION");
     });
+
+    // #4763 with Xero review F8: the resolved note row is reported, and a
+    // separate allocation failure beside it too - report-only, never retried,
+    // since the officer allocated the note by hand.
+    it.each([
+      ["FAILED", {}],
+      ["FAILED and unretryable", { replayable: false }],
+      ["PENDING", { status: "PENDING", completedAt: null, createdAt: new Date("2026-07-01T00:00:00.000Z") }],
+    ])(
+      "MUTATION: reports both a resolved PARTIAL row and a %s allocation row beside it, and offers nothing (#4763)",
+      async (_label, overrides) => {
+        const bookingReport = await classify([
+          noteRow({ id: "operation_resolved_note", status: "PARTIAL", manuallyResolvedAt: new Date("2026-05-03T00:00:00Z") }),
+          allocationRow({ id: "operation_failed_allocation", status: "FAILED", ...overrides }),
+        ]);
+
+        expect(actionsOf(bookingReport)).toEqual([]);
+        expect(bookingReport.findings).toContainEqual(
+          expect.objectContaining({
+            code: "RESOLVED_IN_XERO_BY_OFFICER",
+            details: expect.objectContaining({ creditNoteId: "cn_mod_3", operationId: "operation_resolved_note" }),
+            actions: [],
+          })
+        );
+        expect(bookingReport.findings).toContainEqual(
+          expect.objectContaining({
+            code: "BLOCKED_BY_XERO_OPERATION",
+            safeToAutoApply: false,
+            details: expect.objectContaining({ modificationId: "mod_3", operationId: "operation_failed_allocation" }),
+            actions: [],
+          })
+        );
+      }
+    );
 
     // #4757 review S1: the note's own attempt (this note, its invoice AND
     // amount: Xero's key) is covered by the note's retry, which links it with
@@ -9129,8 +9192,9 @@ describe("runBookingXeroRepair - primary invoice vs edit timing (#3199)", () => 
  * twice from ONE fixture: unresolved, the control, which must offer the retry;
  * and resolved in Xero, which must offer no retry, queue no rival document,
  * and report the officer's operation only as the info-level, action-free
- * RESOLVED_IN_XERO_BY_OFFICER finding (orchestrator decision 2) - or nothing,
- * where the document itself exists (the PARTIAL clearing note).
+ * RESOLVED_IN_XERO_BY_OFFICER finding (orchestrator decision 2) - the PARTIAL
+ * clearing note too, whose note exists but whose allocation the officer made
+ * by hand (#4763; before, it was not reported).
  */
 describe("the missing-refund-note arm asks only for what a note may answer (#3635)", () => {
   const cancelledRefunded = () =>
@@ -9522,20 +9586,15 @@ describe("resolved in Xero is done on every repair retry arm (#3635)", () => {
       (finding) =>
         (finding.details as Record<string, unknown>)?.operationId === "operation_officer"
     );
-    const documentExists = scenario.arm === "cancelled open-invoice PARTIAL clearing note";
-    expect(aboutTheOfficersOperation).toEqual(
-      documentExists
-        ? []
-        : [
-            expect.objectContaining({
-              code: "RESOLVED_IN_XERO_BY_OFFICER",
-              severity: "info",
-              safeToAutoApply: false,
-              actions: [],
-              details: expect.objectContaining({ manuallyResolvedAt: RESOLVED_AT }),
-            }),
-          ]
-    );
+    expect(aboutTheOfficersOperation).toEqual([
+      expect.objectContaining({
+        code: "RESOLVED_IN_XERO_BY_OFFICER",
+        severity: "info",
+        safeToAutoApply: false,
+        actions: [],
+        details: expect.objectContaining({ manuallyResolvedAt: RESOLVED_AT }),
+      }),
+    ]);
   });
 
   it.each(["PENDING", "RUNNING"])(
@@ -9613,7 +9672,11 @@ describe("resolved in Xero is done on every repair retry arm (#3635)", () => {
     );
   });
 
-  it("a resolved PARTIAL clearing note does not hide a separate live allocation failure (#3635, Xero F8)", async () => {
+  it.each([
+    { allocationNoteId: "cn_clear", reportsAllocation: true },
+    { allocationNoteId: "cn_other", reportsAllocation: false },
+    { allocationNoteId: undefined, reportsAllocation: false },
+  ])("a resolved clearing note reports an allocation naming $allocationNoteId only when it names this note (#4774)", async ({ allocationNoteId, reportsAllocation }) => {
     const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
       dependencies: createDependencies({
         bookings: [cancelledUnpaid()],
@@ -9647,7 +9710,7 @@ describe("resolved in Xero is done on every repair retry arm (#3635)", () => {
             xeroObjectId: null,
             requestPayload: {
               queueType: "CREDIT_NOTE_ALLOCATION",
-              creditNoteId: "cn_clear",
+              creditNoteId: allocationNoteId,
               invoiceId: "inv_primary",
               amountCents: 10000,
               role: "MODIFICATION_CREDIT_NOTE_ALLOCATION",
@@ -9658,15 +9721,30 @@ describe("resolved in Xero is done on every repair retry arm (#3635)", () => {
       scope: { all: true },
     });
     const bookingReport = report.passes[0].bookings[0];
-    // Seen, but report-only: the officer allocated by hand, so no retry.
+    // #4763: the resolved note row itself is reported, naming the note.
     expect(bookingReport.findings).toContainEqual(
+      expect.objectContaining({
+        code: "RESOLVED_IN_XERO_BY_OFFICER",
+        severity: "info",
+        summary:
+          "An officer marked this invoice-clearing credit note's operation resolved in Xero: they finished its allocations by hand there, so it is treated as done and is never re-run. Any allocation of this note not linked here was made in Xero; if the resolve was a mistake, allocate the invoices left by hand in Xero so the cancelled unpaid booking's invoice closes.",
+        safeToAutoApply: false,
+        actions: [],
+        details: expect.objectContaining({ creditNoteId: "cn_clear", operationId: "operation_resolved_partial_note" }),
+      })
+    );
+    // Only this note's allocation is report-only beside its resolved row.
+    // Other notes' rows (or rows naming no note) belong to their own arms.
+    const allocationFindings = bookingReport.findings.filter(
+      (finding) => finding.details?.operationId === "operation_live_allocation"
+    );
+    expect(allocationFindings).toEqual(reportsAllocation ? [
       expect.objectContaining({
         code: "BLOCKED_BY_XERO_OPERATION",
         safeToAutoApply: false,
         actions: [],
-        details: expect.objectContaining({ operationId: "operation_live_allocation" }),
-      })
-    );
+      }),
+    ] : []);
     const types = bookingReport.actions.map((action) => action.type);
     expect(types).not.toContain("REQUEUE_XERO_OPERATION");
     expect(types).not.toContain("QUEUE_CREDIT_NOTE_ALLOCATION");

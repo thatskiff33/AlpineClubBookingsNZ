@@ -111,8 +111,9 @@ async function taxedCharge(c: Client, broken: { gst?: number; revenueAmount?: nu
 
 describe.skipIf(!RUN)("member money journal database contracts (#4513)", () => {
   beforeAll(async () => {
-    // The shipped journal migration in isolation, with only its legacy FK parents
+    // The journal migration and the M4a reservation migration, with stub parents
     // and the provisioned roles (the shared fixture holds the one definition).
+    // A zero-application batch must still commit under the replaced checks.
     // Full-history/migration-role rehearsal belongs to database-roles.realdb.test.ts.
     scratch = await createMemberMoneyScratchDatabase(url, "member money journal", prefix);
     db = scratch.owner;
@@ -304,7 +305,11 @@ describe.skipIf(!RUN)("member money journal database contracts (#4513)", () => {
     await transaction(app, async () => {
       receipt = { id: next(), debit: "", credit: "" };
       await event(app, receipt.id); await header(app, receipt.id, 2, null, "NZD", 3); await source(app, receipt.id);
-      receipt.debit = await line(app, receipt.id, "DEBIT"); receipt.credit = await line(app, receipt.id, "CREDIT");
+      receipt.debit = await line(app, receipt.id, "DEBIT");
+      receipt.credit = next();
+      await app.query(`INSERT INTO "MemberMoneyLine"
+        (id,"journalId","sourceLinkId",account,side,"amountCents","debtorKind","memberId",evidence)
+        VALUES ($1,$2,$2,'MEMBER_RECEIVABLE','CREDIT',100,'MEMBER','member-evidence','{}')`, [receipt.credit, receipt.id]);
       owed = await obligation(app, receipt.id);
       otherMember = await obligation(app, receipt.id, { member: "another-member" });
       // An organisation debtor whose id equals a member's must still not match it.
@@ -316,10 +321,15 @@ describe.skipIf(!RUN)("member money journal database contracts (#4513)", () => {
         const id = next(); await event(app,id); await header(app,id,2,null,currency,0,1); await source(app,id);
         await line(app,id,"DEBIT"); await line(app,id,"CREDIT");
         await app.query(`INSERT INTO "MemberMoneyApplication" (id,"applicationKey","journalId","sourceLineId","obligationId","amountCents","reversesApplicationId")
-          VALUES ($1,$1,$2,$3,$4,$5,$6)`, [application,id,receipt.debit,target,amount,reversal]);
+          VALUES ($1,$1,$2,$3,$4,$5,$6)`, [application,id,receipt.credit,target,amount,reversal]);
       });
       return application;
     };
+    await expect(transaction(app, async () => {
+      const id = next(); await event(app, id, "ZERO"); await header(app, id, 0, null, "NZD", 0, 1); await source(app, id);
+      await app.query(`INSERT INTO "MemberMoneyApplication" (id,"applicationKey","journalId","sourceLineId","obligationId","amountCents")
+        VALUES ($1,$1,$2,$3,$4,100)`, [next(), id, receipt.debit, owed]);
+    })).rejects.toMatchObject({ code: "23514", message: expect.stringContaining("application_shape") });
     await expect(apply(100,null,"USD")).rejects.toMatchObject({ code: "23514" });
     await expect(apply(100,null,"NZD",otherMember)).rejects.toMatchObject({ code: "23514", message: expect.stringContaining("application_mismatch") });
     await expect(apply(100,null,"NZD",organisationOwed)).rejects.toMatchObject({ code: "23514", message: expect.stringContaining("application_mismatch") });
