@@ -56,7 +56,8 @@ export function receiptFactContext(context: MemberMoneyPostingContext, at: Date)
 const debtorId = (debtor: MemberMoneyDebtor) => (debtor.kind === "MEMBER" ? debtor.memberId : debtor.organisationId);
 const ownedBy = (obligation: ApplicationObligation, debtor: MemberMoneyDebtor) =>
   obligation.debtorKind === debtor.kind && (obligation.memberId ?? obligation.organisationId) === debtorId(debtor);
-const succeeded = (state: ApplicationState, obligation: ApplicationObligation) => state.obligations.some((o) => o.key.startsWith(`${obligation.key}|for|`));
+const succeeded = (state: ApplicationState, obligation: ApplicationObligation) =>
+  state.obligations.some((o) => memberMoneyApplicationKeys.succeeds(o.key, obligation.key));
 /** The debtor's live CHARGE obligation: one no successor has superseded, never a stale root. */
 const chargeOf = (state: ApplicationState, debtor: MemberMoneyDebtor) =>
   state.obligations.find((o) => o.kind === "CHARGE" && ownedBy(o, debtor) && !succeeded(state, o)) ?? null;
@@ -68,8 +69,12 @@ function lineDebtor(line: { debtorKind: string | null; memberId: string | null; 
   throw new MemberMoneyPlanError(["a receipt's receivable line names no debtor"]);
 }
 
-/** A ZERO R01 has no obligation. A named debit and unnamed equal credit open its face without charging again. */
-async function chargeObligation(tx: Db, context: MemberMoneyPostingContext, booking: { bookingId: string; lodgeId: string }, debtor: MemberMoneyDebtor) {
+/**
+ * A ZERO R01 has no obligation. A named debit and unnamed equal credit open its face without charging again.
+ * `liveChargeCents` is the collection's one live-charge read, so the face it sizes is the charge it clamps to.
+ */
+async function chargeObligation(tx: Db, context: MemberMoneyPostingContext, booking: { bookingId: string; lodgeId: string },
+  debtor: MemberMoneyDebtor, liveChargeCents: number) {
   const rootKey = memberMoneyEventKeys.bookingCharge(booking.bookingId);
   const state = await readMemberMoneyApplicationState(tx, booking.bookingId);
   const found = chargeOf(state, debtor);
@@ -77,9 +82,9 @@ async function chargeObligation(tx: Db, context: MemberMoneyPostingContext, book
   if (state.obligations.some((o) => o.key === rootKey)) {
     // The owner moved (a member merge) before this debtor's first collection. Its successor is posted here, under
     // the Payment row every application takes, so the face it carries forward cannot miss a collection.
-    await postChargeSuccessors(tx, context, booking, debtor, state);
+    await postChargeSuccessor(tx, context, booking, debtor, state, liveChargeCents);
   } else {
-    const faceCents = await readBookingLiveChargeCents(tx, booking.bookingId);
+    const faceCents = liveChargeCents;
     if (faceCents <= 0) return null;
     const eventKey = memberMoneyEventKeys.chargeOpen(booking.bookingId);
     const source = { kind: "BOOKING" as const, id: booking.bookingId, version: eventKey };
@@ -95,25 +100,24 @@ async function chargeObligation(tx: Db, context: MemberMoneyPostingContext, book
 
 /**
  * D4: immutable obligations get successors, never a new debtor written onto history. Only from a collection,
- * holding the booking's Payment row, so the uncollected face it carries is read where no collection can race it.
+ * holding the booking's Payment row, so what it carries forward is read where no collection can race it.
+ * Successors only ever chain from the one live tip, so the chain has one CHARGE obligation no successor superseded.
+ * Its successor's face is what the chain still has to collect: the live charge less everything collected, never
+ * the tip's own face less its own collections, since an increase (R02) opens no obligation of its own.
  */
-async function postChargeSuccessors(tx: Db, context: MemberMoneyPostingContext, booking: { bookingId: string; lodgeId: string },
-  debtor: MemberMoneyDebtor, state: ApplicationState): Promise<void> {
-  const collected = memberMoneyApplicationTotals(state).obligations;
-  for (const original of state.obligations.filter((o) => o.kind === "CHARGE" && !ownedBy(o, debtor))) {
-    // Only transfer a live tip, rather than minting another path from an already succeeded obligation.
-    if (succeeded(state, original)) continue;
-    const faceCents = Math.max(0, original.faceCents - (collected.get(original.id) ?? 0));
-    if (faceCents === 0) continue;
-    const eventKey = memberMoneyEventKeys.successor(original.key, original.memberId ?? original.organisationId!, debtorId(debtor));
-    if (await eventPosted(tx, eventKey)) continue;
-    const successor = memberMoneyApplicationKeys.successor(original.key, debtor.kind, debtorId(debtor));
-    const leg = { type: "amount" as const, account: "MEMBER_RECEIVABLE" as const, amountCents: faceCents, debtor, booking, evidence: { predecessor: original.key } };
-    await postMemberMoneyEvent(tx, context, { kind: "TRANSFER", eventKey, origin: "APP",
-      source: { kind: "BOOKING", id: booking.bookingId, version: eventKey }, reason: "Member merge charge successor",
-      obligations: [{ key: successor, kind: "CHARGE", debtor, faceCents, evidence: { predecessor: original.key } }],
-      legs: [{ ...leg, side: "DEBIT", obligationKey: successor }, { ...leg, side: "CREDIT" }] });
-  }
+async function postChargeSuccessor(tx: Db, context: MemberMoneyPostingContext, booking: { bookingId: string; lodgeId: string },
+  debtor: MemberMoneyDebtor, state: ApplicationState, liveChargeCents: number): Promise<void> {
+  const original = state.obligations.find((o) => o.kind === "CHARGE" && !ownedBy(o, debtor) && !succeeded(state, o));
+  const faceCents = liveChargeCents - memberMoneyApplicationTotals(state).collected;
+  if (!original || faceCents <= 0) return;
+  const eventKey = memberMoneyEventKeys.successor(original.key, original.memberId ?? original.organisationId!, debtorId(debtor));
+  if (await eventPosted(tx, eventKey)) return;
+  const successor = memberMoneyApplicationKeys.successor(original.key, debtor.kind, debtorId(debtor));
+  const leg = { type: "amount" as const, account: "MEMBER_RECEIVABLE" as const, amountCents: faceCents, debtor, booking, evidence: { predecessor: original.key } };
+  await postMemberMoneyEvent(tx, context, { kind: "TRANSFER", eventKey, origin: "APP",
+    source: { kind: "BOOKING", id: booking.bookingId, version: eventKey }, reason: "Member merge charge successor",
+    obligations: [{ key: successor, kind: "CHARGE", debtor, faceCents, evidence: { predecessor: original.key } }],
+    legs: [{ ...leg, side: "DEBIT", obligationKey: successor }, { ...leg, side: "CREDIT" }] });
 }
 
 const MERGE_SNAPSHOT_VERSION = "member-money-merge-snapshot-1";
@@ -145,7 +149,8 @@ async function mergeOf(tx: Db, memberId: string) {
 /**
  * Carry an exact event's stray balance on a merged-away member along the merge chain to the owner: each hop to
  * the member that one merged into, unless that member's own merge snapshot already netted it. Never a balance
- * attributed by timing or amount, and never onto a member that has merged away and not into the owner.
+ * attributed by timing or amount. It only ever moves onward along the chain to the owner; an intermediate hop
+ * can be a member that itself merged away.
  */
 async function carryResidue(tx: Db, context: MemberMoneyPostingContext, booking: { bookingId: string; lodgeId: string },
   owner: string, start: { holder: string; eventKey: MemberMoneyEventKey; eventId: string; cents: number }) {
@@ -233,7 +238,9 @@ function receiptPostedAs(evidence: Prisma.JsonValue): ReceiptPostedAs | null {
  * advisory key. The owner is read once, with the Payment row held: every receipt this call posts names that
  * debtor, and every collection lands on that owner's live obligation, the tip of the charge chain. A receipt
  * a merged-away member's writer deferred is applied there through the credit the merge chain carried to the
- * owner, so open CHARGE faces stay equal to the live charge less what was collected.
+ * owner. A collection is capped by its credit's room and the live charge less what was collected, never by its
+ * obligation's face: faces are not a running balance, because a price increase opens no obligation.
+ * Reversing a receipt first reverses its collection, through whichever credit that applied.
  */
 export async function postBookingReceipts(tx: Db, context: BookingJournalContext, input: {
   paymentId: string; decision?: BookingReceiptDecision;
@@ -291,6 +298,15 @@ export async function postBookingReceipts(tx: Db, context: BookingJournalContext
     const receipt = await tx.memberMoneyEvent.findUniqueOrThrow({ where: { eventKey }, select: { journal: { select: { id: true, eventId: true, reversedBy: { select: { id: true } } } } } });
     if (reversal) {
       if (!receipt.journal!.reversedBy) {
+        // Its collection first, whichever credit that applied (its own line, a residue move's or a stand-in's), so no
+        // collection outlives the cash it applied; the receipt's own reversal then finds none left to copy.
+        const collection = await tx.memberMoneyEvent.findUnique({ where: { eventKey: memberMoneyEventKeys.collect(eventKey) },
+          select: { journal: { select: { id: true, reversedBy: { select: { id: true } } } } } });
+        if (collection?.journal && !collection.journal.reversedBy) {
+          await reverseMemberMoneyJournal(tx, receiptFactContext(context, reversal.postedAt), { reversesJournalId: collection.journal.id, origin: "OFFICER",
+            source: { kind: "PAYMENT", id: row.id, version: memberMoneyEventKeys.reversal(collection.journal.id) }, reason: "Reverse an officer receipt's collection" });
+          posted++;
+        }
         const reversed = await reverseMemberMoneyJournal(tx, receiptFactContext(context, reversal.postedAt), {
           reversesJournalId: receipt.journal!.id, origin: "OFFICER", source: { kind: "PAYMENT", id: row.id, version: reversal.id }, reason: "Reverse officer receipt" });
         const debit = await tx.memberMoneyLine.findFirstOrThrow({ where: { journalId: reversed.journalId, account: "MEMBER_RECEIVABLE", side: "DEBIT" }, select: { id: true } });
@@ -306,14 +322,18 @@ export async function postBookingReceipts(tx: Db, context: BookingJournalContext
     const sourceLine = await tx.memberMoneyLine.findFirstOrThrow({ where: { journalId: receipt.journal!.id, account: "MEMBER_RECEIVABLE", side: "CREDIT" } });
     // Only this writer's own receipt: posted now, or deferred by its writer to this decision. Never a catch-up's.
     if (!postedNow && receiptPostedAs(sourceLine.evidence) !== "deferred") continue;
+    // One live-charge read sizes any successor, clamps the amount and is the read C2 checks it against (`ApplicationCheck`).
+    const liveChargeCents = await readBookingLiveChargeCents(tx, booking.bookingId);
     // The live tip of the booking's charge chain is the owner's obligation (a successor is only ever posted for the
     // owner this call read), so a receipt its writer deferred before a merge is collected there, never onto a
     // superseded obligation, through the credit the merge chain carried to the owner.
-    const obligation = await chargeObligation(tx, factContext, booking, debtor);
+    const obligation = await chargeObligation(tx, factContext, booking, debtor, liveChargeCents);
     if (!obligation) continue;
-    const before = memberMoneyApplicationTotals(await readMemberMoneyApplicationState(tx, booking.bookingId));
-    const unapplied = sourceLine.amountCents - (before.sources.get(sourceLine.id) ?? 0);
-    if (unapplied <= 0) continue;
+    const totals = memberMoneyApplicationTotals(await readMemberMoneyApplicationState(tx, booking.bookingId));
+    const unapplied = sourceLine.amountCents - (totals.sources.get(sourceLine.id) ?? 0);
+    // What this receipt can still collect, known before any stand-in is posted: none is posted to collect nothing.
+    const collectable = Math.min(unapplied, liveChargeCents - totals.collected);
+    if (collectable <= 0) continue;
     const credit = await ownerCreditFor(tx, factContext, booking, debtor,
       { eventKey, eventId: receipt.journal!.eventId, line: sourceLine }, unapplied);
     if (!credit) {
@@ -321,10 +341,8 @@ export async function postBookingReceipts(tx: Db, context: BookingJournalContext
       logger.warn({ bookingId: booking.bookingId, receiptEventKey: eventKey }, "A deferred receipt's debtor no longer owns the booking and no merge carried it: left unapplied (#4516)");
       continue;
     }
-    const totals = memberMoneyApplicationTotals(await readMemberMoneyApplicationState(tx, booking.bookingId));
-    // One live-charge read clamps the amount and is the read C2 checks it against (`ApplicationCheck`).
-    const liveChargeCents = await readBookingLiveChargeCents(tx, booking.bookingId);
-    const amountCents = Math.min(unapplied, credit.amountCents - (totals.sources.get(credit.id) ?? 0), liveChargeCents - totals.collected);
+    // A stand-in posted just now has no application yet, so the totals read above still give its room.
+    const amountCents = Math.min(collectable, credit.amountCents - (totals.sources.get(credit.id) ?? 0));
     if (amountCents <= 0) continue;
     await writeMemberMoneyBatch(tx, buildMemberMoneyBatch(factContext, { kind: "ZERO", eventKey: collectKey, origin: "APP", source: { ...source, version: collectKey },
       reason: "Apply the receipt the settlement selected", applications: [{ key: memberMoneyApplicationKeys.application(collectKey, row.id, obligation.key),

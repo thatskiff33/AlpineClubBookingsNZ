@@ -803,14 +803,17 @@ the owner once per call without locking Booking; the next receipt posting moves
 any merged-debtor residue explicitly, keyed to its source event, one merge hop
 at a time. No Payment lock is added to merge.
 
-A successor is only ever posted for the current owner, and every collection
-lands on the owner's live obligation, so the open CHARGE faces always equal the
-live charge less what was collected. A receipt a merged-away member's writer
-deferred is applied there through the credit the merge chain carried to the
-owner: the residue move's exact line, or, when a merge's snapshot netted the
-receipt into the survivor's balance, a zero-net `merge-follow` pair on the owner
-that stands in for it. The receipt census counts what stand-ins collected
-against the receipts' unapplied cash.
+A successor is only ever posted for the current owner, from the chain's one
+live tip, with the face the chain still has to collect: the live charge less
+everything collected. Every collection lands on the owner's live obligation.
+Faces are not a running balance: a price increase opens no obligation, so a
+collection is capped by the live charge, not by its obligation's face. A receipt
+a merged-away member's writer deferred is applied there through the credit the
+merge chain carried to the owner: the residue move's exact line, or, when a
+merge's snapshot netted the receipt into the survivor's balance, a zero-net
+`merge-follow` pair on the owner that stands in for it. The receipt census treats
+a receipt's own credit and the credits its collection applied as one source cap,
+and counts nothing for a reversed receipt.
 
 ### M4b receipt posting and catch-up
 
@@ -819,7 +822,9 @@ for bookings with R01. Cash posts in full. Collection is a separate, exact
 application to the selected transaction, capped by source room and live charge;
 held, duplicate and superseded captures stay unapplied. A ZERO R01 gets its
 CHARGE obligation lazily when collection needs one, without another charge.
-Officer reversals copy the original receipt and its live collection exactly.
+An officer reversal first reverses the receipt's collection exactly, through
+whichever credit it applied (its own line, a residue move's or a stand-in's),
+then the receipt itself.
 Organiser-share mirrors remain M6's. No legacy decision reader changes.
 
 A writer selects only the instruments it wrote or decided in its own

@@ -90,12 +90,19 @@ function nestedPart(value: string): string {
 
 export type RefundObligationScope = "cancellation" | "modification" | "refund-request" | "review" | "capture-return" | "hand-back";
 
+/** What joins an obligation's key to its successor's: only the successor builder and its readers below use it. */
+const SUCCESSOR = "|for|";
+
 /** M4 identities. Composite arguments must themselves come from these builders. */
 export const memberMoneyApplicationKeys = {
   application: (event: MemberMoneyEventKey, sourceIdentity: string, obligationKey: string) =>
     `${event}|${nestedPart(sourceIdentity)}|${obligationKey}`,
   successor: (obligationKey: string, debtorKind: "MEMBER" | "ORGANISATION", id: string) =>
-    `${obligationKey}|for|${debtorKind}|${nestedPart(id)}`,
+    `${obligationKey}${SUCCESSOR}${debtorKind}|${nestedPart(id)}`,
+  /** Whether `candidate` is a successor `successor` built from `obligationKey`, at any depth of its chain. */
+  succeeds: (candidate: string, obligationKey: string) => candidate.startsWith(`${obligationKey}${SUCCESSOR}`),
+  /** The root key a successor chain started from: the key itself for a root obligation. */
+  root: (obligationKey: string) => obligationKey.split(SUCCESSOR)[0]!,
 };
 
 /** The first posting uses the base; a retry after reversal names that exact reversal. */

@@ -5901,12 +5901,12 @@ Each decision the hook acts on is read under the Payment row, never before it:
   on a superseded obligation. A receipt deferred before a merge is applied
   through the credit the merge chain carried to the owner: an exact residue
   move, or a zero-net stand-in when the merge's snapshot netted it. D4 moves
-  merged-debtor residue hop by hop along the merge chain, never onto a member
-  that merged away.
+  merged-debtor residue hop by hop, only ever onward along the merge chain to
+  the owner; an intermediate hop may be a member that has itself merged away.
 - **Charge successors.** Merge takes no Payment row, so it posts no CHARGE
   successor: application state it read could miss a collection committing
   beside it. The first collection by the new owner posts the successor under
-  the Payment row, sized from the face its predecessor has not collected.
+  the Payment row, sized from the live charge less everything collected.
 - **Additional capture.** `markPaymentIntentTransactionSucceeded` decides
   collect from the booking's status and `deletedAt` read under the Payment row
   a cancel also takes; a route's or webhook's earlier read is not used.

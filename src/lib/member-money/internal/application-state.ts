@@ -1,5 +1,6 @@
 import { MemberMoneyAccount, MemberMoneySide } from "@prisma/client";
 import { z } from "zod";
+import { memberMoneyApplicationKeys } from "./keys";
 import { applicationRole } from "./plan";
 
 const Source = z.object({
@@ -26,7 +27,7 @@ export type ApplicationState = z.infer<typeof MemberMoneyApplicationState>;
 export type ApplicationSource = z.infer<typeof Source>;
 export type ApplicationObligation = z.infer<typeof Obligation>;
 
-export function refundFamilyKey(key: string): string { return key.split("|for|")[0]!; }
+export function refundFamilyKey(key: string): string { return memberMoneyApplicationKeys.root(key); }
 export function applicationRoleOf(source: ApplicationSource, obligation: ApplicationObligation): "collect" | "fund" | "pay" | null {
   const role = applicationRole(source, obligation.kind);
   return role === "pay" && source.obligationId !== obligation.id ? null : role;

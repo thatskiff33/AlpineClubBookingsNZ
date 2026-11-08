@@ -1,7 +1,8 @@
 import type { Prisma } from "@prisma/client";
 import { ORGANISER_SHARE_RECEIPT_REASON } from "../../organiser-extra-state";
 import { isCapturedTransactionStatus } from "../../payment-transaction-status";
-import { memberMoneyApplicationTotals } from "./application-state";
+import { memberMoneyApplicationTotals, type ApplicationState, type ApplicationTotals } from "./application-state";
+import { memberMoneyEventKeys } from "./keys";
 import { readMemberMoneyApplicationState } from "./application-read";
 import { bookingOwnerDebtor, readBookingLiveChargeCents } from "./booking-journal-read";
 import { CAPTURE_CASH_ACCOUNTS, CAPTURE_KINDS } from "../../booking-ledger-capture-kinds";
@@ -28,6 +29,33 @@ export async function receiptPopulationPaymentIds(tx: Db): Promise<string[]> {
   return ids;
 }
 
+/**
+ * The receipts' cash no collection has applied. A receipt a merge carried to the owner is collected through a
+ * stand-in (a residue move's or a merge-follow credit), so each receipt's own credit and every credit its one
+ * collection applied are one source cap: what any of them collected counts against that receipt alone, and a
+ * reversed receipt counts nothing (its reversal reverses that collection too).
+ */
+async function unappliedReceiptCents(tx: Db, rows: readonly { id: string; stripePaymentIntentId: string | null; reason: string | null }[],
+  lines: readonly { id: string; kind: string; anchorId: string | null; reversesLineId: string | null; amountCents: number }[],
+  state: ApplicationState, totals: ApplicationTotals): Promise<number> {
+  const keys = [...new Set(lines.flatMap((line) => {
+    const row = line.reversesLineId === null ? rows.find((r) => r.id === line.anchorId) : undefined;
+    return row && row.reason !== ORGANISER_SHARE_RECEIPT_REASON && line.amountCents > 0 ? [bookingReceiptEventKey(row, line)] : [];
+  }))];
+  const events = await tx.memberMoneyEvent.findMany({ where: { eventKey: { in: [...keys, ...keys.map(memberMoneyEventKeys.collect)] } },
+    select: { eventKey: true, journal: { select: { lines: { where: { account: "MEMBER_RECEIVABLE", side: "CREDIT" }, select: { id: true } },
+      applications: { select: { sourceLineId: true } } } } } });
+  const byKey = new Map(events.map((event) => [event.eventKey, event.journal]));
+  let unapplied = 0;
+  for (const key of keys) {
+    const own = state.sources.find((s) => s.id === byKey.get(key)?.lines[0]?.id);
+    if (!own || own.reversed) continue;
+    const capped = new Set([own.id, ...(byKey.get(memberMoneyEventKeys.collect(key))?.applications.map((a) => a.sourceLineId) ?? [])]);
+    unapplied += Math.max(0, own.amountCents - [...capped].reduce((n, id) => n + (totals.sources.get(id) ?? 0), 0));
+  }
+  return unapplied;
+}
+
 /** One population booking in the caller's repeatable-read, read-only snapshot. */
 export async function readBookingReceiptCensus(tx: Db, paymentId: string): Promise<ReceiptCensusFinding[]> {
   const payment = await tx.payment.findUniqueOrThrow({ where: { id: paymentId }, include: { booking: true, transactions: true } });
@@ -51,12 +79,7 @@ export async function readBookingReceiptCensus(tx: Db, paymentId: string): Promi
   const totals = memberMoneyApplicationTotals(state);
   const charge = await readBookingLiveChargeCents(tx, bookingId);
   if (totals.collected > charge) add("OVER_COLLECTED", bookingId, totals.collected - charge);
-  const credits = state.sources.filter((s) => !s.reversed && s.account === "MEMBER_RECEIVABLE" && s.side === "CREDIT");
-  // A receipt a merge carried to the owner is applied through its stand-in (a residue or merge-follow credit), so
-  // what those collected counts against the receipts' unapplied cash.
-  const carried = credits.filter((s) => s.sourceKind !== "PAYMENT").reduce((n, s) => n + (totals.sources.get(s.id) ?? 0), 0);
-  const unapplied = Math.max(0, credits.filter((s) => s.sourceKind === "PAYMENT")
-    .reduce((n, s) => n + Math.max(0, s.amountCents - (totals.sources.get(s.id) ?? 0)), 0) - carried);
+  const unapplied = await unappliedReceiptCents(tx, payment.transactions, lines, state, totals);
   if (unapplied > 0 && charge > totals.collected) add("UNAPPLIED_RECEIPT_ON_OPEN_CHARGE", bookingId, Math.min(unapplied, charge - totals.collected));
   const owner = bookingOwnerDebtor(payment.booking);
   const balances = await readMergedDebtorBalances(tx, bookingId, owner.kind === "MEMBER" ? owner.memberId : null);

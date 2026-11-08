@@ -302,6 +302,51 @@ function counting(tx: Prisma.TransactionClient) {
     expect((await census(id)).filter((f) => ["MERGED_DEBTOR_BALANCE", "UNAPPLIED_RECEIPT_ON_OPEN_CHARGE", "OVER_COLLECTED"].includes(f.kind))).toEqual([]);
   });
 
+  it("reversing a receipt collected through a merge stand-in reverses that collection, unmasking another unapplied receipt (#4516 round 4, 1)", async () => {
+    const [from, to] = await mergePair();
+    const id = await booking(10_000, false, from);
+    const officer = await cash(id, 4_000, "INTERNET_BANKING", true);
+    await post(id, { transactionIds: [officer.id], collect: false, deferred: true });
+    await merge(id, from, to);
+    const held = await cash(id, 3_000);
+    await post(id, { paymentIntentId: held.stripePaymentIntentId!, collect: false });
+    await post(id, { transactionIds: [officer.id], collect: true });
+    expect((await totals(id)).collected).toBe(4_000);
+    expect(await db.memberMoneyEvent.count({ where: { eventKey: memberMoneyEventKeys.mergeFollow(memberMoneyEventKeys.receipt(officer.id, (await db.bookingLedgerLine.findFirstOrThrow({ where: { anchorId: officer.id } })).id), to) } })).toBe(1);
+    await db.$transaction(async (tx) => {
+      await tx.paymentTransaction.update({ where: { id: officer.id }, data: { status: "FAILED" } });
+      await tx.payment.update({ where: { id: `${id}-payment` }, data: { manuallyMarkedPaidAt: null, manuallyMarkedPaidByMemberId: null } });
+      await syncBookingLedgerSettlements({ paymentId: `${id}-payment`, store: tx });
+      await postBookingReceipts(tx, context, { paymentId: `${id}-payment` });
+    });
+    expect((await totals(id)).collected).toBe(0);
+    // The held card receipt is the only unapplied cash left; nothing the reversed receipt's stand-in collected masks it.
+    expect((await census(id)).filter((f) => f.kind === "UNAPPLIED_RECEIPT_ON_OPEN_CHARGE")).toEqual([expect.objectContaining({ cents: 3_000 })]);
+    expect((await census(id)).filter((f) => f.kind === "MERGED_DEBTOR_BALANCE")).toEqual([]);
+  });
+
+  it("after a merge, a payment toward a price increase is collected on a successor sized from what is left to collect (#4516 round 4, 2)", async () => {
+    const [from, to] = await mergePair();
+    const id = await booking(10_000, false, from);
+    const first = await cash(id, 10_000);
+    await post(id, { paymentIntentId: first.stripePaymentIntentId!, collect: true });
+    await merge(id, from, to);
+    await db.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+      await postMemberMoneyEvent(tx, context, { kind: "ADJUSTMENT", eventKey: memberMoneyEventKeys.modification(id), origin: "APP",
+        source: { kind: "BOOKING", id, version: "increase" }, reason: "Synthetic price increase after a merge", legs: [
+          { type: "amount", account: "MEMBER_RECEIVABLE", side: "DEBIT", amountCents: 3_000, debtor: { kind: "MEMBER", memberId: to }, booking: { bookingId: id, lodgeId: names.lodgeId }, evidence: {} },
+          { type: "revenue", account: "BOOKING_REVENUE", side: "CREDIT", grossCents: 3_000, chargeIdentity: `booking:${id}:increase`, booking: { bookingId: id, lodgeId: names.lodgeId }, evidence: {} },
+        ] });
+    });
+    const next = await cash(id, 3_000);
+    await post(id, { paymentIntentId: next.stripePaymentIntentId!, collect: true });
+    expect((await totals(id)).collected).toBe(13_000);
+    expect((await successorOf(id, to))?.faceCents).toBe(3_000);
+    expect(await chargeChain(id)).toMatchObject({ openFaces: 0, outstanding: 0, tipOwners: [to] });
+    expect((await census(id)).filter((f) => ["MERGED_DEBTOR_BALANCE", "UNAPPLIED_RECEIPT_ON_OPEN_CHARGE", "OVER_COLLECTED"].includes(f.kind))).toEqual([]);
+  });
+
   it("moves only a receipt that landed on the merged-away member after the snapshot", async () => {
     const [from, to] = await mergePair();
     const id = await booking(10_000, false, from);

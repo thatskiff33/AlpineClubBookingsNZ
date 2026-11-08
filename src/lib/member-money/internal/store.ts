@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { MemberMoneyRefundReservationReleaseReason, Prisma } from "@prisma/client";
 import { MAX_INTEGER_CENTS } from "../../money-input";
-import { applicationRoleOf, sameApplicationDebtor, memberMoneyConservationProblems, memberMoneyApplicationTotals, type ApplicationState } from "./application-state";
+import { applicationRoleOf, sameApplicationDebtor, memberMoneyConservationProblems, memberMoneyApplicationTotals, refundFamilyKey, type ApplicationState } from "./application-state";
 import { lockMemberMoneyPayment, readMemberMoneyApplicationState } from "./application-read";
 import { readBookingLiveChargeCents } from "./booking-journal-read";
 import { dateOnlyInstantOf } from "../../club-time";
@@ -402,7 +402,7 @@ async function prepareApplications(db: Db, batch: BuiltBatch, lineIds: string[],
     if (application.reservationAttemptKey) {
       const reservation = state.reservations.find((r) => r.attemptKey === application.reservationAttemptKey);
       if (!reservation || consumed.has(reservation.id) || role !== "pay" || source.capture !== reservation.capture || application.amountCents !== reservation.amountCents
-        || obligation.key.split("|for|")[0] !== state.obligations.find((o) => o.id === reservation.obligationId)?.key.split("|for|")[0]
+        || refundFamilyKey(obligation.key) !== refundFamilyKey(state.obligations.find((o) => o.id === reservation.obligationId)?.key ?? "")
         || !("line" in application.source) || batch.sources[batch.lines[application.source.line]!.source]!.kind !== "REFUND") {
         problems.push("a refund answer must match its exact open reservation");
       } else consumed.add(reservation.id);
