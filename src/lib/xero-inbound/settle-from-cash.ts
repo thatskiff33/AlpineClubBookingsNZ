@@ -217,9 +217,9 @@ export function paidInvoiceFacts(invoice: Pick<Invoice, "total" | "creditNotes">
  *
  * A correction counts when its note's link records it live and its allocation
  * to this invoice is linked - by the note's own role or a role-less link for
- * the same allocation (#4786, `distinctClearingAllocations`) - both read here; one whose sync writes them while
- * the settle runs is left to that sync and to the recount after the commit
- * (`recountCorrectionsAfterKeptSettle`). Nothing is counted when the refunded
+ * the same allocation (#4786, `distinctClearingAllocations`) - both read
+ * here; one whose sync writes them while the settle runs is left to that sync
+ * and to the recount after the commit (`recountCorrectionsAfterKeptSettle`). Nothing is counted when the refunded
  * total holds more than the payment's rows record - an older fold may already
  * hold the correction - nor when the receipt would not hold the stored figure
  * (`receiptCountsInvoiceCorrections`): that recount decides both. Before the
