@@ -35,6 +35,9 @@ export async function GET() {
       database,
       progress,
       xeroBaseCurrency,
+      // This process IS the running app, so its ring's first key is the
+      // current one, and its fingerprint the one to give the re-encrypt (#4456).
+      dataKeySource: "app",
     }),
     progress,
   });

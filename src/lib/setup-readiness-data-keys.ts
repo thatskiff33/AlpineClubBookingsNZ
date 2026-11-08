@@ -98,9 +98,10 @@ const GENERATE_HINT =
 /** Kept in step with DEPLOYMENT.md → "Adding a data-encryption key" and its rollback notes. */
 const ROLLOUT_HINT =
   "Set it only once every running container is on this release. Once data is written under it, never unset it, roll back to an older release, or route traffic to a colour without it: that data cannot be read there.";
+/** The re-encrypt as an instruction: its fingerprint only ever from the app's own page. */
+const MOVE_COMMAND = "pnpm run data-keys:reencrypt --expect-fingerprint <fingerprint from Admin → Setup>";
 /** Kept in step with DEPLOYMENT.md → "Moving stored data to the current key". */
-const MOVE_HINT =
-  "To move it now: run pnpm run data-keys:reencrypt --dry-run, then the same with --expect-fingerprint and the fingerprint above. It re-encrypts each credential and authenticator secret under the current key and reports what remains.";
+const MOVE_HINT = `To move it now: run pnpm run data-keys:reencrypt --dry-run, then ${MOVE_COMMAND}. It re-encrypts each credential and authenticator secret under the current key and reports what remains.`;
 const RETIRE_LEGACY_HINT = `Nothing stored depends on AUTH_SECRET, so it can be rotated without losing data. To stop reading anything under it at all, set ${DATA_ENCRYPTION_LEGACY_KEY_ENV}=${LEGACY_KEY_RETIRED} and restart.`;
 
 function plural(count: number, noun: string): string {
@@ -144,6 +145,20 @@ function rowsUnder(
   return lines;
 }
 
+/**
+ * Unused recovery codes under an older ring key: information, never amber
+ * (#4456 review round 3). They cannot be moved, so waiting for them could
+ * hold a key in the ring for ever; removing the key retires them instead.
+ */
+function olderKeyRecoveryCodes(usage: DataKeyUsageSnapshot, isOlder: (id: string) => boolean): string[] {
+  return Object.entries(usage.recoveryCodesByKeyId)
+    .filter(([id, count]) => count > 0 && isOlder(id))
+    .map(
+      ([id, count]) =>
+        `${plural(count, "unused recovery code")} under the older key "${id}": they cannot be moved, and removing that key retires them (their members are told to generate a new set).`,
+    );
+}
+
 /** Recovery codes no lookup can match under this ring: informational, never red. */
 function retiredRecoveryCodes(usage: DataKeyUsageSnapshot, live: (id: string) => boolean): string[] {
   const retired = Object.entries(usage.recoveryCodesByKeyId)
@@ -154,11 +169,20 @@ function retiredRecoveryCodes(usage: DataKeyUsageSnapshot, live: (id: string) =>
     : [];
 }
 
+/**
+ * Whose ring this is (#4456 review round 3): `app` only for the running app
+ * (Admin → Setup), whose first key IS the current one; `shell` for anything
+ * else, such as `setup:check`, whose env plus `.env` may be stale. The default
+ * is the one that claims nothing.
+ */
+export type DataKeyRingSource = "app" | "shell";
+
 export function buildDataEncryptionKeyCheck(
   rawRing: string | undefined,
   usage: DataKeyUsageSnapshot | undefined,
   authSecret?: string,
   rawLegacyKey?: string,
+  source: DataKeyRingSource = "shell",
 ): DataKeyCheckResult {
   const base = {
     id: "data-encryption-keys" as const,
@@ -207,16 +231,22 @@ export function buildDataEncryptionKeyCheck(
   }
 
   const ringIds = new Set(ring.keys.map((key) => key.id));
-  // The running app's current key, one-way (#4456 review): the re-encrypt
-  // writes only when given this fingerprint, and only under a key that has it.
-  const fingerprint = dataKeyFingerprint(ring.current);
-  const keyLine = `The current key "${ring.current.id}" has the fingerprint ${fingerprint}. pnpm run data-keys:reencrypt writes only when run with --expect-fingerprint ${fingerprint}, and refuses if its own key differs.`;
-  const moveCommand = `pnpm run data-keys:reencrypt --expect-fingerprint ${fingerprint}`;
+  const fromApp = source === "app";
+  // Which key the ring makes current, and the fingerprint the re-encrypt must be
+  // given (#4456 review). Only the RUNNING APP knows its current key: a shell's
+  // ring (`setup:check`, env plus `.env`) may be stale, so it claims nothing,
+  // prints no fingerprint, and says where the fingerprint comes from (round 3).
+  const keyLine = fromApp
+    ? `The current key "${ring.current.id}" has the fingerprint ${dataKeyFingerprint(ring.current)}. pnpm run data-keys:reencrypt writes only when run with --expect-fingerprint ${dataKeyFingerprint(ring.current)}, and refuses if its own key differs.`
+    : `This shell's ring lists "${ring.current.id}" first: this shell's key, not necessarily the running app's. Take the fingerprint for pnpm run data-keys:reencrypt --expect-fingerprint only from Admin → Setup in the browser.`;
+  const newData = fromApp
+    ? `New data is encrypted under the data key "${ring.current.id}"`
+    : `This shell's ring puts new data under "${ring.current.id}" (not necessarily the running app's key)`;
   if (!usage) {
     return {
       ...base,
       status: "warning",
-      message: `New data is encrypted under the data key "${ring.current.id}", but stored data was not checked, so whether anything still depends on AUTH_SECRET is unknown.`,
+      message: `${newData}, but stored data was not checked, so whether anything still depends on AUTH_SECRET is unknown.`,
       details: [keyLine, "Re-run the check once the database is reachable."],
     };
   }
@@ -231,9 +261,13 @@ export function buildDataEncryptionKeyCheck(
     };
   }
 
+  const isOlder = (id: string) => ringIds.has(id) && id !== ring.current.id;
   const recovery = retiredRecoveryCodes(usage, (id) => ringIds.has(id));
   const legacy = rowsUnder(usage, isLegacy);
-  const older = rowsUnder(usage, (id) => ringIds.has(id) && id !== ring.current.id, true);
+  // Amber only for what can be moved (round 3, S5): credentials and
+  // authenticator secrets. Recovery codes cannot be; they are information.
+  const older = rowsUnder(usage, isOlder);
+  const olderCodes = olderKeyRecoveryCodes(usage, isOlder);
   if (legacy.length > 0 && ring.legacyRetired) {
     return {
       ...base,
@@ -242,7 +276,7 @@ export function buildDataEncryptionKeyCheck(
       details: [
         keyLine,
         ...legacy,
-        `Unset ${DATA_ENCRYPTION_LEGACY_KEY_ENV} and restart, run pnpm run data-keys:reencrypt until it reports nothing on AUTH_SECRET, then set it again.`,
+        `Unset ${DATA_ENCRYPTION_LEGACY_KEY_ENV} and restart, run ${MOVE_COMMAND} until it reports nothing on AUTH_SECRET, then set it again.`,
       ],
     };
   }
@@ -250,37 +284,35 @@ export function buildDataEncryptionKeyCheck(
     return {
       ...base,
       status: "warning",
-      message: `New data is encrypted under the data key "${ring.current.id}", but some stored data still depends on AUTH_SECRET: rotating it now would make that data unreadable.`,
-      details: [keyLine, ...legacy, ...older, ...recovery, MOVE_HINT],
+      message: `${newData}, but some stored data still depends on AUTH_SECRET: rotating it now would make that data unreadable.`,
+      details: [keyLine, ...legacy, ...older, ...olderCodes, ...recovery, MOVE_HINT],
     };
   }
 
-  // Not complete while anything is under an older ring key (#4456 review
-  // round 2): that key cannot leave the ring yet, and a run under a stale ring
-  // could have put it there.
+  // Not complete while a credential or an authenticator secret is under an
+  // older ring key (#4456 review round 2): that key cannot leave the ring yet.
   if (older.length > 0) {
     return {
       ...base,
       status: "warning",
-      message: `New data is encrypted under the data key "${ring.current.id}", but some stored data is still under an older key in the ring. Remove that key only once nothing is under it.`,
-      details: [
-        keyLine,
-        ...older,
-        `Move the credentials and authenticator secrets with ${moveCommand}. Recovery codes cannot be moved: they stay under their key until used or replaced, and removing it retires them (their members are told to generate a new set).`,
-      ],
+      message: `${newData}, but some stored data is still under an older key in the ring. Remove that key only once nothing is under it.`,
+      details: [keyLine, ...older, ...olderCodes, `Move them with ${MOVE_COMMAND}.`],
     };
   }
 
   return {
     ...base,
     status: "complete",
-    message: `Data is encrypted under the data key "${ring.current.id}".`,
+    message: fromApp
+      ? `Data is encrypted under the data key "${ring.current.id}".`
+      : `Stored credentials and authenticator secrets are all under "${ring.current.id}", the first key of this shell's ring (not necessarily the running app's).`,
     details: [
       keyLine,
       `${plural(ring.keys.length, "key")} in the ring; the first is used for new data.`,
       ring.legacyRetired
         ? `Nothing stored depends on AUTH_SECRET, and nothing is read under it (${DATA_ENCRYPTION_LEGACY_KEY_ENV}=${LEGACY_KEY_RETIRED}).`
         : RETIRE_LEGACY_HINT,
+      ...olderCodes,
       ...recovery,
     ],
   };

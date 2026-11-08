@@ -2102,10 +2102,11 @@ first cut-over's overlap: during that redeploy the previous colour (ring
    the step-1 ring (`k2026` first) refuses, rather than moving the app's
    `k2027` rows back to `k2026`.
 4. Remove the old entry only once Admin → Setup → "Data Encryption Key" shows
-   **no rows under it**; until then the step stays amber and names them.
-   Removing a key any earlier strands every row that names it. Recovery codes
-   cannot be moved: they stay under the old key until used or replaced, and
-   removing it retires them (their members are told to generate a new set).
+   **no provider credential or authenticator secret under it**; until then the
+   step stays amber and names them. Removing a key any earlier strands every
+   such row. Unused recovery codes under it are listed but do not hold the step
+   amber: they cannot be moved, and removing the key retires them (their
+   members are told to generate a new set).
 
 #### Moving stored data to the current key (#4456)
 
@@ -2126,11 +2127,16 @@ first key is the app's previous one, which would move the app's newer rows
 back. Two checks stop that:
 
 - **A run that writes needs `--expect-fingerprint`**, copied from Admin →
-  Setup → "Data Encryption Key", which shows the running app's current key's
-  fingerprint (a one-way hash, never the key). The command refuses before
-  reading anything unless the key it would write under has that fingerprint. A
-  `--dry-run` needs none: it prints its own key's fingerprint and the exact
-  command, which is right only if Setup shows the same fingerprint.
+  Setup → "Data Encryption Key" **in the browser**, which shows the running
+  app's current key's fingerprint (a one-way hash, never the key). Never take
+  it from `pnpm run setup:check` or from this command's own output: both read
+  this shell's environment and `.env`, the very ring being checked, and
+  `setup:check` labels its key "this shell's key" and prints no fingerprint for
+  that reason. The command refuses before reading anything unless the key it
+  would write under has the fingerprint given, and refuses a value that is not
+  fingerprint-shaped without repeating it. A `--dry-run` needs none: it prints
+  its own key's fingerprint on a line of its own, to compare with Setup's and
+  never to copy into the command.
 - **It also decrypts a row already stored under that key id**, and refuses if
   it cannot ("Refused before writing anything …": the environment's ring is
   not the app's, or that row is damaged). On the first cut-over nothing is

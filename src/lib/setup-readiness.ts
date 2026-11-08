@@ -45,7 +45,11 @@ import {
 } from "@/lib/xero-config";
 import { authSecretWeaknessReason } from "@/lib/integration-crypto";
 import { DATA_ENCRYPTION_KEYS_ENV, DATA_ENCRYPTION_LEGACY_KEY_ENV } from "@/lib/data-encryption-key-material";
-import { buildDataEncryptionKeyCheck, type DataKeyUsageSnapshot } from "@/lib/setup-readiness-data-keys";
+import {
+  buildDataEncryptionKeyCheck,
+  type DataKeyRingSource,
+  type DataKeyUsageSnapshot,
+} from "@/lib/setup-readiness-data-keys";
 
 export const SETUP_STEP_IDS = [
   "club-config",
@@ -2150,6 +2154,12 @@ export function buildSetupReadiness(
      * gives no warning.
      */
     xeroBaseCurrency?: string | null;
+    /**
+     * Whose data-encryption ring `env` is (#4456 review round 3): `app` only
+     * from the running app's own route; anything else, `setup:check` among
+     * them, is `shell` and never claims its first key is the app's current one.
+     */
+    dataKeySource?: DataKeyRingSource;
   } = {},
 ): SetupReadiness {
   const env = input.env ?? process.env;
@@ -2164,7 +2174,7 @@ export function buildSetupReadiness(
       buildEnvironmentRoleCheck(input.database, progress),
       buildRuntimeEnvCheck(env, progress),
       buildAuthSecretStrengthCheck(env, progress),
-      applyProgress(buildDataEncryptionKeyCheck(readEnv(env, DATA_ENCRYPTION_KEYS_ENV), input.database?.dataKeyUsage, readEnv(env, "AUTH_SECRET") ?? readEnv(env, "NEXTAUTH_SECRET"), readEnv(env, DATA_ENCRYPTION_LEGACY_KEY_ENV)), progress),
+      applyProgress(buildDataEncryptionKeyCheck(readEnv(env, DATA_ENCRYPTION_KEYS_ENV), input.database?.dataKeyUsage, readEnv(env, "AUTH_SECRET") ?? readEnv(env, "NEXTAUTH_SECRET"), readEnv(env, DATA_ENCRYPTION_LEGACY_KEY_ENV), input.dataKeySource ?? "shell"), progress),
       buildSeedAdminCheck(input.database, progress),
       buildFeatureFlagCheck(input.database, progress),
     ],
