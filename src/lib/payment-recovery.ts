@@ -1,4 +1,4 @@
-import { providerCaptureTime } from "@/lib/stripe-capture-date";
+import { receiptCaptureTime } from "@/lib/stripe-capture-date";
 import { postBookingReceipts, resolveBookingMoneyPostingContext, type BookingJournalContext } from "@/lib/member-money/doors";
 import { withStoreTransaction } from "@/lib/db-transaction";
 import {
@@ -81,7 +81,7 @@ import {
 import { stripeReferenceId } from "@/lib/stripe-references";
 import { claimAlertCooldown } from "@/lib/alert-cooldown";
 import { formatCents } from "@/lib/utils";
-import { isCapturedTransactionStatus, OPEN_INTENT_TRANSACTION_STATUS_LIST, SUPERSEDED_ASK_TRANSACTION_REASON } from "@/lib/payment-transaction-status";
+import { CAPTURED_TRANSACTION_STATUS_LIST, isCapturedTransactionStatus, OPEN_INTENT_TRANSACTION_STATUS_LIST, SUPERSEDED_ASK_TRANSACTION_REASON } from "@/lib/payment-transaction-status";
 import { replayNotingEachRefund } from "@/lib/card-refund-own-note";
 import { finishApprovedLateCaptureRefundAfterReplay } from "@/lib/late-capture-refund-credit-note";
 import { holdSupersededLateCaptureIfRequired } from "@/lib/late-capture-refund-hold";
@@ -1820,10 +1820,13 @@ async function markSupersededTransactionSucceeded({
     throw new Error("Payment recovery operation is missing paymentTransactionId");
   }
 
-  await withStoreTransaction(store, async (db) => {
+  // #4516 review (F6): the row's status is re-read here, under the Payment row, by the guard of the write itself.
+  // A caller's earlier read is advice only: a row captured, part refunded or refunded meanwhile is left alone, and
+  // a lost claim posts no receipt.
+  return withStoreTransaction(store, async (db) => {
     await lockPaymentForRefundedTotal(db, operation.paymentId);
-    await db.paymentTransaction.update({
-      where: { id: operation.paymentTransactionId! },
+    const claimed = await db.paymentTransaction.updateMany({
+      where: { id: operation.paymentTransactionId!, status: { notIn: [...CAPTURED_TRANSACTION_STATUS_LIST] } },
       data: {
         amountCents,
         status: PaymentStatus.SUCCEEDED,
@@ -1833,10 +1836,12 @@ async function markSupersededTransactionSucceeded({
         reason: "zero_dollar_batch_modification_late_capture",
       },
     });
+    if (claimed.count !== 1) return false;
 
     await reconcilePaymentAggregates({ paymentId: operation.paymentId, store: db });
     await postBookingReceipts(db, journal, { paymentId: operation.paymentId,
       decision: { paymentIntentId: operation.paymentIntentId ?? undefined, collect: false, effectiveAt: capturedAt } });
+    return true;
   });
 }
 
@@ -1953,7 +1958,7 @@ async function processCancelPaymentIntentOperation(
     await handoffSucceededSupersededIntentToRefund({
       operation,
       amountCents: result.paymentIntent.amount,
-      capturedAt: providerCaptureTime(result.paymentIntent),
+      capturedAt: receiptCaptureTime(result.paymentIntent),
       paymentMethodId:
         typeof result.paymentIntent.payment_method === "string"
           ? result.paymentIntent.payment_method
@@ -1982,6 +1987,8 @@ async function processRefundSupersededPaymentOperation(
   }
 
   const transaction = await readSupersededRefundCharge(operation.paymentTransactionId);
+  // A plain read, outside every lock: it only spares the posting context when the row is already captured. The
+  // flip itself re-checks under the Payment row (`markSupersededTransactionSucceeded`), and a lost claim posts nothing.
   if (!isCapturedTransactionStatus(transaction.status)) {
     const journal = await resolveBookingMoneyPostingContext();
     await markSupersededTransactionSucceeded({
@@ -3595,7 +3602,7 @@ export async function queueSupersededPaymentIntentRefundRecovery(
       amountCents: paymentIntent.amount,
       paymentMethodId: getStripePaymentMethodId(paymentIntent),
       takenFromOutside: true,
-      capturedAt: paymentIntent.created === undefined ? undefined : providerCaptureTime(paymentIntent as Stripe.PaymentIntent),
+      capturedAt: receiptCaptureTime(paymentIntent),
     }))
   ) {
     return true;

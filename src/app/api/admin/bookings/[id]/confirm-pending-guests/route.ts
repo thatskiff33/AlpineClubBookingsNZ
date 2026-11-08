@@ -1,4 +1,4 @@
-import { providerCaptureTime } from "@/lib/stripe-capture-date";
+import { receiptCaptureTime } from "@/lib/stripe-capture-date";
 import { NextRequest, NextResponse } from "next/server";
 import { handOffSupersededCaptureAfterRefusal } from "@/lib/superseded-paid-intent";
 import { SUPERSEDED_CHARGE_NOT_SETTLED_BODY } from "@/lib/payment-recovery-contract";
@@ -799,7 +799,7 @@ export async function POST(
     let reconciliation;
     try {
       reconciliation = await markBookingPaymentSucceeded({
-      capturedAt: providerCaptureTime(paymentIntent),
+      capturedAt: receiptCaptureTime(paymentIntent),
         format,
         bookingId, recordedByCaller,
         paymentIntentId: paymentIntent.id,

@@ -1,4 +1,4 @@
-import { providerCaptureTime } from "@/lib/stripe-capture-date";
+import { receiptCaptureTime } from "@/lib/stripe-capture-date";
 /**
  * Token-authenticated Stripe PaymentIntent creation for a payment link.
  * Extracted from `payment-link.ts` by responsibility (#2956): this is the one
@@ -234,7 +234,7 @@ export async function createPaymentIntentForPaymentLink(
         try {
           if (booking.payment.status !== PaymentStatus.SUCCEEDED) {
             const reconciliation = await markBookingPaymentSucceeded({
-      capturedAt: providerCaptureTime(existingIntent),
+      capturedAt: receiptCaptureTime(existingIntent),
               format,
               bookingId: booking.id,
               paymentIntentId: existingIntent.id,

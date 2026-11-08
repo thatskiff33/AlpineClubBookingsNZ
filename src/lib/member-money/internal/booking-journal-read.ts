@@ -1,7 +1,9 @@
-import type { Prisma } from "@prisma/client";
+import type { MemberMoneySide, Prisma } from "@prisma/client";
+import { bookingOwnerProviderMetadata } from "../../booking-owner";
 import { BINDING_CHARGE_SOURCE_VERSION, type BookingChargeAccount } from "./booking-charges";
 import { componentKey, liveComponentGross } from "./components";
-import { memberMoneyEventKeys } from "./keys";
+import { memberMoneyEventKeys, type MemberMoneyEventKey } from "./keys";
+import type { MemberMoneyDebtor } from "./plan";
 
 /**
  * What the journal holds of each booking's charges, for the comparison report
@@ -64,6 +66,37 @@ export async function readBookingLiveComponents(
   bookingId: string,
 ): Promise<LiveChargeComponent[]> {
   return liveChargeComponents(await db.memberMoneyLine.findMany({ where: chargeLegsOf([bookingId]), orderBy: { id: "asc" }, select: LEG_SELECT }));
+}
+
+/** The booking's live charge: the sum C2 caps collection by, for the receipts, the engine and the census alike. */
+export async function readBookingLiveChargeCents(db: Pick<Prisma.TransactionClient, "memberMoneyLine">, bookingId: string): Promise<number> {
+  return (await readBookingLiveComponents(db, bookingId)).reduce((sum, component) => sum + component.liveGrossCents, 0);
+}
+
+/** Whether an event key is in the journal: a replay check, never a lock. */
+export async function eventPosted(db: Pick<Prisma.TransactionClient, "memberMoneyEvent">, eventKey: MemberMoneyEventKey): Promise<boolean> {
+  return (await db.memberMoneyEvent.findUnique({ where: { eventKey }, select: { id: true } })) !== null;
+}
+
+/**
+ * The receivable's debtor for a booking's owner row (`INV-SSOT-005`: who owns a
+ * booking is `booking-owner.ts`'s answer, never re-derived). The caller decides
+ * whether that read held the booking row: a door does, a receipt does not.
+ */
+export function bookingOwnerDebtor(booking: { memberId: string | null; organisationId: string | null }): MemberMoneyDebtor {
+  const owner = bookingOwnerProviderMetadata(booking);
+  return "memberId" in owner ? { kind: "MEMBER", memberId: owner.memberId } : { kind: "ORGANISATION", organisationId: owner.organisationId };
+}
+
+/** Signed receivable balances (debit positive), keyed by the caller: merge per booking, residue and census per member. */
+export function receivableBalances<R extends { side: MemberMoneySide; amountCents: number }, K>(rows: Iterable<R>, keyOf: (row: R) => K | null): Map<K, number> {
+  const balances = new Map<K, number>();
+  for (const row of rows) {
+    const key = keyOf(row);
+    if (key === null) continue;
+    balances.set(key, (balances.get(key) ?? 0) + (row.side === "DEBIT" ? 1 : -1) * row.amountCents);
+  }
+  return balances;
 }
 
 /**

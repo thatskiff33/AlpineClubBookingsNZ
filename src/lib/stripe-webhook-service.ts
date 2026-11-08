@@ -1,5 +1,5 @@
 import { lockPaymentForRefundedTotal } from "@/lib/payment-transactions";
-import { providerCaptureTime } from "@/lib/stripe-capture-date";
+import { receiptCaptureTime } from "@/lib/stripe-capture-date";
 import { postBookingReceipts, resolveBookingMoneyPostingContext } from "@/lib/member-money/doors";
 import { bookingAmountOwedCents, bookingWorthCents } from "@/lib/booking-payment-state";
 import { bookingOwner, bookingOwnerEmail } from "@/lib/booking-owner";
@@ -605,7 +605,7 @@ async function handlePaymentIntentSucceeded(
   }
 
   const reconciliation = await markBookingPaymentSucceeded({
-    capturedAt: providerCaptureTime(paymentIntent),
+    capturedAt: receiptCaptureTime(paymentIntent),
     format,
     bookingId, recordedByCaller,
     paymentIntentId: paymentIntent.id,
@@ -976,7 +976,7 @@ async function handleAdditionalModificationPaymentSucceeded(
 
   await markPaymentIntentTransactionSucceeded({
     journal: await resolveBookingMoneyPostingContext(),
-    receiptDecision: { collect: true, effectiveAt: providerCaptureTime(paymentIntent) },
+    capturedAt: receiptCaptureTime(paymentIntent),
     paymentIntentId: paymentIntent.id,
     amountCents: paymentIntent.amount,
     paymentMethodId:
@@ -1522,7 +1522,7 @@ async function handleCancelledBookingAdditionalPaymentSucceeded(
   if (!isCapturedTransactionStatus(paymentTransaction.status)) {
     await markPaymentIntentTransactionSucceeded({
       journal: await resolveBookingMoneyPostingContext(),
-      receiptDecision: { collect: false, effectiveAt: providerCaptureTime(paymentIntent) },
+      capturedAt: receiptCaptureTime(paymentIntent),
       paymentIntentId: paymentIntent.id,
       amountCents: paymentIntent.amount,
       paymentMethodId: getStripePaymentMethodId(paymentIntent),
@@ -1725,7 +1725,7 @@ async function handleCancelledBookingPaymentSucceeded(
       reason: CANCELLED_BOOKING_LATE_CAPTURE_REASON,
     });
     await postBookingReceipts(tx, journal, { paymentId: booking.payment!.id,
-      decision: { paymentIntentId: paymentIntent.id, collect: false, effectiveAt: providerCaptureTime(paymentIntent) } });
+      decision: { paymentIntentId: paymentIntent.id, collect: false, effectiveAt: receiptCaptureTime(paymentIntent) } });
   });
   const lateCapture = describeLateCaptureFromBooking(booking, lateCaptureIdentity);
 

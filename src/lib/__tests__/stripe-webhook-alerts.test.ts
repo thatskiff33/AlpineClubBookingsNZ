@@ -2230,7 +2230,7 @@ describe("Stripe webhook Xero alerting", () => {
       // idempotent late-cancel key pinned to this transaction.
       expect(mockMarkPaymentIntentTransactionSucceeded).toHaveBeenCalledWith({
         journal: expect.any(Object),
-        receiptDecision: expect.objectContaining({ collect: false }),
+        capturedAt: expect.any(Date),
         paymentIntentId: "pi_additional_late",
         amountCents: 2500,
         paymentMethodId: "pm_late",
@@ -3216,7 +3216,7 @@ describe("Stripe webhook Xero alerting", () => {
       expect(response.status).toBe(200);
       expect(mockMarkPaymentIntentTransactionSucceeded).toHaveBeenCalledWith({
         journal: expect.any(Object),
-        receiptDecision: expect.objectContaining({ collect: true }),
+        capturedAt: expect.any(Date),
         paymentIntentId: "pi_additional_late",
         amountCents: 2500,
         paymentMethodId: "pm_late",

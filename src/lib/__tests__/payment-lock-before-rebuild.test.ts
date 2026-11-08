@@ -96,6 +96,8 @@ const intentRow = {
 /** The intent's row is found by the pure read and again under the lock. */
 const ANSWERS: Record<string, (args: unknown) => unknown> = {
   "paymentTransaction.findUnique": () => ({ ...intentRow }),
+  // #4516: the additional capture reads its booking under the lock to decide collect.
+  "payment.findUniqueOrThrow": () => ({ booking: { status: "CONFIRMED", deletedAt: null } }),
 };
 
 const WRITERS: Array<[string, (store: PaymentStore) => Promise<unknown>]> = [
@@ -129,7 +131,7 @@ const WRITERS: Array<[string, (store: PaymentStore) => Promise<unknown>]> = [
   ],
   [
     "markPaymentIntentTransactionSucceeded",
-    (store) => markPaymentIntentTransactionSucceeded({ journal: memberMoneyTestContext(), receiptDecision: { collect: true }, paymentIntentId: INTENT_ID, amountCents: 5_000, store }),
+    (store) => markPaymentIntentTransactionSucceeded({ journal: memberMoneyTestContext(), paymentIntentId: INTENT_ID, amountCents: 5_000, store }),
   ],
   [
     "markPaymentIntentTransactionFailed",
@@ -222,7 +224,7 @@ describe("#4217: the Payment row is locked before any ledger row is written or t
       "payment.findUnique": () => ({ id: PAYMENT_ID }),
     }) as unknown as PaymentStore;
 
-    const refusal = markPaymentIntentTransactionSucceeded({ journal: memberMoneyTestContext(), receiptDecision: { collect: true }, paymentIntentId: INTENT_ID, amountCents: 5_000, store });
+    const refusal = markPaymentIntentTransactionSucceeded({ journal: memberMoneyTestContext(), paymentIntentId: INTENT_ID, amountCents: 5_000, store });
     await expect(refusal).rejects.toBeInstanceOf(IntentLedgerRowOnAnotherPaymentError);
     await expect(refusal).rejects.toThrow(/belongs to payment payment_other, not the locked payment payment_4217/);
     expect(log.filter(isRowWrite)).toEqual([]);

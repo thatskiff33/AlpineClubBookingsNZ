@@ -691,18 +691,6 @@ async function prepareManualSettlement(
  * Runs INSIDE a caller-provided transaction; every provider call (Stripe
  * refunds/cancels, email) belongs to the callers, after commit.
  */
-async function settleAndPostBookingReceipts(tx: Prisma.TransactionClient, bookingId: string, settlement: BookingSettlementSource, journal: BookingJournalContext) {
-  const result = await settleBookingPaymentInTransaction(tx, bookingId, settlement, journal);
-  const paymentId = "paymentId" in result ? result.paymentId : null;
-  if (paymentId) await postBookingReceipts(tx, journal, { paymentId, decision: {
-    collect: result.outcome === "paid" || result.outcome === "manual_paid",
-    ...(settlement.kind === "stripe" ? { paymentIntentId: settlement.paymentIntentId, effectiveAt: settlement.capturedAt }
-      : { officerCash: result.outcome === "manual_paid" ? true : undefined,
-          effectiveAt: result.outcome === "manual_paid" ? result.settledAt : undefined }),
-  } });
-  return result;
-}
-
 async function settleBookingPaymentInTransaction(
   tx: Prisma.TransactionClient,
   bookingId: string,
@@ -829,6 +817,8 @@ async function settleBookingPaymentInTransaction(
     // never change what the primary row says was received.
     const manualPrimaryTransactionAmountCents =
       settlementAmountCents - manualAdditionalSettlementCents;
+    // #4516 (M4b): the rows this officer settle writes, which alone its receipts may collect.
+    const manualReceiptRowIds: string[] = [];
 
     const payment = await tx.payment.upsert({
       where: { bookingId },
@@ -896,19 +886,21 @@ async function settleBookingPaymentInTransaction(
       // reversal's FAILED row and mint nothing, leaving a PAID payment with no
       // settled transaction. Refund history on the payment is left untouched
       // (#1765 / #1357 raise-only spirit).
-      const mintedUpdate = await tx.paymentTransaction.updateMany({
-        where: {
-          paymentId: payment.id,
-          source: PaymentSource.INTERNET_BANKING,
-          kind: PaymentTransactionKind.PRIMARY,
-          status: {
-            notIn: [
-              PaymentStatus.REFUNDED,
-              PaymentStatus.PARTIALLY_REFUNDED,
-              PaymentStatus.FAILED,
-            ],
-          },
+      const mintablePrimary = {
+        paymentId: payment.id,
+        source: PaymentSource.INTERNET_BANKING,
+        kind: PaymentTransactionKind.PRIMARY,
+        status: {
+          notIn: [
+            PaymentStatus.REFUNDED,
+            PaymentStatus.PARTIALLY_REFUNDED,
+            PaymentStatus.FAILED,
+          ],
         },
+      };
+      manualReceiptRowIds.push(...(await tx.paymentTransaction.findMany({ where: mintablePrimary, select: { id: true } })).map((row) => row.id));
+      const mintedUpdate = await tx.paymentTransaction.updateMany({
+        where: mintablePrimary,
         data: {
           status: PaymentStatus.SUCCEEDED,
           amountCents: manualPrimaryTransactionAmountCents,
@@ -917,7 +909,7 @@ async function settleBookingPaymentInTransaction(
       });
 
       if (mintedUpdate.count === 0) {
-        await tx.paymentTransaction.create({
+        const minted = await tx.paymentTransaction.create({
           data: {
             paymentId: payment.id,
             kind: PaymentTransactionKind.PRIMARY,
@@ -928,6 +920,7 @@ async function settleBookingPaymentInTransaction(
             reason: "manual_mark_paid",
           },
         });
+        manualReceiptRowIds.push(minted.id);
       }
 
       // #2397 — the ADDITIONAL half, minted the same way and only when the
@@ -947,19 +940,21 @@ async function settleBookingPaymentInTransaction(
       // reconcile and the member would start being chased again for cash the
       // club already holds.
       if (manualAdditionalSettlementCents > 0) {
-        const mintedAdditional = await tx.paymentTransaction.updateMany({
-          where: {
-            paymentId: payment.id,
-            source: PaymentSource.INTERNET_BANKING,
-            kind: PaymentTransactionKind.ADDITIONAL,
-            status: {
-              notIn: [
-                PaymentStatus.REFUNDED,
-                PaymentStatus.PARTIALLY_REFUNDED,
-                PaymentStatus.FAILED,
-              ],
-            },
+        const mintableAdditional = {
+          paymentId: payment.id,
+          source: PaymentSource.INTERNET_BANKING,
+          kind: PaymentTransactionKind.ADDITIONAL,
+          status: {
+            notIn: [
+              PaymentStatus.REFUNDED,
+              PaymentStatus.PARTIALLY_REFUNDED,
+              PaymentStatus.FAILED,
+            ],
           },
+        };
+        manualReceiptRowIds.push(...(await tx.paymentTransaction.findMany({ where: mintableAdditional, select: { id: true } })).map((row) => row.id));
+        const mintedAdditional = await tx.paymentTransaction.updateMany({
+          where: mintableAdditional,
           data: {
             status: PaymentStatus.SUCCEEDED,
             amountCents: manualAdditionalSettlementCents,
@@ -968,7 +963,7 @@ async function settleBookingPaymentInTransaction(
         });
 
         if (mintedAdditional.count === 0) {
-          await tx.paymentTransaction.create({
+          const minted = await tx.paymentTransaction.create({
             data: {
               paymentId: payment.id,
               kind: PaymentTransactionKind.ADDITIONAL,
@@ -979,6 +974,7 @@ async function settleBookingPaymentInTransaction(
               reason: MANUAL_MARK_PAID_ADDITIONAL_REASON,
             },
           });
+          manualReceiptRowIds.push(minted.id);
         }
       }
     }
@@ -1616,6 +1612,7 @@ async function settleBookingPaymentInTransaction(
         settledAdditionalAmountCents: manualAdditionalSettlementCents,
         uncollectedAdditionalCents: manualUncollectedAdditionalCents,
         sparedAdditionalPaymentIntentId: sparedIntentId,
+        receiptTransactionIds: manualReceiptRowIds,
       };
     }
 
@@ -1628,6 +1625,22 @@ async function settleBookingPaymentInTransaction(
       givenBackCreditCents,
       heldCreditCents,
     };
+}
+
+/**
+ * #4516 (M4b): the settlement body, then R06/R07 for its payment in the same transaction. The decision is the
+ * outcome's: only a settle that paid the booking collects, and only the instrument it settled (the Stripe intent,
+ * or the rows this officer settle wrote), never other receipts on the payment.
+ */
+async function settleAndPostBookingReceipts(tx: Prisma.TransactionClient, bookingId: string, settlement: BookingSettlementSource, journal: BookingJournalContext) {
+  const result = await settleBookingPaymentInTransaction(tx, bookingId, settlement, journal);
+  const paymentId = "paymentId" in result ? result.paymentId : null;
+  if (paymentId) await postBookingReceipts(tx, journal, { paymentId, decision: {
+    collect: result.outcome === "paid" || result.outcome === "manual_paid",
+    ...(settlement.kind === "stripe" ? { paymentIntentId: settlement.paymentIntentId, effectiveAt: settlement.capturedAt }
+      : result.outcome === "manual_paid" ? { transactionIds: result.receiptTransactionIds, effectiveAt: result.settledAt } : {}),
+  } });
+  return result;
 }
 
 export async function markBookingPaymentSucceeded({

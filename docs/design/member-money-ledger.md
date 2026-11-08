@@ -793,10 +793,13 @@ holding one of that member's bookings makes the owner move wait, so its charge
 is in the balances read; a door after it reads the survivor. The transfer posts
 no revenue, so it needs no `lock(1)`, which merge deliberately does not take.
 
-M4b adds CHARGE successors after the merge's receivable transfer: each live
-obligation gets a zero-net receivable pair on the survivor for its uncollected
-face. Posted debtors remain immutable. Receipt writers take only the Payment
-row and read the owner without locking Booking; the next receipt posting moves
+M4b gives the survivor CHARGE successors, but not inside merge: merge holds no
+Payment row, so it could size a successor from application state that misses
+a collection committing beside it. The survivor's first collection posts them
+instead, under the Payment row: each live obligation gets a zero-net receivable
+pair on the survivor for the face its predecessor has not collected. Posted
+debtors remain immutable. Receipt writers take only the Payment row and read
+the owner once per call without locking Booking; the next receipt posting moves
 any merged-debtor residue explicitly, keyed to its source event. No Payment lock
 is added to merge.
 
@@ -809,6 +812,23 @@ held, duplicate and superseded captures stay unapplied. A ZERO R01 gets its
 CHARGE obligation lazily when collection needs one, without another charge.
 Officer reversals copy the original receipt and its live collection exactly.
 Organiser-share mirrors remain M6's. No legacy decision reader changes.
+
+A writer selects only the instruments it wrote or decided in its own
+transaction: the Stripe intent it settled, the bank rows a Xero delivery moved
+to captured, the W8 row a close wrote, or the rows an officer settle wrote.
+Each receipt's evidence records how it was posted (`postedAs`). A later call
+may collect only a `deferred` one, which a saved-card answer posts for its own
+settlement to decide. A receipt a catch-up posted, or one its writer chose not
+to collect, is never collected from a later hook's state. Who collects:
+
+| Writer | Collects when |
+| --- | --- |
+| Booking settle (card or officer) | The settle paid the booking |
+| Additional capture | The booking, read under the Payment row, is neither cancelled nor deleted |
+| Xero receipt | The delivery took the paid arm |
+| W7 part payment, W8 close | Always, for the row it wrote |
+| Saved-card answer | Never; deferred to the settle |
+| Superseded or cancelled-primary capture | Never |
 
 Each hook catches up the payment's other receipts unapplied. The owner command
 `pnpm run member-money:receipt-catch-up` defaults to a read-only census;

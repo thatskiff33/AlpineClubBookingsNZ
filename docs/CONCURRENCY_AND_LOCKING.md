@@ -5890,9 +5890,33 @@ Payment ordering. Saved-card capture, additional capture, superseded capture and
 cancelled-primary capture take only Payment. The cancelled-primary upsert and
 the formerly unlocked superseded-success write now enclose their legacy write
 and receipt in one Payment-row transaction. No new advisory key or provider call
-is introduced. Receipt debtor reads never lock Booking; D4 transfers residue
-explicitly on a subsequent posting. Merge adds only zero-net CHARGE successors,
-without a Payment lock. Settings and timezone resolve before transactions.
+is introduced. Settings and timezone resolve before transactions.
+
+Each decision the hook acts on is read under the Payment row, never before it:
+
+- **The owner, once per call.** The receipt reads the booking's owner without
+  locking Booking, once, and every receipt it posts names that debtor. A
+  collection applies a receipt to its own debtor's obligation, so a merge
+  committing mid-call never parts the two and never drops the collection. D4
+  moves any merged-debtor residue explicitly on a later posting.
+- **Charge successors.** Merge takes no Payment row, so it posts no CHARGE
+  successor: application state it read could miss a collection committing
+  beside it. The first collection by the new owner posts the successor under
+  the Payment row, sized from the face its predecessor has not collected.
+- **Additional capture.** `markPaymentIntentTransactionSucceeded` decides
+  collect from the booking's status and `deletedAt` read under the Payment row
+  a cancel also takes; a route's or webhook's earlier read is not used.
+- **Superseded capture.** The flip is a status-guarded `updateMany` under the
+  Payment row. A row captured or refunded since the caller's read is left
+  alone, and a lost claim posts no receipt.
+- **C2.** The hook clamps a collection to one live-charge read and the engine
+  checks C2 against that same read. A price edit under `lock(1)` alone can
+  commit between them; the collection is then ordered before it (the accepted
+  over-collection the census reports), never a refusal that rolls back the
+  legacy capture write.
+- **Nothing to do.** With nothing selected, every receipt and reversal bridged
+  and no merged-debtor balance, the hook returns after those reads, adding no
+  per-line work under its caller's locks.
 
 Counterpart reconciliation at M4b's base: #4776 (engine caps and Payment lock),
 #4749, #4727, #4714, #4706, #4698, #4700, #4694, #4689 and #4684. Their capture,

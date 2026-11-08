@@ -1,4 +1,4 @@
-import { providerCaptureTime } from "@/lib/stripe-capture-date";
+import { receiptCaptureTime } from "@/lib/stripe-capture-date";
 import { resolveBookingMoneyPostingContext } from "@/lib/member-money/doors";
 import { NextRequest, NextResponse } from "next/server";
 import { handOffSupersededCaptureAfterRefusal } from "@/lib/superseded-paid-intent";
@@ -457,7 +457,7 @@ export async function POST(request: NextRequest) {
         );
       }
       const reconciliation = await markBookingPaymentSucceeded({
-      capturedAt: providerCaptureTime(paymentIntent),
+      capturedAt: receiptCaptureTime(paymentIntent),
         format,
         bookingId, recordedByCaller,
         paymentIntentId: paymentIntent.id,

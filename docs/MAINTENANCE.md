@@ -1956,7 +1956,8 @@ The default and `--dry-run` perform read-only checks. JSON findings distinguish
 `RECEIPT_WITHOUT_EVENT`, `UNBRIDGED_SETTLEMENT_LINE`, `RECEIPT_AMOUNT_DRIFT`,
 `OVER_COLLECTED`, `UNAPPLIED_RECEIPT_ON_OPEN_CHARGE` and `MERGED_DEBTOR_BALANCE`.
 Missing receipts give exit status 2 and hold M4c's deployment. Unapplied cash is
-expected after catch-up; it remains available without inferring collection.
+expected after catch-up; it remains available without inferring collection, and
+no later receipt hook collects a receipt the catch-up posted.
 A drift finding needs investigation; the command never rewrites an existing
 journal or silently resizes cash. Failure rolls back the current payment's
 transaction; earlier committed payments remain safe to replay.

@@ -1,6 +1,6 @@
 import { isCapturedTransactionStatus } from "@/lib/payment-transaction-status";
 import { postBookingReceipts, type BookingJournalContext } from "@/lib/member-money/doors";
-import { providerCaptureTime } from "@/lib/stripe-capture-date";
+import { receiptCaptureTime } from "@/lib/stripe-capture-date";
 /**
  * #3267 (epic #3270) — recording Stripe's answer on a saved-card charge attempt
  * row (`INV-PAY-055`). The other half of `saved-card-charge-attempt.ts`, whose
@@ -235,8 +235,9 @@ export async function settleSavedCardChargeAttempt(params: {
       await lockPaymentForRefundedTotal(db, paymentId);
       const result = await settleSavedCardChargeAttemptUnderLock(db, { attemptRowId, paymentId, paymentIntent, answer });
       if (isCapturedTransactionStatus(result.ledgerStatus)) await postBookingReceipts(db, journal, { paymentId,
-        decision: { paymentIntentId: paymentIntent.id, collect: false,
-          effectiveAt: "created" in paymentIntent ? providerCaptureTime(paymentIntent as Stripe.PaymentIntent) : undefined } });
+        // Deferred: the booking's settlement for this intent (`markBookingPaymentSucceeded`) decides collection.
+        decision: { paymentIntentId: paymentIntent.id, collect: false, deferred: true,
+          effectiveAt: receiptCaptureTime(paymentIntent) } });
       return result;
     });
   if (!isRootPrismaClient(store)) return settle();

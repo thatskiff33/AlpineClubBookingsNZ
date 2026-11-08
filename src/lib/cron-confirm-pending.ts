@@ -1,4 +1,4 @@
-import { providerCaptureTime } from "@/lib/stripe-capture-date";
+import { receiptCaptureTime } from "@/lib/stripe-capture-date";
 import { savedCardChargeCents } from "@/lib/booking-payment-state";
 import { writeZeroWorthConfirmPayment } from "@/lib/zero-worth-confirm-payment";
 import { handOffSupersededCaptureAfterRefusal } from "@/lib/superseded-paid-intent";
@@ -1683,7 +1683,7 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
         });
 
         const reconciliation = await markBookingPaymentSucceeded({
-      capturedAt: providerCaptureTime(paymentIntent),
+      capturedAt: receiptCaptureTime(paymentIntent),
           format, recordedByCaller: newlyCaptured, // #4285 review: new money, not a replay
           bookingId: resolution.booking.id,
           paymentIntentId: paymentIntent.id,

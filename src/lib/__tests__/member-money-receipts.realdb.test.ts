@@ -1,5 +1,6 @@
-import type { PrismaClient } from "@prisma/client";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { randomUUID } from "node:crypto";
+import type { Prisma, PrismaClient } from "@prisma/client";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { postBookingReceipts, postMemberMergeTransfer } from "@/lib/member-money/doors";
 import { memberMoneyEventKeys, postMemberMoneyEvent } from "@/lib/member-money";
 import { readMemberMoneyApplicationState } from "@/lib/member-money/internal/application-read";
@@ -10,22 +11,55 @@ import { cleanHistories, createHistoryBooking, historyNames, seedHistoryFixtures
 import { memberMoneyTestContext } from "./support/member-money-fixtures";
 import { assertSafeRaceDbUrl } from "./support/race-db-url";
 
+/** The one shared double: the LAST file to register a factory wins, so every realdb file registers this same one. */
+vi.mock("@/lib/stripe", async (importOriginal) =>
+  (await import("./support/stripe-race-double")).stripeRaceDouble(await importOriginal()),
+);
+
+/** A seam after the receipt hook's live-charge read: a test commits a price edit there, from another connection. */
+const liveChargeRead = vi.hoisted(() => ({ after: null as null | (() => Promise<void>) }));
+vi.mock("@/lib/member-money/internal/booking-journal-read", async (importOriginal) => {
+  const original = (await importOriginal()) as typeof import("@/lib/member-money/internal/booking-journal-read");
+  return { ...original, readBookingLiveChargeCents: async (...args: Parameters<typeof original.readBookingLiveChargeCents>) => {
+    const cents = await original.readBookingLiveChargeCents(...args);
+    const after = liveChargeRead.after;
+    liveChargeRead.after = null;
+    if (after) await after();
+    return cents;
+  } };
+});
+
 const RUN = process.env.RUN_CONCURRENCY_RACE_TESTS === "1";
 const PREFIX = "race-m4b-";
+/** Merges need members of their own: a merge's key is its pair, and a merge moves every booking the member owns. */
+const MERGE_MEMBERS = `${PREFIX}x-${randomUUID().slice(0, 8)}-`;
 const names = historyNames(PREFIX);
 const context = memberMoneyTestContext();
 let db: PrismaClient;
 let sequence = 0;
 
-async function booking(charge = 10_000, zero = false) {
+async function mergePair(): Promise<[string, string]> {
+  const ids: [string, string] = [`${MERGE_MEMBERS}${++sequence}`, `${MERGE_MEMBERS}${++sequence}`];
+  for (const id of ids) await db.member.create({ data: { id, email: `${id}@example.invalid`, passwordHash: "not-a-real-password", firstName: "Merge", lastName: "Proof", ageTier: "ADULT" } });
+  return ids;
+}
+
+async function merge(id: string, from: string, to: string) {
+  await db.$transaction(async (tx) => {
+    await tx.booking.update({ where: { id }, data: { memberId: to } });
+    await postMemberMergeTransfer(tx, context, { fromMemberId: from, toMemberId: to, actorMemberId: names.officerId });
+  });
+}
+
+async function booking(charge = 10_000, zero = false, memberId = names.memberId) {
   const id = `${PREFIX}${++sequence}`;
-  await createHistoryBooking(db, names, id, { payment: { amountCents: charge, source: "STRIPE" } });
+  await createHistoryBooking(db, { ...names, memberId }, id, { payment: { amountCents: charge, source: "STRIPE" } });
   await db.$transaction((tx) => postMemberMoneyEvent(tx, context, zero
     ? { kind: "ZERO", eventKey: memberMoneyEventKeys.bookingCharge(id), origin: "APP", source: { kind: "BOOKING", id, version: "1" }, reason: "Synthetic zero R01" }
     : { kind: "CHARGE", eventKey: memberMoneyEventKeys.bookingCharge(id), origin: "APP", source: { kind: "BOOKING", id, version: "1" }, reason: "Synthetic R01",
-      obligations: [{ key: memberMoneyEventKeys.bookingCharge(id), kind: "CHARGE", debtor: { kind: "MEMBER", memberId: names.memberId }, faceCents: charge, evidence: {} }],
+      obligations: [{ key: memberMoneyEventKeys.bookingCharge(id), kind: "CHARGE", debtor: { kind: "MEMBER", memberId }, faceCents: charge, evidence: {} }],
       legs: [
-        { type: "amount", account: "MEMBER_RECEIVABLE", side: "DEBIT", amountCents: charge, booking: { bookingId: id, lodgeId: names.lodgeId }, debtor: { kind: "MEMBER", memberId: names.memberId }, obligationKey: memberMoneyEventKeys.bookingCharge(id), evidence: {} },
+        { type: "amount", account: "MEMBER_RECEIVABLE", side: "DEBIT", amountCents: charge, booking: { bookingId: id, lodgeId: names.lodgeId }, debtor: { kind: "MEMBER", memberId }, obligationKey: memberMoneyEventKeys.bookingCharge(id), evidence: {} },
         { type: "revenue", account: "BOOKING_REVENUE", side: "CREDIT", grossCents: charge, booking: { bookingId: id, lodgeId: names.lodgeId }, chargeIdentity: `booking:${id}:test`, evidence: {} },
       ] }));
   return id;
@@ -43,6 +77,23 @@ async function cash(id: string, cents: number, source: "STRIPE" | "INTERNET_BANK
 const post = (id: string, decision?: Parameters<typeof postBookingReceipts>[2]["decision"]) => db.$transaction((tx) => postBookingReceipts(tx, context, { paymentId: `${id}-payment`, decision }));
 const totals = (id: string) => db.$transaction(async (tx) => memberMoneyApplicationTotals(await readMemberMoneyApplicationState(tx, id)));
 const census = (id: string) => db.$transaction((tx) => readBookingReceiptCensus(tx, `${id}-payment`));
+const successorOf = (id: string, memberId: string) =>
+  db.memberMoneyObligation.findUnique({ where: { obligationKey: `${memberMoneyEventKeys.bookingCharge(id)}|for|MEMBER|${memberId}` } });
+
+/** A transaction client that records each delegate call, to prove what the hook reads under its caller's locks. */
+function counting(tx: Prisma.TransactionClient) {
+  const calls: string[] = [];
+  const proxy = new Proxy(tx, { get(target, model) {
+    const delegate = Reflect.get(target, model) as unknown;
+    if (typeof delegate === "function") return (delegate as (...a: unknown[]) => unknown).bind(target);
+    if (!delegate || typeof delegate !== "object") return delegate;
+    return new Proxy(delegate, { get(inner, op) {
+      const fn = Reflect.get(inner, op) as unknown;
+      return typeof fn === "function" ? (...args: unknown[]) => { calls.push(`${String(model)}.${String(op)}`); return (fn as (...a: unknown[]) => unknown).apply(inner, args); } : fn;
+    } });
+  } });
+  return { proxy, calls };
+}
 
 (RUN ? describe : describe.skip)("M4b receipts on synthetic PostgreSQL bookings", () => {
   beforeAll(async () => {
@@ -51,24 +102,45 @@ const census = (id: string) => db.$transaction((tx) => readBookingReceiptCensus(
     process.env.DATABASE_URL = url;
     ({ prisma: db } = await import("@/lib/prisma"));
     await cleanHistories(db, PREFIX);
+    await db.member.deleteMany({ where: { id: { startsWith: `${PREFIX}x-` } } });
     await seedHistoryFixtures(db, PREFIX);
   }, 60_000);
-  afterAll(async () => { if (db) await cleanHistories(db, PREFIX); }, 60_000);
+  afterAll(async () => {
+    if (!db) return;
+    await cleanHistories(db, PREFIX);
+    await db.member.deleteMany({ where: { id: { startsWith: `${PREFIX}x-` } } });
+  }, 60_000);
 
-  it("catches up full receipts unapplied, then collects only the exact chosen instrument up to C2", async () => {
+  it("collects only the exact instrument each writer chose, up to C2, keeping full cash", async () => {
     const id = await booking();
     const first = await cash(id, 7_000);
-    const second = await cash(id, 8_000);
-    expect((await census(id)).filter((f) => f.kind === "RECEIPT_WITHOUT_EVENT")).toHaveLength(2);
-    expect(await post(id)).toBe(2);
-    expect((await totals(id)).collected).toBe(0);
-    expect(await post(id, { paymentIntentId: first.stripePaymentIntentId!, collect: true })).toBe(1);
+    expect((await census(id)).filter((f) => f.kind === "RECEIPT_WITHOUT_EVENT")).toHaveLength(1);
+    expect(await post(id, { paymentIntentId: first.stripePaymentIntentId!, collect: true })).toBe(2);
     expect((await totals(id)).collected).toBe(7_000);
-    expect(await post(id, { paymentIntentId: second.stripePaymentIntentId!, collect: true })).toBe(1);
+    const second = await cash(id, 8_000);
+    expect(await post(id, { paymentIntentId: second.stripePaymentIntentId!, collect: true })).toBe(2);
     expect((await totals(id)).collected).toBe(10_000);
     expect(await post(id, { paymentIntentId: second.stripePaymentIntentId!, collect: true })).toBe(0);
     const money = await db.memberMoneyLine.aggregate({ where: { bookingId: id, account: "STRIPE_CLEARING", side: "DEBIT" }, _sum: { amountCents: true } });
     expect(money._sum.amountCents).toBe(15_000);
+    expect((await census(id)).filter((f) => f.kind === "RECEIPT_WITHOUT_EVENT")).toEqual([]);
+  });
+
+  it("never collects a receipt a catch-up or a final hold posted, but collects one its writer deferred (#4516 review item 5)", async () => {
+    const id = await booking();
+    const caught = await cash(id, 2_000, "INTERNET_BANKING");
+    expect(await post(id)).toBe(1);
+    expect(await post(id, { transactionIds: [caught.id], collect: true })).toBe(0);
+    expect((await totals(id)).collected).toBe(0);
+    const held = await cash(id, 3_000);
+    await post(id, { paymentIntentId: held.stripePaymentIntentId!, collect: false });
+    expect(await post(id, { paymentIntentId: held.stripePaymentIntentId!, collect: true })).toBe(0);
+    expect((await totals(id)).collected).toBe(0);
+    const deferred = await cash(id, 4_000);
+    await post(id, { paymentIntentId: deferred.stripePaymentIntentId!, collect: false, deferred: true });
+    expect((await totals(id)).collected).toBe(0);
+    expect(await post(id, { paymentIntentId: deferred.stripePaymentIntentId!, collect: true })).toBe(1);
+    expect((await totals(id)).collected).toBe(4_000);
     expect((await census(id)).filter((f) => f.kind === "RECEIPT_WITHOUT_EVENT")).toEqual([]);
   });
 
@@ -116,29 +188,64 @@ const census = (id: string) => db.$transaction((tx) => readBookingReceiptCensus(
     expect((await db.memberMoneyObligation.findUniqueOrThrow({ where: { obligationKey: memberMoneyEventKeys.bookingCharge(id) } })).faceCents).toBe(10_000);
   });
 
-  it("D4 transfers open charge obligations to successors, preserving prior collection and replay", async () => {
-    const id = await booking(); const row = await cash(id, 4_000);
+  it("D4: merge posts no successor; the survivor's first collection posts it under the Payment row, preserving prior collection", async () => {
+    const [from, to] = await mergePair();
+    const id = await booking(10_000, false, from); const row = await cash(id, 4_000);
     await post(id, { transactionIds: [row.id], collect: true });
-    await db.$transaction(async (tx) => {
-      await tx.booking.update({ where: { id }, data: { memberId: names.officerId } });
-      await postMemberMergeTransfer(tx, context, { fromMemberId: names.memberId, toMemberId: names.officerId, actorMemberId: names.officerId });
-    });
-    const successor = await db.memberMoneyObligation.findUniqueOrThrow({ where: { obligationKey: `${memberMoneyEventKeys.bookingCharge(id)}|for|MEMBER|${names.officerId}` } });
-    expect(successor.faceCents).toBe(6_000);
+    await merge(id, from, to);
+    expect(await successorOf(id, to)).toBeNull();
     const next = await cash(id, 6_000);
     await post(id, { transactionIds: [next.id], collect: true });
+    expect((await successorOf(id, to))?.faceCents).toBe(6_000);
     expect((await totals(id)).collected).toBe(10_000);
     expect((await census(id)).filter((f) => f.kind === "MERGED_DEBTOR_BALANCE")).toEqual([]);
   });
 
+  it("a merge beside an uncommitted Payment-only collection cannot overstate the survivor's obligation (#4516 review item 1)", async () => {
+    const [from, to] = await mergePair();
+    const id = await booking(10_000, false, from);
+    const held = await cash(id, 4_000);
+    await post(id, { paymentIntentId: held.stripePaymentIntentId!, collect: false, deferred: true });
+    let collected!: () => void; let release!: () => void;
+    const applied = new Promise<void>((resolve) => { collected = resolve; });
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const collector = db.$transaction(async (tx) => {
+      await postBookingReceipts(tx, context, { paymentId: `${id}-payment`, decision: { paymentIntentId: held.stripePaymentIntentId!, collect: true } });
+      collected();
+      await gate;
+    }, { timeout: 30_000 });
+    await applied;
+    // The merge runs to its commit while the collection is applied but not committed: it holds no Payment row.
+    await merge(id, from, to);
+    release();
+    await collector;
+    expect((await totals(id)).collected).toBe(4_000);
+    const next = await cash(id, 6_000);
+    await post(id, { transactionIds: [next.id], collect: true });
+    expect((await successorOf(id, to))?.faceCents).toBe(6_000);
+    expect((await totals(id)).collected).toBe(10_000);
+  });
+
+  it("collects a receipt its writer deferred before a merge onto that receipt's own debtor, never skipping it (#4516 review item 2)", async () => {
+    const [from, to] = await mergePair();
+    const id = await booking(10_000, false, from);
+    const held = await cash(id, 4_000);
+    await post(id, { paymentIntentId: held.stripePaymentIntentId!, collect: false, deferred: true });
+    await merge(id, from, to);
+    expect(await post(id, { paymentIntentId: held.stripePaymentIntentId!, collect: true })).toBeGreaterThan(0);
+    expect((await totals(id)).collected).toBe(4_000);
+    const next = await cash(id, 6_000);
+    await post(id, { transactionIds: [next.id], collect: true });
+    expect((await successorOf(id, to))?.faceCents).toBe(6_000);
+    expect((await totals(id)).collected).toBe(10_000);
+  });
+
   it("moves only a receipt that landed on the merged-away member after the snapshot", async () => {
-    const id = await booking();
+    const [from, to] = await mergePair();
+    const id = await booking(10_000, false, from);
     const early = await cash(id, 4_000);
     await post(id, { paymentIntentId: early.stripePaymentIntentId!, collect: false });
-    await db.$transaction(async (tx) => {
-      await tx.booking.update({ where: { id }, data: { memberId: names.officerId } });
-      await postMemberMergeTransfer(tx, context, { fromMemberId: names.memberId, toMemberId: names.officerId, actorMemberId: names.officerId });
-    });
+    await merge(id, from, to);
     const strayIntent = `${id}-stray`;
     await db.paymentTransaction.create({ data: { paymentId: `${id}-payment`, source: "STRIPE", kind: "ADDITIONAL", status: "SUCCEEDED", amountCents: 2_000, stripePaymentIntentId: strayIntent } });
     await db.$transaction(async (tx) => {
@@ -148,14 +255,14 @@ const census = (id: string) => db.$transaction((tx) => readBookingReceiptCensus(
         source: { kind: "PAYMENT", id: line.anchorId!, version: line.id }, reason: "Receipt read the owner before the merge committed",
         legs: [
           { type: "amount", account: "STRIPE_CLEARING", side: "DEBIT", amountCents: 2_000, booking: { bookingId: id, lodgeId: names.lodgeId }, evidence: {} },
-          { type: "amount", account: "MEMBER_RECEIVABLE", side: "CREDIT", amountCents: 2_000, debtor: { kind: "MEMBER", memberId: names.memberId }, booking: { bookingId: id, lodgeId: names.lodgeId }, evidence: {} },
+          { type: "amount", account: "MEMBER_RECEIVABLE", side: "CREDIT", amountCents: 2_000, debtor: { kind: "MEMBER", memberId: from }, booking: { bookingId: id, lodgeId: names.lodgeId }, evidence: {} },
         ] });
     });
-    expect((await census(id)).some((f) => f.kind === "MERGED_DEBTOR_BALANCE" && f.identity === names.memberId)).toBe(true);
+    expect((await census(id)).some((f) => f.kind === "MERGED_DEBTOR_BALANCE" && f.identity === from)).toBe(true);
     await post(id);
     expect((await census(id)).filter((f) => f.kind === "MERGED_DEBTOR_BALANCE")).toEqual([]);
-    expect(await db.memberMoneyEvent.findUnique({ where: { eventKey: memberMoneyEventKeys.mergeResidue(names.memberId, names.officerId, memberMoneyEventKeys.capture(strayIntent)) } })).not.toBeNull();
-    expect(await db.memberMoneyEvent.count({ where: { eventKey: { startsWith: `merge-residue:${names.officerId}` } } })).toBe(0);
+    expect(await db.memberMoneyEvent.findUnique({ where: { eventKey: memberMoneyEventKeys.mergeResidue(from, to, memberMoneyEventKeys.capture(strayIntent)) } })).not.toBeNull();
+    expect(await db.memberMoneyEvent.count({ where: { eventKey: { startsWith: `merge-residue:${to}` } } })).toBe(0);
   });
 
   it("reports drift without rewriting cash", async () => {
@@ -178,8 +285,13 @@ const census = (id: string) => db.$transaction((tx) => readBookingReceiptCensus(
   });
 
   it("serialises two collectors under the Payment row, preserving both full cash receipts", async () => {
-    const id = await booking(); const first = await cash(id, 8_000); const second = await cash(id, 8_000);
-    await Promise.all([post(id, { transactionIds: [first.id], collect: true }), post(id, { transactionIds: [second.id], collect: true })]);
+    const { markPaymentIntentTransactionSucceeded } = await import("@/lib/payment-transactions");
+    const id = await booking();
+    const intents = [`${id}-additional-a`, `${id}-additional-b`];
+    for (const intent of intents) await db.paymentTransaction.create({ data: { paymentId: `${id}-payment`, kind: "ADDITIONAL", source: "STRIPE", stripePaymentIntentId: intent, status: "PENDING", amountCents: 8_000 } });
+    await Promise.all(intents.map((intent) => db.$transaction(async (tx) => {
+      await markPaymentIntentTransactionSucceeded({ paymentIntentId: intent, amountCents: 8_000, store: tx, journal: context });
+    })));
     expect((await totals(id)).collected).toBe(10_000);
     const receipts = await db.memberMoneyLine.aggregate({ where: { bookingId: id, account: "STRIPE_CLEARING", side: "DEBIT" }, _sum: { amountCents: true } });
     expect(receipts._sum.amountCents).toBe(16_000);
@@ -195,15 +307,18 @@ const census = (id: string) => db.$transaction((tx) => readBookingReceiptCensus(
     expect(await db.memberMoneyEvent.count({ where: { eventKey: memberMoneyEventKeys.capture(row.stripePaymentIntentId!) } })).toBe(0);
   });
 
-  it("the real additional-capture writer receives an explicit hold/collect decision", async () => {
+  it("the real additional-capture writer decides collect under the Payment row from the booking as it stands (#4516 review item 3)", async () => {
     const { markPaymentIntentTransactionSucceeded } = await import("@/lib/payment-transactions");
-    for (const collect of [false, true]) {
+    for (const booked of [{ status: "CONFIRMED", deleted: false, collect: true }, { status: "CANCELLED", deleted: false, collect: false },
+      { status: "CANCELLED", deleted: true, collect: false }, { status: "CONFIRMED", deleted: true, collect: false }] as const) {
       const id = await booking();
       const intent = `${id}-additional`;
       await db.paymentTransaction.create({ data: { paymentId: `${id}-payment`, kind: "ADDITIONAL", source: "STRIPE", stripePaymentIntentId: intent, status: "PENDING", amountCents: 5_000 } });
+      // The caller read the booking live before its provider call; it changed before this writer's lock.
+      await db.booking.update({ where: { id }, data: { status: booked.status, deletedAt: booked.deleted ? new Date(context.effectiveAt) : null } });
       await db.$transaction((tx) => markPaymentIntentTransactionSucceeded({ paymentIntentId: intent, amountCents: 5_000, store: tx, journal: context,
-        receiptDecision: { collect, effectiveAt: new Date(context.effectiveAt) } }));
-      expect((await totals(id)).collected).toBe(collect ? 5_000 : 0);
+        capturedAt: new Date(context.effectiveAt) }));
+      expect((await totals(id)).collected, JSON.stringify(booked)).toBe(booked.collect ? 5_000 : 0);
       expect(await db.memberMoneyEvent.count({ where: { eventKey: memberMoneyEventKeys.capture(intent) } })).toBe(1);
     }
   });
@@ -231,6 +346,60 @@ const census = (id: string) => db.$transaction((tx) => readBookingReceiptCensus(
     expect((await totals(id)).collected).toBe(0);
     const cashLegs = await db.memberMoneyLine.findMany({ where: { bookingId: id, account: "CASH" } });
     expect(cashLegs.reduce((n, l) => n + (l.side === "DEBIT" ? l.amountCents : -l.amountCents), 0)).toBe(0);
+  });
+
+  it("a price edit committing after the collect's live-charge read never refuses the legacy capture write (#4516 review item 6)", async () => {
+    const id = await booking();
+    const row = await cash(id, 8_000);
+    // The edit lowers the live charge to 6000 under lock(1), without the Payment row, right after the hook's read.
+    liveChargeRead.after = () => db.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+      await postMemberMoneyEvent(tx, context, { kind: "ADJUSTMENT", eventKey: memberMoneyEventKeys.modification(id), origin: "APP",
+        source: { kind: "BOOKING", id, version: "price-edit" }, reason: "Synthetic price edit racing the collect", legs: [
+          { type: "revenue", account: "BOOKING_REVENUE", side: "DEBIT", grossCents: 10_000, chargeIdentity: `booking:${id}:test`, booking: { bookingId: id, lodgeId: names.lodgeId }, evidence: {} },
+          { type: "revenue", account: "BOOKING_REVENUE", side: "CREDIT", grossCents: 6_000, chargeIdentity: `booking:${id}:test`, booking: { bookingId: id, lodgeId: names.lodgeId }, evidence: {} },
+          { type: "amount", account: "MEMBER_RECEIVABLE", side: "CREDIT", amountCents: 4_000, debtor: { kind: "MEMBER", memberId: names.memberId }, booking: { bookingId: id, lodgeId: names.lodgeId }, evidence: {} },
+        ] });
+    }).then(() => undefined);
+    await db.$transaction(async (tx) => {
+      await tx.payment.update({ where: { id: `${id}-payment` }, data: { manualPaymentNote: "legacy capture write" } });
+      await postBookingReceipts(tx, context, { paymentId: `${id}-payment`, decision: { paymentIntentId: row.stripePaymentIntentId!, collect: true } });
+    }, { timeout: 30_000 });
+    expect(liveChargeRead.after).toBeNull();
+    expect((await db.payment.findUniqueOrThrow({ where: { id: `${id}-payment` } })).manualPaymentNote).toBe("legacy capture write");
+    // Serialised as the collect before the edit: the accepted C2 limit, which the census reports.
+    expect((await totals(id)).collected).toBe(8_000);
+    expect((await census(id)).filter((f) => f.kind === "OVER_COLLECTED")).toEqual([expect.objectContaining({ cents: 2_000 })]);
+  });
+
+  it("a superseded capture's flip re-checks the row under the Payment lock and posts nothing when the claim is lost (#4516 review item 7)", async () => {
+    const { queueSupersededPaymentIntentRefundRecovery } = await import("@/lib/payment-recovery");
+    const id = await booking();
+    const intent = `${id}-superseded`;
+    const row = await db.paymentTransaction.create({ data: { paymentId: `${id}-payment`, kind: "ADDITIONAL", source: "STRIPE", stripePaymentIntentId: intent,
+      status: "PENDING", amountCents: 5_000 } });
+    await db.paymentRecoveryOperation.create({ data: { type: "CANCEL_PAYMENT_INTENT", status: "PENDING", bookingId: id, paymentId: `${id}-payment`,
+      paymentTransactionId: row.id, paymentIntentId: intent, amountCents: 5_000, idempotencyKey: `${id}-cancel-superseded` } });
+    // Read as uncaptured by the caller; captured and part refunded by another writer before this flip's lock.
+    await db.paymentTransaction.update({ where: { id: row.id }, data: { status: "PARTIALLY_REFUNDED", refundedAmountCents: 1_000, amountCents: 4_000 } });
+    await queueSupersededPaymentIntentRefundRecovery({ id: intent, amount: 5_000, payment_method: null });
+    const after = await db.paymentTransaction.findUniqueOrThrow({ where: { id: row.id } });
+    expect([after.status, after.amountCents, after.reason]).toEqual(["PARTIALLY_REFUNDED", 4_000, null]);
+    expect(await db.memberMoneyEvent.count({ where: { eventKey: memberMoneyEventKeys.capture(intent) } })).toBe(0);
+  });
+
+  it("returns before any further read when nothing is selected, every receipt is bridged and no residue exists (#4516 review item 8)", async () => {
+    const id = await booking();
+    await cash(id, 3_000); await cash(id, 4_000, "INTERNET_BANKING");
+    expect(await post(id)).toBe(2);
+    const { proxy, calls } = await db.$transaction(async (tx) => {
+      const counted = counting(tx);
+      expect(await postBookingReceipts(counted.proxy, context, { paymentId: `${id}-payment` })).toBe(0);
+      return counted;
+    });
+    expect(proxy).toBeDefined();
+    expect(calls.filter((call) => call.startsWith("memberMoneyEvent."))).toEqual(["memberMoneyEvent.findUnique"]);
+    expect(calls.filter((call) => /^memberMoney(Line|Obligation|Application)\./.test(call))).toEqual(["memberMoneyLine.findMany"]);
   });
 
 });

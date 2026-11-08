@@ -38,6 +38,8 @@ export function sameApplicationDebtor(source: ApplicationSource, obligation: App
 
 export interface ApplicationTotals {
   sources: Map<string, number>;
+  /** Net applied to each obligation, by its id: what a successor carries forward from its predecessor. */
+  obligations: Map<string, number>;
   collected: number;
   families: Map<string, { funded: number; paid: number; reserved: number; captures: Map<string, { funded: number; paid: number; reserved: number }> }>;
 }
@@ -47,7 +49,7 @@ export function memberMoneyApplicationTotals(state: ApplicationState): Applicati
   const sources = new Map(state.sources.map((s) => [s.id, s]));
   const obligations = new Map(state.obligations.map((o) => [o.id, o]));
   const applications = new Map(state.applications.map((a) => [a.id, a]));
-  const totals: ApplicationTotals = { sources: new Map(), collected: 0, families: new Map() };
+  const totals: ApplicationTotals = { sources: new Map(), obligations: new Map(), collected: 0, families: new Map() };
   const sign = (id: string, visited = new Set<string>()): number => {
     if (visited.has(id)) throw new Error("Cyclic member-money application reversal");
     visited.add(id);
@@ -76,6 +78,7 @@ export function memberMoneyApplicationTotals(state: ApplicationState): Applicati
     if (!source || !obligation) throw new Error("Missing application source or obligation");
     const amount = application.amountCents * sign(application.id);
     totals.sources.set(source.id, (totals.sources.get(source.id) ?? 0) + amount);
+    totals.obligations.set(obligation.id, (totals.obligations.get(obligation.id) ?? 0) + amount);
     const role = applicationRoleOf(source, obligation);
     if (role === "collect") totals.collected += amount;
     else if (role !== null) add(obligation, source.capture, role === "fund" ? "funded" : "paid", amount);
