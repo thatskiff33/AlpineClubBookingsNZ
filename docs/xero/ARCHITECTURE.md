@@ -1045,9 +1045,11 @@ note.
    only reads such a link; it never re-roles it. So a retry can close a note
    whose allocation only a role-less link records, until the inbound mirror
    writes the note's own. Since #4786 the money readers count it too, through
-   one reader built on that predicate (`distinctClearingAllocations`): the
-   hold under-clear audit, the kept settle's correction count and, by the
-   payment's invoice, the refunded-total recount. Each allocation counts once:
+   one reader built on that predicate (`clearingAllocationOf`, and
+   `distinctClearingAllocations` over it): the hold under-clear audit, the
+   kept settle's correction count and, by the payment's invoice, the
+   refunded-total recount, which keeps its newest link per note and invoice.
+   Each allocation counts once:
    the mirror's own-role link and a role-less one for the same note, invoice
    and amount are one, and another amount is another allocation. A role-less
    link with no amount counts nothing. The recount still reads a payment's

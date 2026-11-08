@@ -280,9 +280,10 @@ export interface ClearingAllocation<L extends ClearingAllocationLink = ClearingA
  * - are one allocation, so the inbound mirror's own-role link and the role-less
  * one for the same allocation count once; a different amount is a different
  * allocation. Where several links hold one allocation the last given is kept.
- * With `creditNoteId`, only that note's allocations. Read only: the money
- * readers (the hold under-clear audit, the kept settle's correction count and
- * the refunded-total recount) count what this returns.
+ * With `creditNoteId`, only that note's allocations. Read only: the hold
+ * under-clear audit and the kept settle's correction count read this; the
+ * refunded-total recount reads `clearingAllocationOf` and keeps its own newest
+ * link per note and invoice.
  */
 export function distinctClearingAllocations<L extends ClearingAllocationLink>(
   links: readonly L[],
@@ -290,19 +291,31 @@ export function distinctClearingAllocations<L extends ClearingAllocationLink>(
 ): ClearingAllocation<L>[] {
   const byKey = new Map<string, ClearingAllocation<L>>();
   for (const link of links) {
-    const metadata = asRecord(link.metadata);
-    const noteId = readString(metadata?.creditNoteId);
-    const invoiceId = readString(metadata?.invoiceId);
-    if (!noteId || !invoiceId || (creditNoteId !== undefined && noteId !== creditNoteId)) continue;
-    const amountCents = readNumber(metadata?.amountCents);
-    // The link's own allocation as the target: the note's role needs only the
-    // note and invoice; a role-less link's missing amount (NaN) never matches.
-    if (!linkAllocatesClearingTarget(link, { invoiceId, amountCents: amountCents ?? Number.NaN }, noteId)) continue;
-    const key = JSON.stringify([noteId, invoiceId, amountCents]);
+    const allocation = clearingAllocationOf(link);
+    if (!allocation || (creditNoteId !== undefined && allocation.creditNoteId !== creditNoteId)) continue;
+    const key = JSON.stringify([allocation.creditNoteId, allocation.invoiceId, allocation.amountCents]);
     byKey.delete(key);
-    byKey.set(key, { creditNoteId: noteId, invoiceId, amountCents, link });
+    byKey.set(key, allocation);
   }
   return [...byKey.values()];
+}
+
+/**
+ * Pure (#4786): the one allocation a link records, or null when it records
+ * none by `distinctClearingAllocations`'s rule - no note or invoice named, a
+ * role other than the two, or a role-less link with no amount.
+ */
+export function clearingAllocationOf<L extends ClearingAllocationLink>(link: L): ClearingAllocation<L> | null {
+  const metadata = asRecord(link.metadata);
+  const creditNoteId = readString(metadata?.creditNoteId);
+  const invoiceId = readString(metadata?.invoiceId);
+  if (!creditNoteId || !invoiceId) return null;
+  const amountCents = readNumber(metadata?.amountCents);
+  // The link's own allocation as the target: the note's role needs only the
+  // note and invoice; a role-less link's missing amount (NaN) never matches.
+  return linkAllocatesClearingTarget(link, { invoiceId, amountCents: amountCents ?? Number.NaN }, creditNoteId)
+    ? { creditNoteId, invoiceId, amountCents, link }
+    : null;
 }
 
 /**
