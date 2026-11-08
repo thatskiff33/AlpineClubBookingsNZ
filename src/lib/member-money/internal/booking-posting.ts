@@ -59,7 +59,7 @@ type Db = Prisma.TransactionClient;
  * (`bookingOwnerDebtor`, exactly one). Lock raw, read typed (#2289): the lock
  * selects a constant, the owner comes back through the Prisma model.
  */
-async function lockedBookingDebtor(tx: Db, bookingId: string): Promise<MemberMoneyDebtor> {
+export async function lockedBookingDebtor(tx: Db, bookingId: string): Promise<MemberMoneyDebtor> {
   await tx.$executeRaw`SELECT 1 FROM "Booking" WHERE "id" = ${bookingId} FOR NO KEY UPDATE`;
   const booking = await tx.booking.findUnique({ where: { id: bookingId }, select: { memberId: true, organisationId: true } });
   if (!booking) throw new MemberMoneyPlanError([`booking ${bookingId} does not exist`]);

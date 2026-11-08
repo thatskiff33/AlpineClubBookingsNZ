@@ -63,6 +63,12 @@ export const memberMoneyEventKeys = {
   chargeOpen: (id: string) => key(`charge-open:${part(id, "booking")}`),
   refundObligation: (scope: RefundObligationScope, id: string) => key(`refund-obligation|${scope}|${nestedPart(id)}`),
   refundFunding: (attemptKey: string) => key(`refund-funding|${nestedPart(attemptKey)}`),
+  /**
+   * #4516 (M4c): the collection a refund's funding must take back from its own receipt first (design section 4,
+   * "Un-apply"), named by the funding event it makes room for. Its own event, never part of the funding batch: a
+   * released reservation reverses its funding alone, so funding batches stay independent of each other.
+   */
+  refundUncollect: (funding: MemberMoneyEventKey) => key(`refund-uncollect|${funding}`),
   refund: (id: string) => key(`refund:${part(id, "refund")}`),
   refundAnswer: (id: string) => key(`refund-answer:${part(id, "refund")}`),
   paidAnotherWay: (id: string) => key(`paid-another-way:${part(id, "record")}`),

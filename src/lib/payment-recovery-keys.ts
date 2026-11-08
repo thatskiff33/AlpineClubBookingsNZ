@@ -48,6 +48,24 @@ export function cardRefundFailedLaterRefundId(key: string): string | null {
 /** The Stripe `reason` metadata of that retry; a failed refund carrying it was itself a retry. */
 export const CARD_REFUND_FAILED_LATER_REASON = "card_refund_failed_later";
 
+/**
+ * #4516 (M4c; owner decision of 2 Nov 2026, `INV-PAY-122`): what a part "Paid another way" close left STILL OWED,
+ * as the treasurer chose. A row of its own, born dead (attempts spent, so the runner never claims it), keyed by the
+ * close's record: it keeps the rest in "Refunds owed" and on the dead card refund list, where a later close pays
+ * it. The key doubles as its Stripe key prefix and its metadata reason, so it is never another row's request.
+ */
+export const CARD_REFUND_STILL_OWED_RECOVERY_PREFIX = "card_refund_still_owed_";
+export function buildCardRefundStillOwedRecoveryKey(closeRecordId: string) {
+  return `${CARD_REFUND_STILL_OWED_RECOVERY_PREFIX}${closeRecordId}`;
+}
+/** The part close a still-owed row carries forward; null for any other key. */
+export function cardRefundStillOwedCloseRecordId(key: string): string | null {
+  return key.startsWith(CARD_REFUND_STILL_OWED_RECOVERY_PREFIX) && key.length > CARD_REFUND_STILL_OWED_RECOVERY_PREFIX.length
+    ? key.slice(CARD_REFUND_STILL_OWED_RECOVERY_PREFIX.length)
+    : null;
+}
+export const CARD_REFUND_STILL_OWED_REASON = "card_refund_still_owed";
+
 export function buildBookingCancellationRefundIdempotencyKey(bookingId: string) {
   return `${BOOKING_CANCELLATION_REFUND_RECOVERY_PREFIX}${bookingId}`;
 }
@@ -186,6 +204,23 @@ export function buildEditFinancialReviewRefundRecoveryIdempotencyKey(
 // Stripe key (that would refund twice).
 export function buildLegacyModificationRefundStripeKeyPrefix(operationId: string) {
   return `payment_recovery_modification_refund_${operationId}`;
+}
+
+/**
+ * #4516 (M4c, `INV-SSOT`): the Stripe key prefix a card refund row's slices are sent under, the one rule the
+ * recovery runner sends by and a "Paid another way" close reads to name the reservations it closes: a superseded
+ * intent's row under its own key; an appeal's (#1507) and a cancellation's (#1494) under their inline prefix,
+ * rebuilt from the row; every other under the prefix it stored (#1152), or, before that column, its operation's.
+ */
+export function cardRefundOperationStripeKeyPrefix(operation: {
+  id: string; type: string; idempotencyKey: string; bookingId: string; stripeKeyPrefix: string | null;
+}): string {
+  if (operation.type === "REFUND_SUPERSEDED_PAYMENT") return operation.idempotencyKey;
+  if (isRefundRequestRefundRecoveryKey(operation.idempotencyKey)) {
+    return buildRefundRequestRefundStripeKeyPrefix(operation.idempotencyKey.slice(REFUND_REQUEST_REFUND_RECOVERY_PREFIX.length));
+  }
+  if (operation.idempotencyKey.startsWith(BOOKING_CANCELLATION_REFUND_RECOVERY_PREFIX)) return `booking_cancel_refund_${operation.bookingId}`;
+  return operation.stripeKeyPrefix ?? buildLegacyModificationRefundStripeKeyPrefix(operation.id);
 }
 
 // #4083 (`INV-PAY-128`): one spelling of each slice's Stripe key. Stripe

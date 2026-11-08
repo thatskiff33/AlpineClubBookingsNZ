@@ -65,8 +65,10 @@ export function receiptFactContext(context: MemberMoneyPostingContext, at: Date)
   return { ...context, effectiveAt, effectiveDate: clubCalendarDateOf(effectiveAt, context.zone) };
 }
 
-const debtorId = (debtor: MemberMoneyDebtor) => (debtor.kind === "MEMBER" ? debtor.memberId : debtor.organisationId);
-const ownedBy = (obligation: ApplicationObligation, debtor: MemberMoneyDebtor) =>
+/** The id of a debtor, member or organisation; one rule for receipts and refunds (`INV-SSOT`). */
+export const debtorId = (debtor: MemberMoneyDebtor) => (debtor.kind === "MEMBER" ? debtor.memberId : debtor.organisationId);
+/** Whether an obligation (or a line) names this debtor. */
+export const ownedBy = (obligation: Pick<ApplicationObligation, "debtorKind" | "memberId" | "organisationId">, debtor: MemberMoneyDebtor) =>
   obligation.debtorKind === debtor.kind && (obligation.memberId ?? obligation.organisationId) === debtorId(debtor);
 const succeeded = (state: ApplicationState, obligation: ApplicationObligation) =>
   state.obligations.some((o) => memberMoneyApplicationKeys.succeeds(o.key, obligation.key));
@@ -75,7 +77,7 @@ const chargeOf = (state: ApplicationState, debtor: MemberMoneyDebtor) =>
   state.obligations.find((o) => o.kind === "CHARGE" && ownedBy(o, debtor) && !succeeded(state, o)) ?? null;
 
 /** The debtor a posted receivable line names; the line is immutable, so this never re-reads the booking. */
-function lineDebtor(line: { debtorKind: string | null; memberId: string | null; organisationId: string | null }): MemberMoneyDebtor {
+export function lineDebtor(line: { debtorKind: string | null; memberId: string | null; organisationId: string | null }): MemberMoneyDebtor {
   if (line.debtorKind === "MEMBER" && line.memberId) return { kind: "MEMBER", memberId: line.memberId };
   if (line.debtorKind === "ORGANISATION" && line.organisationId) return { kind: "ORGANISATION", organisationId: line.organisationId };
   throw new MemberMoneyPlanError(["a receipt's receivable line names no debtor"]);

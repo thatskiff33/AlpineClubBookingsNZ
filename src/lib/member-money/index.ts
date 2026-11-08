@@ -31,7 +31,7 @@ export {
 } from "./internal/booking-journal-read";
 export { bookingJournalInactiveReason } from "./internal/journal-activity";
 
-// M4a primitives remain inert: no production door imports these.
+// M4a primitives: production doors reach them only through M4c's `./doors` entry.
 export { memberMoneyApplicationKeys, memberMoneyChainKey } from "./internal/keys";
 export { reserveMemberMoneyRefund, MemberMoneyReservationRefused } from "./internal/store";
 export { releaseMemberMoneyRefundReservation } from "./internal/post";
@@ -39,3 +39,6 @@ export { releaseMemberMoneyRefundReservation } from "./internal/post";
 // M4b operator commands use the same adapter and read-only census as the receipt doors.
 export { postBookingReceipts } from "./internal/booking-receipts";
 export { receiptPopulationPaymentIds, readBookingReceiptCensus } from "./internal/receipt-census";
+
+// M4c operator command: the refund census, the exact reconciliation of stranded reservations and the OPERATOR release.
+export { readBookingRefundCensus, reconcileMadeRefundReservations, releaseReservationByOperator, type RefundCensusFinding } from "./internal/refund-census";
