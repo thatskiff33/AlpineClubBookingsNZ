@@ -306,10 +306,16 @@ function defaultPause(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/** What a fingerprint looks like (`dataKeyFingerprint`): four groups of four hex digits. */
+export const FINGERPRINT_PATTERN = /^[0-9a-f]{4}(-[0-9a-f]{4}){3}$/i;
+
 /** A fingerprint as an operator may paste it: case and surrounding space ignored. */
 function normaliseFingerprint(text: string): string {
   return text.trim().toLowerCase();
 }
+
+/** The flag as an instruction. Its value only ever comes from the app's own page. */
+const RUN_COMMAND_PLACEHOLDER = "pnpm run data-keys:reencrypt --expect-fingerprint <fingerprint from Admin → Setup>";
 
 /**
  * The first guard on the target key: a run that writes must name the app's
@@ -321,13 +327,21 @@ function requireExpectedFingerprint(target: DataKey, options: ReencryptOptions):
   const actual = dataKeyFingerprint(target);
   if (options.expectFingerprint === undefined) {
     if (options.dryRun) return false;
+    // No fingerprint of this command's own key here (round 3): only the app's
+    // page may supply the value, so nothing here offers one to copy.
     throw new ReencryptRefusedError(
-      `Refused: a run that writes needs --expect-fingerprint <fingerprint>, copied from Admin → Setup → "Data Encryption Key" (the app's current key). This command's key "${target.id}" has the fingerprint ${actual}; run with --dry-run to see what would move.`,
+      `Refused: a run that writes needs --expect-fingerprint <fingerprint from Admin → Setup>: the fingerprint Admin → Setup → "Data Encryption Key" shows for the app's current key. Run with --dry-run to see what would move.`,
+    );
+  }
+  // The supplied value is never echoed (round 3): a mis-paste may be a key.
+  if (!FINGERPRINT_PATTERN.test(options.expectFingerprint.trim())) {
+    throw new ReencryptRefusedError(
+      "Refused before reading anything: --expect-fingerprint is not a fingerprint (four groups of four hex digits, as Admin → Setup shows it). The value given is not repeated here.",
     );
   }
   if (normaliseFingerprint(options.expectFingerprint) !== actual) {
     throw new ReencryptRefusedError(
-      `Refused before reading anything: this command would write under its key "${target.id}" (fingerprint ${actual}), but --expect-fingerprint names ${normaliseFingerprint(options.expectFingerprint)}. Its ${DATA_ENCRYPTION_KEYS_ENV} is not the app's: a stale .env, or a ring whose first key is not the app's current one. Variables exported in this shell win; anything unset is read from the .env in the current directory.`,
+      `Refused before reading anything: this command would write under its key "${target.id}" (fingerprint ${actual}), but --expect-fingerprint names a different key. Its ${DATA_ENCRYPTION_KEYS_ENV} is not the app's: a stale .env, or a ring whose first key is not the app's current one. Variables exported in this shell win; anything unset is read from the .env in the current directory.`,
     );
   }
   return true;
@@ -449,9 +463,7 @@ export async function reencryptStoredData(options: ReencryptOptions): Promise<Re
     currentKeyFingerprint: dataKeyFingerprint(target),
     keyCheckedAgainst,
     fingerprintConfirmed,
-    runCommand: `pnpm run data-keys:reencrypt --expect-fingerprint ${dataKeyFingerprint(target)}${
-      options.retireLegacyRecoveryCodes ? " --retire-legacy-recovery-codes" : ""
-    }`,
+    runCommand: `${RUN_COMMAND_PLACEHOLDER}${options.retireLegacyRecoveryCodes ? " --retire-legacy-recovery-codes" : ""}`,
     dryRun: options.dryRun,
     passes: Math.max(credentials.passes, secrets.passes),
     credentials: { ...credentials.tally, remaining: credentialsRemaining },
@@ -474,9 +486,12 @@ export function formatReencryptReport(report: ReencryptReport): string[] {
   ];
   const lines = [
     `Data-encryption re-encrypt to the key "${report.currentKeyId}"${report.dryRun ? " (dry run: nothing written)" : ""}, ${report.passes} pass${report.passes === 1 ? "" : "es"}.`,
-    report.fingerprintConfirmed
-      ? `Key "${report.currentKeyId}", fingerprint ${report.currentKeyFingerprint}: matches --expect-fingerprint.`
-      : `Key "${report.currentKeyId}", fingerprint ${report.currentKeyFingerprint}: not compared. Only if Admin → Setup → "Data Encryption Key" shows this same fingerprint for the app's current key, run: ${report.runCommand}`,
+    ...(report.fingerprintConfirmed
+      ? [`Key "${report.currentKeyId}", fingerprint ${report.currentKeyFingerprint}: matches --expect-fingerprint.`]
+      : [
+          `This command's key "${report.currentKeyId}" has the fingerprint ${report.currentKeyFingerprint}: compare with Admin → Setup, do not copy into the command.`,
+          `If Admin → Setup → "Data Encryption Key" shows that same fingerprint for the app's current key, run: ${report.runCommand}`,
+        ]),
     report.keyCheckedAgainst
       ? `Decrypt check: this command's key "${report.currentKeyId}" reads ${report.keyCheckedAgainst} stored under that id.`
       : `Decrypt check: nothing readable is stored under "${report.currentKeyId}" yet, so only the fingerprint vouches for the key.`,

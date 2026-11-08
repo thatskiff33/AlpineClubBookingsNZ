@@ -534,7 +534,10 @@ describe("the fingerprint binds the run to the app's current key (#4456 review r
     mocks.credentialRows = [{ provider: "stripe", key: "secret_key" }];
     const error = (await run({ expectFingerprint: undefined }).catch((caught: unknown) => caught)) as Error;
     expect(error).toBeInstanceOf(ReencryptRefusedError);
-    expect(error.message).toMatch(/^Refused: a run that writes needs --expect-fingerprint <fingerprint>, copied from Admin → Setup/);
+    expect(error.message).toMatch(/^Refused: a run that writes needs --expect-fingerprint <fingerprint from Admin → Setup>/);
+    // Nothing to copy (round 3, S2): not this command's own fingerprint.
+    expect(error.message).not.toContain(setupFingerprint()!);
+    expect(error.message).not.toMatch(/[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}/);
     expect(mocks.prisma.integrationCredential.findMany).not.toHaveBeenCalled();
     noWrites();
   });
@@ -543,7 +546,9 @@ describe("the fingerprint binds the run to the app's current key (#4456 review r
     mocks.credentialRows = [{ provider: "stripe", key: "secret_key" }];
     const error = (await run({ expectFingerprint: "0000-0000-0000-0000" }).catch((caught: unknown) => caught)) as Error;
     expect(error).toBeInstanceOf(ReencryptRefusedError);
-    expect(error.message).toMatch(/would write under its key "k_2" \(fingerprint [0-9a-f-]{19}\), but --expect-fingerprint names 0000-0000-0000-0000/);
+    expect(error.message).toMatch(/would write under its key "k_2" \(fingerprint [0-9a-f-]{19}\), but --expect-fingerprint names a different key/);
+    // The supplied value is not repeated (round 3, S3).
+    expect(error.message).not.toContain("0000-0000-0000-0000");
     expect(error.message).not.toContain(K_NEW);
     expect(mocks.prisma.integrationCredential.findMany).not.toHaveBeenCalled();
     noWrites();
@@ -555,12 +560,31 @@ describe("the fingerprint binds the run to the app's current key (#4456 review r
     await expect(run({ expectFingerprint: pasted })).resolves.toMatchObject({ fingerprintConfirmed: true });
   });
 
-  it("a dry run needs none, and prints the fingerprint with the exact command to run", async () => {
+  it("a dry run needs none: it labels its own fingerprint as one to compare, and its command carries a placeholder (round 3, S2)", async () => {
     const report = await run({ dryRun: true, expectFingerprint: undefined, retireLegacyRecoveryCodes: true });
     expect(report.fingerprintConfirmed).toBe(false);
-    expect(formatReencryptReport(report)[1]).toBe(
-      `Key "k_2", fingerprint ${setupFingerprint()}: not compared. Only if Admin → Setup → "Data Encryption Key" shows this same fingerprint for the app's current key, run: pnpm run data-keys:reencrypt --expect-fingerprint ${setupFingerprint()} --retire-legacy-recovery-codes`,
+    const lines = formatReencryptReport(report);
+    expect(lines[1]).toBe(
+      `This command's key "k_2" has the fingerprint ${setupFingerprint()}: compare with Admin → Setup, do not copy into the command.`,
     );
+    expect(lines[2]).toBe(
+      'If Admin → Setup → "Data Encryption Key" shows that same fingerprint for the app\'s current key, run: pnpm run data-keys:reencrypt --expect-fingerprint <fingerprint from Admin → Setup> --retire-legacy-recovery-codes',
+    );
+    // The only line carrying the job's fingerprint is the labelled one.
+    expect(lines.filter((line) => line.includes(setupFingerprint()!))).toEqual([lines[1]]);
+  });
+
+  it("refuses a value that is not fingerprint-shaped, such as a pasted ring entry, without repeating it or reading anything (round 3, S3)", async () => {
+    const pastedEntry = `k_2:${K_NEW}`;
+    for (const dryRun of [false, true]) {
+      const error = (await run({ dryRun, expectFingerprint: pastedEntry }).catch((caught: unknown) => caught)) as Error;
+      expect(error).toBeInstanceOf(ReencryptRefusedError);
+      expect(error.message).toMatch(/--expect-fingerprint is not a fingerprint/);
+      expect(error.message).not.toContain(K_NEW);
+      expect(error.message).not.toContain(pastedEntry);
+    }
+    expect(mocks.prisma.integrationCredential.findMany).not.toHaveBeenCalled();
+    noWrites();
   });
 });
 

@@ -56,12 +56,29 @@ describe("data-keys:reencrypt arguments (#4456 PR 2)", () => {
         options: { dryRun: false, retireLegacyRecoveryCodes: false, expectFingerprint: "ab12-cd34-ef56-7890" },
       });
     }
-    for (const argv of [["--expect-fingerprint"], ["--expect-fingerprint", "--dry-run"], ["--expect-fingerprint="]]) {
+    for (const argv of [["--expect-fingerprint"], ["--expect-fingerprint", "--dry-run"], ["--expect-fingerprint="], ["--expect-fingerprint", "ab12-cd34-ef56"]]) {
       expect(parseReencryptArgs(argv)).toEqual({
         kind: "error",
-        message: "--expect-fingerprint needs the fingerprint Admin → Setup shows",
+        message:
+          "--expect-fingerprint needs the fingerprint Admin → Setup shows: four groups of four hex digits. The value given is not repeated here.",
       });
     }
+    // Trimmed, and any case.
+    expect(parseReencryptArgs(["--expect-fingerprint", " AB12-cd34-EF56-7890 "])).toMatchObject({
+      options: { expectFingerprint: "AB12-cd34-EF56-7890" },
+    });
+  });
+
+  it("refuses a pasted ring entry as the fingerprint without running, and never prints it (round 3, S3)", async () => {
+    const pastedEntry = "k2026:" + Buffer.from(Array.from({ length: 32 }, (_, index) => (index * 7 + 3) % 256)).toString("base64");
+    const { out, err, io: deps } = io(async () => report());
+    await expect(runReencryptCommand(["--expect-fingerprint", pastedEntry], deps)).resolves.toBe(1);
+    await expect(runReencryptCommand([`--expect-fingerprint=${pastedEntry}`], deps)).resolves.toBe(1);
+    expect(deps.run).not.toHaveBeenCalled();
+    const printed = [...out, ...err].join("\n");
+    expect(printed).toMatch(/--expect-fingerprint needs the fingerprint Admin → Setup shows/);
+    expect(printed).not.toContain(pastedEntry);
+    expect(printed).not.toContain(pastedEntry.slice(6));
   });
 
   it("names itself as the pnpm script an operator runs", () => {

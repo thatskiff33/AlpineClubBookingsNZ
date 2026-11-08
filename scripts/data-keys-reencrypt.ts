@@ -18,6 +18,7 @@ import process from "node:process";
 
 import { DataKeyRingError } from "../src/lib/data-encryption-key-material";
 import {
+  FINGERPRINT_PATTERN,
   formatReencryptReport,
   reencryptLeftRows,
   reencryptStoredData,
@@ -66,9 +67,14 @@ export function parseReencryptArgs(argv: readonly string[]): ParsedArgs {
     if (arg === "--dry-run") dryRun = true;
     else if (arg === "--retire-legacy-recovery-codes") retireLegacyRecoveryCodes = true;
     else if (arg === "--expect-fingerprint" || arg.startsWith("--expect-fingerprint=")) {
-      const value = arg.includes("=") ? arg.slice(arg.indexOf("=") + 1) : argv[++index];
-      if (!value || value.startsWith("--")) {
-        return { kind: "error", message: "--expect-fingerprint needs the fingerprint Admin → Setup shows" };
+      const value = (arg.includes("=") ? arg.slice(arg.indexOf("=") + 1) : argv[++index])?.trim();
+      // Never echoed (#4456 review round 3): a mis-paste may be a ring entry, a key.
+      if (!value || !FINGERPRINT_PATTERN.test(value)) {
+        return {
+          kind: "error",
+          message:
+            "--expect-fingerprint needs the fingerprint Admin → Setup shows: four groups of four hex digits. The value given is not repeated here.",
+        };
       }
       expectFingerprint = value;
     }
