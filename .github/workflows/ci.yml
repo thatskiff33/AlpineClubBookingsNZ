@@ -1506,10 +1506,11 @@ jobs:
   realdb-all:
     name: Real-PostgreSQL suites (all, advisory)
     runs-on: ubuntu-latest
-    # PR CI measured this job at 9m02s (#4476): 20 minutes leaves room for a
-    # slower runner and growing suites, where 45 would let a hung run hold a
-    # runner for most of an hour.
-    timeout-minutes: 20
+    # PR CI measured this job at 9m02s (#4476). By 8 Nov 2026 it took 16-18
+    # minutes on `main` and was cancelled at the old 20-minute limit in 4 of 7
+    # runs, so a cancelled run proved nothing (#4793). 35 is about twice the
+    # current run time and still frees a hung runner well inside the hour.
+    timeout-minutes: 35
     permissions:
       contents: read
     services:
