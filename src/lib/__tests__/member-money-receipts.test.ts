@@ -385,7 +385,7 @@ describe("M4b receipt census", () => {
     expect((await over.census()).filter((f) => f.kind === "OVER_COLLECTED")).toEqual([{ kind: "OVER_COLLECTED", identity: "over", bookingId: "over", cents: 4_000 }]);
   });
 
-  it("treats a receipt and its stand-in as one source cap, and counts nothing for a reversed one whose collection survived", async () => {
+  it("treats a receipt and its stand-in as one source cap, and reports a reversed one whose collection survived", async () => {
     const b = await setup();
     const officer = b.cash(4_000, "CASH_RECORDED");
     await b.post({ transactionIds: [officer.row.id], collect: false, deferred: true });
@@ -400,6 +400,9 @@ describe("M4b receipt census", () => {
     expect(b.totals().collected).toBe(4_000);
     // The surviving 4000 is not set against the held receipt's 3000: that stays reported.
     expect((await b.census()).filter((f) => f.kind === "UNAPPLIED_RECEIPT_ON_OPEN_CHARGE")).toEqual([expect.objectContaining({ cents: 3_000 })]);
+    // ...and the collection that outlived its receipt is reported, never silently counted.
+    expect((await b.census()).filter((f) => f.kind === "COLLECTION_ON_REVERSED_RECEIPT"))
+      .toEqual([{ kind: "COLLECTION_ON_REVERSED_RECEIPT", identity: receiptKey(officer), bookingId: expect.any(String), cents: 4_000 }]);
   });
 
   it("lists exactly the payments of bookings with R01, across pages", async () => {

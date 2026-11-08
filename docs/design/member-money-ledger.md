@@ -796,8 +796,8 @@ no revenue, so it needs no `lock(1)`, which merge deliberately does not take.
 M4b gives the survivor CHARGE successors, but not inside merge: merge holds no
 Payment row, so it could size a successor from application state that misses
 a collection committing beside it. The survivor's first collection posts them
-instead, under the Payment row: each live obligation gets a zero-net receivable
-pair on the survivor for the face its predecessor has not collected. Posted
+instead, under the Payment row: one successor for the chain's live tip, a
+zero-net receivable pair on the survivor sized as the paragraph below says. Posted
 debtors remain immutable. Receipt writers take only the Payment row and read
 the owner once per call without locking Booking; the next receipt posting moves
 any merged-debtor residue explicitly, keyed to its source event, one merge hop

@@ -1960,7 +1960,8 @@ legacy settlement line's recorded instant and are labelled `app-record`.
 
 The default and `--dry-run` perform read-only checks. JSON findings distinguish
 `RECEIPT_WITHOUT_EVENT`, `UNBRIDGED_SETTLEMENT_LINE`, `RECEIPT_AMOUNT_DRIFT`,
-`OVER_COLLECTED`, `UNAPPLIED_RECEIPT_ON_OPEN_CHARGE` and `MERGED_DEBTOR_BALANCE`.
+`OVER_COLLECTED`, `UNAPPLIED_RECEIPT_ON_OPEN_CHARGE`, `MERGED_DEBTOR_BALANCE` and
+`COLLECTION_ON_REVERSED_RECEIPT` (a reversed receipt whose collection still applies cash).
 Missing receipts give exit status 2 and hold M4c's deployment. Unapplied cash is
 expected after catch-up; it remains available without inferring collection, and
 no later receipt hook collects a receipt the catch-up posted.

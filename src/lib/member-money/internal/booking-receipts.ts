@@ -38,6 +38,18 @@ export interface BookingReceiptDecision {
  */
 type ReceiptPostedAs = "collect" | "deferred" | "uncollected" | "catch-up";
 
+/**
+ * The one rule for which settlement line is a booking receipt (`INV-SSOT`): an original, positive capture line
+ * anchored on one of the payment's rows, other than an organiser share. The hook posts these and the receipt census
+ * counts these, so the two never disagree on the population.
+ */
+export function bookingReceiptRow<R extends { id: string; reason: string | null }>(
+  line: { anchorId: string | null; reversesLineId: string | null; amountCents: number }, rows: readonly R[]): R | undefined {
+  if (line.reversesLineId !== null || line.amountCents <= 0) return undefined;
+  const row = rows.find((r) => r.id === line.anchorId);
+  return row && row.reason !== ORGANISER_SHARE_RECEIPT_REASON ? row : undefined;
+}
+
 /** Stable identities shared with the census; never amount, timing or array position. */
 export function bookingReceiptEventKey(row: { id: string; stripePaymentIntentId: string | null }, line: { id: string; kind: string }) {
   if (line.kind === "CARD_CAPTURE") {
@@ -258,8 +270,8 @@ export async function postBookingReceipts(tx: Db, context: BookingJournalContext
   const lines = await tx.bookingLedgerLine.findMany({ where: { bookingId: owner.bookingId, side: "SETTLEMENT", kind: { in: [...CAPTURE_KINDS] } },
     orderBy: [{ postedAt: "asc" }, { id: "asc" }] });
   const receipts = lines.flatMap((line) => {
-    const row = line.reversesLineId === null ? payment.transactions.find((t) => t.id === line.anchorId) : undefined;
-    if (!row || row.reason === ORGANISER_SHARE_RECEIPT_REASON || line.amountCents <= 0) return [];
+    const row = bookingReceiptRow(line, payment.transactions);
+    if (!row) return [];
     const selected = decision !== undefined && (decision.paymentIntentId !== undefined && decision.paymentIntentId === row.stripePaymentIntentId
       || decision.transactionIds?.includes(row.id) === true);
     return [{ line, row, kind: line.kind as CaptureKind, selected, reversal: lines.find((l) => l.reversesLineId === line.id) ?? null }];

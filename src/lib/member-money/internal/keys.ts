@@ -90,7 +90,8 @@ function nestedPart(value: string): string {
 
 export type RefundObligationScope = "cancellation" | "modification" | "refund-request" | "review" | "capture-return" | "hand-back";
 
-/** What joins an obligation's key to its successor's: only the successor builder and its readers below use it. */
+/** What joins an obligation's key to its successor's: the successor builder and its readers below, and the deferred
+ * check `member_money_batch_errors` (`split_part(..., '|for|', 1)`), which a format test pins. */
 const SUCCESSOR = "|for|";
 
 /** M4 identities. Composite arguments must themselves come from these builders. */
