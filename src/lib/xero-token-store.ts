@@ -450,17 +450,17 @@ class XeroConnectionLeaseHeld extends Error {}
 const leaseIsFreeAt = (now: Date) => ({ OR: [{ refreshInProgressUntil: null }, { refreshInProgressUntil: { lte: now } }] });
 
 /**
- * The data-key re-encrypt's fence (#4456): rule 2's row locks, each lease-free-guarded, holding no lease. False while
- * a refresh holds either (its save must win); no connection row, no lease. Why: CONCURRENCY_AND_LOCKING.md.
+ * The data-key re-encrypt's fence (#4456): rule 2's row locks, each guarded on NO lease at all, never taking one over
+ * (an expired one may be a stalled refresh). False while either is set; no connection row, no lease. CONCURRENCY_AND_LOCKING.md.
  */
-export async function fenceXeroTokenSetRewrite(tx: XeroTokenDb, now = new Date()): Promise<boolean> {
+export async function fenceXeroTokenSetRewrite(tx: XeroTokenDb): Promise<boolean> {
   const unheld = { refreshInProgressUntil: null };
   const tokenRow = await tx.xeroToken.findFirst({ select: { id: true }, orderBy: XERO_TOKEN_ROW_ORDER });
   if (tokenRow) {
-    const previousRelease = await tx.xeroToken.updateMany({ where: { id: tokenRow.id, ...leaseIsFreeAt(now) }, data: unheld });
+    const previousRelease = await tx.xeroToken.updateMany({ where: { id: tokenRow.id, ...unheld }, data: unheld });
     if (previousRelease.count !== 1) return false;
   }
-  const ours = await tx.xeroConnection.updateMany({ where: { id: XERO_CONNECTION_ID, ...leaseIsFreeAt(now) }, data: unheld });
+  const ours = await tx.xeroConnection.updateMany({ where: { id: XERO_CONNECTION_ID, ...unheld }, data: unheld });
   return ours.count === 1 || !(await tx.xeroConnection.findUnique({ where: { id: XERO_CONNECTION_ID }, select: { id: true } }));
 }
 

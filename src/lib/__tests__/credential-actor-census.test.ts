@@ -286,7 +286,7 @@ const TOKEN_MIRROR_WRITES: Record<string, string> = {
   "src/lib/xero-token-store.ts::deleteXeroTokensInTransaction.previousRelease#0":
     "the delete's half for the previous release, audited in the same transaction whichever copies existed",
   "src/lib/xero-token-store.ts::fenceXeroTokenSetRewrite.previousRelease#0":
-    "the data-key re-encrypt's fence (#4456 PR 2): the lease claim's own guarded statement, clearing only an unheld `refreshInProgressUntil`, so a refresh in flight makes the re-encrypt lose; not a credential write, and the re-encrypt's store write beside it is audited",
+    "the data-key re-encrypt's fence (#4456 PR 2): guarded on `refreshInProgressUntil` being NULL and writing NULL back, so it only locks the row and never takes over a lease, held or expired; a refresh in flight makes the re-encrypt lose; not a credential write, and the re-encrypt's store write beside it is audited",
 };
 
 /**

@@ -473,6 +473,22 @@ let observerClient: PrismaClient;
       expect((await xeroStore.loadXeroTokens())?.refreshToken).toBe("race-4456-refresh-refreshed");
     });
 
+    it("never takes over an EXPIRED lease: a stalled refresh still in flight saves its rotated pair (#4456 review C1)", async () => {
+      await connectLegacy();
+      // A refresh claimed ten minutes ago and is still at Xero: its two-minute lease has run out.
+      const claim = await xeroStore.claimXeroTokenRefreshLease({ now: new Date(Date.now() - 10 * 60_000) });
+      if (!claim.claimed) throw new Error("expected the lease");
+      expect(claim.leaseUntil.getTime()).toBeLessThan(Date.now());
+
+      const lost = await moveTokenSet();
+      expect(lost.credentials).toMatchObject({ moved: 0, lostClaims: 1, remaining: 1 });
+      expect(await tokenSetSource()).toBe("AUTH_SECRET");
+
+      await xeroStore.saveXeroTokens(tokens("refreshed"), { actor: REFRESH_JOB, lease: claim.lease });
+      expect((await xeroStore.loadXeroTokens())?.refreshToken).toBe("race-4456-refresh-refreshed");
+      expect(await tokenSetSource()).toBe("DATA_ENCRYPTION_KEY:k1");
+    });
+
     it("a re-encrypt that commits first makes the next claim read the moved row, and its save wins", async () => {
       await connectLegacy();
       expect((await moveTokenSet()).credentials).toMatchObject({ moved: 1 });

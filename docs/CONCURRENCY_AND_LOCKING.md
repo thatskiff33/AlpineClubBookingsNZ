@@ -435,7 +435,7 @@ already use:
 | Row | Its other writers | How the re-encrypt claims it |
 | --- | --- | --- |
 | `IntegrationCredential` | admin saves and deletes, verify-resets, the Xero connect, refresh and disconnect | `withCredentialTransaction`, the row read on that transaction, then `expect: version`: the `(ciphertext, iv, authTag)` compare-and-set. A writer that commits first makes it lose (`StaleCredentialWriteError`) |
-| the Xero token set (`xero-oauth`/`token-set`) | as above, plus the refresh lease | first `fenceXeroTokenSetRewrite`: the lease rows in the order above, `XeroToken` then `XeroConnection`, each with the claim's own lease-free guard. A held lease makes it lose; holding both row locks, it makes a new claim queue and then read the moved row |
+| the Xero token set (`xero-oauth`/`token-set`) | as above, plus the refresh lease | first `fenceXeroTokenSetRewrite`: the lease rows in the order above, `XeroToken` then `XeroConnection`, each guarded on `refreshInProgressUntil` being NULL. Any lease, held or expired, makes it lose; holding both row locks, it makes a new claim queue and then read the moved row |
 | `Member.totpSecret` | enrolment, the erasure and retention clears | `updateMany` guarded on the exact value read |
 | `TwoFactorRecoveryCode` (retiring a legacy code) | sign-in's use of a code, replacement, enrolment, erasure | `updateMany` guarded on the hash read and `usedAt: null` |
 
@@ -444,9 +444,14 @@ next pass (three passes, two seconds apart). **Why the Xero fence is needed:** a
 refresh reads the version its save compares on, spends the refresh token at
 Xero, then saves. A re-encrypt committing in between would make that save
 lose with the new token already issued and the old one spent, so the
-re-encrypt must not move the row while the lease is held. An EXPIRED lease is
-taken over, exactly as a new claim takes it over.
-`data-encryption-key-ring.realdb.test.ts` proves it: with the lease held the
+re-encrypt must not move the row while the lease is held. **Nor while it has
+expired** (#4456 review): unlike a claim, which takes an expired lease over by
+its own clock, the fence never does, because a refresh stalled past its lease,
+or judged by a skewed clock, may still be about to save, and its save matches
+only its own lease value. An expired lease is cleared by that refresh's save or
+release, or by the next claim; until then the row stays where it is and the
+report says to run again. `data-encryption-key-ring.realdb.test.ts` proves it:
+with the lease held, and with it expired but its refresh still in flight, the
 re-encrypt loses and the refresh saves; queued behind a held `XeroToken` row
 lock in each order, the refresh's save wins and no refresh token is lost.
 

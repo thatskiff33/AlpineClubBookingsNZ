@@ -80,8 +80,6 @@ export interface ReencryptOptions {
   maxPasses?: number;
   /** test seam: how to wait between passes. */
   pause?: (ms: number) => Promise<void>;
-  /** test seam: the lease clock for the Xero fence. */
-  now?: () => Date;
   /** test seam: only these rows. The command never passes it. */
   scope?: { providers?: readonly string[]; memberIds?: readonly string[] };
 }
@@ -191,7 +189,7 @@ async function moveCredential(row: CredentialRow, target: DataKey, options: Reen
     await withCredentialTransaction([row.provider], async (tx) => {
       if (
         row.provider === XERO_OAUTH_TOKEN_PROVIDER &&
-        !(await fenceXeroTokenSetRewrite(tx, options.now?.() ?? new Date()))
+        !(await fenceXeroTokenSetRewrite(tx))
       ) {
         throw new RowNotMoved("lost-claim");
       }
