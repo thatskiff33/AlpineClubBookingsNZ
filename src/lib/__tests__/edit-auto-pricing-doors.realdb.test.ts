@@ -137,6 +137,7 @@ async function clean(): Promise<void> {
   await prisma.hostingCoverageReevaluation.deleteMany({ where: { memberId: OWNER_ID } });
   await prisma.hostingCoverageIncident.deleteMany({ where: { bookingId: BOOKING_ID } });
   await prisma.bedAllocation.deleteMany({ where: { bookingId: BOOKING_ID } });
+  await prisma.paymentTransaction.deleteMany({ where: { payment: { bookingId: BOOKING_ID } } });
   await prisma.payment.deleteMany({ where: { bookingId: BOOKING_ID } });
   await prisma.bookingGuestNightAdjustment.deleteMany({ where: { bookingId: BOOKING_ID } });
   await prisma.promoRedemptionGuestTarget.deleteMany({ where: { bookingId: BOOKING_ID } });

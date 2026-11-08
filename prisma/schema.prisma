@@ -3310,7 +3310,7 @@ model PaymentTransaction {
   insertionSeq          Int                    @default(autoincrement())
   updatedAt             DateTime               @updatedAt
 
-  payment            Payment                    @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+  payment            Payment                    @relation(fields: [paymentId], references: [id], onDelete: Restrict)
   refunds            PaymentRefund[]
   recoveryOperations PaymentRecoveryOperation[]
 
@@ -3341,7 +3341,7 @@ model PaymentRefund {
   updatedAt              DateTime  @updatedAt
 
   payment            Payment             @relation(fields: [paymentId], references: [id], onDelete: Restrict)
-  paymentTransaction PaymentTransaction? @relation(fields: [paymentTransactionId], references: [id], onDelete: SetNull)
+  paymentTransaction PaymentTransaction? @relation(fields: [paymentTransactionId], references: [id], onDelete: Restrict)
 
   @@index([paymentId, createdAt])
   @@index([paymentTransactionId])
@@ -3430,7 +3430,7 @@ model PaymentRecoveryOperation {
 
   booking            Booking             @relation(fields: [bookingId], references: [id], onDelete: Restrict)
   payment            Payment             @relation(fields: [paymentId], references: [id], onDelete: Restrict)
-  paymentTransaction PaymentTransaction? @relation(fields: [paymentTransactionId], references: [id], onDelete: SetNull)
+  paymentTransaction PaymentTransaction? @relation(fields: [paymentTransactionId], references: [id], onDelete: Restrict)
 
   @@index([bookingId])
   @@index([paymentId])

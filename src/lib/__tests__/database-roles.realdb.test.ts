@@ -628,6 +628,8 @@ async function privilegeSnapshot(database: string, { includeDatabaseAcl = true }
       // A transaction alone must hold its payment: a refund or recovery row's
       // existing paymentId RESTRICT key would otherwise mask that cascade.
       it("cannot delete a Payment carrying only transaction history (#4574, D1)", async () => {
+        const bookingId = "tac4574-transaction-only";
+        await createHistoryBooking(bookingId, "2026-09-10", "2026-09-11");
         const payment = await appPrisma.payment.create({ data: { bookingId, amountCents: 100 } });
         const transaction = await appPrisma.paymentTransaction.create({
           data: { paymentId: payment.id, kind: "PRIMARY", amountCents: 100 },
@@ -645,6 +647,8 @@ async function privilegeSnapshot(database: string, { includeDatabaseAcl = true }
       });
 
       it.each(["refund", "recovery"] as const)("cannot blank a %s link by deleting its transaction or Payment (#4574, D1)", async (kind) => {
+        const bookingId = `tac4574-${kind}`;
+        await createHistoryBooking(bookingId, "2026-09-12", "2026-09-13");
         const payment = await appPrisma.payment.create({ data: { bookingId, amountCents: 100 } });
         const transaction = await appPrisma.paymentTransaction.create({
           data: { paymentId: payment.id, kind: "PRIMARY", amountCents: 100 },

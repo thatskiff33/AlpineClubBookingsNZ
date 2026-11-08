@@ -190,6 +190,7 @@ let harnessRole: SuiteEnvironmentRoleDeclaration | undefined;
       await prisma.paymentRecoveryOperation.deleteMany({ where: { bookingId: BOOKING_ID } });
       await prisma.manualRefundTask.deleteMany({ where: { bookingId: BOOKING_ID } });
       await prisma.bookingModification.deleteMany({ where: { bookingId: BOOKING_ID } });
+      await prisma.paymentTransaction.deleteMany({ where: { payment: { bookingId: BOOKING_ID } } });
       await prisma.payment.deleteMany({ where: { bookingId: BOOKING_ID } });
       await prisma.bookingGuestNight.deleteMany({ where: { bookingGuest: { bookingId: BOOKING_ID } } });
       await prisma.bookingGuest.deleteMany({ where: { bookingId: BOOKING_ID } });
