@@ -98,6 +98,7 @@ const DOORS: Record<string, string> = {
  * context type.
  */
 const CONTEXT_RESOLVERS: readonly string[] = [
+  "src/app/api/bookings/[id]/confirm-modification-payment/route.ts",
   "src/app/api/bookings/[id]/guests/route.ts",
   "src/app/api/bookings/[id]/guests/[guestId]/route.ts",
   "src/lib/booking-batch-modification-service.ts",

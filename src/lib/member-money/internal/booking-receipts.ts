@@ -7,7 +7,7 @@ import { memberMoneyApplicationTotals, sameApplicationDebtor } from "./applicati
 import { readBookingLiveComponents } from "./booking-journal-read";
 import { memberMoneyApplicationKeys, memberMoneyEventKeys } from "./keys";
 import { isBookingJournalInactive, type BookingJournalContext } from "./journal-activity";
-import { MemberMoneyPlanError, type MemberMoneyDebtor, type MemberMoneyPostingContext } from "./plan";
+import { MemberMoneyPlanError, type MemberMoneyDebtor, type MemberMoneyPostingContext, type MemberMoneySource } from "./plan";
 import { postMemberMoneyEvent, reverseMemberMoneyJournal } from "./post";
 import { linkLegacyLinesToPostedBatch } from "./store";
 
@@ -106,15 +106,33 @@ export async function postChargeSuccessors(tx: Db, context: MemberMoneyPostingCo
   }
 }
 
-/** Move an old debtor's committed residue on the next posting, with an explicit immutable D4 transfer. */
+const MERGE_SNAPSHOT_VERSION = "member-money-merge-snapshot-1";
+
+/** The same immutable line snapshot determines both the balances and the source events a merge included. */
+export function memberMergeSnapshotSources(eventKey: ReturnType<typeof memberMoneyEventKeys.merge>, eventIds: readonly string[]): MemberMoneySource[] {
+  return [{ kind: "PROVIDER_FACT", id: eventKey, version: MERGE_SNAPSHOT_VERSION },
+    ...[...new Set(eventIds)].sort().map((id): MemberMoneySource => ({ kind: "PROVIDER_FACT", id, version: eventKey }))];
+}
+
+/** Transfer only an exact event omitted from the merge's snapshot, never a balance attributed by timing or amount. */
 async function moveReceiptResidue(tx: Db, context: MemberMoneyPostingContext, booking: { bookingId: string; lodgeId: string }, eventKey: ReturnType<typeof memberMoneyEventKeys.capture>) {
   const debtor = await receiptBookingDebtor(tx, booking.bookingId);
   if (debtor.kind !== "MEMBER") return;
-  const rows = await tx.memberMoneyLine.groupBy({ by: ["memberId", "side"], where: { ...booking, account: "MEMBER_RECEIVABLE", debtorKind: "MEMBER", memberId: { not: debtor.memberId } }, _sum: { amountCents: true } });
+  const event = await tx.memberMoneyEvent.findUniqueOrThrow({ where: { eventKey }, select: { id: true, journal: { select: { lines: {
+    where: { account: "MEMBER_RECEIVABLE", debtorKind: "MEMBER", bookingId: booking.bookingId, memberId: { not: debtor.memberId } },
+    select: { memberId: true, side: true, amountCents: true },
+  } } } } });
   const balances = new Map<string, number>();
-  for (const row of rows) if (row.memberId) balances.set(row.memberId, (balances.get(row.memberId) ?? 0) + (row.side === "DEBIT" ? 1 : -1) * (row._sum.amountCents ?? 0));
+  for (const line of event.journal!.lines) if (line.memberId) balances.set(line.memberId,
+    (balances.get(line.memberId) ?? 0) + (line.side === "DEBIT" ? 1 : -1) * line.amountCents);
   for (const [from, cents] of balances) {
     if (cents === 0) continue;
+    // A member merges away once. This also finds the first merge when the survivor later merges again.
+    const merge = await tx.memberMoneyEvent.findFirst({ where: { sourceKind: "OFFICER_FACT", sourceIdentity: from, sourceVersion: { startsWith: "merge:" } },
+      select: { eventKey: true, journal: { select: { sources: { select: { sourceKind: true, sourceId: true, sourceVersion: true } } } } } });
+    const sources = merge?.journal?.sources ?? [];
+    if (!sources.some((s) => s.sourceId === merge!.eventKey && s.sourceVersion === MERGE_SNAPSHOT_VERSION)) continue;
+    if (sources.some((s) => s.sourceId === event.id && s.sourceVersion === merge!.eventKey)) continue;
     const key = memberMoneyEventKeys.mergeResidue(from, debtor.memberId, eventKey);
     if (await tx.memberMoneyEvent.findUnique({ where: { eventKey: key }, select: { id: true } })) continue;
     const leg = { type: "amount" as const, account: "MEMBER_RECEIVABLE" as const, amountCents: Math.abs(cents), booking, evidence: { strayEventKey: eventKey } };
@@ -177,6 +195,7 @@ export async function postBookingReceipts(tx: Db, context: BookingJournalContext
         await linkLegacyLinesToPostedBatch(tx, { journalId: reversal.journalId, receivableLegId: debit.id, lines: [{ id: reversedLine.id, version: reversedLine.postingKey ?? reversedLine.id }] });
         posted++;
       }
+      await moveReceiptResidue(tx, receiptFactContext(context, reversedLine.postedAt), booking, memberMoneyEventKeys.reversal(receipt.journal!.id));
       continue;
     }
     if (!selected || !input.decision?.collect || receipt.journal!.reversedBy) continue;

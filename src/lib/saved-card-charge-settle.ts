@@ -1,5 +1,5 @@
 import { isCapturedTransactionStatus } from "@/lib/payment-transaction-status";
-import { postBookingReceipts, resolveBookingMoneyPostingContext, type BookingJournalContext } from "@/lib/member-money/doors";
+import { postBookingReceipts, type BookingJournalContext } from "@/lib/member-money/doors";
 import { providerCaptureTime } from "@/lib/stripe-capture-date";
 /**
  * #3267 (epic #3270) — recording Stripe's answer on a saved-card charge attempt
@@ -207,7 +207,7 @@ export async function settleSavedCardChargeAttempt(params: {
   paymentId: string;
   paymentIntent: SavedCardChargeAnswer;
   store?: PaymentStore;
-  journal?: BookingJournalContext;
+  journal: BookingJournalContext;
   /**
    * #4646: the webhook's adoption of a row it found holding no intent. The
    * row's own write then also requires it STILL to hold none, under the
@@ -220,8 +220,7 @@ export async function settleSavedCardChargeAttempt(params: {
 }): Promise<SettledSavedCardChargeAttempt> {
   const { attemptRowId, paymentId, paymentIntent } = params;
   const store = params.store ?? prisma;
-  if (!params.journal && !isRootPrismaClient(store)) throw new Error("A saved-card transaction must receive its pre-resolved journal context.");
-  const journal = params.journal ?? await resolveBookingMoneyPostingContext();
+  const journal = params.journal;
   const ledgerStatus = ledgerStatusForPaymentIntent(paymentIntent.status);
   const paymentMethodId = stripeReferenceId(paymentIntent.payment_method);
   const answer = { ledgerStatus, amountCents: paymentIntent.amount, paymentMethodId, adopting: params.adopting === true };
@@ -420,6 +419,7 @@ async function keepExistingRow(
  * (`INV-INT-033`).
  */
 export async function adoptSavedCardChargeAttemptForIntent(params: {
+  journal: BookingJournalContext;
   paymentIntent: SavedCardChargeAnswer;
   bookingId: string;
   idempotencyKey: string | null | undefined;
@@ -463,6 +463,7 @@ export async function adoptSavedCardChargeAttemptForIntent(params: {
     "Adopted a saved-card charge attempt row for a webhook whose intent the ledger did not know (#3267, #4646)"
   );
   return settleSavedCardChargeAttempt({
+    journal: params.journal,
     attemptRowId: row.id,
     paymentId: row.paymentId,
     paymentIntent,

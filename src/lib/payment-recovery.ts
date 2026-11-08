@@ -1821,22 +1821,22 @@ async function markSupersededTransactionSucceeded({
   }
 
   await withStoreTransaction(store, async (db) => {
-  await lockPaymentForRefundedTotal(db, operation.paymentId);
-  await db.paymentTransaction.update({
-    where: { id: operation.paymentTransactionId! },
-    data: {
-      amountCents,
-      status: PaymentStatus.SUCCEEDED,
-      ...(paymentMethodId !== undefined
-        ? { paymentMethodId: paymentMethodId ?? null }
-        : {}),
-      reason: "zero_dollar_batch_modification_late_capture",
-    },
-  });
+    await lockPaymentForRefundedTotal(db, operation.paymentId);
+    await db.paymentTransaction.update({
+      where: { id: operation.paymentTransactionId! },
+      data: {
+        amountCents,
+        status: PaymentStatus.SUCCEEDED,
+        ...(paymentMethodId !== undefined
+          ? { paymentMethodId: paymentMethodId ?? null }
+          : {}),
+        reason: "zero_dollar_batch_modification_late_capture",
+      },
+    });
 
-  await reconcilePaymentAggregates({ paymentId: operation.paymentId, store: db });
-  await postBookingReceipts(db, journal, { paymentId: operation.paymentId,
-    decision: { paymentIntentId: operation.paymentIntentId ?? undefined, collect: false, effectiveAt: capturedAt } });
+    await reconcilePaymentAggregates({ paymentId: operation.paymentId, store: db });
+    await postBookingReceipts(db, journal, { paymentId: operation.paymentId,
+      decision: { paymentIntentId: operation.paymentIntentId ?? undefined, collect: false, effectiveAt: capturedAt } });
   });
 }
 

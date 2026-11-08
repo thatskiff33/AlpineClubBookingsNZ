@@ -11,7 +11,7 @@ import {
   type BookingChargeEvent,
   type LegacyChargeLine,
 } from "./booking-charges";
-import { postChargeSuccessors } from "./booking-receipts";
+import { memberMergeSnapshotSources, postChargeSuccessors } from "./booking-receipts";
 import { readBookingLiveComponents } from "./booking-journal-read";
 import {
   planPendingBookingCharge,
@@ -286,21 +286,24 @@ export async function postMemberMergeTransfer(
   // transfer could never be recovered); reaching here inactive is a caller bug.
   if (isBookingJournalInactive(context)) throw new Error("A member merge cannot post its D4 transfer while the journal is inactive (#4627).");
   if (await eventPosted(tx, memberMoneyEventKeys.merge(input.fromMemberId, input.toMemberId))) return null;
-  const sums = await tx.memberMoneyLine.groupBy({
-    by: ["bookingId", "lodgeId", "side"],
+  const economicRows = await tx.memberMoneyLine.findMany({
     where: { account: "MEMBER_RECEIVABLE", debtorKind: "MEMBER", memberId: input.fromMemberId },
-    orderBy: [{ bookingId: "asc" }, { lodgeId: "asc" }, { side: "asc" }],
-    _sum: { amountCents: true },
+    select: { bookingId: true, lodgeId: true, side: true, amountCents: true, journal: { select: { eventId: true } } },
   });
   const balances = new Map<string, { bookingId: string | null; lodgeId: string | null; cents: number }>();
-  for (const row of sums) {
+  for (const row of economicRows) {
     const key = `${row.bookingId ?? ""}\u0000${row.lodgeId ?? ""}`;
     const entry = balances.get(key) ?? { bookingId: row.bookingId, lodgeId: row.lodgeId, cents: 0 };
-    entry.cents += (row.side === "DEBIT" ? 1 : -1) * (row._sum.amountCents ?? 0);
+    entry.cents += (row.side === "DEBIT" ? 1 : -1) * row.amountCents;
     balances.set(key, entry);
   }
   const plan = planMemberMergeTransfer({ ...input, balances: [...balances.values()] });
-  const result = plan ? await postMemberMoneyEvent(tx, context, plan) : null;
+  const eventKey = memberMoneyEventKeys.merge(input.fromMemberId, input.toMemberId);
+  const result = await postMemberMoneyEvent(tx, context, {
+    ...(plan ?? { kind: "ZERO", eventKey, origin: "OFFICER", actorMemberId: input.actorMemberId,
+      source: { kind: "OFFICER_FACT", id: input.fromMemberId, version: `merge:${input.toMemberId}` }, reason: "Member merge: no open receivable" }),
+    additionalSources: memberMergeSnapshotSources(eventKey, economicRows.map((row) => row.journal.eventId)),
+  });
   const rows = await tx.memberMoneyLine.findMany({ where: { memberId: input.fromMemberId, bookingId: { not: null } }, select: { bookingId: true, lodgeId: true } });
   const bookings = new Map(rows.filter((r) => r.bookingId && r.lodgeId).map((r) => [r.bookingId!, r.lodgeId!]));
   for (const [bookingId, lodgeId] of bookings) await postChargeSuccessors(tx, context, {

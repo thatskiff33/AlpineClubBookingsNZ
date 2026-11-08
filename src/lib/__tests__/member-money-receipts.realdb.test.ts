@@ -131,6 +131,33 @@ const census = (id: string) => db.$transaction((tx) => readBookingReceiptCensus(
     expect((await census(id)).filter((f) => f.kind === "MERGED_DEBTOR_BALANCE")).toEqual([]);
   });
 
+  it("moves only a receipt that landed on the merged-away member after the snapshot", async () => {
+    const id = await booking();
+    const early = await cash(id, 4_000);
+    await post(id, { paymentIntentId: early.stripePaymentIntentId!, collect: false });
+    await db.$transaction(async (tx) => {
+      await tx.booking.update({ where: { id }, data: { memberId: names.officerId } });
+      await postMemberMergeTransfer(tx, context, { fromMemberId: names.memberId, toMemberId: names.officerId, actorMemberId: names.officerId });
+    });
+    const strayIntent = `${id}-stray`;
+    await db.paymentTransaction.create({ data: { paymentId: `${id}-payment`, source: "STRIPE", kind: "ADDITIONAL", status: "SUCCEEDED", amountCents: 2_000, stripePaymentIntentId: strayIntent } });
+    await db.$transaction(async (tx) => {
+      await syncBookingLedgerSettlements({ paymentId: `${id}-payment`, store: tx });
+      const line = await tx.bookingLedgerLine.findFirstOrThrow({ where: { bookingId: id, anchorId: { not: early.id }, side: "SETTLEMENT", kind: "CARD_CAPTURE" } });
+      await postMemberMoneyEvent(tx, context, { kind: "RECEIPT", eventKey: memberMoneyEventKeys.capture(strayIntent), origin: "STRIPE",
+        source: { kind: "PAYMENT", id: line.anchorId!, version: line.id }, reason: "Receipt read the owner before the merge committed",
+        legs: [
+          { type: "amount", account: "STRIPE_CLEARING", side: "DEBIT", amountCents: 2_000, booking: { bookingId: id, lodgeId: names.lodgeId }, evidence: {} },
+          { type: "amount", account: "MEMBER_RECEIVABLE", side: "CREDIT", amountCents: 2_000, debtor: { kind: "MEMBER", memberId: names.memberId }, booking: { bookingId: id, lodgeId: names.lodgeId }, evidence: {} },
+        ] });
+    });
+    expect((await census(id)).some((f) => f.kind === "MERGED_DEBTOR_BALANCE" && f.identity === names.memberId)).toBe(true);
+    await post(id);
+    expect((await census(id)).filter((f) => f.kind === "MERGED_DEBTOR_BALANCE")).toEqual([]);
+    expect(await db.memberMoneyEvent.findUnique({ where: { eventKey: memberMoneyEventKeys.mergeResidue(names.memberId, names.officerId, memberMoneyEventKeys.capture(strayIntent)) } })).not.toBeNull();
+    expect(await db.memberMoneyEvent.count({ where: { eventKey: { startsWith: `merge-residue:${names.officerId}` } } })).toBe(0);
+  });
+
   it("reports drift without rewriting cash", async () => {
     const id = await booking(); const row = await cash(id, 8_000);
     await post(id);

@@ -1,3 +1,4 @@
+import { memberMoneyTestContext } from "./support/member-money-fixtures";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { BelowStripeMinimumError, UnsupportedChargeCurrencyError } from "@/lib/stripe-charge-currency";
 import {
@@ -324,7 +325,7 @@ function settle(
   paymentIntent: Parameters<typeof settleSavedCardChargeAttempt>[0]["paymentIntent"],
   store?: Prisma.TransactionClient
 ) {
-  return settleSavedCardChargeAttempt({ attemptRowId, paymentId: PAYMENT, paymentIntent, ...(store ? { store } : {}) });
+  return settleSavedCardChargeAttempt({ journal: memberMoneyTestContext(), attemptRowId, paymentId: PAYMENT, paymentIntent, ...(store ? { store } : {}) });
 }
 
 /**
@@ -1524,7 +1525,7 @@ describe("adoptSavedCardChargeAttemptForIntent (a webhook for an intent the ledg
     return { attemptRowId: seeded.id, idempotencyKey: seeded.reference! };
   };
   const adopt = (params: { idempotencyKey?: string | null; metadata?: Record<string, string> | null; paymentIntent?: typeof capture; bookingId?: string }) =>
-    adoptSavedCardChargeAttemptForIntent({
+    adoptSavedCardChargeAttemptForIntent({ journal: memberMoneyTestContext(),
       paymentIntent: params.paymentIntent ?? capture,
       bookingId: params.bookingId ?? BOOKING,
       idempotencyKey: params.idempotencyKey,

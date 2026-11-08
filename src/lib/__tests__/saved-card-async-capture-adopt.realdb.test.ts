@@ -349,11 +349,13 @@ async function expectSettledOnce(paymentIntentId: string, attemptRowId: string):
     it("the two adoptions themselves, run at once: exactly one writes the capture as new money, the other writes nothing", async () => {
       const { sent, attemptRowId } = await chargeV2AttemptWithLostAnswer();
       const { adoptSavedCardChargeAttemptForIntent } = await import("@/lib/saved-card-charge-settle");
-      const paymentIntent = { id: `${INTENT_PREFIX}adopt_race`, status: "succeeded" as const, amount: sent.amountCents, payment_method: CARD };
+      const { memberMoneyTestContext } = await import("./support/member-money-fixtures");
+      const paymentIntent = { id: `${INTENT_PREFIX}adopt_race`, status: "succeeded" as const, amount: sent.amountCents, payment_method: CARD, created: 1_782_864_000 };
+      const journal = memberMoneyTestContext();
 
       const outcomes = await Promise.all([
-        adoptSavedCardChargeAttemptForIntent({ paymentIntent, bookingId: BOOKING_ID, idempotencyKey: sent.idempotencyKey, metadata: sent.metadata }),
-        adoptSavedCardChargeAttemptForIntent({ paymentIntent, bookingId: BOOKING_ID, idempotencyKey: null, metadata: sent.metadata }),
+        adoptSavedCardChargeAttemptForIntent({ journal, paymentIntent, bookingId: BOOKING_ID, idempotencyKey: sent.idempotencyKey, metadata: sent.metadata }),
+        adoptSavedCardChargeAttemptForIntent({ journal, paymentIntent, bookingId: BOOKING_ID, idempotencyKey: null, metadata: sent.metadata }),
       ]);
 
       // The loser either found the row already holding the intent (null), or

@@ -423,6 +423,7 @@ async function adoptUnknownIntentsAttemptRow(
   onAdopted?: (newlyCaptured: boolean) => void, // #4285 review: the adoption wrote the capture just now
 ) {
   const adopted = await adoptSavedCardChargeAttemptForIntent({
+    journal: await resolveBookingMoneyPostingContext(),
     paymentIntent,
     bookingId,
     idempotencyKey: event.request?.idempotency_key,
@@ -974,6 +975,7 @@ async function handleAdditionalModificationPaymentSucceeded(
   }
 
   await markPaymentIntentTransactionSucceeded({
+    journal: await resolveBookingMoneyPostingContext(),
     receiptDecision: { collect: true, effectiveAt: providerCaptureTime(paymentIntent) },
     paymentIntentId: paymentIntent.id,
     amountCents: paymentIntent.amount,
@@ -1519,7 +1521,8 @@ async function handleCancelledBookingAdditionalPaymentSucceeded(
   // already captured/refunded so a completed refund is not flipped back.
   if (!isCapturedTransactionStatus(paymentTransaction.status)) {
     await markPaymentIntentTransactionSucceeded({
-    receiptDecision: { collect: false, effectiveAt: providerCaptureTime(paymentIntent) },
+      journal: await resolveBookingMoneyPostingContext(),
+      receiptDecision: { collect: false, effectiveAt: providerCaptureTime(paymentIntent) },
       paymentIntentId: paymentIntent.id,
       amountCents: paymentIntent.amount,
       paymentMethodId: getStripePaymentMethodId(paymentIntent),
@@ -1711,16 +1714,16 @@ async function handleCancelledBookingPaymentSucceeded(
   await prisma.$transaction(async (tx) => {
     await lockPaymentForRefundedTotal(tx, booking.payment!.id);
     await upsertPaymentIntentTransaction({
-    store: tx,
-    paymentId: booking.payment!.id,
-    kind: PaymentTransactionKind.PRIMARY,
-    paymentIntentId: paymentIntent.id,
-    amountCents: paymentIntent.amount,
-    status: PaymentStatus.SUCCEEDED,
-    paymentMethodId,
-    // #3639: marks this handler's own write, so a crash-and-retry still refunds.
-    reason: CANCELLED_BOOKING_LATE_CAPTURE_REASON,
-  });
+      store: tx,
+      paymentId: booking.payment!.id,
+      kind: PaymentTransactionKind.PRIMARY,
+      paymentIntentId: paymentIntent.id,
+      amountCents: paymentIntent.amount,
+      status: PaymentStatus.SUCCEEDED,
+      paymentMethodId,
+      // #3639: marks this handler's own write, so a crash-and-retry still refunds.
+      reason: CANCELLED_BOOKING_LATE_CAPTURE_REASON,
+    });
     await postBookingReceipts(tx, journal, { paymentId: booking.payment!.id,
       decision: { paymentIntentId: paymentIntent.id, collect: false, effectiveAt: providerCaptureTime(paymentIntent) } });
   });

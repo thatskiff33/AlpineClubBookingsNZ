@@ -2,9 +2,10 @@ import ts from "typescript";
 
 /** Classify every transaction mutation, including dynamic data, so a computed status cannot hide a capture. */
 export function captureWriterSites(file: string, text: string): string[] {
-  if (!/paymentTransaction|upsertPaymentIntentTransaction|recordInternetBankingPaymentTransaction|transactions/.test(text)) return [];
+  const raw = [...text.matchAll(/\b(?:INSERT\s+INTO|UPDATE|MERGE\s+INTO|COPY)\s+(?:public\.)?"?PaymentTransaction\b/g)].map(() => `${file}|raw-sql|write`);
+  if (!/paymentTransaction|upsertPaymentIntentTransaction|recordInternetBankingPaymentTransaction|transactions/.test(text)) return raw;
   const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true);
-  const sites: string[] = [];
+  const sites: string[] = [...raw];
   const literalBindings = new Map<string, string>();
   const literals = (node: ts.Node) => {
     if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer && ts.isStringLiteral(node.initializer)) literalBindings.set(node.name.text, node.initializer.text);
@@ -31,22 +32,34 @@ export function captureWriterSites(file: string, text: string): string[] {
     ts.forEachChild(node, gather);
   };
   gather(source);
+  const statuses = (node: ts.Node): string => {
+    const found = new Set<string>();
+    const visit = (n: ts.Node) => {
+      if (ts.isPropertyAssignment(n) && n.name.getText(source).replace(/["']/g, "") === "status") {
+        found.add(ts.isIdentifier(n.initializer) || ts.isPropertyAccessExpression(n.initializer) || ts.isStringLiteral(n.initializer)
+          ? n.initializer.getText(source) : "computed");
+      }
+      ts.forEachChild(n, visit);
+    };
+    visit(node);
+    return [...found].sort().join(",") || "dynamic-or-no-status";
+  };
   const visit = (node: ts.Node) => {
     if (ts.isCallExpression(node) && ts.isIdentifier(node.expression)
       && ["upsertPaymentIntentTransaction", "recordInternetBankingPaymentTransaction"].includes(node.expression.text)) {
-      sites.push(`${file}|${name(node)}|${node.expression.text}`);
+      sites.push(`${file}|${name(node)}|${node.expression.text}|${statuses(node)}`);
     }
     if (ts.isCallExpression(node) && (ts.isPropertyAccessExpression(node.expression) || ts.isElementAccessExpression(node.expression))) {
       const method = property(node.expression);
       const receiver = node.expression.expression;
       if (["create", "createMany", "update", "updateMany", "upsert", "delete", "deleteMany"].includes(method ?? "")
         && (property(receiver) === "paymentTransaction" || ts.isIdentifier(receiver) && delegates.has(receiver.text))) {
-        sites.push(`${file}|${name(node)}|${method}`);
+        sites.push(`${file}|${name(node)}|${method}|${statuses(node)}`);
       }
       // Relation writes are an independent route to a capture; force an explicit classification.
       if (["create", "update", "upsert"].includes(method ?? "") && ["payment", "booking"].includes(property(receiver) ?? "")
         && node.arguments.some((a) => /\btransactions\s*:\s*\{\s*(?:create|upsert|update)/.test(a.getText(source)))) {
-        sites.push(`${file}|${name(node)}|nested-transactions`);
+        sites.push(`${file}|${name(node)}|nested-transactions|${statuses(node)}`);
       }
     }
     ts.forEachChild(node, visit);
