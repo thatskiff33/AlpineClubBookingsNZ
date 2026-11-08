@@ -9628,7 +9628,11 @@ describe("resolved in Xero is done on every repair retry arm (#3635)", () => {
     );
   });
 
-  it("a resolved PARTIAL clearing note does not hide a separate live allocation failure (#3635, Xero F8)", async () => {
+  it.each([
+    { allocationNoteId: "cn_clear", reportsAllocation: true },
+    { allocationNoteId: "cn_other", reportsAllocation: false },
+    { allocationNoteId: undefined, reportsAllocation: false },
+  ])("a resolved clearing note reports an allocation naming $allocationNoteId only when it names this note (#4774)", async ({ allocationNoteId, reportsAllocation }) => {
     const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
       dependencies: createDependencies({
         bookings: [cancelledUnpaid()],
@@ -9662,7 +9666,7 @@ describe("resolved in Xero is done on every repair retry arm (#3635)", () => {
             xeroObjectId: null,
             requestPayload: {
               queueType: "CREDIT_NOTE_ALLOCATION",
-              creditNoteId: "cn_clear",
+              creditNoteId: allocationNoteId,
               invoiceId: "inv_primary",
               amountCents: 10000,
               role: "MODIFICATION_CREDIT_NOTE_ALLOCATION",
@@ -9685,15 +9689,18 @@ describe("resolved in Xero is done on every repair retry arm (#3635)", () => {
         details: expect.objectContaining({ creditNoteId: "cn_clear", operationId: "operation_resolved_partial_note" }),
       })
     );
-    // Seen, but report-only: the officer allocated by hand, so no retry.
-    expect(bookingReport.findings).toContainEqual(
+    // Only this note's allocation is report-only beside its resolved row.
+    // Other notes' rows (or rows naming no note) belong to their own arms.
+    const allocationFindings = bookingReport.findings.filter(
+      (finding) => finding.details?.operationId === "operation_live_allocation"
+    );
+    expect(allocationFindings).toEqual(reportsAllocation ? [
       expect.objectContaining({
         code: "BLOCKED_BY_XERO_OPERATION",
         safeToAutoApply: false,
         actions: [],
-        details: expect.objectContaining({ operationId: "operation_live_allocation" }),
-      })
-    );
+      }),
+    ] : []);
     const types = bookingReport.actions.map((action) => action.type);
     expect(types).not.toContain("REQUEUE_XERO_OPERATION");
     expect(types).not.toContain("QUEUE_CREDIT_NOTE_ALLOCATION");
