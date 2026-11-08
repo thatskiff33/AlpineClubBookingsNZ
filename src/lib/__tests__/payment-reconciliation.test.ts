@@ -79,10 +79,12 @@ const cancellationLedger = vi.hoisted(() => ({
 vi.mock("@/lib/booking-ledger-cancellation-sync", () => cancellationLedger);
 // #4627: the journal half of the confirmation runs on PostgreSQL
 // (`booking-ledger-journal.realdb.test.ts`); here, that the settle hands it the lines.
-const journalDoors = vi.hoisted(() => ({ postBookingLedgerJournal: vi.fn(async () => null) }));
+const journalDoors = vi.hoisted(() => ({ postBookingLedgerJournal: vi.fn(async () => null), postBookingReceipts: vi.fn(async () => 0) }));
 vi.mock("@/lib/member-money/doors", async (importOriginal) => ({
   ...((await importOriginal()) as typeof import("@/lib/member-money/doors")),
   postBookingLedgerJournal: journalDoors.postBookingLedgerJournal,
+  // #4516 (M4b): the receipt hook runs on PostgreSQL (`member-money-receipts.realdb.test.ts`); here, its decision.
+  postBookingReceipts: journalDoors.postBookingReceipts,
 }));
 
 // #4300 (`INV-PAY-138`): the settle's superseded-capture refusal reads the

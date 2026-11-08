@@ -127,6 +127,12 @@ vi.mock("@/lib/booking-ledger-cancellation-sync", () => cancellationLedger);
 const appliedCredit = vi.hoisted(() => ({
   deriveBookingAppliedCreditCents: vi.fn<(...args: unknown[]) => Promise<number>>(async () => 0),
 }));
+// #4516 (M4b): the receipt hook runs on PostgreSQL (`member-money-receipts.realdb.test.ts`), not on this fake store.
+const receiptDoors = vi.hoisted(() => ({ postBookingReceipts: vi.fn(async () => 0) }));
+vi.mock("@/lib/member-money/doors", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/member-money/doors")),
+  postBookingReceipts: receiptDoors.postBookingReceipts,
+}));
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     booking: {
