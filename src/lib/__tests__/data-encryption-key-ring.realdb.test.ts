@@ -310,12 +310,24 @@ let observerClient: PrismaClient;
   // ---------------------------------------------------------------------------
 
   const noPause = async () => undefined;
-  const runReencrypt = (options: { retire?: boolean; maxPasses?: number; providers?: string[] } = {}) =>
+  /** What Admin → Setup shows for a ring: its current key's fingerprint. */
+  async function setupFingerprintOf(ring: string): Promise<string> {
+    const material = await import("@/lib/data-encryption-key-material");
+    const state = material.parseDataEncryptionKeys(ring, process.env.AUTH_SECRET);
+    if (state.status !== "configured") throw new Error("expected a ring");
+    return material.dataKeyFingerprint(state.current);
+  }
+  // By default the operator copies the fingerprint of the ring the command
+  // itself holds, as if the app ran the same one.
+  const runReencrypt = async (
+    options: { retire?: boolean; maxPasses?: number; providers?: string[]; expectFingerprint?: string } = {},
+  ) =>
     reencrypt.reencryptStoredData({
       dryRun: false,
       retireLegacyRecoveryCodes: options.retire ?? false,
       maxPasses: options.maxPasses,
       pause: noPause,
+      expectFingerprint: options.expectFingerprint ?? (await setupFingerprintOf(process.env.DATA_ENCRYPTION_KEYS!)),
       scope: { providers: options.providers ?? [PROVIDER], memberIds: [MEMBER_ID] },
     });
 
@@ -463,6 +475,37 @@ let observerClient: PrismaClient;
     const report = await runReencrypt();
     expect(report.keyCheckedAgainst).toBe("a stored credential");
     expect(report.credentials).toMatchObject({ moved: 1, remaining: 0 });
+  });
+
+  it("refuses a stale two-key ring whose first key is not the app's current one, moving nothing back (#4456 review round 2, F1)", async () => {
+    // The app wrote under k1, then took k2 as current ("Adding a newer key later" step 2).
+    process.env.DATA_ENCRYPTION_KEYS = RING;
+    await set("old-key-row", "old-value", { expect: "absent" });
+    const appRing = `k2:${testKey(2)},k1:${testKey(1)}`;
+    process.env.DATA_ENCRYPTION_KEYS = appRing;
+    await set("new-key-row", "new-value", { expect: "absent" });
+    const before = await prisma.integrationCredential.findMany({ where: { provider: PROVIDER }, orderBy: { key: "asc" } });
+    // The operator copies Admin → Setup's fingerprint: the app's current key, k2.
+    const fromSetup = await setupFingerprintOf(appRing);
+    // The command's stale .env still lists k1 first. The decrypt check alone
+    // would pass: k1 really does read the k1 row.
+    process.env.DATA_ENCRYPTION_KEYS = `k1:${testKey(1)},k2:${testKey(2)}`;
+
+    await expect(runReencrypt({ expectFingerprint: fromSetup })).rejects.toThrow(
+      /^Refused before reading anything: this command would write under its key "k1"/,
+    );
+
+    expect(await prisma.integrationCredential.findMany({ where: { provider: PROVIDER }, orderBy: { key: "asc" } })).toEqual(before);
+    expect((await storedSource("new-key-row"))?.secretSource).toBe("DATA_ENCRYPTION_KEY:k2");
+  });
+
+  it("refuses a run that writes without the fingerprint, changing nothing", async () => {
+    await set("legacy-row", "v", { expect: "absent" });
+    process.env.DATA_ENCRYPTION_KEYS = RING;
+    await expect(
+      reencrypt.reencryptStoredData({ dryRun: false, retireLegacyRecoveryCodes: false, pause: noPause, scope: { providers: [PROVIDER] } }),
+    ).rejects.toThrow(/needs --expect-fingerprint/);
+    expect((await storedSource("legacy-row"))?.secretSource).toBe("AUTH_SECRET");
   });
 
   it("moves everything again to a newer ring key, and a second run finds nothing to do", async () => {

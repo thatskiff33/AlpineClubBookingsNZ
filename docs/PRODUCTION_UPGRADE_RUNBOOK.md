@@ -1772,9 +1772,9 @@ Not part of the upgrade itself: nothing changes until `DATA_ENCRYPTION_KEYS` is
 set, and these are the owner's production steps. In order, each in
 [`DEPLOYMENT.md` → Adding a data-encryption key](../DEPLOYMENT.md#adding-a-data-encryption-key-4456):
 set the ring once the previous release has drained; run
-`pnpm run data-keys:reencrypt --dry-run` and check that the key fingerprint it
-prints matches Admin → Setup → "Data Encryption Key", then
-`pnpm run data-keys:reencrypt --retire-legacy-recovery-codes` until it reports
+`pnpm run data-keys:reencrypt --dry-run`, then
+`pnpm run data-keys:reencrypt --expect-fingerprint <fingerprint> --retire-legacy-recovery-codes`,
+with the fingerprint Admin → Setup → "Data Encryption Key" shows, until it reports
 `remaining on old keys: 0` for both tables; then, with Admin → Setup → "Data
 Encryption Key" green, set `DATA_ENCRYPTION_LEGACY_KEY=retired` and redeploy.
 Only then rotate `AUTH_SECRET`, if that is the goal.

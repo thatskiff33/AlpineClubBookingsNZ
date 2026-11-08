@@ -607,9 +607,12 @@ a refresh that has spent its token at Xero always saves the new one
 It prints counts and key ids only: an unexpected error is reported by its class
 and code, because a database error's message can echo the row it failed on.
 Because its ring comes from its own environment (and `.env` fills anything not
-exported), it first decrypts a row the app wrote under the target key and
-refuses if that fails; with no such row yet it prints the key's fingerprint
-for the operator to match against Admin → Setup's. The fingerprint is 64 bits
+exported), a run that writes needs `--expect-fingerprint`, copied from Admin →
+Setup's fingerprint of the app's current key, and refuses unless its own target
+key has it; this also stops a stale ring whose first key is an older one from
+moving rows back. As a second guard it decrypts a row already stored under the
+target id and refuses if that fails. Setup stays amber while anything is under
+an older ring key, so a key is removed only once nothing names it. The fingerprint is 64 bits
 of SHA-256 over a fixed domain label and the key, used for nothing else, so it
 says nothing usable about a 256-bit key and is never a sub-key or a hash the
 app stores.

@@ -3,9 +3,9 @@
  * data-encryption key (#4456). The steps around it, and when to run it, are in
  * DEPLOYMENT.md → "Moving stored data to the current key".
  *
- *   pnpm run data-keys:reencrypt --dry-run                         # count only
- *   pnpm run data-keys:reencrypt                                   # move
- *   pnpm run data-keys:reencrypt --retire-legacy-recovery-codes    # move, and retire
+ *   pnpm run data-keys:reencrypt --dry-run                     # count only
+ *   pnpm run data-keys:reencrypt --expect-fingerprint <fp>     # move
+ *   pnpm run data-keys:reencrypt --expect-fingerprint <fp> --retire-legacy-recovery-codes
  *
  * It writes to the database named by DATABASE_URL, one row per short
  * transaction, through the same compare-and-set writers the app uses, so it is
@@ -29,7 +29,8 @@ import { prisma } from "../src/lib/prisma";
 import { isMainModule } from "./lib/is-main-module.mjs";
 
 export const USAGE = `Usage:
-  pnpm run data-keys:reencrypt [--dry-run] [--retire-legacy-recovery-codes]
+  pnpm run data-keys:reencrypt --dry-run [--retire-legacy-recovery-codes]
+  pnpm run data-keys:reencrypt --expect-fingerprint <fp> [--retire-legacy-recovery-codes]
 
   Re-encrypts every stored provider credential and authenticator-app secret
   not already under the first key of DATA_ENCRYPTION_KEYS, one row at a time,
@@ -37,6 +38,10 @@ export const USAGE = `Usage:
   unset or invalid.
 
   --dry-run                       Count what would move; write nothing.
+  --expect-fingerprint <fp>       Required unless --dry-run: the fingerprint
+                                  Admin → Setup → "Data Encryption Key" shows
+                                  for the app's current key. Refuses unless
+                                  this command's key has it.
   --retire-legacy-recovery-codes  Also retire the unused recovery codes hashed
                                   under AUTH_SECRET, so they stop working on
                                   every instance, ring or not. Their members are
@@ -47,21 +52,33 @@ export const USAGE = `Usage:
   Exit 1: refused or failed.`;
 
 export type ParsedArgs =
-  | { kind: "run"; options: Pick<ReencryptOptions, "dryRun" | "retireLegacyRecoveryCodes"> }
+  | { kind: "run"; options: Pick<ReencryptOptions, "dryRun" | "retireLegacyRecoveryCodes" | "expectFingerprint"> }
   | { kind: "help" }
   | { kind: "error"; message: string };
 
 export function parseReencryptArgs(argv: readonly string[]): ParsedArgs {
   let dryRun = false;
   let retireLegacyRecoveryCodes = false;
-  for (const arg of argv) {
+  let expectFingerprint: string | undefined;
+  for (let index = 0; index < argv.length; index++) {
+    const arg = argv[index]!;
     if (arg === "--help" || arg === "-h") return { kind: "help" };
     if (arg === "--dry-run") dryRun = true;
     else if (arg === "--retire-legacy-recovery-codes") retireLegacyRecoveryCodes = true;
+    else if (arg === "--expect-fingerprint" || arg.startsWith("--expect-fingerprint=")) {
+      const value = arg.includes("=") ? arg.slice(arg.indexOf("=") + 1) : argv[++index];
+      if (!value || value.startsWith("--")) {
+        return { kind: "error", message: "--expect-fingerprint needs the fingerprint Admin → Setup shows" };
+      }
+      expectFingerprint = value;
+    }
     // pnpm forwards a lone "--" separator; it carries no option.
     else if (arg !== "--") return { kind: "error", message: `Unknown argument: ${arg}` };
   }
-  return { kind: "run", options: { dryRun, retireLegacyRecoveryCodes } };
+  return {
+    kind: "run",
+    options: { dryRun, retireLegacyRecoveryCodes, ...(expectFingerprint === undefined ? {} : { expectFingerprint }) },
+  };
 }
 
 /**

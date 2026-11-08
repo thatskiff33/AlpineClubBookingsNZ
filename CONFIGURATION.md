@@ -2395,7 +2395,9 @@ exposes both and rotating it destroys the stored data.
   [`DEPLOYMENT.md` → Adding a data-encryption key](DEPLOYMENT.md#adding-a-data-encryption-key-4456).
 - **Removing a key** strands every row still naming it ("needs re-entry" for a
   credential; an authenticator that no longer verifies; recovery codes that no
-  longer match). Keep an old key in the ring until nothing names it.
+  longer match). Keep an old key in the ring until nothing names it: the setup
+  step stays amber, naming the rows, while anything is under a ring key other
+  than the current one.
 - Production and every copy must use **different** keys, as with `AUTH_SECRET`.
 
 Invalid two-factor attempts are rate-limited and tracked per member. Five

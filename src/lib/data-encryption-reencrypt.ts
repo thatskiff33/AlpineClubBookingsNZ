@@ -25,14 +25,16 @@
  * side effect. It is retried on the next pass, up to `maxPasses`; what still
  * loses is reported, and a later run picks it up.
  *
- * IT FIRST PROVES ITS KEY IS THE APP'S (#4456 review). The command reads its
- * ring from the environment it is started in — and the database client loads
- * `.env` from the current directory for any variable not exported — so a ring
- * with the right id but other bytes would re-encrypt everything under a key
- * the app does not hold. Before anything is written it decrypts one row the
- * app already wrote under the target id, and refuses if it cannot. On the
- * first cut-over no such row exists yet; the report then shows the key's
- * fingerprint for the operator to compare with Admin → Setup's.
+ * IT ONLY WRITES UNDER THE KEY THE OPERATOR NAMED (#4456 review). The command
+ * reads its ring from the environment it is started in — and the database
+ * client loads `.env` from the current directory for any variable not
+ * exported — so a stale ring could re-encrypt everything under a key the app
+ * does not hold, or move the app's newer-key rows back to an older key. So a
+ * run that writes REQUIRES `--expect-fingerprint`, copied from Admin → Setup's
+ * fingerprint of the app's CURRENT key, and refuses unless its own target key
+ * has that fingerprint. As a second guard it decrypts a row already stored
+ * under the target id and refuses if it cannot (`checkTargetKey`). A dry run
+ * needs no fingerprint, and prints the target key's.
  *
  * NOTHING HERE PRINTS A VALUE. Rows are named by provider and key, or counted;
  * a plaintext lives only between the read and the write of its own row.
@@ -87,6 +89,11 @@ export interface ReencryptOptions {
   dryRun: boolean;
   /** Also retire the unused recovery codes hashed under the auth secret. */
   retireLegacyRecoveryCodes: boolean;
+  /**
+   * The fingerprint Admin → Setup shows for the app's current key. Required
+   * unless `dryRun`; the run refuses unless its target key has it.
+   */
+  expectFingerprint?: string;
   maxPasses?: number;
   /** test seam: how to wait between passes. */
   pause?: (ms: number) => Promise<void>;
@@ -110,6 +117,10 @@ export interface ReencryptReport {
   currentKeyFingerprint: string;
   /** What proved this environment's key is the app's, or null when nothing could yet. */
   keyCheckedAgainst: "a stored credential" | "a stored authenticator secret" | null;
+  /** True when `--expect-fingerprint` was given and matched (always, for a run that wrote). */
+  fingerprintConfirmed: boolean;
+  /** The command that moves the rows, for a dry run to print. */
+  runCommand: string;
   dryRun: boolean;
   passes: number;
   credentials: StoreTally;
@@ -295,6 +306,33 @@ function defaultPause(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/** A fingerprint as an operator may paste it: case and surrounding space ignored. */
+function normaliseFingerprint(text: string): string {
+  return text.trim().toLowerCase();
+}
+
+/**
+ * The first guard on the target key: a run that writes must name the app's
+ * current key by its fingerprint (`--expect-fingerprint`, from Admin → Setup),
+ * and this command's target key must have it. Refuses before anything is read.
+ * Resolves whether a fingerprint was given and matched; a dry run may omit it.
+ */
+function requireExpectedFingerprint(target: DataKey, options: ReencryptOptions): boolean {
+  const actual = dataKeyFingerprint(target);
+  if (options.expectFingerprint === undefined) {
+    if (options.dryRun) return false;
+    throw new ReencryptRefusedError(
+      `Refused: a run that writes needs --expect-fingerprint <fingerprint>, copied from Admin → Setup → "Data Encryption Key" (the app's current key). This command's key "${target.id}" has the fingerprint ${actual}; run with --dry-run to see what would move.`,
+    );
+  }
+  if (normaliseFingerprint(options.expectFingerprint) !== actual) {
+    throw new ReencryptRefusedError(
+      `Refused before reading anything: this command would write under its key "${target.id}" (fingerprint ${actual}), but --expect-fingerprint names ${normaliseFingerprint(options.expectFingerprint)}. Its ${DATA_ENCRYPTION_KEYS_ENV} is not the app's: a stale .env, or a ring whose first key is not the app's current one. Variables exported in this shell win; anything unset is read from the .env in the current directory.`,
+    );
+  }
+  return true;
+}
+
 /** How many stored rows under the target id the key check tries, newest first. */
 const KEY_CHECK_CANDIDATES = 5;
 
@@ -348,6 +386,7 @@ async function checkTargetKey(
 export async function reencryptStoredData(options: ReencryptOptions): Promise<ReencryptReport> {
   const target = requireReencryptTarget();
   const scope = scopeWhere(options);
+  const fingerprintConfirmed = requireExpectedFingerprint(target, options);
   const keyCheckedAgainst = await checkTargetKey(target, options);
 
   const credentialRows = await prisma.integrationCredential.findMany({
@@ -409,6 +448,10 @@ export async function reencryptStoredData(options: ReencryptOptions): Promise<Re
     currentKeyId: target.id,
     currentKeyFingerprint: dataKeyFingerprint(target),
     keyCheckedAgainst,
+    fingerprintConfirmed,
+    runCommand: `pnpm run data-keys:reencrypt --expect-fingerprint ${dataKeyFingerprint(target)}${
+      options.retireLegacyRecoveryCodes ? " --retire-legacy-recovery-codes" : ""
+    }`,
     dryRun: options.dryRun,
     passes: Math.max(credentials.passes, secrets.passes),
     credentials: { ...credentials.tally, remaining: credentialsRemaining },
@@ -431,9 +474,12 @@ export function formatReencryptReport(report: ReencryptReport): string[] {
   ];
   const lines = [
     `Data-encryption re-encrypt to the key "${report.currentKeyId}"${report.dryRun ? " (dry run: nothing written)" : ""}, ${report.passes} pass${report.passes === 1 ? "" : "es"}.`,
+    report.fingerprintConfirmed
+      ? `Key "${report.currentKeyId}", fingerprint ${report.currentKeyFingerprint}: matches --expect-fingerprint.`
+      : `Key "${report.currentKeyId}", fingerprint ${report.currentKeyFingerprint}: not compared. Only if Admin → Setup → "Data Encryption Key" shows this same fingerprint for the app's current key, run: ${report.runCommand}`,
     report.keyCheckedAgainst
-      ? `Key "${report.currentKeyId}", fingerprint ${report.currentKeyFingerprint}: read ${report.keyCheckedAgainst} the app wrote under it, so this is the app's key.`
-      : `Key "${report.currentKeyId}", fingerprint ${report.currentKeyFingerprint}: NOT CHECKED, nothing is stored under it yet. Compare this fingerprint with Admin → Setup → "Data Encryption Key" before running without --dry-run.`,
+      ? `Decrypt check: this command's key "${report.currentKeyId}" reads ${report.keyCheckedAgainst} stored under that id.`
+      : `Decrypt check: nothing readable is stored under "${report.currentKeyId}" yet, so only the fingerprint vouches for the key.`,
     ...store("IntegrationCredential", report.credentials),
     ...store("Member.totpSecret", report.authenticatorSecrets),
     `TwoFactorRecoveryCode: legacy (AUTH_SECRET) unused: ${report.recoveryCodes.legacyUnused}${

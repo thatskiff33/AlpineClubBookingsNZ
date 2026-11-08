@@ -100,7 +100,7 @@ const ROLLOUT_HINT =
   "Set it only once every running container is on this release. Once data is written under it, never unset it, roll back to an older release, or route traffic to a colour without it: that data cannot be read there.";
 /** Kept in step with DEPLOYMENT.md → "Moving stored data to the current key". */
 const MOVE_HINT =
-  "To move it now: run pnpm run data-keys:reencrypt (try --dry-run first). It re-encrypts each credential and authenticator secret under the current key and reports what remains.";
+  "To move it now: run pnpm run data-keys:reencrypt --dry-run, then the same with --expect-fingerprint and the fingerprint above. It re-encrypts each credential and authenticator secret under the current key and reports what remains.";
 const RETIRE_LEGACY_HINT = `Nothing stored depends on AUTH_SECRET, so it can be rotated without losing data. To stop reading anything under it at all, set ${DATA_ENCRYPTION_LEGACY_KEY_ENV}=${LEGACY_KEY_RETIRED} and restart.`;
 
 function plural(count: number, noun: string): string {
@@ -207,9 +207,11 @@ export function buildDataEncryptionKeyCheck(
   }
 
   const ringIds = new Set(ring.keys.map((key) => key.id));
-  // The running app's key, one-way: pnpm run data-keys:reencrypt prints the
-  // same fingerprint only when it holds the same bytes (#4456 review).
-  const keyLine = `The current key "${ring.current.id}" has the fingerprint ${dataKeyFingerprint(ring.current)}; pnpm run data-keys:reencrypt must print the same one before it is run.`;
+  // The running app's current key, one-way (#4456 review): the re-encrypt
+  // writes only when given this fingerprint, and only under a key that has it.
+  const fingerprint = dataKeyFingerprint(ring.current);
+  const keyLine = `The current key "${ring.current.id}" has the fingerprint ${fingerprint}. pnpm run data-keys:reencrypt writes only when run with --expect-fingerprint ${fingerprint}, and refuses if its own key differs.`;
+  const moveCommand = `pnpm run data-keys:reencrypt --expect-fingerprint ${fingerprint}`;
   if (!usage) {
     return {
       ...base,
@@ -231,6 +233,7 @@ export function buildDataEncryptionKeyCheck(
 
   const recovery = retiredRecoveryCodes(usage, (id) => ringIds.has(id));
   const legacy = rowsUnder(usage, isLegacy);
+  const older = rowsUnder(usage, (id) => ringIds.has(id) && id !== ring.current.id, true);
   if (legacy.length > 0 && ring.legacyRetired) {
     return {
       ...base,
@@ -248,7 +251,23 @@ export function buildDataEncryptionKeyCheck(
       ...base,
       status: "warning",
       message: `New data is encrypted under the data key "${ring.current.id}", but some stored data still depends on AUTH_SECRET: rotating it now would make that data unreadable.`,
-      details: [keyLine, ...legacy, ...recovery, MOVE_HINT],
+      details: [keyLine, ...legacy, ...older, ...recovery, MOVE_HINT],
+    };
+  }
+
+  // Not complete while anything is under an older ring key (#4456 review
+  // round 2): that key cannot leave the ring yet, and a run under a stale ring
+  // could have put it there.
+  if (older.length > 0) {
+    return {
+      ...base,
+      status: "warning",
+      message: `New data is encrypted under the data key "${ring.current.id}", but some stored data is still under an older key in the ring. Remove that key only once nothing is under it.`,
+      details: [
+        keyLine,
+        ...older,
+        `Move the credentials and authenticator secrets with ${moveCommand}. Recovery codes cannot be moved: they stay under their key until used or replaced, and removing it retires them (their members are told to generate a new set).`,
+      ],
     };
   }
 
@@ -256,7 +275,8 @@ export function buildDataEncryptionKeyCheck(
     ...base,
     status: "complete",
     message: `Data is encrypted under the data key "${ring.current.id}".`,
-    details: [keyLine, 
+    details: [
+      keyLine,
       `${plural(ring.keys.length, "key")} in the ring; the first is used for new data.`,
       ring.legacyRetired
         ? `Nothing stored depends on AUTH_SECRET, and nothing is read under it (${DATA_ENCRYPTION_LEGACY_KEY_ENV}=${LEGACY_KEY_RETIRED}).`

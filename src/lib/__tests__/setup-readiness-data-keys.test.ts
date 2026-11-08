@@ -74,7 +74,7 @@ describe("setup readiness: the Data Encryption Key step (#4456)", () => {
     );
     expect(check.status).toBe("blocked");
     expect(check.details).toEqual([
-      expect.stringMatching(/^The current key "k2" has the fingerprint [0-9a-f]{4}(-[0-9a-f]{4}){3}; /),
+      expect.stringMatching(/^The current key "k2" has the fingerprint [0-9a-f]{4}(-[0-9a-f]{4}){3}\. /),
       '4 provider credentials under the data key "k1".',
       '2 authenticator-app secrets under the data key "k0".',
       expect.stringMatching(/Put that key back in the ring/),
@@ -87,16 +87,40 @@ describe("setup readiness: the Data Encryption Key step (#4456)", () => {
     expect(check.message).toMatch(/data key "k1"/);
     expect(check.message).toMatch(/rotating it now would make that data unreadable/);
     // The re-encrypt command (#4456 PR 2), dry run first.
-    expect(check.details.join(" ")).toMatch(/run pnpm run data-keys:reencrypt \(try --dry-run first\)/);
+    expect(check.details.join(" ")).toMatch(/run pnpm run data-keys:reencrypt --dry-run, then the same with --expect-fingerprint/);
   });
 
-  it("is complete when a ring is set and nothing depends on AUTH_SECRET", () => {
+  it("is complete when a ring is set and everything stored is under its current key", () => {
     const check = buildDataEncryptionKeyCheck(
       `k2:${K2},k1:${K1}`,
-      usage({ credentialRowsByKeyId: { k2: 2, k1: 1 }, totpRowsByKeyId: { k1: 3 }, recoveryCodesByKeyId: { k2: 10 } }),
+      usage({ credentialRowsByKeyId: { k2: 2 }, totpRowsByKeyId: { k2: 3 }, recoveryCodesByKeyId: { k2: 10 } }),
     );
     expect(check.status).toBe("complete");
     expect(check.message).toBe('Data is encrypted under the data key "k2".');
+  });
+
+  // #4456 review round 2 (F1): an older ring key still in use is not "complete".
+  it.each([
+    ["a provider credential", { credentialRowsByKeyId: { k2: 2, k1: 1 } }, '1 provider credential under the data key "k1".'],
+    ["an authenticator secret", { totpRowsByKeyId: { k1: 3 } }, '3 authenticator-app secrets under the data key "k1".'],
+    ["an unused recovery code", { recoveryCodesByKeyId: { k2: 4, k1: 2 } }, '2 unused recovery codes under the data key "k1".'],
+  ] as const)("warns, naming it, while %s is under an older key in the ring", (_label, stored, line) => {
+    const check = buildDataEncryptionKeyCheck(`k2:${K2},k1:${K1}`, usage(stored));
+    expect(check.status).toBe("warning");
+    expect(check.message).toMatch(/still under an older key in the ring\. Remove that key only once nothing is under it/);
+    expect(check.details).toContain(line);
+    expect(check.details.join(" ")).toMatch(/pnpm run data-keys:reencrypt --expect-fingerprint [0-9a-f]{4}(-[0-9a-f]{4}){3}\./);
+  });
+
+  it("lists older-key rows alongside AUTH_SECRET ones while both remain", () => {
+    const check = buildDataEncryptionKeyCheck(
+      `k2:${K2},k1:${K1}`,
+      usage({ credentialRowsByKeyId: { "legacy-auth-secret": 1, k1: 2 } }),
+    );
+    expect(check.status).toBe("warning");
+    expect(check.details).toEqual(
+      expect.arrayContaining(["1 provider credential encrypted under AUTH_SECRET.", '2 provider credentials under the data key "k1".']),
+    );
   });
 
   it("is never complete when stored data was not checked, with a ring set (#4456 review)", () => {
@@ -255,7 +279,7 @@ describe("setup readiness: the current key's fingerprint (#4456 review S1)", () 
     for (const stored of [NOTHING_STORED, LEGACY_STORED, undefined]) {
       const check = buildDataEncryptionKeyCheck(`k1:${K1}`, stored);
       expect(check.details).toContain(
-        `The current key "k1" has the fingerprint ${fingerprint}; pnpm run data-keys:reencrypt must print the same one before it is run.`,
+        `The current key "k1" has the fingerprint ${fingerprint}. pnpm run data-keys:reencrypt writes only when run with --expect-fingerprint ${fingerprint}, and refuses if its own key differs.`,
       );
       expect(check.details.join(" ")).not.toContain(K1);
     }

@@ -47,8 +47,24 @@ describe("data-keys:reencrypt arguments (#4456 PR 2)", () => {
     expect(parseReencryptArgs(["--dryrun"])).toEqual({ kind: "error", message: "Unknown argument: --dryrun" });
   });
 
+  it("takes --expect-fingerprint as a separate or an = value, and refuses it with none (F1)", () => {
+    for (const argv of [["--expect-fingerprint", "ab12-cd34-ef56-7890"], ["--expect-fingerprint=ab12-cd34-ef56-7890"]]) {
+      expect(parseReencryptArgs(argv)).toEqual({
+        kind: "run",
+        options: { dryRun: false, retireLegacyRecoveryCodes: false, expectFingerprint: "ab12-cd34-ef56-7890" },
+      });
+    }
+    for (const argv of [["--expect-fingerprint"], ["--expect-fingerprint", "--dry-run"], ["--expect-fingerprint="]]) {
+      expect(parseReencryptArgs(argv)).toEqual({
+        kind: "error",
+        message: "--expect-fingerprint needs the fingerprint Admin → Setup shows",
+      });
+    }
+  });
+
   it("names itself as the pnpm script an operator runs", () => {
-    expect(USAGE).toMatch(/pnpm run data-keys:reencrypt \[--dry-run\] \[--retire-legacy-recovery-codes\]/);
+    expect(USAGE).toMatch(/pnpm run data-keys:reencrypt --dry-run \[--retire-legacy-recovery-codes\]/);
+    expect(USAGE).toMatch(/pnpm run data-keys:reencrypt --expect-fingerprint <fp> \[--retire-legacy-recovery-codes\]/);
   });
 });
 

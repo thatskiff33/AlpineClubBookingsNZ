@@ -2045,12 +2045,13 @@ Production operator steps are the owner's.
    any instance without the ring** (the previous colour during this redeploy,
    or anywhere the variable is unset).
 5. **Move what is still on `AUTH_SECRET`, and retire the old recovery codes**,
-   once no container runs without the ring:
-   `pnpm run data-keys:reencrypt --dry-run`, and **check its key fingerprint
-   against Admin → Setup → "Data Encryption Key"** (they must be identical), then
-   `pnpm run data-keys:reencrypt --retire-legacy-recovery-codes`
+   once no container runs without the ring. Copy the fingerprint Admin → Setup
+   → "Data Encryption Key" shows for the current key, run
+   `pnpm run data-keys:reencrypt --dry-run`, then
+   `pnpm run data-keys:reencrypt --expect-fingerprint <that fingerprint> --retire-legacy-recovery-codes`
    ([Moving stored data to the current key](#moving-stored-data-to-the-current-key-4456)).
-   Run it again until it reports `remaining on old keys: 0` for both tables.
+   It refuses unless its own key has that fingerprint. Run it again until it
+   reports `remaining on old keys: 0` for both tables.
 6. When Admin → Setup → "Data Encryption Key" is **green**, nothing stored
    depends on `AUTH_SECRET`; rotating it now only signs everyone out and
    invalidates links signed with it. To stop the app reading anything under it
@@ -2095,11 +2096,16 @@ first cut-over's overlap: during that redeploy the previous colour (ring
 2. Once no container runs without `k2027`, promote it:
    `DATA_ENCRYPTION_KEYS=k2027:<new>,k2026:<old>`, and redeploy. New writes use
    `k2027`; the previous colour already holds it, so it reads them.
-3. Move the rows still on the old key with `pnpm run data-keys:reencrypt`, and
-   only then remove the old entry. Removing a key any earlier strands every row
-   that names it. Recovery codes cannot be moved: the report counts the unused
-   ones under an older key, and removing that key retires them (their members
-   are told to generate a new set).
+3. Move the rows still on the old key with
+   `pnpm run data-keys:reencrypt --expect-fingerprint <fingerprint>`, taking
+   the fingerprint Admin → Setup shows for `k2027` now. A command still holding
+   the step-1 ring (`k2026` first) refuses, rather than moving the app's
+   `k2027` rows back to `k2026`.
+4. Remove the old entry only once Admin → Setup → "Data Encryption Key" shows
+   **no rows under it**; until then the step stays amber and names them.
+   Removing a key any earlier strands every row that names it. Recovery codes
+   cannot be moved: they stay under the old key until used or replaced, and
+   removing it retires them (their members are told to generate a new set).
 
 #### Moving stored data to the current key (#4456)
 
@@ -2113,23 +2119,28 @@ are the owner's.
 
 **Where its settings come from.** The command loads `.env` from the directory
 it is run in, for every variable not already exported in the shell; an
-exported value always wins. A stale `.env` in that directory can therefore
-hand it a ring with the right id and the wrong bytes, which would re-encrypt
-everything under a key the app does not hold. Two checks stop that:
+exported value always wins. A stale `.env` in that directory can hand it a ring
+that is not the app's: the right id with the wrong bytes, which would
+re-encrypt everything under a key the app does not hold, or an old ring whose
+first key is the app's previous one, which would move the app's newer rows
+back. Two checks stop that:
 
-- **Before writing anything it reads one row the app already stored under the
-  current key** and refuses if it cannot ("Refused before writing anything …").
-  Its report then says which kind of row proved the key.
-- **On the first cut-over nothing is stored under the key yet**, so it cannot
-  check, and says `NOT CHECKED`. Its second line prints the key's fingerprint
-  (a one-way hash of the key, never the key). Open Admin → Setup → "Data
-  Encryption Key", which shows the running app's fingerprint, and run the
-  command without `--dry-run` only if the two are identical.
+- **A run that writes needs `--expect-fingerprint`**, copied from Admin →
+  Setup → "Data Encryption Key", which shows the running app's current key's
+  fingerprint (a one-way hash, never the key). The command refuses before
+  reading anything unless the key it would write under has that fingerprint. A
+  `--dry-run` needs none: it prints its own key's fingerprint and the exact
+  command, which is right only if Setup shows the same fingerprint.
+- **It also decrypts a row already stored under that key id**, and refuses if
+  it cannot ("Refused before writing anything …": the environment's ring is
+  not the app's, or that row is damaged). On the first cut-over nothing is
+  stored under the key yet, and the report says only the fingerprint vouched
+  for it.
 
 ```bash
-pnpm run data-keys:reencrypt --dry-run                        # count only, writes nothing
-pnpm run data-keys:reencrypt                                  # move
-pnpm run data-keys:reencrypt --retire-legacy-recovery-codes   # move, and retire the old codes
+pnpm run data-keys:reencrypt --dry-run                                  # count only, writes nothing
+pnpm run data-keys:reencrypt --expect-fingerprint <fp>                  # move
+pnpm run data-keys:reencrypt --expect-fingerprint <fp> --retire-legacy-recovery-codes
 ```
 
 - **Safe beside live traffic.** It moves one row per short transaction through
@@ -2177,7 +2188,7 @@ would still be accepted. `DATA_ENCRYPTION_LEGACY_KEY=retired` stops that: no
 credential or authenticator secret is read under the auth secret any more, and
 `AUTH_SECRET` signs sessions and links only.
 
-1. Run `pnpm run data-keys:reencrypt` until it reports `remaining on old keys: 0`
+1. Run `pnpm run data-keys:reencrypt --expect-fingerprint <fingerprint>` until it reports `remaining on old keys: 0`
    for both tables, and Admin → Setup → "Data Encryption Key" is green.
 2. Set `DATA_ENCRYPTION_LEGACY_KEY=retired` and redeploy. The two colours may
    differ during the redeploy: they disagree only about rows under

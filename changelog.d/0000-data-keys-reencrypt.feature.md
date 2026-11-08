@@ -5,8 +5,12 @@
   `DATA_ENCRYPTION_KEYS` key. Values and members' authenticator apps are
   unchanged. It is safe to run while the site serves traffic: a row that
   changes while it is being moved, such as a Xero token refresh, wins and is
-  retried. `--dry-run` only counts. The report ends with what remains on old
-  keys and never prints a key or a stored value. Each move is recorded in the
+  retried. `--dry-run` only counts. A run that writes needs
+  `--expect-fingerprint`, copied from Admin → Setup → "Data Encryption Key",
+  and refuses unless its own key matches, so a stale `.env` cannot move data
+  under the wrong key. The report ends with what remains on old keys and never
+  prints a key or a stored value. The setup step stays amber while anything is
+  under an older key in the ring. Each move is recorded in the
   audit log under the `data-key-reencrypt` job.
 
   With `--retire-legacy-recovery-codes` it also retires the recovery codes

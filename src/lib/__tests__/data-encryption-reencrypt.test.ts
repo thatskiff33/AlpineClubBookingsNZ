@@ -68,6 +68,7 @@ import {
   type ReencryptOptions,
 } from "@/lib/data-encryption-reencrypt";
 import { StaleCredentialWriteError } from "@/lib/integration-credential-actor";
+import { dataKeyFingerprint, parseDataEncryptionKeys } from "@/lib/data-encryption-key-material";
 
 function testKey(seed: number): string {
   return Buffer.from(Array.from({ length: 32 }, (_, index) => (seed * 47 + index * 13) % 256)).toString("base64");
@@ -79,8 +80,19 @@ const PLAINTEXT = "sentinel-plaintext-credential-value";
 const STORED_TOTP = "v1:sentinel-iv:sentinel-tag:sentinel-ciphertext";
 
 const pause = vi.fn(async () => undefined);
+/** What Admin → Setup would show for the ring in the environment now, if it parses. */
+function setupFingerprint(): string | undefined {
+  const ring = parseDataEncryptionKeys(process.env.DATA_ENCRYPTION_KEYS, process.env.AUTH_SECRET);
+  return ring.status === "configured" ? dataKeyFingerprint(ring.current) : undefined;
+}
 const run = (overrides: Partial<ReencryptOptions> = {}) =>
-  reencryptStoredData({ dryRun: false, retireLegacyRecoveryCodes: false, pause, ...overrides });
+  reencryptStoredData({
+    dryRun: false,
+    retireLegacyRecoveryCodes: false,
+    pause,
+    expectFingerprint: setupFingerprint(),
+    ...overrides,
+  });
 
 /** The row's own timestamp, which the move keeps (#4456 review C3). */
 const STAMP = new Date("2026-06-01T00:00:00.000Z");
@@ -409,9 +421,8 @@ describe("the report (#4456 PR 2)", () => {
 
     expect(lines).toEqual([
       'Data-encryption re-encrypt to the key "k_2", 1 pass.',
-      expect.stringMatching(
-        /^Key "k_2", fingerprint [0-9a-f]{4}(-[0-9a-f]{4}){3}: NOT CHECKED, nothing is stored under it yet\. Compare this fingerprint with Admin → Setup/,
-      ),
+      `Key "k_2", fingerprint ${setupFingerprint()}: matches --expect-fingerprint.`,
+      'Decrypt check: nothing readable is stored under "k_2" yet, so only the fingerprint vouches for the key.',
       "IntegrationCredential: moved 1, lost claim 0, unreadable 0",
       "IntegrationCredential: remaining on old keys: 0",
       "Member.totpSecret: moved 1, lost claim 0, unreadable 0",
@@ -514,6 +525,41 @@ describe("the kept timestamp comes from the row the claim is made on (#4456 revi
     // The timestamp is read after the value, never before.
     expect(TX.integrationCredential.findUnique.mock.invocationCallOrder[0]!).toBeGreaterThan(
       mocks.readIntegrationCredentialRow.mock.invocationCallOrder.at(-1)!,
+    );
+  });
+});
+
+describe("the fingerprint binds the run to the app's current key (#4456 review round 2, F1)", () => {
+  it("refuses a run that writes without --expect-fingerprint, before reading anything", async () => {
+    mocks.credentialRows = [{ provider: "stripe", key: "secret_key" }];
+    const error = (await run({ expectFingerprint: undefined }).catch((caught: unknown) => caught)) as Error;
+    expect(error).toBeInstanceOf(ReencryptRefusedError);
+    expect(error.message).toMatch(/^Refused: a run that writes needs --expect-fingerprint <fingerprint>, copied from Admin → Setup/);
+    expect(mocks.prisma.integrationCredential.findMany).not.toHaveBeenCalled();
+    noWrites();
+  });
+
+  it("refuses a fingerprint that is not its target key's, before reading anything", async () => {
+    mocks.credentialRows = [{ provider: "stripe", key: "secret_key" }];
+    const error = (await run({ expectFingerprint: "0000-0000-0000-0000" }).catch((caught: unknown) => caught)) as Error;
+    expect(error).toBeInstanceOf(ReencryptRefusedError);
+    expect(error.message).toMatch(/would write under its key "k_2" \(fingerprint [0-9a-f-]{19}\), but --expect-fingerprint names 0000-0000-0000-0000/);
+    expect(error.message).not.toContain(K_NEW);
+    expect(mocks.prisma.integrationCredential.findMany).not.toHaveBeenCalled();
+    noWrites();
+  });
+
+  it("refuses in a dry run too when a wrong fingerprint is given, and accepts one pasted with other case and spaces", async () => {
+    await expect(run({ dryRun: true, expectFingerprint: "0000-0000-0000-0000" })).rejects.toThrow(ReencryptRefusedError);
+    const pasted = `  ${setupFingerprint()!.toUpperCase()}  `;
+    await expect(run({ expectFingerprint: pasted })).resolves.toMatchObject({ fingerprintConfirmed: true });
+  });
+
+  it("a dry run needs none, and prints the fingerprint with the exact command to run", async () => {
+    const report = await run({ dryRun: true, expectFingerprint: undefined, retireLegacyRecoveryCodes: true });
+    expect(report.fingerprintConfirmed).toBe(false);
+    expect(formatReencryptReport(report)[1]).toBe(
+      `Key "k_2", fingerprint ${setupFingerprint()}: not compared. Only if Admin → Setup → "Data Encryption Key" shows this same fingerprint for the app's current key, run: pnpm run data-keys:reencrypt --expect-fingerprint ${setupFingerprint()} --retire-legacy-recovery-codes`,
     );
   });
 });
