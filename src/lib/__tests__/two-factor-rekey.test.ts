@@ -19,7 +19,7 @@ vi.mock("@/lib/club-identity-settings", () => ({
 vi.mock("@/lib/audit", () => ({ createAuditLog: vi.fn(async () => undefined) }));
 // The real assertion, observed: an entry point must call it before its claim (S2).
 vi.mock("@/lib/two-factor-audit", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/two-factor-audit")>();
+  const actual = (await importOriginal()) as typeof import("@/lib/two-factor-audit");
   return { ...actual, assertTwoFactorActorMayAct: vi.fn(actual.assertTwoFactorActorMayAct) };
 });
 
