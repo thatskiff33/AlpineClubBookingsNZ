@@ -11,6 +11,17 @@ import { cleanHistories, createHistoryBooking, historyNames, seedHistoryFixtures
 import { memberMoneyTestContext } from "./support/member-money-fixtures";
 import { assertSafeRaceDbUrl } from "./support/race-db-url";
 
+/**
+ * The static imports below load `@/lib/prisma`, whose client takes DATABASE_URL when it is built, before
+ * `beforeAll` runs. CI's job sets DATABASE_URL to an unreachable placeholder, so point it at the race database
+ * first; `beforeAll` still refuses an unsafe race URL before any query is made.
+ */
+vi.hoisted(() => {
+  if (process.env.RUN_CONCURRENCY_RACE_TESTS === "1" && process.env.CONCURRENCY_RACE_DATABASE_URL) {
+    process.env.DATABASE_URL = process.env.CONCURRENCY_RACE_DATABASE_URL;
+  }
+});
+
 /** The one shared double: the LAST file to register a factory wins, so every realdb file registers this same one. */
 vi.mock("@/lib/stripe", async (importOriginal) =>
   (await import("./support/stripe-race-double")).stripeRaceDouble(await importOriginal()),
