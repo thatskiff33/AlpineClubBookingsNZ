@@ -12,6 +12,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   credentialRows: [] as Array<{ provider: string; key: string }>,
+  /** Rows the key check finds already under the target id. */
+  targetCredentials: [] as Array<{ provider: string; key: string }>,
+  targetMembers: [] as Array<{ totpSecret: string }>,
   memberRows: [] as Array<{ id: string; totpSecret: string }>,
   legacyHolders: [] as Array<{ memberId: string }>,
   counts: { credentials: 0, secrets: 0, legacyCodes: 0, olderCodes: 0 },
@@ -99,17 +102,21 @@ beforeEach(() => {
   process.env.DATA_ENCRYPTION_KEYS = RING;
   delete process.env.DATA_ENCRYPTION_LEGACY_KEY;
   mocks.credentialRows = [];
+  mocks.targetCredentials = [];
+  mocks.targetMembers = [];
   mocks.memberRows = [];
   mocks.legacyHolders = [];
   mocks.counts = { credentials: 0, secrets: 0, legacyCodes: 0, olderCodes: 0 };
-  mocks.prisma.integrationCredential.findMany.mockImplementation(async () => mocks.credentialRows);
+  // The key check asks for rows equal to the target source; the listing for the rest.
+  mocks.prisma.integrationCredential.findMany.mockImplementation(async ({ where }: { where: { secretSource?: unknown } }) =>
+    typeof where.secretSource === "string" ? mocks.targetCredentials : mocks.credentialRows,
+  );
   mocks.prisma.integrationCredential.count.mockImplementation(async () => mocks.counts.credentials);
-  mocks.prisma.member.findMany.mockImplementation(async () => mocks.memberRows);
-  // The key check's lookups (a row already under the target id) find nothing
-  // by default: the first cut-over. Tests below arrange one.
-  mocks.prisma.integrationCredential.findFirst.mockResolvedValue(null);
+  mocks.prisma.member.findMany.mockImplementation(async ({ where }: { where: { totpSecret?: unknown } }) =>
+    where.totpSecret === undefined ? mocks.memberRows : mocks.targetMembers,
+  );
   mocks.prisma.member.findFirst.mockImplementation(async ({ where }: { where: { id?: string } }) =>
-    where.id === undefined ? null : (mocks.memberRows.find((row) => row.id === where.id) ?? null),
+    mocks.memberRows.find((row) => row.id === where.id) ?? null,
   );
   mocks.prisma.member.count.mockImplementation(async () => mocks.counts.secrets);
   mocks.prisma.twoFactorRecoveryCode.findMany.mockImplementation(async () => mocks.legacyHolders);
@@ -280,12 +287,13 @@ describe("moving authenticator secrets (#4456 PR 2)", () => {
 
     const report = await run();
 
-    expect(mocks.prisma.member.findMany.mock.calls[0]![0].select).toEqual({ id: true });
-    const where = mocks.prisma.member.findMany.mock.calls[0]![0].where;
+    // The listing, not the key check's lookup under the target id.
+    const listing = mocks.prisma.member.findMany.mock.calls.find(([args]) => args.where.totpSecret === undefined)![0];
+    expect(listing.select).toEqual({ id: true });
+    const where = listing.where;
     expect(where).toEqual({
       AND: [{ totpSecret: { not: null } }, { NOT: { totpSecret: { startsWith: "v2:k\\_2:" } } }],
     });
-    // Per-member re-reads only (the key check's lookup names no id).
     expect(mocks.prisma.member.findFirst.mock.calls.filter(([args]) => args.where.id === "m1")).toHaveLength(2);
     expect(mocks.rewrapTwoFactorSecret.mock.calls).toEqual([
       ["m1", STORED_TOTP],
@@ -420,29 +428,28 @@ describe("the report (#4456 PR 2)", () => {
   });
 });
 
-describe("the command proves its key is the app's before writing (#4456 review S1)", () => {
-  it("refuses, writing nothing, when a row the app stored under the target id cannot be read here", async () => {
+describe("the decrypt check on the target key (#4456 review S1, round 2 F4)", () => {
+  it("refuses, writing nothing, when a row stored under the target id cannot be read here, naming both causes", async () => {
     mocks.credentialRows = [{ provider: "stripe", key: "secret_key" }];
-    mocks.prisma.integrationCredential.findFirst.mockResolvedValue({ provider: "xero", key: "client_id" });
+    mocks.targetCredentials = [{ provider: "xero", key: "client_id" }];
     mocks.readIntegrationCredentialRow.mockResolvedValueOnce({ status: "needs_reentry", reason: "r", version: "v" });
 
     const error = (await run().catch((caught: unknown) => caught)) as Error;
 
     expect(error).toBeInstanceOf(ReencryptRefusedError);
     expect(error.message).toMatch(/^Refused before writing anything: data the app stored under the key "k_2" cannot be read/);
+    expect(error.message).toMatch(/is not the app's, or that row is damaged/);
     expect(error.message).toMatch(/the \.env in the current directory/);
     expect(error.message).not.toContain(K_NEW);
-    expect(mocks.prisma.integrationCredential.findFirst).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { secretSource: "DATA_ENCRYPTION_KEY:k_2" } }),
+    expect(mocks.prisma.integrationCredential.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { secretSource: "DATA_ENCRYPTION_KEY:k_2" }, take: 5 }),
     );
     expect(mocks.readIntegrationCredentialRow).toHaveBeenCalledExactlyOnceWith(expect.anything(), "xero", "client_id");
     noWrites();
   });
 
   it("refuses on an authenticator secret under the target id it cannot decrypt, when no credential names it", async () => {
-    mocks.prisma.member.findFirst.mockImplementation(async ({ where }: { where: { id?: string } }) =>
-      where.id === undefined ? { totpSecret: "v2:k_2:aa:bb:cc" } : null,
-    );
+    mocks.targetMembers = [{ totpSecret: "v2:k_2:aa:bb:cc" }];
     mocks.decryptTwoFactorSecret.mockImplementationOnce(() => {
       throw new Error("Unsupported state or unable to authenticate data");
     });
@@ -450,24 +457,40 @@ describe("the command proves its key is the app's before writing (#4456 review S
     noWrites();
   });
 
-  it("says which stored row proved the key, before moving anything", async () => {
-    mocks.credentialRows = [{ provider: "stripe", key: "secret_key" }];
-    mocks.prisma.integrationCredential.findFirst.mockResolvedValue({ provider: "xero", key: "client_id" });
-    mocks.readIntegrationCredentialRow.mockResolvedValueOnce(configured("DATA_ENCRYPTION_KEY:k_2"));
+  it("treats a row deleted between its lookup and its read as no proof, and tries the next one", async () => {
+    mocks.targetCredentials = [
+      { provider: "xero", key: "deleted-meanwhile" },
+      { provider: "xero", key: "client_id" },
+    ];
+    mocks.readIntegrationCredentialRow
+      .mockResolvedValueOnce({ status: "not_configured" })
+      .mockResolvedValueOnce(configured("DATA_ENCRYPTION_KEY:k_2"));
 
     const report = await run();
 
     expect(report.keyCheckedAgainst).toBe("a stored credential");
-    expect(formatReencryptReport(report)[1]).toMatch(
-      /^Key "k_2", fingerprint [0-9a-f]{4}(-[0-9a-f]{4}){3}: read a stored credential the app wrote under it, so this is the app's key\.$/,
-    );
-    expect(mocks.prisma.integrationCredential.findFirst.mock.invocationCallOrder[0]!).toBeLessThan(
-      mocks.withCredentialTransaction.mock.invocationCallOrder[0]!,
-    );
+    expect(mocks.readIntegrationCredentialRow.mock.calls.map(([, , key]) => key)).toEqual(["deleted-meanwhile", "client_id"]);
   });
 
-  it("checks in a dry run too", async () => {
-    mocks.prisma.integrationCredential.findFirst.mockResolvedValue({ provider: "xero", key: "client_id" });
+  it("falls back to the authenticator secrets when every credential candidate vanished, and to nothing after that", async () => {
+    mocks.targetCredentials = [{ provider: "xero", key: "deleted-meanwhile" }];
+    mocks.readIntegrationCredentialRow.mockResolvedValue({ status: "not_configured" });
+    mocks.targetMembers = [{ totpSecret: "v2:k_2:aa:bb:cc" }];
+    expect((await run()).keyCheckedAgainst).toBe("a stored authenticator secret");
+
+    mocks.targetMembers = [];
+    expect((await run()).keyCheckedAgainst).toBeNull();
+  });
+
+  it("runs before anything is moved, and in a dry run too", async () => {
+    mocks.credentialRows = [{ provider: "stripe", key: "secret_key" }];
+    mocks.targetCredentials = [{ provider: "xero", key: "client_id" }];
+    mocks.readIntegrationCredentialRow.mockResolvedValueOnce(configured("DATA_ENCRYPTION_KEY:k_2"));
+    await run();
+    expect(mocks.prisma.integrationCredential.findMany.mock.invocationCallOrder[0]!).toBeLessThan(
+      mocks.withCredentialTransaction.mock.invocationCallOrder[0]!,
+    );
+
     mocks.readIntegrationCredentialRow.mockResolvedValueOnce({ status: "needs_reentry", reason: "r", version: "v" });
     await expect(run({ dryRun: true })).rejects.toThrow(ReencryptRefusedError);
   });

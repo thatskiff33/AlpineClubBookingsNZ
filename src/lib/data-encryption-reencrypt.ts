@@ -295,11 +295,17 @@ function defaultPause(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/** How many stored rows under the target id the key check tries, newest first. */
+const KEY_CHECK_CANDIDATES = 5;
+
 /**
- * Prove this environment's target key is the one the app writes with: decrypt
- * the newest credential, else authenticator secret, the app has stored under
- * the target id. Refuses with `ReencryptRefusedError` when that row cannot be
- * read here; null when no row names the target id yet (the first cut-over).
+ * The second guard on the target key (the first is `--expect-fingerprint`):
+ * decrypt a credential, else an authenticator secret, already stored under the
+ * target id, newest first. A row that cannot be read here refuses the run
+ * (`ReencryptRefusedError`); a row that vanished between its lookup and its
+ * read proves nothing, so the next candidate is tried. Null when nothing under
+ * the target id could be read: the first cut-over. It proves only that this
+ * command's key decrypts data stored under that id.
  */
 async function checkTargetKey(
   target: DataKey,
@@ -307,26 +313,31 @@ async function checkTargetKey(
 ): Promise<ReencryptReport["keyCheckedAgainst"]> {
   const refuse = () =>
     new ReencryptRefusedError(
-      `Refused before writing anything: data the app stored under the key "${target.id}" cannot be read with the "${target.id}" this command holds (fingerprint ${dataKeyFingerprint(target)}). This environment's ${DATA_ENCRYPTION_KEYS_ENV} is not the app's. Variables exported in this shell win; anything unset is read from the .env in the current directory.`,
+      `Refused before writing anything: data the app stored under the key "${target.id}" cannot be read with the "${target.id}" this command holds (fingerprint ${dataKeyFingerprint(target)}). Either this environment's ${DATA_ENCRYPTION_KEYS_ENV} is not the app's, or that row is damaged. Variables exported in this shell win; anything unset is read from the .env in the current directory.`,
     );
-  const credential = await prisma.integrationCredential.findFirst({
+  const credentials = await prisma.integrationCredential.findMany({
     where: { ...scopeWhere(options).credential, secretSource: `${DATA_KEY_SOURCE_PREFIX}${target.id}` },
     select: { provider: true, key: true },
     orderBy: { updatedAt: "desc" },
+    take: KEY_CHECK_CANDIDATES,
   });
-  if (credential) {
+  for (const credential of credentials) {
     const stored = await readIntegrationCredentialRow(prisma, credential.provider, credential.key);
     if (stored.status === "needs_reentry") throw refuse();
-    return "a stored credential";
+    if (stored.status === "configured") return "a stored credential";
   }
-  const member = await prisma.member.findFirst({
+  const members = await prisma.member.findMany({
     where: { ...scopeWhere(options).member, totpSecret: exactPrefix(`${RING_ENCRYPTION_VERSION}:${target.id}:`) },
     select: { totpSecret: true },
     orderBy: { updatedAt: "desc" },
+    take: KEY_CHECK_CANDIDATES,
   });
-  if (!member?.totpSecret) return null;
-  if (inspectSecret(member.totpSecret) === "unreadable") throw refuse();
-  return "a stored authenticator secret";
+  for (const member of members) {
+    if (!member.totpSecret) continue;
+    if (inspectSecret(member.totpSecret) === "unreadable") throw refuse();
+    return "a stored authenticator secret";
+  }
+  return null;
 }
 
 /**
