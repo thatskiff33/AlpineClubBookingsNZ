@@ -371,8 +371,11 @@ const TODAYS_SOURCES: PrefixCensusSources = {
  * The page paths a hub may own beneath its root: its landing page, and every
  * one of its pages that has moved there.
  */
-function ownedPagePaths(hubKey: string): string[] {
-  return ADMIN_PAGES.filter(
+function ownedPagePaths(
+  hubKey: string,
+  pages: readonly AdminHubPage[] = ADMIN_PAGES,
+): string[] {
+  return pages.filter(
     (page) => page.hub === hubKey && (page.moved || page.hubPath === page.oldPath),
   ).map((page) => page.hubPath);
 }
@@ -468,10 +471,15 @@ describe("the hub prefix census", () => {
   });
 
   it("lets a hub own the pages that have moved under it, and no others", () => {
-    const moved = ADMIN_PAGES.find((page) => page.id === "payments")!;
+    const pages = ADMIN_PAGES.map((page) =>
+      page.id === "payments" ? { ...page, moved: true } : page,
+    );
+    const moved = pages.find((page) => page.id === "payments")!;
     const sources = { ...TODAYS_SOURCES, pagePaths: [...ON_DISK_PAGE_PATHS, moved.hubPath] };
-    expect(hubPrefixCollisions("finance", [moved.hubPath], sources)).toEqual([]);
-    expect(hubPrefixCollisions("finance", [], sources)).toEqual([
+    expect(ownedPagePaths("finance", pages)).toEqual([moved.hubPath]);
+    expect(hubPrefixCollisions("finance", ownedPagePaths("finance", pages), sources)).toEqual([]);
+    // Unmoved in the registry, so the file under the hub is not the hub's.
+    expect(hubPrefixCollisions("finance", ownedPagePaths("finance"), sources)).toEqual([
       `the existing page ${moved.hubPath} sits under it`,
     ]);
   });
