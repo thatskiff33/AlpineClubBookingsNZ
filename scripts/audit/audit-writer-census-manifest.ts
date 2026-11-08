@@ -1388,6 +1388,11 @@ export const AUDIT_CENSUS_TOTALS = {
     // turned on, its recovery codes replaced or it was cleared. The rows carry no
     // secret: booleans, the method, and for a replacement the COUNT of codes
     // issued, never the codes.
+    // Still 25 (#4456 PR 2): `security.two_factor.secret_rewrapped` and
+    // `.recovery_codes_retired`, written by the `data-key-reencrypt` job, go
+    // through that same one site, so no site is added and the support:view
+    // total does not move. Each names the member and carries booleans and, for
+    // a retirement, the COUNT of codes retired, never a secret or a code.
     security: 25,
     // 16 -> 18 (#2595): the two reviewed-move writes. `lodge` is the category
     // every other bed-allocation write already uses, and it is not one of the
