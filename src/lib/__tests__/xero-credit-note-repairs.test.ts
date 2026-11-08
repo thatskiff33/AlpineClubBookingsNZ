@@ -666,6 +666,15 @@ describe("a modification note's allocations are summed per note, each allocation
       expect(refundedWrites()).toEqual([10_000]);
     });
 
+    it("MUTATION: a link recording a zero or negative amount counts nothing", async () => {
+      mocks.paymentFindMany.mockResolvedValue([BANK_PAYMENT()]);
+      invoiceLinks = [onEdit(allocation("alloc-60", "inv-1", 6000))];
+      paymentLinks = [allocation("alloc-neg", "inv-2", -500), allocation("alloc-zero", "inv-3", 0)];
+
+      await recount();
+      expect(refundedWrites()).toEqual([6000]);
+    });
+
     it("MUTATION: a link naming no invoice is no allocation it can key, so it counts nothing (fail closed)", async () => {
       // Before #4786 it counted under its own link id; no writer records an
       // allocation link without the invoice.

@@ -466,6 +466,18 @@ describe("auditIbHoldClearingUnderclears (#3535 scan)", () => {
         xeroObjectType: "ALLOCATION",
         role: "MODIFICATION_CREDIT_NOTE_ALLOCATION",
         metadata: { creditNoteId: "cn_new", invoiceId: "inv_new", amountCents: 10000 },
+        updatedAt: new Date("2026-06-03T00:00:00.000Z"),
+      },
+      // #4786: an older piece of the same note's application to that invoice,
+      // which the newer link above already holds summed: read by its
+      // `updatedAt`, never added to it nor taken for it.
+      {
+        localModel: "Booking",
+        localId: "booking_new",
+        xeroObjectType: "ALLOCATION",
+        role: "CREDIT_NOTE_ALLOCATION",
+        metadata: { creditNoteId: "cn_new", invoiceId: "inv_new", amountCents: 4000 },
+        updatedAt: new Date("2026-06-01T00:00:00.000Z"),
       },
       {
         localModel: "Booking",
@@ -502,8 +514,11 @@ describe("auditIbHoldClearingUnderclears (#3535 scan)", () => {
         },
       },
       xeroObjectLink: {
-        findMany: async (query: { where: { OR: Array<{ localModel: string; localId: string }> } }) =>
-          links.filter((link) => matches(query.where.OR, link)),
+        // Only the selected columns, as Prisma returns them.
+        findMany: async (query: { where: { OR: Array<{ localModel: string; localId: string }> }; select: Record<string, boolean> }) =>
+          links
+            .filter((link) => matches(query.where.OR, link))
+            .map((link) => Object.fromEntries(Object.entries(link).filter(([column]) => query.select[column]))),
       },
     };
 
