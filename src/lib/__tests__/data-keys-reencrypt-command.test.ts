@@ -20,6 +20,8 @@ import { ReencryptRefusedError, type ReencryptReport } from "@/lib/data-encrypti
 function report(remaining = 0): ReencryptReport {
   return {
     currentKeyId: "k1",
+    currentKeyFingerprint: "0000-1111-2222-3333",
+    keyCheckedAgainst: "a stored credential",
     dryRun: false,
     passes: 1,
     credentials: { moved: 1, lostClaims: 0, unreadable: 0, remaining },
