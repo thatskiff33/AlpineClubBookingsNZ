@@ -541,6 +541,100 @@ member change- and reset-password routes do, so `isRevokedMemberSession` ends
 every kiosk session issued before the rotation at its next refresh, whatever
 window it holds. `admin-lodge-route.test.ts` feeds the written row to that rule.
 
+## Recent authentication and step-up (#4616)
+
+Audience: Operator, Developer.
+
+A signed-in session looks the same five minutes or five days after sign-in, so
+a session left open on a shared lodge computer could otherwise restore a
+backup or change payment credentials. The session therefore records when the
+person last proved who they are, and the most destructive actions can ask them
+to prove it again first. The rules are `INV-AUTH-008` in
+[`invariants/authentication.md`](invariants/authentication.md#inv-auth-008);
+this section holds the behaviour and the limits. This release adds the record,
+the check and the dialog; **no action asks yet** — the step-up list and the
+route census arrive with #4619.
+
+**The record.** The session token carries `lastAuthenticatedAt`. The `jwt`
+callback in `src/lib/auth.ts` stamps it when sign-in completes, beside
+`sessionIssuedAt`, and moves it only when it consumes a step-up challenge.
+Nothing else moves it: not a refresh, a role change or a two-factor
+verification, and never a `session.update()` from the browser, whose payload
+the callback does not read for this field. A token minted before this release
+has no stamp and is treated as never authenticated.
+
+**The check.** `requireRecentAuth()` (`src/lib/recent-auth.ts`) is the one
+check. It reads the stamp from the signed session and admits a proof at most
+**five minutes** old. Anything older, missing or later than now is refused
+with HTTP 403 and `code: "RECENT_AUTH_REQUIRED"`, the refusal the dialog
+recognises. The five minutes are a security floor, not a club setting (owner
+decision on #4454). It runs after a route's own guard and adds only recency.
+
+**Proving it again.** `GET /api/auth/reauth` tells the dialog which method
+this person uses; `POST /api/auth/reauth` checks it. Both need a fully
+signed-in session (active, login on, no pending password change, two-factor
+verified).
+
+- **An authenticator app, when the person has one:** its current code. The
+  password is refused, unchecked and uncounted, while an app is enrolled.
+- **The password, only when the person has neither an app nor (from #4617) a
+  passkey.**
+- **Never an emailed code** (owner decision 2 on #4454: an emailed code does
+  not prove an officer) **and never a recovery code**, which is for a lost
+  device. A request naming either fails validation.
+
+**A failed attempt counts.** A wrong app code counts towards the same
+two-factor lockout sign-in uses: five failures lock the code for 15 minutes,
+and a locked member is refused before the code is read. A password is claimed
+against the account's shared password budget before it is compared
+(`INV-AUTH-004`), so step-up, sign-in and change-password draw on one budget.
+A right answer clears the count, as at sign-in. The route also takes the
+per-address two-factor limiter.
+
+**How the record moves.** A right answer mints a `SessionReauthChallenge`: a
+256-bit token stored only as the keyed two-factor code hash
+([`TOKEN_HASHING.md`](TOKEN_HASHING.md#keyed-code-hashes-and-the-data-encryption-key-ring-4456)),
+bound to the member and live for two minutes. The route hands the raw token to
+`updateSession()` in the same request; the `jwt` callback consumes it with one
+guarded single-row delete for the token's own member and only then stamps now.
+The token never leaves the server, and a replayed, expired, other-member or
+made-up one moves nothing. Consumption takes no advisory key
+([`CONCURRENCY_AND_LOCKING.md`](CONCURRENCY_AND_LOCKING.md#the-step-up-challenge-is-a-guarded-single-row-delete-4616)).
+
+**The dialog.** `RecentAuthProvider` and `useRecentAuthFetch()`
+(`src/components/recent-auth/`) send a request; on the refusal they open
+"Confirm it's you", and after a confirmed proof send the same request once
+more, its body unchanged, so a typed confirmation such as `RESTORE` is neither
+lost nor acted on twice. A second refusal is returned rather than asked again;
+Cancel returns the original refusal. A body that cannot be sent twice (a
+stream, or a `Request` object) is not accepted by the type.
+
+**Stated limits.**
+
+- **Any completed sign-in counts as a fresh proof**, including an emailed
+  sign-in link or Google, as the issue specifies ("set when sign-in
+  finishes"). Where two-factor is required, the session still has to pass it
+  before any guarded action. A person who lost their device can sign in again
+  with a recovery code and act within the five minutes that sign-in gives.
+- **The two-factor verification at sign-in does not refresh the stamp**,
+  because that path also accepts emailed and recovery codes. A person who
+  takes more than five minutes between the password and the code is asked
+  again before a guarded action.
+- **An app code is not single-use.** The same code accepted at sign-in can be
+  presented for a step-up within its 30-second window and the one either side,
+  as for every two-factor code today.
+- **A person with no app and no password they know** (an account that has only
+  ever used sign-in links) cannot step up until they set one through "Forgot
+  password".
+- **A stolen session cookie used within five minutes of the person's own
+  step-up carries that fresh proof.** The window bounds how long; nothing
+  binds the proof to the device.
+- **No audit row is written for a step-up**, as for a sign-in verification; the
+  guarded actions record their own (#4619).
+- **During a blue/green cutover** the draining release never names the new
+  table and never stamps tokens. A session it minted carries no stamp and is
+  asked to step up on its first guarded action.
+
 ## Data-encryption key ring (#4456)
 
 Audience: Operator, Developer.

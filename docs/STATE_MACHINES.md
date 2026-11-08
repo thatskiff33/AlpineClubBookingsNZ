@@ -5029,6 +5029,42 @@ Rendered panel tests cover accepted, pending, rejected and network-failed reques
 direct browser journeys require protected content after Continue and verification,
 without a later helper navigation (#4060).
 
+## Recent Authentication And Step-Up Lifecycle (#4616)
+
+The session token's `lastAuthenticatedAt` (`INV-AUTH-008`): when the person
+last proved who they are. It keeps no status column; the state is the stamp's
+age, read through `isRecentlyAuthenticated` in
+`src/lib/recent-auth-policy.ts`. The step-up challenge is a
+`SessionReauthChallenge` row that lives only between mint and consume.
+
+```text
+sign-in completes (any provider) -> jwt callback stamps lastAuthenticatedAt = now (beside sessionIssuedAt)
+refresh, role change, two-factor verification -> stamp unchanged
+token minted before #4616 (no stamp) -> never recent; never back-filled
+stamp age <= 5 min -> recent: requireRecentAuth admits
+stamp age > 5 min, missing, or in the future -> stale: requireRecentAuth answers 403 RECENT_AUTH_REQUIRED
+stale + dialog -> GET /api/auth/reauth offers TOTP (app enrolled) or PASSWORD (no app, no passkey)
+EMAIL or RECOVERY proof -> 400, nothing checked or counted
+PASSWORD while an app is enrolled -> 409, nothing checked or counted
+wrong app code -> two-factor failure counted -> 5th failure locks 15 min -> locked: 429 before the code is read
+wrong password -> counted by the shared password budget (claimed before the compare) -> waiting: 429 LOGIN_THROTTLED
+right proof -> count cleared -> challenge minted (keyed hash, member-bound, 2 min) -> updateSession carries the raw token
+jwt callback consumes it (one guarded delete, count 1) -> stamp = now -> recent
+replayed, expired, other-member or made-up token -> deletes nothing -> stamp unchanged
+client session.update() carrying lastAuthenticatedAt -> ignored -> stamp unchanged
+dialog confirmed -> refused request replayed once, body unchanged -> its answer returned (a second refusal is not re-asked)
+dialog cancelled -> original refusal returned, request not resent
+```
+
+To verify: `recent-auth-policy.test.ts` (the window on the frozen clock, the
+methods), `auth-recent-auth-claim.test.ts` (end to end through the Auth.js
+handler: sign-in stamp, the 5:00/5:01 boundary, a forged update ignored, a
+consumed challenge refreshing, a two-factor verification not),
+`recent-auth-route.test.ts` (the route, and the real two-factor lockout
+counting failed app codes), `session-reauth-challenge.realdb.test.ts` (replay,
+expiry, other member, and two consumers forced to meet: exactly one success)
+and `recent-auth-provider.test.tsx` (the dialog replays once).
+
 ## Password Sign-In Throttle (#4609)
 
 A per-account count in front of the password check (`INV-AUTH`). It keeps no
