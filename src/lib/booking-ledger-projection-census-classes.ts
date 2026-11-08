@@ -17,6 +17,7 @@
  * questions live in `booking-ledger-projection-census.ts`.
  */
 import type { LedgerLineKind, ManualRefundTaskStatus } from "@prisma/client";
+import { CAPTURE_KINDS } from "@/lib/booking-ledger-capture-kinds";
 
 import type { BookingLedgerCensusRow, CensusLedgerLine } from "@/lib/booking-ledger-projection-census-row";
 import { inFlightGroupPlanRefundCents } from "@/lib/booking-ledger-projection-census-group";
@@ -180,7 +181,8 @@ export function explainResidual(
 // Ledger figures and evidence every predicate shares
 // ---------------------------------------------------------------------------
 
-export const CAPTURE_KINDS = ["CARD_CAPTURE", "BANK_RECEIPT", "CASH_RECORDED"] as const satisfies readonly LedgerLineKind[];
+// #4516 (`INV-SSOT`): one capture-kind list, with each kind's receipt account, in its leaf module.
+export { CAPTURE_KINDS };
 
 export function sumKinds(lines: readonly CensusLedgerLine[], kinds: readonly LedgerLineKind[]): number {
   let total = 0;

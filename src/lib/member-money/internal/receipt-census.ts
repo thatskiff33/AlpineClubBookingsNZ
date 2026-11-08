@@ -4,7 +4,8 @@ import { isCapturedTransactionStatus } from "../../payment-transaction-status";
 import { memberMoneyApplicationTotals } from "./application-state";
 import { readMemberMoneyApplicationState } from "./application-read";
 import { bookingOwnerDebtor, readBookingLiveChargeCents } from "./booking-journal-read";
-import { bookingReceiptEventKey, RECEIPT_CASH_ACCOUNTS, RECEIPT_LINE_KINDS, readMergedDebtorBalances } from "./booking-receipts";
+import { CAPTURE_CASH_ACCOUNTS, CAPTURE_KINDS } from "../../booking-ledger-capture-kinds";
+import { bookingReceiptEventKey, readMergedDebtorBalances } from "./booking-receipts";
 
 export type ReceiptCensusClass = "UNBRIDGED_SETTLEMENT_LINE" | "RECEIPT_WITHOUT_EVENT" | "RECEIPT_AMOUNT_DRIFT"
   | "OVER_COLLECTED" | "UNAPPLIED_RECEIPT_ON_OPEN_CHARGE" | "MERGED_DEBTOR_BALANCE";
@@ -33,7 +34,7 @@ export async function readBookingReceiptCensus(tx: Db, paymentId: string): Promi
   const bookingId = payment.bookingId;
   const findings: ReceiptCensusFinding[] = [];
   const add = (kind: ReceiptCensusClass, identity: string, cents: number) => findings.push({ kind, identity, bookingId, cents });
-  const lines = await tx.bookingLedgerLine.findMany({ where: { bookingId, side: "SETTLEMENT", kind: { in: RECEIPT_LINE_KINDS } } });
+  const lines = await tx.bookingLedgerLine.findMany({ where: { bookingId, side: "SETTLEMENT", kind: { in: [...CAPTURE_KINDS] } } });
   for (const row of payment.transactions.filter((r) => r.reason !== ORGANISER_SHARE_RECEIPT_REASON && isCapturedTransactionStatus(r.status) && r.amountCents > 0)) {
     const line = lines.find((l) => l.anchorId === row.id && l.reversesLineId === null && !lines.some((r) => r.reversesLineId === l.id));
     if (!line) { add("UNBRIDGED_SETTLEMENT_LINE", row.id, row.amountCents); add("RECEIPT_WITHOUT_EVENT", row.id, row.amountCents); continue; }
@@ -41,7 +42,7 @@ export async function readBookingReceiptCensus(tx: Db, paymentId: string): Promi
     const event = await tx.memberMoneyEvent.findUnique({ where: { eventKey }, select: { journal: { select: { lines: { select: { account: true, side: true, amountCents: true } } } } } });
     if (!event) add("RECEIPT_WITHOUT_EVENT", row.id, row.amountCents);
     else {
-      const posted = event.journal!.lines.filter((l) => l.side === "DEBIT" && RECEIPT_CASH_ACCOUNTS.includes(l.account)).reduce((n, l) => n + l.amountCents, 0);
+      const posted = event.journal!.lines.filter((l) => l.side === "DEBIT" && CAPTURE_CASH_ACCOUNTS.includes(l.account)).reduce((n, l) => n + l.amountCents, 0);
       if (posted !== row.amountCents) add("RECEIPT_AMOUNT_DRIFT", row.id, row.amountCents - posted);
     }
     if (!await tx.memberMoneySourceLink.findUnique({ where: { bookingLedgerLineId: line.id }, select: { id: true } })) add("UNBRIDGED_SETTLEMENT_LINE", line.id, line.amountCents);

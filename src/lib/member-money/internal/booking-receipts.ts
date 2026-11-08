@@ -1,4 +1,5 @@
-import type { LedgerLineKind, MemberMoneyAccount, MemberMoneyOrigin, Prisma } from "@prisma/client";
+import type { Prisma } from "@prisma/client";
+import { CAPTURE_KIND_RECEIPTS, CAPTURE_KINDS, type CaptureKind } from "../../booking-ledger-capture-kinds";
 import { clubCalendarDateOf, requireInstant, startOfClubDay, type CalendarDate } from "../../club-time";
 import { ORGANISER_SHARE_RECEIPT_REASON } from "../../organiser-extra-state";
 import { lockMemberMoneyPayment, readMemberMoneyApplicationState } from "./application-read";
@@ -12,15 +13,6 @@ import { linkLegacyLinesToPostedBatch, writeMemberMoneyBatch } from "./store";
 
 type Db = Prisma.TransactionClient;
 
-/** The legacy settlement lines that are receipts, with the cash account and origin each posts: one map for the hooks and the census. */
-export const RECEIPT_LINES = {
-  CARD_CAPTURE: { cash: "STRIPE_CLEARING", origin: "STRIPE" },
-  BANK_RECEIPT: { cash: "BANK", origin: "XERO" },
-  CASH_RECORDED: { cash: "CASH", origin: "OFFICER" },
-} as const satisfies Partial<Record<LedgerLineKind, { cash: MemberMoneyAccount; origin: MemberMoneyOrigin }>>;
-type ReceiptLineKind = keyof typeof RECEIPT_LINES;
-export const RECEIPT_LINE_KINDS = Object.keys(RECEIPT_LINES) as ReceiptLineKind[];
-export const RECEIPT_CASH_ACCOUNTS: readonly MemberMoneyAccount[] = RECEIPT_LINE_KINDS.map((kind) => RECEIPT_LINES[kind].cash);
 
 export interface BookingReceiptDecision {
   /** No selection means catch-up only. Never select an instrument by amount or time. */
@@ -186,14 +178,14 @@ export async function postBookingReceipts(tx: Db, context: BookingJournalContext
   const booking = { bookingId: owner.bookingId, lodgeId: payment.booking.lodgeId };
   const debtor = bookingOwnerDebtor(payment.booking);
   const decision = input.decision;
-  const lines = await tx.bookingLedgerLine.findMany({ where: { bookingId: owner.bookingId, side: "SETTLEMENT", kind: { in: RECEIPT_LINE_KINDS } },
+  const lines = await tx.bookingLedgerLine.findMany({ where: { bookingId: owner.bookingId, side: "SETTLEMENT", kind: { in: [...CAPTURE_KINDS] } },
     orderBy: [{ postedAt: "asc" }, { id: "asc" }] });
   const receipts = lines.flatMap((line) => {
     const row = line.reversesLineId === null ? payment.transactions.find((t) => t.id === line.anchorId) : undefined;
     if (!row || row.reason === ORGANISER_SHARE_RECEIPT_REASON || line.amountCents <= 0) return [];
     const selected = decision !== undefined && (decision.paymentIntentId !== undefined && decision.paymentIntentId === row.stripePaymentIntentId
       || decision.transactionIds?.includes(row.id) === true);
-    return [{ line, row, kind: line.kind as ReceiptLineKind, selected, reversal: lines.find((l) => l.reversesLineId === line.id) ?? null }];
+    return [{ line, row, kind: line.kind as CaptureKind, selected, reversal: lines.find((l) => l.reversesLineId === line.id) ?? null }];
   });
   // Nothing selected, every receipt and reversal already bridged, and no merged-debtor residue: no further reads
   // under the caller's locks (this hook runs beside every capture, often holding `lock(1)`).
@@ -216,9 +208,9 @@ export async function postBookingReceipts(tx: Db, context: BookingJournalContext
       const postedAs: ReceiptPostedAs = !selected ? "catch-up" : decision!.collect ? "collect" : decision!.deferred ? "deferred" : "uncollected";
       const evidence = { transactionId: row.id, settlementLineId: line.id, postedAs,
         datedBy: selected && decision?.effectiveDate ? "source-date" : selected && decision?.effectiveAt ? "source" : "app-record" };
-      const result = await postMemberMoneyEvent(tx, factContext, { kind: "RECEIPT", eventKey, origin: RECEIPT_LINES[kind].origin, source, reason: "Booking receipt",
+      const result = await postMemberMoneyEvent(tx, factContext, { kind: "RECEIPT", eventKey, origin: CAPTURE_KIND_RECEIPTS[kind].origin, source, reason: "Booking receipt",
         legs: [
-          { type: "amount", account: RECEIPT_LINES[kind].cash, side: "DEBIT", amountCents: line.amountCents, booking, evidence },
+          { type: "amount", account: CAPTURE_KIND_RECEIPTS[kind].cash, side: "DEBIT", amountCents: line.amountCents, booking, evidence },
           { type: "amount", account: "MEMBER_RECEIVABLE", side: "CREDIT", amountCents: line.amountCents, debtor, booking, evidence },
         ] });
       const credit = await tx.memberMoneyLine.findFirstOrThrow({ where: { journalId: result.journalId, account: "MEMBER_RECEIVABLE", side: "CREDIT" }, select: { id: true } });
