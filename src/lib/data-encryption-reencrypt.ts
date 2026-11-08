@@ -25,6 +25,15 @@
  * side effect. It is retried on the next pass, up to `maxPasses`; what still
  * loses is reported, and a later run picks it up.
  *
+ * IT FIRST PROVES ITS KEY IS THE APP'S (#4456 review). The command reads its
+ * ring from the environment it is started in — and the database client loads
+ * `.env` from the current directory for any variable not exported — so a ring
+ * with the right id but other bytes would re-encrypt everything under a key
+ * the app does not hold. Before anything is written it decrypts one row the
+ * app already wrote under the target id, and refuses if it cannot. On the
+ * first cut-over no such row exists yet; the report then shows the key's
+ * fingerprint for the operator to compare with Admin → Setup's.
+ *
  * NOTHING HERE PRINTS A VALUE. Rows are named by provider and key, or counted;
  * a plaintext lives only between the read and the write of its own row.
  */
@@ -37,6 +46,7 @@ import {
   DATA_KEY_REENCRYPT_JOB_NAME,
   LEGACY_KEY_RETIRED,
   DataKeyRingError,
+  dataKeyFingerprint,
   type DataKey,
 } from "@/lib/data-encryption-key-material";
 import { readDataKeyRing } from "@/lib/data-encryption-keys";
@@ -96,6 +106,10 @@ export interface StoreTally {
 
 export interface ReencryptReport {
   currentKeyId: string;
+  /** `dataKeyFingerprint` of the key moved to: compare it with Admin → Setup's. */
+  currentKeyFingerprint: string;
+  /** What proved this environment's key is the app's, or null when nothing could yet. */
+  keyCheckedAgainst: "a stored credential" | "a stored authenticator secret" | null;
   dryRun: boolean;
   passes: number;
   credentials: StoreTally;
@@ -183,7 +197,7 @@ function olderRingKeyCodes(target: DataKey, options: ReencryptOptions): Prisma.T
 }
 
 /** Move one credential row, claimed on the version read inside its transaction. */
-async function moveCredential(row: CredentialRow, target: DataKey, options: ReencryptOptions): Promise<Outcome> {
+async function moveCredential(row: CredentialRow, target: DataKey): Promise<Outcome> {
   const targetSource = `${DATA_KEY_SOURCE_PREFIX}${target.id}`;
   try {
     await withCredentialTransaction([row.provider], async (tx) => {
@@ -278,6 +292,40 @@ function defaultPause(ms: number): Promise<void> {
 }
 
 /**
+ * Prove this environment's target key is the one the app writes with: decrypt
+ * the newest credential, else authenticator secret, the app has stored under
+ * the target id. Refuses with `ReencryptRefusedError` when that row cannot be
+ * read here; null when no row names the target id yet (the first cut-over).
+ */
+async function checkTargetKey(
+  target: DataKey,
+  options: ReencryptOptions,
+): Promise<ReencryptReport["keyCheckedAgainst"]> {
+  const refuse = () =>
+    new ReencryptRefusedError(
+      `Refused before writing anything: data the app stored under the key "${target.id}" cannot be read with the "${target.id}" this command holds (fingerprint ${dataKeyFingerprint(target)}). This environment's ${DATA_ENCRYPTION_KEYS_ENV} is not the app's. Variables exported in this shell win; anything unset is read from the .env in the current directory.`,
+    );
+  const credential = await prisma.integrationCredential.findFirst({
+    where: { ...scopeWhere(options).credential, secretSource: `${DATA_KEY_SOURCE_PREFIX}${target.id}` },
+    select: { provider: true, key: true },
+    orderBy: { updatedAt: "desc" },
+  });
+  if (credential) {
+    const stored = await readIntegrationCredentialRow(prisma, credential.provider, credential.key);
+    if (stored.status === "needs_reentry") throw refuse();
+    return "a stored credential";
+  }
+  const member = await prisma.member.findFirst({
+    where: { ...scopeWhere(options).member, totpSecret: exactPrefix(`${RING_ENCRYPTION_VERSION}:${target.id}:`) },
+    select: { totpSecret: true },
+    orderBy: { updatedAt: "desc" },
+  });
+  if (!member?.totpSecret) return null;
+  if (inspectSecret(member.totpSecret) === "unreadable") throw refuse();
+  return "a stored authenticator secret";
+}
+
+/**
  * Move every row not under the current key to it, or (dry run) say what would
  * move. Refuses with `ReencryptRefusedError` before reading anything when the
  * ring is unset or invalid.
@@ -285,6 +333,7 @@ function defaultPause(ms: number): Promise<void> {
 export async function reencryptStoredData(options: ReencryptOptions): Promise<ReencryptReport> {
   const target = requireReencryptTarget();
   const scope = scopeWhere(options);
+  const keyCheckedAgainst = await checkTargetKey(target, options);
 
   const credentialRows = await prisma.integrationCredential.findMany({
     where: credentialsOffTarget(target, options),
@@ -293,7 +342,7 @@ export async function reencryptStoredData(options: ReencryptOptions): Promise<Re
   });
   const credentials = await inPasses(
     credentialRows,
-    (row) => (options.dryRun ? inspectCredential(row) : moveCredential(row, target, options)),
+    (row) => (options.dryRun ? inspectCredential(row) : moveCredential(row, target)),
     options,
   );
 
@@ -343,6 +392,8 @@ export async function reencryptStoredData(options: ReencryptOptions): Promise<Re
 
   return {
     currentKeyId: target.id,
+    currentKeyFingerprint: dataKeyFingerprint(target),
+    keyCheckedAgainst,
     dryRun: options.dryRun,
     passes: Math.max(credentials.passes, secrets.passes),
     credentials: { ...credentials.tally, remaining: credentialsRemaining },
@@ -365,6 +416,9 @@ export function formatReencryptReport(report: ReencryptReport): string[] {
   ];
   const lines = [
     `Data-encryption re-encrypt to the key "${report.currentKeyId}"${report.dryRun ? " (dry run: nothing written)" : ""}, ${report.passes} pass${report.passes === 1 ? "" : "es"}.`,
+    report.keyCheckedAgainst
+      ? `Key "${report.currentKeyId}", fingerprint ${report.currentKeyFingerprint}: read ${report.keyCheckedAgainst} the app wrote under it, so this is the app's key.`
+      : `Key "${report.currentKeyId}", fingerprint ${report.currentKeyFingerprint}: NOT CHECKED, nothing is stored under it yet. Compare this fingerprint with Admin → Setup → "Data Encryption Key" before running without --dry-run.`,
     ...store("IntegrationCredential", report.credentials),
     ...store("Member.totpSecret", report.authenticatorSecrets),
     `TwoFactorRecoveryCode: legacy (AUTH_SECRET) unused: ${report.recoveryCodes.legacyUnused}${

@@ -445,6 +445,26 @@ let observerClient: PrismaClient;
     expect(row).toEqual({ updatedAt: kept, secretSource: "DATA_ENCRYPTION_KEY:k1" });
   });
 
+  it("refuses, changing nothing, when its ring has the app's key id but other bytes (#4456 review S1)", async () => {
+    await set("still-legacy", "legacy-value", { expect: "absent" });
+    process.env.DATA_ENCRYPTION_KEYS = RING;
+    await set("app-written", "ring-value", { expect: "absent" });
+    const before = await prisma.integrationCredential.findMany({ where: { provider: PROVIDER }, orderBy: { key: "asc" } });
+    // The command's environment: the right id, the wrong bytes (a stale .env, say).
+    process.env.DATA_ENCRYPTION_KEYS = `k1:${testKey(7)}`;
+
+    await expect(runReencrypt()).rejects.toThrow(/^Refused before writing anything: data the app stored under the key "k1"/);
+
+    expect(await prisma.integrationCredential.findMany({ where: { provider: PROVIDER }, orderBy: { key: "asc" } })).toEqual(before);
+    expect(await prisma.auditLog.count({ where: { entityId: `${PROVIDER}:still-legacy`, metadata: { path: ["systemActor"], equals: "data-key-reencrypt" } } })).toBe(0);
+
+    // With the app's own key it proves the key and moves the legacy row.
+    process.env.DATA_ENCRYPTION_KEYS = RING;
+    const report = await runReencrypt();
+    expect(report.keyCheckedAgainst).toBe("a stored credential");
+    expect(report.credentials).toMatchObject({ moved: 1, remaining: 0 });
+  });
+
   it("moves everything again to a newer ring key, and a second run finds nothing to do", async () => {
     await seedLegacy();
     process.env.DATA_ENCRYPTION_KEYS = RING;

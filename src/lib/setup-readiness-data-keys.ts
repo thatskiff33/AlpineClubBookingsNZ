@@ -19,6 +19,7 @@ import {
   DATA_ENCRYPTION_LEGACY_KEY_ENV,
   LEGACY_AUTH_SECRET_KEY_ID,
   LEGACY_KEY_RETIRED,
+  dataKeyFingerprint,
   parseDataEncryptionKeys,
 } from "@/lib/data-encryption-key-material";
 import { wrappingKeyIdOf } from "@/lib/integration-crypto";
@@ -206,12 +207,15 @@ export function buildDataEncryptionKeyCheck(
   }
 
   const ringIds = new Set(ring.keys.map((key) => key.id));
+  // The running app's key, one-way: pnpm run data-keys:reencrypt prints the
+  // same fingerprint only when it holds the same bytes (#4456 review).
+  const keyLine = `The current key "${ring.current.id}" has the fingerprint ${dataKeyFingerprint(ring.current)}; pnpm run data-keys:reencrypt must print the same one before it is run.`;
   if (!usage) {
     return {
       ...base,
       status: "warning",
       message: `New data is encrypted under the data key "${ring.current.id}", but stored data was not checked, so whether anything still depends on AUTH_SECRET is unknown.`,
-      details: ["Re-run the check once the database is reachable."],
+      details: [keyLine, "Re-run the check once the database is reachable."],
     };
   }
 
@@ -221,7 +225,7 @@ export function buildDataEncryptionKeyCheck(
       ...base,
       status: "blocked",
       message: `Some stored data names a data key that is not in ${DATA_ENCRYPTION_KEYS_ENV}, so it cannot be read.`,
-      details: [...missing, "Put that key back in the ring, or re-enter what it holds."],
+      details: [keyLine, ...missing, "Put that key back in the ring, or re-enter what it holds."],
     };
   }
 
@@ -233,6 +237,7 @@ export function buildDataEncryptionKeyCheck(
       status: "blocked",
       message: `${DATA_ENCRYPTION_LEGACY_KEY_ENV}=${LEGACY_KEY_RETIRED} stops reading anything under AUTH_SECRET, but some stored data is still under it, so it cannot be read.`,
       details: [
+        keyLine,
         ...legacy,
         `Unset ${DATA_ENCRYPTION_LEGACY_KEY_ENV} and restart, run pnpm run data-keys:reencrypt until it reports nothing on AUTH_SECRET, then set it again.`,
       ],
@@ -243,7 +248,7 @@ export function buildDataEncryptionKeyCheck(
       ...base,
       status: "warning",
       message: `New data is encrypted under the data key "${ring.current.id}", but some stored data still depends on AUTH_SECRET: rotating it now would make that data unreadable.`,
-      details: [...legacy, ...recovery, MOVE_HINT],
+      details: [keyLine, ...legacy, ...recovery, MOVE_HINT],
     };
   }
 
@@ -251,7 +256,7 @@ export function buildDataEncryptionKeyCheck(
     ...base,
     status: "complete",
     message: `Data is encrypted under the data key "${ring.current.id}".`,
-    details: [
+    details: [keyLine, 
       `${plural(ring.keys.length, "key")} in the ring; the first is used for new data.`,
       ring.legacyRetired
         ? `Nothing stored depends on AUTH_SECRET, and nothing is read under it (${DATA_ENCRYPTION_LEGACY_KEY_ENV}=${LEGACY_KEY_RETIRED}).`

@@ -2046,7 +2046,8 @@ Production operator steps are the owner's.
    or anywhere the variable is unset).
 5. **Move what is still on `AUTH_SECRET`, and retire the old recovery codes**,
    once no container runs without the ring:
-   `pnpm run data-keys:reencrypt --dry-run`, then
+   `pnpm run data-keys:reencrypt --dry-run`, and **check its key fingerprint
+   against Admin → Setup → "Data Encryption Key"** (they must be identical), then
    `pnpm run data-keys:reencrypt --retire-legacy-recovery-codes`
    ([Moving stored data to the current key](#moving-stored-data-to-the-current-key-4456)).
    Run it again until it reports `remaining on old keys: 0` for both tables.
@@ -2109,6 +2110,21 @@ that key, unchanged. Run it from a checkout of the deployed release with the
 running release's `DATABASE_URL`, `AUTH_SECRET` and `DATA_ENCRYPTION_KEYS`:
 without the auth secret it cannot read what is still under it. Production runs
 are the owner's.
+
+**Where its settings come from.** The command loads `.env` from the directory
+it is run in, for every variable not already exported in the shell; an
+exported value always wins. A stale `.env` in that directory can therefore
+hand it a ring with the right id and the wrong bytes, which would re-encrypt
+everything under a key the app does not hold. Two checks stop that:
+
+- **Before writing anything it reads one row the app already stored under the
+  current key** and refuses if it cannot ("Refused before writing anything …").
+  Its report then says which kind of row proved the key.
+- **On the first cut-over nothing is stored under the key yet**, so it cannot
+  check, and says `NOT CHECKED`. Its second line prints the key's fingerprint
+  (a one-way hash of the key, never the key). Open Admin → Setup → "Data
+  Encryption Key", which shows the running app's fingerprint, and run the
+  command without `--dry-run` only if the two are identical.
 
 ```bash
 pnpm run data-keys:reencrypt --dry-run                        # count only, writes nothing

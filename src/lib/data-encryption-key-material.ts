@@ -10,7 +10,7 @@
  * `util.inspect` and any spread copy, so a stray log line shows the id alone.
  */
 
-import { hkdfSync } from "node:crypto";
+import { createHash, hkdfSync } from "node:crypto";
 
 /** The environment variable that holds the ring. */
 export const DATA_ENCRYPTION_KEYS_ENV = "DATA_ENCRYPTION_KEYS";
@@ -234,6 +234,28 @@ export function deriveDataSubkey(key: DataKey, purpose: string): Buffer {
   return Buffer.from(
     hkdfSync("sha256", material, RING_HKDF_SALT, Buffer.from(purpose, "utf8"), DATA_KEY_BYTES),
   );
+}
+
+/**
+ * The fixed prefix of a key fingerprint's hash input. Nothing else hashes or
+ * derives with it, so a fingerprint is never a sub-key, a code hash or the key.
+ */
+const FINGERPRINT_DOMAIN = "acb:data-encryption-key:fingerprint:v1\0";
+
+/**
+ * A short, one-way fingerprint of a RING key, for an operator to check that two
+ * environments hold the same key bytes (#4456 review): the re-encrypt prints
+ * it, and Admin → Setup shows the running app's. SHA-256 over a domain prefix
+ * and the key, cut to 64 bits: enough to tell two random keys apart, far too
+ * little to say anything about a 256-bit key. The legacy key has none.
+ */
+export function dataKeyFingerprint(key: DataKey): string {
+  const material = key[MATERIAL];
+  if (key.legacy || typeof material === "string") {
+    throw new DataKeyRingError("The legacy key has no fingerprint.");
+  }
+  const digest = createHash("sha256").update(FINGERPRINT_DOMAIN, "utf8").update(material).digest("hex");
+  return digest.slice(0, 16).match(/.{4}/g)!.join("-");
 }
 
 /** The auth secret behind the legacy key, for the legacy derivations only. */

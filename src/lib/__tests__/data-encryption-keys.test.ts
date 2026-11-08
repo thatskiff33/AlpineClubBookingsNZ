@@ -6,9 +6,13 @@ const mocks = vi.hoisted(() => ({
 }));
 vi.mock("@/lib/logger", () => ({ default: mocks.logger, logger: mocks.logger }));
 
+import { createHash } from "node:crypto";
+
 import {
   DATA_KEY_BYTES,
   DataKeyRingError,
+  dataKeyFingerprint,
+  legacyDataKey,
   LEGACY_AUTH_SECRET_KEY_ID,
   deriveDataSubkey,
   legacySecretOf,
@@ -317,3 +321,37 @@ describe("the legacy-read switch, DATA_ENCRYPTION_LEGACY_KEY (#4456 PR 2)", () =
     expect(read()).toBe("legacy-plaintext");
   });
 });
+
+describe("a key's fingerprint (#4456 review S1)", () => {
+  function ringKey(raw: string) {
+    const ring = parseDataEncryptionKeys(raw, AUTH);
+    if (ring.status !== "configured") throw new Error("expected a ring");
+    return ring.current;
+  }
+
+  it("is 64 bits in four groups, the same for the same bytes whatever the id, and differs for other bytes", () => {
+    const fingerprint = dataKeyFingerprint(ringKey(`k1:${K1}`));
+    expect(fingerprint).toMatch(/^[0-9a-f]{4}(-[0-9a-f]{4}){3}$/);
+    expect(dataKeyFingerprint(ringKey(`other:${K1}`))).toBe(fingerprint);
+    expect(dataKeyFingerprint(ringKey(`k1:${K2}`))).not.toBe(fingerprint);
+  });
+
+  it("is a domain-separated hash: never the key, its plain SHA-256, or a sub-key any use derives", () => {
+    const key = ringKey(`k1:${K1}`);
+    const fingerprint = dataKeyFingerprint(key).replace(/-/g, "");
+    const material = Buffer.from(K1, "base64");
+    expect(material.toString("hex")).not.toContain(fingerprint);
+    expect(createHash("sha256").update(material).digest("hex").startsWith(fingerprint)).toBe(false);
+    for (const purpose of ["integration-credential:v2", "two-factor-secret:v2", "two-factor-code:v2"]) {
+      expect(deriveDataSubkey(key, purpose).toString("hex").startsWith(fingerprint)).toBe(false);
+    }
+    expect(
+      createHash("sha256").update("acb:data-encryption-key:fingerprint:v1\0", "utf8").update(material).digest("hex").slice(0, 16),
+    ).toBe(fingerprint);
+  });
+
+  it("does not exist for the legacy key, so the auth secret is never fingerprinted", () => {
+    expect(() => dataKeyFingerprint(legacyDataKey(AUTH))).toThrow(DataKeyRingError);
+  });
+});
+

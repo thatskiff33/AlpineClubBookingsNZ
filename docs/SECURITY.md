@@ -606,6 +606,13 @@ a refresh that has spent its token at Xero always saves the new one
 ([`CONCURRENCY_AND_LOCKING.md`](CONCURRENCY_AND_LOCKING.md#the-data-key-re-encrypt-joins-the-row-claims-and-takes-no-advisory-key-4456)).
 It prints counts and key ids only: an unexpected error is reported by its class
 and code, because a database error's message can echo the row it failed on.
+Because its ring comes from its own environment (and `.env` fills anything not
+exported), it first decrypts a row the app wrote under the target key and
+refuses if that fails; with no such row yet it prints the key's fingerprint
+for the operator to match against Admin → Setup's. The fingerprint is 64 bits
+of SHA-256 over a fixed domain label and the key, used for nothing else, so it
+says nothing usable about a 256-bit key and is never a sub-key or a hash the
+app stores.
 
 **Retiring the legacy key.** Until `DATA_ENCRYPTION_LEGACY_KEY=retired` is set,
 a row naming the auth secret is still READ under it, so someone holding a leaked

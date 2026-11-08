@@ -74,6 +74,7 @@ describe("setup readiness: the Data Encryption Key step (#4456)", () => {
     );
     expect(check.status).toBe("blocked");
     expect(check.details).toEqual([
+      expect.stringMatching(/^The current key "k2" has the fingerprint [0-9a-f]{4}(-[0-9a-f]{4}){3}; /),
       '4 provider credentials under the data key "k1".',
       '2 authenticator-app secrets under the data key "k0".',
       expect.stringMatching(/Put that key back in the ring/),
@@ -241,5 +242,24 @@ describe("setup readiness: the legacy-read switch, DATA_ENCRYPTION_LEGACY_KEY (#
     const typo = buildDataEncryptionKeyCheck(`k1:${K1}`, MOVED, undefined, "retire");
     expect(typo.status).toBe("blocked");
     expect(typo.details[0]).toMatch(/DATA_ENCRYPTION_LEGACY_KEY: the only accepted value is "retired"/);
+  });
+});
+
+describe("setup readiness: the current key's fingerprint (#4456 review S1)", () => {
+  it("shows the running app's key fingerprint, the same one the re-encrypt prints for the same bytes", async () => {
+    const { dataKeyFingerprint, parseDataEncryptionKeys } = await import("@/lib/data-encryption-key-material");
+    const ring = parseDataEncryptionKeys(`k1:${K1}`);
+    if (ring.status !== "configured") throw new Error("expected a ring");
+    const fingerprint = dataKeyFingerprint(ring.current);
+
+    for (const stored of [NOTHING_STORED, LEGACY_STORED, undefined]) {
+      const check = buildDataEncryptionKeyCheck(`k1:${K1}`, stored);
+      expect(check.details).toContain(
+        `The current key "k1" has the fingerprint ${fingerprint}; pnpm run data-keys:reencrypt must print the same one before it is run.`,
+      );
+      expect(check.details.join(" ")).not.toContain(K1);
+    }
+    // Other bytes under the same id: a different fingerprint.
+    expect(buildDataEncryptionKeyCheck(`k1:${K2}`, NOTHING_STORED).details.join(" ")).not.toContain(fingerprint);
   });
 });
