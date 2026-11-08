@@ -377,7 +377,11 @@ describe("legacy recovery codes (#4456 PR 2, owner decision of 1 Nov 2026)", () 
     expect(mocks.prisma.twoFactorRecoveryCode.count).toHaveBeenCalledWith({
       where: { usedAt: null, NOT: { codeHash: { contains: ":" } } },
     });
-    expect(formatReencryptReport(report).join("\n")).toMatch(/Keep each older key in the ring/);
+    // The same answer as the setup step's (round 4): codes cannot hold a key in the ring.
+    expect(formatReencryptReport(report)).toContain(
+      "Unused recovery codes under an older key cannot be moved: removing that key retires them, and their members are told to generate a new set.",
+    );
+    expect(formatReencryptReport(report).join("\n")).not.toMatch(/until its recovery codes are used/);
   });
 });
 
@@ -534,7 +538,9 @@ describe("the fingerprint binds the run to the app's current key (#4456 review r
     mocks.credentialRows = [{ provider: "stripe", key: "secret_key" }];
     const error = (await run({ expectFingerprint: undefined }).catch((caught: unknown) => caught)) as Error;
     expect(error).toBeInstanceOf(ReencryptRefusedError);
-    expect(error.message).toMatch(/^Refused: a run that writes needs --expect-fingerprint <fingerprint from Admin → Setup>/);
+    expect(error.message).toMatch(
+      /^Refused: a run that writes must be run as pnpm run data-keys:reencrypt --expect-fingerprint <fingerprint from Admin → Setup>, /,
+    );
     // Nothing to copy (round 3, S2): not this command's own fingerprint.
     expect(error.message).not.toContain(setupFingerprint()!);
     expect(error.message).not.toMatch(/[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}/);

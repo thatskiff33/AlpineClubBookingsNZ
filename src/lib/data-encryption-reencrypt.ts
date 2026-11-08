@@ -47,6 +47,7 @@ import {
   DATA_ENCRYPTION_LEGACY_KEY_ENV,
   DATA_KEY_REENCRYPT_JOB_NAME,
   LEGACY_KEY_RETIRED,
+  REENCRYPT_RUN_COMMAND,
   DataKeyRingError,
   dataKeyFingerprint,
   type DataKey,
@@ -314,8 +315,6 @@ function normaliseFingerprint(text: string): string {
   return text.trim().toLowerCase();
 }
 
-/** The flag as an instruction. Its value only ever comes from the app's own page. */
-const RUN_COMMAND_PLACEHOLDER = "pnpm run data-keys:reencrypt --expect-fingerprint <fingerprint from Admin → Setup>";
 
 /**
  * The first guard on the target key: a run that writes must name the app's
@@ -330,7 +329,7 @@ function requireExpectedFingerprint(target: DataKey, options: ReencryptOptions):
     // No fingerprint of this command's own key here (round 3): only the app's
     // page may supply the value, so nothing here offers one to copy.
     throw new ReencryptRefusedError(
-      `Refused: a run that writes needs --expect-fingerprint <fingerprint from Admin → Setup>: the fingerprint Admin → Setup → "Data Encryption Key" shows for the app's current key. Run with --dry-run to see what would move.`,
+      `Refused: a run that writes must be run as ${REENCRYPT_RUN_COMMAND}, with the fingerprint Admin → Setup → "Data Encryption Key" shows for the app's current key. Run with --dry-run to see what would move.`,
     );
   }
   // The supplied value is never echoed (round 3): a mis-paste may be a key.
@@ -463,7 +462,7 @@ export async function reencryptStoredData(options: ReencryptOptions): Promise<Re
     currentKeyFingerprint: dataKeyFingerprint(target),
     keyCheckedAgainst,
     fingerprintConfirmed,
-    runCommand: `${RUN_COMMAND_PLACEHOLDER}${options.retireLegacyRecoveryCodes ? " --retire-legacy-recovery-codes" : ""}`,
+    runCommand: `${REENCRYPT_RUN_COMMAND}${options.retireLegacyRecoveryCodes ? " --retire-legacy-recovery-codes" : ""}`,
     dryRun: options.dryRun,
     passes: Math.max(credentials.passes, secrets.passes),
     credentials: { ...credentials.tally, remaining: credentialsRemaining },
@@ -519,7 +518,7 @@ export function formatReencryptReport(report: ReencryptReport): string[] {
   }
   if (report.recoveryCodes.olderRingKeyUnused > 0) {
     lines.push(
-      "Keep each older key in the ring until its recovery codes are used or replaced: removing it retires them.",
+      "Unused recovery codes under an older key cannot be moved: removing that key retires them, and their members are told to generate a new set.",
     );
   }
   if (!report.dryRun && !reencryptLeftRows(report)) {

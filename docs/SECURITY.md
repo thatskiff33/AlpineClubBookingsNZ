@@ -590,7 +590,7 @@ of 1 Nov 2026 on #4456): it lets the auth secret leave the data path entirely.
 A member still holding such codes is told on the sign-in challenge and on their
 profile to generate a new set. Under the ring they are only refused, so an
 instance started without it would accept them;
-`pnpm run data-keys:reencrypt --retire-legacy-recovery-codes` rewrites each one
+`pnpm run data-keys:reencrypt --expect-fingerprint <fingerprint from Admin → Setup> --retire-legacy-recovery-codes` rewrites each one
 so that no release accepts it, and keeps it unused so the notice still shows
 ([`TOKEN_HASHING.md`](TOKEN_HASHING.md#keyed-code-hashes-and-the-data-encryption-key-ring-4456)).
 

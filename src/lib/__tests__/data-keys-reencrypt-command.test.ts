@@ -141,3 +141,37 @@ describe("data-keys:reencrypt never prints a stored value in an error (#4456 PR 
     );
   });
 });
+
+describe("data-keys:reencrypt never echoes an unrecognised argument that could be a key (#4456 review round 4)", () => {
+  const KEY_B64 = Buffer.from(Array.from({ length: 32 }, (_, index) => (index * 11 + 5) % 256)).toString("base64");
+  const PASTED = `k2027:${KEY_B64}`;
+
+  it.each([
+    ["a bare pasted ring entry", [PASTED]],
+    ["a pasted entry after a misspelt flag", ["--fingerprint", PASTED]],
+    ["a misspelt flag joined to a pasted entry", [`--fingerprint=${PASTED}`]],
+    ["a bare base64 key", [KEY_B64]],
+  ])("refuses %s without running, and the key appears in no output", async (_label, argv) => {
+    const { out, err, io: deps } = io(async () => report());
+    await expect(runReencryptCommand(argv, deps)).resolves.toBe(1);
+    expect(deps.run).not.toHaveBeenCalled();
+    const printed = [...out, ...err].join("\n");
+    expect(printed).toMatch(/^Unknown argument: /);
+    expect(printed).not.toContain(KEY_B64);
+    expect(printed).not.toContain(KEY_B64.slice(0, 12));
+    expect(printed).not.toContain("k2027");
+  });
+
+  it("names a misspelt option by its name only, before any =, and anything else not at all", () => {
+    expect(parseReencryptArgs(["--fingerprint", PASTED])).toEqual({ kind: "error", message: "Unknown argument: --fingerprint" });
+    expect(parseReencryptArgs([`--fingerprint=${PASTED}`])).toEqual({ kind: "error", message: "Unknown argument: --fingerprint" });
+    expect(parseReencryptArgs(["-x"])).toEqual({ kind: "error", message: "Unknown argument: -x" });
+    for (const arg of [PASTED, KEY_B64, "--Fingerprint", "--x9", "k2027"]) {
+      expect(parseReencryptArgs([arg])).toEqual({
+        kind: "error",
+        message: "Unknown argument: an unrecognised argument (not repeated here)",
+      });
+    }
+  });
+});
+

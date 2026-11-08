@@ -19,6 +19,7 @@ import {
   DATA_ENCRYPTION_LEGACY_KEY_ENV,
   LEGACY_AUTH_SECRET_KEY_ID,
   LEGACY_KEY_RETIRED,
+  REENCRYPT_RUN_COMMAND,
   dataKeyFingerprint,
   parseDataEncryptionKeys,
 } from "@/lib/data-encryption-key-material";
@@ -99,7 +100,7 @@ const GENERATE_HINT =
 const ROLLOUT_HINT =
   "Set it only once every running container is on this release. Once data is written under it, never unset it, roll back to an older release, or route traffic to a colour without it: that data cannot be read there.";
 /** The re-encrypt as an instruction: its fingerprint only ever from the app's own page. */
-const MOVE_COMMAND = "pnpm run data-keys:reencrypt --expect-fingerprint <fingerprint from Admin → Setup>";
+const MOVE_COMMAND = REENCRYPT_RUN_COMMAND;
 /** Kept in step with DEPLOYMENT.md → "Moving stored data to the current key". */
 const MOVE_HINT = `To move it now: run pnpm run data-keys:reencrypt --dry-run, then ${MOVE_COMMAND}. It re-encrypts each credential and authenticator secret under the current key and reports what remains.`;
 const RETIRE_LEGACY_HINT = `Nothing stored depends on AUTH_SECRET, so it can be rotated without losing data. To stop reading anything under it at all, set ${DATA_ENCRYPTION_LEGACY_KEY_ENV}=${LEGACY_KEY_RETIRED} and restart.`;

@@ -2373,7 +2373,7 @@ exposes both and rotating it destroys the stored data.
   before a ring was set stop working the moment it is set, because a hash cannot
   be re-keyed. A member holding them is told, on the sign-in challenge and on
   their profile, to generate a new set. On an instance without the ring they
-  work again until `pnpm run data-keys:reencrypt --retire-legacy-recovery-codes`
+  work again until `pnpm run data-keys:reencrypt --expect-fingerprint <fingerprint from Admin → Setup> --retire-legacy-recovery-codes`
   retires them in the database; after that no instance accepts them, and the
   member is still told to generate a new set. Email codes last ten minutes and
   simply expire.

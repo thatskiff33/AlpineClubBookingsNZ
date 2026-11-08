@@ -52,6 +52,19 @@ export const USAGE = `Usage:
   Exit 0: nothing left on an old key. Exit 2: something is; run again.
   Exit 1: refused or failed.`;
 
+/** What an option's name looks like: only such a token, before any `=`, is echoed. */
+const OPTION_NAME = /^--?[a-z][a-z-]*$/;
+
+/**
+ * An unknown argument as it may be printed (#4456 review round 4): a mis-typed
+ * option by its name only, and anything else not at all, since a pasted ring
+ * entry or a `--fingerprint=<key>` typo would otherwise land on stderr.
+ */
+function describeUnknownArgument(arg: string): string {
+  const name = arg.split("=", 1)[0]!;
+  return OPTION_NAME.test(name) ? name : "an unrecognised argument (not repeated here)";
+}
+
 export type ParsedArgs =
   | { kind: "run"; options: Pick<ReencryptOptions, "dryRun" | "retireLegacyRecoveryCodes" | "expectFingerprint"> }
   | { kind: "help" }
@@ -79,7 +92,7 @@ export function parseReencryptArgs(argv: readonly string[]): ParsedArgs {
       expectFingerprint = value;
     }
     // pnpm forwards a lone "--" separator; it carries no option.
-    else if (arg !== "--") return { kind: "error", message: `Unknown argument: ${arg}` };
+    else if (arg !== "--") return { kind: "error", message: `Unknown argument: ${describeUnknownArgument(arg)}` };
   }
   return {
     kind: "run",

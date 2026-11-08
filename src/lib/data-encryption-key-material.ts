@@ -44,6 +44,15 @@ export function legacyKeyRetired(rawLegacyKey: string | undefined): boolean {
  */
 export const DATA_KEY_REENCRYPT_JOB_NAME = "data-key-reencrypt";
 
+/**
+ * The re-encrypt as an instruction (#4456 review): the ONE spelling every
+ * message that tells an operator to run it uses. Its fingerprint is a
+ * placeholder because only Admin → Setup, the running app's own page, may
+ * supply the value.
+ */
+export const REENCRYPT_RUN_COMMAND =
+  "pnpm run data-keys:reencrypt --expect-fingerprint <fingerprint from Admin → Setup>";
+
 /** Every ring key is exactly this many bytes. */
 export const DATA_KEY_BYTES = 32;
 

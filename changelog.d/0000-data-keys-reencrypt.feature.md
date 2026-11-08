@@ -9,8 +9,10 @@
   `--expect-fingerprint`, copied from Admin → Setup → "Data Encryption Key",
   and refuses unless its own key matches, so a stale `.env` cannot move data
   under the wrong key. The report ends with what remains on old keys and never
-  prints a key or a stored value. The setup step stays amber while anything is
-  under an older key in the ring. Each move is recorded in the
+  prints a key or a stored value. The setup step stays amber while a
+  credential or an authenticator-app secret is under an older key in the ring;
+  unused recovery codes under it are only listed, since removing that key
+  retires them. Each move is recorded in the
   audit log under the `data-key-reencrypt` job.
 
   With `--retire-legacy-recovery-codes` it also retires the recovery codes

@@ -2096,9 +2096,9 @@ first cut-over's overlap: during that redeploy the previous colour (ring
 2. Once no container runs without `k2027`, promote it:
    `DATA_ENCRYPTION_KEYS=k2027:<new>,k2026:<old>`, and redeploy. New writes use
    `k2027`; the previous colour already holds it, so it reads them.
-3. Move the rows still on the old key with
-   `pnpm run data-keys:reencrypt --expect-fingerprint <fingerprint>`, taking
-   the fingerprint Admin → Setup shows for `k2027` now. A command still holding
+3. Once that redeploy has finished, move the rows still on the old key with
+   `pnpm run data-keys:reencrypt --expect-fingerprint <fingerprint from Admin → Setup>`,
+   taking the fingerprint Admin → Setup now shows for `k2027`. A command still holding
    the step-1 ring (`k2026` first) refuses, rather than moving the app's
    `k2027` rows back to `k2026`.
 4. Remove the old entry only once Admin → Setup → "Data Encryption Key" shows
