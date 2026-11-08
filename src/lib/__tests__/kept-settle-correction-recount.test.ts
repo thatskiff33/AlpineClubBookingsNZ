@@ -144,9 +144,10 @@ describe("a keep counts an applied correction already synced in its own transact
   const NOTE_ALLOCATION_ROLE = "MODIFICATION_CREDIT_NOTE_ALLOCATION";
   const ROLELESS_ALLOCATION_ROLE = "CREDIT_NOTE_ALLOCATION";
   const allocationLink = { role: NOTE_ALLOCATION_ROLE, metadata: { creditNoteId: "cn-correction", invoiceId: INVOICE_ID, amountCents: 10_000 } };
-  const rolelessLink = (amountCents: number | undefined = 10_000) => ({
+  // `null`: no amount recorded.
+  const rolelessLink = (amountCents: number | null = 10_000) => ({
     role: ROLELESS_ALLOCATION_ROLE,
-    metadata: { creditNoteId: "cn-correction", invoiceId: INVOICE_ID, amountCents },
+    metadata: { creditNoteId: "cn-correction", invoiceId: INVOICE_ID, ...(amountCents === null ? {} : { amountCents }) },
   });
 
   function decide(input: {
@@ -242,7 +243,7 @@ describe("a keep counts an applied correction already synced in its own transact
   });
 
   it("MUTATION (#4786): a role-less link with no amount recorded shows nothing linked (fail closed)", async () => {
-    await expect(decide({ allocationLinks: [rolelessLink(undefined)] }).decided).resolves.toMatchObject({ paymentColumns: null });
+    await expect(decide({ allocationLinks: [rolelessLink(null)] }).decided).resolves.toMatchObject({ paymentColumns: null });
   });
 
   it("#4786: an allocation link with any other role shows nothing linked", async () => {
