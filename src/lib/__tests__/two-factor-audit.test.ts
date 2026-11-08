@@ -100,3 +100,76 @@ describe("two-factor system actors (INV-PRIV-020)", () => {
     );
   });
 });
+
+// #4456 PR 2: the data-key re-encrypt records its two key-maintenance actions,
+// and is the only actor that may; it may record nothing else.
+describe("the data-key re-encrypt's two-factor actions (INV-PRIV-020)", () => {
+  const REENCRYPT = { kind: "system", actor: "data-key-reencrypt" } as const;
+  const MAINTENANCE = [
+    TWO_FACTOR_AUDIT_ACTIONS.secretRewrapped,
+    TWO_FACTOR_AUDIT_ACTIONS.recoveryCodesRetired,
+  ] as const;
+  // @ts-expect-error a key-maintenance row names the re-encrypt job, never a person
+  const rewrapByMember: TwoFactorMutation = { action: TWO_FACTOR_AUDIT_ACTIONS.secretRewrapped, actor: { kind: "member", memberId: "m" }, subjectMemberId: "m", method: null, authenticatorApp: true };
+  // @ts-expect-error nor another job
+  const rewrapByOtherJob: TwoFactorMutation = { action: TWO_FACTOR_AUDIT_ACTIONS.secretRewrapped, actor: JOB, subjectMemberId: "m", method: null, authenticatorApp: true };
+  void [rewrapByMember, rewrapByOtherJob];
+
+  it("lets the re-encrypt job record its own actions", () => {
+    for (const action of MAINTENANCE) {
+      expect(() => assertTwoFactorActorMayAct(action, REENCRYPT, "member-1")).not.toThrow();
+    }
+  });
+
+  it("refuses its actions to anyone else: a member, an administrator or another job", () => {
+    for (const action of MAINTENANCE) {
+      for (const actor of [{ kind: "member", memberId: "member-1" }, { kind: "admin", memberId: "admin-1" }, JOB]) {
+        expect(() => assertTwoFactorActorMayAct(action, actor, "member-1")).toThrow(
+          /only the "data-key-reencrypt" job records it/,
+        );
+      }
+    }
+  });
+
+  it("refuses the re-encrypt job everything else, a clear included", () => {
+    for (const action of [
+      TWO_FACTOR_AUDIT_ACTIONS.enrolled,
+      TWO_FACTOR_AUDIT_ACTIONS.recoveryCodesReplaced,
+      TWO_FACTOR_AUDIT_ACTIONS.cleared,
+    ]) {
+      expect(() => assertTwoFactorActorMayAct(action, REENCRYPT, "member-1")).toThrow(TwoFactorActorError);
+    }
+  });
+
+  it("records a retirement with the count and no code, and a re-wrap with no secret", async () => {
+    await recordTwoFactorMutation(db, {
+      action: TWO_FACTOR_AUDIT_ACTIONS.recoveryCodesRetired,
+      actor: REENCRYPT,
+      subjectMemberId: "member-1",
+      method: null,
+      authenticatorApp: false,
+      recoveryCodesRetired: 4,
+    });
+    await recordTwoFactorMutation(db, {
+      action: TWO_FACTOR_AUDIT_ACTIONS.secretRewrapped,
+      actor: REENCRYPT,
+      subjectMemberId: "member-1",
+      method: null,
+      authenticatorApp: true,
+    });
+    expect(vi.mocked(createAuditLog).mock.calls.map(([row]) => [row.action, row.summary, row.metadata, row.category])).toEqual([
+      [
+        "security.two_factor.recovery_codes_retired",
+        "Two-factor recovery codes retired by a data-encryption key change",
+        { actorKind: "system", systemActor: "data-key-reencrypt", method: null, authenticatorApp: false, recoveryCodesRetired: 4 },
+        "security",
+      ],
+      [
+        "security.two_factor.secret_rewrapped",
+        "Two-factor authenticator secret re-encrypted under the current data key",
+        { actorKind: "system", systemActor: "data-key-reencrypt", method: null, authenticatorApp: true },
+        "security",
+      ],
+    ]);
+  });
+});

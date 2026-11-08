@@ -225,6 +225,11 @@ export interface ClearingAllocationLink {
   metadata: unknown;
 }
 
+/** An allocation link with when it was last written, which the money readers order by (#4786). */
+export interface DatedClearingAllocationLink extends ClearingAllocationLink {
+  updatedAt: Date;
+}
+
 /**
  * Pure (#4767, `INV-SSOT`): does this link show `target` allocated from
  * `creditNoteId`? The one rule the PARTIAL retry, the repair tool's PARTIAL
@@ -244,7 +249,8 @@ export interface ClearingAllocationLink {
  *
  * Read only: the role-less link is never re-roled. The role is part of the
  * link's unique key, so the inbound mirror of the note writes its own
- * role-carrying link for the same allocation, which the money readers use.
+ * role-carrying link for the same allocation beside it; the money readers
+ * count the two as one (`distinctClearingAllocations`, #4786).
  */
 export function linkAllocatesClearingTarget(
   link: ClearingAllocationLink,
@@ -257,6 +263,95 @@ export function linkAllocatesClearingTarget(
   }
   if (link.role === NOTE_ALLOCATION_ROLE) return true;
   return link.role === ROLELESS_ALLOCATION_ROLE && readNumber(metadata?.amountCents) === target.amountCents;
+}
+
+/** A credit note's application to one invoice, as a link records it. */
+export interface ClearingAllocation<L extends ClearingAllocationLink = ClearingAllocationLink> {
+  creditNoteId: string;
+  invoiceId: string;
+  /** Null only for a link with the note's own role that recorded no amount. */
+  amountCents: number | null;
+  /** The link it was read from: the newest one for that note and invoice. */
+  link: L;
+}
+
+/**
+ * Pure (#4786, `INV-SSOT`): what these links record a credit note applied to
+ * each invoice, one entry per note and invoice - the money readers' one rule
+ * (the hold under-clear audit, the kept settle's correction count and the
+ * refunded-total recount). A link counts when it carries the note's own role,
+ * or is a role-less `CREDIT_NOTE_ALLOCATION` link that recorded its amount
+ * (`clearingAllocationOf`); any other role, or a role-less link with no
+ * amount, counts nothing. With `requireAmount`, neither does a link without a
+ * positive amount, so it never stands in for an older one that has one: the
+ * readers that sum amounts ask for it; the kept settle, which asks only
+ * whether the note is linked to the invoice, does not.
+ *
+ * Of the links left for one note and invoice, one counts: the newest with the
+ * note's own role (`updatedAt`; among equals the last given), else the newest
+ * role-less one. The inbound mirror writes one own-role link per note and
+ * invoice carrying the note's applied amounts SUMMED, beside the builder's
+ * per-allocation link and any role-less one, and a re-sync at a new total
+ * leaves the older link active (its id carries the amount): adding them would
+ * count an allocation twice. A clearing or edit note's role-less link is
+ * written only by a generic allocation retry, which can replay an older single
+ * allocation after the mirror's sum, so it never displaces an own-role link.
+ *
+ * What a reader counts can still differ from Xero. Before the mirror writes, a
+ * note applied to one invoice in two parts counts only one part: the audit
+ * then reports an under-clear that is not there, and the recount a refunded
+ * total too low, which leaves more refund headroom, until the mirror's next
+ * write. And a note whose allocation is removed in Xero keeps counting while
+ * its link stays active: the audit then misses an under-clear, and the
+ * recount holds a refunded total too high. With `creditNoteId`, only that
+ * note's. Read only.
+ */
+export function distinctClearingAllocations<L extends DatedClearingAllocationLink>(
+  links: readonly L[],
+  options: { creditNoteId?: string; requireAmount?: boolean } = {}
+): ClearingAllocation<L>[] {
+  const rank = (link: L) => [link.role === NOTE_ALLOCATION_ROLE ? 1 : 0, link.updatedAt.getTime()] as const;
+  const byKey = new Map<string, ClearingAllocation<L>>();
+  for (const link of links) {
+    const allocation = clearingAllocationOf(link);
+    if (!allocation || (options.creditNoteId !== undefined && allocation.creditNoteId !== options.creditNoteId)) continue;
+    if (options.requireAmount && !(allocation.amountCents !== null && allocation.amountCents > 0)) continue;
+    const key = JSON.stringify([allocation.creditNoteId, allocation.invoiceId]);
+    const kept = byKey.get(key);
+    const [ownRole, writtenAt] = rank(link);
+    const [keptOwnRole, keptWrittenAt] = kept ? rank(kept.link) : [-1, 0];
+    if (ownRole > keptOwnRole || (ownRole === keptOwnRole && writtenAt >= keptWrittenAt)) byKey.set(key, allocation);
+  }
+  return [...byKey.values()];
+}
+
+/**
+ * Pure (#4786): the money readers' role-and-anchor filter for allocation
+ * links found by their invoice: the note's own role, or the role-less one on
+ * the note's own anchor. A payment's role-less links mirror its refund and
+ * account notes, which its direct refund total counts, so they are never read
+ * as a clearing or edit note's allocation.
+ */
+export const CLEARING_ALLOCATION_LINK_WHERE = {
+  OR: [{ role: NOTE_ALLOCATION_ROLE }, { role: ROLELESS_ALLOCATION_ROLE, localModel: { not: "Payment" } }],
+};
+
+/**
+ * Pure (#4786): the one allocation a link records, or null when it records
+ * none by `distinctClearingAllocations`'s rule - no note or invoice named, a
+ * role other than the two, or a role-less link with no amount.
+ */
+export function clearingAllocationOf<L extends ClearingAllocationLink>(link: L): ClearingAllocation<L> | null {
+  const metadata = asRecord(link.metadata);
+  const creditNoteId = readString(metadata?.creditNoteId);
+  const invoiceId = readString(metadata?.invoiceId);
+  if (!creditNoteId || !invoiceId) return null;
+  const amountCents = readNumber(metadata?.amountCents);
+  // The link's own allocation as the target: the note's role needs only the
+  // note and invoice; a role-less link's missing amount (NaN) never matches.
+  return linkAllocatesClearingTarget(link, { invoiceId, amountCents: amountCents ?? Number.NaN }, creditNoteId)
+    ? { creditNoteId, invoiceId, amountCents, link }
+    : null;
 }
 
 /**

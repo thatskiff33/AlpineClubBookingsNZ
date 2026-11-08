@@ -597,18 +597,60 @@ codes issued under the auth secret stop working the moment a ring is set. The
 owner chose this over keeping the auth secret in the ring for them (decision
 of 1 Nov 2026 on #4456): it lets the auth secret leave the data path entirely.
 A member still holding such codes is told on the sign-in challenge and on their
-profile to generate a new set.
+profile to generate a new set. Under the ring they are only refused, so an
+instance started without it would accept them;
+`pnpm run data-keys:reencrypt --expect-fingerprint <fingerprint from Admin → Setup> --retire-legacy-recovery-codes` rewrites each one
+so that no release accepts it, and keeps it unused so the notice still shows
+([`TOKEN_HASHING.md`](TOKEN_HASHING.md#keyed-code-hashes-and-the-data-encryption-key-ring-4456)).
+
+**Moving rows off the auth secret.** `pnpm run data-keys:reencrypt` re-encrypts
+every credential and authenticator secret not under the ring's current key,
+one row per short transaction, through the writers that already own each row:
+the credential store's compare-and-set (audited as the named
+`data-key-reencrypt` job, `INV-PRIV-020`), and a claim on the exact stored
+value for an authenticator secret (audited as
+`security.two_factor.secret_rewrapped`). A concurrent writer wins and the row is
+retried. The Xero token set is moved only while no refresh holds its lease, so
+a refresh that has spent its token at Xero always saves the new one
+([`CONCURRENCY_AND_LOCKING.md`](CONCURRENCY_AND_LOCKING.md#the-data-key-re-encrypt-joins-the-row-claims-and-takes-no-advisory-key-4456)).
+It prints counts and key ids only: an unexpected error is reported by its class
+and code, because a database error's message can echo the row it failed on.
+Because its ring comes from its own environment (and `.env` fills anything not
+exported), a run that writes needs `--expect-fingerprint`, copied from Admin →
+Setup's fingerprint of the app's current key in the browser, and refuses unless
+its own target key has it; this also stops a stale ring whose first key is an
+older one from moving rows back. Only the running app's page shows that
+fingerprint: `setup:check` reads the same shell environment as the command, so
+it calls its key "this shell's key" and prints none, and the command's own
+output prints its fingerprint only as something to compare. A value that is
+not fingerprint-shaped is refused without being repeated, in case a key was
+pasted. As a second guard it decrypts a row already stored under the target id
+and refuses if that fails. Setup stays amber while a credential or an
+authenticator secret is under an older ring key, so a key is removed only once
+none names it (recovery codes under it are retired with it). The fingerprint is 64 bits
+of SHA-256 over a fixed domain label and the key, used for nothing else, so it
+says nothing usable about a 256-bit key and is never a sub-key or a hash the
+app stores.
+
+**Retiring the legacy key.** Until `DATA_ENCRYPTION_LEGACY_KEY=retired` is set,
+a row naming the auth secret is still READ under it, so someone holding a leaked
+auth secret and write access to the database could plant a credential or an
+authenticator secret the app would accept. Once the re-encrypt reports nothing
+left, the switch refuses those reads: the auth secret then signs sessions and
+links and nothing else. It is a read switch only; the ring already decides every
+write. Set without a ring, or to any other value, it fails readiness and refuses
+writes rather than letting the auth secret back in
+([`DEPLOYMENT.md` → Retiring the legacy key](../DEPLOYMENT.md#retiring-the-legacy-key-4456)).
 
 **Stated limits.**
 
-- Rows written before the ring stay readable under `AUTH_SECRET` until they are
-  re-encrypted, so until setup readiness reports nothing left on it, the old
-  coupling remains for those rows. The in-place re-encrypt command is the second
-  part of #4456, and so is a switch to stop reading rows under the auth secret
-  once none remain; until then the current auth secret always reads them.
-- Recovery codes issued before the ring are refused, not deleted: an instance
-  started without the ring accepts them again. The second part of #4456
-  retires them in the database.
+- Rows written before the ring stay readable under `AUTH_SECRET` until the
+  re-encrypt moves them and the legacy-read switch is set; until then the
+  current auth secret reads them. Both are operator steps, so a club that sets
+  a ring and stops there keeps that coupling for its old rows.
+- The re-encrypt retries a row that lost its claim a bounded number of times
+  (three passes, two seconds apart), then reports it and exits 2; running it
+  again moves it.
 - An older release cannot read ring rows, so the variable must not be set until
   the previous release has drained (the runbook's first step).
 - The keys live in the environment of each app container, like `AUTH_SECRET`;

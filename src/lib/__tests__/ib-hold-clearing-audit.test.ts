@@ -13,6 +13,10 @@ import {
   type IbHoldClearingRow,
 } from "@/lib/ib-hold-clearing-underclear-audit";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
+import { NOTE_ALLOCATION_ROLE, ROLELESS_ALLOCATION_ROLE } from "@/lib/xero-clearing-allocations";
+
+// When a fixture link was last written; the money readers order by it (#4786).
+const LINK_WRITTEN_AT = new Date("2026-06-01T00:00:00.000Z");
 
 function makeNote(overrides: Partial<IbHoldClearingNote> = {}): IbHoldClearingNote {
   return {
@@ -162,12 +166,12 @@ describe("resolveIbHoldClearingNotes (#3535: both note shapes)", () => {
           },
         ],
         allocationLinks: [
-          { localModel: "Booking", metadata: { creditNoteId: "cn_clear", invoiceId: "inv_1", amountCents: 30000 } },
-          { localModel: "Booking", metadata: { creditNoteId: "cn_clear", invoiceId: "inv_supp", amountCents: 11000 } },
+          { localModel: "Booking", role: NOTE_ALLOCATION_ROLE, metadata: { creditNoteId: "cn_clear", invoiceId: "inv_1", amountCents: 30000 }, updatedAt: LINK_WRITTEN_AT },
+          { localModel: "Booking", role: NOTE_ALLOCATION_ROLE, metadata: { creditNoteId: "cn_clear", invoiceId: "inv_supp", amountCents: 11000 }, updatedAt: LINK_WRITTEN_AT },
           // The inbound reconcile's copy of the first allocation.
-          { localModel: "Booking", metadata: { creditNoteId: "cn_clear", invoiceId: "inv_1", amountCents: 30000 } },
+          { localModel: "Booking", role: NOTE_ALLOCATION_ROLE, metadata: { creditNoteId: "cn_clear", invoiceId: "inv_1", amountCents: 30000 }, updatedAt: LINK_WRITTEN_AT },
           // A payment-anchored allocation is the refund note's, not this one's.
-          { localModel: "Payment", metadata: { creditNoteId: "cn_other", invoiceId: "inv_1", amountCents: 999 } },
+          { localModel: "Payment", role: ROLELESS_ALLOCATION_ROLE, metadata: { creditNoteId: "cn_other", invoiceId: "inv_1", amountCents: 999 }, updatedAt: LINK_WRITTEN_AT },
         ],
         xeroRefundCreditNoteId: null,
       }),
@@ -219,7 +223,8 @@ describe("resolveIbHoldClearingNotes (#3535: both note shapes)", () => {
           },
         ],
         allocationLinks: [
-          { localModel: "Payment", metadata: { creditNoteId: "cn_refund", invoiceId: "inv_1", amountCents: 5000 } },
+          // The inbound mirror of a refund note links its hand allocation role-less.
+          { localModel: "Payment", role: ROLELESS_ALLOCATION_ROLE, metadata: { creditNoteId: "cn_refund", invoiceId: "inv_1", amountCents: 5000 }, updatedAt: LINK_WRITTEN_AT },
         ],
         xeroRefundCreditNoteId: "cn_refund",
       }),
@@ -255,6 +260,112 @@ describe("resolveIbHoldClearingNotes (#3535: both note shapes)", () => {
     expect(notes.map((note) => [note.kind, note.operationStatus, note.amountCents])).toEqual([
       ["allocated-clearing-note", "FAILED", 2655],
       ["refund-note", "SUCCEEDED", 12345],
+    ]);
+  });
+});
+
+// #4786: a clearing note's PARTIAL retry can close a note whose allocation an
+// older repair linked role-less (`CREDIT_NOTE_ALLOCATION`). The audit counts
+// each allocation once, by whichever links record it (`distinctClearingAllocations`).
+describe("resolveIbHoldClearingNotes reads role-less allocation links (#4786)", () => {
+  const clearingOperation = {
+    localModel: "Booking",
+    status: "SUCCEEDED",
+    xeroObjectId: "cn_clear",
+    requestPayload: { invoiceId: "inv_1", refundAmountCents: 30000 },
+  };
+  const link = (role: string, amountCents: number | undefined, invoiceId = "inv_1", updatedAt = "2026-06-01T00:00:00.000Z") => ({
+    localModel: "Booking",
+    role,
+    metadata: { creditNoteId: "cn_clear", invoiceId, amountCents },
+    updatedAt: new Date(updatedAt),
+  });
+  const allocated = (allocationLinks: Array<ReturnType<typeof link>>) =>
+    resolveIbHoldClearingNotes({ operations: [clearingOperation], allocationLinks, xeroRefundCreditNoteId: null })[0]
+      ?.allocatedCents;
+
+  it("counts an allocation linked with the note's own role only", () => {
+    expect(allocated([link(NOTE_ALLOCATION_ROLE, 30000)])).toBe(30000);
+  });
+
+  it("MUTATION: counts an allocation linked only role-less", () => {
+    expect(allocated([link(ROLELESS_ALLOCATION_ROLE, 30000)])).toBe(30000);
+  });
+
+  it("MUTATION: the inbound mirror's own-role link and the role-less one for the same allocation count once", () => {
+    expect(allocated([link(ROLELESS_ALLOCATION_ROLE, 30000), link(NOTE_ALLOCATION_ROLE, 30000)])).toBe(30000);
+  });
+
+  // The inbound mirror writes one own-role link per note and invoice carrying
+  // the note's applications to it SUMMED, beside the builder's per-allocation
+  // link and any role-less piece. Adding them would double the cleared figure
+  // and hide an under-clear, so the newest per note and invoice counts.
+  it("MUTATION: a role-less piece and the mirror's summed link count the summed figure once, never 60000", () => {
+    const rolelessPiece = link(ROLELESS_ALLOCATION_ROLE, 10000, "inv_1", "2026-06-01T00:00:00.000Z");
+    const builderPiece = link(NOTE_ALLOCATION_ROLE, 20000, "inv_1", "2026-06-02T00:00:00.000Z");
+    const mirrorSum = link(NOTE_ALLOCATION_ROLE, 30000, "inv_1", "2026-06-03T00:00:00.000Z");
+    expect(allocated([rolelessPiece, builderPiece, mirrorSum])).toBe(30000);
+    expect(allocated([mirrorSum, rolelessPiece])).toBe(30000);
+  });
+
+  it("MUTATION: the builder's per-allocation link and the mirror's summed link count once", () => {
+    const builderPiece = link(NOTE_ALLOCATION_ROLE, 20000, "inv_1", "2026-06-01T00:00:00.000Z");
+    const mirrorSum = link(NOTE_ALLOCATION_ROLE, 30000, "inv_1", "2026-06-03T00:00:00.000Z");
+    expect(allocated([mirrorSum, builderPiece])).toBe(30000);
+  });
+
+  it("before the mirror writes, two pieces on one invoice count one - the audit then reports an under-clear the mirror's next write clears", () => {
+    expect(
+      allocated([
+        link(ROLELESS_ALLOCATION_ROLE, 10000, "inv_1", "2026-06-01T00:00:00.000Z"),
+        link(NOTE_ALLOCATION_ROLE, 20000, "inv_1", "2026-06-02T00:00:00.000Z"),
+      ]),
+    ).toBe(20000);
+  });
+
+  it("MUTATION: a role-less link written after the mirror's own-role sum never replaces it", () => {
+    expect(
+      allocated([
+        link(NOTE_ALLOCATION_ROLE, 30000, "inv_1", "2026-06-03T00:00:00.000Z"),
+        link(ROLELESS_ALLOCATION_ROLE, 10000, "inv_1", "2026-06-05T00:00:00.000Z"),
+      ]),
+    ).toBe(30000);
+  });
+
+  it.each([
+    ["no amount", undefined],
+    ["a zero amount", 0],
+    ["a negative amount", -500],
+  ])("MUTATION: a newer own-role link with %s never hides an older one on the same note and invoice", (_label, amountCents) => {
+    expect(
+      allocated([
+        link(NOTE_ALLOCATION_ROLE, 30000, "inv_1", "2026-06-01T00:00:00.000Z"),
+        link(NOTE_ALLOCATION_ROLE, amountCents, "inv_1", "2026-06-03T00:00:00.000Z"),
+      ]),
+    ).toBe(30000);
+  });
+
+  it("each invoice's application counts, the primary and a supplementary one", () => {
+    expect(allocated([link(NOTE_ALLOCATION_ROLE, 20000), link(ROLELESS_ALLOCATION_ROLE, 10000, "inv_supp")])).toBe(30000);
+  });
+
+  it("MUTATION: a role-less link with no amount, or a link with any other role, counts nothing", () => {
+    expect(allocated([link(ROLELESS_ALLOCATION_ROLE, undefined)])).toBe(0);
+    expect(allocated([link("APPLIED_CREDIT_ALLOCATION", 30000)])).toBe(0);
+  });
+
+  it("reads a refund note's links on the payment once per invoice, and only that note's", () => {
+    const notes = resolveIbHoldClearingNotes({
+      operations: [],
+      allocationLinks: [
+        { localModel: "Payment", role: ROLELESS_ALLOCATION_ROLE, metadata: { creditNoteId: "cn_refund", invoiceId: "inv_1", amountCents: 5000 }, updatedAt: LINK_WRITTEN_AT },
+        { localModel: "Payment", role: NOTE_ALLOCATION_ROLE, metadata: { creditNoteId: "cn_refund", invoiceId: "inv_1", amountCents: 5000 }, updatedAt: LINK_WRITTEN_AT },
+        { localModel: "Payment", role: ROLELESS_ALLOCATION_ROLE, metadata: { creditNoteId: "cn_other", invoiceId: "inv_1", amountCents: 999 }, updatedAt: LINK_WRITTEN_AT },
+      ],
+      xeroRefundCreditNoteId: "cn_refund",
+    });
+    expect(notes).toEqual([
+      { kind: "refund-note", creditNoteId: "cn_refund", amountCents: null, operationStatus: null, allocatedCents: 5000 },
     ]);
   });
 });
@@ -380,6 +491,18 @@ describe("auditIbHoldClearingUnderclears (#3535 scan)", () => {
         xeroObjectType: "ALLOCATION",
         role: "MODIFICATION_CREDIT_NOTE_ALLOCATION",
         metadata: { creditNoteId: "cn_new", invoiceId: "inv_new", amountCents: 10000 },
+        updatedAt: new Date("2026-06-03T00:00:00.000Z"),
+      },
+      // #4786: an older piece of the same note's application to that invoice,
+      // which the newer link above already holds summed: read by its
+      // `updatedAt`, never added to it nor taken for it.
+      {
+        localModel: "Booking",
+        localId: "booking_new",
+        xeroObjectType: "ALLOCATION",
+        role: "CREDIT_NOTE_ALLOCATION",
+        metadata: { creditNoteId: "cn_new", invoiceId: "inv_new", amountCents: 4000 },
+        updatedAt: new Date("2026-06-01T00:00:00.000Z"),
       },
       {
         localModel: "Booking",
@@ -387,6 +510,7 @@ describe("auditIbHoldClearingUnderclears (#3535 scan)", () => {
         xeroObjectType: "ALLOCATION",
         role: "MODIFICATION_CREDIT_NOTE_ALLOCATION",
         metadata: { creditNoteId: "cn_retried", invoiceId: "inv_retried", amountCents: 15000 },
+        updatedAt: LINK_WRITTEN_AT,
       },
       {
         localModel: "Payment",
@@ -416,8 +540,11 @@ describe("auditIbHoldClearingUnderclears (#3535 scan)", () => {
         },
       },
       xeroObjectLink: {
-        findMany: async (query: { where: { OR: Array<{ localModel: string; localId: string }> } }) =>
-          links.filter((link) => matches(query.where.OR, link)),
+        // Only the selected columns, as Prisma returns them.
+        findMany: async (query: { where: { OR: Array<{ localModel: string; localId: string }> }; select: Record<string, boolean> }) =>
+          links
+            .filter((link) => matches(query.where.OR, link))
+            .map((link) => Object.fromEntries(Object.entries(link).filter(([column]) => query.select[column]))),
       },
     };
 

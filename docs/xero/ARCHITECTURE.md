@@ -1042,7 +1042,31 @@ note.
    A role-less link for another note, invoice or amount, or with no amount
    recorded (no writer of that role omits it), is not the allocation, so the
    retry sends it and a refusal leaves the row PARTIAL, visible. The retry
-   only reads such a link; it never re-roles it. Another unresolved row -
+   only reads such a link; it never re-roles it. So a retry can close a note
+   whose allocation only a role-less link records, until the inbound mirror
+   writes the note's own. Since #4786 the kept settle's correction count and,
+   by the payment's invoice, the refunded-total recount count it too, and the
+   hold under-clear audit, which read any role before, now reads only these
+   two. All three read one rule built on that predicate
+   (`distinctClearingAllocations`): per note and invoice, the newest link with
+   the note's role, else the newest role-less one with its amount; the audit
+   and the recount, which sum amounts, first drop any link without a positive
+   amount, so it never hides an older one that has one. The mirror writes one
+   own-role link per note and invoice carrying the note's applications to it
+   summed, beside the builder's per-allocation link and any role-less piece,
+   so adding them would count an allocation twice, and a generic retry's
+   role-less link can replay an older single allocation after that sum, so it
+   never displaces an own-role link. A reader can still differ from Xero.
+   Before the mirror writes, a note applied to one invoice in two parts counts
+   one part: the audit reports an under-clear that is not there, and the
+   recount a refunded total too low, which leaves more refund headroom. A note
+   whose allocation is removed in Xero keeps counting while its link stays
+   active: the audit misses an under-clear, and the recount holds a refunded
+   total too high. A role-less link with no amount, or any other role, counts
+   nothing. Found by invoice, a role-less link is
+   read only off the note's own anchor (`CLEARING_ALLOCATION_LINK_WHERE`): a
+   payment's role-less links mirror its refund and account notes, which its
+   direct total counts. Another unresolved row -
    another note, invoice or amount, such as the old tool's evidence-sized
    allocation - is a second key, so it is answered first, from the match the
    dispatcher returns: retried or reported blocked. A row resolved in Xero is answered first,
