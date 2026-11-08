@@ -1032,12 +1032,20 @@ note.
    claims no allocation row up front, so each allocation it makes creates its
    own row and a refused one leaves that row FAILED; the retry covers it: it
    skips a target already linked and links
-   with the note's role, so own attempts never stand in its way (offering
-   their generic retry instead would link without that role, and the note
-   would never close). Another unresolved row - another note, invoice or
-   amount, such as the old tool's evidence-sized allocation - is a second
-   key, so it is answered first, from the match the dispatcher returns:
-   retried or reported blocked. A row resolved in Xero is answered first,
+   with the note's role, so own attempts never stand in its way. Before
+   #4757 the tool could offer such a row its generic retry, which links as
+   `CREDIT_NOTE_ALLOCATION`, without the note's role. Since #4767 one
+   predicate (`linkAllocatesClearingTarget`) decides for the retry, the
+   PARTIAL check and the dispatcher alike: a link with the note's role for
+   the same note and invoice, or a role-less one for the same note, invoice
+   AND amount - Xero's key, so the retry never sends that allocation again.
+   A role-less link for another note, invoice or amount, or with no amount
+   recorded (no writer of that role omits it), is not the allocation, so the
+   retry sends it and a refusal leaves the row PARTIAL, visible. The retry
+   only reads such a link; it never re-roles it. Another unresolved row -
+   another note, invoice or amount, such as the old tool's evidence-sized
+   allocation - is a second key, so it is answered first, from the match the
+   dispatcher returns: retried or reported blocked. A row resolved in Xero is answered first,
    reported done (`INV-INT-025`), only when it names this note; one naming
    another note (an applied-credit or other note's allocation on the same
    booking, fixed by hand) is that note's concern, and would otherwise hold
