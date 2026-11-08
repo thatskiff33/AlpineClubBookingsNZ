@@ -14,6 +14,7 @@ vi.mock("@/lib/xero-operation-retry", () => ({ getXeroOperationRetryMeta: vi.fn(
 
 import {
   CLEARING_TARGET_LINK_ROLES,
+  distinctClearingAllocations,
   linkAllocatesClearingTarget,
   NOTE_ALLOCATION_ROLE,
   partialClearingNoteIsIncomplete,
@@ -61,6 +62,61 @@ describe("linkAllocatesClearingTarget (#4767)", () => {
       expect(linkAllocatesClearingTarget(link(role), TARGET, "cn_clear")).toBe(false);
     }
   );
+});
+
+// #4786: the money readers count a clearing note's allocations through this one
+// reader, built on the predicate above.
+describe("distinctClearingAllocations (#4786)", () => {
+  const allocations = (links: Array<ReturnType<typeof link>>, creditNoteId?: string) =>
+    distinctClearingAllocations(links, creditNoteId).map(({ creditNoteId: note, invoiceId, amountCents }) => [note, invoiceId, amountCents]);
+
+  it("reads an own-role link and a role-less one, each its own allocation", () => {
+    expect(allocations([link(NOTE_ALLOCATION_ROLE)])).toEqual([["cn_clear", "inv_primary", 6000]]);
+    expect(allocations([link(ROLELESS_ALLOCATION_ROLE)])).toEqual([["cn_clear", "inv_primary", 6000]]);
+  });
+
+  it("MUTATION: an own-role and a role-less link for the same note, invoice and amount are one allocation", () => {
+    expect(allocations([link(NOTE_ALLOCATION_ROLE), link(ROLELESS_ALLOCATION_ROLE)])).toEqual([["cn_clear", "inv_primary", 6000]]);
+  });
+
+  it("MUTATION: another amount, invoice or note is another allocation", () => {
+    expect(
+      allocations([
+        link(NOTE_ALLOCATION_ROLE),
+        link(ROLELESS_ALLOCATION_ROLE, { amountCents: 4000 }),
+        link(ROLELESS_ALLOCATION_ROLE, { invoiceId: "inv_supp" }),
+        link(ROLELESS_ALLOCATION_ROLE, { creditNoteId: "cn_other" }),
+      ]),
+    ).toEqual([
+      ["cn_clear", "inv_primary", 6000],
+      ["cn_clear", "inv_primary", 4000],
+      ["cn_clear", "inv_supp", 6000],
+      ["cn_other", "inv_primary", 6000],
+    ]);
+  });
+
+  it("MUTATION: a role-less link with no amount, or a link with any other role, is no allocation", () => {
+    expect(allocations([link(ROLELESS_ALLOCATION_ROLE, { amountCents: undefined })])).toEqual([]);
+    expect(allocations([link("APPLIED_CREDIT_ALLOCATION"), link("")])).toEqual([]);
+  });
+
+  it("keeps an own-role link with no amount, amount unknown; a link naming no note or invoice is none", () => {
+    expect(allocations([link(NOTE_ALLOCATION_ROLE, { amountCents: undefined })])).toEqual([["cn_clear", "inv_primary", null]]);
+    expect(allocations([link(NOTE_ALLOCATION_ROLE, { creditNoteId: undefined }), link(NOTE_ALLOCATION_ROLE, { invoiceId: undefined })])).toEqual([]);
+  });
+
+  it("MUTATION: with a note, only that note's allocations", () => {
+    expect(allocations([link(NOTE_ALLOCATION_ROLE), link(NOTE_ALLOCATION_ROLE, { creditNoteId: "cn_other" })], "cn_other")).toEqual([
+      ["cn_other", "inv_primary", 6000],
+    ]);
+  });
+
+  it("keeps the last link given for an allocation, in the place it was last given", () => {
+    const first = link(NOTE_ALLOCATION_ROLE);
+    const other = link(NOTE_ALLOCATION_ROLE, { invoiceId: "inv_supp" });
+    const last = link(ROLELESS_ALLOCATION_ROLE);
+    expect(distinctClearingAllocations([first, other, last]).map((allocation) => allocation.link)).toEqual([other, last]);
+  });
 });
 
 describe("the retry and the repair tool read the same links (#4767, INV-SSOT)", () => {

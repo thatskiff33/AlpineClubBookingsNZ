@@ -35,7 +35,8 @@ import {
   LEGACY_PRIMARY_BACKFILL_REASON,
 } from "@/lib/payment-transaction-status";
 import { readModificationNoteCash } from "@/lib/xero-inbound/account-credit-modification-notes";
-import { type CreditNoteAllocationCents, getCreditNoteIdFromAllocationMetadata, sumAppliedCentsByCreditNote } from "@/lib/xero-inbound/amounts";
+import { type CreditNoteAllocationCents, sumAppliedCentsByCreditNote } from "@/lib/xero-inbound/amounts";
+import { CLEARING_TARGET_LINK_ROLES, distinctClearingAllocations } from "@/lib/xero-clearing-allocations";
 import { isIncludedRefundCreditNoteStatus, readRefundCreditNoteLinkStatus } from "@/lib/xero-refund-note-status";
 import type { IbSettlementKeptReason } from "@/lib/ib-settlement-figure-note";
 
@@ -215,7 +216,8 @@ export function paidInvoiceFacts(invoice: Pick<Invoice, "total" | "creditNotes">
  * figure before the correction.
  *
  * A correction counts when its note's link records it live and its allocation
- * to this invoice is linked, both read here; one whose sync writes them while
+ * to this invoice is linked - by the note's own role or a role-less link for
+ * the same allocation (#4786, `distinctClearingAllocations`) - both read here; one whose sync writes them while
  * the settle runs is left to that sync and to the recount after the commit
  * (`recountCorrectionsAfterKeptSettle`). Nothing is counted when the refunded
  * total holds more than the payment's rows record - an older fold may already
@@ -251,14 +253,16 @@ async function keptCorrectionRefundCents(
       where: { xeroObjectType: "CREDIT_NOTE", role: "MODIFICATION_CREDIT_NOTE", active: true, xeroObjectId: { in: noteIds } },
       select: { xeroObjectId: true, metadata: true },
     }),
+    // #4786: the note's own role, or a role-less link an older repair wrote
+    // for the same allocation (`distinctClearingAllocations`).
     tx.xeroObjectLink.findMany({
       where: {
         xeroObjectType: "ALLOCATION",
-        role: "MODIFICATION_CREDIT_NOTE_ALLOCATION",
+        role: { in: [...CLEARING_TARGET_LINK_ROLES] },
         active: true,
         metadata: { path: ["invoiceId"], equals: input.invoiceId },
       },
-      select: { metadata: true },
+      select: { role: true, metadata: true },
     }),
   ]);
   const liveNoteIds = new Set(
@@ -266,7 +270,7 @@ async function keptCorrectionRefundCents(
       .filter((link) => isIncludedRefundCreditNoteStatus(readRefundCreditNoteLinkStatus(link.metadata)))
       .map((link) => link.xeroObjectId),
   );
-  const allocatedNoteIds = new Set(allocationLinks.map((link) => getCreditNoteIdFromAllocationMetadata(link.metadata)));
+  const allocatedNoteIds = new Set(distinctClearingAllocations(allocationLinks).map((allocation) => allocation.creditNoteId));
   return input.corrections
     .filter((note) => liveNoteIds.has(note.id) && allocatedNoteIds.has(note.id))
     .reduce((sum, note) => sum + note.appliedCents, 0);

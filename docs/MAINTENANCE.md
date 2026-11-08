@@ -2651,7 +2651,9 @@ reading applied credit from the same allocation ledger the release reads), and
 lists each booking whose notes ALLOCATED less than that: booking id, invoice
 ref, the notes raised, expected clearing, what was allocated, and the open
 delta. It reads only local rows (no Xero calls). Only allocations count — the
-allocation links the builder and the inbound reconcile write — so a FAILED
+allocation links the builder and the inbound reconcile write, and since #4786 a
+`CREDIT_NOTE_ALLOCATION` link an older repair wrote without the note's role,
+each allocation once — so a FAILED
 clearing operation (nothing created), a PARTIAL one, and a pre-#3535 refund note
 (never allocated by the system) all show as not clearing. A refund note someone
 allocated by hand in Xero counts as far as it was allocated; every clearing

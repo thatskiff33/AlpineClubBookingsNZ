@@ -244,7 +244,8 @@ export interface ClearingAllocationLink {
  *
  * Read only: the role-less link is never re-roled. The role is part of the
  * link's unique key, so the inbound mirror of the note writes its own
- * role-carrying link for the same allocation, which the money readers use.
+ * role-carrying link for the same allocation beside it; the money readers
+ * count the two as one (`distinctClearingAllocations`, #4786).
  */
 export function linkAllocatesClearingTarget(
   link: ClearingAllocationLink,
@@ -257,6 +258,51 @@ export function linkAllocatesClearingTarget(
   }
   if (link.role === NOTE_ALLOCATION_ROLE) return true;
   return link.role === ROLELESS_ALLOCATION_ROLE && readNumber(metadata?.amountCents) === target.amountCents;
+}
+
+/** One allocation of a credit note to an invoice, as a link records it. */
+export interface ClearingAllocation<L extends ClearingAllocationLink = ClearingAllocationLink> {
+  creditNoteId: string;
+  invoiceId: string;
+  /** Null only for a link with the note's own role that recorded no amount. */
+  amountCents: number | null;
+  /** The link it was read from: the last one given for that allocation. */
+  link: L;
+}
+
+/**
+ * Pure (#4786, `INV-SSOT`): the allocations these links record, each once, by
+ * the rule `linkAllocatesClearingTarget` applies to a planned target. A link
+ * counts when it carries the note's own role, or is a role-less
+ * `CREDIT_NOTE_ALLOCATION` link that recorded its amount; any other role, or a
+ * role-less link with no amount, counts nothing (fail closed, as the retry
+ * does). Links naming the same note, invoice and amount - Xero's allocation key
+ * - are one allocation, so the inbound mirror's own-role link and the role-less
+ * one for the same allocation count once; a different amount is a different
+ * allocation. Where several links hold one allocation the last given is kept.
+ * With `creditNoteId`, only that note's allocations. Read only: the money
+ * readers (the hold under-clear audit, the kept settle's correction count and
+ * the refunded-total recount) count what this returns.
+ */
+export function distinctClearingAllocations<L extends ClearingAllocationLink>(
+  links: readonly L[],
+  creditNoteId?: string
+): ClearingAllocation<L>[] {
+  const byKey = new Map<string, ClearingAllocation<L>>();
+  for (const link of links) {
+    const metadata = asRecord(link.metadata);
+    const noteId = readString(metadata?.creditNoteId);
+    const invoiceId = readString(metadata?.invoiceId);
+    if (!noteId || !invoiceId || (creditNoteId !== undefined && noteId !== creditNoteId)) continue;
+    const amountCents = readNumber(metadata?.amountCents);
+    // The link's own allocation as the target: the note's role needs only the
+    // note and invoice; a role-less link's missing amount (NaN) never matches.
+    if (!linkAllocatesClearingTarget(link, { invoiceId, amountCents: amountCents ?? Number.NaN }, noteId)) continue;
+    const key = JSON.stringify([noteId, invoiceId, amountCents]);
+    byKey.delete(key);
+    byKey.set(key, { creditNoteId: noteId, invoiceId, amountCents, link });
+  }
+  return [...byKey.values()];
 }
 
 /**

@@ -13,6 +13,7 @@ import {
   type IbHoldClearingRow,
 } from "@/lib/ib-hold-clearing-underclear-audit";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
+import { NOTE_ALLOCATION_ROLE, ROLELESS_ALLOCATION_ROLE } from "@/lib/xero-clearing-allocations";
 
 function makeNote(overrides: Partial<IbHoldClearingNote> = {}): IbHoldClearingNote {
   return {
@@ -162,12 +163,12 @@ describe("resolveIbHoldClearingNotes (#3535: both note shapes)", () => {
           },
         ],
         allocationLinks: [
-          { localModel: "Booking", metadata: { creditNoteId: "cn_clear", invoiceId: "inv_1", amountCents: 30000 } },
-          { localModel: "Booking", metadata: { creditNoteId: "cn_clear", invoiceId: "inv_supp", amountCents: 11000 } },
+          { localModel: "Booking", role: NOTE_ALLOCATION_ROLE, metadata: { creditNoteId: "cn_clear", invoiceId: "inv_1", amountCents: 30000 } },
+          { localModel: "Booking", role: NOTE_ALLOCATION_ROLE, metadata: { creditNoteId: "cn_clear", invoiceId: "inv_supp", amountCents: 11000 } },
           // The inbound reconcile's copy of the first allocation.
-          { localModel: "Booking", metadata: { creditNoteId: "cn_clear", invoiceId: "inv_1", amountCents: 30000 } },
+          { localModel: "Booking", role: NOTE_ALLOCATION_ROLE, metadata: { creditNoteId: "cn_clear", invoiceId: "inv_1", amountCents: 30000 } },
           // A payment-anchored allocation is the refund note's, not this one's.
-          { localModel: "Payment", metadata: { creditNoteId: "cn_other", invoiceId: "inv_1", amountCents: 999 } },
+          { localModel: "Payment", role: ROLELESS_ALLOCATION_ROLE, metadata: { creditNoteId: "cn_other", invoiceId: "inv_1", amountCents: 999 } },
         ],
         xeroRefundCreditNoteId: null,
       }),
@@ -219,7 +220,8 @@ describe("resolveIbHoldClearingNotes (#3535: both note shapes)", () => {
           },
         ],
         allocationLinks: [
-          { localModel: "Payment", metadata: { creditNoteId: "cn_refund", invoiceId: "inv_1", amountCents: 5000 } },
+          // The inbound mirror of a refund note links its hand allocation role-less.
+          { localModel: "Payment", role: ROLELESS_ALLOCATION_ROLE, metadata: { creditNoteId: "cn_refund", invoiceId: "inv_1", amountCents: 5000 } },
         ],
         xeroRefundCreditNoteId: "cn_refund",
       }),
@@ -255,6 +257,62 @@ describe("resolveIbHoldClearingNotes (#3535: both note shapes)", () => {
     expect(notes.map((note) => [note.kind, note.operationStatus, note.amountCents])).toEqual([
       ["allocated-clearing-note", "FAILED", 2655],
       ["refund-note", "SUCCEEDED", 12345],
+    ]);
+  });
+});
+
+// #4786: a clearing note's PARTIAL retry can close a note whose allocation an
+// older repair linked role-less (`CREDIT_NOTE_ALLOCATION`). The audit counts
+// each allocation once, by whichever links record it (`distinctClearingAllocations`).
+describe("resolveIbHoldClearingNotes reads role-less allocation links (#4786)", () => {
+  const clearingOperation = {
+    localModel: "Booking",
+    status: "SUCCEEDED",
+    xeroObjectId: "cn_clear",
+    requestPayload: { invoiceId: "inv_1", refundAmountCents: 30000 },
+  };
+  const link = (role: string, amountCents: number | undefined, invoiceId = "inv_1") => ({
+    localModel: "Booking",
+    role,
+    metadata: { creditNoteId: "cn_clear", invoiceId, amountCents },
+  });
+  const allocated = (allocationLinks: Array<ReturnType<typeof link>>) =>
+    resolveIbHoldClearingNotes({ operations: [clearingOperation], allocationLinks, xeroRefundCreditNoteId: null })[0]
+      ?.allocatedCents;
+
+  it("counts an allocation linked with the note's own role only", () => {
+    expect(allocated([link(NOTE_ALLOCATION_ROLE, 30000)])).toBe(30000);
+  });
+
+  it("MUTATION: counts an allocation linked only role-less", () => {
+    expect(allocated([link(ROLELESS_ALLOCATION_ROLE, 30000)])).toBe(30000);
+  });
+
+  it("MUTATION: the inbound mirror's own-role link and the role-less one for the same allocation count once", () => {
+    expect(allocated([link(ROLELESS_ALLOCATION_ROLE, 30000), link(NOTE_ALLOCATION_ROLE, 30000)])).toBe(30000);
+  });
+
+  it("MUTATION: a role-less link for another amount is another allocation, not merged", () => {
+    expect(allocated([link(NOTE_ALLOCATION_ROLE, 20000), link(ROLELESS_ALLOCATION_ROLE, 10000)])).toBe(30000);
+  });
+
+  it("MUTATION: a role-less link with no amount, or a link with any other role, counts nothing", () => {
+    expect(allocated([link(ROLELESS_ALLOCATION_ROLE, undefined)])).toBe(0);
+    expect(allocated([link("APPLIED_CREDIT_ALLOCATION", 30000)])).toBe(0);
+  });
+
+  it("reads a refund note's role-less and own-role links on the payment once each, and only that note's", () => {
+    const notes = resolveIbHoldClearingNotes({
+      operations: [],
+      allocationLinks: [
+        { localModel: "Payment", role: ROLELESS_ALLOCATION_ROLE, metadata: { creditNoteId: "cn_refund", invoiceId: "inv_1", amountCents: 5000 } },
+        { localModel: "Payment", role: NOTE_ALLOCATION_ROLE, metadata: { creditNoteId: "cn_refund", invoiceId: "inv_1", amountCents: 5000 } },
+        { localModel: "Payment", role: ROLELESS_ALLOCATION_ROLE, metadata: { creditNoteId: "cn_other", invoiceId: "inv_1", amountCents: 999 } },
+      ],
+      xeroRefundCreditNoteId: "cn_refund",
+    });
+    expect(notes).toEqual([
+      { kind: "refund-note", creditNoteId: "cn_refund", amountCents: null, operationStatus: null, allocatedCents: 5000 },
     ]);
   });
 });
