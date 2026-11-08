@@ -80,25 +80,6 @@ export function getJsonRecord(value: unknown): Record<string, unknown> | null {
   return value as Record<string, unknown>;
 }
 
-export function getCreditNoteIdFromAllocationMetadata(metadata: unknown): string | null {
-  const record = getJsonRecord(metadata);
-  const creditNoteId = record?.creditNoteId;
-  return typeof creditNoteId === "string" && creditNoteId.trim().length > 0
-    ? creditNoteId
-    : null;
-}
-
-export function getAmountCentsFromAllocationMetadata(metadata: unknown): number | null {
-  const record = getJsonRecord(metadata);
-  const amountCents = record?.amountCents;
-
-  if (typeof amountCents !== "number" || !Number.isFinite(amountCents) || amountCents <= 0) {
-    return null;
-  }
-
-  return Math.round(amountCents);
-}
-
 /** One application of a credit note: cents it applied, and which allocation that is when known. */
 export type CreditNoteAllocationCents = {
   creditNoteId: string;
