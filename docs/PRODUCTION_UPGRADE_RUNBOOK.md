@@ -1899,7 +1899,8 @@ rows as an owner-approved data operation (see below).
   unreadable (credentials need re-entry, authenticators stop verifying,
   recovery codes stop matching), and makes the recovery codes issued before the
   ring work again there unless `pnpm run data-keys:reencrypt
-  --retire-legacy-recovery-codes` has retired them. Keep the
+  --expect-fingerprint <fingerprint from Admin → Setup> --retire-legacy-recovery-codes`
+  has retired them. Keep the
   ring set and go forward
   ([`DEPLOYMENT.md` → Adding a data-encryption key](../DEPLOYMENT.md#adding-a-data-encryption-key-4456));
   the pre-deploy backup is the only route back to a ring-less state.

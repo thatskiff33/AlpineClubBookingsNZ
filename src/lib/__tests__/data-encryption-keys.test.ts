@@ -309,6 +309,8 @@ describe("the legacy-read switch, DATA_ENCRYPTION_LEGACY_KEY (#4456 PR 2)", () =
     process.env.DATA_ENCRYPTION_LEGACY_KEY = "retired";
     const read = () => decryptCredential({ provider: "p", key: "k", ...legacy });
     expect(read).toThrow(/stored under AUTH_SECRET, which DATA_ENCRYPTION_LEGACY_KEY has retired for reads/);
+    // The fix it names carries the flag, with its value from Admin → Setup (round 3, S4).
+    expect(read).toThrow(/run pnpm run data-keys:reencrypt --expect-fingerprint <fingerprint from Admin → Setup>/);
     let message = "";
     try {
       read();

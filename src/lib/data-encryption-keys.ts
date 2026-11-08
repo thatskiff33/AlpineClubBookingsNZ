@@ -118,7 +118,7 @@ export function legacyReadsRetired(): boolean {
 }
 
 /** Why a row under the auth secret cannot be read once the switch is set. Never a value. */
-export const LEGACY_READS_RETIRED_MESSAGE = `it is stored under AUTH_SECRET, which ${DATA_ENCRYPTION_LEGACY_KEY_ENV} has retired for reads. Unset it and run pnpm run data-keys:reencrypt, or re-enter it`;
+export const LEGACY_READS_RETIRED_MESSAGE = `it is stored under AUTH_SECRET, which ${DATA_ENCRYPTION_LEGACY_KEY_ENV} has retired for reads. Unset it and run pnpm run data-keys:reencrypt --expect-fingerprint <fingerprint from Admin → Setup>, or re-enter it`;
 
 /**
  * The keys a keyed-hash lookup computes a candidate under: every ring key when
