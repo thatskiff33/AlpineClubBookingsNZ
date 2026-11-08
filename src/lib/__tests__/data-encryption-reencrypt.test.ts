@@ -42,6 +42,16 @@ vi.mock("@/lib/two-factor-rekey", () => ({
   retireLegacyRecoveryCodes: mocks.retireLegacyRecoveryCodes,
 }));
 vi.mock("@/lib/two-factor", () => ({ decryptTwoFactorSecret: mocks.decryptTwoFactorSecret }));
+// A stored row's version is a hash of its encrypted columns; the double's rows
+// carry it directly, so the stamp read can match (or not) the read before it.
+vi.mock("@/lib/integration-credential-actor", async (importOriginal) => {
+  const actual = (await importOriginal()) as typeof import("@/lib/integration-credential-actor");
+  return {
+    ...actual,
+    credentialVersionOf: (row: { version?: string; ciphertext: string; iv: string; authTag: string }) =>
+      row.version ?? actual.credentialVersionOf(row),
+  };
+});
 vi.mock("@/lib/xero-token-store", () => ({
   XERO_OAUTH_TOKEN_PROVIDER: "xero-oauth",
   fenceXeroTokenSetRewrite: mocks.fenceXeroTokenSetRewrite,
@@ -71,7 +81,13 @@ const run = (overrides: Partial<ReencryptOptions> = {}) =>
 
 /** The row's own timestamp, which the move keeps (#4456 review C3). */
 const STAMP = new Date("2026-06-01T00:00:00.000Z");
-const TX = { integrationCredential: { findUnique: vi.fn(async () => ({ updatedAt: STAMP })) } };
+/** The stamp read: by default the same row the `stored` read just resolved. */
+async function sameRowAsStored() {
+  const last = mocks.readIntegrationCredentialRow.mock.results.at(-1);
+  const stored = (await last?.value) as { version?: string } | undefined;
+  return { ciphertext: "c", iv: "i", authTag: "t", updatedAt: STAMP, version: stored?.version };
+}
+const TX = { integrationCredential: { findUnique: vi.fn(sameRowAsStored) } };
 function configured(secretSource = "AUTH_SECRET", version = "v-1") {
   return { status: "configured", value: PLAINTEXT, secretSource, sourceFlipped: false, labelVersion: "l", version };
 }
@@ -456,3 +472,26 @@ describe("the command proves its key is the app's before writing (#4456 review S
     await expect(run({ dryRun: true })).rejects.toThrow(ReencryptRefusedError);
   });
 });
+
+describe("the kept timestamp comes from the row the claim is made on (#4456 review round 2, F3)", () => {
+  it("a write landing between the value read and the timestamp read makes the move lose, writing nothing", async () => {
+    mocks.credentialRows = [{ provider: "stripe", key: "secret_key" }];
+    TX.integrationCredential.findUnique.mockImplementationOnce(async () => ({
+      ciphertext: "c2",
+      iv: "i2",
+      authTag: "t2",
+      updatedAt: new Date("2026-06-30T00:00:00.000Z"),
+      version: "an-admin-save-landed",
+    }));
+
+    const report = await run({ maxPasses: 1 });
+
+    expect(mocks.setIntegrationCredentialInTransaction).not.toHaveBeenCalled();
+    expect(report.credentials).toMatchObject({ moved: 0, lostClaims: 1 });
+    // The timestamp is read after the value, never before.
+    expect(TX.integrationCredential.findUnique.mock.invocationCallOrder[0]!).toBeGreaterThan(
+      mocks.readIntegrationCredentialRow.mock.invocationCallOrder.at(-1)!,
+    );
+  });
+});
+

@@ -50,7 +50,7 @@ import {
   type DataKey,
 } from "@/lib/data-encryption-key-material";
 import { readDataKeyRing } from "@/lib/data-encryption-keys";
-import { StaleCredentialWriteError } from "@/lib/integration-credential-actor";
+import { credentialVersionOf, StaleCredentialWriteError } from "@/lib/integration-credential-actor";
 import {
   readIntegrationCredentialRow,
   setIntegrationCredentialInTransaction,
@@ -207,16 +207,20 @@ async function moveCredential(row: CredentialRow, target: DataKey): Promise<Outc
       ) {
         throw new RowNotMoved("lost-claim");
       }
-      // The row's own timestamp, kept: the same value under a new key is not a
-      // newer credential, and verified markers compare it (#4456 review C3).
-      const stamp = await tx.integrationCredential.findUnique({
-        where: { provider_key: { provider: row.provider, key: row.key } },
-        select: { updatedAt: true },
-      });
       const stored = await readIntegrationCredentialRow(tx, row.provider, row.key);
-      if (stored.status === "not_configured" || !stamp) throw new RowNotMoved("gone");
+      if (stored.status === "not_configured") throw new RowNotMoved("gone");
       if (stored.status === "needs_reentry") throw new RowNotMoved("unreadable");
       if (stored.secretSource === targetSource) throw new RowNotMoved("already-current");
+      // The row's own timestamp, kept: the same value under a new key is not a
+      // newer credential, and verified markers compare it (#4456 review C3).
+      // Read AFTER `stored` and checked against its version (review round 2),
+      // so a write landing between the two reads makes this move lose instead
+      // of having its timestamp rolled back; a later one fails the claim.
+      const stamp = await tx.integrationCredential.findUnique({
+        where: { provider_key: { provider: row.provider, key: row.key } },
+        select: { ciphertext: true, iv: true, authTag: true, updatedAt: true },
+      });
+      if (!stamp || credentialVersionOf(stamp) !== stored.version) throw new RowNotMoved("lost-claim");
       await setIntegrationCredentialInTransaction({
         tx,
         provider: row.provider,

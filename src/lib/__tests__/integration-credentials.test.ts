@@ -49,6 +49,7 @@ import {
   resetIntegrationCredentialCacheForTests,
   resolveIntegrationCredential,
   setIntegrationCredential,
+  KeepUpdatedAtRefusedError,
 } from "@/lib/integration-credentials";
 
 const STRONG_SECRET = "a".repeat(48);
@@ -315,6 +316,44 @@ describe("no AUTH_SECRET write while ring-keyed credentials exist (#4456 review)
     await write();
     expect(mocks.tx.integrationCredential.count).not.toHaveBeenCalled();
     expect(mocks.tx.integrationCredential.upsert).toHaveBeenCalledOnce();
+  });
+});
+
+describe("a kept timestamp is the data-key re-encrypt's alone (#4456 review round 2, F3)", () => {
+  const RING_KEY = Buffer.from(Array.from({ length: 32 }, (_, index) => (index * 31 + 9) % 256)).toString("base64");
+  const KEPT = new Date("2026-01-01T00:00:00.000Z");
+  const REENCRYPT = { kind: "system", actor: "data-key-reencrypt" } as const;
+
+  beforeEach(() => {
+    process.env.DATA_ENCRYPTION_KEYS = `k1:${RING_KEY}`;
+  });
+  afterEach(() => {
+    delete process.env.DATA_ENCRYPTION_KEYS;
+  });
+
+  it.each([
+    ["another cause", { cause: { kind: "oauth-connect" } as const, expect: { expect: "version", version: "v" } as const }],
+    ["no cause", { cause: undefined, expect: { expect: "version", version: "v" } as const }],
+    ["an unconditional write", { cause: { kind: "data-key-reencrypt" } as const, expect: { expect: "any" } as const }],
+    ["a create", { cause: { kind: "data-key-reencrypt" } as const, expect: { expect: "absent" } as const }],
+  ])("refuses it with %s, reading, writing and auditing nothing", async (_label, shape) => {
+    await expect(
+      setIntegrationCredential({
+        provider: "google",
+        key: "client_id",
+        value: "v",
+        actor: REENCRYPT,
+        keepUpdatedAt: KEPT,
+        ...shape,
+      }),
+    ).rejects.toBeInstanceOf(KeepUpdatedAtRefusedError);
+    for (const delegate of [mocks.tx.integrationCredential, mocks.prisma.integrationCredential]) {
+      expect(delegate.findUnique).not.toHaveBeenCalled();
+      expect(delegate.updateMany).not.toHaveBeenCalled();
+      expect(delegate.upsert).not.toHaveBeenCalled();
+      expect(delegate.create).not.toHaveBeenCalled();
+    }
+    expect(mocks.tx.auditLog.create).not.toHaveBeenCalled();
   });
 });
 

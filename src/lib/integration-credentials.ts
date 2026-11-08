@@ -337,6 +337,29 @@ export interface SetIntegrationCredentialParams {
   keepUpdatedAt?: Date;
 }
 
+/** `keepUpdatedAt` from anything but the data-key re-encrypt's compare-and-set. */
+export class KeepUpdatedAtRefusedError extends Error {
+  constructor() {
+    super(
+      "keepUpdatedAt is only for the data-key re-encrypt (cause data-key-reencrypt) on a version compare-and-set; a real change gets a fresh timestamp.",
+    );
+    this.name = "KeepUpdatedAtRefusedError";
+  }
+}
+
+/**
+ * Refuse, before anything is written, a kept timestamp on any write but the
+ * re-encrypt's (#4456 review): anywhere else it would hide a real change from
+ * the verified-marker freshness rules, and without a version claim it could
+ * stamp a value it never read.
+ */
+function assertKeepUpdatedAtIsAReencrypt(params: SetIntegrationCredentialParams): void {
+  if (params.keepUpdatedAt === undefined) return;
+  if (params.cause?.kind !== "data-key-reencrypt" || params.expect.expect !== "version") {
+    throw new KeepUpdatedAtRefusedError();
+  }
+}
+
 /**
  * Run `work` in ONE transaction and drop the named providers' cached rows once
  * it settles, whichever way it settles (#3454).
@@ -371,6 +394,7 @@ export async function setIntegrationCredentialInTransaction(
 ): Promise<SetCredentialResult> {
   assertCredentialActor(CREDENTIAL_AUDIT_ACTIONS.set, params.actor);
   assertCredentialWriteExpectation(CREDENTIAL_AUDIT_ACTIONS.set, params.expect);
+  assertKeepUpdatedAtIsAReencrypt(params);
 
   const encrypted = encryptCredential({
     provider: params.provider,
