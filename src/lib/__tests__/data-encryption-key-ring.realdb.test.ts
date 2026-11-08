@@ -413,9 +413,9 @@ let observerClient: PrismaClient;
       select: { key: true, updatedAt: true },
       orderBy: { key: "asc" },
     });
-    // Long enough that a bumped timestamp would differ from the marker's. (On
-    // Prisma 7.10 the store's compare-and-set does not bump `updatedAt` anyway;
-    // the next test pins that the re-encrypt's write keeps it by contract.)
+    // Long enough that a bumped timestamp would differ from the marker's. The
+    // store's compare-and-set does stamp a fresh `updatedAt` (#4788, below); the
+    // next test pins that the re-encrypt's write keeps the old one by contract.
     await new Promise((resolve) => setTimeout(resolve, 25));
 
     const report = await runReencrypt({ providers: ["google"] });
@@ -455,6 +455,25 @@ let observerClient: PrismaClient;
       select: { updatedAt: true, secretSource: true },
     });
     expect(row).toEqual({ updatedAt: kept, secretSource: "DATA_ENCRYPTION_KEY:k1" });
+  });
+
+  it("a version-checked write moves updatedAt forward and reports the time it stored (#4788)", async () => {
+    // Prisma applies `@updatedAt` to the compare-and-set's `updateMany`. Under the
+    // frozen test clock a row written twice gets the same instant both times, so
+    // the row is first dated in the past to make the move visible.
+    await set("versioned", "first", { expect: "absent" });
+    const stale = new Date("2020-01-01T00:00:00.000Z");
+    await prisma.integrationCredential.update({ where: { provider_key: { provider: PROVIDER, key: "versioned" } }, data: { updatedAt: stale } });
+    const version = await versionOf("versioned");
+
+    const result = await set("versioned", "second", { expect: "version", version });
+
+    const row = await prisma.integrationCredential.findUniqueOrThrow({
+      where: { provider_key: { provider: PROVIDER, key: "versioned" } },
+      select: { updatedAt: true },
+    });
+    expect(row.updatedAt.getTime()).toBeGreaterThan(stale.getTime());
+    expect(result.updatedAt).toEqual(row.updatedAt);
   });
 
   it("refuses, changing nothing, when its ring has the app's key id but other bytes (#4456 review S1)", async () => {
