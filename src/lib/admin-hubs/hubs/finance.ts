@@ -64,6 +64,7 @@ export const FINANCE_HUB = defineHub({
       oldPath: "/admin/xero/records/[localModel]/[localId]",
       area: "finance",
       flags: ["xeroIntegration"],
+      kind: "detail",
       moved: false,
     },
     {

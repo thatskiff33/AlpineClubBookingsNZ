@@ -24,6 +24,7 @@ export const RULES_HUB = defineHub({
       label: "Fee Configuration",
       oldPath: "/admin/fee-configuration",
       area: "finance",
+      kind: "stub",
       moved: false,
     },
     {

@@ -10,6 +10,7 @@ import {
 } from "next/experimental/testing/server";
 import {
   ADMIN_PERMISSION_AREAS,
+  ADMIN_ROUTE_MAP_PREFIXES,
   ADMIN_PERMISSION_LEVELS,
   ANY_ADMIN_ADMISSION_PATHS,
   CONSOLIDATED_FEES_PATH,
@@ -44,7 +45,12 @@ import {
   resolveAdminHref,
   type AdminUrlRules,
 } from "@/lib/admin-hubs";
-import { hubRoot, type AdminHubPage } from "@/lib/admin-hubs/define";
+import {
+  hubRoot,
+  isAdminMenuDestination,
+  type AdminHubPage,
+} from "@/lib/admin-hubs/define";
+import { stripComments } from "@/lib/__tests__/support/strip-comments";
 
 // ---------------------------------------------------------------------------
 // The admin hub registry (epic #4468, C1 #4798).
@@ -67,15 +73,57 @@ const PAGE_FILE_BY_PATH = new Map(
 );
 const ON_DISK_PAGE_PATHS = [...RESOLVER_PATH_BY_PAGE.keys()].sort();
 
-function resolverPath(oldPath: string): string {
-  const resolved = RESOLVER_PATH_BY_PAGE.get(oldPath);
-  if (!resolved) throw new Error(`${oldPath} is not a page on disk`);
-  return resolved;
-}
-
 /** A concrete URL for a registry path: every `[name]` filled with `x123`. */
 function concrete(registryPath: string): string {
   return registryPath.replace(/\[[^\]/]+\]/g, "x123");
+}
+
+/**
+ * Where a page's `page.tsx` lives: its hub path once it has moved, its old path
+ * until then.
+ */
+function diskPath(page: AdminHubPage): string {
+  return page.moved ? page.hubPath : page.oldPath;
+}
+
+/**
+ * The pathname today's resolvers are asked about. It is always the OLD path,
+ * moved or not: until C2 regenerates the route map from this registry, the map
+ * knows only old paths, and the off-state rewrite keeps the proxy and the
+ * layout guard seeing them. `concrete` uses the shared enumeration's
+ * placeholder, which a test below pins.
+ */
+function resolverPath(page: AdminHubPage): string {
+  return concrete(page.oldPath);
+}
+
+/**
+ * The registry against a page list from disk: every page on disk registered
+ * once, at the path where its file now lives, and no entry without a file.
+ * A function of its inputs so a synthetic tree can drive it.
+ */
+function diskCensus(
+  pages: readonly AdminHubPage[],
+  onDisk: readonly string[],
+): string[] {
+  const counts = new Map<string, number>();
+  for (const page of pages) {
+    counts.set(diskPath(page), (counts.get(diskPath(page)) ?? 0) + 1);
+  }
+  const disk = new Set(onDisk);
+  const missing = onDisk
+    .filter((p) => !counts.has(p))
+    .map((p) => `${PAGE_FILE_BY_PATH.get(p) ?? p} (${p}) has no registry entry`);
+  const duplicated = [...counts]
+    .filter(([, count]) => count > 1)
+    .map(([p, count]) => `${p} is registered ${count} times`);
+  const stale = pages
+    .filter((page) => !disk.has(diskPath(page)))
+    .map(
+      (page) =>
+        `${page.id} is ${page.moved ? "moved" : "not moved"}, but no page.tsx serves ${diskPath(page)}`,
+    );
+  return [...missing, ...duplicated, ...stale];
 }
 
 /** `path` equals `root` or sits beneath it, `/`-anchored as every resolver matches. */
@@ -127,23 +175,40 @@ describe("every admin page is registered exactly once", () => {
   });
 
   it("registers each page directory on disk once, and nothing that is not on disk", () => {
-    const registered = ADMIN_PAGES.map((page) => page.oldPath);
-    const counts = new Map<string, number>();
-    for (const oldPath of registered) {
-      counts.set(oldPath, (counts.get(oldPath) ?? 0) + 1);
-    }
+    expect(diskCensus(ADMIN_PAGES, ON_DISK_PAGE_PATHS)).toEqual([]);
+  });
 
-    const missing = ON_DISK_PAGE_PATHS.filter((p) => !counts.has(p)).map(
-      (p) => `${PAGE_FILE_BY_PATH.get(p)} (${p}) has no registry entry`,
+  it("expects a moved page at its hub path, not its old path", () => {
+    // C4's first `git mv`, played against a synthetic tree.
+    const pages = ADMIN_PAGES.map((page) =>
+      page.id === "member-merge" ? { ...page, moved: true } : page,
     );
-    const duplicated = [...counts]
-      .filter(([, count]) => count > 1)
-      .map(([p, count]) => `${p} is registered ${count} times`);
-    const stale = registered
-      .filter((p) => !RESOLVER_PATH_BY_PAGE.has(p))
-      .map((p) => `${p} is registered but no page.tsx serves it`);
+    const merge = pages.find((page) => page.id === "member-merge")!;
+    const afterMove = ON_DISK_PAGE_PATHS.filter((p) => p !== merge.oldPath).concat(
+      merge.hubPath,
+    );
 
-    expect([...missing, ...duplicated, ...stale]).toEqual([]);
+    expect(diskCensus(pages, afterMove)).toEqual([]);
+    // Flagged moved, but the file never left: the hub path is missing and the
+    // old path is unregistered.
+    expect(diskCensus(pages, ON_DISK_PAGE_PATHS)).toEqual([
+      `${PAGE_FILE_BY_PATH.get(merge.oldPath)} (${merge.oldPath}) has no registry entry`,
+      `member-merge is moved, but no page.tsx serves ${merge.hubPath}`,
+    ]);
+    // Moved on disk, but the registry was not told.
+    expect(diskCensus(ADMIN_PAGES, afterMove)).toEqual([
+      `${merge.hubPath} (${merge.hubPath}) has no registry entry`,
+      `member-merge is not moved, but no page.tsx serves ${merge.oldPath}`,
+    ]);
+  });
+
+  it("asks the resolvers about each unmoved page exactly as the shared enumeration does", () => {
+    // `resolverPath` fills dynamic segments itself so it still works after a
+    // move; this pins its placeholder to the enumeration's (INV-SSOT-004).
+    const drift = ADMIN_PAGES.filter((page) => !page.moved)
+      .filter((page) => RESOLVER_PATH_BY_PAGE.get(page.oldPath) !== resolverPath(page))
+      .map((page) => page.id);
+    expect(drift).toEqual([]);
   });
 });
 
@@ -172,7 +237,7 @@ describe("ids and paths are unique", () => {
 describe("each entry's admission is what today's code gives its old path", () => {
   it("records the route map's area, at view", () => {
     const drift = ADMIN_PAGES.flatMap((page) => {
-      const requirement = getAdminRouteRequirement(resolverPath(page.oldPath), "GET");
+      const requirement = getAdminRouteRequirement(resolverPath(page), "GET");
       return requirement?.area === page.area && requirement.level === "view"
         ? []
         : [`${page.id}: registry ${page.area}, route map ${JSON.stringify(requirement)}`];
@@ -182,7 +247,7 @@ describe("each entry's admission is what today's code gives its old path", () =>
 
   it("records canOpenAdminPath's special rules, in its order", () => {
     const drift = ADMIN_PAGES.flatMap((page) => {
-      const probe = resolverPath(page.oldPath);
+      const probe = resolverPath(page);
       const expected = isAnyAdminAdmissionPath(probe)
         ? "any-admin"
         : isConsolidatedFeesPath(probe)
@@ -229,7 +294,7 @@ describe("each entry's admission is what today's code gives its old path", () =>
 
     const drift: string[] = [];
     for (const page of ADMIN_PAGES) {
-      const probe = resolverPath(page.oldPath);
+      const probe = resolverPath(page);
       for (const grid of grids) {
         const actual = canOpenAdminPath(
           { canLogin: true, accessRoles: [], adminPermissionMatrix: grid },
@@ -246,7 +311,7 @@ describe("each entry's admission is what today's code gives its old path", () =>
 
   it("records every module flag the path needs today", () => {
     const drift = ADMIN_PAGES.flatMap((page) => {
-      const expected = getRequiredFeaturesForPath(resolverPath(page.oldPath)).sort();
+      const expected = getRequiredFeaturesForPath(resolverPath(page)).sort();
       const recorded = [...page.flags].sort();
       return JSON.stringify(expected) === JSON.stringify(recorded)
         ? []
@@ -281,6 +346,37 @@ describe("each entry's admission is what today's code gives its old path", () =>
   });
 });
 
+interface PrefixCensusSources {
+  /** Every prefix in today's route map (`ADMIN_ROUTE_MAP_PREFIXES`). */
+  readonly routeMapPrefixes: readonly string[];
+  /** Every module-gated path, labelled. */
+  readonly gatedPaths: ReadonlyArray<{ readonly path: string; readonly label: string }>;
+  /** The paths `canOpenAdminPath` admits by a special rule. */
+  readonly specialPaths: readonly string[];
+  /** Every `page.tsx` on disk. */
+  readonly pagePaths: readonly string[];
+}
+
+const TODAYS_SOURCES: PrefixCensusSources = {
+  routeMapPrefixes: ADMIN_ROUTE_MAP_PREFIXES,
+  gatedPaths: FEATURE_ROUTE_RULES.flatMap((rule) => [
+    ...(rule.prefixes ?? []).map((p) => ({ path: p, label: `${rule.flag} prefix` })),
+    ...(rule.exemptPaths ?? []).map((p) => ({ path: p, label: `${rule.flag} exemption` })),
+  ]),
+  specialPaths: [...ANY_ADMIN_ADMISSION_PATHS, CONSOLIDATED_FEES_PATH, ROOMS_BEDS_PATH],
+  pagePaths: ON_DISK_PAGE_PATHS,
+};
+
+/**
+ * The page paths a hub may own beneath its root: its landing page, and every
+ * one of its pages that has moved there.
+ */
+function ownedPagePaths(hubKey: string): string[] {
+  return ADMIN_PAGES.filter(
+    (page) => page.hub === hubKey && (page.moved || page.hubPath === page.oldPath),
+  ).map((page) => page.hubPath);
+}
+
 /**
  * Why a hub prefix cannot be used: the reasons it would collide with today's
  * security map, module gates or page tree. Empty means it is safe.
@@ -291,8 +387,18 @@ describe("each entry's admission is what today's code gives its old path", () =>
  * `/admin/lodge/...` it would need the kiosk module; under `/admin/fees/...` it
  * would take the fee console's OR rule. An existing page under the prefix would
  * also be redirected away from its own URL when the switch goes on.
+ *
+ * Probing the root finds rules AT or ABOVE it; only the lists find rules
+ * BELOW it, so both are needed. Once C2 generates route-map and module
+ * prefixes from this registry, a moved page's own generated prefixes sit under
+ * its hub root by design, and C2 must exclude them here as `owned` does for
+ * the page tree.
  */
-function hubPrefixCollisions(prefix: string, landingOldPath?: string): string[] {
+function hubPrefixCollisions(
+  prefix: string,
+  owned: readonly string[] = [],
+  sources: PrefixCensusSources = TODAYS_SOURCES,
+): string[] {
   const root = hubRoot(prefix);
   const reasons: string[] = [];
 
@@ -308,18 +414,17 @@ function hubPrefixCollisions(prefix: string, landingOldPath?: string): string[] 
     if (flags.length > 0) reasons.push(`${probe} needs the module(s) ${flags.join(", ")}`);
   }
 
-  const gatedPaths = FEATURE_ROUTE_RULES.flatMap((rule) => [
-    ...(rule.prefixes ?? []).map((p) => `${p} (${rule.flag} prefix)`),
-    ...(rule.exemptPaths ?? []).map((p) => `${p} (${rule.flag} exemption)`),
-  ]);
-  for (const entry of gatedPaths) {
-    if (nestsUnder(entry.split(" ")[0], root)) reasons.push(`${entry} sits under it`);
+  for (const mapPrefix of sources.routeMapPrefixes) {
+    if (nestsUnder(mapPrefix, root)) reasons.push(`the route-map prefix ${mapPrefix} sits under it`);
   }
-  for (const special of [...ANY_ADMIN_ADMISSION_PATHS, CONSOLIDATED_FEES_PATH, ROOMS_BEDS_PATH]) {
+  for (const { path: gated, label } of sources.gatedPaths) {
+    if (nestsUnder(gated, root)) reasons.push(`${gated} (${label}) sits under it`);
+  }
+  for (const special of sources.specialPaths) {
     if (nestsUnder(special, root)) reasons.push(`the special path ${special} sits under it`);
   }
-  for (const page of ON_DISK_PAGE_PATHS) {
-    if (nestsUnder(page, root) && page !== landingOldPath) {
+  for (const page of sources.pagePaths) {
+    if (nestsUnder(page, root) && !owned.includes(page)) {
       reasons.push(`the existing page ${page} sits under it`);
     }
   }
@@ -328,13 +433,17 @@ function hubPrefixCollisions(prefix: string, landingOldPath?: string): string[] 
 
 describe("the hub prefix census", () => {
   it("passes every hub's prefix", () => {
-    const collisions = ADMIN_HUBS.flatMap((hub) => {
-      const landing = hub.pages.find((page) => "landing" in page && page.landing);
-      return hubPrefixCollisions(hub.prefix, landing?.oldPath).map(
+    const collisions = ADMIN_HUBS.flatMap((hub) =>
+      hubPrefixCollisions(hub.prefix, ownedPagePaths(hub.key)).map(
         (reason) => `${hub.key} (/admin/${hub.prefix}): ${reason}`,
-      );
-    });
+      ),
+    );
     expect(collisions).toEqual([]);
+  });
+
+  it("reads a non-empty route map", () => {
+    expect(ADMIN_ROUTE_MAP_PREFIXES).toContain("/admin/bookings");
+    expect(Object.isFrozen(ADMIN_ROUTE_MAP_PREFIXES)).toBe(true);
   });
 
   it.each([
@@ -355,7 +464,48 @@ describe("the hub prefix census", () => {
     expect(hubPrefixCollisions("dashboard")).toEqual([
       "the existing page /admin/dashboard sits under it",
     ]);
-    expect(hubPrefixCollisions("dashboard", "/admin/dashboard")).toEqual([]);
+    expect(hubPrefixCollisions("dashboard", ownedPagePaths("dashboard"))).toEqual([]);
+  });
+
+  it("lets a hub own the pages that have moved under it, and no others", () => {
+    const moved = ADMIN_PAGES.find((page) => page.id === "payments")!;
+    const sources = { ...TODAYS_SOURCES, pagePaths: [...ON_DISK_PAGE_PATHS, moved.hubPath] };
+    expect(hubPrefixCollisions("finance", [moved.hubPath], sources)).toEqual([]);
+    expect(hubPrefixCollisions("finance", [], sources)).toEqual([
+      `the existing page ${moved.hubPath} sits under it`,
+    ]);
+  });
+
+  /**
+   * A rule that sits only BELOW the root, where a probe of the root cannot see
+   * it. Today's tree has no such case, so each source is given one.
+   */
+  it.each([
+    [
+      "route map",
+      { routeMapPrefixes: [...ADMIN_ROUTE_MAP_PREFIXES, "/admin/zz-hub/child"] },
+      "the route-map prefix /admin/zz-hub/child sits under it",
+    ],
+    [
+      "module gates",
+      {
+        gatedPaths: [...TODAYS_SOURCES.gatedPaths, { path: "/admin/zz-hub/child", label: "kiosk prefix" }],
+      },
+      "/admin/zz-hub/child (kiosk prefix) sits under it",
+    ],
+    [
+      "special rules",
+      { specialPaths: [...TODAYS_SOURCES.specialPaths, "/admin/zz-hub/child"] },
+      "the special path /admin/zz-hub/child sits under it",
+    ],
+    [
+      "page tree",
+      { pagePaths: [...ON_DISK_PAGE_PATHS, "/admin/zz-hub/child"] },
+      "the existing page /admin/zz-hub/child sits under it",
+    ],
+  ])("rejects a prefix whose only collision is nested in the %s", (_source, override, reason) => {
+    expect(hubPrefixCollisions("zz-hub")).toEqual([]);
+    expect(hubPrefixCollisions("zz-hub", [], { ...TODAYS_SOURCES, ...override })).toEqual([reason]);
   });
 });
 
@@ -383,8 +533,49 @@ describe("the entries' shape", () => {
     expect(roots).toEqual(["dashboard"]);
   });
 
-  it("has moved no page yet", () => {
+  it("has moved no page yet (C4 #4801 makes the first move)", () => {
     expect(ADMIN_PAGES.filter((page) => page.moved).map((page) => page.id)).toEqual([]);
+  });
+
+  /**
+   * A directory move carries everything beneath it, whichever hub those pages
+   * belong to: `/admin/setup` holds pages of Settings, Rules, Members and
+   * System. So no page may be moved while a page under its old path is not.
+   */
+  function movedOverUnmoved(pages: readonly AdminHubPage[]): string[] {
+    return pages
+      .filter((page) => page.moved)
+      .flatMap((page) =>
+        pages
+          .filter(
+            (other) =>
+              !other.moved &&
+              other.oldPath !== page.oldPath &&
+              nestsUnder(other.oldPath, page.oldPath),
+          )
+          .map((other) => `${page.id} is moved but ${other.id} beneath it is not`),
+      );
+  }
+
+  it("moves no page while a page beneath it, in any hub, stays", () => {
+    expect(movedOverUnmoved(ADMIN_PAGES)).toEqual([]);
+  });
+
+  it("refuses moving setup before the other hubs move their setup pages out", () => {
+    const settingsOnly = ADMIN_PAGES.map((page) => ({
+      ...page,
+      moved: page.hub === "settings",
+    }));
+    expect(movedOverUnmoved(settingsOnly)).toEqual([
+      "setup is moved but setup-booking-rules beneath it is not",
+      "setup is moved but setup-cancellation beneath it is not",
+      "setup is moved but setup-integrations beneath it is not",
+    ]);
+    const othersFirst = ADMIN_PAGES.map((page) => ({
+      ...page,
+      moved: page.hub === "settings" || page.oldPath.startsWith("/admin/setup/"),
+    }));
+    expect(movedOverUnmoved(othersFirst)).toEqual([]);
   });
 
   it("moves the pages of one hub that share a directory together", () => {
@@ -409,6 +600,53 @@ describe("the entries' shape", () => {
         .some((segment) => segment.startsWith("[") && !/^\[[A-Za-z][A-Za-z0-9]*\]$/.test(segment)),
     ).map((page) => page.oldPath);
     expect(odd).toEqual([]);
+  });
+});
+
+describe("which pages are menu and palette destinations", () => {
+  /**
+   * A stub is a `page.tsx` that calls `redirect()` and never returns anything
+   * to render, read from the file itself so the classification cannot drift.
+   */
+  function isRedirectStub(page: AdminHubPage): boolean {
+    const file = PAGE_FILE_BY_PATH.get(diskPath(page));
+    if (!file) throw new Error(`${page.id}: no page.tsx at ${diskPath(page)}`);
+    const source = stripComments(fs.readFileSync(path.join(process.cwd(), file), "utf8"));
+    return /\b(?:permanentRedirect|redirect)\(/.test(source) && !/\breturn\b/.test(source);
+  }
+
+  it("classifies every page from its path and its file", () => {
+    const drift = ADMIN_PAGES.flatMap((page) => {
+      const expected = page.oldPath.startsWith("/admin/testing/")
+        ? "test"
+        : isRedirectStub(page)
+          ? "stub"
+          : page.oldPath.endsWith("/print")
+            ? "print"
+            : /\[[^\]/]+\]/.test(page.oldPath)
+              ? "detail"
+              : "page";
+      return expected === page.kind ? [] : [`${page.id}: registry ${page.kind}, expected ${expected}`];
+    });
+    expect(drift).toEqual([]);
+  });
+
+  it("offers no page with a [param] in its path", () => {
+    expect(
+      ADMIN_PAGES.filter(
+        (page) => isAdminMenuDestination(page) && page.oldPath.includes("["),
+      ).map((page) => page.id),
+    ).toEqual([]);
+  });
+
+  it("finds the four redirect stubs and the test probe", () => {
+    expect(
+      ADMIN_PAGES.filter((page) => page.kind === "stub").map((page) => page.id).sort(),
+    ).toEqual(["booking-approvals", "booking-change-requests", "display-settings", "fee-configuration"]);
+    expect(
+      ADMIN_PAGES.filter((page) => page.kind === "test").map((page) => page.id),
+    ).toEqual(["testing-route-error"]);
+    expect(ADMIN_PAGES.filter((page) => !isAdminMenuDestination(page))).toHaveLength(16);
   });
 });
 
@@ -579,6 +817,7 @@ describe("buildAdminUrlRules", () => {
     area: "support",
     admission: "area",
     flags: [],
+    kind: "detail",
     fullAdminOnly: false,
     moved: true,
   };

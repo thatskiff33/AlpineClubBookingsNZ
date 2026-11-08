@@ -30,6 +30,7 @@ export const BOOKINGS_HUB = defineHub({
       label: "Booking Approvals",
       oldPath: "/admin/booking-approvals",
       area: "bookings",
+      kind: "stub",
       moved: false,
     },
     {
@@ -38,6 +39,7 @@ export const BOOKINGS_HUB = defineHub({
       label: "Booking Change Requests",
       oldPath: "/admin/booking-change-requests",
       area: "bookings",
+      kind: "stub",
       moved: false,
     },
     {

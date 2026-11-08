@@ -35,6 +35,7 @@ export const MESSAGES_HUB = defineHub({
       oldPath: "/admin/notices/[id]",
       area: "membership",
       flags: ["memberNotices"],
+      kind: "detail",
       moved: false,
     },
     {

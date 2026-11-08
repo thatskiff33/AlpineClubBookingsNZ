@@ -96,6 +96,7 @@ export const SYSTEM_HUB = defineHub({
       label: "Route Error Probe",
       oldPath: "/admin/testing/route-error",
       area: "overview",
+      kind: "test",
       moved: false,
     },
   ],

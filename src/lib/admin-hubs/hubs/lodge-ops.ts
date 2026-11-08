@@ -21,6 +21,7 @@ export const LODGE_OPS_HUB = defineHub({
       label: "Lodge",
       oldPath: "/admin/lodges/[id]",
       area: "lodge",
+      kind: "detail",
       moved: false,
     },
     {
@@ -28,6 +29,7 @@ export const LODGE_OPS_HUB = defineHub({
       label: "Central Lodge Listing",
       oldPath: "/admin/lodges/[id]/central-lodge",
       area: "lodge",
+      kind: "detail",
       moved: false,
     },
     {
@@ -35,6 +37,7 @@ export const LODGE_OPS_HUB = defineHub({
       label: "Lodge Display",
       oldPath: "/admin/lodges/[id]/display",
       area: "lodge",
+      kind: "detail",
       moved: false,
     },
     {
@@ -42,6 +45,7 @@ export const LODGE_OPS_HUB = defineHub({
       label: "Lodge Roster",
       oldPath: "/admin/lodges/[id]/roster",
       area: "lodge",
+      kind: "detail",
       moved: false,
     },
     {
@@ -49,6 +53,7 @@ export const LODGE_OPS_HUB = defineHub({
       label: "Lodge Setup",
       oldPath: "/admin/lodges/[id]/setup",
       area: "lodge",
+      kind: "detail",
       moved: false,
     },
     {
@@ -90,6 +95,7 @@ export const LODGE_OPS_HUB = defineHub({
       oldPath: "/admin/roster/[date]/print",
       area: "lodge",
       flags: ["chores"],
+      kind: "print",
       moved: false,
     },
     {
@@ -178,6 +184,7 @@ export const LODGE_OPS_HUB = defineHub({
       oldPath: "/admin/display/settings",
       area: "lodge",
       flags: ["lobbyDisplay"],
+      kind: "stub",
       moved: false,
     },
     {

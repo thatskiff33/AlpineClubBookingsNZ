@@ -24,6 +24,19 @@ export type AdminPageAdmission =
   | "fees-or"
   | "rooms-beds-or";
 
+/**
+ * What a page is FOR, which decides whether the hub menu (C13) and the command
+ * palette (S2) may offer it. Only a `page` is a destination; the rest are
+ * reached from one, or not at all.
+ *
+ * - `page`: a screen an officer opens on purpose.
+ * - `detail`: one record's screen, reached from its list (any `[param]` path).
+ * - `print`: a printable view of one record.
+ * - `stub`: a `page.tsx` that only redirects, kept so old links still work.
+ * - `test`: a test-only probe that 404s in production.
+ */
+export type AdminPageKind = "page" | "detail" | "print" | "stub" | "test";
+
 /** One page as a hub fragment writes it. Omitted fields take the defaults below. */
 export interface AdminHubPageInput {
   /** Stable key for `adminHref`; unique across every hub. */
@@ -37,6 +50,8 @@ export interface AdminHubPageInput {
   readonly admission?: AdminPageAdmission;
   /** Every module flag `getRequiredFeaturesForPath(oldPath)` requires today. Defaults to none. */
   readonly flags?: readonly FeatureFlagKey[];
+  /** Defaults to `"page"`. */
+  readonly kind?: AdminPageKind;
   /** The menu hides the page from anyone but a Full Admin. Defaults to `false`. */
   readonly fullAdminOnly?: boolean;
   /**
@@ -68,8 +83,14 @@ export interface AdminHubPage {
   readonly area: AdminPermissionArea;
   readonly admission: AdminPageAdmission;
   readonly flags: readonly FeatureFlagKey[];
+  readonly kind: AdminPageKind;
   readonly fullAdminOnly: boolean;
   readonly moved: boolean;
+}
+
+/** Whether the hub menu and the command palette may offer this page. */
+export function isAdminMenuDestination(page: AdminHubPage): boolean {
+  return page.kind === "page";
 }
 
 /**
@@ -106,6 +127,7 @@ export function normaliseHubPage(
     area: page.area,
     admission: page.admission ?? "area",
     flags: page.flags ?? [],
+    kind: page.kind ?? "page",
     fullAdminOnly: page.fullAdminOnly ?? false,
     moved: page.moved,
   };

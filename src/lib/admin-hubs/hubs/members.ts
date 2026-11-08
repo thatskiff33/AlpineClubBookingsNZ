@@ -22,6 +22,7 @@ export const MEMBERS_HUB = defineHub({
       label: "Member",
       oldPath: "/admin/members/[id]",
       area: "membership",
+      kind: "detail",
       moved: false,
     },
     {
@@ -29,6 +30,7 @@ export const MEMBERS_HUB = defineHub({
       label: "Merge Member",
       oldPath: "/admin/members/[id]/merge",
       area: "membership",
+      kind: "detail",
       moved: false,
     },
     {
@@ -90,6 +92,7 @@ export const MEMBERS_HUB = defineHub({
       oldPath: "/admin/induction/[id]/print",
       area: "membership",
       flags: ["induction"],
+      kind: "print",
       moved: false,
     },
     {
