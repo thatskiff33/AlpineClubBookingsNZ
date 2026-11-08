@@ -108,7 +108,8 @@ let observerClient: PrismaClient;
     await prisma.auditLog.deleteMany({ where: { entityId: { in: [MEMBER_ID, XERO_TOKEN_ENTITY] } } });
     await prisma.xeroToken.deleteMany();
     await prisma.xeroConnection.deleteMany();
-    await prisma.integrationCredential.deleteMany({ where: { provider: "xero-oauth" } });
+    await prisma.integrationCredential.deleteMany({ where: { provider: { in: ["xero-oauth", "google"] } } });
+    await prisma.auditLog.deleteMany({ where: { entityId: { startsWith: "google:" } } });
     credentials.resetIntegrationCredentialCacheForTests();
   }
 
@@ -385,6 +386,63 @@ let observerClient: PrismaClient;
     delete process.env.DATA_ENCRYPTION_KEYS;
     expect(await twoFactor.consumeRecoveryCode(MEMBER_ID, LEGACY_CODE)).toBe(false);
     expect(await twoFactor.memberHoldsRetiredRecoveryCodes(MEMBER_ID)).toBe(true);
+  });
+
+  it("keeps a provider verified: a moved credential keeps its own updatedAt, so the marker stays fresh (#4456 review C3)", async () => {
+    const google = await import("@/lib/google-config");
+    for (const key of ["client_id", "client_secret"]) {
+      await credentials.setIntegrationCredential({ provider: "google", key, value: `${key}-value`, actor: ADMIN, expect: { expect: "absent" } });
+    }
+    process.env.DATA_ENCRYPTION_KEYS = RING;
+    await google.recordGoogleVerified();
+    expect((await google.getGoogleSetupState()).verified).toBe(true);
+    const before = await prisma.integrationCredential.findMany({
+      where: { provider: "google", key: { in: ["client_id", "client_secret"] } },
+      select: { key: true, updatedAt: true },
+      orderBy: { key: "asc" },
+    });
+    // Long enough that a bumped timestamp would differ from the marker's. (On
+    // Prisma 7.10 the store's compare-and-set does not bump `updatedAt` anyway;
+    // the next test pins that the re-encrypt's write keeps it by contract.)
+    await new Promise((resolve) => setTimeout(resolve, 25));
+
+    const report = await runReencrypt({ providers: ["google"] });
+
+    expect(report.credentials).toMatchObject({ moved: 2, remaining: 0 });
+    const after = await prisma.integrationCredential.findMany({
+      where: { provider: "google", key: { in: ["client_id", "client_secret"] } },
+      select: { key: true, updatedAt: true, secretSource: true },
+      orderBy: { key: "asc" },
+    });
+    expect(after.map((row) => row.secretSource)).toEqual(["DATA_ENCRYPTION_KEY:k1", "DATA_ENCRYPTION_KEY:k1"]);
+    expect(after.map((row) => row.updatedAt.getTime())).toEqual(before.map((row) => row.updatedAt.getTime()));
+    expect((await google.getGoogleSetupState()).verified).toBe(true);
+  });
+
+  it("the store writes the timestamp it is told to keep, so the re-encrypt never depends on Prisma's own (#4456 review C3)", async () => {
+    await set("stamped", "value", { expect: "absent" });
+    const version = await versionOf("stamped");
+    const kept = new Date("2026-01-01T00:00:00.000Z");
+    process.env.DATA_ENCRYPTION_KEYS = RING;
+
+    await credentials.withCredentialTransaction([PROVIDER], (tx) =>
+      credentials.setIntegrationCredentialInTransaction({
+        tx,
+        provider: PROVIDER,
+        key: "stamped",
+        value: "value",
+        actor: { kind: "system", actor: "data-key-reencrypt" },
+        expect: { expect: "version", version },
+        cause: { kind: "data-key-reencrypt" },
+        keepUpdatedAt: kept,
+      }),
+    );
+
+    const row = await prisma.integrationCredential.findUniqueOrThrow({
+      where: { provider_key: { provider: PROVIDER, key: "stamped" } },
+      select: { updatedAt: true, secretSource: true },
+    });
+    expect(row).toEqual({ updatedAt: kept, secretSource: "DATA_ENCRYPTION_KEY:k1" });
   });
 
   it("moves everything again to a newer ring key, and a second run finds nothing to do", async () => {

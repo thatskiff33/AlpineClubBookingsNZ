@@ -193,8 +193,14 @@ async function moveCredential(row: CredentialRow, target: DataKey, options: Reen
       ) {
         throw new RowNotMoved("lost-claim");
       }
+      // The row's own timestamp, kept: the same value under a new key is not a
+      // newer credential, and verified markers compare it (#4456 review C3).
+      const stamp = await tx.integrationCredential.findUnique({
+        where: { provider_key: { provider: row.provider, key: row.key } },
+        select: { updatedAt: true },
+      });
       const stored = await readIntegrationCredentialRow(tx, row.provider, row.key);
-      if (stored.status === "not_configured") throw new RowNotMoved("gone");
+      if (stored.status === "not_configured" || !stamp) throw new RowNotMoved("gone");
       if (stored.status === "needs_reentry") throw new RowNotMoved("unreadable");
       if (stored.secretSource === targetSource) throw new RowNotMoved("already-current");
       await setIntegrationCredentialInTransaction({
@@ -205,6 +211,7 @@ async function moveCredential(row: CredentialRow, target: DataKey, options: Reen
         actor: { kind: "system", actor: DATA_KEY_REENCRYPT_JOB_NAME },
         expect: { expect: "version", version: stored.version },
         cause: { kind: "data-key-reencrypt" },
+        keepUpdatedAt: stamp.updatedAt,
       });
     });
     return "moved";

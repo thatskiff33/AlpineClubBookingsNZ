@@ -69,7 +69,9 @@ const pause = vi.fn(async () => undefined);
 const run = (overrides: Partial<ReencryptOptions> = {}) =>
   reencryptStoredData({ dryRun: false, retireLegacyRecoveryCodes: false, pause, ...overrides });
 
-const TX = { tx: true };
+/** The row's own timestamp, which the move keeps (#4456 review C3). */
+const STAMP = new Date("2026-06-01T00:00:00.000Z");
+const TX = { integrationCredential: { findUnique: vi.fn(async () => ({ updatedAt: STAMP })) } };
 function configured(secretSource = "AUTH_SECRET", version = "v-1") {
   return { status: "configured", value: PLAINTEXT, secretSource, sourceFlipped: false, labelVersion: "l", version };
 }
@@ -167,6 +169,7 @@ describe("moving credentials (#4456 PR 2)", () => {
         actor: { kind: "system", actor: "data-key-reencrypt" },
         expect: { expect: "version", version: "ver-a" },
         cause: { kind: "data-key-reencrypt" },
+        keepUpdatedAt: STAMP,
       },
       expect.objectContaining({ provider: "xero", key: "client_secret", expect: { expect: "version", version: "ver-b" } }),
     ]);

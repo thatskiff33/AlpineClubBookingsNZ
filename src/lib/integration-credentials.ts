@@ -326,6 +326,15 @@ export interface SetIntegrationCredentialParams {
   request?: CredentialRequestContext;
   /** Why, when the write is the consequence of something else (#3454). */
   cause?: CredentialMutationCause;
+  /**
+   * The row's own `updatedAt`, kept rather than bumped. ONLY the data-key
+   * re-encrypt passes it (#4456 review): it writes the same value under a new
+   * key, which is not a newer credential, and the verified-marker freshness
+   * rules compare `updatedAt` (`getGoogleSetupState`, the Stripe webhook
+   * marker), so a bump would quietly unverify a provider. Every real change
+   * omits it and gets a fresh timestamp.
+   */
+  keepUpdatedAt?: Date;
 }
 
 /**
@@ -379,6 +388,7 @@ export async function setIntegrationCredentialInTransaction(
     secretSource: encrypted.secretSource,
     labelVersion: encrypted.labelVersion,
     updatedByUserId: credentialActorMemberId(params.actor),
+    ...(params.keepUpdatedAt === undefined ? {} : { updatedAt: params.keepUpdatedAt }),
   };
 
   const updatedAt = await applyCredentialWrite(params.tx, {
