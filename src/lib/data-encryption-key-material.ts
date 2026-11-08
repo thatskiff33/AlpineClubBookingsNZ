@@ -10,13 +10,48 @@
  * `util.inspect` and any spread copy, so a stray log line shows the id alone.
  */
 
-import { hkdfSync } from "node:crypto";
+import { createHash, hkdfSync } from "node:crypto";
 
 /** The environment variable that holds the ring. */
 export const DATA_ENCRYPTION_KEYS_ENV = "DATA_ENCRYPTION_KEYS";
 
 /** The reserved id rows written under the auth secret are read with. */
 export const LEGACY_AUTH_SECRET_KEY_ID = "legacy-auth-secret";
+
+/**
+ * The switch that stops reading stored data under the auth secret (#4456): set
+ * to `retired` once the re-encrypt reports nothing left on it. Unset, the
+ * legacy key stays readable. It never changes what a write uses.
+ */
+export const DATA_ENCRYPTION_LEGACY_KEY_ENV = "DATA_ENCRYPTION_LEGACY_KEY";
+
+/** The one value `DATA_ENCRYPTION_LEGACY_KEY` accepts. */
+export const LEGACY_KEY_RETIRED = "retired";
+
+/**
+ * Is the legacy key retired for READS? Any non-blank value counts, so a typo
+ * fails closed: the ring parser reports it as invalid, and meanwhile nothing
+ * is read under the auth secret.
+ */
+export function legacyKeyRetired(rawLegacyKey: string | undefined): boolean {
+  return (rawLegacyKey?.trim() ?? "") !== "";
+}
+
+/**
+ * The named job that moves stored rows to the current ring key
+ * (`pnpm run data-keys:reencrypt`). One spelling for the credential store's and
+ * the two-factor audit's closed actor lists.
+ */
+export const DATA_KEY_REENCRYPT_JOB_NAME = "data-key-reencrypt";
+
+/**
+ * The re-encrypt as an instruction (#4456 review): the ONE spelling every
+ * message that tells an operator to run it uses. Its fingerprint is a
+ * placeholder because only Admin → Setup, the running app's own page, may
+ * supply the value.
+ */
+export const REENCRYPT_RUN_COMMAND =
+  "pnpm run data-keys:reencrypt --expect-fingerprint <fingerprint from Admin → Setup>";
 
 /** Every ring key is exactly this many bytes. */
 export const DATA_KEY_BYTES = 32;
@@ -69,6 +104,8 @@ export type DataKeyRingState =
       readonly current: DataKey;
       /** Every ring key, current first, in the order the variable lists them. */
       readonly keys: readonly DataKey[];
+      /** `DATA_ENCRYPTION_LEGACY_KEY=retired`: nothing is read under the auth secret. */
+      readonly legacyRetired: boolean;
     };
 
 /** The ring is set but cannot be used. Never names a key's value. */
@@ -89,19 +126,37 @@ function decodeKey(encoded: string): Buffer | null {
 }
 
 /**
- * Parse a `DATA_ENCRYPTION_KEYS` value. Pure. A blank value is `unset`; any
- * entry that is malformed, the wrong length, visibly not random (every byte the
- * same), a duplicate id, a duplicate key or the reserved legacy id makes the
- * whole ring `invalid` — never a partial ring, because a ring missing the key
- * an operator meant to be current would write under the wrong one.
+ * Parse a `DATA_ENCRYPTION_KEYS` value, with `DATA_ENCRYPTION_LEGACY_KEY`.
+ * Pure. A blank ring is `unset`; any entry that is malformed, the wrong length,
+ * visibly not random (every byte the same), a duplicate id, a duplicate key or
+ * the reserved legacy id makes the whole ring `invalid` — never a partial ring,
+ * because a ring missing the key an operator meant to be current would write
+ * under the wrong one. A legacy-key value other than `retired` is invalid, and
+ * so is `retired` with no ring: the auth secret would then be the only key a
+ * write could use, and the one key nothing may read.
  */
 export function parseDataEncryptionKeys(
   raw: string | undefined,
   authSecret?: string,
+  rawLegacyKey?: string,
 ): DataKeyRingState {
   const authForms = authSecretForms(authSecret);
   const trimmed = raw?.trim() ?? "";
-  if (trimmed === "") return { status: "unset" };
+  const legacyRetired = legacyKeyRetired(rawLegacyKey);
+  if (legacyRetired && rawLegacyKey?.trim() !== LEGACY_KEY_RETIRED) {
+    return {
+      status: "invalid",
+      reason: `${DATA_ENCRYPTION_LEGACY_KEY_ENV}: the only accepted value is "${LEGACY_KEY_RETIRED}"; unset it to keep reading data stored under AUTH_SECRET.`,
+    };
+  }
+  if (trimmed === "") {
+    return legacyRetired
+      ? {
+          status: "invalid",
+          reason: `${DATA_ENCRYPTION_LEGACY_KEY_ENV}=${LEGACY_KEY_RETIRED} needs ${DATA_ENCRYPTION_KEYS_ENV}: with no ring, AUTH_SECRET is the only key a write could use. Put the ring back, or unset ${DATA_ENCRYPTION_LEGACY_KEY_ENV}.`,
+        }
+      : { status: "unset" };
+  }
 
   const entries = trimmed.split(",").map((entry) => entry.trim());
   const keys: DataKey[] = [];
@@ -152,7 +207,7 @@ export function parseDataEncryptionKeys(
     seenMaterial.add(fingerprint);
     keys.push(makeKey(id, false, material));
   }
-  return { status: "configured", current: keys[0]!, keys };
+  return { status: "configured", current: keys[0]!, keys, legacyRetired };
 }
 
 /**
@@ -188,6 +243,28 @@ export function deriveDataSubkey(key: DataKey, purpose: string): Buffer {
   return Buffer.from(
     hkdfSync("sha256", material, RING_HKDF_SALT, Buffer.from(purpose, "utf8"), DATA_KEY_BYTES),
   );
+}
+
+/**
+ * The fixed prefix of a key fingerprint's hash input. Nothing else hashes or
+ * derives with it, so a fingerprint is never a sub-key, a code hash or the key.
+ */
+const FINGERPRINT_DOMAIN = "acb:data-encryption-key:fingerprint:v1\0";
+
+/**
+ * A short, one-way fingerprint of a RING key, for an operator to check that two
+ * environments hold the same key bytes (#4456 review): the re-encrypt prints
+ * it, and Admin → Setup shows the running app's. SHA-256 over a domain prefix
+ * and the key, cut to 64 bits: enough to tell two random keys apart, far too
+ * little to say anything about a 256-bit key. The legacy key has none.
+ */
+export function dataKeyFingerprint(key: DataKey): string {
+  const material = key[MATERIAL];
+  if (key.legacy || typeof material === "string") {
+    throw new DataKeyRingError("The legacy key has no fingerprint.");
+  }
+  const digest = createHash("sha256").update(FINGERPRINT_DOMAIN, "utf8").update(material).digest("hex");
+  return digest.slice(0, 16).match(/.{4}/g)!.join("-");
 }
 
 /** The auth secret behind the legacy key, for the legacy derivations only. */

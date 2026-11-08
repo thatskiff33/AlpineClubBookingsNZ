@@ -6,9 +6,13 @@ const mocks = vi.hoisted(() => ({
 }));
 vi.mock("@/lib/logger", () => ({ default: mocks.logger, logger: mocks.logger }));
 
+import { createHash } from "node:crypto";
+
 import {
   DATA_KEY_BYTES,
   DataKeyRingError,
+  dataKeyFingerprint,
+  legacyDataKey,
   LEGACY_AUTH_SECRET_KEY_ID,
   deriveDataSubkey,
   legacySecretOf,
@@ -35,6 +39,7 @@ const savedEnv = { ...process.env };
 beforeEach(() => {
   vi.clearAllMocks();
   delete process.env.DATA_ENCRYPTION_KEYS;
+  delete process.env.DATA_ENCRYPTION_LEGACY_KEY;
   delete process.env.NEXTAUTH_SECRET;
   process.env.AUTH_SECRET = AUTH;
 });
@@ -248,3 +253,107 @@ describe("no key material reaches a log, an error or a report (#4456)", () => {
     }
   });
 });
+
+describe("the legacy-read switch, DATA_ENCRYPTION_LEGACY_KEY (#4456 PR 2)", () => {
+  it("parses: unset keeps legacy reads; retired with a ring stops them; anything else is invalid", () => {
+    expect(parseDataEncryptionKeys(`k1:${K1}`, AUTH)).toMatchObject({ status: "configured", legacyRetired: false });
+    expect(parseDataEncryptionKeys(`k1:${K1}`, AUTH, " retired ")).toMatchObject({
+      status: "configured",
+      legacyRetired: true,
+    });
+    expect(parseDataEncryptionKeys(`k1:${K1}`, AUTH, "true")).toEqual({
+      status: "invalid",
+      reason: expect.stringMatching(/^DATA_ENCRYPTION_LEGACY_KEY: the only accepted value is "retired"/),
+    });
+    expect(parseDataEncryptionKeys(undefined, AUTH, "retired")).toEqual({
+      status: "invalid",
+      reason: expect.stringMatching(/^DATA_ENCRYPTION_LEGACY_KEY=retired needs DATA_ENCRYPTION_KEYS/),
+    });
+    expect(parseDataEncryptionKeys(undefined, AUTH, "  ")).toEqual({ status: "unset" });
+  });
+
+  it("refuses every read under the auth secret once set, and leaves ring reads and writes alone", () => {
+    process.env.DATA_ENCRYPTION_KEYS = `k1:${K1}`;
+    expect(dataKeyById(LEGACY_AUTH_SECRET_KEY_ID)?.id).toBe(LEGACY_AUTH_SECRET_KEY_ID);
+    process.env.DATA_ENCRYPTION_LEGACY_KEY = "retired";
+    expect(dataKeyById(LEGACY_AUTH_SECRET_KEY_ID)).toBeNull();
+    expect(dataKeyById("k1")?.id).toBe("k1");
+    expect(currentDataKey()?.id).toBe("k1");
+    expect(codeHashKeys().map((key) => key.id)).toEqual(["k1"]);
+  });
+
+  it("fails closed on a typo: no legacy read, and no write or lookup either while the ring is invalid", () => {
+    process.env.DATA_ENCRYPTION_KEYS = `k1:${K1}`;
+    process.env.DATA_ENCRYPTION_LEGACY_KEY = "retire";
+    expect(dataKeyById(LEGACY_AUTH_SECRET_KEY_ID)).toBeNull();
+    expect(() => currentDataKey()).toThrow(DataKeyRingError);
+    expect(() => codeHashKeys()).toThrow(DataKeyRingError);
+  });
+
+  it("set without a ring, refuses writes rather than falling back to the auth secret", () => {
+    process.env.DATA_ENCRYPTION_LEGACY_KEY = "retired";
+    expect(() => currentDataKey()).toThrow(/DATA_ENCRYPTION_LEGACY_KEY=retired needs DATA_ENCRYPTION_KEYS/);
+    expect(dataKeyById(LEGACY_AUTH_SECRET_KEY_ID)).toBeNull();
+  });
+
+  it("re-reads the switch when it changes", () => {
+    process.env.DATA_ENCRYPTION_KEYS = `k1:${K1}`;
+    expect(readDataKeyRing()).toMatchObject({ legacyRetired: false });
+    process.env.DATA_ENCRYPTION_LEGACY_KEY = "retired";
+    expect(readDataKeyRing()).toMatchObject({ legacyRetired: true });
+  });
+
+  it("a legacy credential then reads as needs-re-entry, naming the switch and never the value", () => {
+    const legacy = encryptCredential({ provider: "p", key: "k", plaintext: "legacy-plaintext" });
+    process.env.DATA_ENCRYPTION_KEYS = `k1:${K1}`;
+    process.env.DATA_ENCRYPTION_LEGACY_KEY = "retired";
+    const read = () => decryptCredential({ provider: "p", key: "k", ...legacy });
+    expect(read).toThrow(/stored under AUTH_SECRET, which DATA_ENCRYPTION_LEGACY_KEY has retired for reads/);
+    // The fix it names carries the flag, with its value from Admin → Setup (round 3, S4).
+    expect(read).toThrow(/run pnpm run data-keys:reencrypt --expect-fingerprint <fingerprint from Admin → Setup>/);
+    let message = "";
+    try {
+      read();
+    } catch (error) {
+      message = (error as Error).message;
+    }
+    expect(message).not.toContain("legacy-plaintext");
+    expect(message).not.toContain(AUTH);
+    delete process.env.DATA_ENCRYPTION_LEGACY_KEY;
+    expect(read()).toBe("legacy-plaintext");
+  });
+});
+
+describe("a key's fingerprint (#4456 review S1)", () => {
+  function ringKey(raw: string) {
+    const ring = parseDataEncryptionKeys(raw, AUTH);
+    if (ring.status !== "configured") throw new Error("expected a ring");
+    return ring.current;
+  }
+
+  it("is 64 bits in four groups, the same for the same bytes whatever the id, and differs for other bytes", () => {
+    const fingerprint = dataKeyFingerprint(ringKey(`k1:${K1}`));
+    expect(fingerprint).toMatch(/^[0-9a-f]{4}(-[0-9a-f]{4}){3}$/);
+    expect(dataKeyFingerprint(ringKey(`other:${K1}`))).toBe(fingerprint);
+    expect(dataKeyFingerprint(ringKey(`k1:${K2}`))).not.toBe(fingerprint);
+  });
+
+  it("is a domain-separated hash: never the key, its plain SHA-256, or a sub-key any use derives", () => {
+    const key = ringKey(`k1:${K1}`);
+    const fingerprint = dataKeyFingerprint(key).replace(/-/g, "");
+    const material = Buffer.from(K1, "base64");
+    expect(material.toString("hex")).not.toContain(fingerprint);
+    expect(createHash("sha256").update(material).digest("hex").startsWith(fingerprint)).toBe(false);
+    for (const purpose of ["integration-credential:v2", "two-factor-secret:v2", "two-factor-code:v2"]) {
+      expect(deriveDataSubkey(key, purpose).toString("hex").startsWith(fingerprint)).toBe(false);
+    }
+    expect(
+      createHash("sha256").update("acb:data-encryption-key:fingerprint:v1\0", "utf8").update(material).digest("hex").slice(0, 16),
+    ).toBe(fingerprint);
+  });
+
+  it("does not exist for the legacy key, so the auth secret is never fingerprinted", () => {
+    expect(() => dataKeyFingerprint(legacyDataKey(AUTH))).toThrow(DataKeyRingError);
+  });
+});
+

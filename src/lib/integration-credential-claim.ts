@@ -33,6 +33,8 @@ export interface CredentialRowWrite {
   secretSource: WrappingKeySource;
   labelVersion: string;
   updatedByUserId: string | null;
+  /** Set only to keep the row's own timestamp: see `keepUpdatedAt` in the store. */
+  updatedAt?: Date;
 }
 
 /** The stored row, or `null`, read through the given client. */

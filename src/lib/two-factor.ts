@@ -16,9 +16,11 @@ import {
   type DataKey,
 } from "@/lib/data-encryption-key-material";
 import {
+  LEGACY_READS_RETIRED_MESSAGE,
   codeHashKeys,
   currentDataKey,
   dataKeyById,
+  legacyReadsRetired,
 } from "@/lib/data-encryption-keys";
 import { assertLegacyWriteAllowed } from "@/lib/data-encryption-legacy-write-guard";
 import { prisma } from "@/lib/prisma";
@@ -122,7 +124,9 @@ function totpKeyFor(stored: string): { key: DataKey; envelope: TwoFactorSecretEn
   if (!key) {
     throw new Error(
       envelope.keyId === LEGACY_AUTH_SECRET_KEY_ID
-        ? NO_KEY_MESSAGE
+        ? legacyReadsRetired()
+          ? `This two-factor secret cannot be read: ${LEGACY_READS_RETIRED_MESSAGE}`
+          : NO_KEY_MESSAGE
         : `The data-encryption key "${envelope.keyId}" this two-factor secret was written under is not in DATA_ENCRYPTION_KEYS`,
     );
   }
@@ -432,8 +436,10 @@ export async function consumeRecoveryCode(memberId: string, code: string) {
     return false;
   }
 
+  // Claimed on the hash it matched too, so a code the data-key re-encrypt
+  // retired meanwhile (its hash rewritten) is not used after all (#4456).
   const updated = await prisma.twoFactorRecoveryCode.updateMany({
-    where: { id: record.id, usedAt: null },
+    where: { id: record.id, codeHash: record.codeHash, usedAt: null },
     data: { usedAt: new Date() },
   });
   return updated.count === 1;

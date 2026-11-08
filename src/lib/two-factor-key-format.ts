@@ -77,6 +77,23 @@ export function keyedCodeHash(key: DataKey, value: string): string {
   return createHmac("sha256", legacyHashKey).update(value).digest("hex");
 }
 
+/**
+ * The key id of a recovery code RETIRED in the database (#4456, owner decision
+ * of 1 Nov 2026: codes hashed under the auth secret are invalidated at
+ * cut-over). `pnpm run data-keys:reencrypt --retire-legacy-recovery-codes`
+ * prefixes each unused legacy hash with this id and a `:`. The `.` is outside
+ * every ring id's alphabet (`KEY_ID_PATTERN`), so no key can ever claim it, and
+ * no lookup computes a hash under it — on any release, ring or not — so the
+ * code never signs anyone in again. The row stays unused, which is what keeps
+ * telling its member to generate a new set (`isRetiredRecoveryCodeHash`).
+ */
+export const RETIRED_RECOVERY_CODE_KEY_ID = `retired.${LEGACY_AUTH_SECRET_KEY_ID}`;
+
+/** The stored form of a retired legacy recovery-code hash. */
+export function retiredRecoveryCodeHash(legacyCodeHash: string): string {
+  return `${RETIRED_RECOVERY_CODE_KEY_ID}:${legacyCodeHash}`;
+}
+
 /** The key id a stored code hash was made under: its prefix, or legacy if bare. */
 export function codeHashKeyId(codeHash: string): string {
   const separator = codeHash.indexOf(":");
