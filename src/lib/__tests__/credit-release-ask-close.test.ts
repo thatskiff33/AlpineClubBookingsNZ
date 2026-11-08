@@ -258,15 +258,15 @@ describe("recordReleasePaidInXeroCash (an invoice already settled when the reque
   });
 
   it("never writes more than the ledger shows unasked, so a repeat writes nothing", async () => {
-    mocks.tx.payment.findUnique.mockResolvedValue({ bookingId: "bk-1", ...owing, amountCents: 38_500 });
+    mocks.tx.payment.findUnique.mockResolvedValue({ ...owing, amountCents: 38_500 });
     await expect(call()).resolves.toBe(1500);
-    mocks.tx.payment.findUnique.mockResolvedValue({ bookingId: "bk-1", ...owing, amountCents: 40_000 });
+    mocks.tx.payment.findUnique.mockResolvedValue({ ...owing, amountCents: 40_000 });
     await expect(call()).resolves.toBe(0);
     expect(mocks.recordBank).toHaveBeenCalledTimes(1);
   });
 
   it("writes nothing for a booking that ended or was cancelled", async () => {
-    mocks.tx.payment.findUnique.mockResolvedValue({ bookingId: "bk-1", ...owing, booking: { ...booking, status: "CANCELLED" } });
+    mocks.tx.payment.findUnique.mockResolvedValue({ ...owing, booking: { ...booking, status: "CANCELLED" } });
     await expect(call()).resolves.toBe(0);
     expect(mocks.recordBank).not.toHaveBeenCalled();
     expect(mocks.audit).not.toHaveBeenCalled();
