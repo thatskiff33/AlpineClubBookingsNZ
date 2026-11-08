@@ -1965,6 +1965,9 @@ The default and `--dry-run` perform read-only checks. JSON findings distinguish
 Missing receipts give exit status 2 and hold M4c's deployment. Unapplied cash is
 expected after catch-up; it remains available without inferring collection, and
 no later receipt hook collects a receipt the catch-up posted.
+`OVER_COLLECTED` is also expected until M4c records refunds. A booking whose
+price fell after it was paid, or that was cancelled and not yet refunded, still
+holds its full collection against the lower charge.
 A drift finding needs investigation; the command never rewrites an existing
 journal or silently resizes cash. Failure rolls back the current payment's
 transaction; earlier committed payments remain safe to replay.
