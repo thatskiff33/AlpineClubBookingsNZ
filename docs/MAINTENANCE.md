@@ -1939,6 +1939,39 @@ the effect of the parking gate's grain (#3531 3a) and the rate-derived backfill
 DATABASE_URL=<non-prod copy or, read-only, production> pnpm run booking-money:census
 ```
 
+### Catch up and census member-money receipts (M4b)
+
+Before enabling card-refund journal posting (M4c), account for every receipt on
+a booking whose R01 charge is already in the journal. This fills the gap between
+M3 and M4b without guessing which charge historical cash paid.
+
+```bash
+pnpm run member-money:receipt-catch-up --dry-run
+pnpm run member-money:receipt-catch-up --execute
+pnpm run member-money:receipt-catch-up --dry-run
+```
+
+Only the owner runs `--execute`, using the application database role. It posts
+missing receipts and their exact reversals, one Payment-row transaction at a
+time. It never calls a provider or creates collection applications. A repeated
+run posts nothing. It includes archived bookings with R01; older bookings and
+organiser-share mirrors stay outside this population. Catch-up dates are the
+legacy settlement line's recorded instant and are labelled `app-record`.
+
+The default and `--dry-run` perform read-only checks. JSON findings distinguish
+`RECEIPT_WITHOUT_EVENT`, `UNBRIDGED_SETTLEMENT_LINE`, `RECEIPT_AMOUNT_DRIFT`,
+`OVER_COLLECTED`, `UNAPPLIED_RECEIPT_ON_OPEN_CHARGE`, `MERGED_DEBTOR_BALANCE` and
+`COLLECTION_ON_REVERSED_RECEIPT` (a reversed receipt whose collection still applies cash).
+Missing receipts give exit status 2 and hold M4c's deployment. Unapplied cash is
+expected after catch-up; it remains available without inferring collection, and
+no later receipt hook collects a receipt the catch-up posted.
+`OVER_COLLECTED` is also expected until M4c records refunds. A booking whose
+price fell after it was paid, or that was cancelled and not yet refunded, still
+holds its full collection against the lower charge.
+A drift finding needs investigation; the command never rewrites an existing
+journal or silently resizes cash. Failure rolls back the current payment's
+transaction; earlier committed payments remain safe to replay.
+
 ### Census the booking ledger against its money columns (#3583)
 
 `pnpm run booking-ledger:census` is the booking ledger's cut-over gate

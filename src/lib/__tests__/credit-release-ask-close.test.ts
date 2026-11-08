@@ -4,7 +4,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => {
   const tx = {
     $executeRaw: vi.fn(),
-    paymentTransaction: { updateMany: vi.fn() },
+    memberMoneyEvent: { findUnique: vi.fn(async () => null) },
+    paymentTransaction: { updateMany: vi.fn(), findMany: vi.fn(async () => [{ id: "bank-receipt" }]) },
     payment: { findUnique: vi.fn() },
   };
   return {
@@ -66,7 +67,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.prisma.payment.findMany.mockResolvedValue([payment]);
   mocks.prisma.paymentTransaction.findFirst.mockResolvedValue(ask);
-  mocks.tx.payment.findUnique.mockResolvedValue({
+  mocks.tx.payment.findUnique.mockResolvedValue({ bookingId: "bk-1",
     additionalPaymentIntentId: "pi_1",
     additionalPaymentStatus: PaymentStatus.PENDING,
     booking: { status: "CONFIRMED", deletedAt: null },
@@ -199,7 +200,7 @@ describe("closeCreditReleaseAsksPaidInXero", () => {
   });
 
   it("writes no cash when the request stopped being the live ask while the card payment was cancelled", async () => {
-    mocks.tx.payment.findUnique.mockResolvedValue({
+    mocks.tx.payment.findUnique.mockResolvedValue({ bookingId: "bk-1",
       additionalPaymentIntentId: "pi_newer",
       additionalPaymentStatus: PaymentStatus.PENDING,
       booking: { status: "CONFIRMED", deletedAt: null },
@@ -209,7 +210,7 @@ describe("closeCreditReleaseAsksPaidInXero", () => {
   });
 
   it.each(["CANCELLED", "BUMPED"])("writes no cash on a booking that was %s meanwhile", async (status) => {
-    mocks.tx.payment.findUnique.mockResolvedValue({
+    mocks.tx.payment.findUnique.mockResolvedValue({ bookingId: "bk-1",
       additionalPaymentIntentId: "pi_1",
       additionalPaymentStatus: PaymentStatus.FAILED,
       booking: { status, deletedAt: null },
@@ -231,7 +232,7 @@ describe("closeCreditReleaseAsksPaidInXero", () => {
 describe("recordReleasePaidInXeroCash (an invoice already settled when the request would be raised)", () => {
   const booking = { id: "bk-1", status: "CONFIRMED", deletedAt: null, finalPriceCents: 40_000, memberId: "m-1", member: { id: "m-1", firstName: "A", lastName: "B", email: "a@example.test" }, organisation: null };
   // The release cut the credit from 4000 to 0, so $40.00 of the $400.00 price is unpaid and unasked.
-  const owing = { amountCents: 36_000, refundedAmountCents: 0, changeFeeCents: 0, creditAppliedCents: 0, additionalAmountCents: 0, additionalPaymentStatus: null, booking };
+  const owing = { bookingId: "bk-1", amountCents: 36_000, refundedAmountCents: 0, changeFeeCents: 0, creditAppliedCents: 0, additionalAmountCents: 0, additionalPaymentStatus: null, booking };
   const call = (releasedCents = 4000) => recordReleasePaidInXeroCash({ paymentId: "pay-1", releasedCents, balance: { invoiceId: "inv-1", invoiceNumber: "INV-1" } });
 
   beforeEach(() => {

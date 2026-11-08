@@ -1483,8 +1483,10 @@ const ROW_LOCK_SITE_INVENTORY: Record<string, number> = {
   // take the booking's Payment row (`SELECT 1 … FOR NO KEY UPDATE`) before they
   // read caps. No advisory key. A caller that already holds the row adds nothing.
   // Charges and reversals that apply nothing do not take it, so the M3 doors
-  // gain no edge. See docs/CONCURRENCY_AND_LOCKING.md ->
-  // "Member-money applications and refund reservations".
+  // gain no edge. #4516 (M4b): receipt collections take it, and the CHARGE
+  // successor a member merge once posted is now posted only under it, by the new
+  // owner's first collection; merge itself still takes no Payment row. See
+  // docs/CONCURRENCY_AND_LOCKING.md -> "Member-money applications and refund reservations".
   "src/lib/member-money/internal/application-read.ts": 1,
   // #4627: an edit review's closure takes its booking row straight after its claim,
   // before any credit write (giveBackCancelledShareCredit, applyLocalRefundAllocation,

@@ -1,3 +1,6 @@
+import { receiptCaptureTime } from "@/lib/stripe-capture-date";
+import { postBookingReceipts, resolveBookingMoneyPostingContext, type BookingJournalContext } from "@/lib/member-money/doors";
+import { withStoreTransaction } from "@/lib/db-transaction";
 import {
   ADDITIONAL_ASK_QUEUE_TRANSACTION_OPTIONS,
   assertAdditionalAskSizingCurrent,
@@ -78,7 +81,7 @@ import {
 import { stripeReferenceId } from "@/lib/stripe-references";
 import { claimAlertCooldown } from "@/lib/alert-cooldown";
 import { formatCents } from "@/lib/utils";
-import { isCapturedTransactionStatus, OPEN_INTENT_TRANSACTION_STATUS_LIST, SUPERSEDED_ASK_TRANSACTION_REASON } from "@/lib/payment-transaction-status";
+import { CAPTURED_TRANSACTION_STATUS_LIST, isCapturedTransactionStatus, OPEN_INTENT_TRANSACTION_STATUS_LIST, SUPERSEDED_ASK_TRANSACTION_REASON } from "@/lib/payment-transaction-status";
 import { replayNotingEachRefund } from "@/lib/card-refund-own-note";
 import { finishApprovedLateCaptureRefundAfterReplay } from "@/lib/late-capture-refund-credit-note";
 import { holdSupersededLateCaptureIfRequired } from "@/lib/late-capture-refund-hold";
@@ -1804,8 +1807,11 @@ async function markSupersededTransactionSucceeded({
   amountCents,
   paymentMethodId,
   store = prisma,
+  journal, capturedAt,
 }: {
   operation: PaymentRecoveryOperation;
+  journal: BookingJournalContext;
+  capturedAt?: Date;
   amountCents: number;
   paymentMethodId?: string | null;
   store?: Prisma.TransactionClient | typeof prisma; // #4320: the hand-off's, holding the Payment row
@@ -1814,26 +1820,36 @@ async function markSupersededTransactionSucceeded({
     throw new Error("Payment recovery operation is missing paymentTransactionId");
   }
 
-  await store.paymentTransaction.update({
-    where: { id: operation.paymentTransactionId },
-    data: {
-      amountCents,
-      status: PaymentStatus.SUCCEEDED,
-      ...(paymentMethodId !== undefined
-        ? { paymentMethodId: paymentMethodId ?? null }
-        : {}),
-      reason: "zero_dollar_batch_modification_late_capture",
-    },
-  });
+  // #4516 review (F6): the row's status is re-read here, under the Payment row, by the guard of the write itself.
+  // A caller's earlier read is advice only: a row captured, part refunded or refunded meanwhile is left alone, and
+  // a lost claim posts no receipt.
+  return withStoreTransaction(store, async (db) => {
+    await lockPaymentForRefundedTotal(db, operation.paymentId);
+    const claimed = await db.paymentTransaction.updateMany({
+      where: { id: operation.paymentTransactionId!, status: { notIn: [...CAPTURED_TRANSACTION_STATUS_LIST] } },
+      data: {
+        amountCents,
+        status: PaymentStatus.SUCCEEDED,
+        ...(paymentMethodId !== undefined
+          ? { paymentMethodId: paymentMethodId ?? null }
+          : {}),
+        reason: "zero_dollar_batch_modification_late_capture",
+      },
+    });
+    if (claimed.count !== 1) return false;
 
-  await reconcilePaymentAggregates({ paymentId: operation.paymentId, store });
+    await reconcilePaymentAggregates({ paymentId: operation.paymentId, store: db });
+    await postBookingReceipts(db, journal, { paymentId: operation.paymentId,
+      decision: { paymentIntentId: operation.paymentIntentId ?? undefined, collect: false, effectiveAt: capturedAt } });
+    return true;
+  });
 }
 
 async function handoffSucceededSupersededIntentToRefund({
   operation,
   amountCents,
   paymentMethodId,
-  takenFromOutside = false,
+  takenFromOutside = false, capturedAt,
 }: {
   operation: PaymentRecoveryOperation;
   amountCents: number;
@@ -1845,6 +1861,7 @@ async function handoffSucceededSupersededIntentToRefund({
    * on the attempt). The worker's own hand-off stays inside its attempt.
    */
   takenFromOutside?: boolean;
+  capturedAt?: Date;
 }): Promise<boolean> {
   if (!operation.paymentTransactionId) {
     throw new Error("Payment recovery operation is missing paymentTransactionId");
@@ -1864,6 +1881,7 @@ async function handoffSucceededSupersededIntentToRefund({
   // on a booking left unpaid. No provider call runs inside.
   // #4675: the claim this hand-off now holds is read back under the row lock its
   // own write took, and its close below is fenced on it like any runner's.
+  const journal = await resolveBookingMoneyPostingContext();
   const claimed = await prisma.$transaction(async (tx): Promise<PaymentRecoveryClaim | null> => {
     await lockPaymentForRefundedTotal(tx, operation.paymentId);
     const claim = await tx.paymentRecoveryOperation.updateMany({
@@ -1875,7 +1893,7 @@ async function handoffSucceededSupersededIntentToRefund({
       },
     });
     if (claim.count !== 1) return null;
-    await markSupersededTransactionSucceeded({ operation, amountCents, paymentMethodId, store: tx });
+    await markSupersededTransactionSucceeded({ operation, amountCents, paymentMethodId, store: tx, journal, capturedAt });
     // The row this transaction just wrote and still locks, so never missing; if it were, the
     // throw rolls the flip back with the claim.
     const held = await tx.paymentRecoveryOperation.findUnique({
@@ -1940,6 +1958,7 @@ async function processCancelPaymentIntentOperation(
     await handoffSucceededSupersededIntentToRefund({
       operation,
       amountCents: result.paymentIntent.amount,
+      capturedAt: receiptCaptureTime(result.paymentIntent),
       paymentMethodId:
         typeof result.paymentIntent.payment_method === "string"
           ? result.paymentIntent.payment_method
@@ -1968,9 +1987,12 @@ async function processRefundSupersededPaymentOperation(
   }
 
   const transaction = await readSupersededRefundCharge(operation.paymentTransactionId);
+  // A plain read, outside every lock: it only spares the posting context when the row is already captured. The
+  // flip itself re-checks under the Payment row (`markSupersededTransactionSucceeded`), and a lost claim posts nothing.
   if (!isCapturedTransactionStatus(transaction.status)) {
+    const journal = await resolveBookingMoneyPostingContext();
     await markSupersededTransactionSucceeded({
-      operation,
+      journal, operation,
       amountCents: Math.max(transaction.amountCents, operation.amountCents),
     });
   }
@@ -3560,7 +3582,7 @@ export async function completeCanceledSupersededPaymentIntentRecovery({
  * again under lock(1).
  */
 export async function queueSupersededPaymentIntentRefundRecovery(
-  paymentIntent: Pick<Stripe.PaymentIntent, "id" | "amount" | "payment_method">,
+  paymentIntent: Pick<Stripe.PaymentIntent, "id" | "amount" | "payment_method"> & Partial<Pick<Stripe.PaymentIntent, "created" | "latest_charge">>,
 ): Promise<boolean> {
   const operation = await prisma.paymentRecoveryOperation.findFirst({
     where: {
@@ -3580,6 +3602,7 @@ export async function queueSupersededPaymentIntentRefundRecovery(
       amountCents: paymentIntent.amount,
       paymentMethodId: getStripePaymentMethodId(paymentIntent),
       takenFromOutside: true,
+      capturedAt: receiptCaptureTime(paymentIntent),
     }))
   ) {
     return true;

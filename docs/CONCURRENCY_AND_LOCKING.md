@@ -5910,13 +5910,64 @@ application: the Payment row is what keeps two applications, or a reservation
 and a release, from both passing the caps. A price edit still changes the live
 charge under `lock(1)` without this row, so the charge cap (C2) can be over or
 under; that is the accepted limit, and the population check does not fail it.
-No door calls the engine's application or reservation commands yet. Proved
+M4a left the application and reservation commands inert. M4b activates receipt
+applications; refund reservations remain inert until M4c. Proved
 against real PostgreSQL by `member-money-applications.realdb.test.ts`.
 
 Reconciled against #4668, #4671, #4667, #4666, #4664, #4659, #4658, #4654, #4653
 and #4662, the merges the M4 plan checked against these writers, and against
 the open credit-release work that shares this Payment row. No new edge: the
 store does not take a booking row, and merge does not take a Payment row.
+
+M4b (#4516) activates receipt applications through `postBookingReceipts`. Its
+cash, application and exact-reversal writes run under the same Payment row as
+the legacy write (`INV-LOCK-001`–`003`). W1 retains global → lodge → member →
+Payment ordering. Saved-card capture, additional capture, superseded capture and
+cancelled-primary capture take only Payment. The cancelled-primary upsert and
+the formerly unlocked superseded-success write now enclose their legacy write
+and receipt in one Payment-row transaction. No new advisory key or provider call
+is introduced. Settings and timezone resolve before transactions.
+
+Each decision the hook acts on is read under the Payment row, never before it:
+
+- **The owner, once per call.** The receipt reads the booking's owner without
+  locking Booking, once, and every receipt it posts names that debtor. Every
+  collection lands on that owner's live obligation, the tip of the charge chain,
+  so a merge committing mid-call never drops a collection and never strands one
+  on a superseded obligation. A receipt deferred before a merge is applied
+  through the credit the merge chain carried to the owner: an exact residue
+  move, or a zero-net stand-in when the merge's snapshot netted it. D4 moves
+  merged-debtor residue hop by hop, only ever onward along the merge chain to
+  the owner; an intermediate hop may be a member that has itself merged away.
+- **Charge successors.** Merge takes no Payment row, so it posts no CHARGE
+  successor: application state it read could miss a collection committing
+  beside it. The first collection by the new owner posts the successor under
+  the Payment row, sized from the live charge less everything collected.
+- **Additional capture.** `markPaymentIntentTransactionSucceeded` decides
+  collect from the booking's status and `deletedAt` read under the Payment row
+  a cancel also takes; a route's or webhook's earlier read is not used.
+- **Superseded capture.** The flip is a status-guarded `updateMany` under the
+  Payment row. A row captured or refunded since the caller's read is left
+  alone, and a lost claim posts no receipt.
+- **C2.** The hook clamps a collection to one live-charge read and the engine
+  checks C2 against that same read. A price edit under `lock(1)` alone can
+  commit between them; the collection is then ordered before it (the accepted
+  over-collection the census reports), never a refusal that rolls back the
+  legacy capture write.
+- **Nothing to do.** With nothing selected, every receipt and reversal bridged
+  and no merged-debtor balance, the hook returns after those reads, adding no
+  per-line work under its caller's locks.
+
+The Xero receipt posts after the delivery's body completes, never from a
+`finally`, so a body that fails in SQL surfaces its own error. It collects only
+the PRIMARY rows that delivery moved to captured, and only on the paid arm.
+
+Counterpart reconciliation at M4b's base: #4776 (engine caps and Payment lock),
+#4749, #4727, #4714, #4706, #4698, #4700, #4694, #4689 and #4684. Their capture,
+recovery claims, exact markers and outbox/provider behaviour remain unchanged.
+Open #4779–#4784 and #4496 have no competing receipt writer; the owner's serial
+waiver covers them. `member-money-capture-writer-census.test.ts` inventories all
+transaction mutations, generic capture callers and each new receipt hook.
 
 ## A credit note spent outside the app: global, then the member's credit ledger (#4219)
 

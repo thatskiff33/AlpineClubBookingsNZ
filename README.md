@@ -25,6 +25,11 @@ capacity; admins run the whole club — bookings, membership lifecycle, fees,
 Stripe and bank-transfer payments, Xero accounting, lodge chores, even the TV in
 the lodge lobby — from one app.
 
+Booking receipts are also recorded in the member-money journal. The
+[receipt catch-up and census](docs/MAINTENANCE.md#catch-up-and-census-member-money-receipts-m4b)
+checks the gap between charge posting and receipt posting before the later
+refund-ledger rollout.
+
 **One deployment serves one club — and this repository is the generic product
 every club deploys, not one club's copy of it.** Nothing here encodes which club
 you are. Your name, capacity, age tiers, integer-cent rates, policies, wording,

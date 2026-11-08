@@ -54,6 +54,7 @@ let census: typeof import("@/lib/booking-ledger-projection-census-store");
 let merge: typeof import("@/lib/member-merge");
 let lodgeLock: typeof import("@/lib/lodge-capacity-lock");
 let modificationSync: typeof import("@/lib/booking-ledger-modification-sync");
+let moneyKeys: typeof import("@/lib/member-money")["memberMoneyEventKeys"];
 let sequence = 0;
 
 async function newBooking(owner: { memberId?: string; organisationId?: string } = {}): Promise<string> {
@@ -116,6 +117,20 @@ async function receivable(bookingId: string): Promise<Record<string, number>> {
   return out;
 }
 
+/**
+ * M4b (#4516): the card settle's receipt, posted once in the settle's transaction beside the capture. Its cash
+ * debit is the full capture, its credit lands on the owner's receivable (so `receivable` nets it), and the settle
+ * collects it on the charge. Cash already received stays credited until M4c's refund posts the money back.
+ */
+async function cardReceipt(bookingId: string) {
+  const receipts = await prisma.memberMoneyEvent.findMany({ where: { eventKey: moneyKeys.capture(`pi_${bookingId}`) }, select: { kind: true } });
+  const cash = await prisma.memberMoneyLine.aggregate({ where: { bookingId, account: "STRIPE_CLEARING", side: "DEBIT" }, _sum: { amountCents: true } });
+  const collected = await prisma.memberMoneyApplication.aggregate({
+    where: { journal: { event: { eventKey: moneyKeys.collect(moneyKeys.capture(`pi_${bookingId}`)) } } }, _sum: { amountCents: true } });
+  return { receipts: receipts.map((r) => r.kind), cashCents: cash._sum.amountCents ?? 0, collectedCents: collected._sum.amountCents ?? 0 };
+}
+const SETTLED_RECEIPT = { receipts: ["RECEIPT"], cashCents: PRICE, collectedCents: PRICE };
+
 /** The census's JOURNAL result and any unbridged line for one booking, from the census's own row read. */
 async function judged(bookingId: string) {
   const row = await census.readBookingLedgerCensusRow(prisma, bookingId);
@@ -156,6 +171,7 @@ async function untilSomeoneWaits(): Promise<void> {
     merge = await import("@/lib/member-merge");
     lodgeLock = await import("@/lib/lodge-capacity-lock");
     modificationSync = await import("@/lib/booking-ledger-modification-sync");
+    ({ memberMoneyEventKeys: moneyKeys } = await import("@/lib/member-money"));
     await cleanup();
     await seedHistoryFixtures(prisma, PREFIX);
     for (const id of [LOSER, MASTER]) {
@@ -189,12 +205,16 @@ async function untilSomeoneWaits(): Promise<void> {
   it("R01: the real card settle posts its lines once, each bridged, as one CHARGE batch the census agrees with", async () => {
     const id = await newBooking();
     await settleHistoryByCard(id, PRICE);
+    // The settle's capture receipt posts in the same transaction (M4b, #4516); both are recorded at its commit instant.
     const events = await journalEvents(id);
-    expect(events).toEqual([{ eventKey: `booking-charge:${id}`, kind: "CHARGE" }]);
+    expect(events.sort((a, b) => a.eventKey.localeCompare(b.eventKey))).toEqual([
+      { eventKey: `booking-charge:${id}`, kind: "CHARGE" }, { eventKey: `capture:pi_${id}`, kind: "RECEIPT" }]);
+    expect(await cardReceipt(id)).toEqual(SETTLED_RECEIPT);
     const legacy = await prisma.bookingLedgerLine.findMany({ where: { bookingId: id, side: "CHARGE" }, select: { id: true, memberMoneySourceLink: { select: { id: true } } } });
     expect(legacy).toHaveLength(4);
     expect(legacy.every((line) => line.memberMoneySourceLink !== null)).toBe(true);
-    expect(await receivable(id)).toEqual({ [names.memberId]: PRICE });
+    // The charge's debit less the receipt's credit for the same full capture: paid in full.
+    expect(await receivable(id)).toEqual({ [names.memberId]: 0 });
     const revenue = await prisma.memberMoneyLine.findMany({ where: { bookingId: id, account: "BOOKING_REVENUE" }, select: { side: true, grossCents: true, chargeIdentity: true } });
     expect(revenue).toEqual([{ side: "CREDIT", grossCents: PRICE, chargeIdentity: `booking:${id}:charge` }]);
     await expectAgreed(id);
@@ -208,21 +228,24 @@ async function untilSomeoneWaits(): Promise<void> {
         postingKeys: (await tx.bookingLedgerLine.findMany({ where: { bookingId: id }, select: { postingKey: true } })).map((line) => line.postingKey!),
       })).toBeNull();
     });
-    expect(await journalEvents(id)).toHaveLength(1);
+    expect(await journalEvents(id)).toHaveLength(2); // R01 and its receipt
+    expect(await cardReceipt(id)).toEqual(SETTLED_RECEIPT);
   });
 
   it("R02/R03 then R04: an edit with a change fee and the cancellation correct whole components, once each", async () => {
     const id = await newBooking();
     await settleHistoryByCard(id, PRICE);
     await postHistoryEdit(prisma, names, id, `${id}-edit`, { removeGuestId: `${id}-g2`, changeFeeCents: 2_500 });
-    expect((await journalEvents(id)).map((event) => event.eventKey)).toEqual([`booking-charge:${id}`, `modification:${id}-edit`]);
-    expect(await receivable(id)).toEqual({ [names.memberId]: PRICE - 10_000 + 2_500 });
+    expect((await journalEvents(id)).map((event) => event.eventKey).sort()).toEqual([`booking-charge:${id}`, `capture:pi_${id}`, `modification:${id}-edit`]);
+    // The edit's new charge less the settle's receipt (M4b): the member is in credit by what the edit took off.
+    expect(await receivable(id)).toEqual({ [names.memberId]: PRICE - 10_000 + 2_500 - PRICE });
     await expectAgreed(id);
 
     // Kept below the change fee: the fee is reversed too, and what is kept becomes the cancellation fee.
     expect(await cancelDoor(id, 1_000)).toBe(true);
     expect((await journalEvents(id)).map((event) => event.eventKey)).toContain(`cancellation:${id}:0`);
-    expect(await receivable(id)).toEqual({ [names.memberId]: 1_000 });
+    // What is kept less the receipt (M4b): the rest of the cash stays credited until M4c's refund posts it back.
+    expect(await receivable(id)).toEqual({ [names.memberId]: 1_000 - PRICE });
     await expectAgreed(id);
 
     // The cancellation replayed (its lines are already posted) posts nothing more.
@@ -230,7 +253,8 @@ async function untilSomeoneWaits(): Promise<void> {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
       await cancellationSync.postCancellationLedgerLines({ store: tx, journal: JOURNAL, bookingId: id, lodgeId: names.lodgeId, keptCents: 1_000, site: "race-4627" });
     });
-    expect(await journalEvents(id)).toHaveLength(3);
+    expect(await journalEvents(id)).toHaveLength(4); // R01, its receipt, R02/R03 and R04
+    expect(await cardReceipt(id)).toEqual(SETTLED_RECEIPT);
     await expectAgreed(id);
   });
 
@@ -263,7 +287,11 @@ async function untilSomeoneWaits(): Promise<void> {
   it("an organisation-owned booking posts the organisation as the debtor", async () => {
     const id = await newBooking({ organisationId: ORGANISATION });
     await settleHistoryByCard(id, PRICE);
-    expect(await receivable(id)).toEqual({ [ORGANISATION]: PRICE });
+    // The settle's receipt names the organisation too (M4b), so its full capture clears the charge.
+    expect(await receivable(id)).toEqual({ [ORGANISATION]: 0 });
+    expect(await cardReceipt(id)).toEqual(SETTLED_RECEIPT);
+    const receiptCredit = await prisma.memberMoneyLine.findFirstOrThrow({ where: { bookingId: id, account: "MEMBER_RECEIVABLE", side: "CREDIT", journal: { event: { kind: "RECEIPT" } } } });
+    expect(receiptCredit).toMatchObject({ debtorKind: "ORGANISATION", organisationId: ORGANISATION, memberId: null, amountCents: PRICE });
     const obligation = await prisma.memberMoneyObligation.findUniqueOrThrow({ where: { obligationKey: `booking-charge:${id}` } });
     expect(obligation).toMatchObject({ debtorKind: "ORGANISATION", organisationId: ORGANISATION, memberId: null, faceCents: PRICE });
     await expectAgreed(id);
@@ -303,7 +331,9 @@ async function untilSomeoneWaits(): Promise<void> {
       const keys = (await journalEvents(id)).map((event) => event.eventKey);
       expect(new Set(keys).size).toBe(keys.length);
       expect(keys).toContain(`cancellation:${id}:0`);
-      expect(await receivable(id)).toEqual({ [names.memberId]: 0 });
+      // Charge cancelled to 0; the settle's receipt (M4b) keeps the full capture credited until M4c refunds it.
+      expect(await receivable(id)).toEqual({ [names.memberId]: -PRICE });
+      expect(await cardReceipt(id)).toEqual(SETTLED_RECEIPT);
       await expectAgreed(id);
     }
   });
@@ -383,7 +413,9 @@ async function untilSomeoneWaits(): Promise<void> {
     await close(`${id}-g2`, PRICE - 1_000, PRICE - 2_500); // reopened, completed, re-priced again
     const closures = (await journalEvents(id)).map((event) => event.eventKey).filter((key) => key.startsWith(`review-close:${task}:`));
     expect(closures).toHaveLength(2);
-    expect(await receivable(id)).toEqual({ [names.memberId]: PRICE - 2_500 });
+    // The re-priced charge less the settle's receipt (M4b): the 2500 taken off is owed back, which M4c refunds.
+    expect(await receivable(id)).toEqual({ [names.memberId]: PRICE - 2_500 - PRICE });
+    expect(await cardReceipt(id)).toEqual(SETTLED_RECEIPT);
     await expectAgreed(id);
   });
 
@@ -402,7 +434,9 @@ async function untilSomeoneWaits(): Promise<void> {
     const run = await runBookingLedgerBackPost({ client: prisma, apply: true, bookingIds: [id] });
     expect(run.outcomes[0]).toMatchObject({ kind: "POSTED", journalBatches: 1 });
     expect((await journalEvents(id)).map((event) => event.eventKey).some((key) => key.startsWith("back-post:"))).toBe(true);
-    expect(await receivable(id)).toEqual({ [names.memberId]: PRICE - 2_000 });
+    // The back-posted charge less the settle's receipt (M4b): the 2000 taken off is owed back, which M4c refunds.
+    expect(await receivable(id)).toEqual({ [names.memberId]: PRICE - 2_000 - PRICE });
+    expect(await cardReceipt(id)).toEqual(SETTLED_RECEIPT);
     await expectAgreed(id);
   });
 
@@ -444,7 +478,9 @@ async function untilSomeoneWaits(): Promise<void> {
     const keys = (await journalEvents(id)).map((event) => event.eventKey);
     expect(keys.some((key) => key.startsWith("back-post:"))).toBe(true);
     expect(keys).toContain(`cancellation:${id}:0`);
-    expect(await receivable(id)).toEqual({ [names.memberId]: 0 });
+    // Charge cancelled to 0; the receipt the active settle posted (M4b) keeps the capture credited until M4c refunds it.
+    expect(await receivable(id)).toEqual({ [names.memberId]: -PRICE });
+    expect(await cardReceipt(id)).toEqual(SETTLED_RECEIPT);
     await expectAgreed(id);
   });
 

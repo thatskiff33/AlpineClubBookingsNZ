@@ -321,6 +321,7 @@ vi.mock("../prisma", () => ({
       updateMany: (...args: unknown[]) => mockBookingUpdateMany(...args),
     },
     payment: {
+      findUnique: vi.fn(async () => null), // Legacy fixtures outside the R01 population.
       update: (...args: unknown[]) => mockPaymentUpdate(...args),
       upsert: (...args: unknown[]) => mockPaymentUpsert(...args),
       updateMany: (...args: unknown[]) => mockPaymentUpdateMany(...args),
@@ -682,6 +683,7 @@ describe("Cron: Confirm Pending Bookings", () => {
             updateMany: (...args: unknown[]) => mockBookingUpdateMany(...args),
           },
           payment: {
+            findUnique: vi.fn(async () => null), // Legacy fixtures outside the R01 population.
             upsert: (...args: unknown[]) => mockPaymentUpsert(...args),
           },
           // #3267: the claim mints the attempt row in-tx; the PROCESSING

@@ -208,6 +208,8 @@ const RESOLVERS = {
  * shortcut shut.
  */
 const PURE_CALLEES = [
+  // M4b: the superseded-success callee takes a context; only the named root entry points resolve it.
+  "src/lib/payment-recovery.ts",
   "src/lib/bed-allocation-lifecycle.ts",
   "src/lib/adult-member-hosting-review.ts",
   "src/lib/booking-guest-removal-service.ts",
@@ -384,6 +386,7 @@ const LOCK_BOUND_INDIRECT_RESOLVERS = [
 const PRE_TRANSACTION_RESOLVER_HOMES: Readonly<
   Record<string, readonly string[]>
 > = {
+  "src/lib/payment-recovery.ts": ["handoffSucceededSupersededIntentToRefund", "processRefundSupersededPaymentOperation"],
   "src/lib/booking-batch-modification-service.ts": [
     "prepareBookingBatchModification",
     // The STANDALONE path's own pre-transaction resolver (#3232 fix round). It is

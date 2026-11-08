@@ -1,9 +1,9 @@
 import { randomUUID } from "node:crypto";
 import type { MemberMoneyRefundReservationReleaseReason, Prisma } from "@prisma/client";
 import { MAX_INTEGER_CENTS } from "../../money-input";
-import { applicationRoleOf, sameApplicationDebtor, memberMoneyConservationProblems, memberMoneyApplicationTotals, type ApplicationState } from "./application-state";
+import { applicationRoleOf, sameApplicationDebtor, memberMoneyConservationProblems, memberMoneyApplicationTotals, refundFamilyKey, type ApplicationState } from "./application-state";
 import { lockMemberMoneyPayment, readMemberMoneyApplicationState } from "./application-read";
-import { readBookingLiveComponents } from "./booking-journal-read";
+import { readBookingLiveChargeCents } from "./booking-journal-read";
 import { dateOnlyInstantOf } from "../../club-time";
 import { assertGlobalLockHeld } from "../../global-lock-held";
 import { stableStringify } from "../../stable-digest";
@@ -137,6 +137,7 @@ export async function writeMemberMoneyBatch(
   db: Db,
   draft: BuiltBatch,
   reversing?: MemberMoneyJournalToReverse,
+  check?: ApplicationCheck,
 ): Promise<MemberMoneyPosting> {
   const earlier = await replay(db, draft, false);
   if (earlier) return earlier;
@@ -164,7 +165,7 @@ export async function writeMemberMoneyBatch(
   }
   const lineIds = batch.lines.map(() => randomUUID());
   const applicationIds = batch.applications.map(() => randomUUID());
-  const applicationState = await prepareApplications(db, batch, lineIds, applicationIds);
+  const applicationState = await prepareApplications(db, batch, lineIds, applicationIds, check);
   const obligationIds = await resolveObligations(db, batch);
   const eventId = randomUUID();
   // Reserve the event key first: ON CONFLICT DO NOTHING waits for a concurrent
@@ -354,8 +355,16 @@ async function sourceCapture(db: Db, kind: string, id: string, bookingId: string
   return source.stripePaymentIntentId;
 }
 
+/**
+ * C2's live charge as the applying caller read it, in this transaction and under the booking's Payment row,
+ * when it sized the application from that read. A price edit moves the charge under `lock(1)` without that row,
+ * so a second read here could fall between the two and refuse what the caller clamped: the accepted C2 limit
+ * (`docs/CONCURRENCY_AND_LOCKING.md`, the Payment-row section) is that order, never a refusal of the caller's write.
+ */
+export interface ApplicationCheck { liveChargeCents: number }
+
 /** All cap refusals precede the first write. Cash legs are never resized or inferred here. */
-async function prepareApplications(db: Db, batch: BuiltBatch, lineIds: string[], applicationIds: string[]): Promise<ApplicationState | null> {
+async function prepareApplications(db: Db, batch: BuiltBatch, lineIds: string[], applicationIds: string[], check?: ApplicationCheck): Promise<ApplicationState | null> {
   if (batch.applications.length === 0) return null;
   const externalIds = batch.applications.flatMap((a) => "lineId" in a.source ? [a.source.lineId] : []);
   const external = externalIds.length ? await db.memberMoneyLine.findMany({ where: { id: { in: externalIds } }, select: { bookingId: true } }) : [];
@@ -393,7 +402,7 @@ async function prepareApplications(db: Db, batch: BuiltBatch, lineIds: string[],
     if (application.reservationAttemptKey) {
       const reservation = state.reservations.find((r) => r.attemptKey === application.reservationAttemptKey);
       if (!reservation || consumed.has(reservation.id) || role !== "pay" || source.capture !== reservation.capture || application.amountCents !== reservation.amountCents
-        || obligation.key.split("|for|")[0] !== state.obligations.find((o) => o.id === reservation.obligationId)?.key.split("|for|")[0]
+        || refundFamilyKey(obligation.key) !== refundFamilyKey(state.obligations.find((o) => o.id === reservation.obligationId)?.key ?? "")
         || !("line" in application.source) || batch.sources[batch.lines[application.source.line]!.source]!.kind !== "REFUND") {
         problems.push("a refund answer must match its exact open reservation");
       } else consumed.add(reservation.id);
@@ -405,7 +414,7 @@ async function prepareApplications(db: Db, batch: BuiltBatch, lineIds: string[],
   problems.push(...memberMoneyConservationProblems(state).map((p) => `${p.problem}: ${p.identity}`));
   const before = memberMoneyApplicationTotals(originalState).collected;
   const after = memberMoneyApplicationTotals(state).collected;
-  const liveCharge = (await readBookingLiveComponents(db, bookingId)).reduce((sum, c) => sum + c.liveGrossCents, 0);
+  const liveCharge = check?.liveChargeCents ?? await readBookingLiveChargeCents(db, bookingId);
   if (after > before && after > liveCharge) problems.push("C2: collect exceeds the booking's live charge");
   if (problems.length) throw new MemberMoneyPlanError(problems);
   return originalState;

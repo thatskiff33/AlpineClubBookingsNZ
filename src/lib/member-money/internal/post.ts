@@ -57,6 +57,7 @@ export function resolveMemberMoneyPostingContext(input: {
     }
   }
   return {
+    zone: input.zone,
     effectiveAt: input.effectiveAt,
     effectiveDate,
     currency: clubChargeCurrencyCodeOrThrow(input.format),

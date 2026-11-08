@@ -151,6 +151,12 @@ vi.mock("@/lib/edit-financial-review-charge", () => ({
 
 // #4631: how many transactions are open, so a provider call can be pinned outside every one.
 const openTransactions = vi.hoisted(() => ({ count: 0 }));
+// #4516 (M4b): the receipt hook runs on PostgreSQL (`member-money-receipts.realdb.test.ts`), not on this fake store.
+const receiptDoors = vi.hoisted(() => ({ postBookingReceipts: vi.fn(async () => 0) }));
+vi.mock("@/lib/member-money/doors", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/member-money/doors")),
+  postBookingReceipts: receiptDoors.postBookingReceipts,
+}));
 vi.mock("@/lib/prisma", () => {
   const prisma = {
     $executeRaw: (...args: unknown[]) => mockExecuteRaw(...args),
@@ -498,6 +504,25 @@ import {
 import { PENDING_ASK_NETTED_BY_REDUCTION_NOTE } from "@/lib/additional-ask-recovery-close";
 import { WAITING_REISSUE_FOLDED_BY_INCREASE_NOTE } from "@/lib/additional-ask-reissue";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
+import { CAPTURED_TRANSACTION_STATUS_LIST } from "@/lib/payment-transaction-status";
+
+/**
+ * #4516 review: the superseded capture's SUCCEEDED flip is a status-guarded
+ * `updateMany` under the Payment row (the row must not already be captured).
+ * These are its calls; `mockPaymentTransactionUpdate` is no longer a flip path.
+ */
+const SUPERSEDED_FLIP_WHERE = (id: string) => ({ id, status: { notIn: [...CAPTURED_TRANSACTION_STATUS_LIST] } });
+function supersededFlips() {
+  return mockPaymentTransactionUpdateMany.mock.calls.filter(
+    ([args]) => (args as { data?: { reason?: unknown } }).data?.reason === "zero_dollar_batch_modification_late_capture",
+  );
+}
+function supersededFlipOrder(): number {
+  const index = mockPaymentTransactionUpdateMany.mock.calls.findIndex(
+    ([args]) => (args as { data?: { reason?: unknown } }).data?.reason === "zero_dollar_batch_modification_late_capture",
+  );
+  return mockPaymentTransactionUpdateMany.mock.invocationCallOrder[index]!;
+}
 
 beforeEach(() => {
   clubFormatMock.mockResolvedValue(CLUB_FORMAT_TEST);
@@ -1060,8 +1085,8 @@ describe("payment recovery worker", () => {
     const result = await processPaymentRecoveryOperations({ limit: 1 });
 
     expect(result.succeeded).toBe(1);
-    expect(mockPaymentTransactionUpdate).toHaveBeenCalledWith({
-      where: { id: "txn-1" },
+    expect(mockPaymentTransactionUpdateMany).toHaveBeenCalledWith({
+      where: SUPERSEDED_FLIP_WHERE("txn-1"),
       data: expect.objectContaining({
         amountCents: 6000,
         status: PaymentStatus.SUCCEEDED,
@@ -1123,7 +1148,9 @@ describe("payment recovery worker", () => {
 
   it("#4422: a DECLINED superseded ask a stale tab paid first is handed to the superseded refund, never cancelled", async () => {
     mockFollowSupersededAskInvoices.mockClear();
-    mockPaymentTransactionUpdateMany.mockResolvedValue({ count: 0 });
+    // The declined row's open-status fence matches nothing; the flip's guard (not yet captured) matches the FAILED row.
+    mockPaymentTransactionUpdateMany.mockImplementation(async (args: { where?: { status?: { notIn?: unknown } } }) =>
+      ({ count: args.where?.status?.notIn ? 1 : 0 }));
     mockCancelPaymentIntentIfCancellableWithResult.mockResolvedValue({
       canceled: false,
       paymentIntent: { id: "pi_superseded", status: "succeeded", amount: 6000, payment_method: "pm_123" },
@@ -1132,8 +1159,8 @@ describe("payment recovery worker", () => {
     const result = await processPaymentRecoveryOperations({ limit: 1 });
 
     expect(result.succeeded).toBe(1);
-    expect(mockPaymentTransactionUpdate).toHaveBeenCalledWith({
-      where: { id: "txn-1" },
+    expect(mockPaymentTransactionUpdateMany).toHaveBeenCalledWith({
+      where: SUPERSEDED_FLIP_WHERE("txn-1"),
       data: expect.objectContaining({ amountCents: 6000, status: PaymentStatus.SUCCEEDED }),
     });
     expect(mockPaymentRecoveryUpsert).toHaveBeenCalledWith(
@@ -1185,11 +1212,31 @@ describe("payment recovery worker", () => {
       refunds: [expect.objectContaining({ id: "re_idempotent", amount: 3000 })],
       fallbackPaymentIntentId: "pi_superseded",
     });
-    expect(mockPaymentTransactionUpdate).not.toHaveBeenCalledWith(
-      expect.objectContaining({
-        data: expect.objectContaining({ refundedAmountCents: expect.anything() }),
-      }),
-    );
+    for (const write of [mockPaymentTransactionUpdate, mockPaymentTransactionUpdateMany]) {
+      expect(write).not.toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ refundedAmountCents: expect.anything() }),
+        }),
+      );
+    }
+  });
+
+  it("#4516 review: the refund runner's flip re-checks the row under the Payment lock; a lost claim posts no receipt", async () => {
+    mockPaymentRecoveryFindUnique.mockResolvedValue(makeOperation({ type: PaymentRecoveryOperationType.REFUND_SUPERSEDED_PAYMENT }));
+    // Read uncaptured before the lock; captured by another writer before the guarded flip.
+    mockPaymentTransactionFindUnique.mockResolvedValue({
+      id: "txn-1", paymentId: "payment-1", stripePaymentIntentId: "pi_superseded", amountCents: 6000, refundedAmountCents: 0, status: PaymentStatus.PENDING,
+    });
+    mockPaymentTransactionUpdateMany.mockImplementation(async (args: { data?: { reason?: unknown } }) =>
+      ({ count: args.data?.reason === "zero_dollar_batch_modification_late_capture" ? 0 : 1 }));
+    mockReconcilePaymentAggregates.mockClear();
+    receiptDoors.postBookingReceipts.mockClear();
+
+    await processPaymentRecoveryOperations({ limit: 1 });
+
+    expect(supersededFlips()).toEqual([[{ where: SUPERSEDED_FLIP_WHERE("txn-1"), data: expect.objectContaining({ status: PaymentStatus.SUCCEEDED }) }]]);
+    expect(mockLockPaymentForRefundedTotal.mock.invocationCallOrder[0]!).toBeLessThan(supersededFlipOrder());
+    expect(receiptDoors.postBookingReceipts).not.toHaveBeenCalled();
   });
 
   /*
@@ -5779,6 +5826,7 @@ describe("#2262 — deleted-operation coherence (H1/H2)", () => {
     mockPaymentRecoveryUpdate.mockResolvedValue({});
     mockPaymentRecoveryUpsert.mockResolvedValue({});
     mockPaymentTransactionUpdate.mockResolvedValue({});
+    mockPaymentTransactionUpdateMany.mockResolvedValue({ count: 1 });
     mockReconcilePaymentAggregates.mockResolvedValue(undefined);
   });
 
@@ -5796,6 +5844,7 @@ describe("#2262 — deleted-operation coherence (H1/H2)", () => {
     // No transaction flip, no refund enqueued — the capture is the caller's to
     // settle as ordinary money.
     expect(mockPaymentTransactionUpdate).not.toHaveBeenCalled();
+    expect(supersededFlips()).toEqual([]);
     expect(mockPaymentRecoveryUpsert).not.toHaveBeenCalled();
   });
 
@@ -5823,6 +5872,7 @@ describe("#2262 — deleted-operation coherence (H1/H2)", () => {
     // Abandoned loudly: no SUCCEEDED flip on the transaction, no fresh
     // REFUND_SUPERSEDED_PAYMENT the reversal's disarm never covered.
     expect(mockPaymentTransactionUpdate).not.toHaveBeenCalled();
+    expect(supersededFlips()).toEqual([]);
     expect(mockPaymentRecoveryUpsert).not.toHaveBeenCalled();
   });
 
@@ -5844,8 +5894,9 @@ describe("#2262 — deleted-operation coherence (H1/H2)", () => {
       ([args]) => (args as { data?: { status?: unknown } }).data?.status === PaymentRecoveryOperationStatus.PROCESSING,
     );
     expect(lockedAt).toBeLessThan(mockPaymentRecoveryUpdateMany.mock.invocationCallOrder[claimAt]!);
-    expect(mockPaymentRecoveryUpdateMany.mock.invocationCallOrder[claimAt]!).toBeLessThan(mockPaymentTransactionUpdate.mock.invocationCallOrder[0]!);
-    expect(mockPaymentTransactionUpdate.mock.invocationCallOrder[0]!).toBeLessThan(mockReconcilePaymentAggregates.mock.invocationCallOrder[0]!);
+    expect(supersededFlips()).toEqual([[{ where: SUPERSEDED_FLIP_WHERE(op.paymentTransactionId!), data: expect.objectContaining({ status: PaymentStatus.SUCCEEDED }) }]]);
+    expect(mockPaymentRecoveryUpdateMany.mock.invocationCallOrder[claimAt]!).toBeLessThan(supersededFlipOrder());
+    expect(supersededFlipOrder()).toBeLessThan(mockReconcilePaymentAggregates.mock.invocationCallOrder[0]!);
     expect(mockReconcilePaymentAggregates).toHaveBeenCalledWith({ paymentId: op.paymentId, store: expect.anything() });
   });
 
@@ -5940,7 +5991,7 @@ describe("#2262 — deleted-operation coherence (H1/H2)", () => {
       }),
     );
     // Stripe holds the money, so the row says captured; nothing is refunded.
-    expect(mockPaymentTransactionUpdate).toHaveBeenCalled();
+    expect(supersededFlips()).toHaveLength(1);
     expect(mockPaymentRecoveryUpsert).not.toHaveBeenCalled();
     expect(mockPaymentRecoveryUpdateMany).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -7325,6 +7376,7 @@ describe("#4300 — the check answers with the shared superseded-machinery readi
     expect(mockSupersededMachineryOwnsCapture).toHaveBeenCalledWith(expect.anything(), { paymentId: "pay-1", paymentIntentId: "pi_handed_off" });
     expect(mockPaymentRecoveryUpdateMany).not.toHaveBeenCalled();
     expect(mockPaymentTransactionUpdate).not.toHaveBeenCalled();
+    expect(supersededFlips()).toEqual([]);
     expect(mockPaymentRecoveryUpsert).not.toHaveBeenCalled();
   });
 
