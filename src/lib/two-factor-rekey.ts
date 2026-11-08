@@ -24,6 +24,7 @@ import { prisma } from "@/lib/prisma";
 import { exactContains } from "@/lib/prisma-exact-prefix";
 import { decryptTwoFactorSecret, encryptTwoFactorSecret } from "@/lib/two-factor";
 import {
+  assertTwoFactorActorMayAct,
   recordTwoFactorMutation,
   TWO_FACTOR_AUDIT_ACTIONS,
   type TwoFactorReencryptActor,
@@ -58,6 +59,8 @@ function assertRingIsCurrent(): void {
  * nothing is written, and only re-enrolment fixes it.
  */
 export async function rewrapTwoFactorSecret(memberId: string, stored: string): Promise<RekeyOutcome> {
+  // Asserted before anything is written, as every second-factor entry point does.
+  assertTwoFactorActorMayAct(TWO_FACTOR_AUDIT_ACTIONS.secretRewrapped, REENCRYPT_JOB, memberId);
   assertRingIsCurrent();
   let plaintext: string;
   try {
@@ -92,6 +95,7 @@ export async function rewrapTwoFactorSecret(memberId: string, stored: string): P
  * Resolves the number retired; zero records nothing.
  */
 export async function retireLegacyRecoveryCodes(memberId: string): Promise<number> {
+  assertTwoFactorActorMayAct(TWO_FACTOR_AUDIT_ACTIONS.recoveryCodesRetired, REENCRYPT_JOB, memberId);
   assertRingIsCurrent();
   return prisma.$transaction(async (tx) => {
     const codes = await tx.twoFactorRecoveryCode.findMany({

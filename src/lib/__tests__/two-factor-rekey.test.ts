@@ -17,6 +17,11 @@ vi.mock("@/lib/club-identity-settings", () => ({
   getClubIdentitySync: () => ({ name: "Test Club", bookingsName: "Test Club - Bookings" }),
 }));
 vi.mock("@/lib/audit", () => ({ createAuditLog: vi.fn(async () => undefined) }));
+// The real assertion, observed: an entry point must call it before its claim (S2).
+vi.mock("@/lib/two-factor-audit", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/two-factor-audit")>();
+  return { ...actual, assertTwoFactorActorMayAct: vi.fn(actual.assertTwoFactorActorMayAct) };
+});
 
 type CodeRow = { id: string; memberId: string; codeHash: string; usedAt: Date | null };
 type CodeWhere = {
@@ -76,6 +81,8 @@ vi.mock("@/lib/prisma", () => {
 });
 
 import { createAuditLog } from "@/lib/audit";
+import { prisma } from "@/lib/prisma";
+import { assertTwoFactorActorMayAct } from "@/lib/two-factor-audit";
 import { DataKeyRingError } from "@/lib/data-encryption-key-material";
 import {
   consumeRecoveryCode,
@@ -255,3 +262,35 @@ describe("retiring legacy recovery codes (#4456 PR 2, owner decision of 1 Nov 20
   });
 });
 
+describe("each writer asserts its actor before it claims anything (#4456 review S2)", () => {
+  it("re-wrap: the job is asserted for its action before the member row is claimed", async () => {
+    const legacy = encryptTwoFactorSecret(SECRET);
+    db.members.set("m1", legacy);
+    process.env.DATA_ENCRYPTION_KEYS = RING;
+
+    await rewrapTwoFactorSecret("m1", legacy);
+
+    const assertCall = vi.mocked(assertTwoFactorActorMayAct).mock.calls.findIndex(
+      ([action]) => action === "security.two_factor.secret_rewrapped",
+    );
+    expect(assertCall).toBeGreaterThanOrEqual(0);
+    expect(vi.mocked(assertTwoFactorActorMayAct).mock.invocationCallOrder[assertCall]!).toBeLessThan(
+      vi.mocked(prisma.member.updateMany).mock.invocationCallOrder[0]!,
+    );
+  });
+
+  it("retirement: the job is asserted for its action before any code is claimed", async () => {
+    db.codes.push({ id: "c1", memberId: "m1", codeHash: hashRecoveryCode("AAAA-BBBB-CCCC"), usedAt: null });
+    process.env.DATA_ENCRYPTION_KEYS = RING;
+
+    await retireLegacyRecoveryCodes("m1");
+
+    const assertCall = vi.mocked(assertTwoFactorActorMayAct).mock.calls.findIndex(
+      ([action]) => action === "security.two_factor.recovery_codes_retired",
+    );
+    expect(assertCall).toBeGreaterThanOrEqual(0);
+    expect(vi.mocked(assertTwoFactorActorMayAct).mock.invocationCallOrder[assertCall]!).toBeLessThan(
+      vi.mocked(prisma.twoFactorRecoveryCode.updateMany).mock.invocationCallOrder[0]!,
+    );
+  });
+});
