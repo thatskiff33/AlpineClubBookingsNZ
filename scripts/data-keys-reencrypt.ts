@@ -26,6 +26,7 @@ import {
   type ReencryptReport,
 } from "../src/lib/data-encryption-reencrypt";
 import { prisma } from "../src/lib/prisma";
+import { isMainModule } from "./lib/is-main-module.mjs";
 
 export const USAGE = `Usage:
   pnpm run data-keys:reencrypt [--dry-run] [--retire-legacy-recovery-codes]
@@ -117,6 +118,6 @@ async function main(): Promise<void> {
   }
 }
 
-if (process.argv[1]?.endsWith("data-keys-reencrypt.ts")) {
+if (isMainModule(import.meta.url)) {
   void main();
 }
