@@ -174,7 +174,20 @@ describe("pr:check offline gate runner", () => {
     root = makeRepo({ "package.json": '{ "name": "x" }\n' });
     const { status, output } = runGate(root, DEPENDABOT_BODY);
     expect(output).toContain("PASS  Concurrency declaration");
+    expect(output).toContain("PASS  Plan deviation");
     expect(status).toBe(0);
+  });
+
+  it("requires a plan answer when even a non-sensitive file accompanies dependencies", () => {
+    root = makeRepo({
+      "package.json": '{}\n',
+      "pnpm-lock.yaml": "lockfileVersion: '9.0'\n",
+      "docs/note.md": "hello\n",
+    });
+    const { status, output } = runGate(root, DEPENDABOT_BODY);
+    expect(output).toContain("PASS  Concurrency declaration");
+    expect(output).toContain("FAIL  Plan deviation");
+    expect(status).toBe(1);
   });
 
   it("fails the same sectionless body once the diff touches a sensitive path", () => {
@@ -209,6 +222,7 @@ describe("pr:check offline gate runner", () => {
     expect(output).toContain("Could not diff against");
     expect(output).toContain("FAIL  Concurrency declaration");
     expect(output).toContain("no diff context");
+    expect(output).toContain("FAIL  Plan deviation");
     expect(status).toBe(1);
   });
 
@@ -254,18 +268,20 @@ describe("pr:check offline gate runner", () => {
   });
 
   /*
-    #4463: the plan-deviation section reports WARN, not FAIL, during its rollout
-    week (the exit code is decided by the enforced gates alone), and PASS once
-    answered; the soft size gate reports WARN for a large PR with no reason.
+    #4633: plan-deviation answers are enforced for every non-dependency diff;
+    the soft size gate still reports WARN for a large PR with no reason.
   */
-  it("reports a missing plan-deviation section as WARN and still exits 0", () => {
-    root = makeRepo({ "docs/note.md": "hello\n" });
-    const { status, output } = runGate(root, BODY_WITHOUT_FRAGMENT.replace("## Plan Deviation\n\n- None\n", ""));
-    expect(output).toContain("WARN  Plan deviation");
-    expect(output).toContain("PASS  PR size");
-    expect(output).toContain("passes every enforced gate, with 1 warning(s)");
-    expect(status).toBe(0);
-  });
+  it.each(["", "## Plan Deviation\n\n", "## Plan Deviation\n\n- Added a column\n"])(
+    "fails a missing, empty or unlinked section on a docs diff: %s",
+    (section) => {
+      root = makeRepo({ "docs/note.md": "hello\n" });
+      const { status, output } = runGate(root, BODY_WITHOUT_FRAGMENT.replace("## Plan Deviation\n\n- None\n", section));
+      expect(output).toContain("FAIL  Plan deviation");
+      expect(output).toContain("PASS  PR size");
+      expect(output).not.toContain("passes every enforced gate");
+      expect(status).toBe(1);
+    },
+  );
 
   it("passes the plan-deviation section answered None, and warns on an unexplained large PR", () => {
     const big = Array.from({ length: 900 }, (_, i) => `line ${i}`).join("\n");
