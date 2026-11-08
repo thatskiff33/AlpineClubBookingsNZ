@@ -150,9 +150,13 @@ function dynamicSegmentCount(path: string): number {
  *   gate and the layout guard all see the old path.
  * - On: the old URL redirects (307) to the hub URL; no rewrites.
  *
- * Next passes the request's query through both. Static paths sort before
- * dynamic ones, so `/notices/new` is never claimed by `/notices/:id`. A page
- * whose hub path is its old path (Home's dashboard) has nothing to redirect.
+ * Next passes the request's query through both. A page whose hub path is its
+ * old path (Home's dashboard) has nothing to redirect.
+ *
+ * The order is fixed, static paths before dynamic ones, as defence in depth
+ * only: a hub path keeps its page's relative path, so even if `/notices/:id`
+ * claimed `/notices/new` it would send it to the same file. A mutation probe
+ * that removed the sort left the suite green, which is why this says so.
  */
 export function buildAdminUrlRules(
   live: boolean,
