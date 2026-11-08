@@ -271,10 +271,11 @@ describe("resolveIbHoldClearingNotes reads role-less allocation links (#4786)", 
     xeroObjectId: "cn_clear",
     requestPayload: { invoiceId: "inv_1", refundAmountCents: 30000 },
   };
-  const link = (role: string, amountCents: number | undefined, invoiceId = "inv_1") => ({
+  const link = (role: string, amountCents: number | undefined, invoiceId = "inv_1", updatedAt = "2026-06-01T00:00:00.000Z") => ({
     localModel: "Booking",
     role,
     metadata: { creditNoteId: "cn_clear", invoiceId, amountCents },
+    updatedAt: new Date(updatedAt),
   });
   const allocated = (allocationLinks: Array<ReturnType<typeof link>>) =>
     resolveIbHoldClearingNotes({ operations: [clearingOperation], allocationLinks, xeroRefundCreditNoteId: null })[0]
@@ -292,8 +293,35 @@ describe("resolveIbHoldClearingNotes reads role-less allocation links (#4786)", 
     expect(allocated([link(ROLELESS_ALLOCATION_ROLE, 30000), link(NOTE_ALLOCATION_ROLE, 30000)])).toBe(30000);
   });
 
-  it("MUTATION: a role-less link for another amount is another allocation, not merged", () => {
-    expect(allocated([link(NOTE_ALLOCATION_ROLE, 20000), link(ROLELESS_ALLOCATION_ROLE, 10000)])).toBe(30000);
+  // The inbound mirror writes one own-role link per note and invoice carrying
+  // the note's applications to it SUMMED, beside the builder's per-allocation
+  // link and any role-less piece. Adding them would double the cleared figure
+  // and hide an under-clear, so the newest per note and invoice counts.
+  it("MUTATION: a role-less piece and the mirror's summed link count the summed figure once, never 60000", () => {
+    const rolelessPiece = link(ROLELESS_ALLOCATION_ROLE, 10000, "inv_1", "2026-06-01T00:00:00.000Z");
+    const builderPiece = link(NOTE_ALLOCATION_ROLE, 20000, "inv_1", "2026-06-02T00:00:00.000Z");
+    const mirrorSum = link(NOTE_ALLOCATION_ROLE, 30000, "inv_1", "2026-06-03T00:00:00.000Z");
+    expect(allocated([rolelessPiece, builderPiece, mirrorSum])).toBe(30000);
+    expect(allocated([mirrorSum, rolelessPiece])).toBe(30000);
+  });
+
+  it("MUTATION: the builder's per-allocation link and the mirror's summed link count once", () => {
+    const builderPiece = link(NOTE_ALLOCATION_ROLE, 20000, "inv_1", "2026-06-01T00:00:00.000Z");
+    const mirrorSum = link(NOTE_ALLOCATION_ROLE, 30000, "inv_1", "2026-06-03T00:00:00.000Z");
+    expect(allocated([mirrorSum, builderPiece])).toBe(30000);
+  });
+
+  it("before the mirror writes, two pieces on one invoice count the newest only - an undercount the audit reports, never an overcount", () => {
+    expect(
+      allocated([
+        link(ROLELESS_ALLOCATION_ROLE, 10000, "inv_1", "2026-06-01T00:00:00.000Z"),
+        link(NOTE_ALLOCATION_ROLE, 20000, "inv_1", "2026-06-02T00:00:00.000Z"),
+      ]),
+    ).toBe(20000);
+  });
+
+  it("each invoice's application counts, the primary and a supplementary one", () => {
+    expect(allocated([link(NOTE_ALLOCATION_ROLE, 20000), link(ROLELESS_ALLOCATION_ROLE, 10000, "inv_supp")])).toBe(30000);
   });
 
   it("MUTATION: a role-less link with no amount, or a link with any other role, counts nothing", () => {
@@ -301,7 +329,7 @@ describe("resolveIbHoldClearingNotes reads role-less allocation links (#4786)", 
     expect(allocated([link("APPLIED_CREDIT_ALLOCATION", 30000)])).toBe(0);
   });
 
-  it("reads a refund note's role-less and own-role links on the payment once each, and only that note's", () => {
+  it("reads a refund note's links on the payment once per invoice, and only that note's", () => {
     const notes = resolveIbHoldClearingNotes({
       operations: [],
       allocationLinks: [

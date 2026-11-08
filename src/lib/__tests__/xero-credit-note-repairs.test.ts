@@ -85,10 +85,29 @@ beforeEach(() => {
 // and by its invoice the role-less one too; each link carries its role.
 const NOTE_ALLOCATION_ROLE = "MODIFICATION_CREDIT_NOTE_ALLOCATION";
 const ROLELESS_ALLOCATION_ROLE = "CREDIT_NOTE_ALLOCATION";
-function readsNoteAllocations(role: unknown): boolean {
-  if (role === NOTE_ALLOCATION_ROLE) return true;
-  const roles = (role as { in?: unknown } | null)?.in;
-  return Array.isArray(roles) && roles.includes(NOTE_ALLOCATION_ROLE);
+// Both allocation queries: the payment's own links, and those found by its invoice.
+function readsNoteAllocations(where: { xeroObjectType?: string }): boolean {
+  return where.xeroObjectType === "ALLOCATION";
+}
+type LinkWhere = {
+  localModel?: string | { not: string };
+  localId?: { in: string[] };
+  role?: string;
+  metadata?: { path: string[]; equals: string };
+  OR?: LinkWhere[];
+  AND?: LinkWhere[];
+};
+type LinkRow = { localModel: string; localId: string; role: string; metadata: Record<string, unknown> };
+// A link matches the where clauses the recount writes as Postgres would match them.
+function linkMatches(link: LinkRow, where: LinkWhere): boolean {
+  const { localModel, localId, role, metadata, OR, AND } = where;
+  if (typeof localModel === "string" && link.localModel !== localModel) return false;
+  if (typeof localModel === "object" && link.localModel === localModel.not) return false;
+  if (localId && !localId.in.includes(link.localId)) return false;
+  if (role !== undefined && link.role !== role) return false;
+  if (metadata && link.metadata[metadata.path[0]] !== metadata.equals) return false;
+  if (OR && !OR.some((clause) => linkMatches(link, clause))) return false;
+  return !AND || AND.every((clause) => linkMatches(link, clause));
 }
 const withNoteRole = <T extends object>(links: T[]) => links.map((link) => ({ role: NOTE_ALLOCATION_ROLE, ...link }));
 
@@ -411,7 +430,7 @@ describe("#3809: a give-back's account-credit note is not a cash refund", () => 
       payment({ source: PaymentSource.INTERNET_BANKING, refundedAmountCents: 3000, status: PaymentStatus.PARTIALLY_REFUNDED }),
     ]);
     mocks.xeroObjectLinkFindMany.mockImplementation(async ({ where }: { where: { role?: unknown; xeroObjectType?: string } }) => {
-      if (readsNoteAllocations(where.role)) {
+      if (readsNoteAllocations(where)) {
         return withNoteRole([
           { localId: "pay-1", xeroObjectId: "alloc-hand-back", metadata: { creditNoteId: "cn-hand-back", invoiceId: "inv-1", amountCents: 3000 } },
           { localId: "pay-1", xeroObjectId: "alloc-give-back", metadata: { creditNoteId: "cn-give-back", invoiceId: "inv-1", amountCents: 2500 } },
@@ -457,7 +476,7 @@ describe("#3954: a billed-offset invoice-correction note is not a cash refund", 
       payment({ source: PaymentSource.INTERNET_BANKING, refundedAmountCents: 3000, status: PaymentStatus.PARTIALLY_REFUNDED }),
     ]);
     mocks.xeroObjectLinkFindMany.mockImplementation(async ({ where }: { where: { role?: unknown; xeroObjectType?: string } }) => {
-      if (readsNoteAllocations(where.role)) {
+      if (readsNoteAllocations(where)) {
         return withNoteRole([
           { localId: "pay-1", xeroObjectId: "alloc-hand-back", metadata: { creditNoteId: "cn-hand-back", invoiceId: "inv-1", amountCents: 3000 } },
           { localId: "pay-1", xeroObjectId: "alloc-billed-offset", metadata: { creditNoteId: "cn-billed-offset", invoiceId: "inv-1", amountCents: 2000 } },
@@ -495,7 +514,7 @@ describe("#3954: a billed-offset invoice-correction note is not a cash refund", 
 // note, by the rule the kept settle uses (`sumAppliedCentsByCreditNote`), and
 // counts one allocation once however many links hold it.
 describe("a modification note's allocations are summed per note, each allocation once (#4095 L1)", () => {
-  type AllocationLink = { localId: string; xeroObjectId: string; role: string; metadata: Record<string, unknown>; updatedAt: Date };
+  type AllocationLink = LinkRow & { xeroObjectId: string; updatedAt: Date };
   const allocation = (
     xeroObjectId: string,
     invoiceId: string | undefined,
@@ -503,14 +522,16 @@ describe("a modification note's allocations are summed per note, each allocation
     updatedAt = "2026-06-01T00:00:00.000Z",
     role = NOTE_ALLOCATION_ROLE,
   ): AllocationLink => ({
+    localModel: "Payment",
     localId: "pay-1",
     xeroObjectId,
     role,
     metadata: { creditNoteId: "cn-refund", invoiceId, amountCents },
     updatedAt: new Date(updatedAt),
   });
-  // Only the links whose role the query asked for, as Postgres returns them.
-  const queriedRoles = (role: unknown): unknown[] => (Array.isArray((role as { in?: unknown })?.in) ? (role as { in: unknown[] }).in : [role]);
+  // On the edit, as the inbound sync and an older repair link an edit's note.
+  const onEdit = (link: AllocationLink): AllocationLink => ({ ...link, localModel: "BookingModification", localId: "mod-1" });
+  // Every allocation link in the store, each query getting those its where matches.
   let paymentLinks: AllocationLink[] = [];
   let invoiceLinks: AllocationLink[] = [];
 
@@ -519,10 +540,8 @@ describe("a modification note's allocations are summed per note, each allocation
     paymentLinks = [];
     invoiceLinks = [];
     mocks.paymentUpdate.mockResolvedValue({});
-    mocks.xeroObjectLinkFindMany.mockImplementation(async ({ where }: { where: { role?: unknown; localModel?: string } }) => {
-      if (readsNoteAllocations(where.role)) {
-        return (where.localModel === "Payment" ? paymentLinks : invoiceLinks).filter((link) => queriedRoles(where.role).includes(link.role));
-      }
+    mocks.xeroObjectLinkFindMany.mockImplementation(async ({ where }: { where: LinkWhere & { xeroObjectType?: string } }) => {
+      if (readsNoteAllocations(where)) return [...paymentLinks, ...invoiceLinks].filter((link) => linkMatches(link, where));
       if (where.role === "MODIFICATION_CREDIT_NOTE") return [{ xeroObjectId: "cn-refund", metadata: { status: "AUTHORISED" } }];
       return [];
     });
@@ -555,7 +574,7 @@ describe("a modification note's allocations are summed per note, each allocation
   it("one allocation held by the payment's link and found by its invoice too counts once", async () => {
     mocks.paymentFindMany.mockResolvedValue([payment({ source: PaymentSource.INTERNET_BANKING, amountCents: 30_000, xeroInvoiceId: "inv-1" })]);
     paymentLinks = [allocation("alloc-60", "inv-1", 6000)];
-    invoiceLinks = [{ ...allocation("alloc-60", "inv-1", 6000), localId: "mod-1" }];
+    invoiceLinks = [onEdit(allocation("alloc-60", "inv-1", 6000))];
 
     await recount();
     expect(refundedWrites()).toEqual([6000]);
@@ -577,7 +596,6 @@ describe("a modification note's allocations are summed per note, each allocation
   // links record it (`distinctClearingAllocations`).
   describe("a role-less allocation link found by the payment's invoice (#4786)", () => {
     const BANK_PAYMENT = () => payment({ source: PaymentSource.INTERNET_BANKING, amountCents: 30_000, xeroInvoiceId: "inv-1" });
-    const onEdit = (link: AllocationLink): AllocationLink => ({ ...link, localId: "mod-1" });
 
     it("an allocation linked with the note's own role only counts", async () => {
       mocks.paymentFindMany.mockResolvedValue([BANK_PAYMENT()]);
@@ -595,7 +613,12 @@ describe("a modification note's allocations are summed per note, each allocation
       expect(refundedWrites()).toEqual([6000]);
       expect(mocks.xeroObjectLinkFindMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: expect.objectContaining({ role: { in: [NOTE_ALLOCATION_ROLE, ROLELESS_ALLOCATION_ROLE] }, xeroObjectType: "ALLOCATION" }),
+          where: expect.objectContaining({
+            xeroObjectType: "ALLOCATION",
+            AND: expect.arrayContaining([
+              { OR: [{ role: NOTE_ALLOCATION_ROLE }, { role: ROLELESS_ALLOCATION_ROLE, localModel: { not: "Payment" } }] },
+            ]),
+          }),
         }),
       );
     });
@@ -611,9 +634,9 @@ describe("a modification note's allocations are summed per note, each allocation
       expect(refundedWrites()).toEqual([6000]);
     });
 
-    it("a role-less link for another amount is another allocation, and the per-invoice newest rule (#4095 L1) still counts one", async () => {
-      // Never both: the re-synced own-role link already sums the note's
-      // allocations to this invoice.
+    it("MUTATION: a role-less piece and the mirror's summed link count the summed figure once", async () => {
+      // Never both: the mirror's own-role link sums the note's applications to
+      // this invoice.
       mocks.paymentFindMany.mockResolvedValue([BANK_PAYMENT()]);
       invoiceLinks = [
         onEdit(allocation("alloc-40", "inv-1", 4000, "2026-06-01T00:00:00.000Z", ROLELESS_ALLOCATION_ROLE)),
@@ -632,6 +655,17 @@ describe("a modification note's allocations are summed per note, each allocation
       expect(refundedWrites()).toEqual([]);
     });
 
+    it("MUTATION: the builder's per-allocation link and the mirror's summed link count once", async () => {
+      mocks.paymentFindMany.mockResolvedValue([BANK_PAYMENT()]);
+      invoiceLinks = [
+        onEdit(allocation("alloc-100", "inv-1", 10_000, "2026-06-15T00:00:00.000Z")),
+        onEdit(allocation("alloc-60", "inv-1", 6000, "2026-06-01T00:00:00.000Z")),
+      ];
+
+      await recount();
+      expect(refundedWrites()).toEqual([10_000]);
+    });
+
     it("MUTATION: a link naming no invoice is no allocation it can key, so it counts nothing (fail closed)", async () => {
       // Before #4786 it counted under its own link id; no writer records an
       // allocation link without the invoice.
@@ -642,7 +676,9 @@ describe("a modification note's allocations are summed per note, each allocation
       expect(refundedWrites()).toEqual([]);
     });
 
-    it("MUTATION: a payment's own role-less links are not read - they mirror its refund and account notes, which the direct total counts", async () => {
+    it("MUTATION: a payment's own role-less links are not read, by the payment or by its invoice - they mirror its refund and account notes, which the direct total counts", async () => {
+      // Same invoice as the bank payment, so the by-invoice query would find it
+      // but for its anchor.
       mocks.paymentFindMany.mockResolvedValue([BANK_PAYMENT()]);
       paymentLinks = [allocation("alloc-60", "inv-1", 6000, undefined, ROLELESS_ALLOCATION_ROLE)];
 
@@ -832,8 +868,8 @@ describe("the un-refund guard's limits and the write's claim (#3979 review C)", 
     mocks.paymentFindMany
       .mockResolvedValueOnce([row("2026-06-30T00:00:00.000Z")])
       .mockResolvedValueOnce([row("2026-07-01T00:00:00.000Z")]);
-    mocks.xeroObjectLinkFindMany.mockImplementation(async ({ where }: { where: { role?: unknown } }) => {
-      if (readsNoteAllocations(where.role)) {
+    mocks.xeroObjectLinkFindMany.mockImplementation(async ({ where }: { where: { role?: unknown; xeroObjectType?: string } }) => {
+      if (readsNoteAllocations(where)) {
         return withNoteRole([{ localId: "mod-1", xeroObjectId: "alloc-correction", metadata: { creditNoteId: "cn-correction", invoiceId: "inv-1", amountCents: 10_000 } }]);
       }
       if (where.role === "MODIFICATION_CREDIT_NOTE") {
@@ -891,8 +927,8 @@ describe("a recount with no note being synced (#4095 review, item 2)", () => {
       { xeroObjectId: "cn-correction", localModel: "BookingModification", requestPayload: { noteWording: "invoice-correction" } },
     ]);
     correctionStatus = "AUTHORISED";
-    mocks.xeroObjectLinkFindMany.mockImplementation(async ({ where }: { where: { role?: unknown } }) => {
-      if (readsNoteAllocations(where.role)) {
+    mocks.xeroObjectLinkFindMany.mockImplementation(async ({ where }: { where: { role?: unknown; xeroObjectType?: string } }) => {
+      if (readsNoteAllocations(where)) {
         return withNoteRole([{ localId: "mod-1", xeroObjectId: "alloc-correction", metadata: { creditNoteId: "cn-correction", invoiceId: "inv-1", amountCents: 10_000 } }]);
       }
       if (where.role === "MODIFICATION_CREDIT_NOTE") return [{ xeroObjectId: "cn-correction", metadata: { status: correctionStatus } }];

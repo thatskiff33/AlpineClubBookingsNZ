@@ -13,6 +13,7 @@ vi.mock("@/lib/prisma", () => ({
 vi.mock("@/lib/xero-operation-retry", () => ({ getXeroOperationRetryMeta: vi.fn() }));
 
 import {
+  CLEARING_ALLOCATION_LINK_WHERE,
   CLEARING_TARGET_LINK_ROLES,
   distinctClearingAllocations,
   linkAllocatesClearingTarget,
@@ -67,19 +68,42 @@ describe("linkAllocatesClearingTarget (#4767)", () => {
 // #4786: the money readers count a clearing note's allocations through this one
 // reader, built on the predicate above.
 describe("distinctClearingAllocations (#4786)", () => {
-  const allocations = (links: Array<ReturnType<typeof link>>, creditNoteId?: string) =>
+  type Link = ReturnType<typeof link> & { updatedAt?: Date };
+  const at = (l: ReturnType<typeof link>, iso: string): Link => ({ ...l, updatedAt: new Date(iso) });
+  const allocations = (links: Link[], creditNoteId?: string) =>
     distinctClearingAllocations(links, creditNoteId).map(({ creditNoteId: note, invoiceId, amountCents }) => [note, invoiceId, amountCents]);
 
-  it("reads an own-role link and a role-less one, each its own allocation", () => {
+  it("reads an own-role link and a role-less one", () => {
     expect(allocations([link(NOTE_ALLOCATION_ROLE)])).toEqual([["cn_clear", "inv_primary", 6000]]);
     expect(allocations([link(ROLELESS_ALLOCATION_ROLE)])).toEqual([["cn_clear", "inv_primary", 6000]]);
   });
 
-  it("MUTATION: an own-role and a role-less link for the same note, invoice and amount are one allocation", () => {
+  it("MUTATION: an own-role and a role-less link for the same note, invoice and amount count once", () => {
     expect(allocations([link(NOTE_ALLOCATION_ROLE), link(ROLELESS_ALLOCATION_ROLE)])).toEqual([["cn_clear", "inv_primary", 6000]]);
   });
 
-  it("MUTATION: another amount, invoice or note is another allocation", () => {
+  // The inbound mirror writes one own-role link per note and invoice with the
+  // note's applications SUMMED, beside the builder's per-allocation link and a
+  // role-less piece; adding any of them to it counts an allocation twice.
+  it("MUTATION: a role-less piece and the mirror's summed link count the summed figure once", () => {
+    expect(
+      allocations([
+        at(link(ROLELESS_ALLOCATION_ROLE, { amountCents: 4000 }), "2026-06-01T00:00:00.000Z"),
+        at(link(NOTE_ALLOCATION_ROLE, { amountCents: 10_000 }), "2026-06-03T00:00:00.000Z"),
+      ]),
+    ).toEqual([["cn_clear", "inv_primary", 10_000]]);
+  });
+
+  it("MUTATION: the builder's per-allocation link and the mirror's summed link count once, the newest", () => {
+    expect(
+      allocations([
+        at(link(NOTE_ALLOCATION_ROLE, { amountCents: 10_000 }), "2026-06-03T00:00:00.000Z"),
+        at(link(NOTE_ALLOCATION_ROLE, { amountCents: 6000 }), "2026-06-01T00:00:00.000Z"),
+      ]),
+    ).toEqual([["cn_clear", "inv_primary", 10_000]]);
+  });
+
+  it("MUTATION: another invoice or note is another application; links written at the same time keep the last given", () => {
     expect(
       allocations([
         link(NOTE_ALLOCATION_ROLE),
@@ -88,7 +112,6 @@ describe("distinctClearingAllocations (#4786)", () => {
         link(ROLELESS_ALLOCATION_ROLE, { creditNoteId: "cn_other" }),
       ]),
     ).toEqual([
-      ["cn_clear", "inv_primary", 6000],
       ["cn_clear", "inv_primary", 4000],
       ["cn_clear", "inv_supp", 6000],
       ["cn_other", "inv_primary", 6000],
@@ -110,12 +133,13 @@ describe("distinctClearingAllocations (#4786)", () => {
       ["cn_other", "inv_primary", 6000],
     ]);
   });
+});
 
-  it("keeps the last link given for an allocation, in the place it was last given", () => {
-    const first = link(NOTE_ALLOCATION_ROLE);
-    const other = link(NOTE_ALLOCATION_ROLE, { invoiceId: "inv_supp" });
-    const last = link(ROLELESS_ALLOCATION_ROLE);
-    expect(distinctClearingAllocations([first, other, last]).map((allocation) => allocation.link)).toEqual([other, last]);
+describe("CLEARING_ALLOCATION_LINK_WHERE (#4786)", () => {
+  it("MUTATION: reads the note's own role anywhere, and the role-less one never on a payment", () => {
+    expect(CLEARING_ALLOCATION_LINK_WHERE).toEqual({
+      OR: [{ role: NOTE_ALLOCATION_ROLE }, { role: ROLELESS_ALLOCATION_ROLE, localModel: { not: "Payment" } }],
+    });
   });
 });
 

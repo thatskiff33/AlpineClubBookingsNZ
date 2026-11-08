@@ -7,7 +7,7 @@ import { prisma } from "@/lib/prisma";
 import { lockPaymentForRefundedTotal, PAYMENT_ROW_WAIT_TRANSACTION_OPTIONS } from "@/lib/payment-transactions";
 import logger from "@/lib/logger";
 import { type AccountCreditAllocationRepairResult, type AccountCreditAllocationTarget, type RefundedPaymentBusinessStateRepairResult } from "./types";
-import { buildBookingAppliedCreditDescription, type CreditNoteAllocationCents, getAmountCentsFromAllocationMetadata, getCreditNoteAmountCents, getCreditNoteIdFromAllocationMetadata, getJsonRecord, getNextRefundedPaymentStatus, getRefundContributionCentsFromCreditNoteMetadata, sumAppliedCentsByCreditNote } from "./amounts";
+import { buildBookingAppliedCreditDescription, type CreditNoteAllocationCents, getCreditNoteAmountCents, getJsonRecord, getNextRefundedPaymentStatus, getRefundContributionCentsFromCreditNoteMetadata, sumAppliedCentsByCreditNote } from "./amounts";
 import { isIncludedRefundCreditNoteStatus, readRefundNoteRowsByPayment } from "@/lib/xero-refund-note-status";
 import { findActiveXeroObjectLinks } from "./object-links";
 import { notifyXeroSyncError } from "@/lib/xero-error-alert";
@@ -22,7 +22,7 @@ import { invoiceCorrectionNoteIds, noCashModificationNoteIds } from "./account-c
 import { paymentsCountingInvoiceCorrections, uncapturedPrimaryStatus } from "./modification-note-refunds";
 import { capOrganiserChildMirrorAtStripeRefunds } from "@/lib/organiser-child-refund";
 import { readRefundRequestPaidBackCentsByPaymentId } from "./refund-request-paid-back";
-import { CLEARING_TARGET_LINK_ROLES, clearingAllocationOf } from "@/lib/xero-clearing-allocations";
+import { CLEARING_ALLOCATION_LINK_WHERE, distinctClearingAllocations, NOTE_ALLOCATION_ROLE } from "@/lib/xero-clearing-allocations";
 
 /** #3792: the operator alert, and the audit action, for a refused change. */
 const RESTORED_BOOKING_ALLOCATION_CHANGE_ERROR_TYPE =
@@ -207,7 +207,7 @@ export async function repairRefundedPaymentBusinessState(input: {
     }),
     // The note's own role only: a payment's role-less links mirror its refund and account notes (#4786).
     prisma.xeroObjectLink.findMany({
-      where: { localModel: "Payment", localId: { in: paymentIds }, xeroObjectType: "ALLOCATION", role: "MODIFICATION_CREDIT_NOTE_ALLOCATION", active: true },
+      where: { localModel: "Payment", localId: { in: paymentIds }, xeroObjectType: "ALLOCATION", role: NOTE_ALLOCATION_ROLE, active: true },
       select: { localId: true, xeroObjectId: true, role: true, metadata: true, updatedAt: true },
     }),
     readRefundRequestPaidBackCentsByPaymentId(paymentIds),
@@ -233,41 +233,36 @@ export async function repairRefundedPaymentBusinessState(input: {
       : await prisma.xeroObjectLink.findMany({
           where: {
             xeroObjectType: "ALLOCATION",
-            role: { in: [...CLEARING_TARGET_LINK_ROLES] },
             active: true,
-            OR: [...invoicePaymentIds.keys()].map((invoiceId) => ({
-              metadata: { path: ["invoiceId"], equals: invoiceId },
-            })),
+            AND: [
+              CLEARING_ALLOCATION_LINK_WHERE,
+              { OR: [...invoicePaymentIds.keys()].map((invoiceId) => ({ metadata: { path: ["invoiceId"], equals: invoiceId } })) },
+            ],
           },
           select: { localId: true, xeroObjectId: true, role: true, metadata: true, updatedAt: true },
         });
-  // Oldest first, so where two links hold one allocation the newest counts
-  // (`sumAppliedCentsByCreditNote` below: one per note and invoice, so the
-  // mirror's own-role link and a role-less one count once). #4786: only links
-  // that record an allocation (`clearingAllocationOf`).
-  const linkWrittenAt = (link: { updatedAt?: Date | null }) => link.updatedAt?.getTime() ?? 0;
-  const existingModificationAllocations = [
+  // #4095 (L1), #4786: each payment's links read as what each note applied to
+  // each invoice, once (`distinctClearingAllocations`): the newest link per
+  // note and invoice, so the same allocation linked to several local objects,
+  // a role-less link beside the mirror's, or an older amount left active
+  // beside a re-synced one never counts twice.
+  const linksByPaymentId = new Map<string, Array<(typeof modificationAllocationLinks)[number]>>();
+  for (const { paymentId, link } of [
     ...modificationAllocationLinks.map((link) => ({ paymentId: link.localId, link })),
     ...invoiceAllocationLinks.flatMap((link) => {
       const invoiceId = getJsonRecord(link.metadata)?.invoiceId;
       const paymentId = typeof invoiceId === "string" ? invoicePaymentIds.get(invoiceId) : undefined;
       return paymentId ? [{ paymentId, link }] : [];
     }),
-  ]
-    .filter(({ link }) => clearingAllocationOf(link) !== null)
-    .sort((a, b) => linkWrittenAt(a.link) - linkWrittenAt(b.link))
-    .map(({ paymentId, link }) => ({ paymentId, xeroObjectId: link.xeroObjectId, metadata: link.metadata }));
-
-  const existingModificationCreditNoteIds = Array.from(
-    new Set(
-      existingModificationAllocations
-        .map((link) => getCreditNoteIdFromAllocationMetadata(link.metadata))
-        .filter(
-          (creditNoteId): creditNoteId is string =>
-            Boolean(creditNoteId) && creditNoteId !== input.creditNoteId
-        )
-    )
+  ]) {
+    linksByPaymentId.set(paymentId, [...(linksByPaymentId.get(paymentId) ?? []), link]);
+  }
+  const existingModificationAllocations = [...linksByPaymentId].flatMap(([paymentId, links]) =>
+    distinctClearingAllocations(links).map((allocation) => ({ ...allocation, paymentId })),
   );
+  const existingModificationCreditNoteIds = [
+    ...new Set(existingModificationAllocations.map((allocation) => allocation.creditNoteId).filter((id) => id !== input.creditNoteId)),
+  ];
   const validModificationCreditNoteIds = new Set<string>();
   const validCorrectionNoteIds = new Set<string>();
 
@@ -325,38 +320,23 @@ export async function repairRefundedPaymentBusinessState(input: {
     directRefundCentsByPaymentId.set(link.localId, paymentRefunds);
   }
 
-  // #4095 (L1): a note's allocations to a payment's invoices, summed per note
-  // by the rule the kept settle applies (`sumAppliedCentsByCreditNote`). An
-  // allocation is the note's application to one invoice: the sync writes one
-  // link per note and invoice with its applied amounts summed, so links naming
-  // the same invoice - the same allocation linked to several local objects, or
-  // an older amount left active beside a re-synced one - count once, newest.
+  // #4095 (L1): a note's applications to a payment's invoices (one each, read
+  // above), summed per note by the rule the kept settle applies
+  // (`sumAppliedCentsByCreditNote`).
   const modificationAllocationsByPaymentId = new Map<string, CreditNoteAllocationCents[]>();
-  for (const link of existingModificationAllocations) {
-    const creditNoteId = getCreditNoteIdFromAllocationMetadata(link.metadata);
-    if (!creditNoteId || creditNoteId === input.creditNoteId) {
-      continue;
-    }
+  for (const { creditNoteId, paymentId, amountCents } of existingModificationAllocations) {
+    if (creditNoteId === input.creditNoteId) continue;
     if (
       !validModificationCreditNoteIds.has(creditNoteId) &&
-      !(validCorrectionNoteIds.has(creditNoteId) && paymentsCountingCorrections.has(link.paymentId))
+      !(validCorrectionNoteIds.has(creditNoteId) && paymentsCountingCorrections.has(paymentId))
     ) {
       continue;
     }
-
-    const contributionCents = getAmountCentsFromAllocationMetadata(link.metadata);
-    if (contributionCents === null) {
-      continue;
-    }
-
-    const invoiceId = getJsonRecord(link.metadata)?.invoiceId;
-    const allocations = modificationAllocationsByPaymentId.get(link.paymentId) ?? [];
-    allocations.push({
-      creditNoteId,
-      appliedCents: contributionCents,
-      allocationKey: typeof invoiceId === "string" ? `invoice:${invoiceId}` : `link:${link.xeroObjectId}`,
-    });
-    modificationAllocationsByPaymentId.set(link.paymentId, allocations);
+    if (amountCents === null || amountCents <= 0) continue;
+    modificationAllocationsByPaymentId.set(paymentId, [
+      ...(modificationAllocationsByPaymentId.get(paymentId) ?? []),
+      { creditNoteId, appliedCents: Math.round(amountCents) },
+    ]);
   }
   const modificationRefundCentsByPaymentId = new Map(
     [...modificationAllocationsByPaymentId].map(([paymentId, allocations]) => [

@@ -36,7 +36,7 @@ import {
 } from "@/lib/payment-transaction-status";
 import { readModificationNoteCash } from "@/lib/xero-inbound/account-credit-modification-notes";
 import { type CreditNoteAllocationCents, sumAppliedCentsByCreditNote } from "@/lib/xero-inbound/amounts";
-import { CLEARING_TARGET_LINK_ROLES, distinctClearingAllocations } from "@/lib/xero-clearing-allocations";
+import { CLEARING_ALLOCATION_LINK_WHERE, distinctClearingAllocations } from "@/lib/xero-clearing-allocations";
 import { isIncludedRefundCreditNoteStatus, readRefundCreditNoteLinkStatus } from "@/lib/xero-refund-note-status";
 import type { IbSettlementKeptReason } from "@/lib/ib-settlement-figure-note";
 
@@ -254,15 +254,15 @@ async function keptCorrectionRefundCents(
       select: { xeroObjectId: true, metadata: true },
     }),
     // #4786: the note's own role, or a role-less link an older repair wrote
-    // for the same allocation (`distinctClearingAllocations`).
+    // on the note's anchor for the same allocation (`distinctClearingAllocations`).
     tx.xeroObjectLink.findMany({
       where: {
         xeroObjectType: "ALLOCATION",
-        role: { in: [...CLEARING_TARGET_LINK_ROLES] },
+        ...CLEARING_ALLOCATION_LINK_WHERE,
         active: true,
         metadata: { path: ["invoiceId"], equals: input.invoiceId },
       },
-      select: { role: true, metadata: true },
+      select: { role: true, metadata: true, updatedAt: true },
     }),
   ]);
   const liveNoteIds = new Set(

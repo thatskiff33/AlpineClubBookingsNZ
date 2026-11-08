@@ -223,6 +223,8 @@ export const CLEARING_TARGET_LINK_ROLES: readonly string[] = [NOTE_ALLOCATION_RO
 export interface ClearingAllocationLink {
   role: string | null;
   metadata: unknown;
+  /** When it was last written: the money readers keep the newest (#4786). */
+  updatedAt?: Date | null;
 }
 
 /**
@@ -260,45 +262,61 @@ export function linkAllocatesClearingTarget(
   return link.role === ROLELESS_ALLOCATION_ROLE && readNumber(metadata?.amountCents) === target.amountCents;
 }
 
-/** One allocation of a credit note to an invoice, as a link records it. */
+/** A credit note's application to one invoice, as a link records it. */
 export interface ClearingAllocation<L extends ClearingAllocationLink = ClearingAllocationLink> {
   creditNoteId: string;
   invoiceId: string;
   /** Null only for a link with the note's own role that recorded no amount. */
   amountCents: number | null;
-  /** The link it was read from: the last one given for that allocation. */
+  /** The link it was read from: the newest one for that note and invoice. */
   link: L;
 }
 
 /**
- * Pure (#4786, `INV-SSOT`): the allocations these links record, each once, by
- * the rule `linkAllocatesClearingTarget` applies to a planned target. A link
- * counts when it carries the note's own role, or is a role-less
- * `CREDIT_NOTE_ALLOCATION` link that recorded its amount; any other role, or a
- * role-less link with no amount, counts nothing (fail closed, as the retry
- * does). Links naming the same note, invoice and amount - Xero's allocation key
- * - are one allocation, so the inbound mirror's own-role link and the role-less
- * one for the same allocation count once; a different amount is a different
- * allocation. Where several links hold one allocation the last given is kept.
- * With `creditNoteId`, only that note's allocations. Read only: the hold
- * under-clear audit and the kept settle's correction count read this; the
- * refunded-total recount reads `clearingAllocationOf` and keeps its own newest
- * link per note and invoice.
+ * Pure (#4786, `INV-SSOT`): what these links record a credit note applied to
+ * each invoice, one entry per note and invoice - the money readers' one rule
+ * (the hold under-clear audit, the kept settle's correction count and the
+ * refunded-total recount). A link counts when it carries the note's own role,
+ * or is a role-less `CREDIT_NOTE_ALLOCATION` link that recorded its amount
+ * (`clearingAllocationOf`); any other role, or a role-less link with no
+ * amount, counts nothing (fail closed, as the retry does).
+ *
+ * Of the links for one note and invoice only the newest counts (`updatedAt`;
+ * among equals the last given). The inbound mirror writes one own-role link
+ * per note and invoice carrying the note's applied amounts SUMMED, beside the
+ * builder's per-allocation link and any role-less one, and a re-sync at a new
+ * total leaves the older link active (its id carries the amount). Adding them
+ * would count an allocation twice. Until the mirror writes, a note applied to
+ * one invoice in two parts counts only its newest part - an undercount the
+ * mirror's next write corrects, never an overcount. With `creditNoteId`, only
+ * that note's. Read only.
  */
 export function distinctClearingAllocations<L extends ClearingAllocationLink>(
   links: readonly L[],
   creditNoteId?: string
 ): ClearingAllocation<L>[] {
+  const writtenAt = (link: ClearingAllocationLink) => link.updatedAt?.getTime() ?? 0;
   const byKey = new Map<string, ClearingAllocation<L>>();
   for (const link of links) {
     const allocation = clearingAllocationOf(link);
     if (!allocation || (creditNoteId !== undefined && allocation.creditNoteId !== creditNoteId)) continue;
-    const key = JSON.stringify([allocation.creditNoteId, allocation.invoiceId, allocation.amountCents]);
-    byKey.delete(key);
-    byKey.set(key, allocation);
+    const key = JSON.stringify([allocation.creditNoteId, allocation.invoiceId]);
+    const kept = byKey.get(key);
+    if (!kept || writtenAt(link) >= writtenAt(kept.link)) byKey.set(key, allocation);
   }
   return [...byKey.values()];
 }
+
+/**
+ * Pure (#4786): the money readers' role-and-anchor filter for allocation
+ * links found by their invoice: the note's own role, or the role-less one on
+ * the note's own anchor. A payment's role-less links mirror its refund and
+ * account notes, which its direct refund total counts, so they are never read
+ * as a clearing or edit note's allocation.
+ */
+export const CLEARING_ALLOCATION_LINK_WHERE = {
+  OR: [{ role: NOTE_ALLOCATION_ROLE }, { role: ROLELESS_ALLOCATION_ROLE, localModel: { not: "Payment" } }],
+};
 
 /**
  * Pure (#4786): the one allocation a link records, or null when it records

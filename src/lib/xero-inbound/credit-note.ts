@@ -298,10 +298,14 @@ export async function reconcileXeroCreditNote(creditNoteId: string) {
   // status, so neither is written for a payment whose refund-note row (either
   // role) is VOIDED/DELETED when it is written - read fresh at that point, never
   // a verdict kept from the link write - and a void that won is never given
-  // them. Under a newer live snapshot they are written as before #4288: no money
-  // reader uses a payment's CREDIT_NOTE_ALLOCATION links, and a REFUND_PAYMENT
-  // reader asks only whether one names the note. An older allocation link can
-  // so stay active beside a newer one.
+  // them. Under a newer live snapshot they are written as before #4288: no
+  // writer of money reads a payment's CREDIT_NOTE_ALLOCATION links (the
+  // refunded-total recount and the kept settle leave them out,
+  // `CLEARING_ALLOCATION_LINK_WHERE`, #4786); the read-only hold under-clear
+  // audit counts its refund note's, the newest per note and invoice
+  // (`distinctClearingAllocations`); and a REFUND_PAYMENT reader asks only
+  // whether one names the note. An older allocation link can so stay active
+  // beside a newer one.
   const withoutVoidedRefundNoteRows = async (links: XeroObjectLinkInput[]) =>
     isIncludedRefundCreditNoteStatus(creditNote.status) ? withoutVoidedRefundNoteLinks(creditNote.creditNoteID!, links, prisma) : links;
   const allocationSourceLinks = await withoutVoidedRefundNoteRows(resolvedCreditNoteLinks);

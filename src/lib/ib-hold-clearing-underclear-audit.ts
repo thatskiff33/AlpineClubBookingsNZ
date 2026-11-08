@@ -191,17 +191,17 @@ type ClearingOperation = {
   requestPayload: unknown;
   xeroObjectId: string | null;
 };
-type AllocationLink = { localModel: string; role: string | null; metadata: unknown };
+type AllocationLink = { localModel: string; role: string | null; metadata: unknown; updatedAt?: Date | null };
 
 /**
- * Sum of the allocation links on an anchor, each allocation once
- * (`distinctClearingAllocations`, #4786): a link with the note's own role, or
- * a role-less `CREDIT_NOTE_ALLOCATION` one that recorded its amount - the
- * clearing note's PARTIAL retry can close a note whose allocation an older
- * repair linked role-less, and the inbound mirror of a refund note links its
- * hand allocations with that role. The builder's link, the inbound mirror's
- * and a role-less one for the same note, invoice and amount are one
- * allocation. On the Booking every credit note is a clearing note (only the
+ * What the notes on an anchor applied to invoices, by the money readers' one
+ * rule (`distinctClearingAllocations`, #4786): the newest link per note and
+ * invoice, with the note's own role or role-less with its amount - the inbound
+ * mirror of a refund note links its hand allocations role-less, and so did an
+ * older repair of a clearing note's. The mirror's link carries a note's
+ * applications to one invoice summed, so the builder's per-allocation link
+ * and a role-less one beside it are never added to it. Before #4786 any role
+ * counted, each (note, invoice, amount) once. On the Booking every credit note is a clearing note (only the
  * clearing builder anchors one there), so every note counts — the release's,
  * and a retry's that created the note after the release's operation FAILED.
  * On the Payment only the refund note's own allocations count.
@@ -356,7 +356,7 @@ export async function auditIbHoldClearingUnderclears(options?: {
           { localModel: "Payment", localId: payment.id },
         ],
       },
-      select: { localModel: true, xeroObjectType: true, role: true, metadata: true },
+      select: { localModel: true, xeroObjectType: true, role: true, metadata: true, updatedAt: true },
     });
     const allocationLinks = links.filter((link) => link.xeroObjectType === "ALLOCATION");
 
