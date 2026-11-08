@@ -786,7 +786,7 @@ Decided on [#2723](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/27
 since [#3454](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3454)
 the store holds the Xero OAuth token set. The two-factor secret and recovery
 codes (`two-factor-audit.ts`) take bullets 1, 3, 5 and 6 (no expectation; members
-act only on their own), and 2 for a clear: `TWO_FACTOR_SYSTEM_ACTORS`.
+act only on their own), and 2 for a job's write: `TWO_FACTOR_SYSTEM_ACTORS`.
 
 1. **`actor` is a required argument on every mutator**, so a write with no
    attribution does not compile.

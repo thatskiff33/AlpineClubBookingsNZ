@@ -30,6 +30,7 @@
 import type { PaymentSource, PaymentStatus } from "@prisma/client";
 
 import type { BookingLedgerPosting } from "@/lib/booking-ledger-write";
+import type { CaptureKind } from "@/lib/booking-ledger-capture-kinds";
 import {
   afterReversalKey,
   captureKey,
@@ -97,7 +98,7 @@ export type SettlementPlan = {
 function captureShape(
   source: PaymentSource,
   manuallySettled: boolean,
-): Pick<BookingLedgerPosting, "kind" | "settlementMethod" | "narration"> {
+): Pick<BookingLedgerPosting, "settlementMethod" | "narration"> & { kind: CaptureKind } {
   if (source === "STRIPE") {
     return { kind: "CARD_CAPTURE", settlementMethod: "CARD", narration: "Card payment" };
   }

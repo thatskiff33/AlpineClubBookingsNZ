@@ -435,19 +435,25 @@ async function privilegeSnapshot(database: string, { includeDatabaseAcl = true }
       it("narrows its own tables as the migration role, so the deploy grants check passes without re-provisioning", async () => {
         const database = DATABASES.journal;
         await admin.query(`CREATE DATABASE "${database}" TEMPLATE "${DATABASES.fresh}"`);
-        // The release before the journal, provisioned: take the journal away again.
+        // The release before the journal, provisioned: take the journal and the
+        // M4a reservation tables away, then apply both migrations as the migrator.
         await withClient(urlFor(database), (client) => client.query(`
           DROP TABLE ${MEMBER_MONEY_RELATIONS.map((name) => `"${name}"`).join(", ")} CASCADE;
-          DROP FUNCTION member_money_require_complete(), member_money_batch_errors(text),
-            member_money_check_seal(), member_money_refuse_mutation(), member_money_system_identifier();
+          DROP FUNCTION IF EXISTS member_money_require_complete(), member_money_batch_errors(text),
+            member_money_check_seal(), member_money_refuse_mutation(), member_money_system_identifier(),
+            member_money_application_state(text), member_money_reservation_errors(text),
+            member_money_require_reservation();
           DROP TYPE "MemberMoneyAccount", "MemberMoneySide", "MemberMoneyEventKind", "MemberMoneyOrigin",
-            "MemberMoneySourceKind", "MemberMoneyObligationKind", "MemberMoneyDebtorKind";
-          DELETE FROM "_prisma_migrations" WHERE migration_name = '${APPEND_ONLY_SCHEMA_MIGRATION}'`));
+            "MemberMoneySourceKind", "MemberMoneyObligationKind", "MemberMoneyDebtorKind",
+            "MemberMoneyRefundReservationReleaseReason";
+          DELETE FROM "_prisma_migrations" WHERE migration_name IN (
+            '20261127010000_member_money_journal', '${APPEND_ONLY_SCHEMA_MIGRATION}')`));
         expect(deployGrantsCheck(database)).toBe("");
-        // Applied as prisma migrate deploy applies it: one file, as the migration role.
-        await withClient(urlFor(database, "migrator"), (client) => client.query(
-          readFileSync(path.join(REPO_ROOT, `prisma/migrations/${APPEND_ONLY_SCHEMA_MIGRATION}/migration.sql`), "utf8"),
-        ));
+        // Applied as prisma migrate deploy applies them: each file, as the migration role.
+        await withClient(urlFor(database, "migrator"), async (client) => {
+          await client.query(readFileSync(path.join(REPO_ROOT, "prisma/migrations/20261127010000_member_money_journal/migration.sql"), "utf8"));
+          await client.query(readFileSync(path.join(REPO_ROOT, `prisma/migrations/${APPEND_ONLY_SCHEMA_MIGRATION}/migration.sql`), "utf8"));
+        });
         expect(deployGrantsCheck(database)).toBe("");
         const { rows } = await withClient(urlFor(database), (client) => client.query(
           `SELECT t.name, has_table_privilege($1, to_regclass(format('public.%I', t.name)), 'SELECT')
@@ -617,6 +623,63 @@ async function privilegeSnapshot(database: string, { includeDatabaseAcl = true }
 
         expect(await appPrisma.bookingLedgerLine.findMany({ where: { bookingId: kept }, select: { id: true } })).toEqual([{ id: line.id }]);
         expect(await appPrisma.booking.count({ where: { id: kept } })).toBe(1);
+      });
+
+      // A transaction alone must hold its payment: a refund or recovery row's
+      // existing paymentId RESTRICT key would otherwise mask that cascade.
+      it("cannot delete a Payment carrying only transaction history (#4574, D1)", async () => {
+        const bookingId = "tac4574-transaction-only";
+        await createHistoryBooking(bookingId, "2026-09-10", "2026-09-11");
+        const payment = await appPrisma.payment.create({ data: { bookingId, amountCents: 100 } });
+        const transaction = await appPrisma.paymentTransaction.create({
+          data: { paymentId: payment.id, kind: "PRIMARY", amountCents: 100 },
+        });
+        await withClient(urlFor(DATABASES.upgrade, "app"), async (client) => {
+          await client.query("BEGIN");
+          expect(await sqlstate(client, `DELETE FROM "Payment" WHERE "id" = $1`, [payment.id])).toBe(FOREIGN_KEY_VIOLATION);
+          // Check before rollback: rollback alone could hide a successful cascade.
+          expect((await client.query(`SELECT "id", "paymentId" FROM "PaymentTransaction" WHERE "id" = $1`, [transaction.id])).rows)
+            .toEqual([{ id: transaction.id, paymentId: payment.id }]);
+          await client.query("COMMIT");
+        });
+        expect(await appPrisma.payment.findUnique({ where: { id: payment.id } })).toEqual(payment);
+        expect(await appPrisma.paymentTransaction.findUnique({ where: { id: transaction.id } })).toEqual(transaction);
+      });
+
+      it.each(["refund", "recovery"] as const)("cannot blank a %s link by deleting its transaction or Payment (#4574, D1)", async (kind) => {
+        const bookingId = `tac4574-${kind}`;
+        await createHistoryBooking(bookingId, "2026-09-12", "2026-09-13");
+        const payment = await appPrisma.payment.create({ data: { bookingId, amountCents: 100 } });
+        const transaction = await appPrisma.paymentTransaction.create({
+          data: { paymentId: payment.id, kind: "PRIMARY", amountCents: 100 },
+        });
+        // Exactly one kind of child per transaction: neither changed key can
+        // hide the other one's SET NULL. Use the shipped app grants throughout.
+        const child = kind === "refund"
+          ? await appPrisma.paymentRefund.create({ data: {
+            paymentId: payment.id, paymentTransactionId: transaction.id,
+            stripeRefundId: "tac4574-refund", amountCents: 100, currency: "nzd",
+          } })
+          : await appPrisma.paymentRecoveryOperation.create({ data: {
+            bookingId, paymentId: payment.id, paymentTransactionId: transaction.id,
+            type: "CANCEL_PAYMENT_INTENT", paymentIntentId: "tac4574-intent",
+            amountCents: 100, idempotencyKey: "tac4574-recovery",
+          } });
+        const table = kind === "refund" ? "PaymentRefund" : "PaymentRecoveryOperation";
+        await withClient(urlFor(DATABASES.upgrade, "app"), async (client) => {
+          await client.query("BEGIN");
+          expect(await sqlstate(client, `DELETE FROM "Payment" WHERE "id" = $1`, [payment.id])).toBe(FOREIGN_KEY_VIOLATION);
+          expect(await sqlstate(client, `DELETE FROM "PaymentTransaction" WHERE "id" = $1`, [transaction.id])).toBe(FOREIGN_KEY_VIOLATION);
+          expect((await client.query(`SELECT "paymentTransactionId" FROM "${table}" WHERE "id" = $1`, [child.id])).rows)
+            .toEqual([{ paymentTransactionId: transaction.id }]);
+          await client.query("COMMIT");
+        });
+        expect(await appPrisma.payment.findUnique({ where: { id: payment.id } })).toEqual(payment);
+        expect(await appPrisma.paymentTransaction.findUnique({ where: { id: transaction.id } })).toEqual(transaction);
+        const retained = kind === "refund"
+          ? await appPrisma.paymentRefund.findUnique({ where: { id: child.id } })
+          : await appPrisma.paymentRecoveryOperation.findUnique({ where: { id: child.id } });
+        expect(retained).toEqual(child);
       });
 
       it("cannot blank a credit row's booking link by deleting the booking (D1, INV-MONEY-035)", async () => {

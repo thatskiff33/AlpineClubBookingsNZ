@@ -593,7 +593,7 @@ let webhookClient: PrismaClient;
             await lockPaymentForRefundedTotal(tx, PAYMENT_ID);
             resolveHeld();
             await retireQueued;
-            await markPaymentIntentTransactionSucceeded({ paymentIntentId: ASK_INTENT, amountCents: 5_000, paymentMethodId: "pm_race_3954", store: tx });
+            await markPaymentIntentTransactionSucceeded({ journal: JOURNAL, paymentIntentId: ASK_INTENT, amountCents: 5_000, paymentMethodId: "pm_race_3954", store: tx });
             return "captured";
           },
           { maxWait: 5_000, timeout: 30_000 },
@@ -1734,7 +1734,7 @@ let webhookClient: PrismaClient;
     async function staleTabPays(stripe: ReturnType<typeof fakeStripe>, intentId: string) {
       stripe.intents.get(intentId)!.status = "succeeded";
       const { markPaymentIntentTransactionSucceeded } = await import("@/lib/payment-transactions");
-      await markPaymentIntentTransactionSucceeded({ paymentIntentId: intentId, amountCents: LIVE_SINCE_CENTS, paymentMethodId: "pm_race_4442" });
+      await markPaymentIntentTransactionSucceeded({ journal: JOURNAL, paymentIntentId: intentId, amountCents: LIVE_SINCE_CENTS, paymentMethodId: "pm_race_4442" });
     }
 
     /** The re-issue minted at last: its own $30 alone, nothing of the captured C carried, and C never cancelled. */

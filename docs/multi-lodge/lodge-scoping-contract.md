@@ -61,8 +61,11 @@ jobs cover all lodges while preserving booking and financial lodge references.
 ## Member money journal (#4513)
 
 `MemberMoneyEvent`, `MemberMoneyJournal`, `MemberMoneyObligation`,
-`MemberMoneyApplication`, `MemberMoneySourceLink` and `MemberMoneySourcePosting` are club-wide economic
-records: one receipt may cover several lodges. `MemberMoneyLine` carries optional
+`MemberMoneyApplication`, `MemberMoneySourceLink`, `MemberMoneySourcePosting`,
+`MemberMoneyRefundReservation` and `MemberMoneyRefundReservationRelease` are club-wide economic
+records: one receipt may cover several lodges. A reservation names its obligation
+and its funding batch, which identify the booking; an application batch names
+one booking and takes that booking's Payment row. `MemberMoneyLine` carries optional
 `bookingId` and `lodgeId` dimensions with RESTRICT foreign keys and no update
 cascade. A booking dimension requires its actual lodge (checked on insert).
 Non-booking money can have a lodge dimension or be club-wide. No default lodge
@@ -76,6 +79,11 @@ posted from M3 on, for charges (M3), refunds owed (M4) and member credit (M5);
 M1 posts nothing). The booking ledger's `BookingLedgerLine.lodgeId` and
 `bookingId` keys are RESTRICT both ways as well (#4514, `INV-MONEY-043`): a lodge
 or booking a line names can neither be deleted nor re-keyed.
+
+M4b receipt adapters scope every settlement line, application read and residue
+transfer by the Payment's immutable booking id. Receipt legs carry that booking's
+actual lodge; no default-lodge lookup occurs. The owner-run receipt census spans
+all R01 bookings across lodges; each catch-up transaction locks only its Payment.
 
 ## Club-Wide Defaults With Per-Lodge Overrides
 

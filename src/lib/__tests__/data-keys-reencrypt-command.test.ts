@@ -1,0 +1,177 @@
+/**
+ * `pnpm run data-keys:reencrypt`'s command layer (#4456 PR 2): arguments, exit
+ * status, and that an error prints no stored value even when its own message
+ * holds one (a database error can echo the query it failed on).
+ */
+import { describe, expect, it, vi } from "vitest";
+
+vi.mock("server-only", () => ({}));
+vi.mock("@/lib/prisma", () => ({ prisma: { $disconnect: vi.fn() } }));
+
+import {
+  parseReencryptArgs,
+  runReencryptCommand,
+  safeErrorLine,
+  USAGE,
+} from "../../../scripts/data-keys-reencrypt";
+import { DataKeyRingError } from "@/lib/data-encryption-key-material";
+import { ReencryptRefusedError, type ReencryptReport } from "@/lib/data-encryption-reencrypt";
+
+function report(remaining = 0): ReencryptReport {
+  return {
+    currentKeyId: "k1",
+    currentKeyFingerprint: "0000-1111-2222-3333",
+    keyCheckedAgainst: "a stored credential",
+    fingerprintConfirmed: true,
+    runCommand: "pnpm run data-keys:reencrypt --expect-fingerprint 0000-1111-2222-3333",
+    dryRun: false,
+    passes: 1,
+    credentials: { moved: 1, lostClaims: 0, unreadable: 0, remaining },
+    authenticatorSecrets: { moved: 0, lostClaims: 0, unreadable: 0, remaining: 0 },
+    recoveryCodes: { legacyUnused: 0, retired: 0, olderRingKeyUnused: 0 },
+  };
+}
+
+function io(run: () => Promise<ReencryptReport>) {
+  const out: string[] = [];
+  const err: string[] = [];
+  return { out, err, io: { log: (line: string) => out.push(line), error: (line: string) => err.push(line), run: vi.fn(run) } };
+}
+
+describe("data-keys:reencrypt arguments (#4456 PR 2)", () => {
+  it("parses the two flags, the pnpm separator and help, and refuses anything else", () => {
+    expect(parseReencryptArgs([])).toEqual({ kind: "run", options: { dryRun: false, retireLegacyRecoveryCodes: false } });
+    expect(parseReencryptArgs(["--", "--dry-run", "--retire-legacy-recovery-codes"])).toEqual({
+      kind: "run",
+      options: { dryRun: true, retireLegacyRecoveryCodes: true },
+    });
+    expect(parseReencryptArgs(["--dry-run", "-h"])).toEqual({ kind: "help" });
+    expect(parseReencryptArgs(["--dryrun"])).toEqual({ kind: "error", message: "Unknown argument: --dryrun" });
+  });
+
+  it("takes --expect-fingerprint as a separate or an = value, and refuses it with none (F1)", () => {
+    for (const argv of [["--expect-fingerprint", "ab12-cd34-ef56-7890"], ["--expect-fingerprint=ab12-cd34-ef56-7890"]]) {
+      expect(parseReencryptArgs(argv)).toEqual({
+        kind: "run",
+        options: { dryRun: false, retireLegacyRecoveryCodes: false, expectFingerprint: "ab12-cd34-ef56-7890" },
+      });
+    }
+    for (const argv of [["--expect-fingerprint"], ["--expect-fingerprint", "--dry-run"], ["--expect-fingerprint="], ["--expect-fingerprint", "ab12-cd34-ef56"]]) {
+      expect(parseReencryptArgs(argv)).toEqual({
+        kind: "error",
+        message:
+          "--expect-fingerprint needs the fingerprint Admin → Setup shows: four groups of four hex digits. The value given is not repeated here.",
+      });
+    }
+    // Trimmed, and any case.
+    expect(parseReencryptArgs(["--expect-fingerprint", " AB12-cd34-EF56-7890 "])).toMatchObject({
+      options: { expectFingerprint: "AB12-cd34-EF56-7890" },
+    });
+  });
+
+  it("refuses a pasted ring entry as the fingerprint without running, and never prints it (round 3, S3)", async () => {
+    const pastedEntry = "k2026:" + Buffer.from(Array.from({ length: 32 }, (_, index) => (index * 7 + 3) % 256)).toString("base64");
+    const { out, err, io: deps } = io(async () => report());
+    await expect(runReencryptCommand(["--expect-fingerprint", pastedEntry], deps)).resolves.toBe(1);
+    await expect(runReencryptCommand([`--expect-fingerprint=${pastedEntry}`], deps)).resolves.toBe(1);
+    expect(deps.run).not.toHaveBeenCalled();
+    const printed = [...out, ...err].join("\n");
+    expect(printed).toMatch(/--expect-fingerprint needs the fingerprint Admin → Setup shows/);
+    expect(printed).not.toContain(pastedEntry);
+    expect(printed).not.toContain(pastedEntry.slice(6));
+  });
+
+  it("names itself as the pnpm script an operator runs", () => {
+    expect(USAGE).toMatch(/pnpm run data-keys:reencrypt --dry-run \[--retire-legacy-recovery-codes\]/);
+    expect(USAGE).toMatch(/pnpm run data-keys:reencrypt --expect-fingerprint <fp> \[--retire-legacy-recovery-codes\]/);
+  });
+});
+
+describe("data-keys:reencrypt exit status (#4456 PR 2)", () => {
+  it("is 0 when nothing is left on an old key, printing the report", async () => {
+    const { out, io: deps } = io(async () => report(0));
+    await expect(runReencryptCommand(["--dry-run"], deps)).resolves.toBe(0);
+    expect(deps.run).toHaveBeenCalledWith({ dryRun: true, retireLegacyRecoveryCodes: false });
+    expect(out.join("\n")).toMatch(/IntegrationCredential: remaining on old keys: 0/);
+  });
+
+  it("is 2 when rows remain, so a scripted rollout can run it again", async () => {
+    const { io: deps } = io(async () => report(3));
+    await expect(runReencryptCommand([], deps)).resolves.toBe(2);
+  });
+
+  it("is 1 on a bad argument, without running", async () => {
+    const { err, io: deps } = io(async () => report());
+    await expect(runReencryptCommand(["--force"], deps)).resolves.toBe(1);
+    expect(deps.run).not.toHaveBeenCalled();
+    expect(err[0]).toMatch(/^Unknown argument: --force/);
+  });
+
+  it("is 1 on a refusal, printing its reason", async () => {
+    const { err, io: deps } = io(async () => {
+      throw new ReencryptRefusedError("Refused: DATA_ENCRYPTION_KEYS is not set.");
+    });
+    await expect(runReencryptCommand([], deps)).resolves.toBe(1);
+    expect(err).toEqual(["Refused: DATA_ENCRYPTION_KEYS is not set."]);
+  });
+});
+
+describe("data-keys:reencrypt never prints a stored value in an error (#4456 PR 2)", () => {
+  it("prints any other error as its class and code only, whatever its message holds", async () => {
+    const leaky = Object.assign(new Error('Invalid `update()` invocation: { ciphertext: "deadbeefcafe", value: "sentinel-plaintext" }'), {
+      name: "PrismaClientKnownRequestError",
+      code: "P2002",
+    });
+    const { err, io: deps } = io(async () => {
+      throw leaky;
+    });
+    await expect(runReencryptCommand([], deps)).resolves.toBe(1);
+    expect(err).toEqual([
+      "The re-encrypt failed (PrismaClientKnownRequestError P2002). Rows already moved stay moved; run it again.",
+    ]);
+    expect(err.join("")).not.toMatch(/deadbeefcafe|sentinel-plaintext/);
+  });
+
+  it("keeps the messages built from fixed text and key ids", () => {
+    expect(safeErrorLine(new DataKeyRingError("DATA_ENCRYPTION_KEYS: entry 1 is not in the form <id>:<base64 key>."))).toBe(
+      "DATA_ENCRYPTION_KEYS: entry 1 is not in the form <id>:<base64 key>.",
+    );
+    expect(safeErrorLine("a thrown string")).toBe(
+      "The re-encrypt failed (string). Rows already moved stay moved; run it again.",
+    );
+  });
+});
+
+describe("data-keys:reencrypt never echoes an unrecognised argument that could be a key (#4456 review round 4)", () => {
+  const KEY_B64 = Buffer.from(Array.from({ length: 32 }, (_, index) => (index * 11 + 5) % 256)).toString("base64");
+  const PASTED = `k2027:${KEY_B64}`;
+
+  it.each([
+    ["a bare pasted ring entry", [PASTED]],
+    ["a pasted entry after a misspelt flag", ["--fingerprint", PASTED]],
+    ["a misspelt flag joined to a pasted entry", [`--fingerprint=${PASTED}`]],
+    ["a bare base64 key", [KEY_B64]],
+  ])("refuses %s without running, and the key appears in no output", async (_label, argv) => {
+    const { out, err, io: deps } = io(async () => report());
+    await expect(runReencryptCommand(argv, deps)).resolves.toBe(1);
+    expect(deps.run).not.toHaveBeenCalled();
+    const printed = [...out, ...err].join("\n");
+    expect(printed).toMatch(/^Unknown argument: /);
+    expect(printed).not.toContain(KEY_B64);
+    expect(printed).not.toContain(KEY_B64.slice(0, 12));
+    expect(printed).not.toContain("k2027");
+  });
+
+  it("names a misspelt option by its name only, before any =, and anything else not at all", () => {
+    expect(parseReencryptArgs(["--fingerprint", PASTED])).toEqual({ kind: "error", message: "Unknown argument: --fingerprint" });
+    expect(parseReencryptArgs([`--fingerprint=${PASTED}`])).toEqual({ kind: "error", message: "Unknown argument: --fingerprint" });
+    expect(parseReencryptArgs(["-x"])).toEqual({ kind: "error", message: "Unknown argument: -x" });
+    for (const arg of [PASTED, KEY_B64, "--Fingerprint", "--x9", "k2027"]) {
+      expect(parseReencryptArgs([arg])).toEqual({
+        kind: "error",
+        message: "Unknown argument: an unrecognised argument (not repeated here)",
+      });
+    }
+  });
+});
+

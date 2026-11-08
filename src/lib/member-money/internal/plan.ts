@@ -8,7 +8,7 @@ import type {
   MemberMoneySourceKind,
 } from "@prisma/client";
 import type { ClubTaxTreatment } from "../../club-tax-settings";
-import { isCalendarDate, type CalendarDate, type Instant } from "../../club-time";
+import { isCalendarDate, type CalendarDate, type Instant, type ClubTimeZone } from "../../club-time";
 import { MAX_INTEGER_CENTS } from "../../money-input";
 import { stableDigest, stableStringify } from "../../stable-digest";
 import { formatCentsPlain } from "../../utils";
@@ -72,6 +72,7 @@ declare const postingContextBrand: unique symbol;
  */
 export interface MemberMoneyPostingContext {
   readonly [postingContextBrand]: true;
+  readonly zone: ClubTimeZone;
   readonly effectiveAt: Instant;
   readonly effectiveDate: CalendarDate;
   readonly currency: string;
@@ -135,7 +136,19 @@ export interface MemberMoneyObligationPlan {
   evidence: MemberMoneyEvidence;
 }
 
+/** A named attribution, to an exact amount leg here or an already posted line. */
+export interface MemberMoneyApplicationPlan {
+  key: string;
+  source: { leg: number } | { lineId: string };
+  obligationKey: string;
+  amountCents: number;
+  reversesApplicationId?: string;
+  /** Consume this exact reservation atomically with the pay application. */
+  reservationAttemptKey?: string;
+}
+
 interface PlanCommon {
+  applications?: readonly MemberMoneyApplicationPlan[];
   eventKey: MemberMoneyEventKey;
   origin: MemberMoneyOrigin;
   /** The event's own source; the batch always links it. */
@@ -155,7 +168,7 @@ interface PlanCommon {
  */
 export type MemberMoneyPlan =
   | (PlanCommon & {
-      kind: "CHARGE" | "ADJUSTMENT";
+      kind: "CHARGE" | "ADJUSTMENT" | "RECEIPT" | "REFUND_OBLIGATION" | "REFUND" | "TRANSFER";
       obligations?: readonly MemberMoneyObligationPlan[];
       legs: readonly MemberMoneyLegPlan[];
     })
@@ -228,6 +241,15 @@ export interface BuiltCorrection {
 }
 
 /** One batch, ids still unassigned. Its payload hash covers corrections as planned, before completion. */
+export interface BuiltApplication {
+  key: string;
+  source: { line: number } | { lineId: string };
+  obligationKey: string;
+  amountCents: number;
+  reversesApplicationId: string | null;
+  reservationAttemptKey?: string;
+}
+
 export interface BuiltBatch {
   event: {
     eventKey: MemberMoneyEventKey;
@@ -252,6 +274,7 @@ export interface BuiltBatch {
   obligations: BuiltObligation[];
   lines: BuiltLine[];
   corrections: BuiltCorrection[];
+  applications: BuiltApplication[];
 }
 
 const blank = (value: unknown): boolean => typeof value !== "string" || value.trim().length === 0;
@@ -320,6 +343,11 @@ function payloadHashOf(batch: Omit<BuiltBatch, "event"> & { event: Omit<BuiltBat
     sources: sorted(batch.sources),
     obligations: sorted(batch.obligations),
     lines: sorted(batch.lines.map(({ source, ...line }) => ({ ...line, source: batch.sources[source] }))),
+    // Omit an empty list to preserve hashes of the deployed M3 batches.
+    ...(batch.applications.length === 0 ? {} : { applications: sorted(batch.applications.map(({ source, ...application }) => ({
+      ...application,
+      source: "lineId" in source ? source : { ...batch.lines[source.line], source: batch.sources[batch.lines[source.line]!.source] },
+    }))) }),
     corrections: sorted(batch.corrections.map(({ shared: { source, ...shared }, ...correction }) =>
       ({ ...correction, shared: { ...shared, source: batch.sources[source] } }))),
   });
@@ -358,6 +386,7 @@ export function buildMemberMoneyBatch(context: MemberMoneyPostingContext, plan: 
   const obligations: BuiltObligation[] = [];
   const lines: BuiltLine[] = [];
   const corrections: BuiltCorrection[] = [];
+  const legLines = new Map<number, number>();
   if (plan.kind !== "ZERO") {
     const planned = new Map<string, MemberMoneyObligationPlan>();
     for (const obligation of plan.obligations ?? []) {
@@ -409,6 +438,7 @@ export function buildMemberMoneyBatch(context: MemberMoneyPostingContext, plan: 
           problems.push(`${label} must be a revenue leg: only the builder splits tax`);
         }
         if (!cents(leg.amountCents)) problems.push(`${label} needs positive integer cents`);
+        legLines.set(index, lines.length);
         lines.push({ ...shared, account: leg.account, amountCents: leg.amountCents, ...untaxed });
         return;
       }
@@ -478,6 +508,35 @@ export function buildMemberMoneyBatch(context: MemberMoneyPostingContext, plan: 
     });
   }
 
+  const applications: BuiltApplication[] = [];
+  const applicationKeys = new Set<string>();
+  const applied = new Map<number, number>();
+  for (const application of plan.applications ?? []) {
+    if (blank(application.key) || applicationKeys.has(application.key)) problems.push("application keys must be non-empty and unique");
+    applicationKeys.add(application.key);
+    if (!cents(application.amountCents) || blank(application.obligationKey)) problems.push("applications need an obligation and positive integer cents");
+    let source: BuiltApplication["source"];
+    if ("leg" in application.source) {
+      const index = legLines.get(application.source.leg);
+      const line = index === undefined ? undefined : lines[index];
+      if (!line || index === undefined) { problems.push("an application must name an amount leg"); continue; }
+      source = { line: index };
+      const obligation = obligations.find((o) => o.key === application.obligationKey);
+      if (!applicationRole(line, obligation?.kind)) problems.push("an application must collect/fund from credit AR or pay from debit RP");
+      if (line.account === "REFUND_PAYABLE" && line.obligationKey !== application.obligationKey) problems.push("a pay application must name its source leg's obligation");
+      if (obligation && (obligation.debtorKind !== line.debtorKind || obligation.memberId !== line.memberId || obligation.organisationId !== line.organisationId)) {
+        problems.push("an application's source and obligation must have the same debtor");
+      }
+      if (application.reversesApplicationId) problems.push("an application reversal must name the original posted source line");
+      const total = (applied.get(index) ?? 0) + application.amountCents;
+      applied.set(index, total);
+      if (total > line.amountCents) problems.push("C1: applications exceed their source line");
+    } else {
+      if (blank(application.source.lineId)) problems.push("an application source line id is blank");
+      source = application.source;
+    }
+    applications.push({ ...application, source, reversesApplicationId: application.reversesApplicationId ?? null });
+  }
   if (problems.length > 0) throw new MemberMoneyPlanError(problems);
   return seal({
     event: {
@@ -494,6 +553,7 @@ export function buildMemberMoneyBatch(context: MemberMoneyPostingContext, plan: 
     obligations,
     lines,
     corrections,
+    applications,
   });
 }
 
@@ -504,6 +564,7 @@ export interface MemberMoneyJournalToReverse {
   policyVersion: string;
   codingVersion: string;
   lines: ReadonlyArray<Omit<BuiltLine, "source" | "originalLineId"> & { id: string }>;
+  applications?: readonly (BuiltApplication & { id: string })[];
 }
 
 /**
@@ -542,5 +603,15 @@ export function buildMemberMoneyReversal(
       ...line, source: 0, side: line.side === "DEBIT" ? "CREDIT" : "DEBIT", originalLineId: id,
     })),
     corrections: [],
+    applications: (original.applications ?? []).map(({ id, ...application }) => ({
+      ...application, key: `${eventKey}|${id}`, reversesApplicationId: id,
+    })),
   });
+}
+
+/** Roles are derived from the source account/side and the obligation, never supplied by a caller. */
+export function applicationRole(line: Pick<BuiltLine, "account" | "side">, kind?: MemberMoneyObligationKind): "collect" | "fund" | "pay" | null {
+  if (line.account === "MEMBER_RECEIVABLE" && line.side === "CREDIT") return kind === "REFUND" ? "fund" : "collect";
+  if (line.account === "REFUND_PAYABLE" && line.side === "DEBIT" && kind !== "CHARGE") return "pay";
+  return null;
 }

@@ -287,10 +287,16 @@ export function dispatchOwnNoteRow(
       // hide the officer's resolve: a separate live or failed allocation row
       // is reported alongside it (Xero review F8), report-only. A retry of one
       // of this note's rows could allocate the note a second time, since the
-      // officer's hand allocation has no link here; any other row is reported
-      // the same way, left to a person.
+      // officer's hand allocation has no link here. The clearing arm spans
+      // the booking: rows naming another note belong to that note's arm
+      // (#4774), as for resolved rows above.
       addResolvedNoteAllocationFinding(findings, arm, row.operation, { creditNoteId: arm.creditNoteId });
-      const blocking = getBlockingOperation(operations, "ALLOCATION", "ALLOCATE");
+      const noteOperations = arm.kind === "clearing"
+        ? operations.filter(
+            (operation) => readJsonRecord(operation.requestPayload)?.creditNoteId === arm.creditNoteId
+          )
+        : operations;
+      const blocking = getBlockingOperation(noteOperations, "ALLOCATION", "ALLOCATE");
       if (blocking && blocking.kind !== "resolved") addBlockedNoteAllocationFinding(findings, arm, blocking.operation);
       return HANDLED;
     }

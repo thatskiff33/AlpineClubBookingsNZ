@@ -32,6 +32,7 @@ import {
   type AuditLogClient,
   type StructuredAuditEvent,
 } from "@/lib/audit";
+import { DATA_KEY_REENCRYPT_JOB_NAME } from "@/lib/data-encryption-key-material";
 import { FORMER_MEMBER_ANONYMISATION_JOB_NAME } from "@/lib/privacy-retention-shared";
 
 /**
@@ -41,13 +42,17 @@ import { FORMER_MEMBER_ANONYMISATION_JOB_NAME } from "@/lib/privacy-retention-sh
 export type TwoFactorRequestContext = StructuredAuditEvent["request"];
 
 /**
- * The background jobs that may CLEAR a second factor with no person behind the
- * write, each named (INV-PRIV-020 bullet 2's closed list, for this vocabulary).
- * Adding one is a reviewed change; no system actor ever enrols a factor.
+ * The background jobs that may change a second factor with no person behind
+ * the write, each named (INV-PRIV-020 bullet 2's closed list, for this
+ * vocabulary). Adding one is a reviewed change; no system actor ever enrols a
+ * factor or issues codes. Which job may record which action is
+ * `assertTwoFactorActorMayAct`'s.
  */
 export const TWO_FACTOR_SYSTEM_ACTORS = [
   /** The retention job anonymising a former member after their period (#4457). */
   FORMER_MEMBER_ANONYMISATION_JOB_NAME,
+  /** The operator's re-encrypt moving stored data to the current data key (#4456). */
+  DATA_KEY_REENCRYPT_JOB_NAME,
 ] as const;
 
 export type TwoFactorSystemActor = (typeof TWO_FACTOR_SYSTEM_ACTORS)[number];
@@ -77,7 +82,24 @@ export const TWO_FACTOR_AUDIT_ACTIONS = {
   cleared: "security.two_factor.cleared",
   /** A member replaced their recovery codes, invalidating every unused one. */
   recoveryCodesReplaced: "security.two_factor.recovery_codes_replaced",
+  /**
+   * The authenticator secret was re-encrypted under the current data key
+   * (#4456). The same secret: the member's authenticator app keeps working.
+   */
+  secretRewrapped: "security.two_factor.secret_rewrapped",
+  /**
+   * Unused recovery codes hashed under the auth secret were retired at the
+   * data-key cut-over (#4456, owner decision of 1 Nov 2026): they no longer
+   * sign the member in, and the member is told to generate a new set.
+   */
+  recoveryCodesRetired: "security.two_factor.recovery_codes_retired",
 } as const;
+
+/** The actions only the data-key re-encrypt records, and nobody else. */
+const KEY_MAINTENANCE_ACTIONS: ReadonlySet<string> = new Set([
+  TWO_FACTOR_AUDIT_ACTIONS.secretRewrapped,
+  TWO_FACTOR_AUDIT_ACTIONS.recoveryCodesRetired,
+]);
 
 export type TwoFactorAuditAction =
   (typeof TWO_FACTOR_AUDIT_ACTIONS)[keyof typeof TWO_FACTOR_AUDIT_ACTIONS];
@@ -86,7 +108,8 @@ export type TwoFactorAuditAction =
 type TwoFactorActorRefusal =
   | { readonly kind: "unusable" }
   | { readonly kind: "not-own-factor"; readonly subjectMemberId: string }
-  | { readonly kind: "job-may-only-clear" };
+  | { readonly kind: "job-may-only-clear" }
+  | { readonly kind: "re-encrypt-only" };
 
 function refusalMessage(operation: string, received: unknown, refusal: TwoFactorActorRefusal): string {
   switch (refusal.kind) {
@@ -105,6 +128,10 @@ function refusalMessage(operation: string, received: unknown, refusal: TwoFactor
       return `Two-factor mutation "${operation}" was refused: a job ` +
         `(${JSON.stringify(received)}) may only clear a second factor. ` +
         "Enrolling one or replacing recovery codes needs a member or an administrator.";
+    case "re-encrypt-only":
+      return `Two-factor mutation "${operation}" was refused: only the ` +
+        `"${DATA_KEY_REENCRYPT_JOB_NAME}" job records it, and it may record nothing ` +
+        `else (received ${JSON.stringify(received)}).`;
   }
 }
 
@@ -154,7 +181,9 @@ export function assertTwoFactorActor(
 /**
  * Whether this actor may make this mutation of this member's second factor. A
  * member may change only their OWN; an administrator acts on someone else's; a
- * named job may only CLEAR one. Every entry point calls it before anything is
+ * named job may only CLEAR one — except the data-key re-encrypt, which records
+ * its own two key-maintenance actions and nothing else, and is the only actor
+ * that may record them. Every entry point calls it before anything is
  * written: a row naming member A as "the member themself" for member B's
  * enrolment, or a job as the author of an enrolment, is a false record. The
  * types already refuse a job outside a clear; this is the runtime half, for
@@ -166,7 +195,11 @@ export function assertTwoFactorActorMayAct(
   subjectMemberId: string,
 ): asserts actor is TwoFactorActor {
   assertTwoFactorActor(operation, actor);
-  if (actor.kind === "system" && operation !== TWO_FACTOR_AUDIT_ACTIONS.cleared) {
+  const reencryptJob = actor.kind === "system" && actor.actor === DATA_KEY_REENCRYPT_JOB_NAME;
+  if (KEY_MAINTENANCE_ACTIONS.has(operation) !== reencryptJob) {
+    throw new TwoFactorActorError(operation, actor, { kind: "re-encrypt-only" });
+  }
+  if (actor.kind === "system" && !reencryptJob && operation !== TWO_FACTOR_AUDIT_ACTIONS.cleared) {
     throw new TwoFactorActorError(operation, actor, { kind: "job-may-only-clear" });
   }
   if (actor.kind === "member" && actor.memberId !== subjectMemberId) {
@@ -187,17 +220,45 @@ type TwoFactorMutationDetails = {
   authenticatorApp: boolean;
   /** How many recovery codes were issued, when the event issued any. Never the codes. */
   recoveryCodesIssued?: number;
+  /** How many unused recovery codes the event retired, when it retired any. Never the codes. */
+  recoveryCodesRetired?: number;
   request?: TwoFactorRequestContext;
 };
 
-/** A job appears only beside a clear; enrolment and code replacement name a person. */
+/** The data-key re-encrypt, the one actor of the key-maintenance actions. */
+export type TwoFactorReencryptActor = {
+  readonly kind: "system";
+  readonly actor: typeof DATA_KEY_REENCRYPT_JOB_NAME;
+};
+
+type TwoFactorKeyMaintenanceAction =
+  | typeof TWO_FACTOR_AUDIT_ACTIONS.secretRewrapped
+  | typeof TWO_FACTOR_AUDIT_ACTIONS.recoveryCodesRetired;
+
+/**
+ * A job appears only beside a clear or a key-maintenance action; enrolment and
+ * code replacement name a person.
+ */
 export type TwoFactorMutation = TwoFactorMutationDetails & (
   | { action: typeof TWO_FACTOR_AUDIT_ACTIONS.cleared; actor: TwoFactorActor }
+  | { action: TwoFactorKeyMaintenanceAction; actor: TwoFactorReencryptActor }
   | {
-      action: Exclude<TwoFactorAuditAction, typeof TWO_FACTOR_AUDIT_ACTIONS.cleared>;
+      action: Exclude<
+        TwoFactorAuditAction,
+        typeof TWO_FACTOR_AUDIT_ACTIONS.cleared | TwoFactorKeyMaintenanceAction
+      >;
       actor: TwoFactorPersonActor;
     }
 );
+
+const SUMMARIES: Record<Exclude<TwoFactorAuditAction, typeof TWO_FACTOR_AUDIT_ACTIONS.enrolled>, string> = {
+  [TWO_FACTOR_AUDIT_ACTIONS.cleared]: "Two-factor authentication cleared",
+  [TWO_FACTOR_AUDIT_ACTIONS.recoveryCodesReplaced]: "Two-factor recovery codes replaced",
+  [TWO_FACTOR_AUDIT_ACTIONS.secretRewrapped]:
+    "Two-factor authenticator secret re-encrypted under the current data key",
+  [TWO_FACTOR_AUDIT_ACTIONS.recoveryCodesRetired]:
+    "Two-factor recovery codes retired by a data-encryption key change",
+};
 
 /**
  * Write the audit row for a two-factor mutation, on the SAME client that made
@@ -216,9 +277,7 @@ export async function recordTwoFactorMutation(
       ? `Two-factor authentication turned on (${
           params.method === "EMAIL" ? "email code" : "authenticator app"
         })`
-      : params.action === TWO_FACTOR_AUDIT_ACTIONS.recoveryCodesReplaced
-        ? "Two-factor recovery codes replaced"
-        : "Two-factor authentication cleared";
+      : SUMMARIES[params.action];
   await createAuditLog(
     {
       action: params.action,
@@ -242,6 +301,9 @@ export async function recordTwoFactorMutation(
         ...(params.recoveryCodesIssued === undefined
           ? {}
           : { recoveryCodesIssued: params.recoveryCodesIssued }),
+        ...(params.recoveryCodesRetired === undefined
+          ? {}
+          : { recoveryCodesRetired: params.recoveryCodesRetired }),
       },
       // Declared, not defaulted: the member reads the generic event only.
       memberDisclosure: { visibility: "internal" },

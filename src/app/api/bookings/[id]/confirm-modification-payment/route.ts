@@ -1,3 +1,5 @@
+import { resolveBookingMoneyPostingContext } from "@/lib/member-money/doors";
+import { receiptCaptureTime } from "@/lib/stripe-capture-date";
 import { NextRequest, NextResponse } from "next/server";
 import { bookingOwner } from "@/lib/booking-owner";
 import { auth } from "@/lib/auth";
@@ -113,6 +115,8 @@ export async function POST(
     }
 
     await markPaymentIntentTransactionSucceeded({
+      journal: await resolveBookingMoneyPostingContext(),
+      capturedAt: receiptCaptureTime(pi),
       paymentIntentId: pi.id,
       amountCents: pi.amount,
       paymentMethodId:

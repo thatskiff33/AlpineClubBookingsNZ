@@ -97,6 +97,8 @@ let reconcile: (typeof import("@/lib/payment-transactions"))["reconcilePaymentAg
     await prisma.xeroObjectLink.deleteMany({ where: { localId: modificationId } });
     await prisma.manualRefundTask.deleteMany({ where: { bookingId: childId } });
     await prisma.bookingModification.deleteMany({ where: { bookingId: childId } });
+    // #4574: payment transaction history no longer cascades with its payment.
+    await prisma.paymentTransaction.deleteMany({ where: { payment: { bookingId: childId } } });
     await prisma.payment.deleteMany({ where: { bookingId: childId } });
     await prisma.booking.deleteMany({ where: { id: childId } });
     await prisma.groupBookingSettlement.deleteMany({ where: { groupBookingId: `${P}-group` } });

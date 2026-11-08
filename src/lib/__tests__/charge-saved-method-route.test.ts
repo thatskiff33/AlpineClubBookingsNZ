@@ -103,7 +103,7 @@ vi.mock("@/lib/session-guards", () => ({
 // #3267: a replayed attempt that already names its intent is RETRIEVED, and a
 // superseded attempt's intent is cancelled through the with-result variant.
 vi.mock("@/lib/stripe", () => ({
-  chargePaymentMethod: (...args: unknown[]) => mockChargePaymentMethod(...args),
+  chargePaymentMethod: async (...args: unknown[]) => ({ created: Math.floor(new Date().getTime() / 1000), ...await mockChargePaymentMethod(...args) }),
   getPaymentIntent: (...args: unknown[]) => mockGetPaymentIntent(...args),
   cancelPaymentIntentIfCancellableWithResult: (...args: unknown[]) =>
     mockCancelPaymentIntentIfCancellableWithResult(...args),
@@ -203,6 +203,8 @@ function paymentTransactionMocks() {
   };
 }
 const txClient = {
+  memberMoneyEvent: { findUnique: vi.fn(async () => null) },
+  payment: { findUnique: vi.fn(async () => ({ bookingId: "booking-1" })) },
   $executeRaw: (...args: unknown[]) => mockExecuteRaw(...args),
   booking: {
     findUnique: (...args: unknown[]) => mockBookingFindUnique(...args),
@@ -222,7 +224,9 @@ vi.mock("@/lib/prisma", () => ({
       updateMany: (...args: unknown[]) => mockBookingUpdateMany(...args),
       update: (...args: unknown[]) => mockBookingUpdate(...args),
     },
+    memberMoneyEvent: { findUnique: vi.fn(async () => null) },
     payment: {
+      findUnique: vi.fn(async () => ({ bookingId: "booking-1" })),
       update: (...args: unknown[]) => mockPaymentUpdate(...args),
     },
     paymentTransaction: {
@@ -406,6 +410,7 @@ describe("POST /api/payments/charge-saved-method", () => {
     });
 
     expect(mockMarkBookingPaymentSucceeded).toHaveBeenCalledWith({
+      capturedAt: expect.any(Date),
       bookingId: "booking-1",
       paymentIntentId: "pi_success_1",
       amountCents: 12500,

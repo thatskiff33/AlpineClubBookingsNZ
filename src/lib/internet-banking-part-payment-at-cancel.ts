@@ -1,3 +1,4 @@
+import { postBookingReceipts, type BookingJournalContext } from "@/lib/member-money/doors";
 /**
  * #3643 (`INV-PAY-107`, orchestrator decisions 1 and 2 on the thread, within
  * option A): the normal cancel path knows about a part-paid internet banking
@@ -174,6 +175,7 @@ export async function recordPartPaymentInClaim(
   paymentId: string,
   partPayment: PartPaymentAtCancel,
   createdByMemberId: string,
+  journal: BookingJournalContext,
 ) {
   if (
     await hasRecordedInvoicePayment(
@@ -222,6 +224,7 @@ export async function recordPartPaymentInClaim(
             xeroInvoiceNumber: payment.xeroInvoiceNumber,
           },
         });
+
         return reconcilePaymentAggregates({ paymentId, store: tx });
       })()
     : await recordInternetBankingPaymentTransaction({
@@ -235,6 +238,9 @@ export async function recordPartPaymentInClaim(
         store: tx,
       });
   if (!recorded) throw new PartPaymentChangedError();
+  const capturedRows = await tx.paymentTransaction.findMany({ where: { paymentId, source: "INTERNET_BANKING", status: "SUCCEEDED" }, select: { id: true } });
+  await postBookingReceipts(tx, journal, { paymentId, decision: { transactionIds: capturedRows.map((r) => r.id), collect: true } });
+
 
   // #3535's booking-anchored clearing note for what the invoices still owe,
   // sized from Xero's own amount due at the read. The builder re-reads the

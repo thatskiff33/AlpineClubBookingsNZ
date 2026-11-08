@@ -68,7 +68,8 @@ vi.mock("@/lib/prisma", () => ({
       update: mocks.bookingUpdate,
       updateMany: mocks.bookingUpdateMany,
     },
-    payment: { upsert: mocks.paymentUpsert },
+    memberMoneyEvent: { findUnique: vi.fn(async () => null) },
+    payment: { findUnique: vi.fn(async () => ({ bookingId: "b1" })), upsert: mocks.paymentUpsert },
     // #3267: settle and a definite-failure FAILED mark run on the base client.
     paymentTransaction: {
       findMany: mocks.paymentTransactionFindMany,
@@ -95,7 +96,7 @@ vi.mock("@/lib/capacity", () => ({
   checkCapacityForGuestRanges: mocks.checkCapacity,
 }));
 vi.mock("@/lib/stripe", () => ({
-  chargePaymentMethod: mocks.chargePaymentMethod,
+  chargePaymentMethod: async (...args: unknown[]) => ({ created: Math.floor(new Date().getTime() / 1000), ...await mocks.chargePaymentMethod(...args) }),
   getPaymentIntent: mocks.getPaymentIntent,
   cancelPaymentIntentIfCancellableWithResult:
     mocks.cancelPaymentIntentIfCancellableWithResult,
@@ -171,7 +172,8 @@ const txClient = {
     update: mocks.bookingUpdate,
     updateMany: mocks.bookingUpdateMany,
   },
-  payment: { upsert: mocks.paymentUpsert },
+  memberMoneyEvent: { findUnique: vi.fn(async () => null) },
+  payment: { findUnique: vi.fn(async () => ({ bookingId: "b1" })), upsert: mocks.paymentUpsert },
   // #3267: the claim mints the attempt row inside this transaction, after the
   // CONFIRMED claim and the Payment upsert.
   paymentTransaction: {

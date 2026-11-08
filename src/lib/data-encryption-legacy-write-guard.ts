@@ -29,7 +29,7 @@ import type { Prisma } from "@prisma/client";
 import { DATA_ENCRYPTION_KEYS_ENV } from "@/lib/data-encryption-key-material";
 import { DATA_KEY_SOURCE_PREFIX, WeakAuthSecretError } from "@/lib/integration-crypto";
 import { exactContains, exactPrefix } from "@/lib/prisma-exact-prefix";
-import { RING_ENCRYPTION_VERSION } from "@/lib/two-factor-key-format";
+import { RETIRED_RECOVERY_CODE_KEY_ID, RING_ENCRYPTION_VERSION } from "@/lib/two-factor-key-format";
 
 /**
  * A legacy write refused because stored data names a ring key and no ring is
@@ -54,9 +54,11 @@ type RingEvidenceReader = Pick<
 /**
  * Does any durable stored row name a ring key? Asked in order, stopping at the
  * first yes. A ring code hash is `<id>:<hex>` and a legacy one bare hex, so a
- * `:` is the ring's mark (`two-factor-key-format.ts`). Every pattern is matched
- * literally (`INV-SSOT-006`): the `_` in `DATA_ENCRYPTION_KEY:` is otherwise a
- * `LIKE` wildcard.
+ * `:` is the ring's mark (`two-factor-key-format.ts`) — except on a legacy code
+ * the re-encrypt RETIRED, which depends on no key at all and so is no evidence
+ * that a ring was ever set. Every pattern is matched literally
+ * (`INV-SSOT-006`): the `_` in `DATA_ENCRYPTION_KEY:` is otherwise a `LIKE`
+ * wildcard.
  */
 export async function ringKeyedDataExists(db: RingEvidenceReader): Promise<boolean> {
   if ((await db.integrationCredential.count({ where: { secretSource: exactPrefix(DATA_KEY_SOURCE_PREFIX) } })) > 0) {
@@ -65,7 +67,16 @@ export async function ringKeyedDataExists(db: RingEvidenceReader): Promise<boole
   if ((await db.member.count({ where: { totpSecret: exactPrefix(`${RING_ENCRYPTION_VERSION}:`) } })) > 0) {
     return true;
   }
-  return (await db.twoFactorRecoveryCode.count({ where: { codeHash: exactContains(":") } })) > 0;
+  return (
+    (await db.twoFactorRecoveryCode.count({
+      where: {
+        AND: [
+          { codeHash: exactContains(":") },
+          { NOT: { codeHash: exactPrefix(`${RETIRED_RECOVERY_CODE_KEY_ID}:`) } },
+        ],
+      },
+    })) > 0
+  );
 }
 
 /**

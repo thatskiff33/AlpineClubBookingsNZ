@@ -63,6 +63,26 @@ const mocks = vi.hoisted(() => ({
   error: vi.fn(),
 }));
 
+/**
+ * The second-instrument lookups among the transaction reads: every `findMany` but
+ * #4516's read of the PRIMARY bank rows this delivery moves to captured (its
+ * receipt selection, `status notIn [...refunded, SUCCEEDED]`, ids only).
+ */
+function secondInstrumentLookups() {
+  return mocks.paymentTransactionFindMany.mock.calls.filter(([args]) => {
+    const read = args as { select?: unknown; where?: { kind?: unknown; status?: { notIn?: unknown[] } } } | undefined;
+    const receiptSelection = read?.where?.kind === "PRIMARY" && read.where.status?.notIn?.includes("SUCCEEDED")
+      && JSON.stringify(read.select) === JSON.stringify({ id: true });
+    return !receiptSelection;
+  });
+}
+
+// #4516 (M4b): the receipt hook runs on PostgreSQL (`member-money-receipts.realdb.test.ts`), not on this fake store.
+const receiptDoors = vi.hoisted(() => ({ postBookingReceipts: vi.fn(async () => 0) }));
+vi.mock("@/lib/member-money/doors", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/member-money/doors")),
+  postBookingReceipts: receiptDoors.postBookingReceipts,
+}));
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     $transaction: (...a: unknown[]) => mocks.transaction(...a),
@@ -699,7 +719,7 @@ describe("card first, then cancelled, then bank (#3638)", () => {
       },
       select: { id: true, snapshot: true },
     });
-    expect(mocks.paymentTransactionFindMany).not.toHaveBeenCalled();
+    expect(secondInstrumentLookups()).toEqual([]);
     expect(mocks.txBookingEventCreate).not.toHaveBeenCalled();
     expect(mocks.sendAdminSecondInstrumentSettlementConflictAlert).not.toHaveBeenCalled();
   });
@@ -720,7 +740,7 @@ describe("card first, then cancelled, then bank (#3638)", () => {
     const result = await sync();
 
     expect(result.secondInstrumentSettlementConflicts).toBe(0);
-    expect(mocks.paymentTransactionFindMany).not.toHaveBeenCalled();
+    expect(secondInstrumentLookups()).toEqual([]);
     expect(markerRows).toEqual([]);
     expect(mocks.sendAdminSecondInstrumentSettlementConflictAlert).not.toHaveBeenCalled();
   });

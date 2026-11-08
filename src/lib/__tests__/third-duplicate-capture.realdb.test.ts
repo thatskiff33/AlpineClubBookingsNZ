@@ -1,3 +1,4 @@
+import { memberMoneyTestContext } from "./support/member-money-fixtures";
 /**
  * Real-PostgreSQL proof of #4211 (`INV-PAY-043`, `INV-PAY-133`): a member pays
  * one booking three times (three stale tabs, three card intents). Exactly one
@@ -374,6 +375,7 @@ let prisma: (typeof import("@/lib/prisma"))["prisma"];
       expect((await arrive(settling)).outcome).toBe("paid");
       const { settleSavedCardChargeAttempt } = await import("@/lib/saved-card-charge-settle");
       const recorded = await settleSavedCardChargeAttempt({
+        journal: memberMoneyTestContext(),
         attemptRowId: attempt.id,
         paymentId: PAYMENT_ID,
         paymentIntent: { id: savedCardIntent, status: "succeeded", amount: PRICE_CENTS, payment_method: null },

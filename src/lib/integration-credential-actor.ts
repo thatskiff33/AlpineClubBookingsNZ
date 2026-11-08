@@ -44,6 +44,7 @@
 import { createHash } from "crypto";
 
 import { createAuditLog, type AuditLogClient } from "@/lib/audit";
+import { DATA_KEY_REENCRYPT_JOB_NAME } from "@/lib/data-encryption-key-material";
 import type { WrappingKeySource } from "@/lib/integration-crypto";
 
 // ---------------------------------------------------------------------------
@@ -81,6 +82,12 @@ export const CREDENTIAL_SYSTEM_ACTORS = [
   "xero-token-refresh",
   /** The E2E staging stack seeding Stripe test-mode keys. Never a real deployment. */
   "e2e-stripe-seed",
+  /**
+   * The operator's `pnpm run data-keys:reencrypt` (#4456) re-encrypted a stored
+   * credential, unchanged, under the current data key. Only the wrapping key
+   * changes; the run is the operator's, but no member is signed in to it.
+   */
+  DATA_KEY_REENCRYPT_JOB_NAME,
 ] as const;
 
 /**
@@ -409,7 +416,9 @@ export type CredentialMutationCause =
   | { readonly kind: "oauth-connect" }
   | { readonly kind: "oauth-disconnect" }
   | { readonly kind: "token-refresh" }
-  | { readonly kind: "verify-reset"; readonly credential: string };
+  | { readonly kind: "verify-reset"; readonly credential: string }
+  /** The same value re-encrypted under the current data key (#4456). */
+  | { readonly kind: "data-key-reencrypt" };
 
 /** Describe an expectation for an audit row. Never carries a secret. */
 export function describeCredentialExpectation(

@@ -429,6 +429,9 @@ async function runCheck() {
   const readiness = buildSetupReadiness({
     configDir: CONFIG_DIR,
     database,
+    // This shell's env plus `.env`, which may not be the running app's ring
+    // (#4456 review round 3): it names no current key and no fingerprint.
+    dataKeySource: "shell",
   });
   console.log(renderSetupCheckReport(readiness));
   if (readiness.status === "blocked") {

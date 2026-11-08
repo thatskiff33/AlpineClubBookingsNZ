@@ -1596,6 +1596,7 @@ async function performBookingCancellation(
         lockedPayment.id,
         partPayment,
         sessionUserId,
+        journal,
       );
       lockedPayment = recognised.payment;
       clearingOperationId = recognised.clearingOperationId;

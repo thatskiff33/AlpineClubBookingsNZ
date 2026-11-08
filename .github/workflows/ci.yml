@@ -832,15 +832,17 @@ jobs:
 
       # #4463: every PR says whether it deviates materially from its issue's
       # plan (`## Plan Deviation`: `None`, or items linking the owner's answer).
-      # WARNING ONLY until `PLAN_DEVIATION_ENFORCED` in the script is flipped
-      # (owner decision, 1 Nov 2026: warn for seven days, then fail); a warning
-      # is a `::warning::` annotation and the step exits 0.
+      # Enforced after the warning week (#4633): missing, empty or unlinked
+      # answers fail. Only dependency manifests and the lockfile are exempt;
+      # an unknown diff cannot grant the exemption.
       - name: Validate PR plan deviation
         if: github.event_name == 'pull_request'
         env:
           PR_BODY_FILE: ${{ runner.temp }}/pr-body.md
           PR_NUMBER: ${{ github.event.pull_request.number }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: node scripts/ci/check-pr-plan-deviation.mjs
 
       # #4463: a PR over 800 changed lines (`linguist-generated` files in
@@ -1289,6 +1291,17 @@ jobs:
           RUN_CONCURRENCY_RACE_TESTS: "1"
         run: pnpm exec vitest run src/lib/__tests__/member-money-posting.realdb.test.ts
 
+      # #4691 (Ledger M4a): applications, caps and refund reservations against
+      # real PostgreSQL, as the INSERT/SELECT-only application role. The caps,
+      # the Payment-row queue and the database backstops are PostgreSQL
+      # behaviour. Same shape as the step above. It describe.skip's itself
+      # without the env vars, so this step MUST stay wired —
+      # `review-findings-contracts.test.ts` fails if it goes missing.
+      - name: Prove the member-money application engine against dedicated PostgreSQL
+        env:
+          RUN_CONCURRENCY_RACE_TESTS: "1"
+        run: pnpm exec vitest run src/lib/__tests__/member-money-applications.realdb.test.ts
+
       # E8 (#1934): real-Postgres behavior of the member-grouping cutover
       # migration (legacy-rule deactivation, shape-dedupe, backfill, mode seed,
       # idempotent re-run). Self-provisions a throwaway schema (needs PG 15+
@@ -1493,10 +1506,11 @@ jobs:
   realdb-all:
     name: Real-PostgreSQL suites (all, advisory)
     runs-on: ubuntu-latest
-    # PR CI measured this job at 9m02s (#4476): 20 minutes leaves room for a
-    # slower runner and growing suites, where 45 would let a hung run hold a
-    # runner for most of an hour.
-    timeout-minutes: 20
+    # PR CI measured this job at 9m02s (#4476). By 8 Nov 2026 it took 16-18
+    # minutes on `main` and was cancelled at the old 20-minute limit in 4 of 7
+    # runs, so a cancelled run proved nothing (#4793). 35 is about twice the
+    # current run time and still frees a hung runner well inside the hour.
+    timeout-minutes: 35
     permissions:
       contents: read
     services:
