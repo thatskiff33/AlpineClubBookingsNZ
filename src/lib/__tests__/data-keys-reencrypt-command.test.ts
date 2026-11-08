@@ -22,6 +22,8 @@ function report(remaining = 0): ReencryptReport {
     currentKeyId: "k1",
     currentKeyFingerprint: "0000-1111-2222-3333",
     keyCheckedAgainst: "a stored credential",
+    fingerprintConfirmed: true,
+    runCommand: "pnpm run data-keys:reencrypt --expect-fingerprint 0000-1111-2222-3333",
     dryRun: false,
     passes: 1,
     credentials: { moved: 1, lostClaims: 0, unreadable: 0, remaining },
