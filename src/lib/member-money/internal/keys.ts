@@ -71,6 +71,11 @@ export const memberMoneyEventKeys = {
   keptCapture: (id: string) => key(`kept-capture:${part(id, "capture")}`),
   successor: (obligationKey: string, from: string, to: string) => key(`successor|${obligationKey}|${nestedPart(from)}|${nestedPart(to)}`),
   mergeResidue: (from: string, to: string, event: MemberMoneyEventKey) => key(`merge-residue:${part(from, "from")}:${part(to, "to")}|${event}`),
+  /**
+   * #4516 review: a receipt's credit that a merge's snapshot netted into the survivor's balance, named on the
+   * owner that now collects it as a zero-net stand-in, so its application keeps the obligation's debtor.
+   */
+  mergeFollow: (event: MemberMoneyEventKey, to: string) => key(`merge-follow|${event}|${nestedPart(to)}`),
   /** An exact whole-batch reversal: the database allows one per journal, so the journal names it. */
   reversal: (journalId: string) => key(`reversal:${part(journalId, "journal id")}`),
 } as const;

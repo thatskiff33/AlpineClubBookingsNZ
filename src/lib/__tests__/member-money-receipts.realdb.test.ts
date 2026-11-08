@@ -80,6 +80,30 @@ const census = (id: string) => db.$transaction((tx) => readBookingReceiptCensus(
 const successorOf = (id: string, memberId: string) =>
   db.memberMoneyObligation.findUnique({ where: { obligationKey: `${memberMoneyEventKeys.bookingCharge(id)}|for|MEMBER|${memberId}` } });
 
+/**
+ * The booking's open CHARGE faces (each live tip's face less what was applied to it), what is still owed by the
+ * journal's own figures (live charge less collected), and each member's receivable balance on the booking.
+ */
+async function chargeChain(id: string) {
+  return db.$transaction(async (tx) => {
+    const state = await readMemberMoneyApplicationState(tx, id);
+    const applied = memberMoneyApplicationTotals(state);
+    const tips = state.obligations.filter((o) => o.kind === "CHARGE" && !state.obligations.some((c) => c.key.startsWith(`${o.key}|for|`)));
+    const live = await tx.memberMoneyLine.findMany({ where: { bookingId: id, account: { in: ["BOOKING_REVENUE", "FEE_REVENUE"] } }, select: { side: true, grossCents: true, amountCents: true } });
+    const charge = live.reduce((n, l) => n + (l.side === "CREDIT" ? 1 : -1) * (l.grossCents ?? l.amountCents), 0);
+    const lines = await tx.memberMoneyLine.findMany({ where: { bookingId: id, account: "MEMBER_RECEIVABLE", debtorKind: "MEMBER" }, select: { memberId: true, side: true, amountCents: true } });
+    const balances: Record<string, number> = {};
+    for (const l of lines) balances[l.memberId!] = (balances[l.memberId!] ?? 0) + (l.side === "DEBIT" ? 1 : -1) * l.amountCents;
+    return {
+      openFaces: tips.reduce((n, o) => n + o.faceCents - (applied.obligations.get(o.id) ?? 0), 0),
+      tipOwners: tips.map((o) => o.memberId),
+      outstanding: charge - applied.collected,
+      chargeOwners: [...new Set(state.obligations.filter((o) => o.kind === "CHARGE").map((o) => o.memberId))],
+      balances,
+    };
+  });
+}
+
 /** A transaction client that records each delegate call, to prove what the hook reads under its caller's locks. */
 function counting(tx: Prisma.TransactionClient) {
   const calls: string[] = [];
@@ -226,7 +250,7 @@ function counting(tx: Prisma.TransactionClient) {
     expect((await totals(id)).collected).toBe(10_000);
   });
 
-  it("collects a receipt its writer deferred before a merge onto that receipt's own debtor, never skipping it (#4516 review item 2)", async () => {
+  it("collects a receipt its writer deferred before a merge onto the owner's live obligation, never skipping it (#4516 review item 2)", async () => {
     const [from, to] = await mergePair();
     const id = await booking(10_000, false, from);
     const held = await cash(id, 4_000);
@@ -234,10 +258,48 @@ function counting(tx: Prisma.TransactionClient) {
     await merge(id, from, to);
     expect(await post(id, { paymentIntentId: held.stripePaymentIntentId!, collect: true })).toBeGreaterThan(0);
     expect((await totals(id)).collected).toBe(4_000);
+    // The survivor's successor took the uncollected face; the merge-carried receipt was collected on it.
+    expect((await successorOf(id, to))?.faceCents).toBe(10_000);
     const next = await cash(id, 6_000);
     await post(id, { transactionIds: [next.id], collect: true });
-    expect((await successorOf(id, to))?.faceCents).toBe(6_000);
     expect((await totals(id)).collected).toBe(10_000);
+    expect(await chargeChain(id)).toMatchObject({ openFaces: 0, outstanding: 0, tipOwners: [to] });
+  });
+
+  it("two hops: a receipt deferred before A merged into B, collected after B's own collection, lands on B's live tip (#4516 re-review B)", async () => {
+    const [a, b] = await mergePair();
+    const id = await booking(10_000, false, a);
+    const held = await cash(id, 3_000);
+    await post(id, { paymentIntentId: held.stripePaymentIntentId!, collect: false, deferred: true });
+    await merge(id, a, b);
+    const own = await cash(id, 4_000);
+    await post(id, { transactionIds: [own.id], collect: true });
+    expect(await post(id, { paymentIntentId: held.stripePaymentIntentId!, collect: true })).toBeGreaterThan(0);
+    const chain = await chargeChain(id);
+    expect(chain).toMatchObject({ openFaces: 3_000, outstanding: 3_000, tipOwners: [b] });
+    expect(chain.balances).toEqual({ [a]: 0, [b]: 3_000 });
+    expect((await census(id)).filter((f) => ["MERGED_DEBTOR_BALANCE", "UNAPPLIED_RECEIPT_ON_OPEN_CHARGE", "OVER_COLLECTED"].includes(f.kind))).toEqual([]);
+  });
+
+  it("three hops: A into B into C, deferred receipts of A and of B land on C's live tip and nothing is minted for B (#4516 re-review B)", async () => {
+    const [a, b] = await mergePair();
+    const [c] = await mergePair();
+    const id = await booking(10_000, false, a);
+    const heldA = await cash(id, 2_000);
+    await post(id, { paymentIntentId: heldA.stripePaymentIntentId!, collect: false, deferred: true });
+    await merge(id, a, b);
+    const heldB = await cash(id, 1_000);
+    await post(id, { paymentIntentId: heldB.stripePaymentIntentId!, collect: false, deferred: true });
+    await merge(id, b, c);
+    const own = await cash(id, 2_500);
+    await post(id, { transactionIds: [own.id], collect: true });
+    expect(await post(id, { paymentIntentId: heldA.stripePaymentIntentId!, collect: true })).toBeGreaterThan(0);
+    expect(await post(id, { paymentIntentId: heldB.stripePaymentIntentId!, collect: true })).toBeGreaterThan(0);
+    const chain = await chargeChain(id);
+    expect(chain).toMatchObject({ openFaces: 4_500, outstanding: 4_500, tipOwners: [c] });
+    expect(chain.chargeOwners.sort()).toEqual([a, c].sort());
+    expect(chain.balances).toEqual({ [a]: 0, [b]: 0, [c]: 4_500 });
+    expect((await census(id)).filter((f) => ["MERGED_DEBTOR_BALANCE", "UNAPPLIED_RECEIPT_ON_OPEN_CHARGE", "OVER_COLLECTED"].includes(f.kind))).toEqual([]);
   });
 
   it("moves only a receipt that landed on the merged-away member after the snapshot", async () => {

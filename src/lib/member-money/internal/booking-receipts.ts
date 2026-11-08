@@ -1,11 +1,12 @@
 import type { Prisma } from "@prisma/client";
 import { CAPTURE_KIND_RECEIPTS, CAPTURE_KINDS, type CaptureKind } from "../../booking-ledger-capture-kinds";
 import { clubCalendarDateOf, requireInstant, startOfClubDay, type CalendarDate } from "../../club-time";
+import logger from "../../logger";
 import { ORGANISER_SHARE_RECEIPT_REASON } from "../../organiser-extra-state";
 import { lockMemberMoneyPayment, readMemberMoneyApplicationState } from "./application-read";
 import { memberMoneyApplicationTotals, type ApplicationObligation, type ApplicationState } from "./application-state";
 import { bookingOwnerDebtor, eventPosted, readBookingLiveChargeCents, receivableBalances } from "./booking-journal-read";
-import { memberMoneyApplicationKeys, memberMoneyEventKeys } from "./keys";
+import { memberMoneyApplicationKeys, memberMoneyEventKeys, type MemberMoneyEventKey } from "./keys";
 import { isBookingJournalInactive, type BookingJournalContext } from "./journal-activity";
 import { buildMemberMoneyBatch, MemberMoneyPlanError, type MemberMoneyDebtor, type MemberMoneyPostingContext, type MemberMoneySource } from "./plan";
 import { postMemberMoneyEvent, reverseMemberMoneyJournal } from "./post";
@@ -55,8 +56,10 @@ export function receiptFactContext(context: MemberMoneyPostingContext, at: Date)
 const debtorId = (debtor: MemberMoneyDebtor) => (debtor.kind === "MEMBER" ? debtor.memberId : debtor.organisationId);
 const ownedBy = (obligation: ApplicationObligation, debtor: MemberMoneyDebtor) =>
   obligation.debtorKind === debtor.kind && (obligation.memberId ?? obligation.organisationId) === debtorId(debtor);
+const succeeded = (state: ApplicationState, obligation: ApplicationObligation) => state.obligations.some((o) => o.key.startsWith(`${obligation.key}|for|`));
+/** The debtor's live CHARGE obligation: one no successor has superseded, never a stale root. */
 const chargeOf = (state: ApplicationState, debtor: MemberMoneyDebtor) =>
-  state.obligations.find((o) => o.kind === "CHARGE" && ownedBy(o, debtor)) ?? null;
+  state.obligations.find((o) => o.kind === "CHARGE" && ownedBy(o, debtor) && !succeeded(state, o)) ?? null;
 
 /** The debtor a posted receivable line names; the line is immutable, so this never re-reads the booking. */
 function lineDebtor(line: { debtorKind: string | null; memberId: string | null; organisationId: string | null }): MemberMoneyDebtor {
@@ -99,7 +102,7 @@ async function postChargeSuccessors(tx: Db, context: MemberMoneyPostingContext, 
   const collected = memberMoneyApplicationTotals(state).obligations;
   for (const original of state.obligations.filter((o) => o.kind === "CHARGE" && !ownedBy(o, debtor))) {
     // Only transfer a live tip, rather than minting another path from an already succeeded obligation.
-    if (state.obligations.some((o) => o.key.startsWith(`${original.key}|for|`))) continue;
+    if (succeeded(state, original)) continue;
     const faceCents = Math.max(0, original.faceCents - (collected.get(original.id) ?? 0));
     if (faceCents === 0) continue;
     const eventKey = memberMoneyEventKeys.successor(original.key, original.memberId ?? original.organisationId!, debtorId(debtor));
@@ -128,29 +131,95 @@ export async function readMergedDebtorBalances(tx: Db, bookingId: string, ownerM
   return receivableBalances(rows, (row) => row.memberId);
 }
 
+/** A merged-away member's one merge: whom it merged into, and the events its line snapshot included. */
+async function mergeOf(tx: Db, memberId: string) {
+  // A member merges away once. This also finds the first merge when the survivor later merges again.
+  const merge = await tx.memberMoneyEvent.findFirst({ where: { sourceKind: "OFFICER_FACT", sourceIdentity: memberId, sourceVersion: { startsWith: "merge:" } },
+    select: { eventKey: true, sourceVersion: true, journal: { select: { sources: { select: { sourceId: true, sourceVersion: true } } } } } });
+  const sources = merge?.journal?.sources ?? [];
+  if (!merge || !sources.some((s) => s.sourceId === merge.eventKey && s.sourceVersion === MERGE_SNAPSHOT_VERSION)) return null;
+  return { eventKey: merge.eventKey, to: merge.sourceVersion.slice("merge:".length),
+    netted: (eventId: string) => sources.some((s) => s.sourceId === eventId && s.sourceVersion === merge.eventKey) };
+}
+
+/**
+ * Carry an exact event's stray balance on a merged-away member along the merge chain to the owner: each hop to
+ * the member that one merged into, unless that member's own merge snapshot already netted it. Never a balance
+ * attributed by timing or amount, and never onto a member that has merged away and not into the owner.
+ */
+async function carryResidue(tx: Db, context: MemberMoneyPostingContext, booking: { bookingId: string; lodgeId: string },
+  owner: string, start: { holder: string; eventKey: MemberMoneyEventKey; eventId: string; cents: number }) {
+  let { holder, eventKey, eventId } = start;
+  const { cents } = start;
+  while (holder !== owner) {
+    const merge = await mergeOf(tx, holder);
+    if (!merge || merge.netted(eventId)) return;
+    const key = memberMoneyEventKeys.mergeResidue(holder, merge.to, eventKey);
+    if (!await eventPosted(tx, key)) {
+      const leg = { type: "amount" as const, account: "MEMBER_RECEIVABLE" as const, amountCents: Math.abs(cents), booking, evidence: { strayEventKey: eventKey } };
+      await postMemberMoneyEvent(tx, context, { kind: "TRANSFER", eventKey: key, origin: "APP",
+        source: { kind: "BOOKING", id: booking.bookingId, version: key }, reason: "Move merged-debtor residue",
+        legs: [{ ...leg, side: cents > 0 ? "CREDIT" : "DEBIT", debtor: { kind: "MEMBER", memberId: holder } },
+          { ...leg, side: cents > 0 ? "DEBIT" : "CREDIT", debtor: { kind: "MEMBER", memberId: merge.to } }] });
+    }
+    eventId = (await tx.memberMoneyEvent.findUniqueOrThrow({ where: { eventKey: key }, select: { id: true } })).id;
+    eventKey = key;
+    holder = merge.to;
+  }
+}
+
 /** Transfer only an exact event omitted from the merge's snapshot, never a balance attributed by timing or amount. */
 async function moveReceiptResidue(tx: Db, context: MemberMoneyPostingContext, booking: { bookingId: string; lodgeId: string },
-  debtor: MemberMoneyDebtor, eventKey: ReturnType<typeof memberMoneyEventKeys.capture>) {
+  debtor: MemberMoneyDebtor, eventKey: MemberMoneyEventKey) {
   if (debtor.kind !== "MEMBER") return;
   const event = await tx.memberMoneyEvent.findUniqueOrThrow({ where: { eventKey }, select: { id: true, journal: { select: { lines: {
     where: { account: "MEMBER_RECEIVABLE", debtorKind: "MEMBER", bookingId: booking.bookingId, memberId: { not: debtor.memberId } },
     select: { memberId: true, side: true, amountCents: true },
   } } } } });
   for (const [from, cents] of receivableBalances(event.journal!.lines, (line) => line.memberId)) {
-    if (cents === 0) continue;
-    // A member merges away once. This also finds the first merge when the survivor later merges again.
-    const merge = await tx.memberMoneyEvent.findFirst({ where: { sourceKind: "OFFICER_FACT", sourceIdentity: from, sourceVersion: { startsWith: "merge:" } },
-      select: { eventKey: true, journal: { select: { sources: { select: { sourceKind: true, sourceId: true, sourceVersion: true } } } } } });
-    const sources = merge?.journal?.sources ?? [];
-    if (!sources.some((s) => s.sourceId === merge!.eventKey && s.sourceVersion === MERGE_SNAPSHOT_VERSION)) continue;
-    if (sources.some((s) => s.sourceId === event.id && s.sourceVersion === merge!.eventKey)) continue;
-    const key = memberMoneyEventKeys.mergeResidue(from, debtor.memberId, eventKey);
-    if (await eventPosted(tx, key)) continue;
-    const leg = { type: "amount" as const, account: "MEMBER_RECEIVABLE" as const, amountCents: Math.abs(cents), booking, evidence: { strayEventKey: eventKey } };
-    await postMemberMoneyEvent(tx, context, { kind: "TRANSFER", eventKey: key, origin: "APP",
-      source: { kind: "BOOKING", id: booking.bookingId, version: key }, reason: "Move merged-debtor residue",
-      legs: [{ ...leg, side: cents > 0 ? "CREDIT" : "DEBIT", debtor: { kind: "MEMBER", memberId: from } },
-        { ...leg, side: cents > 0 ? "DEBIT" : "CREDIT", debtor }] });
+    if (cents !== 0) await carryResidue(tx, context, booking, debtor.memberId, { holder: from, eventKey, eventId: event.id, cents });
+  }
+}
+
+/**
+ * The credit line a collection by the owner applies for a receipt: the receipt's own when the owner posted it;
+ * otherwise where the merge chain carried its credit to the owner. A residue move carried it as an exact line;
+ * a merge whose snapshot netted it moved it inside the survivor's balance, so the owner gets a zero-net stand-in
+ * for it, once. Null only when no merge moved the receipt's debtor to the owner.
+ */
+async function ownerCreditFor(tx: Db, context: MemberMoneyPostingContext, booking: { bookingId: string; lodgeId: string }, owner: MemberMoneyDebtor,
+  receipt: { eventKey: MemberMoneyEventKey; eventId: string; line: { id: string; amountCents: number; debtorKind: string | null; memberId: string | null; organisationId: string | null } },
+  unappliedCents: number): Promise<{ id: string; amountCents: number } | null> {
+  let holder = lineDebtor(receipt.line);
+  let credit = { id: receipt.line.id, amountCents: receipt.line.amountCents };
+  let { eventKey, eventId } = receipt;
+  for (;;) {
+    if (holder.kind === owner.kind && debtorId(holder) === debtorId(owner)) return credit;
+    if (holder.kind !== "MEMBER" || owner.kind !== "MEMBER") return null;
+    const merge = await mergeOf(tx, holder.memberId);
+    if (!merge) return null;
+    if (merge.netted(eventId)) {
+      const key = memberMoneyEventKeys.mergeFollow(receipt.eventKey, owner.memberId);
+      if (!await eventPosted(tx, key)) {
+        const leg = { type: "amount" as const, account: "MEMBER_RECEIVABLE" as const, amountCents: unappliedCents, debtor: owner, booking,
+          evidence: { followsEvent: eventKey, nettedBy: merge.eventKey } };
+        await postMemberMoneyEvent(tx, context, { kind: "TRANSFER", eventKey: key, origin: "APP",
+          source: { kind: "BOOKING", id: booking.bookingId, version: key }, reason: "Receipt carried by a member merge",
+          legs: [{ ...leg, side: "DEBIT" }, { ...leg, side: "CREDIT" }] });
+      }
+      const line = await tx.memberMoneyLine.findFirstOrThrow({ where: { journal: { event: { eventKey: key } }, account: "MEMBER_RECEIVABLE", side: "CREDIT" },
+        select: { id: true, amountCents: true } });
+      return line;
+    }
+    const key = memberMoneyEventKeys.mergeResidue(holder.memberId, merge.to, eventKey);
+    const residue = await tx.memberMoneyEvent.findUnique({ where: { eventKey: key }, select: { id: true, journal: { select: { lines: {
+      where: { account: "MEMBER_RECEIVABLE", side: "CREDIT", debtorKind: "MEMBER", memberId: merge.to }, select: { id: true, amountCents: true } } } } } });
+    const line = residue?.journal?.lines[0];
+    if (!residue || !line) return null;
+    holder = { kind: "MEMBER", memberId: merge.to };
+    credit = line;
+    eventKey = key;
+    eventId = residue.id;
   }
 }
 
@@ -162,8 +231,9 @@ function receiptPostedAs(evidence: Prisma.JsonValue): ReceiptPostedAs | null {
 /**
  * R06/R07/R08, beside the writer's own mutation. No caught refusal, provider call, inferred collection or new
  * advisory key. The owner is read once, with the Payment row held: every receipt this call posts names that
- * debtor, and a collection applies a receipt to its own debtor's obligation, so a merge committing mid-call
- * never parts a receipt from the obligation it collects.
+ * debtor, and every collection lands on that owner's live obligation, the tip of the charge chain. A receipt
+ * a merged-away member's writer deferred is applied there through the credit the merge chain carried to the
+ * owner, so open CHARGE faces stay equal to the live charge less what was collected.
  */
 export async function postBookingReceipts(tx: Db, context: BookingJournalContext, input: {
   paymentId: string; decision?: BookingReceiptDecision;
@@ -218,7 +288,7 @@ export async function postBookingReceipts(tx: Db, context: BookingJournalContext
       posted++;
     }
     await moveReceiptResidue(tx, factContext, booking, debtor, eventKey);
-    const receipt = await tx.memberMoneyEvent.findUniqueOrThrow({ where: { eventKey }, select: { journal: { select: { id: true, reversedBy: { select: { id: true } } } } } });
+    const receipt = await tx.memberMoneyEvent.findUniqueOrThrow({ where: { eventKey }, select: { journal: { select: { id: true, eventId: true, reversedBy: { select: { id: true } } } } } });
     if (reversal) {
       if (!receipt.journal!.reversedBy) {
         const reversed = await reverseMemberMoneyJournal(tx, receiptFactContext(context, reversal.postedAt), {
@@ -236,17 +306,29 @@ export async function postBookingReceipts(tx: Db, context: BookingJournalContext
     const sourceLine = await tx.memberMoneyLine.findFirstOrThrow({ where: { journalId: receipt.journal!.id, account: "MEMBER_RECEIVABLE", side: "CREDIT" } });
     // Only this writer's own receipt: posted now, or deferred by its writer to this decision. Never a catch-up's.
     if (!postedNow && receiptPostedAs(sourceLine.evidence) !== "deferred") continue;
-    // The receipt's own debtor: the one this call read, or the one its deferring writer read before a merge.
-    const obligation = await chargeObligation(tx, factContext, booking, lineDebtor(sourceLine));
+    // The live tip of the booking's charge chain is the owner's obligation (a successor is only ever posted for the
+    // owner this call read), so a receipt its writer deferred before a merge is collected there, never onto a
+    // superseded obligation, through the credit the merge chain carried to the owner.
+    const obligation = await chargeObligation(tx, factContext, booking, debtor);
     if (!obligation) continue;
+    const before = memberMoneyApplicationTotals(await readMemberMoneyApplicationState(tx, booking.bookingId));
+    const unapplied = sourceLine.amountCents - (before.sources.get(sourceLine.id) ?? 0);
+    if (unapplied <= 0) continue;
+    const credit = await ownerCreditFor(tx, factContext, booking, debtor,
+      { eventKey, eventId: receipt.journal!.eventId, line: sourceLine }, unapplied);
+    if (!credit) {
+      // An owner change no merge made (none does today): the census reports the receipt unapplied on an open charge.
+      logger.warn({ bookingId: booking.bookingId, receiptEventKey: eventKey }, "A deferred receipt's debtor no longer owns the booking and no merge carried it: left unapplied (#4516)");
+      continue;
+    }
     const totals = memberMoneyApplicationTotals(await readMemberMoneyApplicationState(tx, booking.bookingId));
     // One live-charge read clamps the amount and is the read C2 checks it against (`ApplicationCheck`).
     const liveChargeCents = await readBookingLiveChargeCents(tx, booking.bookingId);
-    const amountCents = Math.min(sourceLine.amountCents - (totals.sources.get(sourceLine.id) ?? 0), liveChargeCents - totals.collected);
+    const amountCents = Math.min(unapplied, credit.amountCents - (totals.sources.get(credit.id) ?? 0), liveChargeCents - totals.collected);
     if (amountCents <= 0) continue;
     await writeMemberMoneyBatch(tx, buildMemberMoneyBatch(factContext, { kind: "ZERO", eventKey: collectKey, origin: "APP", source: { ...source, version: collectKey },
       reason: "Apply the receipt the settlement selected", applications: [{ key: memberMoneyApplicationKeys.application(collectKey, row.id, obligation.key),
-        source: { lineId: sourceLine.id }, obligationKey: obligation.key, amountCents }] }), undefined, { liveChargeCents });
+        source: { lineId: credit.id }, obligationKey: obligation.key, amountCents }] }), undefined, { liveChargeCents });
     posted++;
   }
   return posted;

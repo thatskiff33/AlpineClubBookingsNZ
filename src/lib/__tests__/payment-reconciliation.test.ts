@@ -83,7 +83,9 @@ const journalDoors = vi.hoisted(() => ({ postBookingLedgerJournal: vi.fn(async (
 vi.mock("@/lib/member-money/doors", async (importOriginal) => ({
   ...((await importOriginal()) as typeof import("@/lib/member-money/doors")),
   postBookingLedgerJournal: journalDoors.postBookingLedgerJournal,
-  // #4516 (M4b): the receipt hook runs on PostgreSQL (`member-money-receipts.realdb.test.ts`); here, its decision.
+  // #4516 (M4b): the receipt hook runs on PostgreSQL (`member-money-receipts.realdb.test.ts`); here, the W1
+  // decision it is handed: a card settle collects its intent on `paid` and holds it otherwise (the officer
+  // settle's `manual_paid` is proved by that suite's real officer settle and reversal).
   postBookingReceipts: journalDoors.postBookingReceipts,
 }));
 
@@ -380,6 +382,11 @@ describe("markBookingPaymentSucceeded", () => {
     });
 
     expect(result.outcome).toBe("paid");
+    expect(journalDoors.postBookingReceipts).toHaveBeenCalledTimes(1);
+    expect(journalDoors.postBookingReceipts).toHaveBeenCalledWith(expect.anything(), expect.anything(), {
+      paymentId: expect.any(String),
+      decision: { collect: true, paymentIntentId: "pi_ledger", effectiveAt: undefined },
+    });
     const rows = mocks.ledgerCreateMany.mock.calls[0]?.[0]?.data as Array<
       Record<string, unknown>
     >;
@@ -961,6 +968,11 @@ describe("markBookingPaymentSucceeded", () => {
 
     expect(result.outcome).toBe("cancelled_refunded");
     expect(result.bumpedBookingIds).toEqual([]);
+    // #4516: the capture's receipt is recorded in full and held, never collected onto a cancelled booking.
+    expect(journalDoors.postBookingReceipts).toHaveBeenCalledWith(expect.anything(), expect.anything(), {
+      paymentId: expect.any(String),
+      decision: { collect: false, paymentIntentId: "pi_overbook", effectiveAt: undefined },
+    });
     // The booking is cancelled and the payment refunded — never marked PAID.
     // #1881 — status-guarded updateMany void, not a bare update.
     expect(mocks.bookingUpdateMany).toHaveBeenCalledWith({

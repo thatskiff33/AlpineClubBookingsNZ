@@ -5895,10 +5895,14 @@ is introduced. Settings and timezone resolve before transactions.
 Each decision the hook acts on is read under the Payment row, never before it:
 
 - **The owner, once per call.** The receipt reads the booking's owner without
-  locking Booking, once, and every receipt it posts names that debtor. A
-  collection applies a receipt to its own debtor's obligation, so a merge
-  committing mid-call never parts the two and never drops the collection. D4
-  moves any merged-debtor residue explicitly on a later posting.
+  locking Booking, once, and every receipt it posts names that debtor. Every
+  collection lands on that owner's live obligation, the tip of the charge chain,
+  so a merge committing mid-call never drops a collection and never strands one
+  on a superseded obligation. A receipt deferred before a merge is applied
+  through the credit the merge chain carried to the owner: an exact residue
+  move, or a zero-net stand-in when the merge's snapshot netted it. D4 moves
+  merged-debtor residue hop by hop along the merge chain, never onto a member
+  that merged away.
 - **Charge successors.** Merge takes no Payment row, so it posts no CHARGE
   successor: application state it read could miss a collection committing
   beside it. The first collection by the new owner posts the successor under

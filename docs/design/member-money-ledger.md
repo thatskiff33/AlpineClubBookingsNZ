@@ -800,8 +800,17 @@ instead, under the Payment row: each live obligation gets a zero-net receivable
 pair on the survivor for the face its predecessor has not collected. Posted
 debtors remain immutable. Receipt writers take only the Payment row and read
 the owner once per call without locking Booking; the next receipt posting moves
-any merged-debtor residue explicitly, keyed to its source event. No Payment lock
-is added to merge.
+any merged-debtor residue explicitly, keyed to its source event, one merge hop
+at a time. No Payment lock is added to merge.
+
+A successor is only ever posted for the current owner, and every collection
+lands on the owner's live obligation, so the open CHARGE faces always equal the
+live charge less what was collected. A receipt a merged-away member's writer
+deferred is applied there through the credit the merge chain carried to the
+owner: the residue move's exact line, or, when a merge's snapshot netted the
+receipt into the survivor's balance, a zero-net `merge-follow` pair on the owner
+that stands in for it. The receipt census counts what stand-ins collected
+against the receipts' unapplied cash.
 
 ### M4b receipt posting and catch-up
 

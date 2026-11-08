@@ -51,8 +51,12 @@ export async function readBookingReceiptCensus(tx: Db, paymentId: string): Promi
   const totals = memberMoneyApplicationTotals(state);
   const charge = await readBookingLiveChargeCents(tx, bookingId);
   if (totals.collected > charge) add("OVER_COLLECTED", bookingId, totals.collected - charge);
-  const unapplied = state.sources.filter((s) => !s.reversed && s.account === "MEMBER_RECEIVABLE" && s.side === "CREDIT" && s.sourceKind === "PAYMENT")
-    .reduce((n, s) => n + Math.max(0, s.amountCents - (totals.sources.get(s.id) ?? 0)), 0);
+  const credits = state.sources.filter((s) => !s.reversed && s.account === "MEMBER_RECEIVABLE" && s.side === "CREDIT");
+  // A receipt a merge carried to the owner is applied through its stand-in (a residue or merge-follow credit), so
+  // what those collected counts against the receipts' unapplied cash.
+  const carried = credits.filter((s) => s.sourceKind !== "PAYMENT").reduce((n, s) => n + (totals.sources.get(s.id) ?? 0), 0);
+  const unapplied = Math.max(0, credits.filter((s) => s.sourceKind === "PAYMENT")
+    .reduce((n, s) => n + Math.max(0, s.amountCents - (totals.sources.get(s.id) ?? 0)), 0) - carried);
   if (unapplied > 0 && charge > totals.collected) add("UNAPPLIED_RECEIPT_ON_OPEN_CHARGE", bookingId, Math.min(unapplied, charge - totals.collected));
   const owner = bookingOwnerDebtor(payment.booking);
   const balances = await readMergedDebtorBalances(tx, bookingId, owner.kind === "MEMBER" ? owner.memberId : null);
