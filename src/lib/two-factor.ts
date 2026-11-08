@@ -436,8 +436,10 @@ export async function consumeRecoveryCode(memberId: string, code: string) {
     return false;
   }
 
+  // Claimed on the hash it matched too, so a code the data-key re-encrypt
+  // retired meanwhile (its hash rewritten) is not used after all (#4456).
   const updated = await prisma.twoFactorRecoveryCode.updateMany({
-    where: { id: record.id, usedAt: null },
+    where: { id: record.id, codeHash: record.codeHash, usedAt: null },
     data: { usedAt: new Date() },
   });
   return updated.count === 1;

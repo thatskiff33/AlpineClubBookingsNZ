@@ -144,7 +144,8 @@ describe("two-factor helpers", () => {
 
     await expect(consumeRecoveryCode("member-1", code)).resolves.toBe(true);
     expect(mockPrisma.twoFactorRecoveryCode.updateMany).toHaveBeenCalledWith({
-      where: { id: "recovery-1", usedAt: null },
+      // Claimed on the hash it matched, too (#4456 review C2).
+      where: { id: "recovery-1", codeHash: hashRecoveryCode(code), usedAt: null },
       data: { usedAt: expect.any(Date) },
     });
 

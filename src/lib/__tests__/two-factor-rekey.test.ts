@@ -229,6 +229,19 @@ describe("retiring legacy recovery codes (#4456 PR 2, owner decision of 1 Nov 20
     expect(vi.mocked(createAuditLog).mock.calls[0]![0].metadata).toMatchObject({ recoveryCodesRetired: 1 });
   });
 
+  it("a code retired between its lookup and its use is not used: the two claims exclude each other (C2)", async () => {
+    const legacyCode = "AAAA-BBBB-CCCC";
+    // The instance without the ring, where the legacy code still matches.
+    db.codes.push({ id: "c1", memberId: "m1", codeHash: hashRecoveryCode(legacyCode), usedAt: null });
+    db.beforeCodeClaim = () => {
+      const row = db.codes.find((candidate) => candidate.id === "c1")!;
+      row.codeHash = `retired.legacy-auth-secret:${row.codeHash}`;
+    };
+
+    await expect(consumeRecoveryCode("m1", legacyCode)).resolves.toBe(false);
+    expect(db.codes[0]!.usedAt).toBeNull();
+  });
+
   it("records nothing for a member with no legacy codes", async () => {
     process.env.DATA_ENCRYPTION_KEYS = RING;
     db.codes.push({ id: "c1", memberId: "m1", codeHash: hashRecoveryCode("4444-5555-6666"), usedAt: null });
@@ -241,3 +254,4 @@ describe("retiring legacy recovery codes (#4456 PR 2, owner decision of 1 Nov 20
     await expect(retireLegacyRecoveryCodes("m1")).rejects.toBeInstanceOf(DataKeyRingError);
   });
 });
+
