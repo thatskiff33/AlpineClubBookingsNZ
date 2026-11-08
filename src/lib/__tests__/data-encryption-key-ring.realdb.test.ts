@@ -504,7 +504,7 @@ let observerClient: PrismaClient;
     process.env.DATA_ENCRYPTION_KEYS = RING;
     await expect(
       reencrypt.reencryptStoredData({ dryRun: false, retireLegacyRecoveryCodes: false, pause: noPause, scope: { providers: [PROVIDER] } }),
-    ).rejects.toThrow(/needs --expect-fingerprint/);
+    ).rejects.toThrow(/^Refused: a run that writes must be run as pnpm run data-keys:reencrypt --expect-fingerprint/);
     expect((await storedSource("legacy-row"))?.secretSource).toBe("AUTH_SECRET");
   });
 
