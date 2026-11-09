@@ -4,8 +4,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // ---------------------------------------------------------------------------
 // Admin page URLs are served only at their exact spelling (epic #4468, C4
 // #4801). Next matches a moved page's `beforeFiles` rewrite without regard to
-// letter case, and looks a page file up by its decoded path too, while the
-// proxy, the module gate and the layout guard decide on the path as written.
+// letter case, while the proxy, the module gate and the layout guard decide on
+// the path as written (escaped spellings are refused too, as a precaution).
 // So the proxy answers a registered page's old or hub path spelled any other
 // way with the same 404 a missing page gets, before anything reads the path.
 // `isInexactAdminPagePath` is the rule; `admin-hubs-registry.test.ts` holds

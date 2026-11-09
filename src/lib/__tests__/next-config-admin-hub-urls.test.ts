@@ -164,8 +164,9 @@ describe("next.config.ts today: the Website hub has moved", () => {
     }
     expect(serverMatch("/admin/site-style")).toBe("/admin/website/site-style");
     expect(isInexactAdminPagePath("/admin/site-style")).toBe(false);
-    // An escaped spelling matches no rule (they match the raw path), but the
-    // server finds a page file by its decoded path too, so it is refused as well.
+    // An escaped spelling matches no rule (they match the raw path), and on
+    // next@16.4.3 it renders the public catch-all; it is refused anyway, as a
+    // precaution against a Next that starts rendering decoded paths.
     expect(serverMatch("/admin/site%2Dstyle")).toBeUndefined();
     expect(isInexactAdminPagePath("/admin/site%2Dstyle")).toBe(true);
   });

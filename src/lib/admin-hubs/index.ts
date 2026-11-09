@@ -322,11 +322,14 @@ function decodeSegment(segment: string): string {
  * percent-escape is decoded: `/admin/Site-Style`, `/admin/site%2Dstyle`.
  *
  * Next matches the `beforeFiles` rewrites without regard to case (it compiles
- * them with no `caseSensitive` option, whatever the config says), and looks a
- * page file up by its decoded path too; but the proxy, the module gate and the
- * layout guard decide on the path exactly as written, where such a spelling
- * matches no page's rule. So admin page URLs are served only at their exact
- * spelling: the proxy answers this with a 404 and `canOpenAdminPath` refuses it.
+ * them with no `caseSensitive` option, whatever the config says), but the
+ * proxy, the module gate and the layout guard decide on the path exactly as
+ * written, where such a spelling matches no page's rule. Letter case is the
+ * confirmed way in on next@16.4.3; an escaped spelling there renders the
+ * public catch-all, not the page, and is refused only as a precaution against
+ * a Next that starts rendering decoded paths. So admin page URLs are served
+ * only at their exact spelling: the proxy answers this with a 404 and
+ * `canOpenAdminPath` refuses it.
  * A dynamic segment matches any non-empty value, as Next's does.
  */
 export function isInexactAdminPagePath(
