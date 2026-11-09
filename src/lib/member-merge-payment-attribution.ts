@@ -16,9 +16,14 @@
  *   booking row and waits for the Payment row a settle holds while the settle
  *   waits for that booking row.
  * - Before the booking moves (Payment, then booking, the settle's order): merge
- *   holds the Payment row and waits for the booking row an appeal holds while
- *   the appeal waits for that Payment row. The appeal takes no lodge key, so
- *   merge's lodge prefix does not fence it.
+ *   holds the Payment row and waits for the booking row an edit door holds
+ *   while the door waits for that Payment row.
+ *
+ * Merge's lodge prefix fences either writer only where the booking's lodge is
+ * in it, and a booking merge touches through an actor column (the duplicate
+ * made it, or overrode its capacity) can be at a lodge neither member stayed at.
+ * (An approved appeal refuses a cash-settled payment before its transaction, so
+ * it never meets merge on one of these rows.)
  *
  * So merge never WAITS for a Payment row. One statement locks every row naming
  * the duplicate, sorted by id, `NOWAIT`. If any is held, the merge refuses (a

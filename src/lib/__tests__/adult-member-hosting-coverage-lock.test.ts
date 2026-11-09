@@ -516,7 +516,7 @@ describe("the per-owner coverage lock (#2576 §9)", () => {
       "The Payment attribution must move BELOW lockMemberMergeHostingCoverageParticipants " +
         "(and so below applyMoves' booking moves). Merge holds booking rows without lock(1); " +
         "lock(1) writers take a Payment row before its booking row (a card settle) and after " +
-        "it (an appeal), so merge may only take Payment rows NOWAIT, and only once the Member " +
+        "it (the edit doors), so merge may only take Payment rows NOWAIT, and only once the Member " +
         "rows are locked, when no writer can make another Payment row name the duplicate.",
     ).toBeGreaterThan(body.indexOf(participantLockMarker));
 

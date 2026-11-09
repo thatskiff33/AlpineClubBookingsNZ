@@ -3307,16 +3307,19 @@ The `lock(1)` writers take a booking's two rows in both orders:
 | Order | Writers |
 | --- | --- |
 | Payment → booking | a card settle (W1: its PAID claim and R01's owner read), the back-post |
-| booking → Payment | the edit doors, an edit review, an approved appeal (booking row right after `lock(1)`, no lodge key) |
+| booking → Payment | the edit doors (after their lodge key), an edit review, an approved appeal |
 
 Two `lock(1)` holders never interleave, so neither order is a defect between
 them. Merge is not a `lock(1)` holder, so neither fixed place for the Payment
 rows is safe for merge. Moving them before the booking moves, the settle's
 order, would only change which writer deadlocks. Merge would hold the Payment
-row and wait for the booking row an appeal holds, while the appeal waited for
-that Payment row. Merge's lodge prefix does not fence the appeal, because the
-appeal takes no lodge key. Taking `lock(1)` is ruled out by "Why merge takes no
-global cohort key" above.
+row and wait for the booking row an edit door holds, while the door waited for
+that Payment row. Merge's lodge prefix fences the settle and the doors only
+where the booking's lodge is in it. A booking merge holds through an actor
+column (the duplicate made it, or overrode its capacity) can be at a lodge
+neither member has a guest row in. An approved appeal never meets merge on one
+of these rows: it refuses a cash-settled payment before its transaction opens.
+Taking `lock(1)` is ruled out by "Why merge takes no global cohort key" above.
 
 So merge never waits for a Payment row
 (`src/lib/member-merge-payment-attribution.ts`):
@@ -3339,10 +3342,12 @@ moves touch no Payment row: the guard matrix, the resolvers and D4's transfer
 read none, and `postMemberMergeTransfer` posts no successor. Proved against real
 PostgreSQL by `member-merge-payment-row-races.realdb.test.ts`: a card settle
 holding its Payment row makes the merge refuse at once, and the settle then
-commits. A merge holding the row makes the settle wait, and both commit. An
-appeal holding its booking row, before its Payment row, makes the merge wait,
-and both commit. Each order is a race the old placement or the
-Payment-before-booking placement turns into a deadlock. Pinned by position in
+commits. A merge holding the row makes the settle wait, and both commit. The
+edit doors' order, through their own lock helpers, holding the booking row
+before its Payment row makes the merge wait, and both commit; a merge holding
+both makes it wait. The settle-first race deadlocks under the old placement,
+and the door-first race under the Payment-before-booking placement (both
+probed). Pinned by position in
 `adult-member-hosting-coverage-lock.test.ts` and by shape in
 `member-merge-execute.test.ts`.
 

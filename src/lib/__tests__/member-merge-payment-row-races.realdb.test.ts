@@ -21,7 +21,10 @@
  * makes the booking PAID and its reversal clears it), and the case is about the
  * order of the two rows, which the settle takes the same way on any payable
  * booking. The edit-door race uses a real cash settlement by the duplicate, then
- * the doors' own two lock helpers, paused between them.
+ * the doors' own lock order through their lock helpers (lock(1), the lodge key,
+ * the booking row, the Payment row), paused before the Payment row. An approved
+ * appeal also takes the booking row first, but refuses a cash-settled payment
+ * before its transaction, so it never meets merge on one of these rows.
  *
  * Ordinary Vitest runs skip the file; CI's real-PostgreSQL job runs it against
  * the guarded loopback race database.
@@ -32,6 +35,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { cleanHistories, createHistoryBooking, historyNames, seedHistoryFixtures } from "./support/booking-ledger-history";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 import { assertSafeRaceDbUrl } from "./support/race-db-url";
+import { acquireLodgeCapacityLock } from "@/lib/capacity";
 
 vi.hoisted(() => {
   if (process.env.RUN_CONCURRENCY_RACE_TESTS === "1" && process.env.CONCURRENCY_RACE_DATABASE_URL) {
@@ -245,9 +249,10 @@ async function bookingState(id: string) {
     const { lockPaymentForRefundedTotal } = await import("@/lib/payment-transactions");
     const held = gate();
     const release = gate();
-    // The edit doors' order through their own helpers: lock(1), the booking row, then the Payment row.
+    // The edit doors' order through their own helpers: lock(1), the lodge key, the booking row, then the Payment row.
     const door = prisma.$transaction(async (tx) => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+      await acquireLodgeCapacityLock(tx, names.lodgeId);
       await lockBookingRowForOwnerRead(tx, id);
       held.open();
       await release.opened;
@@ -287,6 +292,7 @@ async function bookingState(id: string) {
       await untilWaiting(1);
       door = prisma.$transaction(async (tx) => {
         await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+        await acquireLodgeCapacityLock(tx, names.lodgeId);
         await lockBookingRowForOwnerRead(tx, id);
         await lockPaymentForRefundedTotal(tx, paymentId);
         await tx.payment.update({ where: { id: paymentId }, data: { changeFeeCents: 700 } });

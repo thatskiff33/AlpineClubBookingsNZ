@@ -3357,8 +3357,8 @@ describe("promo adjustment rows follow their allocation through a merge (#3276, 
 
 /**
  * #4823: merge takes no `lock(1)`, and `lock(1)` writers take a booking's Payment
- * and booking rows in both orders (a card settle Payment first, an approved
- * appeal its booking row first), so merge must never WAIT for a Payment row.
+ * and booking rows in both orders (a card settle Payment first, the edit doors
+ * their booking row first), so merge must never WAIT for a Payment row.
  * The real-PostgreSQL proof is `member-merge-payment-row-races.realdb.test.ts`;
  * these pin the shape: the attribution leaves the generic pass, moves after the
  * sorted Member `FOR UPDATE`, under one sorted `NOWAIT` statement, and a held

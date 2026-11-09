@@ -1507,8 +1507,8 @@ const ROW_LOCK_SITE_INVENTORY: Record<string, number> = {
   // naming the duplicate, then the update. Merge takes no lock(1) and holds
   // booking rows from its owner move on; lock(1) writers take a booking's Payment
   // row before its booking row (a card settle, the back-post) and after it (the
-  // edit doors, an edit review, an approved appeal), so no waiting position is
-  // acyclic and merge never waits: a held row refuses the merge (409). Taken
+  // edit doors, an edit review), so no waiting position is acyclic and merge
+  // never waits: a held row refuses the merge (409). Taken
   // after merge's sorted Member FOR UPDATE, so the set cannot grow. See
   // docs/CONCURRENCY_AND_LOCKING.md -> "Member merge never waits for a Payment row".
   "src/lib/member-merge-payment-attribution.ts": 1,
