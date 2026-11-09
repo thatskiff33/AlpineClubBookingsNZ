@@ -6,8 +6,10 @@
  * from it, C3 the redirects and rewrites, C13 the hub menu and S2 the command
  * palette. The epic plan, in #4468's body, says what each of those does.
  *
- * INERT: nothing outside this directory and its tests imports it until C2/C3,
- * and `src/lib/__tests__/admin-hubs-registry.test.ts` fails if anything does.
+ * INERT until C3: in production only the security map reads it — C2 (#4799)
+ * generates the page half of the route map, the admission paths and the admin
+ * page module gates from it (`security-map.ts`), changing no answer — and
+ * `src/lib/__tests__/admin-hubs-registry.test.ts` names every other importer.
  * Relative imports only (see `release.ts`).
  */
 import { ADMIN_HUBS_LIVE } from "./release";

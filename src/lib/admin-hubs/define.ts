@@ -16,7 +16,8 @@ import type { FeatureFlagKey } from "../../config/schema";
  * - `rooms-beds-or`: Rooms & Beds' lodge-OR-bookings rule.
  *
  * The three special rules still carry a route-map `area` on the entry, because
- * the route map resolves every path to one area and C2 generates that map.
+ * the route map resolves every path to one area and C2 (#4799) generates that
+ * map; the special rules' paths are generated from this field too.
  */
 export type AdminPageAdmission =
   | "area"
@@ -44,11 +45,19 @@ export interface AdminHubPageInput {
   readonly label: string;
   /** Today's URL, from the page directory on disk; `[name]` marks a dynamic segment. */
   readonly oldPath: `/admin/${string}`;
-  /** The area `getAdminRouteRequirement(oldPath)` resolves today. */
+  /**
+   * The page's route-map area. Since C2 (#4799) this DECIDES what
+   * `getAdminRouteRequirement` answers for the old and the hub path: the page
+   * half of the map is generated from it (`security-map.ts`).
+   */
   readonly area: AdminPermissionArea;
   /** Defaults to `"area"`. */
   readonly admission?: AdminPageAdmission;
-  /** Every module flag `getRequiredFeaturesForPath(oldPath)` requires today. Defaults to none. */
+  /**
+   * Every module the page needs; since C2 (#4799) these generate its module
+   * gates, at both paths, failing closed over its whole directory. Defaults to
+   * none.
+   */
   readonly flags?: readonly FeatureFlagKey[];
   /** Defaults to `"page"`. */
   readonly kind?: AdminPageKind;

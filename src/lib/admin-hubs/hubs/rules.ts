@@ -11,6 +11,9 @@ export const RULES_HUB = defineHub({
   prefix: "rules",
   pages: [
     {
+      // The consolidated fee console (#1933, E7): `bookings` in the route map,
+      // admitted on bookings OR finance. Each section still gates its own edits
+      // by its historical area (hut fees bookings, joining and annual finance).
       id: "fees",
       label: "Fees",
       oldPath: "/admin/fees",
@@ -107,7 +110,9 @@ export const RULES_HUB = defineHub({
       moved: false,
     },
     {
-      // S1 (#4796) merges this with bookings-setup.
+      // S1 (#4796) merges this with bookings-setup. `bookings`, not the
+      // `support` of the setup directory it sits in (#4581): every card on it is
+      // bookings work, so Booking Officers open it for their own rules.
       id: "setup-booking-rules",
       label: "Booking Rules",
       oldPath: "/admin/setup/booking-rules",
