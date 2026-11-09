@@ -424,6 +424,18 @@ describe("Try the card again (decision 5)", () => {
       expect(mocks.claim).not.toHaveBeenCalled();
     });
 
+    it("MUTATION (review F1): refused when a sibling row of the same kind holds the attribution - only a mark clears it", async () => {
+      // A later cancellation row of the same booking (same metadata), closed, whose slice the recorded refund matched -
+      // never marked. This row's own figure and what its runner would send agree, so only the Stripe evidence refuses.
+      const sibling = deadOperation({ id: "op-sibling", idempotencyKey: "booking_cancel_refund_recovery_b-1_second", status: "SUCCEEDED", attempts: 1, createdAt: new Date("2026-06-22T00:00:00.000Z") });
+      mocks.findPayment.mockResolvedValue(payment([deadOperation(), sibling], { amountCents: 40_000, refundedAmountCents: 15_000, refunds: [LATER_REFUND] }));
+      mocks.listRefunds.mockResolvedValue([listed({ id: "re_later_1" })]);
+      const error = await refusal(tryAgain());
+      expect(error.status).toBe(409);
+      expect(error.message).toMatch(/this booking's same kind of refund \(re_later_1\)/);
+      expect(mocks.claim).not.toHaveBeenCalled();
+    });
+
     it("MUTATION (review F4): refused when the plan Stripe was read for is not the one under the locks", async () => {
       mocks.preReadOperation.mockResolvedValue({ paymentId: "p-1", paymentTransactionId: null, allocationPlan: [{ paymentTransactionId: "txn-9", amountCents: 15_000 }] });
       const error = await refusal(tryAgain());
