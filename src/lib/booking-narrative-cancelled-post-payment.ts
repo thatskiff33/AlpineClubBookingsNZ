@@ -167,9 +167,10 @@ export interface PaidAnotherWayClose {
   /**
    * #4516 (`INV-PAY-122`): what a part close left still owed to the member and nothing has paid since, on a row of
    * its own (`card_refund_still_owed_<record>`), and where that row stands - born dead, `stalled`, until a later close
-   * pays it. What later closes of it paid back and left unpaid is in the two figures above. Absent when none is owed.
+   * pays it - never settled or closed: what later closes of it paid back and left unpaid is in the two figures above,
+   * and what reached the card in `madeCents`. Absent when none is owed.
    */
-  stillOwed?: { amountCents: number; state: CardRefundState };
+  stillOwed?: { amountCents: number; state: Extract<CardRefundState, "stalled" | "on-its-way"> };
 }
 
 /**

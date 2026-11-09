@@ -4,7 +4,7 @@ import {
   CANCEL_CARD_SHORTFALL_KEY_PREFIX,
   cancelCardShortfallPart,
   closeKeysOf,
-  paidAnotherWayUnpaidCents,
+  paidAnotherWayCloseCents,
   type CardRefundState,
   type CardShortfallTaskStatuses,
 } from "@/lib/manual-refund-task-settlement-rules";
@@ -119,9 +119,18 @@ export async function readCardShortfallTaskStatuses(bookingId: string, store: Ca
  * #4516 (round-3 review 1, `INV-PAY-122`): what part "Paid another way" closes of one row left still owed - each rest
  * on a row of its own (`card_refund_still_owed_<record>`), read as the row it was first owed on
  * (`cardRefundStillOwedOrigin`, through every close of a rest closed in part again): what later closes of those rests
- * paid back and left unpaid, and what nothing has paid yet, where it stands (born dead: `stalled`).
+ * paid back and left unpaid, and what nothing has paid yet, where it stands (born dead: `stalled`). Round-4 review 1:
+ * a rest closed `SUCCEEDED` with no close record (`settled`) is never owed; it is told as made, by what its slices
+ * took from the refunds recorded on its payment - the rule the close's own made figure uses
+ * (`cardRefundMadeForOperation`), so a rest nothing refunded is not told at all.
  */
-type StillOwedRests = { paidBackCents: number; unpaidCents: number; owed?: { amountCents: number; state: CardRefundState } };
+type StillOwedRests = {
+  paidBackCents: number;
+  unpaidCents: number;
+  made: Array<{ id: string; paymentId: string }>;
+  owed?: StillOwedCardRefund;
+};
+type StillOwedCardRefund = NonNullable<PaidAnotherWayClose["stillOwed"]>;
 
 /** Each row's still-owed rests by the row's id: read once, and only when a close asks (`INV-SSOT`: the one reading). */
 function stillOwedRestsReader(bookingId: string, store: CardRefundStore): (originId: string) => Promise<StillOwedRests | undefined> {
@@ -132,25 +141,35 @@ function stillOwedRestsReader(bookingId: string, store: CardRefundStore): (origi
 async function readStillOwedRests(bookingId: string, store: CardRefundStore): Promise<Map<string, StillOwedRests>> {
   const rests = await store.paymentRecoveryOperation.findMany({
     where: { bookingId, idempotencyKey: { startsWith: CARD_REFUND_STILL_OWED_RECOVERY_PREFIX } },
-    select: { id: true, idempotencyKey: true, amountCents: true, status: true, attempts: true, nextRetryAt: true },
+    select: { id: true, idempotencyKey: true, paymentId: true, amountCents: true, status: true, attempts: true, nextRetryAt: true },
   });
   const byOrigin = new Map<string, StillOwedRests>();
   for (const rest of rests ?? []) {
     const origin = await cardRefundStillOwedOrigin(store, rest.idempotencyKey);
     if (!origin) continue;
-    const sum = byOrigin.get(origin.id) ?? { paidBackCents: 0, unpaidCents: 0 };
+    const sum = byOrigin.get(origin.id) ?? { paidBackCents: 0, unpaidCents: 0, made: [] };
     const { state, record } = await cardRefundRowState(rest, store);
     if (record) {
       // Closed again: what that close paid back and left unpaid. A rest it left owed again is a row of its own.
-      sum.paidBackCents += record.amountCents ?? rest.amountCents;
-      sum.unpaidCents += paidAnotherWayUnpaidCents(record);
+      const close = paidAnotherWayCloseCents(record, rest.amountCents);
+      sum.paidBackCents += close.paidBackCents;
+      sum.unpaidCents += close.unpaidCents;
+    } else if (state === "stalled" || state === "on-its-way") {
+      sum.owed = { amountCents: (sum.owed?.amountCents ?? 0) + rest.amountCents, state: furthestFromDone([state, ...(sum.owed ? [sum.owed.state] : [])]) ?? state };
     } else {
-      const states = [state, ...(sum.owed ? [sum.owed.state] : [])];
-      sum.owed = { amountCents: (sum.owed?.amountCents ?? 0) + rest.amountCents, state: FURTHEST_FROM_DONE_FIRST.find((each) => states.includes(each)) ?? state };
+      sum.made.push({ id: rest.id, paymentId: rest.paymentId });
     }
     byOrigin.set(origin.id, sum);
   }
   return byOrigin;
+}
+
+/** What these rows' slices took from the refunds recorded on their payments, by the close's own rule. */
+function madeByRows(rows: ReadonlyArray<{ id: string; paymentId: string }>, payments: ReadonlyArray<Parameters<typeof cardRefundMadeForOperation>[0] & { id: string }>): number {
+  return rows.reduce((sum, row) => {
+    const payment = payments.find((each) => each.id === row.paymentId);
+    return sum + (payment ? cardRefundMadeForOperation(payment, row.id).madeCents : 0);
+  }, 0);
 }
 
 /**
@@ -206,35 +225,32 @@ export async function readOrganiserChildCancelledCardRefund(
 /** The cancel's card refund rows, read as one: where they stand, and what Stripe failed later. */
 async function cancelledCardRefundOf(bookingId: string, own: CancelCardRefundRow[], store: CardRefundStore): Promise<CancelledCardRefund> {
   const standings = await Promise.all(own.map(async (row) => ({ row, ...(await cardRefundRowState(row, store)) })));
-  const cardRefundState = FURTHEST_FROM_DONE_FIRST.find((state) => standings.some((each) => each.state === state));
+  const cardRefundState = furthestFromDone(standings.map((each) => each.state));
   const restsOf = stillOwedRestsReader(bookingId, store);
   const failedLater = await readFailedLaterCardRefunds(bookingId, standings, store, restsOf);
   const planned = { ...capacityRacePlanCents(bookingId, own), ...(failedLater.parts.length > 0 ? { cardRefundFailedLater: failedLater.parts } : {}) };
   if (cardRefundState !== "paid-another-way") return { cardRefundState, ...planned };
-  const closed = standings.flatMap(({ row, record }) => (record ? [{ row, record }] : []));
-  const payments = await store.payment.findMany({
-    where: { id: { in: [...new Set(closed.map(({ row }) => row.paymentId))] } },
-    select: { id: true, status: true, amountCents: true, refundedAmountCents: true, ...netCollectedCardRefundSelect },
-  });
-  const made = (row: { id: string; paymentId: string }) => {
-    const payment = payments.find((each) => each.id === row.paymentId);
-    return payment ? cardRefundMadeForOperation(payment, row.id).madeCents : 0;
-  };
+  const closed = standings.flatMap(({ row, record }) => (record ? [{ row, record, ...paidAnotherWayCloseCents(record, row.amountCents) }] : []));
   // #4516 (round-3 review 1): a part close's rest still owed - and what later closes of it paid - is the close's too.
   const rests = (await Promise.all(closed.map(({ row }) => restsOf(row.id)))).flatMap((each) => (each ? [each] : []));
+  const restsMade = rests.flatMap((each) => each.made);
+  const payments = await store.payment.findMany({
+    where: { id: { in: [...new Set([...closed.map(({ row }) => row.paymentId), ...restsMade.map((each) => each.paymentId)])] } },
+    select: { id: true, status: true, amountCents: true, refundedAmountCents: true, ...netCollectedCardRefundSelect },
+  });
   const owed = rests.flatMap((each) => (each.owed ? [each.owed] : []));
-  const stillOwed = owed.length > 0
-    ? { amountCents: owed.reduce((sum, each) => sum + each.amountCents, 0), state: FURTHEST_FROM_DONE_FIRST.find((state) => owed.some((each) => each.state === state)) ?? "stalled" }
-    : undefined;
+  const owedState = furthestFromDone(owed.map((each) => each.state));
+  const sum = (cents: readonly number[]) => cents.reduce((total, each) => total + each, 0);
   return {
     cardRefundState,
     ...planned,
     cardRefundClose: {
-      paidBackCents: closed.reduce((sum, { record }) => sum + (record.amountCents ?? 0), 0) + rests.reduce((sum, each) => sum + each.paidBackCents, 0),
-      unpaidCents: closed.reduce((sum, { record }) => sum + paidAnotherWayUnpaidCents(record), 0) + rests.reduce((sum, each) => sum + each.unpaidCents, 0),
+      paidBackCents: sum([...closed, ...rests].map((each) => each.paidBackCents)),
+      unpaidCents: sum([...closed, ...rests].map((each) => each.unpaidCents)),
       // #4166: a part that failed later counts as the close found it; the narrative says it by its own row.
-      madeCents: closed.reduce((sum, { row }) => sum + made(row) + (failedLater.madeByRow.get(row.id) ?? 0), 0),
-      ...(stillOwed ? { stillOwed } : {}),
+      // #4516 round-4 review 1: a rest made by card since is made too, by the same rule.
+      madeCents: madeByRows([...closed.map(({ row }) => row), ...restsMade], payments) + sum(closed.map(({ row }) => failedLater.madeByRow.get(row.id) ?? 0)),
+      ...(owedState ? { stillOwed: { amountCents: sum(owed.map((each) => each.amountCents)), state: owedState } } : {}),
     },
   };
 }
@@ -320,24 +336,31 @@ async function readFailedLaterCardRefunds(
       madeByRow.set(root, (madeByRow.get(root) ?? 0) + head.row.amountCents);
     }
     const { state, record } = await cardRefundRowState(row, store);
-    // #4516 (round-3 review 1): a part close's rest still owed is a part of its own, said where it stands.
+    // #4516 (round-3 review 1): a part close's rest still owed is a part of its own, said where it stands; round-4
+    // review 1: one made by card since is a part of its own too, made, by what its slices took.
     const rests = record ? await restsOf(row.id) : undefined;
     const owedCents = Math.min(rests?.owed?.amountCents ?? 0, row.amountCents);
+    const restMadeCents = Math.min(madeByRows(rests?.made ?? [], payments), row.amountCents - owedCents);
+    const told = record ? paidAnotherWayCloseCents(record, row.amountCents) : undefined;
     parts.push({
-      amountCents: row.amountCents - owedCents,
+      amountCents: row.amountCents - owedCents - restMadeCents,
       state,
       ...(dated ? {} : { dated }),
       ...(state === "settled" ? { madeAt: row.succeededAt } : {}),
-      ...(record
-        ? { paidBackCents: (record.amountCents ?? row.amountCents) + (rests?.paidBackCents ?? 0), unpaidCents: paidAnotherWayUnpaidCents(record) + (rests?.unpaidCents ?? 0) }
-        : {}),
+      ...(told ? { paidBackCents: told.paidBackCents + (rests?.paidBackCents ?? 0), unpaidCents: told.unpaidCents + (rests?.unpaidCents ?? 0) } : {}),
     });
     if (owedCents > 0 && rests?.owed) parts.push({ amountCents: owedCents, state: rests.owed.state, ...(dated ? {} : { dated }) });
+    if (restMadeCents > 0) parts.push({ amountCents: restMadeCents, state: "settled", ...(dated ? {} : { dated }) });
   }
   return { parts, madeByRow };
 }
 
 const FURTHEST_FROM_DONE_FIRST: readonly CardRefundState[] = ["stalled", "on-its-way", "paid-another-way", "settled"];
+
+/** Several rows read as one: the one furthest from done - a dead one first, then one still being sent. */
+function furthestFromDone<State extends CardRefundState>(states: readonly State[]): State | undefined {
+  return FURTHEST_FROM_DONE_FIRST.find((state): state is State => (states as readonly CardRefundState[]).includes(state));
+}
 
 /** #4145: a capacity race's rows' frozen plans together (each row's amount where it has none), or nothing for a member's cancel. */
 function capacityRacePlanCents(

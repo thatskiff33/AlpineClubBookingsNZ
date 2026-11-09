@@ -3,6 +3,7 @@ import { PaymentRecoveryOperationStatus } from "@prisma/client";
 
 import { MAX_PAYMENT_RECOVERY_ATTEMPTS } from "@/lib/payment-recovery-constants";
 import { buildOrganiserChildCancellationRefundKey } from "@/lib/payment-recovery-keys";
+import { paidAnotherWayCloseCents } from "@/lib/manual-refund-task-settlement-rules";
 
 /**
  * #4125: where a card cancel's refund stands when no REFUNDED event says it was
@@ -39,6 +40,35 @@ const row = (overrides: Partial<Row> = {}): Row => ({
   nextRetryAt: new Date("2026-07-01T00:05:00.000Z"),
   ...overrides,
 });
+
+/** The payment the closed rows hang on: `made` refunds recorded against op-1's first slice. */
+function paymentWith(made: number[], operations: Array<{ id: string; amountCents: number; plan: Array<{ paymentTransactionId: string; amountCents: number; madeRefundId?: string }> }>) {
+  return {
+    id: "pay-1",
+    status: "PARTIALLY_REFUNDED",
+    amountCents: 20_000,
+    refundedAmountCents: made.reduce((sum, cents) => sum + cents, 0),
+    recoveryOperations: operations.map(({ id, amountCents, plan }) => ({
+      id,
+      type: "REFUND_BOOKING_MODIFICATION",
+      status: "SUCCEEDED",
+      idempotencyKey: `capacity_claim_failed_refund_recovery_booking-1_pi_${id}`,
+      amountCents,
+      allocationPlan: plan,
+      paymentTransactionId: null,
+      createdAt: new Date("2026-06-20T00:00:00.000Z"),
+      succeededAt: new Date("2026-06-30T00:00:00.000Z"),
+    })),
+    refunds: made.map((cents, index) => ({
+      stripeRefundId: `re_${index}`,
+      paymentTransactionId: "txn-1",
+      amountCents: cents,
+      status: "succeeded",
+      createdAt: new Date("2026-06-21T00:00:00.000Z"),
+      stripeCreatedAt: new Date("2026-06-21T00:00:00.000Z"),
+    })),
+  };
+}
 
 describe("readCancelledCardRefund (#4125)", () => {
   beforeEach(() => {
@@ -80,43 +110,16 @@ describe("readCancelledCardRefund (#4125)", () => {
     expect(await readCancelledCardRefundState("booking-1")).toBe(expected);
   });
 
-  /** The payment the closed rows hang on: `made` refunds recorded against op-1's first slice. */
-  function paymentWith(made: number[], operations: Array<{ id: string; amountCents: number; plan: Array<{ paymentTransactionId: string; amountCents: number; madeRefundId?: string }> }>) {
-    return {
-      id: "pay-1",
-      status: "PARTIALLY_REFUNDED",
-      amountCents: 20_000,
-      refundedAmountCents: made.reduce((sum, cents) => sum + cents, 0),
-      recoveryOperations: operations.map(({ id, amountCents, plan }) => ({
-        id,
-        type: "REFUND_BOOKING_MODIFICATION",
-        status: "SUCCEEDED",
-        idempotencyKey: `capacity_claim_failed_refund_recovery_booking-1_pi_${id}`,
-        amountCents,
-        allocationPlan: plan,
-        paymentTransactionId: null,
-        createdAt: new Date("2026-06-20T00:00:00.000Z"),
-        succeededAt: new Date("2026-06-30T00:00:00.000Z"),
-      })),
-      refunds: made.map((cents, index) => ({
-        stripeRefundId: `re_${index}`,
-        paymentTransactionId: "txn-1",
-        amountCents: cents,
-        status: "succeeded",
-        createdAt: new Date("2026-06-21T00:00:00.000Z"),
-        stripeCreatedAt: new Date("2026-06-21T00:00:00.000Z"),
-      })),
-    };
-  }
-
   it("a closed row with a 'Paid another way' record reads as paid another way, with what that record paid back and left unpaid, and what its slices took (#4145)", async () => {
-    db.findMany.mockResolvedValue([row({ status: PaymentRecoveryOperationStatus.SUCCEEDED, nextRetryAt: null })]);
+    // #4516 round-4: a row read with its amount, as the read selects it - what the close's figures are capped at.
+    db.findMany.mockResolvedValue([{ ...row({ status: PaymentRecoveryOperationStatus.SUCCEEDED, nextRetryAt: null }), amountCents: 10_000 }]);
     // $100.00 due: $30.00 went back to the card; of the $70.00 still owed, $50.00 was paid back.
     db.findClose.mockResolvedValue({ amountCents: 5_000, raisedAmountCents: 7_000 });
     db.payments.mockResolvedValue([paymentWith([3_000], [{ id: "op-1", amountCents: 10_000, plan: [{ paymentTransactionId: "txn-1", amountCents: 3_000, madeRefundId: "re_0" }, { paymentTransactionId: "txn-1", amountCents: 7_000 }] }])]);
 
     expect(await readCancelledCardRefund("booking-1")).toEqual({
       cardRefundState: "paid-another-way",
+      cardRefundPlanCents: 10_000,
       cardRefundClose: { paidBackCents: 5_000, unpaidCents: 2_000, madeCents: 3_000 },
     });
     expect(db.findClose).toHaveBeenCalledWith({
@@ -128,7 +131,7 @@ describe("readCancelledCardRefund (#4125)", () => {
 
   it("MUTATION #4145: a capped close's made part is what its refunds took, never the due less what the row still owed", async () => {
     // $90.00 due, nothing reached the card, and the payment held only $60.00: closed in full for that.
-    db.findMany.mockResolvedValue([row({ status: PaymentRecoveryOperationStatus.SUCCEEDED, nextRetryAt: null })]);
+    db.findMany.mockResolvedValue([{ ...row({ status: PaymentRecoveryOperationStatus.SUCCEEDED, nextRetryAt: null }), amountCents: 9_000 }]);
     db.findClose.mockResolvedValue({ amountCents: 6_000, raisedAmountCents: 6_000 });
     db.payments.mockResolvedValue([paymentWith([], [{ id: "op-1", amountCents: 9_000, plan: [{ paymentTransactionId: "txn-1", amountCents: 9_000 }] }])]);
 
@@ -136,8 +139,9 @@ describe("readCancelledCardRefund (#4125)", () => {
   });
 
   it("#4145: a capacity race's rows paid another way read as what they paid back, left unpaid and took together; a row not paid another way carries no figure", async () => {
-    const closed = (id: string) => row({ id, idempotencyKey: `capacity_claim_failed_refund_recovery_booking-1_pi_${id}`, status: PaymentRecoveryOperationStatus.SUCCEEDED, nextRetryAt: null });
-    db.findMany.mockResolvedValue([closed("a"), closed("b")]);
+    const closed = (id: string, amountCents: number) =>
+      ({ ...row({ id, idempotencyKey: `capacity_claim_failed_refund_recovery_booking-1_pi_${id}`, status: PaymentRecoveryOperationStatus.SUCCEEDED, nextRetryAt: null }), amountCents });
+    db.findMany.mockResolvedValue([closed("a", 3_000), closed("b", 4_000)]);
     db.findClose.mockResolvedValueOnce({ amountCents: 2_000, raisedAmountCents: 2_000 }).mockResolvedValueOnce({ amountCents: 3_000, raisedAmountCents: 4_000 });
     db.payments.mockResolvedValue([
       paymentWith([1_000], [
@@ -147,12 +151,13 @@ describe("readCancelledCardRefund (#4125)", () => {
     ]);
     expect(await readCancelledCardRefund("booking-1")).toEqual({
       cardRefundState: "paid-another-way",
+      cardRefundPlanCents: 7_000,
       cardRefundClose: { paidBackCents: 5_000, unpaidCents: 1_000, madeCents: 1_000 },
     });
 
-    db.findMany.mockResolvedValue([closed("a")]);
+    db.findMany.mockResolvedValue([closed("a", 3_000)]);
     db.findClose.mockResolvedValue(null);
-    expect(await readCancelledCardRefund("booking-1")).toEqual({ cardRefundState: "settled" });
+    expect(await readCancelledCardRefund("booking-1")).toEqual({ cardRefundState: "settled", cardRefundPlanCents: 3_000 });
   });
 
   it("MUTATION #4145: a capacity race's rows read with their frozen plans together, in every state; a member's cancel carries none", async () => {
@@ -218,7 +223,7 @@ describe("readCardShortfallTaskStatuses reads a dead card part as stalled (#4125
 describe("a cancel's card refund closed in part, its rest still owed (#4516 round-3 review 1)", () => {
   const CANCEL_KEY = "booking_cancel_refund_recovery_booking-1";
   const DEBT_KEY = buildOrganiserChildCancellationRefundKey("settlement-1", "booking-1");
-  type Close = { id: string; closes: string; amountCents: number; raisedAmountCents: number };
+  type Close = { id: string; closes: string; amountCents: number | null; raisedAmountCents: number | null };
   type Owed = Row & { amountCents: number };
   const closedRow = (id: string, idempotencyKey: string, amountCents: number): Owed =>
     ({ ...row({ id, idempotencyKey, status: PaymentRecoveryOperationStatus.SUCCEEDED, nextRetryAt: null }), amountCents });
@@ -297,6 +302,41 @@ describe("a cancel's card refund closed in part, its rest still owed (#4516 roun
     expect((await readCancelledCardRefund("booking-1")).cardRefundClose).toEqual({ paidBackCents: 10_000, unpaidCents: 0, madeCents: 0 });
   });
 
+  // #4516 round-4 review 1: a rest is owed only while it is dead or still being sent. One closed with no close record
+  // (`settled`) is never owed: it is told as made, by what its slices took from the refunds recorded on its payment.
+  it("MUTATION: a rest still being sent is owed, on its way; one closed with no record is made, by what its slices took", async () => {
+    const restOnItsWay = rest("op-rest", "close-1", 20_000, { attempts: 1, nextRetryAt: new Date("2026-07-01T00:05:00.000Z") });
+    given([cancel, restOnItsWay], [firstClose]);
+    expect((await readCancelledCardRefund("booking-1")).cardRefundClose).toEqual({
+      paidBackCents: 10_000, unpaidCents: 0, madeCents: 0, stillOwed: { amountCents: 20_000, state: "on-its-way" },
+    });
+
+    const restSettled = rest("op-rest", "close-1", 20_000, { status: PaymentRecoveryOperationStatus.SUCCEEDED });
+    given([cancel, restSettled], [firstClose]);
+    // Nothing refunded on its slices: not owed, and nothing made either.
+    expect((await readCancelledCardRefund("booking-1")).cardRefundClose).toEqual({ paidBackCents: 10_000, unpaidCents: 0, madeCents: 0 });
+    // Its $200.00 slice filled by a refund recorded on the payment: made.
+    db.payments.mockResolvedValue([paymentWith([20_000], [
+      { id: "op-cancel", amountCents: 30_000, plan: [{ paymentTransactionId: "txn-1", amountCents: 30_000 }] },
+      { id: "op-rest", amountCents: 20_000, plan: [{ paymentTransactionId: "txn-1", amountCents: 20_000, madeRefundId: "re_0" }] },
+    ])]);
+    expect((await readCancelledCardRefund("booking-1")).cardRefundClose).toEqual({ paidBackCents: 10_000, unpaidCents: 0, madeCents: 20_000 });
+  });
+
+  // #4516 round-4 review 2 (`INV-SSOT`): every close record is read by one rule (`paidAnotherWayCloseCents`): a
+  // record with no figure paid back the whole of what its row owed, and nothing a record says is more than its row.
+  it("MUTATION: a figureless record pays back its row's whole amount, and no record says more than its row owed", async () => {
+    given([cancel, restPaid("op-rest", "close-1", 20_000)], [
+      { ...firstClose, amountCents: null, raisedAmountCents: null },
+      { id: "close-2", closes: "op-rest", amountCents: null, raisedAmountCents: null },
+    ]);
+    // The cancel's $300.00 row and its $200.00 rest, each paid back whole.
+    expect((await readCancelledCardRefund("booking-1")).cardRefundClose).toEqual({ paidBackCents: 50_000, unpaidCents: 0, madeCents: 0 });
+
+    given([cancel], [{ ...firstClose, amountCents: 40_000, raisedAmountCents: 45_000 }]);
+    expect((await readCancelledCardRefund("booking-1")).cardRefundClose).toEqual({ paidBackCents: 30_000, unpaidCents: 0, madeCents: 0 });
+  });
+
   it("MUTATION: an organiser-card child's debt closed in part says its rest still owed the same way", async () => {
     const debt = closedRow("op-debt", DEBT_KEY, 30_000);
     given([debt, rest("op-rest", "close-debt", 20_000)], [{ id: "close-debt", closes: "op-debt", amountCents: 10_000, raisedAmountCents: 10_000 }]);
@@ -347,5 +387,19 @@ describe("the cancel's card refund read through a caller's store (#4285 review 8
     // No debt: nothing recorded.
     expect(await readOrganiserChildCancelledCardRefund("booking-1", "settlement-1", separateStore([]) as never)).toEqual({});
     expect(db.findUnique).not.toHaveBeenCalled();
+  });
+});
+
+// #4516 round-4 review 2 (`INV-SSOT`): the one rule for what a "Paid another way" close record says of its row.
+describe("paidAnotherWayCloseCents", () => {
+  it.each([
+    ["a full close", { amountCents: 6_000, raisedAmountCents: 6_000 }, 6_000, { paidBackCents: 6_000, unpaidCents: 0 }],
+    ["a part close, the rest kept", { amountCents: 4_000, raisedAmountCents: 6_000 }, 6_000, { paidBackCents: 4_000, unpaidCents: 2_000 }],
+    ["a figureless record: the whole paid back", { amountCents: null, raisedAmountCents: null }, 6_000, { paidBackCents: 6_000, unpaidCents: 0 }],
+    ["MUTATION: a paid-back figure past the row, capped at it", { amountCents: 9_000, raisedAmountCents: 9_000 }, 6_000, { paidBackCents: 6_000, unpaidCents: 0 }],
+    ["MUTATION: paid back and unpaid together never past the row", { amountCents: 4_000, raisedAmountCents: 9_000 }, 6_000, { paidBackCents: 4_000, unpaidCents: 2_000 }],
+    ["a negative figure reads as nothing", { amountCents: -100, raisedAmountCents: null }, 6_000, { paidBackCents: 0, unpaidCents: 0 }],
+  ] as const)("%s", (_label, close, owedCents, expected) => {
+    expect(paidAnotherWayCloseCents(close, owedCents)).toEqual(expected);
   });
 });
