@@ -36,6 +36,17 @@ and [Background Jobs](background-jobs.md), which drill into their own detail.
    **Webhooks (Last 24h)** for delivery counts. Click **Refresh** to re-poll;
    the last refresh time is shown next to the button.
 
+### Integration readiness
+
+Below the status board, the **Integration readiness** section links the
+provider-backed setup pages: **Xero Setup**, **Xero Sync**, **Modules** and
+**Email Deliverability**. Each card shows only while its module is on and to an
+admin who can view its page (the Xero cards need the finance area). This was the
+Setup Wizard's separate **Operational Integrations** page
+(`/admin/setup/integrations`) until #4796 folded it in here; that address, and
+the Setup Wizard's **Integration Readiness** card, open this section
+(`/admin/health#integration-readiness`).
+
 ## Settings reference
 
 The page has no settings. What it reports:
@@ -46,6 +57,7 @@ The page has no settings. What it reports:
 | Service Checks | Database, config, Stripe, Xero, SMTP, payment recovery — each OK (with latency) or an error |
 | System Info | Memory (RSS, heap used/total), Sentry connected/not configured, uptime, Sentry dashboard link |
 | Webhooks (Last 24h) | Per-source success / failure / total counts, and a recent-events list |
+| Integration readiness | Links to Xero Setup, Xero Sync, Modules and Email Deliverability |
 
 ## Troubleshooting
 

@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSession } from "next-auth/react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Archive, CheckCircle2, RefreshCw, XCircle } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -11,7 +12,10 @@ import {
   AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
-import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
+import {
+  useAdminAreaEditAccess,
+  useCanOpenAdminPath,
+} from "@/hooks/use-admin-area-edit-access";
 import { useActionAttention } from "@/hooks/use-scroll-to-feedback";
 import {
   Card,
@@ -38,6 +42,9 @@ import {
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { MembershipCancellationBlockerNotice } from "@/components/admin/membership-cancellation-blocker-notice";
+import { MembershipCancellationSettingsPanel } from "@/components/admin/membership-cancellation-settings-panel";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { adminHref, parseAdminPageTab } from "@/lib/admin-hubs";
 import {
   MembershipCancellationInvoiceCheckSkippedLine,
   MembershipCancellationInvoiceCheckSkippedNotice,
@@ -333,7 +340,89 @@ function approvalUnavailableReason(
   return null;
 }
 
+/**
+ * Membership Cancellations: the review queue, and since S1 (#4796) the
+ * cancellation settings that were `/admin/membership-cancellation` (and the
+ * `/admin/setup/cancellation` page of links to both), as a Settings tab. Both
+ * old pages were `membership`, like this one, except the links page
+ * (`support`); every control on either tab keeps its own `membership` edit gate.
+ */
 export default function MembershipCancellationsPage() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const activeTab = parseAdminPageTab(
+    "membership-cancellations",
+    searchParams.get("tab"),
+  );
+
+  function handleTabChange(value: string) {
+    const nextTab = parseAdminPageTab("membership-cancellations", value);
+    const params = new URLSearchParams(searchParams.toString());
+    if (nextTab === "requests") params.delete("tab");
+    else params.set("tab", nextTab);
+    const query = params.toString();
+    router.replace(
+      `${adminHref("membership-cancellations")}${query ? `?${query}` : ""}`,
+      { scroll: false },
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h1 className="text-2xl font-bold text-foreground">
+          Membership Cancellations
+        </h1>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Review member cancellation and archive requests, and set the
+          cancellation copy and Xero handling they use.
+        </p>
+      </div>
+      <Tabs value={activeTab} onValueChange={handleTabChange}>
+        <TabsList>
+          <TabsTrigger value="requests">Requests</TabsTrigger>
+          <TabsTrigger value="settings">Settings</TabsTrigger>
+        </TabsList>
+        <TabsContent value="requests" className="mt-6">
+          <MembershipCancellationRequests />
+        </TabsContent>
+        <TabsContent value="settings" className="mt-6">
+          <MembershipCancellationSettingsTab />
+        </TabsContent>
+      </Tabs>
+    </div>
+  );
+}
+
+/**
+ * The Settings tab: the settings panel as it was on its own page, and the
+ * Email Messages link the old setup page carried, shown only to an admin who
+ * can open it (`support`), as that page's card was.
+ */
+function MembershipCancellationSettingsTab() {
+  const emailMessagesHref = adminHref("email-messages");
+  const canOpenEmailMessages = useCanOpenAdminPath(emailMessagesHref);
+  return (
+    <div className="space-y-4">
+      <Card>
+        <CardContent className="pt-6">
+          <MembershipCancellationSettingsPanel />
+        </CardContent>
+      </Card>
+      {canOpenEmailMessages ? (
+        <p className="text-sm text-muted-foreground">
+          The emails these requests send are edited in{" "}
+          <Link href={emailMessagesHref} className="underline">
+            Email Messages
+          </Link>
+          .
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+function MembershipCancellationRequests() {
   const clubTime = useClubTime();
   const { data: session } = useSession();
   const currentAdminId = session?.user?.id;
@@ -628,9 +717,9 @@ export default function MembershipCancellationsPage() {
       <div className="space-y-6">
       <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-foreground">
-            Membership Cancellations
-          </h1>
+          <h2 className="text-lg font-semibold text-foreground">
+            Requests
+          </h2>
           <p className="mt-1 text-sm text-muted-foreground">{pendingSummary}</p>
         </div>
         <div className="flex items-center gap-2">

@@ -102,20 +102,11 @@ export const RULES_HUB = defineHub({
       moved: false,
     },
     {
-      // S1 (#4796) merges this with setup/booking-rules.
+      // S1 (#4796): also holds what was `/admin/setup/booking-rules`, which
+      // was `bookings` too (#4581).
       id: "bookings-setup",
       label: "Bookings Setup",
       oldPath: "/admin/bookings-setup",
-      area: "bookings",
-      moved: false,
-    },
-    {
-      // S1 (#4796) merges this with bookings-setup. `bookings`, not the
-      // `support` of the setup directory it sits in (#4581): every card on it is
-      // bookings work, so Booking Officers open it for their own rules.
-      id: "setup-booking-rules",
-      label: "Booking Rules",
-      oldPath: "/admin/setup/booking-rules",
       area: "bookings",
       moved: false,
     },

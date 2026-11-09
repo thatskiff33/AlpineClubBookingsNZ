@@ -4,15 +4,22 @@ Audience: Operator
 
 ## What it is
 
-A small hub that gathers the booking-related setup pages you revisit less often
-than the daily booking queues. It links to two places: **Rooms & Beds** (the bed
-inventory) and **Booking Messages** (member-facing booking copy), and carries one
-settings card of its own: **Member guests** (the member-guest consent policy,
-#2307). Find it at **Admin → Setup & Configuration → Bookings Setup**
-(`/admin/bookings-setup`).
+A hub that gathers the booking rules and setup pages you revisit less often
+than the daily booking queues. It links to six places: **Booking Policies**,
+**Hut Fees & Seasons**, **Age Groups**, **Promo Codes**, **Rooms & Beds** (the
+bed inventory) and **Booking Messages** (member-facing booking copy), and
+carries one settings card of its own: **Member guests** (the member-guest
+consent policy, #2307). Find it at **Admin → Setup & Configuration → Bookings
+Setup** (`/admin/bookings-setup`), or from the Setup Wizard's **Bookings Setup**
+card. The first four cards were the Setup Wizard's separate **Booking Rules**
+page (`/admin/setup/booking-rules`) until #4796 merged the two; that address
+opens this page.
 
-Which cards you see depends on your permissions and the active modules — the
-Rooms & Beds card follows the `bedAllocation` module.
+Which cards you see depends on your permissions and the active modules: a card
+shows only to an admin who can open its page (Booking Messages needs the
+support area; Rooms & Beds opens on lodge or bookings), the Promo Codes card
+follows the `promoCodes` module, and the Rooms & Beds card the `bedAllocation`
+module.
 
 ## When you'd use it
 
@@ -33,6 +40,15 @@ Rooms & Beds card follows the `bedAllocation` module.
    ![Bookings Setup hub: two cards — Rooms & Beds and Booking Messages](../images/admin/admin-bookings-setup.png)
 
 2. Choose a card:
+   - **Booking Policies** (`/admin/booking-policies`) — cancellation,
+     minimum-stay, public-request and group-discount rules. See
+     [Booking Policies](booking-policies.md).
+   - **Hut Fees & Seasons** (`/admin/seasons`) — season windows and nightly
+     rates. See [Seasons](seasons.md).
+   - **Age Groups** (`/admin/age-tier-settings`) — age-tier boundaries and
+     whether each tier needs a subscription to book.
+   - **Promo Codes** (`/admin/promo-codes`) — booking discounts. See
+     [Promo Codes](promo-codes.md).
    - **Rooms & Beds** (`/admin/rooms-beds`) — configure lodge rooms, active
      beds, the bed-allocation inventory, and that lodge's
      [allocation preferences](rooms-beds.md#set-this-lodges-allocation-preferences)

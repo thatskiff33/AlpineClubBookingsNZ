@@ -248,9 +248,11 @@ Journey: Filter the list, open a booking, and inspect its dates, guests and stat
 
 Screen: `/admin/bookings-setup`.
 
-Shows: Cards linking to the booking configuration screens.
+Merged in (#4796): `/admin/setup/booking-rules` redirects here.
 
-Journey: Open the relevant setup card for policies, seasons, fees or allocation settings.
+Shows: Cards linking to the booking configuration screens, each shown only to an admin who can open it, and the Member guests settings card.
+
+Journey: Open the relevant setup card for policies, seasons, age groups, promo codes, rooms and beds, or booking copy.
 
 [Guide](guides/bookings-setup.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
@@ -350,21 +352,13 @@ Journey: Inspect a request and its member record before resolving it.
 
 Screen: `/admin/family-groups`.
 
-Shows: Family memberships and billing relationships.
+Merged in (#4796): a Groups tab and a Suggestions tab (`?tab=suggestions`); `/admin/family-suggestions` redirects to the Suggestions tab.
 
-Journey: Find a family, open its members, and review billing and relationship changes.
+Shows: Family memberships and billing relationships; on the Suggestions tab, suggested member relationships awaiting review.
 
-[Guide](guides/family-groups.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
+Journey: Find a family, open its members, and review billing and relationship changes; or open Suggestions, inspect suggested relationships and decide whether to link them.
 
-### Family Suggestions — family-suggestions
-
-Screen: `/admin/family-suggestions`.
-
-Shows: Suggested member relationships awaiting review.
-
-Journey: Inspect suggested relationships and decide whether to link them.
-
-[Guide](guides/family-suggestions.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
+[Guide](guides/family-groups.md) · [Suggestions guide](guides/family-suggestions.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
 ### Induction — induction
 
@@ -416,23 +410,15 @@ Journey: Search or filter members, open a profile, and use its permitted members
 
 [Guide](guides/members.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
-### Cancellation Requests — membership-cancellation
-
-Screen: `/admin/membership-cancellation`.
-
-Shows: Cancellation notification and handling settings.
-
-Journey: Review the cancellation notification settings linked from Notifications & Email.
-
-[Guide](guides/membership-cancellations.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
-
 ### Cancellation Requests — membership-cancellations
 
 Screen: `/admin/membership-cancellations`.
 
-Shows: The membership cancellation review queue.
+Merged in (#4796): a Requests tab and a Settings tab (`?tab=settings`); `/admin/membership-cancellation` and `/admin/setup/cancellation` redirect to the Settings tab.
 
-Journey: Open a cancellation request and review its consequences before deciding it.
+Shows: The membership cancellation review queue; on the Settings tab, the cancellation copy and Xero handling.
+
+Journey: Open a cancellation request and review its consequences before deciding it; or open Settings, from here or from Notifications & Email, to change the cancellation wording.
 
 [Guide](guides/membership-cancellations.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
@@ -898,7 +884,9 @@ Journey: Choose a message template, inspect its tokens, and stage wording change
 
 Screen: `/admin/health`.
 
-Shows: Component health and diagnostic results.
+Merged in (#4796): `/admin/setup/integrations` redirects to its Integration readiness section.
+
+Shows: Component health and diagnostic results, then the provider setup pages (Xero, modules, email deliverability) as readiness cards.
 
 Journey: Inspect health checks and follow the documented recovery for a failing component.
 

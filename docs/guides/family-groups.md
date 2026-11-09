@@ -11,6 +11,11 @@ outstanding partner email invitations. Find it at **Admin → Members → Family
 Groups** (`/admin/family-groups`). It also appears under **Needs Attention** while
 family requests are pending.
 
+The page has two tabs: **Groups** (everything below) and **Suggestions**, which
+proposes groups for members not yet in one; see
+[Family Suggestions](family-suggestions.md). Suggestions was its own page until
+#4796 merged the two, and its old address opens the tab.
+
 Family groups are a **membership** permission area: membership view to read,
 membership **edit** to approve requests or edit groups. How families are *billed*
 is a separate, club-level choice set on the [Subscriptions](subscriptions.md)
@@ -81,7 +86,7 @@ Where the age appears:
 - the **Shared email & login** picker, which decides which of two adults sharing
   a surname *and* an email address keeps the login
 - the members of a suggestion on the
-  [Family Suggestions](family-suggestions.md) page
+  [Suggestions](family-suggestions.md) tab
 
 For a child request, a member who already has a pending or confirmed partner
 link with the requester remains visible but is disabled with an explanation.

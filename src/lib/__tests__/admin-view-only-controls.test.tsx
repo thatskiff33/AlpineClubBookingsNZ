@@ -155,7 +155,7 @@ import MembershipCancellationsPage from "@/app/(admin)/admin/membership-cancella
 // #1997 admin action-button surfaces (support / communications lane).
 import AdminIssueReportsPage from "@/app/(admin)/admin/issue-reports/page";
 import CommunicationsPage from "@/app/(admin)/admin/communications/page";
-import FamilySuggestionsPage from "@/app/(admin)/admin/family-suggestions/page";
+import { FamilySuggestionsPanel } from "@/components/admin/family-groups/family-suggestions-panel";
 // #1997 member-detail action cards (membership / finance lane).
 import { MemberDeletionCard } from "@/app/(admin)/admin/members/[id]/_components/member-deletion-card";
 import { MemberCreditCard } from "@/app/(admin)/admin/members/[id]/_components/member-credit-card";
@@ -3572,7 +3572,8 @@ describe("MemberDetailHeader view-only gating (#1997, membership + finance)", ()
   });
 });
 
-describe("FamilySuggestionsPage view-only gating (#1997, membership)", () => {
+// The Suggestions tab of Family Groups since S1 (#4796).
+describe("FamilySuggestionsPanel view-only gating (#1997, membership)", () => {
   beforeEach(() => {
     sessionMatrix = null;
     stubFetchRoutes({
@@ -3591,7 +3592,7 @@ describe("FamilySuggestionsPage view-only gating (#1997, membership)", () => {
 
   it("shows the notice and disables Reset hidden for a membership:view admin", async () => {
     sessionMatrix = matrix("view", { membership: "view" });
-    render(<FamilySuggestionsPage />);
+    render(<FamilySuggestionsPanel />);
     expect(
       await screen.findByText(
         /can view family group suggestions but cannot create, hide, or reset/i,
@@ -3604,7 +3605,7 @@ describe("FamilySuggestionsPage view-only gating (#1997, membership)", () => {
 
   it("hides the notice and enables Reset hidden for a membership:edit admin", async () => {
     sessionMatrix = matrix("view", { membership: "edit" });
-    render(<FamilySuggestionsPage />);
+    render(<FamilySuggestionsPanel />);
     expect(
       await screen.findByRole("button", { name: /Reset hidden/i }),
     ).toBeEnabled();

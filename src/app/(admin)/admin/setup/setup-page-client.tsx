@@ -21,6 +21,7 @@ import {
   UserX,
   type LucideIcon,
 } from "lucide-react";
+import { adminAnchorHref, adminHref, adminTabHref } from "@/lib/admin-hubs";
 import { Badge, type BadgeProps } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -125,21 +126,23 @@ const setupHubCards: SetupHubCard[] = [
     icon: Landmark,
     requiredAreas: ["finance"],
   },
+  // S1 (#4796): the next three cards open the pages the setup drill-downs
+  // they replaced were merged into, each gated on its destination's area.
   {
-    href: "/admin/setup/booking-rules",
-    title: "Booking Rules",
+    href: adminHref("bookings-setup"),
+    title: "Bookings Setup",
     description:
       "Review booking policy, seasons, age groups, promo codes, inventory, and booking copy.",
     icon: BookOpenCheck,
-    requiredAreas: ["bookings", "lodge"],
+    requiredAreas: ["bookings"],
   },
   {
-    href: "/admin/setup/integrations",
-    title: "Operational Integrations",
+    href: adminAnchorHref("health", "integration-readiness"),
+    title: "Integration Readiness",
     description:
       "Check external-provider readiness, Xero connection, modules, and delivery health.",
     icon: Plug,
-    requiredAreas: ["support", "finance"],
+    requiredAreas: ["support"],
   },
   {
     href: "/admin/membership-setup",
@@ -150,12 +153,12 @@ const setupHubCards: SetupHubCard[] = [
     requiredAreas: ["membership"],
   },
   {
-    href: "/admin/setup/cancellation",
-    title: "Cancellation",
+    href: adminTabHref("membership-cancellations", "settings"),
+    title: "Membership Cancellations",
     description:
-      "Review cancellation settings, cancellation request queues, and related message copy.",
+      "Review cancellation settings and the cancellation request queue.",
     icon: UserX,
-    requiredAreas: ["membership", "support"],
+    requiredAreas: ["membership"],
   },
   {
     href: "/admin/notifications",

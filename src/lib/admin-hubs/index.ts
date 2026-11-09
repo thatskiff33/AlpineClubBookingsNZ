@@ -2,16 +2,18 @@
  * THE ADMIN HUB REGISTRY (epic #4468, C1 #4798; `INV-SSOT`).
  *
  * Every admin page, the hub it belongs to, its old URL, its hub URL and how it
- * is admitted, defined once. C2 generates the page half of the security map
- * from it, C3 the redirects and rewrites, C13 the hub menu and S2 the command
- * palette. The epic plan, in #4468's body, says what each of those does.
+ * is admitted, defined once; and every page retired by a merge, with where its
+ * old URL now goes (`retired.ts`, S1 #4796). C2 generates the page half of the
+ * security map from it, C3 the redirects and rewrites, C13 the hub menu and S2
+ * the command palette. The epic plan, in #4468's body, says what each of those does.
  *
  * Inert while no page has moved. In production it is read by the security map
  * — C2 (#4799) generates the page half of the route map, the admission paths and
  * the admin page module gates from it (`security-map.ts`), changing no answer —
  * and, since C3 (#4800), by `next.config.ts` (the redirects and rewrites), the
  * sidebar's active link (`activeAdminHref`) and `revalidateAdminPage`; each of
- * those answers exactly as before until a page's `moved` is set.
+ * those answers exactly as before until a page's `moved` is set, apart from
+ * the retired pages' permanent redirects.
  * `src/lib/__tests__/admin-hubs-registry.test.ts` names every importer.
  * Relative imports only (see `release.ts`).
  */
@@ -20,7 +22,9 @@ import {
   normaliseHubPage,
   type AdminHubInput,
   type AdminHubPage,
+  type AdminRetiredPage,
 } from "./define";
+import { ADMIN_RETIRED_PAGES } from "./retired";
 import { DASHBOARD_HUB } from "./hubs/dashboard";
 import { BOOKINGS_HUB } from "./hubs/bookings";
 import { RULES_HUB } from "./hubs/rules";
@@ -31,6 +35,8 @@ import { WEBSITE_HUB } from "./hubs/website";
 import { MESSAGES_HUB } from "./hubs/messages";
 import { SYSTEM_HUB } from "./hubs/system";
 import { SETTINGS_HUB } from "./hubs/settings";
+
+export { ADMIN_RETIRED_PAGES };
 
 /** The hubs, in menu order: the order the owner approved on #4468. */
 export const ADMIN_HUBS = [
@@ -96,6 +102,22 @@ export function resolveAdminHref(
   });
 }
 
+type DeclaredList<Id extends AdminPageId, Field extends "tabs" | "anchors"> =
+  Extract<AdminHubPageLiteral, { id: Id }> extends { readonly [K in Field]: readonly (infer Value)[] }
+    ? Value & string
+    : never;
+
+/** A `?tab=` value page `Id` declares; `never` for a page without tabs. */
+export type AdminPageTab<Id extends AdminPageId> = DeclaredList<Id, "tabs">;
+
+/** A section id page `Id` declares; `never` for a page without anchors. */
+export type AdminPageAnchor<Id extends AdminPageId> = DeclaredList<Id, "anchors">;
+
+/** Every page that declares tabs. */
+export type AdminTabbedPageId = {
+  [Id in AdminPageId]: [AdminPageTab<Id>] extends [never] ? never : Id;
+}[AdminPageId];
+
 /** The registered page for an id; an id the registry does not know throws. */
 export function getAdminPage(id: AdminPageId): AdminHubPage {
   const page = PAGES_BY_ID.get(id);
@@ -109,6 +131,54 @@ export function adminHref<Id extends AdminPageId>(
   ...args: AdminHrefArgs<Id>
 ): string {
   return resolveAdminHref(getAdminPage(id), ADMIN_HUBS_LIVE, args[0]);
+}
+
+/**
+ * `href` with `tab` as its `?tab=` and `anchor` as its fragment; refuses a tab
+ * or anchor the page does not declare. The first tab is the page's default, so
+ * it is linked without a query.
+ */
+function withTabAndAnchor(
+  page: AdminHubPage,
+  href: string,
+  tab: string | undefined,
+  anchor: string | undefined,
+): string {
+  if (tab !== undefined && !page.tabs.includes(tab)) {
+    throw new Error(`admin hub registry: ${page.id} has no "${tab}" tab`);
+  }
+  if (anchor !== undefined && !page.anchors.includes(anchor)) {
+    throw new Error(`admin hub registry: ${page.id} has no "${anchor}" anchor`);
+  }
+  const query = tab !== undefined && tab !== page.tabs[0] ? `?tab=${encodeURIComponent(tab)}` : "";
+  return `${href}${query}${anchor !== undefined ? `#${anchor}` : ""}`;
+}
+
+/** The URL to link one tab of a page at; the default tab has no query. */
+export function adminTabHref<Id extends AdminTabbedPageId>(id: Id, tab: AdminPageTab<Id>): string {
+  const page = getAdminPage(id);
+  return withTabAndAnchor(page, resolveAdminHref(page, ADMIN_HUBS_LIVE), tab, undefined);
+}
+
+/** The URL to link one section of a page at. */
+export function adminAnchorHref<Id extends AdminPageId>(
+  id: Id,
+  anchor: AdminPageAnchor<Id>,
+): string {
+  const page = getAdminPage(id);
+  return withTabAndAnchor(page, resolveAdminHref(page, ADMIN_HUBS_LIVE), undefined, anchor);
+}
+
+/**
+ * The tab a page is showing for its `?tab=` value: the value when the page
+ * declares it, else the page's first (default) tab.
+ */
+export function parseAdminPageTab<Id extends AdminTabbedPageId>(
+  id: Id,
+  value: string | null | undefined,
+): AdminPageTab<Id> {
+  const { tabs } = getAdminPage(id);
+  return (value != null && tabs.includes(value) ? value : tabs[0]) as AdminPageTab<Id>;
 }
 
 /**
@@ -247,11 +317,14 @@ export function activeAdminHref(
   return active;
 }
 
-/** A redirect in the shape `next.config.ts` hands to Next. Always a 307. */
+/**
+ * A redirect in the shape `next.config.ts` hands to Next: a 307 for a moved
+ * page (the switch flips it), a 308 for a retired one.
+ */
 export interface AdminUrlRedirect {
   readonly source: string;
   readonly destination: string;
-  readonly permanent: false;
+  readonly permanent: boolean;
 }
 
 export interface AdminUrlRewrite {
@@ -319,9 +392,48 @@ function assertNoCapturedSibling(pages: readonly AdminHubPage[]): void {
 }
 
 /**
- * The redirects and rewrites for the MOVED pages; nothing for the rest, so
- * today's registry yields none. A registry in which a moved dynamic page would
- * capture an unmoved static sibling, or the reverse, is refused.
+ * A retired page's permanent redirect to the URL its content is served at
+ * under the switch: the page it was merged into, at its tab and section. Next
+ * merges the request's query into the destination's, the destination's `tab`
+ * winning. Refuses a retired path that is dynamic or that any registered page
+ * uses or sits beneath, and a destination the registry does not have.
+ */
+function retiredRedirect(
+  retired: AdminRetiredPage,
+  live: boolean,
+  pages: readonly AdminHubPage[],
+): AdminUrlRedirect {
+  if (retired.oldPath.includes("[")) {
+    throw new Error(`admin hub rules: retired ${retired.oldPath} is dynamic`);
+  }
+  const clash = pages.find((page) =>
+    [page.oldPath, page.hubPath].some(
+      (path) => path === retired.oldPath || path.startsWith(`${retired.oldPath}/`),
+    ),
+  );
+  if (clash) {
+    throw new Error(`admin hub rules: retired ${retired.oldPath} is still ${clash.id}'s path`);
+  }
+  const target = pages.find((page) => page.id === retired.mergedInto);
+  if (!target) {
+    throw new Error(`admin hub rules: retired ${retired.oldPath} was merged into unknown ${retired.mergedInto}`);
+  }
+  return {
+    source: retired.oldPath,
+    destination: withTabAndAnchor(target, resolveAdminHref(target, live), retired.tab, retired.anchor),
+    permanent: true,
+  };
+}
+
+/**
+ * The redirects and rewrites for the MOVED pages, after the permanent
+ * redirects of the RETIRED ones (S1 #4796). An unmoved page has none. A
+ * registry in which a moved dynamic page would capture an unmoved static
+ * sibling, or the reverse, is refused.
+ *
+ * The retired redirects come first, in both states, so no moved page's
+ * pattern can claim a retired URL; each goes straight to where its
+ * destination is served, so it is never a chain.
  *
  * - Off: the hub URL redirects (307) to the old URL, and a `beforeFiles`
  *   rewrite serves the old URL from the moved file, so the proxy, the module
@@ -339,8 +451,10 @@ function assertNoCapturedSibling(pages: readonly AdminHubPage[]): void {
 export function buildAdminUrlRules(
   live: boolean,
   pages: readonly AdminHubPage[] = ADMIN_PAGES,
+  retiredPages: readonly AdminRetiredPage[] = ADMIN_RETIRED_PAGES,
 ): AdminUrlRules {
   assertNoCapturedSibling(pages);
+  const retired = retiredPages.map((page) => retiredRedirect(page, live, pages));
   const moved = pages
     .filter((page) => page.moved && page.hubPath !== page.oldPath)
     .sort(
@@ -355,20 +469,26 @@ export function buildAdminUrlRules(
 
   if (live) {
     return {
-      redirects: pairs.map(({ oldUrl, hubUrl }) => ({
-        source: oldUrl,
-        destination: hubUrl,
-        permanent: false,
-      })),
+      redirects: [
+        ...retired,
+        ...pairs.map(({ oldUrl, hubUrl }) => ({
+          source: oldUrl,
+          destination: hubUrl,
+          permanent: false,
+        })),
+      ],
       rewrites: { beforeFiles: [] },
     };
   }
   return {
-    redirects: pairs.map(({ oldUrl, hubUrl }) => ({
-      source: hubUrl,
-      destination: oldUrl,
-      permanent: false,
-    })),
+    redirects: [
+      ...retired,
+      ...pairs.map(({ oldUrl, hubUrl }) => ({
+        source: hubUrl,
+        destination: oldUrl,
+        permanent: false,
+      })),
+    ],
     rewrites: {
       beforeFiles: pairs.map(({ oldUrl, hubUrl }) => ({
         source: oldUrl,

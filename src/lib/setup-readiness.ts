@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { bookableAgeTierEnum } from "@/lib/age-tier-schema";
 import { isHttpUrl } from "@/lib/http-url";
+import { adminTabHref } from "@/lib/admin-hubs";
 import {
   CLUB_TIME_ZONE_FALLBACK,
   CLUB_TIME_ZONE_MAX_LENGTH,
@@ -1446,6 +1447,9 @@ function buildBookingPolicyCheck(
   );
 }
 
+/** The cancellation settings: Membership Cancellations' Settings tab since S1 (#4796). */
+const MEMBERSHIP_CANCELLATION_SETTINGS_HREF = adminTabHref("membership-cancellations", "settings");
+
 function buildMembershipCancellationCheck(
   db: SetupDatabaseSnapshot | undefined,
   progress: SetupProgressState,
@@ -1461,9 +1465,9 @@ function buildMembershipCancellationCheck(
         required: false,
         message: "Membership cancellation settings were not checked.",
         details: [
-          "Review this in /admin/setup/cancellation after migrations have run.",
+          "Review this on the Settings tab of Membership Cancellations after migrations have run.",
         ],
-        href: "/admin/setup/cancellation",
+        href: MEMBERSHIP_CANCELLATION_SETTINGS_HREF,
       },
       progress,
     );
@@ -1488,7 +1492,7 @@ function buildMembershipCancellationCheck(
           db.membershipCancellationArchiveContacts ? "enabled" : "disabled"
         }`,
       ],
-      href: "/admin/setup/cancellation",
+      href: MEMBERSHIP_CANCELLATION_SETTINGS_HREF,
     },
     progress,
   );

@@ -4,7 +4,7 @@ import {
   type AdminPermissionArea,
 } from "@/lib/admin-permissions";
 import { ADMIN_ROUTE_AREA_ANCHOR_ENTRIES } from "@/lib/__tests__/helpers/admin-route-area-anchors";
-import { ADMIN_PAGES } from "@/lib/admin-hubs";
+import { ADMIN_PAGES, ADMIN_RETIRED_PAGES } from "@/lib/admin-hubs";
 import {
   adminApiRouteFiles,
   toRawPathname,
@@ -658,7 +658,6 @@ const EXPECTED_PAGE_AREAS: Record<string, AdminPermissionArea> = {
   "/admin/email-messages": "support",
   "/admin/environment": "support",
   "/admin/family-groups": "membership",
-  "/admin/family-suggestions": "membership",
   "/admin/fee-configuration": "finance",
   "/admin/fees": "bookings",
   "/admin/google/setup": "finance",
@@ -686,7 +685,6 @@ const EXPECTED_PAGE_AREAS: Record<string, AdminPermissionArea> = {
   "/admin/members": "membership",
   "/admin/members/[id]": "membership",
   "/admin/members/[id]/merge": "membership",
-  "/admin/membership-cancellation": "membership",
   "/admin/membership-cancellations": "membership",
   "/admin/membership-setup": "membership",
   "/admin/membership-types": "membership",
@@ -711,11 +709,8 @@ const EXPECTED_PAGE_AREAS: Record<string, AdminPermissionArea> = {
   "/admin/seasons": "bookings",
   "/admin/security": "support",
   "/admin/setup": "support",
-  "/admin/setup/booking-rules": "bookings",
-  "/admin/setup/cancellation": "support",
   "/admin/setup/finance": "finance",
   "/admin/setup/foundations": "support",
-  "/admin/setup/integrations": "support",
   "/admin/site-banners": "content",
   "/admin/site-content": "content",
   "/admin/site-style": "content",
@@ -731,6 +726,31 @@ const EXPECTED_PAGE_AREAS: Record<string, AdminPermissionArea> = {
   "/admin/xero/member-grouping": "finance",
   "/admin/xero/records/[localModel]/[localId]": "finance",
   "/admin/xero/setup": "finance",
+};
+
+/**
+ * The five pages S1 (#4796) retired by merging them into another, with the
+ * area each was pinned to above until then. Their rows left the table with
+ * their files; this keeps what they admitted on, so each merge is checked
+ * against it.
+ */
+const RETIRED_PAGE_AREAS: Record<string, AdminPermissionArea> = {
+  "/admin/family-suggestions": "membership",
+  "/admin/membership-cancellation": "membership",
+  "/admin/setup/booking-rules": "bookings",
+  "/admin/setup/cancellation": "support",
+  "/admin/setup/integrations": "support",
+};
+
+/**
+ * The one merge whose destination is on a different area, reviewed: the
+ * Cancellation setup page was a `support` page of links to two `membership`
+ * pages and Email Messages; its content is now a `membership` tab. An admin
+ * who reaches it now needs `membership`, as every link on it already did, so
+ * nobody is admitted who was not.
+ */
+const RETIRED_AREA_CHANGES: Record<string, AdminPermissionArea> = {
+  "/admin/setup/cancellation": "membership",
 };
 
 /** A concrete URL for a registry path: every `[name]` filled with `x123`. */
@@ -777,6 +797,27 @@ describe("admin page -> area pin (#4799)", () => {
         : [`${pathname}: anchored to "${area}", snapshot says "${EXPECTED_PAGE_AREAS[pathname]}"`],
     );
     expect(disagreements).toEqual([]);
+  });
+});
+
+describe("retired admin pages (S1 #4796)", () => {
+  it("records the former area of exactly the retired pages", () => {
+    expect(ADMIN_RETIRED_PAGES.map((page) => page.oldPath).sort()).toEqual(
+      Object.keys(RETIRED_PAGE_AREAS).sort(),
+    );
+  });
+
+  it("merges each into a page of its own area, bar the one reviewed change", () => {
+    const drift = ADMIN_RETIRED_PAGES.flatMap((retired) => {
+      const target = ADMIN_PAGES.find((page) => page.id === retired.mergedInto);
+      const destination = target ? EXPECTED_PAGE_AREAS[target.oldPath] : undefined;
+      const expected =
+        RETIRED_AREA_CHANGES[retired.oldPath] ?? RETIRED_PAGE_AREAS[retired.oldPath];
+      return destination === expected
+        ? []
+        : [`${retired.oldPath} -> ${retired.mergedInto}: ${destination}, expected ${expected}`];
+    });
+    expect(drift).toEqual([]);
   });
 });
 

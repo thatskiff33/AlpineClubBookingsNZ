@@ -20,7 +20,7 @@ import {
   getRequiredFeaturesForPath,
 } from "@/config/feature-routes";
 import type { FeatureFlagKey } from "@/config/schema";
-import { ADMIN_HUBS, ADMIN_PAGES } from "@/lib/admin-hubs";
+import { ADMIN_HUBS, ADMIN_PAGES, ADMIN_RETIRED_PAGES } from "@/lib/admin-hubs";
 import { hubRoot, type AdminHubPage } from "@/lib/admin-hubs/define";
 import {
   ADMIN_PAGE_ADMISSION_PATHS,
@@ -185,6 +185,22 @@ const ORACLE_ROUTE_AREAS: ReadonlyArray<{
     ],
   },
   { area: "overview", prefixes: ["/admin"] },
+];
+
+/**
+ * The oracle's prefixes whose pages S1 (#4796) retired, merging each into
+ * another page (`ADMIN_RETIRED_PAGES`). The oracle above stays `main`'s,
+ * verbatim; these three are left out only where the generated map is compared
+ * with it entry for entry, because a retired page has no entry. Nothing is
+ * served at a retired URL: its permanent redirect in `next.config.ts` runs
+ * before the proxy (`next-config-admin-hub-urls.test.ts`). The other two
+ * retired pages, `/admin/setup/cancellation` and `/admin/setup/integrations`,
+ * never had a prefix of their own (they were `/admin/setup`'s `support`).
+ */
+const ORACLE_RETIRED_PREFIXES: readonly string[] = [
+  "/admin/setup/booking-rules",
+  "/admin/membership-cancellation",
+  "/admin/family-suggestions",
 ];
 
 /** `main`'s `ANY_ADMIN_ADMISSION_PATHS`, `CONSOLIDATED_FEES_PATH` and `ROOMS_BEDS_PATH`. */
@@ -595,12 +611,7 @@ describe("the route map's order", () => {
       ).map((inner) => inner.prefix),
     );
     expect(nested).toEqual(
-      expect.arrayContaining([
-        "/admin/setup/finance",
-        "/admin/setup/booking-rules",
-        "/admin/settings/setup/finance",
-        "/admin/rules/setup/booking-rules",
-      ]),
+      expect.arrayContaining(["/admin/setup/finance", "/admin/settings/setup/finance"]),
     );
   });
 
@@ -623,13 +634,22 @@ describe("the route map's order", () => {
 describe("the generated old half is main's hand-written page half", () => {
   const EXPLICIT_OVERVIEW = ["/admin/ai-diagnostics", "/admin/dashboard", "/admin/testing"];
 
+  it("leaves out of the comparison only prefixes of retired pages", () => {
+    const retired: readonly string[] = ADMIN_RETIRED_PAGES.map((page) => page.oldPath);
+    expect(ORACLE_RETIRED_PREFIXES.filter((prefix) => !retired.includes(prefix))).toEqual([]);
+    const oraclePrefixes = ORACLE_ROUTE_AREAS.flatMap(({ prefixes }) => prefixes);
+    expect(ORACLE_RETIRED_PREFIXES.filter((prefix) => !oraclePrefixes.includes(prefix))).toEqual([]);
+  });
+
   it("has the same route-map entries", () => {
     const generated = ADMIN_PAGE_ROUTE_AREAS.filter(({ prefix }) => !isHubHalf(prefix))
       .map(({ prefix, area }) => `${prefix} ${area}`)
       .sort();
     const oracle = [
       ...ORACLE_ROUTE_AREAS.flatMap(({ area, prefixes }) =>
-        prefixes.filter((prefix) => prefix !== "/admin").map((prefix) => `${prefix} ${area}`),
+        prefixes
+          .filter((prefix) => prefix !== "/admin" && !ORACLE_RETIRED_PREFIXES.includes(prefix))
+          .map((prefix) => `${prefix} ${area}`),
       ),
       ...EXPLICIT_OVERVIEW.map((prefix) => `${prefix} overview`),
     ].sort();

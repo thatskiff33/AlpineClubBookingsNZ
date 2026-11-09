@@ -10,9 +10,9 @@ requests** (approve or reject per person, with a member-email choice) and
 **Admin → Members → Cancellation Requests** (`/admin/membership-cancellations`).
 It also appears under **Needs Attention** while requests are pending.
 
-The member-facing wording and the Xero contact-group handling behind these
-requests are edited on a separate **Membership Cancellation** settings page —
-covered in [its own section below](#cancellation-copy-and-xero-settings).
+The page has two tabs: **Requests**, the queues, and **Settings**, where the
+member-facing wording and the Xero contact-group handling behind these requests
+are edited — covered in [its own section below](#cancellation-copy-and-xero-settings).
 
 Cancellations are a **membership** permission area: membership view to read the
 queues, membership **edit** to approve or reject. Paid subscriptions are never
@@ -134,11 +134,16 @@ when unknown. This date starts the retention period, so check it before saving.
 
 ### Cancellation copy and Xero settings
 
-The member-facing cancellation wording and Xero handling live on a separate
-settings page — **Membership Cancellation** — reached from **Admin →
-Notifications & Email** (`/admin/membership-cancellation`). It has no direct
-sidebar entry and writes **membership** settings even though it sits under
-Notifications.
+The member-facing cancellation wording and Xero handling live on the
+**Settings** tab of this page (`/admin/membership-cancellations?tab=settings`),
+also reached from the **Membership Cancellation** card under **Admin →
+Notifications & Email**, the Setup Wizard's **Membership Cancellations** card,
+and the "Open Membership Cancellation settings" link on a blocked request. Until
+#4796 it was a separate page, `/admin/membership-cancellation`, and the Setup
+Wizard's **Cancellation** page linked to it; both old addresses open the tab.
+The tab writes **membership** settings, and holds a link to **Email Messages**
+(for an admin who can open it) for the wording of the emails these requests
+send.
 
 ![Membership Cancellation settings: the cancellation warning, rejoin process, Xero cancelled contact groups, and archive-on-approval controls](../images/admin/admin-membership-cancellation.png)
 

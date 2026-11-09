@@ -107,93 +107,6 @@ export const adminSetupAndConfigurationHelpEntries: HelpEntry[] = [
     ),
   ),
   entry(
-    "/admin/setup/booking-rules",
-    help(
-      "Booking Rules",
-      "Booking Rules groups the setup pages that define booking eligibility, pricing, capacity, and booking copy.",
-      [
-        "Open Booking Policies before changing cancellation, minimum-stay, public-request, or group-discount behavior.",
-        "Review Hut Fees & Seasons and Age Groups before accepting priced bookings.",
-        "Use Rooms & Beds and Booking Messages for inventory and member-facing booking copy.",
-      ],
-      [
-        {
-          name: "Booking Policies",
-          description:
-            "Rules that affect holds, cancellation, minimum stays, public requests, and group discounts.",
-        },
-        {
-          name: "Hut Fees & Seasons",
-          description:
-            "Season windows and nightly rates used by booking pricing.",
-        },
-        {
-          name: "Rooms & Beds",
-          description:
-            "Capacity and allocation inventory used by lodge stays, plus each lodge's allocation preferences.",
-        },
-      ],
-    ),
-  ),
-  entry(
-    "/admin/setup/integrations",
-    help(
-      "Operational Integrations",
-      "Operational Integrations groups provider-backed setup pages for accounting, email, modules, and health checks.",
-      [
-        "Open Xero Setup before connecting or changing operational accounting sync.",
-        "Review Modules before enabling provider-backed workflows.",
-        "Use Email Deliverability and Provider Health for runtime diagnostics.",
-      ],
-      [
-        {
-          name: "Xero Setup",
-          description:
-            "OAuth connection and accounting settings used by Xero-backed workflows.",
-        },
-        {
-          name: "Email Deliverability",
-          description:
-            "SES/SMTP delivery and suppression diagnostics.",
-        },
-        {
-          name: "Provider Health",
-          description:
-            "Safe runtime checks for provider readiness.",
-        },
-      ],
-    ),
-  ),
-  entry(
-    "/admin/setup/cancellation",
-    help(
-      "Cancellation setup",
-      "Cancellation setup groups member cancellation settings, request handling, and related email copy.",
-      [
-        "Open Membership Cancellation before changing cancellation warning or rejoin-process text.",
-        "Review Cancellation Requests before changing live policy that affects pending requests.",
-        "Use Email Messages for cancellation and lifecycle message wording.",
-      ],
-      [
-        {
-          name: "Membership Cancellation",
-          description:
-            "Settings for cancellation copy and Xero cancellation handling.",
-        },
-        {
-          name: "Cancellation Requests",
-          description:
-            "Pending member requests that may be affected by policy changes.",
-        },
-        {
-          name: "Email Messages",
-          description:
-            "Audited templates used by cancellation and member lifecycle workflows.",
-        },
-      ],
-    ),
-  ),
-  entry(
     "/admin/membership-setup",
     help(
       "Membership & Members setup",
@@ -226,13 +139,25 @@ export const adminSetupAndConfigurationHelpEntries: HelpEntry[] = [
     "/admin/bookings-setup",
     help(
       "Bookings Setup",
-      "Bookings Setup groups lower-frequency pages that shape booking inventory and member-facing booking copy.",
+      "Bookings Setup groups the setup pages that shape booking eligibility, pricing, capacity, and member-facing booking copy. It also holds what was the Booking Rules page.",
       [
+        "Open Booking Policies before changing cancellation, minimum-stay, public-request, or group-discount behavior.",
+        "Review Hut Fees & Seasons and Age Groups before accepting priced bookings.",
         "Open Rooms & Beds to change bed-allocation inventory, or to change a lodge's allocation preferences.",
         "Open Booking Messages when booking, payment, cancellation, or group-booking wording needs an operator-approved update.",
-        "Check module and permission gates if a setup card is hidden for the current admin.",
+        "Check module and permission gates if a setup card is hidden for the current admin: a card shows only to an admin who can open its page.",
       ],
       [
+        {
+          name: "Booking Policies",
+          description:
+            "Rules that affect holds, cancellation, minimum stays, public requests, and group discounts.",
+        },
+        {
+          name: "Hut Fees & Seasons",
+          description:
+            "Season windows and nightly rates used by booking pricing.",
+        },
         {
           name: "Rooms & Beds",
           description:

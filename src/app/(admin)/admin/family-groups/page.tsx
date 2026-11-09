@@ -14,6 +14,9 @@ import { DatasetResetButton } from "@/components/admin/dataset-reset-button";
 import { AgeTierBadge } from "@/components/admin/family-groups/age-tier-badge";
 import { MemberAgeChip } from "@/components/admin/family-groups/member-age-display";
 import { FamilyGroupRequestReviewSection } from "@/components/admin/family-groups/request-review-section";
+import { FamilySuggestionsPanel } from "@/components/admin/family-groups/family-suggestions-panel";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { adminHref, parseAdminPageTab } from "@/lib/admin-hubs";
 import { AdminViewOnlySectionBanner, ViewOnlyActionButton } from "@/components/admin/view-only-action";
 import {
   ADMIN_VIEW_ONLY_ACTION_REASON,
@@ -48,6 +51,11 @@ export default function FamilyGroupsPage() {
   const clubTime = useClubTime();
   const searchParams = useSearchParams();
   const router = useRouter();
+  // S1 (#4796): Suggestions, once `/admin/family-suggestions`, is a tab here.
+  // The tab is in the URL so the old page's redirect and every link can open
+  // it; changing it changes `searchParams`, which re-runs the load below, so
+  // a group created from a suggestion is listed on the way back.
+  const activeTab = parseAdminPageTab("family-groups", searchParams.get("tab"));
   // Approve/reject writes the membership-area family-groups requests route; a
   // view-only membership admin browses the queue but cannot act (#1997).
   const canEditMembership = useAdminAreaEditAccess("membership");
@@ -297,7 +305,8 @@ export default function FamilyGroupsPage() {
     const params = new URLSearchParams(searchParams.toString());
     params.delete("edit");
     const newSearch = params.toString();
-    router.replace(newSearch ? `/admin/family-groups?${newSearch}` : "/admin/family-groups", {
+    const listHref = adminHref("family-groups");
+    router.replace(newSearch ? `${listHref}?${newSearch}` : listHref, {
       scroll: false,
     });
   }
@@ -397,17 +406,38 @@ export default function FamilyGroupsPage() {
     </AdminViewOnlySectionBanner>
   );
 
+  function handleTabChange(value: string) {
+    const nextTab = parseAdminPageTab("family-groups", value);
+    const params = new URLSearchParams(searchParams.toString());
+    params.delete("edit");
+    if (nextTab === "groups") params.delete("tab");
+    else params.set("tab", nextTab);
+    const query = params.toString();
+    router.replace(`${adminHref("family-groups")}${query ? `?${query}` : ""}`, {
+      scroll: false,
+    });
+  }
+
   return (
-    <div>
+    <div className="space-y-6">
+      <div>
+        <h1 className="text-2xl font-bold text-foreground">Family Groups</h1>
+        <p className="text-sm text-muted-foreground mt-1">
+          Link primary members together so they appear in each other&apos;s booking quick-add lists
+        </p>
+      </div>
+      <Tabs value={activeTab} onValueChange={handleTabChange}>
+        <TabsList>
+          <TabsTrigger value="groups">Groups</TabsTrigger>
+          <TabsTrigger value="suggestions">Suggestions</TabsTrigger>
+        </TabsList>
+        <TabsContent value="suggestions" className="mt-6">
+          <FamilySuggestionsPanel />
+        </TabsContent>
+        <TabsContent value="groups" className="mt-6">
       {viewOnlyBanner}
       <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-foreground">Family Groups</h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            Link primary members together so they appear in each other&apos;s booking quick-add lists
-          </p>
-        </div>
+      <div className="flex justify-end">
         <ViewOnlyActionButton canEdit={canEditMembership} describeReason={false} onClick={openCreateForm}>
           <Plus className="h-4 w-4 mr-2" />
           New Group
@@ -863,6 +893,8 @@ export default function FamilyGroupsPage() {
         </CardContent>
       </Card>
       </div>
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }
