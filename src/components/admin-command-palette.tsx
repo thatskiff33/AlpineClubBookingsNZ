@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { CornerDownLeft } from "lucide-react";
+import { defaultFilter } from "cmdk";
 import {
   CommandDialog,
   CommandEmpty,
@@ -61,8 +62,48 @@ function groupBySection(
   return groups;
 }
 
+type PaletteGroup = { section: string; entries: AdminFeatureSearchEntry[] };
+
 /**
- * The string cmdk fuzzy-matches against for an entry. Deliberately built from
+ * The groups that match `query`, best first (S2 #4797). The palette filters
+ * and orders its own items (`shouldFilter={false}`) because cmdk 1.1.1 does
+ * not re-sort GROUPS: its sort looks each group up by an attribute value that
+ * never matches, so groups kept hub order and Enter opened the first match in
+ * hub order — typing "Chores" selected Age Groups (score 0.03, through its
+ * "child pricing … Rates & Policies" text) above Chores (0.99).
+ *
+ * Each entry is scored with cmdk's own `defaultFilter` against `searchValue`;
+ * a zero score drops it. Items sort by score within their group, groups by
+ * their best item, ties keeping hub and index order. No query: hub order,
+ * unchanged.
+ */
+function rankGroups(groups: PaletteGroup[], query: string): PaletteGroup[] {
+  const search = query.trim();
+  if (!search) return groups;
+  return groups
+    .map((group, order) => {
+      const scored = group.entries
+        .map((entry, position) => ({
+          entry,
+          position,
+          score: defaultFilter(searchValue(entry), search),
+        }))
+        .filter(({ score }) => score > 0)
+        .sort((a, b) => b.score - a.score || a.position - b.position);
+      return {
+        section: group.section,
+        entries: scored.map(({ entry }) => entry),
+        best: scored[0]?.score ?? 0,
+        order,
+      };
+    })
+    .filter((group) => group.entries.length > 0)
+    .sort((a, b) => b.best - a.best || a.order - b.order)
+    .map(({ section, entries }) => ({ section, entries }));
+}
+
+/**
+ * The string the palette fuzzy-matches against for an entry. Deliberately built from
  * human-readable fields (label, section, keywords) and NOT the href: several
  * hrefs are deep links carrying query strings (e.g. the unpaid-stays views
  * whose href contains `PAYMENT_PENDING`), and scoring against that raw href
@@ -88,6 +129,7 @@ export function AdminCommandPalette({
 }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
   const openRef = useRef(false);
   // The control that had focus when the palette opened, so we can restore focus
   // there on close (a11y). Radix cannot do this itself without a DialogTrigger,
@@ -129,11 +171,13 @@ export function AdminCommandPalette({
     [clubToday, features, permissionMatrix, isFullAdmin, hutLeaderLabel],
   );
 
-  const groups = useMemo(() => groupBySection(index), [index]);
+  const hubGroups = useMemo(() => groupBySection(index), [index]);
+  const groups = useMemo(() => rankGroups(hubGroups, query), [hubGroups, query]);
 
   const openPalette = useCallback(() => {
     restoreFocusRef.current =
       (document.activeElement as HTMLElement | null) ?? null;
+    setQuery("");
     setOpen(true);
   }, []);
 
@@ -175,6 +219,7 @@ export function AdminCommandPalette({
     <CommandDialog
       open={open}
       onOpenChange={setOpen}
+      shouldFilter={false}
       title="Search admin features"
       description="Search the admin panel and jump straight to any page you can access."
       onCloseAutoFocus={(event) => {
@@ -185,7 +230,11 @@ export function AdminCommandPalette({
         }
       }}
     >
-      <CommandInput placeholder="Search admin features…" />
+      <CommandInput
+        placeholder="Search admin features…"
+        value={query}
+        onValueChange={setQuery}
+      />
       <CommandList>
         <CommandEmpty>No matching admin pages.</CommandEmpty>
         {groups.map(({ section, entries }) => (
@@ -195,7 +244,8 @@ export function AdminCommandPalette({
                 // A retired page's entry can share its href with another
                 // (two old names, one tab), never its label too.
                 key={`${entry.href} ${entry.label}`}
-                value={searchValue(entry)}
+                // Identity only: the palette does its own matching.
+                value={`${entry.href} ${entry.label}`}
                 onSelect={() => handleSelect(entry.href)}
                 className="group"
               >

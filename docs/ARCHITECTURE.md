@@ -2478,7 +2478,10 @@ entry must pass `isFeatureHrefVisible`, the `fullAdminOnly` gate and
 admissions and any-admin pages answer as the page will.
 `admin-feature-search-index.test.ts` proves both halves: a census from the page
 tree on disk, and a property test over every sweep grid and seeded role under
-every module setting.
+every module setting. The palette ranks its own matches (`shouldFilter={false}`,
+cmdk's `defaultFilter` score, groups ordered by their best item), because cmdk
+1.1.1 never re-sorts groups and Enter would otherwise open the first match in
+hub order rather than the best one.
 
 **One nav href carries a date, and both surfaces take it from the same place
 (#3123).** The Unpaid Finished Stays entry is a deep link whose `checkOutTo`

@@ -208,10 +208,12 @@ describe("AdminCommandPalette", () => {
 
     const input = await screen.findByPlaceholderText("Search admin features…");
     fireEvent.change(input, { target: { value: "Chores" } });
-    // Clicked, not Enter: cmdk 1.1.1 never reorders groups by score, so the
-    // first fuzzy match in hub order is the one Enter would open.
-    fireEvent.click(await screen.findByRole("option", { name: /^Chores/ }));
+    await waitFor(() => expect(screen.getByRole("option", { name: /^Chores/ })).not.toBeNull());
+    // Enter, not a click: the best match must be the one selected, although
+    // Age Groups (an earlier hub) also fuzzy-matches "chores" weakly.
+    fireEvent.keyDown(input, { key: "Enter" });
 
+    expect(pushMock).toHaveBeenCalledTimes(1);
     expect(pushMock).toHaveBeenCalledWith("/admin/chores");
   });
 
@@ -221,9 +223,45 @@ describe("AdminCommandPalette", () => {
 
     const input = await screen.findByPlaceholderText("Search admin features…");
     fireEvent.change(input, { target: { value: "Family Suggestions" } });
-    fireEvent.click(await screen.findByRole("option", { name: /^Family Suggestions/ }));
+    await waitFor(() =>
+      expect(screen.getByRole("option", { name: /^Family Suggestions/ })).not.toBeNull(),
+    );
+    fireEvent.keyDown(input, { key: "Enter" });
 
     expect(pushMock).toHaveBeenCalledWith("/admin/family-groups?tab=suggestions");
+  });
+
+  it("ranks groups by their best match, and keeps hub order with no query", async () => {
+    renderPalette();
+    pressCtrlK();
+
+    const input = await screen.findByPlaceholderText("Search admin features…");
+    const headings = () =>
+      Array.from(document.body.querySelectorAll("[cmdk-group-heading]")).map(
+        (el) => el.textContent,
+      );
+    const hubOrder = headings();
+    expect(hubOrder[0]).toBe("Home");
+
+    fireEvent.change(input, { target: { value: "Chores" } });
+    await waitFor(() => expect(headings()[0]).toBe("Lodge"));
+    // The weak match is still listed, just after the strong one.
+    expect(headings()).toContain("Fees & booking rules");
+    expect(screen.getAllByRole("option")[0]?.textContent).toMatch(/^Chores/);
+    expect(screen.queryByRole("option", { name: /^Payments/ })).toBeNull();
+
+    fireEvent.change(input, { target: { value: "" } });
+    await waitFor(() => expect(headings()).toEqual(hubOrder));
+  });
+
+  it("shows the empty state when nothing matches", async () => {
+    renderPalette();
+    pressCtrlK();
+
+    const input = await screen.findByPlaceholderText("Search admin features…");
+    fireEvent.change(input, { target: { value: "zzzzqqqq" } });
+    await waitFor(() => expect(screen.getByText("No matching admin pages.")).not.toBeNull());
+    expect(screen.queryAllByRole("option")).toEqual([]);
   });
 
   it("still finds pages by their old sidebar section name", async () => {
