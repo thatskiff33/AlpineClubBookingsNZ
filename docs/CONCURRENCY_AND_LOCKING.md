@@ -3337,9 +3337,9 @@ So merge never waits for a Payment row
   `onDelete: SetNull` finds no Payment row to update at the delete.
 - Being last, merge holds the Payment rows across the fewest later waits.
 
-No advisory key is added, and no writer's own order changes. Merge's other
-moves touch no Payment row: the guard matrix, the resolvers and D4's transfer
-read none, and `postMemberMergeTransfer` posts no successor. Proved against real
+No advisory key is added, and no writer's own order changes. Nothing else in
+merge locks a Payment row: its other moves update no Payment column, and D4's
+`postMemberMergeTransfer` posts no successor. Proved against real
 PostgreSQL by `member-merge-payment-row-races.realdb.test.ts`: a card settle
 holding its Payment row makes the merge refuse at once, and the settle then
 commits. A merge holding the row makes the settle wait, and both commit. The
