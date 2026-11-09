@@ -24,10 +24,3 @@ lines: 2287
 reason: one import line, so the cancellation step links the Settings tab
   through the hub registry instead of a hand-written URL (INV-SSOT); there is
   no smaller way to name the link.
-
-file: src/lib/admin-permissions.ts
-lines: 949
-reason: the matrix form of the admission rule (`canOpenAdminPathWithMatrix`,
-  which hub cards and setup links now use) has to be the same body as
-  `canOpenAdminPath`, which now calls it; putting it in another module would
-  split one authorization rule across two files.
