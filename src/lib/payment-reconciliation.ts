@@ -89,7 +89,7 @@ import {
 import { postCancellationLedgerLines } from "@/lib/booking-ledger-cancellation-sync";
 import { syncBookingLedgerSettlements } from "@/lib/booking-ledger-settlement-sync";
 import { postBookingConfirmationLedgerLines } from "@/lib/booking-ledger-confirmation-sync";
-import { postBookingReceipts, postRefundObligation, resolveBookingMoneyPostingContext, type BookingJournalContext } from "@/lib/member-money/doors";
+import { lockBookingRowForOwnerRead, postBookingReceipts, postRefundObligation, resolveBookingMoneyPostingContext, type BookingJournalContext } from "@/lib/member-money/doors";
 import type { ClubFormat } from "@/lib/club-format";
 
 type ReconciliationBooking = Prisma.BookingGetPayload<{
@@ -725,6 +725,10 @@ async function settleBookingPaymentInTransaction(
 
     const bookingLodgeId = lockTarget.lodgeId ?? (await getDefaultLodgeId(tx));
     await acquireLodgeCapacityLock(tx, bookingLodgeId);
+    // #4840: a manual settle names its officer on the Payment row below (the FK takes KEY SHARE on that Member row)
+    // before its PAID claim, so it takes the booking row first: booking row, then Member, the order member merge and
+    // every booking writer share. Taken after, it deadlocks a merge of that officer holding this row outside its prefix.
+    if (settlement.kind === "manual") await lockBookingRowForOwnerRead(tx, bookingId);
 
     // Re-read the full booking under the lock; the status/amount checks, the
     // capacity check and the PAID/CANCELLED claim below consume ONLY this
@@ -1643,9 +1647,9 @@ async function settleAndPostBookingReceipts(tx: Prisma.TransactionClient, bookin
   // #4516 (M4c): a capture this settle returns (a duplicate, or one the capacity race cancelled) owes its R05,
   // after its held R06, sized by the frozen plan its recovery row carries; its sender reserves against it. Review F1
   // (corrected in round 2): the owner is read without the booking row, defensively. W1 holds the Payment row here,
-  // and a member merge, which takes no lock(1), can update a Payment row after its owner move (its relation move of
-  // `manuallyMarkedPaidByMemberId`, filed separately): the booking row taken now would add one more Payment -> booking
-  // edge against it. No other cycle is known (journal lines name their debtor by id, with no foreign key). A merge in
+  // so the booking row taken now would add one more Payment -> booking edge against a member merge, which takes no
+  // lock(1) and holds booking rows from its owner move on (#4823 made merge never wait for a Payment row, its own
+  // edge). No other cycle is known (journal lines name their debtor by id, with no foreign key). A merge in
   // between leaves the debt on the merged-away member, where the family's lazy successor finds it (`refundFamilyTip`).
   if ((result.outcome === "duplicate_capture" || result.outcome === "capacity_failed") && settlement.kind === "stripe" && result.plannedRefundCents > 0) {
     await postRefundObligation(tx, journal, { bookingId, scope: "capture-return", id: settlement.paymentIntentId, amountCents: result.plannedRefundCents,

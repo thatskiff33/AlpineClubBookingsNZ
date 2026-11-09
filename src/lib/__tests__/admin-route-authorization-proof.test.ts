@@ -669,6 +669,48 @@ const SIDE_EFFECTING_GETS: Array<{
   },
 ];
 
+// ---------------------------------------------------------------------------
+// A page path spelled another way (C4 #4801). Next serves a moved page's old URL
+// in any letter case (escaped spellings are refused too, as a precaution); the
+// route map reads such a spelling as the `/admin` catch-all. The proxy answers
+// it with a 404 (`admin-page-exact-path-proxy.test.ts`); the layout guard
+// refuses it too.
+// ---------------------------------------------------------------------------
+
+describe("a page path spelled another way is refused by the layout guard", () => {
+  /** Every static segment below `/admin` capitalised, dynamic ones filled. */
+  const capitalised = (registryPath: string) =>
+    registryPath
+      .replace(/\[[^\]/]+\]/g, "x123")
+      .split("/")
+      .map((segment, index) =>
+        index < 2 || segment === "x123" ? segment : segment.charAt(0).toUpperCase() + segment.slice(1),
+      )
+      .join("/");
+
+  it("PREMISE: the route map reads a respelled moved page as the overview catch-all", () => {
+    expect(getAdminRouteRequirement("/admin/Site-Style", "GET")?.area).toBe("overview");
+    expect(getAdminRouteRequirement("/admin/site%2Dstyle", "GET")?.area).toBe("overview");
+  });
+
+  it("refuses every page, at its old and hub path respelled, even to a Full Admin and an overview viewer", async () => {
+    const admitted: string[] = [];
+    for (const page of ADMIN_PAGES) {
+      for (const url of [capitalised(page.oldPath), capitalised(page.hubPath)]) {
+        for (const grid of [FULL_ADMIN, viewGridFor("overview")]) {
+          if ((await pageAdmits(grid, `${url}?tab=x`)).ok) admitted.push(`${grid.label} ${url}`);
+        }
+      }
+    }
+    for (const url of ["/admin/site%2Dstyle", "/ADMIN/SITE-STYLE", "/admin/Website/site-style"]) {
+      if ((await pageAdmits(FULL_ADMIN, url)).ok) admitted.push(url);
+    }
+    expect(admitted).toEqual([]);
+    // The same Full Admin is admitted at the exact spelling.
+    expect((await pageAdmits(FULL_ADMIN, "/admin/site-style")).ok).toBe(true);
+  }, 120_000);
+});
+
 describe("side-effecting GETs are named rather than implied away (#2975)", () => {
   it("lists only routes that exist, and says which are gated at edit", () => {
     for (const entry of SIDE_EFFECTING_GETS) {

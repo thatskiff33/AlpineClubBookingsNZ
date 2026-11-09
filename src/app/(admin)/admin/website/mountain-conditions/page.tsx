@@ -1,5 +1,5 @@
 import { BackLink } from "@/components/admin/back-link";
-import { adminHref } from "@/lib/admin-hubs";
+import { adminLink } from "@/lib/admin-hubs";
 import {
   Card,
   CardContent,
@@ -13,7 +13,7 @@ export default function MountainConditionsAdminPage() {
   return (
     <div className="space-y-6">
       <div>
-        <BackLink href={adminHref("appearance")} label="Site Appearance & Content" />
+        <BackLink {...adminLink("appearance")} />
         <h1 className="mt-2 text-2xl font-bold text-foreground">
           Mountain Conditions
         </h1>

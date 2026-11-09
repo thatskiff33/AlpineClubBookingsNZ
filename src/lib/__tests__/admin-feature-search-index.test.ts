@@ -529,7 +529,9 @@ describe("getAdminFeatureSearchIndex — it never offers a page that will not op
       }
     }
     expect(failures).toEqual([]);
-  });
+    // A sweep of every subject and module setting: about 3s alone, past the 5s
+    // default when its shard runs beside other suites.
+  }, 30_000);
 
   it("fails closed: no permission matrix yields an EMPTY index", () => {
     expect(getAdminFeatureSearchIndex(CLUB_DAY, allOn, undefined, true)).toEqual([]);

@@ -28,7 +28,7 @@ import { readCapacityRaceStripeRefundedForTask } from "@/lib/capacity-race-refun
 import { settlementWriteRefusal } from "@/lib/manual-refund-task-settlement-refusal";
 import { prisma } from "@/lib/prisma";
 import { clubToday } from "@/lib/club-time";
-import { postRefundObligation, resolveBookingDoorClock } from "@/lib/member-money/doors";
+import { lockBookingRowForOwnerRead, postRefundObligation, resolveBookingDoorClock } from "@/lib/member-money/doors";
 // #3195: the $0 refusal is said by the settle SCREEN as well as thrown here, and
 // this module is `server-only` - so the sentence lives in a client-safe home and
 // both read it (`INV-SSOT`).
@@ -165,11 +165,13 @@ export async function resolveManualRefundTask(
     // cannot commit between the two reads, which would count the same money
     // as neither refunded nor promised. Its occurrence key, like its kind, is
     // written once at creation and never again.
-    const head = await tx.manualRefundTask.findUnique({ where: { id: taskId }, select: { kind: true, occurrenceKey: true } });
+    const head = await tx.manualRefundTask.findUnique({ where: { id: taskId }, select: { kind: true, occurrenceKey: true, bookingId: true } });
     // #4042 (`INV-PAY-124`): so does a group organiser's, which later joiners' shares grow under it.
     if (head?.kind === ManualRefundTaskKind.EDIT_FINANCIAL_REVIEW || (head !== null && (isNonCancellationHandBackTask(head) || isGroupOrganiserHandBackTask(head)))) {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
     }
+    // #4840 (#4627): an edit review's booking row next, so the owner below is read under it, and the claim (the officer) and credit writes (the owner), each a Member KEY SHARE, follow it as member merge orders them; no other kind takes it after the claim.
+    if (head?.kind === ManualRefundTaskKind.EDIT_FINANCIAL_REVIEW) await lockBookingRowForOwnerRead(tx, head.bookingId);
     const task = await tx.manualRefundTask.findUnique({
       where: { id: taskId },
       select: MANUAL_REFUND_TASK_RESOLUTION_SELECT,
@@ -376,8 +378,6 @@ export async function resolveManualRefundTask(
     if (claimed.count === 0) {
       throw new ManualBookingPaymentError("This refund task changed while you were closing it — refresh and try again.", 409);
     }
-    // #4627: an edit review's booking row before any credit write (a KEY SHARE on the owner's Member row): no inversion against merge.
-    if (isEditReview) await tx.$executeRaw`SELECT 1 FROM "Booking" WHERE "id" = ${task.bookingId} FOR NO KEY UPDATE`;
 
     if (settlement && settlementRoute) {
       // #3835: the credit part goes back FIRST: member ledger lock before any Payment row (INV-LOCK-002).

@@ -4,6 +4,7 @@ import { getRemainingRefundableCentsNetOf } from "@/lib/booking-payment-state";
 import { sumInternetBankingLateCashCreditCents } from "@/lib/internet-banking-late-cash-credit";
 import { openCardRefundOwedCents, type CardRefundOwedPaymentRow } from "@/lib/open-card-refund-owed";
 import { BANK_REFUND_VOID_FOLLOW_UP_KEY_PREFIX, isBankRefundVoidFollowUpTask } from "@/lib/bank-refund-void-follow-up-key";
+import { isLateCaptureHandBackTask } from "@/lib/late-capture-hand-back-task";
 
 /**
  * #3213 (epic #2797): WHICH FINANCE-QUEUE ITEMS CAN BE SETTLED AT ALL, and the
@@ -603,11 +604,12 @@ export type HandBackTaskRow = {
   amountCents: number | null;
   partPaymentReviewPaymentId: string | null;
   occurrenceKey: string | null;
+  /** #4848: names a legacy NULL-kind late capture (`isLateCaptureHandBackTask`). */
+  reason: string;
 };
 
 const OPEN_TASK_STATUS = "OPEN" satisfies ManualRefundTaskStatus;
 const HAND_BACK_KIND = "CANCELLED_BOOKING_HAND_BACK" satisfies ManualRefundTaskKind;
-const LATE_CAPTURE_KIND = "DELETED_BOOKING_LATE_CAPTURE" satisfies ManualRefundTaskKind;
 
 /**
  * THE REFUND STILL OWED BY HAND: money the club has promised back and not yet
@@ -629,10 +631,10 @@ const LATE_CAPTURE_KIND = "DELETED_BOOKING_LATE_CAPTURE" satisfies ManualRefundT
  * - A part-payment review shares the kind but carries no amount and records
  *   money settled in Xero (`isPartPaymentReviewTask`), so it owes nothing here.
  * - A task with no kind (`kind` null) counts too. The column was added on
- *   19 Aug 2026 with no backfill. On a booking that is not deleted such a row
- *   is a cancellation's hand-back; on a DELETED booking it is a #2700 late
- *   capture (`isLateCaptureAwaitingDecisionTask`), which `openTaskOwedCents`
- *   takes out before asking this, so no row counts twice.
+ *   19 Aug 2026 with no backfill, so such a row is a cancellation's hand-back -
+ *   or, carrying a late-capture reason sentence, a #2700 late capture
+ *   (`isLateCaptureAwaitingDecisionTask`), which `openTaskOwedCents` takes out
+ *   before asking this, so no row counts twice.
  * - Not an `EDIT_FINANCIAL_REVIEW`: an officer has still to price it, and
  *   "nothing is due" (DISMISSED) is a legitimate close, so it is not yet owed.
  */
@@ -659,21 +661,17 @@ export function openHandBackOwedCents(
  *   cancelled booking (#3639, `lateCaptureApprovalIntentId` set,
  *   `INV-PAY-106`), or a change payment captured on a deleted booking (#2700,
  *   `INV-ADDPAY-036`). Both kinds of row ask the same question.
- * - An OPEN task with no kind on a DELETED booking: a #2700 row raised before
- *   the kind column existed. The only task raised on a deleted booking is a
- *   late capture.
+ * - An OPEN task with no kind carrying a late-capture reason sentence: a #2700
+ *   row raised before the kind column existed (`isLateCaptureHandBackTask`,
+ *   #4848). Not "no kind on a deleted booking": a cancellation's hand-back on a
+ *   booking deleted later is still a hand-back.
  *
  * The capture is recorded on the payment before the task is raised, so its
  * money is inside `amountCents` and Net Collected takes it off while it waits
  * (`getNetCollectedCashParts`); once kept it counts as collected.
  */
-export function isLateCaptureAwaitingDecisionTask(
-  task: Pick<HandBackTaskRow, "status" | "kind">,
-  booking: { deletedAt: Date | null },
-): boolean {
-  if (task.status !== OPEN_TASK_STATUS) return false;
-  if (task.kind === LATE_CAPTURE_KIND) return true;
-  return task.kind === null && booking.deletedAt !== null;
+export function isLateCaptureAwaitingDecisionTask(task: Pick<HandBackTaskRow, "status" | "kind" | "reason">): boolean {
+  return task.status === OPEN_TASK_STATUS && isLateCaptureHandBackTask(task);
 }
 
 /**
@@ -685,12 +683,11 @@ export function isLateCaptureAwaitingDecisionTask(
  */
 export function openTaskOwedCents(
   tasks: ReadonlyArray<HandBackTaskRow>,
-  booking: { deletedAt: Date | null },
 ): { handBackCents: number; lateCaptureCents: number } {
-  const lateCaptures = tasks.filter((task) => isLateCaptureAwaitingDecisionTask(task, booking));
+  const lateCaptures = tasks.filter((task) => isLateCaptureAwaitingDecisionTask(task));
   return {
     handBackCents: openHandBackOwedCents(
-      tasks.filter((task) => !isLateCaptureAwaitingDecisionTask(task, booking)),
+      tasks.filter((task) => !isLateCaptureAwaitingDecisionTask(task)),
     ),
     lateCaptureCents: lateCaptures.reduce(
       (sum, task) => sum + Math.max(0, task.amountCents ?? 0),

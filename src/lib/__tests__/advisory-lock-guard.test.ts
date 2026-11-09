@@ -537,7 +537,7 @@ const GLOBAL_LOCK_SITE_REGISTRY: readonly RegisteredGlobalLockSite[] = [
     site: "approveAndExecuteLockedPeriodChangeRequest#1",
     tier: "GLOBAL",
     reason:
-      "#3750: approving a LOCKED_PERIOD change request on a finished stay claims the request and runs the canonical batch modification on the same transaction — a money and booking-status transition that must exclude a concurrent cancel, capture or refund of the same booking, composed with a capacity re-check. Global first, then the booking's immutable lodge key; the tx-aware service re-enters both and takes the member keys after.",
+      "#3750: approving a LOCKED_PERIOD change request on a finished stay claims the request and runs the canonical batch modification on the same transaction — a money and booking-status transition that must exclude a concurrent cancel, capture or refund of the same booking, composed with a capacity re-check. Global first, then the booking's immutable lodge key, then (#4845) the booking row before the claim; the tx-aware service re-enters all three and takes the member keys after.",
     invariant: "INV-LOCK-002",
   },
   {
@@ -1482,19 +1482,30 @@ const ROW_LOCK_SITE_INVENTORY: Record<string, number> = {
   // claim (which writes no booking row), so a merge (owner move, then the
   // request's member) cannot hold the row it waits on. W1's capture-return R05
   // reads its owner without it, defensively (round 2: W1 holds the Payment row
-  // there, which a merge's relation move can update after its owner move; no
-  // other cycle is known). See docs/CONCURRENCY_AND_LOCKING.md -> "The M3b
-  // booking doors and member merge's journal transfer" and the M4c paragraph.
-  "src/lib/member-money/internal/booking-posting.ts": 1,
+  // there, so the booking row would add a Payment -> booking edge; since #4823 a
+  // merge never waits for a Payment row). #4840: a manual settle takes it right
+  // after its lodge key, before it names its officer on the Payment row (that FK
+  // takes KEY SHARE on the Member row a merge locks FOR UPDATE after holding the
+  // booking row). An edit review's closure (`manual-refund-task-resolution.ts`,
+  // whose own raw statement this replaced) takes it right after lock(1), before
+  // its full task re-read, its claim naming the officer (`completedByMemberId`)
+  // and any credit write naming the owner (#4627). #4845: a locked-period
+  // change-request approval takes it right after its lodge key, before its claim
+  // names the officer and holds the request row merge re-points. See docs/CONCURRENCY_AND_LOCKING.md -> "The M3b
+  // booking doors and member merge's journal transfer", the M4c paragraph and
+  // "A booking writer takes the booking row before a Member key share".
+  // #4845: that one statement now lives in `booking-row-lock.ts`, outside the journal boundary, so a lock-only
+  // caller names no journal module; `doors` re-exports it and `booking-posting.ts` imports it.
+  "src/lib/booking-row-lock.ts": 1,
   // #4691 (Ledger M4a): an application batch, a refund reservation and a release
   // take the booking's Payment row (`SELECT 1 … FOR NO KEY UPDATE`) before they
   // read caps. No advisory key. A caller that already holds the row adds nothing.
   // Charges and reversals that apply nothing do not take it, so the M3 doors
   // gain no edge. #4516 (M4b): receipt collections take it, and the CHARGE
   // successor a member merge once posted is now posted only under it, by the new
-  // owner's first collection. Merge takes no Payment row of its own, though its
-  // relation moves can update one (`Payment.manuallyMarkedPaidByMemberId`, M4c
-  // review F5, filed separately). #4516 (M4c): it is also taken by every refund
+  // owner's first collection. Merge posts no successor; it re-points one Payment
+  // column (`manuallyMarkedPaidByMemberId`), never waiting for the row (#4823,
+  // counted under member-merge-payment-attribution.ts). #4516 (M4c): it is also taken by every refund
   // writer: R05 at the edit doors (after their booking row), an appeal (after its
   // booking row, before its claim) and its `release_claim` (after the request's
   // row and its task), a late capture's approval and keep (before the task's
@@ -1502,11 +1513,16 @@ const ROW_LOCK_SITE_INVENTORY: Record<string, number> = {
   // writer and "Paid another way". See docs/CONCURRENCY_AND_LOCKING.md ->
   // "Member-money applications and refund reservations" and the M4c paragraph.
   "src/lib/member-money/internal/application-read.ts": 1,
-  // #4627: an edit review's closure takes its booking row straight after its claim,
-  // before any credit write (giveBackCancelledShareCredit, applyLocalRefundAllocation,
-  // an account-credit mint: each a KEY SHARE on the owner's Member row), so neither
-  // those nor the journal adapter's owner read invert against member merge's owner move.
-  "src/lib/manual-refund-task-resolution.ts": 1,
+  // #4823: member merge re-points `Payment.manuallyMarkedPaidByMemberId` with one
+  // sorted `SELECT 1 … ORDER BY "id" FOR NO KEY UPDATE NOWAIT` over every row
+  // naming the duplicate, then the update. Merge takes no lock(1) and holds
+  // booking rows from its owner move on; lock(1) writers take a booking's Payment
+  // row before its booking row (a card settle, the back-post) and after it (the
+  // edit doors, an edit review), so no waiting position is acyclic and merge
+  // never waits: a held row refuses the merge (409). Taken
+  // after merge's sorted Member FOR UPDATE, so the set cannot grow. See
+  // docs/CONCURRENCY_AND_LOCKING.md -> "Member merge never waits for a Payment row".
+  "src/lib/member-merge-payment-attribution.ts": 1,
   // #3635 (review outbox F1/F4): the kept-late-capture enqueue and the
   // worker's send-time decision lock the #3639 approval task's row
   // (`SELECT 1 … FOR UPDATE`), the row the dismissal, reopen and approval
@@ -1666,7 +1682,10 @@ const ROW_LOCK_SITE_INVENTORY: Record<string, number> = {
   // before it reads whether the plan's share is written). #4516 (M4c review F2):
   // and by a late capture's approval or keep (`prepareLateCaptureDecision`, no
   // lock(1)) before its task's claim, the order a "Paid another way" close takes
-  // the Payment row and that task's row in.
+  // the Payment row and that task's row in; #4824: an approval's plan
+  // (`planLateCaptureApprovalRefund`) takes it first, before it reads what the
+  // capture holds; #4838: so does a #2700 hand-back's still-owed check
+  // (`assertLateCaptureHandBackStillOwed`, no lock(1)), before its claim.
   // Order: lock(1) -> lodge -> member credit -> Payment -> refund, recovery and
   // transaction rows. See docs/CONCURRENCY_AND_LOCKING.md -> the #3640
   // paragraph and its #4217 sequel.

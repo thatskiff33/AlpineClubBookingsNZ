@@ -61,8 +61,9 @@ import type { BatchModificationPreTransaction } from "@/lib/booking-batch-modifi
 const TODAY = requireCalendarDate("2026-07-01");
 
 const tx = {
-  $executeRaw: async () => {
-    mocks.calls.push("global-lock");
+  $executeRaw: async (strings: TemplateStringsArray) => {
+    // #4845: the booking-row lock runs through this same client, between the lodge key and the claim.
+    mocks.calls.push(strings.join("?").includes('FROM "Booking"') ? "booking-row" : "global-lock");
   },
   bookingChangeRequest: {
     findUnique: (...args: unknown[]) => mocks.requestFindUnique(...args),
@@ -118,7 +119,7 @@ const GRANDCHILDREN = [
 function primeRequest(requestedChanges: unknown) {
   mocks.requestFindUnique.mockReset();
   mocks.requestFindUnique
-    .mockResolvedValueOnce({ kind: "LOCKED_PERIOD", booking: { lodgeId: "lodge-1" } })
+    .mockResolvedValueOnce({ kind: "LOCKED_PERIOD", bookingId: "booking-1", booking: { lodgeId: "lodge-1" } })
     .mockResolvedValueOnce({
       id: "cr-1",
       kind: "LOCKED_PERIOD",
@@ -238,7 +239,7 @@ describe("officer-entered guests on a free-text request (#4030 Part B)", () => {
       officerEnteredGuests: GRANDCHILDREN,
     });
     // One statement: the guarded claim carries the entry.
-    expect(mocks.calls).toEqual(["global-lock", "lodge-lock", "claim", "modify"]);
+    expect(mocks.calls).toEqual(["global-lock", "lodge-lock", "booking-row", "claim", "modify"]);
     const claim = mocks.updateMany.mock.calls[0][0] as {
       where: Record<string, unknown>;
       data: { requestedChanges: Record<string, Record<string, unknown>>; status: string };
@@ -313,7 +314,7 @@ describe("officer-entered guests on a free-text request (#4030 Part B)", () => {
     mocks.modifyBookingBatch.mockRejectedValue(new Error("over capacity"));
     await expect(run()).rejects.toThrow("over capacity");
     // The claim (and the entry it carried) ran inside the transaction that threw.
-    expect(mocks.calls).toEqual(["global-lock", "lodge-lock", "claim", "modify"]);
+    expect(mocks.calls).toEqual(["global-lock", "lodge-lock", "booking-row", "claim", "modify"]);
     expect(mocks.update).not.toHaveBeenCalled();
   });
 
@@ -331,7 +332,7 @@ describe("officer-entered guests on a free-text request (#4030 Part B)", () => {
       run({ expectedFigures: { additionalAmountCents: 9_000, refundAmountCents: 0, accountCreditAmountCents: 0 } }),
     ).rejects.toBeInstanceOf(FinishedStayFiguresChangedError);
     // Thrown inside the transaction, after the claim and the edit: nothing is linked.
-    expect(mocks.calls).toEqual(["global-lock", "lodge-lock", "claim", "modify"]);
+    expect(mocks.calls).toEqual(["global-lock", "lodge-lock", "booking-row", "claim", "modify"]);
     expect(mocks.update).not.toHaveBeenCalled();
   });
 

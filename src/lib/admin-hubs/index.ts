@@ -155,6 +155,14 @@ export function adminHref<Id extends AdminPageId>(
   return resolveAdminHref(getAdminPage(id), ADMIN_HUBS_LIVE, args[0]);
 }
 
+/** A link to a page, as a back link or a menu item takes it: its `adminHref` and its label. */
+export function adminLink<Id extends AdminPageId>(
+  id: Id,
+  ...args: AdminHrefArgs<Id>
+): { href: string; label: string } {
+  return { href: adminHref(id, ...args), label: getAdminPage(id).label };
+}
+
 /**
  * `href` with `tab` as its `?tab=` and `anchor` as its fragment; refuses a tab
  * or anchor the page does not declare. The first tab is the page's default, so
@@ -300,6 +308,82 @@ export function servedAdminPathname(
 ): string {
   const canonical = canonicalAdminPathname(pathname, pages);
   return live ? relocateAdminPathname(canonical, pages, "oldPath", "hubPath") : canonical;
+}
+
+/** `segment` with its percent-escapes decoded; a malformed escape is left as it is. */
+function decodeSegment(segment: string): string {
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    return segment;
+  }
+}
+
+/**
+ * Whether `pathname` (query and fragment ignored) reaches a registered page, at
+ * its old or hub path or beneath one, only once letter case is ignored or a
+ * percent-escape is decoded: `/admin/Site-Style`, `/admin/site%2Dstyle`.
+ *
+ * Next matches the `beforeFiles` rewrites without regard to case (it compiles
+ * them with no `caseSensitive` option, whatever the config says), but the
+ * proxy, the module gate and the layout guard decide on the path exactly as
+ * written, where such a spelling matches no page's rule. Letter case is the
+ * confirmed way in on next@16.4.3; an escaped spelling there renders the
+ * public catch-all, not the page, and is refused only as a precaution against
+ * a Next that starts rendering decoded paths. So admin page URLs are served
+ * only at their exact spelling: the proxy answers this with a 404 and
+ * `canOpenAdminPath` refuses it.
+ * A dynamic segment matches any non-empty value, as Next's does.
+ */
+export function isInexactAdminPagePath(
+  pathname: string,
+  pages: readonly AdminHubPage[] = ADMIN_PAGES,
+): boolean {
+  const { patterns, lowercase } = pagePatterns(pages);
+  // Asked on every request and every admission: with no capital and no escape,
+  // nothing can differ. The whole string first, which needs no allocation.
+  if (lowercase && !INEXACT_CANDIDATE.test(pathname)) return false;
+  const path = pathname.split(/[?#]/)[0] ?? "";
+  if (lowercase && !INEXACT_CANDIDATE.test(path)) return false;
+  const segments = path.replace(/(.)\/+$/, "$1").split("/");
+  return patterns.some((pattern) => {
+    if (pattern.length > segments.length) return false;
+    let inexact = false;
+    for (const [index, part] of pattern.entries()) {
+      const value = segments[index]!;
+      if (DYNAMIC_PATH_SEGMENT.test(part)) {
+        if (value === "") return false;
+      } else if (value !== part) {
+        if (decodeSegment(value).toLowerCase() !== part.toLowerCase()) return false;
+        inexact = true;
+      }
+    }
+    return inexact;
+  });
+}
+
+const INEXACT_CANDIDATE = /[A-Z%]/;
+
+const PAGE_PATTERNS = new WeakMap<
+  readonly AdminHubPage[],
+  { patterns: readonly string[][]; lowercase: boolean }
+>();
+
+/** Every page's old and hub path, split into segments, once per page list. */
+function pagePatterns(pages: readonly AdminHubPage[]) {
+  let cached = PAGE_PATTERNS.get(pages);
+  if (!cached) {
+    const paths = [...new Set(pages.flatMap((page) => [page.oldPath, page.hubPath]))];
+    const patterns = paths.map((path) => path.split("/"));
+    cached = {
+      patterns,
+      lowercase: patterns.every((pattern) =>
+        pattern.every((part) => DYNAMIC_PATH_SEGMENT.test(part) || part === part.toLowerCase()),
+      ),
+    };
+    PAGE_PATTERNS.set(pages, cached);
+  }
+  return cached;
 }
 
 /** `href` as the path the sidebar compares, its query or fragment kept on the end. */
@@ -476,7 +560,9 @@ export function retiredAdminPageHref(
  *
  * - Off: the hub URL redirects (307) to the old URL, and a `beforeFiles`
  *   rewrite serves the old URL from the moved file, so the proxy, the module
- *   gate and the layout guard all see the old path.
+ *   gate and the layout guard all see the old path. Next matches the rule in
+ *   any letter case; `isInexactAdminPagePath` is how the proxy refuses the
+ *   spellings the guards would not recognise.
  * - On: the old URL redirects (307) to the hub URL; no rewrites.
  *
  * Next passes the request's query through both. A page whose hub path is its

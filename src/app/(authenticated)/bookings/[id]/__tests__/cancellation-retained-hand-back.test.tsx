@@ -21,6 +21,7 @@ const handBack = (status: string, amountCents: number) => ({
   amountCents,
   partPaymentReviewPaymentId: null,
   occurrenceKey: null,
+  reason: "Cancellation refund owed by hand", // #4848
 });
 
 // A cancelled booking marked paid by hand for $100.00 (Internet Banking, one

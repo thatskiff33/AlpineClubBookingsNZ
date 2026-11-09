@@ -19,7 +19,8 @@ import {
 } from "@/lib/member-merge";
 import { mergeMemberFields } from "@/lib/member-merge-field-rules";
 import { MEMBER_MERGE_RELATION_SPECS } from "@/lib/member-merge-relations";
-import { BookingRequestStatus, type MemberGuestConsentStatus } from "@prisma/client";
+import { MEMBER_MERGE_PAYMENT_ATTRIBUTION_SPEC } from "@/lib/member-merge-payment-attribution";
+import { BookingRequestStatus, Prisma, type MemberGuestConsentStatus } from "@prisma/client";
 import { claimAlreadyConvertedBookingRequest } from "@/lib/booking-request-shared";
 import { classifyMemberGuestConsent } from "@/lib/member-guest-consent";
 import {
@@ -3351,5 +3352,106 @@ describe("promo adjustment rows follow their allocation through a merge (#3276, 
       where: { beneficiaryMemberId: LOSER_ID },
       data: { beneficiaryMemberId: MASTER_ID },
     });
+  });
+});
+
+/**
+ * #4823: merge takes no `lock(1)`, and `lock(1)` writers take a booking's Payment
+ * and booking rows in both orders (a card settle Payment first, the edit doors
+ * their booking row first), so merge must never WAIT for a Payment row.
+ * The real-PostgreSQL proof is `member-merge-payment-row-races.realdb.test.ts`;
+ * these pin the shape: the attribution leaves the generic pass, moves after the
+ * sorted Member `FOR UPDATE`, under one sorted `NOWAIT` statement, and a held
+ * row refuses the merge with nothing moved.
+ */
+describe("executeMemberMerge — Payment attribution moves last, never waiting (#4823)", () => {
+  function paymentDelegate(moved: number) {
+    return { ...defaultDelegate(), updateMany: vi.fn().mockResolvedValue({ count: moved }) };
+  }
+
+  /** A tagged `$executeRaw` call composed the way Prisma composes it, identifier fragments included. */
+  function composed(call: unknown[]): { sql: string; values: unknown[] } {
+    const [strings, ...values] = call as [TemplateStringsArray, ...unknown[]];
+    if (!Array.isArray(strings)) return { sql: rawStatement(strings), values };
+    const statement = Prisma.sql(strings, ...(values as Prisma.Sql[]));
+    return { sql: statement.sql, values: statement.values };
+  }
+
+  function execute(client: unknown) {
+    return executeMemberMerge({
+      masterId: MASTER_ID,
+      loserId: LOSER_ID,
+      actorMemberId: ACTOR_ID,
+      previewToken: validToken(),
+      confirmationText: "MERGE Dup Person",
+      db: client as never,
+    });
+  }
+
+  it("takes its relation from the one spec the table marks movedLast", () => {
+    const flagged = MEMBER_MERGE_RELATION_SPECS.filter((spec) => spec.movedLast);
+    expect(flagged).toEqual([MEMBER_MERGE_PAYMENT_ATTRIBUTION_SPEC]);
+    expect(MEMBER_MERGE_PAYMENT_ATTRIBUTION_SPEC).toMatchObject({
+      key: "Payment.manuallyMarkedPaidBy", model: "Payment", delegate: "payment", column: "manuallyMarkedPaidByMemberId", bucket: "move",
+    });
+  });
+
+  it("re-points the attribution once, after the Member FOR UPDATE, under a sorted NOWAIT lock", async () => {
+    const payment = paymentDelegate(2);
+    const { client, executeRaw } = makeClient({ payment });
+
+    const result = await execute(client);
+
+    const statements = executeRaw.mock.calls.map((call) => composed(call));
+    const memberLock = statements.findIndex(({ sql }) => sql.includes('FROM "Member"') && sql.includes("FOR UPDATE"));
+    const paymentLock = statements.findIndex(({ sql }) => sql.includes('FROM "Payment"'));
+    expect(memberLock).toBeGreaterThanOrEqual(0);
+    expect(paymentLock).toBeGreaterThan(memberLock);
+    expect(statements[paymentLock]).toEqual({
+      sql: 'SELECT 1 FROM "Payment" WHERE "manuallyMarkedPaidByMemberId" = ? ORDER BY "id" FOR NO KEY UPDATE NOWAIT',
+      values: [LOSER_ID],
+    });
+
+    // Once, not also in the generic pass, and only after its own lock.
+    expect(payment.updateMany).toHaveBeenCalledTimes(1);
+    expect(payment.updateMany).toHaveBeenCalledWith({
+      where: { manuallyMarkedPaidByMemberId: LOSER_ID },
+      data: { manuallyMarkedPaidByMemberId: MASTER_ID },
+    });
+    expect(payment.updateMany.mock.invocationCallOrder[0]).toBeGreaterThan(
+      executeRaw.mock.invocationCallOrder[paymentLock],
+    );
+    expect(result.relationMoves).toContainEqual({ model: "Payment.manuallyMarkedPaidBy", count: 2 });
+  });
+
+  it("refuses the merge with a 409, moving nothing, when another writer holds a Payment row", async () => {
+    const payment = paymentDelegate(1);
+    const { client, executeRaw, auditLog } = makeClient({ payment });
+    executeRaw.mockImplementation(async (...call: unknown[]) => {
+      if (composed(call).sql.includes('FROM "Payment"')) {
+        throw Object.assign(new Error("could not obtain lock on row in relation \"Payment\""), { code: "55P03" });
+      }
+      return 0;
+    });
+
+    const refused = await execute(client).catch((error: unknown) => error);
+
+    expect(refused).toBeInstanceOf(MemberMergeError);
+    expect(refused).toMatchObject({ statusCode: 409, code: "merge_payment_row_busy" });
+    expect(payment.updateMany).not.toHaveBeenCalled();
+    expectRefusedAudit((auditLog as { create: AuditCreateSpy }).create, "merge_payment_row_busy");
+  });
+
+  it("rethrows any other failure of the Payment lock unchanged", async () => {
+    const payment = paymentDelegate(1);
+    const { client, executeRaw } = makeClient({ payment });
+    const broken = Object.assign(new Error("connection reset"), { code: "08006" });
+    executeRaw.mockImplementation(async (...call: unknown[]) => {
+      if (composed(call).sql.includes('FROM "Payment"')) throw broken;
+      return 0;
+    });
+
+    await expect(execute(client)).rejects.toBe(broken);
+    expect(payment.updateMany).not.toHaveBeenCalled();
   });
 });
