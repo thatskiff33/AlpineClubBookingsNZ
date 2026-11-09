@@ -1189,6 +1189,50 @@ describe("review finding source/schema contracts", () => {
     }
   });
 
+  it("runs the member-merge officer settle race suite against the same dedicated PostgreSQL (#4840)", () => {
+    // A manual settle takes the booking row before it names its officer on the
+    // Payment row, because merge holds booking rows and then takes Member FOR
+    // UPDATE. `manual-booking-payment.test.ts` pins the order against a mock;
+    // only the realdb suite shows PostgreSQL forms no wait-for cycle, and it
+    // `describe.skip`s itself without the harness env vars. Same shape as #4823.
+    const workflow = readRepoFile(".github/workflows/ci.yml");
+    const migrateStep = workflow.indexOf(
+      "name: Migrate dedicated advisory-lock race database"
+    );
+    const officerRaceStep = workflow.indexOf(
+      "name: Test member-merge officer settle races against dedicated PostgreSQL"
+    );
+    expect(migrateStep).toBeGreaterThan(-1);
+    expect(
+      officerRaceStep,
+      "ci.yml no longer runs member-merge-officer-settle-races.realdb.test.ts. " +
+        "That suite self-skips without RUN_CONCURRENCY_RACE_TESTS, so removing " +
+        "the step silently un-tests the #4840 lock order."
+    ).toBeGreaterThan(migrateStep);
+    const stepBlock = workflow.slice(
+      officerRaceStep,
+      workflow.indexOf("      - name:", officerRaceStep + 1)
+    );
+    expect(stepBlock).toContain('RUN_CONCURRENCY_RACE_TESTS: "1"');
+    expect(stepBlock).not.toContain("CONCURRENCY_RACE_DATABASE_URL:");
+    expect(stepBlock).toContain(
+      "pnpm exec vitest run src/lib/__tests__/member-merge-officer-settle-races.realdb.test.ts"
+    );
+
+    const suite = readRepoFile(
+      "src/lib/__tests__/member-merge-officer-settle-races.realdb.test.ts"
+    );
+    expect(suite).toContain('process.env.RUN_CONCURRENCY_RACE_TESTS === "1"');
+    for (const caseName of [
+      "MUTATION: a merge holding the booking row and waiting for the duplicate's Member row makes the settle wait at the booking row, never a deadlock",
+      "a settle holding the booking row and the officer's key share makes the merge wait; both commit",
+      "MUTATION: a merge holding the booking row and waiting for the duplicate's Member row makes an edit review's closure wait at the booking row, never a deadlock",
+      "an edit review's closure holding the booking row and the officer's key share makes the merge wait; both commit",
+    ]) {
+      expect(suite, `#4840 case missing: ${caseName}`).toContain(caseName);
+    }
+  });
+
   it("runs the page-content delete race against a real PostgreSQL in CI (#3852)", () => {
     // The suite describe.skip's itself without the harness env vars, so an
     // unwired step would turn the only proof that PostgreSQL gives the loser of

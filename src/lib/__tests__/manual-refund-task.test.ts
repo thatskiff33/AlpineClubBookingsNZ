@@ -897,6 +897,37 @@ describe("#3030 - pricing an unknown amount at completion", () => {
     expect(result.amountAmended).toBe(false);
   });
 
+  it("#4840: takes the booking row after lock(1) and before the task re-read that reads the owner, so before the claim names the officer", async () => {
+    mocks.manualRefundTaskFindUnique.mockResolvedValue(editReviewTask());
+
+    await resolveManualRefundTask({
+      taskId: "task-1",
+      resolution: "completed",
+      note: "Priced from the June invoice: two nights at $45.",
+      actingMemberId: "admin-1",
+      confirmedAmountCents: 9000,
+      direction: "REFUND_TO_MEMBER",
+      recordedNightPrices: null,
+    }, CLUB_FORMAT_TEST);
+
+    // The claim's `completedByMemberId` takes KEY SHARE on the officer's Member row, and member merge
+    // holds booking rows before its Member FOR UPDATE: so the booking row has to come first.
+    const statements = mocks.executeRaw.mock.calls.map(([strings]) => (strings as TemplateStringsArray).join("?"));
+    const bookingRow = statements.findIndex((sql) => sql.includes('FROM "Booking"') && sql.includes("FOR NO KEY UPDATE"));
+    expect(statements[0]).toContain("pg_advisory_xact_lock(1)");
+    expect(bookingRow).toBeGreaterThan(0);
+    expect(statements.filter((sql) => sql.includes('FROM "Booking"'))).toHaveLength(1);
+    const bookingRowAt = mocks.executeRaw.mock.invocationCallOrder[bookingRow]!;
+    // Keyed from the head read (kind and booking id, both written once), and taken before the full
+    // re-read, whose booking owner then decides the credit recipient under the lock (#4844 review F3).
+    expect(mocks.manualRefundTaskFindUnique.mock.calls[0]![0]).toMatchObject({ select: { kind: true, bookingId: true } });
+    expect(bookingRowAt).toBeGreaterThan(mocks.manualRefundTaskFindUnique.mock.invocationCallOrder[0]!);
+    expect(bookingRowAt).toBeLessThan(mocks.manualRefundTaskFindUnique.mock.invocationCallOrder[1]!);
+    expect(mocks.manualRefundTaskFindUnique.mock.calls[1]![0]).toMatchObject({ select: { booking: expect.anything() } });
+    expect(bookingRowAt).toBeLessThan(mocks.manualRefundTaskUpdateMany.mock.invocationCallOrder[0]!);
+    expect(bookingRowAt).toBeLessThan(mocks.applyLocalRefundAllocation.mock.invocationCallOrder[0]!);
+  });
+
   it("refuses to complete an unpriced task when the caller claims it already has its final amount - the unknown is NOT zero", async () => {
     mocks.manualRefundTaskFindUnique.mockResolvedValue(editReviewTask());
 
@@ -3341,9 +3372,12 @@ describe("recording per-night amounts while settling (#3191)", () => {
     expect(mocks.executeRaw).toHaveBeenCalledTimes(2);
     expect((mocks.executeRaw.mock.calls[1]![0] as unknown as string[]).join("?")).toMatch(/FROM "Booking" WHERE "id" = \? FOR NO KEY UPDATE/);
     expect(mocks.manualRefundTaskFindUnique.mock.calls[0]![0]).toMatchObject({ select: { kind: true } });
+    // #4840 (#4844 review F3): and its booking id, which keys the booking-row lock taken before the
+    // full re-read. Written once at creation like the kind (no writer updates it), so unlocked is safe.
     expect(Object.keys((mocks.manualRefundTaskFindUnique.mock.calls[0]![0] as { select: object }).select)).toEqual([
       "kind",
       "occurrenceKey",
+      "bookingId",
     ]);
     expect(mocks.executeRaw.mock.invocationCallOrder[0]).toBeLessThan(
       mocks.manualRefundTaskFindUnique.mock.invocationCallOrder[1]!,

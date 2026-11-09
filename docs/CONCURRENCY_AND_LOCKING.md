@@ -3306,7 +3306,7 @@ The `lock(1)` writers take a booking's two rows in both orders:
 
 | Order | Writers |
 | --- | --- |
-| Payment → booking | a card settle (W1: its PAID claim and R01's owner read), the back-post |
+| Payment → booking | a card settle (W1: its PAID claim and R01's owner read), the back-post. A manual settle takes the booking row first since #4840 |
 | booking → Payment | the edit doors (after their lodge key), an edit review, an approved appeal |
 
 Two `lock(1)` holders never interleave, so neither order is a defect between
@@ -3360,6 +3360,81 @@ writers: #4820 (M4c refunds: the appeal's booking-row-first order, W1's
 capture-return read), #4791 (M4b receipts), #4776 (the engine's Payment lock),
 #4729 and #4636 (member merge, D4's transfer), #4792, #4761, #4754, #4749 and
 #4750.
+
+#### A booking writer takes the booking row before a Member key share (#4840)
+
+Any write that names a member through a foreign key takes `FOR KEY SHARE` on
+that Member row. Merge holds booking rows from its relation moves on, then takes
+its sorted `Member … FOR UPDATE`. So a writer that takes a Member key share
+first and a booking row after can wait on merge while merge waits on it. The
+order every booking writer and merge share is **booking row, then Member key
+share**. The edit doors take their booking row right after their lodge key,
+and the journal adapter takes it before it reads the owner.
+
+Two writers did not, and #4840 changed both. The manual settle wrote the officer onto the Payment row
+(`manuallyMarkedPaidByMemberId`) before its PAID claim took the booking row. When
+the officer was the duplicate or the survivor of a running merge, and the
+booking named the duplicate at a lodge outside merge's lodge prefix, PostgreSQL
+broke the cycle by aborting one side (`40P01`). Since #4840 the settle takes the
+booking row (`lockBookingRowForOwnerRead`) right after its lodge key, so its
+order is `lock(1)` → lodge → booking row → member-credit → Payment → Member key
+share → PAID claim. The Stripe path writes no Member FK before its claim and is
+unchanged. The reversal updates the booking before it writes its audit row.
+
+An edit review's closure took its booking row straight after its claim
+(#4627), to stay ahead of its credit writes. But the claim itself writes
+`completedByMemberId`, the officer, so the officer's key share came first. The
+closure takes `lock(1)` and no lodge key, so merge's lodge prefix never fenced
+it. It now takes the booking row (`lockBookingRowForOwnerRead`) right after
+`lock(1)`, keyed from its first read of the task's kind and booking id (both
+written once), and before the full re-read. So the booking owner that names the
+credit recipient is read under the lock, and the claim and every credit write
+come after it. The
+other task kinds take no booking row after their claim: their routes touch the
+Payment row, a group child's Payment row, ledger lines (an FK `KEY SHARE` on the
+booking, which merge's `NO KEY UPDATE` does not conflict with) and plain debtor
+reads.
+
+Why not the other fixes:
+
+- **Merge takes its Member rows `FOR UPDATE` before its booking moves.** That
+  inverts the shared order. An edit door run by an officer who is the
+  survivor would hold the booking row and wait for the Member row, while merge
+  held the Member row and waited for the booking row. It would also split
+  #2597's one sorted participant statement: the ancillary owners are known only
+  after the moves, and #2672's coverage re-derivation is a fence only below that
+  statement.
+- **Merge takes its Member rows `NOWAIT`.** #2623 T6 kept that wait blocking,
+  bounded at 10s, because ordinary writers hold key shares on these rows all
+  the time.
+- **Merge takes `lock(1)`.** Ruled out by "Why merge takes no global cohort key".
+
+If merge wins, the settle or closure waits at the booking row. It then names an
+officer the merge deleted, so its FK refuses (`P2003`), nothing is recorded, and
+the officer acts again from the surviving record. If the writer wins, merge
+waits at the booking row and moves the writer's attribution afterwards.
+
+**An accepted counterpart: member hard-delete.** Deleting a member
+(`member-lifecycle-actions.ts`) locks that Member row `FOR UPDATE` first, as its
+Xero fence, and only then lets `ON DELETE SET NULL` update the booking rows that
+name the member as an actor (`createdById`, `adminReviewedById`, `deletedById`,
+`capacityOverriddenByMemberId` and the rest). That is Member, then booking: the
+opposite of merge and of the writers above. Merge and delete order the two rows
+oppositely, so a writer cannot agree with both, and #4840 sides with merge.
+Hard-deleting the officer mid-settle or mid-closure on a booking that officer
+made or reviewed can therefore deadlock where it used to end in a `P2003`.
+PostgreSQL detects the cycle and aborts one side, which rolls back whole, so
+nothing is corrupted, and deleting an officer while their own write is in
+flight is the rarer event. Reordering delete's cascade is tracked separately.
+
+Proved against real PostgreSQL by
+`member-merge-officer-settle-races.realdb.test.ts`, a required step of the
+`migration-drift` job pinned by `review-findings-contracts.test.ts`. Both
+orders are covered for each writer, and the old orders deadlock (probed). The
+positions are pinned in `manual-booking-payment.test.ts` and
+`manual-refund-task.test.ts`. This is not a census of every `lock(1)` writer:
+the settle body, its reversal, the Stripe path and the refund-task closure were
+checked, and the rule above is what a new writer follows.
 
 ## The disciplines, by writer class
 
@@ -5003,8 +5078,10 @@ on the per-member `member-credit` key, **not** on `lock(1)`, so the path compose
 a third tier — `lock(1)` → `acquireLodgeCapacityLock(lodgeId)` →
 `lockMemberCreditLedger(memberId)` — taking them in exactly that order and
 deriving `effectiveAmountCents = finalPriceCents - appliedCredit` only once all
-three are held. This is the same composition (and the same order)
-`switch-to-internet-banking` uses, which likewise refuses to rely on other
+three are held. Since #4840 it also takes the booking row right after the lodge
+key, before it names its officer on the Payment row (see "A booking writer takes
+the booking row before a Member key share"). It takes the same advisory tiers,
+in the same order, as `switch-to-internet-banking`, which likewise refuses to rely on other
 writers happening to hold `lock(1)`. The reversal takes the first two tiers only:
 it writes no amount and reads no credit ledger, but it does restore booking
 status and can release capacity.
@@ -5911,7 +5988,10 @@ Ledger M3b adds no advisory key and no new lock site. Its participants:
   `Member … FOR UPDATE`). The same inversion was already reachable through the
   closure's credit give-back and local refund allocation, which insert
   `MemberCredit` rows. So `resolveManualRefundTask` takes an edit review's
-  booking row straight after its status claim, before any of those writes.
+  booking row before any of those writes. Since #4840 it takes it before the
+  claim too, right after `lock(1)` and before the task re-read, because the
+  claim's `completedByMemberId` is itself a Member key share (see "A booking
+  writer takes the booking row before a Member key share").
 - **Member merge** takes no `lock(1)` (see "Merge joins the bed-allocation
   cohort"). Its transfer posts no revenue, so the engine needs no key, and it
   runs after the booking-owner move and the sorted `Member … FOR UPDATE` set. The

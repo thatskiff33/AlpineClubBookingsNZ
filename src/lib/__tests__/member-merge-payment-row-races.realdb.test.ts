@@ -29,12 +29,13 @@
  * Ordinary Vitest runs skip the file; CI's real-PostgreSQL job runs it against
  * the guarded loopback race database.
  */
-import type { PrismaClient } from "@prisma/client";
+import type { Prisma, PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { cleanHistories, createHistoryBooking, historyNames, seedHistoryFixtures } from "./support/booking-ledger-history";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 import { assertSafeRaceDbUrl } from "./support/race-db-url";
+import { backendPid, isBlocking, untilBlockedChain } from "./support/race-lock-waits";
 import { acquireLodgeCapacityLock } from "@/lib/capacity";
 
 vi.hoisted(() => {
@@ -43,8 +44,15 @@ vi.hoisted(() => {
   }
 });
 
-/** A pause right after a writer locks one Payment row: a pass-through with no hook set. */
-const paymentHook = vi.hoisted(() => ({ paymentId: null as null | string, afterLock: null as null | (() => Promise<void>) }));
+/** The writers open their transactions with no options: give them a budget the race, not the runner, decides (#4844 review F5). */
+vi.mock("@/lib/prisma", async (importOriginal) => {
+  const real = (await importOriginal()) as typeof import("@/lib/prisma");
+  const { withRaceTransactionBudget } = await import("./support/race-lock-waits");
+  return { ...real, prisma: withRaceTransactionBudget(real.prisma) };
+});
+
+/** A pause right after a writer locks one Payment row, handed that transaction's backend id: a pass-through with no hook set. */
+const paymentHook = vi.hoisted(() => ({ paymentId: null as null | string, afterLock: null as null | ((pid: number) => Promise<void>) }));
 vi.mock("@/lib/payment-transactions", async (importOriginal) => {
   const real = (await importOriginal()) as typeof import("@/lib/payment-transactions");
   return {
@@ -54,7 +62,7 @@ vi.mock("@/lib/payment-transactions", async (importOriginal) => {
       const hook = args[1] === paymentHook.paymentId ? paymentHook.afterLock : null;
       if (hook) {
         paymentHook.afterLock = null;
-        await hook();
+        await hook(await backendPid(args[0] as unknown as Prisma.TransactionClient));
       }
     },
   };
@@ -73,29 +81,17 @@ function gate() {
   return { open, opened };
 }
 
-async function waitingBackends(): Promise<number> {
-  const [{ waiting }] = await prisma.$queryRaw<Array<{ waiting: number }>>`
-    SELECT count(*)::int AS waiting FROM pg_catalog.pg_stat_activity
-    WHERE datname = current_database() AND wait_event_type = 'Lock'`;
-  return waiting;
-}
-
-/** Until at least `count` backends wait on a row or advisory lock in this database. */
-async function untilWaiting(count: number): Promise<void> {
-  for (let attempt = 0; attempt < 400; attempt += 1) {
-    if ((await waitingBackends()) >= count) return;
-    await new Promise((resolve) => setTimeout(resolve, 25));
-  }
-  throw new Error(`fewer than ${count} backends ever waited on a lock`);
-}
-
-/** How the merge first stood: settled (either way), or waiting on a lock while the other writer is paused. */
-async function settledOrWaiting(merging: Promise<unknown>): Promise<"settled" | "waiting"> {
+/**
+ * How the merge first stood: settled (either way), or waiting on the paused writer's
+ * backend. Matched to that backend (`pg_blocking_pids`), never counted across the
+ * database, because the CI job runs other suites against it (#4844 review F4).
+ */
+async function settledOrBlockedBy(merging: Promise<unknown>, writerPid: number): Promise<"settled" | "waiting"> {
   let settled = false;
   void merging.then(() => { settled = true; }, () => { settled = true; });
   for (let attempt = 0; attempt < 600; attempt += 1) {
     if (settled) return "settled";
-    if ((await waitingBackends()) >= 1) return "waiting";
+    if (await isBlocking(prisma, writerPid)) return "waiting";
     await new Promise((resolve) => setTimeout(resolve, 25));
   }
   throw new Error("the merge neither settled nor waited");
@@ -134,13 +130,15 @@ async function holdLoserDelete(loser: string) {
   const token = await prisma.passwordResetToken.create({ data: { memberId: loser, tokenHash: `${loser}-reset`, expiresAt: new Date("2026-08-01T00:00:00.000Z") } });
   const held = gate();
   const release = gate();
+  let pid = 0;
   const blocker = prisma.$transaction(async (tx) => {
     await tx.$executeRaw`SELECT 1 FROM "PasswordResetToken" WHERE "id" = ${token.id} FOR UPDATE`;
+    pid = await backendPid(tx);
     held.open();
     await release.opened;
   }, { maxWait: 30_000, timeout: 120_000 });
   await held.opened;
-  return { release: release.open, blocker };
+  return { release: release.open, blocker, pid };
 }
 
 async function attribution(paymentId: string) {
@@ -182,7 +180,9 @@ async function bookingState(id: string) {
     const reached = gate();
     const release = gate();
     paymentHook.paymentId = paymentId;
-    paymentHook.afterLock = async () => {
+    let settlePid = 0;
+    paymentHook.afterLock = async (pid) => {
+      settlePid = pid;
       reached.open();
       await release.opened;
     };
@@ -193,7 +193,7 @@ async function bookingState(id: string) {
     try {
       const execute = await previewMerge(master, loser);
       merging = execute();
-      first = await settledOrWaiting(merging);
+      first = await settledOrBlockedBy(merging, settlePid);
     } finally {
       release.open();
     }
@@ -218,16 +218,17 @@ async function bookingState(id: string) {
   it("a merge holding the Payment row makes the card settle wait; both commit", async () => {
     const { id, paymentId, loser, master } = await bookingMadeByDuplicate("merge-first", "STRIPE");
     await prisma.payment.update({ where: { id: paymentId }, data: { manuallyMarkedPaidByMemberId: loser } });
-    const { release, blocker } = await holdLoserDelete(loser);
+    const { release, blocker, pid } = await holdLoserDelete(loser);
     let merging: Promise<unknown> = Promise.resolve();
     let settling: Promise<unknown> = Promise.resolve();
     try {
       const execute = await previewMerge(master, loser);
       merging = execute();
       // The merge stops at the duplicate's delete, after its Payment rows.
-      await untilWaiting(1);
+      await untilBlockedChain(prisma, pid, 1);
       settling = settleByCard(id);
-      await untilWaiting(2);
+      // The settle queues behind the merge.
+      await untilBlockedChain(prisma, pid, 2);
     } finally {
       release();
     }
@@ -249,11 +250,13 @@ async function bookingState(id: string) {
     const { lockPaymentForRefundedTotal } = await import("@/lib/payment-transactions");
     const held = gate();
     const release = gate();
+    let doorPid = 0;
     // The edit doors' order through their own helpers: lock(1), the lodge key, the booking row, then the Payment row.
     const door = prisma.$transaction(async (tx) => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
       await acquireLodgeCapacityLock(tx, names.lodgeId);
       await lockBookingRowForOwnerRead(tx, id);
+      doorPid = await backendPid(tx);
       held.open();
       await release.opened;
       await lockPaymentForRefundedTotal(tx, paymentId);
@@ -265,7 +268,7 @@ async function bookingState(id: string) {
       const execute = await previewMerge(master, loser);
       merging = execute();
       // The merge waits on the booking row; it must not hold the Payment row while it does.
-      await untilWaiting(1);
+      await untilBlockedChain(prisma, doorPid, 1);
     } finally {
       release.open();
     }
@@ -283,13 +286,13 @@ async function bookingState(id: string) {
     await markBookingPaymentManuallySettled({ bookingId: id, actingAdminMemberId: loser, note: "cash at the lodge", expectedAmountCents: PRICE, notifyMember: false, format: CLUB_FORMAT_TEST });
     const { lockBookingRowForOwnerRead } = await import("@/lib/member-money/doors");
     const { lockPaymentForRefundedTotal } = await import("@/lib/payment-transactions");
-    const { release, blocker } = await holdLoserDelete(loser);
+    const { release, blocker, pid } = await holdLoserDelete(loser);
     let merging: Promise<unknown> = Promise.resolve();
     let door: Promise<unknown> = Promise.resolve();
     try {
       const execute = await previewMerge(master, loser);
       merging = execute();
-      await untilWaiting(1);
+      await untilBlockedChain(prisma, pid, 1);
       door = prisma.$transaction(async (tx) => {
         await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
         await acquireLodgeCapacityLock(tx, names.lodgeId);
@@ -297,7 +300,7 @@ async function bookingState(id: string) {
         await lockPaymentForRefundedTotal(tx, paymentId);
         await tx.payment.update({ where: { id: paymentId }, data: { changeFeeCents: 700 } });
       }, { maxWait: 30_000, timeout: 120_000 });
-      await untilWaiting(2);
+      await untilBlockedChain(prisma, pid, 2);
     } finally {
       release();
     }

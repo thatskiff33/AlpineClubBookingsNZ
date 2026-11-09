@@ -1217,6 +1217,17 @@ jobs:
           RUN_CONCURRENCY_RACE_TESTS: "1"
         run: pnpm exec vitest run src/lib/__tests__/member-merge-payment-row-races.realdb.test.ts
 
+      # #4840: a manual settle and an edit review's closure take the booking row
+      # before they name their officer (on the Payment row, in the task's claim),
+      # because member merge holds booking rows and then takes Member FOR UPDATE. Whether that leaves a wait-for cycle is a claim
+      # about PostgreSQL itself, which only this suite shows, in both orders. It
+      # self-skips without the env vars (same #1881 harness and database), so
+      # `review-findings-contracts.test.ts` fails if this step goes missing.
+      - name: Test member-merge officer settle races against dedicated PostgreSQL
+        env:
+          RUN_CONCURRENCY_RACE_TESTS: "1"
+        run: pnpm exec vitest run src/lib/__tests__/member-merge-officer-settle-races.realdb.test.ts
+
       # #3583: the booking ledger's cut-over gate, run the way the owner runs it
       # (docs/MAINTENANCE.md) over a seeded history: booking histories made by
       # the REAL writers with their lines stripped, in a database of their own on

@@ -373,10 +373,11 @@ function settle(overrides: Record<string, unknown> = {}) {
 }
 
 describe("#2262 guard 1 — the manual settlement runs the ONE settlement body", () => {
-  it("takes global lock(1), then the per-lodge lock, then the MEMBER-CREDIT lock, before deriving the amount", async () => {
+  it("takes global lock(1), then the per-lodge lock, then the booking row, then the MEMBER-CREDIT lock, before deriving the amount", async () => {
     const order: string[] = [];
-    mocks.executeRaw.mockImplementation(async () => {
-      order.push("global");
+    mocks.executeRaw.mockImplementation(async (strings: TemplateStringsArray) => {
+      const sql = strings.join("?");
+      order.push(sql.includes('FROM "Booking"') && sql.includes("FOR NO KEY UPDATE") ? "booking-row" : "global");
     });
     mocks.acquireLodgeCapacityLock.mockImplementation(async () => {
       order.push("lodge");
@@ -393,7 +394,9 @@ describe("#2262 guard 1 — the manual settlement runs the ONE settlement body",
 
     // #3792: the settle takes the member key itself (from its post-lock
     // re-read, before the Payment upsert); the manual third tier re-enters it.
-    expect(order).toEqual(["global", "lodge", "member-credit", "member-credit", "derive-amount"]);
+    // #4840: the booking row comes right after the lodge key, so it is held before
+    // the Payment attribution's FK takes KEY SHARE on the officer's Member row.
+    expect(order).toEqual(["global", "lodge", "booking-row", "member-credit", "member-credit", "derive-amount"]);
     expect(new Set(mocks.lockMemberCreditLedger.mock.calls.map(([memberId]) => memberId)).size).toBe(1);
   });
 

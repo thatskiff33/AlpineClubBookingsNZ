@@ -1483,8 +1483,15 @@ const ROW_LOCK_SITE_INVENTORY: Record<string, number> = {
   // request's member) cannot hold the row it waits on. W1's capture-return R05
   // reads its owner without it, defensively (round 2: W1 holds the Payment row
   // there, so the booking row would add a Payment -> booking edge; since #4823 a
-  // merge never waits for a Payment row). See docs/CONCURRENCY_AND_LOCKING.md -> "The M3b
-  // booking doors and member merge's journal transfer" and the M4c paragraph.
+  // merge never waits for a Payment row). #4840: a manual settle takes it right
+  // after its lodge key, before it names its officer on the Payment row (that FK
+  // takes KEY SHARE on the Member row a merge locks FOR UPDATE after holding the
+  // booking row). An edit review's closure (`manual-refund-task-resolution.ts`,
+  // whose own raw statement this replaced) takes it right after its task re-read
+  // under lock(1), before its claim names the officer (`completedByMemberId`) and
+  // before any credit write names the owner (#4627). See docs/CONCURRENCY_AND_LOCKING.md -> "The M3b
+  // booking doors and member merge's journal transfer", the M4c paragraph and
+  // "A booking writer takes the booking row before a Member key share".
   "src/lib/member-money/internal/booking-posting.ts": 1,
   // #4691 (Ledger M4a): an application batch, a refund reservation and a release
   // take the booking's Payment row (`SELECT 1 … FOR NO KEY UPDATE`) before they
@@ -1512,11 +1519,6 @@ const ROW_LOCK_SITE_INVENTORY: Record<string, number> = {
   // after merge's sorted Member FOR UPDATE, so the set cannot grow. See
   // docs/CONCURRENCY_AND_LOCKING.md -> "Member merge never waits for a Payment row".
   "src/lib/member-merge-payment-attribution.ts": 1,
-  // #4627: an edit review's closure takes its booking row straight after its claim,
-  // before any credit write (giveBackCancelledShareCredit, applyLocalRefundAllocation,
-  // an account-credit mint: each a KEY SHARE on the owner's Member row), so neither
-  // those nor the journal adapter's owner read invert against member merge's owner move.
-  "src/lib/manual-refund-task-resolution.ts": 1,
   // #3635 (review outbox F1/F4): the kept-late-capture enqueue and the
   // worker's send-time decision lock the #3639 approval task's row
   // (`SELECT 1 … FOR UPDATE`), the row the dismissal, reopen and approval
