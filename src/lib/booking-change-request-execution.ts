@@ -5,6 +5,7 @@ import { bookingOwner } from "@/lib/booking-owner";
 import { prisma } from "@/lib/prisma";
 import { acquireLodgeCapacityLock } from "@/lib/capacity";
 import { getDefaultLodgeId } from "@/lib/lodges";
+import { lockBookingRowForOwnerRead } from "@/lib/member-money/doors";
 import { calendarDateOfDateOnlyInstant, type CalendarDate } from "@/lib/club-time";
 import type { ClubFormat } from "@/lib/club-format";
 import { finishedStayEligibility } from "@/lib/booking-edit-policy";
@@ -360,7 +361,7 @@ export async function approveAndExecuteLockedPeriodChangeRequest(params: {
       // (1) Only the immutable lock key before the locks.
       const preRead = await tx.bookingChangeRequest.findUnique({
         where: { id: requestId },
-        select: { kind: true, booking: { select: { lodgeId: true } } },
+        select: { kind: true, bookingId: true, booking: { select: { lodgeId: true } } },
       });
       if (!preRead || preRead.kind !== "LOCKED_PERIOD") {
         return { outcome: "notFound" };
@@ -372,10 +373,9 @@ export async function approveAndExecuteLockedPeriodChangeRequest(params: {
       // key. Registered in `advisory-lock-guard.test.ts` as
       // `approveAndExecuteLockedPeriodChangeRequest#1`.
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
-      await acquireLodgeCapacityLock(
-        tx,
-        preRead.booking.lodgeId ?? (await getDefaultLodgeId(tx)),
-      );
+      await acquireLodgeCapacityLock(tx, preRead.booking.lodgeId ?? (await getDefaultLodgeId(tx)));
+      // #4845: the booking row next, before the claim names the officer (a Member KEY SHARE) and holds the request row a merge re-points, as member merge orders them.
+      await lockBookingRowForOwnerRead(tx, preRead.bookingId);
 
       // (2) Fresh roles. Nothing written yet, so a refusal is clean.
       if (!(await reauthorizeBookingOfficerFromDb(tx, actorMemberId))) {
