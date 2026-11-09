@@ -255,6 +255,12 @@ These family rules are enforced by automated tests (issue #1132):
   gates. It also fails a registered page that falls through to the `overview`
   catch-all, and a route-map entry placed ahead of a longer entry of another
   area beneath it, because the resolver takes the first match, not the longest.
+  The five pages S1 (#4796) merged into others are left out of the comparison
+  by name, and only those: a retired page has no entry, because its permanent
+  redirect in `next.config.ts` runs before the proxy and nothing is served at
+  its URL. `admin-route-area-matrix.test.ts` keeps each one's former area and
+  checks its destination admits on the same area, bar the one reviewed change
+  (`/admin/setup/cancellation`, `support`, now a `membership` tab: narrower).
 
 ### Public or Provider-Signed Exceptions
 
