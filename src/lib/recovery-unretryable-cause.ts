@@ -43,7 +43,7 @@ import {
   AdditionalAskAttributionConflictError,
   IntentLedgerRowOnAnotherPaymentError,
 } from "@/lib/payment-intent-ledger-row-write";
-import { isCardRefundReservationRefusal } from "@/lib/payment-transactions";
+import { isCardRefundReservationRefusal } from "@/lib/member-money";
 import { prisma } from "@/lib/prisma";
 
 /** #4516: what a stopped card refund's row says, and the officers' alert quotes. */

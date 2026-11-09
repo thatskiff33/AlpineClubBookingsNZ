@@ -42,3 +42,5 @@ export { receiptPopulationPaymentIds, readBookingReceiptCensus } from "./interna
 
 // M4c operator command: the refund census, the exact reconciliation of stranded reservations and the OPERATOR release.
 export { readBookingRefundCensus, reconcileMadeRefundReservations, releaseReservationByOperator, type RefundCensusFinding } from "./internal/refund-census";
+// M4c: the one test for a refused card refund reservation, for the senders' callers (runner, webhook holds).
+export { isCardRefundReservationRefusal } from "./internal/refund-refusal";

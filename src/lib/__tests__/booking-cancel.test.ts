@@ -128,10 +128,12 @@ const appliedCredit = vi.hoisted(() => ({
   deriveBookingAppliedCreditCents: vi.fn<(...args: unknown[]) => Promise<number>>(async () => 0),
 }));
 // #4516 (M4b): the receipt hook runs on PostgreSQL (`member-money-receipts.realdb.test.ts`), not on this fake store.
-const receiptDoors = vi.hoisted(() => ({ postBookingReceipts: vi.fn(async () => 0) }));
+const receiptDoors = vi.hoisted(() => ({ postBookingReceipts: vi.fn(async () => 0), postRefundObligation: vi.fn(async () => null) }));
 vi.mock("@/lib/member-money/doors", async (importOriginal) => ({
   ...((await importOriginal()) as typeof import("@/lib/member-money/doors")),
   postBookingReceipts: receiptDoors.postBookingReceipts,
+  // #4516 (M4c): R05 posts on PostgreSQL (`member-money-refunds.realdb.test.ts`); here, that the claim asks for it.
+  postRefundObligation: receiptDoors.postRefundObligation,
 }));
 vi.mock("@/lib/prisma", () => ({
   prisma: {
@@ -1801,8 +1803,11 @@ describe("cancelBooking credit refunds", () => {
       "card"
     );
     expect(mocks.refundPaymentTransactions).toHaveBeenCalledWith(
-      expect.objectContaining({ paymentId: "payment_5", amountCents: 20000 })
+      expect.objectContaining({ paymentId: "payment_5", amountCents: 20000, obligation: { scope: "cancellation", id: expect.any(String) } })
     );
+    // #4516 (M4c): the claim moved the frozen plan's card refund to its own obligation, under its booking row.
+    expect(receiptDoors.postRefundObligation).toHaveBeenCalledWith(expect.anything(), expect.anything(),
+      expect.objectContaining({ scope: "cancellation", amountCents: 20000, debtorRead: "booking-row" }));
   });
 
   it("#3827 (INV-PAY-117): tiers off the cash NOT already promised back on an open edit refund hand-back", async () => {
@@ -2550,6 +2555,7 @@ describe("cancelBooking credit refunds", () => {
           reason: "cancellation",
         },
         idempotencyKeyPrefix: "booking_cancel_refund_booking_1",
+        obligation: { scope: "cancellation", id: "booking_1" }, // #4516: the debt its slices reserve against
       });
       // Happy path closes the operation.
       expect(

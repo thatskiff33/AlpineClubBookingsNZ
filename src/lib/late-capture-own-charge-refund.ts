@@ -2,7 +2,8 @@ import type { ClubFormat } from "@/lib/club-format";
 import logger from "@/lib/logger";
 import { buildLateCaptureRefundMetadata, buildLateCaptureRefundStripeKeyPrefix } from "@/lib/payment-recovery-keys";
 import { captureRefundState, isCapturedTransactionStatus, isRefusedRefundStatus } from "@/lib/payment-transaction-status";
-import { isCardRefundReservationRefusal, refundPaymentTransactions, type RefundAllocationSlice } from "@/lib/payment-transactions";
+import { refundPaymentTransactions, type RefundAllocationSlice } from "@/lib/payment-transactions";
+import { isCardRefundReservationRefusal } from "@/lib/member-money";
 import { prisma } from "@/lib/prisma";
 
 /**

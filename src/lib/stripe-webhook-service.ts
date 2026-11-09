@@ -1,6 +1,7 @@
 import { lockPaymentForRefundedTotal } from "@/lib/payment-transactions";
 import { receiptCaptureTime } from "@/lib/stripe-capture-date";
 import { postBookingReceipts, resolveBookingMoneyPostingContext } from "@/lib/member-money/doors";
+import { isCardRefundReservationRefusal } from "@/lib/member-money";
 import { bookingAmountOwedCents, bookingWorthCents } from "@/lib/booking-payment-state";
 import { bookingOwner, bookingOwnerEmail } from "@/lib/booking-owner";
 import { isPaidLikeBookingStatus } from "@/lib/booking-status";
@@ -51,7 +52,6 @@ import { ADDITIONAL_ASK_INTENT_TYPE } from "@/lib/ordinary-ask-request";
 import { logAudit } from "@/lib/audit";
 import {
   findPaymentTransactionByIntentId,
-  isCardRefundReservationRefusal,
   markPaymentIntentTransactionFailed,
   markPaymentIntentTransactionSucceeded,
   refundPaymentTransactions,

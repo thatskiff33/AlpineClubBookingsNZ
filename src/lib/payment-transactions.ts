@@ -1727,15 +1727,6 @@ export async function reserveCardRefundAttempt(journal: BookingJournalContext, i
   }
 }
 
-/**
- * #4516 (M4c): whether a sender's failure is a refused reservation, bare or as the cause of the
- * `PartialRefundError` the sender wraps every failure in. A refusal is never retried: the next attempt would meet
- * the same caps (`unretryableRecoveryCause` stops the row; a webhook sender holds the capture instead).
- */
-export function isCardRefundReservationRefusal(error: unknown): boolean {
-  return error instanceof MemberMoneyReservationRefused || (error instanceof PartialRefundError && error.cause instanceof MemberMoneyReservationRefused);
-}
-
 async function reportCardRefundReservationRefused(input: CardRefundSliceReservation, error: MemberMoneyReservationRefused): Promise<void> {
   logger.error({ err: error, paymentId: input.paymentId, attemptKey: input.attemptKey, obligation: input.obligation, amountCents: input.amountCents },
     "A card refund's reservation was refused: Stripe was not asked for this slice and it will not be retried (#4516)");
