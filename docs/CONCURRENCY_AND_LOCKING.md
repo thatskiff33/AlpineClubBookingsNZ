@@ -3413,6 +3413,29 @@ once), before its role check and claim. The queue's acknowledge-only decision
 (`PUT /api/admin/booking-change-requests/[id]`) is one autocommit `updateMany`
 that touches no booking row, so it never holds the request row while waiting.
 
+An officer's approval of a held booking request (#4857,
+`approveBookingRequest`) took `lock(1)` and the hold's lodge key, then claimed
+the request and swapped the held party in place before it updated the held
+booking. The swap writes each guest's member link, so a guest newly linked to a
+member takes a key share on that Member row. The hold names the officer who
+quoted it (`createdById`), so merge holds its row when that officer is a merge
+party, and merge's `Member … FOR UPDATE` then waited on the linked guest's key
+share while the approval waited on the booking. That needs the booking outside
+merge's lodge prefix and a guest newly linked to a merge party. The claim alone
+names no Member row: `BookingRequest.reviewedByMemberId` is not a foreign key,
+and merge re-points `requestedByMemberId` only on member whole-lodge requests,
+which `approveMemberWholeLodgeRequest` approves without a hold. The approval now
+takes the held booking's row (`lockBookingRowForOwnerRead`) right after its
+lodge key, keyed from the pre-transaction read its lodge key came from, before
+its locked re-read, claim and guest swap. A booking id never changes, and the
+request's held pointer is re-checked under the locks, so a hold swapped since
+refuses with a 409 before the claim. A fresh conversion creates its booking and
+takes no row. Decline claims in a transaction of its own and releases the hold
+afterwards through `cancelBooking`, so it never holds the request row while
+waiting on a booking. The school approval claims its held booking straight
+after the request, before any guest write, and the requester's quote cancel
+writes no Member key share before its booking update, so neither changes.
+
 Why not the other fixes:
 
 - **Merge takes its Member rows `FOR UPDATE` before its booking moves.** That
@@ -3432,8 +3455,12 @@ officer the merge deleted, so its FK refuses (`P2003`), nothing is recorded, and
 the officer acts again from the surviving record. An approval waiting there
 instead finds its officer gone at its fresh role check and writes nothing; one
 by an officer who is not a merge party claims the request, now the survivor's,
-and executes. If the writer wins, merge
-waits at the booking row and moves the writer's attribution afterwards.
+and executes. A booking-request approval waiting there converts the hold once
+merge commits. If the writer wins, merge
+waits at the booking row and moves the writer's attribution afterwards. When the
+writer was a booking-request approval that linked a merge party as a guest at a
+lodge outside merge's prefix, merge then refuses with
+`partner_share_lodge_drift` (#2672), a clean 409 the operator re-runs.
 
 One cycle remains for the locked-period approval, and it is not new. When the
 officer is a merge party that loses, and the booking is outside merge's lodge
@@ -3459,14 +3486,16 @@ nothing is corrupted, and deleting an officer while their own write is in
 flight is the rarer event. Reordering delete's cascade is tracked as #4850.
 
 Proved against real PostgreSQL by
-`member-merge-officer-settle-races.realdb.test.ts` and, for the approval,
-`member-merge-change-request-races.realdb.test.ts`: required steps of the
-`migration-drift` job pinned by `review-findings-contracts.test.ts`. Both
-orders are covered for each writer and each cycle, and the old orders deadlock
-(probed). The positions are pinned in `manual-booking-payment.test.ts`,
-`manual-refund-task.test.ts` and `booking-change-request-execution.test.ts`.
+`member-merge-officer-settle-races.realdb.test.ts`, for the change-request
+approval `member-merge-change-request-races.realdb.test.ts`, and for the
+booking-request approval `member-merge-booking-request-races.realdb.test.ts`:
+required steps of the `migration-drift` job pinned by
+`review-findings-contracts.test.ts`. Both orders are covered for each writer
+and each cycle, and each old order that formed a cycle deadlocks (probed). The
+positions are pinned in `manual-booking-payment.test.ts`, `manual-refund-task.test.ts`,
+`booking-change-request-execution.test.ts` and `booking-request.test.ts`.
 This is not a census of every `lock(1)` writer: the settle body, its reversal,
-the Stripe path, the refund-task closure and the change-request approval were
+the Stripe path, the refund-task closure and the two approvals were
 checked, and the rule above is what a new writer follows. The policy-exception
 approval (`booking-exception-execution.ts`) has the same claim-before-booking
 shape and is tracked as #4853.
@@ -5292,8 +5321,9 @@ switch-to-internet-banking hold, the officer's held-request conversion
 composition.
 
 Officer approval of a held generic request pre-reads only the held booking's immutable concrete
-`lodgeId`, then takes global -> that lodge and fully re-reads both request and
-hold. It rejects an explicit request/hold lodge mismatch and carries the same
+`lodgeId`, then takes global -> that lodge -> the held booking's row (#4857,
+"A booking writer takes the booking row before a Member key share") and fully
+re-reads both request and hold. It rejects an explicit request/hold lodge mismatch and carries the same
 concrete lodge into policy and email context. A null request lodge is never
 re-resolved through a default that may have changed after hold creation.
 
