@@ -1226,6 +1226,8 @@ describe("review finding source/schema contracts", () => {
     for (const caseName of [
       "MUTATION: a merge holding the booking row and waiting for the duplicate's Member row makes the settle wait at the booking row, never a deadlock",
       "a settle holding the booking row and the officer's key share makes the merge wait; both commit",
+      "MUTATION: a merge holding the booking row and waiting for the duplicate's Member row makes an edit review's closure wait at the booking row, never a deadlock",
+      "an edit review's closure holding the booking row and the officer's key share makes the merge wait; both commit",
     ]) {
       expect(suite, `#4840 case missing: ${caseName}`).toContain(caseName);
     }
