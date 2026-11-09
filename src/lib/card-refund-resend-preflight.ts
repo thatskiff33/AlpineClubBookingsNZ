@@ -1,6 +1,6 @@
 /** Stripe evidence before a charge-backed recovery sends again (INV-PAY-145). */
 import { Prisma, type PaymentRecoveryOperation, type PaymentTransaction } from "@prisma/client";
-import { listRefundsForPaymentIntent } from "@/lib/stripe";
+import { listRefundsOnCardCharge } from "@/lib/card-refund-stripe-refunds";
 import { recordStripeRefundsAgainstTransaction, type RefundAllocationSlice } from "@/lib/payment-transactions";
 import { isRecordedRefundStatus } from "@/lib/payment-transaction-status";
 import logger from "@/lib/logger";
@@ -12,11 +12,10 @@ import { onPlanWhere } from "@/lib/refused-card-refund-retry";
 import { parseRefundAllocationPlan } from "@/lib/open-card-refund-owed";
 import { refundSliceStripeIdempotencyKey } from "@/lib/payment-recovery-keys";
 import { REFUND_SLICE_KEY_METADATA } from "@/lib/refund-slice-evidence";
-import { stripeReferenceId } from "@/lib/stripe-references";
 
 export class UnattributedCardRefundBeforeResendError extends Error {
   constructor(readonly stripeRefundIds: string[]) {
-    super("A refund made outside the app may already have paid this debt (INV-PAY-145). The app sent nothing and stopped automatic retries. Check the Stripe refunds and the booking before paying anything else. If money is still owed, use Paid another way in Stuck States; do not make a new Stripe dashboard refund. If nothing is owed, ask a developer to reconcile the row.");
+    super("A refund made outside the app may already have paid this debt (INV-PAY-145). The app sent nothing and stopped automatic retries. Check the Stripe refunds and the booking before paying anything else. If money is still owed, use Paid another way in Stuck States; do not make a new Stripe dashboard refund. If that refund leaves nothing owed, close it with Nothing left owed in Stuck States.");
   }
 }
 
@@ -51,11 +50,8 @@ export async function checkCardRefundResend({
   if (charges.length !== unmadeIds.size) throw new Error("Refund preflight could not find every planned charge (INV-PAY-145)");
   for (const charge of charges) {
     if (!charge.stripePaymentIntentId) throw new Error("Refund preflight charge has no Stripe intent (INV-PAY-145)");
-    const refunds = await listRefundsForPaymentIntent(charge.stripePaymentIntentId, { timeoutMs: 10_000, singlePage: true });
-    // The list is by intent already; a refund naming another intent is not this charge's.
-    const onCharge = refunds.filter((refund) =>
-      !refund.payment_intent || stripeReferenceId(refund.payment_intent) === charge.stripePaymentIntentId,
-    );
+    // One bounded page, the refunds on this charge only (`listRefundsOnCardCharge`, #4368 review F3).
+    const onCharge = await listRefundsOnCardCharge(charge.stripePaymentIntentId);
     if (onCharge.length === 0) continue;
     // The writer deduplicates unseen refunds and refreshes known statuses. Its
     // refusal result prevents a stale Stripe listing reviving a known failure.

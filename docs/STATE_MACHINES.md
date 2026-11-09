@@ -4732,7 +4732,31 @@ DEAD -> SUCCEEDED     ("Paid another way": finance:edit, lock(1), then the
                        is "still owed" carries the rest to a row of its own,
                        card_refund_still_owed_<task>, born dead (PENDING, attempts spent); a later close
                        settles it. "The club keeps it" raises none)
+DEAD -> SUCCEEDED     (#4368 "Nothing left owed": finance:edit, lock(1), then the
+                       Payment row; refused (409) unless what is owed reads $0,
+                       nothing of its own is unsent, and the Stripe refunds the
+                       attribution gives it are the ones the treasurer saw; the same status-guarded claim, on the plan
+                       read; lastError is the nothing-left-owed marker; no
+                       money, journal, Stripe or Xero change; audited under
+                       `payment`; INV-PAY-149)
+DEAD -> PENDING       (#4368 "Try the card again": finance:edit, lock(1), then the
+                       Payment row; refused (409) where the app cannot show a
+                       re-send would not pay twice (tryCardAgainRefusal: any
+                       failed-later row on the payment, a may-have-refunded
+                       failure, unmarked slices not adding up to what is
+                       owed; or an unmatched refund of the same kind Stripe
+                       lists) or the owed figure or plan moved; the same status-guarded claim, on the plan read;
+                       rearmedPaymentRecoveryOperationData - attempts 0, due
+                       now; the runner's INV-PAY-145 preflight runs before any
+                       send; audited under `payment`; INV-PAY-149)
 ```
+
+The three settlements of a dead row - "Paid another way", "Nothing left
+owed" and "Try the card again" - claim it on one guard (dead, on the plan
+read) under the same `lock(1)` and Payment row, and each moves it off that
+guard, so whichever commits first wins and the others write nothing: a closed
+row is never re-armed, and a re-armed row is offered no close until its
+retries are spent again (#4368, #4492).
 
 Before a keyed slice is sent, the journal reserves its debt (`refundPaymentTransactions`,
 #4516). A refused reservation sends nothing and stops the row as above; a
@@ -4953,7 +4977,8 @@ organiser-cancel settlement's refund (`isOwedCardRefundOperation`); a
 superseded intent's refund closes whole, never at nil, and only while its
 charge still holds exactly what it owes. The rules are
 `INV-PAY-121` and `INV-PAY-122`; the lock is registered as
-`closeCardRefundPaidAnotherWay#1`. To verify:
+`lockDeadCardRefundRow#1`, shared with "Nothing left owed" and "Try the card
+again" (#4368). To verify:
 `card-refund-paid-another-way.test.ts`, `open-card-refund-owed.test.ts`,
 `xero-kept-late-capture-ledger.test.ts` (round 6: the Xero books of a late
 charge's close, whatever order the outbox runs in) and

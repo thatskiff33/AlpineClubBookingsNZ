@@ -1492,7 +1492,9 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
     // row, on a finance-gated route, so outside the lodge-gated keep: unpinned.
     // 404 -> 406 unpinned (#4516): the refused card refund reservation and its OPERATOR release, `payment`.
     // RE-MEASURED with `pnpm run audit:census`.
-    ).toEqual({ pinned: 130, unpinned: 406 });
+    // 406 -> 408 unpinned (#4368): a dead card refund's "Nothing left owed" and "Try the card again", `payment`.
+    // RE-MEASURED with `pnpm run audit:census`.
+    ).toEqual({ pinned: 130, unpinned: 408 });
   });
 
   it("pins which classified writers a MEMBER can now see about themselves", () => {
