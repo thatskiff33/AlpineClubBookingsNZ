@@ -3422,9 +3422,11 @@ name the member as an actor (`createdById`, `adminReviewedById`, `deletedById`,
 hard-deleting an officer mid-settle or mid-closure on a booking that officer made
 or reviewed could deadlock; #4844 first accepted it as the rarer case.
 
-The delete now reads the bookings naming the member (every Booking column
-`MEMBER_MERGE_RELATION_SPECS` lists), locks them in id order
-(`member-delete-booking-rows.ts`), and only then takes its fence. That set can
+The delete now reads the bookings naming the member as an actor (every Booking
+relation `MEMBER_MERGE_RELATION_SPECS` lists but the owner, whose FK is Restrict
+and whom eligibility refuses), locks them in id order, in chunks below
+PostgreSQL's bind-parameter cap (`member-delete-booking-rows.ts`), and only then
+takes its fence. That set can
 grow until the fence holds, because naming the member on another booking needs
 the Member row's key share, which the fence then blocks. So it is read again
 under the fence, and a booking that joined it refuses the delete with a 409 and
@@ -3440,15 +3442,30 @@ the delete removed, and its FK refuses (`P2003`), nothing recorded. If the write
 wins, the delete waits at the booking row, then re-checks eligibility under its
 fence: a settle leaves the officer deletable and the delete clears both names; a
 closure records a booking modification in the officer's name, so the delete is
-refused. Not changed: the delete's other `SET NULL` actions (a Payment's
-`manuallyMarkedPaidByMemberId`, a task's `completedByMemberId`, …) still run
-inside the delete, after the booking rows, as they did before.
+refused.
+
+Holding booking rows from the start meets the Payment-first writers (a card
+settle, the back-post: Payment row, then booking row) through the delete's
+`SET NULL` on `Payment.manuallyMarkedPaidByMemberId`. So, as merge does
+(#4823), the delete locks the Payment rows naming the member in one sorted
+`FOR NO KEY UPDATE NOWAIT` statement once its fence holds (the set cannot grow
+then), and a held row refuses it with a 409 and nothing written. The delete
+writes no audit row for a refusal, as before. Its other `SET NULL` actions keep
+running inside the delete: no writer is known to take one of those rows
+(`ManualRefundTask.completedByMemberId` and the rest) before a booking row it
+then waits for.
+
+This is not yet the whole story. Three approvals name their officer in a claim
+before they take the booking row: a change request (#4845), a policy exception
+(#4853) and a booking request (#4857). Against the delete's new order each can
+deadlock until its own issue brings it booking-row first.
 
 Proved against real PostgreSQL by
 `member-merge-officer-settle-races.realdb.test.ts` and, for the delete,
 `member-delete-officer-races.realdb.test.ts`: required steps of the
 `migration-drift` job pinned by `review-findings-contracts.test.ts`. Both
-orders are covered for each writer, and the old orders deadlock (probed). The
+orders are covered for each writer, and the old orders deadlock (probed); the
+delete's suite also shows a Payment-first writer making it refuse at once. The
 positions are pinned in `manual-booking-payment.test.ts`,
 `manual-refund-task.test.ts` and `member-lifecycle-actions.test.ts`. This is not a census of every `lock(1)` writer:
 the settle body, its reversal, the Stripe path and the refund-task closure were

@@ -1271,6 +1271,7 @@ describe("review finding source/schema contracts", () => {
       "a settle holding the booking row and the officer's key share makes the delete wait; both commit",
       "MUTATION: a delete holding the officer's Member row makes that officer's review closure wait at the booking row, never a deadlock",
       "a review closure holding the booking row and the officer's key share makes the delete wait; neither deadlocks",
+      "MUTATION: a Payment-first writer holding a payment the officer recorded makes the delete refuse at once, never wait; the writer then commits",
     ]) {
       expect(suite, `#4850 case missing: ${caseName}`).toContain(caseName);
     }

@@ -18,6 +18,11 @@
  * while the writer holds the booking row and the officer's key share. Every
  * wait is matched to the backend it waits on (`pg_blocking_pids`).
  *
+ * #4856 review: a Payment-first writer (the back-post's order: Payment row, then
+ * booking row) holding a Payment the officer recorded makes the delete refuse at
+ * once with a 409, because the delete now holds its booking rows from the start
+ * and so takes the Payment rows `NOWAIT`.
+ *
  * Ordinary Vitest runs skip the file; CI's real-PostgreSQL job runs it against
  * the guarded loopback race database.
  */
@@ -27,7 +32,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { cleanHistories, createHistoryBooking, historyNames, parkHistoryStrand, seedHistoryFixtures } from "./support/booking-ledger-history";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 import { assertSafeRaceDbUrl } from "./support/race-db-url";
-import { backendPid, untilBlockedChain } from "./support/race-lock-waits";
+import { backendPid, isBlocking, untilBlockedChain } from "./support/race-lock-waits";
 
 vi.hoisted(() => {
   if (process.env.RUN_CONCURRENCY_RACE_TESTS === "1" && process.env.CONCURRENCY_RACE_DATABASE_URL) {
@@ -218,6 +223,18 @@ async function deleteArrivingWhileWriterHoldsTheBooking(slot: "settle" | "closur
   return { deleted, written };
 }
 
+/** Whether the delete settled (either way) or came to wait on the paused writer's backend. */
+async function settledOrBlockedBy(deleting: Promise<unknown>, writerPid: number): Promise<"settled" | "waiting"> {
+  let settled = false;
+  void deleting.then(() => { settled = true; }, () => { settled = true; });
+  for (let attempt = 0; attempt < 1200; attempt += 1) {
+    if (settled) return "settled";
+    if (await isBlocking(prisma, writerPid)) return "waiting";
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  throw new Error("the delete neither settled nor waited");
+}
+
 (RUN ? describe : describe.skip)("an officer's hard-delete racing that officer's own write (#4850)", { timeout: 180_000 }, () => {
   beforeAll(async () => {
     const url = process.env.CONCURRENCY_RACE_DATABASE_URL ?? "";
@@ -294,5 +311,47 @@ async function deleteArrivingWhileWriterHoldsTheBooking(slot: "settle" | "closur
     expect(await memberExists(officer)).toBe(true);
     expect(await taskState(taskId)).toEqual({ status: "DISMISSED", completedByMemberId: officer });
     expect((await prisma.booking.findUniqueOrThrow({ where: { id }, select: { createdById: true } })).createdById).toBe(officer);
+  });
+
+  it("MUTATION: a Payment-first writer holding a payment the officer recorded makes the delete refuse at once, never wait; the writer then commits", async () => {
+    const { id, paymentId, officer } = await bookingMadeByOfficer("payment-first");
+    // The officer recorded the cash, so the Payment row names the officer.
+    await markPaid(id, officer);
+    const approve = await deleteRequested(officer);
+    const { acquireLodgeCapacityLock } = await import("@/lib/capacity");
+    const { lockPaymentForRefundedTotal } = await import("@/lib/payment-transactions");
+    const { lockBookingRowForOwnerRead } = await import("@/lib/member-money/doors");
+    const held = gate();
+    const release = gate();
+    let writerPid = 0;
+    // The back-post's order through the writers' own helpers: lock(1), the lodge key, the Payment row, then the booking row.
+    const writer = prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+      await acquireLodgeCapacityLock(tx, names.lodgeId);
+      await lockPaymentForRefundedTotal(tx, paymentId);
+      writerPid = await backendPid(tx);
+      held.open();
+      await release.opened;
+      await lockBookingRowForOwnerRead(tx, id);
+      await tx.payment.update({ where: { id: paymentId }, data: { changeFeeCents: 300 } });
+    }, { maxWait: 30_000, timeout: 120_000 });
+    await held.opened;
+    let deleting: Promise<unknown> = Promise.resolve();
+    let first: "settled" | "waiting" = "waiting";
+    try {
+      deleting = approve();
+      first = await settledOrBlockedBy(deleting, writerPid);
+    } finally {
+      release.open();
+    }
+    const [deleted, written] = await Promise.allSettled([deleting, writer]);
+    // Before the review fix the delete held the booking row and waited for this Payment row in its cascade.
+    expect(first, "the delete waited for the Payment row the writer held").toBe("settled");
+    expect(deleted.status).toBe("rejected");
+    expect((deleted as PromiseRejectedResult).reason).toMatchObject({ statusCode: 409 });
+    expectFulfilled(written);
+    expect(await memberExists(officer)).toBe(true);
+    const payment = await prisma.payment.findUniqueOrThrow({ where: { id: paymentId }, select: { manuallyMarkedPaidByMemberId: true, changeFeeCents: true } });
+    expect(payment).toEqual({ manuallyMarkedPaidByMemberId: officer, changeFeeCents: 300 });
   });
 });
