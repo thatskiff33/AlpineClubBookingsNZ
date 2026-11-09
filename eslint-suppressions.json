@@ -207,7 +207,7 @@
       "count": 2
     }
   },
-  "src/app/(admin)/admin/image-manager/image-manager-client.tsx": {
+  "src/app/(admin)/admin/website/image-manager/image-manager-client.tsx": {
     "accessibility/minimum-text-size": {
       "count": 1
     },
@@ -373,7 +373,7 @@
       "count": 1
     }
   },
-  "src/app/(admin)/admin/mountain-conditions/_components/mountain-conditions-panel.tsx": {
+  "src/app/(admin)/admin/website/mountain-conditions/_components/mountain-conditions-panel.tsx": {
     "design-system/no-raw-button": {
       "count": 1
     }
@@ -450,7 +450,7 @@
       "count": 1
     }
   },
-  "src/app/(admin)/admin/site-style/site-style-wizard.tsx": {
+  "src/app/(admin)/admin/website/site-style/site-style-wizard.tsx": {
     "design-system/no-raw-button": {
       "count": 3
     }

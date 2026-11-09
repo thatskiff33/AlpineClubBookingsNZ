@@ -163,7 +163,7 @@ import {
   adminPagePaths,
   allAdminPaths,
 } from "@/lib/__tests__/helpers/admin-route-enumeration";
-import { ADMIN_PAGES } from "@/lib/admin-hubs";
+import { ADMIN_PAGES, adminPageRoutePath } from "@/lib/admin-hubs";
 import {
   adminApiRouteGates,
   handlersWithMultipleGuards,
@@ -226,6 +226,31 @@ const registryPagePaths: string[] = [
     ),
   ),
 ].sort();
+
+/** The on-disk path the resolvers see: `[id]` filled the same way as the enumeration. */
+function concretePageFile(registryPath: string): string {
+  return registryPath.replace(/\[[^\]/]+\]/g, "x123");
+}
+
+/**
+ * The anchors name a screen's old URL. A moved Website page's file is at its
+ * hub path, and the old URL is still the route the layout guard sees.
+ */
+function pageForOldPath(pathname: string) {
+  return ADMIN_PAGES.find((page) => page.oldPath === pathname);
+}
+
+function anchorRouteExists(pathname: string): boolean {
+  if (allAdminPaths.has(pathname)) return true;
+  const page = pageForOldPath(pathname);
+  return page !== undefined && allAdminPaths.has(concretePageFile(adminPageRoutePath(page)));
+}
+
+function isAdminScreen(pathname: string): boolean {
+  if (adminPagePaths.includes(pathname)) return true;
+  const page = pageForOldPath(pathname);
+  return page !== undefined && adminPagePaths.includes(concretePageFile(adminPageRoutePath(page)));
+}
 
 // ---------------------------------------------------------------------------
 // 2. THE GATE EACH REQUEST ACTUALLY MEETS.
@@ -908,7 +933,7 @@ describe("the reviewed route-to-area anchors, enforced through the real guards",
 
   it("names only routes that exist, so the table cannot rot", () => {
     const missing = anchorEntries
-      .filter(({ pathname }) => !allAdminPaths.has(pathname))
+      .filter(({ pathname }) => !anchorRouteExists(pathname))
       .map(({ pathname }) => pathname);
     expect(missing).toEqual([]);
     expect(anchorEntries.length).toBeGreaterThan(25);
@@ -917,7 +942,7 @@ describe("the reviewed route-to-area anchors, enforced through the real guards",
   it("admits the area's own holder and refuses every other area's", async () => {
     const violations: string[] = [];
     for (const { area, pathname } of anchorEntries) {
-      const isPage = adminPagePaths.includes(pathname);
+      const isPage = isAdminScreen(pathname);
       for (const other of AREAS) {
         const grid = viewGridFor(other);
         const result = isPage
@@ -939,7 +964,7 @@ describe("the reviewed route-to-area anchors, enforced through the real guards",
   it("admits a Full Admin to every anchor", async () => {
     const refused: string[] = [];
     for (const { pathname } of anchorEntries) {
-      const isPage = adminPagePaths.includes(pathname);
+      const isPage = isAdminScreen(pathname);
       const result = isPage
         ? await pageAdmits(FULL_ADMIN, pathname)
         : await apiAdmits(FULL_ADMIN, pathname, "GET");

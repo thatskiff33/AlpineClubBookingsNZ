@@ -583,8 +583,24 @@ describe("the entries' shape", () => {
     expect(roots).toEqual(["dashboard"]);
   });
 
-  it("has moved no page yet (C4 #4801 makes the first move)", () => {
-    expect(ADMIN_PAGES.filter((page) => page.moved).map((page) => page.id)).toEqual([]);
+  it("has moved the Website hub, and nothing else (C4 #4801)", () => {
+    expect(
+      ADMIN_PAGES.filter((page) => page.moved)
+        .map((page) => page.id)
+        .sort(),
+    ).toEqual([
+      "appearance",
+      "club-identity",
+      "image-manager",
+      "mountain-conditions",
+      "page-content",
+      "site-banners",
+      "site-content",
+      "site-style",
+    ]);
+    expect(new Set(ADMIN_PAGES.filter((page) => page.moved).map((page) => page.hub))).toEqual(
+      new Set(["website"]),
+    );
   });
 
   /**
@@ -1200,43 +1216,78 @@ async function walkRegistry(
 }
 
 describe("buildAdminUrlRules", () => {
-  it("returns only the retired pages' redirects for today's registry, in either state", () => {
-    // No page has moved, so every destination is served at its old path either way.
-    const retired = {
-      redirects: [
-        {
-          source: "/admin/family-suggestions",
-          destination: "/admin/family-groups?tab=suggestions",
-          permanent: false,
-        },
-        {
-          source: "/admin/membership-cancellation",
-          destination: "/admin/membership-cancellations?tab=settings",
-          permanent: false,
-        },
-        {
-          source: "/admin/setup/cancellation",
-          destination: "/admin/membership-cancellations?tab=settings",
-          permanent: false,
-        },
-        {
-          source: "/admin/setup/booking-rules",
-          destination: "/admin/bookings-setup",
-          permanent: false,
-        },
-        {
-          source: "/admin/setup/integrations",
-          destination: "/admin/health#integration-readiness",
-          permanent: false,
-        },
-      ],
+  it("returns the retired redirects and the Website pages' move rules", () => {
+    // C4 moved the Website pages under `/admin/website`. Off: each hub URL
+    // redirects to the old URL, and a beforeFiles rewrite serves the old URL
+    // from the moved file. On: the old URL redirects to the hub URL, and there
+    // are no rewrites. Retired pages still come first, at their old destinations.
+    const retiredRedirects = [
+      {
+        source: "/admin/family-suggestions",
+        destination: "/admin/family-groups?tab=suggestions",
+        permanent: false,
+      },
+      {
+        source: "/admin/membership-cancellation",
+        destination: "/admin/membership-cancellations?tab=settings",
+        permanent: false,
+      },
+      {
+        source: "/admin/setup/cancellation",
+        destination: "/admin/membership-cancellations?tab=settings",
+        permanent: false,
+      },
+      {
+        source: "/admin/setup/booking-rules",
+        destination: "/admin/bookings-setup",
+        permanent: false,
+      },
+      {
+        source: "/admin/setup/integrations",
+        destination: "/admin/health#integration-readiness",
+        permanent: false,
+      },
+    ];
+    const websiteMoves = [
+      ["/admin/appearance", "/admin/website/appearance"],
+      ["/admin/appearance/identity", "/admin/website/appearance/identity"],
+      ["/admin/image-manager", "/admin/website/image-manager"],
+      ["/admin/mountain-conditions", "/admin/website/mountain-conditions"],
+      ["/admin/page-content", "/admin/website/page-content"],
+      ["/admin/site-banners", "/admin/website/site-banners"],
+      ["/admin/site-content", "/admin/website/site-content"],
+      ["/admin/site-style", "/admin/website/site-style"],
+    ] as const;
+    expect(
+      ADMIN_PAGES.filter((page) => page.moved)
+        .map((page) => [page.oldPath, page.hubPath])
+        .sort((a, b) => a[0].localeCompare(b[0])),
+    ).toEqual([...websiteMoves]);
+    const off = websiteMoves.map(([oldUrl, hubUrl]) => ({
+      source: hubUrl,
+      destination: oldUrl,
+      permanent: false as const,
+    }));
+    const on = websiteMoves.map(([oldUrl, hubUrl]) => ({
+      source: oldUrl,
+      destination: hubUrl,
+      permanent: false as const,
+    }));
+    const beforeFiles = websiteMoves.map(([oldUrl, hubUrl]) => ({
+      source: oldUrl,
+      destination: hubUrl,
+    }));
+    expect(buildAdminUrlRules(false)).toEqual({
+      redirects: [...retiredRedirects, ...off],
+      rewrites: { beforeFiles },
+    });
+    expect(buildAdminUrlRules(true)).toEqual({
+      redirects: [...retiredRedirects, ...on],
       rewrites: { beforeFiles: [] },
-    };
-    expect(buildAdminUrlRules(false)).toEqual(retired);
-    expect(buildAdminUrlRules(true)).toEqual(retired);
+    });
     expect(buildAdminUrlRules(false, ADMIN_PAGES, [])).toEqual({
-      redirects: [],
-      rewrites: { beforeFiles: [] },
+      redirects: off,
+      rewrites: { beforeFiles },
     });
   });
 
@@ -1398,6 +1449,8 @@ describe("the registry is inert", () => {
     "src/app/(admin)/admin/xero/_components/inbound-events-panel.tsx":
       "C3: router.replace targets use servedAdminPathname",
     "src/lib/__tests__/admin-hubs-active-link.test.ts": "C3: activeAdminHref and its census",
+    "src/lib/__tests__/feature-navigation.test.ts":
+      "C4: a nav href's page file is the hub path once the Website pages have moved",
     "src/components/__tests__/admin-sidebar-active-link.test.tsx":
       "C3: the real sidebar over a moved Finance hub",
     "src/lib/__tests__/admin-page-revalidation.test.ts":
@@ -1422,6 +1475,22 @@ describe("the registry is inert", () => {
       "S2: the lodge-scoped pages open from their palette href",
     "src/lib/__tests__/next-config-admin-hub-urls.test.ts":
       "S1: walks each retired page's redirect through the real config",
+    "src/app/(admin)/layout.tsx": "C4: the site-style banner links with adminHref",
+    "src/app/(admin)/admin/website/appearance/page.tsx": "C4: its cards link with adminHref",
+    "src/app/(admin)/admin/website/appearance/identity/page.tsx":
+      "C4: its back link is adminHref",
+    "src/app/(admin)/admin/website/site-style/page.tsx": "C4: its back link is adminHref",
+    "src/app/(admin)/admin/website/site-content/page.tsx": "C4: its back link is adminHref",
+    "src/app/(admin)/admin/website/site-banners/page.tsx": "C4: its back link is adminHref",
+    "src/app/(admin)/admin/website/page-content/page.tsx": "C4: its back link is adminHref",
+    "src/app/(admin)/admin/website/image-manager/page.tsx": "C4: its back link is adminHref",
+    "src/app/(admin)/admin/website/mountain-conditions/page.tsx":
+      "C4: its back link is adminHref",
+    "src/app/(admin)/admin/setup/foundations/page.tsx":
+      "C4: the Club Identity card links with adminHref",
+    "src/app/(admin)/admin/booking-policies/cancellation/page.tsx":
+      "C4: the public-pages link is adminHref",
+    "src/lib/analytics-settings-shared.ts": "C4: the privacy-policy editor link is adminHref",
   };
   const SOURCE = /\.(?:ts|tsx|mts|cts|js|jsx|mjs|cjs)$/;
   const IMPORT = /(?:\bfrom\s*|\bimport\s*\(\s*|\brequire\s*\(\s*|^\s*import\s+)["'][^"']*admin-hubs(?:\/[^"']*)?["']/m;
