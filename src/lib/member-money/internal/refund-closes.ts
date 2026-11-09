@@ -44,7 +44,7 @@ export type PaidAnotherWayRest = "club-keeps" | "still-owed";
 
 export interface PaidAnotherWayJournalClose {
   bookingId: string;
-  /** The refund debt the closed row paid, or null where its key maps to none (nothing posts). */
+  /** The refund debt the closed row paid, or null where its key maps to none (its bank cash posts unapplied). */
   obligation: CardRefundObligationRef | null;
   /** The completed close record (`ManualRefundTask`). */
   recordId: string;

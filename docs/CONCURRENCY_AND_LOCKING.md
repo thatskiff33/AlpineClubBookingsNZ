@@ -5987,9 +5987,12 @@ writers (`INV-LOCK-001`–`003`). Each mutation and its tiers:
   existing booking → Payment edge. An edit review's card refund posts after its
   re-price, so any member credit key comes before the Payment row. A duplicate
   or capacity-race capture posts in W1's body after its held R06 and reads the
-  owner without the booking row (review F1): the R06 already wrote lines naming
-  the owner (a `KEY SHARE` on its Member row), and merge takes `Member … FOR
-  UPDATE` after its owner move. A treasurer-approved late capture takes the
+  owner without the booking row (review F1), defensively: W1 holds the Payment
+  row there, and a merge can update a Payment row after its owner move (F5
+  below), so the booking row taken then would add a Payment → booking edge
+  against it. No other cycle is known: a journal line names its debtor by id,
+  with no foreign key, so the R06 takes no lock on the Member row. A
+  treasurer-approved late capture takes the
   Payment row before its task's claim (review F2), and reads the owner without
   the booking row (its `lock(1)` arrives in M4d).
 - **A kept late capture** (the approval task dismissed) takes the same Payment

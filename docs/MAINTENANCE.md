@@ -1999,7 +1999,9 @@ is a counted refund the next cash-writer run on its payment posts.
 `PAID_ANOTHER_WAY_WITHOUT_EVENT` is a "Paid another way" close with no R14: one
 made before M4c (M9 back-posts history) or while the journal was inactive.
 `KEPT_REST_WITHOUT_CLOSE_OUT` is a part close whose record says the club kept
-the rest and whose rest has no close-out. Open reservations give exit status 2.
+the rest, whose R14 paid its debt in the journal, and whose rest has no
+close-out. A close whose debt was never in the journal posts its bank cash
+unapplied and has no debt to close out, so it is not listed. Open reservations give exit status 2.
 No provider call; nothing is matched by amount or time.
 
 Expected until the milestone that answers unapplied refunds: a refund that

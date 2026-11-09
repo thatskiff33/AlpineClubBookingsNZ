@@ -21,7 +21,8 @@ import type { CardRefundObligationRef } from "./refund-reservations";
  * WHICH REFUND DEBT A CARD REFUND ROW PAYS (#4516, Ledger M4c; plan section 5, "Runner mapping"). One exhaustive
  * map from a recovery row's key to the R05 its door posted, shared by the recovery runner and a "Paid another way"
  * close. A row it cannot map (an organiser's or a group settlement's, M6) sends exactly as today with no
- * reservation, and a close of it posts nothing; an obligation not in the journal is the same.
+ * reservation, and a close of it posts its bank cash unapplied (R14, Dr AR, Cr BANK; review M3); an obligation not
+ * in the journal is the same.
  */
 
 export interface CardRefundRecoveryRow {

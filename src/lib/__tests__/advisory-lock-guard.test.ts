@@ -1480,8 +1480,10 @@ const ROW_LOCK_SITE_INVENTORY: Record<string, number> = {
   // statement, `lockBookingRowForOwnerRead`, is also taken by an approved refund
   // appeal right after its lock(1), before the Payment row and the request's
   // claim (which writes no booking row), so a merge (owner move, then the
-  // request's member) cannot hold the row it waits on; W1's capture-return R05
-  // reads its owner without it. See docs/CONCURRENCY_AND_LOCKING.md -> "The M3b
+  // request's member) cannot hold the row it waits on. W1's capture-return R05
+  // reads its owner without it, defensively (round 2: W1 holds the Payment row
+  // there, which a merge's relation move can update after its owner move; no
+  // other cycle is known). See docs/CONCURRENCY_AND_LOCKING.md -> "The M3b
   // booking doors and member merge's journal transfer" and the M4c paragraph.
   "src/lib/member-money/internal/booking-posting.ts": 1,
   // #4691 (Ledger M4a): an application batch, a refund reservation and a release

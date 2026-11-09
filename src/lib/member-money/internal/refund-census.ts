@@ -26,8 +26,9 @@ import { cardReceiptLine, reservationGenerationsWhere, stripeKeyOfReservation } 
  *   an R06 receipt for its capture. A dashboard refund, a capture with no receipt, or a debtor a merge moved.
  * - `PAID_ANOTHER_WAY_WITHOUT_EVENT`: a "Paid another way" close of one of the payment's card refund rows with no
  *   R14 (#4516 review M3): one made before M4c (M9 back-posts history), or while the journal was inactive.
- * - `KEPT_REST_WITHOUT_CLOSE_OUT`: a part close whose record says the club kept the rest, whose R14 posted, and
- *   whose rest has no close-out (`refund-close-out:<record>`).
+ * - `KEPT_REST_WITHOUT_CLOSE_OUT`: a part close whose record says the club kept the rest, whose R14 posted
+ *   applied to its debt, and whose rest has no close-out (`refund-close-out:<record>`). An R14 posted unapplied
+ *   (its debt was never in the journal) has no debt to close out, so it is not listed (round-2 review E).
  */
 
 type Db = Prisma.TransactionClient;
@@ -79,10 +80,14 @@ export async function readBookingRefundCensus(tx: Db, paymentId: string): Promis
   const closes = operationIds.length === 0 ? [] : await tx.manualRefundTask.findMany({ where: cardRefundPaidAnotherWayClosesWhere(operationIds),
     select: { id: true, amountCents: true, raisedAmountCents: true } });
   for (const close of closes) {
-    if (!(await tx.memberMoneyEvent.findUnique({ where: { eventKey: memberMoneyEventKeys.paidAnotherWay(close.id) }, select: { id: true } }))) {
+    const r14 = await tx.memberMoneyEvent.findUnique({ where: { eventKey: memberMoneyEventKeys.paidAnotherWay(close.id) },
+      select: { journal: { select: { lines: { where: { account: "MEMBER_RECEIVABLE" }, select: { id: true } } } } } });
+    if (!r14) {
       add("PAID_ANOTHER_WAY_WITHOUT_EVENT", close.id, close.amountCents ?? 0);
       continue;
     }
+    // Round-2 review E: an R14 posted unapplied (its debt was not in the journal, Dr AR) has no debt to close out.
+    if ((r14.journal?.lines.length ?? 0) > 0) continue;
     const keptCents = paidAnotherWayUnpaidCents(close);
     if (keptCents > 0 && !(await tx.memberMoneyEvent.findUnique({ where: { eventKey: memberMoneyEventKeys.refundCloseOut(close.id) }, select: { id: true } }))) {
       add("KEPT_REST_WITHOUT_CLOSE_OUT", close.id, keptCents);

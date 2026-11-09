@@ -24,7 +24,7 @@ import { readMemberMoneyApplicationState } from "@/lib/member-money/internal/app
 import { memberMoneyApplicationTotals, memberMoneyConservationProblems } from "@/lib/member-money/internal/application-state";
 import { syncBookingLedgerSettlements } from "@/lib/booking-ledger-settlement-sync";
 import { PartialRefundError, recordStripeRefundsAgainstTransaction, refundPaymentTransactions, syncRefundsFromStripeCharge } from "@/lib/payment-transactions";
-import { buildBookingCancellationRefundMetadata } from "@/lib/payment-recovery-keys";
+import { buildBookingCancellationRefundMetadata, buildLateCaptureRefundStripeKeyPrefix, refundSliceStripeIdempotencyKey } from "@/lib/payment-recovery-keys";
 import { refundRequestStripeMetadata } from "@/lib/refund-slice-evidence";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 import { resetStripeRaceHooks, stripeRaceHooks } from "./support/stripe-race-double";
@@ -366,10 +366,12 @@ async function cancelledPaidBooking() {
     await db.$transaction((tx) => syncBookingLedgerSettlements({ paymentId: `${id}-payment`, store: tx }));
     await db.$transaction((tx) => postBookingReceipts(tx, context, { paymentId: `${id}-payment`, decision: { paymentIntentId: late.stripePaymentIntentId!, collect: false } }));
     const debt = { scope: "capture-return" as const, id: late.stripePaymentIntentId!, ensureFaceCents: 3_000 };
-    const webhookPrefix = `late_cancel_refund_${id}_${late.stripePaymentIntentId}`;
-    const webhookKey = `${webhookPrefix}_${late.id}_3000`;
+    // Round-2 review G: the senders' keys as their own builders make them (the repair tool's prefix is built inline there).
+    const slice = { paymentTransactionId: late.id, amountCents: 3_000 };
+    const webhookPrefix = buildLateCaptureRefundStripeKeyPrefix(id, late.stripePaymentIntentId!);
+    const webhookKey = refundSliceStripeIdempotencyKey(webhookPrefix, slice);
     const repairPrefix = `late_cancel_refund_repair_${id}`;
-    const repairKey = `${repairPrefix}_${late.id}_3000`;
+    const repairKey = refundSliceStripeIdempotencyKey(repairPrefix, slice);
     await reserve(id, late, debt, webhookKey, 3_000, [webhookKey], webhookPrefix);
     await expect(reserve(id, late, debt, repairKey, 3_000, [repairKey], repairPrefix)).rejects.toBeInstanceOf(MemberMoneyReservationRefused);
     expect((await reservationOf(webhookKey))?.release).toBeNull();

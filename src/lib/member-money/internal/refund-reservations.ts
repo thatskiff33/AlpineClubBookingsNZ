@@ -1,4 +1,5 @@
 import type { Prisma } from "@prisma/client";
+import { isStripeKeyOfSenderPrefix } from "../../payment-recovery-keys";
 import { lockMemberMoneyPayment, readMemberMoneyApplicationState } from "./application-read";
 import { refundFamilyKey } from "./application-state";
 import { eventPosted } from "./booking-journal-read";
@@ -10,7 +11,6 @@ import {
   asReservationRefusal,
   cardReceiptLine,
   fundRefundFromReceipt,
-  isSenderStripeKey,
   refundFamilyTip,
   refundObligationChain,
   reservationGenerationKey,
@@ -114,7 +114,7 @@ export async function reserveCardRefundSlice(tx: Db, context: BookingJournalCont
   for (const reservation of state.reservations) {
     const stripeKey = stripeKeyOfReservation(reservation.attemptKey);
     if (!familyIds.has(reservation.obligationId) || reservation.capture !== capture || input.planAttemptKeys.includes(stripeKey)
-      || !isSenderStripeKey(stripeKey, input.senderKeyPrefix)) continue;
+      || !isStripeKeyOfSenderPrefix(stripeKey, input.senderKeyPrefix)) continue;
     await releaseMemberMoneyRefundReservation(tx, context, { bookingId, reservationId: reservation.id, reason: "SUPERSEDED_KEY",
       source: { kind: "PAYMENT", id: input.paymentTransactionId, version: `superseded:${reservation.attemptKey}` } });
   }

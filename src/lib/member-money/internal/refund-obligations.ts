@@ -8,7 +8,8 @@ import { isBookingJournalInactive, type BookingJournalContext } from "./journal-
 import { memberMoneyEventKeys, type MemberMoneyEventKey, type RefundObligationScope } from "./keys";
 import { MemberMoneyPlanError, type MemberMoneyDebtor, type MemberMoneyEvidence, type MemberMoneyLegPlan, type MemberMoneyPostingContext } from "./plan";
 import { postMemberMoneyEvent, releaseMemberMoneyRefundReservation, reverseMemberMoneyJournal } from "./post";
-import { isSenderStripeKey, refundFamily, refundObligationChain, stripeKeyOfReservation } from "./refund-family";
+import { isStripeKeyOfSenderPrefix } from "../../payment-recovery-keys";
+import { refundFamily, refundObligationChain, stripeKeyOfReservation } from "./refund-family";
 
 /**
  * R05 AT THE CARD-REFUND DOORS (#4516, Ledger M4c). After the door's price or retention decision has posted
@@ -114,7 +115,7 @@ export async function withdrawRefundObligation(tx: Db, context: BookingJournalCo
   }
   const ids = new Set(family.members.map((o) => o.id));
   const held = state.reservations.filter((r) => ids.has(r.obligationId));
-  const others = held.filter((r) => !isSenderStripeKey(stripeKeyOfReservation(r.attemptKey), input.senderKeyPrefix));
+  const others = held.filter((r) => !isStripeKeyOfSenderPrefix(stripeKeyOfReservation(r.attemptKey), input.senderKeyPrefix));
   if (others.length > 0) {
     throw new MemberMoneyPlanError([`refund obligation ${live} is reserved by another sender (${others.map((r) => r.attemptKey).join(", ")}), so its door cannot withdraw it`]);
   }

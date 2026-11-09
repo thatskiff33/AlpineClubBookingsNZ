@@ -197,21 +197,20 @@ export function buildLegacyModificationRefundStripeKeyPrefix(operationId: string
 // evidence before replay even after expiry (`INV-PAY-147`).
 const REFUSED_REFUND_KEY_SUFFIX = /^refused([1-9][0-9]{0,5})$/;
 
-export function isRefusedRefundKeySuffix(value: unknown): value is string {
-  return typeof value === "string" && REFUSED_REFUND_KEY_SUFFIX.test(value);
-}
+export const isRefusedRefundKeySuffix = (value: unknown): value is string => typeof value === "string" && REFUSED_REFUND_KEY_SUFFIX.test(value);
 
 export function nextRefusedRefundKeySuffix(current: string | undefined): string {
   const generation = current ? REFUSED_REFUND_KEY_SUFFIX.exec(current)?.[1] : undefined;
   return `refused${generation ? Number(generation) + 1 : 1}`;
 }
 
-export function refundSliceStripeIdempotencyKey(
-  prefix: string,
-  slice: { paymentTransactionId: string; amountCents: number; stripeKeySuffix?: string },
-): string {
+export function refundSliceStripeIdempotencyKey(prefix: string, slice: { paymentTransactionId: string; amountCents: number; stripeKeySuffix?: string }): string {
   const key = `${prefix}_${slice.paymentTransactionId}_${slice.amountCents}`;
   return slice.stripeKeySuffix ? `${key}_${slice.stripeKeySuffix}` : key;
+}
+/** #4516 (`INV-SSOT`): a Stripe key the sender with this prefix built: its one keyed request, or any slice's (above). */
+export function isStripeKeyOfSenderPrefix(key: string, prefix: string): boolean {
+  return key === prefix || key.startsWith(`${prefix}_`);
 }
 
 export function buildEditFinancialReviewRefundStripeKeyPrefix(taskId: string) {

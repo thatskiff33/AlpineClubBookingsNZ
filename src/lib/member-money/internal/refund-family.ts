@@ -100,8 +100,12 @@ export async function cardReceiptLine(tx: Db, paymentIntentId: string) {
  * A RESERVATION'S ATTEMPT KEY (#4516 review F4). A Stripe key's first reservation is that key, verbatim. One made
  * after every earlier reservation of the key was released without a refund answering it (an appeal re-approved
  * after `release_claim`, a re-send of a refused or superseded key) is the key's next generation, `<key>#<n>`: the
- * journal claims the debt again while Stripe is sent the key exactly as before, so a refund it made under that key
- * is replayed and never repeated. `#` is never in a Stripe key.
+ * journal claims the debt again while Stripe is sent the key exactly as before. Within Stripe's 24-hour idempotency
+ * window a refund made under that key is replayed, never repeated; beyond it, the recovery preflight adopts the
+ * key's `refundSliceKey` evidence before any replay (`INV-PAY-147`). A replayed refusal answers nothing new (the
+ * refusal is not first recorded again), so its generation stays open until the same sender's next key supersedes it
+ * (the runner's re-plan to `refused<n>`, SUPERSEDED_KEY), or else the census lists it stranded for the OPERATOR
+ * release. `#` is never in a Stripe key.
  */
 const GENERATION_MARK = "#";
 export function reservationGenerationKey(stripeKey: string, generation: number): string {
@@ -119,16 +123,6 @@ export function stripeKeyOfReservation(attemptKey: string): string {
 export function reservationGenerationsWhere(stripeKey: string) {
   // `exactPrefix` (INV-SSOT-006): a Stripe key carries `_`, which LIKE would read as any character.
   return { OR: [{ attemptKey: stripeKey }, { attemptKey: exactPrefix(`${stripeKey}${GENERATION_MARK}`) }] };
-}
-
-/**
- * Whether a reservation's Stripe key is one the sender with this key prefix made (`refundSliceStripeIdempotencyKey`
- * for any of its slices, or the prefix itself for a row's one keyed request). A sender supersedes or withdraws only
- * its own keys (#4516 review F3): another sender's open reservation on the same debt is that sender's attempt in
- * flight, and C3 and C4 decide whether there is room beside it.
- */
-export function isSenderStripeKey(stripeKey: string, senderKeyPrefix: string): boolean {
-  return stripeKey === senderKeyPrefix || stripeKey.startsWith(`${senderKeyPrefix}_`);
 }
 
 /** A refusal for a broken cap; any other plan error is a fault, rethrown as it is. */

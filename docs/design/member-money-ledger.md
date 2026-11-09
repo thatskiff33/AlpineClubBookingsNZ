@@ -873,9 +873,14 @@ sender's plan no longer carries is released (SUPERSEDED_KEY); another sender's
 open reservation on the same debt is its attempt in flight, left for C3 and C4
 to judge. A key whose reservations were all released without a refund (an
 appeal re-approved after `release_claim`, a refused key sent again) reserves the
-key's next generation, `<key>#<n>`, while Stripe is sent the key unchanged; a
-key a refund answered is replayed by Stripe and reserves nothing. A retry
-replays its claim only for the same slice. With no receipt, no R05 in the
+key's next generation, `<key>#<n>`, while Stripe is sent the key unchanged
+(within Stripe's 24-hour idempotency window a refund made under it is replayed;
+beyond it, the preflight adopts the key's evidence first, `INV-PAY-147`). A
+replayed refusal releases nothing again, so that generation stays open until the
+same sender's next key supersedes it, or the census lists it for the OPERATOR
+release. A key a refund answered reserves nothing. A retry replays its claim
+only for the same slice; a superseded row's one request, found unused at
+Stripe, is reserved again at its new amount. With no receipt, no R05 in the
 journal, or a receipt on a member a merge moved away from, nothing is reserved
 and the refund later posts unapplied. A broken cap refuses the slice before
 Stripe is asked: the committed door stands, the sender throws, the recovery

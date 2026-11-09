@@ -23,6 +23,7 @@ import { memberMoneyApplicationTotals, memberMoneyConservationProblems } from "@
 import { isRefundReservationOpen, readBookingRefundCensus, reconcileMadeRefundReservations, releaseReservationByOperator } from "@/lib/member-money/internal/refund-census";
 import { isMemberMoneyCapProblem, MEMBER_MONEY_CAP_PROBLEMS } from "@/lib/member-money/internal/cap-problems";
 import { reservationGenerationKey, stripeKeyOfReservation } from "@/lib/member-money/internal/refund-family";
+import { buildLateCaptureRefundStripeKeyPrefix, isStripeKeyOfSenderPrefix, refundSliceStripeIdempotencyKey } from "@/lib/payment-recovery-keys";
 import { refundDoorOfObligationKey } from "@/lib/member-money/internal/refund-obligation-map";
 import { MemberMoneyPlanError } from "@/lib/member-money/internal/plan";
 import { PartialRefundError } from "@/lib/payment-transactions";
@@ -258,18 +259,35 @@ describe("the reservation step", () => {
     expect(await t.reserve(t.row, { scope: "cancellation", id: t.id }, t.key, 8_000)).toEqual({ outcome: "skipped", reason: "key-already-decided" });
   });
 
-  it("MUTATION (review F4): a key released without a refund reserves its next generation, which its refund then answers", async () => {
+  it("MUTATION (review F4): a key released without a refund reserves its next generation; a replayed refusal leaves it open until the sender's next key supersedes it", async () => {
     const t = await cancelled();
     await t.reserve(t.row, { scope: "cancellation", id: t.id }, t.key, 8_000);
-    await t.refund(t.row, "re_refused", 8_000, "failed", t.key); // REFUSED in this delivery
+    await t.refund(t.row, "re_refused", 8_000, "failed", t.key); // REFUSED, first recorded in this delivery
     expect(t.release(t.key)).toMatchObject({ reason: "REFUSED" });
     // The same Stripe key asked again: never sent unreserved.
     expect(await t.reserve(t.row, { scope: "cancellation", id: t.id }, t.key, 8_000)).toMatchObject({ outcome: "reserved", attemptKey: `${t.key}#2`, replayed: false });
     expect(await t.reserve(t.row, { scope: "cancellation", id: t.id }, t.key, 8_000)).toMatchObject({ outcome: "reserved", attemptKey: `${t.key}#2`, replayed: true });
-    // Stripe's evidence names the bare key; it answers the open generation.
-    expect(await t.refund(t.row, "re_made", 8_000, "succeeded", t.key)).toBe(1);
-    expect(t.release(`${t.key}#2`)).toMatchObject({ reason: "ANSWERED", stripeRefundId: "re_made" });
+    // Within Stripe's 24 hours the key replays the same failed refund: not first recorded, so it releases nothing.
+    expect(await t.refund(t.row, "re_refused", 8_000, "failed", t.key)).toBe(0);
+    expect(t.release(`${t.key}#2`)).toBeNull();
+    // The runner's re-plan moves the slice to its next refused key: the same sender's, so the open generation goes.
+    const next = `${t.key}_refused1`;
+    await t.reserve(t.row, { scope: "cancellation", id: t.id }, next, 8_000, [next]);
+    expect(t.release(`${t.key}#2`)).toMatchObject({ reason: "SUPERSEDED_KEY" });
+    expect(await t.refund(t.row, "re_made", 8_000, "succeeded", next)).toBe(1);
+    expect(t.release(next)).toMatchObject({ reason: "ANSWERED", stripeRefundId: "re_made" });
     expect(t.family(t.root)).toMatchObject({ paid: 8_000, reserved: 0 });
+    expect(t.caps()).toEqual([]);
+  });
+
+  it("review F4: a generation reserved after a release is answered by a refund its key really makes", async () => {
+    // Beyond Stripe's 24 hours the same key makes a new refund (preflight's evidence adoption guards the replay).
+    const t = await cancelled();
+    await t.reserve(t.row, { scope: "cancellation", id: t.id }, t.key, 8_000);
+    await t.refund(t.row, "re_refused", 8_000, "failed", t.key);
+    await t.reserve(t.row, { scope: "cancellation", id: t.id }, t.key, 8_000);
+    expect(await t.refund(t.row, "re_made_later", 8_000, "succeeded", t.key)).toBe(1);
+    expect(t.release(`${t.key}#2`)).toMatchObject({ reason: "ANSWERED", stripeRefundId: "re_made_later" });
     expect(t.caps()).toEqual([]);
   });
 
@@ -329,6 +347,18 @@ describe("the reservation step", () => {
     // The same sender's re-plan does supersede its own.
     expect(await t.reserve(late, debt, "webhook_key_refused1", 3_000, ["webhook_key_refused1"], "webhook")).toMatchObject({ outcome: "reserved" });
     expect(t.release("webhook_key")).toMatchObject({ reason: "SUPERSEDED_KEY" });
+  });
+
+  it("MUTATION (round-2 review G): a sender's own Stripe keys are exactly those its prefix builds, and never another sender's", () => {
+    const slice = { paymentTransactionId: "txn_1", amountCents: 3_000 };
+    const webhook = buildLateCaptureRefundStripeKeyPrefix("b-1", "pi_late");
+    for (const key of [refundSliceStripeIdempotencyKey(webhook, slice), refundSliceStripeIdempotencyKey(webhook, { ...slice, stripeKeySuffix: "refused1" }), webhook]) {
+      expect(isStripeKeyOfSenderPrefix(key, webhook)).toBe(true);
+    }
+    const repair = "late_cancel_refund_repair_b-1";
+    expect(isStripeKeyOfSenderPrefix(refundSliceStripeIdempotencyKey(repair, slice), webhook)).toBe(false);
+    expect(isStripeKeyOfSenderPrefix(refundSliceStripeIdempotencyKey(webhook, slice), repair)).toBe(false);
+    expect(isStripeKeyOfSenderPrefix(`${webhook}x_txn_1_3000`, webhook)).toBe(false);
   });
 
   it("a reservation's attempt key: generation 1 is the Stripe key, later ones are marked, and the Stripe key is read back from either", () => {
@@ -606,6 +636,17 @@ describe("the refund census and the rollback rules", () => {
     await postPaidAnotherWayClose(t.db.tx, context, { bookingId: t.id, obligation: { scope: "cancellation", id: t.id }, recordId: "before", amountCents: 3_000, restCents: 5_000,
       rest: "still-owed", attemptKeys: [], transactionIds: [t.row.id], closedAt: new Date(context.effectiveAt), actorMemberId: OFFICER });
     expect(await t.census()).toEqual([{ bookingId: t.id, identity: "before", kind: "KEPT_REST_WITHOUT_CLOSE_OUT", cents: 5_000 }]);
+  });
+
+  it("MUTATION (round-2 review E): a close whose R14 posted unapplied has no debt to close out, so it is not listed", async () => {
+    const t = await cancelled();
+    t.db.seed("paymentRecoveryOperation", { id: "op-old", type: "REFUND_BOOKING_MODIFICATION", idempotencyKey: "payment_recovery_modification_refund_old", bookingId: t.id,
+      paymentId: `${t.id}-payment`, paymentIntentId: t.row.stripePaymentIntentId, amountCents: 4_000 });
+    t.db.seed("manualRefundTask", { id: "old-close", occurrenceKey: "card-refund-paid-another-way:op-old", kind: "CANCELLED_BOOKING_HAND_BACK", status: "COMPLETED", amountCents: 1_000, raisedAmountCents: 4_000 });
+    await postPaidAnotherWayClose(t.db.tx, context, { bookingId: t.id, obligation: { scope: "modification", id: "old" }, recordId: "old-close", amountCents: 1_000, restCents: 3_000,
+      rest: "club-keeps", attemptKeys: [], transactionIds: [t.row.id], closedAt: new Date(context.effectiveAt), actorMemberId: OFFICER });
+    expect(t.event(keys.paidAnotherWay("old-close"))).not.toBeNull();
+    expect(await t.census()).toEqual([]);
   });
 
   it("a counted refund with no R12 is listed until the next cash-writer run posts it", async () => {
