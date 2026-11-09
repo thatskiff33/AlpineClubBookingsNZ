@@ -1629,12 +1629,16 @@ const ROW_LOCK_SITE_INVENTORY: Record<string, number> = {
   // statements above plus the two `FOR KEY SHARE` ones that were inventoried
   // nowhere — the ordinary seams' sorted NOWAIT acquisition, and the
   // booking-request hold's blocking lock over its exact linked-member snapshot.
-  // The merge `FOR UPDATE` now runs under a 10s `lock_timeout` and restores it,
-  // so a wait-while-holding-the-policy-key is bounded and lands on the same
-  // stable retry (#2623 T6).
+  // FIVE since #4855: merge's participant lock never waits for one Member row
+  // while holding another. Each attempt is one sorted `FOR UPDATE SKIP LOCKED`
+  // in a savepoint; a skipped row is waited for ALONE (`FOR UPDATE`, the fifth
+  // statement) under a savepoint-scoped `lock_timeout` of what is left of the
+  // 10s budget, then released, and the attempt retried. The bound still lands
+  // on the same stable retry (#2623 T6).
   // See docs/CONCURRENCY_AND_LOCKING.md → "Adult-member-hosting queue
-  // participant fencing" and "Member merge".
-  "src/lib/adult-member-hosting-queue-participants.ts": 4,
+  // participant fencing", "Member merge" and "Merge never holds a Member row
+  // while waiting for another (#4855)".
+  "src/lib/adult-member-hosting-queue-participants.ts": 5,
   // The hosting coverage drain locks the claimed owner and FK-less actor
   // `FOR KEY SHARE` after their sorted member-lifecycle keys and before the exact
   // typed queue refresh, so merge cannot re-point an identity between the claim

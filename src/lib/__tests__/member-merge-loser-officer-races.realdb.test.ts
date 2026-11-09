@@ -360,7 +360,7 @@ function expectNoDeadlock(...outcomes: PromiseSettledResult<unknown>[]) {
     return (await prisma.member.count({ where: { id: memberId } })) === 1;
   }
 
-  it("(a) a change-request approval by the duplicate, crediting the survivor, never deadlocks with the merge: the approval commits and the merge refuses, keeping the reviewer", async () => {
+  it("MUTATION: (a) a change-request approval by the duplicate, crediting the survivor, never deadlocks with the merge: the approval commits and the merge refuses, keeping the reviewer", async () => {
     const { loser, master } = await mergePair("a", true);
     await seedChangeRequest(master);
     const figures = await checkFigures(loser);
@@ -377,7 +377,7 @@ function expectNoDeadlock(...outcomes: PromiseSettledResult<unknown>[]) {
     expect(await prisma.memberCredit.count({ where: { memberId: master, sourceBookingId: BOOKING_ID } })).toBe(1);
   });
 
-  it("(b) a held booking-request approval by the duplicate, linking a guest to the survivor, never deadlocks with the merge: the approval commits and the merge refuses", async () => {
+  it("MUTATION: (b) a held booking-request approval by the duplicate, linking a guest to the survivor, never deadlocks with the merge: the approval commits and the merge refuses", async () => {
     const { loser, master } = await mergePair("b", false);
     await seedBookingRequest(master);
     const runMerge = await previewMerge(master, loser, OFFICER_ID);
@@ -397,7 +397,7 @@ function expectNoDeadlock(...outcomes: PromiseSettledResult<unknown>[]) {
     expect(await stillThere(loser)).toBe(true);
   });
 
-  it("(c) a change-request approval by the duplicate that merge waits on keeps its reviewer: the approval commits and the merge refuses", async () => {
+  it("MUTATION: (c) a change-request approval by the duplicate that merge waits on keeps its reviewer: the approval commits and the merge refuses", async () => {
     const { loser, master } = await mergePair("c", false);
     await seedChangeRequest(OWNER_ID);
     const figures = await checkFigures(loser);
@@ -425,7 +425,7 @@ function expectNoDeadlock(...outcomes: PromiseSettledResult<unknown>[]) {
     return { loser, merged };
   }
 
-  it("refuses a merge, rather than dropping it, when a Cascade row naming the duplicate commits under it", async () => {
+  it("MUTATION: refuses a merge, rather than dropping it, when a Cascade row naming the duplicate commits under it", async () => {
     const { loser, merged } = await mergeWithLateRow("cascade", (tx, id) =>
       tx.issueReport.create({ data: { memberId: id, pageUrl: "https://example.invalid/race-4855", description: "Race 4855 late report" } }));
     // Before #4855 the merge committed and the loser delete cascaded the report away.
@@ -433,7 +433,7 @@ function expectNoDeadlock(...outcomes: PromiseSettledResult<unknown>[]) {
     expect(await prisma.issueReport.count({ where: { memberId: loser } })).toBe(1);
   });
 
-  it("refuses a merge with its clean 409, not an FK error, when a Restrict row naming the duplicate commits under it", async () => {
+  it("MUTATION: refuses a merge with its clean 409, not an FK error, when a Restrict row naming the duplicate commits under it", async () => {
     const { loser, merged } = await mergeWithLateRow("restrict", (tx, id) =>
       tx.memberCredit.create({ data: { memberId: id, amountCents: 1_000, type: "ADMIN_ADJUSTMENT", description: "Race 4855 late credit" } }));
     // Before #4855 the loser delete failed on the FK (P2003) and the operator saw a 500.
