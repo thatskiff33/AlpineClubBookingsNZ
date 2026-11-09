@@ -658,8 +658,9 @@ describe("approveAndExecutePolicyExceptionRequest", () => {
     // Keyed from the frozen snapshot the lodge key also comes from, so the row
     // locked is the booking the canonical service modifies (`snapshot.bookingId`),
     // not a second column that could disagree with it.
-    const modRow = baseRow({ proposalHash: MOD_HASH, bookingId: "column-must-not-key-the-lock" });
+    const modRow = baseRow({ proposalHash: MOD_HASH });
     modRow.proposalSnapshot = MOD_SNAPSHOT as never;
+    modRow.bookingId = "column-must-not-key-the-lock";
     const { db, tx, order } = makeDb({ row: modRow });
     const hooks = makeHooks({ verifyLiveProposalIntegrity: vi.fn(async () => true) }, order);
     const result = await approveAndExecutePolicyExceptionRequest({
