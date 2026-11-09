@@ -419,7 +419,8 @@ function FamilyGroupsTab() {
     <div>
       {viewOnlyBanner}
       <div className="space-y-6">
-      <div className="flex justify-end">
+      <div className="flex items-center justify-between">
+        <h2 className="text-lg font-semibold text-foreground">Groups</h2>
         <ViewOnlyActionButton canEdit={canEditMembership} describeReason={false} onClick={openCreateForm}>
           <Plus className="h-4 w-4 mr-2" />
           New Group

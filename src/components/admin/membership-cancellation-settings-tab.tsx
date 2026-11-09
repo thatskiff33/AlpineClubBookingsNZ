@@ -18,6 +18,7 @@ export function MembershipCancellationSettingsTab() {
   const canOpenEmailMessages = useCanOpenAdminPath(emailMessagesHref);
   return (
     <div className="space-y-4">
+      <h2 className="text-lg font-semibold text-foreground">Settings</h2>
       <Card>
         <CardContent className="pt-6">
           <MembershipCancellationSettingsPanel />

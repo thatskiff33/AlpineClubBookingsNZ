@@ -11,7 +11,7 @@ import {
 import { isFeatureHrefVisible } from "@/config/feature-routes";
 import type { FeatureFlags } from "@/config/schema";
 import {
-  canViewAdminHrefWithMatrix,
+  canOpenAdminPathWithMatrix,
   type AdminPermissionMatrix,
 } from "@/lib/admin-permissions";
 
@@ -49,7 +49,7 @@ function getVisibleAdminHubSections(
     (section) =>
       isFeatureHrefVisible(section.href, features) &&
       (!permissionMatrix ||
-        canViewAdminHrefWithMatrix(permissionMatrix, section.href)),
+        canOpenAdminPathWithMatrix(permissionMatrix, section.href)),
   );
 }
 
@@ -126,7 +126,8 @@ export function AdminHubPage({
 
 /**
  * The destination cards of a hub, each shown only where its module is on and,
- * given a matrix, to an admin who can view it. `AdminHubPage` renders them
+ * given a matrix, to an admin who can OPEN its page (`canOpenAdminPathWithMatrix`,
+ * the admin layout's own rule, OR admissions included). `AdminHubPage` renders them
  * under its heading; a page that is not a hub renders them as one of its
  * sections (System Health's integration readiness, S1 #4796).
  */

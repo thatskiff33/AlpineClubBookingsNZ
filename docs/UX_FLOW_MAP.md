@@ -886,7 +886,7 @@ Screen: `/admin/health`.
 
 Merged in (#4796): `/admin/setup/integrations` redirects to its Integration readiness section.
 
-Shows: Component health and diagnostic results, then the provider setup pages (Xero, modules, email deliverability) as readiness cards.
+Shows: The provider setup pages (Xero, modules, email deliverability) as readiness cards, then component health and diagnostic results.
 
 Journey: Inspect health checks and follow the documented recovery for a failing component.
 

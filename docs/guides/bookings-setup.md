@@ -37,7 +37,12 @@ module.
 
 1. Go to **Admin → Setup & Configuration → Bookings Setup**.
 
-   ![Bookings Setup hub: two cards — Rooms & Beds and Booking Messages](../images/admin/admin-bookings-setup.png)
+   ![Bookings Setup hub, captured before #4796: the Rooms & Beds and Booking Messages cards, without the four booking-rules cards now above them](../images/admin/admin-bookings-setup.png)
+
+   (The screenshot predates #4796, which added the Booking Policies, Hut Fees
+   & Seasons, Age Groups and Promo Codes cards, so they are not in it;
+   recapture with `pnpm run docs:screenshots admin-bookings-setup` against the
+   local seeded stack.)
 
 2. Choose a card:
    - **Booking Policies** (`/admin/booking-policies`) — cancellation,

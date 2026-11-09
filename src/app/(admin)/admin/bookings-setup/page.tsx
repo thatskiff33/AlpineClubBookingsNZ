@@ -12,7 +12,6 @@ import {
 } from "@/components/admin-hub-page";
 import { MemberGuestSettingsCard } from "@/components/admin/member-guest-settings-card";
 import { adminHref } from "@/lib/admin-hubs";
-import { canOpenAdminPath } from "@/lib/admin-permissions";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import { loadAdminSetupPermissionMatrix } from "@/app/(admin)/admin/setup/permission-matrix";
 
@@ -20,11 +19,10 @@ import { loadAdminSetupPermissionMatrix } from "@/app/(admin)/admin/setup/permis
  * The booking setup pages (S1 #4796): this page's own two cards and the four
  * the Booking Rules page (`/admin/setup/booking-rules`, now redirected here)
  * added, merged as the owner approved on #4468. Both pages were `bookings`.
- * Each card is shown only to an admin who can OPEN it — `canOpenAdminPath`,
- * the admin layout's own question — so a Booking Officer keeps Rooms & Beds
- * (lodge OR bookings, #2937), which Booking Rules' per-area filter hid, and
- * stops being offered Booking Messages (`support`), which this page showed to
- * every viewer.
+ * `AdminHubPage` shows each card only to an admin who can OPEN it (the admin
+ * layout's own rule), so a Booking Officer keeps Rooms & Beds (lodge OR
+ * bookings, #2937), which Booking Rules' per-area filter hid, and stops being
+ * offered Booking Messages (`support`), which this page showed to every viewer.
  */
 const sections: AdminHubSection[] = [
   {
@@ -77,16 +75,14 @@ export default async function BookingsSetupHubPage() {
     loadAdminSetupPermissionMatrix(),
   ]);
 
-  const viewer = { canLogin: true, accessRoles: [], adminPermissionMatrix: permissionMatrix };
-  const openable = sections.filter((section) => canOpenAdminPath(viewer, section.href));
-
   return (
     <div className="space-y-8">
       <AdminHubPage
         title="Bookings Setup"
         description="Configure the rules and setup pages that shape booking eligibility, pricing, capacity, and member-facing booking copy."
-        sections={openable}
+        sections={sections}
         features={features}
+        permissionMatrix={permissionMatrix}
       />
       {/* #2307 (owner decision MG2-M-1 as ticked): the member-guest policy card
           lives HERE, beside the other booking-policy configuration, rather than

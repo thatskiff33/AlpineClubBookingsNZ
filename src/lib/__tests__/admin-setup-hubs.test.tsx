@@ -44,6 +44,8 @@ import BookingsSetupHubPage from "@/app/(admin)/admin/bookings-setup/page";
 import FinanceSetupPage from "@/app/(admin)/admin/setup/finance/page";
 import FoundationsSetupHubPage from "@/app/(admin)/admin/setup/foundations/page";
 import { IntegrationReadinessSection } from "@/app/(admin)/admin/health/_components/integration-readiness-section";
+import { AdminHubSectionCards } from "@/components/admin-hub-page";
+import { BedDouble, Coins, MessageSquareText } from "lucide-react";
 import IntegrationsHubPage from "@/app/(admin)/admin/integrations/page";
 import MembershipSetupHubPage from "@/app/(admin)/admin/membership-setup/page";
 import { loadAdminSetupPermissionMatrix } from "@/app/(admin)/admin/setup/permission-matrix";
@@ -161,6 +163,31 @@ describe("admin setup hub pages", () => {
     }
     // Booking Messages is `support`.
     expect(html).not.toContain('href="/admin/booking-messages"');
+  });
+
+  it("offers a hub card exactly when its page would open, OR admissions included (S1 #4796)", () => {
+    const sections = [
+      { href: "/admin/fees", title: "Fees", description: "d", icon: Coins },
+      { href: "/admin/rooms-beds", title: "Rooms", description: "d", icon: BedDouble },
+      { href: "/admin/booking-messages", title: "Messages", description: "d", icon: MessageSquareText },
+    ];
+    const cards = (permissionMatrix: AdminPermissionMatrix) =>
+      renderToStaticMarkup(
+        <AdminHubSectionCards sections={sections} features={allOn} permissionMatrix={permissionMatrix} />,
+      );
+    // The fee console opens on bookings OR finance; Rooms & Beds on lodge OR bookings.
+    const financeOnly = cards({ ...emptyAdminPermissionMatrix(), finance: "view" });
+    expect(financeOnly).toContain('href="/admin/fees"');
+    expect(financeOnly).not.toContain('href="/admin/rooms-beds"');
+    expect(financeOnly).not.toContain('href="/admin/booking-messages"');
+    const bookingsOnly = cards({ ...emptyAdminPermissionMatrix(), bookings: "view" });
+    expect(bookingsOnly).toContain('href="/admin/fees"');
+    expect(bookingsOnly).toContain('href="/admin/rooms-beds"');
+    expect(bookingsOnly).not.toContain('href="/admin/booking-messages"');
+    const supportOnly = cards({ ...emptyAdminPermissionMatrix(), support: "view" });
+    expect(supportOnly).not.toContain('href="/admin/fees"');
+    expect(supportOnly).not.toContain('href="/admin/rooms-beds"');
+    expect(supportOnly).toContain('href="/admin/booking-messages"');
   });
 
   it("hides Bookings Setup's module-gated card when the module is off", async () => {

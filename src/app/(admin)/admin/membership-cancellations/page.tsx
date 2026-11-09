@@ -924,9 +924,9 @@ function MembershipCancellationRequests() {
                   <div className="flex flex-col gap-2 lg:flex-row lg:items-start lg:justify-between">
                     <div className="space-y-1">
                       <div className="flex flex-wrap items-center gap-2">
-                        <h2 className="text-base font-semibold text-foreground">
+                        <h3 className="text-base font-semibold text-foreground">
                           Request {request.id.slice(-8)}
-                        </h2>
+                        </h3>
                         {statusBadge(request.status)}
                       </div>
                       <p className="text-sm text-muted-foreground">

@@ -102,6 +102,9 @@ describe("Family Groups' Suggestions tab", () => {
 
     expect(await screen.findByRole("button", { name: /New Group/i })).toBeEnabled();
     expect(screen.getByRole("tab", { name: "Groups" })).toHaveAttribute("aria-selected", "true");
+    // Every tab has its own h2 under the page's h1.
+    expect(screen.getByRole("heading", { level: 1, name: "Family Groups" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 2, name: "Groups" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Reset hidden/i })).not.toBeInTheDocument();
     const urls = vi.mocked(fetch).mock.calls.map(([input]) => String(input));
     expect(urls.some((url) => url.startsWith("/api/admin/family-suggestions"))).toBe(false);
@@ -113,6 +116,7 @@ describe("Family Groups' Suggestions tab", () => {
     render(<FamilyGroupsPage />);
 
     expect(await screen.findByText(SUGGESTIONS_VIEW_ONLY)).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 2, name: "Family Group Suggestions" })).toBeInTheDocument();
     expect(await screen.findByRole("button", { name: "Reset hidden (1)" })).toBeDisabled();
     expect(screen.getByRole("tab", { name: "Suggestions" })).toHaveAttribute("aria-selected", "true");
     // The Groups tab is not mounted, so its controls are not offered here.
@@ -163,7 +167,7 @@ describe("Membership Cancellations' Settings tab", () => {
     sessionMatrix = matrix({ membership: "edit" });
     render(<MembershipCancellationsPage />);
 
-    expect(await screen.findByRole("heading", { name: "Requests" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { level: 2, name: "Requests" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { level: 1, name: "Membership Cancellations" })).toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: /Save Cancellation Settings/i }),
@@ -180,6 +184,7 @@ describe("Membership Cancellations' Settings tab", () => {
     ).toBeDisabled();
     expect(screen.getByRole("button", { name: /Add Group/i })).toBeDisabled();
     expect(screen.getByText(SETTINGS_VIEW_ONLY)).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 2, name: "Settings" })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "Settings" })).toHaveAttribute("aria-selected", "true");
   });
 
