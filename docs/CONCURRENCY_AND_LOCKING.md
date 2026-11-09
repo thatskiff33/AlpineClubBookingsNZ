@@ -6561,7 +6561,8 @@ sized by the close's record less its own notes (`readPaidAnotherWayCloseShare`,
 round 8). A double click queues on the key and the second reads the row
 closed; a refund recorded mid-close gives a 409
 (`card-refund-paid-another-way.realdb.test.ts`). Registered as
-`closeCardRefundPaidAnotherWay#1`.
+`lockDeadCardRefundRow#1` (the lock all three settlements of a dead row share
+since #4368).
 
 A refund Stripe made before the close - the request whose answer was lost - can
 still be recorded after it, by the `charge.refunded` sync. No lock can stop
@@ -6582,6 +6583,67 @@ column of a close's record. A Stripe refund recorded after the dialog opened is
 not stopped by any lock either, so the request carries the card figure the
 dialog showed (`expectedRefundedByCardCents`, round 8) and a different figure
 is a 409: a refund the treasurer never saw is never marked resolved.
+
+## Settling a dead card refund without money: "Nothing left owed" and "Try the card again" (#4368)
+
+`closeCardRefundNothingLeftOwed` and `tryDeadCardRefundAgain`
+(`src/lib/card-refund-dead-row-actions.ts`, `INV-PAY-149`) are the other two
+settlements of the row "Paid another way" closes. Neither moves money, but each
+changes whether a refund debt is open, owed or in flight, which every edit,
+acceptance, paid cancel and refund appeal reads to size a refund, and each must
+exclude "Paid another way" on the same row. So all three take one helper,
+`lockDeadCardRefundRow` (`src/lib/card-refund-dead-row-lock.ts`, #4368 review
+D), each with its own refusals: `lock(1)` first (`INV-LOCK-001`), the row
+re-read and refused unless dead, then the Payment row
+(`lockPaymentForRefundedTotal`) BEFORE the payment is read. Every
+refunded-total writer without `lock(1)` - every Stripe refund recorder, and the
+failed-later writer inside it - takes that row first, so the owed figure, the
+recorded refunds and the payment's other card refund rows cannot move between
+the read and the claim. Then one status-guarded `updateMany`
+(`deadRowClaimWhere`): dead (`deadCardRefundOperationWhere`) and on the plan
+read (`onPlanWhere`). A close moves the row to SUCCEEDED and the re-arm to
+PENDING with its attempts reset, so of any two settlements of one row the
+second matches nothing and writes nothing; a write under the Payment row alone
+that lands between an action's read and its claim fails the claim too. The
+audit row is written in the same transaction; no journal posting or provider
+call of these two runs under the keys. Registered as `lockDeadCardRefundRow#1`.
+
+The re-arm sends nothing itself. The runner claims the row as any other, and
+its preflight (`INV-PAY-145`, below) reads Stripe outside every transaction
+before a slice is sent - but it adopts a refund only by its slice key
+(`INV-PAY-147`), and a re-arm runs outside Stripe's 24-hour key window, so a
+re-armed row is NOT as safe as one on its original retries. Where the app
+cannot show a new request would not pay twice, the re-arm refuses (#4368
+review A, B): while ANY refund Stripe failed later is on the payment, open or
+paid (#4492: once it is re-sent and paid the given-up row reads owed again);
+where the row's last failure says Stripe may have refunded; where what the
+runner would send - every plan slice not marked `madeRefundId`, whole - is not
+exactly the row's own unsent figure the treasurer confirms, or the row keeps no
+plan (review F1: a slice a recorded refund filled but nobody marked would be
+sent again) - except a superseded intent's refund with no plan, whose runner
+sizes one request on its charge's ledger, read under the Payment row, and so
+never sends more than the row owes (review S1) - trusted only while every
+refund the owed figure gives the row is one its own request made, by Stripe's
+listing: another door's, once failed later, would be owed on a row of its own
+while the ledger handed its headroom back (review R1); and where Stripe lists a counted refund this booking's same kind
+of refund made with no slice key that no slice is marked with
+(`unadoptedOwnStripeRefunds`). That list is read before the transaction
+through the preflight's own bounded read (`listRefundsOnCardCharge`); one it
+cannot read refuses, and a plan that moved since it was read is refused under
+the locks (review F4). The
+failed-later writer raises its rows under the Payment row, so that check and
+the raise are ordered. STATED LIMIT: a refund another door made for the same
+money that the owed figure does not match to this row - or one made on the
+row's charge after the re-arm commits, which the owed figure then counts as
+the row's progress and the runner's preflight records without holding -
+failing later while the row is still open, is owed again beside the live row:
+the #4104 failed-later family's open question (#4492), which a re-arm does not
+answer; the runner-side fix is #4858. Proven by `card-refund-dead-row-actions.realdb.test.ts`: a re-arm and a
+"Paid another way" close queued behind a held `lock(1)` in both orders, a plan
+or status moved under the Payment row, "Nothing left owed" against a refund
+arriving and against it failing later, a paid failed-later row and an
+unmatched own refund refusing the re-arm, and the runner's preflight after a
+re-arm.
 
 ## A refused card refund's re-plan: fenced writes, no advisory key (#4083, #4096, #4103, #4144)
 
@@ -6669,7 +6731,8 @@ refund carry no plan: each reads Stripe's refunds on the intent before it asks
 refusals there.
 
 The "Paid another way" close above claims only `PENDING|FAILED` rows with
-their attempts spent, so it never meets the runner's re-plan.
+their attempts spent, so it never meets the runner's re-plan; nor do
+"Nothing left owed" and "Try the card again" (#4368), which claim the same.
 
 **Deploy window.** An older release still draining knows no refusal: its
 worker closes a refused row as paid, and drops a slice's key generation, so it

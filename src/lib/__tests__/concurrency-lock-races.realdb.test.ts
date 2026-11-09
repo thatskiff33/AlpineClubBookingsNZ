@@ -357,6 +357,14 @@ import "./card-refund-reversal-bank-cash-floor.realdb.test";
 // row unchanged, and the close and the failure racing in both orders. Skipped
 // unless RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own `race-4210-` fixtures.
 import "./card-refund-failed-later-after-paid-another-way.realdb.test";
+// #4368 reuses it to prove a dead card refund's "Try the card again" and
+// "Nothing left owed": a re-arm and a "Paid another way" close of one row
+// queued in both orders (one wins, the other writes nothing), a write under the
+// Payment row failing their claims, the close against a refund arriving and
+// against it failing later through the real writer, and the real runner's
+// Stripe check running before any send after a re-arm. Skipped unless
+// RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own `race-4368-` fixtures.
+import "./card-refund-dead-row-actions.realdb.test";
 // #4147 reuses it to prove the booking-ledger census reads a capacity race's
 // cancel by its own refund rows: through the REAL capacity race, back-post and
 // recovery runner, a refund still being sent is IN_FLIGHT_REFUND (the back-post

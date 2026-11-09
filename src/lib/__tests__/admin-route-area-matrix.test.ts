@@ -437,6 +437,9 @@ const EXPECTED_ROUTE_AREAS: Record<string, AdminPermissionArea> = {
   "/api/admin/payments/card-refunds/[id]/paid-another-way": "finance",
   // #3372 (owner, 9 Oct 2026): a paid-twice row marked Resolved, gated as the close is.
   "/api/admin/payments/card-refunds/[id]/paid-twice-resolved": "finance",
+  // #4368 (owner, 25 Oct 2026): a dead card refund's no-money close and its re-arm, gated as the close is.
+  "/api/admin/payments/card-refunds/[id]/nothing-left-owed": "finance",
+  "/api/admin/payments/card-refunds/[id]/try-card-again": "finance",
   "/api/admin/payments/manual-refund-tasks": "finance",
   "/api/admin/payments/manual-refund-tasks/[id]": "finance",
   // #3498 (owner decision D2): putting a dismissed money task back on the queue
