@@ -24,8 +24,8 @@
  * backend it waits on (`pg_blocking_pids`), are shared with the other merge
  * race suites (`support/member-merge-race.ts`).
  *
- * Member hard-delete (#4850, PR #4856) is the other booking-row-then-Member
- * writer; it is not on main yet, so it is not raced here.
+ * Member hard-delete (#4850) is the other booking-row-then-Member writer; it is
+ * raced in `member-delete-officer-races.realdb.test.ts`, not here.
  *
  * Ordinary Vitest runs skip the file; CI's real-PostgreSQL job runs it against
  * the guarded loopback race database.

@@ -33,6 +33,13 @@ vi.mock("@/lib/stripe", async (importOriginal) =>
 );
 vi.mock("@/lib/auth", async () => (await import("./support/race-session-double")).raceAuthDouble());
 
+/** The route opens its transaction with no options: give it a budget the race, not the runner, decides (#4844 review F5). */
+vi.mock("@/lib/prisma", async (importOriginal) => {
+  const real = (await importOriginal()) as typeof import("@/lib/prisma");
+  const { withRaceTransactionBudget } = await import("./support/race-lock-waits");
+  return { ...real, prisma: withRaceTransactionBudget(real.prisma) };
+});
+
 /** A pause inside the appeal's transaction, just before its R05 (slot "beforeAppealR05"): a pass-through unless a case arms it. */
 vi.mock("@/lib/member-money/doors", async (importOriginal) => {
   const real = (await importOriginal()) as typeof import("@/lib/member-money/doors");
