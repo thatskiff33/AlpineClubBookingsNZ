@@ -1217,6 +1217,7 @@ describe("AID-6C finance pack: the recovery scenario catalogue (#4076)", () => {
     nextRefusedRefundKeySuffix: "Stripe idempotency key suffix",
     organiserChildRefundReasonForKey: "Stripe metadata reason",
     refundSliceStripeIdempotencyKey: "Stripe idempotency key",
+    isStripeKeyOfSenderPrefix: "predicate over Stripe idempotency keys (#4516: which sender built a key)",
     stripeIdempotencyKeyForAskAmount: "Stripe idempotency key",
   };
 
