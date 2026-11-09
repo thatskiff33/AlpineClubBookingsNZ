@@ -82,7 +82,9 @@ export async function moveMergedPaymentAttributionLast(
     if (isPostgresLockNotAvailable(error)) throw refuse();
     throw error;
   }
-  const moved = await (tx as unknown as Record<string, LateMoveDelegate>)[delegate].updateMany({
+  const lateDelegate = (tx as unknown as Partial<Record<string, LateMoveDelegate>>)[delegate];
+  if (!lateDelegate) throw new Error(`#4823: the transaction client has no "${delegate}" delegate.`);
+  const moved = await lateDelegate.updateMany({
     where: { [column]: members.loserId },
     data: { [column]: members.masterId },
   });
