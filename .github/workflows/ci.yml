@@ -1247,6 +1247,17 @@ jobs:
           RUN_CONCURRENCY_RACE_TESTS: "1"
         run: pnpm exec vitest run src/lib/__tests__/member-merge-change-request-races.realdb.test.ts
 
+      # #4857: a held booking-request approval takes the held booking's row
+      # before its claim and guest swap, whose member links take Member key
+      # shares that member merge locks FOR UPDATE after holding booking rows.
+      # Only this suite shows PostgreSQL forms no wait-for cycle, in both orders.
+      # It self-skips without the env vars (same #1881 harness and database), so
+      # `review-findings-contracts.test.ts` fails if this step goes missing.
+      - name: Test member-merge booking-request races against dedicated PostgreSQL
+        env:
+          RUN_CONCURRENCY_RACE_TESTS: "1"
+        run: pnpm exec vitest run src/lib/__tests__/member-merge-booking-request-races.realdb.test.ts
+
       # #3583: the booking ledger's cut-over gate, run the way the owner runs it
       # (docs/MAINTENANCE.md) over a seeded history: booking histories made by
       # the REAL writers with their lines stripped, in a database of their own on

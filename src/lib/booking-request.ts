@@ -63,6 +63,7 @@ import {
   type OwnerSubstitution,
 } from "@/lib/booking-request-shared";
 import { acquireLodgeCapacityLock, checkCapacityForGuestRanges } from "@/lib/capacity";
+import { lockBookingRowForOwnerRead } from "@/lib/booking-row-lock";
 import { getDefaultLodgeCapacity, getLodgeCapacity } from "@/lib/lodge-capacity";
 import { loadSchoolGroupSoftCap } from "@/lib/lodge-settings";
 import { getNonMemberHoldDays } from "@/lib/cancellation";
@@ -2204,6 +2205,14 @@ export async function approveBookingRequest(input: {
         ? expectedHeldLodgeId!
         : request.lodgeId ?? (await getDefaultLodgeId(tx));
       await acquireLodgeCapacityLock(tx, requestLodgeId);
+      // #4857: the held booking's row before the claim and the guest swap, whose
+      // member links take Member key shares merge locks after holding booking
+      // rows. Keyed from the pre-transaction read the lodge key came from; the
+      // held pointer is re-checked below, so a swapped hold 409s before the
+      // claim. A fresh conversion creates its booking: no row to take.
+      if (expectedHeldBookingId) {
+        await lockBookingRowForOwnerRead(tx, expectedHeldBookingId);
+      }
 
       const lockedRequest = await tx.bookingRequest.findUnique({
         where: { id: request.id },

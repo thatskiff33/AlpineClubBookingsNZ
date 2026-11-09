@@ -621,7 +621,7 @@ const GLOBAL_LOCK_SITE_REGISTRY: readonly RegisteredGlobalLockSite[] = [
     site: "approveBookingRequest#1",
     tier: "GLOBAL",
     reason:
-      "Accepting a request converts a held booking. Hold-release and cancel serialise on this key alone, so with only the per-lodge key a release could cancel the held booking out from under a converting accept.",
+      "Accepting a request converts a held booking. Hold-release and cancel serialise on this key alone, so with only the per-lodge key a release could cancel the held booking out from under a converting accept. Global first, then the hold's immutable lodge key, then (#4857) the held booking's row before the claim and the guest swap.",
     invariant: "INV-LOCK-002",
   },
   {
@@ -1491,7 +1491,9 @@ const ROW_LOCK_SITE_INVENTORY: Record<string, number> = {
   // its full task re-read, its claim naming the officer (`completedByMemberId`)
   // and any credit write naming the owner (#4627). #4845: a locked-period
   // change-request approval takes it right after its lodge key, before its claim
-  // names the officer and holds the request row merge re-points. See docs/CONCURRENCY_AND_LOCKING.md -> "The M3b
+  // names the officer and holds the request row merge re-points. #4857: a held booking-request approval
+  // (`booking-request.ts`) takes it on the hold right after its lodge key, before its claim and the guest swap
+  // whose member links take key shares. See docs/CONCURRENCY_AND_LOCKING.md -> "The M3b
   // booking doors and member merge's journal transfer", the M4c paragraph and
   // "A booking writer takes the booking row before a Member key share".
   // #4845: that one statement now lives in `booking-row-lock.ts`, outside the journal boundary, so a lock-only
