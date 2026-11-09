@@ -1519,6 +1519,14 @@ const ROW_LOCK_SITE_INVENTORY: Record<string, number> = {
   // after merge's sorted Member FOR UPDATE, so the set cannot grow. See
   // docs/CONCURRENCY_AND_LOCKING.md -> "Member merge never waits for a Payment row".
   "src/lib/member-merge-payment-attribution.ts": 1,
+  // #4850: member hard-delete locks, in id order, the booking rows naming the
+  // member (`SELECT 1 … WHERE "id" IN (…) ORDER BY "id" FOR NO KEY UPDATE`)
+  // BEFORE its Member-row Xero fence, so its ON DELETE SET NULL on Booking's
+  // actor columns updates only rows it already holds: booking row, then Member,
+  // the order merge and every booking writer take. The set is re-read under the
+  // fence and a late booking refuses the delete (409). See
+  // docs/CONCURRENCY_AND_LOCKING.md -> "A booking writer takes the booking row before a Member key share".
+  "src/lib/member-delete-booking-rows.ts": 1,
   // #3635 (review outbox F1/F4): the kept-late-capture enqueue and the
   // worker's send-time decision lock the #3639 approval task's row
   // (`SELECT 1 … FOR UPDATE`), the row the dismissal, reopen and approval

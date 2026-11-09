@@ -3414,25 +3414,43 @@ officer the merge deleted, so its FK refuses (`P2003`), nothing is recorded, and
 the officer acts again from the surviving record. If the writer wins, merge
 waits at the booking row and moves the writer's attribution afterwards.
 
-**An accepted counterpart: member hard-delete.** Deleting a member
-(`member-lifecycle-actions.ts`) locks that Member row `FOR UPDATE` first, as its
-Xero fence, and only then lets `ON DELETE SET NULL` update the booking rows that
+**Member hard-delete follows the same order (#4850).** Deleting a member
+(`member-lifecycle-actions.ts`) locked that Member row `FOR UPDATE` first, as its
+Xero fence, and only then let `ON DELETE SET NULL` update the booking rows that
 name the member as an actor (`createdById`, `adminReviewedById`, `deletedById`,
-`capacityOverriddenByMemberId` and the rest). That is Member, then booking: the
-opposite of merge and of the writers above. Merge and delete order the two rows
-oppositely, so a writer cannot agree with both, and #4840 sides with merge.
-Hard-deleting the officer mid-settle or mid-closure on a booking that officer
-made or reviewed can therefore deadlock where it used to end in a `P2003`.
-PostgreSQL detects the cycle and aborts one side, which rolls back whole, so
-nothing is corrupted, and deleting an officer while their own write is in
-flight is the rarer event. Reordering delete's cascade is tracked separately.
+`capacityOverriddenByMemberId` and the rest). That was Member, then booking, so
+hard-deleting an officer mid-settle or mid-closure on a booking that officer made
+or reviewed could deadlock; #4844 first accepted it as the rarer case.
+
+The delete now reads the bookings naming the member (every Booking column
+`MEMBER_MERGE_RELATION_SPECS` lists), locks them in id order
+(`member-delete-booking-rows.ts`), and only then takes its fence. That set can
+grow until the fence holds, because naming the member on another booking needs
+the Member row's key share, which the fence then blocks. So it is read again
+under the fence, and a booking that joined it refuses the delete with a 409 and
+nothing written, rather than being locked late, Member first. The fence still
+comes before eligibility, the review claim and every write, so what it guards is
+unchanged: a Xero contact reservation takes the Member row's key share in a short
+transaction of its own, and the inbound and backfill writers take the Member row
+`FOR UPDATE`. None of them takes a booking row, so the booking rows ahead of the
+fence add no edge against them.
+
+If the delete wins, the writer waits at the booking row, then names an officer
+the delete removed, and its FK refuses (`P2003`), nothing recorded. If the writer
+wins, the delete waits at the booking row, then re-checks eligibility under its
+fence: a settle leaves the officer deletable and the delete clears both names; a
+closure records a booking modification in the officer's name, so the delete is
+refused. Not changed: the delete's other `SET NULL` actions (a Payment's
+`manuallyMarkedPaidByMemberId`, a task's `completedByMemberId`, …) still run
+inside the delete, after the booking rows, as they did before.
 
 Proved against real PostgreSQL by
-`member-merge-officer-settle-races.realdb.test.ts`, a required step of the
+`member-merge-officer-settle-races.realdb.test.ts` and, for the delete,
+`member-delete-officer-races.realdb.test.ts`: required steps of the
 `migration-drift` job pinned by `review-findings-contracts.test.ts`. Both
 orders are covered for each writer, and the old orders deadlock (probed). The
-positions are pinned in `manual-booking-payment.test.ts` and
-`manual-refund-task.test.ts`. This is not a census of every `lock(1)` writer:
+positions are pinned in `manual-booking-payment.test.ts`,
+`manual-refund-task.test.ts` and `member-lifecycle-actions.test.ts`. This is not a census of every `lock(1)` writer:
 the settle body, its reversal, the Stripe path and the refund-task closure were
 checked, and the rule above is what a new writer follows.
 

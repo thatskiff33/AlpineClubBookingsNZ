@@ -1228,6 +1228,16 @@ jobs:
           RUN_CONCURRENCY_RACE_TESTS: "1"
         run: pnpm exec vitest run src/lib/__tests__/member-merge-officer-settle-races.realdb.test.ts
 
+      # #4850: member hard-delete locks the booking rows naming the member before
+      # its Member-row fence, the order the settle and the review closure take.
+      # Only this suite shows PostgreSQL forms no wait-for cycle, in both orders.
+      # It self-skips without the env vars (same #1881 harness and database), so
+      # `review-findings-contracts.test.ts` fails if this step goes missing.
+      - name: Test member hard-delete officer races against dedicated PostgreSQL
+        env:
+          RUN_CONCURRENCY_RACE_TESTS: "1"
+        run: pnpm exec vitest run src/lib/__tests__/member-delete-officer-races.realdb.test.ts
+
       # #3583: the booking ledger's cut-over gate, run the way the owner runs it
       # (docs/MAINTENANCE.md) over a seeded history: booking histories made by
       # the REAL writers with their lines stripped, in a database of their own on
