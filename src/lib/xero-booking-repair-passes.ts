@@ -435,13 +435,13 @@ async function applyQueuedAction(
     case "QUEUE_ADDITIONAL_CAPTURE_RECEIPT": return applyAdditionalCaptureReceiptAction(action, deps); // #3953
     case "QUEUE_KEPT_LATE_CAPTURE_RECORD": return applyKeptChangeCaptureRecordAction(action, deps); // #4324
     case "QUEUE_PAID_ANOTHER_WAY_REFUND_NOTE": {
-      // #3924 round 8: the one note step, under the approval task's row lock;
-      // it reads the receipt and the close again there and queues at most once.
-      const queuedId = await deps.queueWaitingPaidAnotherWayNote(String(action.payload.paymentIntentId));
-      action.status = queuedId ? "queued" : "skipped";
-      action.resultMessage = queuedId
+      // #3924 round 8: the one note step, under the approval task's row lock; it reads the receipt and the
+      // close again there and queues at most once. #4516 round-3 review 2: only a note queued NOW is "queued".
+      const queuedNow = await deps.queueWaitingPaidAnotherWayNote(String(action.payload.paymentIntentId));
+      action.status = queuedNow > 0 ? "queued" : "skipped";
+      action.resultMessage = queuedNow > 0
         ? "Queued the bank-transfer refund note the paid-another-way close was waiting for."
-        : "Nothing queued: the receipt is not in Xero, or the close needs no note.";
+        : "Nothing queued: the receipt is not in Xero, or every waiting close's note was already asked for or needs none.";
       return;
     }
     case "QUEUE_PRIMARY_INVOICE_UPDATE": {

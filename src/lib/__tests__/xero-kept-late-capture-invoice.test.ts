@@ -74,10 +74,10 @@ vi.mock("@/lib/xero-sync", () => ({
 }));
 vi.mock("@/lib/late-capture-paid-another-way", () => ({
   findLateCaptureRefundPaidAnotherWay: (...a: unknown[]) => mocks.findClose(...a),
-  // #4516 (round-2 review A): every close of the capture's refund; one here.
+  // #4516 (round-2 review A): every close of the capture's refund; one here, unless a test lists several.
   findLateCaptureRefundPaidAnotherWayCloses: async (...a: unknown[]) => {
     const found = (await mocks.findClose(...a)) as unknown;
-    return found ? [found] : [];
+    return Array.isArray(found) ? found : found ? [found] : [];
   },
 }));
 vi.mock("@/lib/late-capture-xero-receipt", () => ({
@@ -661,7 +661,7 @@ describe("queueWaitingPaidAnotherWayNote", () => {
   });
 
   it("MUTATION: reads the receipt under the approval task's lock and credits the invoice Xero holds", async () => {
-    await expect(queueWaitingPaidAnotherWayNote("pi_kept")).resolves.toBe("op_note");
+    await expect(queueWaitingPaidAnotherWayNote("pi_kept")).resolves.toBe(1);
     expect(lockedTask()).toBe(true);
     expect(mocks.executeRaw.mock.invocationCallOrder[0]).toBeLessThan(mocks.readReceipt.mock.invocationCallOrder[0]);
     expect(mocks.readReceipt).toHaveBeenCalledWith("pi_kept", db);
@@ -679,14 +679,26 @@ describe("queueWaitingPaidAnotherWayNote", () => {
     ["resolved by hand", { kind: "resolved-by-hand" }],
   ])("MUTATION: queues nothing while the receipt is %s", async (_when, receipt) => {
     mocks.readReceipt.mockResolvedValue(receipt);
-    await expect(queueWaitingPaidAnotherWayNote("pi_kept")).resolves.toBeNull();
+    await expect(queueWaitingPaidAnotherWayNote("pi_kept")).resolves.toBe(0);
     expect(mocks.noteClose).not.toHaveBeenCalled();
   });
 
   it("nothing for a capture with no approval task", async () => {
     mocks.taskFindUnique.mockResolvedValue(null);
-    await expect(queueWaitingPaidAnotherWayNote("pi_kept")).resolves.toBeNull();
+    await expect(queueWaitingPaidAnotherWayNote("pi_kept")).resolves.toBe(0);
     expect(mocks.executeRaw).not.toHaveBeenCalled();
+  });
+
+  // #4516 round-3 review 2: two waiting closes, the first's note asked for before and the second's enqueue
+  // queuing nothing - the step answers with the first's row, and that is not a note queued now.
+  it("MUTATION: counts only a note queued now, so a close's note asked for before never reads as queued", async () => {
+    const waiting = (id: string) => ({ id, paymentId: "pay_1", kind: "CANCELLED_BOOKING_HAND_BACK", occurrenceKey: `card-refund-paid-another-way:${id}:note-after-receipt` });
+    mocks.findClose.mockResolvedValue([waiting("close-1"), waiting("close-2")]);
+    mocks.operationCount.mockImplementation(async ({ where }: { where: { requestPayload: { equals: string } } }) => (where.requestPayload.equals === "close-1" ? 1 : 0));
+    mocks.noteClose.mockResolvedValue(["op_note_1"]);
+    await expect(queueWaitingPaidAnotherWayNote("pi_kept")).resolves.toBe(0);
+    mocks.noteClose.mockResolvedValue(["op_note_1", "op_note_2"]);
+    await expect(queueWaitingPaidAnotherWayNote("pi_kept")).resolves.toBe(1);
   });
 });
 

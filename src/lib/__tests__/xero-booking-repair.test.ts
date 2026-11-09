@@ -334,6 +334,8 @@ function createDependencies(state: {
   // #3924 round 8: where that close's receipt and note stand.
   paidAnotherWayReceipt?: { kind: "none" } | { kind: "resolved-by-hand" } | { kind: "recorded"; invoiceId: string | null };
   paidAnotherWayNoteAsked?: boolean;
+  /** #4516 round-3 review 2: how many notes the one note step queued NOW (one, unless a test says otherwise). */
+  paidAnotherWayNotesQueuedNow?: number;
   paidAnotherWayReceiptLinks?: Array<"invoice" | "payment">;
   /** #3924 round 9: the close's record, as the receipt state names it. */
   paidAnotherWayCloseRecord?: { id: string; amountCents: number } | null;
@@ -802,7 +804,7 @@ function createDependencies(state: {
       recordByHandCents: state.paidAnotherWayRecordByHandCents ?? 6000,
       cardNoteMayBeInXeroCents: state.paidAnotherWayCardNoteMayBeInXeroCents ?? 0,
     })),
-    queueWaitingPaidAnotherWayNote: vi.fn().mockResolvedValue("op_note"),
+    queueWaitingPaidAnotherWayNote: vi.fn().mockResolvedValue(state.paidAnotherWayNotesQueuedNow ?? 1),
     // #3953: a change capture's receipt, queued once.
     enqueueAdditionalCaptureReceiptOperation: vi.fn().mockResolvedValue({ outcome: "queued", queueOperationId: "op_receipt" }),
     // #4324: the keep's own decision, for a kept change capture.
@@ -6452,6 +6454,7 @@ describe("runBookingXeroRepair", () => {
           Parameters<typeof createDependencies>[0],
           | "paidAnotherWayReceipt"
           | "paidAnotherWayNoteAsked"
+          | "paidAnotherWayNotesQueuedNow"
           | "paidAnotherWayReceiptLinks"
           | "paidAnotherWayCloseRecord"
           | "paidAnotherWayRecordByHandCents"
@@ -6546,8 +6549,20 @@ describe("runBookingXeroRepair", () => {
             payload: { paymentIntentId: "pi_kept" },
           });
           expect(bookingReport.deps.queueWaitingPaidAnotherWayNote).toHaveBeenCalledWith("pi_kept");
+          expect(bookingReport.actions.find((a) => a.type === "QUEUE_PAID_ANOTHER_WAY_REFUND_NOTE")).toMatchObject({ status: "queued" });
           // Never a second receipt beside the one in Xero.
           expect(bookingReport.actions.find((a) => a.type === "QUEUE_KEPT_LATE_CAPTURE_INVOICE")).toBeUndefined();
+        });
+
+        // #4516 round-3 review 2: two waiting closes, one note asked for before and the other's enqueue queuing
+        // nothing - the step queued no note now, so the action is skipped, never "queued".
+        it("MUTATION: an apply whose note step queued nothing new reports skipped", async () => {
+          const bookingReport = await runClosed("after-receipt", [], keptBooking(), { paidAnotherWayReceipt: inXero, paidAnotherWayNotesQueuedNow: 0 }, true);
+          expect(bookingReport.deps.queueWaitingPaidAnotherWayNote).toHaveBeenCalledWith("pi_kept");
+          expect(bookingReport.actions.find((a) => a.type === "QUEUE_PAID_ANOTHER_WAY_REFUND_NOTE")).toMatchObject({
+            status: "skipped",
+            resultMessage: expect.stringMatching(/^Nothing queued: .*already asked for/),
+          });
         });
 
         it("nothing once the note was asked for", async () => {

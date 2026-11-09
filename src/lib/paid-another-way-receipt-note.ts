@@ -27,11 +27,13 @@ import { lockKeptLateCaptureTask } from "@/lib/xero-kept-late-capture-invoice";
  * (`readPaidAnotherWayLateCaptureXeroReceipt`, the invoice the close's plan would name) and
  * queues the waiting close's note against it (`notePaidAnotherWayCloseOnReceipt`,
  * at most once). Nothing without an approval task, or a receipt not yet in
- * Xero. Returns the note row's id, or null. Throws on a failure; the caller
- * decides whether that fails its row.
+ * Xero. Returns how many notes it queued NOW (#4516 round-3 review 2): a note
+ * asked for before is never counted, so the repair tool reports a run that
+ * queued nothing new as skipped. Throws on a failure; the caller decides
+ * whether that fails its row.
  */
-export async function queueWaitingPaidAnotherWayNote(paymentIntentId: string): Promise<string | null> {
-  return (await runWaitingNoteStep(paymentIntentId)).noteOperationIds[0] ?? null;
+export async function queueWaitingPaidAnotherWayNote(paymentIntentId: string): Promise<number> {
+  return (await runWaitingNoteStep(paymentIntentId)).queuedNow;
 }
 
 /**
