@@ -59,7 +59,7 @@ const THEME_FILE = path.join(REPO_ROOT, "src/lib/theme/money-guard-fixture.ts");
 const SCRIPTS_FILE = path.join(REPO_ROOT, "scripts/money-guard-fixture.ts");
 const XERO_ADMIN_SCREEN_FILE = path.join(
   REPO_ROOT,
-  "src/app/(admin)/admin/xero/_components/money-guard-fixture.tsx",
+  "src/app/(admin)/admin/finance/xero/_components/money-guard-fixture.tsx",
 );
 const HELPER_TEXT_FILE = path.join(REPO_ROOT, "src/lib/money-input.ts");
 const HELPER_PROVIDER_FILE = path.join(REPO_ROOT, "src/lib/money-provider-amount.ts");
@@ -736,7 +736,7 @@ describe("money cents-conversion guard: the paths it must reach", () => {
     "src/app/(lodge)/lodge/lodge-display/x.tsx": "standard",
     "src/app/(finance)/finance/x/page.tsx": "standard",
     "src/app/(public)/x/page.tsx": "standard",
-    "src/app/(admin)/admin/xero/_components/x.tsx": "standard",
+    "src/app/(admin)/admin/finance/xero/_components/x.tsx": "standard",
     "scripts/x.ts": "standard",
     "prisma/seed-x.ts": "standard",
     "src/lib/date-only.ts": "standard",

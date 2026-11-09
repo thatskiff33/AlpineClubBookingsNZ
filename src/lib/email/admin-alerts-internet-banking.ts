@@ -17,6 +17,7 @@ import {
 } from "@/lib/email-templates-club-time";
 import { formatBookingReference } from "@/lib/booking-reference";
 import type { ClubFormat } from "@/lib/club-format";
+import { adminHref } from "@/lib/admin-hubs";
 
 /**
  * #3643 (`INV-PAY-107`): the hold-expiry job could not simply release an
@@ -42,7 +43,7 @@ export async function sendAdminInternetBankingHoldKeptAlert(data: {
   format: ClubFormat,
 ): Promise<AdminAlertSendOutcome> {
   const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
-  const reviewUrl = `${baseUrl}/admin/payments`;
+  const reviewUrl = `${baseUrl}${adminHref("payments")}`;
   const xeroInvoiceUrl = await stampXeroOrganisation(data.xeroInvoiceUrl);
   const unknown = "unknown";
 

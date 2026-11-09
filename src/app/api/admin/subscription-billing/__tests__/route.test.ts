@@ -188,7 +188,8 @@ describe("admin subscription billing route", () => {
     expect(mocks.requireAdmin).toHaveBeenCalledWith({ permission: { area: "finance", level: "edit" } });
     expect(mocks.confirmPreview).toHaveBeenCalledWith(expect.objectContaining({ source: "ANNUAL_BATCH", confirmedByMemberId: "admin-1" }));
     expect(mocks.enqueue).toHaveBeenCalledWith("charge-1", { createdByMemberId: "admin-1" });
-    expect(mocks.revalidatePath).toHaveBeenCalledWith("/admin/subscriptions");
+    // The page's file path: under the hub since C5 (#4802), whichever URL serves it.
+    expect(mocks.revalidatePath).toHaveBeenCalledWith("/admin/finance/subscriptions");
   });
 
   it("updates due days and audits the finance mutation", async () => {
@@ -345,7 +346,8 @@ describe("admin subscription billing route", () => {
       message: "Charge closed as already paid. No Xero invoice will be raised for it.",
     });
     expect(mocks.closeAlreadyPaid).toHaveBeenCalledWith({ chargeId: "charge-1", reason: "Paid in cash", actorMemberId: "admin-1" });
-    expect(mocks.revalidatePath).toHaveBeenCalledWith("/admin/subscriptions");
+    // The page's file path: under the hub since C5 (#4802), whichever URL serves it.
+    expect(mocks.revalidatePath).toHaveBeenCalledWith("/admin/finance/subscriptions");
   });
 
   it("CLOSE_ALREADY_PAID returns an idempotent repeat as a success", async () => {

@@ -4,7 +4,11 @@
  * Distilled from that page's own help content, and attached to it by
  * `./index.ts` at load. Kept beside the entries rather than inside them because
  * the same three fallback questions answer for every unmapped page.
+ *
+ * A moved page's chips are keyed by its registry old path, as its entry is
+ * (C5 #4802; see `admin/finance.ts`).
  */
+import { getAdminPage } from "@/lib/admin-hubs";
 import type { HelpQuestion } from "./types";
 
 export const ADMIN_HELP_QUESTIONS: Record<string, HelpQuestion[]> = {
@@ -102,7 +106,7 @@ export const ADMIN_HELP_QUESTIONS: Record<string, HelpQuestion[]> = {
       a: "Only when the applicant's nomination path needs recovery — for example a nominator who cannot confirm.",
     },
   ],
-  "/admin/payments": [
+  [getAdminPage("payments").oldPath]: [
     {
       q: "How do I find a payment?",
       a: "Filter by member, booking, status, source, or date to locate the payment record.",
@@ -120,7 +124,7 @@ export const ADMIN_HELP_QUESTIONS: Record<string, HelpQuestion[]> = {
       a: "Only when the payment source matches the workflow. Check the provider IDs and booking link first.",
     },
   ],
-  "/admin/xero": [
+  [getAdminPage("xero").oldPath]: [
     {
       q: "What does Xero Sync show?",
       a: "Accounting connection health, queued operations, contact links, invoices, and replayable provider failures.",

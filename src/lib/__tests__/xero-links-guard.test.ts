@@ -113,7 +113,7 @@ describe("xero-links guard (#2283)", () => {
       relative(root, file).replace(/\\/g, "/"),
     );
     expect(files).toContain(
-      "src/app/(admin)/admin/xero/_components/sync-results-panel.tsx",
+      "src/app/(admin)/admin/finance/xero/_components/sync-results-panel.tsx",
     );
     expect(files).toContain("src/lib/xero-links.ts");
     // And the exclusions hold: no test files in the walked set.

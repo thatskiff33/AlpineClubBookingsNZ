@@ -37,6 +37,7 @@ import {
   type XeroAdminHealthSnapshot,
 } from "@/lib/xero-admin-health";
 
+import { adminHref } from "@/lib/admin-hubs";
 const PAYMENT_PROCESSING_STALE_MINUTES = 30;
 const PAYMENT_PENDING_OVERDUE_MINUTES = 15;
 const BED_ALLOCATION_LOOKAHEAD_DAYS = 7;
@@ -371,7 +372,7 @@ function addXeroItems(items: StuckStateItem[], snapshot: XeroAdminHealthSnapshot
   addItem(items, {
     id: "xero-silent-webhook", domain: "xero", title: "Silent Xero webhook",
     severity: "warning", owner: "Finance", count: snapshot.webhookHealth?.silent ? 1 : 0,
-    href: "/admin/xero", summary: `No webhook received for more than ${snapshot.webhookHealth?.hours} hours. Check the Xero webhook subscription and sync now to catch up.`,
+    href: adminHref("xero"), summary: `No webhook received for more than ${snapshot.webhookHealth?.hours} hours. Check the Xero webhook subscription and sync now to catch up.`,
   });
   addItem(items, {
     id: "xero-failed-operations",
@@ -380,7 +381,7 @@ function addXeroItems(items: StuckStateItem[], snapshot: XeroAdminHealthSnapshot
     severity: "critical",
     owner: "Finance",
     count: snapshot.failedOperations.count,
-    href: "/admin/xero?section=operations&opStatus=FAILED&opFailureState=ACTIVE",
+    href: `${adminHref("xero")}?section=operations&opStatus=FAILED&opFailureState=ACTIVE`,
     summary: `${snapshot.failedOperations.count} active Xero outbox ${plural(
       snapshot.failedOperations.count,
       "operation",
@@ -393,7 +394,7 @@ function addXeroItems(items: StuckStateItem[], snapshot: XeroAdminHealthSnapshot
     severity: "critical",
     owner: "Finance",
     count: snapshot.staleRunningOperations.count,
-    href: "/admin/xero?section=operations&opStatus=RUNNING",
+    href: `${adminHref("xero")}?section=operations&opStatus=RUNNING`,
     summary: `${snapshot.staleRunningOperations.count} Xero outbox ${plural(
       snapshot.staleRunningOperations.count,
       "operation",
@@ -406,7 +407,7 @@ function addXeroItems(items: StuckStateItem[], snapshot: XeroAdminHealthSnapshot
     severity: "critical",
     owner: "Finance",
     count: snapshot.staleProcessingInboundEvents.count,
-    href: "/admin/xero?section=inbound&inStatus=PROCESSING",
+    href: `${adminHref("xero")}?section=inbound&inStatus=PROCESSING`,
     summary: `${snapshot.staleProcessingInboundEvents.count} inbound Xero ${plural(
       snapshot.staleProcessingInboundEvents.count,
       "event",
@@ -419,7 +420,7 @@ function addXeroItems(items: StuckStateItem[], snapshot: XeroAdminHealthSnapshot
     severity: "critical",
     owner: "Finance",
     count: snapshot.missingInvoices.count,
-    href: "/admin/xero",
+    href: adminHref("xero"),
     summary: `The club's records hold no Xero invoice for ${snapshot.missingInvoices.count} paid ${plural(
       snapshot.missingInvoices.count,
       "booking",
@@ -432,7 +433,7 @@ function addXeroItems(items: StuckStateItem[], snapshot: XeroAdminHealthSnapshot
     severity: "critical",
     owner: "Finance",
     count: snapshot.refundsMissingCreditNotes.count,
-    href: "/admin/xero",
+    href: adminHref("xero"),
     summary: `${snapshot.refundsMissingCreditNotes.count} refunded Stripe ${plural(
       snapshot.refundsMissingCreditNotes.count,
       "payment",
@@ -445,7 +446,7 @@ function addXeroItems(items: StuckStateItem[], snapshot: XeroAdminHealthSnapshot
     severity: "warning",
     owner: "Finance",
     count: snapshot.contactLinkMismatches.count,
-    href: "/admin/xero",
+    href: adminHref("xero"),
     summary: `${snapshot.contactLinkMismatches.count} member/Xero contact ${plural(
       snapshot.contactLinkMismatches.count,
       "link",
@@ -458,7 +459,7 @@ function addXeroItems(items: StuckStateItem[], snapshot: XeroAdminHealthSnapshot
     severity: "warning",
     owner: "Finance",
     count: snapshot.contactGroupMismatches.count,
-    href: "/admin/xero",
+    href: adminHref("xero"),
     summary: `${snapshot.contactGroupMismatches.count} active member ${plural(
       snapshot.contactGroupMismatches.count,
       "contact group",
@@ -478,7 +479,7 @@ function addXeroItems(items: StuckStateItem[], snapshot: XeroAdminHealthSnapshot
         snapshot.apiBudget.status === "warning" ? "warning" : "critical",
       owner: "System",
       count: 1,
-      href: "/admin/xero",
+      href: adminHref("xero"),
       summary: `Xero API budget is ${snapshot.apiBudget.status}${
         snapshot.apiBudget.usagePercent === null
           ? ""
@@ -985,7 +986,7 @@ export async function getStuckStateDashboard(input?: {
     severity: "critical",
     owner: "Finance",
     count: exhaustedSettlementAlerts,
-    href: "/admin/payments",
+    href: adminHref("payments"),
     summary: `${exhaustedSettlementAlerts} settlement figure alerts exhausted their retries. Check the bank transfer amounts against Xero and the staff booking timeline; no further alert emails are attempted.`,
   });
 
@@ -1152,7 +1153,7 @@ export async function getStuckStateDashboard(input?: {
       severity: "warning",
       owner: "Finance",
       count: bankRefundVoidsToAnswer,
-      href: input?.viewerCanViewFinance ? "/admin/stuck-states#bank-refund-voids" : "/admin/xero",
+      href: input?.viewerCanViewFinance ? "/admin/stuck-states#bank-refund-voids" : adminHref("xero"),
       summary: `${bankRefundVoidsToAnswer} bank ${plural(bankRefundVoidsToAnswer, "refund")} had ${bankRefundVoidsToAnswer === 1 ? "its" : "their"} Xero credit note voided, and the app could not tell which refund the note recorded (or another note has held it back for over a week). Pick the refund on this page and the app takes it back out of the records for the treasurer to re-confirm.`,
     });
   }

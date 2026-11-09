@@ -218,7 +218,7 @@ describe("Modules page setup affordance", () => {
     expect(map).toContain('analytics: "/admin/integrations"');
     // The two that were already there, so a careless rewrite of the map is caught
     // rather than silently dropping them.
-    expect(map).toContain('xeroIntegration: "/admin/xero/setup"');
+    expect(map).toContain('xeroIntegration: adminHref("xero-setup")');
     expect(map).toContain('googleLogin: "/admin/google/setup"');
     // The route the owner ruled out must not reappear anywhere on the page.
     expect(page).not.toContain("/admin/analytics/setup");

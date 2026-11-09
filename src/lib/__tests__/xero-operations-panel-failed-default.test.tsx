@@ -25,16 +25,16 @@ vi.mock("@/hooks/use-admin-area-edit-access", async (importOriginal) => ({
   useAdminAreaEditAccess: () => true,
 }))
 
-vi.mock("../../app/(admin)/admin/xero/_components/api", () => ({
+vi.mock("../../app/(admin)/admin/finance/xero/_components/api", () => ({
   fetchJson: mocks.fetchJson,
   postJson: vi.fn(),
 }))
 
 // The real Select is a Radix popover; a native <select> exercises the same
 // onValueChange wiring in the panel without a pointer-event simulation.
-vi.mock("../../app/(admin)/admin/xero/_components/shared", async (importOriginal) => {
+vi.mock("../../app/(admin)/admin/finance/xero/_components/shared", async (importOriginal) => {
   const actual =
-    (await importOriginal()) as typeof import("../../app/(admin)/admin/xero/_components/shared")
+    (await importOriginal()) as typeof import("../../app/(admin)/admin/finance/xero/_components/shared")
   return {
     ...actual,
     FilterSelect: ({
@@ -65,7 +65,7 @@ vi.mock("../../app/(admin)/admin/xero/_components/shared", async (importOriginal
   }
 })
 
-import { OperationsPanel } from "@/app/(admin)/admin/xero/_components/operations-panel"
+import { OperationsPanel } from "@/app/(admin)/admin/finance/xero/_components/operations-panel"
 
 function renderPanel() {
   return render(

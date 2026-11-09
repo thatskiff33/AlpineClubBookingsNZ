@@ -97,7 +97,7 @@ import DisplayBuilderPage from "@/app/(admin)/admin/display/builder/page";
 import DisplaySetupPage from "@/app/(admin)/admin/display/setup/page";
 import LodgeDisplaySettingsPage from "@/app/(admin)/admin/lodges/[id]/display/page";
 import LodgeRosterSettingsPage from "@/app/(admin)/admin/lodges/[id]/roster/page";
-import XeroRecordActivityPage from "@/app/(admin)/admin/xero/records/[localModel]/[localId]/page";
+import XeroRecordActivityPage from "@/app/(admin)/admin/finance/xero/records/[localModel]/[localId]/page";
 import AdminInductionSettingsPage from "@/app/(admin)/admin/induction/settings/page";
 import { MemberDetailHeader } from "@/app/(admin)/admin/members/[id]/_components/member-detail-header";
 

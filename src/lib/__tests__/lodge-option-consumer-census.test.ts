@@ -27,7 +27,7 @@ const EXPECTED_HOOK_CONSUMERS = [
   "src/app/(admin)/admin/members/[id]/_components/member-lodge-access-card.tsx",
   "src/app/(admin)/admin/promo-codes/promo-codes-page-client.tsx",
   "src/app/(admin)/admin/promo-codes/promo-redemptions-panel.tsx",
-  "src/app/(admin)/admin/reports/page.tsx",
+  "src/app/(admin)/admin/finance/reports/page.tsx",
   "src/app/(admin)/admin/roster/page.tsx",
   "src/app/(admin)/admin/seasons/page.tsx",
   "src/app/(admin)/admin/work-parties/page.tsx",

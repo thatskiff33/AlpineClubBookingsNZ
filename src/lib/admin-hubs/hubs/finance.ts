@@ -12,7 +12,7 @@ export const FINANCE_HUB = defineHub({
       oldPath: "/admin/payments",
       area: "finance",
       keywords: ["stripe", "transactions", "receipts"],
-      moved: false,
+      moved: true,
     },
     {
       id: "internet-banking",
@@ -20,21 +20,21 @@ export const FINANCE_HUB = defineHub({
       oldPath: "/admin/internet-banking",
       area: "finance",
       flags: ["xeroIntegration", "internetBankingPayments"],
-      moved: false,
+      moved: true,
     },
     {
       id: "refund-requests",
       label: "Refunds & Credits",
       oldPath: "/admin/refund-requests",
       area: "finance",
-      moved: false,
+      moved: true,
     },
     {
       id: "subscriptions",
       label: "Subscriptions",
       oldPath: "/admin/subscriptions",
       area: "finance",
-      moved: false,
+      moved: true,
     },
     {
       id: "reports",
@@ -42,7 +42,7 @@ export const FINANCE_HUB = defineHub({
       oldPath: "/admin/reports",
       area: "finance",
       keywords: ["statements", "export", "analytics", "revenue"],
-      moved: false,
+      moved: true,
     },
     {
       id: "xero",
@@ -51,7 +51,10 @@ export const FINANCE_HUB = defineHub({
       area: "finance",
       flags: ["xeroIntegration"],
       keywords: ["accounting", "invoices", "reconcile"],
-      moved: false,
+      // The mappings card, linked from Finance Setup and setup readiness. Its
+      // element id is `xeroSectionId("mappings")`, pinned equal in the registry test.
+      anchors: ["xero-section-mappings"],
+      moved: true,
     },
     {
       id: "xero-member-grouping",
@@ -59,7 +62,7 @@ export const FINANCE_HUB = defineHub({
       oldPath: "/admin/xero/member-grouping",
       area: "finance",
       flags: ["xeroIntegration"],
-      moved: false,
+      moved: true,
     },
     {
       id: "xero-record",
@@ -68,7 +71,7 @@ export const FINANCE_HUB = defineHub({
       area: "finance",
       flags: ["xeroIntegration"],
       kind: "detail",
-      moved: false,
+      moved: true,
     },
     {
       id: "xero-setup",
@@ -76,7 +79,7 @@ export const FINANCE_HUB = defineHub({
       oldPath: "/admin/xero/setup",
       area: "finance",
       flags: ["xeroIntegration"],
-      moved: false,
+      moved: true,
     },
   ],
 });

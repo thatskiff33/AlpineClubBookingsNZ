@@ -4,6 +4,7 @@ import { BackLink } from "@/components/admin/back-link";
 import { STRIPE_PROVIDER } from "@/lib/stripe-config";
 import { StripeSetupWizard } from "./stripe-setup-wizard";
 
+import { adminHref } from "@/lib/admin-hubs";
 const STRIPE_WEBHOOK_PATH = "/api/webhooks/stripe";
 
 /**
@@ -37,7 +38,7 @@ export default function StripeSetupPage() {
         Connect Stripe to take card payments. Day-to-day payment operations live
         on the{" "}
         <Link
-          href="/admin/payments"
+          href={adminHref("payments")}
           className="font-medium text-foreground underline decoration-brand-gold/70 decoration-2 underline-offset-4"
         >
           Payments

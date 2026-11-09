@@ -26,6 +26,7 @@ import {
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
 import type { AdminPermissionMatrix } from "@/lib/admin-permissions";
+import { adminHref } from "@/lib/admin-hubs";
 
 const MONTH_NAMES = [
   "January",
@@ -445,7 +446,7 @@ export function SubscriptionLockoutSettingsPanel({
                 but Xero is not connected, so the system cannot read anyone&rsquo;s
                 paid status. While Xero is disconnected the lockout has no effect
                 and all members can book at member rates.{" "}
-                <Link href="/admin/xero/setup" className="font-medium underline">
+                <Link href={adminHref("xero-setup")} className="font-medium underline">
                   Connect Xero
                 </Link>{" "}
                 to enforce it.
@@ -552,7 +553,7 @@ export function SubscriptionLockoutSettingsPanel({
 
           {!xeroConnected && (
             <p className="text-sm text-muted-foreground">
-              <Link href="/admin/xero/setup" className="font-medium underline">
+              <Link href={adminHref("xero-setup")} className="font-medium underline">
                 Connect Xero
               </Link>{" "}
               to choose account and item codes from your chart of accounts.

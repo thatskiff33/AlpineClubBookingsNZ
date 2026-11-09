@@ -24,19 +24,38 @@ import {
   shouldDefaultLinkSideEffects,
 } from "@/lib/admin-member-detail-helpers"
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture"
+import { getAdminPage } from "@/lib/admin-hubs"
 
 describe("admin-member-detail-helpers", () => {
   describe("getMemberDetailBackLabel", () => {
-    it("returns context-specific label for known return paths", () => {
+    it("names the parent page by its registry label, at its old or hub path (C5 #4802)", () => {
       expect(getMemberDetailBackLabel("/admin/bookings")).toBe("Bookings")
+      expect(getMemberDetailBackLabel("/admin/bookings/b-1?tab=guests")).toBe("Bookings")
       expect(getMemberDetailBackLabel("/admin/payments/123")).toBe("Payments")
       expect(getMemberDetailBackLabel("/admin/subscriptions")).toBe("Subscriptions")
-      expect(getMemberDetailBackLabel("/admin/refund-requests")).toBe("Refund Requests")
-      expect(getMemberDetailBackLabel("/admin/xero/health")).toBe("Xero")
+      expect(getMemberDetailBackLabel("/admin/refund-requests")).toBe("Refunds & Credits")
+      expect(getMemberDetailBackLabel("/admin/internet-banking")).toBe("Internet Banking")
+      expect(getMemberDetailBackLabel("/admin/xero/health")).toBe("Xero Sync")
+      // A Xero record is dynamic, so it falls to Xero Sync.
+      expect(getMemberDetailBackLabel("/admin/xero/records/Payment/p-1")).toBe("Xero Sync")
+      expect(getMemberDetailBackLabel("/admin/finance/payments")).toBe("Payments")
+      // The deepest page wins: Xero Setup, not Xero Sync.
+      expect(getMemberDetailBackLabel("/admin/finance/xero/setup?step=webhooks")).toBe("Xero Setup")
+      expect(getMemberDetailBackLabel("/admin/xero/setup")).toBe("Xero Setup")
+    })
+
+    it("takes each label from the registry, never a copy", () => {
+      for (const id of ["bookings", "payments", "refund-requests", "xero", "xero-member-grouping"] as const) {
+        const page = getAdminPage(id)
+        expect(getMemberDetailBackLabel(page.oldPath), id).toBe(page.label)
+        expect(getMemberDetailBackLabel(page.hubPath), id).toBe(page.moved ? page.label : "Members")
+      }
     })
 
     it("defaults to Members for unknown paths", () => {
       expect(getMemberDetailBackLabel("/admin/something-else")).toBe("Members")
+      // A sibling that only shares a prefix is not beneath Bookings.
+      expect(getMemberDetailBackLabel("/admin/bookings-setup")).toBe("Members")
       expect(getMemberDetailBackLabel("/")).toBe("Members")
     })
   })

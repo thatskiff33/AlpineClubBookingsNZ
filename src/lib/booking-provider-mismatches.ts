@@ -10,6 +10,7 @@ import {
   type BookingInvoiceSyncFault,
 } from "@/lib/booking-invoice-sync-status";
 import { bookingHasOpenFinancialReview } from "@/lib/booking-financial-review-visibility";
+import { adminHref } from "@/lib/admin-hubs";
 import { findResolvedBookingInvoiceCreate } from "@/lib/xero-resolved-in-xero-fences";
 import { readRefundCreditNoteGap } from "@/lib/xero-admin-health";
 import { explainXeroFailure } from "@/lib/xero-failure-explanation";
@@ -478,7 +479,7 @@ export async function getBookingFinancialReviewWarnings(
       label: "Money on this booking is waiting for review",
       description:
         "A change to this booking saved, but the refund or credit for it could not be worked out from what the booking has stored, so nothing has been refunded or credited and no amount has been assumed. The member has been told their change saved and that the club is working the adjustment out.",
-      href: "/admin/payments",
+      href: adminHref("payments"),
       linkLabel: "Open the settlement queue",
     },
   ];

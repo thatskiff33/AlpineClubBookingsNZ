@@ -6,6 +6,7 @@ import { LATE_CAPTURE_REFUNDED_OUTSIDE_APP_NOTE } from "@/lib/late-capture-outsi
 import { renderEmailHtml } from "@/lib/email-theme";
 import { emailCalendarDay } from "@/lib/email-templates-club-time";
 import type { ClubFormat } from "@/lib/club-format";
+import { adminHref } from "@/lib/admin-hubs";
 
 /**
  * #3639 (delta D7): a late capture on a cancelled booking HELD for a treasurer's
@@ -25,7 +26,7 @@ export async function sendAdminLateCaptureHeldAlert(data: {
   format: ClubFormat,
 ) {
   const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
-  const reviewUrl = `${baseUrl}/admin/payments`;
+  const reviewUrl = `${baseUrl}${adminHref("payments")}`;
 
   return sendToAdmins({
     subject: `Late payment held for approval: ${data.memberName}`,
@@ -63,7 +64,7 @@ export async function sendAdminLateCaptureRefundedOutsideAppAlert(
   format: ClubFormat,
 ): Promise<void> {
   const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
-  const reviewUrl = `${baseUrl}/admin/payments`;
+  const reviewUrl = `${baseUrl}${adminHref("payments")}`;
   await sendUnmuteableAdminAlert({
     subject: `Late payment refunded outside the app - check Xero: ${data.memberName}`,
     html: await renderEmailHtml(() => adminLateCaptureRefundedOutsideAppTemplate({ ...data, reviewUrl }, format)),

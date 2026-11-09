@@ -6,6 +6,7 @@ import { renderEmailHtml } from "@/lib/email-theme";
 import { emailCalendarDay, emailClubDateTime } from "@/lib/email-templates-club-time";
 import { formatBookingReference } from "@/lib/booking-reference";
 import type { ClubFormat } from "@/lib/club-format";
+import { adminHref } from "@/lib/admin-hubs";
 
 /**
  * #3663 (`INV-PAY-016`): an expired internet banking hold whose stay has
@@ -24,7 +25,7 @@ export async function sendAdminInternetBankingHoldStartedStayAlert(data: {
   format: ClubFormat,
 ): Promise<AdminAlertSendResult> {
   const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
-  const reviewUrl = `${baseUrl}/admin/payments`;
+  const reviewUrl = `${baseUrl}${adminHref("payments")}`;
 
   return sendToAdmins({
     subject: "Overdue internet-banking hold on a stay that has started",

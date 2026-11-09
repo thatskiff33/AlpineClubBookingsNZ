@@ -76,7 +76,7 @@ const BOOKING_NOTIFY_PROMPTS = [
   "components/edit-booking-panel.tsx",
   "components/admin/booking-requests/booking-approvals-panel.tsx",
   "app/(admin)/admin/waitlist/page.tsx",
-  "app/(admin)/admin/refund-requests/page.tsx",
+  "app/(admin)/admin/finance/refund-requests/page.tsx",
   // #4533: a finished-stay promo correction may withhold the change email.
   "components/admin/booking-requests/booking-change-request-officer-entry.tsx",
 ];
@@ -113,9 +113,9 @@ const NOT_BOOKING_BOUND: Record<string, string> = {
   // #2260: manual mark-paid for a membership SUBSCRIPTION. Keyed on a member's
   // season row, never on a Booking, so no booking's switch can reach it — the
   // sender passes bookingContext "none" for exactly that reason.
-  "app/(admin)/admin/subscriptions/_components/manual-payment-dialog.tsx":
+  "app/(admin)/admin/finance/subscriptions/_components/manual-payment-dialog.tsx":
     "membership subscription mark-paid, not a booking",
-  "app/(admin)/admin/subscriptions/page.tsx":
+  "app/(admin)/admin/finance/subscriptions/page.tsx":
     "membership subscription mark-paid, not a booking",
   // The one genuinely awkward case. The roster send is per DATE and fans out
   // across every booking staying that night, so it is not one booking's choice

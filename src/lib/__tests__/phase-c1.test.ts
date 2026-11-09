@@ -196,7 +196,7 @@ describe("#26: Payments Page has clickable links", () => {
     const fs = await import("fs");
     const path = await import("path");
     const content = fs.readFileSync(
-      path.resolve("src/app/(admin)/admin/payments/page.tsx"),
+      path.resolve("src/app/(admin)/admin/finance/payments/page.tsx"),
       "utf-8"
     );
     // Should have a Xero invoice link. Since #2283 the URL is no longer
@@ -225,7 +225,7 @@ describe("#27: Xero Account Mappings lock/edit mode", () => {
     const fs = await import("fs");
     const path = await import("path");
     const content = fs.readFileSync(
-      path.resolve("src/app/(admin)/admin/xero/_components/mappings-panel.tsx"),
+      path.resolve("src/app/(admin)/admin/finance/xero/_components/mappings-panel.tsx"),
       "utf-8"
     );
     // Should have isEditingMappings state
@@ -252,7 +252,7 @@ describe("#27: Scan for Duplicates wording update", () => {
     const fs = await import("fs");
     const path = await import("path");
     const content = fs.readFileSync(
-      path.resolve("src/app/(admin)/admin/xero/_components/setup-panels.tsx"),
+      path.resolve("src/app/(admin)/admin/finance/xero/_components/setup-panels.tsx"),
       "utf-8"
     );
     expect(content).toContain("Duplicates & Family Groups");
@@ -266,7 +266,7 @@ describe("#27: Xero import supports INFANT tier mapping", () => {
     const fs = await import("fs");
     const path = await import("path");
     const content = fs.readFileSync(
-      path.resolve("src/app/(admin)/admin/xero/_components/setup-panels.tsx"),
+      path.resolve("src/app/(admin)/admin/finance/xero/_components/setup-panels.tsx"),
       "utf-8"
     );
     expect(content).toContain('<SelectItem value="INFANT">Infant</SelectItem>');
@@ -278,7 +278,7 @@ describe("#27: Xero contact sync admin action", () => {
     const fs = await import("fs");
     const path = await import("path");
     const content = fs.readFileSync(
-      path.resolve("src/app/(admin)/admin/xero/_components/contact-sync-panel.tsx"),
+      path.resolve("src/app/(admin)/admin/finance/xero/_components/contact-sync-panel.tsx"),
       "utf-8"
     );
 
@@ -352,7 +352,7 @@ describe("#32: Subscriptions Page has Xero invoice link", () => {
     const fs = await import("fs");
     const path = await import("path");
     const content = fs.readFileSync(
-      path.resolve("src/app/(admin)/admin/subscriptions/page.tsx"),
+      path.resolve("src/app/(admin)/admin/finance/subscriptions/page.tsx"),
       "utf-8"
     );
     // See the #26 case above: since #2283 the Xero invoice URL is built by

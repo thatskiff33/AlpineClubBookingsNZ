@@ -45,7 +45,7 @@
   "minimumScannedFiles": 4000,
   "files": [
     {
-      "file": "src/app/(admin)/admin/xero/_components/__tests__/contact-sync-panel-hosting-retry.test.tsx",
+      "file": "src/app/(admin)/admin/finance/xero/_components/__tests__/contact-sync-panel-hosting-retry.test.tsx",
       "reason": "A bare `&` inside a STRING literal, not JSX text: the prop value `currentXeroPath=\"/admin/xero?section=contactSync&view=failed\"`. `&amp;` is the remedy for JSX text only - writing it here would change the value the component receives, and the query string is the point of the case."
     },
     {
