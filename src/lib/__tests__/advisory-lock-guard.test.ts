@@ -1496,6 +1496,7 @@ const ROW_LOCK_SITE_INVENTORY: Record<string, number> = {
   // "A booking writer takes the booking row before a Member key share".
   // #4845: that one statement now lives in `booking-row-lock.ts`, outside the journal boundary, so a lock-only
   // caller names no journal module; `doors` re-exports it and `booking-posting.ts` imports it.
+  // #4853: a policy-exception approval on an existing booking takes it right after its lodge key, before its claim.
   "src/lib/booking-row-lock.ts": 1,
   // #4691 (Ledger M4a): an application batch, a refund reservation and a release
   // take the booking's Payment row (`SELECT 1 … FOR NO KEY UPDATE`) before they

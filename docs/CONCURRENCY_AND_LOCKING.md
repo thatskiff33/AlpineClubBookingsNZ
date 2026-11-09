@@ -3412,6 +3412,12 @@ lodge key, keyed from its pre-lock read of the request's booking id (written
 once), before its role check and claim. The queue's acknowledge-only decision
 (`PUT /api/admin/booking-change-requests/[id]`) is one autocommit `updateMany`
 that touches no booking row, so it never holds the request row while waiting.
+A policy-exception approval on an existing booking (#4853,
+`approveAndExecutePolicyExceptionRequest` with the modification store) had the
+same shape and takes the same fix: its store's pre-read returns the request's
+booking id and the engine locks that row right after the lodge key. A
+new-booking request has no booking row until the approval creates it, so its
+order is unchanged.
 
 Why not the other fixes:
 
@@ -3459,17 +3465,17 @@ nothing is corrupted, and deleting an officer while their own write is in
 flight is the rarer event. Reordering delete's cascade is tracked as #4850.
 
 Proved against real PostgreSQL by
-`member-merge-officer-settle-races.realdb.test.ts` and, for the approval,
-`member-merge-change-request-races.realdb.test.ts`: required steps of the
+`member-merge-officer-settle-races.realdb.test.ts` and, for the approvals,
+`member-merge-change-request-races.realdb.test.ts` and
+`member-merge-policy-exception-races.realdb.test.ts`: required steps of the
 `migration-drift` job pinned by `review-findings-contracts.test.ts`. Both
 orders are covered for each writer and each cycle, and the old orders deadlock
 (probed). The positions are pinned in `manual-booking-payment.test.ts`,
-`manual-refund-task.test.ts` and `booking-change-request-execution.test.ts`.
-This is not a census of every `lock(1)` writer: the settle body, its reversal,
-the Stripe path, the refund-task closure and the change-request approval were
-checked, and the rule above is what a new writer follows. The policy-exception
-approval (`booking-exception-execution.ts`) has the same claim-before-booking
-shape and is tracked as #4853.
+`manual-refund-task.test.ts`, `booking-change-request-execution.test.ts` and
+`booking-exception-execution.test.ts`. This is not a census of every `lock(1)`
+writer: the settle body, its reversal, the Stripe path, the refund-task
+closure, the change-request approval and the policy-exception approval were
+checked, and the rule above is what a new writer follows.
 
 ## The disciplines, by writer class
 
