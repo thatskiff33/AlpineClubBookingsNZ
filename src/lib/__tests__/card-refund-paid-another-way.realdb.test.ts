@@ -122,6 +122,8 @@ const LOCK_POLL_TIMEOUT_MS = 5_000;
       await prisma.manualRefundTask.deleteMany({ where: { bookingId: BOOKING_ID } });
       await prisma.paymentRefund.deleteMany({ where: { paymentId: PAYMENT_ID } });
       await prisma.refundRequest.deleteMany({ where: { bookingId: BOOKING_ID } });
+      // #4516: a still-owed rest's own row.
+      await prisma.paymentRecoveryOperation.deleteMany({ where: { paymentId: PAYMENT_ID, idempotencyKey: { startsWith: "card_refund_still_owed_" } } });
     }
 
     async function deleteFixtures() {
@@ -351,6 +353,7 @@ const LOCK_POLL_TIMEOUT_MS = 5_000;
         operationId: OPERATION_ID,
         amountCents: paidCents,
         paidBack: "partial",
+        rest: "club-keeps", // #4516: the old rule, now the treasurer's explicit choice
         expectedOwedCents: REFUND_CENTS,
         note: "Bank transfer, part, ref RACE",
         actingMemberId: OFFICER_ID,
@@ -358,6 +361,27 @@ const LOCK_POLL_TIMEOUT_MS = 5_000;
       const outcome = await read();
       expect(outcome).toMatchObject({ cardRefundState: "made", cardRefundOwedCents: 0, cardRefundClosedUnpaidCents: REFUND_CENTS - paidCents });
       expect(approvedAppealRefundedCents(REFUND_CENTS, outcome ?? {})).toBe(paidCents);
+    });
+
+    it("#4516 (owner, 2 Nov 2026): a part close whose rest is still owed keeps the rest in Refunds owed and on the dead list, and a later close pays it", async () => {
+      const { listDeadCardRefunds } = await import("@/lib/card-refund-paid-another-way");
+      const { buildCardRefundStillOwedRecoveryKey } = await import("@/lib/payment-recovery-keys");
+      const paidCents = 2_000;
+      const first = await closeCardRefundPaidAnotherWay({ operationId: OPERATION_ID, amountCents: paidCents, paidBack: "partial", rest: "still-owed",
+        expectedOwedCents: REFUND_CENTS, note: "Bank transfer, part, ref RACE", actingMemberId: OFFICER_ID });
+      expect(first).toMatchObject({ rest: "still-owed", stillOwedOperationId: expect.any(String) });
+      const record = await prisma.manualRefundTask.findFirstOrThrow({ where: { bookingId: BOOKING_ID, occurrenceKey: `card-refund-paid-another-way:${OPERATION_ID}` } });
+      // The record closes exactly what it paid: nothing reads as written off.
+      expect(record).toMatchObject({ amountCents: paidCents, raisedAmountCents: paidCents });
+      const rest = await prisma.paymentRecoveryOperation.findUniqueOrThrow({ where: { idempotencyKey: buildCardRefundStillOwedRecoveryKey(record.id) } });
+      expect(rest).toMatchObject({ id: first.stillOwedOperationId, status: "FAILED", attempts: 5, nextRetryAt: null, amountCents: REFUND_CENTS - paidCents });
+      // Refunds owed keeps the rest; the dead list offers it for a close.
+      expect(await owedNow()).toBe(REFUND_CENTS - paidCents);
+      expect((await listDeadCardRefunds()).find((row) => row.operationId === rest.id)).toMatchObject({ owedCents: REFUND_CENTS - paidCents, wholeAmountOnly: false });
+      await closeCardRefundPaidAnotherWay({ operationId: rest.id, amountCents: REFUND_CENTS - paidCents, paidBack: "full",
+        expectedOwedCents: REFUND_CENTS - paidCents, note: "Bank transfer, the rest, ref RACE", actingMemberId: OFFICER_ID });
+      expect(await owedNow()).toBe(0);
+      expect((await prisma.payment.findUniqueOrThrow({ where: { id: PAYMENT_ID } })).refundedAmountCents).toBe(REFUND_CENTS);
     });
 
     it("#4312 F2: a re-send's mark committed between the close's owed read and its claim fails the claim - a 409, nothing recorded", async () => {

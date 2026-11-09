@@ -458,6 +458,7 @@ let CLUB_FORMAT_TEST: (typeof import("@/lib/__tests__/support/club-format-fixtur
         operationId: row.id,
         amountCents: 5_000,
         paidBack: "partial",
+        rest: "club-keeps", // #4516: the old rule, now the treasurer's explicit choice
         expectedOwedCents: 7_000,
         note: "Bank transfer, ref RACE 4145 in part",
         actingMemberId: OFFICER_ID,
