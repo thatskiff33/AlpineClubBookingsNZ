@@ -916,14 +916,14 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
 
 - **Nothing later re-decides what a cancellation settled** (#3639). One rule,
   `classifyCaptureOnCancelledBooking` (`src/lib/cancellation-settled-money.ts`).
-  A decision is a paid-path policy snapshot (recognised by shape, so unpaid
-  auto-cancel and hold-expiry snapshots and the #2262 markers are not), a
+  A decision is a paid-path policy snapshot (by shape, so unpaid
+  auto-cancel and hold-expiry snapshots and #2262 markers are not), a
   cancellation credit or a live cancel-refund recovery.
 - **Both late-capture handlers** acknowledge a success notice on a `CANCELLED`
   booking — no refund, Xero note or status write — when the capture is not
   known to have landed after the cancel and the cancel recorded a decision, or
-  when any of it was already refunded (`captureRefundState`, which reads the
-  refunded total). "Landed after" is the primary handler's own
+  when any of it was already refunded (`captureRefundState`, reading the
+  refunded total). "Landed after" is the primary handler's
   `cancelled_booking_late_capture` write or a `CANCEL_PAYMENT_INTENT` recovery
   for the intent. Each writes `booking.payment.late_notice_acknowledged`, unless
   a late-capture refund lost its record (by Stripe's metadata): the replay or
@@ -945,8 +945,9 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
 - Pinned by `cancellation-settled-money.test.ts`, `stripe-webhook-alerts.test.ts`,
   `payment-recovery.test.ts`, `manual-refund-task.test.ts`,
   `xero-booking-repair.test.ts`, `late-capture-own-charge-refund.realdb.test.ts`,
-  `late-capture-record-recovery.realdb.test.ts` and
-  `late-capture-approval-refund-race.realdb.test.ts`.
+  `late-capture-record-recovery.realdb.test.ts`,
+  `late-capture-approval-refund-race.realdb.test.ts` and
+  `late-capture-hand-back-race.realdb.test.ts`.
 
 ## INV-PAY-110
 

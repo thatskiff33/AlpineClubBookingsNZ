@@ -6002,6 +6002,13 @@ writers (`INV-LOCK-001`–`003`). Each mutation and its tiers:
 - **A kept late capture** (the approval task dismissed) takes the same Payment
   row before its claim and reverses an unpaid, unreserved capture-return R05 an
   automatic refund posted (review M5).
+- **A #2700 hand-back** of a late capture (no approval intent) takes the same
+  Payment row before it reads what its capture still holds, then claims
+  (#4838). Nothing between takes a lodge, member-credit or task-row lock: the
+  group-mirror and card-shortfall routes return before locking for this kind.
+  Read first, a `charge.refunded` sync committing before the claim let the
+  mirror land on another charge's headroom as well; proven by
+  `late-capture-hand-back-race.realdb.test.ts`.
 - **An appeal's `release_claim`** takes global → the request's row → its
   hand-back task → Payment, releases the approval's open reservations under its
   own keys with their funding and reverses its R05 in the same transaction. A
@@ -6043,7 +6050,8 @@ owner under the booking row takes that row before anything the merge takes
 after its owner move (the request's row, a Member row's `FOR UPDATE`), proved
 in both orders by `member-money-refund-appeal-merge.realdb.test.ts`.
 Payment → the approval task row in a "Paid another way" close, and Payment →
-that task's claim in a late-capture approval or keep, in the same order.
+that task's claim in a late-capture approval or keep, in the same order; a
+#2700 hand-back's claim the same (#4838), and its dismissal takes no Payment row.
 Payment-row-only writers never take a booking row.
 
 Counterpart reconciliation at M4c's base (`0d678da`): #4791 (M4b receipts),
