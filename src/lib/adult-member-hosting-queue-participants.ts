@@ -1,7 +1,9 @@
 import { Prisma, type PrismaClient } from "@prisma/client";
+import { z } from "zod";
 
 import { bookingOwner } from "@/lib/booking-owner";
 import { isPostgresLockNotAvailable } from "@/lib/prisma-errors";
+import { decodeRawRows } from "@/lib/raw-sql-rows";
 import { ApiError } from "@/lib/api-error";
 import type { HostingCoverageReevaluationInput } from "@/lib/adult-member-hosting-coverage-queue";
 
@@ -394,6 +396,9 @@ async function setTransactionLockTimeout(
 
 type MemberMergeParticipantDb = Pick<PrismaClient, "$executeRaw" | "$queryRaw" | "member">;
 
+/** A row a participant lock took: its id, read back so merge knows which it holds (#2289's decoder). */
+const LOCKED_MEMBER_ROW = z.object({ id: z.string() });
+
 /**
  * The two savepoints, as fixed statements: one around each acquisition attempt,
  * one around a single-row wait. Named apart so neither can release the other.
@@ -429,12 +434,12 @@ async function waitForOneParticipantRow(
   let outcome: "free" | "missing" | "timedOut";
   try {
     await setTransactionLockTimeout(db, milliseconds);
-    const rows = await db.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+    const rows = decodeRawRows(await db.$queryRaw(Prisma.sql`
       SELECT "id"
       FROM "Member"
       WHERE "id" = ${memberId}
       FOR UPDATE
-    `);
+    `), LOCKED_MEMBER_ROW, "member merge participant wait");
     outcome = rows.length === 1 ? "free" : "missing";
   } catch (error) {
     if (!isPostgresLockNotAvailable(error)) throw error;
@@ -503,13 +508,13 @@ export async function lockMemberMergeHostingCoverageParticipants(
     const remaining = Math.ceil(deadline - performance.now());
     if (remaining <= 0) throw new HostingCoverageParticipantRetryError();
     await db.$executeRaw(ATTEMPT_SAVEPOINT.open);
-    const lockedRows = await db.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+    const lockedRows = decodeRawRows(await db.$queryRaw(Prisma.sql`
       SELECT "id"
       FROM "Member"
       WHERE "id" IN (${Prisma.join(ids)})
       ORDER BY "id"
       FOR UPDATE SKIP LOCKED
-    `);
+    `), LOCKED_MEMBER_ROW, "member merge participant attempt");
     const locked = new Set(lockedRows.map((row) => row.id));
     const busy = ids.find((id) => !locked.has(id));
     if (busy === undefined) {

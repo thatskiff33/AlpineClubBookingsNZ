@@ -16,7 +16,7 @@ const journalDoors = vi.hoisted(() => ({ postMemberMergeTransfer: vi.fn(async ()
  */
 const residualCheck = vi.hoisted(() => ({ real: false }));
 vi.mock("@/lib/member-merge-residual-references", async (importOriginal) => {
-  const real = await importOriginal<typeof import("@/lib/member-merge-residual-references")>();
+  const real = (await importOriginal()) as typeof import("@/lib/member-merge-residual-references");
   return {
     ...real,
     findMemberMergeResidualReferences: (...args: Parameters<typeof real.findMemberMergeResidualReferences>) =>
@@ -439,7 +439,7 @@ describe("executeMemberMerge", () => {
       ...defaultDelegate(),
       findMany: vi.fn().mockResolvedValue([]),
     };
-    const { client, executeRaw, queryRaw, member, auditLog } = makeClient({
+    const { client, queryRaw, member, auditLog } = makeClient({
       xeroSyncOperation,
       xeroObjectLink,
     });
