@@ -607,4 +607,3 @@ describe("isOwnUnstampedCardRefund (#4368 review F3, S2): this row's door, no sl
     expect(isOwnUnstampedCardRefund(row, null)).toBe(false);
   });
 });
-
