@@ -65,7 +65,6 @@ export interface DeadCardRefundPanelRow {
   tryCardAgainRefusal: string | null;
 }
 
-
 /** The warning a refund whose last failure may have reached Stripe carries, on its row and in its dialog. */
 export const STRIPE_MAY_HAVE_REFUNDED_WARNING =
   "Stripe may have refunded: check the Stripe dashboard first.";
