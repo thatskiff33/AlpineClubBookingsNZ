@@ -42,6 +42,13 @@ const mocks = vi.hoisted(() => ({
   alertPaymentRecoveryOfficers: vi.fn(),
 }));
 
+// #4516 (M4c): R05 posts on PostgreSQL (`member-money-refunds.realdb.test.ts`), not on this fake store.
+vi.mock("@/lib/member-money/doors", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/member-money/doors")),
+  postRefundObligation: vi.fn(async () => null),
+  withdrawRefundObligation: vi.fn(async () => false),
+}));
+
 vi.mock("@/lib/auth", () => ({
   auth: mocks.auth,
 }));
@@ -272,7 +279,13 @@ describe("PUT /api/admin/refund-requests/[id]", () => {
       },
       idempotencyKeyPrefix: "refund_request_refund_1",
       format: CLUB_FORMAT_TEST,
+      obligation: { scope: "refund-request", id: "refund_1" }, // #4516: the debt its slices reserve against
     });
+    // #4516 (M4c): the claim posted the card part's concession and R05, under the booking row, before Stripe.
+    const { postRefundObligation } = await import("@/lib/member-money/doors");
+    expect(vi.mocked(postRefundObligation)).toHaveBeenCalledWith(expect.anything(), expect.anything(), expect.objectContaining({
+      bookingId: "booking_1", scope: "refund-request", id: "refund_1", amountCents: 2500, origin: "OFFICER", debtorRead: "booking-row", concession: true }));
+    expect(vi.mocked(postRefundObligation).mock.invocationCallOrder[0]).toBeLessThan(mocks.refundPaymentTransactions.mock.invocationCallOrder[0]!);
     expect(mocks.enqueueXeroRefundCreditNoteOperation).toHaveBeenCalledWith(
       "payment_1",
       2500,
@@ -1324,6 +1337,7 @@ describe("PUT /api/admin/refund-requests/[id]", () => {
       },
       idempotencyKeyPrefix: "refund_request_refund_1",
       format: CLUB_FORMAT_TEST,
+      obligation: { scope: "refund-request", id: "refund_1" }, // #4516
     };
 
     function auditMetadata(action: string) {

@@ -102,6 +102,7 @@ describe("what the close needs", () => {
     ["fractional cents", { ...valid, amountCents: 10.5 }],
     ["a field it does not know", { ...valid, refundToCard: true }],
     ["a note past the column's width", { ...valid, note: "x".repeat(501) }],
+    ["a rest that is neither answer (#4516)", { ...valid, paidBack: "partial", amountCents: 4_000, rest: "split" }],
   ])("refuses %s, and closes nothing", async (_label, body) => {
     const response = await POST(request(body), { params });
     expect(response.status).toBe(400);
@@ -109,13 +110,14 @@ describe("what the close needs", () => {
   });
 
   it("hands the operation, amount, full-or-part answer, the owed figure seen, note and acting treasurer to the close", async () => {
-    const response = await POST(request({ ...valid, paidBack: "partial", amountCents: 4_000 }), { params });
+    const response = await POST(request({ ...valid, paidBack: "partial", rest: "still-owed", amountCents: 4_000 }), { params });
 
     expect(response.status).toBe(200);
     expect(mocks.closeCardRefundPaidAnotherWay).toHaveBeenCalledWith({
       operationId: "op-1",
       amountCents: 4_000,
       paidBack: "partial",
+      rest: "still-owed", // #4516: the treasurer's answer for the rest, passed exactly
       expectedOwedCents: 5_000,
       note: "Bank transfer, ref 123",
       actingMemberId: "treasurer-1",

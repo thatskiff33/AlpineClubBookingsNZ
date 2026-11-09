@@ -7310,7 +7310,12 @@ describe("runBookingXeroRepair", () => {
         reason: "cancelled_booking_late_capture_repair",
       },
       idempotencyKeyPrefix: "late_cancel_refund_repair_booking_1",
+      // #4516 (M4c): each slice returns its own capture; its R05 posts as it is reserved.
+      obligation: expect.any(Function),
     });
+    const { obligation } = deps.refundPaymentTransactions.mock.calls[0]![0] as { obligation: (slice: { paymentTransactionId: string; paymentIntentId: string; amountCents: number }) => unknown };
+    expect(obligation({ paymentTransactionId: "txn_additional", paymentIntentId: "pi_additional", amountCents: 3000 }))
+      .toEqual({ scope: "capture-return", id: "pi_additional", ensureFaceCents: 3000 });
     expect(booking.payment.status).toBe("REFUNDED");
     expect(report.summary.bookingsWithFindings).toBe(0);
   });

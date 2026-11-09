@@ -79,7 +79,8 @@ const cancellationLedger = vi.hoisted(() => ({
 vi.mock("@/lib/booking-ledger-cancellation-sync", () => cancellationLedger);
 // #4627: the journal half of the confirmation runs on PostgreSQL
 // (`booking-ledger-journal.realdb.test.ts`); here, that the settle hands it the lines.
-const journalDoors = vi.hoisted(() => ({ postBookingLedgerJournal: vi.fn(async () => null), postBookingReceipts: vi.fn(async () => 0) }));
+const journalDoors = vi.hoisted(() => ({
+  postRefundObligation: vi.fn(async () => null), postBookingLedgerJournal: vi.fn(async () => null), postBookingReceipts: vi.fn(async () => 0) }));
 vi.mock("@/lib/member-money/doors", async (importOriginal) => ({
   ...((await importOriginal()) as typeof import("@/lib/member-money/doors")),
   postBookingLedgerJournal: journalDoors.postBookingLedgerJournal,
@@ -87,6 +88,8 @@ vi.mock("@/lib/member-money/doors", async (importOriginal) => ({
   // decision it is handed: a card settle collects its intent on `paid` and holds it otherwise (the officer
   // settle's `manual_paid` is proved by that suite's real officer settle and reversal).
   postBookingReceipts: journalDoors.postBookingReceipts,
+  // #4516 (M4c): R05 posts on PostgreSQL (`member-money-refunds.realdb.test.ts`); here, that W1 asks for it.
+  postRefundObligation: journalDoors.postRefundObligation,
 }));
 
 // #4300 (`INV-PAY-138`): the settle's superseded-capture refusal reads the
@@ -1183,7 +1186,11 @@ describe("markBookingPaymentSucceeded", () => {
         format: CLUB_FORMAT_TEST,
         metadata: { bookingId: "booking-1", reason: "capacity_claim_failed" },
         idempotencyKeyPrefix: "capacity_claim_failed_booking-1_pi_race",
+        obligation: { scope: "capture-return", id: "pi_race" }, // #4516: the R05 the settle posted
       });
+      // #4516 (M4c): the settle that cancelled for the capacity race posted the capture's return, sized by its plan.
+      expect(journalDoors.postRefundObligation).toHaveBeenCalledWith(expect.anything(), expect.anything(), expect.objectContaining({
+        scope: "capture-return", id: "pi_race", amountCents: 10000, debtorRead: "booking-row" }));
       // Happy-path close of the pre-persisted operation.
       expect(
         mocks.markCapacityClaimFailedRefundRecoverySucceeded

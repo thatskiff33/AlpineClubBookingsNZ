@@ -89,6 +89,8 @@ vi.mock("@/lib/member-money/doors", async (importOriginal) => ({
   postBookingLedgerJournal: vi.fn(async () => null),
   // #4516 (M4b): the receipt hook runs on PostgreSQL (`member-money-receipts.realdb.test.ts`), not on this fake store.
   postBookingReceipts: vi.fn(async () => 0),
+  // #4516 (M4c): R05 posts on PostgreSQL (`member-money-refunds.realdb.test.ts`), not on this fake store.
+  postRefundObligation: vi.fn(async () => null),
 }));
 vi.mock("@/lib/prisma", () => ({
   prisma: {
@@ -630,6 +632,7 @@ describe("#1992 duplicate-capture auto-refund", () => {
       format: CLUB_FORMAT_TEST,
       metadata: { bookingId: "booking-1", reason: "duplicate_capture" },
       idempotencyKeyPrefix: `duplicate_capture_refund_booking-1_${DUPLICATE_PI}`,
+      obligation: { scope: "capture-return", id: DUPLICATE_PI }, // #4516: the R05 the settle posted
     });
 
     // Happy-path close + loud admin alert (money moved automatically).

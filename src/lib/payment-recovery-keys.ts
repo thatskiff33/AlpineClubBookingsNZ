@@ -643,6 +643,10 @@ export function bookingModificationRefundReasonForKeyPrefix(
   if (keyPrefix?.startsWith(CARD_REFUND_FAILED_LATER_RECOVERY_PREFIX)) {
     return CARD_REFUND_FAILED_LATER_REASON;
   }
+  // #4516: the rest of a part close the treasurer said is still owed: never another row's request.
+  if (keyPrefix?.startsWith(CARD_REFUND_STILL_OWED_RECOVERY_PREFIX)) {
+    return CARD_REFUND_STILL_OWED_REASON;
+  }
   return "booking_modification_refund_recovery";
 }
 

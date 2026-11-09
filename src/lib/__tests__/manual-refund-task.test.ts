@@ -110,6 +110,13 @@ const mocks = vi.hoisted(() => ({
 // #3582: an edit's and a review closure's ledger lines are posted by one sync,
 // proved in its own suites and against Postgres; this suite tests what it
 // always tested.
+// #4516 (M4c): R05 posts on PostgreSQL (`member-money-refunds.realdb.test.ts`), not on this fake store.
+vi.mock("@/lib/member-money/doors", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/member-money/doors")),
+  postRefundObligation: vi.fn(async () => null),
+  withdrawRefundObligation: vi.fn(async () => false),
+}));
+
 vi.mock("@/lib/booking-ledger-modification-sync", () => ({
   postModificationLedgerLines: vi.fn().mockResolvedValue(undefined),
   postReviewClosureLedgerLines: vi.fn().mockResolvedValue(undefined),
@@ -4715,6 +4722,7 @@ describe("#3639 - approving a held late-capture refund", () => {
       allocation: slice,
       metadata: { bookingId: "booking-1", reason: "cancelled_booking_late_capture" },
       idempotencyKeyPrefix: "late_cancel_refund_booking-1_pi_late",
+      obligation: { scope: "capture-return", id: "pi_late" }, // #4516: the R05 the completion posted
     });
     // The debt is durable BEFORE Stripe is asked, and the claim came first.
     expect(
